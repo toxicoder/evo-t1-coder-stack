@@ -48,7 +48,7 @@ set_secret() {
 }
 
 # Only replace values still carrying the sample placeholder.
-for var in CODER_ADMIN_PASSWORD CODER_PG_PASSWORD LITELLM_MASTER_KEY; do
+for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY; do
   if grep -q "^${var}=change-me" .env; then
     set_secret "$var"
   fi
@@ -75,8 +75,7 @@ fi
 echo
 echo "Next steps:"
 echo "  1. docker compose up -d"
-echo "  2. Open http://<host>:3001 and sign in (admin user from .env;"
-echo "     if admin-bootstrap did not apply, create the admin on the first-run screen)"
+echo "  2. Open http://<host>:3001 and register the first account (it becomes the site admin)"
 echo "  3. coder login http://<host>:3001 && coder template push ./templates/docker-dev"
 echo "  4. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
 echo "  5. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"

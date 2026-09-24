@@ -56,7 +56,7 @@ docker compose up -d
 
 Then:
 
-1. Open `http://<host>:3001` and sign in with `CODER_ADMIN_USERNAME` / `CODER_ADMIN_PASSWORD` from `.env` (bootstrap generates them; if admin-bootstrap did not apply in your build, create the admin on the first-run screen).
+1. Open `http://<host>:3001` and register the first account — that account becomes the site admin.
 2. Push the workspace template (section below).
 3. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
 
@@ -168,4 +168,4 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 - Workspace cannot reach LiteLLM → check `CODER_ACCESS_URL` is a LAN IP (not `localhost` / `127.0.0.1`) and that the workspace container can resolve `host.docker.internal`.
 - Grok profile missing in a fresh workspace → the startup script runs before VS Code starts; check the workspace agent logs, then `ls ~/.grok/bin`.
 - Kasm wizard gone after install → expected; use :4443. Reset Kasm by removing the `kasm-data` volume (destroys all Kasm config).
-- Coder admin login fails → see the admin note in Quick start; the fallback is the first-run admin screen.
+- Coder login problems → the first registered account is the site admin; if the UI is unreachable, check `CODER_ACCESS_URL` matches the LAN IP you're browsing from.
