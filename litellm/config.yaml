@@ -1,0 +1,40 @@
+# LiteLLM proxy config for the EVO-T1 stack.
+#
+# Workspaces and desktops always talk to one OpenAI-compatible base URL
+# (http://host.docker.internal:4000/v1) and pick a model alias. Aliases are
+# the stable names: "coder" / "coder-fast" / "chat" / "spark-*".
+#
+# Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
+# network only). The spark-* aliases target optional NVIDIA Spark boxes;
+# set SPARK1_OLLAMA_URL / SPARK2_OLLAMA_URL in .env to real Ollama hosts.
+model_list:
+  # Local — IPEX-LLM Ollama on the Arc 140T
+  - name: coder
+    model: ollama_chat/qwen2.5-coder:32b
+    api_base: http://ollama:11434
+    api_key: local-arc
+  - name: coder-fast
+    model: ollama_chat/qwen2.5-coder:14b
+    api_base: http://ollama:11434
+    api_key: local-arc
+  - name: chat
+    model: ollama_chat/qwen2.5:7b
+    api_base: http://ollama:11434
+    api_key: local-arc
+
+  # Remote — NVIDIA Spark boxes (optional)
+  - name: spark-coder
+    model: ollama_chat/qwen2.5-coder:32b
+    api_base: os.environ/SPARK1_OLLAMA_URL
+    api_key: local-spark
+  - name: spark-chat
+    model: ollama_chat/qwen2.5:7b
+    api_base: os.environ/SPARK2_OLLAMA_URL
+    api_key: local-spark
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  store_model_in_db: false
+
+litellm_settings:
+  drop_params: true

@@ -1,0 +1,111 @@
+# EVO-T1 Coder stack
+# GMKtec EVO-T1 — Intel Core Ultra 9 285H, Intel Arc 140T, 96 GB DDR5.
+#
+# Services:
+#   coder    Coder CE control plane (host port 3001; Kasm owns 3000)
+#   db       Postgres 17 for Coder
+#   litellm  LiteLLM proxy (host port 4000) — local Ollama + NVIDIA Spark boxes
+#   ollama   IPEX-LLM Ollama on the Arc 140T — container network only,
+#            deliberately NOT published to the host
+#   kasm     Kasm Workspaces desktop streaming (wizard :3000 first boot, UI :4443)
+#
+# Secrets live in .env (see .env.sample). Never commit .env.
+
+services:
+  coder:
+    image: ghcr.io/coder/coder:v2.36.6
+    restart: unless-stopped
+    ports:
+      - "${CODER_HTTP_PORT:-3001}:3000"
+    environment:
+      CODER_ACCESS_URL: ${CODER_ACCESS_URL:-http://YOUR_LAN_IP:3001}
+      CODER_ADMIN_USERNAME: ${CODER_ADMIN_USERNAME:-admin}
+      CODER_ADMIN_PASSWORD: ${CODER_ADMIN_PASSWORD:-change-me-coder}
+      CODER_PG_CONNECTION_URL: postgres://coder:${CODER_PG_PASSWORD:-change-me-postgres}@coder-db:5432/coder?sslmode=disable
+      CODER_TELEMETRY_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - coder-home:/home/coder
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: coder
+      POSTGRES_PASSWORD: ${CODER_PG_PASSWORD:-change-me-postgres}
+      POSTGRES_DB: coder
+    volumes:
+      - coder-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coder"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  litellm:
+    image: ghcr.io/berriai/litellm:v1.102.1
+    restart: unless-stopped
+    command: ["--config", "/app/config.yaml"]
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
+      SPARK1_OLLAMA_URL: ${SPARK1_OLLAMA_URL:-http://spark-1.lan:11434}
+      SPARK2_OLLAMA_URL: ${SPARK2_OLLAMA_URL:-http://spark-2.lan:11434}
+    volumes:
+      - ./litellm/config.yaml:/app/config.yaml:ro
+    depends_on:
+      - ollama
+
+  ollama:
+    image: intelanalytics/ipex-llm-inference-cpp-xpu:latest
+    restart: unless-stopped
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      DEVICE: Arc
+      OLLAMA_NUM_GPU: "999" # offload every layer to the Arc 140T
+      ZES_ENABLE_SYSMAN: "1"
+      ONEAPI_DEVICE_SELECTOR: level_zero:0
+      no_proxy: localhost,127.0.0.1
+      OLLAMA_HOST: 0.0.0.0:11434 # compose network only; never published to the host
+      OLLAMA_MODELS: /root/.ollama
+    # The image's start-ollama.sh backgrounds the server and logs to a file;
+    # run `ollama serve` in the foreground here so `docker compose logs` works.
+    command:
+      - bash
+      - -lc
+      - |
+        set -euo pipefail
+        cd /llm/scripts
+        source ipex-llm-init --gpu --device Arc
+        cd /llm/ollama
+        init-ollama
+        exec ./ollama serve
+    shm_size: 16g
+    volumes:
+      - ollama-models:/root/.ollama
+
+  kasm:
+    image: lscr.io/linuxserver/kasm:latest
+    restart: unless-stopped
+    privileged: true
+    security_opt:
+      - apparmor:rootlesskit
+    environment:
+      KASM_PORT: ${KASM_UI_PORT:-4443}
+    ports:
+      - "${KASM_WIZARD_PORT:-3000}:3000" # first-boot install wizard
+      - "${KASM_UI_PORT:-4443}:4443" # Kasm UI after install
+    volumes:
+      - kasm-data:/opt
+    stop_grace_period: 90s
+
+volumes:
+  coder-home:
+  coder-db:
+  ollama-models:
+  kasm-data:

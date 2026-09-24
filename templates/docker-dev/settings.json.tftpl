@@ -1,0 +1,32 @@
+{
+  "__evoT1Stack": true,
+  "terminal.integrated.defaultProfile.linux": "Grok Build",
+  "terminal.integrated.automationProfile.linux": "bash",
+  "terminal.integrated.profiles.linux": {
+    "Grok Build": {
+      "path": "/bin/bash",
+      "args": [
+        "-lc",
+        "exec \"$HOME/.grok/bin/grok-build-terminal\""
+      ]
+    },
+    "bash": {
+      "path": "/bin/bash"
+    },
+    "tmux": {
+      "path": "/bin/bash",
+      "args": [
+        "-lc",
+        "exec tmux"
+      ]
+    }
+  },
+  "cline.apiProvider": "OpenAI Compatible",
+  "cline.openAiCompatibleEndpoint": "${litellm_url}",
+  "cline.apiKey": "${litellm_key}",
+  "cline.customModel": "coder",
+  "roo.apiProvider": "openai",
+  "roo.openaiApiKey": "${litellm_key}",
+  "roo.openaiApiBase": "${litellm_url}",
+  "roo.defaultModel": "coder"
+}

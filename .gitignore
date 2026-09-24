@@ -1,0 +1,19 @@
+# Secrets / local state — never commit
+.env
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+
+# SSH / private key material
+id_rsa
+id_rsa.*
+*.pem
+.ssh/
+
+# Browser/session scratch
+browsed_files*
+
+# OS noise
+.DS_Store
+Thumbs.db

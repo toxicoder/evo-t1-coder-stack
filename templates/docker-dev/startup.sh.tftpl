@@ -1,0 +1,66 @@
+#!/bin/bash
+# Coder workspace startup — EVO-T1 stack.
+#
+# Idempotent: safe to re-run on every workspace start.
+#   1. installs tmux (if missing)
+#   2. installs the Grok Build CLI (if missing)
+#   3. puts ~/.grok/bin on PATH (login shells + this process)
+#   4. writes the "Grok Build" terminal-profile helper
+#   5. writes the workspace VS Code settings (only while this stack owns
+#      the file — a user-edited settings.json is left alone)
+#
+# Note: this file is rendered by Terraform templatefile(); shell variables
+# are written with a doubled dollar sign so the rendered script keeps them.
+
+set -u
+
+SUDO=""
+if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+fi
+
+# --- tmux -------------------------------------------------------------------
+if ! command -v tmux >/dev/null 2>&1; then
+  $SUDO apt-get update -y >/dev/null
+  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y tmux >/dev/null
+fi
+
+# --- Grok Build CLI ----------------------------------------------------------
+if [ ! -x "$HOME/.grok/bin/grok" ]; then
+  curl -fsSL https://x.ai/cli/install.sh | bash >/dev/null
+fi
+if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
+  printf '\n# Grok Build CLI\nexport PATH="$HOME/.grok/bin:$PATH"\n' >>"$HOME/.bashrc"
+fi
+export PATH="$HOME/.grok/bin:$PATH"
+
+# --- "Grok Build" terminal-profile helper ------------------------------------
+# VS Code shows the profile under the settings key "Grok Build"; this helper
+# resumes (or starts) one tmux session per folder:
+#   grok-build-<folder>-<hash>
+# then runs `grok --cwd <folder>` inside that session.
+mkdir -p "$HOME/.grok/bin"
+cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
+#!/bin/bash
+export PATH="$HOME/.grok/bin:$PATH"
+folder=$(basename "$PWD")
+hash=$(printf '%s' "$PWD" | cksum 2>/dev/null | awk '{print substr($1, 1, 6)}')
+[ -n "$hash" ] || hash=$(printf '%s' "$PWD" | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-6)
+[ -n "$hash" ] || hash="root"
+session="grok-build-$${folder}-$${hash}"
+if command -v grok >/dev/null 2>&1; then
+  exec tmux new-session -A -s "$session" -c "$PWD" -- grok --cwd "$PWD"
+fi
+# Grok CLI missing (offline first boot): still resume the session as a shell.
+exec tmux new-session -A -s "$session" -c "$PWD"
+GROK_BUILD_HELPER
+chmod +x "$HOME/.grok/bin/grok-build-terminal"
+
+# --- VS Code settings ---------------------------------------------------------
+mkdir -p "$HOME/.config/Code/User"
+if [ ! -f "$HOME/.config/Code/User/settings.json" ] \
+   || grep -qs '__evoT1Stack' "$HOME/.config/Code/User/settings.json"; then
+  cat >"$HOME/.config/Code/User/settings.json" <<'CODE_SETTINGS_EOF'
+${vscode_settings}
+CODE_SETTINGS_EOF
+fi
