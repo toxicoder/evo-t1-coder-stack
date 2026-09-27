@@ -81,15 +81,35 @@ services:
       OLLAMA_MODELS: /root/.ollama
     # The image's start-ollama.sh backgrounds the server and logs to a file;
     # run `ollama serve` in the foreground here so `docker compose logs` works.
+    # Notes (both cost a restart loop when ignored):
+    #   - ipex-llm-init is installed by pip into /usr/local/bin, NOT in
+    #     /llm/scripts, so resolve it from PATH (no `cd /llm/scripts`).
+    #   - it ends in display-var, which echoes variables it leaves unset
+    #     (${MALLOC_CONF} is unset on the Arc path), so `set -u` is fatal.
+    #   - /llm/ollama is created by start-ollama.sh, which this command
+    #     replaces, so mkdir it before cd.
+    # init-ollama just symlinks the wheel-bundled ollama into $PWD (offline,
+    # idempotent); the probe turns a broken oneAPI runtime into a visible
+    # failure, because the ./ollama launcher returns 0 even when ollama-lib
+    # cannot load. `set -e` without pipefail is deliberate: pipefail would make
+    # the probe pipeline report the loader's status instead of grep's, and the
+    # init script's own `grep "cpu cores"` pipeline is a known pipefail tripwire.
+    # No shell variables appear below — compose interpolates $name inside
+    # command values and would silently blank them out.
     command:
       - bash
       - -lc
       - |
-        set -euo pipefail
-        cd /llm/scripts
+        set -e
         source ipex-llm-init --gpu --device Arc
+        mkdir -p /llm/ollama
         cd /llm/ollama
-        init-ollama
+        [ -x ./ollama ] || init-ollama
+        if timeout 120 ./ollama-lib --help 2>&1 \
+             | grep -qE "error while loading shared libraries|cannot open shared object file|No such file or directory"; then
+          echo "FATAL: ./ollama-lib cannot load its shared libraries (oneAPI runtime missing?)" >&2
+          exit 1
+        fi
         exec ./ollama serve
     shm_size: 16g
     volumes:
