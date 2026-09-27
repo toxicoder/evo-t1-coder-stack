@@ -1,10 +1,15 @@
 terraform {
   required_providers {
+    # Pinned to what .terraform.lock.hcl records, so a provider release cannot
+    # break a rebuild. The coder provider 2.x requires a Coder server >= 2.18
+    # (this stack runs v2.36.6).
     coder = {
-      source = "coder/coder"
+      source  = "coder/coder"
+      version = "~> 2.18"
     }
     docker = {
-      source = "kreuzwerker/docker"
+      source  = "kreuzwerker/docker"
+      version = "~> 4.6"
     }
   }
 }
@@ -28,10 +33,69 @@ data "coder_workspace_owner" "me" {}
 resource "coder_agent" "main" {
   arch = data.coder_provisioner.me.arch
   os   = "linux"
+
+  # Without this a failed container hangs the workspace until the provider
+  # default; a wrong image tag or a broken init script is otherwise invisible.
+  connection_timeout = 300
+
+  # Gate login on the setup stages finishing, so nobody lands in a half-built
+  # home directory with no Grok CLI or VS Code settings.
+  startup_script_behavior = "blocking"
+
+  # Agent-bar buttons. These are driven here, not by any CODER_*IDE* server
+  # flag (no such flag family exists in v2.36).
+  display_apps {
+    vscode                 = true
+    vscode_insiders        = false
+    web_terminal           = true
+    ssh_helper             = true
+    port_forwarding_helper = true
+  }
+
+  # Native threshold alerts. A full /home/coder volume is the realistic failure
+  # mode on a single-disk box, and volume monitoring surfaces it in the UI.
+  resources_monitoring {
+    memory {
+      enabled   = true
+      threshold = 90
+    }
+    volume {
+      enabled   = true
+      path      = "/home/coder"
+      threshold = 85
+    }
+  }
+
+  # Live resource gauges on the workspace page, sampled agent-side by
+  # `coder stat` at CODER_AGENT_STATS_REFRESH_INTERVAL (30s default). The
+  # --host variants read the host, which on this box is also the inference
+  # host, so they are the useful ones for deciding when to stop a workspace.
+  dynamic "metadata" {
+    for_each = [
+      { key = "0_cpu_usage", display_name = "CPU Usage", script = "coder stat cpu --host" },
+      { key = "1_mem_usage", display_name = "Memory Usage", script = "coder stat mem --host" },
+      { key = "2_disk_usage", display_name = "Disk Usage", script = "coder stat disk --path /home/coder" },
+      { key = "3_cpu_core_usage", display_name = "CPU Core Usage", script = "coder stat cpu --host" },
+      { key = "4_swap_usage", display_name = "Swap Usage", script = "awk '/SwapTotal/{t=$2} /SwapFree/{f=$2} END{if(t>0) printf \"%.0f%% used (%d/%dMB)\", (t-f)*100/t, (t-f)/1024, t/1024; else print \"none\"}' /proc/meminfo" },
+      { key = "5_load_average", display_name = "Load Average", script = "awk '{print $1\", \"$2\", \"$3}' /proc/loadavg" },
+    ]
+    content {
+      key          = metadata.value.key
+      display_name = metadata.value.display_name
+      script       = metadata.value.script
+      interval     = 30
+      timeout      = 5
+    }
+  }
+
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     vscode_settings = templatefile("${path.module}/settings.json.tftpl", {
       litellm_url = var.litellm_url
       litellm_key = var.litellm_key
+    })
+    grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
+      litellm_url        = var.litellm_url
+      grok_default_model = var.grok_default_model
     })
   })
 
@@ -42,6 +106,73 @@ resource "coder_agent" "main" {
     GIT_AUTHOR_EMAIL    = "${data.coder_workspace_owner.me.email}"
     GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_COMMITTER_EMAIL = "${data.coder_workspace_owner.me.email}"
+    # The Grok config references this by name (env_key) so the key never lands
+    # in a rendered file in the workspace.
+    LITELLM_API_KEY  = var.litellm_key
+    LITELLM_BASE_URL = var.litellm_url
+    # Local model aliases, for shell prompts, Makefiles and CI overrides.
+    GROK_DEFAULT_MODEL = var.grok_default_model
+  }
+}
+
+# The LiteLLM proxy is reachable from the workspace through the host gateway,
+# so the agent can proxy it as an app. share = "owner" keeps it off the rest of
+# the LAN; healthcheck needs all three of url, interval and threshold.
+resource "coder_app" "litellm" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  slug         = "litellm"
+  display_name = "LiteLLM"
+  url          = "http://host.docker.internal:4000"
+  share        = "owner"
+  subdomain    = false
+  open_in      = "tab"
+  order        = 10
+
+  healthcheck {
+    url       = "http://host.docker.internal:4000/health/liveliness"
+    interval  = 10
+    threshold = 12
+  }
+}
+
+# Surfaced rather than proxied: these are host services the agent cannot proxy
+# on the workspace's loopback, so they open on the client machine.
+resource "coder_app" "coder_ui" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  slug         = "coder"
+  display_name = "Coder"
+  # external apps open on the client machine, so there is nothing to share;
+  # the attribute is mutually exclusive with share in the provider schema.
+  external = true
+  url      = data.coder_workspace.me.access_url
+  order    = 11
+}
+
+resource "coder_metadata" "workspace_info" {
+  count       = data.coder_workspace.me.start_count
+  resource_id = coder_agent.main.id
+
+  item {
+    key   = "image"
+    value = var.image
+  }
+
+  item {
+    key   = "litellm"
+    value = var.litellm_url
+  }
+
+  item {
+    key   = "grok default model"
+    value = var.grok_default_model
+  }
+
+  item {
+    key       = "litellm key"
+    value     = var.litellm_key
+    sensitive = true
   }
 }
 

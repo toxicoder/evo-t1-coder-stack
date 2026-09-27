@@ -1,0 +1,204 @@
+# managed-by: evo-t1-coder-stack
+#
+# ~/.grok/config.toml for the EVO-T1 Coder workspace.
+#
+# This file is written by templates/docker-dev/grok-config.toml.tftpl in the
+# evo-t1-coder-stack repo and is refreshed on workspace start ONLY while the
+# marker line above is present (or the file is missing). To take permanent
+# ownership, delete the first line — the startup script will then leave this
+# file alone. To go back to stack-managed, delete the file and start the
+# workspace again.
+#
+# Inference goes through the LiteLLM proxy; the key is never stored here, it
+# arrives as the LITELLM_API_KEY environment variable set by coder_agent.env.
+
+[models]
+# Only the Spark vLLM aliases return a real tool_calls array on this runtime,
+# so the agent loop needs one of them. The Arc (IPEX-LLM Ollama) aliases below
+# answer tool calls as plain text with finish_reason "stop", which stops the
+# loop after one turn — they stay usable as completion-style fallbacks.
+default = "${grok_default_model}"
+session_summary = "agent-fast"
+image_description = "agent-fast"
+web_search = "agent-fast"
+
+# --- DGX Spark (vLLM): tool-calling-capable, used for the agent loop --------
+[model."agent"]
+model = "agent"
+base_url = "${litellm_url}"
+name = "Agent (DGX Spark vLLM)"
+description = "Primary agent model; emits native tool_calls"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+[model."agent-fast"]
+model = "agent-fast"
+base_url = "${litellm_url}"
+name = "Agent Fast (DGX Spark vLLM)"
+description = "Fast Spark alias; summaries, subagents, ghost text"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 16384
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+# --- Arc 140T (IPEX-LLM Ollama): completion-style fallbacks -----------------
+# Measured against the running stack: these endpoints answer tool requests as
+# plain text with finish_reason "stop" and no tool_calls array, so Grok's
+# agent loop cannot drive them. Keep them for chat/summarisation and for
+# explicit -m selection, not as the default.
+
+[model."coder"]
+model = "coder"
+base_url = "${litellm_url}"
+name = "Qwen2.5-Coder 32B (Arc iGPU)"
+description = "Arc fallback; completion-style on this runtime (no tool_calls)"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 32768
+max_completion_tokens = 4096
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+[model."coder-fast"]
+model = "coder-fast"
+base_url = "${litellm_url}"
+name = "Qwen2.5-Coder 14B (Arc iGPU)"
+description = "Arc fallback; completion-style on this runtime (no tool_calls)"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 32768
+max_completion_tokens = 4096
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+[model."chat"]
+model = "chat"
+base_url = "${litellm_url}"
+name = "Qwen2.5 7B (Arc iGPU)"
+description = "Arc chat fallback; returns real tool_calls on this runtime (measured)"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 32768
+max_completion_tokens = 2048
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+[features]
+telemetry = false
+# Offline-first box: the tool stays available for the rare reachable docs site.
+web_fetch = true
+
+[toolset.web_fetch]
+# SSRF fail-closed: loopback only when explicitly enabled, private ranges and
+# cloud metadata stay blocked.
+allow_local = false
+
+[session]
+auto_compact_threshold_percent = 75
+
+# Laptop-class host: one shared GPU per model, so keep the fan-out modest and
+# queue the overflow instead of failing the spawn.
+[subagents]
+enabled = true
+max_concurrent = 4
+max_depth = 1
+limit_behavior = "queue"
+
+[subagents.models]
+explore = "agent-fast"
+plan = "agent-fast"
+
+# Offline-capable MCP servers only: everything below resolves from a local
+# process and needs no account, token, or inbound route.
+#
+# Deliberately excluded, because they need outbound network or a credential
+# this workspace does not carry: context7 (docs CDN), github (needs a GitHub
+# token), sentry (OAuth to mcp.sentry.dev), postgres (needs a live DSN), fetch
+# (PySocks/egress proxy). They are simply not defined here, so there is
+# nothing to disable; if you add one later and want it parked rather than
+# deleted, list its name in `disabled_mcp_servers = ["..."]` (top-level key,
+# string array).
+#
+# Cold npx/uvx downloads dominate first-launch time, hence the generous
+# startup timeouts; verify a stubborn one with `grok mcp doctor <name>`.
+
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/coder"]
+enabled = true
+startup_timeout_sec = 90
+
+[mcp_servers.memory]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-memory"]
+enabled = true
+startup_timeout_sec = 90
+
+[mcp_servers.sequential-thinking]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+enabled = true
+startup_timeout_sec = 90
+
+# No --repository on purpose: mcp-server-git calls sys.exit when the path is not a
+# Git repo, so pinning /home/coder kills the handshake in a fresh workspace (where
+# nothing is cloned yet) — verified: `grok mcp doctor git` reports "handshake failed
+# (connection closed: initialize response)". Every tool takes a per-call repo_path,
+# which is strictly more useful than one hard-coded root.
+[mcp_servers.git]
+command = "uvx"
+args = ["mcp-server-git"]
+enabled = true
+startup_timeout_sec = 60
+
+[mcp_servers.time]
+command = "uvx"
+args = ["mcp-server-time"]
+enabled = true
+startup_timeout_sec = 60
+
+[mcp]
+max_output_bytes = 40000
+
+# Conservative defaults on purpose: no always-approve / yolo here — that is a
+# per-user decision (`/settings`, or [ui] permission_mode). These denies only
+# keep secrets and destructive rm out of the easy path.
+[permission]
+deny = [
+  "Bash(rm -rf *)",
+  "Read(**/.env)",
+  "Read(**/.env.*)",
+  "Edit(**/.env)",
+  "Edit(**/.env.*)",
+]

@@ -145,12 +145,51 @@ else
   echo "warning: could not detect the docker group GID; set DOCKER_GID in .env if workspace creation fails with 'Cannot connect to the Docker daemon'."
 fi
 
+# The workspace template's default image is built locally, not pulled: the
+# Coder docker provider resolves it from the host image store. A workspace
+# created without it fails with an opaque Docker Hub pull error, so say so now.
+# Read .env by sed rather than sourcing it: the file is user-editable, and with
+# `set -e` a parse error or a stray command substitution there aborts bootstrap.
+env_get() {
+  sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
+}
+
+dev_image="$(env_get DEV_IMAGE)"
+dev_image="${dev_image:-evo-t1-dev:latest}"
+if docker image inspect "${dev_image}" >/dev/null 2>&1; then
+  echo "workspace image ${dev_image} is present ($(docker image inspect --format '{{.Size}}' "${dev_image}" | awk '{printf "%.0f MB", $1/1024/1024}'))"
+else
+  echo "note: workspace image ${dev_image} is not built yet — run ./scripts/build-dev-image.sh before creating a workspace."
+fi
+
+# Agent mode (Grok Build, Cline, Roo) needs structured tool calls, and the Arc
+# Qwen2.5-Coder weights cannot produce them: they return the call as plain text
+# with finish_reason "stop". The Spark-backed agent/agent-fast aliases do work,
+# so probe them here rather than letting the first agent session fail silently.
+# (The Arc `chat` alias — qwen2.5:7b — does emit real tool calls, so it is the
+# offline substitute when no Spark answers.)
+probe_agent_endpoint() {
+  local name="$1" url="$2"
+  [ -n "${url}" ] || { echo "warning: ${name} is empty — the agent aliases cannot route."; return 0; }
+  local host
+  host="$(printf '%s' "${url}" | sed -E 's|^https?://||; s|/.*$||')"
+  if curl -fsS -m 5 -o /dev/null "http://${host}/v1/models" 2>/dev/null \
+     || curl -fsS -m 5 -o /dev/null "${url}/models" 2>/dev/null; then
+    echo "agent endpoint reachable: ${host}"
+  else
+    echo "warning: no agent endpoint answered at ${host} — the agent aliases fall back to the Arc coder/coder-fast aliases, which return tool calls as plain text. Start a Spark inference server, set ${name} in .env, or point GROK_DEFAULT_MODEL at chat (qwen2.5:7b does emit tool calls)."
+  fi
+}
+probe_agent_endpoint "SPARK1_OPENAI_URL" "$(env_get SPARK1_OPENAI_URL)"
+probe_agent_endpoint "SPARK2_OPENAI_URL" "$(env_get SPARK2_OPENAI_URL)"
+
 echo
 echo "Next steps:"
-echo "  1. docker compose up -d"
-echo "  2. Open http://<host>:3001 and register the first account (it becomes the site admin)"
-echo "  3. coder login http://<host>:3001 && coder template push ./templates/docker-dev"
-echo "  4. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
-echo "  5. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
+echo "  1. ./scripts/build-dev-image.sh   # one-time polyglot workspace image"
+echo "  2. docker compose up -d"
+echo "  3. Open http://<host>:3001 and register the first account (it becomes the site admin)"
+echo "  4. coder login http://<host>:3001 && coder templates push ./templates/docker-dev --var image=${dev_image}"
+echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
+echo "  6. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
-echo "  6. Dashboard: https://${stack_lan_host:-<host>}/ (login password: ${dash_pw})"
+echo "  7. Dashboard: https://${stack_lan_host:-<host>}/ (login password: ${dash_pw})"

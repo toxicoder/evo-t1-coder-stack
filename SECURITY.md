@@ -23,6 +23,21 @@ certificate on the dashboard; there is no proper reverse proxy or SSO.
   values; rotate any value that was ever shared. Never commit `.env`, API
   keys, or SSH material. `proxy/certs/` is git-ignored too — the private key
   never enters git.
+- **Metrics stay on the host.** The Coder control plane publishes Prometheus
+  metrics on 2112, mapped to `127.0.0.1` only, so a scrape needs a shell on the
+  stack host. LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
+  other LiteLLM endpoint — keep it that way, since the metrics name your model
+  aliases and traffic volumes.
+- **Workspace credentials.** The LiteLLM master key reaches each workspace as the
+  `LITELLM_API_KEY` environment variable, which the startup script injects into the
+  rendered `~/.grok/config.toml` (the key lives in the file as an `env_key`
+  reference, so nothing secret is written to disk by the template). It is also shown
+  redacted in `coder_metadata.workspace_info`. Anyone with that key can use every
+  alias, including the Spark boxes, so treat a workspace as holding LAN credentials.
+- **Spark endpoints.** `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` point off-box at
+  vLLM servers. vLLM accepts any non-empty bearer token unless it was started with
+  `--api-key`, so an unset `SPARK_n_API_KEY` means the only thing gating that endpoint
+  is LAN reachability. Set the keys to match how the servers were launched.
 - **Kasm is privileged (DinD).** Kasm runs with `privileged: true` because it
   uses Docker-in-Docker to stream containers. Treat it as high-trust: keep it
   LAN-only and review image updates before pulling a new tag.

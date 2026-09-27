@@ -73,6 +73,32 @@
             - field: version
               label: Version
 
+    # The tool-capable backend Grok Build / Cline / Roo use by default. The Arc
+    # Qwen2.5-Coder weights answer a tool request with plain text and
+    # finish_reason "stop", which no agent driver can consume, so a reachable
+    # Spark keeps the default alias on a path with real tool_calls. vLLM/SGLang
+    # return a proper tool_calls array, making this the honest signal for
+    # "will agent mode work right now". Hosts come from .env via
+    # HOMEPAGE_VAR_*, because they change with the LAN.
+    - Agent backend:
+        icon: mdi-robot
+        href: "{{HOMEPAGE_VAR_AGENT_URL}}"
+        description: Spark vLLM — the agent aliases, verified to return real tool calls
+        siteMonitor: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
+        widget:
+          type: customapi
+          url: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
+          refreshInterval: 300000
+          # Only scalars render as label/value pairs, so the array is not mapped.
+          # Presence of the response is the whole signal: an unreachable
+          # endpoint is the state that matters, because agent mode then silently
+          # degrades to the text-only Arc fallback.
+          mappings:
+            - field: object
+              label: API
+            - any: true
+              to: Down
+
 - Desktops:
     - Kasm:
         icon: mdi-desktop-classic
