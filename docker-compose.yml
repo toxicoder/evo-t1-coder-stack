@@ -19,8 +19,16 @@ services:
       - "${CODER_HTTP_PORT:-3001}:3000"
     environment:
       CODER_ACCESS_URL: ${CODER_ACCESS_URL:-http://YOUR_LAN_IP:3001}
-      CODER_PG_CONNECTION_URL: postgres://coder:${CODER_PG_PASSWORD:-change-me-postgres}@coder-db:5432/coder?sslmode=disable
-      CODER_TELEMETRY_ENABLED: "false"
+      CODER_PG_CONNECTION_URL: postgres://coder:${CODER_PG_PASSWORD:-change-me-postgres}@db:5432/coder?sslmode=disable
+      # Coder binds 127.0.0.1:3000 by default, which publishes an empty port.
+      CODER_HTTP_ADDRESS: "0.0.0.0:3000"
+      # Real env var is CODER_TELEMETRY_ENABLE; the _ENABLED spelling is ignored.
+      CODER_TELEMETRY_ENABLE: "false"
+    # The image runs as uid 1000, which needs the host docker group to reach the
+    # mounted socket. Numeric GID only — the group name does not exist in the
+    # image. bootstrap.sh detects it; override DOCKER_GID in .env if it drifts.
+    group_add:
+      - "${DOCKER_GID:-980}"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - coder-home:/home/coder

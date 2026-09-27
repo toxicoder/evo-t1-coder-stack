@@ -72,6 +72,20 @@ if [ ! -e /dev/dri ]; then
   echo "warning: /dev/dri not found — the IPEX-LLM Ollama service needs the Arc 140T (EVO-T1 hardware)."
 fi
 
+# The coder container runs as uid 1000 and needs the host docker group GID to
+# reach the mounted socket; the group name does not exist inside the image.
+docker_gid="$(getent group docker 2>/dev/null | cut -d: -f3 || true)"
+if [ -n "${docker_gid}" ]; then
+  if grep -q "^DOCKER_GID=" .env; then
+    sed_inplace "s|^DOCKER_GID=.*|DOCKER_GID=${docker_gid}|" .env
+  else
+    printf '\n# GID of the host docker group, for the coder container socket access.\nDOCKER_GID=%s\n' "${docker_gid}" >> .env
+  fi
+  echo "set DOCKER_GID=${docker_gid}"
+else
+  echo "warning: could not detect the docker group GID; set DOCKER_GID in .env if workspace creation fails with 'Cannot connect to the Docker daemon'."
+fi
+
 echo
 echo "Next steps:"
 echo "  1. docker compose up -d"
