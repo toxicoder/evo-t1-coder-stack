@@ -323,6 +323,11 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 - `coder templates push` complains about the lockfile → commit
   `templates/docker-dev/.terraform.lock.hcl`; regenerate with
   `terraform -chdir=templates/docker-dev init -backend=false`.
+- `coder server` logs `installed terraform version newer than expected` → harmless.
+  The Coder image ships its own provisioner binary (`/usr/local/bin/terraform`,
+  1.15.5 in `coder:v2.36.6`) and Coder caps the version it was tested against, so the
+  pair is an upstream pin. Builds still succeed; verify with a workspace build before
+  acting on it. Nothing in this repo's compose file sets the provisioner's Terraform.
 - Workspace cannot reach LiteLLM → check `CODER_ACCESS_URL` is a LAN IP (not `localhost` / `127.0.0.1`) and that the workspace container can resolve `host.docker.internal`.
 - Grok profile missing in a fresh workspace → the startup script runs before VS Code starts; check the workspace agent logs, then `ls ~/.grok/bin`.
 - Kasm wizard gone after install → expected; use :4443. Reset Kasm by removing the `kasm-data` volume (destroys all Kasm config).
