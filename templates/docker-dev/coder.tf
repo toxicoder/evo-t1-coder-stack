@@ -1,7 +1,13 @@
 variable "image" {
   type        = string
-  description = "Workspace container image. Use a Coder base image (agent runtime included)."
-  default     = "codercom/example-base:ubuntu"
+  description = "Default for the Workspace image dropdown. Build the golden image with scripts/build-dev-image.sh, or point this at a Coder base image; a custom value is injected into the dropdown as its own option."
+  default     = "evo-t1-dev:latest"
+}
+
+variable "grok_default_model" {
+  type        = string
+  description = "Grok catalog key used for new sessions. The Qwen2.5-Coder weights on the Arc Ollama return tool calls as plain text, so keep this on a Spark vLLM alias; the Arc qwen2.5:7b (the `chat` alias) does emit structured tool calls and is a viable offline substitute."
+  default     = "agent"
 }
 
 variable "litellm_url" {
@@ -12,7 +18,7 @@ variable "litellm_url" {
 
 variable "litellm_key" {
   type        = string
-  description = "LiteLLM master key handed to Cline / Kilo Code in the workspace."
+  description = "LiteLLM master key handed to the workspace as LITELLM_API_KEY for Grok Build, Cline and Roo."
   default     = ""
   sensitive   = true
 }

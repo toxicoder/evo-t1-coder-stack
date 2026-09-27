@@ -18,8 +18,6 @@ services:
   coder:
     image: ghcr.io/coder/coder:v2.36.6
     restart: unless-stopped
-    ports:
-      - "${CODER_HTTP_PORT:-3001}:3000"
     environment:
       CODER_ACCESS_URL: ${CODER_ACCESS_URL:-http://YOUR_LAN_IP:3001}
       CODER_PG_CONNECTION_URL: postgres://coder:${CODER_PG_PASSWORD:-change-me-postgres}@db:5432/coder?sslmode=disable
@@ -27,14 +25,57 @@ services:
       CODER_HTTP_ADDRESS: "0.0.0.0:3000"
       # Real env var is CODER_TELEMETRY_ENABLE; the _ENABLED spelling is ignored.
       CODER_TELEMETRY_ENABLE: "false"
+      # Every name below was checked against codersdk/deployment.go at v2.36.6.
+      # The obvious-sounding alternatives (CODER_SESSION_LIFETIME,
+      # CODER_PASSWORD_LOGIN_MIN_LENGTH, CODER_HEALTHCHECK_*, CODER_*SHUTDOWN*,
+      # CODER_PORT_FORWARDING_ADDRESS, CODER_SSH_GATEWAY_*) do not exist.
+      # No reverse proxy here, so the daily outbound release check is pure egress.
+      CODER_UPDATE_CHECK: "false"
+      # One user on a box also hosting Ollama: 2 daemons leave cores to inference.
+      CODER_PROVISIONER_DAEMONS: "2"
+      # Defaults are 24h / 7d, which silently logs the CLI and IDE out weekly.
+      CODER_SESSION_DURATION: ${CODER_SESSION_DURATION:-720h}
+      CODER_DEFAULT_TOKEN_LIFETIME: ${CODER_DEFAULT_TOKEN_LIFETIME:-720h}
+      # The server hard-fails at boot unless this is STRICTLY greater than
+      # CODER_SESSION_DURATION, so it tracks that value plus a margin. The
+      # product default (720h) collides with a 720h session and crash-loops
+      # the container — caught by bringing the server up, not by any lint.
+      CODER_DEFAULT_OAUTH_REFRESH_LIFETIME: ${CODER_OAUTH_REFRESH_LIFETIME:-8760h}
+      # The default 15ms median-query threshold trips when Postgres contends for
+      # I/O with a loaded model, and 5 slow probes mark the deployment unhealthy.
+      CODER_HEALTH_CHECK_THRESHOLD_DATABASE: ${CODER_HEALTH_CHECK_THRESHOLD_DATABASE:-60ms}
+      # Autostop deadlines are clamped to quiet hours, so the timezone is not
+      # optional: UTC here force-stops workspaces at the wrong wall-clock hour.
+      CODER_QUIET_HOURS_DEFAULT_SCHEDULE: ${CODER_QUIET_HOURS:-CRON_TZ=UTC 0 3 * * *}
+      # STUN defaults point at Google and buy nothing on a LAN; agents reach
+      # each other directly over WireGuard and DERP stays the fallback.
+      CODER_DERP_SERVER_STUN_ADDRESSES: ${CODER_DERP_STUN:-disable}
+      CODER_PROMETHEUS_ENABLE: "true"
+      # Bind inside the container on 0.0.0.0 so the published mapping below can
+      # reach it; the host mapping is loopback-only, so metrics never hit the LAN.
+      CODER_PROMETHEUS_ADDRESS: "0.0.0.0:2112"
+      # No CODER_CACHE_DIRECTORY override: the image already defaults to
+      # /home/coder/.cache/coder, and that path sits inside the coder-home
+      # volume below, so the Terraform provider cache persists across rebuilds
+      # without a second volume. Mounting a fresh named volume there instead
+      # makes it root-owned and the server crash-loops on
+      # "mkdir /home/coder/.cache/coder/site: permission denied".
     # The image runs as uid 1000, which needs the host docker group to reach the
     # mounted socket. Numeric GID only — the group name does not exist in the
     # image. bootstrap.sh detects it; override DOCKER_GID in .env if it drifts.
     group_add:
       - "${DOCKER_GID:-980}"
+    ports:
+      - "${CODER_HTTP_PORT:-3001}:3000"
+      # Prometheus scrape endpoint. Bound to loopback so the metrics stay off
+      # the LAN, which is also why CODER_PROMETHEUS_ADDRESS binds 0.0.0.0.
+      - "127.0.0.1:${CODER_METRICS_PORT:-2112}:2112"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - coder-home:/home/coder
+    # SIGINT is what makes the server drain in-flight provisioner jobs; the
+    # 30s window keeps `compose down` from SIGKILLing a build mid-apply.
+    stop_grace_period: 30s
     depends_on:
       db:
         condition: service_healthy
@@ -64,6 +105,14 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
       SPARK1_OLLAMA_URL: ${SPARK1_OLLAMA_URL:-http://spark-1.lan:11434}
       SPARK2_OLLAMA_URL: ${SPARK2_OLLAMA_URL:-http://spark-2.lan:11434}
+      # OpenAI-compatible endpoints (vLLM/SGLang) for the `agent` and
+      # `agent-fast` aliases Grok Build defaults to. The Arc Qwen2.5-Coder
+      # weights return tool calls as plain text, so agent mode wants one of
+      # these reachable (the Arc `chat` alias is the offline substitute).
+      SPARK1_OPENAI_URL: ${SPARK1_OPENAI_URL:-http://spark-1.lan:8888/v1}
+      SPARK2_OPENAI_URL: ${SPARK2_OPENAI_URL:-http://spark-2.lan:8888/v1}
+      SPARK_1_API_KEY: ${SPARK_1_API_KEY:-}
+      SPARK_2_API_KEY: ${SPARK_2_API_KEY:-}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     depends_on:
@@ -165,6 +214,12 @@ services:
       HOMEPAGE_VAR_LITELLM_URL: http://${STACK_LAN_HOST:-localhost}:${LITELLM_PORT:-4000}
       HOMEPAGE_VAR_KASM_URL: https://${STACK_LAN_HOST:-localhost}:${KASM_UI_PORT:-4443}
       HOMEPAGE_VAR_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      # The agent backend lives off-box on the LAN, so compose DNS does not
+      # apply: the same LAN URL serves both the browser href and the server-side
+      # widget fetch. /v1/models is a public endpoint on vLLM — no key needed —
+      # and opening it shows which model the alias is actually routing to.
+      HOMEPAGE_VAR_AGENT_URL: ${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1/models}
+      HOMEPAGE_VAR_AGENT_HEALTH: ${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1/models}
     volumes:
       # Each config file mounted read-only individually, which keeps /app/config
       # itself writable. Mounting the directory with :ro breaks startup: the

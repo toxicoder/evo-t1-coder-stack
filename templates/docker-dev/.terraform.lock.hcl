@@ -2,9 +2,11 @@
 # Manual edits may be lost in future updates.
 
 provider "registry.terraform.io/coder/coder" {
-  version = "2.18.0"
+  version     = "2.18.0"
+  constraints = "~> 2.18"
   hashes = [
     "h1:Nion+4EjMVVnDv9YQBpCnCPMArn39lACZXigoE6e8s8=",
+    "h1:O25nA2tkM1JFJtQpaX2TOTeWvsSyuxDoJo6/QTv78hM=",
     "zh:107c4eb7a36335ac94637679845c040759e21d3fb108d07081e0689cb93121b1",
     "zh:1f8d904d59e35948f8f795e58d7895b791bd9a12c8409079f5bb90221303c1b6",
     "zh:3942d5c6b6fad45b3b92f82c7b3f40a2d7f2b7b72da07f1ac63e1022b46bdbc7",
@@ -23,8 +25,10 @@ provider "registry.terraform.io/coder/coder" {
 }
 
 provider "registry.terraform.io/kreuzwerker/docker" {
-  version = "4.6.0"
+  version     = "4.6.0"
+  constraints = "~> 4.6"
   hashes = [
+    "h1:1jD5QVpeLkdxKEWWJpTzNdxtR0WNNFq28Po4yq9w+VM=",
     "h1:kJn6TaGTDA7iIbPWth3hUFYEk2xtKkmq2aNKnt1mHEM=",
     "zh:085dbfb1ca54d4517e8cd325670e8c966f747b7757bfbb161055ab924b785a27",
     "zh:520a0d8c55d0119ea70a9e72740d6fbb53d044ddfd5c7acfa1439a9f4f22946f",

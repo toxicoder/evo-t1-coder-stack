@@ -24,7 +24,7 @@ layout:
     useEqualHeights: true
   Models:
     style: row
-    columns: 3
+    columns: 4
     useEqualHeights: true
   Desktops: {}
   Stack docs: {}

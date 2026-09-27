@@ -2,49 +2,120 @@
 #
 # Workspaces and desktops always talk to one OpenAI-compatible base URL
 # (http://host.docker.internal:4000/v1) and pick a model alias. Aliases are
-# the stable names: "coder" / "coder-fast" / "chat" / "spark-*".
+# the stable names: "coder" / "coder-fast" / "chat" / "spark-*" for the Arc and
+# Ollama paths, "agent" / "agent-fast" for the tool-capable Spark vLLM path.
 #
 # Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
 # network only). The spark-* aliases target optional NVIDIA Spark boxes;
 # set SPARK1_OLLAMA_URL / SPARK2_OLLAMA_URL in .env to real Ollama hosts.
+# The agent* aliases target the Spark vLLM servers (SPARKn_OPENAI_URL, an
+# OpenAI-compatible /v1 endpoint).
 #
 # Schema note: each entry must be `model_name:` plus a nested `litellm_params:`
 # block. LiteLLM hard-indexes both keys at startup (KeyError -> uvicorn exit 3
 # -> restart loop), and flat `model:`/`api_base:`/`api_key:` at the entry level
 # are accepted as extras and then silently ignored.
 model_list:
-  # Local — IPEX-LLM Ollama on the Arc 140T
+  # Arc-backed - IPEX-LLM Ollama on the Arc 140T (compose network only).
+  # MEASURED LIMITATION for the two Qwen2.5-Coder weights (this runtime is
+  # ipex-llm's bundled ollama 0.9.3): a request with `tools` returns the call as
+  # plain text with finish_reason "stop" and no tool_calls field, on both
+  # /api/chat and /v1/chat/completions, so agent mode cannot drive them. qwen2.5:7b
+  # on the same runtime does return a real tool_calls array — the limit is the
+  # model, not the runtime.
   - model_name: coder
     litellm_params:
       model: ollama_chat/qwen2.5-coder:32b
       api_base: http://ollama:11434
       api_key: local-arc
+    model_info:
+      # Qwen2.5-Coder caps at 32k context.
+      max_input_tokens: 32768
   - model_name: coder-fast
     litellm_params:
       model: ollama_chat/qwen2.5-coder:14b
       api_base: http://ollama:11434
       api_key: local-arc
+    model_info:
+      max_input_tokens: 32768
   - model_name: chat
     litellm_params:
       model: ollama_chat/qwen2.5:7b
       api_base: http://ollama:11434
       api_key: local-arc
+    model_info:
+      max_input_tokens: 32768
 
-  # Remote — NVIDIA Spark boxes (optional)
+  # Arc-class models on the Spark boxes, still served over Ollama (optional).
   - model_name: spark-coder
     litellm_params:
       model: ollama_chat/qwen2.5-coder:32b
       api_base: os.environ/SPARK1_OLLAMA_URL
       api_key: local-spark
+    model_info:
+      max_input_tokens: 32768
   - model_name: spark-chat
     litellm_params:
       model: ollama_chat/qwen2.5:7b
       api_base: os.environ/SPARK2_OLLAMA_URL
       api_key: local-spark
+    model_info:
+      max_input_tokens: 32768
+
+  # Spark-backed - vLLM behind an OpenAI-compatible /v1 endpoint. Verified to
+  # return a real tool_calls array with finish_reason "tool_calls", so these are
+  # the aliases agent clients (Cline, Roo, Kilo, Grok Build CLI) must use.
+  # Provider prefix is openai/ deliberately: ollama_chat/ would route these
+  # through the Ollama-specific code path. api_base must include /v1.
+  # Served model id on both boxes is qwen3.8-flash-next at max_model_len 262144;
+  # no cheaper second deployment is published, so agent-fast reuses it with a
+  # lower output ceiling.
+  - model_name: agent
+    litellm_params:
+      model: openai/qwen3.8-flash-next
+      api_base: os.environ/SPARK1_OPENAI_URL
+      api_key: os.environ/SPARK_1_API_KEY
+    model_info:
+      # Declared so capability lookups and /v1/model/info report tool calling
+      # for a model id that is absent from LiteLLM's cost/capability map.
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-fast
+    litellm_params:
+      model: openai/qwen3.8-flash-next
+      api_base: os.environ/SPARK2_OPENAI_URL
+      api_key: os.environ/SPARK_2_API_KEY
+      # Default only: a client-supplied max_tokens still wins.
+      max_tokens: 4096
+    model_info:
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
+  # No DB-backed key management, virtual keys, or Admin UI on this box.
   store_model_in_db: false
 
 litellm_settings:
   drop_params: true
+  num_retries: 2
+  # Local generations on the Arc 140T are slow; keep the read timeout generous.
+  request_timeout: 600
+  # Exposes /metrics. Prometheus support is not gated on a premium licence.
+  callbacks: ["prometheus"]
+
+# Fallbacks live in router_settings, which takes precedence over the
+# litellm_settings equivalent. The Spark vLLM boxes are optional and either can be
+# down, so `agent` first retries on the OTHER Spark (still tool-capable, via
+# agent-fast) and only then degrades to the Arc alias. That last hop is text-only
+# (see the Arc limitation note above), so keeping the Spark-to-Spark hop first is
+# what preserves agent mode when one box is offline.
+#
+# The chain is deliberately acyclic: agent-fast falls back straight to coder-fast,
+# never back to agent.
+router_settings:
+  fallbacks:
+    - agent: ["agent-fast", "coder"]
+    - agent-fast: ["coder-fast"]

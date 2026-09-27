@@ -8,6 +8,11 @@
 #   4. writes the "Grok Build" terminal-profile helper
 #   5. writes the workspace VS Code settings (only while this stack owns
 #      the file — a user-edited settings.json is left alone)
+#   6. writes ~/.grok/config.toml (only while this stack owns the file) and
+#      warms the offline MCP package caches in the background
+#
+# Every stage 6 onward is best-effort: an offline first boot must still leave
+# a working terminal, so nothing here may abort the script.
 #
 # Note: this file is rendered by Terraform templatefile(); shell variables
 # are written with a doubled dollar sign so the rendered script keeps them.
@@ -26,8 +31,14 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 # --- Grok Build CLI ----------------------------------------------------------
+# The installer writes its own ~/.grok/config.toml (a `[cli] installer = ...`
+# stub), so the first boot is recorded here: that stub is otherwise indistinguish-
+# able from a user's config, and the managed-config guard below needs to know the
+# file is installer-owned rather than user-owned.
+GROK_FRESH_INSTALL=0
 if [ ! -x "$HOME/.grok/bin/grok" ]; then
   curl -fsSL https://x.ai/cli/install.sh | bash >/dev/null
+  GROK_FRESH_INSTALL=1
 fi
 if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
   printf '\n# Grok Build CLI\nexport PATH="$HOME/.grok/bin:$PATH"\n' >>"$HOME/.bashrc"
@@ -63,4 +74,81 @@ if [ ! -f "$HOME/.config/Code/User/settings.json" ] \
   cat >"$HOME/.config/Code/User/settings.json" <<'CODE_SETTINGS_EOF'
 ${vscode_settings}
 CODE_SETTINGS_EOF
+fi
+
+# --- Grok Build config --------------------------------------------------------
+# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline
+# MCP stack and the subagent sizing. Ownership is decided by the marker comment
+# below: while it is present the stack re-renders the file on every start, and
+# deleting that one line hands the file over to the user for good.
+#
+# A fresh CLI install always takes the file back. The installer creates a
+# `[cli] installer = ...` stub before this stage runs, so without the first-boot
+# flag a brand-new workspace would be left with an unconfigured CLI: the stub has
+# no marker, the file exists, and the guard below would treat it as user-owned.
+mkdir -p "$HOME/.grok/memory" "$HOME/.grok/logs/mcp" 2>/dev/null
+
+if [ ! -f "$HOME/.grok/config.toml" ] \
+   || [ "$GROK_FRESH_INSTALL" = "1" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/config.toml"; then
+  # Re-rendering also happens on every start while the marker is present, so the
+  # installer's (or the user's) [cli] table is carried over instead of wiped —
+  # `cli.installer` picks the CLI's update path and is not something the stack owns.
+  cli_block="$(mktemp 2>/dev/null || printf '/tmp/grok-cli-block.%s.toml' "$$")"
+  if [ -f "$HOME/.grok/config.toml" ]; then
+    awk '/^\[cli\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
+      "$HOME/.grok/config.toml" >"$cli_block" 2>/dev/null || : >"$cli_block"
+  else
+    : >"$cli_block"
+  fi
+  {
+    cat <<'GROK_CONFIG_EOF'
+${grok_config}
+GROK_CONFIG_EOF
+    if [ -s "$cli_block" ]; then
+      printf '\n'
+      cat "$cli_block"
+    fi
+  } >"$HOME/.grok/config.toml" || true
+  rm -f "$cli_block"
+  chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
+fi
+
+# The agent may run as root against a persistent home volume, which leaves the
+# Grok directories root-owned and unreadable for the workspace user; hand them
+# back to whoever owns $HOME.
+if [ "$(id -u)" = "0" ]; then
+  home_owner="$(stat -Lc '%u:%g' "$HOME" 2>/dev/null || true)"
+  [ "$home_owner" = "0:0" ] && home_owner=""
+  if [ -z "$home_owner" ] && id coder >/dev/null 2>&1; then
+    home_owner="$(id -u coder):$(id -g coder)"
+  fi
+  if [ -n "$home_owner" ]; then
+    chown -R "$home_owner" "$HOME/.grok" 2>/dev/null || true
+  fi
+fi
+
+# --- MCP package warm-up (best effort) ----------------------------------------
+# Cold npx/uvx downloads are what make a first session stall on the MCP startup
+# timeout; prefetch the packages config.toml declares, off the boot path, with
+# every byte going to a log so no output pipe is left open behind the agent.
+if command -v npm >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
+  mkdir -p "$HOME/.grok/logs" 2>/dev/null
+  (
+    if command -v npm >/dev/null 2>&1; then
+      for pkg in \
+        @modelcontextprotocol/server-filesystem \
+        @modelcontextprotocol/server-memory \
+        @modelcontextprotocol/server-sequential-thinking
+      do
+        timeout 300 npm cache add "$pkg" </dev/null || true
+      done
+    fi
+    if command -v uvx >/dev/null 2>&1; then
+      for pkg in mcp-server-git mcp-server-time
+      do
+        timeout 300 uvx "$pkg" --help </dev/null || true
+      done
+    fi
+  ) >>"$HOME/.grok/logs/mcp-warmup.log" 2>&1 &
 fi
