@@ -1,0 +1,81 @@
+---
+# Service cards for the EVO-T1 Coder stack dashboard.
+# Options and examples: https://gethomepage.dev/configs/services/
+#
+# Two URL spaces, and mixing them up is the classic homepage mistake:
+#   href:  what the BROWSER opens, so it must be a LAN-reachable address —
+#          these come from {{HOMEPAGE_VAR_*}} tokens that docker-compose.yml
+#          fills in from .env (compose-internal names like http://coder:3000
+#          resolve only inside the container, never in a browser).
+#   url:   what the HOMEPAGE container fetches server-side, so it uses compose
+#          DNS instead, which stays correct whatever the LAN IP is.
+#
+# Docker integration is deliberately off: the socket is a root-equivalent host
+# credential, and each card already has API-backed status plus host CPU, memory
+# and disk from the resources widget in widgets.yaml.
+#
+# Icons come from a public CDN, so cards lose their icon (not their function)
+# when the box is offline.
+
+- Coder:
+    - Coder:
+        icon: si-coder
+        href: "{{HOMEPAGE_VAR_CODER_URL}}"
+        description: Workspaces, agents and the Grok Build terminal
+        siteMonitor: http://coder:3000/api/v2/buildinfo
+        widget:
+          type: customapi
+          url: http://coder:3000/api/v2/buildinfo
+          refreshInterval: 300000
+          mappings:
+            - field: version
+              label: Version
+
+- Models:
+    - LiteLLM:
+        icon: mdi-lightning-bolt
+        href: "{{HOMEPAGE_VAR_LITELLM_URL}}"
+        description: OpenAI-compatible front door for every model alias
+        siteMonitor: http://litellm:4000/health/readiness
+        widgets:
+          - type: customapi
+            url: http://litellm:4000/health/readiness
+            refreshInterval: 60000
+            mappings:
+              - field: status
+                label: Status
+                remap:
+                  - value: healthy
+                    to: OK
+                  - any: true
+                    to: Problem
+          - type: customapi
+            url: http://litellm:4000/models
+            refreshInterval: 300000
+            headers:
+              Authorization: "Bearer {{HOMEPAGE_VAR_LITELLM_MASTER_KEY}}"
+            mappings:
+              - field: data
+                label: Aliases
+                format: size
+    # Ollama has no href on purpose: 11434 is deliberately unpublished (see
+    # SECURITY.md), so a link here would point at a closed port. The card still
+    # gets live status over the compose network.
+    - Ollama:
+        icon: mdi-chip
+        description: Qwen Coder on the Arc 140T — compose network only
+        siteMonitor: http://ollama:11434/api/version
+        widget:
+          type: customapi
+          url: http://ollama:11434/api/version
+          refreshInterval: 300000
+          mappings:
+            - field: version
+              label: Version
+
+- Desktops:
+    - Kasm:
+        icon: mdi-desktop-classic
+        href: "{{HOMEPAGE_VAR_KASM_URL}}"
+        description: Streamed desktops on :4443 (the :3000 wizard is first boot only)
+        siteMonitor: https://kasm:4443/

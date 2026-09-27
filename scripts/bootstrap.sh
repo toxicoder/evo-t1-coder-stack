@@ -3,6 +3,7 @@
 #   - create .env from .env.sample
 #   - generate local secrets (replaces change-me-* placeholders)
 #   - fill in CODER_ACCESS_URL with the LAN IP
+#   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
 set -euo pipefail
 
@@ -47,8 +48,24 @@ set_secret() {
   echo "generated ${1}"
 }
 
+# A .env written before a variable existed would leave the variable unset, so
+# compose falls back to its inline default (a change-me placeholder) and nothing
+# warns. Append anything missing before the secret rotation below can see it.
+if [ -f .env.sample ]; then
+  while IFS= read -r sample_line; do
+    case "${sample_line}" in
+      ''|\#*) continue ;;
+    esac
+    var="${sample_line%%=*}"
+    if ! grep -q "^${var}=" .env; then
+      printf '%s\n' "${sample_line}" >> .env
+      echo "added ${var} to .env"
+    fi
+  done < <(grep -E '^[A-Z0-9_]+=' .env.sample)
+fi
+
 # Only replace values still carrying the sample placeholder.
-for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY; do
+for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD; do
   if grep -q "^${var}=change-me" .env; then
     set_secret "$var"
   fi
@@ -66,6 +83,48 @@ if grep -q "CODER_ACCESS_URL=http://YOUR_LAN_IP" .env; then
   else
     echo "warning: could not detect a LAN IP; edit CODER_ACCESS_URL in .env"
   fi
+fi
+
+# The dashboard links to Coder/LiteLLM/Kasm and validates its Host header
+# against one address, so derive STACK_LAN_HOST from CODER_ACCESS_URL rather
+# than detecting a second time and risking a split-brain host.
+coder_access_url="$(sed -n 's|^CODER_ACCESS_URL=||p' .env | tail -n 1)"
+lan_host="$(printf '%s' "${coder_access_url}" \
+  | sed -E 's|^https?://||; s|[:/].*$||')"
+if [ -n "${lan_host}" ] && [ "${lan_host}" != "YOUR_LAN_IP" ]; then
+  if ! grep -q "^STACK_LAN_HOST=" .env; then
+    printf '\n# Host the browser uses to reach the Homepage dashboard.\nSTACK_LAN_HOST=\n' >> .env
+  fi
+  if ! grep -q "^STACK_LAN_HOST=." .env; then
+    sed_inplace "s|^STACK_LAN_HOST=.*|STACK_LAN_HOST=${lan_host}|" .env
+    echo "set STACK_LAN_HOST=${lan_host}"
+  fi
+fi
+
+# homepage-proxy serves TLS from proxy/certs/ and exits if the pair is missing,
+# so issue it here. Re-issue when the address changes (new DHCP lease, or a
+# hand-edited CODER_ACCESS_URL): a cert whose SAN no longer matches the host the
+# browser uses turns into an unavoidable certificate warning.
+stack_lan_host="$(sed -n 's|^STACK_LAN_HOST=||p' .env | tail -n 1)"
+mkdir -p proxy/certs
+cert_file="proxy/certs/homepage.crt"
+key_file="proxy/certs/homepage.key"
+cert_needs_issue=0
+if [ ! -f "${cert_file}" ] || [ ! -f "${key_file}" ]; then
+  cert_needs_issue=1
+elif ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null \
+    | grep -q "IP Address:${stack_lan_host}"; then
+  cert_needs_issue=1
+fi
+if [ "${cert_needs_issue}" = "1" ] && [ -n "${stack_lan_host}" ]; then
+  openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
+    -subj "/CN=${stack_lan_host}" \
+    -addext "subjectAltName=IP:${stack_lan_host},DNS:localhost,DNS:homepage" \
+    -keyout "${key_file}" -out "${cert_file}" 2>/dev/null
+  chmod 600 "${key_file}"
+  echo "issued self-signed dashboard cert for ${stack_lan_host} (browsers warn once — expected on a LAN IP)"
+elif [ -z "${stack_lan_host}" ]; then
+  echo "warning: no LAN host resolved, so no dashboard cert was issued — homepage-proxy will fail to start until STACK_LAN_HOST is set in .env."
 fi
 
 if [ ! -e /dev/dri ]; then
@@ -93,3 +152,5 @@ echo "  2. Open http://<host>:3001 and register the first account (it becomes th
 echo "  3. coder login http://<host>:3001 && coder template push ./templates/docker-dev"
 echo "  4. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
 echo "  5. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
+dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
+echo "  6. Dashboard: https://${stack_lan_host:-<host>}/ (login password: ${dash_pw})"

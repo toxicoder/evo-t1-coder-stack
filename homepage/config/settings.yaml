@@ -1,0 +1,31 @@
+---
+# Homepage settings for the EVO-T1 Coder stack.
+# Options and examples: https://gethomepage.dev/configs/settings/
+#
+# Mounted read-only file by file (see docker-compose.yml), so edit this in git
+# and `docker compose restart homepage` instead of using the in-app editor.
+#
+# No `providers:` block: no widget here calls a third-party API, so nothing
+# needs an API key.
+#
+# A group listed with `style: row` becomes a full-width band with its cards side
+# by side; a group listed without it keeps the default narrow column. Keys must
+# match group names in services.yaml / bookmarks.yaml exactly, including case.
+
+title: EVO-T1 Coder Stack
+theme: dark
+color: slate
+iconStyle: theme
+
+layout:
+  Coder:
+    style: row
+    columns: 3
+    useEqualHeights: true
+  Models:
+    style: row
+    columns: 3
+    useEqualHeights: true
+  Desktops: {}
+  Stack docs: {}
+  Repo: {}

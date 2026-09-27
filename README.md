@@ -1,6 +1,6 @@
 # EVO-T1 Coder Stack
 
-One `docker compose up` turns a GMKtec EVO-T1 laptop into a self-hosted dev-workspace server: Coder workspaces that open a **Grok Build** terminal by default (with Cline and Kilo Code pre-wired to local models), Kasm Workspaces for full desktop streaming, IPEX-LLM Ollama running Qwen Coder on the Intel Arc 140T, and a LiteLLM proxy that unifies the local iGPU with one or more NVIDIA Spark boxes behind a single OpenAI-compatible endpoint.
+One `docker compose up` turns a GMKtec EVO-T1 laptop into a self-hosted dev-workspace server: Coder workspaces that open a **Grok Build** terminal by default (with Cline and Kilo Code pre-wired to local models), Kasm Workspaces for full desktop streaming, IPEX-LLM Ollama running Qwen Coder on the Intel Arc 140T, a LiteLLM proxy that unifies the local iGPU with one or more NVIDIA Spark boxes behind a single OpenAI-compatible endpoint, and a [Homepage](https://gethomepage.dev) dashboard on the default web ports that links it all together with live status for each service.
 
 ## Hardware
 
@@ -18,6 +18,13 @@ Everything in this stack is sized for that machine: local LLMs run on the iGPU v
 
 ```text
 LAN clients (laptops, phones, the EVO-T1 itself)
+  |
+  +-- :80 / :443 -> homepage-proxy (nginx: TLS terminator)
+  |                   | http:// redirects to https://
+  |                   v
+  |              Homepage dashboard (compose network only, password gate)
+  |                * links + live status for every service below
+  |                * host CPU / memory / disk / CPU temp in the header
   |
   +-- :3001 ----> Coder UI (control plane, Postgres-backed)
   |                   | provisions workspaces via /var/run/docker.sock
@@ -42,6 +49,7 @@ Key properties:
 - **Ollama is never published to the host.** It listens on 11434 inside the compose network; LiteLLM is the only gateway to the models, and it sits behind a master key.
 - **Workspaces reach models through the host.** The Coder access URL is the LAN IP; workspaces reach LiteLLM via `host.docker.internal:4000` (host-gateway).
 - **Kasm owns :3000 / :4443**, so the Coder UI lives on :3001.
+- **The dashboard publishes no port of its own.** Homepage serves plain HTTP and cannot load a certificate, so the nginx sidecar owns :80 / :443 and proxies to it over the compose network.
 
 ## Quick start
 
@@ -59,15 +67,18 @@ Then:
 1. Open `http://<host>:3001` and register the first account — that account becomes the site admin.
 2. Push the workspace template (section below).
 3. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
+4. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
 
 ## Ports
 
 | Host port | Service | Purpose |
 |---:|---|---|
+| 80 / 443 | Homepage | Dashboard — 80 redirects to HTTPS (`HOMEPAGE_HTTP_PORT` / `HOMEPAGE_HTTPS_PORT`) |
 | 3001 | Coder | Web UI + control plane (`CODER_HTTP_PORT`) |
 | 3000 | Kasm | First-boot install wizard (`KASM_WIZARD_PORT`) |
 | 4443 | Kasm | Workspaces UI after install (`KASM_UI_PORT`) |
 | 4000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
+| — | Homepage app | `3000` on the compose network only — reached through the proxy |
 | — | Ollama | `11434` on the compose network only — deliberately not published |
 
 ## LiteLLM model aliases
@@ -117,6 +128,26 @@ New Coder workspaces open a **Grok Build** terminal by default:
 - The image ships default users (`admin@kasm.local` / `user@kasm.local`) — change them during the wizard.
 - Kasm is a privileged Docker-in-Docker container; it is the only privileged service in this stack. Keep it LAN-only (see SECURITY.md).
 
+## Homepage dashboard
+
+The [Homepage](https://gethomepage.dev) dashboard is the landing page for the stack: a card per
+service with live status pulled from each service's own API (Coder version, LiteLLM health and alias
+count, Ollama version), plus host CPU, memory, disk and CPU temperature in the header.
+
+- **URL:** `https://<host>/` — a self-signed cert that `bootstrap.sh` issues, so expect a one-time
+  browser warning. Port 80 redirects to HTTPS.
+- **Login:** homepage v2's built-in gate; the password is `HOMEPAGE_AUTH_PASSWORD`, printed once by
+  `bootstrap.sh`. It is worth keeping on: the dashboard lists every service on the box.
+- **Config:** `homepage/config/*.yaml`, each file bind-mounted read-only, so `git diff` stays the
+  record of dashboard changes. Edit there and `docker compose restart homepage`. A new config file
+  (`custom.css`, `kubernetes.yaml`, …) needs its own mount line in `docker-compose.yml`; the directory
+  itself has to stay writable because the app creates `logs/` inside it.
+- **Wiring:** card `href`s are LAN URLs built from `STACK_LAN_HOST` and the port variables, so links
+  keep working when you change a port or re-detect the LAN IP. Widget `url`s use compose DNS
+  (`http://coder:3000`, `http://litellm:4000`, `http://ollama:11434`) and never leave the network.
+- **The docker socket stays unmounted.** Service status comes from each service's API, which avoids
+  handing the dashboard a root-equivalent host credential.
+
 ## Memory budget (96 GB DDR5, CPU + iGPU unified)
 
 | Item | Typical footprint |
@@ -127,13 +158,16 @@ New Coder workspaces open a **Grok Build** terminal by default:
 | Each Coder workspace | 2–8 GB depending on toolchain |
 | Coder + Postgres + LiteLLM | ~2–3 GB |
 | Kasm desktop session | 4–16 GB (more for GPU apps) |
+| Homepage + nginx sidecar | ~120 MB measured (`docker stats`: 100 + 18 MiB) |
 
 Only models you actually load are resident; Ollama keeps them in RAM until they age out.
 
 ## What not to run here
 
 - **Training / fine-tuning.** This is an inference + dev-workspace box, not a training rig.
-- **Public internet exposure.** All services assume a trusted LAN / VPN; there is no reverse proxy, TLS termination, or SSO in the stack.
+- **Public internet exposure.** All services assume a trusted LAN / VPN. The dashboard has an nginx
+  sidecar with a self-signed cert and its own password gate, which is still far short of a proper
+  reverse proxy with real TLS and SSO — and nothing in front of Coder, LiteLLM or Kasm at all.
 - **Heavy video encode/render.** The Arc 140T is strong for LLM inference; do not plan media pipelines around it.
 - **Multi-tenant teams.** A handful of trusted users, not an org-wide SaaS.
 - **CI that downloads models.** No pipeline in this repo pulls 40 GB of weights — model pulls are a manual `./scripts/pull-models.sh`.
@@ -151,9 +185,11 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 .
 ├── docker-compose.yml
 ├── .env.sample            # canonical env template (.env.example is a copy)
+├── homepage/config/       # dashboard: services, widgets, settings, bookmarks
 ├── litellm/config.yaml    # model aliases
+├── proxy/homepage.conf    # nginx TLS terminator for the dashboard
 ├── scripts/
-│   ├── bootstrap.sh       # .env + secrets + access URL + sanity checks
+│   ├── bootstrap.sh       # .env + secrets + access URL + dashboard cert + checks
 │   └── pull-models.sh     # pulls OLLAMA_MODELS into the IPEX-LLM container
 └── templates/docker-dev   # Coder template (`coder template push`)
     ├── main.tf

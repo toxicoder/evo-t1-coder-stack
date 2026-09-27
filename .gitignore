@@ -14,6 +14,9 @@ id_rsa.*
 # Browser/session scratch
 browsed_files*
 
+# Self-signed dashboard cert issued by scripts/bootstrap.sh
+proxy/certs/
+
 # OS noise
 .DS_Store
 Thumbs.db

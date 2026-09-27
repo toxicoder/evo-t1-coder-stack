@@ -1,0 +1,23 @@
+---
+# Info widgets for the EVO-T1 Coder stack dashboard.
+# Options and examples: https://gethomepage.dev/configs/widgets/
+#
+# cpu/memory/disk/cputemp here describe the EVO-T1 itself, not the homepage
+# container: Docker does not isolate /proc/meminfo, /proc/stat or the overlay
+# device behind df, so those reads already return host-wide values. Verified on
+# this box — MemTotal and `df /` inside the container match the host exactly.
+# Weather is left out because it would need an API key in settings.yaml.
+
+- resources:
+    label: EVO-T1
+    cpu: true
+    memory: true
+    disk: /
+    cputemp: true
+    tempmax: 100
+    units: metric
+    network: true
+
+- search:
+    provider: duckduckgo
+    target: _blank
