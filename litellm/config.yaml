@@ -7,30 +7,40 @@
 # Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
 # network only). The spark-* aliases target optional NVIDIA Spark boxes;
 # set SPARK1_OLLAMA_URL / SPARK2_OLLAMA_URL in .env to real Ollama hosts.
+#
+# Schema note: each entry must be `model_name:` plus a nested `litellm_params:`
+# block. LiteLLM hard-indexes both keys at startup (KeyError -> uvicorn exit 3
+# -> restart loop), and flat `model:`/`api_base:`/`api_key:` at the entry level
+# are accepted as extras and then silently ignored.
 model_list:
   # Local — IPEX-LLM Ollama on the Arc 140T
-  - name: coder
-    model: ollama_chat/qwen2.5-coder:32b
-    api_base: http://ollama:11434
-    api_key: local-arc
-  - name: coder-fast
-    model: ollama_chat/qwen2.5-coder:14b
-    api_base: http://ollama:11434
-    api_key: local-arc
-  - name: chat
-    model: ollama_chat/qwen2.5:7b
-    api_base: http://ollama:11434
-    api_key: local-arc
+  - model_name: coder
+    litellm_params:
+      model: ollama_chat/qwen2.5-coder:32b
+      api_base: http://ollama:11434
+      api_key: local-arc
+  - model_name: coder-fast
+    litellm_params:
+      model: ollama_chat/qwen2.5-coder:14b
+      api_base: http://ollama:11434
+      api_key: local-arc
+  - model_name: chat
+    litellm_params:
+      model: ollama_chat/qwen2.5:7b
+      api_base: http://ollama:11434
+      api_key: local-arc
 
   # Remote — NVIDIA Spark boxes (optional)
-  - name: spark-coder
-    model: ollama_chat/qwen2.5-coder:32b
-    api_base: os.environ/SPARK1_OLLAMA_URL
-    api_key: local-spark
-  - name: spark-chat
-    model: ollama_chat/qwen2.5:7b
-    api_base: os.environ/SPARK2_OLLAMA_URL
-    api_key: local-spark
+  - model_name: spark-coder
+    litellm_params:
+      model: ollama_chat/qwen2.5-coder:32b
+      api_base: os.environ/SPARK1_OLLAMA_URL
+      api_key: local-spark
+  - model_name: spark-chat
+    litellm_params:
+      model: ollama_chat/qwen2.5:7b
+      api_base: os.environ/SPARK2_OLLAMA_URL
+      api_key: local-spark
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
