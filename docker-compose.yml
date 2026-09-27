@@ -2,12 +2,15 @@
 # GMKtec EVO-T1 — Intel Core Ultra 9 285H, Intel Arc 140T, 96 GB DDR5.
 #
 # Services:
-#   coder    Coder CE control plane (host port 3001; Kasm owns 3000)
-#   db       Postgres 17 for Coder
-#   litellm  LiteLLM proxy (host port 4000) — local Ollama + NVIDIA Spark boxes
-#   ollama   IPEX-LLM Ollama on the Arc 140T — container network only,
-#            deliberately NOT published to the host
-#   kasm     Kasm Workspaces desktop streaming (wizard :3000 first boot, UI :4443)
+#   coder           Coder CE control plane (host port 3001; Kasm owns 3000)
+#   db              Postgres 17 for Coder
+#   litellm         LiteLLM proxy (host port 4000) — local Ollama + NVIDIA Spark boxes
+#   ollama          IPEX-LLM Ollama on the Arc 140T — container network only,
+#                   deliberately NOT published to the host
+#   kasm            Kasm Workspaces desktop streaming (wizard :3000 first boot, UI :4443)
+#   homepage        gethomepage dashboard — container network only, reached
+#                   through the homepage-proxy sidecar
+#   homepage-proxy  nginx TLS terminator for the dashboard (host 80 -> 301, 443)
 #
 # Secrets live in .env (see .env.sample). Never commit .env.
 
@@ -129,6 +132,64 @@ services:
     volumes:
       - kasm-data:/opt
     stop_grace_period: 90s
+
+  # The dashboard itself publishes nothing: it is HTTP-only, so browsers reach
+  # it only through homepage-proxy. Config lives in git and mounts read-only
+  # file by file, which keeps `git diff` the record of dashboard changes.
+  #
+  # The docker socket stays unmounted on purpose — it is a root-equivalent host
+  # credential, and the service cards get their status from each service's own
+  # API instead.
+  homepage:
+    image: ghcr.io/gethomepage/homepage:v2.4.0
+    restart: unless-stopped
+    environment:
+      # Host validation (required since v1.0). Must match the Host header the
+      # browser sends; the proxy forwards it verbatim, so the bare LAN host is
+      # what arrives on the default port.
+      HOMEPAGE_ALLOWED_HOSTS: ${STACK_LAN_HOST:-localhost},localhost,127.0.0.1,homepage
+      # NextAuth builds redirects and the Secure-flagged session cookie from this.
+      HOMEPAGE_EXTERNAL_URL: https://${STACK_LAN_HOST:-localhost}
+      HOMEPAGE_AUTH_ENABLED: "true"
+      HOMEPAGE_AUTH_SECRET: ${HOMEPAGE_AUTH_SECRET:-change-me-homepage-secret}
+      HOMEPAGE_AUTH_PASSWORD: ${HOMEPAGE_AUTH_PASSWORD:-change-me-homepage}
+      # The image defaults to root; PUID/PGID make the entrypoint drop privileges
+      # via su-exec after it has chowned /app/config, so the app writes only as
+      # an unprivileged uid.
+      PUID: "1000"
+      PGID: "1000"
+      # HOMEPAGE_VAR_* / HOMEPAGE_FILE_* are substituted into {{...}} tokens in
+      # the config files. hrefs use these (browser-reachable); widget urls use
+      # compose DNS instead.
+      HOMEPAGE_VAR_CODER_URL: ${CODER_ACCESS_URL:-http://localhost:3001}
+      HOMEPAGE_VAR_LITELLM_URL: http://${STACK_LAN_HOST:-localhost}:${LITELLM_PORT:-4000}
+      HOMEPAGE_VAR_KASM_URL: https://${STACK_LAN_HOST:-localhost}:${KASM_UI_PORT:-4443}
+      HOMEPAGE_VAR_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+    volumes:
+      # Each config file mounted read-only individually, which keeps /app/config
+      # itself writable. Mounting the directory with :ro breaks startup: the
+      # logger mkdirs /app/config/logs and the ENOENT surfaces as a 500 from any
+      # route that logs, and a writable volume over that subpath cannot be
+      # created inside a read-only bind. New config files (custom.css, etc.)
+      # need a line added here.
+      - ./homepage/config/settings.yaml:/app/config/settings.yaml:ro
+      - ./homepage/config/services.yaml:/app/config/services.yaml:ro
+      - ./homepage/config/widgets.yaml:/app/config/widgets.yaml:ro
+      - ./homepage/config/bookmarks.yaml:/app/config/bookmarks.yaml:ro
+
+  homepage-proxy:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    ports:
+      - "${HOMEPAGE_HTTP_PORT:-80}:80"
+      - "${HOMEPAGE_HTTPS_PORT:-443}:443"
+    volumes:
+      # Mounted over the image's own conf.d/default.conf, which is a catch-all
+      # welcome-page server that would otherwise win port 80.
+      - ./proxy/homepage.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./proxy/certs:/etc/nginx/certs:ro
+    depends_on:
+      - homepage
 
 volumes:
   coder-home:

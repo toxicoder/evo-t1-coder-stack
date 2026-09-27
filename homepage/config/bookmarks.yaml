@@ -1,0 +1,33 @@
+---
+# Bookmarks for the EVO-T1 Coder stack dashboard.
+# Options and examples: https://gethomepage.dev/configs/bookmarks/
+#
+# Public documentation only — the stack's own services belong in services.yaml,
+# where they get LAN-reachable hrefs from the HOMEPAGE_VAR_* placeholders and
+# live status. Group names must not collide with the service group names there.
+# Every URL below was checked to resolve.
+
+- Stack docs:
+    - Homepage:
+        - abbr: HP
+          href: https://gethomepage.dev/
+    - Coder:
+        - abbr: CDR
+          href: https://coder.com/docs
+    - LiteLLM:
+        - abbr: LLM
+          href: https://docs.litellm.ai/
+    - IPEX-LLM:
+        - abbr: IPX
+          href: https://ipex-llm.readthedocs.io/en/latest/doc/overview/get_started.html
+    - Grok Build:
+        - abbr: GRK
+          href: https://docs.x.ai/build/overview
+
+- Repo:
+    - This stack:
+        - abbr: STK
+          href: https://github.com/toxicoder/evo-t1-coder-stack
+    - Coder templates:
+        - abbr: TPL
+          href: https://github.com/coder/terraform-provider-coder
