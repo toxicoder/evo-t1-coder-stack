@@ -1,6 +1,6 @@
 variable "image" {
   type        = string
-  description = "Workspace container image. Build the golden image with scripts/build-dev-image.sh, or point this at a Coder base image."
+  description = "Default for the Workspace image dropdown. Build the golden image with scripts/build-dev-image.sh, or point this at a Coder base image; a custom value is injected into the dropdown as its own option."
   default     = "evo-t1-dev:latest"
 }
 

@@ -148,6 +148,12 @@ coder templates push ./templates/docker-dev --var image=evo-t1-dev:latest
 resolves that name from the local image store and never attempts a registry pull,
 which is what keeps workspace creation working with no internet.
 
+The create form shows a **Workspace image** dropdown and two presets, *AI workspace*
+(golden image, selected by default) and *Minimal shell* (bare Ubuntu, for when the
+golden image is mid-rebuild). `--var image=` seeds the dropdown's default and is also
+injected as its own option, so a custom tag still reaches the container while the form
+stays honest about what it is building.
+
 The template (`templates/docker-dev/`) creates one Docker container per workspace:
 
 - the golden image from `images/dev/Dockerfile` (override with the `image`
@@ -169,7 +175,8 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
   model and (redacted) which key is wired in, so a misconfigured workspace is visible
   in the UI without shell access
 
-Template variables: `image`, `litellm_url` (default `http://host.docker.internal:4000/v1`),
+Template variables: `image` (seeds the **Workspace image** dropdown default),
+`litellm_url` (default `http://host.docker.internal:4000/v1`),
 `litellm_key` (sensitive — pass the LiteLLM master key when creating a workspace),
 `grok_default_model` (default `agent`; the tool-capable Spark alias), `docker_socket`
 (optional).

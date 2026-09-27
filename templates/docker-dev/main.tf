@@ -30,6 +30,72 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+# The image picker on the create form. The provider requires a parameter
+# default to be one of the option values, so a custom --var image=<tag> is
+# injected as its own option rather than being dropped (which would leave the
+# form showing the golden image while the build used something else).
+locals {
+  image_choices = [
+    {
+      value       = "evo-t1-dev:latest"
+      name        = "EVO-T1 golden image"
+      description = "Pinned polyglot toolchain with pre-warmed uv/npm caches and the MCP servers baked in. Build it first: scripts/build-dev-image.sh."
+    },
+    {
+      value       = "ubuntu:24.04"
+      name        = "Ubuntu 24.04 (bare)"
+      description = "Nothing preinstalled. The startup script still installs tmux and the Grok CLI, but expect a slow first start."
+    },
+  ]
+  image_options = contains([for c in local.image_choices : c.value], var.image) ? local.image_choices : concat(
+    local.image_choices,
+    [{ value = var.image, name = "Custom (${var.image})", description = "Pushed with --var image." }],
+  )
+}
+
+data "coder_parameter" "workspace_image" {
+  name         = "workspace_image"
+  display_name = "Workspace image"
+  description  = "Base image for the dev container. The golden image is what the startup script's Grok and MCP setup was verified against."
+  type         = "string"
+  form_type    = "dropdown"
+  # Fixed at create time: switching image means a rebuild anyway, and a mutable
+  # dropdown invites someone swapping the golden image out from under the stack.
+  mutable = false
+  default = var.image
+  order   = 1
+
+  dynamic "option" {
+    for_each = local.image_options
+    content {
+      name        = option.value.name
+      value       = option.value.value
+      description = option.value.description
+    }
+  }
+}
+
+# Presets collapse the create form to one click. Keys here are parameter *names*
+# (display_name is UI-only and would be ignored).
+data "coder_workspace_preset" "ai_workspace" {
+  name        = "AI workspace"
+  description = "Golden image with the Grok Build terminal, MCP servers and LiteLLM wiring."
+  default     = true
+
+  parameters = {
+    (data.coder_parameter.workspace_image.name) = "evo-t1-dev:latest"
+  }
+}
+
+data "coder_workspace_preset" "minimal" {
+  name        = "Minimal shell"
+  description = "Bare Ubuntu for when the golden image is being rebuilt."
+
+  parameters = {
+    (data.coder_parameter.workspace_image.name) = "ubuntu:24.04"
+  }
+}
+
 resource "coder_agent" "main" {
   arch = data.coder_provisioner.me.arch
   os   = "linux"
@@ -156,7 +222,7 @@ resource "coder_metadata" "workspace_info" {
 
   item {
     key   = "image"
-    value = var.image
+    value = data.coder_parameter.workspace_image.value
   }
 
   item {
@@ -209,7 +275,9 @@ resource "docker_volume" "home" {
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
 
-  image    = var.image
+  # The dropdown decides the image; var.image only seeds its default, so the
+  # rendered container always matches what the create form showed.
+  image    = data.coder_parameter.workspace_image.value
   name     = "coder-${data.coder_workspace_owner.me.name}-${lower(data.coder_workspace.me.name)}"
   hostname = data.coder_workspace.me.name
 
