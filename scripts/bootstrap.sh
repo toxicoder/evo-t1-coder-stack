@@ -174,11 +174,18 @@ while IFS= read -r entry; do
       continue
       ;;
   esac
-  # The dashboard is the one entry with no service prefix: the apex name itself.
+  # Dashboard is the fallback: the bare zone apex or a `dashboard-` name, i.e.
+  # anything without a service prefix. Each service matches its prefix joined by
+  # HYPHEN or DOT. The hyphenated form is the one to use — a wildcard cert at the
+  # public edge covers exactly one label, so the dotted two-label form has no
+  # cert and the browser aborts the handshake before Traefik is reached. The
+  # dotted patterns stay so an .env written before the rename still classifies
+  # each entry, rather than every name falling through to the dashboard branch
+  # and last-one-win.
   case "${entry}" in
-    coder.*) public_coder_url="https://${entry}" ;;
-    kasm.*) public_kasm_url="https://${entry}" ;;
-    litellm.*) public_litellm_url="https://${entry}" ;;
+    coder-*|coder.*) public_coder_url="https://${entry}" ;;
+    kasm-*|kasm.*) public_kasm_url="https://${entry}" ;;
+    litellm-*|litellm.*) public_litellm_url="https://${entry}" ;;
     *) public_dashboard_url="https://${entry}" ;;
   esac
   public_entries+=("${entry}")
