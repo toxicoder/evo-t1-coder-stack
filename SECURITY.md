@@ -62,9 +62,26 @@ repo can verify.
   `--api-key`, so an unset `SPARK_n_API_KEY` means the only thing gating that endpoint
   is LAN reachability. Set the keys to match how the servers were launched.
 - **Kasm is privileged (DinD).** Kasm runs with `privileged: true` because it
-  uses Docker-in-Docker to stream containers. Treat it as high-trust: keep it
+  uses Docker-in-Docker to stream containers, which makes it root-equivalent on
+  the host kernel. It is the only *always-on* privileged service here; the other
+  is the opt-in workspace DinD sidecar below. Treat it as high-trust: keep it
   LAN-only — publishing its public name puts a privileged container behind nothing
   but Kasm's own login unless Authelia covers that host — and review image updates
   before pulling a new tag.
+- **Workspace DinD sidecars are privileged too.** With the template's `dind`
+  toggle on, a workspace gets its own `docker:29.8.1-dind` container running
+  `privileged: true` — the same root-equivalent-on-the-host-kernel standing Kasm
+  has, so a compromised workspace reaches the host kernel and the blast radius
+  widens from the workspace to the machine. The daemon is started with
+  `DOCKER_TLS_CERTDIR=`, which means no TLS and no authentication on
+  `tcp://0.0.0.0:2375`; what contains that is the per-workspace bridge network
+  (`coder-<wsid>-dind`) — no published host port, and two workspaces never share a
+  network, because a shared one would let each reach the other's daemon and
+  therefore each other's builds. That network is deliberately not `internal` — an
+  internal network has no NAT, which would break the workspace's
+  `host.docker.internal` route to the Coder agent listener — so the isolation is
+  simply that nothing else is attached to it and nothing is published to the host.
+  Keep the toggle off unless someone is actually building containers. See README,
+  "Coder workspace template".
 - **Reporting.** Report vulnerabilities by opening an issue marked
   `security`; please do not disclose working exploits publicly.
