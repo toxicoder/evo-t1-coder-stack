@@ -2,7 +2,7 @@
 # GMKtec EVO-T1 — Intel Core Ultra 9 285H, Intel Arc 140T, 96 GB DDR5.
 #
 # Services:
-#   coder           Coder CE control plane (host port 3001; Kasm owns 3000)
+#   coder           Coder CE control plane (HTTPS UI on host port 3001; Kasm owns 3000)
 #   db              Postgres 17 for Coder
 #   litellm         LiteLLM proxy (host port 4000) — local Ollama + NVIDIA Spark boxes
 #   ollama          IPEX-LLM Ollama on the Arc 140T — container network only,
@@ -11,6 +11,9 @@
 #   homepage        gethomepage dashboard — container network only, reached
 #                   through the homepage-proxy sidecar
 #   homepage-proxy  nginx TLS terminator for the dashboard (host 80 -> 301, 443)
+#   router          nginx Host-header router for the public subdomains; the
+#                   main Traefik terminates TLS and forwards plain HTTP here
+#                   (host STACK_PROXY_HTTP_PORT, default 8080)
 #
 # Secrets live in .env (see .env.sample). Never commit .env.
 
@@ -19,10 +22,20 @@ services:
     image: ghcr.io/coder/coder:v2.36.6
     restart: unless-stopped
     environment:
-      CODER_ACCESS_URL: ${CODER_ACCESS_URL:-http://YOUR_LAN_IP:3001}
+      CODER_ACCESS_URL: ${CODER_ACCESS_URL:-https://YOUR_LAN_IP:3001}
       CODER_PG_CONNECTION_URL: postgres://coder:${CODER_PG_PASSWORD:-change-me-postgres}@db:5432/coder?sslmode=disable
       # Coder binds 127.0.0.1:3000 by default, which publishes an empty port.
       CODER_HTTP_ADDRESS: "0.0.0.0:3000"
+      # TemplateBuilderPage calls crypto.randomUUID(), which browsers only expose
+      # in secure contexts: over http://<LAN IP> the page throws
+      # "crypto.randomUUID is not a function". Coder terminates TLS itself — no
+      # nginx sidecar — on the container port published below.
+      CODER_TLS_ENABLE: "true"
+      CODER_TLS_ADDRESS: "0.0.0.0:3443"
+      # bootstrap.sh issues the pair into proxy/certs/ (SAN: the LAN host,
+      # localhost, coder, host.docker.internal).
+      CODER_TLS_CERT_FILE: /etc/coder/certs/coder.crt
+      CODER_TLS_KEY_FILE: /etc/coder/certs/coder.key
       # Real env var is CODER_TELEMETRY_ENABLE; the _ENABLED spelling is ignored.
       CODER_TELEMETRY_ENABLE: "false"
       # Every name below was checked against codersdk/deployment.go at v2.36.6.
@@ -66,13 +79,25 @@ services:
     group_add:
       - "${DOCKER_GID:-980}"
     ports:
-      - "${CODER_HTTP_PORT:-3001}:3000"
+      # Host port maps to the TLS listener; the plain listener on 3000 stays
+      # unpublished for browsers and is what the homepage widget hits via
+      # compose DNS.
+      - "${CODER_HTTP_PORT:-3001}:3443"
+      # Second path to the SAME plain listener, for workspace agents once
+      # CODER_ACCESS_URL is a public hostname: the template rewrites the agent
+      # URL to host.docker.internal:3002 so agents dial the server over the
+      # Docker host gateway instead of hairpinning through the public tunnel
+      # (where Authelia would reject the agent's token-only auth).
+      - "${CODER_AGENT_TUNNEL_PORT:-3002}:3000"
       # Prometheus scrape endpoint. Bound to loopback so the metrics stay off
       # the LAN, which is also why CODER_PROMETHEUS_ADDRESS binds 0.0.0.0.
       - "127.0.0.1:${CODER_METRICS_PORT:-2112}:2112"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - coder-home:/home/coder
+      # Plain listener on 3000 stays container-internal; browsers get the TLS port.
+      - ./proxy/certs/coder.crt:/etc/coder/certs/coder.crt:ro
+      - ./proxy/certs/coder.key:/etc/coder/certs/coder.key:ro
     # SIGINT is what makes the server drain in-flight provisioner jobs; the
     # 30s window keeps `compose down` from SIGKILLing a build mid-apply.
     stop_grace_period: 30s
@@ -194,11 +219,13 @@ services:
     restart: unless-stopped
     environment:
       # Host validation (required since v1.0). Must match the Host header the
-      # browser sends; the proxy forwards it verbatim, so the bare LAN host is
-      # what arrives on the default port.
-      HOMEPAGE_ALLOWED_HOSTS: ${STACK_LAN_HOST:-localhost},localhost,127.0.0.1,homepage
+      # browser sends; both proxies forward it verbatim, so the LAN host and
+      # every public name in STACK_PUBLIC_HOSTS have to be listed here.
+      HOMEPAGE_ALLOWED_HOSTS: ${STACK_LAN_HOST:-localhost},localhost,127.0.0.1,homepage${STACK_PUBLIC_HOSTS:+,${STACK_PUBLIC_HOSTS}}
       # NextAuth builds redirects and the Secure-flagged session cookie from this.
-      HOMEPAGE_EXTERNAL_URL: https://${STACK_LAN_HOST:-localhost}
+      # When the dashboard has a public name it must be the public origin, or the
+      # sign-in redirect lands remote users on a LAN address.
+      HOMEPAGE_EXTERNAL_URL: ${STACK_DASHBOARD_URL:-https://${STACK_LAN_HOST:-localhost}}
       HOMEPAGE_AUTH_ENABLED: "true"
       HOMEPAGE_AUTH_SECRET: ${HOMEPAGE_AUTH_SECRET:-change-me-homepage-secret}
       HOMEPAGE_AUTH_PASSWORD: ${HOMEPAGE_AUTH_PASSWORD:-change-me-homepage}
@@ -209,10 +236,12 @@ services:
       PGID: "1000"
       # HOMEPAGE_VAR_* / HOMEPAGE_FILE_* are substituted into {{...}} tokens in
       # the config files. hrefs use these (browser-reachable); widget urls use
-      # compose DNS instead.
-      HOMEPAGE_VAR_CODER_URL: ${CODER_ACCESS_URL:-http://localhost:3001}
-      HOMEPAGE_VAR_LITELLM_URL: http://${STACK_LAN_HOST:-localhost}:${LITELLM_PORT:-4000}
-      HOMEPAGE_VAR_KASM_URL: https://${STACK_LAN_HOST:-localhost}:${KASM_UI_PORT:-4443}
+      # compose DNS instead. Each one takes the LAN form unless STACK_PUBLIC_*
+      # names a public origin, which bootstrap.sh fills from STACK_PUBLIC_HOSTS
+      # — a LAN IP in a card href strands remote users on an unreachable link.
+      HOMEPAGE_VAR_CODER_URL: ${STACK_CODER_URL:-https://${STACK_LAN_HOST:-localhost}:${CODER_HTTP_PORT:-3001}}
+      HOMEPAGE_VAR_LITELLM_URL: ${STACK_LITELLM_URL:-http://${STACK_LAN_HOST:-localhost}:${LITELLM_PORT:-4000}}
+      HOMEPAGE_VAR_KASM_URL: ${STACK_KASM_URL:-https://${STACK_LAN_HOST:-localhost}:${KASM_UI_PORT:-4443}}
       HOMEPAGE_VAR_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
       # The agent backend lives off-box on the LAN, so compose DNS does not
       # apply: the same LAN URL serves both the browser href and the server-side
@@ -245,6 +274,28 @@ services:
       - ./proxy/certs:/etc/nginx/certs:ro
     depends_on:
       - homepage
+
+  # Second nginx sidecar for the public subdomains. The main Traefik on another
+  # machine terminates TLS for those names and forwards plain HTTP here; this
+  # container only routes by Host header (proxy/router.conf), so it publishes
+  # one plain-HTTP port and holds no certificate.
+  router:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    ports:
+      - "${STACK_PROXY_HTTP_PORT:-8080}:8080"
+    volumes:
+      # Mounted under its own name, not over default.conf: this container's
+      # conf.d holds only this file, so router.conf carries its own
+      # `map $http_upgrade` (the one in homepage.conf lives in the other
+      # container and is invisible here). The image's welcome server keeps
+      # container port 80, which nothing publishes.
+      - ./proxy/router.conf:/etc/nginx/conf.d/router.conf:ro
+    depends_on:
+      - homepage
+      - coder
+      - litellm
+      - kasm
 
 volumes:
   coder-home:

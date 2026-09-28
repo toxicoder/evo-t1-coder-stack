@@ -22,3 +22,9 @@ variable "litellm_key" {
   default     = ""
   sensitive   = true
 }
+
+variable "coder_agent_url" {
+  type        = string
+  description = "URL workspace agents dial to reach the Coder server. Defaults to the plain listener via the Docker host gateway so agents stay on-box even when CODER_ACCESS_URL is a public hostname behind the reverse proxy; a public URL would hairpin agent traffic through Cloudflare and Authelia, which rejects token-only requests. Empty string keeps the provider-rendered access URL, which is only correct on a dev box whose access URL is directly routable from workspaces."
+  default     = "http://host.docker.internal:3002"
+}

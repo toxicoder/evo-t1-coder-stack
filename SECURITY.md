@@ -1,12 +1,35 @@
 # Security
 
-This stack assumes a trusted LAN or VPN. The only TLS in it is the self-signed
-certificate on the dashboard; there is no proper reverse proxy or SSO.
+This stack's default shape assumes a trusted LAN or VPN. Its own TLS is self-signed —
+the dashboard's proxy cert and the cert Coder serves on :3001; it has no reverse proxy
+or SSO of its own. Publishing the services on public names through the external
+Traefik (README, "Public subdomains (optional)") is a supported opt-in rather than a
+prohibition, and it changes this threat model: TLS then comes from real certificates on
+that machine, and every access decision beyond the application's own credential is
+whatever Traefik, Cloudflare and Authelia are configured to enforce — none of which this
+repo can verify.
 
 - **Network exposure.** Coder (:3001) and LiteLLM (:4000) bind to the host for
-  LAN use. Do not port-forward them to the internet. LiteLLM requires
-  `LITELLM_MASTER_KEY` for every request; Coder has its own login, but a
-  public Coder instance should not be run from this stack.
+  LAN use. Coder's published port carries TLS (the self-signed cert
+  `bootstrap.sh` issues); LiteLLM stays plain HTTP, so its traffic is not
+  encrypted in transit. Reach them from outside the LAN through the supported path —
+  the `router` sidecar behind the external Traefik, which brings real TLS and whatever
+  proxy-side policy you configure — not by ad-hoc port-forwarding, which skips both.
+  LiteLLM requires `LITELLM_MASTER_KEY` for every request; Coder has its own login, and
+  once either name resolves publicly assume it is being probed.
+- **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder and the dashboard can be
+  reachable from the WAN. Keep the Coder login strong: that account is the site admin
+  and the control plane it authenticates to creates containers on this host's docker
+  socket. The dashboard's NextAuth password (`HOMEPAGE_AUTH_PASSWORD`) stays the only
+  gate unless an Authelia policy covers the new names too, and that policy is an
+  Authelia-side choice, not something this stack configures. `LITELLM_MASTER_KEY` is
+  the sole credential on the public model endpoint — if Authelia is not exempting that
+  host (it must not gate `Authorization`-header API traffic), a leaked or weak master
+  key exposes the local iGPU models and the Spark boxes behind it, since that proxy was
+  LAN-oriented and is now WAN-reachable. The `router` sidecar itself publishes plain HTTP
+  (`${STACK_PROXY_HTTP_PORT:-8080}`) and enforces no policy beyond refusing an unknown
+  Host: on the LAN, sending a matching Host header to that port reaches the same upstreams
+  without Traefik or Authelia in the path, so treat 8080 as a LAN-only port.
 - **Ollama is internal-only.** IPEX-LLM Ollama listens on 11434 inside the
   compose network only and is deliberately not published to the host.
   Never add a `11434:11434` port mapping.
@@ -40,6 +63,8 @@ certificate on the dashboard; there is no proper reverse proxy or SSO.
   is LAN reachability. Set the keys to match how the servers were launched.
 - **Kasm is privileged (DinD).** Kasm runs with `privileged: true` because it
   uses Docker-in-Docker to stream containers. Treat it as high-trust: keep it
-  LAN-only and review image updates before pulling a new tag.
+  LAN-only — publishing its public name puts a privileged container behind nothing
+  but Kasm's own login unless Authelia covers that host — and review image updates
+  before pulling a new tag.
 - **Reporting.** Report vulnerabilities by opening an issue marked
   `security`; please do not disclose working exploits publicly.

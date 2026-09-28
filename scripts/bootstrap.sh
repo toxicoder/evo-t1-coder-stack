@@ -3,6 +3,8 @@
 #   - create .env from .env.sample
 #   - generate local secrets (replaces change-me-* placeholders)
 #   - fill in CODER_ACCESS_URL with the LAN IP
+#   - in public mode (STACK_PUBLIC_HOSTS set) derive the public STACK_*_URL keys
+#     and carry those names in the Coder cert SANs
 #   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
 set -euo pipefail
@@ -71,18 +73,31 @@ for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AU
   fi
 done
 
-if grep -q "CODER_ACCESS_URL=http://YOUR_LAN_IP" .env; then
+# Match the placeholder under either scheme: .env.sample ships https://, but an
+# .env written while the sample still said http:// carries the old form.
+if grep -qE "CODER_ACCESS_URL=https?://YOUR_LAN_IP" .env; then
   lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
   if [ -z "${lan_ip}" ]; then
     # macOS fallback: first non-loopback interface
     lan_ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
   fi
   if [ -n "${lan_ip}" ]; then
-    sed_inplace "s|http://YOUR_LAN_IP|http://${lan_ip}|" .env
-    echo "set CODER_ACCESS_URL=http://${lan_ip}:3001"
+    # Rewrite the host token only, so the scheme the sample carries survives.
+    sed_inplace "s|://YOUR_LAN_IP|://${lan_ip}|" .env
+    access_url="$(sed -n 's|^CODER_ACCESS_URL=||p' .env | tail -n 1)"
+    echo "set CODER_ACCESS_URL=${access_url}"
   else
     echo "warning: could not detect a LAN IP; edit CODER_ACCESS_URL in .env"
   fi
+fi
+
+# Installs that ran before this have a live CODER_ACCESS_URL=http://<ip>:3001
+# line, and plain HTTP is not a secure context, so the browser never exposes
+# crypto.randomUUID and the console dies on a blank TemplateBuilderPage. Coder
+# serves TLS itself (CODER_TLS_* in compose), so lift any leftover http:// value.
+if grep -q "^CODER_ACCESS_URL=http://" .env; then
+  sed_inplace "s|^CODER_ACCESS_URL=http://|CODER_ACCESS_URL=https://|" .env
+  echo "upgraded CODER_ACCESS_URL to https:// (browsers need a secure context for the console)"
 fi
 
 # The dashboard links to Coder/LiteLLM/Kasm and validates its Host header
@@ -99,6 +114,138 @@ if [ -n "${lan_host}" ] && [ "${lan_host}" != "YOUR_LAN_IP" ]; then
     sed_inplace "s|^STACK_LAN_HOST=.*|STACK_LAN_HOST=${lan_host}|" .env
     echo "set STACK_LAN_HOST=${lan_host}"
   fi
+fi
+
+# bootstrap-managed keys are created on first use and never removed, so one
+# upsert covers both "older .env predates this key" and "value changed": write
+# only when it actually differs, which keeps a repeat run silent.
+upsert_env() {
+  # $1 = variable name, $2 = value (empty clears the key so compose's `:-`
+  # fallback applies). Values are hostnames/URLs, so `|` is a safe sed delimiter.
+  local key="$1" value="$2" current
+  if ! grep -q "^${key}=" .env; then
+    printf '%s=%s\n' "${key}" "${value}" >> .env
+    echo "set ${key}=${value}"
+    return 0
+  fi
+  current="$(sed -n "s|^${key}=||p" .env | tail -n 1)"
+  if [ "${current}" != "${value}" ]; then
+    sed_inplace "s|^${key}=.*|${key}=${value}|" .env
+    echo "set ${key}=${value}"
+  fi
+}
+
+# --- Public mode -----------------------------------------------------------
+# STACK_PUBLIC_HOSTS lists the names the main Traefik on another machine holds
+# TLS for; it forwards plain HTTP to this box's router container
+# (proxy/router.conf, published as STACK_PROXY_HTTP_PORT, default 8080) with the
+# Host header intact, so that header is what homepage validates against
+# HOMEPAGE_ALLOWED_HOSTS and what the Coder cert SANs below have to carry.
+# Compose appends the raw key to the allow list itself, so bootstrap only has to
+# derive the per-service origins.
+#
+# Entries are DNS names separated by commas, not URLs: only spaces and CRs are
+# trimmed, and anything that cannot be a DNS name is dropped with a warning
+# rather than pasted into an https:// value. An empty value means LAN-only mode
+# and every derived key below is cleared, so compose keeps its LAN fallbacks.
+#
+# The list is parsed once into an array: the cert check below re-walks it, and a
+# second sed of .env there could disagree with what was just written to it.
+#
+# Order matters: this runs after STACK_LAN_HOST was taken from the LAN form of
+# CODER_ACCESS_URL, because the CODER_ACCESS_URL upgrade below replaces it with
+# the public name and the LAN cert must still get the LAN IP.
+public_entries=()
+public_dashboard_url=""
+public_coder_url=""
+public_kasm_url=""
+public_litellm_url=""
+raw_public_hosts="$(sed -n 's|^STACK_PUBLIC_HOSTS=||p' .env | tail -n 1)"
+
+while IFS= read -r entry; do
+  [ -n "${entry}" ] || continue
+  case "${entry}" in
+    *:*)
+      echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names, not URLs"
+      continue
+      ;;
+    */*|*[!A-Za-z0-9.-]*)
+      echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names"
+      continue
+      ;;
+  esac
+  # The dashboard is the one entry with no service prefix: the apex name itself.
+  case "${entry}" in
+    coder.*) public_coder_url="https://${entry}" ;;
+    kasm.*) public_kasm_url="https://${entry}" ;;
+    litellm.*) public_litellm_url="https://${entry}" ;;
+    *) public_dashboard_url="https://${entry}" ;;
+  esac
+  public_entries+=("${entry}")
+done < <(printf '%s\n' "${raw_public_hosts}" | tr -d '\r' | tr ',' '\n' \
+           | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+
+# join the accepted entries back into one comma-separated value, so the list
+# written to .env is exactly the list the cert SANs below are built from.
+public_hosts=""
+for entry in ${public_entries[@]+"${public_entries[@]}"}; do
+  if [ -n "${public_hosts}" ]; then
+    public_hosts="${public_hosts},${entry}"
+  else
+    public_hosts="${entry}"
+  fi
+done
+
+# compose interpolates the raw value into HOMEPAGE_ALLOWED_HOSTS, so store the
+# cleaned list back; a file that was already written cleanly never differs and
+# this branch stays silent.
+if [ -n "${raw_public_hosts}" ] && [ "${raw_public_hosts}" != "${public_hosts}" ]; then
+  upsert_env STACK_PUBLIC_HOSTS "${public_hosts}"
+fi
+
+# The self-signed pair below still serves the LAN origin, so public mode needs
+# the LAN IP as well as the DNS names. STACK_LAN_HOST may legitimately be empty
+# on a first run, or hold a public name someone copied from CODER_ACCESS_URL
+# (which this block is about to rewrite); neither can go into an IP: SAN, so
+# re-detect here and let the existing LAN block own the value otherwise.
+env_lan_host="$(sed -n 's|^STACK_LAN_HOST=||p' .env | tail -n 1)"
+if [ -n "${public_hosts}" ]; then
+  case ",${public_hosts}," in
+    ",${env_lan_host},"*) env_lan_host="" ;;
+  esac
+  if [ -z "${env_lan_host}" ]; then
+    lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+    if [ -z "${lan_ip}" ]; then
+      # macOS fallback: first non-loopback interface
+      lan_ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+    fi
+    if [ -n "${lan_ip}" ]; then
+      upsert_env STACK_LAN_HOST "${lan_ip}"
+    else
+      echo "warning: STACK_PUBLIC_HOSTS is set but no LAN IP was detected — set STACK_LAN_HOST in .env so the Coder cert keeps an IP SAN."
+    fi
+  fi
+fi
+
+# A missing entry leaves its key empty rather than half-derived, which is exactly
+# the LAN fallback compose wants; the same upsert then clears a value left over
+# from an earlier public run whose name has since been dropped.
+upsert_env STACK_DASHBOARD_URL "${public_dashboard_url}"
+upsert_env STACK_CODER_URL "${public_coder_url}"
+upsert_env STACK_KASM_URL "${public_kasm_url}"
+upsert_env STACK_LITELLM_URL "${public_litellm_url}"
+
+# Coder builds every workspace link and the `coder login` target from
+# CODER_ACCESS_URL, so the public name is the whole point of public mode: the
+# browser gets a real certificate on a secure context and the TemplateBuilderPage
+# works without trusting the self-signed LAN cert at all. Workspace agents keep
+# reaching the plain listener through host.docker.internal:${CODER_AGENT_TUNNEL_PORT:-3002}
+# (see the compose port and the template rewrite), not through this URL.
+# It is written only while a coder entry exists: clearing STACK_PUBLIC_HOSTS
+# drops Coder back on whatever the file says, so the value someone set by hand
+# for LAN-only use is never guessed at here.
+if [ -n "${public_coder_url}" ]; then
+  upsert_env CODER_ACCESS_URL "${public_coder_url}"
 fi
 
 # homepage-proxy serves TLS from proxy/certs/ and exits if the pair is missing,
@@ -125,6 +272,51 @@ if [ "${cert_needs_issue}" = "1" ] && [ -n "${stack_lan_host}" ]; then
   echo "issued self-signed dashboard cert for ${stack_lan_host} (browsers warn once — expected on a LAN IP)"
 elif [ -z "${stack_lan_host}" ]; then
   echo "warning: no LAN host resolved, so no dashboard cert was issued — homepage-proxy will fail to start until STACK_LAN_HOST is set in .env."
+fi
+
+# The coder container terminates TLS itself (CODER_TLS_* in compose) and mounts
+# this pair read-only at /etc/coder/certs; it exits if the pair is missing. The
+# SAN carries coder and host.docker.internal because the compose health check
+# and the workspace agents both reach the server through the host gateway, not
+# through the LAN IP the browser uses. In public mode it also carries every
+# STACK_PUBLIC_HOSTS name: Traefik terminates TLS for those, but anything that
+# dials this origin directly (the agent tunnel's host.docker.internal hop, a
+# hand-written /etc/hosts entry) gets the self-signed pair and checks it.
+cert_file="proxy/certs/coder.crt"
+key_file="proxy/certs/coder.key"
+cert_needs_issue=0
+if [ ! -f "${cert_file}" ] || [ ! -f "${key_file}" ]; then
+  cert_needs_issue=1
+elif ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null \
+    | grep -q "IP Address:${stack_lan_host}"; then
+  cert_needs_issue=1
+fi
+# Same bug class one step later: a cert issued before public mode, or before a
+# name was added to the list, has no SAN for a name the browser uses, and the
+# handshake fails there with no way to click through. Re-issue when any entry is
+# missing from the existing pair.
+if [ "${cert_needs_issue}" = "0" ]; then
+  for entry in ${public_entries[@]+"${public_entries[@]}"}; do
+    if ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null \
+         | grep -q "DNS:${entry}"; then
+      cert_needs_issue=1
+      break
+    fi
+  done
+fi
+if [ "${cert_needs_issue}" = "1" ] && [ -n "${stack_lan_host}" ]; then
+  coder_san_dns=""
+  for entry in ${public_entries[@]+"${public_entries[@]}"}; do
+    coder_san_dns="${coder_san_dns},DNS:${entry}"
+  done
+  openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
+    -subj "/CN=${stack_lan_host}" \
+    -addext "subjectAltName=IP:${stack_lan_host},DNS:localhost,DNS:coder,DNS:host.docker.internal${coder_san_dns}" \
+    -keyout "${key_file}" -out "${cert_file}" 2>/dev/null
+  chmod 600 "${key_file}"
+  echo "issued self-signed Coder cert for ${stack_lan_host}${public_hosts:+ and ${public_hosts}} (browsers warn once — expected on a LAN IP)"
+elif [ -z "${stack_lan_host}" ]; then
+  echo "warning: no LAN host resolved, so no Coder cert was issued — the coder TLS listener will not start until STACK_LAN_HOST is set in .env."
 fi
 
 if [ ! -e /dev/dri ]; then
@@ -187,9 +379,14 @@ echo
 echo "Next steps:"
 echo "  1. ./scripts/build-dev-image.sh   # one-time polyglot workspace image"
 echo "  2. docker compose up -d"
-echo "  3. Open http://<host>:3001 and register the first account (it becomes the site admin)"
-echo "  4. coder login http://<host>:3001 && coder templates push ./templates/docker-dev --var image=${dev_image}"
+# Public mode wins for the two browser-facing steps: those names resolve from
+# anywhere and Traefik serves them a real certificate, so printing the LAN form
+# would send remote users to an address their machine cannot reach.
+coder_reach_url="${public_coder_url:-https://<host>:3001}"
+dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
+echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
+echo "  4. coder login ${coder_reach_url} && coder templates push ./templates/docker-dev --var image=${dev_image}"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
 echo "  6. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
-echo "  7. Dashboard: https://${stack_lan_host:-<host>}/ (login password: ${dash_pw})"
+echo "  7. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
