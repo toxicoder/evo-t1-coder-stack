@@ -323,6 +323,10 @@ count, Ollama version), plus host CPU, memory, disk and CPU temperature in the h
   browser warning. Port 80 redirects to HTTPS.
 - **Login:** homepage v2's built-in gate; the password is `HOMEPAGE_AUTH_PASSWORD`, printed once by
   `bootstrap.sh`. It is worth keeping on: the dashboard lists every service on the box.
+  Change it later with `./scripts/dashboard-password.sh` (generates one, or `--prompt` to type your
+  own) — it rewrites `.env`, recreates the container and verifies the new value landed. homepage
+  hashes that env var itself but still needs the plaintext, so the file has to carry it: the script's
+  job is keeping it out of shell history, `ps` and git, and leaving `.env` mode 600.
 - **Config:** `homepage/config/*.yaml`, each file bind-mounted read-only, so `git diff` stays the
   record of dashboard changes. Edit there and `docker compose restart homepage`. A new config file
   (`custom.css`, `kubernetes.yaml`, …) needs its own mount line in `docker-compose.yml`; the directory
@@ -384,6 +388,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 ├── scripts/
 │   ├── bootstrap.sh         # .env + secrets + access URL + dashboard & Coder certs + checks
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
+│   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   └── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 └── templates/docker-dev   # Coder template (`coder templates push`)
     ├── main.tf
