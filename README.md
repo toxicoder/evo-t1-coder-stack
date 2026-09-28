@@ -26,7 +26,7 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                * links + live status for every service below
   |                * host CPU / memory / disk / CPU temp in the header
   |
-  +-- :3001 ----> Coder UI (control plane, Postgres-backed)
+  +-- :3001 ----> Coder UI (HTTPS, control plane, Postgres-backed)
   |                 :2112 ----> Coder /metrics (loopback-bound; for a scraper)
   |                   | provisions workspaces via /var/run/docker.sock
   |                   v
@@ -55,9 +55,15 @@ LAN clients (laptops, phones, the EVO-T1 itself)
 Key properties:
 
 - **Ollama is never published to the host.** It listens on 11434 inside the compose network; LiteLLM is the only gateway to the models, and it sits behind a master key.
-- **Workspaces reach models through the host.** The Coder access URL is the LAN IP; workspaces reach LiteLLM via `host.docker.internal:4000` (host-gateway).
+- **Workspaces reach models through the host.** The Coder access URL is the LAN IP by default, or the
+  public coder name once `STACK_PUBLIC_HOSTS` is set; workspaces reach LiteLLM via
+  `host.docker.internal:4000` (host-gateway) and their agents dial the plain listener on
+  `host.docker.internal:3002` either way.
 - **Kasm owns :3000 / :4443**, so the Coder UI lives on :3001.
 - **The dashboard publishes no port of its own.** Homepage serves plain HTTP and cannot load a certificate, so the nginx sidecar owns :80 / :443 and proxies to it over the compose network.
+- **Public subdomains are opt-in and purely additive.** The LAN shape above is the default and stays
+  intact when the four public names are enabled through a second nginx sidecar (section "Public
+  subdomains (optional)" below).
 
 ## Quick start
 
@@ -73,12 +79,16 @@ docker compose up -d
 
 Then:
 
-1. Open `http://<host>:3001` and register the first account — that account becomes the site admin.
+1. Open `https://<host>:3001` and register the first account — that account becomes the site admin.
+   `bootstrap.sh` issues a self-signed cert for Coder as well, so expect the same
+   one-time browser warning the dashboard gives. The port is HTTPS because browsers
+   only expose `crypto.randomUUID()` in secure contexts: plain `http://` on a LAN IP
+   breaks pages like the template builder.
    To do it from a terminal instead, every prompt below also has a
    `CODER_FIRST_USER_*` / `CODER_URL` environment equivalent:
 
    ```sh
-   coder login http://<host>:3001 \
+   coder login https://<host>:3001 \
      --first-user-email you@example.com \
      --first-user-username you \
      --first-user-password 'a-long-passphrase' \
@@ -97,13 +107,90 @@ Then:
 | Host port | Service | Purpose |
 |---:|---|---|
 | 80 / 443 | Homepage | Dashboard — 80 redirects to HTTPS (`HOMEPAGE_HTTP_PORT` / `HOMEPAGE_HTTPS_PORT`) |
-| 3001 | Coder | Web UI + control plane (`CODER_HTTP_PORT`) |
+| 8080 | Router | Plain-HTTP Host router for the public subdomains (`STACK_PROXY_HTTP_PORT`) — runs in both modes, Traefik is its only real client |
+| 3001 | Coder | Web UI + control plane over TLS (`CODER_HTTP_PORT`) |
+| 3002 | Coder | Second path to Coder's plain listener, for workspace agents via `host.docker.internal` (`CODER_AGENT_TUNNEL_PORT`) |
 | 3000 | Kasm | First-boot install wizard (`KASM_WIZARD_PORT`) |
 | 4443 | Kasm | Workspaces UI after install (`KASM_UI_PORT`) |
 | 4000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
 | 2112 (loopback) | Coder | Prometheus `/metrics` for the control plane (`CODER_METRICS_PORT`) — bound to 127.0.0.1, so point a scraper at it from the stack host |
 | — | Homepage app | `3000` on the compose network only — reached through the proxy |
 | — | Ollama | `11434` on the compose network only — deliberately not published |
+
+## Public subdomains (optional)
+
+Everything above is the default, LAN-only shape. One extra `.env` variable, `STACK_PUBLIC_HOSTS`
+(comma-separated), additionally serves the same four services on public names over real TLS:
+
+| Name | `proxy/router.conf` upstream |
+|---|---|
+| `gmktecbeast.overeazy.io` | `homepage:3000` |
+| `coder.gmktecbeast.overeazy.io` | `coder:3000` — plain listener |
+| `kasm.gmktecbeast.overeazy.io` | `https://kasm:4443` (`proxy_ssl_verify off`) |
+| `litellm.gmktecbeast.overeazy.io` | `litellm:4000` |
+
+TLS terminates at the main Traefik on the other machine, which forwards plain HTTP to a second nginx
+sidecar on this box: compose service `router`, published `${STACK_PROXY_HTTP_PORT:-8080}:8080`, config
+`proxy/router.conf`. That container holds no certificate — its whole job is picking an upstream from
+the Host header, and an unmatched Host gets `421` rather than a guess, so a mistyped or rewritten Host
+fails loudly instead of landing in the wrong service. Kasm is the only hop that speaks TLS to its
+origin, and verification is off there because the cert is the one its installer generates and reissues.
+Nothing in this path replaces the LAN routes: `https://<lan-ip>/` still serves the dashboard on the
+self-signed cert and `https://<lan-ip>:3001` still serves Coder's own TLS listener.
+
+To enable it, set the four names in `.env`:
+
+```text
+STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder.gmktecbeast.overeazy.io,kasm.gmktecbeast.overeazy.io,litellm.gmktecbeast.overeazy.io
+```
+
+and re-run:
+
+```sh
+./scripts/bootstrap.sh
+docker compose up -d
+```
+
+bootstrap then derives `STACK_DASHBOARD_URL` (compose feeds it to `HOMEPAGE_EXTERNAL_URL`, so NextAuth
+builds its redirects and Secure cookie from the public origin) plus `STACK_CODER_URL` /
+`STACK_KASM_URL` / `STACK_LITELLM_URL` (the card `href`s, so remote users get links they can resolve),
+upgrades `CODER_ACCESS_URL` to the public coder URL, extends `HOMEPAGE_ALLOWED_HOSTS`
+(homepage validates the incoming Host against that exact-match list, so an unlisted name fails its host
+check), and issues the Coder cert with the public DNS SANs alongside the existing ones. The LAN cert
+keeps working — in public mode the browser never sees that cert at all, since Traefik presents real
+ones.
+
+On the Traefik machine (this repo cannot verify any of it — check it there):
+
+- A router per name pointing at `http://<this-box-lan-ip>:8080`.
+- The original Host header preserved. Traefik rewriting the Host matches no server block here and the
+  request comes back as `421`.
+- Any authentication is the Traefik router's middleware: the sidecar forwards what it receives and
+  authenticates nothing, so a name whose router skips the auth middleware reaches its container the same
+  way the LAN does.
+- DNS records for all four names. `gmktecbeast`, `coder.` and `kasm.` already resolve
+  (Cloudflare-proxied, verified from this box); `litellm.gmktecbeast.overeazy.io` had no record when
+  this was written, so check it before chasing a LiteLLM failure — a missing record shows up as a DNS
+  error, a Host that Traefik rewrote shows up as `421`.
+
+**Authelia.** `https://gmktecbeast.overeazy.io/` currently 302s to `https://authelia.overeazy.io/` —
+that zone already has an Authelia policy in front of it (checked from here; the policy itself lives on
+the Traefik side). Whether the new `coder.` / `kasm.` names are covered too is purely an Authelia-side
+config choice; nothing here adds or requires a policy. Note what happens if you do put LiteLLM behind
+it: LiteLLM authenticates from the `Authorization` header, and header-carried API traffic cannot pass an
+interactive sign-in, so every client breaks unless Authelia exempts that host — either leave `litellm.`
+outside any policy or add an explicit bypass. Then `LITELLM_MASTER_KEY` is the only credential in front
+of an endpoint that was a LAN-only proxy and is now reachable WAN-wide (see SECURITY.md). Workspace
+agents never reach Authelia either way: the template rewrites the agent URL to
+`http://host.docker.internal:3002`, the plain listener published via `CODER_AGENT_TUNNEL_PORT`, so agent
+traffic stays on the box.
+
+One runtime follow-up, done by hand once and not by compose: workspaces created before the public mode
+existed need `coder templates push` plus a restart to pick up the template's `coder_agent_url` variable
+(default `http://host.docker.internal:3002`), which is what keeps agents dialing the local plain
+listener whatever the access URL says. Kasm likewise stores its connection endpoints in its own setup
+database (first-boot wizard / admin UI), so that endpoint has to be updated there too or streams keep
+dialing the LAN address.
 
 ## LiteLLM model aliases
 
@@ -139,7 +226,7 @@ Edit aliases in `litellm/config.yaml`, then `docker compose restart litellm`.
 
 ```sh
 export PATH="$PATH:$HOME/bin"          # if you installed the coder CLI locally
-coder login http://<host>:3001
+coder login https://<host>:3001
 coder templates push ./templates/docker-dev --var image=evo-t1-dev:latest
 ```
 
@@ -179,7 +266,9 @@ Template variables: `image` (seeds the **Workspace image** dropdown default),
 `litellm_url` (default `http://host.docker.internal:4000/v1`),
 `litellm_key` (sensitive — pass the LiteLLM master key when creating a workspace),
 `grok_default_model` (default `agent`; the tool-capable Spark alias), `docker_socket`
-(optional).
+(optional), `coder_agent_url` (default `http://host.docker.internal:3002` — the URL the agent
+dials, kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent
+traffic through the reverse proxy; empty keeps the provider-rendered access URL).
 
 Autostart, autostop and TTLs are template *metadata*, so set them once with the CLI
 after pushing (they are deliberately absent from the Terraform, where they would
@@ -222,7 +311,7 @@ New Coder workspaces open a **Grok Build** terminal by default:
 - **First boot:** `http://<host>:3000` — run the install wizard once.
 - **After install:** the Kasm UI is on `http://<host>:4443` (change with `KASM_UI_PORT`).
 - The image ships default users (`admin@kasm.local` / `user@kasm.local`) — change them during the wizard.
-- Kasm is a privileged Docker-in-Docker container; it is the only privileged service in this stack. Keep it LAN-only (see SECURITY.md).
+- Kasm is a privileged Docker-in-Docker container; it is the only privileged service in this stack. Keep it LAN-only unless you have decided who is allowed to reach the public name (see SECURITY.md).
 
 ## Homepage dashboard
 
@@ -238,9 +327,11 @@ count, Ollama version), plus host CPU, memory, disk and CPU temperature in the h
   record of dashboard changes. Edit there and `docker compose restart homepage`. A new config file
   (`custom.css`, `kubernetes.yaml`, …) needs its own mount line in `docker-compose.yml`; the directory
   itself has to stay writable because the app creates `logs/` inside it.
-- **Wiring:** card `href`s are LAN URLs built from `STACK_LAN_HOST` and the port variables, so links
-  keep working when you change a port or re-detect the LAN IP. Widget `url`s use compose DNS
-  (`http://coder:3000`, `http://litellm:4000`, `http://ollama:11434`) and never leave the network.
+- **Wiring:** card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL`, which
+  default to LAN URLs built from `STACK_LAN_HOST` and the port variables, so links keep working when you
+  change a port or re-detect the LAN IP, and follow the public names when `STACK_PUBLIC_HOSTS` is set.
+  Widget `url`s use compose DNS (`http://coder:3000`, `http://litellm:4000`, `http://ollama:11434`) and
+  never leave the network.
 - **The docker socket stays unmounted.** Service status comes from each service's API, which avoids
   handing the dashboard a root-equivalent host credential.
 
@@ -261,9 +352,11 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 ## What not to run here
 
 - **Training / fine-tuning.** This is an inference + dev-workspace box, not a training rig.
-- **Public internet exposure.** All services assume a trusted LAN / VPN. The dashboard has an nginx
-  sidecar with a self-signed cert and its own password gate, which is still far short of a proper
-  reverse proxy with real TLS and SSO — and nothing in front of Coder, LiteLLM or Kasm at all.
+- **Public internet exposure beyond the optional mode above.** The default install assumes a trusted LAN
+  / VPN: the dashboard has an nginx sidecar with a self-signed cert and its own password gate, which is
+  far short of a real reverse proxy, and nothing at all stands in front of Coder, LiteLLM or Kasm.
+  Publishing those through Traefik is supported as an explicit, opt-in choice (section "Public
+  subdomains (optional)"), not as an incidental side effect of opening a port.
 - **Heavy video encode/render.** The Arc 140T is strong for LLM inference; do not plan media pipelines around it.
 - **Multi-tenant teams.** A handful of trusted users, not an org-wide SaaS.
 - **CI that downloads models.** No pipeline in this repo pulls 40 GB of weights — model pulls are a manual `./scripts/pull-models.sh`.
@@ -287,8 +380,9 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 │   └── tool-versions.env  # every version pin, single source of truth
 ├── litellm/config.yaml    # model aliases
 ├── proxy/homepage.conf    # nginx TLS terminator for the dashboard
+├── proxy/router.conf      # nginx Host-header router for the public subdomains (no cert)
 ├── scripts/
-│   ├── bootstrap.sh         # .env + secrets + access URL + dashboard cert + checks
+│   ├── bootstrap.sh         # .env + secrets + access URL + dashboard & Coder certs + checks
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
 │   └── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 └── templates/docker-dev   # Coder template (`coder templates push`)
@@ -328,7 +422,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
   1.15.5 in `coder:v2.36.6`) and Coder caps the version it was tested against, so the
   pair is an upstream pin. Builds still succeed; verify with a workspace build before
   acting on it. Nothing in this repo's compose file sets the provisioner's Terraform.
-- Workspace cannot reach LiteLLM → check `CODER_ACCESS_URL` is a LAN IP (not `localhost` / `127.0.0.1`) and that the workspace container can resolve `host.docker.internal`.
+- Workspace cannot reach LiteLLM → check `CODER_ACCESS_URL` is an `https://` URL (a LAN IP, or the public coder name in public mode — never `localhost` / `127.0.0.1`) and that the workspace container can resolve `host.docker.internal`. Agent traffic ignores that URL and dials `host.docker.internal:3002` (see the `coder_agent_url` template variable).
 - Grok profile missing in a fresh workspace → the startup script runs before VS Code starts; check the workspace agent logs, then `ls ~/.grok/bin`.
 - Kasm wizard gone after install → expected; use :4443. Reset Kasm by removing the `kasm-data` volume (destroys all Kasm config).
-- Coder login problems → the first registered account is the site admin; if the UI is unreachable, check `CODER_ACCESS_URL` matches the LAN IP you're browsing from.
+- Coder login problems → the first registered account is the site admin; if the UI is unreachable, check `CODER_ACCESS_URL` matches the address you're browsing from (LAN IP by default, the public coder name in public mode).

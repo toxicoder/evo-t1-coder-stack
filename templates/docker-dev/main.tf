@@ -281,9 +281,14 @@ resource "docker_container" "workspace" {
   name     = "coder-${data.coder_workspace_owner.me.name}-${lower(data.coder_workspace.me.name)}"
   hostname = data.coder_workspace.me.name
 
-  # Rewrite the agent init script so the agent reaches the Coder server via
-  # the Docker host gateway instead of localhost/127.0.0.1.
-  entrypoint = ["sh", "-c", replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal")]
+  # Two rewrites, both load-bearing, on the provider-rendered init script:
+  # the inner one points a loopback access URL at the Docker host gateway, and
+  # the outer one swaps a public access URL (CODER_ACCESS_URL behind Traefik
+  # and Authelia) for the plain listener on that gateway. Without the second,
+  # agents hairpin through Cloudflare and Authelia, which rejects their
+  # token-only requests; the Coder server has no agent-facing URL setting, so
+  # this is the only seam. Skipped when var.coder_agent_url is empty.
+  entrypoint = ["sh", "-c", var.coder_agent_url == "" ? replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal") : replace(replace(coder_agent.main.init_script, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal"), data.coder_workspace.me.access_url, var.coder_agent_url)]
 
   env = [
     "CODER_AGENT_TOKEN=${coder_agent.main.token}",
