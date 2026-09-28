@@ -7,6 +7,20 @@
 #     and carry those names in the Coder cert SANs
 #   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
+#   - build the golden workspace image if it is missing, then push the template
+#
+# The last two are the steps a fresh clone used to have to be told about in the
+# README. Both run at the very end, after every fast check, so a broken box still
+# fails quickly on the things that cost nothing to test. Neither is fatal: a build
+# that cannot download, or a template push with no Coder session yet, prints why and
+# lets bootstrap finish its "Next steps" output, because bootstrap is idempotent and
+# re-running it is the normal recovery path.
+#
+#   SKIP_DEV_IMAGE_BUILD=1 ./scripts/bootstrap.sh   # print-only, as before
+#   SKIP_TEMPLATE_PUSH=1   ./scripts/bootstrap.sh   # no coder templates push
+#
+# Both are read from the process environment only, never from .env — an .env that
+# silently disables provisioning steps would be unreadable to debug.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -344,22 +358,11 @@ else
   echo "warning: could not detect the docker group GID; set DOCKER_GID in .env if workspace creation fails with 'Cannot connect to the Docker daemon'."
 fi
 
-# The workspace template's default image is built locally, not pulled: the
-# Coder docker provider resolves it from the host image store. A workspace
-# created without it fails with an opaque Docker Hub pull error, so say so now.
 # Read .env by sed rather than sourcing it: the file is user-editable, and with
 # `set -e` a parse error or a stray command substitution there aborts bootstrap.
 env_get() {
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
 }
-
-dev_image="$(env_get DEV_IMAGE)"
-dev_image="${dev_image:-evo-t1-dev:latest}"
-if docker image inspect "${dev_image}" >/dev/null 2>&1; then
-  echo "workspace image ${dev_image} is present ($(docker image inspect --format '{{.Size}}' "${dev_image}" | awk '{printf "%.0f MB", $1/1024/1024}'))"
-else
-  echo "note: workspace image ${dev_image} is not built yet — run ./scripts/build-dev-image.sh before creating a workspace."
-fi
 
 # Agent mode (Grok Build, Cline, Roo) needs structured tool calls, and the Arc
 # Qwen2.5-Coder weights cannot produce them: they return the call as plain text
@@ -382,9 +385,70 @@ probe_agent_endpoint() {
 probe_agent_endpoint "SPARK1_OPENAI_URL" "$(env_get SPARK1_OPENAI_URL)"
 probe_agent_endpoint "SPARK2_OPENAI_URL" "$(env_get SPARK2_OPENAI_URL)"
 
+# ── Golden workspace image ───────────────────────────────────────────────────
+# The workspace template's default image is built locally, not pulled: the Coder
+# docker provider resolves it from the host image store. A workspace created without
+# it fails with an opaque Docker Hub pull error, so build it here instead of leaving
+# it as a README instruction someone has to notice.
+#
+# Last, and after every fast check above, because a cold build pulls several GB and
+# takes many minutes — anything cheaper should have already failed loudly. A failure
+# stays advisory: bootstrap is the script you re-run to recover, so aborting here
+# would cost the "Next steps" output below.
+dev_image="$(env_get DEV_IMAGE)"
+dev_image="${dev_image:-evo-t1-dev:latest}"
+if docker image inspect "${dev_image}" >/dev/null 2>&1; then
+  echo "workspace image ${dev_image} is present ($(docker image inspect --format '{{.Size}}' "${dev_image}" | awk '{printf "%.0f MB", $1/1024/1024}'))"
+elif [ -n "${SKIP_DEV_IMAGE_BUILD:-}" ]; then
+  echo "note: workspace image ${dev_image} is not built yet (SKIP_DEV_IMAGE_BUILD is set) — run ./scripts/build-dev-image.sh before creating a workspace."
+else
+  echo "building workspace image ${dev_image} — several GB of downloads, this takes a few minutes ..."
+  build_rc=0
+  DEV_IMAGE_TAG="${dev_image}" ./scripts/build-dev-image.sh || build_rc=$?
+  if [ "${build_rc}" != "0" ]; then
+    # Almost always a pinned upstream download that failed or no internet; the build
+    # script already printed the layer that stopped.
+    echo "warning: the workspace image ${dev_image} did not build (exit ${build_rc}) — workspaces cannot start until it exists. Retry with: ./scripts/build-dev-image.sh"
+  fi
+fi
+
+# The DinD sidecar's daemon image is resolved from the host store by
+# `data "docker_image"` in templates/docker-dev, which never pulls — that is the
+# behaviour that keeps a LAN box with no internet from hanging mid-apply, so the
+# pull has to happen here instead. Without it, enabling the toggle on a fresh box
+# fails the plan with "did not find docker image 'docker:29.8.1-dind'". Advisory
+# on failure: DinD is opt-in, so an offline box still gets a working stack.
+DIND_IMAGE="$(sed -nE 's/^[[:space:]]*dind_image[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' \
+  templates/docker-dev/main.tf | head -n 1)"
+DIND_IMAGE="${DIND_IMAGE:-docker:29.8.1-dind}"
+if docker image inspect "${DIND_IMAGE}" >/dev/null 2>&1; then
+  echo "docker-in-docker image ${DIND_IMAGE} is present"
+else
+  echo "pulling docker-in-docker image ${DIND_IMAGE} ..."
+  if docker pull "${DIND_IMAGE}" >/dev/null 2>&1; then
+    echo "pulled ${DIND_IMAGE}"
+  else
+    echo "warning: ${DIND_IMAGE} did not pull — workspaces with docker-in-docker enabled will fail to build until it is in the local image store (retry: docker pull ${DIND_IMAGE})."
+  fi
+fi
+
+# ── Template push ────────────────────────────────────────────────────────────
+# Non-fatal by design: the push needs a coder CLI on PATH and a logged-in session,
+# neither of which a fresh clone has, and push-template.sh exits 0 with a one-line
+# reason when it cannot run. A non-zero here means a push was attempted and failed.
+if [ -n "${SKIP_TEMPLATE_PUSH:-}" ]; then
+  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run ./scripts/push-template.sh after logging in."
+else
+  push_rc=0
+  ./scripts/push-template.sh || push_rc=$?
+  if [ "${push_rc}" != "0" ]; then
+    echo "warning: pushing templates/docker-dev failed (exit ${push_rc}) — retry with: ./scripts/push-template.sh"
+  fi
+fi
+
 echo
 echo "Next steps:"
-echo "  1. ./scripts/build-dev-image.sh   # one-time polyglot workspace image"
+echo "  1. ./scripts/build-dev-image.sh   # one-time polyglot workspace image (re-run if the build above failed)"
 echo "  2. docker compose up -d"
 # Public mode wins for the two browser-facing steps: those names resolve from
 # anywhere and Traefik serves them a real certificate, so printing the LAN form
@@ -392,7 +456,7 @@ echo "  2. docker compose up -d"
 coder_reach_url="${public_coder_url:-https://<host>:3001}"
 dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
-echo "  4. coder login ${coder_reach_url} && coder templates push ./templates/docker-dev --var image=${dev_image}"
+echo "  4. coder login ${coder_reach_url} && ./scripts/push-template.sh   # pushes templates/docker-dev (image=${dev_image})"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
 echo "  6. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"

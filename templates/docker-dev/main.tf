@@ -75,6 +75,43 @@ data "coder_parameter" "workspace_image" {
   }
 }
 
+# Docker-in-docker is opt-in because it costs a privileged container: the inner
+# daemon mounts /var/lib/docker on its own volume and needs cgroup/namespace
+# control the workspace itself never gets. Off by default so a normal workspace
+# stays as unprivileged as it was before this existed.
+data "coder_parameter" "dind" {
+  name         = "dind"
+  display_name = "Docker-in-docker"
+  description  = "Provision a dedicated privileged docker:29.8.1-dind sidecar for this workspace, on a network private to it, and point DOCKER_HOST at that daemon. docker build, docker run and docker compose then work inside the workspace. The daemon image is never pulled by Terraform, so docker:29.8.1-dind must already exist in the host image store. Turn this on only when you actually need to build containers: privileged means the workspace can reach the host kernel."
+  type         = "bool"
+  # "radio" is only legal for a bool once options exist — the provider errors
+  # with: "form_type" attribute="radio" is not supported for "type"="bool" when
+  # options do not exist, choose one of [checkbox switch]. The option blocks
+  # below are what make the yes/no wording possible; switch would work without
+  # them but renders a bare on/off toggle with no description per choice.
+  form_type = "radio"
+  # Toggling this changes topology (a network, a volume and a second container
+  # appear or vanish), so an in-place edit would leave a half-wired workspace.
+  # A rebuild is the honest answer; the preset makes redoing it one click.
+  mutable = false
+  default = tostring(var.dind)
+  order   = 2
+
+  # Values must stay the literal strings "true"/"false": .value is always a
+  # string, and the preset below has to set the same value to match.
+  option {
+    name        = "Yes"
+    value       = "true"
+    description = "Provision the privileged DinD sidecar and point DOCKER_HOST at it."
+  }
+
+  option {
+    name        = "No"
+    value       = "false"
+    description = "No sidecar; the workspace sees no Docker daemon at all."
+  }
+}
+
 # Presets collapse the create form to one click. Keys here are parameter *names*
 # (display_name is UI-only and would be ignored).
 data "coder_workspace_preset" "ai_workspace" {
@@ -93,6 +130,19 @@ data "coder_workspace_preset" "minimal" {
 
   parameters = {
     (data.coder_parameter.workspace_image.name) = "ubuntu:24.04"
+  }
+}
+
+# Separate from ai_workspace rather than a variant of it: this preset exists to
+# be picked when someone wants to build containers, and it turns on a privileged
+# sidecar, so it should be its own visible choice, not a default.
+data "coder_workspace_preset" "dind_workspace" {
+  name        = "AI workspace + DinD"
+  description = "Golden image plus a privileged docker:29.8.1-dind sidecar, for workspaces that build or run containers themselves."
+
+  parameters = {
+    (data.coder_parameter.workspace_image.name) = "evo-t1-dev:latest"
+    (data.coder_parameter.dind.name)            = "true"
   }
 }
 
@@ -167,7 +217,7 @@ resource "coder_agent" "main" {
 
   # These environment variables allow you to make Git commits right away
   # after creating a workspace. They take precedence over ~/.gitconfig.
-  env = {
+  env = merge({
     GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_AUTHOR_EMAIL    = "${data.coder_workspace_owner.me.email}"
     GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
@@ -178,7 +228,12 @@ resource "coder_agent" "main" {
     LITELLM_BASE_URL = var.litellm_url
     # Local model aliases, for shell prompts, Makefiles and CI overrides.
     GROK_DEFAULT_MODEL = var.grok_default_model
-  }
+    },
+    # Only present when DinD is on: a DOCKER_HOST that pointed at a daemon that
+    # does not exist would make every docker command in the workspace fail with
+    # a confusing connection error instead of the plain "command not found".
+    local.dind_enabled ? { DOCKER_HOST = local.dind_host } : {},
+  )
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,
@@ -235,6 +290,13 @@ resource "coder_metadata" "workspace_info" {
     value = var.grok_default_model
   }
 
+  # Which topology this workspace actually got. Without it the only way to tell
+  # is running `docker version` inside the workspace and reading the failure.
+  item {
+    key   = "docker-in-docker"
+    value = local.dind_enabled ? "on (${local.dind_host})" : "off"
+  }
+
   item {
     key       = "litellm key"
     value     = var.litellm_key
@@ -251,6 +313,180 @@ resource "docker_volume" "home" {
   }
 
   # Add labels in Docker to keep track of orphan resources.
+  labels {
+    label = "coder.owner"
+    value = data.coder_workspace_owner.me.name
+  }
+
+  labels {
+    label = "coder.owner_id"
+    value = data.coder_workspace_owner.me.id
+  }
+
+  labels {
+    label = "coder.workspace_id"
+    value = data.coder_workspace.me.id
+  }
+
+  labels {
+    label = "coder.workspace_name"
+    value = lower(data.coder_workspace.me.name)
+  }
+}
+
+# DinD topology, all count-gated so a workspace that leaves the toggle off
+# provisions exactly what it provisioned before this feature existed.
+locals {
+  # Only the exact string "true" enables it. Erring towards disabled is
+  # deliberate: what the gate protects is a privileged container.
+  dind_enabled = data.coder_parameter.dind.value == "true"
+
+  dind_image = "docker:29.8.1-dind"
+  dind_alias = "dind"
+  dind_host  = "tcp://${local.dind_alias}:2375"
+  # Same shape as docker_volume.home's name: coder- prefix plus the workspace id.
+  dind_network = "coder-${data.coder_workspace.me.id}-dind"
+  # Separate from the network name so `docker volume ls` reads unambiguously.
+  dind_store   = "coder-${data.coder_workspace.me.id}-dind-lib"
+  dind_sidecar = "coder-${data.coder_workspace.me.id}-dind-sidecar"
+}
+
+# Inspects the local image store and never pulls, which is what this stack wants
+# (see scripts/build-dev-image.sh: a registry pull at workspace-create time is
+# untestable on a LAN box with no internet). Chosen over the docker_image
+# resource with keep_locally, which pulls on a miss *mid-apply* and would leave
+# a half-built workspace behind; this fails at plan time, before anything is
+# created, with "did not find docker image 'docker:29.8.1-dind'". Counter that
+# with: docker pull docker:29.8.1-dind
+data "docker_image" "dind" {
+  count = local.dind_enabled ? 1 : 0
+  name  = local.dind_image
+}
+
+# Per-workspace, not shared: two workspaces on one network could reach each
+# other's daemon and therefore each other's builds.
+#
+# `internal` stays false (the provider default). An internal network gets no
+# gateway route, so the host-gateway entry on the workspace container below
+# would resolve but not answer — verified from a workspace-style container on a
+# plain bridge network, where host.docker.internal resolves to the bridge
+# gateway and the Coder server's plain listener on 3002 accepts the connection.
+# Making this internal would strand the agent and the workspace would never
+# become ready.
+resource "docker_network" "dind" {
+  count  = local.dind_enabled ? 1 : 0
+  name   = local.dind_network
+  driver = "bridge"
+
+  labels {
+    label = "coder.owner"
+    value = data.coder_workspace_owner.me.name
+  }
+
+  labels {
+    label = "coder.owner_id"
+    value = data.coder_workspace_owner.me.id
+  }
+
+  labels {
+    label = "coder.workspace_id"
+    value = data.coder_workspace.me.id
+  }
+
+  labels {
+    label = "coder.workspace_name"
+    value = lower(data.coder_workspace.me.name)
+  }
+}
+
+# The inner daemon's image store. Without this every workspace start re-pulls
+# every image the builds used, which defeats the point on a slow link.
+# Not gated on start_count, so it survives a stop and is reused by the next
+# start; it is torn down only when the workspace is deleted or rebuilt with
+# DinD off.
+resource "docker_volume" "dind_store" {
+  count = local.dind_enabled ? 1 : 0
+  name  = local.dind_store
+
+  # Same protection as docker_volume.home: a rebuild must never lose the store.
+  lifecycle {
+    ignore_changes = all
+  }
+
+  labels {
+    label = "coder.owner"
+    value = data.coder_workspace_owner.me.name
+  }
+
+  labels {
+    label = "coder.owner_id"
+    value = data.coder_workspace_owner.me.id
+  }
+
+  labels {
+    label = "coder.workspace_id"
+    value = data.coder_workspace.me.id
+  }
+
+  labels {
+    label = "coder.workspace_name"
+    value = lower(data.coder_workspace.me.name)
+  }
+}
+
+# Privileged by necessity: the inner daemon needs mount, cgroup and network
+# namespace control (it came up as storage-driver=overlayfs on cgroupv2=2 here).
+# Gated on start_count as well as the toggle, exactly like the workspace
+# container, so a stopped workspace leaves no privileged daemon running.
+resource "docker_container" "dind" {
+  count = local.dind_enabled ? data.coder_workspace.me.start_count : 0
+  name  = local.dind_sidecar
+  # The data source's id, not the tag: create_docker_container pulls whenever a
+  # tag is not already resolvable, so passing the sha256 id is what keeps the
+  # "never pulls" promise of the data source all the way through apply.
+  image      = data.docker_image.dind[0].id
+  privileged = true
+
+  # A private cgroup namespace keeps the inner daemon's view of /sys/fs/cgroup
+  # consistent with what it sees as its own cgroup; host would let it read the
+  # whole host hierarchy.
+  cgroupns_mode = "private"
+  restart       = "unless-stopped"
+
+  # Must be the EMPTY value, not a size: DOCKER_TLS_CERTDIR="" is what makes the
+  # entrypoint skip TLS and serve plain tcp://0.0.0.0:2375. DOCKER_TLS_CERTSIZE=0
+  # does not do this — the daemon then listens on 2376 with TLS only and the
+  # client fails with "Cannot connect to the Docker daemon at tcp://dind:2375".
+  # Docker logs a deprecation warning about unauthenticated TCP; that is
+  # acceptable because 2375 is reachable only from this workspace's network.
+  env = ["DOCKER_TLS_CERTDIR="]
+
+  # The provider takes MBs here despite the Docker API taking bytes: 1024
+  # lands as HostConfig.ShmSize = 1073741824 (1 GiB), which inner builds want.
+  shm_size = 1024
+
+  volumes {
+    container_path = "/var/lib/docker"
+    volume_name    = docker_volume.dind_store[0].name
+    read_only      = false
+  }
+
+  # The alias, not the image's own "docker" hostname: Docker's embedded DNS
+  # answers for network aliases and container names, so linking by hostname
+  # failed here with "lookup docker on 127.0.0.11:53: server misbehaving".
+  networks_advanced {
+    name    = docker_network.dind[0].name
+    aliases = [local.dind_alias]
+  }
+
+  healthcheck {
+    test         = ["CMD-SHELL", "docker version >/dev/null 2>&1 || exit 1"]
+    interval     = "15s"
+    timeout      = "5s"
+    start_period = "10s"
+    retries      = 5
+  }
+
   labels {
     label = "coder.owner"
     value = data.coder_workspace_owner.me.name
@@ -303,6 +539,35 @@ resource "docker_container" "workspace" {
     container_path = "/home/coder"
     volume_name    = docker_volume.home.name
     read_only      = false
+  }
+
+  # Only the sidecar reference matters: it makes Terraform attach the daemon to
+  # the network before starting the workspace, so `dind` already resolves in the
+  # embedded DNS the moment someone types a docker command. The reference is to
+  # a count-gated resource, so it is an empty list — and a no-op — when DinD is
+  # off. The daemon's own health is reported by its healthcheck instead of
+  # gating startup; nothing in startup.sh.tftpl talks to Docker.
+  depends_on = [docker_container.dind]
+
+  # Left empty when DinD is off, which leaves network_mode = "bridge" (the
+  # provider default) as the only attachment — i.e. today's behaviour, and a
+  # byte-identical plan. Once a networks_advanced block appears the provider
+  # stops letting network_mode alone do the attaching, so bridge has to be
+  # listed explicitly next to the DinD network rather than assumed. Verified
+  # against the host daemon: bridge + a second network both attach, and the
+  # host-gateway entry above still lands in /etc/hosts.
+  dynamic "networks_advanced" {
+    for_each = local.dind_enabled ? [1] : []
+    content {
+      name = "bridge"
+    }
+  }
+
+  dynamic "networks_advanced" {
+    for_each = local.dind_enabled ? [1] : []
+    content {
+      name = docker_network.dind[0].name
+    }
   }
 
   # Add labels in Docker to keep track of orphan resources.

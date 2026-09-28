@@ -71,11 +71,21 @@ Key properties:
 git clone https://github.com/toxicoder/evo-t1-coder-stack.git
 cd evo-t1-coder-stack
 cp .env.sample .env
-./scripts/bootstrap.sh    # generates local secrets, fills CODER_ACCESS_URL
+./scripts/bootstrap.sh    # secrets, CODER_ACCESS_URL, certs; also builds the golden
+                          # image and pulls docker:29.8.1-dind when either is missing
 docker compose up -d
-./scripts/build-dev-image.sh  # one-time: the polyglot workspace image (~a few GB)
 ./scripts/pull-models.sh  # pulls OLLAMA_MODELS (first run is a big download)
 ```
+
+`bootstrap.sh` also builds `evo-t1-dev:latest` when it is missing (several GB of
+downloads, so a cold run takes minutes), pulls `docker:29.8.1-dind` for the opt-in
+workspace DinD sidecar, and pushes the workspace template once a Coder session exists.
+None of those is fatal: a build that cannot download, or a push with nobody logged in,
+prints why and bootstrap still finishes. Both are retryable on their own —
+`./scripts/build-dev-image.sh` and `./scripts/push-template.sh` (section "Coder
+workspace template" below). `SKIP_DEV_IMAGE_BUILD=1` / `SKIP_TEMPLATE_PUSH=1` restore the
+old print-only behaviour; bootstrap reads them from the process environment only, never
+from `.env`.
 
 Then:
 
@@ -98,7 +108,9 @@ Then:
    The equivalent HTTP call is `POST /api/v2/users/first`, and `coder server
    create-admin-user` does the same from the server side. All three work on
    v2.36 — the browser is convenience.
-2. Push the workspace template (section below).
+2. Push the workspace template (section below) — `./scripts/push-template.sh` does it
+   once you are logged in, which is why bootstrap runs it for you and says why it
+   skipped when you are not.
 3. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
 4. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
 
@@ -231,9 +243,26 @@ Edit aliases in `litellm/config.yaml`, then `docker compose restart litellm`.
 
 ## Coder workspace template
 
+The push happens on its own: `bootstrap.sh` calls `./scripts/push-template.sh`, which
+pushes when a `coder` CLI, a running coder container and a logged-in session all exist,
+and otherwise prints a one-line reason and exits 0 (a fresh clone has none of the three
+yet). After logging in, the same script is the manual path:
+
 ```sh
 export PATH="$PATH:$HOME/bin"          # if you installed the coder CLI locally
 coder login https://<host>:3001
+./scripts/push-template.sh             # pushes templates/docker-dev as `docker-dev`
+```
+
+It reads `.env` for the variables it passes: `--var image=` from `DEV_IMAGE`,
+`--var litellm_key=` from `LITELLM_MASTER_KEY` (only when that key is real, never the
+sample placeholder) and `--var coder_agent_url` only if `.env` defines it at all. It then
+confirms an **active** template version — a push can exit 0 and still leave the template
+inactive if its Terraform run failed, which shows up as the template missing from the
+create dropdown. The equivalent raw command, for reference or for pushing a tag `.env`
+does not carry:
+
+```sh
 coder templates push ./templates/docker-dev --var image=evo-t1-dev:latest
 ```
 
@@ -242,9 +271,10 @@ coder templates push ./templates/docker-dev --var image=evo-t1-dev:latest
 resolves that name from the local image store and never attempts a registry pull,
 which is what keeps workspace creation working with no internet.
 
-The create form shows a **Workspace image** dropdown and two presets, *AI workspace*
-(golden image, selected by default) and *Minimal shell* (bare Ubuntu, for when the
-golden image is mid-rebuild). `--var image=` seeds the dropdown's default and is also
+The create form shows a **Workspace image** dropdown and three presets: *AI workspace*
+(golden image, selected by default), *Minimal shell* (bare Ubuntu, for when the
+golden image is mid-rebuild), and *AI workspace + DinD* (golden image plus a
+privileged Docker daemon, below). `--var image=` seeds the dropdown's default and is also
 injected as its own option, so a custom tag still reaches the container while the form
 stays honest about what it is building.
 
@@ -253,7 +283,10 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
 - the golden image from `images/dev/Dockerfile` (override with the `image`
   variable) — Node 22 + 24, Python 3.12 + 3.11, Go 1.24, Bazelisk/buildifier,
   Terraform/tflint/terragrunt, protoc and its Go plugins, kubectl/helm/kubeconform,
-  shfmt/shellcheck/bats/ruff/mypy/prettier, the Coder CLI, and the five MCP servers
+  shfmt/shellcheck/bats/ruff/mypy/prettier, the Coder CLI, the Docker **client**
+  toolchain (`docker`, `docker buildx`, `docker compose` as CLI plugins under
+  `/usr/local/lib/docker/cli-plugins` — no daemon: the build asserts `dockerd`,
+  `containerd`, `runc` and `docker-proxy` are absent), and the five MCP servers
   pre-baked so a workspace needs no network to start a session
 - persistent per-workspace home volume
 - `host.docker.internal` → host-gateway, so workspaces reach the Coder server and LiteLLM
@@ -263,11 +296,11 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
 - `startup_script_behavior = "blocking"`, so a workspace only reports *ready* once the
   toolchain is genuinely staged — no opening an editor mid-install
 - in-IDE apps (VS Code, web terminal, port forwarding, SSH helper) via `display_apps`,
-  memory and disk usage gauges, seven `coder stat` metadata tiles, and a **LiteLLM**
+  memory and disk usage gauges, six `coder stat` metadata tiles, and a **LiteLLM**
   tile that health-checks the proxy and is visible only to the workspace owner
 - `coder_metadata.workspace_info` shows the image, the LiteLLM URL, the default Grok
-  model and (redacted) which key is wired in, so a misconfigured workspace is visible
-  in the UI without shell access
+  model, whether DinD is `on (tcp://dind:2375)` or `off`, and (redacted) which key is
+  wired in, so a misconfigured workspace is visible in the UI without shell access
 
 Template variables: `image` (seeds the **Workspace image** dropdown default),
 `litellm_url` (default `http://host.docker.internal:4000/v1`),
@@ -275,7 +308,37 @@ Template variables: `image` (seeds the **Workspace image** dropdown default),
 `grok_default_model` (default `agent`; the tool-capable Spark alias), `docker_socket`
 (optional), `coder_agent_url` (default `http://host.docker.internal:3002` — the URL the agent
 dials, kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent
-traffic through the reverse proxy; empty keeps the provider-rendered access URL).
+traffic through the reverse proxy; empty keeps the provider-rendered access URL),
+`dind` (default `false`; turns on the per-workspace privileged daemon described below).
+
+**Docker-in-docker (opt-in).** The create form's **Docker-in-docker** Yes/No question
+(preset *AI workspace + DinD*, template variable `dind`) provisions, per workspace, a
+privileged `docker:29.8.1-dind` sidecar on a bridge network private to that workspace
+(`coder-<wsid>-dind`, network alias `dind`), attaches the workspace to both `bridge` and
+that network, and injects `DOCKER_HOST=tcp://dind:2375` into the agent
+environment — absent when the toggle is off, so `docker` there fails the normal way
+rather than against a daemon that does not exist. Then `docker build`, `docker run` and
+`docker compose` work inside the workspace — the *AI workspace + DinD* preset is the
+usual way to get this shape, since the client binaries ship only in the golden image.
+Details that matter:
+
+- The toggle is `mutable = false`: turning it on or off means a workspace **rebuild**,
+  because a network, a volume and a second container appear or vanish. The preset makes
+  that one click.
+- The daemon's `/var/lib/docker` lives on its own volume (`coder-<wsid>-dind-lib`), so a
+  workspace stop/start does not re-pull every image the builds used.
+- `DOCKER_TLS_CERTDIR=` is deliberately empty, so the daemon serves plain
+  `tcp://0.0.0.0:2375` with no TLS and no auth. Nothing is published to the host, and
+  2375 is reachable only from that workspace's own network — which is also why the
+  network is not `internal`: an internal network has no NAT and would break
+  `host.docker.internal`, stranding the agent. See SECURITY.md.
+- The daemon image is resolved with `data "docker_image"`, which inspects the host store
+  and **never pulls**, so `docker:29.8.1-dind` must already be there. `bootstrap.sh`
+  pre-arms it; manually: `docker pull docker:29.8.1-dind`. A missing image fails at
+  **plan** time — before anything is created — with
+  `did not find docker image 'docker:29.8.1-dind'`.
+- `DOCKER_CLI_VERSION` in `images/dev/tool-versions.env` and the `docker:29.8.1-dind` tag
+  in `templates/docker-dev/main.tf` are the same engine line; bump them together.
 
 Autostart, autostop and TTLs are template *metadata*, so set them once with the CLI
 after pushing (they are deliberately absent from the Terraform, where they would
@@ -318,7 +381,10 @@ New Coder workspaces open a **Grok Build** terminal by default:
 - **First boot:** `http://<host>:3000` — run the install wizard once.
 - **After install:** the Kasm UI is on `http://<host>:4443` (change with `KASM_UI_PORT`).
 - The image ships default users (`admin@kasm.local` / `user@kasm.local`) — change them during the wizard.
-- Kasm is a privileged Docker-in-Docker container; it is the only privileged service in this stack. Keep it LAN-only unless you have decided who is allowed to reach the public name (see SECURITY.md).
+- Kasm is a privileged Docker-in-Docker container and the only **always-on** privileged
+  service in this stack; the other privileged container is the opt-in workspace DinD
+  sidecar (section "Coder workspace template"). Keep Kasm LAN-only unless you have
+  decided who is allowed to reach the public name (see SECURITY.md).
 
 ## Homepage dashboard
 
@@ -396,7 +462,8 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 │   ├── bootstrap.sh         # .env + secrets + access URL + dashboard & Coder certs + checks
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
-│   └── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
+│   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
+│   └── push-template.sh     # coder templates push of templates/docker-dev (bootstrap calls it)
 └── templates/docker-dev   # Coder template (`coder templates push`)
     ├── main.tf
     ├── coder.tf
@@ -426,6 +493,25 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 - Image missing tools, or the build aborts mid-layer → a pinned download returned an
   error; the layer prints `curl: (22)` and stops rather than shipping a partial image.
   Check the version in `images/dev/tool-versions.env` against the upstream release.
+- `docker` → `command not found` inside a workspace → that container was built from an
+  image predating the Docker client toolchain (or from the bare-Ubuntu *Minimal shell*
+  preset). Rebuild the image with `./scripts/build-dev-image.sh`, then rebuild the
+  workspace — the image is fixed at create time.
+- Workspace `docker` commands fail with `Cannot connect to the Docker daemon at
+  tcp://dind:2375` → the sidecar is unhealthy, or its image was never pulled, or the
+  workspace was created with DinD off (`DOCKER_HOST` is only injected when it is on —
+  check the workspace's *docker-in-docker* metadata tile). On the stack host:
+
+  ```sh
+  docker inspect --format '{{.State.Health.Status}}' coder-<wsid>-dind-sidecar
+  docker logs --tail 100 coder-<wsid>-dind-sidecar
+  docker pull docker:29.8.1-dind
+  ```
+
+  `no such container` from the first two means the workspace has no sidecar at all.
+  An absent image fails the workspace build at **plan** time — before anything is
+  created — with `did not find docker image 'docker:29.8.1-dind'`, in the workspace's
+  build log rather than anywhere inside it.
 - `coder templates push` complains about the lockfile → commit
   `templates/docker-dev/.terraform.lock.hcl`; regenerate with
   `terraform -chdir=templates/docker-dev init -backend=false`.

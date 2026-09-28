@@ -73,7 +73,10 @@ ARG NODE_VERSION_DEFAULT=24 \
     SHFMT_ASSET_VERSION=3.10.0 \
     KUBECONFORM_VERSION=v0.8.0 \
     HELM_VERSION=v3.15.0 \
-    KUBECTL_VERSION=v1.30.14
+    KUBECTL_VERSION=v1.30.14 \
+    DOCKER_CLI_VERSION=29.8.1 \
+    BUILDX_VERSION=v0.37.1 \
+    COMPOSE_VERSION=v5.5.1
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -306,6 +309,39 @@ RUN case "${TARGETARCH}" in \
     && tar -xzf /tmp/coder.tgz -C /tmp/coder-cli \
     && install -m 0755 /tmp/coder-cli/coder /usr/local/bin/coder \
     && rm -rf /tmp/coder.tgz /tmp/coder-cli \
+    # Docker client toolchain — the *client* only, so a workspace can drive a
+    # Docker daemon. download.docker.com's static tarball also ships dockerd,
+    # containerd, containerd-shim-runc-v2, docker-proxy and runc, so it must
+    # never be unpacked wholesale: selecting the docker/docker member alone is
+    # what keeps the daemon out of this image (it runs as the per-workspace
+    # docker:29.8.1-dind sidecar that templates/docker-dev provisions). The
+    # selected member is a static ELF, so noble needs no extra libs for it.
+    #
+    # No `ENV DOCKER_HOST`: the endpoint differs per workspace (sidecar vs. a
+    # mounted host socket), so baking one here would break the host-socket case;
+    # Terraform sets it instead.
+    #
+    # The upstream arch spellings differ — download.docker.com and compose name
+    # their assets x86_64/aarch64, buildx uses amd64/arm64 — so DOCKER_ARCH is
+    # derived from the ${ARCH} already validated above, not from TARGETARCH again.
+    && case "${ARCH}" in amd64) DOCKER_ARCH=x86_64 ;; arm64) DOCKER_ARCH=aarch64 ;; esac \
+    && fetch /tmp/docker-cli.tgz "https://download.docker.com/linux/static/stable/${DOCKER_ARCH}/docker-${DOCKER_CLI_VERSION}.tgz" \
+    && mkdir -p /tmp/docker-cli \
+    && tar -xzf /tmp/docker-cli.tgz --strip-components=1 -C /tmp/docker-cli docker/docker \
+    && install -m 0755 /tmp/docker-cli/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker-cli.tgz /tmp/docker-cli \
+    # buildx and compose are docker CLI *plugins*, which the CLI discovers by
+    # exact file name under /usr/local/lib/docker/cli-plugins — a differently
+    # named copy there is silently invisible to `docker buildx`. Both are
+    # client-only commands, so they answer version output with no daemon
+    # reachable and are usable as build-time smoke checks.
+    && install -d -m 0755 /usr/local/lib/docker/cli-plugins \
+    && fetch /usr/local/lib/docker/cli-plugins/docker-buildx "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-${ARCH}" \
+    && fetch /usr/local/lib/docker/cli-plugins/docker-compose "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-${DOCKER_ARCH}" \
+    && chmod 0755 /usr/local/lib/docker/cli-plugins/docker-buildx /usr/local/lib/docker/cli-plugins/docker-compose \
+    # The plugin dir is root-owned while workspaces run as coder, so the tree has
+    # to stay world-readable/executable or the agent's user cannot run a build.
+    && chmod -R a+rX /usr/local/lib/docker \
     # protoc — the official zip carries both the binary and the well-known .proto
     # includes, so it unpacks under /usr/local/protoc (PROTOC_HOME) and only bin/
     # is linked out; the include tree must stay put for protoc-gen-go.
@@ -340,7 +376,17 @@ RUN case "${TARGETARCH}" in \
     && terragrunt --version \
     && gh --version \
     && coder --version \
-    && protoc --version
+    && protoc --version \
+    && docker --version \
+    && docker buildx version \
+    && docker compose version \
+    # Negative check: a layer that unpacked the whole tarball passes every
+    # positive check above and still ships a daemon binary in the image, so prove
+    # the rest of the archive stayed out — the dind sidecar owns the daemon.
+    && test ! -x /usr/local/bin/dockerd \
+    && test ! -x /usr/local/bin/containerd \
+    && test ! -x /usr/local/bin/runc \
+    && test ! -x /usr/local/bin/docker-proxy
 
 # ── Go 1.24 + protoc/stringer plugins ───────────────────────────────────────
 # Official tarball, not the golang-1.24 apt package: the Debian package puts its
