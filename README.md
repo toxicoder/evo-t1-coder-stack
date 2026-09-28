@@ -125,9 +125,16 @@ Everything above is the default, LAN-only shape. One extra `.env` variable, `STA
 | Name | `proxy/router.conf` upstream |
 |---|---|
 | `gmktecbeast.overeazy.io` | `homepage:3000` |
-| `coder.gmktecbeast.overeazy.io` | `coder:3000` — plain listener |
-| `kasm.gmktecbeast.overeazy.io` | `https://kasm:4443` (`proxy_ssl_verify off`) |
-| `litellm.gmktecbeast.overeazy.io` | `litellm:4000` |
+| `coder-gmktecbeast.overeazy.io` | `coder:3000` — plain listener |
+| `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (`proxy_ssl_verify off`) |
+| `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
+
+Every name is **one label under the zone** and each service prefix is joined with a **hyphen**. A
+wildcard certificate covers exactly one label, so the dotted two-label form (`coder.gmktecbeast.`) has
+no certificate at the public edge: the browser aborts the handshake with
+`ERR_SSL_VERSION_OR_CIPHER_MISMATCH` and Traefik never sees the request. Verified against this box —
+`coder-gmktecbeast.overeazy.io` completes the handshake with the zone's `*.overeazy.io` cert, while
+`coder.gmktecbeast.overeazy.io` fails with a TLS alert 40 and presents no certificate at all.
 
 TLS terminates at the main Traefik on the other machine, which forwards plain HTTP to a second nginx
 sidecar on this box: compose service `router`, published `${STACK_PROXY_HTTP_PORT:-8080}:8080`, config
@@ -141,7 +148,7 @@ self-signed cert and `https://<lan-ip>:3001` still serves Coder's own TLS listen
 To enable it, set the four names in `.env`:
 
 ```text
-STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder.gmktecbeast.overeazy.io,kasm.gmktecbeast.overeazy.io,litellm.gmktecbeast.overeazy.io
+STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io
 ```
 
 and re-run:
@@ -168,20 +175,20 @@ On the Traefik machine (this repo cannot verify any of it — check it there):
 - Any authentication is the Traefik router's middleware: the sidecar forwards what it receives and
   authenticates nothing, so a name whose router skips the auth middleware reaches its container the same
   way the LAN does.
-- DNS records for all four names. `gmktecbeast`, `coder.` and `kasm.` already resolve
-  (Cloudflare-proxied, verified from this box); `litellm.gmktecbeast.overeazy.io` had no record when
-  this was written, so check it before chasing a LiteLLM failure — a missing record shows up as a DNS
-  error, a Host that Traefik rewrote shows up as `421`.
+- DNS records for all four names, each one label deep. The three service names
+  (`coder-`, `kasm-`, `litellm-gmktecbeast`) and the `gmktecbeast` apex resolve Cloudflare-proxied and
+  complete the TLS handshake, verified from this box. A missing record shows up as a DNS error, and a
+  Host that Traefik rewrote shows up as `421`.
 
-**Authelia.** `https://gmktecbeast.overeazy.io/` currently 302s to `https://authelia.overeazy.io/` —
-that zone already has an Authelia policy in front of it (checked from here; the policy itself lives on
-the Traefik side). Whether the new `coder.` / `kasm.` names are covered too is purely an Authelia-side
-config choice; nothing here adds or requires a policy. Note what happens if you do put LiteLLM behind
-it: LiteLLM authenticates from the `Authorization` header, and header-carried API traffic cannot pass an
-interactive sign-in, so every client breaks unless Authelia exempts that host — either leave `litellm.`
-outside any policy or add an explicit bypass. Then `LITELLM_MASTER_KEY` is the only credential in front
-of an endpoint that was a LAN-only proxy and is now reachable WAN-wide (see SECURITY.md). Workspace
-agents never reach Authelia either way: the template rewrites the agent URL to
+**Authelia.** `https://gmktecbeast.overeazy.io/` and the three hyphenated service names 302 to
+`https://authelia.overeazy.io/` — those zones already have an Authelia policy in front of them (checked
+from here; the policy itself lives on the Traefik side). Coverage of a newly-named host is purely an
+Authelia-side config choice; nothing here adds or requires a policy. Note what happens if you do put
+LiteLLM behind it: LiteLLM authenticates from the `Authorization` header, and header-carried API traffic
+cannot pass an interactive sign-in, so every client breaks unless Authelia exempts that host — either
+leave `litellm-gmktecbeast` outside any policy or add an explicit bypass. Then `LITELLM_MASTER_KEY` is
+the only credential in front of an endpoint that was a LAN-only proxy and is now reachable WAN-wide (see
+SECURITY.md). Workspace agents never reach Authelia either way: the template rewrites the agent URL to
 `http://host.docker.internal:3002`, the plain listener published via `CODER_AGENT_TUNNEL_PORT`, so agent
 traffic stays on the box.
 
