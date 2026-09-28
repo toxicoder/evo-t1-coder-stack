@@ -90,14 +90,20 @@
           url: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
           refreshInterval: 300000
           # Only scalars render as label/value pairs, so the array is not mapped.
-          # Presence of the response is the whole signal: an unreachable
-          # endpoint is the state that matters, because agent mode then silently
-          # degrades to the text-only Arc fallback.
+          # `any: true` only has meaning INSIDE a remap list — the customapi
+          # component reads mapping.remap, and a flat `- any:/to:` mapping has no
+          # field, so getValue returns the whole response body and React throws
+          # error #31 rendering the object (caught on the live page).
+          # An unreachable endpoint needs no mapping at all: useWidgetAPI reports
+          # an error and Container renders the built-in error state.
           mappings:
             - field: object
               label: API
-            - any: true
-              to: Down
+              remap:
+                - value: list
+                  to: OK
+                - any: true
+                  to: "?"
 
 - Desktops:
     - Kasm:
