@@ -79,9 +79,9 @@ docker compose up -d
 
 `bootstrap.sh` also builds `evo-t1-dev:latest` when it is missing (several GB of
 downloads, so a cold run takes minutes), pulls `docker:29.8.1-dind` for the opt-in
-workspace DinD sidecar, and pushes the workspace template once a Coder session exists.
-None of those is fatal: a build that cannot download, or a push with nobody logged in,
-prints why and bootstrap still finishes. Both are retryable on their own —
+workspace DinD sidecar, and pushes the workspace template once a Coder account exists.
+None of those is fatal: a build that cannot download, or a push with nobody registered
+yet, prints why and bootstrap still finishes. Both are retryable on their own —
 `./scripts/build-dev-image.sh` and `./scripts/push-template.sh` (section "Coder
 workspace template" below). `SKIP_DEV_IMAGE_BUILD=1` / `SKIP_TEMPLATE_PUSH=1` restore the
 old print-only behaviour; bootstrap reads them from the process environment only, never
@@ -105,12 +105,18 @@ Then:
      --first-user-trial=false
    ```
 
+   Target the address the server itself answers on (`https://<host>:3001`, or
+   `http://127.0.0.1:3000` inside the coder container). Point it at a public
+   subdomain in public mode and it fails before it can prompt — Authelia answers the
+   CLI's unauthenticated first-user probe with its HTML sign-in page, which the CLI
+   reports as `unexpected non-JSON response "text/html; charset=utf-8"`.
+
    The equivalent HTTP call is `POST /api/v2/users/first`, and `coder server
    create-admin-user` does the same from the server side. All three work on
    v2.36 — the browser is convenience.
 2. Push the workspace template (section below) — `./scripts/push-template.sh` does it
-   once you are logged in, which is why bootstrap runs it for you and says why it
-   skipped when you are not.
+   once an account exists, which is why bootstrap runs it for you and says why it
+   skipped when none does. It needs no `coder login` and no host coder CLI.
 3. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
 4. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
 
@@ -205,7 +211,7 @@ SECURITY.md). Workspace agents never reach Authelia either way: the template rew
 traffic stays on the box.
 
 One runtime follow-up, done by hand once and not by compose: workspaces created before the public mode
-existed need `coder templates push` plus a restart to pick up the template's `coder_agent_url` variable
+existed need `./scripts/push-template.sh` plus a restart to pick up the template's `coder_agent_url` variable
 (default `http://host.docker.internal:3002`), which is what keeps agents dialing the local plain
 listener whatever the access URL says. Kasm likewise stores its connection endpoints in its own setup
 database (first-boot wizard / admin UI), so that endpoint has to be updated there too or streams keep
@@ -244,27 +250,54 @@ Edit aliases in `litellm/config.yaml`, then `docker compose restart litellm`.
 ## Coder workspace template
 
 The push happens on its own: `bootstrap.sh` calls `./scripts/push-template.sh`, which
-pushes when a `coder` CLI, a running coder container and a logged-in session all exist,
-and otherwise prints a one-line reason and exits 0 (a fresh clone has none of the three
-yet). After logging in, the same script is the manual path:
+pushes when the coder and db containers are running and an active Coder account exists,
+and otherwise prints a one-line reason and exits 0 (a fresh clone has none of those
+yet). The same script is the manual path after you register:
 
 ```sh
-export PATH="$PATH:$HOME/bin"          # if you installed the coder CLI locally
-coder login https://<host>:3001
 ./scripts/push-template.sh             # pushes templates/docker-dev as `docker-dev`
 ```
+
+**Everything Coder-facing runs inside the coder container**, against
+`http://127.0.0.1:3000` — the server's own plain listener (`CODER_HTTP_ADDRESS`),
+reached without crossing the reverse proxy, Authelia, or the WAN. That is deliberate:
+`coder login` on the host must reach the API *before* it has a credential, and in
+public mode the only URL it will use is `CODER_ACCESS_URL`, which Authelia gates. Its
+first unauthenticated call — the first-user check — gets the HTML sign-in page back,
+and the CLI reports that as `unexpected non-JSON response "text/html;
+charset=utf-8"`. Loopback inside the container cannot be gated, so the push cannot fail
+that way, and it runs the image's own `coder` binary, so client and server are the same
+build. No host coder CLI and no `coder login` are involved.
+
+For credentials the script mints a short-lived token by inserting a row into the
+stack's own Postgres — the same trust model as `coder reset-password`, which also
+bypasses the API and talks to the database directly. The token is scoped to minutes,
+deleted on the way out (including on a failed or interrupted run), and never printed.
+Template source travels as a tar on stdin (`coder templates push --directory -`), so
+nothing is copied into the container or its volumes; a push is also the only thing that
+registers a template, because Coder stores the source as a Filestore row, not as files
+it scans on disk.
 
 It reads `.env` for the variables it passes: `--var image=` from `DEV_IMAGE`,
 `--var litellm_key=` from `LITELLM_MASTER_KEY` (only when that key is real, never the
 sample placeholder) and `--var coder_agent_url` only if `.env` defines it at all. It then
 confirms an **active** template version — a push can exit 0 and still leave the template
 inactive if its Terraform run failed, which shows up as the template missing from the
-create dropdown. The equivalent raw command, for reference or for pushing a tag `.env`
-does not carry:
+create dropdown. The equivalent raw commands, for reference or for pushing a tag `.env`
+does not carry (the repo is not mounted into the container, so the directory has to
+travel as a tar; `CODER_SESSION_TOKEN` is any token from the Coder **Tokens** page or
+`coder tokens create`):
 
 ```sh
-coder templates push ./templates/docker-dev --var image=evo-t1-dev:latest
+tar -C templates/docker-dev --exclude=./.terraform -cf - . | \
+  docker compose exec -T -i \
+    -e CODER_URL=http://127.0.0.1:3000 -e CODER_SESSION_TOKEN \
+    coder coder templates push docker-dev --directory - --yes \
+    --var image=evo-t1-dev:latest
 ```
+
+The service appears twice by necessity: the first `coder` selects the compose service,
+the second is the CLI binary inside it.
 
 `coder templates` is the canonical name (`template` is its alias). Build
 `evo-t1-dev:latest` first with `./scripts/build-dev-image.sh` — the docker provider
@@ -342,14 +375,20 @@ Details that matter:
 
 Autostart, autostop and TTLs are template *metadata*, so set them once with the CLI
 after pushing (they are deliberately absent from the Terraform, where they would
-fight the UI):
+fight the UI). Run it against the container's loopback API as above — a token from the
+Coder **Tokens** page, and the public URL is gated by Authelia:
 
 ```sh
-coder templates edit docker-dev \
-  --default-ttl 8h \
-  --activity-bump 2h \
-  --failure-ttl 24h
+export CODER_URL=http://127.0.0.1:3000 CODER_SESSION_TOKEN=<your-token>
+docker compose exec -T -e CODER_URL -e CODER_SESSION_TOKEN coder \
+  coder templates edit docker-dev \
+    --default-ttl 8h \
+    --activity-bump 2h
 ```
+
+`--failure-ttl` and `--allow-user-autostart=false` are rejected without a license
+(the server names `--failure-ttl`, `--inactivityTTL`, `--allow-user-autostart=false`
+and `--allow-user-autostop=false`), so leave them out of the CE stack.
 
 ## Grok Build default terminal
 
@@ -463,7 +502,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
-│   └── push-template.sh     # coder templates push of templates/docker-dev (bootstrap calls it)
+│   └── push-template.sh     # pushes templates/docker-dev from inside the coder container (bootstrap calls it)
 └── templates/docker-dev   # Coder template (`coder templates push`)
     ├── main.tf
     ├── coder.tf
@@ -512,9 +551,18 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
   An absent image fails the workspace build at **plan** time — before anything is
   created — with `did not find docker image 'docker:29.8.1-dind'`, in the workspace's
   build log rather than anywhere inside it.
-- `coder templates push` complains about the lockfile → commit
+- `./scripts/push-template.sh` notes a missing lockfile → commit
   `templates/docker-dev/.terraform.lock.hcl`; regenerate with
   `terraform -chdir=templates/docker-dev init -backend=false`.
+- `coder login` / any host `coder` command fails with
+  `unexpected non-JSON response "text/html; charset=utf-8"` (usually wrapped in
+  `Failed to check server "https://…" for first user, is the URL correct and is coder
+  accessible from your browser?`) → the CLI is talking to a public subdomain and
+  Authelia is answering its API calls with the sign-in page. This is not a broken
+  credential — it happens with a valid token too, because Authelia gates every route.
+  Point the CLI at the container's loopback listener instead (see
+  "Coder workspace template"), which nothing can gate. `CODER_ACCESS_URL` itself stays
+  the public name: browsers need it, only CLI traffic should not use it.
 - `coder server` logs `installed terraform version newer than expected` → harmless.
   The Coder image ships its own provisioner binary (`/usr/local/bin/terraform`,
   1.15.5 in `coder:v2.36.6`) and Coder caps the version it was tested against, so the

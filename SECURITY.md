@@ -46,6 +46,17 @@ repo can verify.
   values; rotate any value that was ever shared. Never commit `.env`, API
   keys, or SSH material. `proxy/certs/` is git-ignored too — the private key
   never enters git.
+- **The push token.** `scripts/push-template.sh` cannot use a CLI session (the
+  public API is gated by Authelia, which answers unauthenticated CLI probes with an
+  HTML page), so it mints an API key by inserting a row into the stack's own Postgres
+  — the same route `coder reset-password` takes, and it needs docker access to the
+  database container, which is already root-equivalent here. The key is scoped
+  `coder:all`, so treat it as you would an admin token: it is named
+  `stack-template-push`, lives for `CODER_PUSH_TOKEN_MINUTES` (default 10) minutes, is
+  deleted on the way out including on a failed or interrupted run, and is never
+  printed. If a run is SIGKILLed mid-push the row survives until it expires; check
+  with `docker compose exec db psql -U coder -d coder -c "select id, token_name,
+  scopes, expires_at from api_keys where login_type = 'token';"`.
 - **Metrics stay on the host.** The Coder control plane publishes Prometheus
   metrics on 2112, mapped to `127.0.0.1` only, so a scrape needs a shell on the
   stack host. LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
