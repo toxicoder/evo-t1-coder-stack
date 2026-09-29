@@ -260,6 +260,19 @@ services:
       - ./homepage/config/services.yaml:/app/config/services.yaml:ro
       - ./homepage/config/widgets.yaml:/app/config/widgets.yaml:ro
       - ./homepage/config/bookmarks.yaml:/app/config/bookmarks.yaml:ro
+      # custom.css/custom.js come from /app/config, served by the allow-listed
+      # /api/config/<name> route (only those two filenames resolve) — NOT from
+      # /public. It also styles the sign-in page, so nothing internal goes in it.
+      - ./homepage/config/custom.css:/app/config/custom.css:ro
+      # Wallpaper and the header logo are served by Next's static handler off
+      # /app/public. Both live under icons/, because the auth middleware exempts
+      # only /icons/ from the sign-in redirect — /images/ would 307 to /auth/signin
+      # and the wallpaper could not load on the login page, which also uses it.
+      # Subdirectories only: mounting /app/public itself would shadow the
+      # image's own favicons and locales/, and i18n reads /app/public/locales.
+      # New files here need `up -d` (a recreate) — `restart` keeps the old
+      # mounts, and the in-app config revalidation covers YAML only.
+      - ./homepage/assets/icons:/app/public/icons:ro
 
   homepage-proxy:
     image: nginx:1.29-alpine

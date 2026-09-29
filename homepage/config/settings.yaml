@@ -4,28 +4,70 @@
 #
 # Mounted read-only file by file (see docker-compose.yml), so edit this in git
 # and `docker compose restart homepage` instead of using the in-app editor.
+# A NEW file under homepage/assets/icons needs `docker compose up -d` (a
+# recreate): restart keeps the old mounts and Next caches the static file list.
 #
 # No `providers:` block: no widget here calls a third-party API, so nothing
 # needs an API key.
 #
+# background is a settings key, not a widget. The object form reads only
+# image / opacity / blur / saturate / brightness — size, position and repeat are
+# ignored, since the shipped globals.css hard-codes cover/center/no-repeat.
+# opacity counts up: the wallpaper is washed by rgb(var(--bg-color) /
+# (1 - opacity/100)), so it means "how much wallpaper shows through" and 0 hides
+# the image entirely.
+#
+# The image must be reachable from /app/public, which Next serves at the URL
+# root. It lives under icons/ rather than images/ on purpose: the auth middleware
+# exempts only /icons/ from the sign-in redirect, so an /images/ path 307s to
+# /auth/signin and the wallpaper cannot load on the login page, which uses it too.
+#
+# boxedWidgets gives each header widget its own rounded translucent shell and is
+# the only headerStyle in which a per-group cardBlur class is emitted, so
+# cardBlur must stay set alongside it. backdrop-blur-xs is compiled into the
+# shipped CSS.
+#
+# statusStyle: basic renders a siteMonitor badge as the word UP/DOWN instead of
+# the "12 ms" latency. The RUNNING-style badge needs a per-card Docker
+# `container:` key, and the Docker socket is deliberately not mounted (it is a
+# root-equivalent host credential), so the container badge is not available here.
+#
+# hideVersion drops the footer version string; disableUpdateCheck drops the
+# outbound GitHub /api/releases request the update notice would make.
+#
 # A group listed with `style: row` becomes a full-width band with its cards side
 # by side; a group listed without it keeps the default narrow column. Keys must
 # match group names in services.yaml / bookmarks.yaml exactly, including case.
+# `columns` must equal the number of cards the group actually has, otherwise the
+# grid leaves blank cells.
 
 title: EVO-T1 Coder Stack
 theme: dark
 color: slate
 iconStyle: theme
 
+background:
+  image: /icons/background.webp
+  opacity: 65
+
+headerStyle: boxedWidgets
+cardBlur: xs
+statusStyle: basic
+hideVersion: true
+disableUpdateCheck: true
+
 layout:
   Coder:
     style: row
-    columns: 3
-    useEqualHeights: true
+    columns: 1
+    useEqualHeights: false
+  # The three Models cards draw different numbers of stat rows (LiteLLM two,
+  # Ollama three, Agent backend one), so equal heights would pad the shorter
+  # cards with an empty band. They stay top-aligned and size to their own data.
   Models:
     style: row
-    columns: 4
-    useEqualHeights: true
+    columns: 3
+    useEqualHeights: false
   Desktops: {}
   Stack docs: {}
   Repo: {}

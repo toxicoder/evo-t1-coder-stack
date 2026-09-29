@@ -429,7 +429,8 @@ New Coder workspaces open a **Grok Build** terminal by default:
 
 The [Homepage](https://gethomepage.dev) dashboard is the landing page for the stack: a card per
 service with live status pulled from each service's own API (Coder version, LiteLLM health and alias
-count, Ollama version), plus host CPU, memory, disk and CPU temperature in the header.
+count, Ollama version), plus a header of boxed tiles — host CPU, memory and CPU temperature, disk,
+`eth0` throughput — alongside the clock, local weather (open-meteo, keyless) and a DuckDuckGo search.
 
 - **URL:** `https://<host>/` — a self-signed cert that `bootstrap.sh` issues, so expect a one-time
   browser warning. Port 80 redirects to HTTPS.
@@ -439,10 +440,27 @@ count, Ollama version), plus host CPU, memory, disk and CPU temperature in the h
   own) — it rewrites `.env`, recreates the container and verifies the new value landed. homepage
   hashes that env var itself but still needs the plaintext, so the file has to carry it: the script's
   job is keeping it out of shell history, `ps` and git, and leaving `.env` mode 600.
-- **Config:** `homepage/config/*.yaml`, each file bind-mounted read-only, so `git diff` stays the
-  record of dashboard changes. Edit there and `docker compose restart homepage`. A new config file
-  (`custom.css`, `kubernetes.yaml`, …) needs its own mount line in `docker-compose.yml`; the directory
-  itself has to stay writable because the app creates `logs/` inside it.
+- **Config:** `homepage/config/*.yaml` plus `custom.css`, each file bind-mounted read-only, so
+  `git diff` stays the record of dashboard changes. Edit there and `docker compose restart homepage`.
+  A new config file (`kubernetes.yaml`, …) needs its own mount line in `docker-compose.yml`; the
+  directory itself has to stay writable because the app creates `logs/` inside it. `custom.css`
+  lives in `/app/config` and is served by the allow-listed `/api/config/custom.css` route — it
+  styles the sign-in page too, so keep internal hostnames out of it.
+- **Look:** the layout follows the upstream README example — logo + greeting top-left, boxed
+  resource tiles, clock / weather / search top-right, cards on a wallpaper. The wallpaper
+  (`background.webp`) and logo (`evo-t1.svg`) live in `homepage/assets/icons/`, mounted at
+  `/app/public/icons` and served as `/icons/…`. They sit under `icons/` because homepage's auth
+  middleware exempts only that path from the sign-in redirect, which is what lets the same
+  wallpaper render on the login page. New asset files need `docker compose up -d` (a recreate) —
+  `restart` keeps the old mounts.
+- **After a recreate, revalidate once.** v2.4.0 serves a prerendered page with the settings baked
+  in, so a freshly created container shows an empty default layout (`initialSettings {}`) until
+  the config is re-read. Click the refresh button in the header, or
+  `curl -k -X POST https://<host>/api/revalidate`. A plain `restart` keeps the generated page, so
+  day-to-day YAML edits do not need this.
+- **Host stats caveat:** CPU, memory, CPU temp and disk are host-wide through `/proc`, but a
+  network widget can only see the container's netns (`lo`/`eth0`) — `/sys/class/net` is
+  namespaced, so the host Wi-Fi NIC is invisible even with `/sys` mounted. That tile shows `eth0`.
 - **Wiring:** card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL`, which
   default to LAN URLs built from `STACK_LAN_HOST` and the port variables, so links keep working when you
   change a port or re-detect the LAN IP, and follow the public names when `STACK_PUBLIC_HOSTS` is set.
@@ -490,7 +508,8 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 .
 ├── docker-compose.yml
 ├── .env.sample            # canonical env template (.env.example is a copy)
-├── homepage/config/       # dashboard: services, widgets, settings, bookmarks
+├── homepage/config/       # dashboard: services, widgets, settings, bookmarks, custom.css
+├── homepage/assets/icons/ # dashboard wallpaper + header logo, served at /icons/
 ├── images/dev/            # golden workspace image
 │   ├── Dockerfile
 │   └── tool-versions.env  # every version pin, single source of truth

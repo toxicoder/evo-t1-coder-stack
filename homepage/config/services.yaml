@@ -11,8 +11,15 @@
 #          DNS instead, which stays correct whatever the LAN IP is.
 #
 # Docker integration is deliberately off: the socket is a root-equivalent host
-# credential, and each card already has API-backed status plus host CPU, memory
-# and disk from the resources widget in widgets.yaml.
+# credential. A container badge was never the status source anyway — the
+# siteMonitor probe is, and settings.yaml renders it as UP/DOWN through
+# statusStyle: basic. Host CPU, memory and disk come from the resources widget
+# in widgets.yaml.
+#
+# Each customapi widget fills the stat band under the card title with at most
+# four mappings (the shipped v2.4.0 bundle slices the list to four), so a card
+# gets its breadth from several single-field widgets over separate endpoints.
+# `format: size` reduces an array field to its length.
 #
 # Icons come from a public CDN, so cards lose their icon (not their function)
 # when the box is offline.
@@ -27,9 +34,15 @@
           type: customapi
           url: http://coder:3000/api/v2/buildinfo
           refreshInterval: 300000
+          # One response, three scalars: the agent and provisioner API versions
+          # are what a stale workspace agent or template shows up against.
           mappings:
             - field: version
               label: Version
+            - field: agent_api_version
+              label: Agent API
+            - field: provisioner_api_version
+              label: Prov API
 
 - Models:
     - LiteLLM:
@@ -49,6 +62,17 @@
                     to: OK
                   - any: true
                     to: Problem
+              # No Postgres in this compose file, so the honest cell says "No DB"
+              # rather than rendering the raw "Not connected" as a failure.
+              - field: db
+                label: Database
+                remap:
+                  - value: "Not connected"
+                    to: "No DB"
+                  - value: "Connected"
+                    to: "DB OK"
+                  - any: true
+                    to: "?"
           - type: customapi
             url: http://litellm:4000/models
             refreshInterval: 300000
@@ -65,13 +89,29 @@
         icon: mdi-chip
         description: Qwen Coder on the Arc 140T — compose network only
         siteMonitor: http://ollama:11434/api/version
-        widget:
-          type: customapi
-          url: http://ollama:11434/api/version
-          refreshInterval: 300000
-          mappings:
-            - field: version
-              label: Version
+        # Three endpoints, one field each: /api/version, /api/tags and /api/ps
+        # answer separately, and a single widget cannot merge their bodies.
+        widgets:
+          - type: customapi
+            url: http://ollama:11434/api/version
+            refreshInterval: 300000
+            mappings:
+              - field: version
+                label: Version
+          - type: customapi
+            url: http://ollama:11434/api/tags
+            refreshInterval: 300000
+            mappings:
+              - field: models
+                label: Models
+                format: size
+          - type: customapi
+            url: http://ollama:11434/api/ps
+            refreshInterval: 300000
+            mappings:
+              - field: models
+                label: Loaded
+                format: size
 
     # The tool-capable backend Grok Build / Cline / Roo use by default. The Arc
     # Qwen2.5-Coder weights answer a tool request with plain text and
@@ -89,7 +129,9 @@
           type: customapi
           url: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
           refreshInterval: 300000
-          # Only scalars render as label/value pairs, so the array is not mapped.
+          # /v1/models is {"object":"list","data":[...]}. The array maps only as
+          # `format: size`, which reduces it to a count; the raw array would not
+          # render as a label/value pair.
           # `any: true` only has meaning INSIDE a remap list — the customapi
           # component reads mapping.remap, and a flat `- any:/to:` mapping has no
           # field, so getValue returns the whole response body and React throws
@@ -104,8 +146,13 @@
                   to: OK
                 - any: true
                   to: "?"
+            - field: data
+              label: Models
+              format: size
 
 - Desktops:
+    # No widget here: Kasm exposes no unauthenticated JSON endpoint (/health and
+    # /api/health both 404), so a widget would only render an error block.
     - Kasm:
         icon: mdi-desktop-classic
         href: "{{HOMEPAGE_VAR_KASM_URL}}"
