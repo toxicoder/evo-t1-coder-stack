@@ -2,21 +2,74 @@
 # Info widgets for the EVO-T1 Coder stack dashboard.
 # Options and examples: https://gethomepage.dev/configs/widgets/
 #
-# cpu/memory/disk/cputemp here describe the EVO-T1 itself, not the homepage
-# container: Docker does not isolate /proc/meminfo, /proc/stat or the overlay
-# device behind df, so those reads already return host-wide values. Verified on
-# this box — MemTotal and `df /` inside the container match the host exactly.
-# Weather is left out because it would need an API key in settings.yaml.
+# Entry order matters: widgets not in the right-aligned set (search, datetime,
+# weather) render on the left in file order, so logo and greeting come first
+# and the clock/weather/search sit on the right.
+#
+# `logo` is an info widget here, not a settings.yaml key. It renders `icon` at
+# a hard-coded 48x48 from /app/public, which is bind-mounted from
+# homepage/assets/icons (see docker-compose.yml).
+#
+# cpu/memory/cputemp are host-wide: Docker does not isolate /proc/meminfo,
+# /proc/stat or /sys/devices/system/cpu, and `disk: /` matches the host root
+# through the overlay. Verified on this box — MemTotal and `df /` inside the
+# container match the host exactly.
+#
+# Network is the exception. The container's network namespace exposes only
+# `lo` and `eth0`, so the counters on the eth0 tile are this container's own
+# veth traffic, not the host uplink. Mounting the host's /sys does not help:
+# /sys/class/net is namespaced too (si.networkStats("wlo1") returns operstate
+# "unknown" and all-zero counters here). A host-NIC tile is not achievable in
+# this deployment, which is why the tile is labelled eth0 rather than a NIC
+# name implying host traffic.
+#
+# openmeteo needs no API key and no `providers:` entry — it calls
+# api.open-meteo.com through the Next server-side proxy. If egress to that host
+# is blocked the tile degrades to an "API Error" card; that is accepted.
+# The latitude/longitude below are a placeholder site coordinate for the host
+# timezone (America/Chicago) — adjust them to the actual site. Weather is
+# optional; delete the whole openmeteo block if the box is offline.
 
-- resources:
-    label: EVO-T1
+- logo:
+    icon: /icons/evo-t1.svg
+
+- greeting:
+    text: EVO-T1
+    text_size: xl
+
+- resources: # host compute
+    label: Host
     cpu: true
     memory: true
-    disk: /
     cputemp: true
     tempmax: 100
+    uptime: true
     units: metric
+    expanded: true
+
+- resources: # storage
+    label: Storage
+    disk: /
+    diskUnits: bbytes
+    expanded: true
+
+- resources: # container network
+    label: eth0
     network: true
+    expanded: true
+
+- datetime:
+    text_size: md
+    format:
+      timeStyle: short
+      hourCycle: h23
+
+- openmeteo:
+    label: EVO-T1
+    latitude: 30.2672
+    longitude: -97.7431
+    units: metric
+    cache: 10
 
 - search:
     provider: duckduckgo

@@ -1,0 +1,27 @@
+/*
+ * Homepage custom.css — served unauthenticated at /api/config/custom.css and it
+ * also styles the sign-in page, so nothing internal belongs in it: no hostnames,
+ * LAN IPs, service names or secrets. Wallpaper, translucency and blur are
+ * settings.yaml's job (background.*, headerStyle, cardBlur); this file fixes only
+ * the two spacing problems settings cannot express.
+ *
+ * custom.css is linked before the app's own Tailwind bundle, so !important is used
+ * only where an app utility (.grow, .p-2) would otherwise win at equal weight.
+ */
+
+/* The search form carries .grow, which stretches it across the whole header. */
+.information-widget-search.information-widget-form {
+  min-width: 12rem;
+  max-width: 22rem;
+  flex-grow: 0 !important;
+}
+
+/* boxedWidgets: #widgets-wrap sets column-gap only, so wrapped tiles touch
+   vertically and the shell's p-2 leaves the label tight against the rim. */
+#widgets-wrap {
+  row-gap: 0.5rem;
+}
+
+.widget-container {
+  padding-block: 0.625rem !important;
+}
