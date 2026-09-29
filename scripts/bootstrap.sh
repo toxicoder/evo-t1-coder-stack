@@ -433,11 +433,13 @@ else
 fi
 
 # ── Template push ────────────────────────────────────────────────────────────
-# Non-fatal by design: the push needs a coder CLI on PATH and a logged-in session,
-# neither of which a fresh clone has, and push-template.sh exits 0 with a one-line
-# reason when it cannot run. A non-zero here means a push was attempted and failed.
+# Non-fatal by design: the push needs a running coder container, docker access and
+# at least one registered account, none of which a fresh clone has, and
+# push-template.sh exits 0 with a one-line reason when it cannot run. It needs no
+# host coder CLI and no `coder login`: it drives the CLI inside the coder container
+# over loopback. A non-zero here means a push was attempted and failed.
 if [ -n "${SKIP_TEMPLATE_PUSH:-}" ]; then
-  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run ./scripts/push-template.sh after logging in."
+  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run ./scripts/push-template.sh after registering an account."
 else
   push_rc=0
   ./scripts/push-template.sh || push_rc=$?
@@ -456,7 +458,7 @@ echo "  2. docker compose up -d"
 coder_reach_url="${public_coder_url:-https://<host>:3001}"
 dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
-echo "  4. coder login ${coder_reach_url} && ./scripts/push-template.sh   # pushes templates/docker-dev (image=${dev_image})"
+echo "  4. ./scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
 echo "  6. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
