@@ -113,8 +113,10 @@ resource "coder_agent" "main" {
   startup_script_behavior = "blocking"
 
   # Agent-bar buttons. These are driven here, not by any CODER_*IDE* server
-  # flag (no such flag family exists in v2.36). code-server for the dev
-  # container comes from the devcontainer's own sub-agent.
+  # flag (no such flag family exists in v2.36). display_apps.vscode is the
+  # desktop helper: a locally installed VS Code plus the coder.coder-remote
+  # extension. The in-browser editor is the code-server app attached to the
+  # dev-container sub-agent below.
   display_apps {
     vscode                 = true
     vscode_insiders        = false
@@ -237,6 +239,20 @@ resource "coder_script" "dind_bootstrap" {
   EOT
 }
 
+# @devcontainers/cli is what the agent drives to build coder_devcontainer.repo;
+# the golden image does not ship it. This module is a run_on_start script on
+# the parent agent. Coder runs every run_on_start script (this one, the clone
+# in startup_script, and dind_bootstrap) before it creates the dev containers,
+# which is what makes the CLI install early enough for the build. The sidecar
+# wait in dind_bootstrap still has to stay ahead of that build because
+# `devcontainer up` talks to DOCKER_HOST = tcp://dind:2375.
+module "devcontainers_cli" {
+  count    = data.coder_workspace.me.start_count
+  source   = "registry.coder.com/coder/devcontainers-cli/coder"
+  version  = "~> 1.0"
+  agent_id = coder_agent.main.id
+}
+
 # The Coder built-in: the agent drives @devcontainers/cli against this folder
 # during startup and exposes the result as a devcontainer sub-agent with its own
 # terminal and apps. count matches the agent's lifecycle so a stopped workspace
@@ -248,6 +264,26 @@ resource "coder_devcontainer" "repo" {
   # repo that uses the other legal locations (docker-compose.yml, .devcontainer/)
   # behaves the same as it does in VS Code.
   workspace_folder = "${local.dc_host_dir}/${local.repo_folder}"
+}
+
+# In-browser VS Code (Coder's code-server fork) on port 13337, attached to the
+# dev-container sub-agent so it runs inside the repo's container. Attaching any
+# app/script/env to that agent makes the dev container terraform-managed: a
+# repo's own customizations.coder.apps are then ignored (displayApps still
+# apply). display_apps.vscode on the parent agent is only the desktop helper.
+# install_prefix stays at the module default (/tmp/code-server): the dev
+# container is rebuilt from the repo's image, so a persistent prefix buys
+# nothing. No CODER_WILDCARD_ACCESS_URL on this box, so subdomain routing is
+# unavailable.
+module "code_server" {
+  count     = data.coder_workspace.me.start_count
+  source    = "registry.coder.com/coder/code-server/coder"
+  version   = "~> 1.0"
+  agent_id  = coder_devcontainer.repo[0].subagent_id
+  folder    = "${local.dc_host_dir}/${local.repo_folder}"
+  port      = 13337
+  subdomain = false
+  open_in   = "tab"
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,

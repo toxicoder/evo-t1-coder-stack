@@ -343,13 +343,16 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
 - persistent per-workspace home volume
 - `host.docker.internal` → host-gateway, so workspaces reach the Coder server and LiteLLM
 - a startup script that installs the **Grok Build CLI**, puts `~/.grok/bin` on PATH,
-  renders `~/.grok/config.toml` and the VS Code settings (below), and warms the MCP
-  servers in the background
+  renders `~/.grok/config.toml` and the shared VS Code user settings (below), and
+  warms the MCP servers in the background
 - `startup_script_behavior = "blocking"`, so a workspace only reports *ready* once the
   toolchain is genuinely staged — no opening an editor mid-install
-- in-IDE apps (VS Code, web terminal, port forwarding, SSH helper) via `display_apps`,
-  memory and disk usage gauges, six `coder stat` metadata tiles, and a **LiteLLM**
-  tile that health-checks the proxy and is visible only to the workspace owner
+- agent-bar buttons via `display_apps` (VS Code Desktop helper: a locally installed
+  VS Code / Cursor / Windsurf plus the `coder.coder-remote` extension; web terminal;
+  port forwarding; SSH helper), a separate in-browser **code-server** editor
+  (Coder's VS Code fork; no local VS Code), memory and disk usage gauges, six
+  `coder stat` metadata tiles, and a **LiteLLM** tile that health-checks the proxy
+  and is visible only to the workspace owner
 - `coder_metadata.workspace_info` shows the image, the LiteLLM URL, the default Grok
   model, whether DinD is `on (tcp://dind:2375)` or `off`, and (redacted) which key is
   wired in, so a misconfigured workspace is visible in the UI without shell access
@@ -417,14 +420,18 @@ always on, plus a repository that brings its own toolchain:
   DinD toggle is), and one preset makes the template's default repository a one-click
   workspace
 - `startup.sh.tftpl` clones the repo onto that bind, and `coder_devcontainer` then builds the
-  repo's own `.devcontainer/devcontainer.json` on the sidecar through the Coder agent, which
-  exposes the dev container as a sub-agent with its own terminal and apps. No `config_path`
-  is set, so the CLI discovers the file the way VS Code does and a repo using the other
-  legal locations behaves the same.
+  repo's own `.devcontainer/devcontainer.json` on the sidecar through the Coder agent
+  (`@devcontainers/cli` is in the parent workspace container), which exposes the
+  dev container as a sub-agent with its own terminal and apps. The in-browser editor
+  attaches to that sub-agent, so it runs inside the dev container where the cloned
+  repo's toolchain lives. No `config_path` is set, so the CLI discovers the file the
+  way VS Code does and a repo using the other legal locations behaves the same.
 
 It reuses `docker-dev`'s variables plus `repo_url`, minus `dind` (the sidecar is not optional
 here — a devcontainer workspace without a daemon is nothing), and carries its own copies of
-`startup.sh.tftpl`, `settings.json.tftpl` and `grok-config.toml.tftpl`, so the Grok Build
+`startup.sh.tftpl`, `settings.json.tftpl` (desktop VS Code user settings; code-server
+keeps its own under `~/.local/share/code-server/User/settings.json`) and
+`grok-config.toml.tftpl`, so the Grok Build
 terminal and LiteLLM wiring above apply to it too. **Treat the repository as untrusted
 code**: everything it builds runs on a privileged daemon on this box, so a Dockerfile in
 that repo is root-equivalent on the stack host — the create form's own description says so,
@@ -466,11 +473,17 @@ New Coder workspaces open a **Grok Build** terminal by default:
   all pre-installed in the image (`npm -g` for the first three, `uv tool` for the
   Python two), and warmed at workspace startup so the first session does not pay the
   cold-start cost. Check them with `grok mcp doctor` inside a workspace.
-- Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint
-  `http://host.docker.internal:4000/v1`, master key from the `litellm_key` template
-  variable, model alias `agent`, with `coder`/`coder-fast`/`chat` listed as
-  alternates). If your extension build names its settings slightly differently, set
-  the OpenAI-compatible endpoint + key in its settings UI — one field each.
+- Cline and Roo/Kilo are pre-wired to the LiteLLM proxy in
+  `~/.config/Code/User/settings.json`, the user-settings file desktop VS Code reads
+  (endpoint `http://host.docker.internal:4000/v1`, master key from the `litellm_key`
+  template variable, model alias `agent`, with `coder`/`coder-fast`/`chat` listed as
+  alternates). code-server keeps its own settings in
+  `~/.local/share/code-server/User/settings.json`; pass that map through the
+  `code_server` module's `settings` input to give the browser editor the same wiring.
+  Installing Cline/Roo itself is a manual step in either editor's Extensions panel
+  (Open VSX by default). If your extension build names its settings slightly
+  differently, set the OpenAI-compatible endpoint + key in its settings UI — one
+  field each.
 
 ## Kasm
 
@@ -584,7 +597,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
     │   ├── main.tf
     │   ├── coder.tf
     │   ├── startup.sh.tftpl     # staged workspace bootstrap (blocking)
-    │   ├── settings.json.tftpl  # VS Code / Cline / Roo settings
+    │   ├── settings.json.tftpl  # desktop VS Code user settings (Cline / Roo / terminal profile)
     │   └── grok-config.toml.tftpl  # ~/.grok/config.toml — models + MCP servers
     └── docker-devcontainer   # Coder template that clones repo_url and builds its
                               # .devcontainer on an always-on DinD sidecar (pushed second)
@@ -649,6 +662,15 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
   pair is an upstream pin. Builds still succeed; verify with a workspace build before
   acting on it. Nothing in this repo's compose file sets the provisioner's Terraform.
 - Workspace cannot reach LiteLLM → check `CODER_ACCESS_URL` is an `https://` URL (a LAN IP, or the public coder name in public mode — never `localhost` / `127.0.0.1`) and that the workspace container can resolve `host.docker.internal`. Agent traffic ignores that URL and dials `host.docker.internal:3002` (see the `coder_agent_url` template variable).
-- Grok profile missing in a fresh workspace → the startup script runs before VS Code starts; check the workspace agent logs, then `ls ~/.grok/bin`.
+- Grok profile missing in a fresh workspace → `startup_script` is blocking, so it
+  has already finished before the agent reports ready and before code-server
+  starts; check the workspace agent logs, then `ls ~/.grok/bin`.
+- Browser editor (code-server) stays unhealthy → check in this order: the
+  code-server install script's log is green in the workspace's Scripts/Log tab;
+  `curl -fsS localhost:13337/healthz` answers from inside the workspace; the
+  browser is on `https://` with a trusted cert (plain `http://` is an insecure
+  context, which is what breaks `crypto.randomUUID()` — see "Public subdomains
+  (optional)" above). On `docker-devcontainer` the dev container must build first
+  (the repo needs `.devcontainer/devcontainer.json`).
 - Kasm wizard gone after install → expected; use :4443. Reset Kasm by removing the `kasm-data` volume (destroys all Kasm config).
 - Coder login problems → the first registered account is the site admin; if the UI is unreachable, check `CODER_ACCESS_URL` matches the address you're browsing from (LAN IP by default, the public coder name in public mode).

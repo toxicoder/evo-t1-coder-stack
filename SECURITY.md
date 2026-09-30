@@ -94,5 +94,12 @@ repo can verify.
   simply that nothing else is attached to it and nothing is published to the host.
   Keep the toggle off unless someone is actually building containers. See README,
   "Coder workspace template".
+- **Workspace code-server.** Each workspace runs Coder's code-server fork on
+  13337 with `--auth none`, published as a `coder_app` with `share = "owner"`
+  and `subdomain = false` (this stack sets no `CODER_WILDCARD_ACCESS_URL`, so
+  only path-based routing is available). It listens on all interfaces inside
+  the workspace; access control is the Coder app proxy plus Authelia/Cloudflare
+  in front of the public URL. Extension installs are manual from Open VSX;
+  neither editor auto-installs them.
 - **Reporting.** Report vulnerabilities by opening an issue marked
   `security`; please do not disclose working exploits publicly.
