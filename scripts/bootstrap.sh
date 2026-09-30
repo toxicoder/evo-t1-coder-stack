@@ -437,14 +437,15 @@ fi
 # at least one registered account, none of which a fresh clone has, and
 # push-template.sh exits 0 with a one-line reason when it cannot run. It needs no
 # host coder CLI and no `coder login`: it drives the CLI inside the coder container
-# over loopback. A non-zero here means a push was attempted and failed.
+# over loopback, and it pushes both templates, docker-dev first. A non-zero here
+# means at least one of those pushes was attempted and failed.
 if [ -n "${SKIP_TEMPLATE_PUSH:-}" ]; then
   echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run ./scripts/push-template.sh after registering an account."
 else
   push_rc=0
   ./scripts/push-template.sh || push_rc=$?
   if [ "${push_rc}" != "0" ]; then
-    echo "warning: pushing templates/docker-dev failed (exit ${push_rc}) — retry with: ./scripts/push-template.sh"
+    echo "warning: template push failed (exit ${push_rc}) — retry the failed one with: ./scripts/push-template.sh [name]"
   fi
 fi
 

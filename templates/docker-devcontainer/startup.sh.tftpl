@@ -1,0 +1,290 @@
+#!/bin/bash
+# Coder workspace startup — EVO-T1 stack, devcontainer template.
+#
+# Idempotent: safe to re-run on every workspace start.
+#   1. installs tmux (if missing)
+#   2. installs the Grok Build CLI (if missing)
+#   3. puts ~/.grok/bin on PATH (login shells + this process)
+#   4. writes the "Grok Build" terminal-profile helper
+#   5. writes the workspace VS Code settings (only while this stack owns
+#      the file — a user-edited settings.json is left alone)
+#   6. writes ~/.grok/config.toml (only while this stack owns the file)
+#   7. clones the repository named by the create form onto the shared
+#      devcontainer bind — this is what coder_devcontainer's workspace_folder
+#      points at, so it has to exist before the agent builds the dev container
+#   8. warms the offline MCP package caches in the background
+#
+# Every stage 6 onward is best-effort: an offline first boot must still leave a
+# working terminal, and a repository that cannot be cloned must still leave a
+# workspace someone can fix, so nothing here may abort the script. A missing or
+# half-cloned folder is not silent — coder_devcontainer fails on its own with a
+# visible error naming the folder it looked in.
+#
+# Note: this file is rendered by Terraform templatefile(); shell variables are
+# written with a doubled dollar sign ($name or $${name}; the braced form is only
+# safe when escaped this way) so the rendered script keeps them. The only
+# interpolations Terraform has to resolve are the four variables main.tf
+# passes: vscode_settings, grok_config, repo_url and dc_dir.
+
+set -u
+
+SUDO=""
+if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+fi
+
+# --- tmux -------------------------------------------------------------------
+if ! command -v tmux >/dev/null 2>&1; then
+  $SUDO apt-get update -y >/dev/null
+  $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y tmux >/dev/null
+fi
+
+# --- Grok Build CLI ----------------------------------------------------------
+# The installer writes its own ~/.grok/config.toml (a `[cli] installer = ...`
+# stub), so the first boot is recorded here: that stub is otherwise indistinguish-
+# able from a user's config, and the managed-config guard below needs to know the
+# file is installer-owned rather than user-owned.
+GROK_FRESH_INSTALL=0
+if [ ! -x "$HOME/.grok/bin/grok" ]; then
+  curl -fsSL https://x.ai/cli/install.sh | bash >/dev/null
+  GROK_FRESH_INSTALL=1
+fi
+if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
+  printf '\n# Grok Build CLI\nexport PATH="$HOME/.grok/bin:$PATH"\n' >>"$HOME/.bashrc"
+fi
+export PATH="$HOME/.grok/bin:$PATH"
+
+# --- "Grok Build" terminal-profile helper ------------------------------------
+# VS Code shows the profile under the settings key "Grok Build"; this helper
+# resumes (or starts) one tmux session per folder:
+#   grok-build-<folder>-<hash>
+# then runs `grok --cwd <folder>` inside that session.
+mkdir -p "$HOME/.grok/bin"
+cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
+#!/bin/bash
+export PATH="$HOME/.grok/bin:$PATH"
+folder=$(basename "$PWD")
+hash=$(printf '%s' "$PWD" | cksum 2>/dev/null | awk '{print substr($1, 1, 6)}')
+[ -n "$hash" ] || hash=$(printf '%s' "$PWD" | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-6)
+[ -n "$hash" ] || hash="root"
+session="grok-build-$${folder}-$${hash}"
+if command -v grok >/dev/null 2>&1; then
+  exec tmux new-session -A -s "$session" -c "$PWD" -- grok --cwd "$PWD"
+fi
+# Grok CLI missing (offline first boot): still resume the session as a shell.
+exec tmux new-session -A -s "$session" -c "$PWD"
+GROK_BUILD_HELPER
+chmod +x "$HOME/.grok/bin/grok-build-terminal"
+
+# --- VS Code settings ---------------------------------------------------------
+mkdir -p "$HOME/.config/Code/User"
+if [ ! -f "$HOME/.config/Code/User/settings.json" ] \
+   || grep -qs '__evoT1Stack' "$HOME/.config/Code/User/settings.json"; then
+  cat >"$HOME/.config/Code/User/settings.json" <<'CODE_SETTINGS_EOF'
+${vscode_settings}
+CODE_SETTINGS_EOF
+fi
+
+# --- Grok Build config --------------------------------------------------------
+# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline
+# MCP stack and the subagent sizing. Ownership is decided by the marker comment
+# below: while it is present the stack re-renders the file on every start, and
+# deleting that one line hands the file over to the user for good.
+#
+# A fresh CLI install always takes the file back. The installer creates a
+# `[cli] installer = ...` stub before this stage runs, so without the first-boot
+# flag a brand-new workspace would be left with an unconfigured CLI: the stub has
+# no marker, the file exists, and the guard below would treat it as user-owned.
+mkdir -p "$HOME/.grok/memory" "$HOME/.grok/logs/mcp" 2>/dev/null
+
+if [ ! -f "$HOME/.grok/config.toml" ] \
+   || [ "$GROK_FRESH_INSTALL" = "1" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/config.toml"; then
+  # Re-rendering also happens on every start while the marker is present, so the
+  # installer's (or the user's) [cli] table is carried over instead of wiped —
+  # `cli.installer` picks the CLI's update path and is not something the stack owns.
+  cli_block="$(mktemp 2>/dev/null || printf '/tmp/grok-cli-block.%s.toml' "$$")"
+  if [ -f "$HOME/.grok/config.toml" ]; then
+    awk '/^\[cli\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
+      "$HOME/.grok/config.toml" >"$cli_block" 2>/dev/null || : >"$cli_block"
+  else
+    : >"$cli_block"
+  fi
+  {
+    cat <<'GROK_CONFIG_EOF'
+${grok_config}
+GROK_CONFIG_EOF
+    if [ -s "$cli_block" ]; then
+      printf '\n'
+      cat "$cli_block"
+    fi
+  } >"$HOME/.grok/config.toml" || true
+  rm -f "$cli_block"
+  chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
+fi
+
+# The agent may run as root against a persistent home volume, which leaves the
+# Grok directories root-owned and unreadable for the workspace user; hand them
+# back to whoever owns $HOME.
+if [ "$(id -u)" = "0" ]; then
+  home_owner="$(stat -Lc '%u:%g' "$HOME" 2>/dev/null || true)"
+  [ "$home_owner" = "0:0" ] && home_owner=""
+  if [ -z "$home_owner" ] && id coder >/dev/null 2>&1; then
+    home_owner="$(id -u coder):$(id -g coder)"
+  fi
+  if [ -n "$home_owner" ]; then
+    chown -R "$home_owner" "$HOME/.grok" 2>/dev/null || true
+  fi
+fi
+
+# --- Repository clone onto the shared devcontainer bind ----------------------
+# This stage exists because the dev container's workspace folder is not created
+# by anything else: coder_devcontainer.repo points at "$dc_dir/<folder>", the
+# agent runs @devcontainers/cli against that folder, and only this script ever
+# puts code in it. A missing folder is not swallowed here — it surfaces as the
+# devcontainer build's own visible failure (no devcontainer.json found), which is
+# the report the user actually sees on the workspace page.
+#
+# The path is load-bearing, not incidental: the DinD sidecar bind-mounts the same
+# host directory at the same container path (see the locals block in main.tf),
+# because a bind mount's source is resolved by the daemon that runs the container
+# and that daemon is the sidecar. Anything cloned anywhere else is invisible to
+# the daemon and the build dies with "bind source path does not exist".
+#
+# The folder name is re-derived here rather than handed in, because this is the
+# side that runs git; main.tf derives it the same way for workspace_folder and
+# the two derivations must agree (split on "/", drop empty segments so a trailing
+# slash is harmless, take the last, drop a trailing ".git", map every character
+# outside [A-Za-z0-9._-] to "-", and fall back to "repo" when that leaves no
+# leading alphanumeric — which also keeps "../" out of a root-owned bind).
+#
+# The URL arrives as a rendered literal, so it is read through a quoted heredoc:
+# that way no shell quoting has to survive, and the value is only ever expanded
+# as data.
+repo_url_raw="$(cat <<'REPO_URL_EOF'
+${repo_url}
+REPO_URL_EOF
+)"
+dc_dir='${dc_dir}'
+
+repo_leaf="$(printf '%s' "$repo_url_raw" | tr '/' '\n' | grep -v '^$' | tail -n 1)"
+# The "$${leaf%.git}" suffix form would be the shorter way to drop the extension;
+# it is spelled with sed here because a braced shell expansion is a templatefile
+# interpolation, and the bare form keeps this script's interpolation count at the
+# four variables main.tf passes.
+repo_folder="$(printf '%s' "$repo_leaf" | sed 's/\.git$//')"
+repo_folder="$(printf '%s' "$repo_folder" | sed 's/[^A-Za-z0-9._-]/-/g')"
+printf '%s' "$repo_folder" | grep -qE '^[A-Za-z0-9]' || repo_folder="repo"
+target="$dc_dir/$repo_folder"
+
+# Whichever user the workspace really belongs to: the owner of $HOME when the
+# agent runs as root (same rule as the ~/.grok chown above), otherwise whoever is
+# running this script. It decides both the chown target and whose git credentials
+# the clone uses.
+clone_owner="$(id -un)"
+if [ "$(id -u)" = "0" ]; then
+  clone_owner="$(stat -Lc '%U' "$HOME" 2>/dev/null || true)"
+  [ "$clone_owner" = "root" ] && clone_owner=""
+  if [ -z "$clone_owner" ] && id coder >/dev/null 2>&1; then
+    clone_owner="coder"
+  fi
+fi
+clone_home=""
+[ -n "$clone_owner" ] && clone_home="$(getent passwd "$clone_owner" 2>/dev/null | cut -d: -f6)"
+
+# Docker creates a missing bind source root-owned on the stack host, so the shared
+# directory is handed to the workspace user before git runs — a root-owned 755
+# parent would otherwise fail the clone outright. Non-recursive here: other
+# workspaces' clones live alongside this one and are not ours to chown.
+mkdir -p -- "$dc_dir" 2>/dev/null || true
+if [ -n "$clone_owner" ]; then
+  chown "$clone_owner" "$dc_dir" 2>/dev/null || true
+fi
+
+# Clone as the workspace user, never as root, so their credentials (a helper,
+# ~/.git-credentials, ssh keys) are the ones git consults. An empty prefix means
+# "run git directly", which is correct for a non-root agent and for a root agent
+# with no derivable workspace user. HOME is passed explicitly because runuser keeps
+# the invoker's environment — a root agent would otherwise hand git /root and miss
+# the workspace user's credential files entirely.
+clone_runner=""
+if [ "$(id -u)" = "0" ] && [ -n "$clone_owner" ]; then
+  if command -v runuser >/dev/null 2>&1; then
+    clone_runner="runuser -u $clone_owner --"
+  elif command -v sudo >/dev/null 2>&1; then
+    clone_runner="sudo -u $clone_owner --"
+  fi
+fi
+
+run_clone() {
+  if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
+    $clone_runner env HOME="$clone_home" git "$@"
+  elif [ -n "$clone_runner" ]; then
+    $clone_runner git "$@"
+  else
+    git "$@"
+  fi
+}
+
+if [ -d "$target/.git" ]; then
+  # Re-fetching is the user's call: a pull here could conflict mid-edit or fail
+  # on a dirty tree, and either way the workspace would start on code nobody chose.
+  echo "$repo_folder: already cloned, skipping"
+elif [ -e "$target" ]; then
+  echo "WARNING: $target exists but is not a git repository — leaving it alone and" \
+    "skipping the clone. Remove it from the stack host if it should not be there." >&2
+elif ! command -v git >/dev/null 2>&1; then
+  echo "WARNING: git is not installed in the workspace container, so $repo_url_raw" \
+    "was not cloned into $target — the dev container build will fail. This template" \
+    "expects the golden image (scripts/build-dev-image.sh), which ships git." >&2
+else
+  # -- before the URL: the value is user input and must never parse as an option.
+  if run_clone clone -- "$repo_url_raw" "$target"; then
+    echo "cloned $repo_url_raw into $target"
+    if [ -n "$clone_owner" ]; then
+      chown -R "$clone_owner" "$target" 2>/dev/null || true
+    fi
+  else
+    # Loud and non-fatal on purpose: the devcontainer build reports the same
+    # problem a second time, and the workspace still boots for someone to fix it.
+    # git removes its own partial clone on failure; nothing here deletes a folder
+    # that may hold someone's work.
+    echo "==============================================================" >&2
+    echo "WARNING: the repository clone failed — the dev container will not build." >&2
+    echo "  repository: $repo_url_raw" >&2
+    echo "  target:     $target" >&2
+    echo "  The two likely causes:" >&2
+    echo "    1. a private repository: git runs unauthenticated as the workspace" >&2
+    echo "       user, so credentials must already exist inside the workspace" >&2
+    echo "       (a credential helper, ~/.git-credentials, or ~/.ssh)" >&2
+    echo "    2. an unreachable host: check DNS and egress from the workspace" >&2
+    echo "       container, then restart the workspace" >&2
+    echo "  Clone it by hand into the path above, or fix the URL, and start again." >&2
+    echo "==============================================================" >&2
+  fi
+fi
+
+# --- MCP package warm-up (best effort) ----------------------------------------
+# Cold npx/uvx downloads are what make a first session stall on the MCP startup
+# timeout; prefetch the packages config.toml declares, off the boot path, with
+# every byte going to a log so no output pipe is left open behind the agent.
+if command -v npm >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
+  mkdir -p "$HOME/.grok/logs" 2>/dev/null
+  (
+    if command -v npm >/dev/null 2>&1; then
+      for pkg in \
+        @modelcontextprotocol/server-filesystem \
+        @modelcontextprotocol/server-memory \
+        @modelcontextprotocol/server-sequential-thinking
+      do
+        timeout 300 npm cache add "$pkg" </dev/null || true
+      done
+    fi
+    if command -v uvx >/dev/null 2>&1; then
+      for pkg in mcp-server-git mcp-server-time
+      do
+        timeout 300 uvx "$pkg" --help </dev/null || true
+      done
+    fi
+  ) >>"$HOME/.grok/logs/mcp-warmup.log" 2>&1 &
+fi
