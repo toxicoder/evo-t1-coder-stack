@@ -40,14 +40,34 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 # --- Grok Build CLI ----------------------------------------------------------
-# The installer writes its own ~/.grok/config.toml (a `[cli] installer = ...`
-# stub), so the first boot is recorded here: that stub is otherwise indistinguish-
-# able from a user's config, and the managed-config guard below needs to know the
-# file is installer-owned rather than user-owned.
+# A PATH probe (`command -v`), not `[ -x ~/.grok/bin/grok ]`: the golden image
+# bakes the CLI into /usr/local/bin, so on a golden-image boot this probe
+# answers YES and nothing downloads. The download is the fallback for the
+# `ubuntu:24.04` image option and for a home volume that never received a CLI,
+# and it is bounded + retried on purpose: one unbounded attempt burned a whole
+# start on a single stalled connection to x.ai ("curl: (28) SSL connection
+# timeout") and booted the workspace without a CLI anyway.
+#
+# GROK_FRESH_INSTALL records that an install COMPLETED this boot. The
+# installer writes its own ~/.grok/config.toml (a `[cli] installer = ...`
+# stub), indistinguishable from a user's config; the managed-config guard
+# below may only treat that stub as stack-owned on a completed install — a
+# download that failed must never wipe a user-owned config in its place.
 GROK_FRESH_INSTALL=0
-if [ ! -x "$HOME/.grok/bin/grok" ]; then
-  curl -fsSL https://x.ai/cli/install.sh | bash >/dev/null
-  GROK_FRESH_INSTALL=1
+if ! command -v grok >/dev/null 2>&1; then
+  grok_installer="$(mktemp 2>/dev/null || true)"
+  if [ -n "$grok_installer" ] \
+     && curl -fsSL --http1.1 --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 180 \
+          -o "$grok_installer" https://x.ai/cli/install.sh \
+     && bash "$grok_installer" >/dev/null; then
+    # `command -v` again, not `[ -x ... ]`: the probe must see the CLI
+    # wherever the installer put it, and a failed download must leave the
+    # flag at 0.
+    command -v grok >/dev/null 2>&1 && GROK_FRESH_INSTALL=1
+  fi
+  # $${...} (doubled dollar) keeps this a shell expansion, not a Terraform
+  # interpolation — see the note at the top of this file.
+  rm -f "$${grok_installer:-}"
 fi
 if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
   printf '\n# Grok Build CLI\nexport PATH="$HOME/.grok/bin:$PATH"\n' >>"$HOME/.bashrc"

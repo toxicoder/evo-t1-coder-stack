@@ -76,7 +76,8 @@ ARG NODE_VERSION_DEFAULT=24 \
     KUBECTL_VERSION=v1.30.14 \
     DOCKER_CLI_VERSION=29.8.1 \
     BUILDX_VERSION=v0.37.1 \
-    COMPOSE_VERSION=v5.5.1
+    COMPOSE_VERSION=v5.5.1 \
+    GROK_VERSION=1.0.44
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -166,6 +167,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       python3-dev \
       python3-full \
       xz-utils \
+      zstd \
     # Python 3.11 is not in noble's own archive; deadsnakes is the maintained
     # source and lists noble as a supported suite. Fingerprint-pinned key fetched
     # over TLS from the Ubuntu keyserver, dearmored by hand — no apt-key.
@@ -388,6 +390,39 @@ RUN case "${TARGETARCH}" in \
     && test ! -x /usr/local/bin/runc \
     && test ! -x /usr/local/bin/docker-proxy
 
+# ── Grok Build CLI (the coding agent this stack exists to serve) ────────────
+# The binary is fetched pinned (GROK_VERSION; the default here mirrors
+# tool-versions.env, per the naming contract at the top of this file) and
+# unpacked into /usr/local/bin/grok with an `agent` link beside it — the same
+# pair `curl https://x.ai/cli/install.sh | bash` would lay down, placed OUTSIDE
+# /home/coder on purpose: the home volume is seeded from the image only when it
+# is first created, so a CLI under $HOME freezes (or is absent) with the
+# volume, while this copy exists in every container built from the image.
+# `templates/*/startup.sh.tftpl` probes `command -v grok` before downloading:
+# on a golden-image boot that probe answers YES, so boot needs no internet at
+# all (the rule this file's header states). Without the bake-in, one start on
+# this box burned its whole startup budget on one stalled unbounded connection
+# to x.ai ("curl: (28) SSL connection timeout" in /tmp/coder-startup-script.log)
+# and booted WITHOUT the CLI, while another start streamed the same ~170 MiB
+# across the same link with no trouble — a pin removes that coin flip.
+# Upgrade path: bump GROK_VERSION here + in tool-versions.env, rebuild, re-push
+# the templates; a user's self-installed newer CLI in ~/.grok/bin stays first
+# on the login-shell PATH (profile.d) and wins over the baked copy there.
+RUN case "${TARGETARCH}" in \
+      amd64) GROK_ARCH=x86_64 ;; arm64) GROK_ARCH=aarch64 ;; \
+      *) echo "Unsupported TARGETARCH=${TARGETARCH} (need amd64 or arm64)" >&2; exit 1 ;; \
+    esac; \
+    echo "Unpacking Grok CLI ${GROK_VERSION} for linux/${GROK_ARCH}..."; \
+    fetch() { curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 --http1.1 -o "$1" "$2"; }; \
+    fetch /tmp/grok.zst "https://x.ai/cli/grok-${GROK_VERSION}-linux-${GROK_ARCH}.zst" \
+    && zstd -q -dc /tmp/grok.zst >/usr/local/bin/grok \
+    && rm -f /tmp/grok.zst \
+    && test -s /usr/local/bin/grok \
+    && chmod 0755 /usr/local/bin/grok \
+    && ln -sf grok /usr/local/bin/agent \
+    && /usr/local/bin/grok --version \
+    && /usr/local/bin/agent --version
+
 # ── Go 1.24 + protoc/stringer plugins ───────────────────────────────────────
 # Official tarball, not the golang-1.24 apt package: the Debian package puts its
 # binaries in /usr/lib/go-1.24/bin, which breaks every snippet that expects
@@ -537,7 +572,7 @@ RUN printf '%s\n' \
     # Coder agent runs startup_script, so a broken profile shows up at build time
     # instead of as a workspace with no tmux. HOME is overridden because RUN here is
     # still root (USER coder only takes effect on the next line).
-    && su coder -c 'env -i HOME=/home/coder USER=coder LOGNAME=coder PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb bash -l -c '"'"'set -e; for d in /home/coder/.grok/bin /opt/node/24/bin /usr/local/bin; do printf "%s\n" "$PATH" | tr : "\n" | grep -qx "$d"; done; node -v; tmux -V; git --version'"'"''
+    && su coder -c 'env -i HOME=/home/coder USER=coder LOGNAME=coder PATH=/usr/local/bin:/usr/bin:/bin TERM=dumb bash -l -c '"'"'set -e; for d in /home/coder/.grok/bin /opt/node/24/bin /usr/local/bin; do printf "%s\n" "$PATH" | tr : "\n" | grep -qx "$d"; done; node -v; tmux -V; git --version; grok --version'"'"''
 
 USER coder
 WORKDIR /home/coder
