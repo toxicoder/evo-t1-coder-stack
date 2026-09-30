@@ -87,6 +87,14 @@ locals {
   )
   repo_folder = can(regex("^[A-Za-z0-9]", local.repo_stripped)) ? local.repo_stripped : "repo"
 
+  # The VS Code settings payload, rendered once and reused: the code_server
+  # module decodes it into its settings inputs; the startup script no longer
+  # seeds any settings file, and code-server never reads ~/.config/Code.
+  vscode_settings = templatefile("${path.module}/settings.json.tftpl", {
+    litellm_url = var.litellm_url
+    litellm_key = var.litellm_key
+  })
+
   # DinD topology. Same shape as docker-dev's opt-in version, minus the toggle:
   # a devcontainer workspace is useless without a daemon the CLI can reach.
   dind_image = "docker:29.8.1-dind"
@@ -162,10 +170,6 @@ resource "coder_agent" "main" {
   }
 
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
-    vscode_settings = templatefile("${path.module}/settings.json.tftpl", {
-      litellm_url = var.litellm_url
-      litellm_key = var.litellm_key
-    })
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
       litellm_url        = var.litellm_url
       grok_default_model = var.grok_default_model
@@ -284,6 +288,23 @@ module "code_server" {
   port      = 13337
   subdomain = false
   open_in   = "tab"
+
+  # The agent bar shows this as "VS Code Web" (display_name; the static
+  # "VS Code Desktop" helper from display_apps keeps its own label, so the two
+  # editor buttons read differently now) and sorts it before the LiteLLM (10)
+  # and Coder UI (11) custom apps (lowest order first; static helper buttons
+  # are not reorderable per Coder's resource-ordering docs).
+  display_name = "VS Code Web"
+  order        = 5
+
+  # code-server reads its User/Machine settings from its user-data-dir, not
+  # from ~/.config/Code — the module merges this map into
+  # ~/.local/share/code-server/User/settings.json and .../Machine/settings.json
+  # on startup (per-key merge, so user-edited files survive). Same JSON goes
+  # to both files; the Machine copy is the fallback if the key resolves as
+  # machine-scoped in the editor's settings scope.
+  settings         = jsondecode(local.vscode_settings)
+  machine_settings = jsondecode(local.vscode_settings)
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,

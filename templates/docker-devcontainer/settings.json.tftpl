@@ -7,15 +7,65 @@
     "coder-fast",
     "chat"
   ],
-  "terminal.integrated.defaultProfile.linux": "Grok Build",
+  "editor.bracketPairColorization.enabled": true,
+  "editor.formatOnSave": true,
+  "editor.guides.bracketPairs": true,
+  "editor.inlineSuggest.enabled": false,
+  "editor.linkedEditing": true,
+  "editor.minimap.enabled": false,
+  "editor.renderWhitespace": "boundary",
+  "editor.stickyScroll.enabled": true,
+  "editor.wordWrap": "on",
+  "explorer.compactFolders": false,
+  "files.exclude": {
+    "**/.DS_Store": true,
+    "**/.ipynb_checkpoints": true,
+    "**/.virtual_documents": true
+  },
+  "files.watcherExclude": {
+    "**/.ipynb_checkpoints/**": true,
+    "**/.virtual_documents/**": true,
+    "**/node_modules/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true,
+    "**/.cache/**": true,
+    "**/models/**": true
+  },
+  "search.exclude": {
+    "**/.ipynb_checkpoints": true,
+    "**/.virtual_documents": true
+  },
+  "terminal.integrated.defaultProfile.linux": "tmux",
   "terminal.integrated.automationProfile.linux": "bash",
+  "terminal.integrated.scrollback": 2000,
+  "terminal.integrated.splitCwd": "workspaceRoot",
+  "terminal.integrated.enablePersistentSessions": false,
+  "terminal.integrated.persistentSessionReviveProcess": "never",
+  "terminal.integrated.commandsToSkipShell": [
+    "-workbench.action.quickOpen",
+    "-workbench.action.terminal.copySelection",
+    "-workbench.action.terminal.paste",
+    "-workbench.action.terminal.selectAll",
+    "-workbench.action.terminal.scrollDown",
+    "-workbench.action.terminal.scrollDownPage",
+    "-workbench.action.terminal.scrollToBottom",
+    "-workbench.action.terminal.scrollToTop",
+    "-workbench.action.terminal.scrollUp",
+    "-workbench.action.terminal.scrollUpPage",
+    "-workbench.action.terminal.clear",
+    "-editor.action.clipboardCopyAction",
+    "-workbench.action.terminal.toggleTerminal"
+  ],
   "terminal.integrated.profiles.linux": {
     "Grok Build": {
       "path": "/bin/bash",
       "args": [
         "-lc",
         "exec \"$HOME/.grok/bin/grok-build-terminal\""
-      ]
+      ],
+      "icon": "terminal",
+      "color": "terminal.ansiMagenta",
+      "overrideName": true
     },
     "bash": {
       "path": "/bin/bash"
@@ -24,10 +74,49 @@
       "path": "/bin/bash",
       "args": [
         "-lc",
-        "exec tmux"
-      ]
+        "exec \"$HOME/.grok/bin/vscode-terminal-tmux\""
+      ],
+      "icon": "terminal-tmux",
+      "color": "terminal.ansiGreen",
+      "overrideName": true
     }
   },
+  "[markdown]": {
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "other": false,
+      "comments": false,
+      "strings": false
+    },
+    "editor.unicodeHighlight.ambiguousCharacters": false,
+    "editor.unicodeHighlight.invisibleCharacters": false,
+    "diffEditor.ignoreTrimWhitespace": true
+  },
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.tabSize": 4
+  },
+  "[yaml]": {
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2,
+    "editor.autoIndent": "advanced",
+    "editor.quickSuggestions": {
+      "other": true,
+      "comments": false,
+      "strings": true
+    }
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "markdown.preview.breaks": true,
+  "markdown.preview.markEditorSelection": true,
+  "markdown.preview.fontSize": 15,
+  "markdown.preview.lineHeight": 1.6,
+  "markdown.preview.openMarkdownLinks": "inPreview",
+  "python.analysis.typeCheckingMode": "strict",
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "python.terminal.activateEnvironment": false,
   "cline.apiProvider": "OpenAI Compatible",
   "cline.openAiCompatibleEndpoint": "${litellm_url}",
   "cline.apiKey": "${litellm_key}",

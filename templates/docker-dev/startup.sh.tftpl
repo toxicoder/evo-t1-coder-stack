@@ -5,13 +5,13 @@
 #   1. installs tmux (if missing)
 #   2. installs the Grok Build CLI (if missing)
 #   3. puts ~/.grok/bin on PATH (login shells + this process)
-#   4. writes the "Grok Build" terminal-profile helper
-#   5. writes the workspace VS Code settings (only while this stack owns
-#      the file — a user-edited settings.json is left alone)
-#   6. writes ~/.grok/config.toml (only while this stack owns the file) and
+#   4. writes the two terminal-profile helpers (the "Grok Build" one and the
+#      plain tmux reattach wrapper the default profile uses), so a closed tab
+#      rejoins its session instead of losing the processes running in it
+#   5. writes ~/.grok/config.toml (only while this stack owns the file) and
 #      warms the offline MCP package caches in the background
 #
-# Every stage 6 onward is best-effort: an offline first boot must still leave
+# Every stage 5 onward is best-effort: an offline first boot must still leave
 # a working terminal, so nothing here may abort the script.
 #
 # Note: this file is rendered by Terraform templatefile(); shell variables
@@ -45,7 +45,10 @@ if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
 fi
 export PATH="$HOME/.grok/bin:$PATH"
 
-# --- "Grok Build" terminal-profile helper ------------------------------------
+# --- terminal-profile helpers -------------------------------------------------
+# Both profiles below launch through a per-folder tmux session, so a closed tab
+# never kills what was running in it.
+#
 # VS Code shows the profile under the settings key "Grok Build"; this helper
 # resumes (or starts) one tmux session per folder:
 #   grok-build-<folder>-<hash>
@@ -67,14 +70,30 @@ exec tmux new-session -A -s "$session" -c "$PWD"
 GROK_BUILD_HELPER
 chmod +x "$HOME/.grok/bin/grok-build-terminal"
 
-# --- VS Code settings ---------------------------------------------------------
-mkdir -p "$HOME/.config/Code/User"
-if [ ! -f "$HOME/.config/Code/User/settings.json" ] \
-   || grep -qs '__evoT1Stack' "$HOME/.config/Code/User/settings.json"; then
-  cat >"$HOME/.config/Code/User/settings.json" <<'CODE_SETTINGS_EOF'
-${vscode_settings}
-CODE_SETTINGS_EOF
+# The default terminal (and the Grok Build profile) join one tmux session per
+# folder instead of starting a throwaway one, so a closed tab or reloaded page
+# never kills running processes and another terminal (or an SSH client) can
+# rejoin the same session. No tmux (offline first boot): plain login shell.
+cat >"$HOME/.grok/bin/vscode-terminal-tmux" <<'TMUX_ATTACH_HELPER'
+#!/bin/bash
+folder=$(basename "$PWD")
+hash=$(printf '%s' "$PWD" | cksum 2>/dev/null | awk '{print substr($1, 1, 6)}')
+[ -n "$hash" ] || hash=$(printf '%s' "$PWD" | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-6)
+[ -n "$hash" ] || hash="root"
+session="vscode-$${folder}-$${hash}"
+if ! command -v tmux >/dev/null 2>&1; then
+  exec /bin/bash -l
 fi
+exec tmux -u new-session -A -s "$session" -c "$PWD"
+TMUX_ATTACH_HELPER
+chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
+
+# --- Editor settings ----------------------------------------------------------
+# The stack's editor settings are no longer written here. main.tf hands the same
+# JSON to the code-server module's `settings`/`machine_settings` inputs, which
+# merge it into ~/.local/share/code-server/{User,Machine}/settings.json on
+# startup (per-key merge, so a user-edited file survives). Those are the paths
+# code-server actually reads; nothing reads ~/.config/Code here.
 
 # --- Grok Build config --------------------------------------------------------
 # Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline
