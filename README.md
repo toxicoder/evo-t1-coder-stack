@@ -1,6 +1,6 @@
 # EVO-T1 Coder Stack
 
-One `docker compose up` turns a GMKtec EVO-T1 laptop into a self-hosted dev-workspace server: Coder workspaces that open a **Grok Build** terminal by default (with Cline and Kilo Code pre-wired to local models), Kasm Workspaces for full desktop streaming, IPEX-LLM Ollama running Qwen Coder on the Intel Arc 140T, a LiteLLM proxy that unifies the local iGPU with one or more NVIDIA Spark boxes behind a single OpenAI-compatible endpoint, and a [Homepage](https://gethomepage.dev) dashboard on the default web ports that links it all together with live status for each service.
+One `docker compose up` turns a GMKtec EVO-T1 laptop into a self-hosted dev-workspace server: Coder workspaces whose default terminal re-joins the folder's persistent tmux session (with the Grok Build terminal on its own session, and Cline and Kilo Code pre-wired to local models), Kasm Workspaces for full desktop streaming, IPEX-LLM Ollama running Qwen Coder on the Intel Arc 140T, a LiteLLM proxy that unifies the local iGPU with one or more NVIDIA Spark boxes behind a single OpenAI-compatible endpoint, and a [Homepage](https://gethomepage.dev) dashboard on the default web ports that links it all together with live status for each service.
 
 ## Hardware
 
@@ -36,8 +36,9 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                * two templates: docker-dev (plain container) and
   |                  docker-devcontainer (clones repo_url, builds its
   |                  .devcontainer on the workspace's own DinD sidecar)
-  |                * Grok Build terminal (default; tmux session
-  |                  grok-build-<folder>-<hash>, then `grok --cwd <folder>`)
+  |                * default terminal re-joins the folder's tmux session
+  |                  (vscode-<folder>-<hash>); Grok Build runs `grok --cwd <folder>`
+  |                  inside its own session (grok-build-<folder>-<hash>)
   |                * ~/.grok/config.toml rendered by the template: model
   |                  aliases + MCP servers (filesystem, memory,
   |                  sequential-thinking, git, time)
@@ -343,16 +344,21 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
 - persistent per-workspace home volume
 - `host.docker.internal` → host-gateway, so workspaces reach the Coder server and LiteLLM
 - a startup script that installs the **Grok Build CLI**, puts `~/.grok/bin` on PATH,
-  renders `~/.grok/config.toml` and the shared VS Code user settings (below), and
-  warms the MCP servers in the background
+  seeds the two terminal-profile tmux helpers, renders `~/.grok/config.toml`, and
+  warms the MCP servers in the background. The `settings.json.tftpl` payload does not
+  pass through the script: it goes to the `code_server` module, which merges it into
+  code-server's User+Machine settings on every start (below)
 - `startup_script_behavior = "blocking"`, so a workspace only reports *ready* once the
   toolchain is genuinely staged — no opening an editor mid-install
 - agent-bar buttons via `display_apps` (VS Code Desktop helper: a locally installed
   VS Code / Cursor / Windsurf plus the `coder.coder-remote` extension; web terminal;
   port forwarding; SSH helper), a separate in-browser **code-server** editor
-  (Coder's VS Code fork; no local VS Code), memory and disk usage gauges, six
-  `coder stat` metadata tiles, and a **LiteLLM** tile that health-checks the proxy
-  and is visible only to the workspace owner
+  (Coder's VS Code fork; no local VS Code), labelled **VS Code Web** with `order = 5`
+  so it sorts before the LiteLLM and Coder UI buttons and reads apart from the
+  **VS Code Desktop** helper (static helper buttons have no order/icon knobs in this
+  Coder release — custom apps are ordered among themselves), memory and disk usage
+  gauges, six `coder stat` metadata tiles, and a **LiteLLM** tile that health-checks
+  the proxy and is visible only to the workspace owner
 - `coder_metadata.workspace_info` shows the image, the LiteLLM URL, the default Grok
   model, whether DinD is `on (tcp://dind:2375)` or `off`, and (redacted) which key is
   wired in, so a misconfigured workspace is visible in the UI without shell access
@@ -429,9 +435,10 @@ always on, plus a repository that brings its own toolchain:
 
 It reuses `docker-dev`'s variables plus `repo_url`, minus `dind` (the sidecar is not optional
 here — a devcontainer workspace without a daemon is nothing), and carries its own copies of
-`startup.sh.tftpl`, `settings.json.tftpl` (desktop VS Code user settings; code-server
-keeps its own under `~/.local/share/code-server/User/settings.json`) and
-`grok-config.toml.tftpl`, so the Grok Build
+`startup.sh.tftpl`, `settings.json.tftpl` (the shared editor-settings payload,
+merged into each dev container's code-server User+Machine settings by the
+`code_server` module) and
+`grok-config.toml.tftpl`, so the tmux-default
 terminal and LiteLLM wiring above apply to it too. **Treat the repository as untrusted
 code**: everything it builds runs on a privileged daemon on this box, so a Dockerfile in
 that repo is root-equivalent on the stack host — the create form's own description says so,
@@ -454,12 +461,13 @@ docker compose exec -T -e CODER_URL -e CODER_SESSION_TOKEN coder \
 (the server names `--failure-ttl`, `--inactivityTTL`, `--allow-user-autostart=false`
 and `--allow-user-autostop=false`), so leave them out of the CE stack.
 
-## Grok Build default terminal
+## Terminal defaults: tmux re-attach and Grok Build
 
-New Coder workspaces open a **Grok Build** terminal by default:
+New Coder workspaces open a terminal that **re-attaches to a tmux session**:
 
-- `terminal.integrated.defaultProfile.linux` is `"Grok Build"`; the automation profile stays `bash`, and plain `bash` and `tmux` remain available as extra profiles.
-- The profile resumes (or starts) one tmux session per folder — `grok-build-<folder>-<hash>` — then runs `grok --cwd <folder>` inside it.
+- `terminal.integrated.defaultProfile.linux` is `"tmux"`; the automation profile stays `bash` (so build/tasks commands never wait on tmux), and plain `bash` and **Grok Build** remain available as extra profiles.
+- The `tmux` profile re-joins (or starts) one shared session per folder — `vscode-<folder>-<hash>` — so a second terminal window, a browser reload, or `ssh` + `tmux attach -t <session>` from any client lands in the same session, and long jobs survive closing the tab. **Grok Build** keeps its own session (`grok-build-<folder>-<hash>`, running `grok --cwd <folder>` inside it); `tmux ls` lists the names, `tmux attach -t <session>` re-joins from any other terminal.
+- If tmux is absent (offline first boot), the helper execs a plain login shell, so the default terminal still opens. The Coder **web-terminal** button is separate from all of this: it streams a plain login shell over the agent's reconnecting PTY with its own reconnection token and reads no `terminal.integrated.*` settings.
 - The workspace startup script installs the Grok CLI from `https://x.ai/cli/install.sh` (once) and adds `~/.grok/bin` to PATH.
 - The startup script renders `~/.grok/config.toml` from
   `templates/docker-dev/grok-config.toml.tftpl`: `[models] default` points at the
@@ -473,15 +481,15 @@ New Coder workspaces open a **Grok Build** terminal by default:
   all pre-installed in the image (`npm -g` for the first three, `uv tool` for the
   Python two), and warmed at workspace startup so the first session does not pay the
   cold-start cost. Check them with `grok mcp doctor` inside a workspace.
-- Cline and Roo/Kilo are pre-wired to the LiteLLM proxy in
-  `~/.config/Code/User/settings.json`, the user-settings file desktop VS Code reads
-  (endpoint `http://host.docker.internal:4000/v1`, master key from the `litellm_key`
+- Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint
+  `http://host.docker.internal:4000/v1`, master key from the `litellm_key`
   template variable, model alias `agent`, with `coder`/`coder-fast`/`chat` listed as
-  alternates). code-server keeps its own settings in
-  `~/.local/share/code-server/User/settings.json`; pass that map through the
-  `code_server` module's `settings` input to give the browser editor the same wiring.
-  Installing Cline/Roo itself is a manual step in either editor's Extensions panel
-  (Open VSX by default). If your extension build names its settings slightly
+  alternates) through the `code_server` module's `settings` and `machine_settings`
+  inputs, which merge the payload key-by-key into code-server's User and Machine
+  settings under `~/.local/share/code-server` on every start — user-edited keys
+  there survive, and nothing is written to the unread `~/.config/Code` path any
+  more. Installing Cline/Roo itself is a manual step in either editor's Extensions
+  panel (Open VSX by default). If your extension build names its settings slightly
   differently, set the OpenAI-compatible endpoint + key in its settings UI — one
   field each.
 
@@ -597,7 +605,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
     │   ├── main.tf
     │   ├── coder.tf
     │   ├── startup.sh.tftpl     # staged workspace bootstrap (blocking)
-    │   ├── settings.json.tftpl  # desktop VS Code user settings (Cline / Roo / terminal profile)
+    │   ├── settings.json.tftpl  # editor settings (Cline / Roo / terminal profiles), merged into code-server's User+Machine settings
     │   └── grok-config.toml.tftpl  # ~/.grok/config.toml — models + MCP servers
     └── docker-devcontainer   # Coder template that clones repo_url and builds its
                               # .devcontainer on an always-on DinD sidecar (pushed second)
