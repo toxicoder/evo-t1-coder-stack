@@ -339,11 +339,15 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
   shfmt/shellcheck/bats/ruff/mypy/prettier, the Coder CLI, the Docker **client**
   toolchain (`docker`, `docker buildx`, `docker compose` as CLI plugins under
   `/usr/local/lib/docker/cli-plugins` — no daemon: the build asserts `dockerd`,
-  `containerd`, `runc` and `docker-proxy` are absent), and the five MCP servers
-  pre-baked so a workspace needs no network to start a session
+  `containerd`, `runc` and `docker-proxy` are absent), the five MCP servers
+  pre-baked next to the pinned Grok Build CLI (`/usr/local/bin/grok`), so a
+  workspace needs no network to start a session
 - persistent per-workspace home volume
 - `host.docker.internal` → host-gateway, so workspaces reach the Coder server and LiteLLM
-- a startup script that installs the **Grok Build CLI**, puts `~/.grok/bin` on PATH,
+- a startup script that ensures the **Grok Build CLI** is on PATH — the golden
+  image ships it, and the script's `https://x.ai/cli/install.sh` download runs
+  only where `grok` is missing from PATH (the `ubuntu:24.04` image option, or a
+  home volume that never received the CLI). It also puts `~/.grok/bin` on PATH,
   seeds the two terminal-profile tmux helpers, renders `~/.grok/config.toml`, and
   warms the MCP servers in the background. The `settings.json.tftpl` payload does not
   pass through the script: it goes to the `code_server` module, which merges it into
@@ -468,7 +472,13 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
 - `terminal.integrated.defaultProfile.linux` is `"tmux"`; the automation profile stays `bash` (so build/tasks commands never wait on tmux), and plain `bash` and **Grok Build** remain available as extra profiles.
 - The `tmux` profile re-joins (or starts) one shared session per folder — `vscode-<folder>-<hash>` — so a second terminal window, a browser reload, or `ssh` + `tmux attach -t <session>` from any client lands in the same session, and long jobs survive closing the tab. **Grok Build** keeps its own session (`grok-build-<folder>-<hash>`, running `grok --cwd <folder>` inside it); `tmux ls` lists the names, `tmux attach -t <session>` re-joins from any other terminal.
 - If tmux is absent (offline first boot), the helper execs a plain login shell, so the default terminal still opens. The Coder **web-terminal** button is separate from all of this: it streams a plain login shell over the agent's reconnecting PTY with its own reconnection token and reads no `terminal.integrated.*` settings.
-- The workspace startup script installs the Grok CLI from `https://x.ai/cli/install.sh` (once) and adds `~/.grok/bin` to PATH.
+- The golden image ships the Grok CLI at `/usr/local/bin/grok` (with an `agent`
+  link beside it), pinned as `GROK_VERSION` in `images/dev/tool-versions.env` and
+  deliberately OUTSIDE the home volume, so a rebuilt volume cannot lose it. The
+  startup script probes `command -v grok` on every start and re-downloads from
+  `https://x.ai/cli/install.sh` — bounded, with retries — only while `grok` is
+  missing from PATH. A self-installed CLI under `~/.grok/bin` wins over the
+  baked copy on the login-shell PATH.
 - The startup script renders `~/.grok/config.toml` from
   `templates/docker-dev/grok-config.toml.tftpl`: `[models] default` points at the
   `agent` alias, the five aliases are defined with `base_url` set to `litellm_url`
@@ -632,6 +642,15 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 - Image missing tools, or the build aborts mid-layer → a pinned download returned an
   error; the layer prints `curl: (22)` and stops rather than shipping a partial image.
   Check the version in `images/dev/tool-versions.env` against the upstream release.
+- `grok` → `command not found` inside a workspace → the container started before
+  the CLI was baked into the image, or its start-time download failed.
+  `bash -lc 'command -v grok'` (or `test -x ~/.grok/bin/grok`) answers nothing in
+  that case; `/tmp/coder-startup-script.log` holds exactly one `curl: (28)` line.
+  Fix now, from the stack host:
+  `docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retry 3 --retry-all-errors --retry-delay 3 --connect-timeout 15 --max-time 240 https://x.ai/cli/install.sh | bash'`
+  and open a new terminal (PATH there already includes `~/.grok/bin`).
+  Permanent fix: rebuild the image (`./scripts/build-dev-image.sh`) and rebuild
+  the workspace, which then starts from the image's copy.
 - `docker` → `command not found` inside a workspace → that container was built from an
   image predating the Docker client toolchain (or from the bare-Ubuntu *Minimal shell*
   preset). Rebuild the image with `./scripts/build-dev-image.sh`, then rebuild the
@@ -672,7 +691,8 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 - Workspace cannot reach LiteLLM → check `CODER_ACCESS_URL` is an `https://` URL (a LAN IP, or the public coder name in public mode — never `localhost` / `127.0.0.1`) and that the workspace container can resolve `host.docker.internal`. Agent traffic ignores that URL and dials `host.docker.internal:3002` (see the `coder_agent_url` template variable).
 - Grok profile missing in a fresh workspace → `startup_script` is blocking, so it
   has already finished before the agent reports ready and before code-server
-  starts; check the workspace agent logs, then `ls ~/.grok/bin`.
+  starts; check the workspace agent logs, then `bash -lc 'command -v grok'` — a
+workspace on a current image answers `/usr/local/bin/grok`.
 - Browser editor (code-server) stays unhealthy → check in this order: the
   code-server install script's log is green in the workspace's Scripts/Log tab;
   `curl -fsS localhost:13337/healthz` answers from inside the workspace; the
