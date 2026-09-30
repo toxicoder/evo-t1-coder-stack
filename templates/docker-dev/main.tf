@@ -159,7 +159,9 @@ resource "coder_agent" "main" {
   startup_script_behavior = "blocking"
 
   # Agent-bar buttons. These are driven here, not by any CODER_*IDE* server
-  # flag (no such flag family exists in v2.36).
+  # flag (no such flag family exists in v2.36). display_apps.vscode is the
+  # desktop helper: a locally installed VS Code plus the coder.coder-remote
+  # extension. The in-browser editor is the separate code-server app below.
   display_apps {
     vscode                 = true
     vscode_insiders        = false
@@ -234,6 +236,27 @@ resource "coder_agent" "main" {
     # a confusing connection error instead of the plain "command not found".
     local.dind_enabled ? { DOCKER_HOST = local.dind_host } : {},
   )
+}
+
+# In-browser VS Code (Coder's code-server fork) on port 13337. display_apps.vscode
+# above is only the desktop helper; this module installs the binary into the
+# home volume and exposes it as a path-based coder_app.
+module "code_server" {
+  count  = data.coder_workspace.me.start_count
+  source = "registry.coder.com/coder/code-server/coder"
+  # Pinned: this module is downloaded from registry.coder.com on every
+  # `terraform init`, so an unpinned constraint lets an upstream module release
+  # change every workspace's editor without a commit in this repo.
+  version        = "~> 1.0"
+  agent_id       = coder_agent.main.id
+  folder         = "/home/coder"
+  port           = 13337
+  install_prefix = "/home/coder/.local/share/code-server"
+  use_cached     = true
+  # No CODER_WILDCARD_ACCESS_URL on this box, so subdomain routing is not
+  # available: the editor is proxied on the path-based access URL.
+  subdomain = false
+  open_in   = "tab"
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,
