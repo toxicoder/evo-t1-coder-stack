@@ -94,6 +94,14 @@ repo can verify.
   simply that nothing else is attached to it and nothing is published to the host.
   Keep the toggle off unless someone is actually building containers. See README,
   "Coder workspace template".
+- **The Grok Build profile volume is per-user, not host-wide.** Each workspace mounts its
+  owner's `grok-profile-<owner-id>` volume read-write at `/home/coder/.grok`, keyed by
+  workspace **owner** id, so one human's cross-workspace state sharing is the intent and no
+  other user's workspace is ever configured to mount it. The accepted cost is that the
+  SQLite memory/index files in there are opened live by every holder, so concurrent writers
+  can race; nothing credential-bearing lives in `~/.grok` either, because `config.toml`
+  names `LITELLM_API_KEY` through `env_key` and the key itself travels in the workspace
+  environment. See README, "Grok Build state: one shared profile per user".
 - **Workspace code-server.** Each workspace runs Coder's code-server fork on
   13337 with `--auth none`, published as a `coder_app` with `share = "owner"`
   and `subdomain = false` (this stack sets no `CODER_WILDCARD_ACCESS_URL`, so

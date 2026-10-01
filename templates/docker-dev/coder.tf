@@ -34,3 +34,9 @@ variable "dind" {
   description = "Default for the docker-in-docker toggle. When on, the workspace gets a dedicated privileged docker:29.8.1-dind sidecar on a network private to that workspace, plus DOCKER_HOST pointed at it, so docker build, docker run and docker compose work inside. The sidecar runs privileged, so keep this off unless someone is actually testing container builds; the daemon image is never pulled by Terraform, so docker:29.8.1-dind must already be in the host's local image store (docker pull docker:29.8.1-dind)."
   default     = false
 }
+
+variable "grok_profile_share" {
+  type        = bool
+  description = "Mount the workspace owner's shared Grok Build profile volume (grok-profile-<owner-id>) at /home/coder/.grok, nested inside that workspace's own home volume. Everything the CLI keeps in ~/.grok — config.toml, skills, memory-v2, sessions, the MCP warm caches, a self-installed CLI under ~/.grok/bin — is then written once and read by every workspace this user owns, and survives a rebuild. Per-user, not host-wide: the volume name is keyed by owner id, so another user's workspaces never see it. Off gives each workspace a private ~/.grok that dies with it. Changing this needs a workspace rebuild."
+  default     = true
+}

@@ -374,7 +374,10 @@ Template variables: `image` (seeds the **Workspace image** dropdown default),
 (optional), `coder_agent_url` (default `http://host.docker.internal:3002` — the URL the agent
 dials, kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent
 traffic through the reverse proxy; empty keeps the provider-rendered access URL),
-`dind` (default `false`; turns on the per-workspace privileged daemon described below).
+`dind` (default `false`; turns on the per-workspace privileged daemon described below),
+`grok_profile_share` (default `true`; mounts the owner's shared `~/.grok` profile volume
+instead of leaving each workspace with a private one — see "Grok Build state: one shared
+profile per user").
 
 **Docker-in-docker (opt-in).** The create form's **Docker-in-docker** Yes/No question
 (preset *AI workspace + DinD*, template variable `dind`) provisions, per workspace, a
@@ -502,6 +505,31 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   panel (Open VSX by default). If your extension build names its settings slightly
   differently, set the OpenAI-compatible endpoint + key in its settings UI — one
   field each.
+
+## Grok Build state: one shared profile per user
+
+Every workspace still gets its own `/home/coder` volume, and `~/.grok` is now a
+**second, nested** mount inside it: a Docker volume named `grok-profile-<owner-id>`,
+referenced by name rather than declared as a Terraform resource, that every workspace
+belonging to that user mounts read-write at the same path. Configure the CLI once and the
+rest of that account's workspaces inherit it.
+
+- **What is shared:** `config.toml`, `skills/`, `memory-v2/`, `sessions/`, the warmed MCP
+  caches, and a CLI you installed yourself under `~/.grok/bin`.
+- **Why:** the model catalog, the MCP servers and any skill get set up once. A `/learn`
+  run or a hand-added skill written in one workspace is immediately visible in that user's
+  other workspaces, and a rebuilt or recreated workspace starts on the existing profile
+  instead of an empty one.
+- **Per-user privacy:** one volume per workspace **owner**, keyed by owner id — never
+  host-wide and never cross-user. Another user's workspace has no mount that points at it,
+  because its own profile volume carries a different name.
+- **Caveats, honestly:** the memory and index files in there are SQLite and are opened
+  live by every workspace holding the mount, so two workspaces writing memory at the same
+  time can race — *roughly in sync* is the bar, not transactional sharing. A stop or start
+  of a **different user's** workspace never sees the volume; it is keyed to the owner, not
+  to the workspace. And turning the knob off needs a rebuild
+  (`coder templates push … --var grok_profile_share=false`, or the per-workspace variable),
+  after which that workspace goes back to a private `~/.grok` that dies with it.
 
 ## Kasm
 

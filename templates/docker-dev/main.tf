@@ -552,6 +552,23 @@ resource "docker_container" "dind" {
   }
 }
 
+# One Grok Build profile per *user*, mounted into every workspace that user
+# owns, instead of one ~/.grok per workspace that dies on a rebuild.
+#
+# The volume is deliberately NOT declared as a docker_volume resource. A
+# declared volume would be one resource per workspace, which is the opposite of
+# sharing, and a workspace stop would then have to unmount a volume another of
+# the same user's workspaces still holds open ("volume is in use"). Referencing
+# it by plain string name means Docker creates it on the first container start
+# that names it and reuses it afterwards.
+locals {
+  # Off => no extra volumes entry at all, so the container spec is byte-identical
+  # to what it was before the profile volume existed.
+  grok_profile_enabled = var.grok_profile_share
+  # Keyed by owner id, not by workspace id: that is the whole privacy boundary.
+  grok_profile_volume = "grok-profile-${data.coder_workspace_owner.me.id}"
+}
+
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
 
@@ -583,6 +600,21 @@ resource "docker_container" "workspace" {
     container_path = "/home/coder"
     volume_name    = docker_volume.home.name
     read_only      = false
+  }
+
+  # Nested inside the mount above, not instead of it: Docker resolves the
+  # /home/coder volume first and then covers /home/coder/.grok with the owner's
+  # shared profile volume, so the CLI's state tree is one directory tree shared
+  # live by every workspace that user owns. Gated on grok_profile_share because
+  # an empty for_each emits no volumes entry at all — with the knob off the
+  # planned container is exactly the pre-profile shape.
+  dynamic "volumes" {
+    for_each = local.grok_profile_enabled ? [1] : []
+    content {
+      container_path = "/home/coder/.grok"
+      volume_name    = local.grok_profile_volume
+      read_only      = false
+    }
   }
 
   # Only the sidecar reference matters: it makes Terraform attach the daemon to

@@ -11,6 +11,16 @@
 #   5. writes ~/.grok/config.toml (only while this stack owns the file) and
 #      warms the offline MCP package caches in the background
 #
+# ~/.grok is not necessarily this workspace's own directory. With main.tf's
+# grok_profile_share on (the default) the container mounts the workspace owner's
+# shared per-user Docker volume read-write at /home/coder/.grok, nested inside
+# that workspace's own /home/coder volume, so the terminal helpers, config.toml,
+# memory-v2/ and the MCP warm caches written below are the same files every
+# other workspace this user owns reads and writes, and they survive a rebuild.
+# What that does NOT change is ownership of config.toml: the managed-by:
+# evo-t1-coder-stack marker still decides it, and the file is still re-rendered
+# on every start while that marker line is present.
+#
 # Every stage 5 onward is best-effort: an offline first boot must still leave
 # a working terminal, so nothing here may abort the script.
 #
@@ -119,7 +129,9 @@ chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
 # Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline
 # MCP stack and the subagent sizing. Ownership is decided by the marker comment
 # below: while it is present the stack re-renders the file on every start, and
-# deleting that one line hands the file over to the user for good.
+# deleting that one line hands the file over to the user for good. On a shared
+# profile volume that file usually already exists — another of the owner's
+# workspaces wrote it — so the marker, not first-boot, is what decides.
 #
 # A fresh CLI install always takes the file back. The installer creates a
 # `[cli] installer = ...` stub before this stage runs, so without the first-boot
