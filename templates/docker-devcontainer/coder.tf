@@ -6,7 +6,7 @@ variable "image" {
 
 variable "repo_url" {
   type        = string
-  description = "Default for the create form's Git repository field. The repo must carry .devcontainer/devcontainer.json; the clone runs unauthenticated as the workspace user, so a private repo needs git credentials inside the workspace (~/.git-credentials or an SSH key) before it will fetch."
+  description = "Default for the create form's Git repository field — the clone source in either mode: built into a dev container when the dev-container toggle is on, opened directly by the editor when it is off. With the toggle on the repo must carry .devcontainer/devcontainer.json, otherwise that build fails and no editor appears; with it off any repo works. The clone runs unauthenticated as the workspace user, so a private repo needs git credentials inside the workspace (~/.git-credentials or an SSH key) before it will fetch."
   default     = "https://github.com/coder/coder"
 }
 

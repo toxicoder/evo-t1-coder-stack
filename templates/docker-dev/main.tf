@@ -52,6 +52,24 @@ locals {
     [{ value = var.image, name = "Custom (${var.image})", description = "Pushed with --var image." }],
   )
 
+  # The folder a cloned repository lands in. Derived here *and* in
+  # startup.sh.tftpl on purpose: this file only names the path, the script is
+  # the side that runs git, and the two derivations must agree or the editor and
+  # the terminal helpers point at a folder that was never cloned. Both do —
+  # split on "/", drop empty segments (so a trailing slash is harmless), take
+  # the last, drop a trailing ".git", map every character outside
+  # [A-Za-z0-9._-] to "-", and fall back to "repo" when that leaves no leading
+  # alphanumeric — which also keeps "../" out of a root-owned path the editor,
+  # the web terminal and Grok Build all open on.
+  repo_leaf = element(concat(compact(split("/", trimspace(data.coder_parameter.repo_url.value))), [""]), -1)
+  repo_stripped = replace(
+    replace(local.repo_leaf, "\\.git$", ""),
+    "[^A-Za-z0-9._-]", "-",
+  )
+  repo_folder = can(regex("^[A-Za-z0-9]", local.repo_stripped)) ? local.repo_stripped : "repo"
+  # An empty field clones nothing and keeps every folder below on /home/coder.
+  repo_set = trimspace(data.coder_parameter.repo_url.value) != ""
+
   # The VS Code settings payload, rendered once and reused: the code_server
   # module decodes it into its settings inputs; the startup script no longer
   # seeds any settings file, and code-server never reads ~/.config/Code.
@@ -120,6 +138,21 @@ data "coder_parameter" "dind" {
   }
 }
 
+# Empty by default: a workspace that names no repository is exactly what this
+# template used to be — editor, web terminal and Grok Build all on /home/coder.
+# Mutable because switching repository clones a folder and reopens the editor;
+# unlike the DinD toggle that changes no topology, so no rebuild is needed.
+data "coder_parameter" "repo_url" {
+  name         = "repo_url"
+  display_name = "Git repository"
+  description  = "Optional clone URL. The repository is fetched into /home/coder/workspace/<repo-name> on workspace create and on every start, and when this is filled the editor, the terminal and Grok Build all open and run on that folder. Leave it empty for a home-directory workspace."
+  type         = "string"
+  form_type    = "input"
+  mutable      = true
+  default      = var.repo_url
+  order        = 3
+}
+
 # Presets collapse the create form to one click. Keys here are parameter *names*
 # (display_name is UI-only and would be ignored).
 data "coder_workspace_preset" "ai_workspace" {
@@ -170,10 +203,16 @@ resource "coder_agent" "main" {
   # flag (no such flag family exists in v2.36). display_apps.vscode is the
   # desktop helper: a locally installed VS Code plus the coder.coder-remote
   # extension. The in-browser editor is the separate code-server app below.
+  # web_terminal stays off on purpose: the built-in terminal is hardwired to
+  # open in coder_agent.dir, which is unset here and therefore /home/coder,
+  # and the custom coder_app below replaces it with one that opens on the
+  # cloned repository instead. That is the documented replace pattern (set the
+  # display_apps key false and add a command-type coder_app); leaving this on
+  # would only add a second terminal button that lands on the home folder.
   display_apps {
     vscode                 = true
     vscode_insiders        = false
-    web_terminal           = true
+    web_terminal           = false
     ssh_helper             = true
     port_forwarding_helper = true
   }
@@ -219,6 +258,10 @@ resource "coder_agent" "main" {
       litellm_url        = var.litellm_url
       grok_default_model = var.grok_default_model
     })
+    # Injected verbatim into the script, which is safe enough: this is the
+    # workspace creator's own input and they already hold a shell in this
+    # container. The script quotes it anyway so a URL with spaces survives.
+    repo_url = data.coder_parameter.repo_url.value
   })
 
   # These environment variables allow you to make Git commits right away
@@ -267,9 +310,14 @@ module "code_server" {
   # Pinned: this module is downloaded from registry.coder.com on every
   # `terraform init`, so an unpinned constraint lets an upstream module release
   # change every workspace's editor without a commit in this repo.
-  version        = "~> 1.0"
-  agent_id       = coder_agent.main.id
-  folder         = "/home/coder"
+  version  = "~> 1.0"
+  agent_id = coder_agent.main.id
+  # Not just where the file tree starts: VS Code opens every new terminal with
+  # cwd = the workspace root, and the Grok Build and tmux terminal profiles in
+  # startup.sh.tftpl key their tmux session name and their `grok --cwd` off that
+  # cwd. Move the folder and the editor's terminals and the Grok agent move with
+  # it; leave it on /home/coder and they all keep working from the home folder.
+  folder         = local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"
   port           = 13337
   install_prefix = "/home/coder/.local/share/code-server"
   use_cached     = true
@@ -294,6 +342,28 @@ module "code_server" {
   # machine-scoped in the editor's settings scope.
   settings         = jsondecode(local.vscode_settings)
   machine_settings = jsondecode(local.vscode_settings)
+}
+
+# The agent-bar terminal button, replacing the built-in one (which stays off in
+# display_apps above because it hardwires to coder_agent.dir = /home/coder).
+# coder_app in coder/coder 2.18 has no `folder` argument — terraform validate
+# rejects one with `An argument named "folder" is not expected here` — so the
+# folder is pinned inside `command` instead: a command-type coder_app opens a
+# terminal running that command, and this one lands the shell on the cloned
+# repository when there is one, or on /home/coder when there is not. The `cd`
+# is best-effort (`2>/dev/null;`): with && a failed clone would leave the only
+# terminal button starting a shell in /home/coder and one in a dead folder, and
+# a workspace whose clone failed still needs a working terminal to fix it from.
+# Verified against `terraform validate` only — the shell-semantics behaviour
+# needs one try in a real workspace.
+resource "coder_app" "web_terminal" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  slug         = "web-terminal"
+  display_name = "Web Terminal"
+  icon         = "/icon/terminal.svg"
+  command      = "cd ${local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"} 2>/dev/null; exec /bin/bash -l"
+  order        = 6
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,
@@ -338,6 +408,13 @@ resource "coder_metadata" "workspace_info" {
   item {
     key   = "image"
     value = data.coder_parameter.workspace_image.value
+  }
+
+  # Which repository this workspace opened, and on an empty field say so, rather
+  # than leaving a blank tile that reads like a failure.
+  item {
+    key   = "repo"
+    value = local.repo_set ? data.coder_parameter.repo_url.value : "none"
   }
 
   item {

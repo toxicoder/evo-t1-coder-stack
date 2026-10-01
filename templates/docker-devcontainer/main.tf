@@ -30,14 +30,15 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
-# The whole create form is one question: which repository to open. The repo, not
-# this repo, decides the toolchain — its .devcontainer/devcontainer.json (and the
-# Dockerfile or image that file names) is built and started by the Coder agent
-# through @devcontainers/cli.
+# The create form asks two questions: which repository to open, and whether to
+# build that repository's dev container. The repo, not this repo, decides the
+# toolchain — its .devcontainer/devcontainer.json (and the Dockerfile or image
+# that file names) is built and started by the Coder agent through
+# @devcontainers/cli, which is what the question below decides.
 data "coder_parameter" "repo_url" {
   name         = "repo_url"
   display_name = "Git repository"
-  description  = "Clone URL of the repository to open. It must contain .devcontainer/devcontainer.json, otherwise the dev container never starts and only the workspace itself comes up. The clone runs unauthenticated as the workspace user — a private repo needs git credentials inside the workspace first. Everything the repo builds runs on this workspace's privileged docker:29.8.1-dind sidecar, so a Dockerfile in the repo is root-equivalent on the stack host: only point this at repositories you trust."
+  description  = "Clone URL of the repository to open. With the dev-container toggle below on it must contain .devcontainer/devcontainer.json, otherwise the build fails and the workspace comes up without an editor; with the toggle off any repository works and the editor opens the clone directly. The clone runs unauthenticated as the workspace user — a private repo needs git credentials inside the workspace first. Everything the repo builds runs on this workspace's privileged docker:29.8.1-dind sidecar, so a Dockerfile in the repo is root-equivalent on the stack host: only point this at repositories you trust."
   type         = "string"
   form_type    = "input"
   # Mutable: switching repository is a re-clone plus a devcontainer build, not a
@@ -48,9 +49,46 @@ data "coder_parameter" "repo_url" {
   order   = 1
 }
 
-# One preset is enough when the form has one question: it makes the default
-# repository a one-click workspace instead of requiring the input to be typed.
-# Keys are parameter *names* (display_name is UI-only and would be ignored).
+# The second question: whether to attempt the devcontainer build at all. Without
+# it there was no answer for a repository that ships no devcontainer.json — the
+# build fails, and because code-server hangs off the dev-container sub-agent,
+# such a workspace got no editor and no terminal profile at all.
+data "coder_parameter" "use_devcontainer" {
+  name         = "use_devcontainer"
+  display_name = "Build repo's dev container"
+  description  = "Build the repository's own .devcontainer/devcontainer.json on the DinD sidecar and run code-server inside the result. That file is mandatory for this to work: without it the build fails and no dev container, hence no editor, ever appears. Choose No for a repository without one and the editor and Grok run on the plain workspace container instead."
+  type         = "bool"
+  # Same reason docker-dev gives for its dind toggle: "radio" is only legal for a
+  # bool once options exist, and the options are what put wording on each choice
+  # (a switch would render a bare on/off toggle with no description).
+  form_type = "radio"
+  # Off means the dev container never exists, which is a different topology, not
+  # an edit — one container instead of two, and the editor on the other side of
+  # that line. Fixed at create time for the same reason docker-dev rebuilds.
+  mutable = false
+  default = "true"
+  order   = 2
+
+  # Values must stay the literal strings "true"/"false": .value is always a
+  # string, and the preset below has to set the same value to match.
+  option {
+    name        = "Yes"
+    value       = "true"
+    description = "Build the dev container from the repository's own devcontainer.json and run code-server inside it. Requires the repository to contain that file, otherwise the build fails and the editor never appears — for repositories without one, choose No."
+  }
+
+  option {
+    name        = "No"
+    value       = "false"
+    description = "Skip the build: code-server and Grok run on the plain workspace container, opened on the cloned folder."
+  }
+}
+
+# One preset per answer to the second question, so the default repository never
+# has to be typed and the no-devcontainer path is one click too. Keys are
+# parameter *names* (display_name is UI-only and would be ignored); an unset key
+# keeps the parameter's own default, which is why only plain_clone names the
+# toggle.
 data "coder_workspace_preset" "devcontainer_default" {
   name        = "Devcontainer default"
   description = "Clone the template's default repository and start its .devcontainer/devcontainer.json on the DinD sidecar."
@@ -58,6 +96,19 @@ data "coder_workspace_preset" "devcontainer_default" {
 
   parameters = {
     (data.coder_parameter.repo_url.name) = var.repo_url
+  }
+}
+
+# The same repository, for a repository that brings no devcontainer.json of its
+# own (and for anyone who wants the editor on the plain container regardless).
+data "coder_workspace_preset" "plain_clone" {
+  name        = "Plain clone"
+  description = "Clone the default repository and open the editor on it in the plain workspace container; no dev container build."
+  default     = false
+
+  parameters = {
+    (data.coder_parameter.repo_url.name)         = var.repo_url
+    (data.coder_parameter.use_devcontainer.name) = "false"
   }
 }
 
@@ -87,6 +138,18 @@ locals {
   )
   repo_folder = can(regex("^[A-Za-z0-9]", local.repo_stripped)) ? local.repo_stripped : "repo"
 
+  # The same folder as one path, for every consumer that has to name it: the
+  # devcontainer build, code-server's window (in either mode) and the
+  # workspace-info metadata. Spelled out here rather than indexed off
+  # coder_devcontainer.repo[0] so the metadata survives the toggle being off —
+  # that resource does not exist then, and its count would be an empty tuple.
+  project_folder = "${local.dc_host_dir}/${local.repo_folder}"
+
+  # Only the exact string "true" builds a dev container, per docker-dev's
+  # dind_enabled rule: a stray or misspelled value errs towards the cheaper
+  # topology. The plain_clone preset below is what hands in "false".
+  use_dc = data.coder_parameter.use_devcontainer.value == "true"
+
   # The VS Code settings payload, rendered once and reused: the code_server
   # module decodes it into its settings inputs; the startup script no longer
   # seeds any settings file, and code-server never reads ~/.config/Code.
@@ -96,7 +159,9 @@ locals {
   })
 
   # DinD topology. Same shape as docker-dev's opt-in version, minus the toggle:
-  # a devcontainer workspace is useless without a daemon the CLI can reach.
+  # the daemon is always on here, because a devcontainer workspace is useless
+  # without one and a plain-mode workspace still wants a daemon its own `docker`
+  # commands and the devcontainer CLI can reach.
   dind_image = "docker:29.8.1-dind"
   dind_alias = "dind"
   dind_host  = "tcp://${local.dind_alias}:2375"
@@ -124,11 +189,15 @@ resource "coder_agent" "main" {
   # flag (no such flag family exists in v2.36). display_apps.vscode is the
   # desktop helper: a locally installed VS Code plus the coder.coder-remote
   # extension. The in-browser editor is the code-server app attached to the
-  # dev-container sub-agent below.
+  # dev-container sub-agent below. web_terminal stays off on purpose: the
+  # built-in terminal hardwires to coder_agent.dir, which is unset here and
+  # therefore /home/coder, and the custom coder_app below replaces it with one
+  # that opens on the clone (same path, shared bind, in both toggle modes) —
+  # the documented replace pattern.
   display_apps {
     vscode                 = true
     vscode_insiders        = false
-    web_terminal           = true
+    web_terminal           = false
     ssh_helper             = true
     port_forwarding_helper = true
   }
@@ -179,6 +248,9 @@ resource "coder_agent" "main" {
     # container. The script quotes it anyway so a URL with spaces survives.
     repo_url = data.coder_parameter.repo_url.value
     dc_dir   = local.dc_host_dir
+    # What the clone preflight in the script has to say about a repo that ships
+    # no devcontainer.json: a fallback it chose, or a build that will now fail.
+    build_devcontainer = local.use_dc ? "yes" : "no"
   })
 
   # These environment variables allow you to make Git commits right away
@@ -199,8 +271,10 @@ resource "coder_agent" "main" {
     # the shell environment it uses for that invocation (agent.go wires
     # agentssh.CommandEnv into the containers API), so both `devcontainer` and a
     # user's `docker` reach tcp://dind:2375 rather than a socket the workspace
-    # never had. Pointing DOCKER_HOST at a daemon that does not exist is not a
-    # risk here: this template always provisions the sidecar.
+    # never had. That holds in either mode: the toggle only decides whether the
+    # CLI is driven at all, and a plain-mode workspace still gets a daemon for its
+    # own docker commands. Pointing DOCKER_HOST at a daemon that does not exist is
+    # not a risk here: this template always provisions the sidecar.
     DOCKER_HOST = local.dind_host
     # Same trio as docker-dev/main.tf, same verification (v2.36.6 binary + its
     # agentcontextconfig source): the _DIRS keys list DIRECTORIES and _FILE
@@ -222,7 +296,10 @@ resource "coder_agent" "main" {
 # containerAPI.Start() and creates the dev containers (agent.go: ExecuteStartScripts
 # first, createDevcontainer after). So waiting for the daemon here is what keeps
 # `devcontainer up` from racing a sidecar that has not opened 2375 yet; nothing
-# here starts a devcontainer, coder_devcontainer.repo owns that.
+# here starts a devcontainer, coder_devcontainer.repo owns that, and only when
+# use_devcontainer is on. Kept unconditional: with the toggle off this probe is
+# still the only proof that the daemon the workspace's own docker commands point
+# at is answering.
 resource "coder_script" "dind_bootstrap" {
   count        = data.coder_workspace.me.start_count
   agent_id     = coder_agent.main.id
@@ -257,13 +334,14 @@ resource "coder_script" "dind_bootstrap" {
 
 # @devcontainers/cli is what the agent drives to build coder_devcontainer.repo;
 # the golden image does not ship it. This module is a run_on_start script on
-# the parent agent. Coder runs every run_on_start script (this one, the clone
-# in startup_script, and dind_bootstrap) before it creates the dev containers,
-# which is what makes the CLI install early enough for the build. The sidecar
-# wait in dind_bootstrap still has to stay ahead of that build because
-# `devcontainer up` talks to DOCKER_HOST = tcp://dind:2375.
+# the parent agent. Coder runs every run_on_start script (this one, the clone in
+# startup_script, and dind_bootstrap) before it creates the dev containers, which
+# is what makes the CLI install early enough for the build. The sidecar wait in
+# dind_bootstrap still has to stay ahead of that build because `devcontainer up`
+# talks to DOCKER_HOST = tcp://dind:2375. Gated on use_dc: with the toggle off
+# there is no build to run, and nothing may talk to the sidecar's daemon at all.
 module "devcontainers_cli" {
-  count    = data.coder_workspace.me.start_count
+  count    = local.use_dc ? data.coder_workspace.me.start_count : 0
   source   = "registry.coder.com/coder/devcontainers-cli/coder"
   version  = "~> 1.0"
   agent_id = coder_agent.main.id
@@ -272,31 +350,41 @@ module "devcontainers_cli" {
 # The Coder built-in: the agent drives @devcontainers/cli against this folder
 # during startup and exposes the result as a devcontainer sub-agent with its own
 # terminal and apps. count matches the agent's lifecycle so a stopped workspace
-# has nothing left to autostart.
+# has nothing left to autostart, and rides on the same toggle. With the toggle on
+# but no devcontainer.json anywhere in the repo the CLI still errors — there is
+# nothing for it to build — which is what startup.sh.tftpl's preflight now warns
+# about before the build is attempted.
 resource "coder_devcontainer" "repo" {
-  count    = data.coder_workspace.me.start_count
+  count    = local.use_dc ? data.coder_workspace.me.start_count : 0
   agent_id = coder_agent.main.id
   # No config_path: let the CLI find .devcontainer/devcontainer.json itself, so a
   # repo that uses the other legal locations (docker-compose.yml, .devcontainer/)
   # behaves the same as it does in VS Code.
-  workspace_folder = "${local.dc_host_dir}/${local.repo_folder}"
+  workspace_folder = local.project_folder
 }
 
-# In-browser VS Code (Coder's code-server fork) on port 13337, attached to the
-# dev-container sub-agent so it runs inside the repo's container. Attaching any
-# app/script/env to that agent makes the dev container terraform-managed: a
-# repo's own customizations.coder.apps are then ignored (displayApps still
-# apply). display_apps.vscode on the parent agent is only the desktop helper.
-# install_prefix stays at the module default (/tmp/code-server): the dev
-# container is rebuilt from the repo's image, so a persistent prefix buys
-# nothing. No CODER_WILDCARD_ACCESS_URL on this box, so subdomain routing is
-# unavailable.
+# In-browser VS Code (Coder's code-server fork) on port 13337, on the cloned
+# folder in either mode: inside the dev container when the toggle is on, on the
+# plain workspace container when it is off. That second branch is the whole point
+# of the toggle — the editor hung off the dev-container sub-agent alone, so a repo
+# that ships no devcontainer.json got no dev container, hence no sub-agent, hence
+# no editor and no terminal profile at all. HCL does not evaluate the untaken
+# branch of a ternary, so coder_devcontainer.repo[0] never indexes an empty tuple
+# in the off case — the same shape docker-dev uses for its count-gated
+# data.docker_image.dind[0].id. Attaching any app/script/env to the dev-container
+# sub-agent makes the dev container terraform-managed: a repo's own
+# customizations.coder.apps are then ignored (displayApps still apply).
+# display_apps.vscode on the parent agent is only the desktop helper.
+# install_prefix stays at the module default (/tmp/code-server): both modes
+# rebuild the container that hosts the editor on every start, so a persistent
+# prefix buys nothing. No CODER_WILDCARD_ACCESS_URL on this box, so subdomain
+# routing is unavailable.
 module "code_server" {
   count     = data.coder_workspace.me.start_count
   source    = "registry.coder.com/coder/code-server/coder"
   version   = "~> 1.0"
-  agent_id  = coder_devcontainer.repo[0].subagent_id
-  folder    = "${local.dc_host_dir}/${local.repo_folder}"
+  agent_id  = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
+  folder    = local.project_folder
   port      = 13337
   subdomain = false
   open_in   = "tab"
@@ -317,6 +405,27 @@ module "code_server" {
   # machine-scoped in the editor's settings scope.
   settings         = jsondecode(local.vscode_settings)
   machine_settings = jsondecode(local.vscode_settings)
+}
+
+# The agent-bar terminal button, replacing the built-in one (display_apps
+# .web_terminal stays off because it hardwires to coder_agent.dir = /home/coder
+# here, and this app takes its slot in the bar). A command-type coder_app opens
+# a terminal running its command, so the clone folder is pinned inside the
+# command: coder_app in coder/coder 2.18 has no `folder` argument. The clone
+# lives on the shared bind in BOTH toggle modes, so this button lands on the
+# repository either way: inside the dev container's build context when the
+# toggle is on, on the plain workspace container when it is off. `cd` is
+# best-effort (`2>/dev/null;`) because with && a failed clone would leave the
+# button starting a dead terminal instead of a shell someone can fix the clone
+# from. Spelled out against `terraform validate` only.
+resource "coder_app" "web_terminal" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  slug         = "web-terminal"
+  display_name = "Web Terminal"
+  icon         = "/icon/terminal.svg"
+  command      = "cd ${local.project_folder} 2>/dev/null; exec /bin/bash -l"
+  order        = 6
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,
@@ -368,9 +477,11 @@ resource "coder_metadata" "workspace_info" {
     value = data.coder_parameter.repo_url.value
   }
 
+  # Not indexed off coder_devcontainer.repo[0] — that resource is absent when the
+  # dev-container toggle is off, and the folder exists either way.
   item {
     key   = "devcontainer folder"
-    value = coder_devcontainer.repo[0].workspace_folder
+    value = local.project_folder
   }
 
   item {
@@ -383,8 +494,16 @@ resource "coder_metadata" "workspace_info" {
     value = var.grok_default_model
   }
 
-  # Always on in this template, so the item states which daemon the devcontainer
-  # CLI is talking to rather than whether one exists.
+  # Which of the two modes this workspace got — the only place the create form's
+  # second answer is still readable after create.
+  item {
+    key   = "devcontainer"
+    value = local.use_dc ? "on (built on ${local.dind_alias} sidecar)" : "off (plain workspace container)"
+  }
+
+  # Always on in this template, so the item states which daemon is reachable:
+  # with the toggle off that daemon is still there for the workspace's own docker
+  # commands, it just has no dev container build to serve.
   item {
     key   = "docker-in-docker"
     value = "on (${local.dind_host})"
@@ -609,9 +728,12 @@ locals {
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
 
-  # var.image, not a dropdown: the workspace container is only the launcher and
-  # the clone target here — the editor's real environment is whatever the repo's
-  # devcontainer.json builds on the sidecar.
+  # var.image, not a dropdown: with the dev-container toggle on, the workspace
+  # container is only the launcher and the clone target, and the editor's real
+  # environment is whatever the repo's devcontainer.json builds on the sidecar.
+  # With the toggle off this container hosts the editor itself, so the golden
+  # image is what the editor runs on — either way it still has to ship the
+  # docker client, git, tmux and the Grok CLI.
   image    = var.image
   name     = "coder-${data.coder_workspace_owner.me.name}-${lower(data.coder_workspace.me.name)}"
   hostname = data.coder_workspace.me.name
