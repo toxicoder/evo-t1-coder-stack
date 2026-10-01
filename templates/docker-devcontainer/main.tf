@@ -202,6 +202,18 @@ resource "coder_agent" "main" {
     # never had. Pointing DOCKER_HOST at a daemon that does not exist is not a
     # risk here: this template always provisions the sidecar.
     DOCKER_HOST = local.dind_host
+    # Same trio as docker-dev/main.tf, same verification (v2.36.6 binary + its
+    # agentcontextconfig source): the _DIRS keys list DIRECTORIES and _FILE
+    # names the file to look for inside each of them (default AGENTS.md), not
+    # a path. Defaults are replaced, not appended to, by these keys — so the
+    # upstream defaults (~/.coder, ~/.coder/skills, .agents/skills, relative to
+    # the agent's working dir) stay in the lists and /home/coder/.agents rides
+    # along. That matters here specifically: the dev container's own working
+    # dir is the cloned folder under /srv/coder-devcontainers/..., where a
+    # cwd-relative .agents/skills would not find the seeded skill.
+    CODER_AGENT_EXP_SKILLS_DIRS       = "~/.coder/skills,.agents/skills,/home/coder/.agents/skills"
+    CODER_AGENT_EXP_INSTRUCTIONS_DIRS = "~/.coder,/home/coder/.agents"
+    CODER_AGENT_EXP_INSTRUCTIONS_FILE = "INSTRUCTIONS.md"
   })
 }
 
@@ -580,6 +592,20 @@ resource "docker_container" "dind" {
   }
 }
 
+# One Grok Build profile per *user*, mounted into every workspace that user
+# owns, instead of one ~/.grok per workspace that dies on a rebuild. Same shape
+# as docker-dev's: the volume is referenced by plain string name and never
+# declared as a docker_volume resource, so Docker creates it on the first
+# container start that names it, and a workspace stop never has to unmount a
+# volume another of the same user's workspaces still holds open.
+locals {
+  # Off => no extra volumes entry at all, so the container spec is byte-identical
+  # to what it was before the profile volume existed.
+  grok_profile_enabled = var.grok_profile_share
+  # Keyed by owner id, not by workspace id: that is the whole privacy boundary.
+  grok_profile_volume = "grok-profile-${data.coder_workspace_owner.me.id}"
+}
+
 resource "docker_container" "workspace" {
   count = data.coder_workspace.me.start_count
 
@@ -621,6 +647,21 @@ resource "docker_container" "workspace" {
     container_path = local.dc_host_dir
     host_path      = local.dc_host_dir
     read_only      = false
+  }
+
+  # Rides alongside the two above rather than replacing either: /home/coder/.grok
+  # is resolved *inside* the home volume's mount, so Docker covers it with the
+  # owner's shared profile volume and the CLI's state tree is one directory tree
+  # shared live by every workspace this user owns. Gated on grok_profile_share
+  # because an empty for_each emits no volumes entry at all — with the knob off
+  # the planned container is exactly the pre-profile shape.
+  dynamic "volumes" {
+    for_each = local.grok_profile_enabled ? [1] : []
+    content {
+      container_path = "/home/coder/.grok"
+      volume_name    = local.grok_profile_volume
+      read_only      = false
+    }
   }
 
   # Only the sidecar reference matters: it makes Terraform attach the daemon to

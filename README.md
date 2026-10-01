@@ -374,7 +374,10 @@ Template variables: `image` (seeds the **Workspace image** dropdown default),
 (optional), `coder_agent_url` (default `http://host.docker.internal:3002` — the URL the agent
 dials, kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent
 traffic through the reverse proxy; empty keeps the provider-rendered access URL),
-`dind` (default `false`; turns on the per-workspace privileged daemon described below).
+`dind` (default `false`; turns on the per-workspace privileged daemon described below),
+`grok_profile_share` (default `true`; mounts the owner's shared `~/.grok` profile volume
+instead of leaving each workspace with a private one — see "Grok Build state: one shared
+profile per user").
 
 **Docker-in-docker (opt-in).** The create form's **Docker-in-docker** Yes/No question
 (preset *AI workspace + DinD*, template variable `dind`) provisions, per workspace, a
@@ -502,6 +505,81 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   panel (Open VSX by default). If your extension build names its settings slightly
   differently, set the OpenAI-compatible endpoint + key in its settings UI — one
   field each.
+
+## Grok Build state: one shared profile per user
+
+Every workspace still gets its own `/home/coder` volume, and `~/.grok` is now a
+**second, nested** mount inside it: a Docker volume named `grok-profile-<owner-id>`,
+referenced by name rather than declared as a Terraform resource, that every workspace
+belonging to that user mounts read-write at the same path. Configure the CLI once and the
+rest of that account's workspaces inherit it.
+
+- **What is shared:** `config.toml`, `skills/`, `memory-v2/`, `sessions/`, the warmed MCP
+  caches, and a CLI you installed yourself under `~/.grok/bin`.
+- **Why:** the model catalog, the MCP servers and any skill get set up once. A `/learn`
+  run or a hand-added skill written in one workspace is immediately visible in that user's
+  other workspaces, and a rebuilt or recreated workspace starts on the existing profile
+  instead of an empty one.
+- **Per-user privacy:** one volume per workspace **owner**, keyed by owner id — never
+  host-wide and never cross-user. Another user's workspace has no mount that points at it,
+  because its own profile volume carries a different name.
+- **Caveats, honestly:** the memory and index files in there are SQLite and are opened
+  live by every workspace holding the mount, so two workspaces writing memory at the same
+  time can race — *roughly in sync* is the bar, not transactional sharing. A stop or start
+  of a **different user's** workspace never sees the volume; it is keyed to the owner, not
+  to the workspace. And turning the knob off needs a template re-push plus a rebuild
+  (`GROK_PROFILE_SHARE=false` in `.env` — `scripts/push-template.sh` forwards it as
+  `--var grok_profile_share` on every push — or hand the `--var` to your own push),
+  after which that workspace goes back to a private `~/.grok` that dies with it.
+
+## Coder Agents (control-plane) + Grok Build delegation
+
+**What this is.** Coder v2.36.6 ships *Coder Agents*: a coding agent that lives in the
+Coder **server** — a chat UI and an API beside your workspaces, not inside one. A chat
+runs its tools (`read_file`, `edit_files`, `execute`) against a workspace over that
+workspace's agent connection, and it consults two pieces of per-workspace context first:
+an **instructions** file and any **skills** it discovers. This stack wires that up (and
+teaches it, below); the agent itself is upstream Coder, not a home-grown agent.
+
+**Enable.** `CODER_EXPERIMENTS` in `.env` — the default here is now `agents`; 2.36.6
+lists it as an **EARLY ACCESS** experiment. It is one restart away from off: set the
+value to the empty string (`CODER_EXPERIMENTS=`) and restart the coder service and the
+Agents feature is gone; the compose default exists so a fresh clone has it on.
+
+**Provider wiring (manual, once per install).** Admin settings → AI → Coder Agents →
+base URL `http://litellm:4000/v1` (that is LiteLLM over the compose network, *server-side*
+— same transport the workspaces use, not a per-workspace URL) + paste the
+`LITELLM_MASTER_KEY` value from `.env` + model name `agent` (the tool-call-capable
+alias; `agent-fast` for cheap subagents where the form offers a subagent model). Coder's
+optional AI Gateway proxy stays off — LiteLLM remains the model transport, which is why
+no AI-Gateway keys exist in `docker-compose.yml`.
+
+**The delegation sketch.** Chat on the Agents page → if the ask needs more tooling than
+chat has, Coder Agents provisions or uses a workspace through `execute` → big multi-file
+tasks are *delegated inside* that workspace: a headless Grok Build CLI run, started
+backgrounded and polled (`grok -p "<task brief with acceptance criteria>" --cwd <repo>
+--permission-mode acceptEdits --max-turns <budget>`) → Coder Agents then reviews the
+delegated diff, runs the project's tests, and commits. Subagents spawned by Coder
+Agents cannot create workspaces — provisioning decisions stop at the top-level chat.
+
+**What equips it.** Two files seed into every workspace home — `~/.agents/skills/
+grok-build-delegation/SKILL.md` (when to delegate; how to review the delegated diff;
+the workaround for `execute`’s roughly-one-minute tool timeout) and `~/.agents/INSTRUCTIONS.md` (small asks handled
+directly; big multi-file work routed through the skill; never print `$LITELLM_API_KEY`) —
+plus three `CODER_AGENT_EXP_*` env keys on `coder_agent.main` that point the agent's
+context discovery at those paths (defaults preserved, see the `main.tf` comment). The
+seed is written by `startup.sh.tftpl` only while the file is absent and carries the
+stack's `managed-by: evo-t1-coder-stack` marker as its first line (in `SKILL.md`
+directly under the `---` frontmatter, since the agent's skill parser requires
+frontmatter on line 1) — delete a file to take it over, or edit it and the stack
+leaves it alone. `~/.agents/` is per-workspace, on that workspace's own home volume:
+it is *not* on the shared `~/.grok` profile volume above, and seeding does not care
+whether that mount exists.
+
+**What this is not:** Coder Agents is control-plane-native. This stack does not wrap
+Grok Build; the wiring above *teaches* (skill + instructions) and *equips* (the
+workspace-side CLI with its LiteLLM alias) the native Coder agent to drive Grok Build
+when work is too big to hand-drive — delegation is a taught habit, not the product.
 
 ## Kasm
 

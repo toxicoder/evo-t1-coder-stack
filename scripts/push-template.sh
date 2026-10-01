@@ -369,6 +369,15 @@ if grep -q '^CODER_AGENT_URL=' .env 2>/dev/null; then
   log "coder_agent_url passed from .env"
 fi
 
+# grok_profile_share is passed only when .env carries the key, like coder_agent_url above:
+# both templates default the variable to true (shared ~/.grok), so an untouched .env
+# keeps that. Flip it to false and re-push to give workspaces created afterwards a
+# private per-workspace ~/.grok again.
+if grep -q '^GROK_PROFILE_SHARE=' .env 2>/dev/null; then
+  vars+=(--var "grok_profile_share=$(env_get GROK_PROFILE_SHARE)")
+  log "grok_profile_share passed from .env"
+fi
+
 # ── Per-template work ───────────────────────────────────────────────────────
 # Everything below runs once per selected template. The token minted above is
 # reused for every push in the run and deleted after the loop, because one

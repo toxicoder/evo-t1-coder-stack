@@ -63,6 +63,15 @@ services:
       # STUN defaults point at Google and buy nothing on a LAN; agents reach
       # each other directly over WireGuard and DERP stays the fallback.
       CODER_DERP_SERVER_STUN_ADDRESSES: ${CODER_DERP_STUN:-disable}
+      # Coder v2.36.6 gates Coder Agents (the control-plane coding agent: chat
+      # UI + API, Admin settings -> AI -> Coder Agents) behind the `agents`
+      # EXPERIMENT — EARLY ACCESS, and one restart away from off: an empty
+      # value disables the feature. No AI-Gateway keys here on purpose:
+      # LiteLLM stays the model transport (Admin -> AI points the agent at
+      # http://litellm:4000/v1 with the LITELLM_MASTER_KEY value below;
+      # LITELLM_BASE_URL/LITELLM_API_KEY already reach workspaces through
+      # coder_agent.env).
+      CODER_EXPERIMENTS: ${CODER_EXPERIMENTS:-agents}
       CODER_PROMETHEUS_ENABLE: "true"
       # Bind inside the container on 0.0.0.0 so the published mapping below can
       # reach it; the host mapping is loopback-only, so metrics never hit the LAN.
