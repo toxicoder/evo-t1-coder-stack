@@ -34,11 +34,17 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                * built from the golden image evo-t1-dev:latest
   |                  (scripts/build-dev-image.sh)
   |                * two templates: docker-dev (plain container) and
-  |                  docker-devcontainer (clones repo_url, builds its
-  |                  .devcontainer on the workspace's own DinD sidecar)
+  |                  docker-devcontainer (builds the cloned repo's .devcontainer
+  |                  on the workspace's own DinD sidecar; toggle off or no
+  |                  devcontainer.json => the clone opens on the plain container)
+  |                * both clone the create form's repo_url (empty = no clone);
+  |                  code-server, the web terminal and the terminal profiles all
+  |                  start on that clone, and scripts/new-workspace.sh picks the
+  |                  template + parameters from a git URL
   |                * default terminal re-joins the folder's tmux session
-  |                  (vscode-<folder>-<hash>); Grok Build runs `grok --cwd <folder>`
-  |                  inside its own session (grok-build-<folder>-<hash>)
+  |                  (vscode-<folder>-<hash>); Grok Build runs `grok --cwd <repo root>`
+  |                  inside its own session (grok-build-<folder>-<hash>, with the
+  |                  repo root resolved from the terminal's folder by git rev-parse)
   |                * ~/.grok/config.toml rendered by the template: model
   |                  aliases + MCP servers (filesystem, memory,
   |                  sequential-thinking, git, time)
@@ -122,8 +128,14 @@ Then:
 2. Push the workspace templates (section below) — `./scripts/push-template.sh` does both
    once an account exists, which is why bootstrap runs it for you and says why it
    skipped when none does. It needs no `coder login` and no host coder CLI.
-3. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
-4. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
+3. Create a workspace from a git repository: `./scripts/new-workspace.sh <git-url>`
+   (add `--dry-run` to see the decision without creating anything). It shallow-clones
+   the repo, probes it for a dev container, picks `docker-dev` or `docker-devcontainer`
+   accordingly, and drives `coder create` with the right template parameters — the same
+   choice, by hand, is: create a workspace in the UI, pick the template, and fill the
+   **Git repository** field.
+4. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
+5. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
 
 ## Ports
 
@@ -299,7 +311,11 @@ it scans on disk.
 
 It reads `.env` for the variables it passes: `--var image=` from `DEV_IMAGE`,
 `--var litellm_key=` from `LITELLM_MASTER_KEY` (only when that key is real, never the
-sample placeholder) and `--var coder_agent_url` only if `.env` defines it at all. Then, per
+sample placeholder), `--var coder_agent_url` only if `.env` defines it at all, and
+`--var repo_url=` from `REPO_URL` only when that key is present and non-empty (it
+prefills the Git repository field on both create forms; docker-dev defaults to no
+clone and docker-devcontainer to the coder/coder demo repo, which is why a blank
+`REPO_URL=` line stays unpassed). Then, per
 template, it confirms an **active** template version — a push can exit 0 and still leave the
 template inactive if its Terraform run failed, which shows up as the template missing from
 the create dropdown. The equivalent raw command — what the script does for each template,
@@ -324,7 +340,9 @@ the second is the CLI binary inside it.
 resolves that name from the local image store and never attempts a registry pull,
 which is what keeps workspace creation working with no internet.
 
-The create form shows a **Workspace image** dropdown and three presets: *AI workspace*
+The create form shows a **Workspace image** dropdown, a **Docker-in-docker** Yes/No
+question, a **Git repository** input (`repo_url`, default empty, mutable — anything you
+type is cloned into the workspace on the next start; see below) and three presets: *AI workspace*
 (golden image, selected by default), *Minimal shell* (bare Ubuntu, for when the
 golden image is mid-rebuild), and *AI workspace + DinD* (golden image plus a
 privileged Docker daemon, below). `--var image=` seeds the dropdown's default and is also
@@ -348,22 +366,29 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
   image ships it, and the script's `https://x.ai/cli/install.sh` download runs
   only where `grok` is missing from PATH (the `ubuntu:24.04` image option, or a
   home volume that never received the CLI). It also puts `~/.grok/bin` on PATH,
-  seeds the two terminal-profile tmux helpers, renders `~/.grok/config.toml`, and
+  seeds the two terminal-profile tmux helpers, **clones a non-empty Git repository
+  field** into `/home/coder/workspace/<repo-name>` (idempotent; runs as the
+  workspace user so their git credentials are consulted; refuses to touch an
+  existing non-git folder there), renders `~/.grok/config.toml`, and
   warms the MCP servers in the background. The `settings.json.tftpl` payload does not
   pass through the script: it goes to the `code_server` module, which merges it into
   code-server's User+Machine settings on every start (below)
 - `startup_script_behavior = "blocking"`, so a workspace only reports *ready* once the
   toolchain is genuinely staged — no opening an editor mid-install
 - agent-bar buttons via `display_apps` (VS Code Desktop helper: a locally installed
-  VS Code / Cursor / Windsurf plus the `coder.coder-remote` extension; web terminal;
+  VS Code / Cursor / Windsurf plus the `coder.coder-remote` extension;
   port forwarding; SSH helper), a separate in-browser **code-server** editor
   (Coder's VS Code fork; no local VS Code), labelled **VS Code Web** with `order = 5`
   so it sorts before the LiteLLM and Coder UI buttons and reads apart from the
   **VS Code Desktop** helper (static helper buttons have no order/icon knobs in this
-  Coder release — custom apps are ordered among themselves), memory and disk usage
+  Coder release — custom apps are ordered among themselves), a custom **Web Terminal**
+  command-app (`order = 6`) for the terminal slot — `display_apps.web_terminal` stays
+  false because the built-in terminal hardwires to `coder_agent.dir` (`/home/coder`),
+  while the custom app `cd`s to the clone folder when there is one —, memory and disk usage
   gauges, six `coder stat` metadata tiles, and a **LiteLLM** tile that health-checks
   the proxy and is visible only to the workspace owner
-- `coder_metadata.workspace_info` shows the image, the LiteLLM URL, the default Grok
+- `coder_metadata.workspace_info` shows the image, the cloned repository (or `none`
+  when the Git repository field is empty), the LiteLLM URL, the default Grok
   model, whether DinD is `on (tcp://dind:2375)` or `off`, and (redacted) which key is
   wired in, so a misconfigured workspace is visible in the UI without shell access
 
@@ -375,6 +400,10 @@ Template variables: `image` (seeds the **Workspace image** dropdown default),
 dials, kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent
 traffic through the reverse proxy; empty keeps the provider-rendered access URL),
 `dind` (default `false`; turns on the per-workspace privileged daemon described below),
+`repo_url` (default `""` on `docker-dev`, `https://github.com/coder/coder` on
+`docker-devcontainer`; prefills the create form's **Git repository** field — both
+templates clone that URL into the workspace on every start, and `REPO_URL` in `.env`
+overrides the default),
 `grok_profile_share` (default `true`; mounts the owner's shared `~/.grok` profile volume
 instead of leaving each workspace with a private one — see "Grok Build state: one shared
 profile per user").
@@ -428,20 +457,34 @@ always on, plus a repository that brings its own toolchain:
   sidecar cannot see fails with `bind source path does not exist`. Named volumes cannot
   substitute: a volume is a daemon-local object and does not cross to the sidecar's daemon.
   Docker creates the missing host directory itself and `startup.sh.tftpl` chowns it.
-- the create form asks a single question, **Git repository** (`repo_url`, mutable — switching
-  repository is a re-clone plus a dev image build, not a new topology the way `docker-dev`'s
-  DinD toggle is), and one preset makes the template's default repository a one-click
-  workspace
-- `startup.sh.tftpl` clones the repo onto that bind, and `coder_devcontainer` then builds the
-  repo's own `.devcontainer/devcontainer.json` on the sidecar through the Coder agent
+- the create form asks two questions: **Git repository** (`repo_url`, mutable — switching
+  repository is a re-clone plus a devcontainer build, not a new topology the way
+  `docker-dev`'s DinD toggle is) and **Build repo's dev container** (`use_devcontainer`,
+  a Yes/No radio, immutable — building a dev container or not is a different topology:
+  with Yes the editor lives in the dev container, with No in the plain container, and
+  the workspace presets *Devcontainer default* and *Plain clone* make each one a
+  one-click workspace on the template's default repository). A repository that ships no
+  `devcontainer.json` gets no dev container and hence no editor with the toggle on;
+  the toggle (or `scripts/new-workspace.sh`, which reads the repository and picks for
+  you) is how that case is meant to be handled
+- `startup.sh.tftpl` clones the repo onto that bind in **both** toggle modes, and with
+  the toggle on `coder_devcontainer` then builds the repo's own
+  `.devcontainer/devcontainer.json` on the sidecar through the Coder agent
   (`@devcontainers/cli` is in the parent workspace container), which exposes the
   dev container as a sub-agent with its own terminal and apps. The in-browser editor
   attaches to that sub-agent, so it runs inside the dev container where the cloned
-  repo's toolchain lives. No `config_path` is set, so the CLI discovers the file the
-  way VS Code does and a repo using the other legal locations behaves the same.
+  repo's toolchain lives; with the toggle off — or on a repo that carries no
+  devcontainer.json, where the build has nothing to build — it attaches to the plain
+  workspace agent instead, opened on the same clone path. Either way `folder` is the
+  clone, so code-server and its terminal profiles land on the repository, and the
+  agent-bar **Web Terminal** button `cd`s there too. No `config_path` is set, so the
+  CLI discovers the file the way VS Code does and a repo using the other legal
+  locations behaves the same.
 
-It reuses `docker-dev`'s variables plus `repo_url`, minus `dind` (the sidecar is not optional
-here — a devcontainer workspace without a daemon is nothing), and carries its own copies of
+It reuses `docker-dev`'s variables (`repo_url` exists in both templates; `dind` does
+not exist here — the sidecar is not optional here, a devcontainer workspace without a
+daemon is nothing, and the plain-clone fallback still wants a daemon its `docker`
+commands can reach), and carries its own copies of
 `startup.sh.tftpl`, `settings.json.tftpl` (the shared editor-settings payload,
 merged into each dev container's code-server User+Machine settings by the
 `code_server` module) and
@@ -450,6 +493,36 @@ terminal and LiteLLM wiring above apply to it too. **Treat the repository as unt
 code**: everything it builds runs on a privileged daemon on this box, so a Dockerfile in
 that repo is root-equivalent on the stack host — the create form's own description says so,
 and only repositories you trust belong in the field.
+
+### From a git URL: `scripts/new-workspace.sh`
+
+The two questions above (which template, and whether to build the dev container) are
+exactly what `scripts/new-workspace.sh <git-url> [name]` answers for you:
+
+```sh
+./scripts/new-workspace.sh --dry-run https://github.com/foo/bar.git   # decision only, creates nothing
+./scripts/new-workspace.sh https://github.com/foo/bar.git             # creates the workspace
+./scripts/new-workspace.sh --plain git@git.example.com:org/private.git  # force docker-dev
+```
+
+It shallow-clones the repo into a temp dir (unauthenticated, like the in-workspace
+clone, so a private repo needs git credentials on the host you run it from), greps the
+file listing for a dev container (`.devcontainer/`, `.github/devcontainers/`, or a
+`devcontainer.json`/`.yml` anywhere in the tree), and picks `docker-devcontainer` when
+it finds one, `docker-dev` when it does not — the probe failing entirely is also a
+"docker-dev" answer (with a warning). It then assembles `coder create` with the
+template's parameters — `repo_url=<url>` always, `use_devcontainer=false` whenever
+`docker-devcontainer` was chosen but no dev container was found (forced with
+`--devcontainer` onto a repo that has none, or a probe that could not check the repo —
+the cases where leaving the toggle at its default would build nothing anyway),
+`dind=true` on
+request — and either runs it (`--no-wait`; watch with `coder ls` / `coder logs <name>`)
+or, with no usable `coder` login, prints the same command to run by hand and exits 0.
+`--devcontainer` forces the devcontainer template, `--template <name>` overrides the
+template choice outright, and a workspace name can follow the URL (Coder names
+start with a letter; the derived default is the repo leaf). It never mints, reads, or
+stores a token — unlike `push-template.sh`, which mints its own because a template
+push has no other credential path.
 
 Autostart, autostop and TTLs are template *metadata*, so set them once per template with the
 CLI after pushing (they are deliberately absent from the Terraform, where they would
@@ -473,8 +546,8 @@ and `--allow-user-autostop=false`), so leave them out of the CE stack.
 New Coder workspaces open a terminal that **re-attaches to a tmux session**:
 
 - `terminal.integrated.defaultProfile.linux` is `"tmux"`; the automation profile stays `bash` (so build/tasks commands never wait on tmux), and plain `bash` and **Grok Build** remain available as extra profiles.
-- The `tmux` profile re-joins (or starts) one shared session per folder — `vscode-<folder>-<hash>` — so a second terminal window, a browser reload, or `ssh` + `tmux attach -t <session>` from any client lands in the same session, and long jobs survive closing the tab. **Grok Build** keeps its own session (`grok-build-<folder>-<hash>`, running `grok --cwd <folder>` inside it); `tmux ls` lists the names, `tmux attach -t <session>` re-joins from any other terminal.
-- If tmux is absent (offline first boot), the helper execs a plain login shell, so the default terminal still opens. The Coder **web-terminal** button is separate from all of this: it streams a plain login shell over the agent's reconnecting PTY with its own reconnection token and reads no `terminal.integrated.*` settings.
+- The `tmux` profile re-joins (or starts) one shared session per folder — `vscode-<folder>-<hash>` — so a second terminal window, a browser reload, or `ssh` + `tmux attach -t <session>` from any client lands in the same session, and long jobs survive closing the tab. **Grok Build** keeps its own session: the helper first walks up from the terminal's folder to the repository root (`git rev-parse --show-toplevel`, falling back to the terminal's own `$PWD` outside a clone), and the session — `grok-build-<folder>-<hash>`, keyed off that root — runs `grok --cwd <repo root>` inside it. A terminal opened anywhere inside the clone therefore rejoins the one session the whole repository shares, and `grok` starts in the repository, not in the subfolder. `tmux ls` lists the names, `tmux attach -t <session>` re-joins from any other terminal.
+- If tmux is absent (offline first boot), the helper execs a plain login shell, so the default terminal still opens. The agent-bar **Web Terminal** button is separate from all of this: `display_apps.web_terminal` is off (it would open a shell on the agent's working dir, which is `/home/coder` here), and a custom command-type `coder_app` named **Web Terminal** takes its slot: it `cd`s to the clone folder (empty `repo_url` keeps it on `/home/coder`) and execs a login shell, so the terminal outside the editor starts inside the project too. Like the built-in it reads no `terminal.integrated.*` settings.
 - The golden image ships the Grok CLI at `/usr/local/bin/grok` (with an `agent`
   link beside it), pinned as `GROK_VERSION` in `images/dev/tool-versions.env` and
   deliberately OUTSIDE the home volume, so a rebuilt volume cannot lose it. The
@@ -686,6 +759,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 │   ├── bootstrap.sh         # .env + secrets + access URL + dashboard & Coder certs + checks
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
+│   ├── new-workspace.sh     # git URL → workspace: probes for a devcontainer, picks the template + params, drives `coder create`
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 │   └── push-template.sh     # pushes both templates from inside the coder container (bootstrap calls it)
 └── templates/
@@ -695,8 +769,9 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
     │   ├── startup.sh.tftpl     # staged workspace bootstrap (blocking)
     │   ├── settings.json.tftpl  # editor settings (Cline / Roo / terminal profiles), merged into code-server's User+Machine settings
     │   └── grok-config.toml.tftpl  # ~/.grok/config.toml — models + MCP servers
-    └── docker-devcontainer   # Coder template that clones repo_url and builds its
-                              # .devcontainer on an always-on DinD sidecar (pushed second)
+    └── docker-devcontainer   # Coder template that clones repo_url and (toggle on)
+                              # builds its .devcontainer on an always-on DinD sidecar,
+                              # or opens the clone on the plain container (toggle off); pushed second
 ```
 
 ## Troubleshooting
@@ -777,6 +852,9 @@ workspace on a current image answers `/usr/local/bin/grok`.
   browser is on `https://` with a trusted cert (plain `http://` is an insecure
   context, which is what breaks `crypto.randomUUID()` — see "Public subdomains
   (optional)" above). On `docker-devcontainer` the dev container must build first
-  (the repo needs `.devcontainer/devcontainer.json`).
+  (the repo needs `.devcontainer/devcontainer.json`); a repo that ships none wants the
+  **Plain clone** preset or the dev-container toggle set to **No** at create time — that
+  runs code-server on the plain workspace container and opens the clone there, and
+  `scripts/new-workspace.sh` decides this automatically when you pass it a git URL.
 - Kasm wizard gone after install → expected; use :4443. Reset Kasm by removing the `kasm-data` volume (destroys all Kasm config).
 - Coder login problems → the first registered account is the site admin; if the UI is unreachable, check `CODER_ACCESS_URL` matches the address you're browsing from (LAN IP by default, the public coder name in public mode).
