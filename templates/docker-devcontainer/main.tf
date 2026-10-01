@@ -202,6 +202,18 @@ resource "coder_agent" "main" {
     # never had. Pointing DOCKER_HOST at a daemon that does not exist is not a
     # risk here: this template always provisions the sidecar.
     DOCKER_HOST = local.dind_host
+    # Same trio as docker-dev/main.tf, same verification (v2.36.6 binary + its
+    # agentcontextconfig source): the _DIRS keys list DIRECTORIES and _FILE
+    # names the file to look for inside each of them (default AGENTS.md), not
+    # a path. Defaults are replaced, not appended to, by these keys — so the
+    # upstream defaults (~/.coder, ~/.coder/skills, .agents/skills, relative to
+    # the agent's working dir) stay in the lists and /home/coder/.agents rides
+    # along. That matters here specifically: the dev container's own working
+    # dir is the cloned folder under /srv/coder-devcontainers/..., where a
+    # cwd-relative .agents/skills would not find the seeded skill.
+    CODER_AGENT_EXP_SKILLS_DIRS       = "~/.coder/skills,.agents/skills,/home/coder/.agents/skills"
+    CODER_AGENT_EXP_INSTRUCTIONS_DIRS = "~/.coder,/home/coder/.agents"
+    CODER_AGENT_EXP_INSTRUCTIONS_FILE = "INSTRUCTIONS.md"
   })
 }
 
