@@ -234,6 +234,22 @@ resource "coder_agent" "main" {
     LITELLM_BASE_URL = var.litellm_url
     # Local model aliases, for shell prompts, Makefiles and CI overrides.
     GROK_DEFAULT_MODEL = var.grok_default_model
+    # Coder Agents (the `agents` EXPERIMENT, gated by CODER_EXPERIMENTS in
+    # docker-compose.yml) discovers per-workspace skills and instructions from
+    # exactly these keys — spelling verified against the v2.36.6 binary and its
+    # agentcontextconfig source: the two _DIRS keys are comma-separated
+    # DIRECTORIES, and _FILE names the file to look for inside each of them
+    # (default AGENTS.md), not a path. Setting any of these keys REPLACES its
+    # upstream default, so the defaults (~/.coder, ~/.coder/skills,
+    # .agents/skills, relative to the agent's working dir) are kept and the
+    # seeded /home/coder/.agents paths ride along with them. One name only
+    # where AGENTS.md used to be: rename a seeded AGENTS.md over INSTRUCTIONS.md
+    # here if that trade is wrong for you, rather than adding a second name.
+    # The files themselves are written by startup.sh.tftpl on every boot, but
+    # only while they are absent, so a hand-edited copy survives restarts.
+    CODER_AGENT_EXP_SKILLS_DIRS       = "~/.coder/skills,.agents/skills,/home/coder/.agents/skills"
+    CODER_AGENT_EXP_INSTRUCTIONS_DIRS = "~/.coder,/home/coder/.agents"
+    CODER_AGENT_EXP_INSTRUCTIONS_FILE = "INSTRUCTIONS.md"
     },
     # Only present when DinD is on: a DOCKER_HOST that pointed at a daemon that
     # does not exist would make every docker command in the workspace fail with
