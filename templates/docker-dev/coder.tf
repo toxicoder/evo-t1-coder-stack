@@ -35,6 +35,18 @@ variable "dind" {
   default     = false
 }
 
+# Optional create-form default for the Git repository field, not a mandate: an
+# empty value clones nothing and leaves the editor on /home/coder, which is what
+# this template did before the field existed. scripts/push-template.sh passes
+# --var repo_url= to *every* template from a shared vars array, so this variable
+# has to exist here too or a push with REPO_URL set dies on an undeclared
+# variable.
+variable "repo_url" {
+  type        = string
+  description = "Optional default for the Git repository field. A non-empty value is cloned on the first workspace start into /home/coder/workspace/<repo-name>, and that folder is the one code-server opens. The clone runs unauthenticated as the workspace user, so a private repository needs git credentials inside the workspace first. A Dockerfile or toolchain in the cloned repo executes as that same workspace user, so only point this at repositories you trust."
+  default     = ""
+}
+
 variable "grok_profile_share" {
   type        = bool
   description = "Mount the workspace owner's shared Grok Build profile volume (grok-profile-<owner-id>) at /home/coder/.grok, nested inside that workspace's own home volume. Everything the CLI keeps in ~/.grok — config.toml, skills, memory-v2, sessions, the MCP warm caches, a self-installed CLI under ~/.grok/bin — is then written once and read by every workspace this user owns, and survives a rebuild. Per-user, not host-wide: the volume name is keyed by owner id, so another user's workspaces never see it. Off gives each workspace a private ~/.grok that dies with it. Changing this needs a workspace rebuild."

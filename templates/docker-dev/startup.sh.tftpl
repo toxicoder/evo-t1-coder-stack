@@ -10,8 +10,12 @@
 #      rejoins its session instead of losing the processes running in it
 #   5. seeds the Coder Agents context (skill + instructions under ~/.agents),
 #      only if those files are absent
-#   6. writes ~/.grok/config.toml (only while this stack owns the file) and
-#      warms the offline MCP package caches in the background
+#   6. writes ~/.grok/config.toml (only while this stack owns the file)
+#   7. clones the repository the create form named into
+#      /home/coder/workspace/<repo-name> — the folder code-server, the web
+#      terminal and the Grok Build session all open on, so it has to land
+#      before any of them is used
+#   8. warms the offline MCP package caches in the background
 #
 # ~/.grok is not necessarily this workspace's own directory. With main.tf's
 # grok_profile_share on (the default) the container mounts the workspace owner's
@@ -24,10 +28,14 @@
 # on every start while that marker line is present.
 #
 # Every stage 5 onward is best-effort: an offline first boot must still leave
-# a working terminal, so nothing here may abort the script.
+# a working terminal, and a repository that will not clone must still leave a
+# workspace someone can fix, so nothing here may abort the script.
 #
 # Note: this file is rendered by Terraform templatefile(); shell variables
-# are written with a doubled dollar sign so the rendered script keeps them.
+# are written with a doubled dollar sign so the rendered script keeps them
+# ($name or $${name}; the braced form is only safe when escaped this way). The
+# only interpolations Terraform has to resolve are the two variables main.tf
+# passes: grok_config and repo_url.
 
 set -u
 
@@ -82,20 +90,27 @@ export PATH="$HOME/.grok/bin:$PATH"
 # never kills what was running in it.
 #
 # VS Code shows the profile under the settings key "Grok Build"; this helper
-# resumes (or starts) one tmux session per folder:
-#   grok-build-<folder>-<hash>
-# then runs `grok --cwd <folder>` inside that session.
+# walks up to the repository root first, so a terminal opened anywhere inside a
+# clone rejoins one session, and runs `grok --cwd <that root>` inside it.
 mkdir -p "$HOME/.grok/bin"
 cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
 #!/bin/bash
 export PATH="$HOME/.grok/bin:$PATH"
-folder=$(basename "$PWD")
-hash=$(printf '%s' "$PWD" | cksum 2>/dev/null | awk '{print substr($1, 1, 6)}')
-[ -n "$hash" ] || hash=$(printf '%s' "$PWD" | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-6)
+# The project root, not $PWD: the editor opens on the clone's root, and a
+# terminal opened in a subfolder must still rejoin that same session and agent
+# run rather than starting a second one beside it.
+repo_root="$PWD"
+if command -v git >/dev/null 2>&1; then
+  top="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+  [ -n "$top" ] && repo_root="$top"
+fi
+folder=$(basename "$repo_root")
+hash=$(printf '%s' "$repo_root" | cksum 2>/dev/null | awk '{print substr($1, 1, 6)}')
+[ -n "$hash" ] || hash=$(printf '%s' "$repo_root" | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-6)
 [ -n "$hash" ] || hash="root"
 session="grok-build-$${folder}-$${hash}"
 if command -v grok >/dev/null 2>&1; then
-  exec tmux new-session -A -s "$session" -c "$PWD" -- grok --cwd "$PWD"
+  exec tmux new-session -A -s "$session" -c "$PWD" -- grok --cwd "$repo_root"
 fi
 # Grok CLI missing (offline first boot): still resume the session as a shell.
 exec tmux new-session -A -s "$session" -c "$PWD"
@@ -264,6 +279,130 @@ if [ "$(id -u)" = "0" ]; then
   fi
   if [ -n "$home_owner" ]; then
     chown -R "$home_owner" "$HOME/.grok" 2>/dev/null || true
+  fi
+fi
+
+# --- Repository clone (best effort) --------------------------------------------
+# Nothing else puts code in /home/coder/workspace. That folder is what main.tf's
+# code_server `folder` and the web-terminal app point at, and it is what the
+# Grok Build helper above resolves `git rev-parse` and `grok --cwd` against, so
+# a repository that is not there by now leaves the editor and every terminal
+# working from the home directory instead.
+#
+# The folder name is re-derived here rather than handed in, because this is the
+# side that runs git; main.tf derives it the same way for those two `folder`
+# arguments and the two derivations must agree (split on "/", drop empty
+# segments so a trailing slash is harmless, take the last, drop a trailing
+# ".git", map every character outside [A-Za-z0-9._-] to "-", and fall back to
+# "repo" when that leaves no leading alphanumeric — which also keeps "../" out
+# of a path the editor, the terminal and the Grok agent all open on).
+#
+# The URL arrives as a rendered literal, so it is read through a quoted heredoc:
+# that way no shell quoting has to survive, and the value is only ever expanded
+# as data. An empty field means a home-directory workspace, so the whole stage
+# is skipped rather than attempted with an empty URL.
+repo_url_raw="$(cat <<'REPO_URL_EOF'
+${repo_url}
+REPO_URL_EOF
+)"
+
+if [ -n "$repo_url_raw" ]; then
+  repo_leaf="$(printf '%s' "$repo_url_raw" | tr '/' '\n' | grep -v '^$' | tail -n 1)"
+  # The "$${leaf%.git}" suffix form would be the shorter way to drop the
+  # extension; it is spelled with sed here because a braced shell expansion is a
+  # templatefile interpolation, and the bare form keeps this script's
+  # interpolation count at the two variables main.tf passes.
+  repo_folder="$(printf '%s' "$repo_leaf" | sed 's/\.git$//')"
+  repo_folder="$(printf '%s' "$repo_folder" | sed 's/[^A-Za-z0-9._-]/-/g')"
+  printf '%s' "$repo_folder" | grep -qE '^[A-Za-z0-9]' || repo_folder="repo"
+  target="/home/coder/workspace/$repo_folder"
+
+  # Whichever user the workspace really belongs to: the owner of $HOME when the
+  # agent runs as root (same rule as the ~/.grok chown above), otherwise whoever
+  # is running this script. It decides both the chown target and whose git
+  # credentials the clone consults.
+  clone_owner="$(id -un)"
+  if [ "$(id -u)" = "0" ]; then
+    clone_owner="$(stat -Lc '%U' "$HOME" 2>/dev/null || true)"
+    [ "$clone_owner" = "root" ] && clone_owner=""
+    if [ -z "$clone_owner" ] && id coder >/dev/null 2>&1; then
+      clone_owner="coder"
+    fi
+  fi
+  clone_home=""
+  [ -n "$clone_owner" ] && clone_home="$(getent passwd "$clone_owner" 2>/dev/null | cut -d: -f6)"
+
+  # A fresh home volume is root-owned and 755, so the parent folder goes to the
+  # workspace user before git runs or the clone dies on a permission error.
+  # Not recursive: workspace/ may hold other clones, and they are not ours to
+  # take over.
+  mkdir -p -- /home/coder/workspace 2>/dev/null || true
+  if [ -n "$clone_owner" ]; then
+    chown "$clone_owner" /home/coder/workspace 2>/dev/null || true
+  fi
+
+  # Clone as the workspace user, never as root, so their credentials (a helper,
+  # ~/.git-credentials, ssh keys) are the ones git consults. An empty prefix
+  # means "run git directly", which is correct for a non-root agent and for a
+  # root agent with no derivable workspace user. HOME is passed explicitly
+  # because runuser keeps the invoker's environment — a root agent would
+  # otherwise hand git /root and miss the workspace user's credentials entirely.
+  clone_runner=""
+  if [ "$(id -u)" = "0" ] && [ -n "$clone_owner" ]; then
+    if command -v runuser >/dev/null 2>&1; then
+      clone_runner="runuser -u $clone_owner --"
+    elif command -v sudo >/dev/null 2>&1; then
+      clone_runner="sudo -u $clone_owner --"
+    fi
+  fi
+
+  run_clone() {
+    if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
+      $clone_runner env HOME="$clone_home" git "$@"
+    elif [ -n "$clone_runner" ]; then
+      $clone_runner git "$@"
+    else
+      git "$@"
+    fi
+  }
+
+  if [ -d "$target/.git" ]; then
+    # Re-fetching is the user's call: a pull here could conflict mid-edit or
+    # fail on a dirty tree, and either way the workspace would start on code
+    # nobody chose.
+    echo "$repo_folder: already cloned, skipping"
+  elif [ -e "$target" ]; then
+    echo "WARNING: $target exists but is not a git repository — leaving it" \
+      "alone and skipping the clone. Remove it if it should not be there." >&2
+  elif ! command -v git >/dev/null 2>&1; then
+    echo "WARNING: git is not installed in the workspace container, so" \
+      "$repo_url_raw was not cloned into $target. This template expects the" \
+      "golden image (scripts/build-dev-image.sh), which ships git." >&2
+  else
+    # -- before the URL: the value is user input and must never parse as an option.
+    if run_clone clone -- "$repo_url_raw" "$target"; then
+      echo "cloned $repo_url_raw into $target"
+      if [ -n "$clone_owner" ]; then
+        chown -R "$clone_owner" "$target" 2>/dev/null || true
+      fi
+    else
+      # Loud and non-fatal on purpose: the workspace still boots, and an empty
+      # editor folder is fixable from a terminal. git deletes its own partial
+      # clone on failure; nothing here deletes a folder that may hold work.
+      echo "==============================================================" >&2
+      echo "WARNING: the repository clone failed — the editor and the terminals" \
+        "open on $target, which does not exist." >&2
+      echo "  repository: $repo_url_raw" >&2
+      echo "  target:     $target" >&2
+      echo "  The two likely causes:" >&2
+      echo "    1. a private repository: git runs unauthenticated as the" >&2
+      echo "       workspace user, so credentials must already exist inside the" >&2
+      echo "       workspace (a credential helper, ~/.git-credentials, or ~/.ssh)" >&2
+      echo "    2. an unreachable host: check DNS and egress from the" >&2
+      echo "       workspace container, then restart the workspace" >&2
+      echo "  Clone it by hand into the path above and reopen the workspace." >&2
+      echo "==============================================================" >&2
+    fi
   fi
 fi
 

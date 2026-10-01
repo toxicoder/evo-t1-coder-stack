@@ -378,6 +378,21 @@ if grep -q '^GROK_PROFILE_SHARE=' .env 2>/dev/null; then
   log "grok_profile_share passed from .env"
 fi
 
+# repo_url is passed only when .env carries a NON-EMPTY REPO_URL, gated the same
+# way as coder_agent_url above: both templates' create forms now carry an
+# optional Git repository field, and this variable prefills it. docker-dev
+# defaults to no clone at all and docker-devcontainer defaults to the coder/coder
+# demo repo, so pushing an empty value would either change nothing (docker-dev)
+# or replace the demo default with "clone nothing" (docker-devcontainer) — which
+# is why a blank REPO_URL= line stays unpassed.
+if grep -q '^REPO_URL=' .env 2>/dev/null; then
+  repo_default_url="$(env_get REPO_URL)"
+  if [ -n "${repo_default_url}" ]; then
+    vars+=(--var "repo_url=${repo_default_url}")
+    log "repo_url passed from .env (prefills the Git repository field on both create forms)"
+  fi
+fi
+
 # ── Per-template work ───────────────────────────────────────────────────────
 # Everything below runs once per selected template. The token minted above is
 # reused for every push in the run and deleted after the loop, because one
