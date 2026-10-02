@@ -11,6 +11,12 @@
 #
 # Inference goes through the LiteLLM proxy; the key is never stored here, it
 # arrives as the LITELLM_API_KEY environment variable set by coder_agent.env.
+#
+# Two of the create form's per-workspace knobs reach this file: the default model
+# (the "Grok default model" dropdown) fills [models] default below, and anything
+# typed into "Grok config extras" is appended verbatim under the comment header at
+# the very end of the file. Both are per-workspace, so with the Grok profile set to
+# "private" two workspaces can legitimately disagree about either one.
 
 [models]
 # Only the Spark vLLM aliases return a real tool_calls array on this runtime,
@@ -142,13 +148,15 @@ plan = "agent-fast"
 # Offline-capable MCP servers only: everything below resolves from a local
 # process and needs no account, token, or inbound route.
 #
-# Deliberately excluded, because they need outbound network or a credential
-# this workspace does not carry: context7 (docs CDN), github (needs a GitHub
-# token), sentry (OAuth to mcp.sentry.dev), postgres (needs a live DSN), fetch
-# (PySocks/egress proxy). They are simply not defined here, so there is
-# nothing to disable; if you add one later and want it parked rather than
-# deleted, list its name in `disabled_mcp_servers = ["..."]` (top-level key,
-# string array).
+# Deliberately excluded, because they need outbound network or a credential this
+# workspace does not carry: context7 (docs CDN), sentry (OAuth to
+# mcp.sentry.dev), postgres (needs a live DSN), fetch (PySocks/egress proxy).
+# github is the one exception: it is OFF unless this stack renders it, and when
+# on it appears as an HTTP MCP server wired to the GH_TOKEN env var.
+#
+# What is left out is simply not defined here, so there is nothing to disable;
+# if you add one later and want it parked rather than deleted, list its name in
+# `disabled_mcp_servers = ["..."]` (top-level key, string array).
 #
 # Cold npx/uvx downloads dominate first-launch time, hence the generous
 # startup timeouts; verify a stubborn one with `grok mcp doctor <name>`.
@@ -188,6 +196,19 @@ args = ["mcp-server-time"]
 enabled = true
 startup_timeout_sec = 60
 
+%{if github_mcp && github_token != ""~}
+# Rendered only when a GitHub token was supplied AND github_mcp is on; with
+# either one missing this whole block is absent from the file. A session whose
+# environment has no GH_TOKEN in it simply fails this server's handshake, which
+# is the point — the entry is best effort, so a workspace with no GitHub
+# credential pays nothing for it (and the token itself stays in the environment,
+# never in this file).
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+enabled = true
+headers = { Authorization = "Bearer $${GH_TOKEN}" }
+
+%{endif~}
 [mcp]
 max_output_bytes = 40000
 
@@ -202,3 +223,8 @@ deny = [
   "Edit(**/.env)",
   "Edit(**/.env.*)",
 ]
+%{if grok_config_extra != ""~}
+
+# --- per-workspace additions (create form: Grok config extras) ---
+${grok_config_extra}
+%{endif~}

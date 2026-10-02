@@ -52,6 +52,44 @@ locals {
     [{ value = var.image, name = "Custom (${var.image})", description = "Pushed with --var image." }],
   )
 
+  # Same rule as image_options, same trick: the provider requires a parameter
+  # default to be one of its options, so a custom --var grok_default_model=<key>
+  # is added as its own option rather than dropped (which would leave the form
+  # showing `agent` while the build used something else). The descriptions are the
+  # ones the [model.*] blocks in grok-config.toml.tftpl carry, so the create form
+  # says the same thing about each alias as the rendered config does.
+  model_choices = [
+    {
+      value       = "agent"
+      name        = "agent (DGX Spark vLLM)"
+      description = "Primary agent model; emits native tool_calls"
+    },
+    {
+      value       = "agent-fast"
+      name        = "agent-fast (DGX Spark vLLM)"
+      description = "Fast Spark alias; summaries, subagents, ghost text"
+    },
+    {
+      value       = "coder"
+      name        = "coder (Arc iGPU)"
+      description = "Arc fallback; completion-style on this runtime (no tool_calls)"
+    },
+    {
+      value       = "coder-fast"
+      name        = "coder-fast (Arc iGPU)"
+      description = "Arc fallback; completion-style on this runtime (no tool_calls)"
+    },
+    {
+      value       = "chat"
+      name        = "chat (Arc iGPU)"
+      description = "Arc chat fallback; returns real tool_calls on this runtime (measured)"
+    },
+  ]
+  model_options = contains([for c in local.model_choices : c.value], var.grok_default_model) ? local.model_choices : concat(
+    local.model_choices,
+    [{ value = var.grok_default_model, name = "Custom (${var.grok_default_model})", description = "Pushed with --var grok_default_model." }],
+  )
+
   # The folder a cloned repository lands in. Derived here *and* in
   # startup.sh.tftpl on purpose: this file only names the path, the script is
   # the side that runs git, and the two derivations must agree or the editor and
@@ -151,6 +189,84 @@ data "coder_parameter" "repo_url" {
   mutable      = true
   default      = var.repo_url
   order        = 3
+}
+
+# Immutable in place, like the DinD toggle: which mode a workspace is in decides
+# whether the nested ~/.grok mount exists at all, so an in-place edit would change
+# the mount topology under a running workspace. The default comes from the template
+# variable so an operator can flip the whole stack with --var grok_profile_mode on
+# push, exactly like the image and DinD defaults above.
+data "coder_parameter" "grok_profile_mode" {
+  name         = "grok_profile_mode"
+  display_name = "Grok profile"
+  description  = "Where this workspace's ~/.grok lives. Shared = one per-user profile volume, shared by every workspace this owner owns: config.toml, the MCP caches, memory and skills are shared between them, and the last workspace started re-renders that one shared config.toml. Private = this workspace gets its own private ~/.grok on its own home volume, so its config.toml (and its memory and skills) are independent of the owner's other workspaces and die with the workspace. Changing this needs a rebuild: the nested mount either exists or it does not."
+  type         = "string"
+  # Same reason as the DinD toggle: the choice is the mount topology, and a
+  # mutable field would let someone pull the mount out from under a running agent.
+  form_type = "dropdown"
+  mutable   = false
+  default   = var.grok_profile_mode
+  order     = 4
+
+  # Only these two spellings mean anything; anything else reads as private, which
+  # is the safe half of the mistake (it leaks nothing, it just costs sharing).
+  option {
+    name        = "Shared (one profile per user)"
+    value       = "shared"
+    description = "One per-user profile volume, shared by every workspace this owner owns: config.toml, MCP caches, memory and skills are shared, and the last workspace started re-renders that one shared config.toml."
+  }
+
+  option {
+    name        = "Private (this workspace only)"
+    value       = "private"
+    description = "This workspace gets its own private ~/.grok on its own home volume, so its config.toml (and its memory and skills) are independent of the owner's other workspaces and die with the workspace."
+  }
+}
+
+# The default model per workspace, which the create form could not express before
+# (it was a stack-wide variable). It only differs observably per workspace while
+# the profile is private, or while config.toml is unmanaged: on a shared profile
+# volume one file serves all of the owner's workspaces, and whoever starts last
+# re-renders it for everyone. Options follow the aliases in
+# grok-config.toml.tftpl, and local.model_options keeps the provider's
+# default-must-be-an-option rule true for a custom --var grok_default_model.
+data "coder_parameter" "grok_default_model" {
+  name         = "grok_default_model"
+  display_name = "Grok default model"
+  description  = "The model alias new Grok Build sessions in this workspace start on. Written into the rendered ~/.grok/config.toml as [models] default. Only the Spark vLLM aliases return a real tool_calls array on this runtime; the Arc aliases answer tool calls as plain text, so they suit chat and summarisation."
+  type         = "string"
+  form_type    = "dropdown"
+  # Fixed at create time for the same reason as the profile mode: the file that
+  # carries it is rewritten on start, so this is the only honest seam, and a
+  # silent model swap under a running workspace is not worth one dropdown.
+  mutable = false
+  default = var.grok_default_model
+  order   = 5
+
+  dynamic "option" {
+    for_each = local.model_options
+    content {
+      name        = option.value.name
+      value       = option.value.value
+      description = option.value.description
+    }
+  }
+}
+
+# Trusted, not validated: appended verbatim into a file the CLI reads, by the same
+# argument that makes repo_url a free-text field (see above) — whoever fills this in
+# already holds a shell in that container, so nothing gained by restricting it.
+data "coder_parameter" "grok_config_extra" {
+  name         = "grok_config_extra"
+  display_name = "Grok config extras"
+  description  = "Free-form TOML appended verbatim to the rendered ~/.grok/config.toml, under its own comment header. Use it for per-workspace keys the managed block does not set — an extra [mcp_servers.*] entry, a permission deny list, a different subagent cap. This trusts whoever fills it in, exactly like the Git repository field above: this workspace's owner already holds a shell in that container. Leave it empty unless needed; empty renders nothing at all."
+  type         = "string"
+  # Mutable because it writes one text file, not topology: no rebuild has to
+  # happen to take a key back out again, and restart re-renders the whole file.
+  form_type = "textarea"
+  mutable   = true
+  default   = ""
+  order     = 6
 }
 
 # Presets collapse the create form to one click. Keys here are parameter *names*
@@ -254,9 +370,18 @@ resource "coder_agent" "main" {
   }
 
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
+    # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
+    # resolve, so all five are declared together. github_token is a *boolean* gate
+    # in there — it only decides whether the [mcp_servers.github] block appears —
+    # so no token bytes are ever interpolated into the rendered script or into
+    # config.toml; the rendered file names GH_TOKEN and the CLI expands that
+    # reference from the environment.
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
       litellm_url        = var.litellm_url
-      grok_default_model = var.grok_default_model
+      grok_default_model = data.coder_parameter.grok_default_model.value
+      grok_config_extra  = data.coder_parameter.grok_config_extra.value
+      github_token       = var.github_token
+      github_mcp         = var.github_mcp && var.github_token != ""
     })
     # Injected verbatim into the script, which is safe enough: this is the
     # workspace creator's own input and they already hold a shell in this
@@ -275,8 +400,10 @@ resource "coder_agent" "main" {
     # in a rendered file in the workspace.
     LITELLM_API_KEY  = var.litellm_key
     LITELLM_BASE_URL = var.litellm_url
-    # Local model aliases, for shell prompts, Makefiles and CI overrides.
-    GROK_DEFAULT_MODEL = var.grok_default_model
+    # Local model aliases, for shell prompts, Makefiles and CI overrides. Read
+    # from the create-form dropdown, so it always agrees with the [models] default
+    # the startup script renders.
+    GROK_DEFAULT_MODEL = data.coder_parameter.grok_default_model.value
     # Coder Agents (the `agents` EXPERIMENT, gated by CODER_EXPERIMENTS in
     # docker-compose.yml) discovers per-workspace skills and instructions from
     # exactly these keys — spelling verified against the v2.36.6 binary and its
@@ -298,6 +425,13 @@ resource "coder_agent" "main" {
     # does not exist would make every docker command in the workspace fail with
     # a confusing connection error instead of the plain "command not found".
     local.dind_enabled ? { DOCKER_HOST = local.dind_host } : {},
+    # An empty token adds NEITHER key, so a workspace that declares no GitHub
+    # credential gets exactly the environment it got before. When present the
+    # token travels env-only, like LITELLM_API_KEY above: the startup script
+    # seeds the gh/git credential helper from it, so `git push` and
+    # `gh pr create` work with the token never written to a file, and the
+    # rendered config.toml only ever references GH_TOKEN by name.
+    var.github_token != "" ? { GH_TOKEN = var.github_token, GITHUB_TOKEN = var.github_token } : {},
   )
 }
 
@@ -424,7 +558,15 @@ resource "coder_metadata" "workspace_info" {
 
   item {
     key   = "grok default model"
-    value = var.grok_default_model
+    value = data.coder_parameter.grok_default_model.value
+  }
+
+  # Which ~/.grok topology this workspace got: `shared` means it mounts the
+  # owner's one per-user profile volume, `private` means a private ~/.grok that
+  # dies with the workspace. Without this the two look identical on the page.
+  item {
+    key   = "grok profile"
+    value = data.coder_parameter.grok_profile_mode.value
   }
 
   # Which topology this workspace actually got. Without it the only way to tell
@@ -437,6 +579,16 @@ resource "coder_metadata" "workspace_info" {
   item {
     key       = "litellm key"
     value     = var.litellm_key
+    sensitive = true
+  }
+
+  # Same redaction stance as the two items above, for the same reason: this says
+  # only whether a credential exists, never what it is, and `sensitive` keeps even
+  # that "set"/"none" answer masked in the UI. There is nothing more to show —
+  # the token never reaches the rendered config.toml, only its name does.
+  item {
+    key       = "github token"
+    value     = var.github_token != "" ? "set" : "none"
     sensitive = true
   }
 }
@@ -645,8 +797,10 @@ resource "docker_container" "dind" {
   }
 }
 
-# One Grok Build profile per *user*, mounted into every workspace that user
-# owns, instead of one ~/.grok per workspace that dies on a rebuild.
+# One Grok Build profile per *user*, mounted into every workspace that user owns,
+# instead of one ~/.grok per workspace that dies on a rebuild — but only in
+# `shared` mode: the grok_profile_mode parameter above decides. `private` gives that
+# workspace a private ~/.grok on its own home volume, which dies with it.
 #
 # The volume is deliberately NOT declared as a docker_volume resource. A
 # declared volume would be one resource per workspace, which is the opposite of
@@ -655,9 +809,11 @@ resource "docker_container" "dind" {
 # it by plain string name means Docker creates it on the first container start
 # that names it and reuses it afterwards.
 locals {
-  # Off => no extra volumes entry at all, so the container spec is byte-identical
-  # to what it was before the profile volume existed.
-  grok_profile_enabled = var.grok_profile_share
+  # Anything but "shared" — "private" included — means no extra volumes entry at
+  # all, so the container spec is byte-identical to what it was before the
+  # profile volume existed. lower() + trimspace() so a form value typed as
+  # "Shared " still reads as shared instead of silently provisioning private.
+  grok_profile_shared = lower(trimspace(data.coder_parameter.grok_profile_mode.value)) == "shared"
   # Keyed by owner id, not by workspace id: that is the whole privacy boundary.
   grok_profile_volume = "grok-profile-${data.coder_workspace_owner.me.id}"
 }
@@ -698,11 +854,12 @@ resource "docker_container" "workspace" {
   # Nested inside the mount above, not instead of it: Docker resolves the
   # /home/coder volume first and then covers /home/coder/.grok with the owner's
   # shared profile volume, so the CLI's state tree is one directory tree shared
-  # live by every workspace that user owns. Gated on grok_profile_share because
-  # an empty for_each emits no volumes entry at all — with the knob off the
-  # planned container is exactly the pre-profile shape.
+  # live by every workspace that user owns. Only in `shared` mode — in `private`
+  # mode .grok stays a plain folder on this workspace's own home volume. Gated on
+  # local.grok_profile_shared because an empty for_each emits no volumes entry at
+  # all — with the mode off the planned container is exactly the pre-profile shape.
   dynamic "volumes" {
-    for_each = local.grok_profile_enabled ? [1] : []
+    for_each = local.grok_profile_shared ? [1] : []
     content {
       container_path = "/home/coder/.grok"
       volume_name    = local.grok_profile_volume

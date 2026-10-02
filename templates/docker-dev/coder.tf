@@ -47,8 +47,31 @@ variable "repo_url" {
   default     = ""
 }
 
-variable "grok_profile_share" {
+# Was `variable "grok_profile_share"` (a bool) until the per-workspace mode needed
+# to say *which* layout a workspace gets, not just whether a shared volume exists.
+# It stays a plain string with exactly those two values because
+# scripts/push-template.sh may forward it with `--var grok_profile_mode`, and a
+# create-form dropdown can only offer options the pushed default actually has.
+variable "grok_profile_mode" {
+  type        = string
+  description = "How a workspace gets its ~/.grok. 'shared' = one per-user Docker volume (grok-profile-<owner-id>) mounted at /home/coder/.grok, nested inside that workspace's own home volume — exactly what the old grok_profile_share = true did: everything the CLI keeps there (config.toml, MCP caches, memory-v2, skills, a self-installed CLI) is written once and read by every workspace this user owns, and survives a rebuild. 'private' = no nested mount, so each workspace gets its own private ~/.grok on its own home volume, and that workspace's config.toml, MCP caches, memory and skills die with it. Per-user, not host-wide, in shared mode: the volume name is keyed by owner id, so another user's workspaces never see it. Changing the mode changes the mount topology, so it needs a workspace rebuild."
+  default     = "shared"
+}
+
+# Optional, and empty by default: this box is offline-first and most workspaces
+# never talk to GitHub, so the default keeps no credential anywhere — in the
+# rendered file, in the agent environment, or on disk.
+variable "github_token" {
+  type        = string
+  description = "Optional GitHub fine-grained personal access token. When non-empty it is injected into the agent environment as GH_TOKEN and GITHUB_TOKEN, and the startup script seeds the gh/git credential helper from it so git push and gh pr create work. Use a least-privilege fine-grained token scoped to only the repositories these workspaces touch, and rotate it when a workspace is done with it. Empty (the default) means no GitHub credential exists anywhere in the workspace."
+  default     = ""
+  sensitive   = true
+}
+
+# Declaring the server is not enough for a token to be usable, and a server that
+# cannot handshake is dead weight in every session, so both switches are needed.
+variable "github_mcp" {
   type        = bool
-  description = "Mount the workspace owner's shared Grok Build profile volume (grok-profile-<owner-id>) at /home/coder/.grok, nested inside that workspace's own home volume. Everything the CLI keeps in ~/.grok — config.toml, skills, memory-v2, sessions, the MCP warm caches, a self-installed CLI under ~/.grok/bin — is then written once and read by every workspace this user owns, and survives a rebuild. Per-user, not host-wide: the volume name is keyed by owner id, so another user's workspaces never see it. Off gives each workspace a private ~/.grok that dies with it. Changing this needs a workspace rebuild."
-  default     = true
+  description = "When true AND github_token is non-empty, the rendered ~/.grok/config.toml declares the github MCP HTTP server, which is how Grok Build gets its GitHub tools. Off by default keeps the offline-first MCP list lean: with no token there is nothing for that server to authenticate against anyway, and a session would pay a failed handshake on every start."
+  default     = false
 }
