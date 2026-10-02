@@ -2,8 +2,8 @@
 #
 # ~/.grok/config.toml for the EVO-T1 Coder workspace.
 #
-# This file is written by templates/docker-dev/grok-config.toml.tftpl in the
-# evo-t1-coder-stack repo and is refreshed on workspace start ONLY while the
+# This file is written by templates/docker-devcontainer/grok-config.toml.tftpl in
+# the evo-t1-coder-stack repo and is refreshed on workspace start ONLY while the
 # marker line above is present (or the file is missing). To take permanent
 # ownership, delete the first line — the startup script will then leave this
 # file alone. To go back to stack-managed, delete the file and start the
@@ -11,6 +11,14 @@
 #
 # Inference goes through the LiteLLM proxy; the key is never stored here, it
 # arrives as the LITELLM_API_KEY environment variable set by coder_agent.env.
+#
+# Two of the create form's per-workspace knobs reach this file: the default model
+# (the "Grok default model" dropdown) fills [models] default below, and anything
+# typed into "Grok config extras" is appended verbatim under the comment header at
+# the very end of the file. Both are per-workspace, so with the Grok profile set to
+# "private" two workspaces can legitimately disagree about either one — on a
+# "shared" profile this single file serves every workspace its owner owns, and the
+# one started last re-renders it for all of them.
 
 [models]
 # Only the Spark vLLM aliases return a real tool_calls array on this runtime,
@@ -140,15 +148,19 @@ explore = "agent-fast"
 plan = "agent-fast"
 
 # Offline-capable MCP servers only: everything below resolves from a local
-# process and needs no account, token, or inbound route.
+# process and needs no account, token, or inbound route, with one gated
+# exception: github, which is a hosted HTTP server and is off unless this file
+# is rendered with it.
 #
-# Deliberately excluded, because they need outbound network or a credential
-# this workspace does not carry: context7 (docs CDN), github (needs a GitHub
-# token), sentry (OAuth to mcp.sentry.dev), postgres (needs a live DSN), fetch
-# (PySocks/egress proxy). They are simply not defined here, so there is
-# nothing to disable; if you add one later and want it parked rather than
-# deleted, list its name in `disabled_mcp_servers = ["..."]` (top-level key,
-# string array).
+# Deliberately excluded, because they need outbound network or a credential this
+# workspace does not carry: context7 (docs CDN), sentry (OAuth to
+# mcp.sentry.dev), postgres (needs a live DSN), fetch (PySocks/egress proxy).
+# github is the one exception: it is OFF unless this stack renders it, and when
+# on it appears as an HTTP MCP server wired to the GH_TOKEN env var.
+#
+# What is left out is simply not defined here, so there is nothing to disable;
+# if you add one later and want it parked rather than deleted, list its name in
+# `disabled_mcp_servers = ["..."]` (top-level key, string array).
 #
 # Cold npx/uvx downloads dominate first-launch time, hence the generous
 # startup timeouts; verify a stubborn one with `grok mcp doctor <name>`.
@@ -188,6 +200,26 @@ args = ["mcp-server-time"]
 enabled = true
 startup_timeout_sec = 60
 
+%{if github_mcp && github_token != ""~}
+
+# Hosted GitHub API MCP over HTTPS: no local process, so nothing to warm up, but
+# it needs outbound TLS and a bearer token — the exception the note above makes.
+# Rendered only when this template is pushed with github_mcp = true AND a
+# non-empty github_token; with either one off the gate below emits nothing at
+# all, so the rendered file is what it was before this entry existed. A session
+# whose environment has no GH_TOKEN in it just fails this server's handshake.
+# The header below escapes its dollar signs (doubled), so the rendered file keeps
+# that reference literally and the CLI expands it from the agent environment at
+# run time. Written with single dollars it would be a templatefile interpolation,
+# resolved (or rejected) at render time — and resolving it would need the token
+# itself in the render map, which is exactly what stays out.
+[mcp_servers.github]
+url = "https://api.githubcopilot.com/mcp/"
+enabled = true
+headers = { Authorization = "Bearer $${GH_TOKEN}" }
+
+%{endif~}
+
 [mcp]
 max_output_bytes = 40000
 
@@ -202,3 +234,8 @@ deny = [
   "Edit(**/.env)",
   "Edit(**/.env.*)",
 ]
+
+%{if grok_config_extra != ""~}
+# --- per-workspace additions (create form: Grok config extras) ---
+${grok_config_extra}
+%{endif~}

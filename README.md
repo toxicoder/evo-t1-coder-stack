@@ -47,7 +47,8 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                  repo root resolved from the terminal's folder by git rev-parse)
   |                * ~/.grok/config.toml rendered by the template: model
   |                  aliases + MCP servers (filesystem, memory,
-  |                  sequential-thinking, git, time)
+  |                  sequential-thinking, git, time; github only when
+  |                  `github_mcp` is on and a `github_token` is set)
   |                * Cline / Kilo Code ---> host.docker.internal:4000
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
@@ -311,11 +312,16 @@ it scans on disk.
 
 It reads `.env` for the variables it passes: `--var image=` from `DEV_IMAGE`,
 `--var litellm_key=` from `LITELLM_MASTER_KEY` (only when that key is real, never the
-sample placeholder), `--var coder_agent_url` only if `.env` defines it at all, and
+sample placeholder), `--var coder_agent_url` only if `.env` defines it at all,
+`--var grok_profile_mode=` from `GROK_PROFILE_MODE` (a `.env` still carrying the older
+true/false key maps onto it — `true` → `shared`, `false` → `private`), and
 `--var repo_url=` from `REPO_URL` only when that key is present and non-empty (it
 prefills the Git repository field on both create forms; docker-dev defaults to no
 clone and docker-devcontainer to the coder/coder demo repo, which is why a blank
-`REPO_URL=` line stays unpassed). Then, per
+`REPO_URL=` line stays unpassed). It also passes `--var github_token=` from
+`GITHUB_TOKEN`, only when that key is present and non-empty, and never prints the
+value: an empty `GITHUB_TOKEN=` is the default state, in which no workspace holds a
+GitHub credential. Then, per
 template, it confirms an **active** template version — a push can exit 0 and still leave the
 template inactive if its Terraform run failed, which shows up as the template missing from
 the create dropdown. The equivalent raw command — what the script does for each template,
@@ -342,7 +348,16 @@ which is what keeps workspace creation working with no internet.
 
 The create form shows a **Workspace image** dropdown, a **Docker-in-docker** Yes/No
 question, a **Git repository** input (`repo_url`, default empty, mutable — anything you
-type is cloned into the workspace on the next start; see below) and three presets: *AI workspace*
+type is cloned into the workspace on the next start; see below), three Grok fields —
+**Grok profile** (`grok_profile_mode`, default `shared`, immutable: `private` gives that
+one workspace a private `~/.grok` on its own home volume, so a single workspace can sit
+outside the shared profile while its siblings stay inside it, and switching needs a
+rebuild), **Grok default model** (`grok_default_model`, one of the five LiteLLM aliases,
+default `agent`) and **Grok config extras** (`grok_config_extra`, default empty, a
+textarea; whatever you type is appended verbatim under a comment header into that
+workspace's rendered `~/.grok/config.toml`, which is only observably per-workspace while
+the profile mode is `private` — one shared profile is one file for every workspace that
+owner owns and the last boot to re-render it wins) — and three presets: *AI workspace*
 (golden image, selected by default), *Minimal shell* (bare Ubuntu, for when the
 golden image is mid-rebuild), and *AI workspace + DinD* (golden image plus a
 privileged Docker daemon, below). `--var image=` seeds the dropdown's default and is also
@@ -370,7 +385,12 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
   field** into `/home/coder/workspace/<repo-name>` (idempotent; runs as the
   workspace user so their git credentials are consulted; refuses to touch an
   existing non-git folder there), renders `~/.grok/config.toml`, and
-  warms the MCP servers in the background. The `settings.json.tftpl` payload does not
+  warms the MCP servers in the background. When `github_token` is set it also seeds an
+  idempotent `~/.gitconfig` holding `credential.https://github.com.helper =
+  !gh auth git-credential`, so `git push`, `gh pr create` and `gh api` authenticate
+  through the `GH_TOKEN` in the agent environment — gh 2.101 ships in the golden image
+  and reads that variable — instead of from a token stored in a file.
+  The `settings.json.tftpl` payload does not
   pass through the script: it goes to the `code_server` module, which merges it into
   code-server's User+Machine settings on every start (below)
 - `startup_script_behavior = "blocking"`, so a workspace only reports *ready* once the
@@ -395,7 +415,10 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
 Template variables: `image` (seeds the **Workspace image** dropdown default),
 `litellm_url` (default `http://host.docker.internal:4000/v1`),
 `litellm_key` (sensitive — pass the LiteLLM master key when creating a workspace),
-`grok_default_model` (default `agent`; the tool-capable Spark alias), `docker_socket`
+`grok_default_model` (default `agent`; the tool-capable Spark alias — it is also a
+per-workspace **Grok default model** dropdown on the create form, whose options are the
+five aliases `agent`, `agent-fast`, `coder`, `coder-fast` and `chat`, plus a custom
+entry when the variable names another one), `docker_socket`
 (optional), `coder_agent_url` (default `http://host.docker.internal:3002` — the URL the agent
 dials, kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent
 traffic through the reverse proxy; empty keeps the provider-rendered access URL),
@@ -404,9 +427,20 @@ traffic through the reverse proxy; empty keeps the provider-rendered access URL)
 `docker-devcontainer`; prefills the create form's **Git repository** field — both
 templates clone that URL into the workspace on every start, and `REPO_URL` in `.env`
 overrides the default),
-`grok_profile_share` (default `true`; mounts the owner's shared `~/.grok` profile volume
-instead of leaving each workspace with a private one — see "Grok Build state: one shared
-profile per user").
+`grok_profile_mode` (default `shared`; `shared` mounts the owner's shared `~/.grok`
+profile volume, `private` gives that workspace a private `~/.grok` on its own home
+volume — see "Grok Build state: one shared profile per user"). It is also the default
+behind the create form's per-workspace **Grok profile** dropdown, and switching a live
+workspace between the two modes needs a rebuild),
+`github_token` (sensitive, default empty; an optional GitHub fine-grained PAT, handed to
+every workspace as the `GH_TOKEN` and `GITHUB_TOKEN` environment variables — empty means
+no GitHub credential exists anywhere, so pass a least-privilege token scoped to the
+repositories the workspaces actually clone and push),
+`github_mcp` (default `false`; with a token present, additionally wires the `github` MCP
+HTTP server into Grok's rendered `config.toml`), and
+`grok_config_extra` (default empty; the create form's **Grok config extras** textarea —
+free-form TOML appended verbatim, under a comment header, to that workspace's rendered
+`~/.grok/config.toml`).
 
 **Docker-in-docker (opt-in).** The create form's **Docker-in-docker** Yes/No question
 (preset *AI workspace + DinD*, template variable `dind`) provisions, per workspace, a
@@ -457,13 +491,17 @@ always on, plus a repository that brings its own toolchain:
   sidecar cannot see fails with `bind source path does not exist`. Named volumes cannot
   substitute: a volume is a daemon-local object and does not cross to the sidecar's daemon.
   Docker creates the missing host directory itself and `startup.sh.tftpl` chowns it.
-- the create form asks two questions: **Git repository** (`repo_url`, mutable — switching
+- the create form asks two questions — **Git repository** (`repo_url`, mutable — switching
   repository is a re-clone plus a devcontainer build, not a new topology the way
   `docker-dev`'s DinD toggle is) and **Build repo's dev container** (`use_devcontainer`,
   a Yes/No radio, immutable — building a dev container or not is a different topology:
   with Yes the editor lives in the dev container, with No in the plain container, and
   the workspace presets *Devcontainer default* and *Plain clone* make each one a
-  one-click workspace on the template's default repository). A repository that ships no
+  one-click workspace on the template's default repository) — and carries the same three
+  Grok fields as `docker-dev` (**Grok profile**, **Grok default model**, **Grok config
+  extras**), since this template mounts the profile volume and renders `config.toml` the
+  same way. The mount covers the workspace container; a dev container built on the
+  sidecar keeps its own home either way. A repository that ships no
   `devcontainer.json` gets no dev container and hence no editor with the toggle on;
   the toggle (or `scripts/new-workspace.sh`, which reads the repository and picks for
   you) is how that case is meant to be handled
@@ -557,16 +595,24 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   baked copy on the login-shell PATH.
 - The startup script renders `~/.grok/config.toml` from
   `templates/docker-dev/grok-config.toml.tftpl`: `[models] default` points at the
-  `agent` alias, the five aliases are defined with `base_url` set to `litellm_url`
-  and `env_key = "LITELLM_API_KEY"` (the key is injected as an environment variable,
-  so it never appears in a file), and the MCP servers, `[features]`, `[permission]`
-  deny rules and `web_fetch` policy are set. It is re-rendered idempotently and
+  `grok_default_model` alias (`agent` unless the template variable or the create form's
+  **Grok default model** dropdown names another), the five aliases are defined with
+  `base_url` set to `litellm_url` and `env_key = "LITELLM_API_KEY"` (the key is
+  injected as an environment variable, so it never appears in a file), and the MCP
+  servers, `[features]`, `[permission]` deny rules and `web_fetch` policy are set.
+  `github_mcp` adds the `github` HTTP server (`https://api.githubcopilot.com/mcp/`,
+  whose `Authorization` header references `${GH_TOKEN}` by name) to that same file, and
+  `grok_config_extra` appends whatever the create form's **Grok config extras** field
+  holds, under its own comment header. It is re-rendered idempotently and
   leaves a hand-edited config alone — the managed block is guarded by a
   `managed-by: evo-t1-coder-stack` marker.
 - **MCP servers**: `filesystem`, `memory`, `sequential-thinking`, `git` and `time`,
   all pre-installed in the image (`npm -g` for the first three, `uv tool` for the
   Python two), and warmed at workspace startup so the first session does not pay the
-  cold-start cost. Check them with `grok mcp doctor` inside a workspace.
+  cold-start cost. Check them with `grok mcp doctor` inside a workspace. The `github`
+  server is the opt-in exception: it needs a token and outbound network, so the
+  template declares it only with `github_mcp` on and a `github_token` present, and
+  leaves it out otherwise.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint
   `http://host.docker.internal:4000/v1`, master key from the `litellm_key`
   template variable, model alias `agent`, with `coder`/`coder-fast`/`chat` listed as
@@ -584,26 +630,43 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
 Every workspace still gets its own `/home/coder` volume, and `~/.grok` is now a
 **second, nested** mount inside it: a Docker volume named `grok-profile-<owner-id>`,
 referenced by name rather than declared as a Terraform resource, that every workspace
-belonging to that user mounts read-write at the same path. Configure the CLI once and the
-rest of that account's workspaces inherit it.
+belonging to that user mounts read-write at the same path **while that workspace is in
+`shared` mode** (the default here, so a workspace gets it unless you turn the mode off).
+Configure the CLI once and the rest of that account's workspaces inherit it.
 
-- **What is shared:** `config.toml`, `skills/`, `memory-v2/`, `sessions/`, the warmed MCP
-  caches, and a CLI you installed yourself under `~/.grok/bin`.
+- **What is shared:** in `shared` mode, `config.toml`, `skills/`, `memory-v2/`, `sessions/`, the warmed MCP
+  caches, and a CLI you installed yourself under `~/.grok/bin`. In `private` mode that same
+  list lives on the workspace's own home volume and belongs to that workspace alone.
 - **Why:** the model catalog, the MCP servers and any skill get set up once. A `/learn`
   run or a hand-added skill written in one workspace is immediately visible in that user's
   other workspaces, and a rebuilt or recreated workspace starts on the existing profile
   instead of an empty one.
-- **Per-user privacy:** one volume per workspace **owner**, keyed by owner id — never
-  host-wide and never cross-user. Another user's workspace has no mount that points at it,
-  because its own profile volume carries a different name.
+- **Two modes:** the mount is mode-gated, twice over. The template variable
+  `grok_profile_mode` (default `shared`) picks the default for the template, and the create
+  form's **Grok profile** field repeats that choice per workspace, defaulting to the
+  variable — so one workspace can sit outside the shared profile while its siblings stay in
+  it. `shared` is today's behaviour (one volume per owner); `private` mounts nothing, so
+  that workspace's `~/.grok` — `config.toml` included — lives on its own home volume,
+  differs from its siblings, and dies with the workspace, or survives a rebuild on the same
+  volume. Changing the mode needs a rebuild, because the nested mount either exists or it
+  does not, and a workspace that goes from `shared` to `private` starts on an empty
+  profile: nothing is copied, and the shared volume is left alone. A per-workspace
+  `config.toml` is what makes that difference mean anything — on a shared profile there is
+  only one file for all of that owner's workspaces, and the last boot to re-render it wins.
+- **Per-user privacy:** in `shared` mode, one volume per workspace **owner**, keyed by
+  owner id — never host-wide and never cross-user. Another user's workspace has no mount
+  that points at it, because its own profile volume carries a different name. A workspace
+  in `private` mode shares nothing with anyone: its `~/.grok` is on its own volume only.
 - **Caveats, honestly:** the memory and index files in there are SQLite and are opened
   live by every workspace holding the mount, so two workspaces writing memory at the same
   time can race — *roughly in sync* is the bar, not transactional sharing. A stop or start
   of a **different user's** workspace never sees the volume; it is keyed to the owner, not
-  to the workspace. And turning the knob off needs a template re-push plus a rebuild
-  (`GROK_PROFILE_SHARE=false` in `.env` — `scripts/push-template.sh` forwards it as
-  `--var grok_profile_share` on every push — or hand the `--var` to your own push),
-  after which that workspace goes back to a private `~/.grok` that dies with it.
+  to the workspace. And the mode knob has two settings and two places: the template
+  variable `grok_profile_mode` (`GROK_PROFILE_MODE=shared|private` in `.env`, which
+  `scripts/push-template.sh` forwards as `--var grok_profile_mode`, or hand that `--var`
+  to your own push) and the create form's **Grok profile** field for one workspace. Either
+  way, switching needs a re-push or an edit plus a rebuild, and a workspace that goes to
+  `private` starts on an empty `~/.grok`.
 
 ## Coder Agents (control-plane) + Grok Build delegation
 

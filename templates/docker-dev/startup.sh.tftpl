@@ -10,20 +10,30 @@
 #      rejoins its session instead of losing the processes running in it
 #   5. seeds the Coder Agents context (skill + instructions under ~/.agents),
 #      only if those files are absent
-#   6. writes ~/.grok/config.toml (only while this stack owns the file)
-#   7. clones the repository the create form named into
+#   6. writes ~/.grok/config.toml (only while this stack owns the file) — the
+#      LiteLLM catalog plus this workspace's create-form choices: the default
+#      model and any appended config extras
+#   7. seeds the gh/git credential helper, but only when a GitHub token was
+#      supplied — the token itself is never written to disk
+#   8. clones the repository the create form named into
 #      /home/coder/workspace/<repo-name> — the folder code-server, the web
 #      terminal and the Grok Build session all open on, so it has to land
 #      before any of them is used
-#   8. warms the offline MCP package caches in the background
+#   9. warms the offline MCP package caches in the background
 #
 # ~/.grok is not necessarily this workspace's own directory. With main.tf's
-# grok_profile_share on (the default) the container mounts the workspace owner's
-# shared per-user Docker volume read-write at /home/coder/.grok, nested inside
-# that workspace's own /home/coder volume, so the terminal helpers, config.toml,
-# memory-v2/ and the MCP warm caches written below are the same files every
-# other workspace this user owns reads and writes, and they survive a rebuild.
-# What that does NOT change is ownership of config.toml: the managed-by:
+# grok_profile_mode at "shared" (the default) the container mounts the workspace
+# owner's shared per-user Docker volume read-write at /home/coder/.grok, nested
+# inside that workspace's own /home/coder volume, so the terminal helpers,
+# config.toml, memory-v2/ and the MCP warm caches written below are the same files
+# every other workspace this user owns reads and writes, and they survive a
+# rebuild. That is also why config.toml cannot be per-workspace in that mode: it is
+# one file, and the last workspace to boot re-renders it for all of them.
+# "private" mounts nothing extra — the tree then lives on this workspace's own home
+# volume, so its config.toml (default model and extras included) is its own and
+# dies with it.
+#
+# What neither mode changes is ownership of config.toml: the managed-by:
 # evo-t1-coder-stack marker still decides it, and the file is still re-rendered
 # on every start while that marker line is present.
 #
@@ -229,10 +239,16 @@ fi
 # code-server actually reads; nothing reads ~/.config/Code here.
 
 # --- Grok Build config --------------------------------------------------------
-# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline
-# MCP stack and the subagent sizing. Ownership is decided by the marker comment
-# below: while it is present the stack re-renders the file on every start, and
-# deleting that one line hands the file over to the user for good. On a shared
+# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline MCP
+# stack, the subagent sizing, and the two per-workspace knobs — the default model
+# picked in the create form and anything typed into the config-extras field. Both
+# of those only differ per workspace while the profile is private (or this file is
+# unmanaged): on a shared profile volume this is ONE file for every workspace the
+# owner owns, and the last one to boot re-renders it for all of them.
+#
+# Ownership is decided by the marker comment below: while it is present the stack
+# re-renders the file on every start, and deleting that one line hands the file
+# over to the user for good. On a shared
 # profile volume that file usually already exists — another of the owner's
 # workspaces wrote it — so the marker, not first-boot, is what decides.
 #
@@ -279,6 +295,31 @@ if [ "$(id -u)" = "0" ]; then
   fi
   if [ -n "$home_owner" ]; then
     chown -R "$home_owner" "$HOME/.grok" 2>/dev/null || true
+  fi
+fi
+
+# --- GitHub credential plumbing (best effort) ----------------------------------
+# Only ever runs when a token was handed in. main.tf puts GH_TOKEN and
+# GITHUB_TOKEN in the agent environment (never in a file), gh reads either one
+# from there, and `gh auth git-credential` is the helper that lets plain git use
+# that same env token — so `git push` and `gh pr create` work without the token
+# ever being written to disk. With neither variable set, or with gh or git
+# missing, this stage does nothing at all: the default workspace gets no .gitconfig
+# change, which is the point of keeping the token optional.
+#
+# The grep is what makes it idempotent — one helper line per home volume, not one
+# per start — and it skips the append when the file already names either the
+# helper or a github.com credential section of its own: git resolves a credential
+# helper by host and takes the LAST value it finds, so a hand-managed gitconfig
+# keeps whatever helper its owner chose instead of being overridden by ours.
+# Scoped to github.com on purpose: gist.github.com is not what these workspaces
+# push, and a gist credential would be a second scope to audit.
+if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1 \
+   && [ -n "$${GH_TOKEN:-}$${GITHUB_TOKEN:-}" ]; then
+  if ! grep -qs -e 'helper = !gh auth git-credential' \
+                -e '\[credential "https://github.com"\]' "$HOME/.gitconfig"; then
+    printf '\n[credential "https://github.com"]\n    helper = !gh auth git-credential\n' \
+      >>"$HOME/.gitconfig" 2>/dev/null || true
   fi
 fi
 
