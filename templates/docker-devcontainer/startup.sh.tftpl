@@ -10,25 +10,33 @@
 #      rejoins its session instead of losing the processes running in it
 #   5. seeds the Coder Agents context (skill + instructions under ~/.agents),
 #      only if those files are absent
-#   6. writes ~/.grok/config.toml (only while this stack owns the file)
-#   7. clones the repository named by the create form onto the shared
+#   6. writes ~/.grok/config.toml (only while this stack owns the file): the
+#      model catalog with this workspace's default model alias, the MCP list,
+#      and anything the create form put in "Grok config extras"
+#   7. seeds the GitHub credential plumbing (git's github.com credential helper),
+#      and only when a GitHub token was supplied and both git and gh exist
+#   8. clones the repository named by the create form onto the shared
 #      devcontainer bind — this is what coder_devcontainer's workspace_folder
 #      points at, so it has to exist before the agent builds the dev container —
 #      and says so out loud when the clone carries no devcontainer configuration
 #      for the CLI to build
-#   8. warms the offline MCP package caches in the background
+#   9. warms the offline MCP package caches in the background
 #
-# ~/.grok is not necessarily this workspace's own directory. With main.tf's
-# grok_profile_share on (the default) the container mounts the workspace owner's
-# shared per-user Docker volume read-write at /home/coder/.grok, nested inside
-# that workspace's own /home/coder volume, so the terminal helpers, config.toml,
-# memory-v2/ and the MCP warm caches written below are the same files every
-# other workspace this user owns reads and writes, and they survive a rebuild.
-# It is the workspace container that gets that mount; a dev container the repo
-# builds on the sidecar keeps its own home. What none of this changes is
-# ownership of config.toml: the managed-by: evo-t1-coder-stack marker still
-# decides it, and the file is still re-rendered on every start while that
-# marker line is present.
+# ~/.grok is not necessarily this workspace's own directory. In "shared" mode
+# (main.tf's grok_profile_mode, and the default) the container mounts the
+# workspace owner's shared per-user Docker volume read-write at /home/coder/.grok,
+# nested inside that workspace's own /home/coder volume, so the terminal helpers,
+# config.toml, memory-v2/ and the MCP warm caches written below are the same files
+# every other workspace this user owns reads and writes, they survive a rebuild,
+# and config.toml stays one last-boot-wins file for all of them: the workspace
+# started last re-renders it for everyone, which is the only way this template's
+# per-workspace model alias and config extras can be overwritten. "private" mode
+# adds no such mount, so ~/.grok is this workspace's own directory on its own
+# home volume and dies with the workspace. Either way the mount is on the
+# workspace container only — a dev container the repo builds on the sidecar keeps
+# its own home. What none of this changes is ownership of config.toml: the
+# managed-by: evo-t1-coder-stack marker still decides it, and the file is still
+# re-rendered on every start while that marker line is present.
 #
 # Every stage 5 onward is best-effort: an offline first boot must still leave a
 # working terminal, and a repository that cannot be cloned must still leave a
@@ -40,8 +48,14 @@
 # Note: this file is rendered by Terraform templatefile(); shell variables are
 # written with a doubled dollar sign ($name or $${name}; the braced form is only
 # safe when escaped this way) so the rendered script keeps them. The only
-# interpolations Terraform has to resolve are the four variables main.tf
-# passes: grok_config, repo_url, dc_dir and build_devcontainer.
+# interpolations Terraform has to resolve here are the four variables main.tf
+# passes into this script: grok_config, repo_url, dc_dir and build_devcontainer.
+# grok_config arrives already rendered from grok-config.toml.tftpl, whose own
+# keys are litellm_url, grok_default_model, grok_config_extra, github_token and
+# github_mcp — the last two only gate text, and the token's own bytes never
+# appear in the result. The one GH_TOKEN reference that config template does emit
+# is dollar-escaped, so it stays literal text inside the quoted heredoc below
+# and reaches config.toml unchanged, for the CLI to expand from the environment.
 
 set -u
 
@@ -239,12 +253,20 @@ fi
 # code-server actually reads; nothing reads ~/.config/Code here.
 
 # --- Grok Build config --------------------------------------------------------
-# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline
-# MCP stack and the subagent sizing. Ownership is decided by the marker comment
-# below: while it is present the stack re-renders the file on every start, and
-# deleting that one line hands the file over to the user for good. On a shared
-# profile volume that file usually already exists — another of the owner's
-# workspaces wrote it — so the marker, not first-boot, is what decides.
+# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog (with this
+# workspace's default model alias, from the create form), the MCP stack — the
+# offline servers plus the gated github one, which appears only when a GitHub
+# token was supplied — and the subagent sizing, with anything the create form
+# put in "Grok config extras" appended at the end. Ownership is decided by the
+# marker comment below: while it is present the stack re-renders the file on
+# every start, and deleting that one line hands the file over to the user for
+# good. On a shared profile volume that file usually already exists — another of
+# the owner's workspaces wrote it — so the marker, not first-boot, is what
+# decides, and it decides one file for every workspace that user owns: this
+# workspace's alias and extras overwrite whatever the last boot wrote, for all of
+# them. The heredoc below is quoted, so a `Bearer $${GH_TOKEN}` line the template
+# emits travels through as literal text instead of being expanded here: the token
+# itself stays in the environment and the file only names the key to read.
 #
 # A fresh CLI install always takes the file back. The installer creates a
 # `[cli] installer = ...` stub before this stage runs, so without the first-boot
@@ -289,6 +311,41 @@ if [ "$(id -u)" = "0" ]; then
   fi
   if [ -n "$home_owner" ]; then
     chown -R "$home_owner" "$HOME/.grok" 2>/dev/null || true
+  fi
+fi
+
+# --- GitHub credential plumbing (best effort) ---------------------------------
+# Only runs with a token: GH_TOKEN and GITHUB_TOKEN exist solely because this
+# template was pushed with github_token set, so an empty pair — the default —
+# leaves this stage, and the workspace, exactly as they were before it existed.
+#
+# With a token, two things read it, and neither one stores it. `gh` picks the key
+# out of its own environment, and git is told here to ask `gh auth
+# git-credential` for credentials for github.com, which answers from that same
+# environment. The secret therefore stays in the environment for the length of the
+# workspace, and ~/.gitconfig only ever names the helper. That file is what the
+# append below writes, and only while it names neither the helper nor a
+# github.com credential section of its own, so a gitconfig someone manages by
+# hand keeps whatever it already says — a second section for the same host would
+# otherwise win over the helper they chose.
+#
+# Nothing here changes what the clone stage below does: it still runs the plain
+# `git clone` it always ran, unauthenticated, and this stage hands it no
+# credential. What the helper opens up is the manual route — `git clone`,
+# `git fetch` or `gh auth status` from a terminal in the same environment, and any
+# push after that — which is what a private repository needs, since the
+# private-repo hint the clone stage prints still names missing credentials as the
+# first likely cause.
+if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1 \
+   && [ -n "$${GH_TOKEN:-}$${GITHUB_TOKEN:-}" ]; then
+  # Two names to look for, not one: git resolves a credential helper by host and
+  # takes the LAST value it finds, so a hand-written [credential "https://github.com"]
+  # section already in the file would be overridden by the append below. Absent
+  # either the helper line or that section, this stage leaves the file alone.
+  if ! grep -qs -e 'helper = !gh auth git-credential' \
+                -e '\[credential "https://github.com"\]' "$HOME/.gitconfig"; then
+    printf '\n[credential "https://github.com"]\n\thelper = !gh auth git-credential\n' \
+      >>"$HOME/.gitconfig" 2>/dev/null
   fi
 fi
 
