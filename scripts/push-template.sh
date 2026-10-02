@@ -369,13 +369,56 @@ if grep -q '^CODER_AGENT_URL=' .env 2>/dev/null; then
   log "coder_agent_url passed from .env"
 fi
 
-# grok_profile_share is passed only when .env carries the key, like coder_agent_url above:
-# both templates default the variable to true (shared ~/.grok), so an untouched .env
-# keeps that. Flip it to false and re-push to give workspaces created afterwards a
-# private per-workspace ~/.grok again.
-if grep -q '^GROK_PROFILE_SHARE=' .env 2>/dev/null; then
-  vars+=(--var "grok_profile_share=$(env_get GROK_PROFILE_SHARE)")
-  log "grok_profile_share passed from .env"
+# grok_profile_mode is passed only when .env carries a non-empty value for it, like
+# coder_agent_url above: both templates default the variable to "shared" (one
+# per-user profile volume), so an untouched .env keeps that. "private" mounts
+# nothing, so each workspace gets a private ~/.grok on its own home volume.
+# GROK_PROFILE_SHARE is the retired spelling of the same knob — true meant shared,
+# false meant private — and still maps, so an .env written before the rename works
+# unchanged. Only those two legacy values map; anything else passes nothing.
+grok_profile_mode="$(env_get GROK_PROFILE_MODE)"
+legacy_profile_share="$(env_get GROK_PROFILE_SHARE)"
+profile_mode_key=GROK_PROFILE_MODE
+if [ -z "${grok_profile_mode}" ]; then
+  case "${legacy_profile_share}" in
+    true)
+      grok_profile_mode=shared
+      profile_mode_key=GROK_PROFILE_SHARE
+      ;;
+    false)
+      grok_profile_mode=private
+      profile_mode_key=GROK_PROFILE_SHARE
+      ;;
+  esac
+fi
+if [ -n "${grok_profile_mode}" ]; then
+  vars+=(--var "grok_profile_mode=${grok_profile_mode}")
+  log "grok_profile_mode=${grok_profile_mode} passed from ${profile_mode_key} in .env"
+fi
+
+# github_token is passed only when .env carries a NON-EMPTY GITHUB_TOKEN, gated the
+# same way as LITELLM_MASTER_KEY above: an empty key means no workspace gets a
+# GitHub credential anywhere. The token rides to every workspace as the GH_TOKEN and
+# GITHUB_TOKEN agent environment variables (and seeds the gh/git credential helper in
+# the startup script), which is how `git push`, `gh pr create` and `gh api`
+# authenticate inside a workspace — gh is baked into the golden image and reads
+# GH_TOKEN. Env-only, like LITELLM_MASTER_KEY: the value is never printed here and
+# never written to a file in the workspace.
+github_token="$(env_get GITHUB_TOKEN)"
+if [ -n "${github_token}" ]; then
+  vars+=(--var "github_token=${github_token}")
+  log "github_token passed from GITHUB_TOKEN (value not shown)"
+fi
+
+# github_mcp is forwarded only alongside a token, because that is exactly where it
+# stops being decoration: both templates declare the github MCP server only when
+# github_mcp AND github_token arrive together (an empty-token render is byte-identical
+# with or without this flag), so forwarding it on its own would push a variable that
+# cannot change anything. Kept out of the log line's value for the same reason as the
+# token above — the key name is printed, the pairing is what makes it worth naming.
+if [ "$(env_get GITHUB_MCP)" = "true" ] && [ -n "${github_token}" ]; then
+  vars+=(--var "github_mcp=true")
+  log "github_mcp passed from GITHUB_MCP (github MCP server on for every workspace)"
 fi
 
 # repo_url is passed only when .env carries a NON-EMPTY REPO_URL, gated the same
