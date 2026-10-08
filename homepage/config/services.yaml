@@ -123,32 +123,83 @@
     - Agent backend:
         icon: mdi-robot
         href: "{{HOMEPAGE_VAR_AGENT_URL}}"
-        description: Spark vLLM — the agent aliases, verified to return real tool calls
+        description: Agent lane — one TensorFold box per Spark; all three down = text-only Arc
         siteMonitor: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
-        widget:
-          type: customapi
-          url: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
-          refreshInterval: 300000
-          # /v1/models is {"object":"list","data":[...]}. The array maps only as
-          # `format: size`, which reduces it to a count; the raw array would not
-          # render as a label/value pair.
-          # `any: true` only has meaning INSIDE a remap list — the customapi
-          # component reads mapping.remap, and a flat `- any:/to:` mapping has no
-          # field, so getValue returns the whole response body and React throws
-          # error #31 rendering the object (caught on the live page).
-          # An unreachable endpoint needs no mapping at all: useWidgetAPI reports
-          # an error and Container renders the built-in error state.
-          mappings:
-            - field: object
-              label: API
-              remap:
-                - value: list
-                  to: OK
-                - any: true
-                  to: "?"
-            - field: data
-              label: Models
-              format: size
+        # The lane is ONE model group whose three deployments are one TensorFold
+        # instance per Spark box (five full 262144-token streams each), spread by
+        # least-busy. With all three boxes down, `agent` degrades to `coder`
+        # (Arc, text-only) — the per-box widgets below then error while the
+        # `agent` alias still answers, which is the visible signal of that hop.
+        # A box answering {ok:false, requests_running:0} is UP but not serving
+        # the model — that is a "run scripts/spark-verify.sh" state, not health.
+        widgets:
+          - type: customapi
+            url: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
+            refreshInterval: 300000
+            # /v1/models is {"object":"list","data":[...]}. The array maps only as
+            # `format: size`, which reduces it to a count; the raw array would not
+            # render as a label/value pair.
+            # `any: true` only has meaning INSIDE a remap list — the customapi
+            # component reads mapping.remap, and a flat `- any:/to:` mapping has no
+            # field, so getValue returns the whole response body and React throws
+            # error #31 rendering the object (caught on the live page).
+            # An unreachable endpoint needs no mapping at all: useWidgetAPI reports
+            # an error and Container renders the built-in error state.
+            mappings:
+              - field: object
+                label: API
+                remap:
+                  - value: list
+                    to: OK
+                  - any: true
+                    to: "?"
+              - field: data
+                label: Models
+                format: size
+          # One widget per Spark box, fed by {{HOMEPAGE_VAR_SPARKn_HEALTH}}:
+          # requests_running counts the streams that box is servicing right now
+          # (its scheduler queues above five). All three moving during a fan-out
+          # is what least-busy spreading looks like; one box pinned high while
+          # its peers idle is the self-inflicted queue this layout avoids.
+          - type: customapi
+            url: "{{HOMEPAGE_VAR_SPARK1_HEALTH}}"
+            refreshInterval: 60000
+            mappings:
+              - field: requests_running
+                label: spark-1 busy
+              - field: ok
+                label: spark-1
+                remap:
+                  - value: true
+                    to: "up"
+                  - any: true
+                    to: "down"
+          - type: customapi
+            url: "{{HOMEPAGE_VAR_SPARK2_HEALTH}}"
+            refreshInterval: 60000
+            mappings:
+              - field: requests_running
+                label: spark-2 busy
+              - field: ok
+                label: spark-2
+                remap:
+                  - value: true
+                    to: "up"
+                  - any: true
+                    to: "down"
+          - type: customapi
+            url: "{{HOMEPAGE_VAR_SPARK3_HEALTH}}"
+            refreshInterval: 60000
+            mappings:
+              - field: requests_running
+                label: spark-3 busy
+              - field: ok
+                label: spark-3
+                remap:
+                  - value: true
+                    to: "up"
+                  - any: true
+                    to: "down"
 
 - Desktops:
     # No widget here: Kasm exposes no unauthenticated JSON endpoint (/health and

@@ -54,8 +54,9 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
   |                   +-- local:  http://ollama:11434 (compose network only)
   |                   +-- remote: SPARK1/2_OLLAMA_URL (Ollama aliases) and
-  |                   |           SPARK1/2_OPENAI_URL (vLLM — the `agent`
-  |                   |           aliases, the only tool-capable path)
+  |                   |           SPARK1/2/3_OPENAI_URL (TensorFold on :8888 —
+  |                   |           the one `agent` group, one deployment per
+  |                   |           Spark box, the only tool-capable path)
   |
   +-- (no host port) IPEX-LLM Ollama on the Arc 140T (/dev/dri)
   |
@@ -241,8 +242,7 @@ Workspaces and desktops always talk to one base URL — `http://host.docker.inte
 
 | Alias | Model | Backend | Structured tool calls |
 |---|---|---|---|
-| `agent` | `qwen3.8-flash-next` | `SPARK1_OPENAI_URL` (Spark vLLM, optional) | yes (measured) |
-| `agent-fast` | `qwen3.8-flash-next` | `SPARK2_OPENAI_URL` (Spark vLLM, optional) | yes (measured) |
+| `agent` | `Qwen3.8-Flash-Next` | `SPARK1/2/3_OPENAI_URL` (TensorFold on :8888 — one deployment per Spark box, optional) | yes (measured) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
@@ -255,13 +255,21 @@ with `tools` for `qwen2.5-coder:32b` and `:14b` comes back as plain text with
 `finish_reason: "stop"` and no `tool_calls` field — the model writes the JSON call
 into the message body, which no agent driver can consume. `qwen2.5:7b` on the same
 runtime does return a real `tool_calls` array, so the limitation tracks the model,
-and agent mode needs either a Spark `agent` alias or the small `chat` model. Grok
-Build, Cline, Roo and Kilo therefore default to `agent`, the Spark vLLM alias.
+and agent mode needs either the Spark `agent` lane or the small `chat` model. Grok
+Build, Cline, Roo and Kilo therefore default to `agent`: one model group with one
+deployment per Spark box, spread by `least-busy`. Measured on a harness boot of
+this config against the two live boxes: a 30-request burst spread 12/10/8 across
+the three deployments and returned 30x 200 — with no concurrency cap configured,
+the proxy neither queues nor sheds inside itself; a fully offered box absorbs the
+overflow in its own scheduler.
 
-If both Sparks are unreachable, `router_settings.fallbacks` first retries `agent` on
-the other Spark via `agent-fast` and only then degrades to `coder`, which still
-streams text and keeps chat usable while agent mode quietly loses its tools. That
-last hop is the failure the dashboard's **Agent backend** card exists to surface.
+When every Spark box is down, `router_settings.fallbacks` degrades `agent`
+straight to `coder` (text-only), which keeps chat usable while agent mode quietly
+loses its tools. That one hop — no chain through `agent-fast` anymore, because
+one group already covers every reachable box — is the failure the dashboard's
+**Agent backend** card exists to surface: its per-box widgets go to error state
+while `agent` still answers, and each response's `x-litellm-model-id` header
+names the deployment that answered.
 
 Edit aliases in `litellm/config.yaml`, then `docker compose restart litellm`.
 
@@ -352,7 +360,7 @@ type is cloned into the workspace on the next start; see below), three Grok fiel
 **Grok profile** (`grok_profile_mode`, default `shared`, immutable: `private` gives that
 one workspace a private `~/.grok` on its own home volume, so a single workspace can sit
 outside the shared profile while its siblings stay inside it, and switching needs a
-rebuild), **Grok default model** (`grok_default_model`, one of the five LiteLLM aliases,
+rebuild), **Grok default model** (`grok_default_model`, one of the four LiteLLM aliases,
 default `agent`) and **Grok config extras** (`grok_config_extra`, default empty, a
 textarea; whatever you type is appended verbatim under a comment header into that
 workspace's rendered `~/.grok/config.toml`, which is only observably per-workspace while
@@ -415,10 +423,10 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
 Template variables: `image` (seeds the **Workspace image** dropdown default),
 `litellm_url` (default `http://host.docker.internal:4000/v1`),
 `litellm_key` (sensitive — pass the LiteLLM master key when creating a workspace),
-`grok_default_model` (default `agent`; the tool-capable Spark alias — it is also a
+`grok_default_model` (default `agent`; the tool-capable Spark lane — it is also a
 per-workspace **Grok default model** dropdown on the create form, whose options are the
-five aliases `agent`, `agent-fast`, `coder`, `coder-fast` and `chat`, plus a custom
-entry when the variable names another one), `docker_socket`
+four aliases `agent`, `coder`, `coder-fast` and `chat` (each Spark box is a
+deployment inside `agent`), plus a custom entry when the variable names another one), `docker_socket`
 (optional), `coder_agent_url` (default `http://host.docker.internal:3002` — the URL the agent
 dials, kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent
 traffic through the reverse proxy; empty keeps the provider-rendered access URL),
@@ -596,7 +604,7 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
 - The startup script renders `~/.grok/config.toml` from
   `templates/docker-dev/grok-config.toml.tftpl`: `[models] default` points at the
   `grok_default_model` alias (`agent` unless the template variable or the create form's
-  **Grok default model** dropdown names another), the five aliases are defined with
+  **Grok default model** dropdown names another), the four aliases are defined with
   `base_url` set to `litellm_url` and `env_key = "LITELLM_API_KEY"` (the key is
   injected as an environment variable, so it never appears in a file), and the MCP
   servers, `[features]`, `[permission]` deny rules and `web_fetch` policy are set.
@@ -686,7 +694,7 @@ Agents feature is gone; the compose default exists so a fresh clone has it on.
 base URL `http://litellm:4000/v1` (that is LiteLLM over the compose network, *server-side*
 — same transport the workspaces use, not a per-workspace URL) + paste the
 `LITELLM_MASTER_KEY` value from `.env` + model name `agent` (the tool-call-capable
-alias; `agent-fast` for cheap subagents where the form offers a subagent model). Coder's
+alias; `subagents.models` in the rendered config maps `explore`/`plan` to `agent` too, so there is no separate fast-subagent alias anymore). Coder's
 optional AI Gateway proxy stays off — LiteLLM remains the model transport, which is why
 no AI-Gateway keys exist in `docker-compose.yml`.
 
@@ -841,16 +849,23 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 
 - `docker compose logs -f ollama` — IPEX-LLM startup; look for `runners=[ipex_llm]`.
 - **Grok agent mode makes no tool calls** (it narrates actions and stops) → the request
-  is being served by the Arc. Check the dashboard's **Agent backend** card, or:
+  is being served by the Arc (no Spark box reachable). Check the dashboard's
+  **Agent backend** card — its per-box widgets go to error state while `agent`
+  still answers — or probe the boxes directly:
 
   ```sh
-  curl -sS "${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1}/models" | head -c 200
+  curl -sS "${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1/models}" | head -c 200
+  # or all three boxes at once, from the repo root (placeholder hostnames shown):
+  SPARK_HOSTS="spark-1.lan spark-2.lan spark-3.lan" ./scripts/spark-verify.sh
   ```
 
-  If that fails, either bring the Spark vLLM server up or point
-  `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` at a tool-capable OpenAI-compatible
-  endpoint and `docker compose restart litellm`. The `agent` → `coder` fallback keeps
-  chat working while a Spark is down, which is exactly when tools disappear.
+  If that fails, bring the TensorFold server up (`scripts/spark-configure.sh <host>
+  --apply` writes the per-host override file the server runs) or point
+  `SPARK1/2/3_OPENAI_URL` at a tool-capable OpenAI-compatible endpoint and
+  `docker compose restart litellm` — and keep `SPARK_n_API_KEY` non-empty: an
+  empty key fails every request inside the proxy before it reaches the box. The
+  `agent` → `coder` fallback keeps chat working while a Spark is down, which is
+  exactly when tools disappear.
 - Workspace stuck in *starting* → startup is blocking by design, so a failure there
   surfaces as a failed build with the reason in the workspace startup log
   (`coder logs <workspace>`); the container is not marked healthy until the toolchain

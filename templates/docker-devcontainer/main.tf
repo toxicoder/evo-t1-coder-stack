@@ -212,11 +212,6 @@ locals {
       description = "Primary agent model; emits native tool_calls"
     },
     {
-      value       = "agent-fast"
-      name        = "agent-fast (DGX Spark vLLM)"
-      description = "Fast Spark alias; summaries, subagents, ghost text"
-    },
-    {
       value       = "coder"
       name        = "coder (Arc iGPU)"
       description = "Arc fallback; completion-style on this runtime (no tool_calls)"
