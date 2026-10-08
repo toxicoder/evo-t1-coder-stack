@@ -38,7 +38,7 @@ data "coder_workspace_owner" "me" {}
 data "coder_parameter" "repo_url" {
   name         = "repo_url"
   display_name = "Git repository"
-  description  = "Clone URL of the repository to open. With the dev-container toggle below on it must contain .devcontainer/devcontainer.json, otherwise the build fails and the workspace comes up without an editor; with the toggle off any repository works and the editor opens the clone directly. The clone runs unauthenticated as the workspace user — a private repo needs git credentials inside the workspace first. Everything the repo builds runs on this workspace's privileged docker:29.8.1-dind sidecar, so a Dockerfile in the repo is root-equivalent on the stack host: only point this at repositories you trust."
+  description  = "Clone URL of the repository to open. With the dev-container toggle below on it must contain .devcontainer/devcontainer.json, otherwise the build fails and the workspace comes up without an editor; with the toggle off any repository works and the editor opens the clone directly. The clone runs as the workspace user and consults whatever HTTPS credential it finds (a credential helper, ~/.git-credentials, or the external-auth account connected in Coder — which must also GRANT the repo, or the fetch is refused). Everything the repo builds runs on this workspace's privileged docker:29.8.1-dind sidecar, so a Dockerfile in the repo is root-equivalent on the stack host: only point this at repositories you trust."
   type         = "string"
   form_type    = "input"
   # Mutable: switching repository is a re-clone plus a devcontainer build, not a

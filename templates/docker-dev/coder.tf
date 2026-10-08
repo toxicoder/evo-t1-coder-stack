@@ -43,7 +43,7 @@ variable "dind" {
 # variable.
 variable "repo_url" {
   type        = string
-  description = "Optional default for the Git repository field. A non-empty value is cloned on the first workspace start into /home/coder/workspace/<repo-name>, and that folder is the one code-server opens. The clone runs unauthenticated as the workspace user, so a private repository needs git credentials inside the workspace first. A Dockerfile or toolchain in the cloned repo executes as that same workspace user, so only point this at repositories you trust."
+  description = "Optional default for the Git repository field. A non-empty value is cloned on the first workspace start into /home/coder/workspace/<repo-name>, and that folder is the one code-server opens. The clone runs as the workspace user and consults whatever HTTPS credential it finds there (a credential helper, ~/.git-credentials, or the external-auth account connected in Coder — which must also GRANT the repo, or the fetch is refused). A Dockerfile or toolchain in the cloned repo executes as that same workspace user, so only point this at repositories you trust."
   default     = ""
 }
 

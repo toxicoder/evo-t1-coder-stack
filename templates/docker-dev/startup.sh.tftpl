@@ -436,9 +436,10 @@ if [ -n "$repo_url_raw" ]; then
       echo "  repository: $repo_url_raw" >&2
       echo "  target:     $target" >&2
       echo "  The two likely causes:" >&2
-      echo "    1. a private repository: git runs unauthenticated as the" >&2
-      echo "       workspace user, so credentials must already exist inside the" >&2
-      echo "       workspace (a credential helper, ~/.git-credentials, or ~/.ssh)" >&2
+      echo "    1. a private repository: git runs as the workspace user and" >&2
+      echo "       consults any credential it finds (a credential helper," >&2
+      echo "       ~/.git-credentials, ~/.ssh, or the external-auth account" >&2
+      echo "       connected in Coder — which must also GRANT this repo)." >&2
       echo "    2. an unreachable host: check DNS and egress from the" >&2
       echo "       workspace container, then restart the workspace" >&2
       echo "  Clone it by hand into the path above and reopen the workspace." >&2

@@ -330,12 +330,13 @@ fi
 # otherwise win over the helper they chose.
 #
 # Nothing here changes what the clone stage below does: it still runs the plain
-# `git clone` it always ran, unauthenticated, and this stage hands it no
-# credential. What the helper opens up is the manual route — `git clone`,
-# `git fetch` or `gh auth status` from a terminal in the same environment, and any
-# push after that — which is what a private repository needs, since the
-# private-repo hint the clone stage prints still names missing credentials as the
-# first likely cause.
+# `git clone` it always ran, now with whatever credentials the environment
+# already offers it (the seeded helper with the env token, or the Coder
+# external-auth askpass helper when an account is connected). What the helper
+# also opens up is the manual route — `git clone`, `git fetch` or `gh auth
+# status` from a terminal in the same environment, and any push after that —
+# and the clone-failure hint the clone stage prints names credential trouble
+# (none found, or one that does not grant this repo) as the first likely cause.
 if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1 \
    && [ -n "$${GH_TOKEN:-}$${GITHUB_TOKEN:-}" ]; then
   # Two names to look for, not one: git resolves a credential helper by host and
@@ -469,9 +470,10 @@ else
     echo "  repository: $repo_url_raw" >&2
     echo "  target:     $target" >&2
     echo "  The two likely causes:" >&2
-    echo "    1. a private repository: git runs unauthenticated as the workspace" >&2
-    echo "       user, so credentials must already exist inside the workspace" >&2
-    echo "       (a credential helper, ~/.git-credentials, or ~/.ssh)" >&2
+    echo "    1. a private repository: git runs as the workspace user and" >&2
+    echo "       consults any credential it finds (a credential helper," >&2
+    echo "       ~/.git-credentials, ~/.ssh, or the external-auth account" >&2
+    echo "       connected in Coder — which must also GRANT this repo)." >&2
     echo "    2. an unreachable host: check DNS and egress from the workspace" >&2
     echo "       container, then restart the workspace" >&2
     echo "  Clone it by hand into the path above, or fix the URL, and start again." >&2

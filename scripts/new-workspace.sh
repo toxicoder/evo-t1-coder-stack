@@ -4,7 +4,7 @@
 # Two things are decided here, in this order.
 #
 # 1. Which template the workspace gets. The repository is cloned (depth 1,
-#    --no-checkout, unauthenticated) into a temporary directory and searched for a
+#    --no-checkout) into a temporary directory on the host and searched for a
 #    dev container: .devcontainer/, .github/devcontainers/, or a
 #    devcontainer.json/.yml at the top level or in a subdirectory. Found ->
 #    docker-devcontainer, which builds that file on a privileged DinD sidecar. Not

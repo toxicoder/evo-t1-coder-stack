@@ -328,8 +328,9 @@ prefills the Git repository field on both create forms; docker-dev defaults to n
 clone and docker-devcontainer to the coder/coder demo repo, which is why a blank
 `REPO_URL=` line stays unpassed). It also passes `--var github_token=` from
 `GITHUB_TOKEN`, only when that key is present and non-empty, and never prints the
-value: an empty `GITHUB_TOKEN=` is the default state, in which no workspace holds a
-GitHub credential. Then, per
+value: an empty `GITHUB_TOKEN=` is the default state — the PAT fallback stays off,
+and workspaces that need GitHub credentials take the external-auth broker path
+instead (see the credential note below). Then, per
 template, it confirms an **active** template version — a push can exit 0 and still leave the
 template inactive if its Terraform run failed, which shows up as the template missing from
 the create dropdown. The equivalent raw command — what the script does for each template,
@@ -393,11 +394,18 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
   field** into `/home/coder/workspace/<repo-name>` (idempotent; runs as the
   workspace user so their git credentials are consulted; refuses to touch an
   existing non-git folder there), renders `~/.grok/config.toml`, and
-  warms the MCP servers in the background. When `github_token` is set it also seeds an
-  idempotent `~/.gitconfig` holding `credential.https://github.com.helper =
+  warms the MCP servers in the background. GitHub credentials arrive by one of two
+  paths, both opt-in and HTTPS-only (an `ssh://`/`git@` URL reaches neither — this
+  stack provisions no SSH keys). **Preferred:** the external-auth broker — fill the
+  `CODER_EXTERNAL_AUTH_0_*` keys (see `.env.example`), connect your GitHub account
+  under Settings → external auth, and every workspace's agent injects a
+  `GIT_ASKPASS` helper that mints short-lived per-host tokens on demand: no
+  long-lived secret lives in any file, env or template, and one connection covers
+  every workspace. **Fallback:** when `github_token` is set the startup script seeds
+  an idempotent `~/.gitconfig` holding `credential.https://github.com.helper =
   !gh auth git-credential`, so `git push`, `gh pr create` and `gh api` authenticate
-  through the `GH_TOKEN` in the agent environment — gh 2.101 ships in the golden image
-  and reads that variable — instead of from a token stored in a file.
+  through the `GH_TOKEN` in the agent environment — gh 2.101 ships in the golden
+  image and reads that variable — instead of from a token stored in a file.
   The `settings.json.tftpl` payload does not
   pass through the script: it goes to the `code_server` module, which merges it into
   code-server's User+Machine settings on every start (below)
@@ -440,10 +448,12 @@ profile volume, `private` gives that workspace a private `~/.grok` on its own ho
 volume — see "Grok Build state: one shared profile per user"). It is also the default
 behind the create form's per-workspace **Grok profile** dropdown, and switching a live
 workspace between the two modes needs a rebuild),
-`github_token` (sensitive, default empty; an optional GitHub fine-grained PAT, handed to
-every workspace as the `GH_TOKEN` and `GITHUB_TOKEN` environment variables — empty means
-no GitHub credential exists anywhere, so pass a least-privilege token scoped to the
-repositories the workspaces actually clone and push),
+`github_token` (sensitive, default empty; the **fallback** credential path — an
+optional GitHub fine-grained PAT, handed to every workspace as the `GH_TOKEN` and
+`GITHUB_TOKEN` environment variables. Empty keeps the fallback off, which is the
+intended steady state once the external-auth broker is connected; if you do set it,
+scope it to exactly the repositories the workspaces clone and push and rotate it
+when work ends),
 `github_mcp` (default `false`; with a token present, additionally wires the `github` MCP
 HTTP server into Grok's rendered `config.toml`), and
 `grok_config_extra` (default empty; the create form's **Grok config extras** textarea —
@@ -551,8 +561,9 @@ exactly what `scripts/new-workspace.sh <git-url> [name]` answers for you:
 ./scripts/new-workspace.sh --plain git@git.example.com:org/private.git  # force docker-dev
 ```
 
-It shallow-clones the repo into a temp dir (unauthenticated, like the in-workspace
-clone, so a private repo needs git credentials on the host you run it from), greps the
+It shallow-clones the repo into a temp dir (a plain `git clone` from the host, so
+it consults the host's own git credentials — a private repo therefore needs a
+grant covering it on the machine you run this from), greps the
 file listing for a dev container (`.devcontainer/`, `.github/devcontainers/`, or a
 `devcontainer.json`/`.yml` anywhere in the tree), and picks `docker-devcontainer` when
 it finds one, `docker-dev` when it does not — the probe failing entirely is also a
@@ -934,5 +945,6 @@ workspace on a current image answers `/usr/local/bin/grok`.
   **Plain clone** preset or the dev-container toggle set to **No** at create time — that
   runs code-server on the plain workspace container and opens the clone there, and
   `scripts/new-workspace.sh` decides this automatically when you pass it a git URL.
+- Private-repo clone or push denied even though a credential exists → the denial is about the **grant**, not the credential format: a connected-but-unscoped credential authenticates and is still refused (403 — or 404, which GitHub returns to hide a private repo's existence). Check the GitHub side first: the App installation (or fine-grained PAT) must include the repository the workspace clones. Then check the URL scheme: both credential paths answer only for `https://github.com/...` remotes; a `git@github.com:`/`ssh://` URL gets neither helper nor askpass token and needs an SSH key you placed yourself — this stack provisions none.
 - Kasm wizard gone after install → expected; use :4443. Reset Kasm by removing the `kasm-data` volume (destroys all Kasm config).
 - Coder login problems → the first registered account is the site admin; if the UI is unreachable, check `CODER_ACCESS_URL` matches the address you're browsing from (LAN IP by default, the public coder name in public mode).

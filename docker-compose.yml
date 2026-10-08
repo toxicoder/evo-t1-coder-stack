@@ -36,6 +36,24 @@ services:
       # localhost, coder, host.docker.internal).
       CODER_TLS_CERT_FILE: /etc/coder/certs/coder.crt
       CODER_TLS_KEY_FILE: /etc/coder/certs/coder.key
+      # GitHub credential broker (Coder external auth), the per-user credential
+      # workspaces' git/gh consult instead of a pasted PAT. All five keys are
+      # empty until you fill them, and Coder treats a half-filled provider as
+      # none: empty here means no external auth provider exists and the stack
+      # behaves exactly as before. When filled (ID and TYPE name the provider
+      # "github"; a user connecting their GitHub account completes setup), the
+      # agent mints SHORT-LIVED per-host tokens on demand via the workspace's
+      # GIT_ASKPASS helper. The GitHub-side callback URL must be
+      # <CODER_ACCESS_URL>/external-auth/<ID>/callback and the App/OAuth grant
+      # must INCLUDE the repos workspaces clone: a connected-but-unscoped
+      # token authenticates and is still denied on clone/push (403/404) —
+      # check that first. Key names per Coder's external-auth docs (env-driven
+      # registration; restart to apply), not cross-checked against codersdk.
+      CODER_EXTERNAL_AUTH_0_ID: ${CODER_EXTERNAL_AUTH_0_ID:-}
+      CODER_EXTERNAL_AUTH_0_TYPE: ${CODER_EXTERNAL_AUTH_0_TYPE:-}
+      CODER_EXTERNAL_AUTH_0_CLIENT_ID: ${CODER_EXTERNAL_AUTH_0_CLIENT_ID:-}
+      CODER_EXTERNAL_AUTH_0_CLIENT_SECRET: ${CODER_EXTERNAL_AUTH_0_CLIENT_SECRET:-}
+      CODER_EXTERNAL_AUTH_0_REVOKE_URL: ${CODER_EXTERNAL_AUTH_0_REVOKE_URL:-}
       # Real env var is CODER_TELEMETRY_ENABLE; the _ENABLED spelling is ignored.
       CODER_TELEMETRY_ENABLE: "false"
       # Every name below was checked against codersdk/deployment.go at v2.36.6.
