@@ -1,5 +1,9 @@
 # Secrets / local state — never commit
 .env
+# Optional per-host Coder external-auth overrides (GitHub OAuth client secret
+# lives here when the broker is enabled); compose mounts it into the coder
+# container only if it exists.
+coder.env
 *.tfstate
 *.tfstate.*
 .terraform/
