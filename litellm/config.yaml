@@ -3,13 +3,20 @@
 # Workspaces and desktops always talk to one OpenAI-compatible base URL
 # (http://host.docker.internal:4000/v1) and pick a model alias. Aliases are
 # the stable names: "coder" / "coder-fast" / "chat" / "spark-*" for the Arc and
-# Ollama paths, "agent" / "agent-fast" for the tool-capable Spark vLLM path.
+# Ollama paths, "agent" for the tool-capable Spark lane (ONE model group whose
+# three deployments are one TensorFold-served inference backend per Spark box).
 #
 # Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
 # network only). The spark-* aliases target optional NVIDIA Spark boxes;
 # set SPARK1_OLLAMA_URL / SPARK2_OLLAMA_URL in .env to real Ollama hosts.
-# The agent* aliases target the Spark vLLM servers (SPARKn_OPENAI_URL, an
-# OpenAI-compatible /v1 endpoint).
+# The agent alias targets the TensorFold /v1 endpoints those boxes run on
+# :8888 (SPARKn_OPENAI_URL, an OpenAI-compatible /v1 endpoint).
+#
+# One endpoint per box, one box per endpoint. Never point two deployments (or
+# two aliases) at the same physical box: least-busy then spreads a fan-out
+# onto whichever URL happens to be least busy, which on a saturated box means
+# queueing on a machine that already has work — exactly what routing around a
+# busy box is meant to avoid.
 #
 # Schema note: each entry must be `model_name:` plus a nested `litellm_params:`
 # block. LiteLLM hard-indexes both keys at startup (KeyError -> uvicorn exit 3
@@ -62,33 +69,68 @@ model_list:
     model_info:
       max_input_tokens: 32768
 
-  # Spark-backed - vLLM behind an OpenAI-compatible /v1 endpoint. Verified to
-  # return a real tool_calls array with finish_reason "tool_calls", so these are
-  # the aliases agent clients (Cline, Roo, Kilo, Grok Build CLI) must use.
+  # Spark-backed agent lane - TensorFold (vLLM-lineage, OpenAI-compatible /v1)
+  # serving Qwen3.8-Flash-Next on :8888. THREE deployments in ONE `agent` group,
+  # all equal (no `order:` tier): least-busy fans a fan-out across every
+  # reachable box, which is the whole point of running three boxes (5 full
+  # 262144-token streams each). An `order:` tier would make the tier-2 boxes
+  # unreachable while any tier-1 box is healthy.
   # Provider prefix is openai/ deliberately: ollama_chat/ would route these
   # through the Ollama-specific code path. api_base must include /v1.
-  # Served model id on both boxes is qwen3.8-flash-next at max_model_len 262144;
-  # no cheaper second deployment is published, so agent-fast reuses it with a
-  # lower output ceiling.
+  # `model:` is sent to the backend verbatim and must match the served id
+  # byte-for-byte — "Qwen3.8-Flash-Next" with that exact case and hyphens,
+  # measured against the live boxes and equal to the recipe's SERVED_NAME
+  # default. A wrong id does not crash the proxy: v1.102.1 builds the Router
+  # with ignore_invalid_deployments forced to True (not settable from
+  # config.yaml), so a bad model id drops that deployment at boot with one
+  # log line and later surfaces as "No deployments available", not an error.
+  # /health shows every deployment — trust it, not the absence of boot errors.
+  # api_key below resolves from SPARKn_API_KEY and MUST be non-empty: v1.102.1
+  # fails every request inside the proxy ("The api_key client option must be
+  # set...") when it is empty, before the request ever reaches the box. The
+  # shipped default is the placeholder `local-spark` — not a secret, ignored
+  # by a keyless vLLM/TensorFold backend; replace per box via .env only if
+  # that box was started with --api-key.
+  # No rpm/tpm/max_parallel_requests caps anywhere on purpose. The proxy's cap
+  # chain (rpm -> max_parallel_requests) parks requests behind an in-memory
+  # semaphore when a cap is set; with no caps a fully-offered box sheds load
+  # in its own scheduler instead of queueing inside the proxy.
   - model_name: agent
     litellm_params:
-      model: openai/qwen3.8-flash-next
+      model: openai/Qwen3.8-Flash-Next
       api_base: os.environ/SPARK1_OPENAI_URL
       api_key: os.environ/SPARK_1_API_KEY
     model_info:
+      # v1.102.1 has no `deploy_name` key. Health checks, cooldowns and the
+      # least-busy in-flight counters all attribute per deployment via
+      # model_info.id, so each box gets a unique id — that is what keeps a
+      # cooled box visibly OUT of healthy_deployments instead of blending into
+      # the group's aggregate stats.
+      id: agent-spark-1
       # Declared so capability lookups and /v1/model/info report tool calling
       # for a model id that is absent from LiteLLM's cost/capability map.
       supports_function_calling: true
       supports_tool_choice: true
+      # Inert for routing while enable_pre_call_checks stays off (its
+      # default); records the true window for /model_group/info readers.
       max_input_tokens: 262144
-  - model_name: agent-fast
+  - model_name: agent
     litellm_params:
-      model: openai/qwen3.8-flash-next
+      model: openai/Qwen3.8-Flash-Next
       api_base: os.environ/SPARK2_OPENAI_URL
       api_key: os.environ/SPARK_2_API_KEY
-      # Default only: a client-supplied max_tokens still wins.
-      max_tokens: 4096
     model_info:
+      id: agent-spark-2
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK3_OPENAI_URL
+      api_key: os.environ/SPARK_3_API_KEY
+    model_info:
+      id: agent-spark-3
       supports_function_calling: true
       supports_tool_choice: true
       max_input_tokens: 262144
@@ -97,25 +139,61 @@ general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   # No DB-backed key management, virtual keys, or Admin UI on this box.
   store_model_in_db: false
+  # Health checks are the only auto-recovery route: a failing box leaves
+  # healthy_deployments (per-deployment attribution via the model_info.id
+  # above) until a green probe clears it, and background checks re-probe every
+  # health_check_interval seconds so recovery does not wait for user traffic
+  # to rediscover the box. health_check_interval and health_check_concurrency
+  # MUST sit here: under router_settings the proxy raises ValueError at boot.
+  # (store_prompts_in_spend_logs / turn_off_message_logging are not keys in
+  # v1.102.1 — do not paste them from newer docs.)
+  background_health_checks: true
+  health_check_interval: 30
+  health_check_concurrency: 5
+  health_check_ignore_transient_errors: true
+  # Inert while no request limiter is configured; guardrail if one ever
+  # returns: a saturated-and-capped deployment will not collect cross-deployment
+  # retries meant for relocation.
+  disable_retry_on_max_parallel_request_limit_error: true
 
 litellm_settings:
   drop_params: true
+  # Provider-SDK retries and router cross-deployment retries are different
+  # things: retrying a saturated box eight times on the SAME deployment buys no
+  # relocation and burns tens of minutes. Two retries cover a transient blip;
+  # moving off a busy box is routing's job, not the retry chain's.
   num_retries: 2
-  # Local generations on the Arc 140T are slow; keep the read timeout generous.
-  request_timeout: 600
+  # One chain-wide deadline, 1200 s. Long compaction summaries and generations
+  # on a saturated Spark outrun a 10-minute read timeout: the Grok CLI's own
+  # streaming idle allowance is 1200 s (per model + [models] default in the
+  # Grok templates), and a shorter proxy timeout here would cut those calls
+  # off with a proxy-side error before the client ever gives up. With both
+  # ends at 1200, one slow call may take a full 20 minutes before either end
+  # calls it dead.
+  request_timeout: 1200
   # Exposes /metrics. Prometheus support is not gated on a premium licence.
   callbacks: ["prometheus"]
 
 # Fallbacks live in router_settings, which takes precedence over the
-# litellm_settings equivalent. The Spark vLLM boxes are optional and either can be
-# down, so `agent` first retries on the OTHER Spark (still tool-capable, via
-# agent-fast) and only then degrades to the Arc alias. That last hop is text-only
-# (see the Arc limitation note above), so keeping the Spark-to-Spark hop first is
-# what preserves agent mode when one box is offline.
-#
-# The chain is deliberately acyclic: agent-fast falls back straight to coder-fast,
-# never back to agent.
+# litellm_settings equivalent. `agent` degrades to `coder` (Arc, text-only —
+# see the measured limitation above) when NO Spark box is healthy; that hop is
+# a last resort and shows up in spend logs / per-deployment health instead of
+# silently. The old chain `agent -> agent-fast -> coder` existed only because
+# agent-fast was a second alias for the SAME model on a second box with a lower
+# output ceiling; with one group of three equal deployments, least-busy covers
+# that case and the chain collapsed to a single acyclic hop: agent -> coder.
+# (If a concurrency cap is ever reintroduced, its fallback pairing is
+# `fallbacks` + `context_window_fallbacks` — both, not one.)
 router_settings:
+  # Verified in v1.102.1: least-busy picks the healthy deployment with the
+  # fewest in-flight requests (per-deployment request counters, 1 h TTL) — a
+  # load spreader, not cache-affinity pinning. No routing_strategy_args: its
+  # only meaningful child (`ttl`) belongs to the latency-based strategies and
+  # least-busy's counter TTL is hardcoded (3600 s). session_affinity — the
+  # opt-in `optional_pre_call_checks` string that narrows candidates to one
+  # pinned box BEFORE routing — stays absent on purpose.
+  routing_strategy: least-busy
+  allowed_fails: 40
+  cooldown_time: 5
   fallbacks:
-    - agent: ["agent-fast", "coder"]
-    - agent-fast: ["coder-fast"]
+    - agent: ["coder"]

@@ -139,14 +139,27 @@ services:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
       SPARK1_OLLAMA_URL: ${SPARK1_OLLAMA_URL:-http://spark-1.lan:11434}
       SPARK2_OLLAMA_URL: ${SPARK2_OLLAMA_URL:-http://spark-2.lan:11434}
-      # OpenAI-compatible endpoints (vLLM/SGLang) for the `agent` and
-      # `agent-fast` aliases Grok Build defaults to. The Arc Qwen2.5-Coder
-      # weights return tool calls as plain text, so agent mode wants one of
-      # these reachable (the Arc `chat` alias is the offline substitute).
+      # OpenAI-compatible /v1 endpoints for the ONE `agent` model group: its three
+      # deployments are the three URLs below, one per Spark box, and `least-busy`
+      # routing sends each request to whichever deployment has the fewest requests
+      # in flight. Deliberately no session pinning and no concurrency cap — a busy
+      # box sheds load instead of queueing behind itself. The boxes run TensorFold
+      # (a vLLM-lineage, OpenAI-compatible /v1 engine) serving Qwen3.8-Flash-Next,
+      # and each may be powered off: with one or two boxes down the group routes
+      # around them, with none reachable `agent` falls back to `coder`. The Arc
+      # Qwen2.5-Coder weights return tool calls as plain text, so agent mode wants
+      # one of these reachable (the Arc `chat` alias is the offline substitute).
       SPARK1_OPENAI_URL: ${SPARK1_OPENAI_URL:-http://spark-1.lan:8888/v1}
       SPARK2_OPENAI_URL: ${SPARK2_OPENAI_URL:-http://spark-2.lan:8888/v1}
-      SPARK_1_API_KEY: ${SPARK_1_API_KEY:-}
-      SPARK_2_API_KEY: ${SPARK_2_API_KEY:-}
+      SPARK3_OPENAI_URL: ${SPARK3_OPENAI_URL:-http://spark-3.lan:8888/v1}
+      # NOT optional and not secrets: LiteLLM v1.102.1 refuses to build the
+      # upstream client when a deployment's api_key is empty, so these carry a
+      # placeholder unless the box was started with --api-key (then set the
+      # real key per machine here). Verified: an empty value 500s every
+      # agent-alias request inside the proxy.
+      SPARK_1_API_KEY: ${SPARK_1_API_KEY:-local-spark}
+      SPARK_2_API_KEY: ${SPARK_2_API_KEY:-local-spark}
+      SPARK_3_API_KEY: ${SPARK_3_API_KEY:-local-spark}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
     depends_on:
@@ -258,6 +271,13 @@ services:
       # and opening it shows which model the alias is actually routing to.
       HOMEPAGE_VAR_AGENT_URL: ${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1/models}
       HOMEPAGE_VAR_AGENT_HEALTH: ${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1/models}
+      # Per-box probe URLs for the Spark cards: services.yaml renders one widget
+      # per box from these three instead of assuming one "usual" box, so a box
+      # that is powered off shows its own card as down. /health is the TensorFold
+      # liveness path on :8888 and answers without a key.
+      HOMEPAGE_VAR_SPARK1_HEALTH: ${SPARK1_HEALTH_URL:-http://spark-1.lan:8888/health}
+      HOMEPAGE_VAR_SPARK2_HEALTH: ${SPARK2_HEALTH_URL:-http://spark-2.lan:8888/health}
+      HOMEPAGE_VAR_SPARK3_HEALTH: ${SPARK3_HEALTH_URL:-http://spark-3.lan:8888/health}
     volumes:
       # Each config file mounted read-only individually, which keeps /app/config
       # itself writable. Mounting the directory with :ro breaks startup: the

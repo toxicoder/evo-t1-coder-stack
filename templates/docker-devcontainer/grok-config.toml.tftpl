@@ -21,14 +21,27 @@
 # one started last re-renders it for all of them.
 
 [models]
-# Only the Spark vLLM aliases return a real tool_calls array on this runtime,
-# so the agent loop needs one of them. The Arc (IPEX-LLM Ollama) aliases below
+# `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
+# tool_calls array on this runtime. The Arc (IPEX-LLM Ollama) aliases below
 # answer tool calls as plain text with finish_reason "stop", which stops the
 # loop after one turn — they stay usable as completion-style fallbacks.
+# Each key here names the model that serves that role. The CLI's own default
+# for the web_search role is a hosted model, so all three roles below stay on
+# the local Spark lane; supports_backend_search = false keeps that search
+# client-side (local fetch, then the model summarises the result).
 default = "${grok_default_model}"
-session_summary = "agent-fast"
-image_description = "agent-fast"
-web_search = "agent-fast"
+session_summary = "agent"
+image_description = "agent"
+web_search = "agent"
+
+# Global streaming-idle deadline for every model that does not pin its own
+# value below: the compaction summary, the web_search digest and the image
+# description all ride this lane, and on a busy Spark a large compaction
+# summary can run far past the CLI's 600 s default. 1200 s matches the
+# per-model values below and the proxy's request_timeout, so one 20-minute
+# deadline covers the whole client-to-backend chain and long compactions are
+# not cut off in the middle.
+inference_idle_timeout_secs = 1200
 
 # --- DGX Spark (vLLM): tool-calling-capable, used for the agent loop --------
 [model."agent"]
@@ -40,23 +53,6 @@ api_backend = "chat_completions"
 env_key = "LITELLM_API_KEY"
 context_window = 262144
 max_completion_tokens = 32768
-temperature = 1.0
-top_p = 0.95
-supports_backend_search = false
-supports_reasoning_effort = false
-stream_tool_calls = true
-max_retries = 1
-inference_idle_timeout_secs = 1200
-
-[model."agent-fast"]
-model = "agent-fast"
-base_url = "${litellm_url}"
-name = "Agent Fast (DGX Spark vLLM)"
-description = "Fast Spark alias; summaries, subagents, ghost text"
-api_backend = "chat_completions"
-env_key = "LITELLM_API_KEY"
-context_window = 262144
-max_completion_tokens = 16384
 temperature = 1.0
 top_p = 0.95
 supports_backend_search = false
@@ -135,8 +131,9 @@ allow_local = false
 [session]
 auto_compact_threshold_percent = 75
 
-# Laptop-class host: one shared GPU per model, so keep the fan-out modest and
-# queue the overflow instead of failing the spawn.
+# Three Spark boxes behind one model lane, and LiteLLM's "least-busy" routing
+# spreads the fan-out across them, so keep the fan-out modest and let
+# limit_behavior "queue" hold the overflow instead of failing the spawn.
 [subagents]
 enabled = true
 max_concurrent = 4
@@ -144,8 +141,8 @@ max_depth = 1
 limit_behavior = "queue"
 
 [subagents.models]
-explore = "agent-fast"
-plan = "agent-fast"
+explore = "agent"
+plan = "agent"
 
 # Offline-capable MCP servers only: everything below resolves from a local
 # process and needs no account, token, or inbound route, with one gated

@@ -8,18 +8,20 @@
 #   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
 #   - build the golden workspace image if it is missing, then push the template
+#   - check the Spark fleet with scripts/spark-configure.sh and scripts/spark-verify.sh
 #
-# The last two are the steps a fresh clone used to have to be told about in the
-# README. Both run at the very end, after every fast check, so a broken box still
-# fails quickly on the things that cost nothing to test. Neither is fatal: a build
-# that cannot download, or a template push with no Coder session yet, prints why and
-# lets bootstrap finish its "Next steps" output, because bootstrap is idempotent and
-# re-running it is the normal recovery path.
+# The last three are the steps a fresh clone used to have to be told about in the
+# README. All run at the very end, after every fast check, so a broken box still
+# fails quickly on the things that cost nothing to test. None is fatal: a build that
+# cannot download, a template push with no Coder session yet, or a Spark that is
+# switched off prints why and lets bootstrap finish its "Next steps" output, because
+# bootstrap is idempotent and re-running it is the normal recovery path.
 #
 #   SKIP_DEV_IMAGE_BUILD=1 ./scripts/bootstrap.sh   # print-only, as before
 #   SKIP_TEMPLATE_PUSH=1   ./scripts/bootstrap.sh   # no coder templates push
+#   SKIP_SPARKS=1          ./scripts/bootstrap.sh   # no Spark fleet check
 #
-# Both are read from the process environment only, never from .env — an .env that
+# All three are read from the process environment only, never from .env — an .env that
 # silently disables provisioning steps would be unreadable to debug.
 set -euo pipefail
 
@@ -366,8 +368,9 @@ env_get() {
 
 # Agent mode (Grok Build, Cline, Roo) needs structured tool calls, and the Arc
 # Qwen2.5-Coder weights cannot produce them: they return the call as plain text
-# with finish_reason "stop". The Spark-backed agent/agent-fast aliases do work,
-# so probe them here rather than letting the first agent session fail silently.
+# with finish_reason "stop". The Spark-backed `agent` alias (one alias, one
+# deployment per Spark) does work, so probe the boxes here rather than letting
+# the first agent session fail silently.
 # (The Arc `chat` alias — qwen2.5:7b — does emit real tool calls, so it is the
 # offline substitute when no Spark answers.)
 probe_agent_endpoint() {
@@ -384,6 +387,7 @@ probe_agent_endpoint() {
 }
 probe_agent_endpoint "SPARK1_OPENAI_URL" "$(env_get SPARK1_OPENAI_URL)"
 probe_agent_endpoint "SPARK2_OPENAI_URL" "$(env_get SPARK2_OPENAI_URL)"
+probe_agent_endpoint "SPARK3_OPENAI_URL" "$(env_get SPARK3_OPENAI_URL)"
 
 # ── Golden workspace image ───────────────────────────────────────────────────
 # The workspace template's default image is built locally, not pulled: the Coder
@@ -449,6 +453,41 @@ else
   fi
 fi
 
+# ── Spark fleet ──────────────────────────────────────────────────────────────
+# The optional DGX Spark boxes all serve the same Qwen3.8-Flash-Next weights behind one
+# `agent` model group with `least-busy` routing, so they have to agree on everything
+# that changes an answer: same model id, same PARALLEL stream count, same context
+# window, same KV dtype. A box that differs keeps receiving traffic and answers with a
+# degraded or wrong completion, and because LiteLLM v1.102.1 builds its Router with
+# ignore_invalid_deployments forced to True, a box serving a model id that is spelled
+# even one character differently is dropped from the model group at boot — after which
+# it answers curl perfectly well while the proxy reports "No deployments available".
+# Hence two scripts: spark-configure.sh asserts what each box is set up to run and
+# writes sparks/<host>.env with --apply, spark-verify.sh proves the fleet still agrees
+# with itself.
+#
+# Advisory for the same reason as the two steps above: a Spark that is switched off, has
+# no server on it, or is not an ssh target from this box is a "not yet" state, so an
+# unreachable host prints why and bootstrap still finishes. Hosts come from SPARK_HOSTS
+# in the process environment, never from .env; with nothing set both scripts check the
+# placeholder trio, which never resolves. --no-tests keeps the recipe's own probes — a
+# 195k-token needle plus a 1/2/4/5-client bench sweep, minutes per box — out of a
+# bootstrap run; re-run ./scripts/spark-verify.sh without it to get them back.
+if [ -n "${SKIP_SPARKS:-}" ]; then
+  echo "note: Spark fleet check skipped (SKIP_SPARKS is set) — run ./scripts/spark-verify.sh --no-tests to check the boxes."
+else
+  spark_rc=0
+  ./scripts/spark-configure.sh || spark_rc=$?
+  if [ "${spark_rc}" != "0" ]; then
+    echo "warning: the Spark config check did not complete (exit ${spark_rc}) — no sparks/<host>.env was written. Name the boxes with SPARK_HOSTS and check SPARK_SSH_USER, then re-run ./scripts/spark-configure.sh."
+  fi
+  verify_rc=0
+  ./scripts/spark-verify.sh --no-tests || verify_rc=$?
+  if [ "${verify_rc}" != "0" ]; then
+    echo "warning: the Spark fleet check failed (exit ${verify_rc}) — either a box disagrees with its peers or its model id is spelled differently from the one litellm/config.yaml declares, and the proxy routes to it either way. Re-run ./scripts/spark-verify.sh --no-tests for the per-box detail, and ./scripts/spark-configure.sh --apply <host> to write the fix."
+  fi
+fi
+
 echo
 echo "Next steps:"
 echo "  1. ./scripts/build-dev-image.sh   # one-time polyglot workspace image (re-run if the build above failed)"
@@ -461,6 +500,7 @@ dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
 echo "  4. ./scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
-echo "  6. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
+echo "  6. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (SPARK_HOSTS=\"host1 host2 ...\" names the real boxes; drop --no-tests for the 195k/bench sweep)"
+echo "  7. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
-echo "  7. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
+echo "  8. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
