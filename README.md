@@ -396,8 +396,10 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
   existing non-git folder there), renders `~/.grok/config.toml`, and
   warms the MCP servers in the background. GitHub credentials arrive by one of two
   paths, both opt-in and HTTPS-only (an `ssh://`/`git@` URL reaches neither — this
-  stack provisions no SSH keys). **Preferred:** the external-auth broker — fill the
-  `CODER_EXTERNAL_AUTH_0_*` keys (see `.env.example`), connect your GitHub account
+  stack provisions no SSH keys). **Preferred:** the external-auth broker — create
+  `coder.env` beside `docker-compose.yml` with the `CODER_EXTERNAL_AUTH_0_*` keys
+  all filled (see `.env.example`; a defined-but-empty key crash-loops the server,
+  which is why these keys live in `coder.env` and not `.env`), then connect your GitHub account
   under Settings → external auth, and every workspace's agent injects a
   `GIT_ASKPASS` helper that mints short-lived per-host tokens on demand: no
   long-lived secret lives in any file, env or template, and one connection covers
@@ -696,10 +698,13 @@ workspace's agent connection, and it consults two pieces of per-workspace contex
 an **instructions** file and any **skills** it discovers. This stack wires that up (and
 teaches it, below); the agent itself is upstream Coder, not a home-grown agent.
 
-**Enable.** `CODER_EXPERIMENTS` in `.env` — the default here is now `agents`; 2.36.6
-lists it as an **EARLY ACCESS** experiment. It is one restart away from off: set the
-value to the empty string (`CODER_EXPERIMENTS=`) and restart the coder service and the
-Agents feature is gone; the compose default exists so a fresh clone has it on.
+**Enable.** `CODER_EXPERIMENTS` in `.env` — empty by default since 2026-10-08. The old
+default `agents` was never a recognized experiment in 2.36.6: the server logged
+`ignoring unknown experiment` and ignored it on every boot. Coder Agents itself gates
+on the entitlement feature `workspace_external_agent` — `CODER_EXPERIMENTS` does not
+unlock entitlements on a CE install. If you know a real experiment you want
+(`chat-advisor`, `chat-virtual-desktop`, …), list it in `.env` and restart the coder
+service; empty (the default) means no experiments on.
 
 **Provider wiring (manual, once per install).** Admin settings → AI → Coder Agents →
 base URL `http://litellm:4000/v1` (that is LiteLLM over the compose network, *server-side*

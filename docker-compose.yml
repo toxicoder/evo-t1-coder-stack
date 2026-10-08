@@ -21,6 +21,33 @@ services:
   coder:
     image: ghcr.io/coder/coder:v2.36.6
     restart: unless-stopped
+    # Optional file, absent by default: create ./coder.env (next to this file,
+    # gitignored) only to enable the Coder external-auth broker for GitHub
+    # credentials — the one place CODER_EXTERNAL_AUTH_0_* keys may live. The
+    # server parses every DEFINED CODER_EXTERNAL_AUTH_* key, empty included,
+    # and treats it as a configured provider: an empty one yields provider ""
+    # with an invalid id, `coder server` exits with
+    # "convert external auth config: ..." and restart: unless-stopped turns
+    # that into a crash loop (shipped empty in bf7e36d; crashed live exactly
+    # this way). So define the keys here, fully filled, or not at all:
+    #   CODER_EXTERNAL_AUTH_0_ID=github
+    #   CODER_EXTERNAL_AUTH_0_TYPE=github
+    #   CODER_EXTERNAL_AUTH_0_CLIENT_ID=<GitHub OAuth App client id>
+    #   CODER_EXTERNAL_AUTH_0_CLIENT_SECRET=<GitHub OAuth App client secret>
+    #   CODER_EXTERNAL_AUTH_0_REVOKE_URL=https://github.com/settings/connections/applications/<client id>
+    # (an omitted REGEX matches every github.com remote; set it only to tell
+    # several providers/hosts apart). Once present, connect your GitHub
+    # account in Coder (Settings -> external auth) and each workspace's agent
+    # mints SHORT-LIVED per-host tokens on demand via its GIT_ASKPASS
+    # helper. The GitHub-side callback URL is
+    # <CODER_ACCESS_URL>/external-auth/github/callback, and the App/OAuth
+    # grant must INCLUDE the repos workspaces clone: a connected-but-unscoped
+    # token authenticates and is still denied on clone/push (403/404) — check
+    # that first. `required: false` needs Docker Compose v2.24+ (older
+    # compose refuses a missing env file at parse time, loudly).
+    env_file:
+      - path: ./coder.env
+        required: false
     environment:
       CODER_ACCESS_URL: ${CODER_ACCESS_URL:-https://YOUR_LAN_IP:3001}
       CODER_PG_CONNECTION_URL: postgres://coder:${CODER_PG_PASSWORD:-change-me-postgres}@db:5432/coder?sslmode=disable
@@ -36,24 +63,6 @@ services:
       # localhost, coder, host.docker.internal).
       CODER_TLS_CERT_FILE: /etc/coder/certs/coder.crt
       CODER_TLS_KEY_FILE: /etc/coder/certs/coder.key
-      # GitHub credential broker (Coder external auth), the per-user credential
-      # workspaces' git/gh consult instead of a pasted PAT. All five keys are
-      # empty until you fill them, and Coder treats a half-filled provider as
-      # none: empty here means no external auth provider exists and the stack
-      # behaves exactly as before. When filled (ID and TYPE name the provider
-      # "github"; a user connecting their GitHub account completes setup), the
-      # agent mints SHORT-LIVED per-host tokens on demand via the workspace's
-      # GIT_ASKPASS helper. The GitHub-side callback URL must be
-      # <CODER_ACCESS_URL>/external-auth/<ID>/callback and the App/OAuth grant
-      # must INCLUDE the repos workspaces clone: a connected-but-unscoped
-      # token authenticates and is still denied on clone/push (403/404) —
-      # check that first. Key names per Coder's external-auth docs (env-driven
-      # registration; restart to apply), not cross-checked against codersdk.
-      CODER_EXTERNAL_AUTH_0_ID: ${CODER_EXTERNAL_AUTH_0_ID:-}
-      CODER_EXTERNAL_AUTH_0_TYPE: ${CODER_EXTERNAL_AUTH_0_TYPE:-}
-      CODER_EXTERNAL_AUTH_0_CLIENT_ID: ${CODER_EXTERNAL_AUTH_0_CLIENT_ID:-}
-      CODER_EXTERNAL_AUTH_0_CLIENT_SECRET: ${CODER_EXTERNAL_AUTH_0_CLIENT_SECRET:-}
-      CODER_EXTERNAL_AUTH_0_REVOKE_URL: ${CODER_EXTERNAL_AUTH_0_REVOKE_URL:-}
       # Real env var is CODER_TELEMETRY_ENABLE; the _ENABLED spelling is ignored.
       CODER_TELEMETRY_ENABLE: "false"
       # Every name below was checked against codersdk/deployment.go at v2.36.6.
@@ -81,15 +90,19 @@ services:
       # STUN defaults point at Google and buy nothing on a LAN; agents reach
       # each other directly over WireGuard and DERP stays the fallback.
       CODER_DERP_SERVER_STUN_ADDRESSES: ${CODER_DERP_STUN:-disable}
-      # Coder v2.36.6 gates Coder Agents (the control-plane coding agent: chat
-      # UI + API, Admin settings -> AI -> Coder Agents) behind the `agents`
-      # EXPERIMENT — EARLY ACCESS, and one restart away from off: an empty
-      # value disables the feature. No AI-Gateway keys here on purpose:
-      # LiteLLM stays the model transport (Admin -> AI points the agent at
-      # http://litellm:4000/v1 with the LITELLM_MASTER_KEY value below;
-      # LITELLM_BASE_URL/LITELLM_API_KEY already reach workspaces through
-      # coder_agent.env).
-      CODER_EXPERIMENTS: ${CODER_EXPERIMENTS:-agents}
+      # Experiment opt-ins, comma-separated; empty by default = none. Unlike
+      # CODER_EXTERNAL_AUTH_* an empty value here is safe (parsed as an empty
+      # list), but an UNKNOWN name is no-ops with a warning: v2.36.6 knows no
+      # experiment `agents` — that default only logged "ignoring unknown
+      # experiment" on every boot. Coder Agents gates on the entitlement
+      # feature `workspace_external_agent` (not unlockable via this key on
+      # the CE image); real experiment names include `chat-advisor` and
+      # `chat-virtual-desktop` if you opt into them here. No AI-Gateway keys
+      # on purpose: LiteLLM stays the model transport (Admin -> AI points the
+      # agent at http://litellm:4000/v1 with the LITELLM_MASTER_KEY value
+      # below; LITELLM_BASE_URL/LITELLM_API_KEY already reach workspaces
+      # through coder_agent.env).
+      CODER_EXPERIMENTS: ${CODER_EXPERIMENTS:-}
       CODER_PROMETHEUS_ENABLE: "true"
       # Bind inside the container on 0.0.0.0 so the published mapping below can
       # reach it; the host mapping is loopback-only, so metrics never hit the LAN.
