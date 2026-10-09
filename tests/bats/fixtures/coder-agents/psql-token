@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## psql-token — fixture psql for the token-mint phase (test fixture; never ships)
+#
+# Purpose: answer the api_keys INSERT the way the real client does — by printing
+# the `returning id` value — so a suite can drive the phases that run AFTER the
+# mint without a database or a daemon. Both entry scripts only continue when the
+# INSERT echoes back the id it just generated (`case "${inserted}:${insert_rc}"`
+# compares the reply against ${key_id}), and that id is random per run, which a
+# fixed canned body cannot supply. The id is therefore lifted back out of the
+# statement on argv, exactly as a real -tA reply would print it.
+#
+# A statement that mentions `returning` is the mint; everything else (the
+# deletes around it) prints nothing, like the real client with -tA.
+#
+# Usage (in a .bats file): copy this over bin/psql in the per-test bin dir, then
+# run <script>. STUB_PSQL_RC still decides the exit code.
+#
+# Safety: stub only. Never opens a database connection.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "psql $*" >>"${STUB_LOG}/psql.log"; fi
+
+sql="${*: -1}"
+if printf '%s' "${sql}" | grep -qF 'returning'; then
+  printf '%s' "${sql}" | sed -nE "s/.*select '([0-9a-f]{10})',.*/\1/p" | head -1
+fi
+exit "${STUB_PSQL_RC:-0}"
