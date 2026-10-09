@@ -42,4 +42,4 @@ runs:
     - name: Install lint tools
       if: inputs.install-lint-tools == 'true'
       shell: bash
-      run: .github/scripts/install-lint-tools.sh
+      run: bash .github/scripts/install-lint-tools.sh
