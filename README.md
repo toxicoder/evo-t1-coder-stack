@@ -88,7 +88,7 @@ Key properties:
 git clone https://github.com/toxicoder/evo-t1-coder-stack.git
 cd evo-t1-coder-stack
 cp .env.sample .env
-./scripts/bootstrap.sh    # secrets, CODER_ACCESS_URL, certs; also builds the golden
+bash scripts/bootstrap.sh    # secrets, CODER_ACCESS_URL, certs; also builds the golden
                           # image and pulls docker:29.8.1-dind when either is missing
 docker compose up -d
 ./scripts/pull-models.sh  # pulls OLLAMA_MODELS (first run is a big download)
@@ -100,9 +100,9 @@ workspace DinD sidecar, pushes both workspace templates and wires the Coder Agen
 model once a Coder account exists, and checks the Spark fleet. None of those is fatal:
 a build that cannot download, or a push or wiring run with nobody registered yet, prints
 why and bootstrap still finishes. All are retryable on their own —
-`./scripts/build-dev-image.sh`, `./scripts/push-template.sh` (no arguments pushes both,
+`./scripts/build-dev-image.sh`, `bash scripts/push-template.sh` (no arguments pushes both,
 template names retry just the ones that failed; section "Coder workspace template"
-below), and `./scripts/coder-agents.sh --dry-run` / `--apply` (section "Coder Agents"
+below), and `bash scripts/coder-agents.sh --dry-run` / `--apply` (section "Coder Agents"
 below). `SKIP_DEV_IMAGE_BUILD=1` / `SKIP_TEMPLATE_PUSH=1` / `SKIP_CODER_AGENTS=1` /
 `SKIP_SPARKS=1` restore the old print-only behaviour; bootstrap reads them from the
 process environment only, never from `.env`.
@@ -134,17 +134,17 @@ Then:
    The equivalent HTTP call is `POST /api/v2/users/first`, and `coder server
    create-admin-user` does the same from the server side. All three work on
    v2.36 — the browser is convenience.
-2. Push the workspace templates (section below) — `./scripts/push-template.sh` does both
+2. Push the workspace templates (section below) — `bash scripts/push-template.sh` does both
    once an account exists, which is why bootstrap runs it for you and says why it
    skipped when none does. It needs no `coder login` and no host coder CLI.
 3. Wire the Coder Agents chat (section "Coder Agents (control-plane) + Grok Build
-   delegation" below) — `./scripts/coder-agents.sh --apply` creates the `litellm` AI
+   delegation" below) — `bash scripts/coder-agents.sh --apply` creates the `litellm` AI
    provider, the two chat model configs, the subagent lane pins and the system-prompt
    addendum, through the server API and without leaving a credential behind. Bootstrap
    calls it the same way it calls the push, so a cold box skipped both; a stack that
    already runs picks them up on the next bootstrap run or with this one command.
    `--dry-run` prints the intended end state first.
-4. Create a workspace from a git repository: `./scripts/new-workspace.sh <git-url>`
+4. Create a workspace from a git repository: `bash scripts/new-workspace.sh <git-url>`
    (add `--dry-run` to see the decision without creating anything). It shallow-clones
    the repo, probes it for a dev container, picks `docker-dev` or `docker-devcontainer`
    accordingly, and drives `coder create` with the right template parameters — the same
@@ -205,7 +205,7 @@ STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gm
 and re-run:
 
 ```sh
-./scripts/bootstrap.sh
+bash scripts/bootstrap.sh
 docker compose up -d
 ```
 
@@ -244,7 +244,7 @@ SECURITY.md). Workspace agents never reach Authelia either way: the template rew
 traffic stays on the box.
 
 One runtime follow-up, done by hand once and not by compose: workspaces created before the public mode
-existed need `./scripts/push-template.sh` plus a restart to pick up the template's `coder_agent_url` variable
+existed need `bash scripts/push-template.sh` plus a restart to pick up the template's `coder_agent_url` variable
 (default `http://host.docker.internal:3002`), which is what keeps agents dialing the local plain
 listener whatever the access URL says. Kasm likewise stores its connection endpoints in its own setup
 database (first-boot wizard / admin UI), so that endpoint has to be updated there too or streams keep
@@ -294,7 +294,7 @@ the CLI.
 ## Coder workspace template
 
 Two templates live under `templates/`, and the push covers both. It happens on its own:
-`bootstrap.sh` calls `./scripts/push-template.sh`, which then pushes when the coder and db
+`bootstrap.sh` calls `bash scripts/push-template.sh`, which then pushes when the coder and db
 containers are running and an active Coder account exists, and otherwise prints a one-line
 reason and exits 0 (a fresh clone has none of those yet). `docker-dev` goes first and
 `docker-devcontainer` last — a dependent template pushes last so a partial failure leaves
@@ -303,8 +303,8 @@ while its `main.tf` exists. The same script is the manual path after you registe
 arguments are the retry path for a single template:
 
 ```sh
-./scripts/push-template.sh                           # both, in that order
-./scripts/push-template.sh docker-devcontainer       # just the one that failed
+bash scripts/push-template.sh                           # both, in that order
+bash scripts/push-template.sh docker-devcontainer       # just the one that failed
 ```
 
 An unknown name is an error that lists the known names, not a silent no-op. Per template
@@ -581,9 +581,9 @@ The two questions above (which template, and whether to build the dev container)
 exactly what `scripts/new-workspace.sh <git-url> [name]` answers for you:
 
 ```sh
-./scripts/new-workspace.sh --dry-run https://github.com/foo/bar.git   # decision only, creates nothing
-./scripts/new-workspace.sh https://github.com/foo/bar.git             # creates the workspace
-./scripts/new-workspace.sh --plain git@git.example.com:org/private.git  # force docker-dev
+bash scripts/new-workspace.sh --dry-run https://github.com/foo/bar.git   # decision only, creates nothing
+bash scripts/new-workspace.sh https://github.com/foo/bar.git             # creates the workspace
+bash scripts/new-workspace.sh --plain git@git.example.com:org/private.git  # force docker-dev
 ```
 
 It shallow-clones the repo into a temp dir (a plain `git clone` from the host, so
@@ -734,7 +734,7 @@ experiments on.
 
 **Model wiring (scripted, idempotent, re-runnable).** A chat turn needs an enabled
 chat model config — the chat's own pick, else the deployment default, else it errors
-before the first tool call — and that wiring is scripted: `./scripts/coder-agents.sh`
+before the first tool call — and that wiring is scripted: `bash scripts/coder-agents.sh`
 (bootstrap calls it, quick start step 3 repeats it by hand; `--dry-run` prints the
 plan). It mints a short-lived admin API token straight from the stack's Postgres,
 deleted on exit, the same trick `push-template.sh` uses, then drives the server's
@@ -939,7 +939,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
   `agent` → `coder` fallback keeps chat working while a Spark is down, which is
   exactly when tools disappear.
 - **Coder Agents chat** refuses every prompt, or its model dropdown is empty → the chat
-  has no model config on this deployment: run `./scripts/coder-agents.sh --dry-run`
+  has no model config on this deployment: run `bash scripts/coder-agents.sh --dry-run`
   then `--apply` (it skips while the coder or db container is down or nobody has
   registered yet, and re-running it repairs a drifted provider). A chat that starts but
   narrates instead of calling tools is the no-Spark fallback again — the first bullet.
@@ -978,7 +978,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
   An absent image fails the workspace build at **plan** time — before anything is
   created — with `did not find docker image 'docker:29.8.1-dind'`, in the workspace's
   build log rather than anywhere inside it.
-- `./scripts/push-template.sh` notes a missing lockfile → each template dir keeps
+- `bash scripts/push-template.sh` notes a missing lockfile → each template dir keeps
   its own committed `templates/<name>/.terraform.lock.hcl`; regenerate it with
   `terraform -chdir=templates/<name> init -backend=false` (name = `docker-dev` or
   `docker-devcontainer`) and commit the result.
