@@ -30,7 +30,8 @@
 # Credentials come from the stack's own Postgres, the same way `coder reset-password`
 # works: the CLI inside the container has no session file, so a short-lived token is
 # inserted into api_keys for an admin user, used for every coder call of the run
-# (the whoami probe plus one push and one versions list per template), and deleted
+# (the whoami probe plus, per template, one push, one versions list and one
+# description edit), and deleted
 # on the way out (including on failure, via the trap). It is minted once per run and
 # shared by all pushes in the loop — minting one per template would leave a
 # root-equivalent credential alive for as many times as there are templates. The
@@ -565,6 +566,32 @@ verify_one() {
   fi
 }
 
+# What the Coder Agents chat reads to route work: the agent lists the user's
+# templates, reads each one's description and parameters, and provisions a
+# workspace from the template it picks. `templates push` carries no description
+# (push has no --description flag), so the description travels on the template
+# row via `templates edit --description` — the same write the UI's template
+# editor makes, and a re-send is one cheap idempotent PUT with no Terraform
+# run behind it. Both texts stay under the same 128-byte ceiling as the
+# workspace presets, so the chat agent and the presets speak the same shape.
+declare -A TEMPLATE_DESCRIPTIONS=(
+  [docker-dev]="General dev workspace: polyglot toolchain + Grok Build agent + optional DinD sidecar. For Python/Go/JS/infra work."
+  [docker-devcontainer]="Dev Container workspace: builds the repo's devcontainer.json on a private DinD sidecar. For repos that ship that file."
+)
+
+# $1 = template name. Advisory by design: the push is the payload, a description
+# is a routing hint, so a failed edit prints a note and still counts the template
+# as delivered. Silence on success keeps the per-template output one line.
+set_description() {
+  local name="$1" desc="${TEMPLATE_DESCRIPTIONS[$1]:-}"
+  [ -n "${desc}" ] || return 0
+  if coder_exec templates edit "${name}" --description "${desc}" >/dev/null 2>&1; then
+    log "template ${name}: description set (chat-agent routing hint)"
+  else
+    log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --description '...'"
+  fi
+}
+
 failed=0
 for entry in "${selected[@]}"; do
   name="${entry%%:*}"
@@ -596,6 +623,7 @@ for entry in "${selected[@]}"; do
     continue
   fi
 
+  set_description "${name}"
   log "template ${name} pushed; active version ${active_id}"
 done
 
