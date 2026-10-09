@@ -409,18 +409,20 @@ resource "coder_agent" "main" {
     # own docker commands. Pointing DOCKER_HOST at a daemon that does not exist is
     # not a risk here: this template always provisions the sidecar.
     DOCKER_HOST = local.dind_host
-    # Same trio as docker-dev/main.tf, same verification (v2.36.6 binary + its
-    # agentcontextconfig source): the _DIRS keys list DIRECTORIES and _FILE
-    # names the file to look for inside each of them (default AGENTS.md), not
-    # a path. Defaults are replaced, not appended to, by these keys — so the
-    # upstream defaults (~/.coder, ~/.coder/skills, .agents/skills, relative to
-    # the agent's working dir) stay in the lists and /home/coder/.agents rides
-    # along. That matters here specifically: the dev container's own working
-    # dir is the cloned folder under /srv/coder-devcontainers/..., where a
-    # cwd-relative .agents/skills would not find the seeded skill.
-    CODER_AGENT_EXP_SKILLS_DIRS       = "~/.coder/skills,.agents/skills,/home/coder/.agents/skills"
-    CODER_AGENT_EXP_INSTRUCTIONS_DIRS = "~/.coder,/home/coder/.agents"
-    CODER_AGENT_EXP_INSTRUCTIONS_FILE = "INSTRUCTIONS.md"
+    # Same trio-less config as docker-dev/main.tf, same verification (v2.36.6
+    # binary + its agentcontextconfig source): the keys REPLACE the discovery
+    # defaults (~/.coder + the file AGENTS.md; ~/.coder/skills + a
+    # working-dir-relative .agents/skills) rather than appending to them, so
+    # unset keys keep every default path alive. Two facts make the defaults
+    # the right choice here specifically: the dev container's working dir is
+    # the cloned folder under /srv/coder-devcontainers/..., where the
+    # cwd-relative entry would resolve inside the clone rather than beside
+    # the seeded copies; and a dev container built on the sidecar carries
+    # its own home and never mounts /home/coder, so no /home/coder-rooted
+    # path — seeded or declared — is visible inside one anyway. The seeds
+    # live in the main agent's /home/coder (startup.sh.tftpl), where both
+    # the chat agent's workspace-context read and the plain-mode tools find
+    # them through exactly the default paths.
     },
     # An empty token adds NEITHER key, so a workspace that declares no GitHub
     # credential gets exactly the environment it got before. When present the

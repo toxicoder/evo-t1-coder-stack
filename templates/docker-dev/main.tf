@@ -399,22 +399,18 @@ resource "coder_agent" "main" {
     # from the create-form dropdown, so it always agrees with the [models] default
     # the startup script renders.
     GROK_DEFAULT_MODEL = data.coder_parameter.grok_default_model.value
-    # Coder Agents (the `agents` EXPERIMENT, gated by CODER_EXPERIMENTS in
-    # docker-compose.yml) discovers per-workspace skills and instructions from
-    # exactly these keys — spelling verified against the v2.36.6 binary and its
-    # agentcontextconfig source: the two _DIRS keys are comma-separated
-    # DIRECTORIES, and _FILE names the file to look for inside each of them
-    # (default AGENTS.md), not a path. Setting any of these keys REPLACES its
-    # upstream default, so the defaults (~/.coder, ~/.coder/skills,
-    # .agents/skills, relative to the agent's working dir) are kept and the
-    # seeded /home/coder/.agents paths ride along with them. One name only
-    # where AGENTS.md used to be: rename a seeded AGENTS.md over INSTRUCTIONS.md
-    # here if that trade is wrong for you, rather than adding a second name.
-    # The files themselves are written by startup.sh.tftpl on every boot, but
-    # only while they are absent, so a hand-edited copy survives restarts.
-    CODER_AGENT_EXP_SKILLS_DIRS       = "~/.coder/skills,.agents/skills,/home/coder/.agents/skills"
-    CODER_AGENT_EXP_INSTRUCTIONS_DIRS = "~/.coder,/home/coder/.agents"
-    CODER_AGENT_EXP_INSTRUCTIONS_FILE = "INSTRUCTIONS.md"
+    # No CODER_AGENT_EXP_* overrides on purpose (verified against the v2.36.6
+    # binary + its agentcontextconfig source): these keys REPLACE the agent's
+    # discovery defaults rather than appending to them, and the defaults are
+    # exactly what the stack seeds — the instruction file AGENTS.md under
+    # ~/.coder plus the working dir, and skills under ~/.coder/skills plus a
+    # working-dir-relative .agents/skills. The agent's working dir here is
+    # /home/coder, so even the cwd-relative entry resolves inside the home
+    # volume this stack manages, and a workspace that later clones a repo
+    # carrying project-scoped instruction or skill files is discovered with
+    # no change here. The files themselves are written by startup.sh.tftpl
+    # on every boot, but only while absent, so a hand-edited copy survives
+    # restarts.
     },
     # Only present when DinD is on: a DOCKER_HOST that pointed at a daemon that
     # does not exist would make every docker command in the workspace fail with
