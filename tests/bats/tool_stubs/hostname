@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## hostname — deterministic hostname stub (test fixture; never ships)
+#
+# Purpose: pin host identity for scripts that name things after the host.
+# `hostname -I` prints STUB_HOSTNAME_I (default 10.0.0.2); a plain `hostname`
+# prints STUB_HOSTNAME (default stub-host). Records one argv line to
+# $STUB_LOG/hostname.log when STUB_LOG is set.
+#
+# Usage (in a .bats file): use_stubs hostname; STUB_HOSTNAME_I=10.1.2.3 run ...
+# Safety: stub only.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "hostname $*" >>"${STUB_LOG}/hostname.log"; fi
+
+if [ "${1:-}" = "-I" ]; then
+  printf '%s\n' "${STUB_HOSTNAME_I:-10.0.0.2}"
+else
+  printf '%s\n' "${STUB_HOSTNAME:-stub-host}"
+fi
+exit 0

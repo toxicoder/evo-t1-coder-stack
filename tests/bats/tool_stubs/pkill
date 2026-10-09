@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## pkill — deterministic pkill stub (test fixture; never ships)
+#
+# Purpose: make "kill the leftovers" calls observable and steerable: exit
+# STUB_PKILL_RC (default 0 — the real pkill exits 1 when nothing matched and
+# scripts treat that as fine, so both answers get modelled). Records one
+# argv line to $STUB_LOG/pkill.log when STUB_LOG is set.
+#
+# Usage (in a .bats file): use_stubs pkill; STUB_PKILL_RC=1 run ...
+# Safety: stub only — kills nothing, ever.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "pkill $*" >>"${STUB_LOG}/pkill.log"; fi
+
+exit "${STUB_PKILL_RC:-0}"

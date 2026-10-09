@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## pgrep — deterministic pgrep stub (test fixture; never ships)
+#
+# Purpose: answer the "is the process already there" probes. Default exit 1
+# (nothing matched, like real pgrep); STUB_PGREP_FOUND=1 prints pid 424242
+# and exits 0. Records one argv line to $STUB_LOG/pgrep.log when set.
+#
+# Usage (in a .bats file): use_stubs pgrep; STUB_PGREP_FOUND=1 run ...
+# Safety: stub only — sees no real processes.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "pgrep $*" >>"${STUB_LOG}/pgrep.log"; fi
+
+if [ "${STUB_PGREP_FOUND:-0}" = "1" ]; then
+  printf '%s\n' "424242"
+  exit 0
+fi
+exit "${STUB_PGREP_RC:-1}"

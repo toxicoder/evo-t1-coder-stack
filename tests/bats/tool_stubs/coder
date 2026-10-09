@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## coder — deterministic coder CLI stub (test fixture; never ships)
+#
+# Purpose: stand in for the coder CLI run INSIDE the coder service (reached
+# through the docker stub's exec passthrough). Prints STUB_CODER_OUT — a file
+# whose content becomes the body, or a literal body — then exits
+# STUB_CODER_RC (0). Logs one argv line to $STUB_LOG/coder.log.
+#
+# Usage (in a .bats file): use_stubs docker coder; STUB_CODER_RC=1 run ...
+# Safety: stub only.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "coder $*" >> "${STUB_LOG}/coder.log"; fi
+
+if [ -n "${STUB_CODER_OUT:-}" ]; then
+  if [ -f "${STUB_CODER_OUT}" ]; then cat "${STUB_CODER_OUT}"; else printf '%s\n' "${STUB_CODER_OUT}"; fi
+fi
+exit "${STUB_CODER_RC:-0}"

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## docker — deterministic docker CLI stub (test fixture; never ships)
+#
+# Purpose: stand in for the docker CLI so unit suites can drive every script
+# that shells out to `docker compose ...` with no daemon. Fixed behaviour:
+#   an argv word equal to "ps"        -> print STUB_COMPOSE_PS (file or
+#                                        literal; empty = none running), exit
+#                                        STUB_COMPOSE_PS_RC (0)
+#   an argv word equal to "exec"     -> strip the exec flags (-T -i -it -iT
+#     (docker exec or compose exec)     -t -ti -ct, and -e NAME pairs), then
+#                                        the service name, and PASS THE REST
+#                                        THROUGH (STUB_DOCKER_EXEC_RUN=1 is
+#                                        the default): the in-container tool
+#                                        then resolves its own stub through
+#                                        the same PATH shadow. With
+#                                        STUB_DOCKER_EXEC_RUN=0 the call is
+#                                        canned instead: print
+#                                        STUB_DOCKER_EXEC_OUT, exit
+#                                        STUB_DOCKER_EXEC_RC (0)
+#   any other argv with "config"     -> exit STUB_DOCKER_RC (0), silent
+#   any other argv with "inspect"    -> STUB_DOCKER_INSPECT=1 makes the image
+#                                        exist (id printed); default: "no such
+#                                        image" on stderr, exit 1
+#   any other argv with "build"      -> exit STUB_DOCKER_RC (0), silent
+#   anything else                    -> exit STUB_DOCKER_RC (0)
+# Records the full argv to $STUB_LOG/docker.log when STUB_LOG is set, so
+# suites can assert on the exact command line a script built.
+#
+# Usage (in a .bats file): use_stubs docker psql   # execs pass through
+#   STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=1 ... # canned daemon-down
+# Safety: stub only — never contacts a daemon or a socket.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "docker $*" >> "${STUB_LOG}/docker.log"; fi
+
+ps_seen=0
+exec_seen=0
+exec_at=-1
+idx=0
+for a in "$@"; do
+  if [ "${a}" = "ps" ]; then ps_seen=1; fi
+  if [ "${a}" = "exec" ]; then
+    exec_seen=1
+    exec_at="${idx}"
+  fi
+  idx=$((idx + 1))
+done
+
+if [ "${ps_seen}" = "1" ]; then
+  body="${STUB_COMPOSE_PS:-}"
+  if [ -f "${body}" ]; then cat "${body}"; elif [ -n "${body}" ]; then printf '%s\n' "${body}"; fi
+  exit "${STUB_COMPOSE_PS_RC:-0}"
+fi
+
+if [ "${exec_seen}" = "1" ]; then
+  argv=("$@")
+  i=$((exec_at + 1))
+  while [ "${i}" -lt "${#argv[@]}" ]; do
+    case "${argv[i]}" in
+      -T | -i | -it | -iT | -t | -ti | -ct) i=$((i + 1)) ;;
+      -e) i=$((i + 2)) ;;
+      *) break ;;
+    esac
+  done
+  # argv[i] is now the service name (or out of range); everything after it
+  # is the in-container command (nothing means the exec carried no command).
+  if [ "${i}" -lt "${#argv[@]}" ]; then
+    i=$((i + 1))
+  fi
+  if [ "${i}" -lt "${#argv[@]}" ]; then
+    rest=("${argv[@]:i}")
+  else
+    rest=()
+  fi
+  if [ "${#rest[@]}" -eq 0 ]; then
+    exit "${STUB_DOCKER_EXEC_RC:-0}"
+  fi
+  if [ "${STUB_DOCKER_EXEC_RUN:-1}" = "1" ]; then
+    exec "${rest[@]}"
+  fi
+  if [ -n "${STUB_DOCKER_EXEC_OUT:-}" ]; then printf '%s\n' "${STUB_DOCKER_EXEC_OUT}"; fi
+  exit "${STUB_DOCKER_EXEC_RC:-0}"
+fi
+
+case "$*" in
+  *config*)
+    exit "${STUB_DOCKER_RC:-0}"
+    ;;
+  *inspect*)
+    if [ "${STUB_DOCKER_INSPECT:-0}" = "1" ]; then
+      printf '%s\n' "stub-image"
+      exit 0
+    fi
+    printf 'Error: No such image: %s\n' "${!#}" >&2
+    exit 1
+    ;;
+  *build*)
+    exit "${STUB_DOCKER_RC:-0}"
+    ;;
+esac
+
+exit "${STUB_DOCKER_RC:-0}"
