@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bazel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: ./.github/actions/setup-bazel
+        with:
+          install-lint-tools: "true"
+
+      - name: Bazel test-fast and lint
+        env:
+          CI: "true"
+        run: |
+          bazelisk test //:test-fast --config=ci
+          bazelisk test //:lint --config=ci --test_tag_filters=manual
+
+      - name: Compose and env sample
+        run: |
+          docker compose config -q
+          cmp .env.sample .env.example

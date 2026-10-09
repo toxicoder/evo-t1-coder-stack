@@ -29,3 +29,7 @@ sparks/
 # OS noise
 .DS_Store
 Thumbs.db
+
+# Bazel
+/bazel-*
+MODULE.bazel.lock.old

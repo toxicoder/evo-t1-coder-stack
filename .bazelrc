@@ -1,0 +1,30 @@
+# evo-t1-coder-stack .bazelrc
+# Bazelisk is the primary ingress. Make targets only delegate here.
+
+common --enable_bzlmod
+common --noenable_workspace
+
+build --disk_cache=~/.cache/bazel-disk
+test --disk_cache=~/.cache/bazel-disk
+build --repository_cache=~/.cache/bazel-repo
+test --repository_cache=~/.cache/bazel-repo
+
+build --jobs=HOST_CPUS*0.75
+build --local_resources=memory=HOST_RAM*0.5
+
+build --spawn_strategy=sandboxed
+test --spawn_strategy=local,sandboxed
+
+build --show_progress_rate_limit=0.2
+test --test_output=errors
+
+build:ci --noshow_progress
+build:ci --show_progress_rate_limit=5
+test:ci --test_output=errors
+test:ci --test_summary=detailed
+build:ci --jobs=HOST_CPUS
+build:ci --local_resources=memory=HOST_RAM*0.8
+test:ci --jobs=HOST_CPUS
+test:ci --local_resources=memory=HOST_RAM*0.8
+test:ci --test_sharding_strategy=disabled
+test:ci --keep_going

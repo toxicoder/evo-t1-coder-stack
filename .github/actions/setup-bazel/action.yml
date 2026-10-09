@@ -1,0 +1,45 @@
+name: Setup Bazel
+description: Install Bazelisk and restore disk/repository caches for CI jobs.
+
+inputs:
+  install-lint-tools:
+    description: Install shellcheck, shfmt, and buildifier
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Bazelisk
+      shell: bash
+      run: |
+        set -euo pipefail
+        arch="$(uname -m)"
+        case "$arch" in
+          x86_64|amd64) barch=amd64 ;;
+          aarch64|arm64) barch=arm64 ;;
+          *) echo "unsupported arch: $arch" >&2; exit 1 ;;
+        esac
+        curl -fsSL "https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-${barch}" \
+          -o "${RUNNER_TEMP}/bazelisk"
+        chmod +x "${RUNNER_TEMP}/bazelisk"
+        mkdir -p "${HOME}/bin"
+        install -m 0755 "${RUNNER_TEMP}/bazelisk" "${HOME}/bin/bazelisk"
+        echo "${HOME}/bin" >> "${GITHUB_PATH}"
+        "${HOME}/bin/bazelisk" version
+
+    - name: Cache Bazel disk and repository cache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/bazel-disk
+          ~/.cache/bazel-repo
+        key: bazel-${{ runner.os }}-${{ github.job }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}
+        restore-keys: |
+          bazel-${{ runner.os }}-${{ github.job }}-
+          bazel-${{ runner.os }}-
+
+    - name: Install lint tools
+      if: inputs.install-lint-tools == 'true'
+      shell: bash
+      run: .github/scripts/install-lint-tools.sh

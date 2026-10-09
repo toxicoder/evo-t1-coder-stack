@@ -17,16 +17,25 @@
   file.
 - No CI that downloads models: this repo has no pipeline that pulls
   multi-gigabyte weights.
-- Validate locally before opening:
+- Validate locally before opening. Bazelisk is the ingress:
 
   ```sh
-  bash -n scripts/*.sh
+  bazelisk test //:test-fast
+  bazelisk test //:lint --test_tag_filters=manual
+  bazelisk run //:validate
+  ```
+
+  `//:validate` runs the suite above and then:
+
+  ```sh
   docker compose config -q
   cmp .env.sample .env.example            # .env.example is a copy — keep them identical
   terraform -chdir=templates/docker-dev fmt -check
-  terraform -chdir=templates/docker-dev validate   # the check for template changes
+  terraform -chdir=templates/docker-devcontainer fmt -check
   python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('homepage/config/*.yaml')+['litellm/config.yaml']]"
   ```
+
+  `terraform validate` still needs a local init with the provider cache; run it when a template changes. Shell functions need a `# @function` block and a Bats test (`docs/project-conventions.md`).
 
 ## Changing version pins
 
