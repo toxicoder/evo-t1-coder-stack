@@ -71,6 +71,11 @@ Key properties:
   public coder name once `STACK_PUBLIC_HOSTS` is set; workspaces reach LiteLLM via
   `host.docker.internal:4000` (host-gateway) and their agents dial the plain listener on
   `host.docker.internal:3002` either way.
+- **The control-plane chat agent reaches models the same way, from the server side.** coderd
+  dials `http://litellm:4000/v1` over the compose network — `scripts/coder-agents.sh` writes
+  that provider, the `agent` + `chat` model configs, the lane pins and the system-prompt
+  addendum, so the two doors into LiteLLM are the workspace CLI's `host.docker.internal:4000`
+  and the chat agent's `litellm:4000`, with the same master key on both.
 - **Kasm owns :3000 / :4443**, so the Coder UI lives on :3001.
 - **The dashboard publishes no port of its own.** Homepage serves plain HTTP and cannot load a certificate, so the nginx sidecar owns :80 / :443 and proxies to it over the compose network.
 - **Public subdomains are opt-in and purely additive.** The LAN shape above is the default and stays
@@ -91,14 +96,16 @@ docker compose up -d
 
 `bootstrap.sh` also builds `evo-t1-dev:latest` when it is missing (several GB of
 downloads, so a cold run takes minutes), pulls `docker:29.8.1-dind` for the opt-in
-workspace DinD sidecar, and pushes both workspace templates once a Coder account exists.
-None of those is fatal: a build that cannot download, or a push with nobody registered
-yet, prints why and bootstrap still finishes. Both are retryable on their own —
-`./scripts/build-dev-image.sh` and `./scripts/push-template.sh` (which takes no arguments
-to push both, or template names to retry just the ones that failed; section "Coder
-workspace template" below). `SKIP_DEV_IMAGE_BUILD=1` / `SKIP_TEMPLATE_PUSH=1` restore the
-old print-only behaviour; bootstrap reads them from the process environment only, never
-from `.env`.
+workspace DinD sidecar, pushes both workspace templates and wires the Coder Agents chat
+model once a Coder account exists, and checks the Spark fleet. None of those is fatal:
+a build that cannot download, or a push or wiring run with nobody registered yet, prints
+why and bootstrap still finishes. All are retryable on their own —
+`./scripts/build-dev-image.sh`, `./scripts/push-template.sh` (no arguments pushes both,
+template names retry just the ones that failed; section "Coder workspace template"
+below), and `./scripts/coder-agents.sh --dry-run` / `--apply` (section "Coder Agents"
+below). `SKIP_DEV_IMAGE_BUILD=1` / `SKIP_TEMPLATE_PUSH=1` / `SKIP_CODER_AGENTS=1` /
+`SKIP_SPARKS=1` restore the old print-only behaviour; bootstrap reads them from the
+process environment only, never from `.env`.
 
 Then:
 
@@ -130,14 +137,21 @@ Then:
 2. Push the workspace templates (section below) — `./scripts/push-template.sh` does both
    once an account exists, which is why bootstrap runs it for you and says why it
    skipped when none does. It needs no `coder login` and no host coder CLI.
-3. Create a workspace from a git repository: `./scripts/new-workspace.sh <git-url>`
+3. Wire the Coder Agents chat (section "Coder Agents (control-plane) + Grok Build
+   delegation" below) — `./scripts/coder-agents.sh --apply` creates the `litellm` AI
+   provider, the two chat model configs, the subagent lane pins and the system-prompt
+   addendum, through the server API and without leaving a credential behind. Bootstrap
+   calls it the same way it calls the push, so a cold box skipped both; a stack that
+   already runs picks them up on the next bootstrap run or with this one command.
+   `--dry-run` prints the intended end state first.
+4. Create a workspace from a git repository: `./scripts/new-workspace.sh <git-url>`
    (add `--dry-run` to see the decision without creating anything). It shallow-clones
    the repo, probes it for a dev container, picks `docker-dev` or `docker-devcontainer`
    accordingly, and drives `coder create` with the right template parameters — the same
    choice, by hand, is: create a workspace in the UI, pick the template, and fill the
    **Git repository** field.
-4. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
-5. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
+5. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
+6. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
 
 ## Ports
 
@@ -271,7 +285,11 @@ one group already covers every reachable box — is the failure the dashboard's
 while `agent` still answers, and each response's `x-litellm-model-id` header
 names the deployment that answered.
 
-Edit aliases in `litellm/config.yaml`, then `docker compose restart litellm`.
+Edit aliases in `litellm/config.yaml`, then `docker compose restart litellm`. The two
+tool-capable aliases also back the control-plane chat: `scripts/coder-agents.sh`
+registers `agent` (default) and `chat` as the Coder Agents chat model configs, so an
+alias edited or deleted here moves in the Agents model dropdowns exactly as it does in
+the CLI.
 
 ## Coder workspace template
 
@@ -293,9 +311,14 @@ An unknown name is an error that lists the known names, not a silent no-op. Per 
 the script checks `main.tf`, notes a missing `.terraform.lock.hcl` (each template directory
 keeps its own committed lockfile; both pin `coder/coder` `~> 2.18` and `kreuzwerker/docker`
 `~> 4.6`), refuses a preset description over Coder's 128-character limit, streams the
-source, and then confirms an **active** version. A template whose push or that verification
-failed is counted in the `N of M template(s) did not reach an active version` line and makes
-the run exit non-zero, while every other template still gets its push attempt.
+source, confirms an **active** version, and then re-sends the template's own
+description — the routing hint the Coder Agents chat reads when it picks a template to
+provision (`templates push` carries none, so `templates edit --description` is the
+write; both texts fit the same 128-byte ceiling, and a failed description edit only
+adds a note to the output, never blocks the template). A template whose push or that
+verification failed is counted in the `N of M template(s) did not reach an active
+version` line and makes the run exit non-zero, while every other template still gets
+its push attempt.
 
 **Everything Coder-facing runs inside the coder container**, against
 `http://127.0.0.1:3000` — the server's own plain listener (`CODER_HTTP_ADDRESS`),
@@ -693,26 +716,44 @@ Configure the CLI once and the rest of that account's workspaces inherit it.
 
 **What this is.** Coder v2.36.6 ships *Coder Agents*: a coding agent that lives in the
 Coder **server** — a chat UI and an API beside your workspaces, not inside one. A chat
-runs its tools (`read_file`, `edit_files`, `execute`) against a workspace over that
-workspace's agent connection, and it consults two pieces of per-workspace context first:
-an **instructions** file and any **skills** it discovers. This stack wires that up (and
-teaches it, below); the agent itself is upstream Coder, not a home-grown agent.
+runs its tools (`read_file`, `edit_files`, `execute`, `spawn_agent`) against a workspace
+over that workspace's agent connection, and it consults two pieces of per-workspace
+context first: an **instructions** file and any **skills** it discovers. This stack wires
+that up (and teaches it, below); the agent itself is upstream Coder, not a home-grown
+agent.
 
-**Enable.** `CODER_EXPERIMENTS` in `.env` — empty by default since 2026-10-08. The old
-default `agents` was never a recognized experiment in 2.36.6: the server logged
-`ignoring unknown experiment` and ignored it on every boot. Coder Agents itself gates
-on the entitlement feature `workspace_external_agent` — `CODER_EXPERIMENTS` does not
-unlock entitlements on a CE install. If you know a real experiment you want
-(`chat-advisor`, `chat-virtual-desktop`, …), list it in `.env` and restart the coder
-service; empty (the default) means no experiments on.
+**Always on; nothing to enable.** The chat agent is compiled into coderd
+unconditionally. `CODER_EXPERIMENTS` in `.env` (empty by default since 2026-10-08)
+has never gated anything about it — the old `agents` default was not a recognized
+experiment name, and the server just logged `ignoring unknown experiment` and ignored
+it on every boot. `workspace_external_agent`, the entitlement the docs name, gates
+*external* agents (Claude Code, Codex, …), not this one; nothing in this stack needs
+it. If you know a real experiment you want (`chat-advisor`, `chat-virtual-desktop`, …),
+list it in `.env` and restart the coder service; empty (the default) means no
+experiments on.
 
-**Provider wiring (manual, once per install).** Admin settings → AI → Coder Agents →
-base URL `http://litellm:4000/v1` (that is LiteLLM over the compose network, *server-side*
-— same transport the workspaces use, not a per-workspace URL) + paste the
-`LITELLM_MASTER_KEY` value from `.env` + model name `agent` (the tool-call-capable
-alias; `subagents.models` in the rendered config maps `explore`/`plan` to `agent` too, so there is no separate fast-subagent alias anymore). Coder's
-optional AI Gateway proxy stays off — LiteLLM remains the model transport, which is why
-no AI-Gateway keys exist in `docker-compose.yml`.
+**Model wiring (scripted, idempotent, re-runnable).** A chat turn needs an enabled
+chat model config — the chat's own pick, else the deployment default, else it errors
+before the first tool call — and that wiring is scripted: `./scripts/coder-agents.sh`
+(bootstrap calls it, quick start step 3 repeats it by hand; `--dry-run` prints the
+plan). It mints a short-lived admin API token straight from the stack's Postgres,
+deleted on exit, the same trick `push-template.sh` uses, then drives the server's
+experimental chat API (`/api/experimental` — v2.36.6 keeps the chat-model surface
+there, with no stability guarantee, by design): an `openai-compat` AI provider named
+`litellm`, base URL `http://litellm:4000/v1` — LiteLLM over the compose network,
+*server-side*, authenticated with the `LITELLM_MASTER_KEY` value from `.env` (or the
+`change-me-litellm` placeholder while `.env` leaves the key empty) — created when
+absent, drift-patched when one exists with a drifted `base_url` or key; model
+configs `agent` (context limit 262144, set as default) and `chat` (32768) for models
+not already registered; pins for the four auxiliary lanes — `general`/`explore` take
+`agent` and `compaction`/`title_generation` take `chat`, each falling back to the
+other alias — written only for lanes that carry no pin, so an admin's own pins stay
+in place; and a three-line system-prompt addendum, appended after Coder's default
+prompt text (`include_default_system_prompt: true`), telling the agent to delegate
+multi-file work through the grok-build-delegation skill and to never echo
+`$LITELLM_API_KEY`/`$GH_TOKEN`/`$GITHUB_TOKEN`. Coder's optional AI Gateway proxy
+stays off — LiteLLM remains the model transport, which is why no AI-Gateway keys
+exist in `docker-compose.yml`.
 
 **The delegation sketch.** Chat on the Agents page → if the ask needs more tooling than
 chat has, Coder Agents provisions or uses a workspace through `execute` → big multi-file
@@ -722,19 +763,31 @@ backgrounded and polled (`grok -p "<task brief with acceptance criteria>" --cwd 
 delegated diff, runs the project's tests, and commits. Subagents spawned by Coder
 Agents cannot create workspaces — provisioning decisions stop at the top-level chat.
 
-**What equips it.** Two files seed into every workspace home — `~/.agents/skills/
-grok-build-delegation/SKILL.md` (when to delegate; how to review the delegated diff;
-the workaround for `execute`’s roughly-one-minute tool timeout) and `~/.agents/INSTRUCTIONS.md` (small asks handled
-directly; big multi-file work routed through the skill; never print `$LITELLM_API_KEY`) —
-plus three `CODER_AGENT_EXP_*` env keys on `coder_agent.main` that point the agent's
-context discovery at those paths (defaults preserved, see the `main.tf` comment). The
-seed is written by `startup.sh.tftpl` only while the file is absent and carries the
-stack's `managed-by: evo-t1-coder-stack` marker as its first line (in `SKILL.md`
-directly under the `---` frontmatter, since the agent's skill parser requires
-frontmatter on line 1) — delete a file to take it over, or edit it and the stack
-leaves it alone. `~/.agents/` is per-workspace, on that workspace's own home volume:
-it is *not* on the shared `~/.grok` profile volume above, and seeding does not care
-whether that mount exists.
+**What equips it.** Four context files seed into every new workspace, on first boot and
+only while the file is absent: `~/.coder/AGENTS.md` and
+`~/.coder/skills/grok-build-delegation/SKILL.md` — the Coder agent's *default* discovery
+paths — plus `~/.agents/INSTRUCTIONS.md` and `~/.agents/skills/grok-build-delegation/SKILL.md`
+twins, because the Grok Build CLI discovers its instructions and skills under `~/.agents`
+(that is its convention, and the CLI is what `execute`-lane delegation drives; the chat
+agent dedupes skills by name with first-match-wins, so an agent reading both trees loads
+any one skill exactly once). The skill carries the delegation recipe — when to delegate,
+how to review the delegated diff, the workaround for `execute`’s roughly-one-minute tool
+timeout — and the instruction file handles small asks directly, routes big multi-file
+work through the skill, and never prints `$LITELLM_API_KEY`. Both `main.tf` files
+deliberately set **no** `CODER_AGENT_EXP_*` env keys on `coder_agent.main`: those keys
+*replace* the agent's discovery defaults, and the defaults already cover exactly the
+seeded paths — the `~/.coder` roots plus a working-dir-relative `.agents/skills`, which
+resolves inside the agent's working dir (`/home/coder` in `docker-dev`; in
+`docker-devcontainer` with the toggle on, the cloned folder under
+`/srv/coder-devcontainers/...`, where a dev container built on the sidecar carries its
+own home and no seeded path is visible from inside it anyway). Each seeded file carries
+the stack's `managed-by: evo-t1-coder-stack` marker (in `SKILL.md` directly under the
+`---` frontmatter, since the agent's skill parser requires frontmatter on line 1) as a
+seed-guard — delete a file to take it over, or edit it and the stack leaves it alone —
+and the marker never reaches the model anyway: the agent strips HTML comments from
+injected instruction text. The seeds live per-workspace, on that workspace's own home
+volume: they are *not* on the shared `~/.grok` profile volume above, and seeding does
+not care whether that mount exists.
 
 **What this is not:** Coder Agents is control-plane-native. This stack does not wrap
 Grok Build; the wiring above *teaches* (skill + instructions) and *equips* (the
@@ -845,6 +898,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 ├── scripts/
 │   ├── bootstrap.sh         # .env + secrets + access URL + dashboard & Coder certs + checks
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
+│   ├── coder-agents.sh      # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (bootstrap calls it)
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   ├── new-workspace.sh     # git URL → workspace: probes for a devcontainer, picks the template + params, drives `coder create`
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
@@ -884,6 +938,11 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
   empty key fails every request inside the proxy before it reaches the box. The
   `agent` → `coder` fallback keeps chat working while a Spark is down, which is
   exactly when tools disappear.
+- **Coder Agents chat** refuses every prompt, or its model dropdown is empty → the chat
+  has no model config on this deployment: run `./scripts/coder-agents.sh --dry-run`
+  then `--apply` (it skips while the coder or db container is down or nobody has
+  registered yet, and re-running it repairs a drifted provider). A chat that starts but
+  narrates instead of calling tools is the no-Spark fallback again — the first bullet.
 - Workspace stuck in *starting* → startup is blocking by design, so a failure there
   surfaces as a failed build with the reason in the workspace startup log
   (`coder logs <workspace>`); the container is not marked healthy until the toolchain
