@@ -38,13 +38,13 @@
 # meant to be safe to re-run.
 #
 # Usage:
-#   ./scripts/new-workspace.sh --dry-run https://github.com/foo/bar.git
-#   ./scripts/new-workspace.sh https://github.com/foo/bar.git             # auto
-#   ./scripts/new-workspace.sh --dry-run /srv/repos/my-tool               # local path
-#   ./scripts/new-workspace.sh --plain https://github.com/foo/bar.git     # docker-dev
-#   ./scripts/new-workspace.sh --dind https://github.com/foo/bar.git      # + DinD
-#   ./scripts/new-workspace.sh --devcontainer git@git.example.com:org/private.git
-#   ./scripts/new-workspace.sh --template docker-dev --name ml-scratch repo.git
+#   bash scripts/new-workspace.sh --dry-run https://github.com/foo/bar.git
+#   bash scripts/new-workspace.sh https://github.com/foo/bar.git             # auto
+#   bash scripts/new-workspace.sh --dry-run /srv/repos/my-tool               # local path
+#   bash scripts/new-workspace.sh --plain https://github.com/foo/bar.git     # docker-dev
+#   bash scripts/new-workspace.sh --dind https://github.com/foo/bar.git      # + DinD
+#   bash scripts/new-workspace.sh --devcontainer git@git.example.com:org/private.git
+#   bash scripts/new-workspace.sh --template docker-dev --name ml-scratch repo.git
 #
 # Options:
 #   --dry-run          print the decision and the exact command, create nothing

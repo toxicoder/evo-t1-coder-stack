@@ -8,8 +8,8 @@
 #   4. writes the two terminal-profile helpers (the "Grok Build" one and the
 #      plain tmux reattach wrapper the default profile uses), so a closed tab
 #      rejoins its session instead of losing the processes running in it
-#   5. seeds the Coder Agents context (skill + instructions under ~/.agents),
-#      only if those files are absent
+#   5. seeds the Coder Agents context (AGENTS.md + skill under ~/.coder, with
+#      ~/.agents twins for the Grok CLI), only for files that are absent
 #   6. writes ~/.grok/config.toml (only while this stack owns the file): the
 #      model catalog with this workspace's default model alias, the MCP list,
 #      and anything the create form put in "Grok config extras"
@@ -160,21 +160,38 @@ TMUX_ATTACH_HELPER
 chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
 
 # --- Coder Agents context (skill + instructions) ------------------------------
-# Seeds the two files the `agents` EXPERIMENT (Coder Agents chat) reads inside a
-# workspace: the skill folder is offered to the chat agent through the
-# CODER_AGENT_EXP_SKILLS_DIRS / CODER_AGENT_EXP_INSTRUCTIONS_* env keys set in
-# main.tf. Written only if ABSENT — a hand-edited copy is user-owned and this
-# stage re-runs harmlessly (the first line of each file carries the stack's
-# managed-by: evo-t1-coder-stack marker for the same reason config.toml's does,
-# and in SKILL.md sits after the `---` frontmatter because the agent's skill
-# parser needs `---` on line 1 and silently drops a skill whose first line is
-# anything else). Best-effort like the stages below it: a read-only or missing
-# $HOME/.agents changes nothing observable. The files live on the workspace's
-# own /home/coder volume — this stage neither needs nor disturbs the ~/.grok
+# Seeds the two files the Coder Agents chat agent discovers through its
+# DEFAULT paths (verified against the v2.36.6 agent binary + its
+# agentcontextconfig source): the instruction file AGENTS.md under ~/.coder
+# and skills under ~/.coder/skills, plus a working-dir-relative
+# .agents/skills. main.tf therefore sets NO CODER_AGENT_EXP_SKILLS_DIRS /
+# CODER_AGENT_EXP_INSTRUCTIONS_* keys: those REPLACE the default lists
+# rather than appending, and the seeded copies now sit exactly where the
+# (unmodified) defaults point. Chat itself is on by default in 2.36.6 — no
+# experiment name and no entitlement gates it.
+# Working-dir resolution here: with the dev-container toggle OFF the agent's
+# working dir is /home/coder, so .agents/skills resolves to
+# /home/coder/.agents/skills exactly as in docker-dev; with the toggle ON
+# the dev container's own working dir is the cloned folder under
+# /srv/coder-devcontainers/..., and that folder ships no skill tree, so the
+# ~/.coder copies remain the live source either way. Each file also gets a
+# twin in the ~/.agents tree, because the `execute`-lane delegation this
+# stack teaches starts `grok -p` inside the workspace, and that CLI reads
+# the ~/.agents convention (the chat agent would only take the ~/.coder
+# copies anyway — skill dedupe is first-match-wins, home scope first).
+# Written or copied only if ABSENT — a hand-edited copy is user-owned and
+# this stage re-runs harmlessly. The managed-by: evo-t1-coder-stack marker
+# marks every stack-seeded file (in SKILL.md it sits after the `---`
+# frontmatter because the skill parser needs `---` on line 1 and silently
+# drops a skill whose first line is anything else; injected instruction
+# content gets HTML comments stripped anyway, so there the marker is pure
+# provenance). Best-effort like the stages below it: a read-only or missing
+# $HOME changes nothing observable. The files live on the workspace's own
+# /home/coder home volume — this stage neither needs nor disturbs the ~/.grok
 # profile mount.
-if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
-  mkdir -p "$HOME/.agents/skills/grok-build-delegation" 2>/dev/null
-  cat >"$HOME/.agents/skills/grok-build-delegation/SKILL.md" <<'AGENT_SKILL_MD_EOF'
+if [ ! -f "$HOME/.coder/skills/grok-build-delegation/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/grok-build-delegation" 2>/dev/null
+  cat >"$HOME/.coder/skills/grok-build-delegation/SKILL.md" <<'AGENT_SKILL_MD_EOF'
 ---
 name: grok-build-delegation
 description: "Delegate big multi-file work to the Grok Build CLI (`grok`, also on PATH as `agent`): run it headless as a tracked background process, then review its diff and run the project tests before reporting done."
@@ -226,8 +243,17 @@ Rules:
 AGENT_SKILL_MD_EOF
 fi
 
-if [ ! -f "$HOME/.agents/INSTRUCTIONS.md" ]; then
-  cat >"$HOME/.agents/INSTRUCTIONS.md" <<'AGENT_INSTR_MD_EOF'
+# The ~/.agents twin: copied only while absent, and only from the managed
+# ~/.coder copy, so a hand-placed skill there is never overwritten (and the
+# chat agent's first-match-wins skill dedupe keeps exactly one live source).
+if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/grok-build-delegation" 2>/dev/null
+  cp "$HOME/.coder/skills/grok-build-delegation/SKILL.md" \
+    "$HOME/.agents/skills/grok-build-delegation/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/AGENTS.md" ]; then
+  cat >"$HOME/.coder/AGENTS.md" <<'AGENT_INSTR_MD_EOF'
 <!-- managed-by: evo-t1-coder-stack — stack-seeded. Delete this file to take the
      instructions over: the workspace boot reseeds it only while it is absent. -->
 
@@ -243,6 +269,13 @@ if [ ! -f "$HOME/.agents/INSTRUCTIONS.md" ]; then
 - Keep secrets out of commands and file contents. Never print `$LITELLM_API_KEY`
   — reference env vars by name, never by value.
 AGENT_INSTR_MD_EOF
+fi
+
+# The ~/.agents twin, same rule as the skill twin above (copied only while
+# absent; the CLI-side spelling of this file keeps its INSTRUCTIONS.md name
+# because that is the name the ~/.agents convention was seeded under).
+if [ ! -f "$HOME/.agents/INSTRUCTIONS.md" ]; then
+  cp "$HOME/.coder/AGENTS.md" "$HOME/.agents/INSTRUCTIONS.md" 2>/dev/null
 fi
 
 # --- Editor settings ----------------------------------------------------------

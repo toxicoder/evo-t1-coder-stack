@@ -8,20 +8,22 @@
 #   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
 #   - build the golden workspace image if it is missing, then push the template
+#   - wire the Coder Agents chat agent with scripts/coder-agents.sh
 #   - check the Spark fleet with scripts/spark-configure.sh and scripts/spark-verify.sh
 #
-# The last three are the steps a fresh clone used to have to be told about in the
+# The last four are the steps a fresh clone used to have to be told about in the
 # README. All run at the very end, after every fast check, so a broken box still
 # fails quickly on the things that cost nothing to test. None is fatal: a build that
 # cannot download, a template push with no Coder session yet, or a Spark that is
 # switched off prints why and lets bootstrap finish its "Next steps" output, because
 # bootstrap is idempotent and re-running it is the normal recovery path.
 #
-#   SKIP_DEV_IMAGE_BUILD=1 ./scripts/bootstrap.sh   # print-only, as before
-#   SKIP_TEMPLATE_PUSH=1   ./scripts/bootstrap.sh   # no coder templates push
-#   SKIP_SPARKS=1          ./scripts/bootstrap.sh   # no Spark fleet check
+#   SKIP_DEV_IMAGE_BUILD=1 bash scripts/bootstrap.sh   # print-only, as before
+#   SKIP_TEMPLATE_PUSH=1   bash scripts/bootstrap.sh   # no coder templates push
+#   SKIP_CODER_AGENTS=1    bash scripts/bootstrap.sh   # no Coder Agents model wiring
+#   SKIP_SPARKS=1          bash scripts/bootstrap.sh   # no Spark fleet check
 #
-# All three are read from the process environment only, never from .env — an .env that
+# All four are read from the process environment only, never from .env — an .env that
 # silently disables provisioning steps would be unreadable to debug.
 set -euo pipefail
 
@@ -444,12 +446,32 @@ fi
 # over loopback, and it pushes both templates, docker-dev first. A non-zero here
 # means at least one of those pushes was attempted and failed.
 if [ -n "${SKIP_TEMPLATE_PUSH:-}" ]; then
-  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run ./scripts/push-template.sh after registering an account."
+  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run bash scripts/push-template.sh after registering an account."
 else
   push_rc=0
-  ./scripts/push-template.sh || push_rc=$?
+  bash scripts/push-template.sh || push_rc=$?
   if [ "${push_rc}" != "0" ]; then
-    echo "warning: template push failed (exit ${push_rc}) — retry the failed one with: ./scripts/push-template.sh [name]"
+    echo "warning: template push failed (exit ${push_rc}) — retry the failed one with: bash scripts/push-template.sh [name]"
+  fi
+fi
+
+# ── Coder Agents wiring ──────────────────────────────────────────────────────
+# The control-plane chat agent cannot answer a single prompt until the deployment
+# has a chat model config, and its subagent lanes (general/explore/compaction/
+# title_generation) default to nothing once pinned lanes are wanted.
+# scripts/coder-agents.sh writes all of that through the server API — the
+# `litellm` provider, the `agent` + `chat` model configs, the four lane pins, and
+# the system-prompt addendum that teaches delegation to the Grok Build CLI. It
+# mints its own short-lived admin token from Postgres (like push-template.sh),
+# skips cleanly while the stack is down or nobody has registered yet, and reuses
+# what is already wired, so this step is safe to re-run beside the push above.
+if [ -n "${SKIP_CODER_AGENTS:-}" ]; then
+  echo "note: Coder Agents wiring skipped (SKIP_CODER_AGENTS is set) — run bash scripts/coder-agents.sh --apply after the stack is up."
+else
+  agents_rc=0
+  bash scripts/coder-agents.sh --apply || agents_rc=$?
+  if [ "${agents_rc}" != "0" ]; then
+    echo "warning: the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: bash scripts/coder-agents.sh --dry-run (once the stack is up), then re-run with --apply."
   fi
 fi
 
@@ -502,9 +524,10 @@ echo "  2. docker compose up -d"
 coder_reach_url="${public_coder_url:-https://<host>:3001}"
 dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
-echo "  4. ./scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
+echo "  4. bash scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
-echo "  6. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS=\"host1 host2 ...\" overrides that; drop --no-tests for the 195k/bench sweep)"
-echo "  7. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
+echo "  6. bash scripts/coder-agents.sh --apply   # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (skipped on a cold box; re-run it after steps 2-3)"
+echo "  7. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS=\"host1 host2 ...\" overrides that; drop --no-tests for the 195k/bench sweep)"
+echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
-echo "  8. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
+echo "  9. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
