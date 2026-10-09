@@ -55,10 +55,10 @@
 # or writes .env beyond the reads below.
 #
 # Usage:
-#   ./scripts/push-template.sh                  # every template in TEMPLATES_DEFAULT
-#   ./scripts/push-template.sh docker-devcontainer
+#   bash scripts/push-template.sh                  # every template in TEMPLATES_DEFAULT
+#   bash scripts/push-template.sh docker-devcontainer
 #                                             # name filter args, for retrying one
-#   SKIP_TEMPLATE_PUSH=1 ./scripts/bootstrap.sh   # bootstrap skips this step
+#   SKIP_TEMPLATE_PUSH=1 bash scripts/bootstrap.sh   # bootstrap skips this step
 # Names are validated against TEMPLATES_DEFAULT before anything touches docker, and
 # an unknown one is a user error: it exits non-zero rather than skipping. Push order
 # is always TEMPLATES_DEFAULT order, whatever the argument order.

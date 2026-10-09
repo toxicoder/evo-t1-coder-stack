@@ -56,9 +56,9 @@
 # shell from the environment, so neither ever lands in a host-visible argv.
 #
 # Usage:
-#   ./scripts/coder-agents.sh                 # apply: write what is missing
-#   ./scripts/coder-agents.sh --dry-run       # print the intended end state only
-#   SKIP_CODER_AGENTS=1 ./scripts/bootstrap.sh   # bootstrap skips this step
+#   bash scripts/coder-agents.sh                 # apply: write what is missing
+#   bash scripts/coder-agents.sh --dry-run       # print the intended end state only
+#   SKIP_CODER_AGENTS=1 bash scripts/bootstrap.sh   # bootstrap skips this step
 # Overrides (rare; each exists for a stack that renamed something in compose):
 #   CODER_CONTAINER_SERVICE=coder    compose service holding the server
 #   CODER_DB_SERVICE=db              compose service holding Postgres
