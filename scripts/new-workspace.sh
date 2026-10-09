@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Create a Coder workspace for one git repository, in one command.
+# shellcheck shell=bash
+#
+# ## new-workspace.sh — Create a Coder workspace for one git repository, in one command.
 #
 # Two things are decided here, in this order.
 #
@@ -75,66 +77,69 @@
 # person running this script: a private repository needs git credentials on this
 # host (an SSH agent, or ~/.git-credentials) and fails with a warning without
 # them, never silently.
+#
+# Safety:
+#   - Nothing here mints, reads, prints or stores a credential: an existing token
+#     reaches the CLI by name, never by value, so it stays out of argv (`ps`) and
+#     out of any log.
+#   - Not being able to create anything — no coder CLI, or one that is logged out —
+#     prints the manual route and exits 0. That is a "not yet" state, not an error,
+#     and re-running this script is always safe.
+#   - The probe clone is --depth 1 --no-checkout under a mktemp -d tree that the
+#     EXIT trap removes, so no copy of the repository is left on disk.
+
 set -euo pipefail
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
+# SELF_DIR, not pwd: this script never cds, and the seam must be findable however
+# it is invoked (bash scripts/new-workspace.sh, ./scripts/…, from any cwd).
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# die, first_line and has_tool come from the shared seam, byte-identical to the
+# copies that used to live here. log and note stay local on purpose: the seam's
+# versions move prose to stderr under an inherited JSON_MODE, and this script has
+# no --json mode to earn that.
+# shellcheck source=lib/common.sh disable=SC1091
+source "${SELF_DIR}/lib/common.sh"
+# The name/folder derivations and the probe clone live in lib/workspace.sh, which
+# is pure: sourcing it creates no workspace, runs no clone and writes no file.
+# shellcheck source=lib/workspace.sh disable=SC1091
+source "${SELF_DIR}/lib/workspace.sh"
+
+# @function log
+# Print one status line on stdout — this script has no --json mode, so nothing
+# here ever moves prose to stderr.
+# Globals:
+#   None
+# Arguments:
+#   $* - text to print
+# Outputs:
+#   The text on stdout
+# Returns:
+#   0
 log() { printf '%s\n' "$*"; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+# @function note
+# Print one line of soft commentary, never a failure.
+# Globals:
+#   None
+# Arguments:
+#   $* - note text, with the "note: " prefix added
+# Outputs:
+#   "note: ..." on stdout
+# Returns:
+#   0
 note() { printf 'note: %s\n' "$*"; }
 
-first_line() {
-  # $1 = text; prints its first non-blank line, so a tool's own complaint can be
-  # quoted without dumping its whole stderr into this script's output. The
-  # `|| true` is load-bearing: pipefail makes an all-blank input (grep exits 1)
-  # abort the caller, and every caller below reads a command substitution.
-  printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | sed -n '1p' || true
-}
-
-sanitize_leaf() {
-  # $1 = text; lowercase it, map every character outside [a-z0-9-] to "-",
-  # collapse those runs, and trim the ends. tr -c works byte by byte, so a
-  # multi-byte character becomes one run of dashes rather than one dash per byte.
-  printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9-' '-' \
-    | sed -e 's/--*-/-/g' -e 's/^-//' -e 's/-$//'
-}
-
-leaf_of_url() {
-  # $1 = clone URL or local path; prints the lowercase leaf used for the
-  # workspace NAME (Coder names are lowercase; see name_from_url and
-  # sanitize_leaf). The clone FOLDER keeps the source case — that is derived by
-  # clone_folder_of_url, because the templates re-derive it with case intact.
-  local leaf
-  leaf="$(printf '%s' "$1" | tr '/' '\n' | grep -v '^[[:space:]]*$' | tail -n 1)"
-  leaf="$(printf '%s' "$leaf" | sed -e 's|?.*$||' -e 's|#.*$||' -e 's|\.git$||')"
-  sanitize_leaf "$leaf"
-}
-
-name_from_url() {
-  # $1 = clone URL; prints the workspace name to use: leaf_of_url plus the two
-  # rules Coder's own name check needs — start with a letter, stay under 40.
-  local leaf
-  leaf="$(leaf_of_url "$1")"
-  [ -n "$leaf" ] || leaf="repo"
-  case "$leaf" in [a-z]*) ;; *) leaf="x${leaf}" ;; esac
-  printf '%s' "$leaf" | cut -c1-40 | sed -e 's/-$//'
-}
-
-clone_folder_of_url() {
-  # $1 = clone URL or local path; prints the folder the TEMPLATE will clone into,
-  # case kept intact — an exact mirror of the templates' repo_folder re-derivation
-  # (take the last "/" segment, drop a query/fragment and a trailing ".git", map
-  # every character outside [A-Za-z0-9._-] to "-", and fall back to "repo" when
-  # that leaves no leading alphanumeric). Used only to print the clone path; the
-  # workspace NAME uses the lowercase leaf_of_url, which is why this exists
-  # separately — printing "…/imagesharp" for a repo cloned into "ImageSharp"
-  # would send someone looking for a folder that does not exist.
-  local leaf
-  leaf="$(printf '%s' "$1" | tr '/' '\n' | grep -v '^[[:space:]]*$' | tail -n 1)"
-  leaf="$(printf '%s' "$leaf" | sed -e 's|?.*$||' -e 's|#.*$||' -e 's|\.git$||')"
-  leaf="$(printf '%s' "$leaf" | tr -c 'A-Za-z0-9._-' '-')"
-  if printf '%s' "$leaf" | grep -qE '^[A-Za-z0-9]'; then printf '%s' "$leaf"; else printf 'repo'; fi
-}
-
+# @function usage
+# Print this script's own help — the same flag list as the header block above.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   The help text on stdout
+# Returns:
+#   0
 usage() {
   cat <<'EOF'
 usage: new-workspace.sh [options] <git-url> [workspace-name]
@@ -205,8 +210,8 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-[ "${#positional[@]}" -le 2 ] \
-  || die "expected <git-url> and at most one workspace name, got ${#positional[@]} arguments (see --help)"
+[ "${#positional[@]}" -le 2 ] ||
+  die "expected <git-url> and at most one workspace name, got ${#positional[@]} arguments (see --help)"
 URL="${positional[0]-}"
 NAME_FORCED="${positional[1]-}"
 
@@ -276,6 +281,16 @@ if [ -z "$WORK" ] || [ ! -d "$WORK" ]; then
   rm -rf -- "$WORK"
   mkdir -p -- "$WORK"
 fi
+# @function cleanup
+# Delete this run's temporary tree, if it still exists.
+# Globals:
+#   WORK (the temporary directory this script made)
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0
 cleanup() {
   # Quoted in full, including the directory itself: a temp path with a space in it
   # is a working directory here, not a quoting accident.
@@ -293,35 +308,18 @@ CLONE="${WORK}/repo"
 DC_FOUND=0
 PROBE_STATE="skipped (a --plain/--dind/--template choice decided the template already)"
 
-probe_repo() {
-  # $1 = clone source, $2 = where to put it. Returns 0 when a dev container is
-  # tracked, and non-zero for "could not check" (a failed clone or a failed
-  # ls-tree) versus 3 for "checked, nothing found". --filter=blob:none is
-  # deliberately absent: it is not honoured by older servers, and a private
-  # Gitea on the LAN is where it would be tried.
-  local src="$1" dst="$2" listing rc=0
-  if ! git -C "${WORK}" clone --quiet --depth 1 --no-checkout --single-branch \
-      -- "$src" "$dst" 2>"${WORK}/probe.err"; then
-    return 1
-  fi
-  listing="$(git -C "$dst" ls-tree -r --name-only HEAD 2>>"${WORK}/probe.err")" || rc=$?
-  if [ "$rc" != 0 ]; then
-    return 2
-  fi
-  if printf '%s\n' "$listing" | grep -qE \
-    '(^|/)\.devcontainer/|(^|/)\.github/devcontainers/|(^|/)devcontainer\.(json|yml)$'; then
-    return 0
-  fi
-  return 3
-}
+# probe_repo (lib/workspace.sh) clones <src> into <dst> under the temporary
+# directory and lists what it tracks. It returns 0 when a dev container is
+# tracked, 3 for "checked, nothing found", and 1 or 2 for "could not check" (a
+# failed clone or a failed ls-tree) — the last of which the case below reports.
 
 if [ "$PROBE_SKIPPED" = 0 ]; then
-  if ! command -v git >/dev/null 2>&1; then
+  if ! has_tool git; then
     PROBE_STATE="probe skipped: git is not installed on this host"
     note "git is not installed here, so the repository cannot be probed — assuming no dev container (docker-dev), which clones inside the workspace anyway; install git and re-run if that assumption matters"
   else
     probe_rc=0
-    probe_repo "$URL" "${CLONE}" || probe_rc=$?
+    probe_repo "${WORK}" "$URL" "${CLONE}" || probe_rc=$?
     case "$probe_rc" in
       0)
         DC_FOUND=1
@@ -403,7 +401,7 @@ fi
 log ""
 log "creating workspace '${NAME}' (build runs in the background — --no-wait; watch it with: coder ls, coder logs ${NAME})"
 create_rc=0
-if ! command -v coder >/dev/null 2>&1; then
+if ! has_tool coder; then
   note "no coder CLI on PATH — printing the manual route instead"
   create_rc=1
 elif [ -n "${CODER_SESSION_TOKEN:-}" ]; then
@@ -411,9 +409,9 @@ elif [ -n "${CODER_SESSION_TOKEN:-}" ]; then
     note "CODER_SESSION_TOKEN is set but CODER_URL is not, so the CLI would dial whatever login URL you last used — that is almost never what this wants"
     create_rc=1
   else
-    log "\$ coder create ... (CODER_URL=\${CODER_URL} with the token by name, not by value)"
+    log '$ coder create ... (CODER_URL=${CODER_URL} with the token by name, not by value)'
     if ! CODER_URL="$CODER_URL" CODER_SESSION_TOKEN="$CODER_SESSION_TOKEN" \
-        coder create -t "$TEMPLATE_CHOSEN" "${params[@]}" "$NAME"; then
+      coder create -t "$TEMPLATE_CHOSEN" "${params[@]}" "$NAME"; then
       create_rc=1
     fi
   fi
