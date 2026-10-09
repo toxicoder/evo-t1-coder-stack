@@ -64,23 +64,47 @@
 #
 # The same object is written to sparks/<host>.jsonl, one per host: gitignored
 # generated state holding this run's answer, and printed to stdout with --json as well,
+# ## spark-verify.sh — check the Spark fleet against the serving contract
 # one object per host, for jq or for a dashboard.
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# @function log
+# Print one status line. Spark scripts send it to stderr when --json is set.
+# Globals:
+#   json (Spark scripts; empty means stdout)
+# Arguments:
+#   $* - text to print
+# Outputs:
+#   The text on stdout, or stderr when json is set
+# Returns:
+#   0
 log() {
   # With --json, stdout stays exactly one JSON object per host: every prose line goes to
   # stderr instead, so `spark-verify.sh --json | jq` parses and `2>/dev/null` silences
   # the commentary without losing it.
   if [ -n "${json:-}" ]; then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi
 }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# @function die
+# Print an error on stderr and exit 1.
+# Globals:
+#   None
+# Arguments:
+#   $* - error text, without the "error: " prefix
+# Outputs:
+#   "error: ..." on stderr
+# Returns:
+#   Does not return; exits 1
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
 
 # The fleet's contract, as facts to CHECK. Nothing here is ever written anywhere: use
 # scripts/spark-configure.sh --apply to change what a box actually runs with.
-JSON_ESCAPE_SED='s/["\\]/\\&/g'   # one sed program, quoted: escape \ and " in one pass
+JSON_ESCAPE_SED='s/["\\]/\\&/g' # one sed program, quoted: escape \ and " in one pass
 model_id="Qwen3.8-Flash-Next"
 parallel_want=5
 context_want=262144
@@ -193,7 +217,7 @@ if [ "${#hosts[@]}" -eq 0 ]; then
         hosts+=("${host}")
       done
     else
-      log "note: no host given and SPARK_HOSTS is not set or empty, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS=\"host1 host2 ...\" in the environment."
+      log 'note: no host given and SPARK_HOSTS is not set or empty, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
       hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
     fi
   fi
@@ -233,6 +257,16 @@ trap 'rm -f "${work}"/*' EXIT
 # complaint can be quoted without its whole stack trace. The `|| true` is load-bearing:
 # pipefail makes an all-blank input abort the caller, and every caller is an assignment
 # under `set -e`.
+# @function first_line
+# Print the first non-blank line of a block of text.
+# Globals:
+#   None
+# Arguments:
+#   $1 - text, which may be empty or all blank
+# Outputs:
+#   That line, or nothing; an all-blank input does not abort the caller
+# Returns:
+#   0
 first_line() {
   printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | sed -n '1p' || true
 }
@@ -243,6 +277,16 @@ first_line() {
 # absence, never as a match, which is the difference between "this box was not checked"
 # and "this box agrees with the other two". Read with sed and never sourced, so a
 # truncated or hostile answer cannot name a variable and supply the command filling it.
+# @function report_get
+# Read one key from a key=value report. Empty and NOTSET use the fallback.
+# Globals:
+#   None
+# Arguments:
+#   $1 - key; $2 - report file; $3 - fallback, optional
+# Outputs:
+#   The value or the fallback
+# Returns:
+#   0
 report_get() {
   local value=""
   if [ -s "$2" ]; then
@@ -254,6 +298,16 @@ report_get() {
   esac
 }
 
+# @function fact_value
+# Read one fact gathered for one host.
+# Globals:
+#   work, report_get
+# Arguments:
+#   $1 - host; $2 - fact name
+# Outputs:
+#   The fact value, or nothing when it was never measured
+# Returns:
+#   0
 fact_value() {
   report_get "$2" "${work}/${1}.facts"
 }
@@ -262,6 +316,16 @@ fact_value() {
 # a parse error in it must not be able to abort this script. Only the three
 # SPARKn_OPENAI_URL routing URLs are read here (the default host list above strips the
 # same keys plus the Ollama URLs), and only to compare them with each other.
+# @function env_get
+# Read the last assignment of one key from .env without sourcing the file.
+# Globals:
+#   None
+# Arguments:
+#   $1 - key name
+# Outputs:
+#   The value with one layer of wrapping quotes removed, or nothing
+# Returns:
+#   0
 env_get() {
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
 }
@@ -269,6 +333,16 @@ env_get() {
 # json_value / json_escape: keep --json one parseable object per host. A check that
 # never ran prints null rather than a number that was never taken, and a remote tool's
 # reply is stripped of the delimiters it could otherwise close.
+# @function json_value
+# Print one JSON scalar: null when empty, a bare integer, or a quoted string.
+# Globals:
+#   None
+# Arguments:
+#   $1 - value, optional
+# Outputs:
+#   null, a bare integer, or a quoted string
+# Returns:
+#   0
 json_value() {
   if [ "$#" -lt 1 ] || [ -z "$1" ]; then
     printf 'null'
@@ -280,6 +354,16 @@ json_value() {
   esac
 }
 
+# @function json_escape
+# Escape text so it can sit inside one JSON string.
+# Globals:
+#   JSON_ESCAPE_SED when this copy clips remote replies
+# Arguments:
+#   $1 - raw text
+# Outputs:
+#   Escaped text. The coder-agents copy also turns newlines into \\n.
+# Returns:
+#   0
 json_escape() {
   local trimmed
   trimmed="$(printf '%s' "$1" | sed -E "${JSON_ESCAPE_SED}" | tr -d '\n\r')"
@@ -290,6 +374,16 @@ json_escape() {
 # result here and not an error: an empty body stays distinguishable from a body that
 # says something, which is what lets a box with no server on it be a skip and not a
 # failure.
+# @function probe_http
+# Print the body of one capped HTTP GET, or nothing when it does not answer.
+# Globals:
+#   probe_tool or has_timeout and http_cap, depending on the caller
+# Arguments:
+#   Spark entry scripts: $1 - URL. spark.sh: $1 - cap seconds, $2 - URL.
+# Outputs:
+#   The body, or nothing
+# Returns:
+#   0
 probe_http() {
   # $1 = URL, printed on stdout. One command substitution per call, and no nested one
   # inside it: the whole file keeps that rule so ssh's argument string stays flat too.
@@ -309,8 +403,28 @@ probe_http() {
 # carries it. It runs under `sh` on the far end, so it stays POSIX: no arrays, no
 # [[, no process substitution. One `key=value` line per fact and `report_end` last, so
 # a truncated answer stops the reader instead of poisoning the checks that read it.
+# @function probe_script
+# Print the remote probe script that one ssh round trip will run.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   The script text on stdout
+# Returns:
+#   0
 probe_script() {
   cat <<'PROBE'
+# @function say
+# Print one key=value line on the remote probe host.
+# Globals:
+#   None
+# Arguments:
+#   $1 - line to print
+# Outputs:
+#   The line on stdout
+# Returns:
+#   0
 say() {
   printf '%s\n' "$1"
 }
@@ -320,6 +434,16 @@ say() {
 # next to start.sh, because that is what a restart would read. Both are read with grep,
 # never sourced: an answer is data, and a config.sh that had been edited into something
 # hostile must not be executed by this check.
+# @function fact
+# On the remote host, print what key $1 is set to, or NOTSET.
+# Globals:
+#   cenv, RECIPE_DIR
+# Arguments:
+#   $1 - key
+# Outputs:
+#   The value
+# Returns:
+#   0
 fact() {
   key="$1"
   value=""
@@ -342,6 +466,16 @@ fact() {
 # run_test: run one of the recipe's own probes and print one line — pass or fail plus
 # the first line of whatever it said. A missing script is reported as absent, never
 # guessed at, and none of these four starts a server or restarts one.
+# @function run_test
+# On the remote host, run one recipe probe and print pass or fail.
+# Globals:
+#   RECIPE_DIR, have_timeout, test_cap
+# Arguments:
+#   $1 - probe name; $2... - command to run inside the recipe directory
+# Outputs:
+#   One line: the name, ok or FAIL, and the first line of output
+# Returns:
+#   0
 run_test() {
   name="$1"
   shift
@@ -501,15 +635,17 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     # as one flat body and the per-host body below keeps appending to it.
     # Double quotes, not single: the default recipe dir holds a literal $HOME that has
     # to expand on the far side, and the rest of these are read as paths on the far side.
-    { printf '%s\n' "RECIPE_DIR=\"${recipe_dir}\"" "CONTAINER=\"${container}\"" "RUN_TESTS=\"${tests}\"" "VISION_WANTED=\"${vision}\"" "TEST_CAP=\"${test_cap}\"" "have_timeout=\"${has_timeout}\""; \
-      probe_script; } > "${script_file}"
-    payload="$(base64 < "${script_file}" | tr -d '\n')"
+    {
+      printf '%s\n' "RECIPE_DIR=\"${recipe_dir}\"" "CONTAINER=\"${container}\"" "RUN_TESTS=\"${tests}\"" "VISION_WANTED=\"${vision}\"" "TEST_CAP=\"${test_cap}\"" "have_timeout=\"${has_timeout}\""
+      probe_script
+    } >"${script_file}"
+    payload="$(base64 <"${script_file}" | tr -d '\n')"
     if [ -n "${has_timeout}" ]; then
       ssh_out="$(timeout "${ssh_cap_run}" ssh -n -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-        -o ConnectTimeout=10 -p "${ssh_port}" -- "${target}" "printf '%s' '${payload}' | base64 -d | sh" 2> "${work}/${host}.err")" || report_rc=$?
+        -o ConnectTimeout=10 -p "${ssh_port}" -- "${target}" "printf '%s' '${payload}' | base64 -d | sh" 2>"${work}/${host}.err")" || report_rc=$?
     else
       ssh_out="$(ssh -n -o BatchMode=yes -o StrictHostKeyChecking=accept-new \
-        -o ConnectTimeout=10 -p "${ssh_port}" -- "${target}" "printf '%s' '${payload}' | base64 -d | sh" 2> "${work}/${host}.err")" || report_rc=$?
+        -o ConnectTimeout=10 -p "${ssh_port}" -- "${target}" "printf '%s' '${payload}' | base64 -d | sh" 2>"${work}/${host}.err")" || report_rc=$?
     fi
     if [ "${report_rc}" = "124" ] || [ "${report_rc}" = "143" ]; then
       ssh_note="ssh was cut off after ${ssh_cap_run}s (timeout(1) guard)"
@@ -525,7 +661,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
       [ -n "${ssh_note}" ] || ssh_note="ssh to ${host} answered but did not produce a probe report"
     fi
     if [ -z "${ssh_note}" ]; then
-      printf '%s\n' "${ssh_out}" > "${report}"
+      printf '%s\n' "${ssh_out}" >"${report}"
     fi
   fi
   [ -n "${ssh_note}" ] || ssh_note="no ssh session — probed over the LAN only"
@@ -564,7 +700,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # comparison after the loop has something to compare. A key that was never measured
   # keeps its empty value: that is an absence, and comparing absences is how a check
   # would pass on a fleet where nothing answered.
-  : > "${facts}"
+  : >"${facts}"
   {
     printf 'model_id_seen=%s\n' "${model_seen}"
     printf 'model_served=%s\n' "${model_served}"
@@ -572,13 +708,13 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     printf 'streams_max=%s\n' "${streams_max}"
     printf 'requests_running=%s\n' "${requests_running}"
     printf 'context_length=%s\n' "${context_length}"
-  } >> "${facts}"
+  } >>"${facts}"
   # The three proxy-side URLs come from .env.sample / docker-compose.yml, not from the
   # box: an :8888 that answers on its plain path is a V1OpenAIChatProvider deployment
   # (chat completions), not a /v1/messages one, and the proxy would not say so.
-  printf 'spark1_openai=%s\n' "$(env_get SPARK1_OPENAI_URL)" >> "${facts}"
-  printf 'spark2_openai=%s\n' "$(env_get SPARK2_OPENAI_URL)" >> "${facts}"
-  printf 'spark3_openai=%s\n' "$(env_get SPARK3_OPENAI_URL)" >> "${facts}"
+  printf 'spark1_openai=%s\n' "$(env_get SPARK1_OPENAI_URL)" >>"${facts}"
+  printf 'spark2_openai=%s\n' "$(env_get SPARK2_OPENAI_URL)" >>"${facts}"
+  printf 'spark3_openai=%s\n' "$(env_get SPARK3_OPENAI_URL)" >>"${facts}"
   if [ -s "${report}" ]; then
     {
       printf 'context_pairs=%s\n' "$(report_get context_pairs "${report}")"
@@ -593,7 +729,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
       printf 'needle=%s\n' "$(report_get needle "${report}")"
       printf 'visioncheck=%s\n' "$(report_get visioncheck "${report}")"
       printf 'bench=%s\n' "$(report_get bench "${report}")"
-    } >> "${facts}"
+    } >>"${facts}"
   fi
 
   # ── the verdict ────────────────────────────────────────────────────────────
@@ -677,14 +813,14 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     "$(json_escape "${health_state}")" "$(json_value "${requests_running}")" \
     "$(json_value "${streams_max}")" "$(json_value "${context_length}")" \
     "$(json_escape "${seen_image}")" "$(json_escape "${seen_kv}")" \
-    "$(json_escape "${seen_parallel}")" "$(json_escape "${detail}")" > "${work}/${host}.jsonl"
+    "$(json_escape "${seen_parallel}")" "$(json_escape "${detail}")" >"${work}/${host}.jsonl"
 
   if [ "${json}" = 1 ]; then
     cat "${work}/${host}.jsonl"
   fi
   if ! mkdir -p sparks 2>/dev/null; then
     log "  note: sparks/ could not be created, so ${host}'s result stays on stdout"
-  elif ! cat "${work}/${host}.jsonl" > "sparks/${host}.jsonl" 2>/dev/null; then
+  elif ! cat "${work}/${host}.jsonl" >"sparks/${host}.jsonl" 2>/dev/null; then
     log "  note: ${host}'s result could not be written to sparks/${host}.jsonl (read-only checkout?) — it is still on stdout above"
   fi
 done
@@ -719,7 +855,7 @@ done
 if [ -n "${drift}" ]; then
   log ""
   log "FAIL: the checked boxes do not agree — ${drift}"
-  log "note: mixed images or mixed parallel settings across the boxes is exactly what this check is for, and the proxy cannot see it: they all sit behind one \`agent\` model group with least-busy routing, so requests keep going to the odd box."
+  log 'note: mixed images or mixed parallel settings across the boxes is exactly what this check is for, and the proxy cannot see it: they all sit behind one `agent` model group with least-busy routing, so requests keep going to the odd box.'
   log "note: read the details with ./scripts/spark-configure.sh <host> and write the fleet's values with ./scripts/spark-configure.sh --apply <host> (add --restart to restart a running server), then re-run this script."
   exit 1
 fi
@@ -737,4 +873,3 @@ if [ "${hosts_failed}" != 0 ]; then
   exit 1
 fi
 exit 0
-
