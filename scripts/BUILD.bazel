@@ -1,0 +1,30 @@
+"""Package purpose: Operational shell and the validate orchestrator."""
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:private"])
+
+filegroup(
+    name = "doc_sources",
+    srcs = glob(["**/*.sh"]),
+    visibility = [
+        "//lints:__pkg__",
+        "//tests:__pkg__",
+        "//visibility:public",
+    ],
+)
+
+exports_files(
+    glob(["**/*.sh"]),
+    visibility = [
+        "//lints:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
+
+sh_binary(
+    name = "validate",
+    srcs = ["validate.sh"],
+    data = [":doc_sources"],
+    visibility = ["//visibility:public"],
+)

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#
+# ## build-dev-image.sh — build the local golden Coder workspace image
+#
 # Build the golden Coder workspace image (images/dev/Dockerfile) as
 # evo-t1-dev:latest, taking every version pin from images/dev/tool-versions.env.
 #
@@ -23,25 +26,50 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-ROOT="$(pwd)"
 
 IMAGE_DIR="images/dev"
 DOCKERFILE="${IMAGE_DIR}/Dockerfile"
 VERSIONS="${IMAGE_DIR}/tool-versions.env"
+
+# shellcheck source=lib/image.sh disable=SC1091
+source "scripts/lib/image.sh"
 
 # Defaults so the script still works if .env is unreadable; the build then fails
 # loudly on the missing-ARG check below rather than building something unknown.
 DEV_IMAGE_TAG="${DEV_IMAGE_TAG:-evo-t1-dev:latest}"
 DOCKER="${DOCKER:-docker}"
 
+# @function log
+# Print one status line. Spark scripts send it to stderr when --json is set.
+# Globals:
+#   json (Spark scripts; empty means stdout)
+# Arguments:
+#   $* - text to print
+# Outputs:
+#   The text on stdout, or stderr when json is set
+# Returns:
+#   0
 log() { printf '%s\n' "$*"; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# @function die
+# Print an error on stderr and exit 1.
+# Globals:
+#   None
+# Arguments:
+#   $* - error text, without the "error: " prefix
+# Outputs:
+#   "error: ..." on stderr
+# Returns:
+#   Does not return; exits 1
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
 
 [ -f "${DOCKERFILE}" ] || die "${DOCKERFILE} not found (run this from the repo root)"
 [ -f "${VERSIONS}" ] || die "${VERSIONS} not found — it is the single source of version pins"
 
-command -v "${DOCKER%% *}" >/dev/null 2>&1 \
-  || die "docker not found on PATH (set DOCKER=\"sudo docker\" if only root can talk to the daemon)"
+command -v "${DOCKER%% *}" >/dev/null 2>&1 ||
+  die 'docker not found on PATH (set DOCKER="sudo docker" if only root can talk to the daemon)'
 if ! ${DOCKER} info >/dev/null 2>&1; then
   die "cannot reach the Docker daemon — this script needs docker access; run it with sudo, or add your user to the docker group (then re-login)"
 fi
@@ -66,30 +94,14 @@ set +a
 # A KEY in tool-versions.env with no matching ARG in the Dockerfile would build
 # silently with the Dockerfile's own default — the failure mode this whole design
 # is meant to remove. Checked up front so it costs no build time.
-#
-# The declared set is read out of the Dockerfile itself (ARG stanzas, including
-# backslash-continued lines), so the two files cannot drift apart unnoticed.
-declared="$(awk '
-  /^[[:space:]]*#/ { next }                                  # skip comments
-  /^[[:space:]]*ARG[[:space:]]/ { inblk = 1 }
-  inblk {
-    line = $0
-    sub(/^[[:space:]]*ARG[[:space:]]+/, "", line)
-    sub(/[[:space:]]*\\[[:space:]]*$/, "", line)
-    gsub(/^[[:space:]]+/, "", line)                          # continuation indent
-    split(line, kv, /=/)
-    if (kv[1] ~ /^[A-Z0-9_]+$/) print kv[1]
-    inblk = ($0 ~ /[[:space:]]\\[[:space:]]*$/)               # continue while escaped
-  }
-' "${DOCKERFILE}" | sort -u)"
-
+# dockerfile_arg_names / missing_version_pins (scripts/lib/image.sh) read the
+# ARG stanzas, including backslash-continued lines, so the two files cannot
+# drift apart unnoticed.
 missing=()
 while IFS= read -r key; do
   [ -n "${key}" ] || continue
-  if ! grep -qx "${key}" <<<"${declared}"; then
-    missing+=("${key}")
-  fi
-done < <(grep -oE '^[A-Z0-9_]+=' "${VERSIONS}" | tr -d '=')
+  missing+=("${key}")
+done < <(missing_version_pins "${DOCKERFILE}" "${VERSIONS}")
 
 if [ "${#missing[@]}" -gt 0 ]; then
   printf 'error: these pins have no matching ARG in %s:\n' "${DOCKERFILE}" >&2

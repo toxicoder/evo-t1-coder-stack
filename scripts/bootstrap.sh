@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#
+# ## bootstrap.sh — first-boot prep for the EVO-T1 Coder stack
+#
 # Prepare the EVO-T1 Coder stack for first boot:
 #   - create .env from .env.sample
 #   - generate local secrets (replaces change-me-* placeholders)
@@ -28,7 +31,11 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-ROOT="$(pwd)"
+
+# shellcheck source=lib/common.sh disable=SC1091
+source "scripts/lib/common.sh"
+# shellcheck source=lib/bootstrap.sh disable=SC1091
+source "scripts/lib/bootstrap.sh"
 
 command -v docker >/dev/null 2>&1 || {
   echo "error: docker not found on PATH" >&2
@@ -44,41 +51,17 @@ if [ ! -f .env ]; then
   echo "created .env from .env.sample"
 fi
 
-gen_secret() {
-  openssl rand -hex 16
-}
-
-# BSD sed (macOS) vs GNU sed (Linux) in-place editing.
-sed_inplace() {
-  # $1 = sed script, rest = files
-  local script="$1"
-  shift
-  if sed --version >/dev/null 2>&1; then
-    sed -i "$script" "$@"
-  else
-    sed -i '' "$script" "$@"
-  fi
-}
-
-set_secret() {
-  # $1 = variable name in .env
-  local value
-  value="$(gen_secret)"
-  sed_inplace "s|^${1}=.*|${1}=${value}|" .env
-  echo "generated ${1}"
-}
-
 # A .env written before a variable existed would leave the variable unset, so
 # compose falls back to its inline default (a change-me placeholder) and nothing
 # warns. Append anything missing before the secret rotation below can see it.
 if [ -f .env.sample ]; then
   while IFS= read -r sample_line; do
     case "${sample_line}" in
-      ''|\#*) continue ;;
+      '' | \#*) continue ;;
     esac
     var="${sample_line%%=*}"
     if ! grep -q "^${var}=" .env; then
-      printf '%s\n' "${sample_line}" >> .env
+      printf '%s\n' "${sample_line}" >>.env
       echo "added ${var} to .env"
     fi
   done < <(grep -E '^[A-Z0-9_]+=' .env.sample)
@@ -122,11 +105,11 @@ fi
 # against one address, so derive STACK_LAN_HOST from CODER_ACCESS_URL rather
 # than detecting a second time and risking a split-brain host.
 coder_access_url="$(sed -n 's|^CODER_ACCESS_URL=||p' .env | tail -n 1)"
-lan_host="$(printf '%s' "${coder_access_url}" \
-  | sed -E 's|^https?://||; s|[:/].*$||')"
+lan_host="$(printf '%s' "${coder_access_url}" |
+  sed -E 's|^https?://||; s|[:/].*$||')"
 if [ -n "${lan_host}" ] && [ "${lan_host}" != "YOUR_LAN_IP" ]; then
   if ! grep -q "^STACK_LAN_HOST=" .env; then
-    printf '\n# Host the browser uses to reach the Homepage dashboard.\nSTACK_LAN_HOST=\n' >> .env
+    printf '\n# Host the browser uses to reach the Homepage dashboard.\nSTACK_LAN_HOST=\n' >>.env
   fi
   if ! grep -q "^STACK_LAN_HOST=." .env; then
     sed_inplace "s|^STACK_LAN_HOST=.*|STACK_LAN_HOST=${lan_host}|" .env
@@ -137,22 +120,6 @@ fi
 # bootstrap-managed keys are created on first use and never removed, so one
 # upsert covers both "older .env predates this key" and "value changed": write
 # only when it actually differs, which keeps a repeat run silent.
-upsert_env() {
-  # $1 = variable name, $2 = value (empty clears the key so compose's `:-`
-  # fallback applies). Values are hostnames/URLs, so `|` is a safe sed delimiter.
-  local key="$1" value="$2" current
-  if ! grep -q "^${key}=" .env; then
-    printf '%s=%s\n' "${key}" "${value}" >> .env
-    echo "set ${key}=${value}"
-    return 0
-  fi
-  current="$(sed -n "s|^${key}=||p" .env | tail -n 1)"
-  if [ "${current}" != "${value}" ]; then
-    sed_inplace "s|^${key}=.*|${key}=${value}|" .env
-    echo "set ${key}=${value}"
-  fi
-}
-
 # --- Public mode -----------------------------------------------------------
 # STACK_PUBLIC_HOSTS lists the names the main Traefik on another machine holds
 # TLS for; it forwards plain HTTP to this box's router container
@@ -182,16 +149,6 @@ raw_public_hosts="$(sed -n 's|^STACK_PUBLIC_HOSTS=||p' .env | tail -n 1)"
 
 while IFS= read -r entry; do
   [ -n "${entry}" ] || continue
-  case "${entry}" in
-    *:*)
-      echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names, not URLs"
-      continue
-      ;;
-    */*|*[!A-Za-z0-9.-]*)
-      echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names"
-      continue
-      ;;
-  esac
   # Dashboard is the fallback: the bare zone apex or a `dashboard-` name, i.e.
   # anything without a service prefix. Each service matches its prefix joined by
   # HYPHEN or DOT. The hyphenated form is the one to use — a wildcard cert at the
@@ -199,16 +156,27 @@ while IFS= read -r entry; do
   # cert and the browser aborts the handshake before Traefik is reached. The
   # dotted patterns stay so an .env written before the rename still classifies
   # each entry, rather than every name falling through to the dashboard branch
-  # and last-one-win.
-  case "${entry}" in
-    coder-*|coder.*) public_coder_url="https://${entry}" ;;
-    kasm-*|kasm.*) public_kasm_url="https://${entry}" ;;
-    litellm-*|litellm.*) public_litellm_url="https://${entry}" ;;
-    *) public_dashboard_url="https://${entry}" ;;
+  # and last-one-win. classify_public_entry owns that case table.
+  read -r kind role url < <(classify_public_entry "${entry}")
+  case "${kind}" in
+    skip)
+      if [ "${role}" = "url" ]; then
+        echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names, not URLs"
+      else
+        echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names"
+      fi
+      continue
+      ;;
+  esac
+  case "${role}" in
+    coder) public_coder_url="${url}" ;;
+    kasm) public_kasm_url="${url}" ;;
+    litellm) public_litellm_url="${url}" ;;
+    *) public_dashboard_url="${url}" ;;
   esac
   public_entries+=("${entry}")
-done < <(printf '%s\n' "${raw_public_hosts}" | tr -d '\r' | tr ',' '\n' \
-           | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
+done < <(printf '%s\n' "${raw_public_hosts}" | tr -d '\r' | tr ',' '\n' |
+  sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')
 
 # join the accepted entries back into one comma-separated value, so the list
 # written to .env is exactly the list the cert SANs below are built from.
@@ -284,8 +252,8 @@ key_file="proxy/certs/homepage.key"
 cert_needs_issue=0
 if [ ! -f "${cert_file}" ] || [ ! -f "${key_file}" ]; then
   cert_needs_issue=1
-elif ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null \
-    | grep -q "IP Address:${stack_lan_host}"; then
+elif ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null |
+  grep -q "IP Address:${stack_lan_host}"; then
   cert_needs_issue=1
 fi
 if [ "${cert_needs_issue}" = "1" ] && [ -n "${stack_lan_host}" ]; then
@@ -312,8 +280,8 @@ key_file="proxy/certs/coder.key"
 cert_needs_issue=0
 if [ ! -f "${cert_file}" ] || [ ! -f "${key_file}" ]; then
   cert_needs_issue=1
-elif ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null \
-    | grep -q "IP Address:${stack_lan_host}"; then
+elif ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null |
+  grep -q "IP Address:${stack_lan_host}"; then
   cert_needs_issue=1
 fi
 # Same bug class one step later: a cert issued before public mode, or before a
@@ -322,8 +290,8 @@ fi
 # missing from the existing pair.
 if [ "${cert_needs_issue}" = "0" ]; then
   for entry in ${public_entries[@]+"${public_entries[@]}"}; do
-    if ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null \
-         | grep -q "DNS:${entry}"; then
+    if ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null |
+      grep -q "DNS:${entry}"; then
       cert_needs_issue=1
       break
     fi
@@ -355,18 +323,12 @@ if [ -n "${docker_gid}" ]; then
   if grep -q "^DOCKER_GID=" .env; then
     sed_inplace "s|^DOCKER_GID=.*|DOCKER_GID=${docker_gid}|" .env
   else
-    printf '\n# GID of the host docker group, for the coder container socket access.\nDOCKER_GID=%s\n' "${docker_gid}" >> .env
+    printf '\n# GID of the host docker group, for the coder container socket access.\nDOCKER_GID=%s\n' "${docker_gid}" >>.env
   fi
   echo "set DOCKER_GID=${docker_gid}"
 else
   echo "warning: could not detect the docker group GID; set DOCKER_GID in .env if workspace creation fails with 'Cannot connect to the Docker daemon'."
 fi
-
-# Read .env by sed rather than sourcing it: the file is user-editable, and with
-# `set -e` a parse error or a stray command substitution there aborts bootstrap.
-env_get() {
-  sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
-}
 
 # Agent mode (Grok Build, Cline, Roo) needs structured tool calls, and the Arc
 # Qwen2.5-Coder weights cannot produce them: they return the call as plain text
@@ -375,21 +337,9 @@ env_get() {
 # the first agent session fail silently.
 # (The Arc `chat` alias — qwen2.5:7b — does emit real tool calls, so it is the
 # offline substitute when no Spark answers.)
-probe_agent_endpoint() {
-  local name="$1" url="$2"
-  [ -n "${url}" ] || { echo "warning: ${name} is empty — the agent aliases cannot route."; return 0; }
-  local host
-  host="$(printf '%s' "${url}" | sed -E 's|^https?://||; s|/.*$||')"
-  if curl -fsS -m 5 -o /dev/null "http://${host}/v1/models" 2>/dev/null \
-     || curl -fsS -m 5 -o /dev/null "${url}/models" 2>/dev/null; then
-    echo "agent endpoint reachable: ${host}"
-  else
-    echo "warning: no agent endpoint answered at ${host} — the agent aliases fall back to the Arc coder/coder-fast aliases, which return tool calls as plain text. Start a Spark inference server, set ${name} in .env, or point GROK_DEFAULT_MODEL at chat (qwen2.5:7b does emit tool calls)."
-  fi
-}
-probe_agent_endpoint "SPARK1_OPENAI_URL" "$(env_get SPARK1_OPENAI_URL)"
-probe_agent_endpoint "SPARK2_OPENAI_URL" "$(env_get SPARK2_OPENAI_URL)"
-probe_agent_endpoint "SPARK3_OPENAI_URL" "$(env_get SPARK3_OPENAI_URL)"
+probe_agent_endpoint "SPARK1_OPENAI_URL" "$(env_get .env SPARK1_OPENAI_URL)"
+probe_agent_endpoint "SPARK2_OPENAI_URL" "$(env_get .env SPARK2_OPENAI_URL)"
+probe_agent_endpoint "SPARK3_OPENAI_URL" "$(env_get .env SPARK3_OPENAI_URL)"
 
 # ── Golden workspace image ───────────────────────────────────────────────────
 # The workspace template's default image is built locally, not pulled: the Coder
@@ -401,7 +351,7 @@ probe_agent_endpoint "SPARK3_OPENAI_URL" "$(env_get SPARK3_OPENAI_URL)"
 # takes many minutes — anything cheaper should have already failed loudly. A failure
 # stays advisory: bootstrap is the script you re-run to recover, so aborting here
 # would cost the "Next steps" output below.
-dev_image="$(env_get DEV_IMAGE)"
+dev_image="$(env_get .env DEV_IMAGE)"
 dev_image="${dev_image:-evo-t1-dev:latest}"
 if docker image inspect "${dev_image}" >/dev/null 2>&1; then
   echo "workspace image ${dev_image} is present ($(docker image inspect --format '{{.Size}}' "${dev_image}" | awk '{printf "%.0f MB", $1/1024/1024}'))"
@@ -424,9 +374,7 @@ fi
 # pull has to happen here instead. Without it, enabling the toggle on a fresh box
 # fails the plan with "did not find docker image 'docker:29.8.1-dind'". Advisory
 # on failure: DinD is opt-in, so an offline box still gets a working stack.
-DIND_IMAGE="$(sed -nE 's/^[[:space:]]*dind_image[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' \
-  templates/docker-dev/main.tf | head -n 1)"
-DIND_IMAGE="${DIND_IMAGE:-docker:29.8.1-dind}"
+DIND_IMAGE="$(dind_image_ref templates/docker-dev/main.tf)"
 if docker image inspect "${DIND_IMAGE}" >/dev/null 2>&1; then
   echo "docker-in-docker image ${DIND_IMAGE} is present"
 else
@@ -527,7 +475,7 @@ echo "  3. Open ${coder_reach_url} and register the first account (it becomes th
 echo "  4. bash scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
 echo "  6. bash scripts/coder-agents.sh --apply   # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (skipped on a cold box; re-run it after steps 2-3)"
-echo "  7. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS=\"host1 host2 ...\" overrides that; drop --no-tests for the 195k/bench sweep)"
+echo '  7. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep)'
 echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
 echo "  9. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
