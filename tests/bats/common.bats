@@ -153,6 +153,10 @@ line two")"; b="$(first_line "   ")"; printf "[%s][%s]" "${a}" "${b}"'
   # has_tool must report absence and capped_run must exec the tool directly.
   plain_bin="$(mktemp -d "${BATS_TEST_TMPDIR}/plain.XXXXXX")"
   cp "${STUB_BIN_DIR}/curl" "${plain_bin}/curl"
+  # The checkout may store the stub as mode 100644. command -v still finds it,
+  # but the kernel will not exec it, so the uncapped path would return 126
+  # instead of the stub's 22.
+  chmod 755 "${plain_bin}/curl"
   ln -s "$(command -v bash)" "${plain_bin}/bash"
   ln -s "$(command -v env)" "${plain_bin}/env"
   run --separate-stderr bash -c "export PATH='${plain_bin}'; export STUB_LOG='${STUB_LOG}'; source '${REPO_ROOT}/scripts/lib/common.sh'; if has_tool timeout; then exit 7; fi; capped_run 5 curl -s http://10.255.255.1:11434/version"

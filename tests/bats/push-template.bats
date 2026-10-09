@@ -260,6 +260,9 @@ logs_absent() {
   psql_token_variant
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
+  if [ "${status}" -ne 0 ]; then
+    printf 'status=%s\nstdout<<%s>>\nstderr<<%s>>\n' "${status}" "${output}" "${stderr}"
+  fi
   [ "${status}" -eq 0 ]
   [[ ${output} == *"litellm_key not passed (LITELLM_MASTER_KEY in .env is empty or still the sample placeholder)"* ]]
   logs_absent 'change-me-litellm-zzz9' "${STUB_LOG}/docker.log"

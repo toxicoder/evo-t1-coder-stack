@@ -110,4 +110,4 @@ if [[ ! -e ${BATS_TEST_FILES[0]} ]]; then
   exit 1
 fi
 
-exec "${BATS_BIN}" "${BATS_TEST_FILES[@]}"
+exec "${BATS_BIN}" --print-output-on-failure "${BATS_TEST_FILES[@]}"
