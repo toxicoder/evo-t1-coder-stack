@@ -153,6 +153,18 @@ Then:
 5. Kasm: on first boot open `http://<host>:3000`, run the install wizard once, then use `http://<host>:4443` for the Kasm UI.
 6. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
 
+## Develop
+
+Bazelisk is how changes are tested. `make test` and `make validate` call the same targets.
+
+```sh
+bazelisk test //:test-fast
+bazelisk test //:lint --test_tag_filters=manual
+bazelisk run //:validate
+```
+
+`//:test-fast` is hermetic Bats plus two gates: every function under `scripts/` is named by a test, and every function has a `# @function` docstring. It does not build the golden image or start Compose. Conventions: [docs/project-conventions.md](docs/project-conventions.md). Bazel itself: [docs/contribute/building-with-bazel.md](docs/contribute/building-with-bazel.md).
+
 ## Ports
 
 | Host port | Service | Purpose |
