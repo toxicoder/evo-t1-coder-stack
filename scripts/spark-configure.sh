@@ -3,17 +3,17 @@
 # with --apply, write the per-host override file that keeps the three boxes identical.
 #
 # Usage:
-#   ./scripts/spark-configure.sh                          # assert-only, placeholder trio
+#   ./scripts/spark-configure.sh                          # assert-only, the fleet named in .env
 #   ./scripts/spark-configure.sh spark-1.lan              # assert-only, one host
 #   ./scripts/spark-configure.sh --json spark-1.lan       # one JSON object per host
 #   ./scripts/spark-configure.sh --apply 192.168.64.10    # write sparks/192.168.64.10.env
 #   ./scripts/spark-configure.sh --apply --restart <host> # and restart a RUNNING server
 #   SPARK_CFG_PARALLEL=4 ./scripts/spark-configure.sh --apply <host>
 #
-# With no host arguments the placeholder trio spark-1.lan spark-2.lan spark-3.lan is
-# used, exactly as .env.sample and docker-compose.yml carry them. Those three names
-# are placeholders and never resolve: pass your real Spark hostnames or IPs, or set
-# SPARK_HOSTS="host1 host2 ..." in the process environment.
+# With no host arguments the fleet named in .env is used — the host parts of the
+# SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL keys — falling back to the placeholder trio
+# spark-1.lan spark-2.lan spark-3.lan, whose names do not resolve. Pass real hostnames
+# or IPs, or set SPARK_HOSTS="host1 host2 ..." in the process environment, to override.
 #
 # WHY one override file per host: three boxes behind one `agent` model group must stay
 # identical in everything that affects outputs — same parallel stream count, same
@@ -30,9 +30,9 @@
 # stays pristine, so `git -C <clone> status` on the Spark still reads clean, and a
 # recipe bump cannot silently rewrite one box's stream count behind the fleet's back.
 #
-# Values come from process env SPARK_CFG_<NAME> (process environment only, never from
-# the repo-root .env, which stays user-editable and is not read here) or from an
-# existing sparks/<host>.env, which is this script's own output.
+# Values come from process env SPARK_CFG_<NAME> (process environment only — the
+# repo-root .env is read only to name the default HOST list, never for values) or
+# from an existing sparks/<host>.env, which is this script's own output.
 #
 # No interactive prompts and no reboots: assert-only is the default mode, --apply
 # writes, and --restart (which implies --apply) only ever restarts a server that is
@@ -161,8 +161,35 @@ if [ "${#hosts[@]}" -eq 0 ]; then
       hosts+=("${host}")
     done
   else
-    log "note: no host given and SPARK_HOSTS is not set — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS=\"host1 host2 ...\" in the environment."
-    hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
+    # No host list from the caller: check the fleet this checkout already points at.
+    # The per-Spark URL keys in .env name its addresses as far as the stack is
+    # concerned — LiteLLM routes to the SPARKn_OPENAI_URL ones and the dashboard
+    # probes them — so the host part of each (scheme and port stripped, deduplicated)
+    # becomes the default list. A .env filled with real Spark IPs therefore gets
+    # those boxes checked with nothing to retype; a .env left on the shipped
+    # spark-<n>.lan placeholders (or with no Spark URLs at all) still checks the
+    # placeholder trio, whose names do not resolve — checked and skipped as a
+    # "not yet" state, exactly as before.
+    derived_hosts=""
+    if [ -f .env ]; then
+      for key in SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
+        url="$(sed -n "s|^${key}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' | tr -d ' \r' || true)"
+        [ -n "${url}" ] || continue
+        host="$(printf '%s' "${url}" | sed -E 's|^https?://||; s|[:/].*$||')"
+        case "${host}" in '' | *[!A-Za-z0-9.-]*) continue ;; esac
+        case " ${derived_hosts} " in *" ${host} "*) continue ;; esac
+        derived_hosts="${derived_hosts} ${host}"
+      done
+    fi
+    if [ -n "${derived_hosts}" ]; then
+      log "note: no host given and SPARK_HOSTS is not set — checking the hosts named by the SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL keys in .env:${derived_hosts}"
+      for host in ${derived_hosts}; do
+        hosts+=("${host}")
+      done
+    else
+      log "note: no host given and SPARK_HOSTS is not set, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS=\"host1 host2 ...\" in the environment."
+      hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
+    fi
   fi
 fi
 
@@ -183,7 +210,8 @@ fi
 
 # One scratch directory per run, for the per-host probe script and its response.
 # Neither script nor response is ever a shell argument: each host gets its own pair of
-# files under this directory, and nothing here reads or writes the repo-root .env.
+# files under this directory, and the repo-root .env is read above only to name the
+# default host list — never written, and never read for config values.
 work="$(mktemp -d 2>/dev/null || true)"
 [ -n "${work}" ] || die "could not create a scratch directory for the probe scripts"
 trap 'rm -f "${work}"/*' EXIT
@@ -241,7 +269,8 @@ first_line() {
 # want_value: the value this fleet wants for key $1 on this host, from the per-host
 # override file this script wrote on an earlier run when there is one (that is why a
 # second --apply stays silent), else from process env SPARK_CFG_<NAME>, else the
-# default in $keys. The repo-root .env is none of those sources and is not read.
+# default in $keys. The repo-root .env is none of those sources (it is read above
+# only to name the default host list, never for values like these).
 want_value() {
   # $1 = key, $2 = per-host override file (may be missing)
   local key="$1" file="${2:-}" value="" entry

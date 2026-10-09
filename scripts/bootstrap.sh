@@ -469,8 +469,12 @@ fi
 # Advisory for the same reason as the two steps above: a Spark that is switched off, has
 # no server on it, or is not an ssh target from this box is a "not yet" state, so an
 # unreachable host prints why and bootstrap still finishes. Hosts come from SPARK_HOSTS
-# in the process environment, never from .env; with nothing set both scripts check the
-# placeholder trio, which never resolves. --no-tests keeps the recipe's own probes — a
+# in the process environment when set; with nothing set both scripts derive the fleet's
+# addresses from the SPARK*_URL keys in .env (host part of each), so a .env that names
+# real boxes gets those boxes checked instead of being told to retype them. A .env
+# still on the shipped spark-<n>.lan placeholders checks those names anyway — they do
+# not resolve, so they skip as a "not yet" state rather than failing.
+# --no-tests keeps the recipe's own probes — a
 # 195k-token needle plus a 1/2/4/5-client bench sweep, minutes per box — out of a
 # bootstrap run; re-run ./scripts/spark-verify.sh without it to get them back.
 if [ -n "${SKIP_SPARKS:-}" ]; then
@@ -500,7 +504,7 @@ dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
 echo "  4. ./scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
-echo "  6. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (SPARK_HOSTS=\"host1 host2 ...\" names the real boxes; drop --no-tests for the 195k/bench sweep)"
+echo "  6. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS=\"host1 host2 ...\" overrides that; drop --no-tests for the 195k/bench sweep)"
 echo "  7. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
 echo "  8. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"

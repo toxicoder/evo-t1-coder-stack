@@ -6,12 +6,12 @@
 # routes to.
 #
 # Usage:
-#   ./scripts/spark-verify.sh                              # assert-only, placeholder trio
+#   ./scripts/spark-verify.sh                              # assert-only, the fleet named in .env
 #   ./scripts/spark-verify.sh spark-1.lan                  # assert-only, one host
 #   ./scripts/spark-verify.sh --json                       # one JSON object per host
 #   ./scripts/spark-verify.sh --no-tests <host>            # skip the recipe's own probes
 #   VISION=1 ./scripts/spark-verify.sh <host>               # also run visioncheck.py
-#   SPARK_HOSTS="host1 host2" ./scripts/spark-verify.sh    # process env only
+#   SPARK_HOSTS="host1 host2" ./scripts/spark-verify.sh    # process env; overrides the .env-derived fleet
 #
 # Callable on its own and callable from scripts/bootstrap.sh, which runs it with
 # --no-tests as its last step. Nothing here writes to a Spark and nothing here starts or
@@ -55,8 +55,8 @@
 #      differently-configured box is not shunned, it is fed traffic, and it answers with
 #      a degraded or wrong completion instead of an error.
 #
-# Unreachable is not a failure. A host that does not answer — no DNS entry (the
-# placeholder trio below never resolves, which is the whole reason it is shipped), no
+# Unreachable is not a failure. A host that does not answer — no DNS entry (a default
+# fleet derived from .env can name placeholder hostnames, which never resolve), no
 # route, no ssh credentials, or a box with no server on it — prints WHY and still exits
 # 0, because that is a "not yet" state and re-running this script is the recovery path.
 # Exit 1 means a box that COULD be reached disagrees with the fleet's contract or with
@@ -162,15 +162,40 @@ done
 if [ "${#hosts[@]}" -eq 0 ]; then
   if [ -n "${SPARK_HOSTS:-}" ]; then
     # Word-splitting is the point: SPARK_HOSTS is a space-separated list taken from the
-    # process environment only. The repo-root .env is not read by this script at all —
-    # it holds no host list, and an .env that silently steers a fleet check would be
-    # unreadable to debug, which is the same rule bootstrap.sh's SKIP_* keys follow.
+    # process environment, and it overrides the .env-derived default below.
     for host in ${SPARK_HOSTS}; do
       hosts+=("${host}")
     done
   else
-    log "note: no host given and SPARK_HOSTS is not set or empty — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS=\"host1 host2 ...\" in the environment."
-    hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
+    # No host list from the caller: check the fleet this checkout already points at.
+    # The per-Spark URL keys in .env name its addresses as far as the stack is
+    # concerned — LiteLLM routes to the SPARKn_OPENAI_URL ones and the dashboard
+    # probes them — so the host part of each (scheme and port stripped, deduplicated)
+    # becomes the default list. A .env filled with real Spark IPs therefore gets
+    # those boxes checked with nothing to retype; a .env left on the shipped
+    # spark-<n>.lan placeholders (or with no Spark URLs at all) still checks the
+    # placeholder trio, whose names do not resolve — checked and skipped as a
+    # "not yet" state, exactly as before.
+    derived_hosts=""
+    if [ -f .env ]; then
+      for key in SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
+        url="$(sed -n "s|^${key}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' | tr -d ' \r' || true)"
+        [ -n "${url}" ] || continue
+        host="$(printf '%s' "${url}" | sed -E 's|^https?://||; s|[:/].*$||')"
+        case "${host}" in '' | *[!A-Za-z0-9.-]*) continue ;; esac
+        case " ${derived_hosts} " in *" ${host} "*) continue ;; esac
+        derived_hosts="${derived_hosts} ${host}"
+      done
+    fi
+    if [ -n "${derived_hosts}" ]; then
+      log "note: no host given and SPARK_HOSTS is not set or empty — checking the hosts named by the SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL keys in .env:${derived_hosts}"
+      for host in ${derived_hosts}; do
+        hosts+=("${host}")
+      done
+    else
+      log "note: no host given and SPARK_HOSTS is not set or empty, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS=\"host1 host2 ...\" in the environment."
+      hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
+    fi
   fi
 fi
 
@@ -235,7 +260,8 @@ fact_value() {
 
 # env_get: read one key out of .env without sourcing it — the file is user-editable and
 # a parse error in it must not be able to abort this script. Only the three
-# SPARKn_OPENAI_URL routing URLs are read, and only to compare them with each other.
+# SPARKn_OPENAI_URL routing URLs are read here (the default host list above strips the
+# same keys plus the Ollama URLs), and only to compare them with each other.
 env_get() {
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
 }
