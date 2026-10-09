@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## psql — deterministic psql stub (test fixture; never ships)
+#
+# Purpose: stand in for the psql run INSIDE the db service (reached through
+# the docker stub's exec passthrough) so SQL paths test without a database.
+# Prints STUB_PSQL_OUT (a file's content or a literal body), exits
+# STUB_PSQL_RC (0); a non-zero rc also prints "psql: error: stub failure"
+# on stderr, matching the real client's habit of answering bad input with an
+# error rather than silence.
+#
+# Usage (in a .bats file): use_stubs docker psql; STUB_PSQL_RC=1 run ...
+# Safety: stub only.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "psql $*" >> "${STUB_LOG}/psql.log"; fi
+
+if [ -n "${STUB_PSQL_OUT:-}" ]; then
+  if [ -f "${STUB_PSQL_OUT}" ]; then cat "${STUB_PSQL_OUT}"; else printf '%s\n' "${STUB_PSQL_OUT}"; fi
+fi
+if [ "${STUB_PSQL_RC:-0}" != "0" ]; then
+  printf 'psql: error: stub failure\n' >&2
+fi
+exit "${STUB_PSQL_RC:-0}"

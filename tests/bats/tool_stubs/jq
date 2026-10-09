@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## jq — deterministic jq stub (test fixture; never ships)
+#
+# Purpose: answer with STUB_JQ_OUT (default: empty) and exit STUB_JQ_RC (0),
+# so suites pin the JSON answer a script parses instead of requiring the real
+# jq on PATH (the real tool stays usable too — scripts keep jq optional).
+# Records one argv line to $STUB_LOG/jq.log when STUB_LOG is set.
+#
+# Usage (in a .bats file): use_stubs jq; STUB_JQ_OUT='{"ok":true}' run ...
+# Safety: stub only.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "jq $*" >>"${STUB_LOG}/jq.log"; fi
+
+if [ -n "${STUB_JQ_OUT:-}" ]; then printf '%s\n' "${STUB_JQ_OUT}"; fi
+exit "${STUB_JQ_RC:-0}"

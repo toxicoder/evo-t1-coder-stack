@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#
+# ## dashboard-password.sh — rotate the Homepage dashboard login password
+#
 # Change the Homepage dashboard login password (HOMEPAGE_AUTH_PASSWORD in .env).
 #
 # Upstream homepage v2.4.0 hashes this value itself — its NextAuth chunk does
@@ -28,6 +31,16 @@ KEY="HOMEPAGE_AUTH_PASSWORD"
 MIN_LEN=12
 TMP_FILE=""
 
+# @function cleanup
+# Remove the temporary file or directory this run created.
+# Globals:
+#   TMP_FILE (dashboard-password.sh) or WORK (new-workspace.sh)
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0
 cleanup() {
   if [ -n "${TMP_FILE}" ]; then
     rm -f "${TMP_FILE}"
@@ -35,6 +48,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# @function usage
+# Print this script's help text.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   The help text on stdout
+# Returns:
+#   0
 usage() {
   cat <<'EOF'
 usage: scripts/dashboard-password.sh [--prompt] [-l|--length N] [--no-apply]
@@ -58,6 +81,16 @@ A generated password is printed once, here and nowhere else; it then lives in
 EOF
 }
 
+# @function die
+# Print an error on stderr and exit 1.
+# Globals:
+#   None
+# Arguments:
+#   $* - error text, without the "error: " prefix
+# Outputs:
+#   "error: ..." on stderr
+# Returns:
+#   Does not return; exits 1
 die() {
   echo "error: $*" >&2
   exit 1
@@ -135,6 +168,16 @@ esac
 [ "${#new_password}" -ge "${MIN_LEN}" ] ||
   die "password too short: at least ${MIN_LEN} characters required (got ${#new_password})"
 
+# @function read_env_value
+# Print the current value of one key in ENV_FILE, with no trailing newline.
+# Globals:
+#   ENV_FILE
+# Arguments:
+#   $1 - key name
+# Outputs:
+#   The value, or nothing when the key is absent
+# Returns:
+#   0
 read_env_value() {
   # $1 = key name; prints its value with no trailing newline. read -r keeps
   # backslashes literal, so this round-trips values that sed or awk would eat.
@@ -147,6 +190,16 @@ read_env_value() {
   printf '%s' "${out}"
 }
 
+# @function hash_of
+# Print the sha256 hex of a value. The value goes in on a pipe, never argv.
+# Globals:
+#   None
+# Arguments:
+#   $1 - text to hash
+# Outputs:
+#   The hex digest
+# Returns:
+#   0
 hash_of() {
   # sha256 hex of $1. The value reaches the hasher through a pipe, never through
   # argv: sha256sum hashes files, and a secret in the argv of a live process is
@@ -162,6 +215,16 @@ hash_of() {
   fi
 }
 
+# @function write_env_line
+# Replace or append KEY in ENV_FILE. The value is copied, never passed to sed.
+# Globals:
+#   ENV_FILE, KEY, TMP_FILE
+# Arguments:
+#   $1 - new value
+# Outputs:
+#   None. Rewrites ENV_FILE mode 600.
+# Returns:
+#   0
 write_env_line() {
   # $1 = new value. The value never reaches sed or awk: both give &, \, / and |
   # a special meaning (and awk -v collapses backslashes), and a password may

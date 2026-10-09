@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#
+# ## push-template.sh — push the Coder templates and their routing descriptions
+#
 # Push each template listed in TEMPLATES_DEFAULT into the running Coder server and
 # confirm the pushed version became the active one. bootstrap.sh runs this for you,
 # with no arguments, so it pushes them all; it is also the standalone loop for
@@ -69,15 +72,22 @@
 #                                    coder container (default http://127.0.0.1:3000)
 #   CODER_PUSH_USER=<username>       user to mint the push token for
 #   CODER_PUSH_TOKEN_MINUTES=10      lifetime of the minted token
+# The push plumbing (psql_sql, psql_query, coder_exec and the per-template push /
+# verify / description helpers) lives in scripts/lib/template-push.sh, sourced
+# right after the repo-root cd below. That file honours PROBE_TIMEOUT and
+# VERIFY_TIMEOUT, so the assignments further down still win over its defaults.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# shellcheck source=lib/template-push.sh disable=SC1091
+source "scripts/lib/template-push.sh" # sources common.sh + coder_api.sh itself
+
 # Ordered: a dependent template pushes last so a partial failure leaves the
 # base template usable. Each entry is "<template-name>:<directory>".
 TEMPLATES_DEFAULT=("docker-dev:templates/docker-dev")
-[ -f templates/docker-devcontainer/main.tf ] \
-  && TEMPLATES_DEFAULT+=("docker-devcontainer:templates/docker-devcontainer")
+[ -f templates/docker-devcontainer/main.tf ] &&
+  TEMPLATES_DEFAULT+=("docker-devcontainer:templates/docker-devcontainer")
 
 CODER_SERVICE="${CODER_CONTAINER_SERVICE:-coder}"
 DB_SERVICE="${CODER_DB_SERVICE:-db}"
@@ -95,20 +105,79 @@ TOKEN_NAME="stack-template-push"
 # A half-started server leaves the CLI retrying its API call; 20s is long enough
 # for a live server to answer and short enough not to stall a scripted run.
 PROBE_TIMEOUT=20
+# VERIFY_TIMEOUT is the cap the seam puts in front of every coder CLI call
+# (coder_exec in scripts/lib/coder_api.sh), and UUID_RE used to be spelled out
+# here too — scripts/lib/template-push.sh carries the identical pattern now.
+# shellcheck disable=SC2034 # read inside the sourced seam, not in this file
 VERIFY_TIMEOUT=60
-UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
+# @function log
+# Print one status line. Spark scripts send it to stderr when --json is set.
+# Globals:
+#   json (Spark scripts; empty means stdout)
+# Arguments:
+#   $* - text to print
+# Outputs:
+#   The text on stdout, or stderr when json is set
+# Returns:
+#   0
 log() { printf '%s\n' "$*"; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# @function die
+# Print an error on stderr and exit 1.
+# Globals:
+#   None
+# Arguments:
+#   $* - error text, without the "error: " prefix
+# Outputs:
+#   "error: ..." on stderr
+# Returns:
+#   Does not return; exits 1
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
 # Expected states, not errors: exit 0 so callers (bootstrap) keep going.
-skip() { printf '%s\n' "$*"; exit 0; }
+# @function skip
+# Print a not-yet line and exit 0 so callers such as bootstrap keep going.
+# Globals:
+#   None
+# Arguments:
+#   $* - reason text
+# Outputs:
+#   The reason on stdout (spark-configure routes it through log)
+# Returns:
+#   Does not return; exits 0
+skip() {
+  printf '%s\n' "$*"
+  exit 0
+}
 
 # Read .env by sed rather than sourcing it: the file is user-editable, and with
 # `set -e` a parse error or a stray command substitution there aborts the script.
+# @function env_get
+# Read the last assignment of one key from .env without sourcing the file.
+# Globals:
+#   None
+# Arguments:
+#   $1 - key name
+# Outputs:
+#   The value with one layer of wrapping quotes removed, or nothing
+# Returns:
+#   0
 env_get() {
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
 }
 
+# @function first_line
+# Print the first non-blank line of a block of text.
+# Globals:
+#   None
+# Arguments:
+#   $1 - text, which may be empty or all blank
+# Outputs:
+#   That line, or nothing; an all-blank input does not abort the caller
+# Returns:
+#   0
 first_line() {
   # $1 = text; prints its first non-blank line so a tool's own complaint can be
   # quoted without dumping its whole stderr into this script's output. The `|| true`
@@ -117,6 +186,16 @@ first_line() {
   printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | sed -n '1p' || true
 }
 
+# @function known_templates
+# Print the selectable template names, comma-separated.
+# Globals:
+#   TEMPLATES_DEFAULT
+# Arguments:
+#   None
+# Outputs:
+#   The names
+# Returns:
+#   0
 known_templates() {
   # The selectable names, comma-separated, for the unknown-name error below.
   local entry names=""
@@ -162,13 +241,13 @@ if [ -n "${PUSH_USER}" ] && ! printf '%s' "${PUSH_USER}" | grep -qE '^[A-Za-z0-9
   die "CODER_PUSH_USER='${PUSH_USER}' is not a valid Coder username (letters, digits, dot, underscore, hyphen, @)"
 fi
 
-command -v docker >/dev/null 2>&1 \
-  || skip "skipped: docker is not on PATH, so neither the coder server nor its database can be reached"
-command -v timeout >/dev/null 2>&1 \
-  || skip "skipped: timeout(1) is not available, so the probes below cannot be bounded"
+command -v docker >/dev/null 2>&1 ||
+  skip "skipped: docker is not on PATH, so neither the coder server nor its database can be reached"
+command -v timeout >/dev/null 2>&1 ||
+  skip "skipped: timeout(1) is not available, so the probes below cannot be bounded"
 # The template travels as a tar on stdin; without it there is nothing to pipe.
-command -v tar >/dev/null 2>&1 \
-  || skip "skipped: tar is not on PATH, so the template directory cannot be streamed to the server"
+command -v tar >/dev/null 2>&1 ||
+  skip "skipped: tar is not on PATH, so the template directory cannot be streamed to the server"
 
 # The server has to be up before anything has a chance of working. Ask compose
 # rather than the daemon so the check stays scoped to this stack, and treat a
@@ -210,8 +289,8 @@ dev_image="${dev_image:-evo-t1-dev:latest}"
 # CLI's opening organization lookups ("get organizations: You are signed out"), so a
 # least-privilege push is not available on v2.36. The compensating controls are the
 # minutes-long lifetime and the delete in the trap.
-command -v openssl >/dev/null 2>&1 \
-  || skip "skipped: openssl is not on PATH, so no push token can be generated"
+command -v openssl >/dev/null 2>&1 ||
+  skip "skipped: openssl is not on PATH, so no push token can be generated"
 
 key_id="$(openssl rand -hex 5)"
 key_secret="$(openssl rand -hex 11)"
@@ -220,27 +299,15 @@ key_secret="$(openssl rand -hex 11)"
 # padding), and the server compares sha256(secret) against hashed_secret. openssl
 # computes the digest rather than sha256sum, which the macOS hosts bootstrap.sh
 # supports do not ship.
-key_hash="$(printf '%s' "${key_secret}" | openssl dgst -sha256 -r 2>/dev/null \
-  | cut -c1-64)"
+key_hash="$(printf '%s' "${key_secret}" | openssl dgst -sha256 -r 2>/dev/null |
+  cut -c1-64)"
 if [ "${#key_hash}" != "64" ]; then
   die "could not compute a sha256 digest with openssl — this openssl build lacks the dgst command"
 fi
 
-psql_sql() {
-  # $1 = SQL. ON_ERROR_STOP makes a failed insert non-zero instead of a quiet
-  # warning, which would otherwise surface as an unexplained auth failure below.
-  timeout "${PROBE_TIMEOUT}" docker compose exec -T "${DB_SERVICE}" \
-    psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q -c "$1" </dev/null 2>&1
-}
-
-psql_query() {
-  # $1 = SQL returning at most one row; prints that single column, trimmed. -q
-  # suppresses the command statuses ("INSERT 0 1" and friends) that -t alone still
-  # prints, so the only output is the RETURNING value.
-  timeout "${PROBE_TIMEOUT}" docker compose exec -T "${DB_SERVICE}" \
-    psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q -tAc "$1" </dev/null 2>&1 \
-    | tr -d '[:space:]'
-}
+# psql_sql and psql_query come from scripts/lib/coder_api.sh (sourced above):
+# ON_ERROR_STOP makes a failed statement non-zero instead of a quiet warning, and
+# -q -tA prints only the RETURNING value, whitespace-trimmed.
 
 # A token left behind by a killed run (the trap cannot fire on SIGKILL) is replaced
 # rather than colliding with the unique (user_id, token_name) index.
@@ -256,6 +323,16 @@ fi
 # how a run gets interrupted here. SIGKILL remains the one case nothing can clean
 # up, which is why the token's lifetime is minutes and why the delete above runs
 # before minting.
+# @function cleanup_token
+# Delete this run's minted api_keys row. A database error is ignored.
+# Globals:
+#   TOKEN_NAME, psql_sql
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0
 cleanup_token() {
   psql_sql "delete from api_keys where token_name = '${TOKEN_NAME}';" >/dev/null 2>&1 || true
 }
@@ -276,7 +353,7 @@ insert into api_keys
    login_type, lifetime_seconds, ip_address, token_name, scopes, allow_list)
 select '${key_id}', decode('${key_hash}','hex'), u.id, now(),
        now() + interval '${TOKEN_MINUTES} minute', now(), now(),
-       'token', $(( TOKEN_MINUTES * 60 )), '0.0.0.0'::inet, '${TOKEN_NAME}',
+       'token', $((TOKEN_MINUTES * 60)), '0.0.0.0'::inet, '${TOKEN_NAME}',
        '{coder:all}'::api_key_scope[], '{*:*}'::text[]
 from users u
 where u.status = 'active' and not u.deleted and not u.is_service_account
@@ -309,21 +386,17 @@ case "${inserted}:${insert_rc}" in
     ;;
 esac
 
+# shellcheck disable=SC2034 # seam knob: coder_exec and template_push_one (scripts/lib/*) read it
 session_token="${key_id}-${key_secret}"
 
-# The two CODER_* names below are the only credentials the CLI reads from the
+# The two CODER_* names above are the only credentials the CLI reads from the
 # environment, and neither is referenced by docker-compose.yml, so prefixing them to
 # `docker compose` cannot perturb compose's own ${CODER_*} interpolation. Passing
-# them this way (rather than as -e NAME=VALUE) keeps the token out of the argv that
-# `ps` shows while the command runs.
-coder_exec() {
-  # $@ = coder subcommand and args. -T keeps progress output parseable and makes
-  # this safe under a pipe; -i is added by callers that supply stdin.
-  CODER_URL="${CONTAINER_API_URL}" CODER_SESSION_TOKEN="${session_token}" \
-    timeout "${VERIFY_TIMEOUT}" docker compose exec -T \
-      -e CODER_URL -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
-      coder "$@" </dev/null
-}
+# them this way (rather than as -e NAME=VALUE, and with -e NAME on the compose exec
+# line) keeps the token out of the argv that `ps` shows while the command runs.
+# coder_exec — with the capped `timeout "${VERIFY_TIMEOUT}"` in front of it, the -T
+# that keeps progress output parseable, and the </dev/null that frees stdin — comes
+# from scripts/lib/coder_api.sh, sourced above.
 
 # Authenticated before attempting a Terraform run, so a rejected token reads as an
 # auth problem and not as a failed build.
@@ -449,6 +522,16 @@ fi
 # Measured here instead. Only coder_workspace_preset blocks are checked:
 # coder_parameter descriptions legitimately run past 450 characters and are not
 # capped at all, so scanning every description would fail on text that is legal.
+# @function preset_desc_guard
+# Reject a coder_workspace_preset description longer than 128 bytes.
+# Globals:
+#   log, die
+# Arguments:
+#   $1 - template directory
+# Outputs:
+#   A note for a heredoc description; an error via die when one is too long
+# Returns:
+#   0 when every measured description fits; does not return when one does not
 preset_desc_guard() {
   # $1 = template directory. Silence means every preset description it found fits.
   local f kind label name value len
@@ -507,64 +590,19 @@ preset_desc_guard() {
   done
 }
 
-# $1 = template name, $2 = template directory, and the shared vars array. The
-# directory travels as a tar on stdin, which is how the source gets into the
-# container without a copy step, and the CLI's own plan/apply output stays on the
-# terminal: only the exit status is the caller's business.
-#
-# .terraform/ is excluded from the tar: it is gitignored provider cache, and
-# pushing it would put the plan's provider binaries in the version's Filestore row.
-#
-# No timeout on the push itself: it runs a Terraform plan and apply server-side,
-# which legitimately takes minutes. The buildinfo probe before the loop already
-# proved the server answers.
-push_one() {
-  local name="$1" dir="$2"
-  tar -C "${dir}" --exclude=./.terraform -cf - . \
-    | CODER_URL="${CONTAINER_API_URL}" CODER_SESSION_TOKEN="${session_token}" \
-      docker compose exec -T -i \
-        -e CODER_URL -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
-        coder templates push "${name}" \
-          --directory - \
-          --yes \
-          ${vars[@]+"${vars[@]}"}
-}
-
-# $1 = template name. Non-zero means this template did not reach an active
-# version, which is the caller's problem to count; the reason is printed here.
-verify_one() {
-  # A push can exit 0 while leaving the template inactive, because a failing
-  # Terraform run produces a version that is present but never activated — and an
-  # inactive template gives no option in the workspace dropdown. Confirm, do not
-  # assume.
-  #
-  # Table output, not -o json: the JSON form nests the whole TemplateVersion, so
-  # finding the active version's id needs a JSON parser this repo does not depend
-  # on. The active cell renders as the word "Active" (ANSI-wrapped, but
-  # contiguous), so the id is taken from that row; the header row carries the same
-  # word and no uuid.
-  local name="$1"
-  verify_rc=0
-  verify_out="$(coder_exec templates versions list "${name}" \
-    --column id --column active 2>&1)" || verify_rc=$?
-  if [ "${verify_rc}" != "0" ]; then
-    printf '%s\n' "${verify_out}" >&2
-    printf 'error: pushed %s but could not read its versions (exit %s) — inspect from the host: docker compose exec %s coder templates versions list %s\n' \
-      "${name}" "${verify_rc}" "${CODER_SERVICE}" "${name}" >&2
-    return 1
-  fi
-
-  active_id="$(printf '%s\n' "${verify_out}" \
-    | grep -i active \
-    | grep -oE "${UUID_RE}" \
-    | sed -n '1p' || true)"
-  if [ -z "${active_id}" ]; then
-    printf '%s\n' "${verify_out}" >&2
-    printf 'error: pushed %s but it has no active version — new workspaces cannot use it; inspect: docker compose exec %s coder templates versions list %s\n' \
-      "${name}" "${CODER_SERVICE}" "${name}" >&2
-    return 1
-  fi
-}
+# Per-template plumbing (scripts/lib/template-push.sh, sourced above):
+# template_push_one streams the directory as a tar on stdin — .terraform/ excluded,
+# because it is gitignored provider cache and pushing it would put the plan's
+# provider binaries into the version's Filestore row — with no timeout cap, since a
+# server-side Terraform plan+apply legitimately takes minutes and the buildinfo
+# probe above already proved the server answers. template_verify_active then reads
+# the active version back: a push can exit 0 while leaving the template inactive (a
+# failing Terraform run produces a version that is present but never activated) and
+# an inactive template offers no workspace dropdown. It prints the active version's
+# id on success; on failure it prints the CLI dump plus one error line on stderr
+# and returns non-zero, which is what the loop below counts as a failure. Table
+# output, not -o json: the JSON form nests the whole TemplateVersion, so finding
+# the active version's id would need a JSON parser this repo does not depend on.
 
 # What the Coder Agents chat reads to route work: the agent lists the user's
 # templates, reads each one's description and parameters, and provisions a
@@ -575,30 +613,22 @@ verify_one() {
 # run behind it. Both texts stay under the same 128-byte ceiling as the
 # workspace presets, so the chat agent and the presets speak the same shape.
 declare -A TEMPLATE_DESCRIPTIONS=(
-  [docker-dev]="General dev workspace: polyglot toolchain + Grok Build agent + optional DinD sidecar. For Python/Go/JS/infra work."
-  [docker-devcontainer]="Dev Container workspace: builds the repo's devcontainer.json on a private DinD sidecar. For repos that ship that file."
+  ["docker-dev"]="General dev workspace: polyglot toolchain + Grok Build agent + optional DinD sidecar. For Python/Go/JS/infra work."
+  ["docker-devcontainer"]="Dev Container workspace: builds the repo's devcontainer.json on a private DinD sidecar. For repos that ship that file."
 )
 
-# $1 = template name. Advisory by design: the push is the payload, a description
-# is a routing hint, so a failed edit prints a note and still counts the template
-# as delivered. Silence on success keeps the per-template output one line.
-set_description() {
-  local name="$1" desc="${TEMPLATE_DESCRIPTIONS[$1]:-}"
-  [ -n "${desc}" ] || return 0
-  if coder_exec templates edit "${name}" --description "${desc}" >/dev/null 2>&1; then
-    log "template ${name}: description set (chat-agent routing hint)"
-  else
-    log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --description '...'"
-  fi
-}
+# template_set_description (scripts/lib/template-push.sh) sends those texts: it is
+# silent, returns non-zero on failure, and skips an empty text — so the log
+# wording below stays this script's business, and silence on success keeps the
+# per-template output one line.
 
 failed=0
 for entry in "${selected[@]}"; do
   name="${entry%%:*}"
   dir="${entry#*:}"
 
-  [ -f "${dir}/main.tf" ] \
-    || die "${dir}/main.tf not found (run this from the repo root)"
+  [ -f "${dir}/main.tf" ] ||
+    die "${dir}/main.tf not found (run this from the repo root)"
   # Coder pushes without a lockfile but warns, and the README's fix is one command;
   # say it here rather than make the operator decode the CLI's warning.
   if [ ! -f "${dir}/.terraform.lock.hcl" ]; then
@@ -609,7 +639,7 @@ for entry in "${selected[@]}"; do
 
   log "pushing ${dir} as template ${name} (image ${dev_image}) to ${CONTAINER_API_URL} in ${CODER_SERVICE} ..."
   push_rc=0
-  push_one "${name}" "${dir}" || push_rc=$?
+  template_push_one "${name}" "${dir}" ${vars[@]+"${vars[@]}"} || push_rc=$?
   if [ "${push_rc}" != "0" ]; then
     # The CLI's own plan/apply output already went to the terminal above.
     printf 'error: the push of %s failed (exit %s) — check the server with: docker compose logs --tail 100 %s\n' \
@@ -618,12 +648,22 @@ for entry in "${selected[@]}"; do
     continue
   fi
 
-  if ! verify_one "${name}"; then
+  # Prints the active version's id on success, so the capture below keeps the
+  # one-line-per-template output; the failure text stays in template-push.sh.
+  if ! active_id="$(template_verify_active "${name}")"; then
     failed=$((failed + 1))
     continue
   fi
 
-  set_description "${name}"
+  # Advisory by design: a failed edit prints a note and still counts the template
+  # as delivered, and a template with no description text prints nothing at all.
+  if [ -n "${TEMPLATE_DESCRIPTIONS[${name}]:-}" ]; then
+    if template_set_description "${name}" "${TEMPLATE_DESCRIPTIONS[${name}]}"; then
+      log "template ${name}: description set (chat-agent routing hint)"
+    else
+      log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --description '...'"
+    fi
+  fi
   log "template ${name} pushed; active version ${active_id}"
 done
 
@@ -633,8 +673,8 @@ done
 #
 # Disarm before the delete so the delete runs once, deliberately.
 trap - EXIT
-psql_sql "${cleanup_sql}" >/dev/null 2>&1 \
-  || log "note: the push token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
+psql_sql "${cleanup_sql}" >/dev/null 2>&1 ||
+  log "note: the push token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
 
 if [ "${failed}" != "0" ]; then
   printf '%s of %s template(s) did not reach an active version\n' "${failed}" "${#selected[@]}" >&2

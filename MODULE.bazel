@@ -1,0 +1,35 @@
+"""evo-t1-coder-stack
+
+Bazel tracks hermetic Bats tests, the shell-function inventory, docstring
+coverage, and lint. Runtime remains Docker Compose. This module stays small:
+no Kubernetes rules and no extra language rules.
+"""
+
+module(
+    name = "evo_t1_coder_stack",
+    version = "0.1.0",
+    compatibility_level = 1,
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.7.1")
+bazel_dep(name = "platforms", version = "0.0.11")
+bazel_dep(name = "rules_shell", version = "0.3.0")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "bats_core",
+    build_file_content = """
+exports_files(glob(["**/*"], allow_empty = True))
+
+filegroup(
+    name = "bats",
+    srcs = ["bin/bats"],
+    visibility = ["//visibility:public"],
+    data = glob(["libexec/**/*"], allow_empty = True),
+)
+""",
+    sha256 = "aeff09fdc8b0c88b3087c99de00cf549356d7a2f6a69e3fcec5e0e861d2f9063",
+    strip_prefix = "bats-core-1.11.0",
+    urls = ["https://github.com/bats-core/bats-core/archive/refs/tags/v1.11.0.tar.gz"],
+)

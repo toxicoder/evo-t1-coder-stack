@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## curl — deterministic curl stub (test fixture; never ships)
+#
+# Purpose: answer probes and API calls with a canned body so probe_http and
+# the in-container `docker compose exec ... curl` paths test hermetically.
+# The DEFAULT answer is an empty body + exit 22 (curl -f's HTTP-fail code):
+# "nothing answered" is a legal result the callers must treat as unmeasured,
+# and this default keeps the unit tier from inventing passes.
+#   -o <file>           write the body to <file> (it is not echoed to stdout)
+#   --data-binary @-    drain stdin so piped bodies never block the caller
+# STUB_CURL_OUT is a file holding the body, or the literal body itself.
+# STUB_CURL_RC (default 0 when OUT is set, else 22) overrides the exit code.
+# Records one argv line to $STUB_LOG/curl.log when STUB_LOG is set.
+#
+# Usage (in a .bats file): use_stubs curl; STUB_CURL_OUT='{"ok":true}' \
+#   run ./scripts/...
+# Safety: stub only — never opens a socket.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "curl $*" >>"${STUB_LOG}/curl.log"; fi
+
+outfile=""
+prev=""
+for a in "$@"; do
+  if [ "${prev}" = "--data-binary" ] && [ "${a}" = "@-" ]; then
+    cat >/dev/null 2>&1 || true
+  fi
+  if [ "${prev}" = "-o" ]; then
+    outfile="${a}"
+  fi
+  prev="${a}"
+done
+
+body=""
+rc="${STUB_CURL_RC:-}"
+if [ -n "${STUB_CURL_OUT:-}" ]; then
+  if [ -f "${STUB_CURL_OUT}" ]; then body="$(cat "${STUB_CURL_OUT}")"; else body="${STUB_CURL_OUT}"; fi
+  rc="${rc:-0}"
+fi
+rc="${rc:-22}"
+
+if [ -n "${outfile}" ]; then
+  printf '%s' "${body}" >"${outfile}"
+  exit "${rc}"
+fi
+printf '%s' "${body}"
+exit "${rc}"

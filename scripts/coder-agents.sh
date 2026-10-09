@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#
+# ## coder-agents.sh — wire the Coder Agents chat provider, models, and pins
+#
 # Wire the Coder Agents (control-plane chat agent) end to end: the LiteLLM AI
 # provider, the tool-capable chat model configs, the subagent/compaction/title
 # model pins, and the deployment system prompt. bootstrap.sh runs this after
@@ -68,11 +71,30 @@
 #                                    coder container (default http://litellm:4000/v1)
 #   CODER_AGENTS_USER=<username>     user to mint the token for
 #   CODER_AGENTS_TOKEN_MINUTES=10    lifetime of the minted token
+# The psql one-offs (psql_sql / psql_query) come from scripts/lib/coder_api.sh,
+# sourced right after the repo-root cd below. That file honours PROBE_TIMEOUT,
+# so the assignments further down still win over its defaults.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# shellcheck source=lib/coder_api.sh disable=SC1091
+source "scripts/lib/coder_api.sh"
+
+# @function die
+# Print an error on stderr and exit 1.
+# Globals:
+#   None
+# Arguments:
+#   $* - error text, without the "error: " prefix
+# Outputs:
+#   "error: ..." on stderr
+# Returns:
+#   Does not return; exits 1
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
 
 MODE=apply
 for arg in "$@"; do
@@ -100,23 +122,66 @@ PROBE_TIMEOUT=20
 API_TIMEOUT=20
 UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
+# @function log
+# Print one status line. Spark scripts send it to stderr when --json is set.
+# Globals:
+#   json (Spark scripts; empty means stdout)
+# Arguments:
+#   $* - text to print
+# Outputs:
+#   The text on stdout, or stderr when json is set
+# Returns:
+#   0
 log() { printf '%s\n' "$*"; }
-skip() { printf '%s\n' "$*"; exit 0; }
+# @function skip
+# Print a not-yet line and exit 0 so callers such as bootstrap keep going.
+# Globals:
+#   None
+# Arguments:
+#   $* - reason text
+# Outputs:
+#   The reason on stdout (spark-configure routes it through log)
+# Returns:
+#   Does not return; exits 0
+skip() {
+  printf '%s\n' "$*"
+  exit 0
+}
 
 # Read .env by sed rather than sourcing it (same reason as push-template.sh).
+# @function env_get
+# Read the last assignment of one key from .env without sourcing the file.
+# Globals:
+#   None
+# Arguments:
+#   $1 - key name
+# Outputs:
+#   The value with one layer of wrapping quotes removed, or nothing
+# Returns:
+#   0
 env_get() {
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
 }
 
+# @function first_line
+# Print the first non-blank line of a block of text.
+# Globals:
+#   None
+# Arguments:
+#   $1 - text, which may be empty or all blank
+# Outputs:
+#   That line, or nothing; an all-blank input does not abort the caller
+# Returns:
+#   0
 first_line() {
   printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | sed -n '1p' || true
 }
 
 # ── Guards ──────────────────────────────────────────────────────────────────
-command -v docker >/dev/null 2>&1 \
-  || skip "skipped: docker is not on PATH, so neither the coder server nor its database can be reached"
-command -v timeout >/dev/null 2>&1 \
-  || skip "skipped: timeout(1) is not available, so the API probes below cannot be bounded"
+command -v docker >/dev/null 2>&1 ||
+  skip "skipped: docker is not on PATH, so neither the coder server nor its database can be reached"
+command -v timeout >/dev/null 2>&1 ||
+  skip "skipped: timeout(1) is not available, so the API probes below cannot be bounded"
 
 if ! running="$(docker compose ps --status running --services 2>&1)"; then
   skip "skipped: could not query the stack ($(first_line "${running}")) — this script needs docker access; run it with sudo, or add your user to the docker group"
@@ -163,8 +228,8 @@ if [ "${MODE}" = "dry-run" ]; then
 fi
 
 # ── Mint a short-lived token (same trust model as push-template.sh) ────────
-command -v openssl >/dev/null 2>&1 \
-  || skip "skipped: openssl is not on PATH, so no API token can be generated"
+command -v openssl >/dev/null 2>&1 ||
+  skip "skipped: openssl is not on PATH, so no API token can be generated"
 
 if [ -n "${AGENTS_USER}" ] && ! printf '%s' "${AGENTS_USER}" | grep -qE '^[A-Za-z0-9._@-]+$'; then
   die "CODER_AGENTS_USER='${AGENTS_USER}' is not a valid Coder username (letters, digits, dot, underscore, hyphen, @)"
@@ -172,28 +237,29 @@ fi
 
 key_id="$(openssl rand -hex 5)"
 key_secret="$(openssl rand -hex 11)"
-key_hash="$(printf '%s' "${key_secret}" | openssl dgst -sha256 -r 2>/dev/null \
-  | cut -c1-64)"
+key_hash="$(printf '%s' "${key_secret}" | openssl dgst -sha256 -r 2>/dev/null |
+  cut -c1-64)"
 if [ "${#key_hash}" != "64" ]; then
   die "could not compute a sha256 digest with openssl — this openssl build lacks the dgst command"
 fi
 
-psql_sql() {
-  timeout "${PROBE_TIMEOUT}" docker compose exec -T "${DB_SERVICE}" \
-    psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q -c "$1" </dev/null 2>&1
-}
-
-psql_query() {
-  timeout "${PROBE_TIMEOUT}" docker compose exec -T "${DB_SERVICE}" \
-    psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q -tAc "$1" </dev/null 2>&1 \
-    | tr -d '[:space:]'
-}
+# psql_sql and psql_query come from scripts/lib/coder_api.sh (sourced above).
 
 # Replace, do not collide with, a token left behind by a killed run.
 cleanup_sql="delete from api_keys where token_name = '${TOKEN_NAME}';"
 if ! cleanup_out="$(psql_sql "${cleanup_sql}")"; then
   die "could not clean up in ${DB_SERVICE}: $(first_line "${cleanup_out}")"
 fi
+# @function cleanup_token
+# Delete this run's minted api_keys row. A database error is ignored.
+# Globals:
+#   TOKEN_NAME, psql_sql
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0
 cleanup_token() {
   psql_sql "delete from api_keys where token_name = '${TOKEN_NAME}';" >/dev/null 2>&1 || true
 }
@@ -213,7 +279,7 @@ insert into api_keys
    login_type, lifetime_seconds, ip_address, token_name, scopes, allow_list)
 select '${key_id}', decode('${key_hash}','hex'), u.id, now(),
        now() + interval '${TOKEN_MINUTES} minute', now(), now(),
-       'token', $(( TOKEN_MINUTES * 60 )), '0.0.0.0'::inet, '${TOKEN_NAME}',
+       'token', $((TOKEN_MINUTES * 60)), '0.0.0.0'::inet, '${TOKEN_NAME}',
        '{coder:all}'::api_key_scope[], '{*:*}'::text[]
 from users u
 where u.status = 'active' and not u.deleted and not u.is_service_account
@@ -247,30 +313,60 @@ session_token="${key_id}-${key_secret}"
 # -T keeps output parseable; -i (write calls) streams the JSON body on stdin.
 # The Authorization header is assembled by the IN-CONTAINER shell from
 # CODER_SESSION_TOKEN (passed as -e NAME, value via the env, never argv).
+# @function api_read
+# GET one Coder API path with the session token in the environment, not argv.
+# Globals:
+#   session_token, API_TIMEOUT, CODER_SERVICE, CONTAINER_API_URL
+# Arguments:
+#   $1 - API path beginning with /
+# Outputs:
+#   The response body
+# Returns:
+#   0 on a 2xx body; curl's status otherwise
 api_read() {
   # $1 = path. Prints the body; a non-2xx exits non-zero (curl -f).
   CODER_SESSION_TOKEN="${session_token}" \
     timeout "${API_TIMEOUT}" docker compose exec -T \
-      -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
-      sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" "$1"' \
-      sh "${CONTAINER_API_URL}${1}"
+    -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
+    sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" "$1"' \
+    sh "${CONTAINER_API_URL}${1}"
 }
 
+# @function api_write
+# Send one JSON body to a Coder API path. The token stays in the environment.
+# Globals:
+#   session_token, API_TIMEOUT, CODER_SERVICE, CONTAINER_API_URL
+# Arguments:
+#   $1 - HTTP method; $2 - API path; $3 - JSON body
+# Outputs:
+#   The response body
+# Returns:
+#   0 on success; curl's status otherwise
 api_write() {
   # $1 = method, $2 = path, $3 = JSON body.
   printf '%s' "$3" | CODER_SESSION_TOKEN="${session_token}" \
     timeout "${API_TIMEOUT}" docker compose exec -T -i \
-      -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
-      sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" -H "Content-Type: application/json" -X "$1" --data-binary @- "$2"' \
-      sh "$1" "${CONTAINER_API_URL}${2}"
+    -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
+    sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" -H "Content-Type: application/json" -X "$1" --data-binary @- "$2"' \
+    sh "$1" "${CONTAINER_API_URL}${2}"
 }
 
 # Escape a string for JSON embedding: backslash, then double quote, then
 # real newlines to the two-character sequence \n (a raw newline inside a
 # JSON string is malformed; the system prompt body is multiline).
+# @function json_escape
+# Escape text so it can sit inside one JSON string.
+# Globals:
+#   JSON_ESCAPE_SED when this copy clips remote replies
+# Arguments:
+#   $1 - raw text
+# Outputs:
+#   Escaped text. The coder-agents copy also turns newlines into \\n.
+# Returns:
+#   0
 json_escape() {
-  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
-    | awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }'
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' |
+    awk 'NR > 1 { printf "\\n" } { printf "%s", $0 }'
 }
 
 # mask_secret renders a key the way the server masks stored keys (aibridge's
@@ -282,19 +378,33 @@ json_escape() {
 # .env key's mask stay untouched — deliberate, since keys added by hand in
 # the Admin UI are an admin's decision to keep. (A key under 5 characters
 # masks to "..." and could hide a change; that is a placeholder, not a key.)
+# @function mask_secret
+# Mask a key the way Coder's aibridge MaskSecret does, by length.
+# Globals:
+#   None
+# Arguments:
+#   $1 - secret
+# Outputs:
+#   The masked form, or ... when the secret is too short to reveal
+# Returns:
+#   0
 mask_secret() {
   local s="$1" n reveal
   n="${#s}"
-  if [ "${n}" -ge 20 ]; then reveal=4
-  elif [ "${n}" -ge 10 ]; then reveal=2
-  elif [ "${n}" -ge 5 ]; then reveal=1
-  else reveal=0
+  if [ "${n}" -ge 20 ]; then
+    reveal=4
+  elif [ "${n}" -ge 10 ]; then
+    reveal=2
+  elif [ "${n}" -ge 5 ]; then
+    reveal=1
+  else
+    reveal=0
   fi
   if [ "${n}" -le $((reveal * 2)) ]; then
     printf '...'
     return
   fi
-  printf '%s...%s' "${s:0:${reveal}}" "${s:$((n - reveal)):${reveal}}"
+  printf '%s...%s' "${s:0:reveal}" "${s:$((n - reveal)):reveal}"
 }
 
 # ── 1. AI provider ──────────────────────────────────────────────────────────
@@ -319,8 +429,8 @@ provider_body=""
 provider_exists=0
 if printf '%s' "${provider_list}" | grep -q "\"name\":\"${PROVIDER_NAME}\""; then
   provider_exists=1
-  provider_body="$(printf '%s' "${provider_list}" \
-    | tr '{' '\n' | grep "\"name\":\"${PROVIDER_NAME}\"" | head -1)"
+  provider_body="$(printf '%s' "${provider_list}" |
+    tr '{' '\n' | grep "\"name\":\"${PROVIDER_NAME}\"" | head -1)"
 fi
 
 provider_drift=""
@@ -337,13 +447,13 @@ if [ "${provider_exists}" = "1" ]; then
   # from the current key's mask; the patch below then replaces the whole
   # set. Masks are pulled from the full provider_list: the provider_body
   # chunk (split on '{') ends before that provider's api_keys array.
-  provider_masks="$(printf '%s' "${provider_list}" \
-    | awk -v RS="\"name\":\"" -v n="${PROVIDER_NAME}\"" 'index($0, n) == 1' \
-    | tr '{' '\n' | grep -o '"masked":"[^"]*"' \
-      | sed -e 's/^"masked":"//' -e 's/"$//' || true)"
+  provider_masks="$(printf '%s' "${provider_list}" |
+    awk -v RS="\"name\":\"" -v n="${PROVIDER_NAME}\"" 'index($0, n) == 1' |
+    tr '{' '\n' | grep -o '"masked":"[^"]*"' |
+    sed -e 's/^"masked":"//' -e 's/"$//' || true)"
   want_mask="$(mask_secret "${litellm_key}")"
-  if [ -z "${provider_masks}" ] \
-    || [ -n "$(printf '%s\n' "${provider_masks}" | grep -Fxv -e "${want_mask}" || true)" ]; then
+  if [ -z "${provider_masks}" ] ||
+    [ -n "$(printf '%s\n' "${provider_masks}" | grep -Fxv -e "${want_mask}" || true)" ]; then
     provider_drift="${provider_drift:+${provider_drift}+}api_keys"
   fi
   if [ -z "${provider_drift}" ]; then
@@ -380,22 +490,42 @@ fi
 # row (a stale pre-create list would leave step 3 without pin targets).
 # First uuid inside the object for a given model = that config's id (id is
 # the first field serialized; the object is isolated by splitting on braces).
+# @function model_config_id
+# Print the chat model-config uuid for one model alias, or nothing.
+# Globals:
+#   UUID_RE, api_read
+# Arguments:
+#   $1 - model alias (agent or chat)
+# Outputs:
+#   The uuid, or nothing when the list cannot be read or has no row
+# Returns:
+#   0
 model_config_id() {
   local body
   if ! body="$(api_read "/api/experimental/chats/model-configs")"; then
     return 0
   fi
-  printf '%s' "${body}" \
-    | tr '{}' '\n\n' \
-    | grep -F "\"model\":\"${1}\"" \
-    | head -1 \
-    | grep -oE "${UUID_RE}" \
-    | head -1 || true
+  printf '%s' "${body}" |
+    tr '{}' '\n\n' |
+    grep -F "\"model\":\"${1}\"" |
+    head -1 |
+    grep -oE "${UUID_RE}" |
+    head -1 || true
 }
 
 agent_id="$(model_config_id agent)"
 chat_id="$(model_config_id chat)"
 
+# @function create_model_config
+# POST one chat model config. The display name is JSON-escaped.
+# Globals:
+#   provider_id, api_write, json_escape
+# Arguments:
+#   $1 - model; $2 - display name; $3 - context_limit; $4 - is_default
+# Outputs:
+#   An error line on stderr when the POST fails
+# Returns:
+#   0 on success; 1 when the POST fails
 create_model_config() {
   # $1 = model, $2 = display name, $3 = context_limit, $4 = is_default(true|false)
   if ! api_write POST "/api/experimental/chats/model-configs" \
@@ -406,8 +536,8 @@ create_model_config() {
 }
 
 # The provider uuid is needed for the model-config body.
-provider_get="$(api_read "/api/v2/ai/providers/${PROVIDER_NAME}")" \
-  || die "could not read back provider ${PROVIDER_NAME} (its name may differ in case or the create failed)"
+provider_get="$(api_read "/api/v2/ai/providers/${PROVIDER_NAME}")" ||
+  die "could not read back provider ${PROVIDER_NAME} (its name may differ in case or the create failed)"
 provider_id="$(printf '%s' "${provider_get}" | grep -oE "${UUID_RE}" | head -1)"
 if [ -z "${provider_id}" ]; then
   die "provider ${PROVIDER_NAME} exists but no provider uuid could be read from the API reply"
@@ -417,8 +547,8 @@ if [ -n "${agent_id}" ]; then
   log "model config agent: already present (left untouched)"
 else
   log "creating model config agent (context_limit 262144, default)"
-  create_model_config "agent" "${MODEL_AGENT_DISPLAY}" 262144 true \
-    || die "the agent model config could not be created — Agents chats will error until one exists"
+  create_model_config "agent" "${MODEL_AGENT_DISPLAY}" 262144 true ||
+    die "the agent model config could not be created — Agents chats will error until one exists"
   # A created config is only proof for the NEXT step if it reads back; the
   # uuid is reread rather than trusted from the POST body (same shape, one
   # extra call, no assumption about partial success).
@@ -429,14 +559,24 @@ if [ -n "${chat_id}" ]; then
   log "model config chat: already present (left untouched)"
 else
   log "creating model config chat (context_limit 32768)"
-  create_model_config "chat" "${MODEL_CHAT_DISPLAY}" 32768 false \
-    || die "the chat model config could not be created — re-run after the server is healthy"
+  create_model_config "chat" "${MODEL_CHAT_DISPLAY}" 32768 false ||
+    die "the chat model config could not be created — re-run after the server is healthy"
   chat_id="$(model_config_id chat)"
 fi
 
 # ── 3. Model pins for the four auxiliary lanes ──────────────────────────────
 # general/explore name the subagent types; compaction/title_generation name
 # the helper calls. Unset lanes get pinned; any existing pin is respected.
+# @function pin_lane
+# PUT a model-config pin on one auxiliary lane when that lane is unset.
+# Globals:
+#   api_read, api_write, log, die
+# Arguments:
+#   $1 - lane; $2 - label for the log; $3 - model-config uuid
+# Outputs:
+#   One log line describing what happened
+# Returns:
+#   0 when pinned, skipped, or left alone; exits 1 when the PUT fails
 pin_lane() {
   # $1 = lane, $2 = model label (for the log line), $3 = model-config uuid.
   local lane="$1" label="$2" target="$3" current
@@ -475,12 +615,12 @@ pin_lane title_generation "chat (32k tool-capable fallback)" "${secondary}"
 
 # ── 4. Deployment system prompt ─────────────────────────────────────────────
 # Exact-match compare (server sanitizes, our text is plain printable ASCII).
-want_prompt="Coder Agents on this stack run against locally served models over the LAN (LiteLLM to Spark vLLM or Arc IPEX-LLM). Keep tool use deliberate; local GPUs are a shared budget.
-For multi-file or whole-module work, delegate to the Grok Build CLI (binary \`grok\`, also on PATH as \`agent\`) via a background process using the grok-build-delegation skill, then review its diff and run the project tests yourself; answer small asks directly without delegating.
-Never echo, quote, or write into files the values of \$LITELLM_API_KEY, \$GH_TOKEN, or \$GITHUB_TOKEN found inside a workspace."
+want_prompt='Coder Agents on this stack run against locally served models over the LAN (LiteLLM to Spark vLLM or Arc IPEX-LLM). Keep tool use deliberate; local GPUs are a shared budget.
+For multi-file or whole-module work, delegate to the Grok Build CLI (binary `grok`, also on PATH as `agent`) via a background process using the grok-build-delegation skill, then review its diff and run the project tests yourself; answer small asks directly without delegating.
+Never echo, quote, or write into files the values of $LITELLM_API_KEY, $GH_TOKEN, or $GITHUB_TOKEN found inside a workspace.'
 
-current_prompt="$(api_read "/api/experimental/chats/config/system-prompt")" \
-  || die "could not read the deployment system prompt"
+current_prompt="$(api_read "/api/experimental/chats/config/system-prompt")" ||
+  die "could not read the deployment system prompt"
 if printf '%s' "${current_prompt}" | grep -qF 'grok-build-delegation skill, then review its diff'; then
   log "system prompt: already carries the stack addendum (left untouched)"
 else
@@ -495,8 +635,8 @@ fi
 # ── Wrap-up ────────────────────────────────────────────────────────────────
 # Disarm before the delete so the delete runs once, deliberately.
 trap - EXIT
-psql_sql "${cleanup_sql}" >/dev/null 2>&1 \
-  || log "note: the token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
+psql_sql "${cleanup_sql}" >/dev/null 2>&1 ||
+  log "note: the token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
 
 log "Coder Agents wiring complete: provider ${PROVIDER_NAME}, model configs (agent default + chat fallback), four model pins, system prompt."
 log "Spot-check in the UI: start an Agents chat, pick a workspace, and ask it to list files — a tool call in the reply means the loop is live."

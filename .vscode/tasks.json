@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "test-fast",
+      "type": "shell",
+      "command": "bazelisk test //:test-fast",
+      "group": "test"
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "bazelisk test //:lint --test_tag_filters=manual"
+    },
+    {
+      "label": "validate",
+      "type": "shell",
+      "command": "bazelisk run //:validate",
+      "group": "test"
+    },
+    {
+      "label": "fix",
+      "type": "shell",
+      "command": "bazelisk run //:fix"
+    }
+  ]
+}

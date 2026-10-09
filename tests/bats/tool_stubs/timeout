@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## timeout — deterministic timeout(1) stub (test fixture; never ships)
+#
+# Purpose: stand in for timeout(1) so capped probes and execs stay hermetic.
+# Strips a leading duration (e.g. "20", "5.5"), then execs the rest — the
+# remaining argv is what the suite asserts on. Records the full invocation
+# (cap included) to $STUB_LOG/timeout.log when STUB_LOG is set.
+#
+# Usage (in a .bats file): use_stubs timeout curl; run probe_http 5 <url>
+# Safety: stub only. Never bounds anything by real time and never execs a
+# daemon.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "timeout $*" >>"${STUB_LOG}/timeout.log"; fi
+
+if printf '%s\n' "${1:-}" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; then
+  shift
+fi
+if [ "$#" -eq 0 ]; then
+  exit 0
+fi
+exec "$@"

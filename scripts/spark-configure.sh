@@ -46,24 +46,71 @@
 # something failed (write refused, no start.sh to restart with, restart failed) or a
 # host could not be checked at all, because leaving one box on other settings than its
 # peers is the drift this script exists to prevent.
+# ## spark-configure.sh — assert, and with --apply write, the Spark fleet config
 
 # shellcheck disable=SC2016 # usage() prints the header block above, where $SPARK_HOSTS
 # and $HOME are literal text in this script's own comments, not expansions.
+# @function usage
+# Print this script's help text.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   The help text on stdout
+# Returns:
+#   0
 usage() { sed -n '2,27p' "$0"; }
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# @function log
+# Print one status line. Spark scripts send it to stderr when --json is set.
+# Globals:
+#   json (Spark scripts; empty means stdout)
+# Arguments:
+#   $* - text to print
+# Outputs:
+#   The text on stdout, or stderr when json is set
+# Returns:
+#   0
 log() {
   # With --json, stdout stays exactly one JSON object per host: every prose line goes to
   # stderr instead, so `spark-configure.sh --json | jq` parses and `2>/dev/null` silences
   # the commentary without losing it.
   if [ -n "${json:-}" ]; then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi
 }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+# @function die
+# Print an error on stderr and exit 1.
+# Globals:
+#   None
+# Arguments:
+#   $* - error text, without the "error: " prefix
+# Outputs:
+#   "error: ..." on stderr
+# Returns:
+#   Does not return; exits 1
+die() {
+  printf 'error: %s\n' "$*" >&2
+  exit 1
+}
 # Expected states, not errors: exit 0 so callers (bootstrap) keep going.
-skip() { log "$*"; exit 0; }
+# @function skip
+# Print a not-yet line and exit 0 so callers such as bootstrap keep going.
+# Globals:
+#   None
+# Arguments:
+#   $* - reason text
+# Outputs:
+#   The reason on stdout (spark-configure routes it through log)
+# Returns:
+#   Does not return; exits 0
+skip() {
+  log "$*"
+  exit 0
+}
 
 # The twelve settings this script owns. The defaults are the recipe's own and stay as
 # shipped: PARALLEL 5 is the recipe default (4 is the escape hatch for a box ALSO
@@ -87,7 +134,7 @@ probe_cap=15
 http_cap=8
 recipe_dir='${HOME}/Qwen3.8-Flash-Next-Single-DGX-Spark-TensorFold'
 container="qwen38-flash-next-tf"
-JSON_ESCAPE_SED='s/["\\]/\\&/g'   # one sed program, quoted: escape \ and " in one pass
+JSON_ESCAPE_SED='s/["\\]/\\&/g' # one sed program, quoted: escape \ and " in one pass
 model_id="Qwen3.8-Flash-Next"
 container_env="/opt/qwen38-flash-next/.env"
 
@@ -187,14 +234,14 @@ if [ "${#hosts[@]}" -eq 0 ]; then
         hosts+=("${host}")
       done
     else
-      log "note: no host given and SPARK_HOSTS is not set, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS=\"host1 host2 ...\" in the environment."
+      log 'note: no host given and SPARK_HOSTS is not set, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
       hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
     fi
   fi
 fi
 
-command -v ssh >/dev/null 2>&1 \
-  || skip "skipped: ssh is not on PATH, so no Spark can be inspected or configured"
+command -v ssh >/dev/null 2>&1 ||
+  skip "skipped: ssh is not on PATH, so no Spark can be inspected or configured"
 
 # timeout(1) is optional here, unlike in push-template.sh where its absence is a
 # reason to skip: an uncapped ssh or curl to a black-holed address hangs until the
@@ -221,6 +268,16 @@ trap 'rm -f "${work}"/*' EXIT
 # are what keep a run non-interactive: an unknown host key or a key passphrase would
 # otherwise block until the cap below instead of failing, and a blocked probe loop is
 # how a fleet check turns into a 40-minute one.
+# @function ssh_run
+# Run one remote command over ssh, capped when timeout(1) exists.
+# Globals:
+#   has_timeout, timeout_s, ssh_port
+# Arguments:
+#   $1 - user@host; $2 - remote command; $3 - cap seconds, optional
+# Outputs:
+#   The remote command's stdout and stderr
+# Returns:
+#   ssh's status, or 124 when timeout cuts it off
 ssh_run() {
   # $1 = user@host, $2 = the remote command, $3 = optional wall-clock cap in seconds.
   # timeout(1) takes the duration and the command as separate argv words, which is why
@@ -238,6 +295,16 @@ ssh_run() {
 # quoted string would claim a number was taken and a bare one would not parse; a pair
 # of values prints as a JSON array, which is how the two context-window figures stay
 # distinguishable from one measurement.
+# @function json_value
+# Print one JSON scalar: null when empty, a bare integer, or a quoted string.
+# Globals:
+#   None
+# Arguments:
+#   $1 - value, optional
+# Outputs:
+#   null, a bare integer, or a quoted string
+# Returns:
+#   0
 json_value() {
   if [ "$#" -lt 1 ] || [ -z "$1" ]; then
     printf 'null'
@@ -252,12 +319,32 @@ json_value() {
 # json_escape: strip the JSON delimiters this script could ever interpolate into a
 # value and cap the length, so --json stays one parseable object per host even when a
 # remote tool answers with a multi-line error.
+# @function json_escape
+# Escape text so it can sit inside one JSON string.
+# Globals:
+#   JSON_ESCAPE_SED when this copy clips remote replies
+# Arguments:
+#   $1 - raw text
+# Outputs:
+#   Escaped text. The coder-agents copy also turns newlines into \\n.
+# Returns:
+#   0
 json_escape() {
   local trimmed
   trimmed="$(printf '%s' "$1" | sed -E "${JSON_ESCAPE_SED}" | tr -d '\n\r')"
   printf '%s' "${trimmed:0:180}"
 }
 
+# @function first_line
+# Print the first non-blank line of a block of text.
+# Globals:
+#   None
+# Arguments:
+#   $1 - text, which may be empty or all blank
+# Outputs:
+#   That line, or nothing; an all-blank input does not abort the caller
+# Returns:
+#   0
 first_line() {
   # $1 = text; print its first non-blank line, so a remote tool's own complaint can be
   # quoted without dumping its whole output into this script's output. The `|| true` is
@@ -271,6 +358,16 @@ first_line() {
 # second --apply stays silent), else from process env SPARK_CFG_<NAME>, else the
 # default in $keys. The repo-root .env is none of those sources (it is read above
 # only to name the default host list, never for values like these).
+# @function want_value
+# Print the fleet's desired value for one key on one host.
+# Globals:
+#   keys, SPARK_CFG_<KEY>
+# Arguments:
+#   $1 - key; $2 - per-host override file, optional
+# Outputs:
+#   The value from the override file, else SPARK_CFG_<KEY>, else keys
+# Returns:
+#   0
 want_value() {
   # $1 = key, $2 = per-host override file (may be missing)
   local key="$1" file="${2:-}" value="" entry
@@ -298,6 +395,16 @@ want_value() {
 # running container was started with first, then the file next to start.sh, because
 # the container's environment is what start.sh read the last time it ran. $2 is the
 # per-host probe response, one key=value line per fact.
+# @function live_value
+# Print the value a probed host is actually running for one key.
+# Globals:
+#   None
+# Arguments:
+#   $1 - key; $2 - probe report file
+# Outputs:
+#   The inspect value, else the recipe value, else nothing
+# Returns:
+#   0
 live_value() {
   local key="$1" report="$2" value="" source
   for source in inspect recipe; do
@@ -319,8 +426,28 @@ live_value() {
 # nvidia runtime is a daemon setting, not a file). One key=value line per fact, and
 # `report_end` on its own line ends the report, so a truncated or hostile response
 # stops the reader instead of poisoning the checks that read it.
+# @function probe_script
+# Print the remote probe script that one ssh round trip will run.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   The script text on stdout
+# Returns:
+#   0
 probe_script() {
   cat <<'PROBE'
+# @function say
+# Print one key=value line on the remote probe host.
+# Globals:
+#   None
+# Arguments:
+#   $1 - line to print
+# Outputs:
+#   The line on stdout
+# Returns:
+#   0
 say() {
   printf '%s\n' "$1"
 }
@@ -400,6 +527,16 @@ PROBE
 # "answered and looks right": an empty body means unmeasured, never a pass. The
 # command substitution below holds no nested one — that nesting is what the ssh
 # plumbing in this file has to avoid, so it is avoided everywhere else too.
+# @function probe_http
+# Print the body of one capped HTTP GET, or nothing when it does not answer.
+# Globals:
+#   probe_tool or has_timeout and http_cap, depending on the caller
+# Arguments:
+#   Spark entry scripts: $1 - URL. spark.sh: $1 - cap seconds, $2 - URL.
+# Outputs:
+#   The body, or nothing
+# Returns:
+#   0
 probe_http() {
   # $1 = URL, and probe_tool is either `timeout <cap> curl -m 5` or `curl -m 5`.
   local out=""
@@ -411,6 +548,16 @@ probe_http() {
 # $3 when the file, the key or the value is missing. Read with sed and never
 # sourced: a truncated or hostile answer must not be able to name a variable and
 # supply the command that fills it (see the note above probe_script).
+# @function report_get
+# Read one key from a key=value report. Empty and NOTSET use the fallback.
+# Globals:
+#   None
+# Arguments:
+#   $1 - key; $2 - report file; $3 - fallback, optional
+# Outputs:
+#   The value or the fallback
+# Returns:
+#   0
 report_get() {
   local value=""
   if [ -s "$2" ]; then
@@ -459,7 +606,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # session first would report a healthy server as unreachable. Each one is capped
   # twice over — timeout(1) around a curl that carries its own -m — because a
   # black-holed address must not be able to stall this loop (see probe_tool above).
-  "${probe_tool[@]}" "http://${host}:${server_port}/v1/models" > "${models}" 2>/dev/null || true
+  "${probe_tool[@]}" "http://${host}:${server_port}/v1/models" >"${models}" 2>/dev/null || true
   health="$(probe_http "http://${host}:${server_port}/health")"
 
   # ── the remote half: one flat script, one ssh round trip ────────────────────
@@ -474,12 +621,15 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # The recipe dir and container name go out in double quotes, not single: the default
   # recipe dir holds a literal $HOME, which has to expand ON THE SPARK. Single-quoted it
   # would arrive as those six characters and every clone would read as "no clone".
-  { printf '%s\n' "RECIPE_DIR=\"${recipe_dir}\"" "CONTAINER=\"${container}\""; probe_script; } > "${probe}"
-  payload="$(base64 < "${probe}" | tr -d '\n')"
+  {
+    printf '%s\n' "RECIPE_DIR=\"${recipe_dir}\"" "CONTAINER=\"${container}\""
+    probe_script
+  } >"${probe}"
+  payload="$(base64 <"${probe}" | tr -d '\n')"
 
   ssh_rc=0
-  ssh_out="$(ssh_run "${target}" "printf '%s' '${payload}' | base64 -d | sh" "${probe_cap}" 2> "${stderr_file}")" \
-    || ssh_rc=$?
+  ssh_out="$(ssh_run "${target}" "printf '%s' '${payload}' | base64 -d | sh" "${probe_cap}" 2>"${stderr_file}")" ||
+    ssh_rc=$?
 
   if [ "${ssh_rc}" = "124" ] || [ "${ssh_rc}" = "143" ]; then
     reason="ssh to ${host} was cut off after ${probe_cap}s (timeout(1) guard)"
@@ -496,7 +646,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     [ -n "${reason}" ] || reason="ssh to ${host} answered but did not produce a probe report"
   else
     reason=""
-    printf '%s\n' "${ssh_out}" > "${report}"
+    printf '%s\n' "${ssh_out}" >"${report}"
   fi
 
   # Everything past here reads ${report} instead of dialling the box a second time.
@@ -587,8 +737,8 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # The fleet's contract for a fleet check: one comparable fingerprint per box, so a
   # box left on other settings than its two peers shows up in the output instead of
   # only in a diff someone has to think to go and read.
-  fingerprint="$(printf '%s\n' "${keys}" | tr ' ' '\n' | sed -n 's|^\([A-Z_0-9]*\)=\(.*\)$|\1=\2|p' \
-    | tr '\n' ' ')"
+  fingerprint="$(printf '%s\n' "${keys}" | tr ' ' '\n' | sed -n 's|^\([A-Z_0-9]*\)=\(.*\)$|\1=\2|p' |
+    tr '\n' ' ')"
   if [ -n "${reason}" ]; then
     # Nothing was compared, so there is no fingerprint to compare and --json must not
     # claim there was one.
@@ -634,8 +784,8 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
       ;;
   esac
 
-  if [ -z "${reason}" ] && [ -z "${container_running}" ] && [ -n "${container_state}" ] \
-    && [ "${container_state}" != absent ]; then
+  if [ -z "${reason}" ] && [ -z "${container_running}" ] && [ -n "${container_state}" ] &&
+    [ "${container_state}" != absent ]; then
     reason="container state: ${container_state}"
   fi
   if [ -z "${reason}" ]; then
@@ -724,7 +874,7 @@ EOF2
     printf '%s\n' \
       "# Generated by ./scripts/spark-configure.sh --apply — NOT a fork of the recipe." \
       "# Every key below is optional (start.sh sources this after scripts/config.sh, so" \
-      "# an omitted key is not \"unset\"), and the three Sparks must agree on all of them." \
+      '# an omitted key is not "unset"), and the three Sparks must agree on all of them.' \
       "# PARALLEL 5 is the recipe default; 4 is the escape hatch for a box ALSO running" \
       "# other GPU work. TENSORFOLD_MEMORY_RESERVE_GIB 2 is already the floor." \
       "# KV_DTYPE int8 halves KV memory against bf16, is the recipe default, and does" \
@@ -733,7 +883,7 @@ EOF2
       printf '%s\n' "${entry}"
     done
     printf '\n'
-  } > "${candidate}"
+  } >"${candidate}"
 
   if [ ! -f "${local_env}" ]; then
     mkdir -p sparks
@@ -824,4 +974,3 @@ if [ -n "${apply}" ] && [ "${hosts_failed}" != 0 ]; then
   exit 1
 fi
 exit 0
-

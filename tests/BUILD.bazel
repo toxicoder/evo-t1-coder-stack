@@ -1,0 +1,103 @@
+"""Package purpose: Hermetic Bats, shell-function inventory, and docstring coverage."""
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:exec_shell.bzl", "exec_shell")
+load(":bats.bzl", "bats_file_tests")
+
+package(default_visibility = ["//visibility:private"])
+
+filegroup(
+    name = "bats_tool",
+    srcs = ["@bats_core//:bin/bats"],
+    data = [
+        "@bats_core//:libexec/bats-core/bats",
+        "@bats_core//:libexec/bats-core/bats-exec-file",
+        "@bats_core//:libexec/bats-core/bats-exec-suite",
+        "@bats_core//:libexec/bats-core/bats-exec-test",
+        "@bats_core//:libexec/bats-core/bats-format-cat",
+        "@bats_core//:libexec/bats-core/bats-format-junit",
+        "@bats_core//:libexec/bats-core/bats-format-pretty",
+        "@bats_core//:libexec/bats-core/bats-format-tap",
+        "@bats_core//:libexec/bats-core/bats-format-tap13",
+        "@bats_core//:libexec/bats-core/bats-gather-tests",
+        "@bats_core//:libexec/bats-core/bats-preprocess",
+    ],
+)
+
+_BATS_COMMON = [
+    "bats/test_helper.bash",
+    "bats_runner.sh",
+    "extract_fn.py",
+    ":bats_tool",
+    "//scripts:doc_sources",
+] + glob(
+    [
+        "bats/tool_stubs/**",
+        "bats/fixtures/**",
+        "test_helpers.sh",
+    ],
+    allow_empty = True,
+)
+
+exec_shell(
+    name = "bats_runner_exec",
+    src = "bats_runner.sh",
+)
+
+bats_file_tests(
+    srcs = glob(["bats/*.bats"]),
+    common_data = _BATS_COMMON,
+    runner = ":bats_runner_exec",
+)
+
+exec_shell(
+    name = "shell_inventory_exec",
+    src = "shell_inventory.sh",
+    data = ["repo_root.sh"],
+)
+
+sh_test(
+    name = "shell_inventory",
+    size = "small",
+    srcs = [":shell_inventory_exec"],
+    data = [
+        "repo_root.sh",
+        "//scripts:doc_sources",
+    ] + glob(["bats/**"]),
+    tags = [
+        "local",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exec_shell(
+    name = "doc_coverage_exec",
+    src = "doc_coverage.sh",
+    data = ["repo_root.sh"],
+)
+
+sh_test(
+    name = "doc_coverage",
+    size = "small",
+    srcs = [":doc_coverage_exec"],
+    data = [
+        "repo_root.sh",
+        "//scripts:doc_sources",
+    ],
+    tags = [
+        "local",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(
+    [
+        "bats_runner.sh",
+        "doc_coverage.sh",
+        "repo_root.sh",
+        "shell_inventory.sh",
+    ],
+    visibility = ["//visibility:public"],
+)

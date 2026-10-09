@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## git — deterministic git client stub (test fixture; never ships)
+#
+# Purpose: drive the git-taking branches without network or history.
+#   clone → default: "fatal: stub refused clone" on stderr, exit 128;
+#           STUB_GIT_CLONE=success prints a marker and exits 0 (the target
+#           dir must pre-exist — a real clone would create it).
+#   ls-remote | rev-parse | symbolic-ref → print STUB_GIT_LS_OUT, exit STUB_GIT_RC (0).
+#   anything else → exit STUB_GIT_RC (0).
+# Records one argv line to $STUB_LOG/git.log when STUB_LOG is set.
+#
+# Usage (in a .bats file): use_stubs git; STUB_GIT_CLONE=success run ...
+# Safety: stub only — no remotes, no credentials, no history.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "git $*" >>"${STUB_LOG}/git.log"; fi
+
+case "$*" in
+  *clone*)
+    if [ "${STUB_GIT_CLONE:-}" = "success" ]; then
+      printf '%s\n' "Cloning into stub repo (stub git, rc 0)"
+      exit 0
+    fi
+    printf '%s\n' "fatal: stub refused clone" >&2
+    exit "${STUB_GIT_CLONE_RC:-128}"
+    ;;
+  *ls-remote* | *rev-parse* | *symbolic-ref*)
+    if [ -n "${STUB_GIT_LS_OUT:-}" ]; then printf '%s\n' "${STUB_GIT_LS_OUT}"; fi
+    exit "${STUB_GIT_RC:-0}"
+    ;;
+esac
+
+exit "${STUB_GIT_RC:-0}"

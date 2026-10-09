@@ -1,0 +1,76 @@
+"""Package purpose: Root Bazel targets. Bazelisk is the primary ingress.
+
+  bazelisk test //:test-fast
+  bazelisk test //:lint --test_tag_filters=manual
+  bazelisk run //:validate
+  bazelisk run //:fix
+"""
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//tools:exec_shell.bzl", "exec_shell")
+
+package(default_visibility = ["//visibility:private"])
+
+exports_files([
+    "fix.sh",
+    "CONTRIBUTING.md",
+    "README.md",
+    "Makefile",
+    "LICENSE",
+])
+
+filegroup(
+    name = "ci_workflows",
+    srcs = [
+        ".github/actions/setup-bazel/action.yml",
+        ".github/scripts/install-lint-tools.sh",
+        ".github/workflows/ci.yml",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "bats",
+    actual = "//tests:bats",
+    visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "test-fast",
+    tests = [
+        "//tests:bats",
+        "//tests:doc_coverage",
+        "//tests:shell_inventory",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "test",
+    tests = [":test-fast"],
+    visibility = ["//visibility:public"],
+)
+
+test_suite(
+    name = "lint",
+    tags = ["lint"],
+    tests = ["//lints:all"],
+    visibility = ["//visibility:public"],
+)
+
+exec_shell(
+    name = "fix_exec",
+    src = "fix.sh",
+)
+
+sh_binary(
+    name = "fix",
+    srcs = [":fix_exec"],
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "validate",
+    actual = "//scripts:validate",
+    visibility = ["//visibility:public"],
+)

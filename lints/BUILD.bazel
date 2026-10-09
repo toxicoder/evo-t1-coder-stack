@@ -1,0 +1,84 @@
+"""Package purpose: ShellCheck, shfmt, and buildifier. Host tools, tagged manual."""
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:exec_shell.bzl", "exec_shell")
+
+package(default_visibility = ["//visibility:private"])
+
+exec_shell(
+    name = "shell_exec",
+    src = "run_shellcheck.sh",
+    data = ["check_tool.sh"],
+)
+
+sh_test(
+    name = "shell",
+    srcs = [":shell_exec"],
+    data = [
+        "check_tool.sh",
+        "//:fix.sh",
+        "//scripts:doc_sources",
+        "//scripts:validate.sh",
+    ],
+    tags = [
+        "lint",
+        "local",
+        "manual",
+        "no-sandbox",
+        "shellcheck",
+    ],
+)
+
+exec_shell(
+    name = "shfmt_exec",
+    src = "run_shfmt.sh",
+    data = ["check_tool.sh"],
+)
+
+sh_test(
+    name = "shfmt",
+    srcs = [":shfmt_exec"],
+    data = [
+        "check_tool.sh",
+        "//:fix.sh",
+        "//scripts:doc_sources",
+        "//scripts:validate.sh",
+    ],
+    tags = [
+        "lint",
+        "local",
+        "manual",
+        "no-sandbox",
+        "shfmt",
+    ],
+)
+
+exec_shell(
+    name = "buildifier_exec",
+    src = "buildifier_check.sh",
+    data = ["check_tool.sh"],
+)
+
+sh_test(
+    name = "buildifier",
+    srcs = [":buildifier_exec"],
+    data = ["check_tool.sh"],
+    tags = [
+        "buildifier",
+        "lint",
+        "local",
+        "manual",
+        "no-sandbox",
+    ],
+)
+
+test_suite(
+    name = "all",
+    tags = ["lint"],
+    tests = [
+        ":buildifier",
+        ":shell",
+        ":shfmt",
+    ],
+    visibility = ["//visibility:public"],
+)

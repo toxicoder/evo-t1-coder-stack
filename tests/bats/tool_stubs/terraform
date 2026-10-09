@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## terraform — deterministic terraform CLI stub (test fixture; never ships)
+#
+# Purpose: drive the fmt/init/validate/plan/apply branches with a canned
+# answer: print STUB_TF_OUT, exit STUB_TF_RC (0). Guards that shell out to
+# terraform (the docs/CI gates and push-template's lockfile hint) stay
+# hermetic this way; the integration tier may run the real binary instead.
+# Records one argv line to $STUB_LOG/terraform.log when STUB_LOG is set.
+#
+# Usage (in a .bats file): use_stubs terraform; STUB_TF_RC=1 run ...
+# Safety: stub only — never touches providers or modules.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "terraform $*" >>"${STUB_LOG}/terraform.log"; fi
+
+if [ -n "${STUB_TF_OUT:-}" ]; then printf '%s\n' "${STUB_TF_OUT}"; fi
+exit "${STUB_TF_RC:-0}"

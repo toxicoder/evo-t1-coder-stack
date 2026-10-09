@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## docker-compose — deterministic docker-compose(1) stub (test fixture; never ships)
+#
+# Purpose: the docker CLI stub's twin for the legacy `docker-compose` binary,
+# which some hosts carry on PATH. Delegates everything to the docker stub next
+# to this file, so both spellings behave identically.
+#
+# Usage (in a .bats file): use_stubs docker docker-compose
+# Safety: stub only — never contacts a daemon or a socket.
+set -u
+
+exec "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/docker" "$@"

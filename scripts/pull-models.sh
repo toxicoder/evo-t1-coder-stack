@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+#
+# ## pull-models.sh — pull OLLAMA_MODELS into the IPEX-LLM container
+#
 # Pull the Ollama models listed in OLLAMA_MODELS (.env) into the IPEX-LLM
 # container. First run is a large download (~35 GB for the default set).
 set -euo pipefail
