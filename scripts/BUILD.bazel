@@ -1,6 +1,7 @@
 """Package purpose: Operational shell and the validate orchestrator."""
 
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//tools:exec_shell.bzl", "exec_shell")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -22,9 +23,14 @@ exports_files(
     ],
 )
 
+exec_shell(
+    name = "validate_exec",
+    src = "validate.sh",
+)
+
 sh_binary(
     name = "validate",
-    srcs = ["validate.sh"],
+    srcs = [":validate_exec"],
     data = [":doc_sources"],
     visibility = ["//visibility:public"],
 )

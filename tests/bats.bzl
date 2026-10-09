@@ -2,12 +2,13 @@
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
-def bats_file_tests(srcs, common_data):
+def bats_file_tests(srcs, common_data, runner):
     """Declare bats_<stem>_test sh_test targets and a bats test_suite.
 
     Args:
         srcs: labels of bats/*.bats files.
         common_data: shared runfiles (helper, bats-core, scripts).
+        runner: exec_shell launcher label whose runfiles include bats_runner.sh.
     """
     tests = []
     for src in srcs:
@@ -18,7 +19,7 @@ def bats_file_tests(srcs, common_data):
             name = name,
             size = "small",
             timeout = "moderate",
-            srcs = ["bats_runner.sh"],
+            srcs = [runner],
             args = [base],
             data = common_data + [src],
             tags = [

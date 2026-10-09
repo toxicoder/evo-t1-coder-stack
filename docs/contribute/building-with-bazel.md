@@ -26,3 +26,5 @@ bazelisk run //:validate
 | `//:fix` | buildifier and shfmt write mode |
 
 `//:test-fast` does not start Compose, pull models, or SSH to a Spark box.
+
+`rules_shell` only symlinks an `sh_test` or `sh_binary` source when that file is executable. `//tools:exec_shell.bzl` writes a generated launcher and runs the real `.sh` from runfiles with bash, so a checkout whose scripts are mode `100644` still builds.

@@ -1,6 +1,7 @@
 """Package purpose: Hermetic Bats, shell-function inventory, and docstring coverage."""
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:exec_shell.bzl", "exec_shell")
 load(":bats.bzl", "bats_file_tests")
 
 package(default_visibility = ["//visibility:private"])
@@ -38,15 +39,27 @@ _BATS_COMMON = [
     allow_empty = True,
 )
 
+exec_shell(
+    name = "bats_runner_exec",
+    src = "bats_runner.sh",
+)
+
 bats_file_tests(
     srcs = glob(["bats/*.bats"]),
     common_data = _BATS_COMMON,
+    runner = ":bats_runner_exec",
+)
+
+exec_shell(
+    name = "shell_inventory_exec",
+    src = "shell_inventory.sh",
+    data = ["repo_root.sh"],
 )
 
 sh_test(
     name = "shell_inventory",
     size = "small",
-    srcs = ["shell_inventory.sh"],
+    srcs = [":shell_inventory_exec"],
     data = [
         "repo_root.sh",
         "//scripts:doc_sources",
@@ -58,10 +71,16 @@ sh_test(
     visibility = ["//visibility:public"],
 )
 
+exec_shell(
+    name = "doc_coverage_exec",
+    src = "doc_coverage.sh",
+    data = ["repo_root.sh"],
+)
+
 sh_test(
     name = "doc_coverage",
     size = "small",
-    srcs = ["doc_coverage.sh"],
+    srcs = [":doc_coverage_exec"],
     data = [
         "repo_root.sh",
         "//scripts:doc_sources",

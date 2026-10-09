@@ -7,6 +7,7 @@
 """
 
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//tools:exec_shell.bzl", "exec_shell")
 
 package(default_visibility = ["//visibility:private"])
 
@@ -57,9 +58,14 @@ test_suite(
     visibility = ["//visibility:public"],
 )
 
+exec_shell(
+    name = "fix_exec",
+    src = "fix.sh",
+)
+
 sh_binary(
     name = "fix",
-    srcs = ["fix.sh"],
+    srcs = [":fix_exec"],
     visibility = ["//visibility:public"],
 )
 
