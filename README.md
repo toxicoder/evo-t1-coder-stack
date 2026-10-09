@@ -871,8 +871,10 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 
   ```sh
   curl -sS "${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1/models}" | head -c 200
-  # or all three boxes at once, from the repo root (placeholder hostnames shown):
-  SPARK_HOSTS="spark-1.lan spark-2.lan spark-3.lan" ./scripts/spark-verify.sh
+  # or the whole fleet at once, from the repo root — spark-verify.sh derives its host
+  # list from the SPARK*_URL keys in .env (set SPARK_HOSTS="host1 host2 ..." only to
+  # check a fleet your .env does not name):
+  ./scripts/spark-verify.sh --no-tests
   ```
 
   If that fails, bring the TensorFold server up (`scripts/spark-configure.sh <host>
