@@ -94,14 +94,18 @@ services:
       # CODER_EXTERNAL_AUTH_* an empty value here is safe (parsed as an empty
       # list), but an UNKNOWN name is no-ops with a warning: v2.36.6 knows no
       # experiment `agents` — that default only logged "ignoring unknown
-      # experiment" on every boot. Coder Agents gates on the entitlement
-      # feature `workspace_external_agent` (not unlockable via this key on
-      # the CE image); real experiment names include `chat-advisor` and
+      # experiment" on every boot, and nothing gates the built-in chat agent
+      # anyway — it is compiled into coderd unconditionally, and the
+      # `workspace_external_agent` entitlement that the docs name gates
+      # EXTERNAL agents (Claude Code, Codex, …), not the chat or the templates
+      # here. Real experiment names include `chat-advisor` and
       # `chat-virtual-desktop` if you opt into them here. No AI-Gateway keys
-      # on purpose: LiteLLM stays the model transport (Admin -> AI points the
-      # agent at http://litellm:4000/v1 with the LITELLM_MASTER_KEY value
-      # below; LITELLM_BASE_URL/LITELLM_API_KEY already reach workspaces
-      # through coder_agent.env).
+      # on purpose: LiteLLM stays the model transport. scripts/coder-agents.sh
+      # --apply wires the chat agent to it server-side (creates the `litellm`
+      # provider at http://litellm:4000/v1 with the LITELLM_MASTER_KEY value
+      # below, plus model configs, lane pins and the system prompt);
+      # LITELLM_BASE_URL/LITELLM_API_KEY already reach workspaces through
+      # coder_agent.env for the CLI inside.
       CODER_EXPERIMENTS: ${CODER_EXPERIMENTS:-}
       CODER_PROMETHEUS_ENABLE: "true"
       # Bind inside the container on 0.0.0.0 so the published mapping below can

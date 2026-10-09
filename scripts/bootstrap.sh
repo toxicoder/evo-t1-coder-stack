@@ -8,9 +8,10 @@
 #   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
 #   - build the golden workspace image if it is missing, then push the template
+#   - wire the Coder Agents chat agent with scripts/coder-agents.sh
 #   - check the Spark fleet with scripts/spark-configure.sh and scripts/spark-verify.sh
 #
-# The last three are the steps a fresh clone used to have to be told about in the
+# The last four are the steps a fresh clone used to have to be told about in the
 # README. All run at the very end, after every fast check, so a broken box still
 # fails quickly on the things that cost nothing to test. None is fatal: a build that
 # cannot download, a template push with no Coder session yet, or a Spark that is
@@ -19,9 +20,10 @@
 #
 #   SKIP_DEV_IMAGE_BUILD=1 ./scripts/bootstrap.sh   # print-only, as before
 #   SKIP_TEMPLATE_PUSH=1   ./scripts/bootstrap.sh   # no coder templates push
+#   SKIP_CODER_AGENTS=1    ./scripts/bootstrap.sh   # no Coder Agents model wiring
 #   SKIP_SPARKS=1          ./scripts/bootstrap.sh   # no Spark fleet check
 #
-# All three are read from the process environment only, never from .env — an .env that
+# All four are read from the process environment only, never from .env — an .env that
 # silently disables provisioning steps would be unreadable to debug.
 set -euo pipefail
 
@@ -453,6 +455,26 @@ else
   fi
 fi
 
+# ── Coder Agents wiring ──────────────────────────────────────────────────────
+# The control-plane chat agent cannot answer a single prompt until the deployment
+# has a chat model config, and its subagent lanes (general/explore/compaction/
+# title_generation) default to nothing once pinned lanes are wanted.
+# scripts/coder-agents.sh writes all of that through the server API — the
+# `litellm` provider, the `agent` + `chat` model configs, the four lane pins, and
+# the system-prompt addendum that teaches delegation to the Grok Build CLI. It
+# mints its own short-lived admin token from Postgres (like push-template.sh),
+# skips cleanly while the stack is down or nobody has registered yet, and reuses
+# what is already wired, so this step is safe to re-run beside the push above.
+if [ -n "${SKIP_CODER_AGENTS:-}" ]; then
+  echo "note: Coder Agents wiring skipped (SKIP_CODER_AGENTS is set) — run ./scripts/coder-agents.sh --apply after the stack is up."
+else
+  agents_rc=0
+  ./scripts/coder-agents.sh --apply || agents_rc=$?
+  if [ "${agents_rc}" != "0" ]; then
+    echo "warning: the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: ./scripts/coder-agents.sh --dry-run (once the stack is up), then re-run with --apply."
+  fi
+fi
+
 # ── Spark fleet ──────────────────────────────────────────────────────────────
 # The optional DGX Spark boxes all serve the same Qwen3.8-Flash-Next weights behind one
 # `agent` model group with `least-busy` routing, so they have to agree on everything
@@ -504,7 +526,8 @@ dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
 echo "  4. ./scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
 echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
-echo "  6. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS=\"host1 host2 ...\" overrides that; drop --no-tests for the 195k/bench sweep)"
-echo "  7. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
+echo "  6. ./scripts/coder-agents.sh --apply   # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (skipped on a cold box; re-run it after steps 2-3)"
+echo "  7. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS=\"host1 host2 ...\" overrides that; drop --no-tests for the 195k/bench sweep)"
+echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
-echo "  8. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
+echo "  9. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
