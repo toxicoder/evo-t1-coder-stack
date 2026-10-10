@@ -6,16 +6,51 @@
     "coder-fast",
     "chat"
   ],
-  "editor.bracketPairColorization.enabled": true,
-  "editor.formatOnSave": true,
-  "editor.guides.bracketPairs": true,
+  "chat.disableAIFeatures": true,
+  "chat.commandCenter.enabled": false,
+  "chat.agent.enabled": false,
+  "chat.mcp.gallery.enabled": false,
+  "chat.useAgentSkills": true,
+  "github.copilot.enable": {
+    "*": false,
+    "plaintext": false,
+    "markdown": false,
+    "scminput": false,
+    "yaml": false,
+    "json": false,
+    "python": false
+  },
+  "github.copilot.nextEditSuggestions.enabled": false,
   "editor.inlineSuggest.enabled": false,
-  "editor.linkedEditing": true,
-  "editor.minimap.enabled": false,
-  "editor.renderWhitespace": "boundary",
-  "editor.stickyScroll.enabled": true,
+  "telemetry.telemetryLevel": "off",
+  "redhat.telemetry.enabled": false,
+  "workbench.settings.showAISearchToggle": false,
+  "workbench.iconTheme": "material-icon-theme",
+  "workbench.activityBar.location": "top",
+  "workbench.startupEditor": "none",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "workbench.enableExperiments": false,
+  "workbench.diffEditorAssociations": {
+    "*.png": "imagePreview.previewEditor"
+  },
+  "extensions.autoCheckUpdates": false,
+  "extensions.autoUpdate": "off",
+  "window.restoreWindows": "none",
+  "editor.formatOnSave": true,
   "editor.wordWrap": "on",
+  "editor.minimap.enabled": false,
+  "editor.bracketPairColorization.enabled": true,
+  "editor.guides.bracketPairs": true,
+  "editor.linkedEditing": true,
+  "editor.stickyScroll.enabled": true,
+  "editor.detectIndentation": true,
+  "editor.renderWhitespace": "boundary",
   "explorer.compactFolders": false,
+  "diffEditor.renderSideBySide": true,
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.autoSave": "onFocusChange",
+  "files.hotExit": "onExitAndWindowClose",
   "files.exclude": {
     "**/.DS_Store": true,
     "**/.ipynb_checkpoints": true,
@@ -34,12 +69,104 @@
     "**/.ipynb_checkpoints": true,
     "**/.virtual_documents": true
   },
-  "terminal.integrated.defaultProfile.linux": "tmux",
-  "terminal.integrated.automationProfile.linux": "bash",
-  "terminal.integrated.scrollback": 2000,
+  "git.confirmSync": false,
+  "git.ignoreRebaseWarning": true,
+  "githubPullRequests.remotes": [],
+  "remote.autoForwardPortsSource": "hybrid",
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "python.analysis.typeCheckingMode": "strict",
+  "python.terminal.activateEnvironment": false,
+  "[python]": {
+    "editor.formatOnSave": true,
+    "editor.tabSize": 4
+  },
+  "[markdown]": {
+    "editor.wordWrap": "on",
+    "editor.quickSuggestions": {
+      "other": false,
+      "comments": false,
+      "strings": false
+    },
+    "editor.unicodeHighlight.ambiguousCharacters": false,
+    "editor.unicodeHighlight.invisibleCharacters": false,
+    "diffEditor.ignoreTrimWhitespace": true
+  },
+  "markdown.preview.breaks": true,
+  "markdown.preview.markEditorSelection": true,
+  "markdown.preview.fontSize": 15,
+  "markdown.preview.lineHeight": 1.6,
+  "markdown.preview.openMarkdownLinks": "inPreview",
+  "[yaml]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml",
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2,
+    "editor.autoIndent": "advanced",
+    "editor.quickSuggestions": {
+      "other": true,
+      "comments": false,
+      "strings": true
+    }
+  },
+  "[dockercompose]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml",
+    "editor.insertSpaces": true,
+    "editor.tabSize": 2,
+    "editor.autoIndent": "advanced",
+    "editor.quickSuggestions": {
+      "other": true,
+      "comments": false,
+      "strings": true
+    }
+  },
+  "[github-actions-workflow]": {
+    "editor.defaultFormatter": "redhat.vscode-yaml"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "yaml.disableSchemaDetection": [
+    "**/.github/workflows/*.yml",
+    "**/.github/workflows/*.yaml",
+    "**/.gitea/workflows/*.yml",
+    "**/.gitea/workflows/*.yaml",
+    "**/.forgejo/workflows/*.yml",
+    "**/.forgejo/workflows/*.yaml"
+  ],
+  "json.schemaDownload.trustedDomains": {
+    "https://developer.microsoft.com/json-schemas/": true,
+    "https://json-schema.org/": true,
+    "https://json.schemastore.org/": true,
+    "https://raw.githubusercontent.com/devcontainers/spec/": true,
+    "https://raw.githubusercontent.com/microsoft/vscode/": true,
+    "https://schemastore.azurewebsites.net/": true,
+    "https://www.schemastore.org/": true
+  },
+  "makefile.configureOnOpen": true,
+  "cSpell.userWords": [
+    "bazelisk",
+    "codeserver",
+    "devcontainer",
+    "dgx",
+    "grok",
+    "litellm",
+    "tftpl",
+    "tmux"
+  ],
+  "cSpell.diagnosticLevel": "Hint",
+  "terminal.integrated.cwd": "$${workspaceFolder}",
   "terminal.integrated.splitCwd": "workspaceRoot",
+  "terminal.integrated.scrollback": 2000,
+  "terminal.integrated.gpuAcceleration": "auto",
+  "terminal.integrated.cursorBlinking": true,
+  "terminal.integrated.cursorStyle": "line",
   "terminal.integrated.enablePersistentSessions": false,
   "terminal.integrated.persistentSessionReviveProcess": "never",
+  "terminal.integrated.copyOnSelection": false,
+  "terminal.integrated.env.linux": {
+    "LANG": "en_US.UTF-8",
+    "VSCODE_WORKSPACE_FOLDER": "$${workspaceFolder}",
+    "GROK_BUILD_WORKSPACE": "$${workspaceFolder}"
+  },
   "terminal.integrated.commandsToSkipShell": [
     "-workbench.action.quickOpen",
     "-workbench.action.terminal.copySelection",
@@ -80,48 +207,14 @@
       "overrideName": true
     }
   },
-  "[markdown]": {
-    "editor.wordWrap": "on",
-    "editor.quickSuggestions": {
-      "other": false,
-      "comments": false,
-      "strings": false
-    },
-    "editor.unicodeHighlight.ambiguousCharacters": false,
-    "editor.unicodeHighlight.invisibleCharacters": false,
-    "diffEditor.ignoreTrimWhitespace": true
+  "terminal.integrated.defaultProfile.linux": "tmux",
+  "terminal.integrated.automationProfile.linux": {
+    "path": "/bin/bash"
   },
-  "[python]": {
-    "editor.formatOnSave": true,
-    "editor.tabSize": 4
-  },
-  "[yaml]": {
-    "editor.insertSpaces": true,
-    "editor.tabSize": 2,
-    "editor.autoIndent": "advanced",
-    "editor.quickSuggestions": {
-      "other": true,
-      "comments": false,
-      "strings": true
-    }
-  },
-  "[jsonc]": {
-    "editor.defaultFormatter": "vscode.json-language-features"
-  },
-  "markdown.preview.breaks": true,
-  "markdown.preview.markEditorSelection": true,
-  "markdown.preview.fontSize": 15,
-  "markdown.preview.lineHeight": 1.6,
-  "markdown.preview.openMarkdownLinks": "inPreview",
-  "python.analysis.typeCheckingMode": "strict",
-  "python.defaultInterpreterPath": "/usr/bin/python3",
-  "python.terminal.activateEnvironment": false,
   "cline.apiProvider": "OpenAI Compatible",
   "cline.openAiCompatibleEndpoint": "${litellm_url}",
-  "cline.apiKey": "${litellm_key}",
   "cline.customModel": "agent",
   "roo.apiProvider": "openai",
-  "roo.openaiApiKey": "${litellm_key}",
   "roo.openaiApiBase": "${litellm_url}",
   "roo.defaultModel": "agent"
 }
