@@ -103,12 +103,14 @@ locals {
   # An empty field clones nothing and keeps every folder below on /home/coder.
   repo_set = trimspace(data.coder_parameter.repo_url.value) != ""
 
-  # The VS Code settings payload, rendered once and reused: the code_server
-  # module decodes it into its settings inputs; the startup script no longer
-  # seeds any settings file, and code-server never reads ~/.config/Code.
+  # The VS Code settings seed. startup.sh.tftpl copies it onto the per-owner
+  # shared volume the first time that file is absent, then points code-server's
+  # User settings at it. The code-server module does not receive this map: its
+  # merge replaces that symlink on every start. The LiteLLM key is not in the
+  # seed — the script adds it from the agent environment at seed time — so a
+  # template render never contains the key. code-server never reads ~/.config/Code.
   vscode_settings = templatefile("${path.module}/settings.json.tftpl", {
     litellm_url = var.litellm_url
-    litellm_key = var.litellm_key
   })
 }
 
@@ -384,6 +386,11 @@ resource "coder_agent" "main" {
     # workspace creator's own input and they already hold a shell in this
     # container. The script quotes it anyway so a URL with spaces survives.
     repo_url = data.coder_parameter.repo_url.value
+    # Rendered settings seed, inserted verbatim into a quoted heredoc. Already
+    # resolved, so VS Code $${workspaceFolder} values inside it are not
+    # interpolated again here. No key bytes: the script fills those from
+    # LITELLM_API_KEY when it copies the file in.
+    vscode_settings = local.vscode_settings
   })
 
   # These environment variables allow you to make Git commits right away
@@ -461,14 +468,12 @@ module "code_server" {
   display_name = "VS Code Web"
   order        = 5
 
-  # code-server reads its User/Machine settings from its user-data-dir, not
-  # from ~/.config/Code — the module merges this map into
-  # ~/.local/share/code-server/User/settings.json and .../Machine/settings.json
-  # on startup (per-key merge, so user-edited files survive). Same JSON goes
-  # to both files; the Machine copy is the fallback if the key resolves as
-  # machine-scoped in the editor's settings scope.
-  settings         = jsondecode(local.vscode_settings)
-  machine_settings = jsondecode(local.vscode_settings)
+  # User settings are intentionally not passed. The module merges `settings`
+  # into ~/.local/share/code-server/User/settings.json on every start, and the
+  # merge `mv`s a regular file over whatever is there — including the symlink
+  # startup.sh.tftpl maintains onto the shared volume. Machine settings stay
+  # at the module default (empty) so a machine-scoped copy cannot override
+  # the shared user file. code-server never reads ~/.config/Code.
 }
 
 # The agent-bar terminal button, replacing the built-in one (which stays off in
@@ -809,6 +814,12 @@ locals {
   grok_profile_shared = lower(trimspace(data.coder_parameter.grok_profile_mode.value)) == "shared"
   # Keyed by owner id, not by workspace id: that is the whole privacy boundary.
   grok_profile_volume = "grok-profile-${data.coder_workspace_owner.me.id}"
+  # Editor settings, same sharing rule and the same reason this is not a
+  # docker_volume resource: one volume per owner, created on first use, and a
+  # workspace stop must not try to unmount a volume another workspace holds.
+  # Not gated on grok_profile_mode — these are editor preferences, not the CLI
+  # profile, and every workspace this owner has is supposed to share them.
+  vscode_settings_volume = "vscode-settings-${data.coder_workspace_owner.me.id}"
 }
 
 resource "docker_container" "workspace" {
@@ -858,6 +869,18 @@ resource "docker_container" "workspace" {
       volume_name    = local.grok_profile_volume
       read_only      = false
     }
+  }
+
+  # Nested the same way as .grok above: the home volume is mounted first, then
+  # this covers /home/coder/.shared/vscode with the owner's one settings
+  # volume. startup.sh.tftpl copies the seed in only while settings.json is
+  # absent and symlinks code-server's User settings at it, so an edit in any
+  # workspace — or from the host, by mounting vscode-settings-<owner-id> — is
+  # the file every workspace opens. Read-write on purpose.
+  volumes {
+    container_path = "/home/coder/.shared/vscode"
+    volume_name    = local.vscode_settings_volume
+    read_only      = false
   }
 
   # Only the sidecar reference matters: it makes Terraform attach the daemon to

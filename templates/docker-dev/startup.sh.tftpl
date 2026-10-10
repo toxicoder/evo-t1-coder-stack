@@ -10,6 +10,8 @@
 #      rejoins its session instead of losing the processes running in it
 #   5. seeds the Coder Agents context (AGENTS.md + skill under ~/.coder, with
 #      ~/.agents twins for the Grok CLI), only for files that are absent
+#   5b. seeds the shared code-server User settings if that file is absent, then
+#       links the editor at it (one file per owner, not re-merged each start)
 #   6. writes ~/.grok/config.toml (only while this stack owns the file) — the
 #      LiteLLM catalog plus this workspace's create-form choices: the default
 #      model and any appended config extras
@@ -262,11 +264,48 @@ if [ ! -f "$HOME/.agents/INSTRUCTIONS.md" ]; then
 fi
 
 # --- Editor settings ----------------------------------------------------------
-# The stack's editor settings are no longer written here. main.tf hands the same
-# JSON to the code-server module's `settings`/`machine_settings` inputs, which
-# merge it into ~/.local/share/code-server/{User,Machine}/settings.json on
-# startup (per-key merge, so a user-edited file survives). Those are the paths
-# code-server actually reads; nothing reads ~/.config/Code here.
+# One settings.json per owner, on the vscode-settings-<owner-id> volume main.tf
+# mounts at ~/.shared/vscode. The first boot that finds the file missing copies
+# the rendered seed in; every later boot leaves it alone, so an edit survives
+# and every workspace this owner has opens the same file. code-server reads
+# ~/.local/share/code-server/User/settings.json, which is a symlink to that
+# shared file. Nothing reads ~/.config/Code. The code-server module is not
+# given a settings map: its merge runs on every start and `mv`s over this
+# symlink, which would fork a private copy and discard the sharing.
+#
+# The seed in git has no API key. Cline and Roo read their key from
+# settings.json and have no env_key field, so when LITELLM_API_KEY is set it
+# is written into the seed once here and nowhere else. Delete
+# ~/.shared/vscode/settings.json to reseed on the next start.
+mkdir -p "$HOME/.shared/vscode" "$HOME/.local/share/code-server/User"
+shared_settings="$HOME/.shared/vscode/settings.json"
+user_settings="$HOME/.local/share/code-server/User/settings.json"
+if [ ! -f "$shared_settings" ]; then
+  cat >"$shared_settings" <<'VSCODE_SETTINGS_EOF'
+${vscode_settings}
+VSCODE_SETTINGS_EOF
+  if [ -n "$${LITELLM_API_KEY:-}" ]; then
+    tmp_settings="$(mktemp)"
+    if command -v jq >/dev/null 2>&1 && jq --arg k "$LITELLM_API_KEY" \
+      '.["cline.apiKey"]=$k | .["roo.openaiApiKey"]=$k' \
+      "$shared_settings" >"$tmp_settings"; then
+      mv "$tmp_settings" "$shared_settings"
+    elif command -v python3 >/dev/null 2>&1; then
+      rm -f "$tmp_settings"
+      SETTINGS_PATH="$shared_settings" python3 -c 'import json, os; p = os.environ["SETTINGS_PATH"]; d = json.load(open(p)); k = os.environ["LITELLM_API_KEY"]; d["cline.apiKey"] = k; d["roo.openaiApiKey"] = k; json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")'
+    else
+      rm -f "$tmp_settings"
+    fi
+  fi
+  chmod 600 "$shared_settings" 2>/dev/null || true
+fi
+# A regular file here is the old per-workspace copy. Keep it beside the link
+# once, then point the editor at the shared file on every start so a workspace
+# cannot drift off it. GNU ln -sfn replaces a symlink; it does not follow it.
+if [ -e "$user_settings" ] && [ ! -L "$user_settings" ]; then
+  mv "$user_settings" "$${user_settings}.pre-shared"
+fi
+ln -sfn "$shared_settings" "$user_settings"
 
 # --- Grok Build config --------------------------------------------------------
 # Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline MCP
@@ -324,7 +363,7 @@ if [ "$(id -u)" = "0" ]; then
     home_owner="$(id -u coder):$(id -g coder)"
   fi
   if [ -n "$home_owner" ]; then
-    chown -R "$home_owner" "$HOME/.grok" 2>/dev/null || true
+    chown -R "$home_owner" "$HOME/.grok" "$HOME/.shared" 2>/dev/null || true
   fi
 fi
 
