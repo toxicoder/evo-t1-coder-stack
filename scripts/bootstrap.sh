@@ -425,9 +425,10 @@ fi
 
 # ── Spark fleet ──────────────────────────────────────────────────────────────
 # The optional DGX Spark boxes all serve the same Qwen3.8-Flash-Next weights behind one
-# `agent` model group with `least-busy` routing, so they have to agree on everything
-# that changes an answer: same model id, same PARALLEL stream count, same context
-# window, same KV dtype. A box that differs keeps receiving traffic and answers with a
+# `agent` model group whose session pins ride on top of `least-busy`, so they
+# have to agree on everything that changes an answer: same model id, same
+# PARALLEL stream count, same context window, same KV dtype. A box that differs
+# keeps receiving traffic and answers with a
 # degraded or wrong completion, and because LiteLLM v1.102.1 builds its Router with
 # ignore_invalid_deployments forced to True, a box serving a model id that is spelled
 # even one character differently is dropped from the model group at boot — after which

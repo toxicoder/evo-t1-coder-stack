@@ -51,9 +51,10 @@
 #      with two different values is a FAIL (exit 1). A mixed fleet — two boxes on
 #      tensorfold/decode-native:0.6.1-cu130 and one on another tag, or PARALLEL 5 beside
 #      PARALLEL 4 — is exactly what this exists to catch: the three boxes sit behind one
-#      `agent` model group with `least-busy` routing and no `order:` tier, so a
-#      differently-configured box is not shunned, it is fed traffic, and it answers with
-#      a degraded or wrong completion instead of an error.
+#      `agent` model group whose session pins ride on top of `least-busy` and
+#      have no `order:` tier, so a differently-configured box is not shunned:
+#      its pinned workspaces keep riding on it and new sessions still land on
+#      it, and it answers with a degraded or wrong completion instead of an error.
 #
 # Unreachable is not a failure. A host that does not answer — no DNS entry (a default
 # fleet derived from .env can name placeholder hostnames, which never resolve), no
@@ -760,7 +761,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     failed_here=1
   else
     if [ -n "${streams_max}" ] && [ "${streams_max}" != "${parallel_want}" ]; then
-      detail="was offered ${streams_max} streams and the fleet routes with ${parallel_want} — least-busy keeps sending requests here either way, so a client's fifth parallel stream lands on a box with no room for it"
+      detail="was offered ${streams_max} streams and the fleet routes with ${parallel_want} — pinned workspaces stay glued to this box and least-busy keeps handing it new sessions either way, so a client's fifth parallel stream lands on a box with no room for it"
       failed_here=1
     fi
     if [ -n "${context_length}" ] && [ "${context_length}" != "${context_want}" ]; then
@@ -855,7 +856,7 @@ done
 if [ -n "${drift}" ]; then
   log ""
   log "FAIL: the checked boxes do not agree — ${drift}"
-  log 'note: mixed images or mixed parallel settings across the boxes is exactly what this check is for, and the proxy cannot see it: they all sit behind one `agent` model group with least-busy routing, so requests keep going to the odd box.'
+  log 'note: mixed images or mixed parallel settings across the boxes is exactly what this check is for, and the proxy cannot see it: they all sit behind one `agent` model group whose session pins ride on top of least-busy routing, so pinned and unpinned requests keep going to the odd box.'
   log "note: read the details with ./scripts/spark-configure.sh <host> and write the fleet's values with ./scripts/spark-configure.sh --apply <host> (add --restart to restart a running server), then re-run this script."
   exit 1
 fi

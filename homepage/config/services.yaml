@@ -126,10 +126,13 @@
         description: Agent lane — one TensorFold box per Spark; all three down = text-only Arc
         siteMonitor: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"
         # The lane is ONE model group whose three deployments are one TensorFold
-        # instance per Spark box (five full 262144-token streams each), spread by
-        # least-busy. With all three boxes down, `agent` degrades to `coder`
-        # (Arc, text-only) — the per-box widgets below then error while the
-        # `agent` alias still answers, which is the visible signal of that hop.
+        # instance per Spark box (five full 262144-token streams each). One
+        # workspace's traffic pins to one healthy box while that pin stays warm
+        # (session_affinity, 1 h idle window); fresh or session-id-less traffic
+        # spreads across the healthy boxes by least-busy (in-flight load). With
+        # all three boxes down, `agent` degrades to `coder` (Arc, text-only) —
+        # the per-box widgets below then error while the `agent` alias still
+        # answers, which is the visible signal of that hop.
         # A box answering {ok:false, requests_running:0} is UP but not serving
         # the model — that is a "run scripts/spark-verify.sh" state, not health.
         widgets:
@@ -158,9 +161,12 @@
                 format: size
           # One widget per Spark box, fed by {{HOMEPAGE_VAR_SPARKn_HEALTH}}:
           # requests_running counts the streams that box is servicing right now
-          # (its scheduler queues above five). All three moving during a fan-out
-          # is what least-busy spreading looks like; one box pinned high while
-          # its peers idle is the self-inflicted queue this layout avoids.
+          # (its scheduler queues above five). All three moving is fresh or
+          # unpinned traffic spreading by least-busy. One box pinned high with
+          # idle peers is either one workspace's pinned streams or, if that
+          # box was meant to shed load, the sticky choice that keeps that
+          # workspace's prompt-prefix cache warm on one engine — a tuning
+          # signal, not automatically a fault.
           - type: customapi
             url: "{{HOMEPAGE_VAR_SPARK1_HEALTH}}"
             refreshInterval: 60000
