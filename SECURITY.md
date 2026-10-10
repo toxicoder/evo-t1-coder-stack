@@ -76,6 +76,11 @@ repo can verify.
   `credential.https://github.com.helper = !gh auth git-credential` and `gh` reads the
   environment variable rather than a token stored on disk. Use a fine-grained,
   least-privilege PAT scoped to only the repositories the workspaces touch.
+  `scripts/github-auth.sh` covers per-workspace needs: `check` names which
+  credential a workspace's git/gh would present and whether the grant covers a
+  given repo (sources and verdicts only, never token bytes); `auth` pipes a PAT
+  into one container's gh credential store, where `gh auth logout` — or a
+  rebuild — removes it.
 - **Spark endpoints.** `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` point off-box at
   vLLM servers. vLLM accepts any non-empty bearer token unless it was started with
   `--api-key`, so an unset `SPARK_n_API_KEY` means the only thing gating that endpoint
