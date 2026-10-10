@@ -5,6 +5,11 @@
 # the stable names: "coder" / "coder-fast" / "chat" / "spark-*" for the Arc and
 # Ollama paths, "agent" for the tool-capable Spark lane (ONE model group whose
 # three deployments are one TensorFold-served inference backend per Spark box).
+# Routing inside that group is session-scoped and best-effort: one conversation
+# — or one workspace sharing one affinity key — rides the same healthy box
+# while that pin stays warm, and a fresh conversation or a request with no
+# session id fans out across every reachable box by least-busy. With none
+# reachable `agent` falls back to `coder`.
 #
 # Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
 # network only). The spark-* aliases target optional NVIDIA Spark boxes;
@@ -13,10 +18,10 @@
 # :8888 (SPARKn_OPENAI_URL, an OpenAI-compatible /v1 endpoint).
 #
 # One endpoint per box, one box per endpoint. Never point two deployments (or
-# two aliases) at the same physical box: least-busy then spreads a fan-out
-# onto whichever URL happens to be least busy, which on a saturated box means
-# queueing on a machine that already has work — exactly what routing around a
-# busy box is meant to avoid.
+# two aliases) at the same physical box: the proxy counts deployments, not
+# machines — least-busy keeps its in-flight counters per deployment and a
+# session pin names one deployment — so two URLs on one box look like spread
+# while the conversation stays on a machine that already has work.
 #
 # Schema note: each entry must be `model_name:` plus a nested `litellm_params:`
 # block. LiteLLM hard-indexes both keys at startup (KeyError -> uvicorn exit 3
@@ -71,10 +76,16 @@ model_list:
 
   # Spark-backed agent lane - TensorFold (vLLM-lineage, OpenAI-compatible /v1)
   # serving Qwen3.8-Flash-Next on :8888. THREE deployments in ONE `agent` group,
-  # all equal (no `order:` tier): least-busy fans a fan-out across every
-  # reachable box, which is the whole point of running three boxes (5 full
-  # 262144-token streams each). An `order:` tier would make the tier-2 boxes
-  # unreachable while any tier-1 box is healthy.
+  # all equal (no `order:` tier): session_affinity pins a session id to one
+  # box for as long as that pin stays warm, and least-busy still chooses among
+  # the healthy boxes for everything else — a fresh conversation, traffic that
+  # carries no session id, and a pinned conversation whose box went unhealthy
+  # or into cooldown (that request routes elsewhere, the pin is kept, and the
+  # conversation goes back to the box once it is healthy again). Spreading
+  # across every reachable box is still the point of running three boxes (5 full
+  # 262144-token streams each) — pinning only narrows the candidates first.
+  # An `order:` tier would make the tier-2 boxes unreachable while any tier-1
+  # box is healthy.
   # Provider prefix is openai/ deliberately: ollama_chat/ would route these
   # through the Ollama-specific code path. api_base must include /v1.
   # `model:` is sent to the backend verbatim and must match the served id
@@ -94,7 +105,10 @@ model_list:
   # No rpm/tpm/max_parallel_requests caps anywhere on purpose. The proxy's cap
   # chain (rpm -> max_parallel_requests) parks requests behind an in-memory
   # semaphore when a cap is set; with no caps a fully-offered box sheds load
-  # in its own scheduler instead of queueing inside the proxy.
+  # in its own scheduler instead of queueing inside the proxy. Session pinning
+  # gives part of that spreading back on purpose: one workspace's agent loop can
+  # sit on a busy box, and that is the trade — stickiness buys prefix-cache
+  # locality and one predictable box for the whole conversation.
   - model_name: agent
     litellm_params:
       model: openai/Qwen3.8-Flash-Next
@@ -186,13 +200,37 @@ litellm_settings:
 # `fallbacks` + `context_window_fallbacks` — both, not one.)
 router_settings:
   # Verified in v1.102.1: least-busy picks the healthy deployment with the
-  # fewest in-flight requests (per-deployment request counters, 1 h TTL) — a
-  # load spreader, not cache-affinity pinning. No routing_strategy_args: its
-  # only meaningful child (`ttl`) belongs to the latency-based strategies and
-  # least-busy's counter TTL is hardcoded (3600 s). session_affinity — the
-  # opt-in `optional_pre_call_checks` string that narrows candidates to one
-  # pinned box BEFORE routing — stays absent on purpose.
+  # fewest in-flight requests (per-deployment request counters, 3600 s TTL;
+  # health checks, cooldowns and those counters all attribute per deployment,
+  # which is why each box carries a unique model_info.id above). It decides
+  # only for unpinned traffic: the affinity pin below resolves first, and
+  # least-busy runs when nothing is pinned, when the pinned deployment is
+  # unhealthy or in cooldown, and for any request with no session id.
+  # No routing_strategy_args: its only meaningful child (`ttl`) belongs to the
+  # latency-based strategies and least-busy's counter TTL is hardcoded (3600 s).
+  # health_check_interval / health_check_concurrency live in general_settings
+  # only — under router_settings the proxy raises ValueError at boot.
   routing_strategy: least-busy
+  # ON, best-effort: this arms the router's DeploymentAffinityCheck, which pins
+  # a session id to one deployment for as long as the pin is warm, so a pinned
+  # conversation rides the same box and everything else keeps spreading. The
+  # pin idles out after 3600 s without a request and every request refreshes
+  # it, so it bounds idle time between requests, not conversation length.
+  # Session id sources, in order: `x-litellm-trace-id`, then
+  # `x-litellm-session-id`, then any `x-<vendor>-session-id`, then
+  # `session-id`/`session_id`/`thread-id`/`conversation_id` (Codex style), then
+  # W3C traceparent/baggage, plus body `metadata.session_id`; a value must look
+  # like an id (alphanumerics, hyphens, underscores, 8+ chars) to count.
+  # Who carries one here: the Grok CLI forwards extra_headers verbatim and the
+  # workspace templates render `x-litellm-session-id = "ws-<workspace-uuid>"`
+  # under [models] in ~/.grok/config.toml, so one key covers every
+  # conversation of a workspace (in shared grok_profile_mode the single shared
+  # profile file is re-rendered by the last-booted workspace, which then shares
+  # that key across that user's workspaces). Cline/Roo carry none — the
+  # extension settings have no custom-header field — and neither does the Coder
+  # control-plane chat agent (2.36.6 aibridge forwards no per-conversation and
+  # no custom session header); both are spread by least-busy, as intended.
+  optional_pre_call_checks: ["session_affinity"]
   allowed_fails: 40
   cooldown_time: 5
   fallbacks:

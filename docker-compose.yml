@@ -175,15 +175,20 @@ services:
       SPARK1_OLLAMA_URL: ${SPARK1_OLLAMA_URL:-http://spark-1.lan:11434}
       SPARK2_OLLAMA_URL: ${SPARK2_OLLAMA_URL:-http://spark-2.lan:11434}
       # OpenAI-compatible /v1 endpoints for the ONE `agent` model group: its three
-      # deployments are the three URLs below, one per Spark box, and `least-busy`
-      # routing sends each request to whichever deployment has the fewest requests
-      # in flight. Deliberately no session pinning and no concurrency cap — a busy
-      # box sheds load instead of queueing behind itself. The boxes run TensorFold
-      # (a vLLM-lineage, OpenAI-compatible /v1 engine) serving Qwen3.8-Flash-Next,
-      # and each may be powered off: with one or two boxes down the group routes
-      # around them, with none reachable `agent` falls back to `coder`. The Arc
-      # Qwen2.5-Coder weights return tool calls as plain text, so agent mode wants
-      # one of these reachable (the Arc `chat` alias is the offline substitute).
+      # deployments are the three URLs below, one per Spark box. Routing is
+      # session-pinned first — a request carrying a session id rides the box its
+      # pin resolved to for as long as that pin stays warm (1 h idle TTL,
+      # refreshed by every request) — and a fresh conversation or any
+      # session-id-less request is spread by least-busy across the healthy set.
+      # Workspaces carry the pin as a per-workspace `x-litellm-session-id`
+      # header, set in the workspace templates. Still no concurrency caps on
+      # purpose: a busy box sheds load instead of queueing behind itself. The
+      # boxes run TensorFold (a vLLM-lineage, OpenAI-compatible /v1 engine)
+      # serving Qwen3.8-Flash-Next, and each may be powered off: with one or two
+      # boxes down the group routes around them, with none reachable `agent`
+      # falls back to `coder`. The Arc Qwen2.5-Coder weights return tool calls
+      # as plain text, so agent mode wants one of these reachable (the Arc
+      # `chat` alias is the offline substitute).
       SPARK1_OPENAI_URL: ${SPARK1_OPENAI_URL:-http://spark-1.lan:8888/v1}
       SPARK2_OPENAI_URL: ${SPARK2_OPENAI_URL:-http://spark-2.lan:8888/v1}
       SPARK3_OPENAI_URL: ${SPARK3_OPENAI_URL:-http://spark-3.lan:8888/v1}

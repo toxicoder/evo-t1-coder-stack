@@ -366,17 +366,19 @@ resource "coder_agent" "main" {
 
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
-    # resolve, so all five are declared together. github_token is a *boolean* gate
+    # resolve, so all six are declared together. github_token is a *boolean* gate
     # in there — it only decides whether the [mcp_servers.github] block appears —
     # so no token bytes are ever interpolated into the rendered script or into
     # config.toml; the rendered file names GH_TOKEN and the CLI expands that
-    # reference from the environment.
+    # reference from the environment. workspace_affinity_key is the per-workspace
+    # LiteLLM session-affinity key, rendered into the [models] extra_headers.
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
-      litellm_url        = var.litellm_url
-      grok_default_model = data.coder_parameter.grok_default_model.value
-      grok_config_extra  = data.coder_parameter.grok_config_extra.value
-      github_token       = var.github_token
-      github_mcp         = var.github_mcp && var.github_token != ""
+      litellm_url            = var.litellm_url
+      grok_default_model     = data.coder_parameter.grok_default_model.value
+      grok_config_extra      = data.coder_parameter.grok_config_extra.value
+      github_token           = var.github_token
+      github_mcp             = var.github_mcp && var.github_token != ""
+      workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
     })
     # Injected verbatim into the script, which is safe enough: this is the
     # workspace creator's own input and they already hold a shell in this

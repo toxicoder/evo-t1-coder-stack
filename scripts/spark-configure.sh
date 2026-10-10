@@ -18,9 +18,11 @@
 # WHY one override file per host: three boxes behind one `agent` model group must stay
 # identical in everything that affects outputs — same parallel stream count, same
 # context length, same KV cache dtype — because a box that differs answers with a
-# degraded or wrong completion rather than an error, and least-busy will happily keep
-# handing it requests. The recipe (MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark-
-# TensorFold, pinned v0.6.1 = commit 17c73e1) keeps the per-host settings in
+# degraded or wrong completion rather than an error, and the proxy happily keeps
+# handing it requests — pinned workspaces stay glued to their box and least-busy
+# still hands a drifted box new sessions. The recipe
+# (MiaAI-Lab/Qwen3.8-Flash-Next-Single-DGX-Spark-TensorFold, pinned v0.6.1 =
+# commit 17c73e1) keeps the per-host settings in
 # scripts/config.sh and reads overrides from a .env file next to start.sh, so one
 # generated file per host is the whole mechanism: start.sh re-runs scripts/prepare.sh
 # only when the setup differs from what prepare last left ready, so an unchanged

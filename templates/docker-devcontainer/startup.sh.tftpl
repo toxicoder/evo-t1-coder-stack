@@ -51,10 +51,12 @@
 # interpolations Terraform has to resolve here are the four variables main.tf
 # passes into this script: grok_config, repo_url, dc_dir and build_devcontainer.
 # grok_config arrives already rendered from grok-config.toml.tftpl, whose own
-# keys are litellm_url, grok_default_model, grok_config_extra, github_token and
-# github_mcp — the last two only gate text, and the token's own bytes never
-# appear in the result. The one GH_TOKEN reference that config template does emit
-# is dollar-escaped, so it stays literal text inside the quoted heredoc below
+# keys are litellm_url, grok_default_model, workspace_affinity_key,
+# grok_config_extra, github_token and github_mcp — the last two only gate text,
+# the affinity key is a per-workspace routing hint (a workspace UUID, not a
+# secret), and the token's own bytes never appear in the result. The one
+# GH_TOKEN reference that config template does emit is dollar-escaped, so it
+# stays literal text inside the quoted heredoc below
 # and reaches config.toml unchanged, for the CLI to expand from the environment.
 
 set -u
