@@ -271,13 +271,27 @@ locals {
   # topology. The plain_clone preset below is what hands in "false".
   use_dc = data.coder_parameter.use_devcontainer.value == "true"
 
-  # The VS Code settings payload, rendered once and reused: the code_server
-  # module decodes it into its settings inputs; the startup script no longer
-  # seeds any settings file, and code-server never reads ~/.config/Code.
+  # The VS Code settings seed. startup.sh.tftpl copies it onto the per-owner
+  # shared volume the first time that file is absent, then points code-server's
+  # User settings at it. Plain mode does not hand this map to the code-server
+  # module: its merge replaces that symlink on every start. Dev-container mode
+  # still does, because that container never mounts the shared volume. The
+  # LiteLLM key is not in the seed — the script adds it from the agent
+  # environment at seed time, and the module map below adds it only for the
+  # dev-container editor — so a template render of the file never contains the
+  # key. code-server never reads ~/.config/Code.
   vscode_settings = templatefile("${path.module}/settings.json.tftpl", {
     litellm_url = var.litellm_url
-    litellm_key = var.litellm_key
   })
+  # Key added only when one was supplied, so an empty variable does not write
+  # a blank secret into the dev-container editor. The conditional stays on
+  # strings so the two branches have one type, then a single jsondecode.
+  # Plain mode never uses this map; the startup script fills the shared file
+  # from the environment.
+  vscode_module_settings = jsondecode(var.litellm_key == "" ? local.vscode_settings : jsonencode(merge(jsondecode(local.vscode_settings), {
+    "cline.apiKey"     = var.litellm_key
+    "roo.openaiApiKey" = var.litellm_key
+  })))
 
   # DinD topology. Same shape as docker-dev's opt-in version, minus the toggle:
   # the daemon is always on here, because a devcontainer workspace is useless
@@ -380,6 +394,11 @@ resource "coder_agent" "main" {
     # container. The script quotes it anyway so a URL with spaces survives.
     repo_url = data.coder_parameter.repo_url.value
     dc_dir   = local.dc_host_dir
+    # Rendered settings seed, inserted verbatim into a quoted heredoc. Already
+    # resolved, so VS Code $${workspaceFolder} values inside it are not
+    # interpolated again here. No key bytes: the script fills those from
+    # LITELLM_API_KEY when it copies the file in.
+    vscode_settings = local.vscode_settings
     # What the clone preflight in the script has to say about a repo that ships
     # no devcontainer.json: a fallback it chose, or a build that will now fail.
     build_devcontainer = local.use_dc ? "yes" : "no"
@@ -549,14 +568,20 @@ module "code_server" {
   display_name = "VS Code Web"
   order        = 5
 
-  # code-server reads its User/Machine settings from its user-data-dir, not
-  # from ~/.config/Code — the module merges this map into
-  # ~/.local/share/code-server/User/settings.json and .../Machine/settings.json
-  # on startup (per-key merge, so user-edited files survive). Same JSON goes
-  # to both files; the Machine copy is the fallback if the key resolves as
-  # machine-scoped in the editor's settings scope.
-  settings         = jsondecode(local.vscode_settings)
-  machine_settings = jsondecode(local.vscode_settings)
+  # Plain mode (toggle off) hosts code-server in this container, where
+  # startup.sh.tftpl symlinks User settings at the shared volume. Passing a
+  # settings map would merge on every start and `mv` over that symlink, so
+  # plain mode passes nothing. Dev-container mode hosts code-server inside
+  # the repo's container, which does not mount the shared volume and has no
+  # other way to see it, so the module merges the seed there on each start.
+  # That copy is not the shared file: edits inside the dev container are
+  # replaced on the next start, and edits to the shared file do not flow in.
+  # Machine settings stay empty in both modes so a machine-scoped copy cannot
+  # override the user file.
+  # "{}" and the decoded map have to meet as strings first: a conditional's
+  # two results must be the same type, and jsondecode("{}") is not the same
+  # object type as the seed map.
+  settings = jsondecode(local.use_dc ? jsonencode(local.vscode_module_settings) : "{}")
 }
 
 # The agent-bar terminal button, replacing the built-in one (display_apps
@@ -903,6 +928,13 @@ locals {
   grok_profile_shared = lower(trimspace(data.coder_parameter.grok_profile_mode.value)) == "shared"
   # Keyed by owner id, not by workspace id: that is the whole privacy boundary.
   grok_profile_volume = "grok-profile-${data.coder_workspace_owner.me.id}"
+  # Editor settings, same sharing rule and the same reason this is not a
+  # docker_volume resource: one volume per owner, created on first use, and a
+  # workspace stop must not try to unmount a volume another workspace holds.
+  # Not gated on grok_profile_mode — these are editor preferences, not the CLI
+  # profile. The mount is on the workspace container only; a dev container
+  # built on the sidecar keeps its own home and does not see this volume.
+  vscode_settings_volume = "vscode-settings-${data.coder_workspace_owner.me.id}"
 }
 
 resource "docker_container" "workspace" {
@@ -967,6 +999,21 @@ resource "docker_container" "workspace" {
       volume_name    = local.grok_profile_volume
       read_only      = false
     }
+  }
+
+  # Nested the same way as .grok above: the home volume is mounted first, then
+  # this covers /home/coder/.shared/vscode with the owner's one settings
+  # volume. startup.sh.tftpl copies the seed in only while settings.json is
+  # absent and symlinks code-server's User settings at it. The symlink is what
+  # plain mode's editor reads. A dev container built on the sidecar does not
+  # get this mount — named volumes do not cross to that daemon — so its editor
+  # is seeded by the code-server module instead. Read-write on purpose: an
+  # edit here, or from the host by mounting vscode-settings-<owner-id>, is the
+  # file every workspace container opens.
+  volumes {
+    container_path = "/home/coder/.shared/vscode"
+    volume_name    = local.vscode_settings_volume
+    read_only      = false
   }
 
   # Only the sidecar reference matters: it makes Terraform attach the daemon to
