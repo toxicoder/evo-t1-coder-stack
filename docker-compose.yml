@@ -43,7 +43,8 @@ services:
     # <CODER_ACCESS_URL>/external-auth/github/callback, and the App/OAuth
     # grant must INCLUDE the repos workspaces clone: a connected-but-unscoped
     # token authenticates and is still denied on clone/push (403/404) — check
-    # that first. `required: false` needs Docker Compose v2.24+ (older
+    # that first — `scripts/github-auth.sh check` runs this probe from the host.
+    # `required: false` needs Docker Compose v2.24+ (older
     # compose refuses a missing env file at parse time, loudly).
     env_file:
       - path: ./coder.env

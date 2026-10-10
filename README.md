@@ -454,7 +454,14 @@ The template (`templates/docker-dev/`) creates one Docker container per workspac
   under Settings → external auth, and every workspace's agent injects a
   `GIT_ASKPASS` helper that mints short-lived per-host tokens on demand: no
   long-lived secret lives in any file, env or template, and one connection covers
-  every workspace. **Fallback:** when `github_token` is set the startup script seeds
+  every workspace. A minted token is only as good as the grant behind it: an
+  unscoped credential authenticates and is still refused on private repos (403
+  `Resource not accessible by integration`). `bash scripts/github-auth.sh check`
+  names the credential each running workspace would present and says whether it is
+  granted on the repo you point it at; `bash scripts/github-auth.sh auth
+  <container> - < PAT` installs a write-capable PAT into that workspace's gh
+  store, shadowing the minted token. **Fallback:** when `github_token` is set the
+  startup script seeds
   an idempotent `~/.gitconfig` holding `credential.https://github.com.helper =
   !gh auth git-credential`, so `git push`, `gh pr create` and `gh api` authenticate
   through the `GH_TOKEN` in the agent environment — gh 2.101 ships in the golden
@@ -933,6 +940,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
 │   ├── coder-agents.sh      # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (bootstrap calls it)
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
+│   ├── github-auth.sh       # GitHub credential doctor: probe what a workspace's git/gh would present, or install a PAT
 │   ├── new-workspace.sh     # git URL → workspace: probes for a devcontainer, picks the template + params, drives `coder create`
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 │   └── push-template.sh     # pushes both templates from inside the coder container (bootstrap calls it)
@@ -1044,6 +1052,6 @@ workspace on a current image answers `/usr/local/bin/grok`.
   **Plain clone** preset or the dev-container toggle set to **No** at create time — that
   runs code-server on the plain workspace container and opens the clone there, and
   `scripts/new-workspace.sh` decides this automatically when you pass it a git URL.
-- Private-repo clone or push denied even though a credential exists → the denial is about the **grant**, not the credential format: a connected-but-unscoped credential authenticates and is still refused (403 — or 404, which GitHub returns to hide a private repo's existence). Check the GitHub side first: the App installation (or fine-grained PAT) must include the repository the workspace clones. Then check the URL scheme: both credential paths answer only for `https://github.com/...` remotes; a `git@github.com:`/`ssh://` URL gets neither helper nor askpass token and needs an SSH key you placed yourself — this stack provisions none.
+- Private-repo clone or push denied even though a credential exists → the denial is about the **grant**, not the credential format: a connected-but-unscoped credential authenticates and is still refused (403 — or 404, which GitHub returns to hide a private repo's existence). Check the GitHub side first: the App installation (or fine-grained PAT) must include the repository the workspace clones. Then check the URL scheme: both credential paths answer only for `https://github.com/...` remotes; a `git@github.com:`/`ssh://` URL gets neither helper nor askpass token and needs an SSH key you placed yourself — this stack provisions none. From the stack host, `bash scripts/github-auth.sh check [container] [repo-url]` names the credential each running workspace presents and whether it is granted on the repo; `bash scripts/github-auth.sh auth <container> - < PAT` installs a write-capable PAT into that workspace's gh store — the gh login is consulted before the minted token, so it shadows it, and `gh auth logout` (or a rebuild) removes it.
 - Kasm wizard gone after install → expected; use :4443. Reset Kasm by removing the `kasm-data` volume (destroys all Kasm config).
 - Coder login problems → the first registered account is the site admin; if the UI is unreachable, check `CODER_ACCESS_URL` matches the address you're browsing from (LAN IP by default, the public coder name in public mode).
