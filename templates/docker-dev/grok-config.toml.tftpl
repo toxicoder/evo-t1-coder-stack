@@ -41,6 +41,17 @@ web_search = "agent"
 # not cut off in the middle.
 inference_idle_timeout_secs = 1200
 
+# How this workspace announces itself to the LiteLLM proxy: one key per
+# workspace pins every session and subagent call to one healthy Spark box
+# (session-affinity, refreshed per request, 1 h idle TTL; an unhealthy or
+# expired pin falls back to the least-busy picker). grok sends it verbatim, so
+# it must stay static per workspace. Shared profile is one file per USER, so
+# the last-booted workspace's key serves all of that user's workspaces (one
+# pin for the fleet); private gives each workspace its own. Cline/Roo editor
+# traffic carries no header (their settings have no custom-header field) and
+# floats; per-model or grok_config_extra extra_headers win per key — keep it.
+extra_headers = { "x-litellm-session-id" = "${workspace_affinity_key}" }
+
 # --- DGX Spark (vLLM): tool-calling-capable, used for the agent loop --------
 [model."agent"]
 model = "agent"

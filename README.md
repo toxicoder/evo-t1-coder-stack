@@ -282,12 +282,19 @@ with `tools` for `qwen2.5-coder:32b` and `:14b` comes back as plain text with
 into the message body, which no agent driver can consume. `qwen2.5:7b` on the same
 runtime does return a real `tool_calls` array, so the limitation tracks the model,
 and agent mode needs either the Spark `agent` lane or the small `chat` model. Grok
-Build, Cline, Roo and Kilo therefore default to `agent`: one model group with one
-deployment per Spark box, spread by `least-busy`. Measured on a harness boot of
-this config against the two live boxes: a 30-request burst spread 12/10/8 across
-the three deployments and returned 30x 200 — with no concurrency cap configured,
-the proxy neither queues nor sheds inside itself; a fully offered box absorbs the
-overflow in its own scheduler.
+Build, Cline, Roo and Kilo therefore default to `agent`: one model group, one
+deployment per Spark box, chosen among the healthy boxes by `least-busy` when
+nothing is pinned (in-flight load). Above that picker, `session_affinity`
+(`router_settings.optional_pre_call_checks`, LiteLLM 1.102.1) is on: one
+conversation from one client sticks to the box that answered its first turn
+while that box stays healthy (1 h idle pin TTL, refreshed by every request; a
+conversation that goes quiet longer than the TTL may move), so a busy pinned
+box sheds its own overflow in its own scheduler instead of queueing inside the
+proxy. Traffic with no session id — Cline/Roo editor traffic, and Coder Agents
+chats (Coder's aibridge forwards model calls with the provider key only and
+adds no per-conversation session id) — floats across healthy boxes by load,
+and a cooled or unhealthy pinned box hands traffic back to that same
+least-busy picker.
 
 When every Spark box is down, `router_settings.fallbacks` degrades `agent`
 straight to `coder` (text-only), which keeps chat usable while agent mode quietly
@@ -295,7 +302,16 @@ loses its tools. That one hop — no chain through `agent-fast` anymore, because
 one group already covers every reachable box — is the failure the dashboard's
 **Agent backend** card exists to surface: its per-box widgets go to error state
 while `agent` still answers, and each response's `x-litellm-model-id` header
-names the deployment that answered.
+names the deployment that answered (with a pin, the pinned box; without one,
+whichever box least-busy picked).
+
+Measured on a harness boot of this config against the two live boxes, before
+`session_affinity` existed: that 30-request burst was multi-session
+fan-out-style traffic and spread 12/10/8 across the three deployments,
+returning 30x 200 — with no concurrency cap configured, the proxy neither
+queued nor shed inside itself, and a fully offered box absorbed the overflow
+in its own scheduler. A single conversation pinned to one box now keeps its
+streams on that box while it stays healthy.
 
 Edit aliases in `litellm/config.yaml`, then `docker compose restart litellm`. The two
 tool-capable aliases also back the control-plane chat: `scripts/coder-agents.sh`
@@ -656,6 +672,11 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   `base_url` set to `litellm_url` and `env_key = "LITELLM_API_KEY"` (the key is
   injected as an environment variable, so it never appears in a file), and the MCP
   servers, `[features]`, `[permission]` deny rules and `web_fetch` policy are set.
+  `[models]` additionally carries `extra_headers` with the workspace's
+  `x-litellm-session-id: ws-<workspace-id>` affinity key, which is what makes
+  LiteLLM pin the workspace's traffic to one healthy Spark box; in `shared`
+  profile mode the last-booted workspace's key wins for the whole fleet (same
+  last-boot-wins caveat as default model and extras).
   `github_mcp` adds the `github` HTTP server (`https://api.githubcopilot.com/mcp/`,
   whose `Authorization` header references `${GH_TOKEN}` by name) to that same file, and
   `grok_config_extra` appends whatever the create form's **Grok config extras** field
