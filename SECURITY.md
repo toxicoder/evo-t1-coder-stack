@@ -123,6 +123,12 @@ repo can verify.
   only path-based routing is available). It listens on all interfaces inside
   the workspace; access control is the Coder app proxy plus Authelia/Cloudflare
   in front of the public URL. Extension installs are manual from Open VSX;
-  neither editor auto-installs them.
+  neither editor auto-installs them. User settings live on a per-owner volume,
+  `vscode-settings-<owner-id>`, mounted at `/home/coder/.shared/vscode` — one
+  file every workspace that owner has, and no other user's workspace mounts it.
+  The git seed does not contain the LiteLLM master key. The startup script
+  writes `LITELLM_API_KEY` into that file once, at seed time, because Cline and
+  Roo read the key from `settings.json` and have no environment-key field. The
+  volume is the secret at rest; treat a copy of it like a copy of the key.
 - **Reporting.** Report vulnerabilities by opening an issue marked
   `security`; please do not disclose working exploits publicly.

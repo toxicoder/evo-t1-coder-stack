@@ -18,7 +18,7 @@ Done means `bazelisk test //:test-fast` and the lint target are green.
 
 - `scripts/*.sh` — operator CLIs
 - `scripts/lib/*.sh` — sourced helpers. Entry scripts call these instead of copying log/die/json helpers.
-- `templates/docker-dev/` and `templates/docker-devcontainer/` keep independent `.tftpl` copies (`startup.sh.tftpl`, `settings.json.tftpl`, `grok-config.toml.tftpl`). The twins must change together — today only `settings.json.tftpl` is byte-identical across the two directories, so edit both copies of any payload.
+- `templates/docker-dev/` and `templates/docker-devcontainer/` keep independent `.tftpl` copies (`startup.sh.tftpl`, `settings.json.tftpl`, `grok-config.toml.tftpl`). The twins must change together — today only `settings.json.tftpl` is byte-identical across the two directories, so edit both copies of any payload. That settings seed is copied once onto the per-owner volume `vscode-settings-<owner-id>` (mounted at `~/.shared/vscode/settings.json`) and then left alone; code-server's User settings file is a symlink to it.
 - `tests/bats/` — hermetic Bats. Stubs live in `tests/bats/tool_stubs/`: docker, ssh, curl and the other external tools resolve through stubs, so no suite touches the network or a real daemon.
 - Workspace `~/.grok` is one profile volume per user in `shared` mode (default; `grok-profile-<owner-id>`), and its single `config.toml` is re-rendered by the last-booted workspace of that owner — last boot wins. See README, section "Grok Build state: one shared profile per user".
 - Runtime is still `docker compose`. Do not add a Kubernetes layer.
