@@ -6,9 +6,11 @@
 # Four things are pinned here, because they are the whole contract of the
 # script: the compose project defaults to evo-t1-dev and --project-name renames
 # it, an unknown subcommand is a usage error rather than an arbitrary action,
-# `status` answers with one-line reports when docker is missing (it runs inside
-# the Bazel sandbox, where no daemon exists), and `reset` refuses to destroy a
-# stack without its confirmation flag.
+# `status` answers with one-line reports when the docker CLI is dead (both CLI
+# spellings resolve through the tool stubs, which can be forced to refuse every
+# probe with STUB_DOCKER_RC=1 — test hosts may carry a real CLI and a live
+# daemon), and `reset` refuses to destroy a stack without its confirmation
+# flag.
 #
 # The whole suite skips while scripts/dev-stack.sh is absent: a suite for a
 # script that does not exist yet has no right to fail the gate.
@@ -45,15 +47,20 @@ setup() {
   [ "$(stub_log_count docker-compose)" -eq 0 ]
 }
 
-@test "dev-stack: status reports a missing docker and still exits 0" {
-  # An empty bin/ first, and only /bin:/usr/bin behind it: that is how "docker
-  # is not installed here" is simulated on a host that happens to have it.
-  mkdir -p "${BATS_TEST_TMPDIR}/emptybin"
-  run --separate-stderr env PATH="${BATS_TEST_TMPDIR}/emptybin:/bin:/usr/bin" \
-    bash "${STACK}" status
+@test "dev-stack: status reports an unresponsive docker CLI and still exits 0" {
+  # Hermetic on every host: both CLI spellings resolve through the tool stubs,
+  # and STUB_DOCKER_RC=1 makes the stubs refuse every probe (info, compose
+  # version, ps), so no daemon is reachable from here. Trusting the host to
+  # lack docker was the old bug — a Linux CI runner carries /usr/bin/docker
+  # and a live daemon, which flipped this case from the dead-CLI shape to the
+  # daemon-reachable shape and pointed `ps` at the real daemon. The
+  # docker-not-on-PATH shape keeps its coverage in the helper-level
+  # report_stack test, which redefines has_tool and therefore never consults
+  # the PATH at all.
+  run --separate-stderr env STUB_DOCKER_RC=1 bash "${STACK}" status
   [ "${status}" -eq 0 ]
-  assert_match "docker line" 'docker:' "${output}"
-  assert_match "daemon line" 'daemon:' "${output}"
+  assert_match "daemon line" 'daemon: not reachable' "${output}"
+  assert_match "project line" '^project: evo-t1-dev$' "${output}"
 }
 
 @test "dev-stack: the compose project is evo-t1-dev unless --project-name says otherwise" {
