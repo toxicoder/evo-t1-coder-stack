@@ -9,6 +9,38 @@
   EVO-T1 (Ultra 9 285H / Arc 140T / 96 GB DDR5). IPEX-LLM behavior varies
   between Intel iGPUs.
 
+## Branching
+
+Trunk-based, GitHub-Flow shaped; `docs/branching.md` is the rule and this is the
+summary. `main` is the only long-lived branch and it stays green and deployable —
+`main` is what a machine is built from, so a merge to `main` is by definition
+deployable to the stack host.
+
+- Cut a short-lived branch per change from the current tip of `main`: `feat/…`,
+  `fix/…`, `refactor/…` (also `docs/…`, `test/…`, `chore/…`, `ci/…`), and delete it
+  the moment it merges.
+- Integrate by pull request into `main` and nowhere else. There are no
+  environment branches — no `dev`, `staging`, `prod`, `uat` or `development` to
+  merge forward through. Every environment deploys *from* `main` (or from a tag
+  cut on `main`), which is also why a hotfix branches from `main` and lands on
+  `main` first: there is no `staging` copy of the fix to write and then remember
+  to cherry-pick.
+- `fix/…` means a defect that is already on `main`.
+
+GitHub is where that is enforced, and it is configured in two layers. Branch
+protection on `main` is what keeps those rules honest: it is set to require a pull
+request before a push, and to require the two Bazel status checks
+(`bazelisk test //:test-fast` and `bazelisk test //:lint --test_tag_filters=manual`)
+to pass before the merge button unlocks — the same two commands CI runs, with
+`--config=ci`, and `bazelisk run //:validate` is that gate one step earlier, on
+your machine.
+`development`, `staging` and `production` are GitHub *Environments*, not branches:
+each one is where a future protected secret and its protection rules would live,
+and `production` stays restricted to `main` (or to tags cut on it) with required
+reviewers, so it can only ever deploy what `main` already proved. Nothing in this
+repo declares an environment or a deploy job today, so an environment branch would
+buy nothing and cost a re-test.
+
 ## Pull requests
 
 - Keep diffs small and focused; keep the architecture (Coder + LiteLLM +
@@ -17,6 +49,15 @@
   file.
 - No CI that downloads models: this repo has no pipeline that pulls
   multi-gigabyte weights.
+- Test a stack-affecting change on the **dev stack** before opening the PR:
+  `bazelisk run //scripts:dev-stack -- up` (README "Testing changes locally"). It is a
+  second compose project with its own name, volumes and host ports, so the stable
+  instance keeps running while you test.
+- A workspace takes ONE repository by default. `--additional-repos` on
+  `//scripts:new-workspace` (and the `additional_repos` template parameter it fills)
+  exists for the case where a workspace genuinely needs siblings beside the primary
+  clone; a change that adds another repository to a workspace without being asked
+  for is a defect, not a convenience.
 - Validate locally before opening. Bazelisk is the ingress:
 
   ```sh
@@ -30,8 +71,8 @@
   ```sh
   docker compose config -q
   cmp .env.sample .env.example            # .env.example is a copy — keep them identical
-  terraform -chdir=templates/docker-dev fmt -check
-  terraform -chdir=templates/docker-devcontainer fmt -check
+  terraform -chdir=templates/workspace fmt -check
+  terraform -chdir=templates/devcontainer fmt -check
   python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('homepage/config/*.yaml')+['litellm/config.yaml']]"
   ```
 
@@ -68,7 +109,8 @@ image. `scripts/build-dev-image.sh` refuses to build if a pin has no matching
   The daemon belongs to the per-workspace `docker:29.8.1-dind` sidecar; keep
   those `test ! -x` guards when touching that layer, and bump
   `DOCKER_CLI_VERSION` together with the `dind_image` tag in
-  `templates/docker-dev/main.tf` — they are the same engine line.
-- After editing pins, `./scripts/build-dev-image.sh` and then
+  `templates/workspace/main.tf` and `templates/devcontainer/main.tf` — they are the
+  same engine line.
+- After editing pins, `bazelisk run //scripts:build-dev-image` and then
   `docker image inspect evo-t1-dev:latest` — the script proves the tag is in the
   local store, which is what the Coder docker provider needs to avoid a pull.

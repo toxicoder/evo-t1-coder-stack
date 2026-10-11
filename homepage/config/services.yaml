@@ -28,7 +28,13 @@
     - Coder:
         icon: si-coder
         href: "{{HOMEPAGE_VAR_CODER_URL}}"
-        description: Workspaces, agents and the Grok Build terminal
+        # The one place an operator creates a workspace: the href opens Coder,
+        # where Templates -> "workspace" (the plain dev container) or
+        # "devcontainer" (DinD-backed) picks the shape, and the Git repository
+        # field names the clone the editor opens on. README "Coder workspace
+        # template" is the long version.
+        description: Create a workspace here (Templates, then the workspace or devcontainer
+          template), then use its agents, editor and Grok Build terminal on the clone
         siteMonitor: http://coder:3000/api/v2/buildinfo
         widget:
           type: customapi
@@ -134,7 +140,8 @@
         # the per-box widgets below then error while the `agent` alias still
         # answers, which is the visible signal of that hop.
         # A box answering {ok:false, requests_running:0} is UP but not serving
-        # the model — that is a "run scripts/spark-verify.sh" state, not health.
+        # the model — that is the state bazelisk run //scripts:spark-verify --
+        # --no-tests exists to diagnose, not a sign of health.
         widgets:
           - type: customapi
             url: "{{HOMEPAGE_VAR_AGENT_HEALTH}}"

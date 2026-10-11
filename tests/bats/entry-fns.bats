@@ -115,8 +115,11 @@ load_fn() {
 
 @test "push-template: known_templates lists names in TEMPLATES_DEFAULT order" {
   load_fn scripts/push-template.sh known_templates
-  TEMPLATES_DEFAULT=("docker-dev:templates/docker-dev" "docker-devcontainer:templates/docker-devcontainer")
-  [ "$(known_templates)" = "docker-dev, docker-devcontainer" ]
+  # A fixture, not the script's own list: this checks the joining, so the pair
+  # here names the template directories the stack ships today (workspace first,
+  # the devcontainer template second) and nothing more.
+  TEMPLATES_DEFAULT=("workspace:templates/workspace" "devcontainer:templates/devcontainer")
+  [ "$(known_templates)" = "workspace, devcontainer" ]
 }
 
 @test "push-template: preset_desc_guard rejects a description over 128 bytes" {

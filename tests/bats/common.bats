@@ -55,6 +55,21 @@ drive() {
   [ "$(env_get "${BATS_TEST_TMPDIR}/nofile" KEY)" = "" ]
 }
 
+@test "common: env_get answers empty without aborting a strict-mode caller" {
+  # drive() runs under set -euo pipefail: the bare call substitution here
+  # would abort the driver while env_get still failed (failing sed through
+  # pipefail), which is exactly how a missing or unreadable env file once
+  # killed dev-stack's report_urls in production.
+  drive 'v="$(env_get nofile KEY)"; printf '[%s]' "${v}"'
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "[]" ]
+  printf 'KEY=hidden\n' > "${BATS_TEST_TMPDIR}/locked.env"
+  chmod 000 "${BATS_TEST_TMPDIR}/locked.env"
+  drive 'v="$(env_get "${PWD}/locked.env" KEY)"; printf '[%s]' "${v}"'
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "[]" ]
+}
+
 @test "common: fact_get falls back for empty and NOTSET and passes real values" {
   source_libs
   printf '%s\n' 'G=hope' 'T=NOTSET' > "${BATS_TEST_TMPDIR}/fact"

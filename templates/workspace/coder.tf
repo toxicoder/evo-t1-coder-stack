@@ -58,20 +58,19 @@ variable "grok_profile_mode" {
   default     = "shared"
 }
 
-# Optional, and empty by default: this box is offline-first and most workspaces
-# never talk to GitHub, so the default keeps no credential anywhere — in the
-# rendered file, in the agent environment, or on disk.
-variable "github_token" {
-  type        = string
-  description = "Optional GitHub fine-grained personal access token. When non-empty it is injected into the agent environment as GH_TOKEN and GITHUB_TOKEN, and the startup script seeds the gh/git credential helper from it so git push and gh pr create work. Use a least-privilege fine-grained token scoped to only the repositories these workspaces touch, and rotate it when a workspace is done with it. Empty (the default) means no GitHub credential exists anywhere in the workspace."
-  default     = ""
-  sensitive   = true
-}
-
-# Declaring the server is not enough for a token to be usable, and a server that
-# cannot handshake is dead weight in every session, so both switches are needed.
+# There is deliberately no GitHub *token* variable in this file. A workspace's
+# GitHub credential comes from the `primary-github` External Auth provider (see
+# the data source in main.tf), which mints a short-lived per-host token for the
+# workspace owner's own connected account — nothing long-lived is declared here,
+# pushed with the template, or written to a file.
+#
+# Declaring the github MCP server is not enough for it to be usable, and a server
+# that cannot handshake is dead weight in every session, so this switch decides
+# on its own whether the [mcp_servers.github] block is rendered. With no GitHub
+# account connected, the block still appears and pays one failed handshake per
+# session, which is the cheaper failure: no credential exists to leak.
 variable "github_mcp" {
   type        = bool
-  description = "When true AND github_token is non-empty, the rendered ~/.grok/config.toml declares the github MCP HTTP server, which is how Grok Build gets its GitHub tools. Off by default keeps the offline-first MCP list lean: with no token there is nothing for that server to authenticate against anyway, and a session would pay a failed handshake on every start."
+  description = "When true, the rendered ~/.grok/config.toml declares the github MCP HTTP server, which is how Grok Build gets its GitHub tools. It authenticates with the $GH_TOKEN reference the agent environment fills from the External Auth provider, so with no provider linked — or no GitHub account connected by the workspace owner — the server has nothing to authenticate with and Grok Build loses its GitHub tools. Off by default keeps the offline-first MCP list lean."
   default     = false
 }

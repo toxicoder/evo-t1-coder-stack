@@ -22,14 +22,14 @@ setup() {
 }
 
 @test "settings: the two settings.json.tftpl copies are byte-identical" {
-  local a="${REPO_ROOT}/templates/docker-dev/settings.json.tftpl"
-  local b="${REPO_ROOT}/templates/docker-devcontainer/settings.json.tftpl"
+  local a="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
+  local b="${REPO_ROOT}/templates/devcontainer/settings.json.tftpl"
   [[ -f "${a}" && -f "${b}" ]]
   cmp -s "${a}" "${b}"
 }
 
 @test "settings: the seed is JSON once Terraform escapes are unfolded" {
-  local seed="${REPO_ROOT}/templates/docker-dev/settings.json.tftpl"
+  local seed="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
   # $${workspaceFolder} is how the tftpl emits a VS Code substitution.
   # ${litellm_url} is a real Terraform interpolation and stays as text here.
   local unfolded
@@ -38,7 +38,7 @@ setup() {
 }
 
 @test "settings: no desktop paths, personal words, or API key in the seed" {
-  local seed="${REPO_ROOT}/templates/docker-dev/settings.json.tftpl"
+  local seed="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
   local banned
   for banned in \
     '/Users/' \
@@ -59,7 +59,7 @@ setup() {
 }
 
 @test "settings: coder terminal profiles and the LiteLLM endpoint stay" {
-  local seed="${REPO_ROOT}/templates/docker-dev/settings.json.tftpl"
+  local seed="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
   local need
   for need in \
     'grok-build-terminal' \
@@ -77,8 +77,8 @@ setup() {
 @test "settings: both startups seed once and both mains mount the shared volume" {
   local startup main
   for startup in \
-    "${REPO_ROOT}/templates/docker-dev/startup.sh.tftpl" \
-    "${REPO_ROOT}/templates/docker-devcontainer/startup.sh.tftpl"; do
+    "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"; do
     run grep -F 'shared_settings="$HOME/.shared/vscode/settings.json"' "${startup}"
     [ "${status}" -eq 0 ]
     run grep -F 'if [ ! -f "$shared_settings" ]; then' "${startup}"
@@ -91,8 +91,8 @@ setup() {
     [ "${status}" -eq 0 ]
   done
   for main in \
-    "${REPO_ROOT}/templates/docker-dev/main.tf" \
-    "${REPO_ROOT}/templates/docker-devcontainer/main.tf"; do
+    "${REPO_ROOT}/templates/workspace/main.tf" \
+    "${REPO_ROOT}/templates/devcontainer/main.tf"; do
     run grep -F 'vscode-settings-${data.coder_workspace_owner.me.id}' "${main}"
     [ "${status}" -eq 0 ]
     run grep -F 'container_path = "/home/coder/.shared/vscode"' "${main}"
@@ -102,8 +102,8 @@ setup() {
   done
 }
 
-@test "settings: docker-dev does not hand the seed to the code-server module" {
-  local main="${REPO_ROOT}/templates/docker-dev/main.tf"
+@test "settings: workspace template does not hand the seed to the code-server module" {
+  local main="${REPO_ROOT}/templates/workspace/main.tf"
   run grep -F 'settings         = jsondecode(local.vscode_settings)' "${main}"
   [ "${status}" -ne 0 ]
   run grep -F 'machine_settings' "${main}"
@@ -111,7 +111,7 @@ setup() {
 }
 
 @test "settings: devcontainer merges the seed only while the dev container is on" {
-  local main="${REPO_ROOT}/templates/docker-devcontainer/main.tf"
+  local main="${REPO_ROOT}/templates/devcontainer/main.tf"
   run grep -F 'local.use_dc ? jsonencode(local.vscode_module_settings) : "{}"' "${main}"
   [ "${status}" -eq 0 ]
   run grep -F 'machine_settings' "${main}"

@@ -9,8 +9,15 @@ check_tool buildifier "https://github.com/bazelbuild/buildtools"
 cd "${ROOT}"
 
 echo "Running buildifier -mode=check..."
-mapfile -d '' files < <(find . -type f \
+files=()
+while IFS= read -r -d '' file; do
+  files+=("${file}")
+done < <(find . -type f \
   \( -name 'BUILD' -o -name 'BUILD.bazel' -o -name 'MODULE.bazel' -o -name '*.bzl' \) \
   ! -path './bazel-*/*' ! -path './.git/*' -print0)
+if [[ ${#files[@]} -eq 0 ]]; then
+  echo "buildifier -mode=check: no Starlark files found."
+  exit 0
+fi
 buildifier -mode=check "${files[@]}"
 echo "buildifier check passed."

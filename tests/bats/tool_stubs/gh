@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## gh — deterministic gh CLI stub (test fixture; never ships)
+#
+# Purpose: stand in for the gh CLI so probe scripts never consult a real
+# credential store or network. `auth token` prints STUB_GH_TOKEN (file or
+# literal; empty = no stored login) and exits STUB_GH_RC (0); `auth login`,
+# `auth logout`, `setup-git` and `api` exit STUB_GH_RC (0) silently; anything
+# else exits STUB_GH_RC (0). Logs one argv line to $STUB_LOG/gh.log.
+#
+# Usage (in a .bats file): use_stubs docker gh; STUB_GH_TOKEN=... run ...
+# Safety: stub only — it authenticates nothing and reads nothing outside the
+# per-test scratch.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "gh $*" >> "${STUB_LOG}/gh.log"; fi
+
+if [ "$*" = "auth token" ]; then
+  if [ -n "${STUB_GH_TOKEN:-}" ]; then
+    if [ -f "${STUB_GH_TOKEN}" ]; then cat "${STUB_GH_TOKEN}"; else printf '%s\n' "${STUB_GH_TOKEN}"; fi
+  fi
+  exit "${STUB_GH_RC:-0}"
+fi
+
+exit "${STUB_GH_RC:-0}"

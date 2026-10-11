@@ -377,7 +377,10 @@ want_value() {
     value="$(sed -n "s|^${key}=||p" "${file}" | tail -n 1)"
   fi
   if [ -z "${value}" ]; then
-    value="$(eval "printf '%s' \"\${SPARK_CFG_${key}:-}\"")"
+    # Indirect expansion, never `eval`: the key name is data, and a name that came
+    # from a file must not be able to execute something by being pasted into a shell.
+    local indirect="SPARK_CFG_${key}"
+    value="${!indirect:-}"
   fi
   if [ -z "${value}" ]; then
     # shellcheck disable=SC2086 # $keys is this script's own literal default list,
@@ -500,16 +503,18 @@ cenv="$(docker inspect "${CONTAINER}" --format '{{range .Config.Env}}{{println .
 say "gpu_env=missing"
 printf '%s\n' "${cenv}" | grep -q 'CUDA_VISIBLE_DEVICES=' && say "gpu_env=present"
 for key in $keys; do
-  value="NOTSET"
-  if [ -f "${RECIPE_DIR:-/nonexistent}/scripts/config.sh" ]; then
-    # shellcheck disable=SC1091 # this runs on the Spark, inside the pinned recipe
-    # clone, where scripts/config.sh is where the recipe keeps the same twelve keys.
-    . "${RECIPE_DIR}/scripts/config.sh" 2>/dev/null || true
-  fi
-  if [ -f "${RECIPE_DIR:-/nonexistent}/.env" ]; then
-    . "${RECIPE_DIR}/.env" 2>/dev/null || true
-  fi
-  value="$(eval "printf '%s' \"\${${key}:-}\")" | sed -n '1p')"
+  # Read the two files as text, never source them: this body runs under `sh` on the
+  # box, where one bad line in a hand-edited .env would abort the whole probe, and
+  # the reason the repo's own env_get reads with sed instead of sourcing is the same.
+  value=""
+  for recipe_file in "${RECIPE_DIR:-/nonexistent}/scripts/config.sh" "${RECIPE_DIR:-/nonexistent}/.env"; do
+    if [ -f "${recipe_file}" ]; then
+      found="$(sed -n "s|^${key}=||p" "${recipe_file}" 2>/dev/null | tail -n 1 | tr -d "\"'")"
+      if [ -n "${found}" ]; then
+        value="${found}"
+      fi
+    fi
+  done
   [ -n "${value}" ] || value=NOTSET
   say "recipe.${key}=${value}"
 done

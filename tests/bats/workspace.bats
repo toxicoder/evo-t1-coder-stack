@@ -131,23 +131,23 @@ source_libs() {
   [ "$(stub_log_count coder)" -eq 0 ]
 }
 
-@test "new-workspace.sh: --dry-run picks docker-devcontainer when a dev container is tracked" {
+@test "new-workspace.sh: --dry-run picks devcontainer when a dev container is tracked" {
   export STUB_GIT_TREE_OUT=".devcontainer/devcontainer.json"
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run https://github.com/foo/ImageSharp.git
   [ "${status}" -eq 0 ]
   assert_match "probe" '^probe:    dev container found$' "${output}"
-  assert_match "template" '^template: docker-devcontainer$' "${output}"
+  assert_match "template" '^template: devcontainer$' "${output}"
   assert_match "name" '^name:     imagesharp$' "${output}"
   assert_match "clone folder" '/srv/coder-devcontainers/<workspace-id>/ImageSharp ' "${output}"
   [ "$(stub_log_count coder)" -eq 0 ]
 }
 
-@test "new-workspace.sh: --dry-run picks docker-dev when nothing is tracked" {
+@test "new-workspace.sh: --dry-run picks workspace when nothing is tracked" {
   export STUB_GIT_TREE_OUT="README.md"
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run /srv/repos/my_tool
   [ "${status}" -eq 0 ]
   assert_match "probe" '^probe:    no dev container found$' "${output}"
-  assert_match "template" '^template: docker-dev$' "${output}"
+  assert_match "template" '^template: workspace$' "${output}"
   assert_match "name" '^name:     my-tool$' "${output}"
   assert_match "clone folder" '/home/coder/workspace/my_tool ' "${output}"
   assert_match "would run" 'would run:' "${output}"
@@ -157,24 +157,24 @@ source_libs() {
   export STUB_GIT_TREE_OUT="README.md"
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run --devcontainer https://example.com/org/tool.git
   [ "${status}" -eq 0 ]
-  assert_match "template" '^template: docker-devcontainer$' "${output}"
+  assert_match "template" '^template: devcontainer$' "${output}"
   assert_match "toggle" 'use_devcontainer=false' "${output}"
 }
 
-@test "new-workspace.sh: --dind passes dind=true on docker-dev" {
+@test "new-workspace.sh: --dind passes dind=true on the workspace template" {
   export STUB_GIT_TREE_OUT="README.md"
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run --dind https://example.com/org/tool.git
   [ "${status}" -eq 0 ]
-  assert_match "template" '^template: docker-dev$' "${output}"
+  assert_match "template" '^template: workspace$' "${output}"
   assert_match "dind" 'dind=true' "${output}"
 }
 
-@test "new-workspace.sh: a failed probe still picks docker-dev and quotes the error" {
+@test "new-workspace.sh: a failed probe still picks workspace and quotes the error" {
   export STUB_GIT_CLONE_RC=128
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run https://github.com/foo/bar.git
   [ "${status}" -eq 0 ]
-  assert_match "failed" 'probe failed: fatal: stub refused clone' "${output}"
-  assert_match "template" '^template: docker-dev$' "${output}"
+  assert_match "failed" 'git said: "fatal: stub refused clone"' "${output}"
+  assert_match "template" '^template: workspace$' "${output}"
 }
 
 @test "new-workspace.sh: a real create goes to the coder stub and the temp tree is removed" {
@@ -183,8 +183,52 @@ source_libs() {
   export STUB_GIT_TREE_OUT="README.md"
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" https://github.com/foo/ImageSharp.git
   [ "${status}" -eq 0 ]
-  assert_match "create" 'coder create -t docker-dev' "${output}"
-  assert_match "started" '^started imagesharp from template docker-dev$' "${output}"
+  assert_match "create" 'coder create -t workspace' "${output}"
+  assert_match "started" '^started imagesharp from template workspace$' "${output}"
   [ "$(stub_log_count coder)" -eq 1 ]
   [ -z "$(ls -A "${work_parent}")" ]
+}
+
+@test "new-workspace.sh: --additional-repos joins a comma list, trimming the spaces" {
+  export STUB_GIT_TREE_OUT="README.md"
+  run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run \
+    --additional-repos " https://github.com/foo/lib.git , https://github.com/foo/tool.git " \
+    https://github.com/foo/app.git
+  [ "${status}" -eq 0 ]
+  assert_match "also line" '^also: +https://github.com/foo/lib.git,https://github.com/foo/tool.git ' "${output}"
+  assert_match "joined list" 'parameter additional_repos=https://github.com/foo/lib.git,https://github.com/foo/tool.git' "${output}"
+  assert_match "primary repo" 'parameter repo_url=https://github.com/foo/app.git' "${output}"
+}
+
+@test "new-workspace.sh: --additional-repos accepts a newline list as the same one string" {
+  export STUB_GIT_TREE_OUT="README.md"
+  run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run \
+    --additional-repos $'https://github.com/foo/lib.git\nhttps://github.com/foo/tool.git' \
+    https://github.com/foo/app.git
+  [ "${status}" -eq 0 ]
+  assert_match "joined list" 'additional_repos=https://github.com/foo/lib.git,https://github.com/foo/tool.git' "${output}"
+}
+
+@test "new-workspace.sh: an empty --additional-repos keeps the single-repo default" {
+  export STUB_GIT_TREE_OUT="README.md"
+  run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run \
+    --additional-repos "" https://github.com/foo/app.git
+  [ "${status}" -eq 0 ]
+  # No list means no parameter: the create line carries repo_url and nothing else
+  # beside use-parameter-defaults, and the probe clone still runs (clone + ls-tree).
+  assert_not_match "no extras" 'additional_repos=' "${output}"
+  assert_match "primary repo" 'parameter repo_url=https://github.com/foo/app.git' "${output}"
+  [ "$(stub_log_count git)" -eq 2 ]
+  assert_match "bare clone" 'clone --quiet --depth 1 --no-checkout' "$(stub_log git)"
+}
+
+@test "new-workspace.sh: --additional-repos with no value of its own is an error" {
+  export STUB_GIT_TREE_OUT="README.md"
+  run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run \
+    https://github.com/foo/app.git --additional-repos
+  [ "${status}" -ne 0 ]
+  # `die` reports on stderr (scripts/lib/common.sh), and `run --separate-stderr`
+  # keeps stderr out of $output — so the error text is read from $stderr here.
+  assert_match "usage" 'needs one or more git URLs' "${stderr}"
+  [ "$(stub_log_count git)" -eq 0 ]
 }

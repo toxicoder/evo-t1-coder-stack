@@ -24,12 +24,16 @@ filegroup(
     ],
 )
 
+# docker-compose.yml is both the marker the runner and bats_canonical_repo_root probe
+# for and the file several suites read by path; the template/image/litellm payload
+# beside it is read the same way, so it all travels with the suite.
 _BATS_COMMON = [
     "bats/test_helper.bash",
     "bats_runner.sh",
     "extract_fn.py",
     ":bats_tool",
     "//scripts:doc_sources",
+    "//:stack_data",
 ] + glob(
     [
         "bats/tool_stubs/**",

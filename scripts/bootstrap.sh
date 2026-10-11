@@ -28,14 +28,149 @@
 #
 # All four are read from the process environment only, never from .env — an .env that
 # silently disables provisioning steps would be unreadable to debug.
+#
+# Arguments: `--check` (or `--check=true`) runs the read-only half on its own — the
+# same probes and the same .env reads, then stops. Every write and every external
+# step (cp .env.sample .env, the secret rotation, the cert issuing, the image build,
+# the template push, the Agents wiring, the Spark fleet check) stays with the full
+# run. Anything else in argv is refused: a flag that advertises itself as a dry run
+# must never fall through to a provisioning run.
+#
+# Sibling scripts are addressed by absolute path under this script's own directory,
+# never by a path relative to the cwd (docs/project-conventions.md §Scripts).
+
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The root is derived, never assumed: $REPO_ROOT or $GITHUB_WORKSPACE when either
+# names a real checkout, otherwise this script's own directory's parent. Under
+# `bazelisk run //scripts:bootstrap` that last one is the runfiles copy, which
+# carries .env.sample, templates/ and images/ beside the script — and the probe
+# below is what proves the choice, because a copy that lacks docker-compose.yml is
+# not a checkout.
+ROOT_DIR="${REPO_ROOT:-}"
+if [ ! -f "${ROOT_DIR:-/nonexistent}/docker-compose.yml" ]; then
+  ROOT_DIR="${GITHUB_WORKSPACE:-}"
+fi
+if [ ! -f "${ROOT_DIR:-/nonexistent}/docker-compose.yml" ]; then
+  ROOT_DIR="${SELF_DIR}/.."
+fi
+if [ ! -f "${ROOT_DIR}/docker-compose.yml" ]; then
+  printf 'error: bootstrap: no docker-compose.yml under %s — run this from the repo root\n' \
+    "${ROOT_DIR}" >&2
+  exit 1
+fi
+cd "${ROOT_DIR}"
 
 # shellcheck source=lib/common.sh disable=SC1091
 source "scripts/lib/common.sh"
 # shellcheck source=lib/bootstrap.sh disable=SC1091
 source "scripts/lib/bootstrap.sh"
+
+check_only=0
+
+for arg in "$@"; do
+  case "${arg}" in
+    --check | --check=true)
+      check_only=1
+      ;;
+    -h | --help)
+      cat <<'HELP'
+usage: bash scripts/bootstrap.sh [--check]
+
+Prepare the stack for first boot. --check reads the same inputs and writes
+nothing: it reports the missing tools, the placeholder secrets, the missing
+certs and the missing images, then stops.
+
+  --check     read-only pass: report what is missing, change nothing
+  -h, --help  this help
+
+  SKIP_DEV_IMAGE_BUILD=1, SKIP_TEMPLATE_PUSH=1, SKIP_CODER_AGENTS=1 and
+  SKIP_SPARKS=1 skip the four expensive steps of a full run.
+HELP
+      exit 0
+      ;;
+    *)
+      die "bootstrap: unknown argument '${arg}' (try --help; --check writes nothing)"
+      ;;
+  esac
+done
+
+if [ "${check_only}" = "1" ]; then
+  echo "bootstrap --check: read-only pass. Nothing below is written, built or pushed."
+  printf 'tools:'
+  for probe_tool in docker openssl terraform git; do
+    if command -v "${probe_tool}" >/dev/null 2>&1; then
+      printf ' %s=present' "${probe_tool}"
+    else
+      printf ' %s=missing' "${probe_tool}"
+    fi
+  done
+  printf '\n'
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+      echo "compose: docker compose answers, so a full run would reach the daemon"
+    else
+      echo "compose: the docker compose plugin is not available — a full run would stop here"
+    fi
+  else
+    echo "compose: docker is not on PATH, so a full run would stop here"
+  fi
+
+  if [ ! -f .env ]; then
+    echo ".env: missing — a full run would create it from .env.sample"
+  else
+    echo "secrets (key names only, never values):"
+    for probe_key in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD; do
+      if grep -q "^${probe_key}=change-me" .env; then
+        echo "  ${probe_key}: still a change-me placeholder — a full run would replace it"
+      fi
+    done
+    echo "hosts: CODER_ACCESS_URL=$(env_get .env CODER_ACCESS_URL)"
+    echo "       STACK_LAN_HOST=$(env_get .env STACK_LAN_HOST)"
+    echo "       STACK_PUBLIC_HOSTS=$(env_get .env STACK_PUBLIC_HOSTS)"
+  fi
+
+  for cert_pair in proxy/certs/homepage.crt proxy/certs/coder.crt; do
+    if [ -f "${cert_pair}" ] && [ -f "${cert_pair%.crt}.key" ]; then
+      echo "certs: ${cert_pair} and its key are present"
+    else
+      echo "certs: ${cert_pair} is missing — a full run would issue it (openssl needed)"
+    fi
+  done
+
+  if [ -e /dev/dri ]; then
+    echo "gpu: /dev/dri is present"
+  else
+    echo "gpu: no /dev/dri — the IPEX-LLM Ollama service needs the Arc 140T"
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    # Read .env only when it exists: `env_get` on an absent file would hand a
+    # failing sed to a pipe, and `set -o pipefail` would end this run there.
+    check_image=""
+    if [ -f .env ]; then
+      check_image="$(env_get .env DEV_IMAGE)"
+    fi
+    check_image="${check_image:-evo-t1-dev:latest}"
+    if docker image inspect "${check_image}" >/dev/null 2>&1; then
+      echo "image: ${check_image} is in the local image store"
+    else
+      echo "image: ${check_image} is not built — a full run would build it"
+    fi
+    check_dind="$(dind_image_ref "${ROOT_DIR}/templates/workspace/main.tf")"
+    if docker image inspect "${check_dind}" >/dev/null 2>&1; then
+      echo "image: ${check_dind} is in the local image store"
+    else
+      echo "image: ${check_dind} is not pulled — a full run would pull it"
+    fi
+  fi
+
+  echo "skipped by --check: the template push, the Coder Agents wiring and the Spark"
+  echo "fleet check, exactly as a full run would run them. Nothing was written."
+  exit 0
+fi
 
 command -v docker >/dev/null 2>&1 || {
   echo "error: docker not found on PATH" >&2
@@ -356,25 +491,25 @@ dev_image="${dev_image:-evo-t1-dev:latest}"
 if docker image inspect "${dev_image}" >/dev/null 2>&1; then
   echo "workspace image ${dev_image} is present ($(docker image inspect --format '{{.Size}}' "${dev_image}" | awk '{printf "%.0f MB", $1/1024/1024}'))"
 elif [ -n "${SKIP_DEV_IMAGE_BUILD:-}" ]; then
-  echo "note: workspace image ${dev_image} is not built yet (SKIP_DEV_IMAGE_BUILD is set) — run ./scripts/build-dev-image.sh before creating a workspace."
+  echo "note: workspace image ${dev_image} is not built yet (SKIP_DEV_IMAGE_BUILD is set) — run bazelisk run //scripts:build-dev-image before creating a workspace."
 else
   echo "building workspace image ${dev_image} — several GB of downloads, this takes a few minutes ..."
   build_rc=0
-  DEV_IMAGE_TAG="${dev_image}" ./scripts/build-dev-image.sh || build_rc=$?
+  DEV_IMAGE_TAG="${dev_image}" bash "${ROOT_DIR}/scripts/build-dev-image.sh" || build_rc=$?
   if [ "${build_rc}" != "0" ]; then
     # Almost always a pinned upstream download that failed or no internet; the build
     # script already printed the layer that stopped.
-    echo "warning: the workspace image ${dev_image} did not build (exit ${build_rc}) — workspaces cannot start until it exists. Retry with: ./scripts/build-dev-image.sh"
+    echo "warning: the workspace image ${dev_image} did not build (exit ${build_rc}) — workspaces cannot start until it exists. Retry with: bazelisk run //scripts:build-dev-image"
   fi
 fi
 
 # The DinD sidecar's daemon image is resolved from the host store by
-# `data "docker_image"` in templates/docker-dev, which never pulls — that is the
+# `data "docker_image"` in templates/workspace/main.tf and templates/devcontainer/main.tf, which never pull — that is the
 # behaviour that keeps a LAN box with no internet from hanging mid-apply, so the
 # pull has to happen here instead. Without it, enabling the toggle on a fresh box
 # fails the plan with "did not find docker image 'docker:29.8.1-dind'". Advisory
 # on failure: DinD is opt-in, so an offline box still gets a working stack.
-DIND_IMAGE="$(dind_image_ref templates/docker-dev/main.tf)"
+DIND_IMAGE="$(dind_image_ref templates/workspace/main.tf)"
 if docker image inspect "${DIND_IMAGE}" >/dev/null 2>&1; then
   echo "docker-in-docker image ${DIND_IMAGE} is present"
 else
@@ -391,15 +526,15 @@ fi
 # at least one registered account, none of which a fresh clone has, and
 # push-template.sh exits 0 with a one-line reason when it cannot run. It needs no
 # host coder CLI and no `coder login`: it drives the CLI inside the coder container
-# over loopback, and it pushes both templates, docker-dev first. A non-zero here
+# over loopback, and it pushes both templates, workspace first. A non-zero here
 # means at least one of those pushes was attempted and failed.
 if [ -n "${SKIP_TEMPLATE_PUSH:-}" ]; then
-  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run bash scripts/push-template.sh after registering an account."
+  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run bazelisk run //scripts:push-template after registering an account."
 else
   push_rc=0
-  bash scripts/push-template.sh || push_rc=$?
+  bash "${ROOT_DIR}/scripts/push-template.sh" || push_rc=$?
   if [ "${push_rc}" != "0" ]; then
-    echo "warning: template push failed (exit ${push_rc}) — retry the failed one with: bash scripts/push-template.sh [name]"
+    echo "warning: template push failed (exit ${push_rc}) — retry the failed one with: bazelisk run //scripts:push-template -- [name]"
   fi
 fi
 
@@ -414,12 +549,12 @@ fi
 # skips cleanly while the stack is down or nobody has registered yet, and reuses
 # what is already wired, so this step is safe to re-run beside the push above.
 if [ -n "${SKIP_CODER_AGENTS:-}" ]; then
-  echo "note: Coder Agents wiring skipped (SKIP_CODER_AGENTS is set) — run bash scripts/coder-agents.sh --apply after the stack is up."
+  echo "note: Coder Agents wiring skipped (SKIP_CODER_AGENTS is set) — run bazelisk run //scripts:coder-agents -- --apply after the stack is up."
 else
   agents_rc=0
-  bash scripts/coder-agents.sh --apply || agents_rc=$?
+  bash "${ROOT_DIR}/scripts/coder-agents.sh" --apply || agents_rc=$?
   if [ "${agents_rc}" != "0" ]; then
-    echo "warning: the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: bash scripts/coder-agents.sh --dry-run (once the stack is up), then re-run with --apply."
+    echo "warning: the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: bazelisk run //scripts:coder-agents -- --dry-run (once the stack is up), then re-run with --apply."
   fi
 fi
 
@@ -447,36 +582,38 @@ fi
 # not resolve, so they skip as a "not yet" state rather than failing.
 # --no-tests keeps the recipe's own probes — a
 # 195k-token needle plus a 1/2/4/5-client bench sweep, minutes per box — out of a
-# bootstrap run; re-run ./scripts/spark-verify.sh without it to get them back.
+# bootstrap run; re-run bazelisk run //scripts:spark-verify (without --no-tests) to get them back.
 if [ -n "${SKIP_SPARKS:-}" ]; then
-  echo "note: Spark fleet check skipped (SKIP_SPARKS is set) — run ./scripts/spark-verify.sh --no-tests to check the boxes."
+  echo "note: Spark fleet check skipped (SKIP_SPARKS is set) — run bazelisk run //scripts:spark-verify -- --no-tests to check the boxes."
 else
   spark_rc=0
-  ./scripts/spark-configure.sh || spark_rc=$?
+  bash "${ROOT_DIR}/scripts/spark-configure.sh" || spark_rc=$?
   if [ "${spark_rc}" != "0" ]; then
-    echo "warning: the Spark config check did not complete (exit ${spark_rc}) — no sparks/<host>.env was written. Name the boxes with SPARK_HOSTS and check SPARK_SSH_USER, then re-run ./scripts/spark-configure.sh."
+    echo "warning: the Spark config check did not complete (exit ${spark_rc}) — no sparks/<host>.env was written. Name the boxes with SPARK_HOSTS and check SPARK_SSH_USER, then re-run bazelisk run //scripts:spark-configure."
   fi
   verify_rc=0
-  ./scripts/spark-verify.sh --no-tests || verify_rc=$?
+  bash "${ROOT_DIR}/scripts/spark-verify.sh" --no-tests || verify_rc=$?
   if [ "${verify_rc}" != "0" ]; then
-    echo "warning: the Spark fleet check failed (exit ${verify_rc}) — either a box disagrees with its peers or its model id is spelled differently from the one litellm/config.yaml declares, and the proxy routes to it either way. Re-run ./scripts/spark-verify.sh --no-tests for the per-box detail, and ./scripts/spark-configure.sh --apply <host> to write the fix."
+    echo "warning: the Spark fleet check failed (exit ${verify_rc}) — either a box disagrees with its peers or its model id is spelled differently from the one litellm/config.yaml declares, and the proxy routes to it either way. Re-run bazelisk run //scripts:spark-verify -- --no-tests for the per-box detail, and bazelisk run //scripts:spark-configure -- --apply <host> to write the fix."
   fi
 fi
 
 echo
 echo "Next steps:"
-echo "  1. ./scripts/build-dev-image.sh   # one-time polyglot workspace image (re-run if the build above failed)"
+echo "  1. bazelisk run //scripts:build-dev-image   # one-time polyglot workspace image (re-run if the build above failed)"
 echo "  2. docker compose up -d"
-# Public mode wins for the two browser-facing steps: those names resolve from
+# Public mode wins for the browser-facing steps: those names resolve from
 # anywhere and Traefik serves them a real certificate, so printing the LAN form
 # would send remote users to an address their machine cannot reach.
 coder_reach_url="${public_coder_url:-https://<host>:3001}"
 dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
+litellm_port="$(env_get .env LITELLM_PORT)"
+litellm_reach_url="${public_litellm_url:-http://${stack_lan_host:-<host>}:${litellm_port:-4000}}"
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
-echo "  4. bash scripts/push-template.sh   # re-run after step 3 if the push above skipped (image=${dev_image})"
-echo "  5. ./scripts/pull-models.sh   # pulls the OLLAMA_MODELS listed in .env"
-echo "  6. bash scripts/coder-agents.sh --apply   # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (skipped on a cold box; re-run it after steps 2-3)"
-echo '  7. ./scripts/spark-verify.sh --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep)'
+echo "  4. bazelisk run //scripts:push-template   # re-run after step 3 if the push above skipped (image=${dev_image})"
+echo "  5. bazelisk run //scripts:pull-models   # pulls the OLLAMA_MODELS listed in .env"
+echo "  6. bazelisk run //scripts:coder-agents -- --apply   # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (skipped on a cold box; re-run it after steps 2-3)"
+echo '  7. bazelisk run //scripts:spark-verify -- --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep)'
 echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
-dash_pw="$(sed -n 's|^HOMEPAGE_AUTH_PASSWORD=||p' .env | tail -n 1)"
-echo "  9. Dashboard: ${dash_reach_url}/ (login password: ${dash_pw})"
+echo "  9. Dashboard: ${dash_reach_url}/ (login password: the HOMEPAGE_AUTH_PASSWORD line in .env, never printed here — bazelisk run //scripts:dashboard-password rotates it)"
+echo " 10. LiteLLM: ${litellm_reach_url}/health — the transport every agent routes through; bazelisk run //scripts:dev-stack -- status reports on the whole stack at once"

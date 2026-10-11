@@ -30,6 +30,19 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+# GitHub auth for the whole stack is ONE Coder External Auth provider, id
+# `primary-github`, created in the Coder UI against a GitHub OAuth app and then
+# linked to this template. `optional` is load-bearing: without it a plan against
+# an owner who never connected a GitHub account fails outright instead of
+# coming up without a credential, which is the ordinary case here. A minted
+# token arrives in the agent environment below and is re-minted by
+# coder_script.gh_token_refresh, because it expires long before the workspace
+# does — and an owner who connected nothing gets no GitHub credential anywhere.
+data "coder_external_auth" "github" {
+  id       = "primary-github"
+  optional = true
+}
+
 # The image picker on the create form. The provider requires a parameter
 # default to be one of the option values, so a custom --var image=<tag> is
 # injected as its own option rather than being dropped (which would leave the
@@ -180,7 +193,7 @@ data "coder_parameter" "dind" {
 data "coder_parameter" "repo_url" {
   name         = "repo_url"
   display_name = "Git repository"
-  description  = "Optional clone URL. The repository is fetched into /home/coder/workspace/<repo-name> on workspace create and on every start, and when this is filled the editor, the terminal and Grok Build all open and run on that folder. Leave it empty for a home-directory workspace."
+  description  = "Optional clone URL. The repository is cloned once into /home/coder/workspace/<repo-name>: on create, and on a later start only while that folder holds no .git yet, so a start never pulls over work you have there — pull by hand when you want to. When this is filled the editor, the terminal and Grok Build all open and run on that folder. Leave it empty for a home-directory workspace."
   type         = "string"
   form_type    = "input"
   mutable      = true
@@ -193,6 +206,23 @@ data "coder_parameter" "repo_url" {
 # the mount topology under a running workspace. The default comes from the template
 # variable so an operator can flip the whole stack with --var grok_profile_mode on
 # push, exactly like the image and DinD defaults above.
+# The opt-in escape hatch for the service-and-the-library-it-uses case: extra
+# repositories cloned into sibling folders beside the primary clone, so nothing
+# about the editor, the terminals or the dev container changes shape. Empty by
+# default — one repository per workspace is the default this stack wants — and
+# the list arrives comma- or newline-separated, which is why the startup script
+# splits on both.
+data "coder_parameter" "additional_repos" {
+  name         = "additional_repos"
+  display_name = "Git repositories (additional)"
+  description  = "Optional repositories to clone BESIDE the one named above, one URL per line or comma-separated. Each lands in its own folder next to the primary clone and is cloned once, exactly like the primary one — a folder that already holds a .git is skipped on later starts, never pulled on. No credential is consulted for them that the primary clone would not have gotten. Leave it empty for the single-repository workspace, which is the common case."
+  type         = "string"
+  form_type    = "textarea"
+  mutable      = true
+  default      = ""
+  order        = 4
+}
+
 data "coder_parameter" "grok_profile_mode" {
   name         = "grok_profile_mode"
   display_name = "Grok profile"
@@ -203,7 +233,7 @@ data "coder_parameter" "grok_profile_mode" {
   form_type = "dropdown"
   mutable   = false
   default   = var.grok_profile_mode
-  order     = 4
+  order     = 5
 
   # Only these two spellings mean anything; anything else reads as private, which
   # is the safe half of the mistake (it leaks nothing, it just costs sharing).
@@ -238,7 +268,7 @@ data "coder_parameter" "grok_default_model" {
   # silent model swap under a running workspace is not worth one dropdown.
   mutable = false
   default = var.grok_default_model
-  order   = 5
+  order   = 6
 
   dynamic "option" {
     for_each = local.model_options
@@ -263,7 +293,7 @@ data "coder_parameter" "grok_config_extra" {
   form_type = "textarea"
   mutable   = true
   default   = ""
-  order     = 6
+  order     = 7
 }
 
 # Presets collapse the create form to one click. Keys here are parameter *names*
@@ -368,24 +398,27 @@ resource "coder_agent" "main" {
 
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
-    # resolve, so all six are declared together. github_token is a *boolean* gate
-    # in there — it only decides whether the [mcp_servers.github] block appears —
-    # so no token bytes are ever interpolated into the rendered script or into
-    # config.toml; the rendered file names GH_TOKEN and the CLI expands that
-    # reference from the environment. workspace_affinity_key is the per-workspace
-    # LiteLLM session-affinity key, rendered into the [models] extra_headers.
+    # resolve, so all five are declared together. github_mcp is a *boolean* gate in
+    # there — it only decides whether the [mcp_servers.github] block appears — and
+    # no token is part of the decision: no credential bytes are ever interpolated
+    # into the rendered script or into config.toml, which only ever names GH_TOKEN
+    # and lets the CLI expand that reference from the agent environment.
+    # workspace_affinity_key is the per-workspace LiteLLM session-affinity key,
+    # rendered into the [models] extra_headers.
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
       litellm_url            = var.litellm_url
       grok_default_model     = data.coder_parameter.grok_default_model.value
       grok_config_extra      = data.coder_parameter.grok_config_extra.value
-      github_token           = var.github_token
-      github_mcp             = var.github_mcp && var.github_token != ""
+      github_mcp             = var.github_mcp
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
     })
     # Injected verbatim into the script, which is safe enough: this is the
     # workspace creator's own input and they already hold a shell in this
     # container. The script quotes it anyway so a URL with spaces survives.
     repo_url = data.coder_parameter.repo_url.value
+    # The same two separators, for the same reason: delivered verbatim, quoted by
+    # the script, and split there. Empty means one repository, which is the default.
+    additional_repos = data.coder_parameter.additional_repos.value
     # Rendered settings seed, inserted verbatim into a quoted heredoc. Already
     # resolved, so VS Code $${workspaceFolder} values inside it are not
     # interpolated again here. No key bytes: the script fills those from
@@ -425,14 +458,63 @@ resource "coder_agent" "main" {
     # does not exist would make every docker command in the workspace fail with
     # a confusing connection error instead of the plain "command not found".
     local.dind_enabled ? { DOCKER_HOST = local.dind_host } : {},
-    # An empty token adds NEITHER key, so a workspace that declares no GitHub
-    # credential gets exactly the environment it got before. When present the
-    # token travels env-only, like LITELLM_API_KEY above: the startup script
-    # seeds the gh/git credential helper from it, so `git push` and
-    # `gh pr create` work with the token never written to a file, and the
-    # rendered config.toml only ever references GH_TOKEN by name.
-    var.github_token != "" ? { GH_TOKEN = var.github_token, GITHUB_TOKEN = var.github_token } : {},
+    # Minted per owner by the `primary-github` provider above, and only when that
+    # owner connected a GitHub account: with no connection this map is empty and
+    # the workspace gets exactly the environment it had before any of this
+    # existed. When present the pair travels as environment variables, like
+    # LITELLM_API_KEY above — the startup script seeds the gh/git credential
+    # helper from it, and the refresh script below additionally stores each
+    # minted token in the workspace's own gh auth store (0600, per workspace)
+    # for shells that start outside the agent environment, so `git push` and
+    # `gh pr create` work with the token never copied into a
+    # template variable or a rendered file, and the rendered config.toml only ever
+    # references GH_TOKEN by name.
+    length(data.coder_external_auth.github.access_token) > 0 ? { GH_TOKEN = data.coder_external_auth.github.access_token, GITHUB_TOKEN = data.coder_external_auth.github.access_token } : {},
   )
+}
+
+# What keeps the pair above from going stale. Coder mints a per-host token that
+# expires in about an hour, the agent environment is rendered once per start, and
+# a workspace that stays up for a day would otherwise spend most of it holding a
+# dead credential — so the same call that VS Code's remote git helper makes runs
+# here on start and every six hours. `coder external-auth access-token` answers
+# with a live token on stdout (refreshing it server-side first) or with the
+# re-authentication URL and exit 1, which is why the `|| true` and the empty
+# check are there: a workspace whose owner connected no account must do nothing,
+# quietly, rather than light up its script log four times a day.
+resource "coder_script" "gh_token_refresh" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Refresh GitHub token for gh"
+  icon         = "/icon/github.svg"
+  run_on_start = true
+  # Longer than the token's own lifetime, so the credential is never already
+  # expired by the time something in the workspace reaches for it.
+  cron    = "0 */6 * * *"
+  timeout = 30
+
+  script = <<-EOT
+    #!/bin/bash
+    set -u
+    # No coder CLI in the image, or no `primary-github` provider linked to this
+    # template: there is nothing to mint from, and saying so is not news.
+    command -v coder >/dev/null 2>&1 || exit 0
+    token="$(coder external-auth access-token primary-github 2>/dev/null || true)"
+    if [ -z "$token" ]; then
+      echo "no GitHub token for this account: connect the 'primary-github' provider in Coder (Settings -> Tokens -> external auth) and reconnect your GitHub account, then restart the workspace." >&2
+      exit 0
+    fi
+    # gh reads either name from the environment, and `gh auth git-credential` is
+    # what plain git asks for an HTTPS credential — but both read it at
+    # invocation time, so the token has to be reachable from a shell, not only
+    # from the agent's start-time environment. Hence the store write, at 0600
+    # and per workspace, which `gh auth status` reads back.
+    if command -v gh >/dev/null 2>&1; then
+      printf '%s' "$token" | gh auth login --hostname github.com --with-token >/dev/null 2>&1 ||
+        echo "the minted token is valid but gh would not take it — check 'gh auth status' inside the workspace." >&2
+    fi
+    exit 0
+  EOT
 }
 
 # In-browser VS Code (Coder's code-server fork) on port 13337. display_apps.vscode
@@ -586,7 +668,7 @@ resource "coder_metadata" "workspace_info" {
   # the token never reaches the rendered config.toml, only its name does.
   item {
     key       = "github token"
-    value     = var.github_token != "" ? "set" : "none"
+    value     = data.coder_external_auth.github.access_token != "" ? "set" : "none"
     sensitive = true
   }
 }

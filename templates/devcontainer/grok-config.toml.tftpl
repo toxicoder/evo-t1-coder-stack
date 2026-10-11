@@ -2,8 +2,8 @@
 #
 # ~/.grok/config.toml for the EVO-T1 Coder workspace.
 #
-# This file is written by templates/docker-dev/grok-config.toml.tftpl in the
-# evo-t1-coder-stack repo and is refreshed on workspace start ONLY while the
+# This file is written by templates/devcontainer/grok-config.toml.tftpl in
+# the evo-t1-coder-stack repo and is refreshed on workspace start ONLY while the
 # marker line above is present (or the file is missing). To take permanent
 # ownership, delete the first line — the startup script will then leave this
 # file alone. To go back to stack-managed, delete the file and start the
@@ -16,7 +16,9 @@
 # (the "Grok default model" dropdown) fills [models] default below, and anything
 # typed into "Grok config extras" is appended verbatim under the comment header at
 # the very end of the file. Both are per-workspace, so with the Grok profile set to
-# "private" two workspaces can legitimately disagree about either one.
+# "private" two workspaces can legitimately disagree about either one — on a
+# "shared" profile this single file serves every workspace its owner owns, and the
+# one started last re-renders it for all of them.
 
 [models]
 # `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
@@ -154,7 +156,9 @@ explore = "agent"
 plan = "agent"
 
 # Offline-capable MCP servers only: everything below resolves from a local
-# process and needs no account, token, or inbound route.
+# process and needs no account, token, or inbound route, with one gated
+# exception: github, which is a hosted HTTP server and is off unless this file
+# is rendered with it.
 #
 # Deliberately excluded, because they need outbound network or a credential this
 # workspace does not carry: context7 (docs CDN), sentry (OAuth to
@@ -204,19 +208,28 @@ args = ["mcp-server-time"]
 enabled = true
 startup_timeout_sec = 60
 
-%{if github_mcp && github_token != ""~}
-# Rendered only when a GitHub token was supplied AND github_mcp is on; with
-# either one missing this whole block is absent from the file. A session whose
-# environment has no GH_TOKEN in it simply fails this server's handshake, which
-# is the point — the entry is best effort, so a workspace with no GitHub
-# credential pays nothing for it (and the token itself stays in the environment,
-# never in this file).
+%{if github_mcp~}
+
+# Hosted GitHub API MCP over HTTPS: no local process, so nothing to warm up, but
+# it needs outbound TLS and a bearer token — the exception the note above makes.
+# Rendered only when this template is pushed with github_mcp = true; with it off
+# the gate below emits nothing at all, so the rendered file is what it was before
+# this entry existed. There is no token to gate it on any more: the credential
+# comes from the `primary-github` External Auth provider, so a session whose owner
+# connected no GitHub account has no GH_TOKEN in its environment and just fails
+# this server's handshake.
+# The header below escapes its dollar signs (doubled), so the rendered file keeps
+# that reference literally and the CLI expands it from the agent environment at
+# run time. Written with single dollars it would be a templatefile interpolation,
+# resolved (or rejected) at render time — and resolving it would need the token
+# itself in the render map, which is exactly what stays out.
 [mcp_servers.github]
 url = "https://api.githubcopilot.com/mcp/"
 enabled = true
 headers = { Authorization = "Bearer $${GH_TOKEN}" }
 
 %{endif~}
+
 [mcp]
 max_output_bytes = 40000
 
@@ -231,8 +244,8 @@ deny = [
   "Edit(**/.env)",
   "Edit(**/.env.*)",
 ]
-%{if grok_config_extra != ""~}
 
+%{if grok_config_extra != ""~}
 # --- per-workspace additions (create form: Grok config extras) ---
 ${grok_config_extra}
 %{endif~}

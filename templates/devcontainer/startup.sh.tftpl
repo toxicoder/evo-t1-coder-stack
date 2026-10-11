@@ -50,11 +50,12 @@
 # Note: this file is rendered by Terraform templatefile(); shell variables are
 # written with a doubled dollar sign ($name or $${name}; the braced form is only
 # safe when escaped this way) so the rendered script keeps them. The only
-# interpolations Terraform has to resolve here are the four variables main.tf
-# passes into this script: grok_config, repo_url, dc_dir and build_devcontainer.
+# interpolations Terraform has to resolve here are the six variables main.tf
+# passes into this script: grok_config, repo_url, additional_repos, dc_dir,
+# build_devcontainer and vscode_settings.
 # grok_config arrives already rendered from grok-config.toml.tftpl, whose own
 # keys are litellm_url, grok_default_model, workspace_affinity_key,
-# grok_config_extra, github_token and github_mcp — the last two only gate text,
+# grok_config_extra and github_mcp — the last one only gates text,
 # the affinity key is a per-workspace routing hint (a workspace UUID, not a
 # secret), and the token's own bytes never appear in the result. The one
 # GH_TOKEN reference that config template does emit is dollar-escaped, so it
@@ -119,7 +120,7 @@ export PATH="$HOME/.grok/bin:$PATH"
 # then runs `grok --cwd <that root>` inside it. The root, not $PWD, keys the
 # session and decides where the CLI starts, so a tab opened in a subdirectory
 # still rejoins the session its repository owns. The identical helper body lives
-# in docker-dev's startup.sh.tftpl — keep the two copies byte-identical.
+# in templates/workspace's startup.sh.tftpl — keep the two copies byte-identical.
 mkdir -p "$HOME/.grok/bin"
 cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
 #!/bin/bash
@@ -175,7 +176,7 @@ chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
 # experiment name and no entitlement gates it.
 # Working-dir resolution here: with the dev-container toggle OFF the agent's
 # working dir is /home/coder, so .agents/skills resolves to
-# /home/coder/.agents/skills exactly as in docker-dev; with the toggle ON
+# /home/coder/.agents/skills exactly as in templates/workspace; with the toggle ON
 # the dev container's own working dir is the cloned folder under
 # /srv/coder-devcontainers/..., and that folder ships no skill tree, so the
 # ~/.coder copies remain the live source either way. Each file also gets a
@@ -391,15 +392,19 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # --- GitHub credential plumbing (best effort) ---------------------------------
-# Only runs with a token: GH_TOKEN and GITHUB_TOKEN exist solely because this
-# template was pushed with github_token set, so an empty pair — the default —
-# leaves this stage, and the workspace, exactly as they were before it existed.
+# Only runs with a token: GH_TOKEN and GITHUB_TOKEN exist solely when the owner
+# has connected the `primary-github` External Auth provider, so an empty pair —
+# the default — leaves this stage, and the workspace, exactly as they were before
+# it existed.
 #
-# With a token, two things read it, and neither one stores it. `gh` picks the key
-# out of its own environment, and git is told here to ask `gh auth
+# With a token, two things read it, and this stage stores nothing: `gh` picks
+# the key out of its own environment, and git is told here to ask `gh auth
 # git-credential` for credentials for github.com, which answers from that same
-# environment. The secret therefore stays in the environment for the length of the
-# workspace, and ~/.gitconfig only ever names the helper. That file is what the
+# environment. The secret therefore lives in the agent environment for the
+# length of the workspace, plus one copy that main.tf's gh_token_refresh script
+# pipes into `gh auth login --with-token` — the per-workspace gh auth store,
+# 0600, for shells launched outside that environment — and ~/.gitconfig only
+# ever names the helper. That file is what the
 # append below writes, and only while it names neither the helper nor a
 # github.com credential section of its own, so a gitconfig someone manages by
 # hand keeps whatever it already says — a second section for the same host would
@@ -462,8 +467,8 @@ build_devcontainer='${build_devcontainer}'
 repo_leaf="$(printf '%s' "$repo_url_raw" | tr '/' '\n' | grep -v '^$' | tail -n 1)"
 # The "$${leaf%.git}" suffix form would be the shorter way to drop the extension;
 # it is spelled with sed here because a braced shell expansion is a templatefile
-# interpolation, and the bare form keeps this script's interpolation count at the
-# four variables main.tf passes.
+# interpolation, and the bare form would add a seventh interpolation, to a
+# name main.tf does not pass.
 repo_folder="$(printf '%s' "$repo_leaf" | sed 's/\.git$//')"
 repo_folder="$(printf '%s' "$repo_folder" | sed 's/[^A-Za-z0-9._-]/-/g')"
 printf '%s' "$repo_folder" | grep -qE '^[A-Za-z0-9]' || repo_folder="repo"
@@ -556,6 +561,49 @@ else
     echo "==============================================================" >&2
   fi
 fi
+
+# --- Additional repositories (best effort) -----------------------------------
+# The list --additional-repos on the new-workspace CLI writes, arriving here as
+# one comma- or newline-separated string (textarea on the create form). Every
+# entry lands beside the primary clone, inside the same $dc_dir bind, so the
+# devcontainer build context and the editor's folder both stay on $target. The
+# same three rules apply per entry — folder name re-derived the same way, never
+# clobber a non-git folder, one loud warning per failed clone — and an empty
+# primary URL means there is no clone tree to be beside, which is why the extras
+# ride along with the primary instead of replacing it.
+extra_repos_raw="$(cat <<'EXTRA_REPOS_EOF'
+${additional_repos}
+EXTRA_REPOS_EOF
+)"
+for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n' \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | grep -v '^[[:space:]]*$' || true); do
+  extra_leaf="$(printf '%s' "$extra_url" | tr '/' '\n' | grep -v '^$' | tail -n 1)"
+  extra_folder="$(printf '%s' "$extra_leaf" | sed 's/\.git$//')"
+  extra_folder="$(printf '%s' "$extra_folder" | sed 's/[^A-Za-z0-9._-]/-/g')"
+  printf '%s' "$extra_folder" | grep -qE '^[A-Za-z0-9]' || extra_folder="repo"
+  if [ "$extra_folder" = "$repo_folder" ]; then
+    continue
+  fi
+  extra_target="$dc_dir/$extra_folder"
+  if [ -d "$extra_target/.git" ]; then
+    echo "$extra_folder: already cloned, skipping"
+  elif [ -e "$extra_target" ]; then
+    echo "WARNING: $extra_target exists but is not a git repository — leaving it" \
+      "alone and skipping the clone. Remove it from the stack host if it should not be there." >&2
+  elif ! command -v git >/dev/null 2>&1; then
+    echo "WARNING: git is not installed, so $extra_url was not cloned into $extra_target." \
+      "This template expects the golden image (scripts/build-dev-image.sh), which ships git." >&2
+  elif run_clone clone -- "$extra_url" "$extra_target"; then
+    echo "cloned $extra_url into $extra_target"
+    if [ -n "$clone_owner" ]; then
+      chown -R "$clone_owner" "$extra_target" 2>/dev/null || true
+    fi
+  else
+    echo "WARNING: $extra_url did not clone into $extra_target. The same two causes" \
+      "apply as for the primary repository: a credential that does not cover this" \
+      "repository, or no route to its host." >&2
+  fi
+done
 
 # --- Dev-container preflight (best effort) ------------------------------------
 # Only worth running after the clone, because it is about what the clone holds.

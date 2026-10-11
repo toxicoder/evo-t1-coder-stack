@@ -46,7 +46,7 @@ setup() {
 fake_root() {
   local root="${BATS_TEST_TMPDIR?}/root" script="${1}"
   shift
-  mkdir -p "${root}/scripts/lib" "${root}/templates/docker-dev" "${root}/templates/docker-devcontainer"
+  mkdir -p "${root}/scripts/lib" "${root}/templates/workspace" "${root}/templates/devcontainer"
   : >"${root}/docker-compose.yml"
   if [ "$#" -gt 0 ]; then
     printf '%s\n' "$@" >"${root}/.env"
@@ -54,11 +54,11 @@ fake_root() {
     : >"${root}/.env"
   fi
   printf '%s\n' 'resource "coder_workspace_preset" "x" {' '  name = "x"' '  description = "short"' \
-    >"${root}/templates/docker-dev/main.tf"
+    >"${root}/templates/workspace/main.tf"
   printf '%s\n' 'resource "coder_workspace_preset" "y" {' '  name = "y"' '  description = "short"' \
-    >"${root}/templates/docker-devcontainer/main.tf"
-  : >"${root}/templates/docker-dev/.terraform.lock.hcl"
-  : >"${root}/templates/docker-devcontainer/.terraform.lock.hcl"
+    >"${root}/templates/devcontainer/main.tf"
+  : >"${root}/templates/workspace/.terraform.lock.hcl"
+  : >"${root}/templates/devcontainer/.terraform.lock.hcl"
   cp "${REPO_ROOT}/scripts/${script}" "${root}/scripts/"
   cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
   printf '%s' "${root}"
@@ -151,7 +151,7 @@ logs_absent() {
   running_stack
   run --separate-stderr bash "${root}/scripts/push-template.sh" nope
   [ "${status}" -eq 1 ]
-  [ "${stderr}" = "error: unknown template 'nope' (known: docker-dev, docker-devcontainer)" ]
+  [ "${stderr}" = "error: unknown template 'nope' (known: workspace, devcontainer)" ]
   # Names are validated before anything touches docker.
   [ "$(stub_log_count docker)" -eq 0 ]
 }
@@ -161,17 +161,17 @@ logs_absent() {
   running_stack
   run --separate-stderr bash "${root}/scripts/push-template.sh" --dry-run
   [ "${status}" -eq 1 ]
-  [ "${stderr}" = "error: unknown template '--dry-run' (known: docker-dev, docker-devcontainer)" ]
+  [ "${stderr}" = "error: unknown template '--dry-run' (known: workspace, devcontainer)" ]
 }
 
 @test "push-template: a missing main.tf stops the run (never a silent skip)" {
   root="$(fake_root push-template.sh)"
   running_stack
   psql_token_variant
-  rm -f "${root}/templates/docker-dev/main.tf" "${root}/templates/docker-devcontainer/main.tf"
+  rm -f "${root}/templates/workspace/main.tf" "${root}/templates/devcontainer/main.tf"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 1 ]
-  [ "${stderr}" = "error: templates/docker-dev/main.tf not found (run this from the repo root)" ]
+  [ "${stderr}" = "error: templates/workspace/main.tf not found (run this from the repo root)" ]
 }
 
 @test "push-template: a missing lockfile is a note, and the push still happens" {
@@ -179,12 +179,12 @@ logs_absent() {
   running_stack
   psql_token_variant
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
-  rm -f "${root}/templates/docker-dev/.terraform.lock.hcl"
-  run --separate-stderr bash "${root}/scripts/push-template.sh" docker-dev
+  rm -f "${root}/templates/workspace/.terraform.lock.hcl"
+  run --separate-stderr bash "${root}/scripts/push-template.sh" workspace
   [ "${status}" -eq 0 ]
-  [[ ${output} == *"note: templates/docker-dev/.terraform.lock.hcl is missing — regenerate it with:"* ]]
-  [[ ${output} == *"      terraform -chdir=templates/docker-dev init -backend=false"* ]]
-  [[ ${output} == *"template docker-dev pushed; active version ${ACTIVE_ID}"* ]]
+  [[ ${output} == *"note: templates/workspace/.terraform.lock.hcl is missing — regenerate it with:"* ]]
+  [[ ${output} == *"      terraform -chdir=templates/workspace init -backend=false"* ]]
+  [[ ${output} == *"template workspace pushed; active version ${ACTIVE_ID}"* ]]
 }
 
 @test "push-template: the full chain reaches an ACTIVE version for both templates" {
@@ -194,15 +194,15 @@ logs_absent() {
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 0 ]
-  [[ ${output} == *"template docker-dev pushed; active version ${ACTIVE_ID}"* ]]
-  [[ ${output} == *"template docker-devcontainer pushed; active version ${ACTIVE_ID}"* ]]
-  [[ ${output} == *"template docker-dev: description set (chat-agent routing hint)"* ]]
+  [[ ${output} == *"template workspace pushed; active version ${ACTIVE_ID}"* ]]
+  [[ ${output} == *"template devcontainer pushed; active version ${ACTIVE_ID}"* ]]
+  [[ ${output} == *"template workspace: description set (chat-agent routing hint)"* ]]
   [[ ${output} == *"litellm_key not passed (LITELLM_MASTER_KEY in .env is empty or still the sample placeholder)"* ]]
   # Every CLI line the seams build, with the token kept out of argv: the
   # passthrough resolves `coder` to the stub, so argv is the whole proof.
-  grep -Fq -- 'coder templates push docker-dev --directory - --yes --var image=evo-t1-dev:latest' "${STUB_LOG}/docker.log"
-  grep -Fq -- 'coder templates versions list docker-dev --column id --column active' "${STUB_LOG}/docker.log"
-  grep -Fq -- 'coder templates edit docker-dev --description' "${STUB_LOG}/docker.log"
+  grep -Fq -- 'coder templates push workspace --directory - --yes --var image=evo-t1-dev:latest' "${STUB_LOG}/docker.log"
+  grep -Fq -- 'coder templates versions list workspace --column id --column active' "${STUB_LOG}/docker.log"
+  grep -Fq -- 'coder templates edit workspace --description' "${STUB_LOG}/docker.log"
   grep -Fq -- 'coder whoami' "${STUB_LOG}/docker.log"
   grep -Fq -- '-e CODER_SESSION_TOKEN' "${STUB_LOG}/docker.log"
   logs_absent 'CODER_SESSION_TOKEN=|[0-9a-f]{10}-[0-9a-f]{22}' "${STUB_LOG}"/*.log
@@ -216,8 +216,8 @@ logs_absent() {
   export STUB_CODER_OUT="${BATS_TEST_TMPDIR}/versions.txt"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 1 ]
-  [[ ${stderr} == *"error: pushed docker-dev but it has no active version"* ]]
-  [[ ${stderr} == *"error: pushed docker-devcontainer but it has no active version"* ]]
+  [[ ${stderr} == *"error: pushed workspace but it has no active version"* ]]
+  [[ ${stderr} == *"error: pushed devcontainer but it has no active version"* ]]
   [[ ${stderr} == *"2 of 2 template(s) did not reach an active version"* ]]
 }
 
@@ -245,13 +245,13 @@ logs_absent() {
   running_stack
   psql_token_variant
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
-  run --separate-stderr bash "${root}/scripts/push-template.sh" docker-devcontainer docker-dev docker-devcontainer
+  run --separate-stderr bash "${root}/scripts/push-template.sh" devcontainer workspace devcontainer
   [ "${status}" -eq 0 ]
-  # Three names, two pushes, and docker-dev first despite being named second.
+  # Three names, two pushes, and workspace first despite being named second.
   [ "$(grep -Fc 'coder templates push' <<<"$(stub_log docker)")" -eq 2 ]
-  [[ "$(grep -F 'coder templates push' <<<"$(stub_log docker)")" == *"templates push docker-dev --directory"*"templates push docker-devcontainer"* ]]
-  [[ ${output} == *"template docker-dev pushed; active version ${ACTIVE_ID}"* ]]
-  [[ ${output} == *"template docker-devcontainer pushed; active version ${ACTIVE_ID}"* ]]
+  [[ "$(grep -F 'coder templates push' <<<"$(stub_log docker)")" == *"templates push workspace --directory"*"templates push devcontainer"* ]]
+  [[ ${output} == *"template workspace pushed; active version ${ACTIVE_ID}"* ]]
+  [[ ${output} == *"template devcontainer pushed; active version ${ACTIVE_ID}"* ]]
 }
 
 @test "push-template: the placeholder LiteLLM key is not passed and never printed" {
