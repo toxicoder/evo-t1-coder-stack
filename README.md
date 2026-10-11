@@ -526,9 +526,14 @@ The template (`templates/workspace/`) creates one Docker container per workspace
   credential for a workspace whose owner connected no account, and while an
   account is connected the next `gh_token_refresh` run rewrites that store with
   a minted pair (`gh auth logout`, or a rebuild, clears it either way).
-  The `settings.json.tftpl` payload does not
-  pass through the script: it goes to the `code_server` module, which merges it into
-  code-server's User+Machine settings on every start (below)
+  The `settings.json.tftpl` seed is copied once, the first time
+  `~/.shared/vscode/settings.json` is missing, onto the per-owner volume
+  `vscode-settings-<owner-id>`. code-server's User settings file is a symlink to
+  that path, so every workspace that owner has opens the same file, and an edit
+  (in any workspace, or from the host by mounting the volume) is not overwritten
+  on the next start. Delete the file to reseed from the template. A built dev
+  container cannot see the volume, so with **Build repo's dev container** on the
+  code-server module still merges the same payload on each start (below)
 - `startup_script_behavior = "blocking"`, so a workspace only reports *ready* once the
   toolchain is genuinely staged — no opening an editor mid-install
 - agent-bar buttons via `display_apps` (VS Code Desktop helper: a locally installed
@@ -665,9 +670,11 @@ It reuses `workspace`'s variables (`repo_url` exists in both templates; `dind` d
 not exist here — the sidecar is not optional here, a devcontainer workspace without a
 daemon is nothing, and the plain-clone fallback still wants a daemon its `docker`
 commands can reach), and carries its own copies of
-`startup.sh.tftpl`, `settings.json.tftpl` (the shared editor-settings payload,
-merged into each dev container's code-server User+Machine settings by the
-`code_server` module) and
+`startup.sh.tftpl`, `settings.json.tftpl` (the shared editor-settings seed,
+copied once onto the per-owner `vscode-settings-<owner-id>` volume and linked
+from code-server's User settings; a built dev container still receives it
+through the `code_server` module, because that container does not mount the
+volume) and
 `grok-config.toml.tftpl`, so the tmux-default
 terminal and LiteLLM wiring above apply to it too. **Treat the repository as untrusted
 code**: everything it builds runs on a privileged daemon on this box, so a Dockerfile in
@@ -797,17 +804,29 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   its `Authorization` header names `$GH_TOKEN` — the agent environment fills that from
   the `primary-github` external-auth connection, so a workspace whose owner connected no
   account renders the block and pays one failed handshake per session.
-- Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint
-  `http://host.docker.internal:4000/v1`, master key from the `litellm_key`
-  template variable, model alias `agent`, with `coder`/`coder-fast`/`chat` listed as
-  alternates) through the `code_server` module's `settings` and `machine_settings`
-  inputs, which merge the payload key-by-key into code-server's User and Machine
-  settings under `~/.local/share/code-server` on every start — user-edited keys
-  there survive, and nothing is written to the unread `~/.config/Code` path any
-  more. Installing Cline/Roo itself is a manual step in either editor's Extensions
-  panel (Open VSX by default). If your extension build names its settings slightly
-  differently, set the OpenAI-compatible endpoint + key in its settings UI — one
-  field each.
+- Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from
+  `litellm_url`, default `http://host.docker.internal:4000/v1`, model alias `agent`,
+  with `coder`/`coder-fast`/`chat` listed in `__evoT1StackModels`). The seed is
+  `settings.json.tftpl`. It is copied onto the per-owner volume
+  `vscode-settings-<owner-id>`, mounted at `~/.shared/vscode/settings.json`, only
+  while that file is absent, and `~/.local/share/code-server/User/settings.json`
+  is a symlink to it. Edits stick, and every workspace that owner has shares the
+  file. Delete it to copy the template in again on the next start. From the host,
+  the same file is the volume's `settings.json` (`docker run --rm -it -v vscode-settings-<owner-id>:/vscode alpine vi /vscode/settings.json`). The owner id is
+  the workspace owner's. The git seed contains no API key and no desktop paths;
+  when `LITELLM_API_KEY` is set the startup script writes it into the seed once,
+  because Cline and Roo read the key from settings and have no environment-key
+  field. Nothing is written to `~/.config/Code`. The code-server module merges
+  settings on every start in exactly one place: the dev-container build, whose
+  container never mounts the shared volume — a built dev container therefore
+  starts from a fresh merged copy, so edits inside it do not survive a rebuild
+  and do not update the shared file. Everywhere else — the `workspace` template,
+  and the `devcontainer` template with **Build repo's dev container** off — the
+  module passes no settings map, because a merge would replace the symlink.
+  Installing Cline, Roo, the Red Hat YAML extension, and Material Icon Theme is a
+  manual step in the Extensions panel (Open VSX by default). If an extension
+  build names its settings differently, set the OpenAI-compatible endpoint and
+  key in its UI.
 
 ## Grok Build state: one shared profile per user
 
@@ -1056,7 +1075,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
     │   ├── main.tf
     │   ├── coder.tf
     │   ├── startup.sh.tftpl     # staged workspace bootstrap (blocking)
-    │   ├── settings.json.tftpl  # editor settings (Cline / Roo / terminal profiles), merged into code-server's User+Machine settings
+    │   ├── settings.json.tftpl  # editor-settings seed, copied once onto vscode-settings-<owner-id> and linked from code-server User settings
     │   └── grok-config.toml.tftpl  # ~/.grok/config.toml — models + MCP servers
     └── devcontainer         # Coder template that clones repo_url and (toggle on)
                               # builds its .devcontainer on an always-on DinD sidecar,
