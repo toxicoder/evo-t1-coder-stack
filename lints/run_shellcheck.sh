@@ -10,7 +10,10 @@ cd "${ROOT}"
 
 echo "Running shellcheck..."
 shellcheck --version
-mapfile -d '' files < <(find scripts lints tests .github -name '*.sh' -type f \
+files=()
+while IFS= read -r -d '' file; do
+  files+=("${file}")
+done < <(find scripts lints tests .github -name '*.sh' -type f \
   ! -path '*/tool_stubs/*' -print0)
 files+=("${ROOT}/fix.sh")
 shellcheck -x --severity=warning "${files[@]}"

@@ -34,7 +34,12 @@ main() {
       echo "${rel}: missing file-level # ## header" >&2
       violations=$((violations + 1))
     fi
-    mapfile -t lines <"${file}"
+    # No mapfile: the macOS system bash 3.2 that `#!/usr/bin/env bash` resolves
+    # to has no such builtin, and a gate that aborts here checks nothing.
+    lines=()
+    while IFS= read -r line; do
+      lines+=("${line}")
+    done <"${file}"
     for i in "${!lines[@]}"; do
       if [[ ${lines[$i]} =~ ^([a-zA-Z_][a-zA-Z0-9_]*)\(\)[[:space:]]*\{? ]]; then
         name="${BASH_REMATCH[1]}"
