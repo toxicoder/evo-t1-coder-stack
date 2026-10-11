@@ -84,6 +84,14 @@ repo can verify.
   minted token is short-lived and per-host, so keep the GitHub-side grant narrow
   anyway: it decides which repositories the workspace can reach, and a
   connected-but-unscoped credential authenticates and is still denied on clone/push.
+  `scripts/github-auth.sh` reads that state from the host: `check` names which
+  credential a workspace's git/gh would present (env pair, auth-store copy, or
+  direct mint) and whether the grant covers a given repo (sources and verdicts
+  only, never token bytes); `auth` pipes a PAT into one container's gh
+  credential store, where it stands in for a workspace whose owner connected no
+  account — with a connected account, the next `gh_token_refresh` run (start,
+  then every 6 hours) rewrites that store with a minted pair. `gh auth logout`
+  inside the container — or a rebuild — removes it either way.
 - **Spark endpoints.** `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` point off-box at
   vLLM servers. vLLM accepts any non-empty bearer token unless it was started with
   `--api-key`, so an unset `SPARK_n_API_KEY` means the only thing gating that endpoint
