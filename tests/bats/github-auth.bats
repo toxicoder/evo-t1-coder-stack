@@ -6,7 +6,7 @@
 # PR-creating session onto a credential that cannot write: git consults the
 # env token, then gh, then the external-auth mint, and an unscoped credential
 # authenticates while still being denied (403 Resource not accessible). The
-# docker/curl/timeout/coder stubs keep this hermetic — probe_workspace,
+# docker/curl/timeout/coder/gh stubs keep this hermetic — probe_workspace,
 # running_workspaces, auth_workspace, and main all run against stubs only.
 #
 # Usage: bats tests/bats/github-auth.bats
@@ -25,7 +25,7 @@ setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SCRIPT="${REPO_ROOT}/scripts/github-auth.sh"
   [[ -f "${SCRIPT}" ]] || skip "scripts/github-auth.sh not reachable from ${REPO_ROOT}"
-  use_stubs docker curl timeout coder
+  use_stubs docker curl timeout coder gh
   unset GH_TOKEN GITHUB_TOKEN
 }
 

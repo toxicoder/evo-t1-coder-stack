@@ -3,7 +3,7 @@
 # ## Golden workspace image — EVO-T1 Coder stack
 #
 # Coder workspaces on the LAN box are provisioned from this image
-# (templates/docker-dev: `image = <this image>`), and the Coder agent is injected
+# (templates/workspace + templates/devcontainer: `image = <this image>`), and the Coder agent is injected
 # by Terraform through `coder_agent.main.init_script`, so this image is a *runtime
 # host* for the agent, not a service image.
 #
@@ -278,7 +278,7 @@ RUN case "${TARGETARCH}" in \
     && chmod 0755 /usr/local/bin/buildifier \
     && fetch /usr/local/bin/shfmt "https://github.com/mvdan/sh/releases/download/v${SHFMT_ASSET_VERSION}/shfmt_v${SHFMT_ASSET_VERSION}_linux_${ARCH}" \
     && chmod 0755 /usr/local/bin/shfmt \
-    # Terraform / tflint / terragrunt — templates/docker-dev plus inkorporated.
+    # Terraform / tflint / terragrunt — templates/workspace plus inkorporated.
     && fetch /tmp/terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${ARCH}.zip" \
     && unzip -q -d /usr/local/bin /tmp/terraform.zip terraform \
     # tflint is published under terraform-linters/tflint; the old
@@ -316,7 +316,7 @@ RUN case "${TARGETARCH}" in \
     # containerd, containerd-shim-runc-v2, docker-proxy and runc, so it must
     # never be unpacked wholesale: selecting the docker/docker member alone is
     # what keeps the daemon out of this image (it runs as the per-workspace
-    # docker:29.8.1-dind sidecar that templates/docker-dev provisions). The
+    # docker:29.8.1-dind sidecar that templates/workspace provisions). The
     # selected member is a static ELF, so noble needs no extra libs for it.
     #
     # No `ENV DOCKER_HOST`: the endpoint differs per workspace (sidecar vs. a

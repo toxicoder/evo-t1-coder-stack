@@ -9,24 +9,27 @@
 #    --no-checkout) into a temporary directory on the host and searched for a
 #    dev container: .devcontainer/, .github/devcontainers/, or a
 #    devcontainer.json/.yml at the top level or in a subdirectory. Found ->
-#    docker-devcontainer, which builds that file on a privileged DinD sidecar. Not
-#    found -> docker-dev, which clones the repository itself and starts code-server
-#    plus Grok Build on the clone.
+#    devcontainer, which builds that file on a privileged DinD sidecar. Not
+#    found -> workspace, which clones the repository itself and starts
+#    code-server plus Grok Build on the clone.
 #
 # 2. Which parameter values travel with it. Both templates carry a repo_url
 #    parameter, so the clone URL is passed instead of being retyped in the form.
+#    --additional-repos adds to that list rather than replacing it: the extra
+#    URLs ride along as the template's additional_repos parameter, one
+#    comma-separated string, whatever separator the caller used.
 #
-#    use_devcontainer belongs to docker-devcontainer only, defaults to true, and
+#    use_devcontainer belongs to the devcontainer template only, defaults to true, and
 #    gates whether the dev container is built at all — and that build also decides
 #    where code-server attaches, because the editor lives inside the dev container
 #    when one is built. So on a repository that carries no devcontainer.json,
 #    leaving the toggle at its default buys nothing: no dev container comes up, and
 #    the editor that would have attached to it never appears either. That is the
 #    one case this script passes --parameter use_devcontainer=false for.
-#    docker-dev never receives that parameter, because that template has none.
+#    The workspace template never receives that parameter, because it has none.
 #
-#    dind belongs to docker-dev only (default false, and immutable: switching it
-#    later means a rebuild). --dind passes it as true.
+#    dind belongs to the workspace template only (default false, and immutable:
+#    switching it later means a rebuild). --dind passes it as true.
 #
 # Everything else is left to --use-parameter-defaults.
 #
@@ -39,29 +42,35 @@
 # a stopped daemon is a "not yet" state rather than an error, and this script is
 # meant to be safe to re-run.
 #
-# Usage:
-#   bash scripts/new-workspace.sh --dry-run https://github.com/foo/bar.git
-#   bash scripts/new-workspace.sh https://github.com/foo/bar.git             # auto
-#   bash scripts/new-workspace.sh --dry-run /srv/repos/my-tool               # local path
-#   bash scripts/new-workspace.sh --plain https://github.com/foo/bar.git     # docker-dev
-#   bash scripts/new-workspace.sh --dind https://github.com/foo/bar.git      # + DinD
-#   bash scripts/new-workspace.sh --devcontainer git@git.example.com:org/private.git
-#   bash scripts/new-workspace.sh --template docker-dev --name ml-scratch repo.git
+# Usage (Bazel is the entry point; every example below is the whole command):
+#   bazelisk run //scripts:new-workspace -- --dry-run https://github.com/foo/bar.git
+#   bazelisk run //scripts:new-workspace -- https://github.com/foo/bar.git   # auto
+#   bazelisk run //scripts:new-workspace -- --dry-run /srv/repos/my-tool     # local path
+#   bazelisk run //scripts:new-workspace -- --plain https://github.com/foo/bar.git
+#   bazelisk run //scripts:new-workspace -- --dind https://github.com/foo/bar.git
+#   bazelisk run //scripts:new-workspace -- --devcontainer git@git.example.com:org/private.git
+#   bazelisk run //scripts:new-workspace -- --additional-repos "one.git,two.git" https://github.com/foo/bar.git
+#   bazelisk run //scripts:new-workspace -- --template workspace --name ml-scratch repo.git
 #
 # Options:
 #   --dry-run          print the decision and the exact command, create nothing
-#   --plain            force template docker-dev even where a dev container exists
-#   --devcontainer     force template docker-devcontainer even where the probe
+#   --plain            force the workspace template even where a dev container exists
+#   --devcontainer     force the devcontainer template even where the probe
 #                      finds nothing — that create gets --parameter
 #                      use_devcontainer=false, which starts no dev container and
 #                      opens the editor on the clone instead (it needs a rebuild to
-#                      flip, so docker-dev is usually what is meant)
-#   --dind             docker-dev plus --parameter dind=true, for a repository you
-#                      trust and a machine you own: a private daemon on a shared
-#                      box is what SECURITY.md is about
-#   --template <name>  full override of the template choice; the probe still runs
-#                      for docker-devcontainer (it decides use_devcontainer there)
-#                      and is skipped for anything else
+#                      flip, so the workspace template is usually what is meant)
+#   --dind             the workspace template plus --parameter dind=true, for a
+#                      repository you trust and a machine you own: a private daemon
+#                      on a shared box is what SECURITY.md is about
+#   --template <name>  full override of the template choice, workspace or
+#                      devcontainer; the probe still runs for devcontainer (it
+#                      decides use_devcontainer there) and is skipped for anything else
+#   --additional-repos <list>
+#                      repositories to clone beside <git-url>, comma- or
+#                      newline-separated with the spaces around each entry
+#                      trimmed; passed through as additional_repos, so a template
+#                      without that parameter ignores it
 #   --name <name>      workspace name, otherwise derived from the URL leaf
 #   -h, --help         this help
 #
@@ -145,16 +154,21 @@ usage() {
 usage: new-workspace.sh [options] <git-url> [workspace-name]
 
 Probe <git-url> for a dev container, then create a Coder workspace on the
-matching template: docker-devcontainer when the repository carries one,
-docker-dev when it does not.
+matching template: devcontainer when the repository carries one, workspace
+when it does not.
 
   --dry-run          print the decision and the exact command, create nothing
-  --plain            force template docker-dev even if a dev container exists
-  --devcontainer     force template docker-devcontainer even if the probe finds
+  --plain            force the workspace template even if a dev container exists
+  --devcontainer     force the devcontainer template even if the probe finds
                      none (that create gets --parameter use_devcontainer=false)
-  --dind             docker-dev plus --parameter dind=true (trusted repos only)
-  --template <name>  full override of the template choice (probe still decides
-                     use_devcontainer when the name is docker-devcontainer)
+  --dind             the workspace template plus --parameter dind=true (trusted
+                     repositories only)
+  --template <name>  full override of the template choice, workspace or
+                     devcontainer (the probe still decides use_devcontainer for
+                     devcontainer)
+  --additional-repos <list>
+                     extra repositories to clone beside <git-url>, comma- or
+                     newline-separated; passed through as additional_repos
   --name <name>      workspace name (otherwise derived from the URL leaf)
   -h, --help         this help
 
@@ -163,6 +177,15 @@ devcontainer.json/.yml anywhere in the repository.
 
 Auth: CODER_URL + CODER_SESSION_TOKEN, or the host coder CLI's own login state.
 With neither, the manual route is printed instead of a create.
+
+Examples (Bazel is the entry point, so every line below is a whole command;
+add `--` before the arguments when the URL begins with a dash):
+  bazelisk run //scripts:new-workspace -- --dry-run https://github.com/foo/bar.git
+  bazelisk run //scripts:new-workspace -- --plain --dind https://github.com/foo/bar.git
+  bazelisk run //scripts:new-workspace -- --devcontainer git@git.example.com:org/private.git
+  bazelisk run //scripts:new-workspace -- --additional-repos "one.git,two.git" https://github.com/foo/bar.git
+  bazelisk run //scripts:new-workspace -- --additional-repos $'one.git\ntwo.git' --name ml-scratch https://github.com/foo/bar.git
+  bazelisk run //scripts:new-workspace -- --template workspace --name ml-scratch repo.git
 EOF
 }
 
@@ -173,6 +196,7 @@ FORCE_DC=0
 DIND_SET=0
 TEMPLATE=""
 NAME=""
+ADDITIONAL_REPOS=""
 positional=()
 
 while [ "$#" -gt 0 ]; do
@@ -184,6 +208,16 @@ while [ "$#" -gt 0 ]; do
     --template)
       [ "$#" -ge 2 ] || die "--template needs a template name"
       TEMPLATE="$2"
+      shift
+      ;;
+    --additional-repos)
+      [ "$#" -ge 2 ] || die "--additional-repos needs one or more git URLs"
+      # Comma-separated or one URL per line, and either way the spaces around an
+      # entry are trimmed and blank entries drop out, so a pasted list and a
+      # quoted multi-line string agree. The template takes one comma-separated
+      # string, which is what the join at the end of this pipeline builds.
+      ADDITIONAL_REPOS="$(printf '%s\n' "$2" | tr ',\r' '\n\n' |
+        sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | sed '/^$/d' | paste -sd, -)"
       shift
       ;;
     --name)
@@ -218,33 +252,33 @@ NAME_FORCED="${positional[1]-}"
 [ -n "$URL" ] || die "no git URL given (usage: new-workspace.sh [options] <git-url> [workspace-name])"
 
 if [ "$FORCE_PLAIN" = 1 ] && [ "$FORCE_DC" = 1 ]; then
-  die "--plain forces docker-dev and --devcontainer forces docker-devcontainer: pick one"
+  die "--plain forces the workspace template and --devcontainer forces the devcontainer template: pick one"
 fi
 
 if [ "$DIND_SET" = 1 ]; then
   if [ "$FORCE_DC" = 1 ]; then
-    die "--dind sets docker-dev's dind parameter; --devcontainer picks the other template: pick one (docker-devcontainer always provisions its own DinD sidecar)"
+    die "--dind sets the workspace template's dind parameter; --devcontainer picks the other template: pick one (devcontainer always provisions its own DinD sidecar)"
   fi
   case "${TEMPLATE}" in
-    docker-devcontainer)
-      die "--dind sets docker-dev's dind parameter, which docker-devcontainer does not define: drop --dind, or use --template docker-dev"
+    devcontainer)
+      die "--dind sets the workspace template's dind parameter, which devcontainer does not define: drop --dind, or use --template workspace"
       ;;
   esac
 fi
 
 # A named template is a full override, so the probe that would have chosen between
 # the two stack templates has nothing left to decide — except for
-# docker-devcontainer, where the probe result still decides use_devcontainer.
+# devcontainer, where the probe result still decides use_devcontainer.
 PROBE_SKIPPED=0
 if [ -n "$TEMPLATE" ]; then
   case "$TEMPLATE" in
-    docker-dev | docker-devcontainer) ;;
+    workspace | devcontainer) ;;
     *)
-      note "template '${TEMPLATE}' is not one this stack ships (docker-dev, docker-devcontainer) — no probe, and no use_devcontainer or dind parameter is passed"
+      note "template '${TEMPLATE}' is not one this stack ships (workspace, devcontainer) — no probe, and no use_devcontainer or dind parameter is passed"
       PROBE_SKIPPED=1
       ;;
   esac
-  [ "$TEMPLATE" = docker-devcontainer ] || PROBE_SKIPPED=1
+  [ "$TEMPLATE" = devcontainer ] || PROBE_SKIPPED=1
 elif [ "$FORCE_PLAIN" = 1 ] || [ "$DIND_SET" = 1 ]; then
   PROBE_SKIPPED=1
 fi
@@ -316,7 +350,7 @@ PROBE_STATE="skipped (a --plain/--dind/--template choice decided the template al
 if [ "$PROBE_SKIPPED" = 0 ]; then
   if ! has_tool git; then
     PROBE_STATE="probe skipped: git is not installed on this host"
-    note "git is not installed here, so the repository cannot be probed — assuming no dev container (docker-dev), which clones inside the workspace anyway; install git and re-run if that assumption matters"
+    note "git is not installed here, so the repository cannot be probed — assuming no dev container (the workspace template), which clones inside the workspace anyway; install git and re-run if that assumption matters"
   else
     probe_rc=0
     probe_repo "${WORK}" "$URL" "${CLONE}" || probe_rc=$?
@@ -329,9 +363,15 @@ if [ "$PROBE_SKIPPED" = 0 ]; then
         PROBE_STATE="no dev container found"
         ;;
       *)
-        PROBE_STATE="probe failed: $(first_line "$(cat "${WORK}/probe.err" 2>/dev/null || true)")"
+        # A failed probe clone is a credential problem far more often than a
+        # missing repository, so the credential check leads and the raw git line
+        # trails as a quote. Printing the git error bare reads as "bad URL" and
+        # sends whoever reads it nowhere: the private repository usually exists
+        # and this host simply has nothing to authenticate the clone with.
+        git_error="$(first_line "$(cat "${WORK}/probe.err" 2>/dev/null || true)")"
+        PROBE_STATE="probe failed: no usable git credential for ${URL} — check the SSH agent (ssh-add -l) or ~/.git-credentials, then re-run; git said: \"${git_error}\""
         note "$PROBE_STATE"
-        note "could not check the repository, so no dev container is assumed and docker-dev is used — pass --devcontainer to force docker-devcontainer anyway, or --plain to say you already know it has none"
+        note "could not check the repository, so no dev container is assumed and the workspace template is used — pass --devcontainer to force devcontainer anyway, or --plain to say you already know it has none"
         ;;
     esac
   fi
@@ -341,37 +381,43 @@ fi
 if [ -n "$TEMPLATE" ]; then
   TEMPLATE_CHOSEN="$TEMPLATE"
 elif [ "$FORCE_DC" = 1 ]; then
-  TEMPLATE_CHOSEN=docker-devcontainer
+  TEMPLATE_CHOSEN=devcontainer
 elif [ "$FORCE_PLAIN" = 1 ] || [ "$DIND_SET" = 1 ]; then
-  TEMPLATE_CHOSEN=docker-dev
+  TEMPLATE_CHOSEN=workspace
 elif [ "$DC_FOUND" = 1 ]; then
-  TEMPLATE_CHOSEN=docker-devcontainer
+  TEMPLATE_CHOSEN=devcontainer
 else
-  TEMPLATE_CHOSEN=docker-dev
+  TEMPLATE_CHOSEN=workspace
 fi
 
-# Where the clone lands. docker-dev clones into the workspace's home volume;
-# docker-devcontainer clones onto the host bind that the DinD sidecar mounts at the
-# same path, because a bind source is resolved by the daemon that runs the dev
+# Where the clone lands. The workspace template clones into the workspace's home
+# volume; devcontainer clones onto the host bind that the DinD sidecar mounts at
+# the same path, because a bind source is resolved by the daemon that runs the dev
 # container, not only by the one that runs the workspace. The folder name is the
 # template's own case-preserving derivation (clone_folder_of_url), so the printed
 # path is the path that will actually exist.
 case "$TEMPLATE_CHOSEN" in
-  docker-dev) CLONE_PATH="/home/coder/workspace/$(clone_folder_of_url "$URL")" ;;
-  docker-devcontainer) CLONE_PATH="/srv/coder-devcontainers/<workspace-id>/$(clone_folder_of_url "$URL")" ;;
+  workspace) CLONE_PATH="/home/coder/workspace/$(clone_folder_of_url "$URL")" ;;
+  devcontainer) CLONE_PATH="/srv/coder-devcontainers/<workspace-id>/$(clone_folder_of_url "$URL")" ;;
   *) CLONE_PATH="(whatever template ${TEMPLATE_CHOSEN} clones)" ;;
 esac
 
 params=(--parameter "repo_url=${URL}")
-if [ "$TEMPLATE_CHOSEN" = "docker-devcontainer" ] && [ "$DC_FOUND" != 1 ]; then
+if [ -n "$ADDITIONAL_REPOS" ]; then
+  # One comma-separated string, which is the shape the template re-splits into
+  # URLs. Sent only when asked for: without the flag this script passes exactly
+  # the parameters it used to pass.
+  params+=(--parameter "additional_repos=${ADDITIONAL_REPOS}")
+fi
+if [ "$TEMPLATE_CHOSEN" = "devcontainer" ] && [ "$DC_FOUND" != 1 ]; then
   # Without this the create would try to build a dev container that cannot exist,
   # and the editor would have no folder to open in either; with the parameter set
   # to false the workspace serves the repository through the plain container
-  # instead. This is the ONLY case where docker-devcontainer gets this parameter —
-  # docker-dev has no such parameter, and never sees this line.
+  # instead. This is the ONLY case where devcontainer gets this parameter —
+  # the workspace template has no such parameter, and never sees this line.
   params+=(--parameter "use_devcontainer=false")
   if [ "$FORCE_DC" = 1 ] || [ -n "$TEMPLATE" ]; then
-    note "docker-devcontainer on a repository with no dev container: the dev container will not build, so --parameter use_devcontainer=false keeps the clone folder usable (code-server + Grok run on the plain container). Recreate with docker-dev instead unless you meant exactly this."
+    note "devcontainer on a repository with no dev container: the dev container will not build, so --parameter use_devcontainer=false keeps the clone folder usable (code-server + Grok run on the plain container). Recreate with the workspace template instead unless you meant exactly this."
   fi
 fi
 if [ "$DIND_SET" = 1 ]; then
@@ -385,6 +431,9 @@ log "probe:    ${PROBE_STATE}"
 log "template: ${TEMPLATE_CHOSEN}"
 log "name:     ${NAME}"
 log "clone:    ${CLONE_PATH} (cloned during provisioning, not before the create)"
+if [ -n "$ADDITIONAL_REPOS" ]; then
+  log "also:     ${ADDITIONAL_REPOS} (beside the URL above, and cloned by the same rule)"
+fi
 
 create_line="coder create -t ${TEMPLATE_CHOSEN} ${params[*]} ${NAME}"
 if [ "$DRY_RUN" = 1 ]; then
@@ -401,8 +450,9 @@ fi
 log ""
 log "creating workspace '${NAME}' (build runs in the background — --no-wait; watch it with: coder ls, coder logs ${NAME})"
 create_rc=0
+create_hint=""
 if ! has_tool coder; then
-  note "no coder CLI on PATH — printing the manual route instead"
+  create_hint="no coder CLI on PATH, so nothing was created: install the 'coder' CLI (https://coder.com/docs/install — the binary is 'coder'), then run 'coder login <url>' with this stack's Coder URL (https://<host>:3001 on the LAN, or http://127.0.0.1:3000 from inside the coder container) and re-run this command"
   create_rc=1
 elif [ -n "${CODER_SESSION_TOKEN:-}" ]; then
   if [ -z "${CODER_URL:-}" ]; then
@@ -412,6 +462,7 @@ elif [ -n "${CODER_SESSION_TOKEN:-}" ]; then
     log '$ coder create ... (CODER_URL=${CODER_URL} with the token by name, not by value)'
     if ! CODER_URL="$CODER_URL" CODER_SESSION_TOKEN="$CODER_SESSION_TOKEN" \
       coder create -t "$TEMPLATE_CHOSEN" "${params[@]}" "$NAME"; then
+      create_hint="the create failed with the token from the environment: a rejected token means it belongs to another deployment, so mint a fresh one in the Coder UI (Settings → Tokens, or 'coder tokens create' inside the coder container), export CODER_URL and CODER_SESSION_TOKEN again, and re-run this command"
       create_rc=1
     fi
   fi
@@ -421,6 +472,7 @@ else
   # honest way to tell. One attempt, then the manual route — no login is faked.
   log "\$ ${create_line}"
   if ! coder create -t "$TEMPLATE_CHOSEN" "${params[@]}" "$NAME"; then
+    create_hint="if that read 'You are not currently logged in', the CLI has no session to spend: run 'coder login <url>' with this stack's Coder URL (https://<host>:3001 on the LAN, or http://127.0.0.1:3000 from inside the coder container) and re-run this command"
     create_rc=1
   fi
 fi
@@ -434,15 +486,21 @@ if [ "$create_rc" = 0 ]; then
   exit 0
 fi
 
+if [ -n "${create_hint}" ]; then
+  printf '\nnext step: %s\n' "${create_hint}"
+fi
+
 cat <<EOF
 
 Nothing was created. Two ways to do it by hand, with the same values:
 
 1. Coder UI — create workspace, pick template '${TEMPLATE_CHOSEN}', and fill the
-   'Git repository' field with the URL above (docker-devcontainer defaults it to
-   a demo repository — replace it), leaving the dev-container toggle at its
-   default when the probe said 'found' and setting it to 'No' when it did not,
-   then pick the matching preset or set the fields by hand, and press Create.
+   'Git repository' field with the URL above (devcontainer defaults it to a
+   demo repository — replace it; add any --additional-repos URLs in the
+   'Git repositories (additional)' field below it), leaving the dev-container
+   toggle at its default when the probe said 'found' and setting it to 'No'
+   when it did not, then pick the matching preset or set the fields by hand,
+   and press Create.
 
 2. Terminal, from the stack repository on the stack host — a token from the
    Coder Tokens page or 'coder tokens create', pasted by name so it stays out

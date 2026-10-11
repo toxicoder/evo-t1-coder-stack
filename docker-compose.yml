@@ -30,7 +30,7 @@ services:
     # "convert external auth config: ..." and restart: unless-stopped turns
     # that into a crash loop (shipped empty in bf7e36d; crashed live exactly
     # this way). So define the keys here, fully filled, or not at all:
-    #   CODER_EXTERNAL_AUTH_0_ID=github
+    #   CODER_EXTERNAL_AUTH_0_ID=primary-github
     #   CODER_EXTERNAL_AUTH_0_TYPE=github
     #   CODER_EXTERNAL_AUTH_0_CLIENT_ID=<GitHub OAuth App client id>
     #   CODER_EXTERNAL_AUTH_0_CLIENT_SECRET=<GitHub OAuth App client secret>
@@ -40,7 +40,7 @@ services:
     # account in Coder (Settings -> external auth) and each workspace's agent
     # mints SHORT-LIVED per-host tokens on demand via its GIT_ASKPASS
     # helper. The GitHub-side callback URL is
-    # <CODER_ACCESS_URL>/external-auth/github/callback, and the App/OAuth
+    # <CODER_ACCESS_URL>/external-auth/primary-github/callback, and the App/OAuth
     # grant must INCLUDE the repos workspaces clone: a connected-but-unscoped
     # token authenticates and is still denied on clone/push (403/404) — check
     # that first — `scripts/github-auth.sh check` runs this probe from the host.

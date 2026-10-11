@@ -111,13 +111,16 @@ skip() {
 #   $1 - file path
 #   $2 - key name
 # Outputs:
-#   The value, or nothing
+#   The value, or nothing (missing or unreadable file included)
 # Returns:
-#   0
+#   0, always: a failing sed would propagate through pipefail into the
+#   caller's assignment and abort a strict-mode script, which this reader
+#   promises to keep running
 env_get() {
   local file="$1" key="$2"
+  [ -f "${file}" ] || return 0
   sed -n "s|^${key}=||p" "${file}" 2>/dev/null | tail -n 1 |
-    sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
+    sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true
 }
 
 # @function fact_get

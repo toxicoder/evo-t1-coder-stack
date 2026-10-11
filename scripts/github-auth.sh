@@ -4,18 +4,19 @@
 # ## github-auth.sh — workspace GitHub credential doctor and one-line auth (entry point)
 #
 # A workspace talks to github.com over HTTPS, and git consults credential
-# sources in this order: GITHUB_TOKEN/GH_TOKEN from the agent environment, then
-# whatever the gh CLI holds (its stored login or that same env token), and only
-# then the Coder agent's external-auth helper — the injected GIT_ASKPASS that
-# mints a short-lived token from the deployment's external-auth provider, when
-# one is configured. A credential that authenticates but was never GRANTED the
-# repository still fails clone/push: private repos answer 403 or 404 (a GitHub
-# App or OAuth grant without write scope answers "Resource not accessible by
-# integration"). This script makes that state visible from the host, and fixes
-# it in one line — because git only consults credential helpers AFTER the gh
-# CLI has been asked (GH_ENTERPRISE_TOKEN/GITHUB_TOKEN env, then the
-# hosts.yml token), an installed gh login also overrides a configured-but-
-# unscoped provider instead of queuing behind its useless minted token.
+# sources in this order: GH_TOKEN/GITHUB_TOKEN from the agent environment (they
+# exist only when the owner connected a GitHub account to the `primary-github`
+# external-auth provider), then whatever the gh CLI holds — that env token
+# first, then the stored login in the per-workspace gh auth store that the
+# gh_token_refresh coder_script re-mints on start and every 6 hours — and only
+# then a direct `coder external-auth access-token primary-github` mint. A
+# credential that authenticates but was never GRANTED the repository still
+# fails clone/push: private repos answer 403 or 404 (a GitHub App or OAuth
+# grant without write scope answers "Resource not accessible by integration").
+# This script makes that state visible from the host, and fixes the
+# no-credential case in one line: with no connected account the gh auth store
+# is empty, so an installed PAT there IS the credential, reachable from shells
+# launched outside the agent environment too.
 #
 # Usage:
 #   scripts/github-auth.sh check [container] [repo-url]
@@ -31,11 +32,13 @@
 #       works too but lands the token in `ps` and history — prefer piping it
 #       in), goes through `gh auth login --hostname github.com --with-token`
 #       inside the container, and `gh auth setup-git` wires git's credential
-#       helper to gh, which shadows any minted token for github.com. Replaces
-#       a previous gh login. Rotate or remove the PAT in GitHub ->
-#       Settings -> Applications when work ends. The per-deployment variant
-#       (every workspace, no rebuild) stays the `.env` GITHUB_TOKEN +
-#       `scripts/push-template.sh` route.
+#       helper to gh. Replaces the gh login that host had before. While an
+#       agent-env token exists gh keeps preferring that over the store, and
+#       when the workspace's owner connected an account the next
+#       `gh_token_refresh` run (start, then every 6 hours) rewrites the store
+#       with a freshly minted pair — the installed PAT therefore stands in
+#       mainly for accounts that are not connected. Rotate or remove the PAT
+#       in GitHub -> Settings -> Applications when work ends.
 #
 # Auth: the docker CLI plus, inside each workspace, whatever sh, curl, gh,
 # timeout and coder resolve to there (a healthy workspace has them all).
@@ -95,7 +98,7 @@ probe_workspace() {
     elif command -v gh >/dev/null 2>&1 && gh_tok=$(gh auth token 2>/dev/null) && [ -n "${gh_tok}" ]; then
       src="gh stored login"
       tok="${gh_tok}"
-    elif mint=$(timeout 15 coder external-auth access-token github 2>/dev/null) && [ -n "${mint}" ]; then
+    elif mint=$(timeout 15 coder external-auth access-token primary-github 2>/dev/null) && [ -n "${mint}" ]; then
       src="Coder external-auth minted token"
       tok="${mint}"
     fi
@@ -231,7 +234,7 @@ main() {
       auth_workspace "${container}" "${pat}"
       ;;
     -h | --help | help)
-      sed -n '2,45p' "${BASH_SOURCE[0]}"
+      sed -n '2,48p' "${BASH_SOURCE[0]}"
       ;;
     *)
       die "usage: github-auth.sh check [container] [repo-url] | auth <container> [-] | -h"

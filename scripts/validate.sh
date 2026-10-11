@@ -43,8 +43,8 @@ main() {
   cmp .env.sample .env.example
   if command -v terraform >/dev/null 2>&1; then
     echo "-> terraform fmt -check"
-    terraform -chdir=templates/docker-dev fmt -check
-    terraform -chdir=templates/docker-devcontainer fmt -check
+    terraform -chdir=templates/workspace fmt -check
+    terraform -chdir=templates/devcontainer fmt -check
   else
     echo "-> terraform not on PATH, skipping fmt -check"
   fi

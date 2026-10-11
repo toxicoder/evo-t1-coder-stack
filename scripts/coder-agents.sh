@@ -160,7 +160,8 @@ skip() {
 # Returns:
 #   0
 env_get() {
-  sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
+  [ -f .env ] || return 0
+  sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true
 }
 
 # @function first_line

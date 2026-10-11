@@ -58,8 +58,8 @@
 # or writes .env beyond the reads below.
 #
 # Usage:
-#   bash scripts/push-template.sh                  # every template in TEMPLATES_DEFAULT
-#   bash scripts/push-template.sh docker-devcontainer
+#   bazelisk run //scripts:push-template            # every template in TEMPLATES_DEFAULT
+#   bazelisk run //scripts:push-template -- devcontainer
 #                                             # name filter args, for retrying one
 #   SKIP_TEMPLATE_PUSH=1 bash scripts/bootstrap.sh   # bootstrap skips this step
 # Names are validated against TEMPLATES_DEFAULT before anything touches docker, and
@@ -85,9 +85,9 @@ source "scripts/lib/template-push.sh" # sources common.sh + coder_api.sh itself
 
 # Ordered: a dependent template pushes last so a partial failure leaves the
 # base template usable. Each entry is "<template-name>:<directory>".
-TEMPLATES_DEFAULT=("docker-dev:templates/docker-dev")
-[ -f templates/docker-devcontainer/main.tf ] &&
-  TEMPLATES_DEFAULT+=("docker-devcontainer:templates/docker-devcontainer")
+TEMPLATES_DEFAULT=("workspace:templates/workspace")
+[ -f templates/devcontainer/main.tf ] &&
+  TEMPLATES_DEFAULT+=("devcontainer:templates/devcontainer")
 
 CODER_SERVICE="${CODER_CONTAINER_SERVICE:-coder}"
 DB_SERVICE="${CODER_DB_SERVICE:-db}"
@@ -165,7 +165,8 @@ skip() {
 # Returns:
 #   0
 env_get() {
-  sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|'
+  [ -f .env ] || return 0
+  sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true
 }
 
 # @function first_line
@@ -414,7 +415,7 @@ vars=(--var "image=${dev_image}")
 # gone, workspaces created from either template fail with an opaque pull error. Say
 # so and still push — the image can be built afterwards and re-pushing is cheap.
 if ! docker image inspect "${dev_image}" >/dev/null 2>&1; then
-  log "note: ${dev_image} is not in the local image store — build it with ./scripts/build-dev-image.sh before creating a workspace."
+  log "note: ${dev_image} is not in the local image store — build it first: bazelisk run //scripts:build-dev-image"
 fi
 
 # litellm_key is sensitive with an empty default, so an unset LITELLM_MASTER_KEY has
@@ -470,37 +471,25 @@ if [ -n "${grok_profile_mode}" ]; then
   log "grok_profile_mode=${grok_profile_mode} passed from ${profile_mode_key} in .env"
 fi
 
-# github_token is passed only when .env carries a NON-EMPTY GITHUB_TOKEN, gated the
-# same way as LITELLM_MASTER_KEY above: an empty key means no workspace gets a
-# GitHub credential anywhere. The token rides to every workspace as the GH_TOKEN and
-# GITHUB_TOKEN agent environment variables (and seeds the gh/git credential helper in
-# the startup script), which is how `git push`, `gh pr create` and `gh api`
-# authenticate inside a workspace — gh is baked into the golden image and reads
-# GH_TOKEN. Env-only, like LITELLM_MASTER_KEY: the value is never printed here and
-# never written to a file in the workspace.
-github_token="$(env_get GITHUB_TOKEN)"
-if [ -n "${github_token}" ]; then
-  vars+=(--var "github_token=${github_token}")
-  log "github_token passed from GITHUB_TOKEN (value not shown)"
-fi
-
-# github_mcp is forwarded only alongside a token, because that is exactly where it
-# stops being decoration: both templates declare the github MCP server only when
-# github_mcp AND github_token arrive together (an empty-token render is byte-identical
-# with or without this flag), so forwarding it on its own would push a variable that
-# cannot change anything. Kept out of the log line's value for the same reason as the
-# token above — the key name is printed, the pairing is what makes it worth naming.
-if [ "$(env_get GITHUB_MCP)" = "true" ] && [ -n "${github_token}" ]; then
+# github_mcp is the only GitHub key that still travels as a --var, and it is a
+# boolean toggle, not a credential: it decides whether the rendered
+# ~/.grok/config.toml declares the github MCP HTTP server at all. The token that
+# server authenticates with is never passed here — there is no GitHub-token
+# template variable any more. A workspace's GitHub credential comes from the
+# `primary-github` External Auth provider, which the agent resolves per start
+# (see the coder_script in each template's main.tf), so nothing in this script,
+# in .env, or in a rendered config.toml ever holds a personal access token.
+if [ "$(env_get GITHUB_MCP)" = "true" ]; then
   vars+=(--var "github_mcp=true")
   log "github_mcp passed from GITHUB_MCP (github MCP server on for every workspace)"
 fi
 
 # repo_url is passed only when .env carries a NON-EMPTY REPO_URL, gated the same
 # way as coder_agent_url above: both templates' create forms now carry an
-# optional Git repository field, and this variable prefills it. docker-dev
-# defaults to no clone at all and docker-devcontainer defaults to the coder/coder
-# demo repo, so pushing an empty value would either change nothing (docker-dev)
-# or replace the demo default with "clone nothing" (docker-devcontainer) — which
+# optional Git repository field, and this variable prefills it. `workspace`
+# defaults to no clone at all and `devcontainer` defaults to the coder/coder
+# demo repo, so pushing an empty value would either change nothing (workspace)
+# or replace the demo default with "clone nothing" (devcontainer) — which
 # is why a blank REPO_URL= line stays unpassed.
 if grep -q '^REPO_URL=' .env 2>/dev/null; then
   repo_default_url="$(env_get REPO_URL)"
@@ -612,10 +601,9 @@ preset_desc_guard() {
 # editor makes, and a re-send is one cheap idempotent PUT with no Terraform
 # run behind it. Both texts stay under the same 128-byte ceiling as the
 # workspace presets, so the chat agent and the presets speak the same shape.
-declare -A TEMPLATE_DESCRIPTIONS=(
-  ["docker-dev"]="General dev workspace: polyglot toolchain + Grok Build agent + optional DinD sidecar. For Python/Go/JS/infra work."
-  ["docker-devcontainer"]="Dev Container workspace: builds the repo's devcontainer.json on a private DinD sidecar. For repos that ship that file."
-)
+# One text per template, matched by `case` rather than an associative array: the
+# host shell is bash 3.2, where `declare -A` is not an option and a string
+# subscript would parse as arithmetic and die under `set -u`.
 
 # template_set_description (scripts/lib/template-push.sh) sends those texts: it is
 # silent, returns non-zero on failure, and skips an empty text — so the log
@@ -657,8 +645,17 @@ for entry in "${selected[@]}"; do
 
   # Advisory by design: a failed edit prints a note and still counts the template
   # as delivered, and a template with no description text prints nothing at all.
-  if [ -n "${TEMPLATE_DESCRIPTIONS[${name}]:-}" ]; then
-    if template_set_description "${name}" "${TEMPLATE_DESCRIPTIONS[${name}]}"; then
+  template_description=""
+  case "${name}" in
+    workspace)
+      template_description="General dev workspace: polyglot toolchain + Grok Build agent + optional DinD sidecar. For Python/Go/JS/infra work."
+      ;;
+    devcontainer)
+      template_description="Dev Container workspace: builds the repo's devcontainer.json on a private DinD sidecar. For repos that ship that file."
+      ;;
+  esac
+  if [ -n "${template_description}" ]; then
+    if template_set_description "${name}" "${template_description}"; then
       log "template ${name}: description set (chat-agent routing hint)"
     else
       log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --description '...'"

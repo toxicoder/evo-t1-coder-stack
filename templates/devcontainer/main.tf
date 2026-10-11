@@ -30,6 +30,19 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+# GitHub auth for the whole stack is ONE Coder External Auth provider, id
+# `primary-github`, created in the Coder UI against a GitHub OAuth app and then
+# linked to this template. `optional` is load-bearing: without it a plan against
+# an owner who never connected a GitHub account fails outright instead of
+# coming up without a credential, which is the ordinary case here. A minted
+# token arrives in the agent environment below and is re-minted by
+# coder_script.gh_token_refresh, because it expires long before the workspace
+# does — and an owner who connected nothing gets no GitHub credential anywhere.
+data "coder_external_auth" "github" {
+  id       = "primary-github"
+  optional = true
+}
+
 # The create form asks two questions: which repository to open, and whether to
 # build that repository's dev container. The repo, not this repo, decides the
 # toolchain — its .devcontainer/devcontainer.json (and the Dockerfile or image
@@ -42,11 +55,28 @@ data "coder_parameter" "repo_url" {
   type         = "string"
   form_type    = "input"
   # Mutable: switching repository is a re-clone plus a devcontainer build, not a
-  # different topology, so it does not cost a rebuild the way docker-dev's DinD
+  # different topology, so it does not cost a rebuild the way templates/workspace's DinD
   # toggle does.
   mutable = true
   default = var.repo_url
   order   = 1
+}
+
+# The opt-in escape hatch for the service-and-the-library-it-uses case: extra
+# repositories cloned into sibling folders BESIDE the primary clone, inside the
+# same devcontainer bind, so neither the build context nor the folder the editor
+# opens on moves. Empty by default — one repository per workspace is the default
+# this stack wants — and the list arrives comma- or newline-separated, which is
+# why the startup script splits on both.
+data "coder_parameter" "additional_repos" {
+  name         = "additional_repos"
+  display_name = "Git repositories (additional)"
+  description  = "Optional repositories to clone BESIDE the one named above, one URL per line or comma-separated. Each lands in its own folder next to the primary clone inside the same bind mount and is cloned once — a folder that already holds a .git is skipped on later starts, never pulled on. No credential is consulted for them that the primary clone would not have gotten. Leave it empty for the single-repository workspace, which is the common case."
+  type         = "string"
+  form_type    = "textarea"
+  mutable      = true
+  default      = ""
+  order        = 3
 }
 
 # The second question: whether to attempt the devcontainer build at all. Without
@@ -58,13 +88,13 @@ data "coder_parameter" "use_devcontainer" {
   display_name = "Build repo's dev container"
   description  = "Build the repository's own .devcontainer/devcontainer.json on the DinD sidecar and run code-server inside the result. That file is mandatory for this to work: without it the build fails and no dev container, hence no editor, ever appears. Choose No for a repository without one and the editor and Grok run on the plain workspace container instead."
   type         = "bool"
-  # Same reason docker-dev gives for its dind toggle: "radio" is only legal for a
+  # Same reason templates/workspace gives for its dind toggle: "radio" is only legal for a
   # bool once options exist, and the options are what put wording on each choice
   # (a switch would render a bare on/off toggle with no description).
   form_type = "radio"
   # Off means the dev container never exists, which is a different topology, not
   # an edit — one container instead of two, and the editor on the other side of
-  # that line. Fixed at create time for the same reason docker-dev rebuilds.
+  # that line. Fixed at create time for the same reason templates/workspace rebuilds.
   mutable = false
   default = "true"
   order   = 2
@@ -106,7 +136,7 @@ data "coder_parameter" "grok_profile_mode" {
   form_type = "dropdown"
   mutable   = false
   default   = var.grok_profile_mode
-  order     = 3
+  order     = 4
 
   option {
     name        = "Shared (one profile per user)"
@@ -140,7 +170,7 @@ data "coder_parameter" "grok_default_model" {
   # honest seam, and a silent model swap under a running workspace is not worth it.
   mutable = false
   default = var.grok_default_model
-  order   = 4
+  order   = 5
 
   dynamic "option" {
     for_each = local.model_options
@@ -165,7 +195,7 @@ data "coder_parameter" "grok_config_extra" {
   form_type = "textarea"
   mutable   = true
   default   = ""
-  order     = 5
+  order     = 6
 }
 
 # One preset per answer to the second question, so the default repository never
@@ -199,7 +229,7 @@ data "coder_workspace_preset" "plain_clone" {
 
 # The create form's model dropdown needs one option per alias, and the provider
 # rejects a parameter whose default is not among its options. Same rule and same
-# trick as docker-dev's image_options: a custom `--var grok_default_model=<key>`
+# trick as templates/workspace's image_options: a custom `--var grok_default_model=<key>`
 # becomes an option of its own instead of being dropped, which would otherwise
 # either fail the plan or leave the form showing `agent` while the build used
 # something else. The descriptions are the ones the [model.*] blocks in
@@ -266,7 +296,7 @@ locals {
   # that resource does not exist then, and its count would be an empty tuple.
   project_folder = "${local.dc_host_dir}/${local.repo_folder}"
 
-  # Only the exact string "true" builds a dev container, per docker-dev's
+  # Only the exact string "true" builds a dev container, per templates/workspace's
   # dind_enabled rule: a stray or misspelled value errs towards the cheaper
   # topology. The plain_clone preset below is what hands in "false".
   use_dc = data.coder_parameter.use_devcontainer.value == "true"
@@ -279,7 +309,7 @@ locals {
     litellm_key = var.litellm_key
   })
 
-  # DinD topology. Same shape as docker-dev's opt-in version, minus the toggle:
+  # DinD topology. Same shape as templates/workspace's opt-in version, minus the toggle:
   # the daemon is always on here, because a devcontainer workspace is useless
   # without one and a plain-mode workspace still wants a daemon its own `docker`
   # commands and the devcontainer CLI can reach.
@@ -361,25 +391,29 @@ resource "coder_agent" "main" {
 
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
-    # resolve, so all six are declared together. github_token is a *boolean* gate
-    # in there — it only decides whether the [mcp_servers.github] block appears —
-    # so no token bytes are ever interpolated into the rendered script or into
-    # config.toml; the rendered file names GH_TOKEN and the CLI expands that
-    # reference from the environment. workspace_affinity_key is the per-workspace
-    # LiteLLM session-affinity key, rendered into the [models] extra_headers.
+    # resolve, so all five are declared together. github_mcp is a *boolean* gate in
+    # there — it only decides whether the [mcp_servers.github] block appears — and
+    # no token is part of the decision: no credential bytes are ever interpolated
+    # into the rendered script or into config.toml, which only ever names GH_TOKEN
+    # and lets the CLI expand that reference from the agent environment.
+    # workspace_affinity_key is the per-workspace LiteLLM session-affinity key,
+    # rendered into the [models] extra_headers.
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
       litellm_url            = var.litellm_url
       grok_default_model     = data.coder_parameter.grok_default_model.value
       grok_config_extra      = data.coder_parameter.grok_config_extra.value
-      github_token           = var.github_token
-      github_mcp             = var.github_mcp && var.github_token != ""
+      github_mcp             = var.github_mcp
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
     })
     # Injected verbatim into the script, which is safe enough: this is the
     # workspace creator's own input and they already hold a shell in this
     # container. The script quotes it anyway so a URL with spaces survives.
     repo_url = data.coder_parameter.repo_url.value
-    dc_dir   = local.dc_host_dir
+    # The same two separators, for the same reason: delivered verbatim, quoted by
+    # the script, and split there. Empty means one repository, which is the
+    # default, and the extras never become the folder the editor opens on.
+    additional_repos = data.coder_parameter.additional_repos.value
+    dc_dir           = local.dc_host_dir
     # What the clone preflight in the script has to say about a repo that ships
     # no devcontainer.json: a fallback it chose, or a build that will now fail.
     build_devcontainer = local.use_dc ? "yes" : "no"
@@ -401,7 +435,7 @@ resource "coder_agent" "main" {
     # inside one workspace the two cannot disagree — what a *shared* profile volume
     # can still do is carry another workspace's alias, see startup.sh.tftpl.
     GROK_DEFAULT_MODEL = data.coder_parameter.grok_default_model.value
-    # Unconditional, unlike docker-dev's conditional injection: the devcontainer
+    # Unconditional, unlike templates/workspace's conditional injection: the devcontainer
     # CLI must talk to the sidecar's daemon, and the agent merges manifest env into
     # the shell environment it uses for that invocation (agent.go wires
     # agentssh.CommandEnv into the containers API), so both `devcontainer` and a
@@ -411,7 +445,7 @@ resource "coder_agent" "main" {
     # own docker commands. Pointing DOCKER_HOST at a daemon that does not exist is
     # not a risk here: this template always provisions the sidecar.
     DOCKER_HOST = local.dind_host
-    # Same trio-less config as docker-dev/main.tf, same verification (v2.36.6
+    # Same trio-less config as templates/workspace/main.tf, same verification (v2.36.6
     # binary + its agentcontextconfig source): the keys REPLACE the discovery
     # defaults (~/.coder + the file AGENTS.md; ~/.coder/skills + a
     # working-dir-relative .agents/skills) rather than appending to them, so
@@ -428,10 +462,12 @@ resource "coder_agent" "main" {
     },
     # An empty token adds NEITHER key, so a workspace that declares no GitHub
     # credential gets exactly the environment it got before. When present the
-    # token travels env-only, like LITELLM_API_KEY above: startup.sh.tftpl seeds
-    # the gh/git credential helper from it, so `git push` and `gh pr create` can
-    # work with the token never written to a file, and the rendered config.toml
-    # only names GH_TOKEN by name. Scope, stated because this repo verifies
+    # token travels as an environment variable, like LITELLM_API_KEY above:
+    # startup.sh.tftpl seeds the gh/git credential helper from it, and the
+    # refresh script below stores each minted token in the workspace's own gh
+    # auth store (0600) for shells outside the agent environment, so `git push`
+    # and `gh pr create` can work with the token never written to a git-tracked
+    # or rendered file, and the rendered config.toml only names GH_TOKEN by name. Scope, stated because this repo verifies
     # neither half of it: the pair lands on the *agent's* environment, which is
     # what the workspace's shells, run_on_start scripts and coder_exec/SSH
     # sessions inherit, and `coder_devcontainer.repo` below sets no env of its
@@ -439,8 +475,53 @@ resource "coder_agent" "main" {
     # receives either key. Both the env pair and the ~/.grok mount stop at the
     # workspace container's edge; what happens inside a built dev container is
     # whatever its own devcontainer.json asks for.
-    var.github_token != "" ? { GH_TOKEN = var.github_token, GITHUB_TOKEN = var.github_token } : {},
+    length(data.coder_external_auth.github.access_token) > 0 ? { GH_TOKEN = data.coder_external_auth.github.access_token, GITHUB_TOKEN = data.coder_external_auth.github.access_token } : {},
   )
+}
+
+# What keeps the pair above from going stale. Coder mints a per-host token that
+# expires in about an hour, the agent environment is rendered once per start, and
+# a workspace that stays up for a day would otherwise spend most of it holding a
+# dead credential — so the same call that VS Code's remote git helper makes runs
+# here on start and every six hours. `coder external-auth access-token` answers
+# with a live token on stdout (refreshing it server-side first) or with the
+# re-authentication URL and exit 1, which is why the `|| true` and the empty
+# check are there: a workspace whose owner connected no account must do nothing,
+# quietly, rather than light up its script log four times a day.
+resource "coder_script" "gh_token_refresh" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Refresh GitHub token for gh"
+  icon         = "/icon/github.svg"
+  run_on_start = true
+  # Longer than the token's own lifetime, so the credential is never already
+  # expired by the time something in the workspace reaches for it. Runs beside
+  # dind_bootstrap, not behind it: this credential path needs no daemon.
+  cron    = "0 */6 * * *"
+  timeout = 30
+
+  script = <<-EOT
+    #!/bin/bash
+    set -u
+    # No coder CLI in the image, or no `primary-github` provider linked to this
+    # template: there is nothing to mint from, and saying so is not news.
+    command -v coder >/dev/null 2>&1 || exit 0
+    token="$(coder external-auth access-token primary-github 2>/dev/null || true)"
+    if [ -z "$token" ]; then
+      echo "no GitHub token for this account: connect the 'primary-github' provider in Coder (Settings -> Tokens -> external auth) and reconnect your GitHub account, then restart the workspace." >&2
+      exit 0
+    fi
+    # gh reads either name from the environment, and `gh auth git-credential` is
+    # what plain git asks for an HTTPS credential — but both read it at
+    # invocation time, so the token has to be reachable from a shell, not only
+    # from the agent's start-time environment. Hence the store write, at 0600
+    # and per workspace, which `gh auth status` reads back.
+    if command -v gh >/dev/null 2>&1; then
+      printf '%s' "$token" | gh auth login --hostname github.com --with-token >/dev/null 2>&1 ||
+        echo "the minted token is valid but gh would not take it — check 'gh auth status' inside the workspace." >&2
+    fi
+    exit 0
+  EOT
 }
 
 # Ordering guard, not a starter. The agent runs every run_on_start script — the
@@ -522,7 +603,7 @@ resource "coder_devcontainer" "repo" {
 # that ships no devcontainer.json got no dev container, hence no sub-agent, hence
 # no editor and no terminal profile at all. HCL does not evaluate the untaken
 # branch of a ternary, so coder_devcontainer.repo[0] never indexes an empty tuple
-# in the off case — the same shape docker-dev uses for its count-gated
+# in the off case — the same shape templates/workspace uses for its count-gated
 # data.docker_image.dind[0].id. Attaching any app/script/env to the dev-container
 # sub-agent makes the dev container terraform-managed: a repo's own
 # customizations.coder.apps are then ignored (displayApps still apply).
@@ -664,7 +745,7 @@ resource "coder_metadata" "workspace_info" {
   # reaches a rendered file, only its name does.
   item {
     key       = "github token"
-    value     = var.github_token != "" ? "set" : "none"
+    value     = data.coder_external_auth.github.access_token != "" ? "set" : "none"
     sensitive = true
   }
 
@@ -890,7 +971,7 @@ resource "docker_container" "dind" {
 # `shared` mode, which the grok_profile_mode parameter above decides. `private`
 # gives that workspace a private ~/.grok on its own home volume, which dies with
 # it, and renders a container that is byte-for-byte the shape this template had
-# before the profile volume existed. Same shape as docker-dev's either way: the
+# before the profile volume existed. Same shape as templates/workspace's either way: the
 # volume is referenced by plain string name and never declared as a docker_volume
 # resource, so Docker creates it on the first container start that names it, and a
 # workspace stop never has to unmount a volume another of the same user's

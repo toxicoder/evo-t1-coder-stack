@@ -1,5 +1,19 @@
 name: ci
 
+# Environments and protection — where the future rules and secrets go:
+#   - development / staging / production are GitHub *Environments*, not branches
+#     and not Bazel configs. Each environment holds its own protected secrets
+#     (a future host-provisioning key, a registry login) and its own protection
+#     rules; a job reaches one with `environment: <name>`, so nothing here
+#     declares one yet.
+#   - `production` stays restricted to `main` — or to tags — with required
+#     reviewers, so it can only ever deploy what main already proved.
+#   - Branch protection on `main` should require a pull request before pushing
+#     and require the checks below to pass before merging.
+#
+# `main` is the only long-lived branch: it stays green and deployable, and every
+# change reaches it through a pull request. See docs/branching.md.
+
 on:
   push:
     branches: [main]
