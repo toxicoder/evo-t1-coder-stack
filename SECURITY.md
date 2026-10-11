@@ -69,13 +69,21 @@ repo can verify.
   redacted in `coder_metadata.workspace_info`. Anyone with that key can use every
   alias, including the Spark boxes, so treat a workspace as holding LAN credentials.
   A workspace may also hold `GH_TOKEN` / `GITHUB_TOKEN` in that environment, but only
-  when `GITHUB_TOKEN=` is set in `.env` — it is absent by default, and env-only in the
-  same way as `LITELLM_API_KEY`. That one is a GitHub WRITE credential: push and PR
-  rights for whatever the token can reach, usable from a workspace terminal and
-  from Grok Build's Bash tool, because the startup script seeds `~/.gitconfig` with
-  `credential.https://github.com.helper = !gh auth git-credential` and `gh` reads the
-  environment variable rather than a token stored on disk. Use a fine-grained,
-  least-privilege PAT scoped to only the repositories the workspaces touch.
+  for a workspace whose owner has connected a GitHub account to the `primary-github`
+  external-auth provider — there is no GitHub-token template variable and no PAT in
+  `.env`, so an owner who connected nothing has no GitHub credential anywhere. The
+  pair reaches the workspace as environment, like `LITELLM_API_KEY`, plus one copy
+  per workspace that the `gh_token_refresh` script writes into the gh auth store
+  (0600, under the home volume) so shells launched outside the agent environment
+  resolve it too; nothing git-tracked carries the token and no output prints it.
+  That one is a GitHub WRITE credential: push and PR rights for whatever the
+  connection can reach, usable from a workspace terminal and from Grok Build's
+  Bash tool, because the startup script seeds `~/.gitconfig` with
+  `credential.https://github.com.helper = !gh auth git-credential` and `gh`
+  prefers the environment variable, falling back to that auth-store copy. The
+  minted token is short-lived and per-host, so keep the GitHub-side grant narrow
+  anyway: it decides which repositories the workspace can reach, and a
+  connected-but-unscoped credential authenticates and is still denied on clone/push.
 - **Spark endpoints.** `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` point off-box at
   vLLM servers. vLLM accepts any non-empty bearer token unless it was started with
   `--api-key`, so an unset `SPARK_n_API_KEY` means the only thing gating that endpoint
@@ -115,8 +123,9 @@ repo can verify.
   because `config.toml` names `LITELLM_API_KEY` through `env_key` — and `GH_TOKEN` by a
   `${GH_TOKEN}` reference when the optional `github_mcp` server is on — while both keys
   travel in the workspace environment. So no secret bytes land in any rendered file,
-  but the trust boundary widens to GitHub, outside the LAN, as soon as a token is
-  configured. See README, "Grok Build state: one shared profile per user".
+  but the trust boundary widens to GitHub, outside the LAN, as soon as an owner
+  connects a GitHub account (and `github_mcp` stays off by default precisely so a
+  workspace does not gain GitHub tools it was never meant to have). See README, "Grok Build state: one shared profile per user".
 - **Workspace code-server.** Each workspace runs Coder's code-server fork on
   13337 with `--auth none`, published as a `coder_app` with `share = "owner"`
   and `subdomain = false` (this stack sets no `CODER_WILDCARD_ACCESS_URL`, so
