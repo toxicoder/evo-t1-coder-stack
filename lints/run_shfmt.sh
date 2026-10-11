@@ -9,7 +9,10 @@ check_tool shfmt "https://github.com/mvdan/sh"
 cd "${ROOT}"
 
 echo "Running shfmt -d..."
-mapfile -d '' files < <(find scripts lints tests .github -name '*.sh' -type f \
+files=()
+while IFS= read -r -d '' file; do
+  files+=("${file}")
+done < <(find scripts lints tests .github -name '*.sh' -type f \
   ! -path '*/tool_stubs/*' -print0)
 files+=("${ROOT}/fix.sh")
 shfmt -d -s -i 2 -ci "${files[@]}"

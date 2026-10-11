@@ -4,6 +4,10 @@
   bazelisk test //:lint --test_tag_filters=manual
   bazelisk run //:validate
   bazelisk run //:fix
+  bazelisk run //scripts:<stem> -- <args>
+
+docs/contribute/building-with-bazel.md and docs/contribute/test-with-bazel.md
+explain the harness; docs/branching.md the branch rules that CI guards.
 """
 
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
@@ -17,7 +21,30 @@ exports_files([
     "README.md",
     "Makefile",
     "LICENSE",
+    "docker-compose.yml",
 ])
+
+# Payload the operational scripts read by path after they resolve a repo root:
+# the compose file, both template payload trees, the golden-image pins, the
+# LiteLLM routing file, the two .env samples, and the license that ships beside
+# them. scripts/**.sh reaches runfiles through //scripts:doc_sources, not here.
+filegroup(
+    name = "stack_data",
+    srcs = [
+        ".env.example",
+        ".env.sample",
+        "LICENSE",
+        "docker-compose.yml",
+    ] + glob(
+        [
+            "images/dev/**",
+            "litellm/**",
+            "templates/**",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
 
 filegroup(
     name = "ci_workflows",

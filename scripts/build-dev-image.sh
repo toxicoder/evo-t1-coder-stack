@@ -8,7 +8,7 @@
 # Safe to re-run: the tag is a local, always-rebuilt name, so a second run just
 # replaces it (BuildKit reuses cached layers). No registry push happens here.
 #
-# The image tag is what templates/docker-dev/main.tf provisions with, so it must
+# The image tag is what both template twins (templates/workspace/main.tf and templates/devcontainer/main.tf) provision with, so it must
 # resolve from the LOCAL daemon store. Two things guarantee that the Coder docker
 # provider never attempts a registry pull:
 #   - the name has no registry host and no dot, so Docker treats it as a local
@@ -167,4 +167,4 @@ log "built          ${created}"
 log "size           ${human_size} uncompressed (${size_bytes} bytes)"
 log
 log "Pin it into a template with:"
-log "  coder templates push ./templates/docker-dev --var image=${DEV_IMAGE_TAG}"
+log "  bazelisk run //scripts:push-template            # pushes both templates, image pinned to ${DEV_IMAGE_TAG}"

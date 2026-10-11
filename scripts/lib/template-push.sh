@@ -2,7 +2,7 @@
 #
 # ## template-push.sh — push Coder template sources (sourced; never executed)
 #
-# The two Coder templates (docker-dev, docker-devcontainer) travel to the
+# The two Coder templates (`workspace`, `devcontainer`) travel to the
 # server as tar streams on stdin, get confirmed through their versions list,
 # and then carry their chat-agent routing hint via `templates edit`. push-template
 # does all three per template; the same plumbing shape reappears around the
