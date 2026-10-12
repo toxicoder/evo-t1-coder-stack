@@ -197,12 +197,16 @@ logs_absent() {
   [[ ${output} == *"template workspace pushed; active version ${ACTIVE_ID}"* ]]
   [[ ${output} == *"template devcontainer pushed; active version ${ACTIVE_ID}"* ]]
   [[ ${output} == *"template workspace: description set (chat-agent routing hint)"* ]]
+  [[ ${output} == *"autostop default set to disabled"* ]]
   [[ ${output} == *"litellm_key not passed (LITELLM_MASTER_KEY in .env is empty or still the sample placeholder)"* ]]
   # Every CLI line the seams build, with the token kept out of argv: the
   # passthrough resolves `coder` to the stub, so argv is the whole proof.
   grep -Fq -- 'coder templates push workspace --directory - --yes --var image=evo-t1-dev:latest' "${STUB_LOG}/docker.log"
   grep -Fq -- 'coder templates versions list workspace --column id --column active' "${STUB_LOG}/docker.log"
   grep -Fq -- 'coder templates edit workspace --description' "${STUB_LOG}/docker.log"
+  # Autostop is pinned off on both templates, so a new workspace starts with no deadline.
+  grep -Fq -- 'coder templates edit workspace --default-ttl 0 --activity-bump 0' "${STUB_LOG}/docker.log"
+  grep -Fq -- 'coder templates edit devcontainer --default-ttl 0 --activity-bump 0' "${STUB_LOG}/docker.log"
   grep -Fq -- 'coder whoami' "${STUB_LOG}/docker.log"
   grep -Fq -- '-e CODER_SESSION_TOKEN' "${STUB_LOG}/docker.log"
   logs_absent 'CODER_SESSION_TOKEN=|[0-9a-f]{10}-[0-9a-f]{22}' "${STUB_LOG}"/*.log
@@ -330,4 +334,13 @@ source_libs() {
   [ "$(stub_log_count coder)" -eq 0 ]
   template_set_description tpl1 "General dev workspace"
   [ "$(stub_log_last coder)" = "coder templates edit tpl1 --description General dev workspace" ]
+}
+
+@test "template-push: template_set_autostop_off pins the default TTL and the activity bump" {
+  source_libs
+  # Both halves of the pair travel on one `templates edit`: the default TTL is what
+  # decides whether a new workspace starts with an autostop deadline, and the activity
+  # bump only ever extends one.
+  template_set_autostop_off tpl1
+  [ "$(stub_log_last coder)" = "coder templates edit tpl1 --default-ttl 0 --activity-bump 0" ]
 }

@@ -402,7 +402,9 @@ source, confirms an **active** version, and then re-sends the template's own
 description — the routing hint the Coder Agents chat reads when it picks a template to
 provision (`templates push` carries none, so `templates edit --description` is the
 write; both texts fit the same 128-byte ceiling, and a failed description edit only
-adds a note to the output, never blocks the template). A template whose push or that
+adds a note to the output, never blocks the template) — and re-pins **Autostop** to
+*Disabled* with `--default-ttl 0 --activity-bump 0`, also on `templates edit` and also
+advisory. A template whose push or that
 verification failed is counted in the `N of M template(s) did not reach an active
 version` line and makes the run exit non-zero, while every other template still gets
 its push attempt.
@@ -716,26 +718,40 @@ template's parameters — `repo_url=<url>` always, `use_devcontainer=false` when
 the cases where leaving the toggle at its default would build nothing anyway),
 `dind=true` on `--dind`, and `additional_repos=<comma-separated list>` whenever
 `--additional-repos` named at least one extra URL (see *Cloning more than one
-repository*) — and either runs it (`--no-wait`; watch with `coder ls` / `coder logs <name>`)
-or, with no usable `coder` login, prints the same command to run by hand and exits 0.
+repository*) — and no `--stop-after`, so a script-made workspace gets no autostop
+deadline. It either runs the command (`--no-wait`; watch with `coder ls` /
+`coder logs <name>`) or, with no usable `coder` login, prints the same command to run by
+hand and exits 0.
 `--devcontainer` forces the devcontainer template, `--template <name>` overrides the
 template choice outright, and a workspace name can follow the URL (Coder names
 start with a letter; the derived default is the repo leaf). It never mints, reads, or
 stores a token — unlike `push-template.sh`, which mints its own because a template
 push has no other credential path.
 
-Autostart, autostop and TTLs are template *metadata*, so set them once per template with the
-CLI after pushing (they are deliberately absent from the Terraform, where they would
-fight the UI). Run it against the container's loopback API as above — a token from the
-Coder **Tokens** page, and the public URL is gated by Authelia:
+Autostart, autostop and TTLs are template *metadata*, so they stay out of the Terraform
+(where they would fight the UI) and travel on the CLI after pushing. **Autostop is
+disabled by default.** Coder reads the template's **Default autostop** (its default TTL)
+when it seeds a workspace — that field also decides whether the create form's **Enable
+Autostop** arrives ticked — and it ships at 24 h, which is how a workspace would
+otherwise start with a shutdown deadline nobody chose. A 0 default TTL leaves the
+checkbox unchecked and leaves `coder create` with nothing to inherit, so a workspace runs
+until its owner stops it. `--activity-bump` goes to `0` with it: a bump only extends a
+deadline, and with no deadline there is nothing to extend. `push-template.sh` re-sends
+both after every push, and `new-workspace.sh` names no `--stop-after`.
+
+A workspace owner can still tick the box for one workspace: `allow_user_autostop` stays
+on, because Community Edition has no switch for it.
 
 ```sh
 export CODER_URL=http://127.0.0.1:3000 CODER_SESSION_TOKEN=<your-token>
 docker compose exec -T -e CODER_URL -e CODER_SESSION_TOKEN coder \
   coder templates edit workspace \
-    --default-ttl 8h \
-    --activity-bump 2h
+    --default-ttl 0 \
+    --activity-bump 0
 ```
+
+Check it in the Coder UI: the template editor's **Default autostop** reads *Disabled*
+(0 h) and a workspace's **Schedule** tab shows **Enable Autostop** unchecked.
 
 `--failure-ttl` and `--allow-user-autostart=false` are rejected without a license
 (the server names `--failure-ttl`, `--inactivityTTL`, `--allow-user-autostart=false`

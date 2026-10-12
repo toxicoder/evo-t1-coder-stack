@@ -610,6 +610,19 @@ preset_desc_guard() {
 # wording below stays this script's business, and silence on success keeps the
 # per-template output one line.
 
+# Autostop is the other metadata write, and it decides what a new workspace is created
+# with. Coder reads the template's default TTL ("Default autostop" in the UI, 24 h by
+# default — `coder templates create --default-ttl` carries that default) when it seeds a
+# workspace: a non-nil one schedules a stop, and it is what pre-ticks the create form's
+# "Enable Autostop" checkbox. This stack wants a workspace to stay up until its owner
+# stops it, so every push pins the default TTL and the activity bump that would extend it
+# to 0, and new-workspace.sh names no --stop-after. `templates push` has no TTL flag, so
+# the pair rides on `templates edit` beside the description; a re-push of a template that
+# already carries a default TTL is a repair, not a no-op.
+
+# template_set_autostop_off (scripts/lib/template-push.sh) sends that pair: silent on
+# success, non-zero on failure, and the note below stays this script's wording.
+
 failed=0
 for entry in "${selected[@]}"; do
   name="${entry%%:*}"
@@ -660,6 +673,15 @@ for entry in "${selected[@]}"; do
     else
       log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --description '...'"
     fi
+  fi
+
+  # Second metadata write, and the one that decides what a workspace is created *with*:
+  # autostop stays disabled until a template says otherwise, so pin it here on every
+  # push rather than leave the 24 h default for someone to trip over.
+  if template_set_autostop_off "${name}"; then
+    log "template ${name}: autostop default set to disabled (workspaces start with a nil TTL)"
+  else
+    log "note: ${name}: autostop could not be switched off — until it is, a new workspace from this template starts with an autostop deadline. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --default-ttl 0 --activity-bump 0"
   fi
   log "template ${name} pushed; active version ${active_id}"
 done
