@@ -638,6 +638,14 @@ always on, plus a repository that brings its own toolchain:
   sidecar cannot see fails with `bind source path does not exist`. Named volumes cannot
   substitute: a volume is a daemon-local object and does not cross to the sidecar's daemon.
   Docker creates the missing host directory itself and `startup.sh.tftpl` chowns it.
+  Inside a built dev container the same folder appears under `/workspaces/<repo-name>` —
+  that is the devcontainer CLI's default mount target, and where the dev-container editor
+  opens. `main.tf` therefore spells the editor's `folder` per hosting environment
+  (`local.editor_folder`): `/workspaces/<repo-name>` inside the dev container,
+  `/srv/coder-devcontainers/<workspace-id>/<repo-name>` on the plain container, and
+  `/home/coder` when no repository was named. One host-side path for all three would
+  open the editor on a folder that exists nowhere the editor runs — VS Code answers
+  that with "Workspace does not exist. Please select another workspace to open."
 - the create form asks two questions — **Git repository** (`repo_url`, mutable — switching
   repository is a re-clone plus a devcontainer build, not a new topology the way
   `workspace`'s DinD toggle is) and **Build repo's dev container** (`use_devcontainer`,
@@ -737,7 +745,9 @@ and `--allow-user-autostop=false`), so leave them out of the CE stack.
 
 One repository per workspace is the default, and that is what `repo_url` and the create
 form's **Git repository** field mean: one URL, cloned into one folder, and that folder is
-what code-server, the Web Terminal button and the Grok Build session open on. Keep it
+what code-server, the Web Terminal button and the Grok Build session open on (inside a
+dev container, code-server sees that same folder under its mount target,
+`/workspaces/<repo-name>`). Keep it
 that way unless a workspace genuinely needs two trees open at once.
 
 `--additional-repos` is the opt-in escape hatch for the service-and-the-library-it-uses

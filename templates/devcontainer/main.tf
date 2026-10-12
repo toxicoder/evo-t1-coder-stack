@@ -289,12 +289,37 @@ locals {
   )
   repo_folder = can(regex("^[A-Za-z0-9]", local.repo_stripped)) ? local.repo_stripped : "repo"
 
-  # The same folder as one path, for every consumer that has to name it: the
-  # devcontainer build, code-server's window (in either mode) and the
-  # workspace-info metadata. Spelled out here rather than indexed off
-  # coder_devcontainer.repo[0] so the metadata survives the toggle being off —
-  # that resource does not exist then, and its count would be an empty tuple.
+  # Where the clone lives as a path OUTSIDE the dev container: the host bind
+  # directory plus the derived folder name. This is how the devcontainer CLI
+  # and the Docker daemons name the folder — coder_devcontainer.workspace_folder
+  # reads the clone's .devcontainer/devcontainer.json from this path, the bind
+  # source a daemon has to resolve is this path, and the Web Terminal button's
+  # `cd` lands here, because that terminal runs on the workspace container
+  # where the /srv bind makes it real in both toggle modes.
   project_folder = "${local.dc_host_dir}/${local.repo_folder}"
+
+  # True when the create form named a repository at all. With no URL nothing
+  # is cloned anywhere (the startup script's clone chain stays out on an empty
+  # URL), so the editor and the terminals stay on the home folder — the rule
+  # templates/workspace spells out for its twin parameter ("an empty field
+  # clones nothing and keeps every folder below on /home/coder").
+  repo_set = trimspace(data.coder_parameter.repo_url.value) != ""
+
+  # The folder the code-server window opens on, spelled for the environment
+  # that hosts code-server — a ?folder= that resolves to nothing is VS Code's
+  # "Workspace does not exist. Please select another workspace to open."
+  # dialog, which is what one host-side path for both modes caused:
+  # dev-container mode runs code-server inside the dev container (the module
+  # takes the dev-container sub-agent as its agent), where the devcontainer
+  # CLI bind-mounts the clone at /workspaces/<repo-name> and gives the
+  # sub-agent that same path as its working dir — the default mount target; a
+  # repo that pins its own workspaceMount to another target is the case this
+  # default misses, and only that file could say where the clone lands.
+  # Plain mode runs code-server on the workspace container, where the /srv
+  # bind carries the clone at project_folder (line above) and that path is
+  # real. With no repository named, nothing was cloned anywhere and the
+  # window opens on /home/coder.
+  editor_folder = local.repo_set ? (local.use_dc ? "/workspaces/${local.repo_folder}" : local.project_folder) : "/home/coder"
 
   # Only the exact string "true" builds a dev container, per templates/workspace's
   # dind_enabled rule: a stray or misspelled value errs towards the cheaper
@@ -617,8 +642,16 @@ resource "coder_devcontainer" "repo" {
 }
 
 # In-browser VS Code (Coder's code-server fork) on port 13337, on the cloned
-# folder in either mode: inside the dev container when the toggle is on, on the
-# plain workspace container when it is off. That second branch is the whole point
+# folder in either mode, spelled the way the environment hosting it reads it
+# (editor_folder): /workspaces/<repo-name> inside the dev container when the
+# toggle is on, /srv/coder-devcontainers/<ws-id>/<repo-name> on the plain
+# workspace container when it is off, /home/coder when no repository was
+# named. A ?folder= that resolves to nothing in the environment hosting the
+# code-server process opens "Workspace does not exist. Please select another
+# workspace to open." on every connect, and that process runs inside the dev
+# container with the toggle on — the host-side spelling of the clone folder
+# does not exist in there, which is why one path cannot serve both modes.
+# That hosting split is the whole point
 # of the toggle — the editor hung off the dev-container sub-agent alone, so a repo
 # that ships no devcontainer.json got no dev container, hence no sub-agent, hence
 # no editor and no terminal profile at all. HCL does not evaluate the untaken
@@ -637,7 +670,7 @@ module "code_server" {
   source    = "registry.coder.com/coder/code-server/coder"
   version   = "~> 1.0"
   agent_id  = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
-  folder    = local.project_folder
+  folder    = local.editor_folder
   port      = 13337
   subdomain = false
   open_in   = "tab"
