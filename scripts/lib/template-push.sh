@@ -16,6 +16,10 @@
 #     with the CALLER's options: under `set -e -o pipefail` a failed tar or a
 #     non-zero CLI exit surfaces to the caller as a failed command line, which
 #     is exactly what the entry scripts count and report.
+#   - What ships is a staging copy, never the template dir itself: the stack's
+#     one seed payload (GROK_BUILD_AGENTS.md, kept one level above the
+#     template dirs under common/) rides along in every staged copy, because
+#     that is where the server-side Terraform reads it from.
 #   - No timeout cap on the push itself: a server-side Terraform plan+apply
 #     legitimately takes minutes; capping it would fail correct pushes.
 #   - Credentials travel in the environment (via compose -e NAME flags), never
@@ -45,33 +49,66 @@ if [ -z "${UUID_RE:-}" ]; then
   UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 fi
 
-# template_push_one <name> <dir> [push-args...] — stream <dir> as a tar on
-# stdin and push it as template <name>. .terraform/ is excluded: it is
-# gitignored provider cache, and pushing it would put the plan's provider
-# binaries into the version's Filestore row. Trailing arguments are appended
-# verbatim to the CLI line, so a caller's shared `--var` array passes through:
+# template_push_one <name> <dir> [push-args...] — push <dir> as template
+# <name>, but never <dir> itself: copy it into a throwaway staging dir,
+# overwrite GROK_BUILD_AGENTS.md there with the stack's one common copy (the
+# seed lives in <dir>'s sibling common/ dir; both templates' main.tf reads it
+# with file() and inlines it into the startup script, and the server resolves
+# that reference inside the pushed copy, which is why the copy must carry the
+# seed). The staged tree then streams as the tar on stdin. .terraform/ is
+# excluded: it is gitignored provider cache, and pushing it would put the
+# plan's provider binaries into the version's Filestore row. A missing seed is
+# a hard stop — the push would die in the server's Terraform anyway; naming
+# the missing file here costs the operator one line instead of a confused
+# debugging session there. Trailing arguments are appended verbatim to the CLI
+# line, so a caller's shared `--var` array passes through:
 #   template_push_one "$name" "$dir" ${vars[@]+"${vars[@]}"}
 # The token stays out of argv via -e NAME (value through the environment);
 # stdin is the tar, which is why -T -i stay on the compose exec flags.
 # @function template_push_one
-# Stream a template directory as a tar and push it. .terraform is excluded.
+# Stage a template dir with the common seed payload, then push it as a tar.
+# .terraform is excluded; a staged copy always carries the seed, and a
+# missing seed fails the push before the CLI runs.
 # Globals:
 #   DOCKER_BIN, CODER_SERVICE, CONTAINER_API_URL, session_token
 # Arguments:
 #   $1 - template name; $2 - directory; remaining args pass to templates push
 # Outputs:
-#   The coder CLI's output
+#   The coder CLI's output; the reason on stderr when staging cannot run
 # Returns:
-#   The pipeline's status
+#   The pipeline's status; 1 when the staging dir, the seed, or the copy fails
 template_push_one() {
   local name="$1" dir="$2"
   shift 2
+  local stage="" seed="" push_rc=0
+  stage="$(mktemp -d)" || return 1
+  seed="$(dirname "${dir}")/common/GROK_BUILD_AGENTS.md"
+  if [ ! -f "${seed}" ]; then
+    rm -rf "${stage}"
+    printf 'error: %s: %s is missing — main.tf inlines it into the startup script, so no push works without it\n' \
+      "${name}" "${seed}" >&2
+    return 1
+  fi
+  # The staging copy is built rather than streamed from the template dir
+  # directly, so the common seed copy can be dropped in beside main.tf — and
+  # it overwrites any same-named file the dir still carries: one source of
+  # truth per payload, so the per-template twins cannot drift back apart.
+  if ! { tar -C "${dir}" --exclude=./.terraform -cf - . | tar -xf - -C "${stage}" &&
+    cp -f "${seed}" "${stage}/GROK_BUILD_AGENTS.md"; }; then
+    rm -rf "${stage}"
+    printf 'error: %s: could not stage %s (with %s) — nothing was pushed\n' \
+      "${name}" "${dir}" "${seed}" >&2
+    return 1
+  fi
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  tar -C "${dir}" --exclude=./.terraform -cf - . |
+  tar -C "${stage}" -cf - . |
     CODER_URL="${CONTAINER_API_URL:-}" CODER_SESSION_TOKEN="${session_token:-}" \
       ${DOCKER_BIN} compose exec -T -i \
       -e CODER_URL -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
       coder templates push "${name}" --directory - --yes "$@"
+  push_rc=$?
+  rm -rf "${stage}"
+  return "${push_rc}"
 }
 
 # template_verify_active <name> — confirm <name> reached an ACTIVE version: a

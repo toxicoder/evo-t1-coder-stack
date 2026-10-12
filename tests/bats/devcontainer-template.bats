@@ -11,11 +11,12 @@
 # default mount target), /srv/coder-devcontainers/<ws-id>/<repo-name> on the
 # plain workspace container (the host bind), /home/coder when no repository
 # was named. Also pins the empty-URL clone guard both startup.sh.tftpl
-# twins keep, and the truthful wording of the no-devcontainer.json warning.
+# twins keep, the truthful wording of the no-devcontainer.json warning, and the
+# one common GROK_BUILD_AGENTS.md that the seed stage copies into place.
 #
 # Usage: bats tests/bats/devcontainer-template.bats
-# Safety: reads templates/devcontainer/main.tf and the two startup.sh.tftpl
-# twins; writes nothing.
+# Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
+# twins and templates/common/GROK_BUILD_AGENTS.md; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -88,4 +89,29 @@ setup() {
   # container" sentence described a fallback that does not exist.
   run grep -F 'fall back to the plain workspace container' "${DC_STARTUP}"
   [ "${status}" -ne 0 ]
+}
+
+@test "agents seed: the orchestration protocol travels from one common GROK_BUILD_AGENTS.md" {
+  # The protocol text used to be an inline heredoc body in both startup
+  # twins, then one identical copy per template dir. It now lives once, in
+  # templates/common/, and push-template stages that copy into each
+  # template's pushed tar - a template travels as its own tarball and the
+  # server reads the payload from inside the pushed copy, so every copy must
+  # carry it. Two failures are pinned here: the payload growing a second
+  # line above its content (the seeded ~/.grok/AGENTS.md must start at
+  # "# Role" - the managed-by marker stayed out on purpose), and either twin
+  # losing the interpolation or the main.tf feed for it, which would leave
+  # the seed stage writing an empty file.
+  local common_md="${REPO_ROOT}/templates/common/GROK_BUILD_AGENTS.md"
+  [ -f "${common_md}" ] ||
+    skip "no common GROK_BUILD_AGENTS.md payload under ${REPO_ROOT}/templates/common"
+  run head -n 1 "${common_md}"
+  [ "${status}" -eq 0 ]
+  [ "${lines[0]}" = "# Role" ]
+  for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
+    run grep -F '${grok_build_agents}' "${tpl_dir}/startup.sh.tftpl"
+    [ "${status}" -eq 0 ]
+    run grep -F 'grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))' "${tpl_dir}/main.tf"
+    [ "${status}" -eq 0 ]
+  done
 }

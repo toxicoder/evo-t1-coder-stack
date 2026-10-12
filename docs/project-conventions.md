@@ -70,9 +70,15 @@ bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.gi
 ## Templates
 
 `templates/workspace/` (the plain dev container) and `templates/devcontainer/` (the
-DinD-backed one) keep independent `.tftpl` copies (`startup.sh.tftpl`, `settings.json.tftpl`,
-`grok-config.toml.tftpl`). The twins must change together — today only `settings.json.tftpl`
-is byte-identical across the two directories, so edit both copies of any payload.
+DinD-backed one) keep independent `.tftpl` payload copies (`startup.sh.tftpl`,
+`settings.json.tftpl`, `grok-config.toml.tftpl`). The twins must change together — today
+only `settings.json.tftpl` is byte-identical across the two directories, so edit both
+copies of that payload. `templates/common/GROK_BUILD_AGENTS.md` — the orchestration
+protocol the startup scripts seed into every workspace's `~/.grok/AGENTS.md` — exists
+once above the twins instead: the push (`scripts/push-template.sh` through
+`template_push_one` in `scripts/lib/template-push.sh`) stages it into each template's
+pushed copy, which is the only place the server-side Terraform can `file()`-read it
+from, so editing the common copy changes both templates.
 
 ## Names and flags
 

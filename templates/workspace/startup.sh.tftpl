@@ -48,8 +48,9 @@
 # Note: this file is rendered by Terraform templatefile(); shell variables
 # are written with a doubled dollar sign so the rendered script keeps them
 # ($name or $${name}; the braced form is only safe when escaped this way). The
-# only interpolations Terraform has to resolve are the four variables main.tf
-# passes: grok_config, repo_url, additional_repos and vscode_settings.
+# only interpolations Terraform has to resolve are the five variables main.tf
+# passes: grok_build_agents, grok_config, repo_url, additional_repos and
+# vscode_settings.
 
 set -u
 
@@ -263,6 +264,20 @@ fi
 # because that is the name the ~/.agents convention was seeded under).
 if [ ! -f "$HOME/.agents/INSTRUCTIONS.md" ]; then
   cp "$HOME/.coder/AGENTS.md" "$HOME/.agents/INSTRUCTIONS.md" 2>/dev/null
+fi
+
+# --- Grok Build orchestration protocol ----------------------------------------
+# Seeds the parent-orchestrator / conflict-gate protocol into ~/.grok/AGENTS.md
+# so every Grok Build session in the workspace follows it. The text arrives
+# interpolated: main.tf reads GROK_BUILD_AGENTS.md (the stack keeps one copy
+# in templates/common/, and the push stages it into this template's pushed
+# copy) and hands its text to the heredoc below, which copies it in, renamed.
+# Only if absent - a hand-edited copy is user-owned and stays untouched.
+if [ ! -f "$HOME/.grok/AGENTS.md" ]; then
+  mkdir -p "$HOME/.grok" 2>/dev/null
+  cat >"$HOME/.grok/AGENTS.md" <<'GROK_AGENTS_EOF'
+${grok_build_agents}
+GROK_AGENTS_EOF
 fi
 
 # --- Editor settings ----------------------------------------------------------
