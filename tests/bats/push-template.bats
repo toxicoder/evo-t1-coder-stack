@@ -40,13 +40,16 @@ setup() {
 
 # fake_root <script> [env-line...] — print a throwaway repo root holding the
 # script under test, scripts/lib/ (the seams it sources after its own repo-root
-# cd), a private .env and both template dirs. main.tf has to exist in a dir for
-# that template to be selectable, and the lockfile keeps the "missing lockfile"
-# note out of the way unless a test wants it.
+# cd), a private .env, and the template tree: both template dirs plus their
+# sibling common/ dir with the seed payload every push stages. main.tf has to
+# exist in a dir for that template to be selectable, the lockfile keeps the
+# "missing lockfile" note out of the way unless a test wants it, and the seed
+# file has to exist because template_push_one refuses to push without it.
 fake_root() {
   local root="${BATS_TEST_TMPDIR?}/root" script="${1}"
   shift
   mkdir -p "${root}/scripts/lib" "${root}/templates/workspace" "${root}/templates/devcontainer"
+  mkdir -p "${root}/templates/common"
   : >"${root}/docker-compose.yml"
   if [ "$#" -gt 0 ]; then
     printf '%s\n' "$@" >"${root}/.env"
@@ -59,6 +62,7 @@ fake_root() {
     >"${root}/templates/devcontainer/main.tf"
   : >"${root}/templates/workspace/.terraform.lock.hcl"
   : >"${root}/templates/devcontainer/.terraform.lock.hcl"
+  printf '%s\n' '# Role' >"${root}/templates/common/GROK_BUILD_AGENTS.md"
   cp "${REPO_ROOT}/scripts/${script}" "${root}/scripts/"
   cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
   printf '%s' "${root}"
@@ -172,6 +176,23 @@ logs_absent() {
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 1 ]
   [ "${stderr}" = "error: templates/workspace/main.tf not found (run this from the repo root)" ]
+}
+
+@test "push-template: a tree without the seed payload pushes nothing" {
+  # Same never-a-silent-skip rule one level deeper: the seed payload is not
+  # read by the CLI but by the server AFTER the push, so a tree that loses
+  # templates/common/GROK_BUILD_AGENTS.md must fail locally instead of
+  # shipping a copy whose Terraform apply dies on the missing file().
+  root="$(fake_root push-template.sh)"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  rm -f "${root}/templates/common/GROK_BUILD_AGENTS.md"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 1 ]
+  [[ ${stderr} == *"GROK_BUILD_AGENTS.md is missing"* ]]
+  [[ ${stderr} == *"2 of 2 template(s) did not reach an active version"* ]]
+  logs_absent 'templates push' "${STUB_LOG}/docker.log"
 }
 
 @test "push-template: a missing lockfile is a note, and the push still happens" {
@@ -302,15 +323,59 @@ source_libs() {
 
 @test "template-push: template_push_one streams the dir and passes --var args through" {
   source_libs
-  mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform"
+  mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' 'resource "coder_script" "x" {}' > "${BATS_TEST_TMPDIR}/tpl/main.tf"
   printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
+  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
   export CONTAINER_API_URL="http://coder:3002"
   export session_token="kid-secret"
   run --separate-stderr template_push_one tpl1 "${BATS_TEST_TMPDIR}/tpl" --var image=tag
   [ "${status}" -eq 0 ]
   [[ "$(stub_log_last docker)" == *"coder templates push tpl1 --directory - --yes --var image=tag"* ]]
   [[ "$(stub_log_last docker)" != *kid-secret* ]]
+}
+
+@test "template-push: the seed payload rides inside the pushed tar" {
+  source_libs
+  # The server-side Terraform reads GROK_BUILD_AGENTS.md from inside the
+  # pushed copy (that is where main.tf's file() reference points), so the
+  # staging must drop the common copy into the tar and .terraform/ must stay
+  # out. The sink DOCKER_BIN stands in for `docker compose exec -T -i`: it
+  # drains stdin into a file instead of exec'ing the coder stub, which is
+  # how the tar stream becomes inspectable.
+  mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"
+  printf '%s\n' 'resource "coder_script" "x" {}' > "${BATS_TEST_TMPDIR}/tpl/main.tf"
+  printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
+  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
+  printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' > "${BATS_TEST_TMPDIR}/bin/tar-sink"
+  chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
+  export DOCKER_BIN=tar-sink
+  template_push_one tpl1 "${BATS_TEST_TMPDIR}/tpl"
+  if [ ! -f "${STUB_LOG}/push.tar" ]; then
+    printf 'FAIL: no tar stream reached the sink\n' >&2
+    return 1
+  fi
+  tar -tf "${STUB_LOG}/push.tar" > "${BATS_TEST_TMPDIR}/members.txt"
+  grep -Fxq './main.tf' "${BATS_TEST_TMPDIR}/members.txt"
+  grep -Fxq './GROK_BUILD_AGENTS.md' "${BATS_TEST_TMPDIR}/members.txt"
+  if grep -qF '.terraform' "${BATS_TEST_TMPDIR}/members.txt"; then
+    printf 'leak: .terraform reached the pushed tar\n' >&2
+    return 1
+  fi
+}
+
+@test "template-push: a tree without the seed payload is refused before the CLI runs" {
+  source_libs
+  # Without the seed the server-side Terraform would die on main.tf's file()
+  # reference anyway; the point of the guard is that it fails locally, loudly,
+  # and before the CLI runs, so the operator sees the missing file by name.
+  mkdir -p "${BATS_TEST_TMPDIR}/tpl-noseed"
+  printf '%s\n' 'resource "coder_script" "y" {}' > "${BATS_TEST_TMPDIR}/tpl-noseed/main.tf"
+  run --separate-stderr template_push_one tpl2 "${BATS_TEST_TMPDIR}/tpl-noseed"
+  [ "${status}" -eq 1 ]
+  [[ ${stderr} == *"common/GROK_BUILD_AGENTS.md is missing"* ]]
+  [ -z "$(stub_log docker)" ]
+  [ -z "$(stub_log coder)" ]
 }
 
 @test "template-push: template_verify_active reads the ACTIVE row and fails without one" {

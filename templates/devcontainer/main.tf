@@ -444,6 +444,14 @@ resource "coder_agent" "main" {
       github_mcp             = var.github_mcp
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
     })
+    # The whole orchestration-protocol payload, read verbatim from
+    # GROK_BUILD_AGENTS.md and interpolated into the quoted heredoc that
+    # writes ~/.grok/AGENTS.md in startup.sh.tftpl. This dir does not keep the
+    # file: the stack holds one copy in templates/common/ and push-template
+    # stages it into this template's pushed copy beside this file, which is
+    # why the path below resolves. chomp() drops the payload's own trailing
+    # newline so the seeded file ends on its last line.
+    grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))
     # Injected verbatim into the script, which is safe enough: this is the
     # workspace creator's own input and they already hold a shell in this
     # container. The script quotes it anyway so a URL with spaces survives.
