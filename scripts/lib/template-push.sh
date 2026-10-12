@@ -4,9 +4,10 @@
 #
 # The two Coder templates (`workspace`, `devcontainer`) travel to the
 # server as tar streams on stdin, get confirmed through their versions list,
-# and then carry their chat-agent routing hint via `templates edit`. push-template
-# does all three per template; the same plumbing shape reappears around the
-# devcontainer flow. The primitives live here so the entry scripts keep their
+# and then carry their chat-agent routing hint and their autostop default via
+# `templates edit`. push-template does both writes per template; the same
+# plumbing shape reappears around the devcontainer flow. The primitives live
+# here so the entry scripts keep their
 # policy and log wording while the plumbing itself stays unit-testable in
 # isolation.
 #
@@ -136,4 +137,27 @@ template_set_description() {
     return 0
   fi
   coder_exec templates edit "${1}" --description "${2}" >/dev/null 2>&1
+}
+
+# template_set_autostop_off <name> — pin <name>'s autostop defaults OFF: a 0 default TTL
+# and a 0 activity bump. Coder reads the template's default TTL ("Default autostop" in the
+# UI) when it seeds a workspace, and that field defaults to 24 h — the same 24 h
+# `coder templates create --default-ttl` carries. Non-nil is what gives a new workspace a
+# stop deadline and pre-ticks the create form's "Enable Autostop" checkbox; pinned to 0
+# there is no deadline and nothing to extend, so a workspace stays up until its owner
+# stops it. `templates push` has no TTL flag, which makes this the only write that can
+# move the value, and it is advisory like the description write: prints nothing, returns
+# non-zero on failure, and leaves the log wording to the caller.
+# @function template_set_autostop_off
+# Set a template's default TTL and activity bump to 0, which leaves autostop disabled.
+# Globals:
+#   coder_exec
+# Arguments:
+#   $1 - template name
+# Outputs:
+#   None
+# Returns:
+#   0 on success; the CLI's status otherwise
+template_set_autostop_off() {
+  coder_exec templates edit "${1}" --default-ttl 0 --activity-bump 0 >/dev/null 2>&1
 }
