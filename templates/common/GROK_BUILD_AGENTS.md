@@ -102,6 +102,10 @@ ASCII first, and keep comments and commit messages in plain ASCII too.
 
 # Tool Call Discipline
 Hallucinated tools or parameters stop the agent. Never invent a tool name or parameter.
+A tool name must be copied verbatim from the current session's tool list. A spelling
+built by analogy - an added affix or suffix such as `write_file` for a writer named
+`write`, or a name carrying another tool's parameters - is an invented name, however
+close it sits to a real tool.
 
 **Before every tool call:**
 1. Confirm the tool exists in the current environment (built-in tools, MCP servers discovered via `grok mcp doctor` or session context, or skills that declare them). If you are unsure, do not call it.
