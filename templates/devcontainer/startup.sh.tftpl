@@ -523,7 +523,15 @@ run_clone() {
   fi
 }
 
-if [ -d "$target/.git" ]; then
+if [ -z "$repo_url_raw" ]; then
+  # An empty Git repository field names nothing to clone and nothing to build a
+  # dev container from, so the clone chain stays quiet and the dev-container
+  # preflight below stays out too — there is no clone to probe, and a warning
+  # about a clone nobody asked for would only be noise. The editor and the
+  # terminals stay on the home folder: main.tf's editor_folder names /home/coder
+  # for exactly this case.
+  :
+elif [ -d "$target/.git" ]; then
   # Re-fetching is the user's call: a pull here could conflict mid-edit or fail
   # on a dirty tree, and either way the workspace would start on code nobody chose.
   echo "$repo_folder: already cloned, skipping"
@@ -629,9 +637,11 @@ if [ -d "$target/.git" ]; then
     echo "==============================================================" >&2
     if [ "$build_devcontainer" = "yes" ]; then
       echo "WARNING: $repo_folder has no devcontainer configuration found — the dev" \
-        "container will NOT build; code-server + Grok fall back to the plain workspace" \
-        "container (recreate this workspace with the dev-container toggle set to No if" \
-        "that is what you want)." >&2
+        "container will NOT build, and with the dev-container toggle on that means no" \
+        "editor and no in-container terminal either: this workspace's code-server and" \
+        "Grok hang off the dev-container sub-agent, and no dev container means no" \
+        "sub-agent to attach them to (recreate this workspace with the dev-container" \
+        "toggle set to No if the plain-container shape is what you want)." >&2
     else
       echo "WARNING: $repo_folder has no devcontainer configuration found — expected" \
         "with the dev-container toggle off; the editor opens the clone directly." >&2
