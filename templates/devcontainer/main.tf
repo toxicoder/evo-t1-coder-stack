@@ -651,60 +651,133 @@ resource "coder_devcontainer" "repo" {
 
 # In-browser VS Code (Coder's code-server fork) on port 13337, on the cloned
 # folder in either mode, spelled the way the environment hosting it reads it
-# (editor_folder): /workspaces/<repo-name> inside the dev container when the
-# toggle is on, /srv/coder-devcontainers/<ws-id>/<repo-name> on the plain
-# workspace container when it is off, /home/coder when no repository was
-# named. A ?folder= that resolves to nothing in the environment hosting the
-# code-server process opens "Workspace does not exist. Please select another
-# workspace to open." on every connect, and that process runs inside the dev
-# container with the toggle on — the host-side spelling of the clone folder
-# does not exist in there, which is why one path cannot serve both modes.
-# That hosting split is the whole point
-# of the toggle — the editor hung off the dev-container sub-agent alone, so a repo
-# that ships no devcontainer.json got no dev container, hence no sub-agent, hence
-# no editor and no terminal profile at all. HCL does not evaluate the untaken
-# branch of a ternary, so coder_devcontainer.repo[0] never indexes an empty tuple
-# in the off case — the same shape templates/workspace uses for its count-gated
-# data.docker_image.dind[0].id. Attaching any app/script/env to the dev-container
-# sub-agent makes the dev container terraform-managed: a repo's own
-# customizations.coder.apps are then ignored (displayApps still apply).
-# display_apps.vscode on the parent agent is only the desktop helper.
-# install_prefix stays at the module default (/tmp/code-server): both modes
-# rebuild the container that hosts the editor on every start, so a persistent
-# prefix buys nothing. No CODER_WILDCARD_ACCESS_URL on this box, so subdomain
-# routing is unavailable.
-module "code_server" {
-  count     = data.coder_workspace.me.start_count
-  source    = "registry.coder.com/coder/code-server/coder"
-  version   = "~> 1.0"
-  agent_id  = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
-  folder    = local.editor_folder
-  port      = 13337
+# (editor_folder, riding in the app URL's ?folder= query): /workspaces/<repo-name>
+# inside the dev container when the toggle is on,
+# /srv/coder-devcontainers/<ws-id>/<repo-name> on the plain workspace
+# container when it is off, /home/coder when no repository was named. A
+# ?folder= that resolves to nothing in the environment hosting the code-server
+# process opens "Workspace does not exist. Please select another workspace to
+# open." on every connect, and that process runs inside the dev container
+# with the toggle on - the host-side spelling of the clone folder does not
+# exist in there, which is why one path cannot serve both modes. That hosting
+# split is the whole point of the toggle - the editor hung off the
+# dev-container sub-agent alone, so a repo that ships no devcontainer.json
+# got no dev container, hence no sub-agent, hence no editor and no terminal
+# profile at all. HCL does not evaluate the untaken branch of a ternary, so
+# coder_devcontainer.repo[0] never indexes an empty tuple in the off case -
+# the same shape templates/workspace uses for its count-gated
+# data.docker_image.dind[0].id. Attaching any app/script/env to the
+# dev-container sub-agent makes the dev container terraform-managed: a
+# repo's own customizations.coder.apps are then ignored (displayApps still
+# apply). display_apps.vscode on the parent agent is only the desktop helper.
+#
+# The two resources below are an inline fork of
+# registry.coder.com/coder/code-server/coder (its ~> 1.0 line), the twin of
+# the same fork in templates/workspace/main.tf: the module hardcodes
+# /icon/code.svg and has no icon input, so the stack's own
+# templates/common/vscode-alt.svg travels as a data: URL (the local below
+# says why the file has to travel), the editor binary is installed fresh
+# into /tmp/code-server on every start because both modes rebuild the
+# container that hosts the editor (a persistent prefix would hold nothing),
+# and no machine settings are passed, so a machine-scoped copy cannot
+# override the user file anywhere.
+#
+# The settings seed travels the same way the module carried it, for the same
+# reason: plain mode (toggle off) hosts code-server where startup.sh.tftpl
+# symlinks User settings at the shared volume, so the ternary inside the
+# script hands the shell an empty string there - merging on every start
+# would break that symlink. Dev-container mode hosts code-server inside the
+# repo's container, which does not mount the shared volume and has no other
+# way to see it, so the seed is seeded - or merged over the container's
+# private copy, when one survived a start-to-start rebuild and jq is there
+# to merge with - on each start. That copy is not the shared file: edits
+# inside the dev container are replaced on the next start, and edits to the
+# shared file do not flow in.
+
+locals {
+  # One private icon, inlined because Coder serves /icon/ only from its
+  # bundled set, where no vscode-alt.svg exists.
+  vscode_alt_icon = "data:image/svg+xml;base64,${filebase64("${path.module}/vscode-alt.svg")}"
+}
+
+resource "coder_script" "code_server" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
+  display_name = "code-server"
+  icon         = local.vscode_alt_icon
+
+  # The folder has to reach the app URL too: coder_app in coder/coder 2.18
+  # has no `folder` argument, so the ?folder= query in the URL below is the
+  # only way to say which folder the editor opens on, and it has to be
+  # spelled the way the hosting environment reads it (editor_folder).
+
+  script = <<-EOT
+    #!/usr/bin/env bash
+    # Fork of the module's run.sh, trimmed to this stack: install fresh into
+    # /tmp/code-server on every start (both toggle modes rebuild the
+    # container that hosts the editor, so a persistent prefix would hold
+    # nothing), seed or merge the settings map when the dev-container toggle
+    # handed one in, then start code-server on port 13337.
+    set -eu
+    PREFIX="/tmp/code-server"
+    CS_BIN="$${PREFIX}/bin/code-server"
+    curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}"
+    if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
+      ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
+    fi
+    SETTINGS_B64='${local.use_dc ? base64encode(jsonencode(local.vscode_module_settings)) : ""}'
+    if [ -n "$${SETTINGS_B64}" ]; then
+      SETTINGS_FILE="$${HOME}/.local/share/code-server/User/settings.json"
+      mkdir -p "$(dirname "$${SETTINGS_FILE}")"
+      printf '%s' "$${SETTINGS_B64}" | base64 -d > "$${SETTINGS_FILE}.seed"
+      if [ ! -f "$${SETTINGS_FILE}" ]; then
+        mv "$${SETTINGS_FILE}.seed" "$${SETTINGS_FILE}"
+      elif command -v jq >/dev/null 2>&1; then
+        if jq -s '.[0] * .[1]' "$${SETTINGS_FILE}" "$${SETTINGS_FILE}.seed" > "$${SETTINGS_FILE}.new"; then
+          mv "$${SETTINGS_FILE}.new" "$${SETTINGS_FILE}"
+        else
+          printf 'Could not merge: keeping the settings file that is already there.\n'
+        fi
+        rm -f "$${SETTINGS_FILE}.seed" "$${SETTINGS_FILE}.new"
+      else
+        printf 'No jq on PATH: keeping the settings file that is already there.\n'
+        rm -f "$${SETTINGS_FILE}.seed"
+      fi
+    fi
+    echo "Running code-server in the background (log: /tmp/code-server.log)."
+    "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" > /tmp/code-server.log 2>&1 &
+  EOT
+
+  run_on_start = true
+}
+
+resource "coder_app" "code_server" {
+  count    = data.coder_workspace.me.start_count
+  agent_id = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
+  slug     = "code-server"
+
+  url          = "http://localhost:13337/?folder=${urlencode(local.editor_folder)}"
+  display_name = "VS Code Web"
+  icon         = local.vscode_alt_icon
+
+  # No CODER_WILDCARD_ACCESS_URL on this box, so subdomain routing is
+  # unavailable.
   subdomain = false
-  open_in   = "tab"
+  share     = "owner"
 
   # The agent bar shows this as "VS Code Web" (display_name; the static
   # "VS Code Desktop" helper from display_apps keeps its own label, so the two
   # editor buttons read differently now) and sorts it before the LiteLLM (10)
   # and Coder UI (11) custom apps (lowest order first; static helper buttons
   # are not reorderable per Coder's resource-ordering docs).
-  display_name = "VS Code Web"
-  order        = 5
+  order   = 5
+  open_in = "tab"
 
-  # Plain mode (toggle off) hosts code-server in this container, where
-  # startup.sh.tftpl symlinks User settings at the shared volume. Passing a
-  # settings map would merge on every start and `mv` over that symlink, so
-  # plain mode passes nothing. Dev-container mode hosts code-server inside
-  # the repo's container, which does not mount the shared volume and has no
-  # other way to see it, so the module merges the seed there on each start.
-  # That copy is not the shared file: edits inside the dev container are
-  # replaced on the next start, and edits to the shared file do not flow in.
-  # Machine settings stay empty in both modes so a machine-scoped copy cannot
-  # override the user file.
-  # "{}" and the decoded map have to meet as strings first: a conditional's
-  # two results must be the same type, and jsondecode("{}") is not the same
-  # object type as the seed map.
-  settings = jsondecode(local.use_dc ? jsonencode(local.vscode_module_settings) : "{}")
+  healthcheck {
+    url       = "http://localhost:13337/healthz"
+    interval  = 5
+    threshold = 6
+  }
 }
 
 # The agent-bar terminal button, replacing the built-in one (display_apps

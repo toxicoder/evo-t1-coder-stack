@@ -3,6 +3,8 @@
 #
 # Idempotent: safe to re-run on every workspace start.
 #   1. installs tmux (if missing)
+#   1b. seeds ~/.tmux.conf (only while this stack owns the file), so the
+#       workspace's tmux terminals scroll and copy like a native terminal
 #   2. installs the Grok Build CLI (if missing)
 #   3. puts ~/.grok/bin on PATH (login shells + this process)
 #   4. writes the two terminal-profile helpers (the "Grok Build" one and the
@@ -63,6 +65,59 @@ fi
 if ! command -v tmux >/dev/null 2>&1; then
   $SUDO apt-get update -y >/dev/null
   $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y tmux >/dev/null
+fi
+
+# --- tmux configuration -----------------------------------------------------
+# Seeded before the terminal-profile helpers, so it is in place before any
+# `tmux new-session -A` can run: tmux reads this file once at server start and
+# every terminal (plus an SSH client that reattaches) shares that one server.
+# `mouse on` hands the wheel and the drag to tmux; `set-clipboard on` is what
+# carries a tmux copy out to the client's clipboard over OSC 52, which a client
+# that blocks OSC 52 (iTerm2 by default) keeps inside tmux's own buffer.
+#
+# The marker line is the ownership flag, on the same contract as
+# ~/.grok/config.toml: while it is present this stage rewrites the file on
+# every start, and editing the file away from the marker hands it to the user
+# for good.
+if [ ! -f "$HOME/.tmux.conf" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.tmux.conf"; then
+  cat >"$HOME/.tmux.conf" <<'TMUX_CONF_EOF'
+# managed-by: evo-t1-coder-stack -- stack-seeded. Delete this line (or the
+# whole file) to take terminal fidelity over: the workspace boot reseeds this
+# file only while the marker line above is present.
+
+# Scrolling and selection belong to tmux, not to the browser or the SSH
+# client: the wheel walks copy-mode history and a drag starts a tmux
+# selection. To select against tmux instead, hold Alt (xterm.js) or Shift
+# (most native terminals and SSH clients) while dragging.
+set -g mouse on
+
+# Copy-mode copies leave through OSC 52 into the client terminal's system
+# clipboard. xterm.js (code-server) and Ghostty/kitty/WezTerm/iTerm2 honour
+# OSC 52; iTerm2 needs "Allow clipboard to be modified" ticked first and
+# xterm.js needs its clipboard allowance on, or the copy never leaves tmux.
+# allow-passthrough keeps that route open for an app inside the pane
+# (vim's `+` register) instead of only for tmux's own copy-mode.
+set -g set-clipboard on
+set -g allow-passthrough on
+
+# vi copy mode: v begins a selection, y copies and releases, Escape clears.
+setw -g mode-keys vi
+bind-key -T copy-mode-vi v send-keys -X begin-selection
+bind-key -T copy-mode-vi y send-keys -X copy-selection-and-cancel
+bind-key -T copy-mode-vi Escape send-keys -X clear-selection
+
+# Release the pointer after a drag-select: copy and drop out of copy-mode
+# instead of parking in it.
+bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel
+
+# One history per pane, big enough that a reattached terminal still reaches
+# the output a closed tab produced.
+set -g history-limit 50000
+TMUX_CONF_EOF
+else
+  echo "WARNING: $HOME/.tmux.conf carries no evo-t1-coder-stack marker -" \
+    "leaving it alone. Remove the marker line to keep your own tmux config." >&2
 fi
 
 # --- Grok Build CLI ----------------------------------------------------------

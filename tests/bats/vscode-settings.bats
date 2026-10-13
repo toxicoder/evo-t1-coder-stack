@@ -4,8 +4,9 @@
 #
 # The desktop settings dump is adapted for this stack and checked in. The
 # seed must stay free of desktop paths and secrets, both template copies must
-# stay byte-identical, and both templates must copy it once onto the per-owner
-# volume instead of merging it on every start.
+# stay byte-identical, and the startup twins each copy it once onto the
+# per-owner volume, while the dev-container template's code-server fork
+# merges it into the dev container's private copy only while the toggle is on.
 #
 # Usage: bats tests/bats/vscode-settings.bats
 # Safety: reads the two template dirs; writes nothing.
@@ -102,9 +103,12 @@ setup() {
   done
 }
 
-@test "settings: workspace template does not hand the seed to the code-server module" {
+@test "settings: workspace template does not hand the seed to the inlined code-server fork" {
   local main="${REPO_ROOT}/templates/workspace/main.tf"
-  run grep -F 'settings         = jsondecode(local.vscode_settings)' "${main}"
+  # The fork carries a seed (if any) in its script's SETTINGS_B64 line;
+  # the workspace fork has none, because the startup script's shared-volume
+  # symlink owns settings.json there.
+  run grep -F 'SETTINGS_B64' "${main}"
   [ "${status}" -ne 0 ]
   run grep -F 'machine_settings' "${main}"
   [ "${status}" -ne 0 ]
@@ -112,7 +116,9 @@ setup() {
 
 @test "settings: devcontainer merges the seed only while the dev container is on" {
   local main="${REPO_ROOT}/templates/devcontainer/main.tf"
-  run grep -F 'local.use_dc ? jsonencode(local.vscode_module_settings) : "{}"' "${main}"
+  # The seed rides in the fork script's SETTINGS_B64 line, empty (so the
+  # shell skips the whole seed/merge block) when the toggle is off.
+  run grep -F -- '${local.use_dc ? base64encode(jsonencode(local.vscode_module_settings)) : ""}' "${main}"
   [ "${status}" -eq 0 ]
   run grep -F 'machine_settings' "${main}"
   [ "${status}" -ne 0 ]

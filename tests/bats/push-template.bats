@@ -41,10 +41,11 @@ setup() {
 # fake_root <script> [env-line...] — print a throwaway repo root holding the
 # script under test, scripts/lib/ (the seams it sources after its own repo-root
 # cd), a private .env, and the template tree: both template dirs plus their
-# sibling common/ dir with the seed payload every push stages. main.tf has to
+# sibling common/ dir with the seed payloads every push stages. main.tf has to
 # exist in a dir for that template to be selectable, the lockfile keeps the
-# "missing lockfile" note out of the way unless a test wants it, and the seed
-# file has to exist because template_push_one refuses to push without it.
+# "missing lockfile" note out of the way unless a test wants it, and the
+# common/ files have to exist because template_push_one refuses to push
+# without each of them.
 fake_root() {
   local root="${BATS_TEST_TMPDIR?}/root" script="${1}"
   shift
@@ -63,6 +64,7 @@ fake_root() {
   : >"${root}/templates/workspace/.terraform.lock.hcl"
   : >"${root}/templates/devcontainer/.terraform.lock.hcl"
   printf '%s\n' '# Role' >"${root}/templates/common/GROK_BUILD_AGENTS.md"
+  printf '%s\n' '<svg/>' >"${root}/templates/common/vscode-alt.svg"
   cp "${REPO_ROOT}/scripts/${script}" "${root}/scripts/"
   cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
   printf '%s' "${root}"
@@ -327,6 +329,7 @@ source_libs() {
   printf '%s\n' 'resource "coder_script" "x" {}' > "${BATS_TEST_TMPDIR}/tpl/main.tf"
   printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
   printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
+  printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
   export CONTAINER_API_URL="http://coder:3002"
   export session_token="kid-secret"
   run --separate-stderr template_push_one tpl1 "${BATS_TEST_TMPDIR}/tpl" --var image=tag
@@ -335,18 +338,19 @@ source_libs() {
   [[ "$(stub_log_last docker)" != *kid-secret* ]]
 }
 
-@test "template-push: the seed payload rides inside the pushed tar" {
+@test "template-push: the seed payloads ride inside the pushed tar" {
   source_libs
-  # The server-side Terraform reads GROK_BUILD_AGENTS.md from inside the
-  # pushed copy (that is where main.tf's file() reference points), so the
-  # staging must drop the common copy into the tar and .terraform/ must stay
-  # out. The sink DOCKER_BIN stands in for `docker compose exec -T -i`: it
-  # drains stdin into a file instead of exec'ing the coder stub, which is
-  # how the tar stream becomes inspectable.
+  # The server-side Terraform reads GROK_BUILD_AGENTS.md (file(), into the
+  # startup script) and vscode-alt.svg (filebase64(), into the editor icon)
+  # from inside the pushed copy, so the staging must drop both common copies
+  # into the tar and .terraform/ must stay out. The sink DOCKER_BIN stands in
+  # for `docker compose exec -T -i`: it drains stdin into a file instead of
+  # exec'ing the coder stub, which is how the tar stream becomes inspectable.
   mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' 'resource "coder_script" "x" {}' > "${BATS_TEST_TMPDIR}/tpl/main.tf"
   printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
   printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
+  printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
   printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' > "${BATS_TEST_TMPDIR}/bin/tar-sink"
   chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
   export DOCKER_BIN=tar-sink
@@ -358,6 +362,7 @@ source_libs() {
   tar -tf "${STUB_LOG}/push.tar" > "${BATS_TEST_TMPDIR}/members.txt"
   grep -Fxq './main.tf' "${BATS_TEST_TMPDIR}/members.txt"
   grep -Fxq './GROK_BUILD_AGENTS.md' "${BATS_TEST_TMPDIR}/members.txt"
+  grep -Fxq './vscode-alt.svg' "${BATS_TEST_TMPDIR}/members.txt"
   if grep -qF '.terraform' "${BATS_TEST_TMPDIR}/members.txt"; then
     printf 'leak: .terraform reached the pushed tar\n' >&2
     return 1
@@ -374,6 +379,23 @@ source_libs() {
   run --separate-stderr template_push_one tpl2 "${BATS_TEST_TMPDIR}/tpl-noseed"
   [ "${status}" -eq 1 ]
   [[ ${stderr} == *"common/GROK_BUILD_AGENTS.md is missing"* ]]
+  [[ ${stderr} == *"common/vscode-alt.svg is missing"* ]]
+  [ -z "$(stub_log docker)" ]
+  [ -z "$(stub_log coder)" ]
+}
+
+@test "template-push: a half-filled common dir names only the payload that is gone" {
+  source_libs
+  # The guard lists the payloads, not the directory: with the seed text there
+  # and the icon gone, only the icon may be named - and the run must still
+  # refuse before the CLI runs.
+  mkdir -p "${BATS_TEST_TMPDIR}/tpl-nosvg" "${BATS_TEST_TMPDIR}/common"
+  printf '%s\n' 'resource "coder_script" "z" {}' > "${BATS_TEST_TMPDIR}/tpl-nosvg/main.tf"
+  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
+  run --separate-stderr template_push_one tpl3 "${BATS_TEST_TMPDIR}/tpl-nosvg"
+  [ "${status}" -eq 1 ]
+  [[ ${stderr} == *"common/vscode-alt.svg is missing"* ]]
+  [[ ${stderr} != *"GROK_BUILD_AGENTS.md is missing"* ]]
   [ -z "$(stub_log docker)" ]
   [ -z "$(stub_log coder)" ]
 }

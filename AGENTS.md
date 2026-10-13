@@ -20,7 +20,7 @@ Done means `//:test-fast` + lint green. Stack changes must be verified on the de
 
 ## Structure
 - `scripts/*.sh` — operator CLIs; `scripts/lib/*.sh` — sourced helpers (do not copy log/die helpers).
-- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `templates/common/GROK_BUILD_AGENTS.md` exists once instead: the seed text both startup scripts inline, staged by the push plumbing into each template's pushed copy, where `main.tf` reads it with `file()`.
+- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline) and `vscode-alt.svg` (the editor icon), each staged by the push plumbing beside the staged `main.tf` and read there with `file()` / `filebase64()`; pushing without either fails early by design.
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
 - Runtime is `docker compose`. Do not add Kubernetes.

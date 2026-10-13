@@ -526,44 +526,99 @@ resource "coder_script" "gh_token_refresh" {
 }
 
 # In-browser VS Code (Coder's code-server fork) on port 13337. display_apps.vscode
-# above is only the desktop helper; this module installs the binary into the
-# home volume and exposes it as a path-based coder_app.
-module "code_server" {
-  count  = data.coder_workspace.me.start_count
-  source = "registry.coder.com/coder/code-server/coder"
-  # Pinned: this module is downloaded from registry.coder.com on every
-  # `terraform init`, so an unpinned constraint lets an upstream module release
-  # change every workspace's editor without a commit in this repo.
-  version  = "~> 1.0"
+# above is only the desktop helper; the two resources below install the binary
+# into the home volume and expose it as a path-based coder_app.
+#
+# They are an inline fork of registry.coder.com/coder/code-server/coder (its
+# ~> 1.0 line). Forked because the module hardcodes /icon/code.svg on its
+# script row and its app button and has no icon input, while this stack ships
+# its own icon: templates/common/vscode-alt.svg, staged beside main.tf by
+# push-template exactly like GROK_BUILD_AGENTS.md and read back through the
+# local below. Coder resolves an icon either against its bundled icon set or
+# through a full https:/data: URL, and vscode-alt.svg is not bundled, hence
+# the data URL. Forking also removes a module download from every `terraform
+# init`: with the module the registry answered every template build, and an
+# unpinned release there could rewrite this workspace's editor without a
+# commit in this repo.
+#
+# The fork keeps the behaviour this stack actually used and drops the rest:
+# reuse the installed copy instead of re-downloading on every start (the
+# module's use_cached = true), no extension list, no machine settings, no
+# .code-workspace handling. User settings stay out on purpose: anything
+# merging into
+# ~/.local/share/code-server/User/settings.json on every start would `mv` a
+# private copy over the symlink startup.sh.tftpl maintains onto the shared
+# volume, and machine-scoped settings could override the shared user file the
+# same way. code-server never reads ~/.config/Code.
+
+locals {
+  # One private icon, inlined because Coder serves /icon/ only from its
+  # bundled set, where no vscode-alt.svg exists.
+  vscode_alt_icon = "data:image/svg+xml;base64,${filebase64("${path.module}/vscode-alt.svg")}"
+}
+
+resource "coder_script" "code_server" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "code-server"
+  icon         = local.vscode_alt_icon
+
+  script = <<-EOT
+    #!/usr/bin/env bash
+    # Fork of the module's run.sh, trimmed to this stack: reuse the copy the
+    # first install left under the prefix, otherwise install standalone there,
+    # then start code-server on port 13337.
+    set -eu
+    PREFIX="/home/coder/.local/share/code-server"
+    CS_BIN="$${PREFIX}/bin/code-server"
+    if [ ! -x "$${CS_BIN}" ]; then
+      curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}"
+    fi
+    if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
+      ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
+    fi
+    echo "Running code-server in the background (log: /tmp/code-server.log)."
+    "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" > /tmp/code-server.log 2>&1 &
+  EOT
+
+  run_on_start = true
+}
+
+resource "coder_app" "code_server" {
+  count    = data.coder_workspace.me.start_count
   agent_id = coder_agent.main.id
+  slug     = "code-server"
+
   # Not just where the file tree starts: VS Code opens every new terminal with
-  # cwd = the workspace root, and the Grok Build and tmux terminal profiles in
-  # startup.sh.tftpl key their tmux session name and their `grok --cwd` off that
-  # cwd. Move the folder and the editor's terminals and the Grok agent move with
-  # it; leave it on /home/coder and they all keep working from the home folder.
-  folder         = local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"
-  port           = 13337
-  install_prefix = "/home/coder/.local/share/code-server"
-  use_cached     = true
+  # cwd = this folder, and the Grok Build and tmux terminal profiles in
+  # startup.sh.tftpl key their tmux session name and their `grok --cwd` off
+  # that cwd. Move the folder and the editor's terminals and the Grok agent
+  # move with it; leave it on /home/coder and they all keep working from the
+  # home folder. coder_app in coder/coder 2.18 has no `folder` argument, so
+  # the folder rides in the URL, where the ?folder= query is what pins it.
+
+  url          = "http://localhost:13337/?folder=${urlencode(local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder")}"
+  display_name = "VS Code Web"
+  icon         = local.vscode_alt_icon
+
   # No CODER_WILDCARD_ACCESS_URL on this box, so subdomain routing is not
   # available: the editor is proxied on the path-based access URL.
   subdomain = false
-  open_in   = "tab"
+  share     = "owner"
 
   # The agent bar shows this as "VS Code Web" (display_name; the static
   # "VS Code Desktop" helper from display_apps keeps its own label, so the two
   # editor buttons read differently now) and sorts it before the LiteLLM (10)
   # and Coder UI (11) custom apps (lowest order first; static helper buttons
   # are not reorderable per Coder's resource-ordering docs).
-  display_name = "VS Code Web"
-  order        = 5
+  order   = 5
+  open_in = "tab"
 
-  # User settings are intentionally not passed. The module merges `settings`
-  # into ~/.local/share/code-server/User/settings.json on every start, and the
-  # merge `mv`s a regular file over whatever is there — including the symlink
-  # startup.sh.tftpl maintains onto the shared volume. Machine settings stay
-  # at the module default (empty) so a machine-scoped copy cannot override
-  # the shared user file. code-server never reads ~/.config/Code.
+  healthcheck {
+    url       = "http://localhost:13337/healthz"
+    interval  = 5
+    threshold = 6
+  }
 }
 
 # The agent-bar terminal button, replacing the built-in one (which stays off in
