@@ -69,7 +69,10 @@ launcher pattern at the repo root.
 with bash, so a checkout whose scripts are mode `100644` still builds.
 
 Each CLI target also declares the repo files that script reads by path — `//:stack_data`
-(`docker-compose.yml`, both `templates/**` payload trees, `images/dev/**`, `litellm/**`, the
-two `.env` samples, `LICENSE`) and `//scripts:doc_sources` (every `scripts/**.sh`, so a
-sourced `scripts/lib/*.sh` resolves too). Without them a sandboxed run would read a partial
-copy of the repo and fail for the wrong reason.
+(`docker-compose.yml`, both `templates/**` payload trees, `images/dev/**`, `litellm/**`,
+`searxng/**`, the two `.env` samples, `LICENSE`) and `//scripts:doc_sources` (every
+`scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves too). Without them a sandboxed run
+would read a partial copy of the repo and fail for the wrong reason. A new top-level payload
+directory has to be added to that `glob` by hand: `test-fast` and `lint` only see repo files
+that travel in runfiles, so an unlisted directory is invisible to the harness rather than
+checked loosely.

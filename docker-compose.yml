@@ -255,6 +255,57 @@ services:
     volumes:
       - ollama-models:/root/.ollama
 
+  # Self-hosted metasearch: the search lane. grok-config.toml keeps
+  # supports_backend_search = false on every model alias, so the CLI's built-in
+  # search tool has no hosted backend to call and each search is a client-side
+  # scrape whose answer the `agent` alias then digests. Handing SearXNG to the
+  # agent as an MCP stdio server is a second, dependent change; this one only
+  # stands the service up, plus scripts/search-check.sh to measure it.
+  #
+  # Kept off the model lane on purpose: SearXNG would otherwise forward every
+  # query through the proxy that lane uses, so egress stays direct here and
+  # search-check.sh probes with `curl --noproxy '*'`. 8181 rather than 8080,
+  # which router already publishes, or 8888, which the remote Spark boxes
+  # answer on: one port number for this service everywhere in the repo.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    hostname: searxng
+    restart: unless-stopped
+    ports:
+      # Published plainly, the way 4000, 80/443 and 8080 are, so the same port
+      # answers on the host's loopback and on its LAN face. A `127.0.0.1:`
+      # prefix here would satisfy the compose layer and still answer nothing to
+      # a workspace: a workspace reaches the host through the host-gateway,
+      # which is the host's LAN address, and the two workspace networks
+      # (bridge plus coder-<wsid>-dind) are not joined to the compose network.
+      - "${STACK_SEARCH_PORT:-8181}:8181"
+    environment:
+      # Must match the published mapping: the default Base URL would send the
+      # instance links and the public_instance gate to the wrong address.
+      SEARXNG_BASE_URL: ${SEARCH_BASE_URL:-http://127.0.0.1:8181/}
+      # The image listens on 8888, bound to loopback only, unless both keys
+      # below say otherwise; a published 8181 mapped onto a loopback-only
+      # listener forwards to an empty port.
+      SEARXNG_PORT: "8181"
+      SEARXNG_BIND_ADDRESS: "0.0.0.0"
+      # Empty unless the limiter is switched on, which needs a signing key: the
+      # file that would carry a literal one is below, so the key stays here.
+      SEARXNG_SECRET: ${STACK_SEARCH_SECRET_KEY:-}
+      # No proxy path, and deliberately blank rather than inherited: this box
+      # reaches the model lane through the Spark hosts, not through a proxy.
+      HTTPS_PROXY: ${STACK_EGRESS_PROXY:-}
+      HTTPS_CA_CERT: ${STACK_EGRESS_CA_CERT:-}
+    volumes:
+      # Its own path beside the image's built-in /etc/searxng files, and
+      # read-only. This file is what adds "json" to search.formats: without it
+      # /search?format=json answers 403 before the query is even parsed.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    # No healthcheck: nothing depends_on this service, so a probe that cannot
+    # run would only hold it in "starting" and colour `dev-stack status`.
+    # `bazelisk run //scripts:search-check` is the check that means something:
+    # it counts results per engine, so an empty answer and no answer stay apart.
+
   kasm:
     image: lscr.io/linuxserver/kasm:latest
     restart: unless-stopped

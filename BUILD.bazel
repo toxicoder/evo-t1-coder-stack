@@ -26,8 +26,9 @@ exports_files([
 
 # Payload the operational scripts read by path after they resolve a repo root:
 # the compose file, both template payload trees, the golden-image pins, the
-# LiteLLM routing file, the two .env samples, and the license that ships beside
-# them. scripts/**.sh reaches runfiles through //scripts:doc_sources, not here.
+# LiteLLM routing file, the SearXNG settings, the two .env samples, and the
+# license that ships beside them. scripts/**.sh reaches runfiles through
+# //scripts:doc_sources, not here.
 filegroup(
     name = "stack_data",
     srcs = [
@@ -39,6 +40,7 @@ filegroup(
         [
             "images/dev/**",
             "litellm/**",
+            "searxng/**",
             "templates/**",
         ],
         allow_empty = True,

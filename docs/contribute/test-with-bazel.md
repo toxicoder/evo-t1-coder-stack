@@ -30,6 +30,17 @@ missing or incomplete. So every new function needs, in the same change as the fu
 Name it in exactly one suite. A chain test that happens to mention the name also satisfies
 the inventory, but the owning suite is the one that asserts its behaviour.
 
+The inventory strips comment lines before it looks for a name, so a name that only ever
+appears in a `# @function` block or in prose is still untested: it has to sit in a code line
+somewhere under `tests/`. The usual way to get one there is a unit case that calls the
+helper directly:
+
+```bash
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" split_list
+  assert_eq "a phrase stays one entry" "a b c" "$(split_list 'a b c')"
+```
+
 ## Running a suite
 
 ```bash
@@ -79,6 +90,19 @@ setup() {
   exec bit, and a per-test copy keeps one test's argv log out of the next test.
 - `with_path <dir…>` prepends directories to PATH when a test needs a hand-written fake
   instead of a shared stub.
+- **Prepend; never replace PATH.** `use_stubs` and `with_path` put the stub directory *in
+  front of* the host PATH. `PATH="${BIN}"` takes `bash`, `grep`, `cut`, `sort` and `wc` away
+  from the script under test as well, and a script that pipes its answer through
+  `grep | wc | tr` then fails for a reason that has nothing to do with the contract the
+  suite means to check.
+- **`run` keeps stdout in `$output`.** With `run --separate-stderr` there is no `$stdout`:
+  `$output` is stdout and `$stderr` is stderr. An assertion written against `$stdout`
+  compares against an empty string and fails, which is how a whole suite of real
+  assertions can look like a broken harness.
+- **`run` can call a helper, and a helper that `exit`s is safe.** `run` forks, so
+  `run --separate-stderr usage_error '…'` followed by `[ "${status}" -eq 2 ]` works even
+  though `usage_error` ends in `exit 2`. Pass a real command (`bash "${SCRIPT}" …`) when
+  the script is what is under test.
 - `stub_log <tool>`, `stub_log_last`, `stub_log_count` read back what the stub recorded from
   `$STUB_LOG/<tool>.log`; assert on the argv, not on prose.
 - `real_bin <tool>` resolves a tool with the stub directory removed from PATH. That is the

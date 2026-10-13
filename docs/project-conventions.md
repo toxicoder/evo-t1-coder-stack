@@ -66,6 +66,9 @@ bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.gi
   probes for it (see the harness doc), because a Bazel sandbox may only hold a copy.
 - External tools are probed with `command -v` and reported as "not on PATH", not assumed.
   `require_tool` skips locally and fails under `CI=true`.
+- A probe-style CLI takes its target as a flag (`--url`) rather than a hard-coded host, and reports
+  "nothing answered" as a result rather than a crash, so one run works from the host and from inside
+  a workspace and still answers the question the operator asked. Its suite stubs the transport.
 
 ## Templates
 
