@@ -4,7 +4,7 @@
 # "which folder does the editor open on" seam.
 #
 # Pins the seam behind VS Code's "Workspace does not exist. Please select
-# another workspace to open." dialog: the code-server module bakes its
+# another workspace to open." dialog: the inlined code-server fork bakes its
 # folder argument into the app URL (?folder=<urlencoded>), so that folder
 # must resolve INSIDE the environment that hosts code-server —
 # /workspaces/<repo-name> inside the dev container (the devcontainer CLI's
@@ -37,13 +37,16 @@ setup() {
     skip "template payload is not reachable from ${REPO_ROOT}"
 }
 
-@test "editor: code-server's folder names the per-mode editor_folder local" {
-  run grep -F 'folder    = local.editor_folder' "${DC_TF}"
+@test "editor: code-server's folder URL names the per-mode editor_folder local" {
+  # The inlined code-server fork carries the folder only as the ?folder=
+  # query on the app URL (coder_app has no folder argument).
+  run grep -F 'folder=${urlencode(local.editor_folder)}' "${DC_TF}"
   [ "${status}" -eq 0 ]
   # The one-path shape is what caused the dialog: with the dev-container
   # toggle on, code-server runs inside the dev container, where the host
-  # /srv/coder-devcontainers/... spelling names no folder.
-  run grep -F 'folder    = local.project_folder' "${DC_TF}"
+  # /srv/coder-devcontainers/... spelling names no folder, so the URL must
+  # never interpolate project_folder directly.
+  run grep -F 'urlencode(local.project_folder)' "${DC_TF}"
   [ "${status}" -ne 0 ]
 }
 
