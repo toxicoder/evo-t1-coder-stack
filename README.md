@@ -455,9 +455,12 @@ workspace's GitHub credential comes from the external-auth broker, which is conf
 in `coder.env` and linked to both templates (see the credential note below). Then, per
 template, it confirms an **active** template version — a push can exit 0 and still leave the
 template inactive if its Terraform run failed, which shows up as the template missing from
-the create dropdown. The equivalent raw command — what the script does for each template,
-shown here for `workspace` alone, for reference or for pushing a tag `.env` does not carry
-(the repo is not mounted into the container, so the directory has to
+the create dropdown. The equivalent raw command — the same tar stream and CLI call the
+script makes for each template, which execs into the daemon's `coder` container by
+container name (the raw form addresses the stack through `docker compose` instead, so run
+it from the checkout root, where the compose project and its `.env` resolve) — shown here
+for `workspace` alone, for reference or for pushing a tag `.env` does not carry (the repo
+is not mounted into the container, so the directory has to
 travel as a tar; `CODER_SESSION_TOKEN` is any token from the Coder **Tokens** page or
 `coder tokens create`):
 
