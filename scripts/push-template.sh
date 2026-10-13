@@ -66,15 +66,18 @@
 # an unknown one is a user error: it exits non-zero rather than skipping. Push order
 # is always TEMPLATES_DEFAULT order, whatever the argument order.
 # Overrides (rare; each exists for a stack that renamed something in compose):
-#   CODER_CONTAINER_SERVICE=coder    compose service holding the server
-#   CODER_DB_SERVICE=db              compose service holding Postgres
+#   CODER_CONTAINER_SERVICE=coder    compose service label (com.docker.compose.
+#                                    service) of the container holding the server
+#   CODER_DB_SERVICE=db              compose service label of the container
+#                                    holding Postgres
 #   CODER_CONTAINER_API_URL=…        server API URL reachable from inside the
 #                                    coder container (default http://127.0.0.1:3000)
 #   CODER_PUSH_USER=<username>       user to mint the push token for
 #   CODER_PUSH_TOKEN_MINUTES=10      lifetime of the minted token
-# The push plumbing (psql_sql, psql_query, coder_exec and the per-template push /
-# verify / description helpers) lives in scripts/lib/template-push.sh, sourced
-# right after the repo-root cd below. That file honours PROBE_TIMEOUT and
+# The push plumbing (stack_ps, stack_container, psql_sql, psql_query, coder_exec
+# and the per-template push / verify / description helpers) lives in
+# scripts/lib/coder_api.sh and scripts/lib/template-push.sh, sourced right after
+# the repo-root cd below. That file honours PROBE_TIMEOUT and
 # VERIFY_TIMEOUT, so the assignments further down still win over its defaults.
 set -euo pipefail
 
@@ -250,16 +253,21 @@ command -v timeout >/dev/null 2>&1 ||
 command -v tar >/dev/null 2>&1 ||
   skip "skipped: tar is not on PATH, so the template directory cannot be streamed to the server"
 
-# The server has to be up before anything has a chance of working. Ask compose
-# rather than the daemon so the check stays scoped to this stack, and treat a
-# docker failure as "cannot tell" rather than as a push failure.
-if ! running="$(docker compose ps --status running --services 2>&1)"; then
+# The stack's containers have to be found before anything has a chance of
+# working, and they are found on the DAEMON, by container label — never through
+# a cwd-resolved compose project (scripts/lib/coder_api.sh: under `bazelisk run`
+# the cwd resolves to a project that never had a stack, which read every live
+# stack as "not running yet"). A daemon that cannot be asked is "cannot tell"
+# rather than a push failure, so it still skips.
+if ! running="$(stack_ps)"; then
   skip "skipped: could not query the stack ($(first_line "${running}")) — this script needs docker access; run it with sudo, or add your user to the docker group"
 fi
-if ! grep -qx "${CODER_SERVICE}" <<<"${running}"; then
+CODER_CONTAINER="$(stack_container "${running}" "${CODER_SERVICE}")"
+DB_CONTAINER="$(stack_container "${running}" "${DB_SERVICE}")"
+if [ -z "${CODER_CONTAINER}" ]; then
   skip "skipped: the ${CODER_SERVICE} service is not running yet (start the stack with: docker compose up -d)"
 fi
-if ! grep -qx "${DB_SERVICE}" <<<"${running}"; then
+if [ -z "${DB_CONTAINER}" ]; then
   skip "skipped: the ${DB_SERVICE} service is not running, so no push token can be minted (start the stack with: docker compose up -d)"
 fi
 
@@ -267,7 +275,7 @@ fi
 # rather than the coder CLI because it needs no credential: a 200 here separates
 # "the container is wedged" from "the token was rejected".
 buildinfo="$(timeout "${PROBE_TIMEOUT}" \
-  docker compose exec -T "${CODER_SERVICE}" \
+  docker exec -i "${CODER_CONTAINER}" \
   curl -fsS -m 5 "${CONTAINER_API_URL}/api/v2/buildinfo" </dev/null 2>&1)" || probe_rc=$?
 probe_rc="${probe_rc:-0}"
 if [ "${probe_rc}" != "0" ]; then

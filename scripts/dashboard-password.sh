@@ -26,6 +26,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# shellcheck source=lib/coder_api.sh disable=SC1091
+source "scripts/lib/coder_api.sh"
+
 ENV_FILE="${DASHBOARD_ENV_FILE:-.env}"
 KEY="HOMEPAGE_AUTH_PASSWORD"
 MIN_LEN=12
@@ -136,8 +139,12 @@ fi
 
 if [ "${APPLY}" = 1 ]; then
   # Checked here rather than at the docker call, so an offline run fails before
-  # .env has already moved on to a password nobody is logged in with.
-  command -v docker >/dev/null 2>&1 || die "docker not found on PATH (use --no-apply to update .env only)"
+  # .env has already moved on to a password nobody is logged in with. The
+  # unquoted DOCKER_BIN splits "sudo docker" into both words, and every
+  # daemon probe below is bounded by timeout(1), so both must be present.
+  # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
+  command -v ${DOCKER_BIN} >/dev/null 2>&1 || die "docker not found on PATH (use --no-apply to update .env only)"
+  command -v timeout >/dev/null 2>&1 || die "timeout(1) not found on PATH (use --no-apply to update .env only)"
 fi
 
 case "${MODE}" in
@@ -286,17 +293,40 @@ if [ "${APPLY}" = 0 ]; then
   echo "not applied: rerun without --no-apply, or run"
   echo "  docker compose up -d --force-recreate homepage"
 else
-  docker compose up -d --force-recreate homepage
+  # The homepage container is FOUND on the daemon, by container label, and then
+  # recreated inside the compose project that created it — never through a
+  # cwd-resolved project (scripts/lib/coder_api.sh: a bare `docker compose`
+  # run from any other directory, `bazelisk run` above all, resolves a shadow
+  # project and would build a second homepage with the wrong binds and no .env
+  # interpolation, leaving the real one on the old password).
+  if ! running="$(stack_ps)"; then
+    die "could not query the docker daemon: ${running}"
+  fi
+  HOME_CONTAINER="$(stack_container "${running}" homepage)"
+  [ -n "${HOME_CONTAINER}" ] ||
+    die "could not find the homepage container on the docker daemon (use --no-apply to update .env only)"
+  compose_target="$(stack_compose_target "${HOME_CONTAINER}")"
+  compose_proj="${compose_target%%|*}"
+  compose_file="${compose_target#*|}"
+  if [ -z "${compose_proj}" ] || [ -z "${compose_file}" ] ||
+    [ "${compose_file}" = "${compose_target}" ] || [ ! -f "${compose_file}" ]; then
+    die "the homepage container answers to no compose project this shell can read; recreate it by hand from the checkout root: docker compose up -d --force-recreate homepage"
+  fi
 
-  # No `head -n 1` here: closing the pipe early would hand docker compose a
-  # SIGPIPE, and pipefail would turn that into a spurious failure.
-  cid="$(docker compose ps --quiet homepage 2>/dev/null || true)"
-  cid="${cid%%[[:space:]]*}"
-  [ -n "${cid}" ] || die "could not find the homepage container; check: docker compose ps homepage"
+  # -p and -f rebuild the addressing the stack was started with, from any
+  # cwd: the compose file also names its own directory, and with it the .env
+  # this script just rewrote, so the recreated container interpolates
+  # HOMEPAGE_AUTH_PASSWORD exactly as `docker compose up -d` from the checkout
+  # root would have. DOCKER_BIN stays unquoted for the "sudo docker" override.
+  # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
+  ${DOCKER_BIN} compose -p "${compose_proj}" -f "${compose_file}" up -d --force-recreate homepage
 
-  # Compare hashes, never values: the container's own env is dumped through a
-  # pipe into a variable, and only the digest is ever printed or compared.
-  container_env="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${cid}")"
+  # Compose recreates the container under the same name inside the same
+  # project, so the name found above now names the NEW container; and there is
+  # no `head -n 1` anywhere in this branch, because closing a pipe early would
+  # hand docker a SIGPIPE that pipefail would report as a spurious failure.
+  # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
+  container_env="$(timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${HOME_CONTAINER}" 2>/dev/null || true)"
   env_line="$(printf '%s\n' "${container_env}" | grep "^${KEY}=" || true)"
   [ -n "${env_line}" ] || die "the homepage container has no ${KEY} entry; check: docker compose config"
 

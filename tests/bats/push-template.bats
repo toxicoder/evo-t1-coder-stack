@@ -7,7 +7,7 @@
 # tests/bats/tool_stubs/ copies (use_stubs), and every run happens inside a
 # throwaway root built by fake_root (its own .env, its own template tree), so
 # neither the checkout's real .env nor a live compose stack is consulted. The
-# docker stub's `compose exec` passthrough (STUB_DOCKER_EXEC_RUN=1, the default)
+# docker stub's `exec` passthrough (STUB_DOCKER_EXEC_RUN=1, the default)
 # drives the whole CLI chain: the exec'd `coder` resolves through the same
 # shadowed PATH, so the push, the versions list and the description edit all
 # answer from the coder stub. STUB_DOCKER_EXEC_RUN=0 with STUB_DOCKER_EXEC_RC and
@@ -77,11 +77,12 @@ psql_token_variant() {
   chmod 755 "${BATS_TEST_TMPDIR?}/bin/psql"
 }
 
-# running_stack — answer `docker compose ps` with both services, let the buildinfo
-# probe answer (empty body, rc 0) and pretend the dev image exists, so a failing
+# running_stack — answer the daemon-wide `docker ps` probe with both services
+# (the "service|container" shape stack_ps prints), let the buildinfo probe answer
+# (empty body, rc 0) and pretend the dev image exists, so a failing
 # `docker image inspect` does not add its note to every expected output.
 running_stack() {
-  export STUB_COMPOSE_PS=$'db\ncoder'
+  export STUB_COMPOSE_PS=$'db|stack-db-1\ncoder|stack-coder-1'
   export STUB_COMPOSE_PS_RC=0
   export STUB_CURL_RC=0
   export STUB_DOCKER_INSPECT=1
@@ -112,7 +113,7 @@ logs_absent() {
   [ "${scanned}" -eq 1 ]
 }
 
-@test "push-template: skips when no service is running (empty compose ps)" {
+@test "push-template: skips when no service is running (empty daemon ps body)" {
   root="$(fake_root push-template.sh)"
   export STUB_COMPOSE_PS=''
   run --separate-stderr bash "${root}/scripts/push-template.sh"
@@ -121,7 +122,7 @@ logs_absent() {
   [ "$(stub_log_count psql)" -eq 0 ]
 }
 
-@test "push-template: skips on a failed compose ps (docker access, exit 22)" {
+@test "push-template: skips on a failed daemon ps probe (docker access, exit 22)" {
   root="$(fake_root push-template.sh)"
   export STUB_COMPOSE_PS='coder'
   export STUB_COMPOSE_PS_RC=22
@@ -133,7 +134,7 @@ logs_absent() {
 
 @test "push-template: skips when only coder runs (no db means no push token)" {
   root="$(fake_root push-template.sh)"
-  export STUB_COMPOSE_PS='coder'
+  export STUB_COMPOSE_PS='coder|stack-coder-1'
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 0 ]
   [ "${output}" = "skipped: the db service is not running, so no push token can be minted (start the stack with: docker compose up -d)" ]
@@ -147,8 +148,8 @@ logs_absent() {
   [ "${status}" -eq 1 ]
   # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
   [[ ${stderr} == "error: the Coder API at http://127.0.0.1:3000 is not answering inside the coder container ()"* ]]
-  [ "$(stub_log_last timeout)" = "timeout 20 docker compose exec -T coder curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
-  [ "$(stub_log_last docker)" = "docker compose exec -T coder curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
+  [ "$(stub_log_last timeout)" = "timeout 20 docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
+  [ "$(stub_log_last docker)" = "docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
   [ "$(stub_log_last curl)" = "curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
 }
 
@@ -233,6 +234,9 @@ logs_absent() {
   grep -Fq -- 'coder whoami' "${STUB_LOG}/docker.log"
   grep -Fq -- '-e CODER_SESSION_TOKEN' "${STUB_LOG}/docker.log"
   logs_absent 'CODER_SESSION_TOKEN=|[0-9a-f]{10}-[0-9a-f]{22}' "${STUB_LOG}"/*.log
+  # The whole chain addresses the daemon directly: not one call may resolve a
+  # compose project from the cwd (the class of bug this shape exists to kill).
+  logs_absent 'docker compose' "${STUB_LOG}/docker.log"
 }
 
 @test "push-template: no ACTIVE row counts both templates as failed (exit 1)" {
@@ -257,12 +261,13 @@ logs_absent() {
   export STUB_DOCKER_EXEC_OUT='Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?'
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 1 ]
-  # The buildinfo probe is the first docker exec, so a daemon that will not
-  # answer reads as an unreachable API — and nothing is pushed.
+  # The stack probe answers (running_stack), so the first refused call is the
+  # buildinfo exec: a daemon that will not answer the in-container calls reads
+  # as an unreachable API — and nothing is pushed.
   [[ ${stderr} == *"Cannot connect to the Docker daemon at unix:///var/run/docker.sock"* ]]
   # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
   [[ ${stderr} == "error: the Coder API at http://127.0.0.1:3000 is not answering inside the coder container"* ]]
-  [[ "$(stub_log docker)" == *"compose exec"* ]]
+  [[ "$(stub_log docker)" == *"exec -i"* ]]
   logs_absent 'templates push' "${STUB_LOG}/docker.log"
   [ "$(stub_log_count psql)" -eq 0 ]
 }
@@ -332,10 +337,28 @@ source_libs() {
   printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
   export CONTAINER_API_URL="http://coder:3002"
   export session_token="kid-secret"
+  export CODER_CONTAINER=stack-coder-1
   run --separate-stderr template_push_one tpl1 "${BATS_TEST_TMPDIR}/tpl" --var image=tag
   [ "${status}" -eq 0 ]
   [[ "$(stub_log_last docker)" == *"coder templates push tpl1 --directory - --yes --var image=tag"* ]]
   [[ "$(stub_log_last docker)" != *kid-secret* ]]
+}
+
+@test "template-push: an unresolved CODER_CONTAINER refuses before anything runs" {
+  source_libs
+  # A run that never resolved a container (daemon down, wrong service name)
+  # must fail locally with a named cause — never stream a tar at nothing.
+  mkdir -p "${BATS_TEST_TMPDIR}/tpl-nopc" "${BATS_TEST_TMPDIR}/common"
+  printf '%s\n' 'resource "coder_script" "w" {}' > "${BATS_TEST_TMPDIR}/tpl-nopc/main.tf"
+  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
+  printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
+  export CONTAINER_API_URL="http://coder:3002"
+  export session_token="kid-secret"
+  run --separate-stderr template_push_one tpl4 "${BATS_TEST_TMPDIR}/tpl-nopc"
+  [ "${status}" -eq 1 ]
+  [[ ${stderr} == *"no coder container was resolved (CODER_CONTAINER is empty) - nothing was pushed"* ]]
+  [ -z "$(stub_log docker)" ]
+  [ -z "$(stub_log coder)" ]
 }
 
 @test "template-push: the seed payloads ride inside the pushed tar" {
@@ -344,7 +367,7 @@ source_libs() {
   # startup script) and vscode-alt.svg (filebase64(), into the editor icon)
   # from inside the pushed copy, so the staging must drop both common copies
   # into the tar and .terraform/ must stay out. The sink DOCKER_BIN stands in
-  # for `docker compose exec -T -i`: it drains stdin into a file instead of
+  # for `docker exec -i`: it drains stdin into a file instead of
   # exec'ing the coder stub, which is how the tar stream becomes inspectable.
   mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' 'resource "coder_script" "x" {}' > "${BATS_TEST_TMPDIR}/tpl/main.tf"
@@ -354,6 +377,7 @@ source_libs() {
   printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' > "${BATS_TEST_TMPDIR}/bin/tar-sink"
   chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
   export DOCKER_BIN=tar-sink
+  export CODER_CONTAINER=stack-coder-1
   template_push_one tpl1 "${BATS_TEST_TMPDIR}/tpl"
   if [ ! -f "${STUB_LOG}/push.tar" ]; then
     printf 'FAIL: no tar stream reached the sink\n' >&2
@@ -376,6 +400,7 @@ source_libs() {
   # and before the CLI runs, so the operator sees the missing file by name.
   mkdir -p "${BATS_TEST_TMPDIR}/tpl-noseed"
   printf '%s\n' 'resource "coder_script" "y" {}' > "${BATS_TEST_TMPDIR}/tpl-noseed/main.tf"
+  export CODER_CONTAINER=stack-coder-1
   run --separate-stderr template_push_one tpl2 "${BATS_TEST_TMPDIR}/tpl-noseed"
   [ "${status}" -eq 1 ]
   [[ ${stderr} == *"common/GROK_BUILD_AGENTS.md is missing"* ]]
@@ -392,6 +417,7 @@ source_libs() {
   mkdir -p "${BATS_TEST_TMPDIR}/tpl-nosvg" "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' 'resource "coder_script" "z" {}' > "${BATS_TEST_TMPDIR}/tpl-nosvg/main.tf"
   printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
+  export CODER_CONTAINER=stack-coder-1
   run --separate-stderr template_push_one tpl3 "${BATS_TEST_TMPDIR}/tpl-nosvg"
   [ "${status}" -eq 1 ]
   [[ ${stderr} == *"common/vscode-alt.svg is missing"* ]]
@@ -402,6 +428,7 @@ source_libs() {
 
 @test "template-push: template_verify_active reads the ACTIVE row and fails without one" {
   source_libs
+  export CODER_CONTAINER=stack-coder-1
   printf 'ID ACTIVE\ndeadbeef-1234-4abc-9999-aabbccddeeff Active\n' > "${BATS_TEST_TMPDIR}/out1.txt"
   export STUB_CODER_OUT="${BATS_TEST_TMPDIR}/out1.txt"
   id="$(template_verify_active tpl1)"
@@ -417,6 +444,7 @@ source_libs() {
 
 @test "template-push: template_set_description skips empty text and pushes real text" {
   source_libs
+  export CODER_CONTAINER=stack-coder-1
   template_set_description tpl1 ""
   [ "$(stub_log_count coder)" -eq 0 ]
   template_set_description tpl1 "General dev workspace"
@@ -425,6 +453,7 @@ source_libs() {
 
 @test "template-push: template_set_autostop_off pins the default TTL and the activity bump" {
   source_libs
+  export CODER_CONTAINER=stack-coder-1
   # Both halves of the pair travel on one `templates edit`: the default TTL is what
   # decides whether a new workspace starts with an autostop deadline, and the activity
   # bump only ever extends one.

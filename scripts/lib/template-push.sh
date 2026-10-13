@@ -22,13 +22,13 @@
 #     because that is where the server-side Terraform reads them from.
 #   - No timeout cap on the push itself: a server-side Terraform plan+apply
 #     legitimately takes minutes; capping it would fail correct pushes.
-#   - Credentials travel in the environment (via compose -e NAME flags), never
-#     in argv, where `ps` would show them.
+#   - Credentials travel in the environment (via `docker exec -e NAME` flags),
+#     never in argv, where `ps` would show them.
 #
 # Usage (from an entry script, after `set -euo pipefail` and the repo-root `cd`):
 #   # shellcheck source=lib/template-push.sh disable=SC1091
 #   source "scripts/lib/template-push.sh"   # sources common.sh + coder_api.sh when needed
-# The caller is expected to have set DOCKER_BIN, CODER_SERVICE,
+# The caller is expected to have resolved DOCKER_BIN, CODER_CONTAINER,
 # CONTAINER_API_URL and session_token (defaults and knobs: scripts/lib/coder_api.sh).
 
 if ! declare -f has_tool >/dev/null 2>&1; then
@@ -62,17 +62,21 @@ fi
 # provider binaries into the version's Filestore row. A missing payload is a
 # hard stop - the push would die in the server's Terraform anyway; naming the
 # missing file here costs the operator one line instead of a confused
-# debugging session there. Trailing arguments are appended verbatim to the CLI
+# debugging session there. A run that never resolved CODER_CONTAINER (or a
+# staging copy that lost a payload) stops the same way, before any CLI call.
+# Trailing arguments are appended verbatim to the CLI
 # line, so a caller's shared `--var` array passes through:
 #   template_push_one "$name" "$dir" ${vars[@]+"${vars[@]}"}
 # The token stays out of argv via -e NAME (value through the environment);
-# stdin is the tar, which is why -T -i stay on the compose exec flags.
+# stdin is the tar, which is why the exec runs with -i — no -t (no TTY) on
+# either half, exactly the role compose's -T -i pair used to play.
 # @function template_push_one
 # Stage a template dir with the common payload copies, then push it as a tar.
 # .terraform is excluded; a staged copy always carries the payloads, and a
-# payload missing from common/ fails the push before the CLI runs.
+# payload missing from common/ (or an unresolved CODER_CONTAINER) fails the
+# push before the CLI runs.
 # Globals:
-#   DOCKER_BIN, CODER_SERVICE, CONTAINER_API_URL, session_token
+#   DOCKER_BIN, CODER_CONTAINER, CONTAINER_API_URL, session_token
 # Arguments:
 #   $1 - template name; $2 - directory; remaining args pass to templates push
 # Outputs:
@@ -84,6 +88,11 @@ template_push_one() {
   shift 2
   local stage="" common="" payload="" missing="" push_rc=0
   stage="$(mktemp -d)" || return 1
+  if [ -z "${CODER_CONTAINER:-}" ]; then
+    rm -rf "${stage}"
+    printf 'error: %s: no coder container was resolved (CODER_CONTAINER is empty) - nothing was pushed\n' "${name}" >&2
+    return 1
+  fi
   common="$(dirname "${dir}")/common"
   for payload in GROK_BUILD_AGENTS.md vscode-alt.svg; do
     if [ ! -f "${common}/${payload}" ]; then
@@ -110,8 +119,7 @@ template_push_one() {
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
   tar -C "${stage}" -cf - . |
     CODER_URL="${CONTAINER_API_URL:-}" CODER_SESSION_TOKEN="${session_token:-}" \
-      ${DOCKER_BIN} compose exec -T -i \
-      -e CODER_URL -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
+      ${DOCKER_BIN} exec -i -e CODER_URL -e CODER_SESSION_TOKEN "${CODER_CONTAINER}" \
       coder templates push "${name}" --directory - --yes "$@"
   push_rc=$?
   rm -rf "${stage}"
@@ -132,7 +140,7 @@ template_push_one() {
 # @function template_verify_active
 # Print the ACTIVE version id of a template, or fail when there is none.
 # Globals:
-#   UUID_RE, coder_exec, CODER_SERVICE
+#   UUID_RE, coder_exec, CODER_CONTAINER
 # Arguments:
 #   $1 - template name
 # Outputs:
@@ -144,8 +152,8 @@ template_verify_active() {
   verify_out="$(coder_exec templates versions list "${name}" --column id --column active 2>&1)" || verify_rc=$?
   if [ "${verify_rc}" != "0" ]; then
     printf '%s\n' "${verify_out}" >&2
-    printf 'error: pushed %s but could not read its versions (exit %s) — inspect from the host: docker compose exec %s coder templates versions list %s\n' \
-      "${name}" "${verify_rc}" "${CODER_SERVICE}" "${name}" >&2
+    printf 'error: pushed %s but could not read its versions (exit %s) — inspect from the host: docker exec %s coder templates versions list %s\n' \
+      "${name}" "${verify_rc}" "${CODER_CONTAINER:-}" "${name}" >&2
     return 1
   fi
   active_id="$(printf '%s\n' "${verify_out}" |
@@ -154,8 +162,8 @@ template_verify_active() {
     sed -n '1p' || true)"
   if [ -z "${active_id}" ]; then
     printf '%s\n' "${verify_out}" >&2
-    printf 'error: pushed %s but it has no active version — new workspaces cannot use it; inspect: docker compose exec %s coder templates versions list %s\n' \
-      "${name}" "${CODER_SERVICE}" "${name}" >&2
+    printf 'error: pushed %s but it has no active version — new workspaces cannot use it; inspect: docker exec %s coder templates versions list %s\n' \
+      "${name}" "${CODER_CONTAINER:-}" "${name}" >&2
     return 1
   fi
   printf '%s' "${active_id}"

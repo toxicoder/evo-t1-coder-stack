@@ -184,20 +184,26 @@ command -v docker >/dev/null 2>&1 ||
 command -v timeout >/dev/null 2>&1 ||
   skip "skipped: timeout(1) is not available, so the API probes below cannot be bounded"
 
-if ! running="$(docker compose ps --status running --services 2>&1)"; then
+# Find the stack's containers on the daemon, by label, and resolve them to
+# container names — a cwd-resolved compose project would name a different
+# project (or none) under `bazelisk run`; scripts/lib/coder_api.sh keeps the
+# reason and the helper.
+if ! running="$(stack_ps)"; then
   skip "skipped: could not query the stack ($(first_line "${running}")) — this script needs docker access; run it with sudo, or add your user to the docker group"
 fi
-if ! grep -qx "${CODER_SERVICE}" <<<"${running}"; then
+CODER_CONTAINER="$(stack_container "${running}" "${CODER_SERVICE}")"
+DB_CONTAINER="$(stack_container "${running}" "${DB_SERVICE}")"
+if [ -z "${CODER_CONTAINER}" ]; then
   skip "skipped: the ${CODER_SERVICE} service is not running yet (start the stack with: docker compose up -d)"
 fi
-if ! grep -qx "${DB_SERVICE}" <<<"${running}"; then
+if [ -z "${DB_CONTAINER}" ]; then
   skip "skipped: the ${DB_SERVICE} service is not running, so no admin token can be minted (start the stack with: docker compose up -d)"
 fi
 
 # curl is used rather than the coder CLI because it needs no session file;
 # the coder image ships it (push-template.sh relies on the same probe).
 buildinfo="$(timeout "${PROBE_TIMEOUT}" \
-  docker compose exec -T "${CODER_SERVICE}" \
+  docker exec -i "${CODER_CONTAINER}" \
   curl -fsS -m 5 "${CONTAINER_API_URL}/api/v2/buildinfo" </dev/null 2>&1)" || probe_rc=$?
 probe_rc="${probe_rc:-0}"
 if [ "${probe_rc}" != "0" ]; then
@@ -311,13 +317,14 @@ esac
 session_token="${key_id}-${key_secret}"
 
 # ── API helpers ─────────────────────────────────────────────────────────────
-# -T keeps output parseable; -i (write calls) streams the JSON body on stdin.
-# The Authorization header is assembled by the IN-CONTAINER shell from
-# CODER_SESSION_TOKEN (passed as -e NAME, value via the env, never argv).
+# -i keeps stdin open and no -t means no TTY, so the output stays parseable
+# (the pair a compose `exec -T` used to give). The Authorization header is
+# assembled by the IN-CONTAINER shell from CODER_SESSION_TOKEN (passed as
+# -e NAME, value via the env, never argv).
 # @function api_read
 # GET one Coder API path with the session token in the environment, not argv.
 # Globals:
-#   session_token, API_TIMEOUT, CODER_SERVICE, CONTAINER_API_URL
+#   session_token, API_TIMEOUT, CODER_CONTAINER, CONTAINER_API_URL
 # Arguments:
 #   $1 - API path beginning with /
 # Outputs:
@@ -327,8 +334,8 @@ session_token="${key_id}-${key_secret}"
 api_read() {
   # $1 = path. Prints the body; a non-2xx exits non-zero (curl -f).
   CODER_SESSION_TOKEN="${session_token}" \
-    timeout "${API_TIMEOUT}" docker compose exec -T \
-    -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
+    timeout "${API_TIMEOUT}" docker exec -i \
+    -e CODER_SESSION_TOKEN "${CODER_CONTAINER}" \
     sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" "$1"' \
     sh "${CONTAINER_API_URL}${1}"
 }
@@ -336,7 +343,7 @@ api_read() {
 # @function api_write
 # Send one JSON body to a Coder API path. The token stays in the environment.
 # Globals:
-#   session_token, API_TIMEOUT, CODER_SERVICE, CONTAINER_API_URL
+#   session_token, API_TIMEOUT, CODER_CONTAINER, CONTAINER_API_URL
 # Arguments:
 #   $1 - HTTP method; $2 - API path; $3 - JSON body
 # Outputs:
@@ -346,8 +353,8 @@ api_read() {
 api_write() {
   # $1 = method, $2 = path, $3 = JSON body.
   printf '%s' "$3" | CODER_SESSION_TOKEN="${session_token}" \
-    timeout "${API_TIMEOUT}" docker compose exec -T -i \
-    -e CODER_SESSION_TOKEN "${CODER_SERVICE}" \
+    timeout "${API_TIMEOUT}" docker exec -i \
+    -e CODER_SESSION_TOKEN "${CODER_CONTAINER}" \
     sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" -H "Content-Type: application/json" -X "$1" --data-binary @- "$2"' \
     sh "$1" "${CONTAINER_API_URL}${2}"
 }

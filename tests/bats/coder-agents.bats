@@ -6,10 +6,10 @@
 # Hermetic by construction: docker, timeout, curl, psql and coder all resolve to
 # the tests/bats/tool_stubs/ copies (use_stubs), and the script runs from a
 # throwaway root built by fake_root with its own .env, so neither the checkout's
-# real .env nor a live compose stack is consulted. The docker stub's `compose
-# exec` passthrough (STUB_DOCKER_EXEC_RUN=1, the default) is what makes the
+# real .env nor a live compose stack is consulted. The docker stub's `exec`
+# passthrough (STUB_DOCKER_EXEC_RUN=1, the default) is what makes the
 # in-container half of the chain testable: the exec'd binary resolves through the
-# same shadowed PATH, so `… compose exec -T coder curl …` lands on the curl stub.
+# same shadowed PATH, so `… exec -i <container> curl …` lands on the curl stub.
 #
 # Seeding psql: tool_stubs/psql prints a fixed body, and the script only walks
 # off the token mint when that body equals the api_keys id it just minted (which
@@ -59,10 +59,11 @@ psql_token_variant() {
   chmod 755 "${BATS_TEST_TMPDIR?}/bin/psql"
 }
 
-# running_stack — answer `docker compose ps` with both services, and let the
-# buildinfo probe answer too (an empty body with rc 0 is an "answered" probe).
+# running_stack — answer the daemon-wide `docker ps` probe with both services
+# (the "service|container" shape stack_ps prints), and let the buildinfo probe
+# answer too (an empty body with rc 0 is an "answered" probe).
 running_stack() {
-  export STUB_COMPOSE_PS=$'db\ncoder'
+  export STUB_COMPOSE_PS=$'db|stack-db-1\ncoder|stack-coder-1'
   export STUB_COMPOSE_PS_RC=0
   export STUB_CURL_RC=0
 }
@@ -84,7 +85,7 @@ logs_absent() {
   [ "${scanned}" -eq 1 ]
 }
 
-@test "coder-agents: skips when no service is running (empty compose ps)" {
+@test "coder-agents: skips when no service is running (empty daemon ps body)" {
   root="$(fake_root)"
   export STUB_COMPOSE_PS=''
   run --separate-stderr bash "${root}/scripts/coder-agents.sh"
@@ -95,14 +96,14 @@ logs_absent() {
 
 @test "coder-agents: skips when only db runs (the coder service is checked first)" {
   root="$(fake_root)"
-  export STUB_COMPOSE_PS='db'
+  export STUB_COMPOSE_PS='db|stack-db-1'
   run --separate-stderr bash "${root}/scripts/coder-agents.sh"
   [ "${status}" -eq 0 ]
   [ "${output}" = "skipped: the coder service is not running yet (start the stack with: docker compose up -d)" ]
   [ "$(stub_log_count docker)" -eq 1 ]
 }
 
-@test "coder-agents: skips on a failed compose ps (docker access, exit 22)" {
+@test "coder-agents: skips on a failed daemon ps probe (docker access, exit 22)" {
   root="$(fake_root)"
   export STUB_COMPOSE_PS='coder'
   export STUB_COMPOSE_PS_RC=22
@@ -144,8 +145,8 @@ logs_absent() {
   [[ ${stderr} == "error: the Coder API at http://127.0.0.1:3000 is not answering inside the coder container ()"* ]]
   [[ ${stderr} == *"check: docker compose logs --tail 100 coder"* ]]
   # The probe is capped, and it reaches curl through the docker-exec passthrough.
-  [ "$(stub_log_last timeout)" = "timeout 20 docker compose exec -T coder curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
-  [ "$(stub_log_last docker)" = "docker compose exec -T coder curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
+  [ "$(stub_log_last timeout)" = "timeout 20 docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
+  [ "$(stub_log_last docker)" = "docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
   [ "$(stub_log_last curl)" = "curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
 }
 
@@ -191,7 +192,7 @@ logs_absent() {
   # The mint succeeded (the fixture answered) and the API phase ran through the
   # docker-exec chain, so this is the run that could have leaked the token.
   [[ ${output} == *"creating AI provider litellm (base_url http://litellm:4000/v1)"* ]]
-  # Host-side argv is what the seam is responsible for: the compose exec line
+  # Host-side argv is what the seam is responsible for: the docker-exec line
   # names CODER_SESSION_TOKEN without its value. (Under the exec passthrough the
   # in-container `sh -c` runs on the host, so curl.log does see the expanded
   # header — that mirrors the container-side argv, not the host's.)
@@ -272,11 +273,20 @@ source_libs() {
   source "${REPO_ROOT}/scripts/lib/coder_api.sh"
 }
 
-@test "coder_api: psql_sql builds a capped -T exec and merges psql's stderr" {
+source_coder_api() {
+  # coder_api.sh alone, for the tests below that call `skip` as a guard:
+  # common.sh defines its own `skip` (print + exit 0), which would shadow the
+  # bats builtin and turn a guarded skip into a hard failure.
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/scripts/lib/coder_api.sh"
+}
+
+@test "coder_api: psql_sql builds a capped -i exec and merges psql's stderr" {
   source_libs
+  export DB_CONTAINER=stack-db-1
   run --separate-stderr psql_sql "SELECT 1;"
   [ "${status}" -eq 0 ]
-  [[ "$(stub_log_last timeout)" == "timeout 20 docker compose exec -T db psql "* ]]
+  [[ "$(stub_log_last timeout)" == "timeout 20 docker exec -i stack-db-1 psql "* ]]
   [[ "$(stub_log_last psql)" == *"ON_ERROR_STOP=1 -q -c SELECT 1;"* ]]
 
   export STUB_PSQL_RC=1
@@ -287,6 +297,7 @@ source_libs() {
 
 @test "coder_api: psql_query prints only the trimmed single-column value" {
   source_libs
+  export DB_CONTAINER=stack-db-1
   export STUB_PSQL_OUT=" 1 "
   v="$(psql_query "select id from users limit 1;")"
   [ "${v}" = "1" ]
@@ -297,9 +308,10 @@ source_libs() {
   source_libs
   export CONTAINER_API_URL="http://coder:3002/api/private"
   export session_token="kid-secret"
+  export CODER_CONTAINER=stack-coder-1
   run --separate-stderr coder_exec whoami
   [ "${status}" -eq 0 ]
-  [ "$(stub_log_last docker)" = "docker compose exec -T -e CODER_URL -e CODER_SESSION_TOKEN coder coder whoami" ]
+  [ "$(stub_log_last docker)" = "docker exec -i -e CODER_URL -e CODER_SESSION_TOKEN stack-coder-1 coder whoami" ]
   [[ "$(stub_log_last docker)" != *kid-secret* ]]
 }
 
@@ -308,8 +320,94 @@ source_libs() {
   printf '#!/usr/bin/env bash\nshift\nexec docker "$@"\n' > "${BATS_TEST_TMPDIR}/bin/fakebin"
   chmod 755 "${BATS_TEST_TMPDIR}/bin/fakebin"
   DOCKER_BIN="fakebin docker"
+  export DB_CONTAINER=stack-db-1
   run --separate-stderr psql_sql "SELECT 1;"
   [ "${status}" -eq 0 ]
-  [[ "$(stub_log_last docker)" == "docker compose exec -T db psql "* ]]
+  [[ "$(stub_log_last docker)" == "docker exec -i stack-db-1 psql "* ]]
+}
+
+@test "coder_api: stack_ps asks the whole daemon and names no compose project" {
+  source_coder_api
+  run --separate-stderr stack_ps
+  [ "${status}" -eq 0 ]
+  # The probe must never resolve a compose project: no call may carry the
+  # word "compose" as a subcommand (a project-resolved probe is exactly the
+  # bug this seam exists to kill). The label KEY com.docker.compose.service
+  # is allowed to appear — it is data, not addressing.
+  [[ "$(stub_log_last docker)" == "docker ps --format "* ]]
+  [[ "$(stub_log_last docker)" != *"docker compose "* ]]
+  [[ "$(stub_log_last timeout)" == "timeout 20 docker ps --format "* ]]
+}
+
+@test "coder_api: stack_container picks the oldest container and matches whole fields" {
+  source_coder_api
+  # `docker ps` lists newest first, so a LATER line is the OLDER container:
+  # with the dev stack up beside the stable one, the last match is the stable
+  # service's copy, and that is the one every caller here means to address.
+  local body='litellm|evo-t1-dev-litellm-1
+coder|evo-t1-dev-coder-1
+coder|evo-t1-coder-stack-coder-1'
+  [ "$(stack_container "${body}" coder)" = "evo-t1-coder-stack-coder-1" ]
+  # Whole-field matching on the LABEL column, never on names: a container
+  # whose label merely contains the wanted service must not answer for it.
+  local body2='xdb|other-db-1
+coder|stack-coder-1'
+  [ -z "$(stack_container "${body2}" db)" ]
+  [ -z "$(stack_container "${body2}" xdbx)" ]
+  [ -z "$(stack_container "" coder)" ]
+}
+
+@test "coder_api: stack_compose_target splits the project and file that built a container" {
+  source_coder_api
+  # A fake DOCKER_BIN replays whatever the two labels hold, so this pins the
+  # contract dashboard-password.sh splits on: a real compose container answers
+  # "project|file"; a docker-run container (or Coder-built workspace box,
+  # hand-labelled) answers "|" with BOTH sides empty — and callers must treat
+  # that as "cannot tell", never guess a project.
+  printf '%s\n' '#!/usr/bin/env bash' 'printf '"'"'%s\n'"'"' "${FAKE_LABELS-}"' >"${BATS_TEST_TMPDIR}/bin/fakedocker"
+  chmod 755 "${BATS_TEST_TMPDIR}/bin/fakedocker"
+  DOCKER_BIN=fakedocker
+  export FAKE_LABELS='evo-t1-coder-stack|/home/alx/stack/docker-compose.yml'
+  target="$(stack_compose_target stack-coder-1)"
+  [ "${target%%|*}" = "evo-t1-coder-stack" ]
+  [ "${target#*|}" = "/home/alx/stack/docker-compose.yml" ]
+  export FAKE_LABELS='|'
+  target="$(stack_compose_target dev-coder)"
+  [ -z "${target%%|*}" ]
+  [ -z "${target#*|}" ]
+}
+
+@test "coder_api: discovery crosses compose-project boundaries (live daemon)" {
+  source_coder_api
+  if [ -z "$(real_bin docker)" ] || [ -z "$(real_bin timeout)" ]; then
+    skip "docker and timeout(1) must both be on PATH for this integration-tier test"
+  fi
+  # Integration tier: drop the stub bin from PATH so the seam talks to the
+  # real daemon. The cwd plays no role any more — that is the point.
+  local stripped
+  stripped="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -vxF "${BATS_TEST_TMPDIR?}/bin" | paste -sd: -)"
+  PATH="${stripped}"
+  if ! docker info >/dev/null 2>&1; then
+    skip "no reachable docker daemon"
+  fi
+  if ! docker image inspect alpine:3.20 >/dev/null 2>&1; then
+    skip "alpine:3.20 is not in the local image store"
+  fi
+  # One throwaway container, labelled as if compose-managed but belonging to
+  # NO compose project resolvable from this cwd: a project-scoped probe would
+  # answer "nothing running" here, while the daemon-wide probe must not.
+  local probe="bats-cross-proj-$$"
+  docker rm -f "${probe}" >/dev/null 2>&1 || true
+  if ! docker run -d --rm --name "${probe}" -l com.docker.compose.service=coder alpine:3.20 sleep 30 >/dev/null 2>&1; then
+    skip "could not start a throwaway container on this daemon"
+  fi
+  local body=""
+  if ! body="$(stack_ps)"; then
+    docker rm -f "${probe}" >/dev/null 2>&1 || true
+    skip "docker ps refused to answer"
+  fi
+  [[ "${body}" == *"coder|${probe}"* ]]
+  [ "$(stack_container "${body}" coder)" = "${probe}" ]
+  docker rm -f "${probe}" >/dev/null 2>&1
 }
 

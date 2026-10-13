@@ -109,6 +109,7 @@ load_fn() {
   source "${REPO_ROOT}/scripts/lib/coder_api.sh"
   load_fn scripts/coder-agents.sh cleanup_token
   TOKEN_NAME="stack-coder-agents"
+  export DB_CONTAINER=stack-db-1 # psql_sql refuses to run without a resolved container
   cleanup_token
   assert_match "delete" 'stack-coder-agents' "$(stub_log_last psql)"
 }
@@ -143,6 +144,7 @@ load_fn() {
   source "${REPO_ROOT}/scripts/lib/coder_api.sh"
   load_fn scripts/push-template.sh cleanup_token
   TOKEN_NAME="stack-template-push"
+  export DB_CONTAINER=stack-db-1 # psql_sql refuses to run without a resolved container
   cleanup_token
   assert_match "delete" 'stack-template-push' "$(stub_log_last psql)"
 }
