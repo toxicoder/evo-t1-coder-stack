@@ -163,7 +163,7 @@ Then:
    accordingly, and drives `coder create` with the right template parameters — the same
    choice, by hand, is: create a workspace in the UI, pick the template, and fill the
    **Git repository** field.
-5. Kasm: on first boot open `https://<host>:3000`, run the install wizard once, then use `https://<host>:4443` for the Kasm UI. Both ports serve TLS with the self-signed certificate Kasm's own installer generates, so expect the same one-time browser warning the dashboard gives — plain `http://` reaches neither port.
+5. Kasm: on first boot open `https://<host>:3000`, run the install wizard once, then use `https://<host>:4443` for the Kasm UI (full detail in section "Kasm" below). Both ports serve TLS with the self-signed certificate Kasm's own installer generates, so expect the same one-time browser warning the dashboard gives — plain `http://` reaches neither port.
 6. Dashboard: open `https://<host>/` and sign in with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap.sh` printed.
 
 ## Development model
@@ -210,15 +210,14 @@ when no daemon is reachable.
 
 Bazelisk is how changes are tested. The `make` shims call the same targets:
 `make test`/`lint`/`fix`/`validate`, plus `make stack-up`/`stack-down`/`stack-status`/
-`stack-logs`/`stack-reset` for the dev stack (each passes `PROJECT`, default `evo-t1-dev`,
-as `--project-name`).
+`stack-logs`/`stack-reset` for the dev stack (each passes `PROJECT` as `--project-name`;
+the flags and the `evo-t1-dev` default are above).
 
 ```sh
 bazelisk test //:test-fast
 bazelisk test //:lint --test_tag_filters=manual
 bazelisk run //:validate
 bazelisk run //:fix
-bazelisk run //scripts:dev-stack -- up
 ```
 
 `//:test-fast` is hermetic Bats plus two gates: every function under `scripts/` is named by a test, and every function has a `# @function` docstring. It does not build the golden image or start Compose. Conventions: [docs/project-conventions.md](docs/project-conventions.md). Bazel itself: [docs/contribute/building-with-bazel.md](docs/contribute/building-with-bazel.md).
@@ -382,7 +381,12 @@ the CLI.
 Two templates live under `templates/`, and the push covers both: `workspace` (the plain dev
 container, `templates/workspace/`) goes first and `devcontainer` (the DinD-backed one,
 `templates/devcontainer/`) last — a dependent template pushes last so a partial failure leaves
-the base template usable. It happens on its own: `bootstrap.sh` calls the same push, which
+the base template usable. Each template dir keeps its own independent copy of the `.tftpl`
+payloads; `templates/common/` exists once instead, and both templates consume it:
+`GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline) and `vscode-alt.svg` (the
+editor icon) are staged by the push plumbing beside each staged `main.tf` copy and read back
+there with `file()` / `filebase64()`, so a push missing either payload fails early by design.
+It happens on its own: `bootstrap.sh` calls the same push, which
 then pushes when the coder and db containers are running and an active Coder account exists,
 and otherwise prints a one-line reason and exits 0 (a fresh clone has none of those yet).
 The same command is the manual path after you register, and its arguments are the retry path
@@ -534,8 +538,8 @@ The template (`templates/workspace/`) creates one Docker container per workspace
   that path, so every workspace that owner has opens the same file, and an edit
   (in any workspace, or from the host by mounting the volume) is not overwritten
   on the next start. Delete the file to reseed from the template. A built dev
-  container cannot see the volume, so with **Build repo's dev container** on the
-  code-server module still merges the same payload on each start (below)
+  container sees neither the volume nor that symlink, so it is the one place the
+  seed is merged instead of linked (see the code-server note below).
 - `startup_script_behavior = "blocking"`, so a workspace only reports *ready* once the
   toolchain is genuinely staged — no opening an editor mid-install
 - agent-bar buttons via `display_apps` (VS Code Desktop helper: a locally installed
@@ -545,11 +549,25 @@ The template (`templates/workspace/`) creates one Docker container per workspace
   so it sorts before the LiteLLM and Coder UI buttons and reads apart from the
   **VS Code Desktop** helper (static helper buttons have no order/icon knobs in this
   Coder release — custom apps are ordered among themselves), a custom **Web Terminal**
-  command-app (`order = 6`) for the terminal slot — `display_apps.web_terminal` stays
-  false because the built-in terminal hardwires to `coder_agent.dir` (`/home/coder`),
-  while the custom app `cd`s to the clone folder when there is one —, memory and disk usage
-  gauges, six `coder stat` metadata tiles, and a **LiteLLM** tile that health-checks
-  the proxy and is visible only to the workspace owner
+  command-app (`order = 6`) for the terminal slot (section "Terminal defaults: tmux
+  re-attach and Grok Build" below), memory and disk usage gauges, six `coder stat`
+  metadata tiles, and a **LiteLLM** tile that health-checks the proxy and is visible
+  only to the workspace owner
+- Neither template installs code-server through the Registry. Each `main.tf` carries an
+  inlined fork (`coder_script.code_server` + `coder_app.code_server`), because that
+  upstream module hardcodes `/icon/code.svg` and has no icon input. The `workspace` fork
+  installs code-server only when it is missing from `/home/coder/.local/share/code-server`
+  and starts it with `--auth none --port 13337 --app-name "VS Code Web"`, passing no
+  settings payload: the editor's settings live on the per-owner
+  `vscode-settings-<owner-id>` volume seed, not in a per-start merge. The `devcontainer`
+  fork has no persistent prefix to reuse - both toggle modes rebuild the container that
+  hosts the editor - so it installs fresh under `/tmp/code-server` on every start. Both
+  twins' `coder_app` opens on `http://localhost:13337/?folder=<urlencoded>` (the
+  `coder_app` resource in `coder/coder` `~> 2.18` has no `folder` argument, so the
+  folder rides in the URL), and the custom icon
+  `templates/common/vscode-alt.svg` travels as a `data:image/svg+xml;base64` data URL
+  read from `templates/common/` - Coder serves icons only from its bundled `/icon/*`
+  set or a full `https`/`data` URL, and that icon is not bundled.
 - `coder_metadata.workspace_info` shows the image, the cloned repository (or `none`
   when the Git repository field is empty), the LiteLLM URL, the default Grok
   model, whether DinD is `on (tcp://dind:2375)` or `off`, and (redacted) which key is
@@ -572,11 +590,9 @@ templates clone that URL into the workspace on the first start (a later start le
 folder that already holds a `.git` alone, so re-fetching is your call), and `REPO_URL`
 in `.env` overrides the default),
 `additional_repos` (default empty; the **Git repositories (additional)** textarea under
-the repository field — a comma- or newline-separated list of extra URLs, cloned into
-its own folder beside `repo_url` by that same clone-once rule, which is what
-`bazelisk run //scripts:new-workspace -- --additional-repos "url1,url2"` writes. One
-repository per workspace is the default, and an extra folder never becomes the folder
-the editor or the terminals open on),
+the repository field — extra URLs cloned into their own folder beside `repo_url`; see
+"Cloning more than one repository" below, which also shows the `--additional-repos`
+form of `bazelisk run //scripts:new-workspace`),
 `grok_profile_mode` (default `shared`; `shared` mounts the owner's shared `~/.grok`
 profile volume, `private` gives that workspace a private `~/.grok` on its own home
 volume — see "Grok Build state: one shared profile per user"). It is also the default
@@ -614,9 +630,8 @@ Details that matter:
   `host.docker.internal`, stranding the agent. See SECURITY.md.
 - The daemon image is resolved with `data "docker_image"`, which inspects the host store
   and **never pulls**, so `docker:29.8.1-dind` must already be there. `bootstrap.sh`
-  pre-arms it; manually: `docker pull docker:29.8.1-dind`. A missing image fails at
-  **plan** time — before anything is created — with
-  `did not find docker image 'docker:29.8.1-dind'`.
+  pre-arms it; manually: `docker pull docker:29.8.1-dind`. A missing image fails the
+  workspace build at **plan** time, before anything is created (see "Troubleshooting").
 - `DOCKER_CLI_VERSION` in `images/dev/tool-versions.env` and the `docker:29.8.1-dind` tag
   in `templates/workspace/main.tf` and `templates/devcontainer/main.tf` are the
   same engine line; bump all three together.
@@ -682,9 +697,10 @@ daemon is nothing, and the plain-clone fallback still wants a daemon its `docker
 commands can reach), and carries its own copies of
 `startup.sh.tftpl`, `settings.json.tftpl` (the shared editor-settings seed,
 copied once onto the per-owner `vscode-settings-<owner-id>` volume and linked
-from code-server's User settings; a built dev container still receives it
-through the `code_server` module, because that container does not mount the
-volume) and
+from code-server's User settings; a built dev container mounts neither, so with
+**Build repo's dev container** on the inlined `coder_script.code_server` fork
+bakes that seed as base64 and merges it into the dev container's private User
+settings copy) and
 `grok-config.toml.tftpl`, so the tmux-default
 terminal and LiteLLM wiring above apply to it too. **Treat the repository as untrusted
 code**: everything it builds runs on a privileged daemon on this box, so a Dockerfile in
@@ -842,13 +858,17 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   the workspace owner's. The git seed contains no API key and no desktop paths;
   when `LITELLM_API_KEY` is set the startup script writes it into the seed once,
   because Cline and Roo read the key from settings and have no environment-key
-  field. Nothing is written to `~/.config/Code`. The code-server module merges
-  settings on every start in exactly one place: the dev-container build, whose
-  container never mounts the shared volume — a built dev container therefore
-  starts from a fresh merged copy, so edits inside it do not survive a rebuild
-  and do not update the shared file. Everywhere else — the `workspace` template,
-  and the `devcontainer` template with **Build repo's dev container** off — the
-  module passes no settings map, because a merge would replace the symlink.
+  field. Nothing is written to `~/.config/Code`. Only the dev-container build
+  merges settings on every start, and only because it has no other way to see the
+  seed: the inlined `coder_script.code_server` fork in `templates/devcontainer/main.tf`
+  bakes a base64 copy of it and writes it over the dev container's private
+  `User/settings.json`, or merges over a copy that survived a rebuild when `jq` is
+  on PATH (without `jq` the existing file is kept). That container never mounts
+  the shared volume, so a built dev container always starts from a fresh merged
+  copy: edits inside it do not survive a rebuild and do not update the shared
+  file. Everywhere else — the `workspace` template, and the `devcontainer`
+  template with **Build repo's dev container** off — no settings map is passed
+  at all, because a merge would replace the symlink.
   Installing Cline, Roo, the Red Hat YAML extension, and Material Icon Theme is a
   manual step in the Extensions panel (Open VSX by default). If an extension
   build names its settings differently, set the OpenAI-compatible endpoint and
@@ -1095,8 +1115,13 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 │   ├── new-workspace.sh     # git URL → workspace: probes for a dev container, picks the template + params, drives `coder create`
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 │   ├── push-template.sh     # pushes both templates from inside the coder container (bootstrap calls it)
-│   └── setup-host.sh        # the one script run straight from a shell: installs Bazelisk + the lint toolchain
+│   ├── refresh-configs.sh   # re-materialize the tracked config seeds (tmux.conf, settings.json, the AGENTS.md text, SKILL.md) into a workspace or container; --dry-run and --json; run as //scripts:refresh-configs
+│   ├── setup-host.sh        # the one script run straight from a shell: installs Bazelisk + the lint toolchain
+│   └── storage-clean.sh     # interactive janitor for the persistent layer: disk report (docker system df, project and workspace volumes), sweep of stale cache files older than --older-than days under the workspace HOME caches, and a config re-sync of the reseed list into running workspace containers; report-only with --check or --dry-run; run as //scripts:storage-clean
 └── templates/
+    ├── common/              # single-copy payloads, staged beside each staged main.tf on a push
+    │   ├── GROK_BUILD_AGENTS.md  # the seed text the startup scripts inline into AGENTS.md
+    │   └── vscode-alt.svg        # the code-server editor icon, read as a base64 data URL
     ├── workspace            # Coder template (`coder templates push`; base template, pushed first)
     │   ├── main.tf
     │   ├── coder.tf

@@ -73,12 +73,14 @@ bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.gi
 DinD-backed one) keep independent `.tftpl` payload copies (`startup.sh.tftpl`,
 `settings.json.tftpl`, `grok-config.toml.tftpl`). The twins must change together — today
 only `settings.json.tftpl` is byte-identical across the two directories, so edit both
-copies of that payload. `templates/common/GROK_BUILD_AGENTS.md` — the orchestration
-protocol the startup scripts seed into every workspace's `~/.grok/AGENTS.md` — exists
-once above the twins instead: the push (`scripts/push-template.sh` through
-`template_push_one` in `scripts/lib/template-push.sh`) stages it into each template's
-pushed copy, which is the only place the server-side Terraform can `file()`-read it
-from, so editing the common copy changes both templates.
+copies of that payload. `templates/common/` exists once above the twins instead and
+holds the two single-copy payloads: `GROK_BUILD_AGENTS.md` (the orchestration protocol
+the startup scripts seed into every workspace's `~/.grok/AGENTS.md`, read with `file()`)
+and `vscode-alt.svg` (the editor icon, read with `filebase64()`). The push
+(`scripts/push-template.sh` through `template_push_one` in `scripts/lib/template-push.sh`)
+stages both beside each template's staged `main.tf` copy, which is the only place the
+server-side Terraform can read them from, so editing the common copy changes both
+templates; a staged copy that lacks either payload fails the push early by design.
 
 ## Names and flags
 
