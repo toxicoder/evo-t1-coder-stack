@@ -46,10 +46,11 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                  inside its own session (grok-build-<folder>-<hash>, with the
   |                  repo root resolved from the terminal's folder by git rev-parse)
   |                * ~/.grok/config.toml rendered by the template: model
-  |                  aliases + MCP servers (filesystem, memory,
-  |                  sequential-thinking, git, time; github only when
-  |                  `github_mcp` is on — its Bearer header names `$GH_TOKEN`,
-  |                  which the workspace environment fills from External Auth)
+  |                  aliases (default + role fallbacks); no MCP servers
+  |                  declared by default (the github_mcp toggle, off, adds
+  |                  the hosted github one alone — its Bearer header names
+  |                  $GH_TOKEN, which the workspace env fills from External
+  |                  Auth)
   |                * Cline / Kilo Code ---> host.docker.internal:4000
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
@@ -502,8 +503,9 @@ The template (`templates/workspace/`) creates one Docker container per workspace
   shfmt/shellcheck/bats/ruff/mypy/prettier, the Coder CLI, the Docker **client**
   toolchain (`docker`, `docker buildx`, `docker compose` as CLI plugins under
   `/usr/local/lib/docker/cli-plugins` — no daemon: the build asserts `dockerd`,
-  `containerd`, `runc` and `docker-proxy` are absent), the five MCP servers
-  pre-baked next to the pinned Grok Build CLI (`/usr/local/bin/grok`), so a
+  `containerd`, `runc` and `docker-proxy` are absent), and the pinned Grok
+  Build CLI (`/usr/local/bin/grok`; the five offline MCP servers ship in the
+  image, but the rendered config declares none of them by default), so a
   workspace needs no network to start a session
 - persistent per-workspace home volume
 - `host.docker.internal` → host-gateway, so workspaces reach the Coder server and LiteLLM
@@ -514,8 +516,7 @@ The template (`templates/workspace/`) creates one Docker container per workspace
   seeds the two terminal-profile tmux helpers, **clones a non-empty Git repository
   field** into `/home/coder/workspace/<repo-name>` (idempotent; runs as the
   workspace user so their git credentials are consulted; refuses to touch an
-  existing non-git folder there), renders `~/.grok/config.toml`, and
-  warms the MCP servers in the background. GitHub credentials arrive by one path only,
+  existing non-git folder there), renders `~/.grok/config.toml` (no MCP servers declared by default). GitHub credentials arrive by one path only,
   opt-in and HTTPS-only (an `ssh://`/`git@` URL reaches nothing here — this
   stack provisions no SSH keys): Coder's external-auth broker, provider id
   `primary-github`. Create `coder.env` beside `docker-compose.yml` with the
@@ -851,11 +852,15 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   measures. Run `bazelisk run //scripts:search-check` to see which engines answer from
   this box and with how many results (an empty result page and "no answer" are
   different answers, which is why the probe says which one it got).
-- **MCP servers**: `filesystem`, `memory`, `sequential-thinking`, `git` and `time`,
-  all pre-installed in the image (`npm -g` for the first three, `uv tool` for the
-  Python two), and warmed at workspace startup so the first session does not pay the
-  cold-start cost. Check them with `grok mcp doctor` inside a workspace. The `github`
-  server is the opt-in exception: it needs a token and outbound network, so
+- **MCP servers**: none declared by default. The five offline stdio servers
+  (`filesystem`, `memory`, `sequential-thinking`, `git` and `time`) stay
+  pre-installed in the image (`npm -g` for the first three, `uv tool` for the
+  Python two), but the rendered `config.toml` names none of them: the session
+  traces collected on this machine called none of their tools, and a
+  declared-but-unused server still costs every session its handshake time and
+  tool schemas. Declare one by hand and check a stubborn server with
+  `grok mcp doctor` inside a workspace. The `github` server is the opt-in
+  exception: it needs a token and outbound network, so
   `github_mcp` (off by default) decides on its own whether the block is rendered, and
   its `Authorization` header names `$GH_TOKEN` — the agent environment fills that from
   the `primary-github` external-auth connection, so a workspace whose owner connected no
@@ -897,10 +902,9 @@ belonging to that user mounts read-write at the same path **while that workspace
 `shared` mode** (the default here, so a workspace gets it unless you turn the mode off).
 Configure the CLI once and the rest of that account's workspaces inherit it.
 
-- **What is shared:** in `shared` mode, `config.toml`, `skills/`, `memory-v2/`, `sessions/`, the warmed MCP
-  caches, and a CLI you installed yourself under `~/.grok/bin`. In `private` mode that same
+- **What is shared:** in `shared` mode, `config.toml`, `skills/`, `memory-v2/`, `sessions/`, and a CLI you installed yourself under `~/.grok/bin`. In `private` mode that same
   list lives on the workspace's own home volume and belongs to that workspace alone.
-- **Why:** the model catalog, the MCP servers and any skill get set up once. A `/learn`
+- **Why:** the model catalog and any hand-added skill, MCP server or profile setting get set up once. A `/learn`
   run or a hand-added skill written in one workspace is immediately visible in that user's
   other workspaces, and a rebuilt or recreated workspace starts on the existing profile
   instead of an empty one.
@@ -1143,7 +1147,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
     │   ├── coder.tf
     │   ├── startup.sh.tftpl     # staged workspace bootstrap (blocking)
     │   ├── settings.json.tftpl  # editor-settings seed, copied once onto vscode-settings-<owner-id> and linked from code-server User settings
-    │   └── grok-config.toml.tftpl  # ~/.grok/config.toml — models + MCP servers
+    │   └── grok-config.toml.tftpl  # ~/.grok/config.toml — models (+ the gated github MCP when enabled)
     └── devcontainer         # Coder template that clones repo_url and (toggle on)
                               # builds its .devcontainer on an always-on DinD sidecar,
                               # or opens the clone on the plain container (toggle off); pushed second

@@ -15,8 +15,8 @@
 #   5b. seeds the shared code-server User settings if that file is absent, then
 #       links the editor at it (one file per owner, not re-merged each start)
 #   6. writes ~/.grok/config.toml (only while this stack owns the file): the
-#      model catalog with this workspace's default model alias, the MCP list,
-#      and anything the create form put in "Grok config extras"
+#      model catalog with this workspace's default model alias
+#      (no MCP servers declared by default), and anything the create form put in "Grok config extras"
 #   7. seeds the GitHub credential plumbing (git's github.com credential helper),
 #      and only when a GitHub token was supplied and both git and gh exist
 #   8. clones the repository named by the create form onto the shared
@@ -24,13 +24,12 @@
 #      points at, so it has to exist before the agent builds the dev container —
 #      and says so out loud when the clone carries no devcontainer configuration
 #      for the CLI to build
-#   9. warms the offline MCP package caches in the background
 #
 # ~/.grok is not necessarily this workspace's own directory. In "shared" mode
 # (main.tf's grok_profile_mode, and the default) the container mounts the
 # workspace owner's shared per-user Docker volume read-write at /home/coder/.grok,
 # nested inside that workspace's own /home/coder volume, so the terminal helpers,
-# config.toml, memory-v2/ and the MCP warm caches written below are the same files
+# config.toml and memory-v2/ written below are the same files
 # every other workspace this user owns reads and writes, they survive a rebuild,
 # and config.toml stays one last-boot-wins file for all of them: the workspace
 # started last re-renders it for everyone, which is the only way this template's
@@ -717,29 +716,4 @@ if [ -d "$target/.git" ]; then
     fi
     echo "==============================================================" >&2
   fi
-fi
-
-# --- MCP package warm-up (best effort) ----------------------------------------
-# Cold npx/uvx downloads are what make a first session stall on the MCP startup
-# timeout; prefetch the packages config.toml declares, off the boot path, with
-# every byte going to a log so no output pipe is left open behind the agent.
-if command -v npm >/dev/null 2>&1 || command -v uvx >/dev/null 2>&1; then
-  mkdir -p "$HOME/.grok/logs" 2>/dev/null
-  (
-    if command -v npm >/dev/null 2>&1; then
-      for pkg in \
-        @modelcontextprotocol/server-filesystem \
-        @modelcontextprotocol/server-memory \
-        @modelcontextprotocol/server-sequential-thinking
-      do
-        timeout 300 npm cache add "$pkg" </dev/null || true
-      done
-    fi
-    if command -v uvx >/dev/null 2>&1; then
-      for pkg in mcp-server-git mcp-server-time
-      do
-        timeout 300 uvx "$pkg" --help </dev/null || true
-      done
-    fi
-  ) >>"$HOME/.grok/logs/mcp-warmup.log" 2>&1 &
 fi

@@ -155,62 +155,29 @@ limit_behavior = "queue"
 explore = "agent"
 plan = "agent"
 
-# Offline-capable MCP servers only: everything below resolves from a local
-# process and needs no account, token, or inbound route, with one gated
-# exception: github, which is a hosted HTTP server and is off unless this file
-# is rendered with it.
+# MCP servers: the default render declares none. This file used to seed five
+# offline stdio servers here (filesystem, memory, sequential-thinking, git and
+# time) plus the gated github HTTP entry below. Every session trace collected
+# on this machine called none of their tools, and a declared-but-unused
+# server still spends each session's start on its handshake and keeps its
+# tool schemas in every context, so the default config names none of them.
+# They stay installed in the golden image, so switching one back on is a
+# one-block edit here (or in the create form's config-extras field); check a
+# stubborn one with `grok mcp doctor <name>`.
 #
-# Deliberately excluded, because they need outbound network or a credential this
-# workspace does not carry: context7 (docs CDN), sentry (OAuth to
-# mcp.sentry.dev), postgres (needs a live DSN), fetch (PySocks/egress proxy).
-# github is the one exception: it is OFF unless this stack renders it, and when
-# on it appears as an HTTP MCP server wired to the GH_TOKEN env var.
+# Deliberately absent for other reasons, because they need outbound network or
+# a credential this workspace does not carry: context7 (docs CDN), sentry
+# (OAuth to mcp.sentry.dev), postgres (needs a live DSN), fetch (PySocks/egress
+# proxy). github is the one server this file can still switch on: an HTTP MCP
+# server wired to the GH_TOKEN env var, and only when this template renders it.
 #
 # What is left out is simply not defined here, so there is nothing to disable;
-# if you add one later and want it parked rather than deleted, list its name in
-# `disabled_mcp_servers = ["..."]` (top-level key, string array).
-#
-# Cold npx/uvx downloads dominate first-launch time, hence the generous
-# startup timeouts; verify a stubborn one with `grok mcp doctor <name>`.
-
-[mcp_servers.filesystem]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/coder"]
-enabled = true
-startup_timeout_sec = 90
-
-[mcp_servers.memory]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-memory"]
-enabled = true
-startup_timeout_sec = 90
-
-[mcp_servers.sequential-thinking]
-command = "npx"
-args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
-enabled = true
-startup_timeout_sec = 90
-
-# No --repository on purpose: mcp-server-git calls sys.exit when the path is not a
-# Git repo, so pinning /home/coder kills the handshake in a fresh workspace (where
-# nothing is cloned yet) — verified: `grok mcp doctor git` reports "handshake failed
-# (connection closed: initialize response)". Every tool takes a per-call repo_path,
-# which is strictly more useful than one hard-coded root.
-[mcp_servers.git]
-command = "uvx"
-args = ["mcp-server-git"]
-enabled = true
-startup_timeout_sec = 60
-
-[mcp_servers.time]
-command = "uvx"
-args = ["mcp-server-time"]
-enabled = true
-startup_timeout_sec = 60
+# if you add one later and want it parked rather than deleted, list its name
+# in `disabled_mcp_servers = ["..."]` (top-level key, string array).
 
 %{if github_mcp~}
 
-# Hosted GitHub API MCP over HTTPS: no local process, so nothing to warm up, but
+# Hosted GitHub API MCP over HTTPS: no local process and no package to prefetch, but
 # it needs outbound TLS and a bearer token — the exception the note above makes.
 # Rendered only when this template is pushed with github_mcp = true; with it off
 # the gate below emits nothing at all, so the rendered file is what it was before
