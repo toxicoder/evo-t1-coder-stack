@@ -61,6 +61,12 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |
   +-- (no host port) IPEX-LLM Ollama on the Arc 140T (/dev/dri)
   |
+  +-- :8181 ----> SearXNG metasearch (loopback + LAN face) — the search lane:
+  |               keyless engines only, no key, no account, no request logging.
+  |               A workspace reaches it through the host gateway, so the
+  |               workspace networks stay untouched. Measure the lane with
+  |               `bazelisk run //scripts:search-check` (empty != answered).
+  |
   +-- :3000 ----> Kasm install wizard (first boot only)
   +-- :4443 ----> Kasm Workspaces UI (privileged DinD desktop streaming)
 ```
@@ -837,6 +843,14 @@ New Coder workspaces open a terminal that **re-attaches to a tmux session**:
   holds, under its own comment header. It is re-rendered idempotently and
   leaves a hand-edited config alone — the managed block is guarded by a
   `managed-by: evo-t1-coder-stack` marker.
+- **Search lane:** `searxng` (SearXNG metasearch, host port 8181) is the search
+  backend the stack runs for itself. It is not a model transport: `[models]
+  web_search = "agent"` and `supports_backend_search = false` stay as they were, so the
+  agent's own `web_search` tool still digests through the `agent` alias. Handing SearXNG
+  to the agent as an MCP stdio server is a separate change, gated on what the probe
+  measures. Run `bazelisk run //scripts:search-check` to see which engines answer from
+  this box and with how many results (an empty result page and "no answer" are
+  different answers, which is why the probe says which one it got).
 - **MCP servers**: `filesystem`, `memory`, `sequential-thinking`, `git` and `time`,
   all pre-installed in the image (`npm -g` for the first three, `uv tool` for the
   Python two), and warmed at workspace startup so the first session does not pay the
@@ -1105,6 +1119,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 ├── litellm/config.yaml    # model aliases
 ├── proxy/homepage.conf    # nginx TLS terminator for the dashboard
 ├── proxy/router.conf      # nginx Host-header router for the public subdomains (no cert)
+├── searxng/settings.yml   # SearXNG metasearch config, mounted read-only into the container
 ├── scripts/
 │   ├── bootstrap.sh         # .env + secrets + access URL + dashboard & Coder certs + checks
 │   ├── build-dev-image.sh   # builds images/dev → evo-t1-dev:latest
@@ -1116,6 +1131,7 @@ Only models you actually load are resident; Ollama keeps them in RAM until they 
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 │   ├── push-template.sh     # pushes both templates from inside the coder container (bootstrap calls it)
 │   ├── refresh-configs.sh   # re-materialize the tracked config seeds (tmux.conf, settings.json, the AGENTS.md text, SKILL.md) into a workspace or container; --dry-run and --json; run as //scripts:refresh-configs
+│   ├── search-check.sh      # probe the search lane: one HTTP GET per engine x query, so an empty answer names the engine that refused; --json; run as //scripts:search-check
 │   ├── setup-host.sh        # the one script run straight from a shell: installs Bazelisk + the lint toolchain
 │   └── storage-clean.sh     # interactive janitor for the persistent layer: disk report (docker system df, project and workspace volumes), sweep of stale cache files older than --older-than days under the workspace HOME caches, and a config re-sync of the reseed list into running workspace containers; report-only with --check or --dry-run; run as //scripts:storage-clean
 └── templates/

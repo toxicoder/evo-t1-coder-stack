@@ -22,6 +22,7 @@ Done means `//:test-fast` + lint green. Stack changes must be verified on the de
 - `scripts/*.sh` — operator CLIs; `scripts/lib/*.sh` — sourced helpers (do not copy log/die helpers).
 - `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline) and `vscode-alt.svg` (the editor icon), each staged by the push plumbing beside the staged `main.tf` and read there with `file()` / `filebase64()`; pushing without either fails early by design.
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
+- `searxng/settings.yml` — payload for the `searxng` service, bind-mounted read-only. A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML only under `homepage/config/*.yaml` and `litellm/config.yaml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
 - Runtime is `docker compose`. Do not add Kubernetes.
 - LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (`primary-github`); never introduce a static token or PAT.

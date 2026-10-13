@@ -1,0 +1,52 @@
+# SearXNG settings for the evo-t1 stack.
+#
+# Bind-mounted read-only at /etc/searxng/settings.yml, which REPLACES the
+# default file wholesale for every key listed here: use_default_settings: true
+# keeps the default engine and plugin sets, it does not merge the keys below
+# back into them. Anything not named here therefore falls back to the shipped
+# default, and the two security-relevant switches (limiter, public_instance)
+# are written down anyway so a later edit cannot turn them on by omission.
+#
+# Kept deliberately short: this file was the only way to switch the JSON
+# answer format on (search.formats below) and to make the listener reachable
+# from a workspace container (server.bind_address below).
+
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "evo-t1 search"
+  # No request data in Valkey/Redis, so the sidecar that would hold it stays
+  # unnecessary. The default is already false; naming it keeps the intent
+  # visible next to limiter below, since request logging is only worth
+  # discussing once rate limiting is on.
+  privacy_with_db: false
+
+search:
+  safe_search: 0
+  autocomplete: ""
+  formats:
+    - html
+    # Without "json" every /search?format=json request answers 403 before the
+    # query is parsed, so the agent-facing MCP bridge and the operator probe
+    # (bazelisk run //scripts:search-check) would both be answered by a
+    # permission error and look like an engine outage instead.
+    - json
+
+server:
+  port: 8181
+  # Both keys below exist to keep the published port and the listener in step.
+  # The image would answer on 8888, bound to loopback only, and a published
+  # 8181 mapping forwards to nothing in that case, so the compose file names
+  # the same port and 0.0.0.0 here and in `environment:`.
+  bind_address: "0.0.0.0"
+  # Signing and encryption key, supplied by SEARXNG_SECRET in docker-compose.yml
+  # and so in .env: it is never committed. An empty value is fine while
+  # limiter is off, and only becomes load-bearing if this instance is ever
+  # exposed beyond the host's loopback, which is a configuration decision
+  # (public_instance below) and not a default.
+  secret_key: "${SEARXNG_SECRET}"
+  limiter: false
+  public_instance: false
+  image_proxy: false
+  method: "GET"
