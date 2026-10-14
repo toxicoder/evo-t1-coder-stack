@@ -3,14 +3,14 @@
 #
 # ## dev-stack.bats — hermetic coverage for scripts/dev-stack.sh.
 #
-# Four things are pinned here, because they are the whole contract of the
+# Five things are pinned here, because they are the whole contract of the
 # script: the compose project defaults to evo-t1-dev and --project-name renames
-# it, an unknown subcommand is a usage error rather than an arbitrary action,
-# `status` answers with one-line reports when the docker CLI is dead (both CLI
-# spellings resolve through the tool stubs, which can be forced to refuse every
-# probe with STUB_DOCKER_RC=1 — test hosts may carry a real CLI and a live
-# daemon), and `reset` refuses to destroy a stack without its confirmation
-# flag.
+# it, the env file that carries the host ports is chosen by project, an unknown
+# subcommand is a usage error rather than an arbitrary action, `status` answers
+# with one-line reports when the docker CLI is dead (both CLI spellings resolve
+# through the tool stubs, which can be forced to refuse every probe with
+# STUB_DOCKER_RC=1 — test hosts may carry a real CLI and a live daemon), and
+# `reset` refuses to destroy a stack without its confirmation flag.
 #
 # The whole suite skips while scripts/dev-stack.sh is absent: a suite for a
 # script that does not exist yet has no right to fail the gate.
@@ -76,6 +76,35 @@ setup() {
   assert_not_match "default name" 'evo-t1-dev' "$(stub_log docker)$(stub_log docker-compose)"
 }
 
+@test "dev-stack: only the dev project takes dev-stack.env as its port source" {
+  # One host runs both stacks, and the env file is where the host ports live.
+  # Handing dev-stack.env to a run that names the stable project would republish
+  # that stack on the dev ports, so the file is chosen by project name. The
+  # scratch root stands in for the checkout: only its two files matter here.
+  scratch="${BATS_TEST_TMPDIR}/two-stacks"
+  mkdir -p "${scratch}"
+  : >"${scratch}/docker-compose.yml"
+  printf 'CODER_HTTP_PORT=13001\n' >"${scratch}/dev-stack.env"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" bash "${STACK}" status
+  [ "${status}" -eq 0 ]
+  assert_match "dev port source" '^env-file: .*/dev-stack\.env$' "${output}"
+
+  # A named non-dev project reads the .env beside the compose file, exactly as a
+  # plain `docker compose` call would, so the dev numbers stay out of it.
+  run --separate-stderr env REPO_ROOT="${scratch}" bash "${STACK}" status --project-name evo-t1-coder-stack
+  [ "${status}" -eq 0 ]
+  assert_match "stable port source" '^env-file: none' "${output}"
+  assert_not_match "no dev ports" 'dev-stack\.env' "${output}"
+
+  # `up` prints the compose line it is about to run, and the URL summary reads
+  # its ports from the same file: both have to name the stable stack's own.
+  run --separate-stderr env REPO_ROOT="${scratch}" bash "${STACK}" up --project-name evo-t1-coder-stack
+  [ "${status}" -eq 0 ]
+  assert_match "compose line" 'run: docker compose -p evo-t1-coder-stack -f .*/docker-compose\.yml up -d' "${output}"
+  assert_match "password line" 'HOMEPAGE_AUTH_PASSWORD in .*/\.env ' "${output}"
+}
+
 @test "dev-stack: reset without the confirmation flag destroys nothing" {
   run --separate-stderr bash "${STACK}" reset
   assert_match "refused" 'confirm' "${output}"
@@ -103,7 +132,7 @@ setup() {
 }
 
 # ── Helper-level coverage ----------------------------------------------------
-# The six tests above drive the script as a whole; the four below load one
+# The tests above drive the script as a whole; the ones below the rule load one
 # helper at a time (tests/extract_fn.py), because //tests:shell_inventory fails
 # when a function under scripts/ is named by no asserting test. docker and
 # docker-compose are still stubs: nothing here reaches a daemon.
@@ -149,6 +178,30 @@ load_fn() {
     "$(compose_prefix)"
   ENV_FILE="${BATS_TEST_TMPDIR}/dev-stack.env"
   assert_match "env file" '\-\-env-file .*/dev-stack\.env' "$(compose_prefix)"
+}
+
+@test "dev-stack: default_env_file picks the host-port file by project" {
+  load_fn scripts/dev-stack.sh default_env_file
+  scratch="${BATS_TEST_TMPDIR}/port-file"
+  mkdir -p "${scratch}"
+  ENV_FILE=""
+  DEV_PROJECT="evo-t1-dev"
+
+  # No dev-stack.env beside the compose file: nothing is chosen, so compose
+  # interpolates its ${VAR:-default} ports, and the shell never sees a --file.
+  assert_eq "no dev-stack.env" "" "$(default_env_file "${scratch}" evo-t1-dev)"
+
+  printf 'CODER_HTTP_PORT=13001\n' >"${scratch}/dev-stack.env"
+  assert_eq "dev project" "${scratch}/dev-stack.env" "$(default_env_file "${scratch}" evo-t1-dev)"
+
+  # Every other project is a stack of its own, so it gets no file here: that is
+  # what keeps the dev port numbers out of a run aimed at the stable stack.
+  assert_eq "stable project" "" "$(default_env_file "${scratch}" evo-t1-coder-stack)"
+  assert_eq "review project" "" "$(default_env_file "${scratch}" evo-t1-review)"
+
+  # An explicit --env-file still outranks the default, whoever the project is.
+  ENV_FILE="${scratch}/custom.env"
+  assert_eq "explicit file wins" "${scratch}/custom.env" "$(default_env_file "${scratch}" evo-t1-dev)"
 }
 
 @test "dev-stack: report_stack reports a missing docker and an unproven root" {

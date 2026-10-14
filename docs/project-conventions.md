@@ -51,7 +51,8 @@ bazelisk test //:test-fast
 bazelisk test //:lint --test_tag_filters=manual
 bazelisk run //:validate
 bazelisk run //:fix
-bazelisk run //scripts:dev-stack -- status --project-name evo-t1-dev
+bazelisk run //scripts:dev-stack -- status                      # the dev stack
+bazelisk run //scripts:dev-stack -- status --project-name evo-t1-coder-stack   # the stable stack
 bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.git
 ```
 
@@ -102,7 +103,9 @@ templates; a staged copy that lacks either payload fails the push early by desig
   `bazelisk run //scripts:new-workspace` only — `dev-stack` has no `--additional-repos`
   (its flags are `-p`, `-f`, `-e`, `--tail`, `--follow`, `--json`, `-y`, `-h`).
 - `--project-name` — every `dev-stack` subcommand (`up`, `down`, `status`, `logs`, `reset`),
-  default `evo-t1-dev`.
+  default `evo-t1-dev`, the dev sandbox. The env file follows the name: the dev project takes
+  `dev-stack.env` beside the compose file when one exists, and any other project gets none, so a
+  run aimed at the stable stack never picks up the dev host ports.
 - `--check` — the read-only mode `scripts/setup-host.sh` and `scripts/bootstrap.sh` both
   take. `setup-host --check` names the tools that are missing and installs nothing;
   `bootstrap --check` prints the same probes the full run makes (tools, compose plugin,

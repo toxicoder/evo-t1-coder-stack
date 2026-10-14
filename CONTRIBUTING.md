@@ -50,9 +50,10 @@ buy nothing and cost a re-test.
 - No CI that downloads models: this repo has no pipeline that pulls
   multi-gigabyte weights.
 - Test a stack-affecting change on the **dev stack** before opening the PR:
-  `bazelisk run //scripts:dev-stack -- up` (README "Testing changes locally"). It is a
+  `bazelisk run //scripts:dev-stack -- up` (README "Two stacks on one box"). It is a
   second compose project with its own name, volumes and host ports, so the stable
-  instance keeps running while you test.
+  instance keeps running while you test. `--project-name evo-t1-coder-stack` addresses
+  the production one instead, and `dev-stack` picks the matching env file either way.
 - A workspace takes ONE repository by default. `--additional-repos` on
   `//scripts:new-workspace` (and the `additional_repos` template parameter it fills)
   exists for the case where a workspace genuinely needs siblings beside the primary

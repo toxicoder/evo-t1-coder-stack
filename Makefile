@@ -16,8 +16,10 @@ SHELL := /bin/bash
 
 BAZEL := $(shell command -v bazelisk 2>/dev/null || command -v bazel 2>/dev/null || echo "")
 
-# Compose project the dev-stack shims address (compose keeps one project per
-# name, so an override here is an override of the live stack).
+# Compose project the dev-stack shims address. Compose keeps one project per name,
+# so an override here addresses a different stack: `PROJECT=evo-t1-coder-stack`
+# names the stable one (the checkout folder's name), and dev-stack then reads the
+# port numbers from .env instead of dev-stack.env.
 PROJECT ?= evo-t1-dev
 
 # Extra argv handed to the two shims that need some (ARGS="--dry-run" plus the
@@ -37,7 +39,8 @@ help:
 	@echo "  bazelisk run //scripts:dev-stack -- up|down|status|logs|reset"
 	@echo ""
 	@echo "  make test | make bats | make lint | make fix | make validate"
-	@echo "  make stack-up | stack-down | stack-status | stack-logs | stack-reset  (PROJECT=evo-t1-dev)"
+	@echo "  make stack-up | stack-down | stack-status | stack-logs | stack-reset  (PROJECT=evo-t1-dev;"
+	@echo "    set PROJECT=evo-t1-coder-stack to address the stable stack instead)"
 	@echo "  make bootstrap | make models | make spark-verify | make spark-configure"
 	@echo "  make new-workspace ARGS=\"https://host/org/repo.git\"  (ARGS is argv, not a make flag)"
 	@echo ""
