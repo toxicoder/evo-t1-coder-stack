@@ -16,10 +16,13 @@
 #
 # 2. Which compose file and env file that call uses. The project name only isolates
 #    half of the stack: host ports are `${VAR:-default}` interpolations
-#    (CODER_HTTP_PORT, LITELLM_PORT, KASM_UI_PORT, HOMEPAGE_HTTP_PORT, …), so a dev
-#    run needs its own env file to sit on different ports. `--env-file <file>` names
-#    one; with nothing named, `<root>/dev-stack.env` is used when it exists and plain
-#    compose defaults apply when it does not.
+#    (CODER_HTTP_PORT, LITELLM_PORT, KASM_UI_PORT, HOMEPAGE_HTTP_PORT, …), so two
+#    stacks on one box need different numbers to come up at the same time.
+#    `--env-file <file>` names one. With nothing named, the dev project takes
+#    `<root>/dev-stack.env` when that file exists and every other project gets no
+#    `--env-file` at all, so a run that addresses a different stack keeps the dev
+#    port numbers out of it and resolves the ports the way a plain
+#    `docker compose` call would. Naming a stack is therefore enough to address it.
 #
 # 3. Where the repo root is. Bazel runs this from a sandbox or a runfiles copy that
 #    holds *copies* of the repo, so the root is read from ${REPO_ROOT:-} /
@@ -46,8 +49,10 @@
 # Options (accepted before or after the subcommand):
 #   -p, --project-name <name>  compose project to address, default evo-t1-dev
 #   -f, --file <file>          compose file, default <root>/docker-compose.yml
-#   -e, --env-file <file>      env file with the dev port mapping, default
-#                              <root>/dev-stack.env when that file exists
+#   -e, --env-file <file>      env file carrying the host ports. With nothing
+#                              named, only the dev project gets one (dev-stack.env,
+#                              when it exists): a run aimed at any other project
+#                              never inherits the dev port numbers.
 #       --tail <n>             for logs: how many lines per service, default 100
 #       --follow               for logs: keep following instead of printing a slice
 #                              (`-f` is the compose file, never a second meaning)
@@ -69,6 +74,9 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SELF_DIR}/lib/common.sh"
 
 PROJECT="evo-t1-dev"
+# The project whose host ports come from dev-stack.env. Any other project is a
+# stack of its own, and its ports live in .env beside the compose file.
+DEV_PROJECT="evo-t1-dev"
 COMPOSE_FILE=""
 ENV_FILE=""
 LOG_TAIL="100"
@@ -98,13 +106,17 @@ usage: dev-stack [--project-name <name>] [--file <file>] [--env-file <file>]
                 trailing words name the services to read)
   reset         stop the project AND destroy its volumes; needs --yes
 
-Options: -p/--project-name (default evo-t1-dev), -f/--file, -e/--env-file,
---tail, --follow (logs only), --json, -y/--yes, -h/--help. A bare word is a
-subcommand: only `logs` takes trailing words, and they name services.
+Options: -p/--project-name (default evo-t1-dev, the dev stack; name the stable
+project to drive that one), -f/--file, -e/--env-file (only the dev project gets a
+default: dev-stack.env, when it exists; any other project gets none, so compose
+reads its own .env), --tail, --follow (logs only), --json, -y/--yes, -h/--help. A
+bare word is a subcommand: only `logs` takes trailing words, and they name
+services.
 
 Examples (each line is the whole command, run from the repo root):
   bazelisk run //scripts:dev-stack -- status
   bazelisk run //scripts:dev-stack -- status --project-name evo-t1-review
+  bazelisk run //scripts:dev-stack -- up --project-name evo-t1-coder-stack
   bazelisk run //scripts:dev-stack -- logs --tail 200 coder
   bazelisk run //scripts:dev-stack -- logs --follow --tail 200 coder litellm
   bazelisk run //scripts:dev-stack -- up
@@ -166,6 +178,39 @@ compose_cli() {
     return 0
   fi
   return 1
+}
+
+# @function default_env_file
+# Print the env file whose port numbers this run should interpolate. An explicit
+# --env-file always wins; the dev project takes dev-stack.env when it exists; any
+# other project gets nothing here, so compose reads the .env beside the compose
+# file exactly as a plain `docker compose` call would. One file can only carry one
+# set of host ports, and the two stacks share a host: handing the dev overrides to
+# a run that names a different project would republish that stack on the dev ports
+# and move the dashboard links off the origin the browser uses.
+# Globals:
+#   ENV_FILE, DEV_PROJECT
+# Arguments:
+#   $1 - the repo root to look under
+#   $2 - the compose project this run addresses
+# Outputs:
+#   The chosen file on stdout, or nothing when this run has no file of its own
+# Returns:
+#   0
+default_env_file() {
+  local root="${1}"
+  local project="${2}"
+
+  if [[ -n ${ENV_FILE} ]]; then
+    printf '%s\n' "${ENV_FILE}"
+    return 0
+  fi
+
+  if [[ ${project} != "${DEV_PROJECT}" ]] || [[ ! -f "${root}/dev-stack.env" ]]; then
+    return 0
+  fi
+
+  printf '%s\n' "${root}/dev-stack.env"
 }
 
 # @function compose_prefix
@@ -234,7 +279,7 @@ report_stack() {
   if [ -n "${ENV_FILE}" ]; then
     printf 'env-file: %s\n' "${ENV_FILE}"
   else
-    printf 'env-file: none (compose keeps its ${VAR:-default} ports)\n'
+    printf 'env-file: none (compose reads the .env beside that file, or its ${VAR:-default} ports)\n'
   fi
   printf 'command: %s ps\n' "$(compose_prefix)"
   printf 'services:\n'
@@ -417,12 +462,10 @@ main() {
     fi
     return 5
   }
-  if [ -z "${COMPOSE_FILE}" ]; then
+  if [[ -z ${COMPOSE_FILE} ]]; then
     COMPOSE_FILE="${root}/docker-compose.yml"
   fi
-  if [ -z "${ENV_FILE}" ] && [ -f "${root}/dev-stack.env" ]; then
-    ENV_FILE="${root}/dev-stack.env"
-  fi
+  ENV_FILE="$(default_env_file "${root}" "${PROJECT}")"
 
   case "${action}" in
     status)

@@ -28,7 +28,8 @@ bazelisk test //tests:bats_common_test
 bazelisk test //:lint --test_tag_filters=manual
 bazelisk run //:fix
 bazelisk run //:validate
-bazelisk run //scripts:dev-stack -- status --project-name evo-t1-dev
+bazelisk run //scripts:dev-stack -- status            # dev stack (the default project)
+bazelisk run //scripts:dev-stack -- status --project-name evo-t1-coder-stack   # stable stack
 ```
 
 | Target | What it runs |
