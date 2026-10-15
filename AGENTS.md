@@ -2,6 +2,30 @@
 
 Compose stack for GMKtec EVO-T1: Coder + LiteLLM + IPEX-LLM Ollama + Kasm + Homepage. Operator docs in README.md. Shell conventions in docs/project-conventions.md. Branching in docs/branching.md.
 
+## Where you run
+
+You are usually editing this repo *from inside one of the workspaces it deploys*, not
+from the stack host. `CODER_WORKSPACE_ID` set means you are in a Coder workspace
+container (and, on the `devcontainer` template, inside a dev container built on that
+workspace's own DinD sidecar). Assume all of this until you prove otherwise:
+
+- `docker` addresses that sidecar daemon (`DOCKER_HOST=tcp://dind:2375`) or nothing,
+  never the daemon running Coder/LiteLLM/Ollama/Kasm. An empty `docker ps` here is
+  normal; it does not mean the stack is down.
+- Whole-stack commands (`dev-stack`, `refresh-configs`, `storage-clean`, `pull-models`,
+  `search-check`, `spark-verify`, `github-auth check`) work on the stack host or on the
+  fleet, not on this workspace, so run them in a host shell. `search-check` defaults to
+  `http://127.0.0.1:8181` on that host, so here pass `--url http://host.docker.internal:8181`.
+- `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
+  `:3002` the Coder agent tunnel, `:8181` SearXNG.
+- The `~/.grok` you see here is one volume per owner, shared with that owner's other
+  workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
+  of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, or the
+  `"__evoxT1Stack": true` key) is stack-owned: change the seed in this repo and
+  re-materialize it, never the copy that lives in a workspace.
+- Bazel behaves the same here, so `//:test-fast`, `//:lint` and
+  `bazelisk run //scripts:<stem>` all still run.
+
 ## Commands
 Prefer Bazelisk. Make is a shim.
 
