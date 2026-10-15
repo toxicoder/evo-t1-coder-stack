@@ -710,6 +710,16 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
 - `check [container] [repo-url]` names the credential each running workspace would
   present and says whether it is granted on the repository you point it at.
 - `auth <container> - < PAT` installs a write-capable PAT into that workspace's gh auth
-  store. That is the only credential for a workspace whose owner connected no account.
-- While an account *is* connected, the next `gh_token_refresh` run rewrites that store
-  with a minted pair. `gh auth logout`, or a rebuild, clears it either way.
+  store. That is legitimate in two cases: the owner connected no Coder account, so
+  nothing can be minted, or the minted (or GitHub App) credential was revoked or has
+  expired.
+- Installing one REPLACES the credential that workspace was presenting. While an
+  account *is* connected the store holds a minted pair and the next `gh_token_refresh`
+  run (start, then every 6 hours) rewrites it, so the PAT is a stand-in, not a second
+  permanent credential: rotate or remove it in GitHub -> Settings -> Applications when
+  the work ends. `gh auth logout`, or a rebuild, clears the store either way.
+- A PAT is never typed as an argument any more. `auth <container> <PAT>` is refused
+  because argv is readable through `ps` and lands in shell history, so the script takes
+  the token on stdin only: pipe it in (`echo "$TOKEN" | bazelisk run
+  //scripts:github-auth -- auth <container> -`) or run `auth <container>` alone and
+  answer the hidden prompt.
