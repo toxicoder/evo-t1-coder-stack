@@ -24,21 +24,23 @@ script meant to run straight from a shell, and it runs before Bazel exists.
 2. [Spin up the stack](#spin-up-the-stack) - first boot, top to bottom
 3. [Two stacks on one box](#two-stacks-on-one-box) - the dev/prod split and its commands
 4. [Develop](#develop) - the gates a change has to pass
-5. [Ports](#ports)
-6. [Public subdomains (optional)](#public-subdomains-optional)
-7. [LiteLLM model aliases](#litellm-model-aliases)
-8. [Coder workspace templates](#coder-workspace-templates)
-9. [Workspaces, terminals and agents](#workspaces-terminals-and-agents)
-10. [Kasm](#kasm), [Homepage dashboard](#homepage-dashboard),
+5. [After a git pull](#after-a-git-pull) - the two things that go stale, and the one
+   command that refreshes them
+6. [Ports](#ports)
+7. [Public subdomains (optional)](#public-subdomains-optional)
+8. [LiteLLM model aliases](#litellm-model-aliases)
+9. [Coder workspace templates](#coder-workspace-templates)
+10. [Workspaces, terminals and agents](#workspaces-terminals-and-agents)
+11. [Kasm](#kasm), [Homepage dashboard](#homepage-dashboard),
    [Memory budget](#memory-budget), [What not to run here](#what-not-to-run-here)
-11. [Why this shape](#why-this-shape), [Repo layout](#repo-layout),
+12. [Why this shape](#why-this-shape), [Repo layout](#repo-layout),
     [Troubleshooting](#troubleshooting)
 
 The long version of each topic sits in a page beside this one, linked where it applies:
 [coder-templates.md](docs/coder-templates.md), [dashboard.md](docs/dashboard.md),
 [grok-build-and-agents.md](docs/grok-build-and-agents.md),
 [litellm-routing.md](docs/litellm-routing.md),
-[public-access.md](docs/public-access.md),
+[public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
 [troubleshooting.md](docs/troubleshooting.md).
 
 ## Hardware
@@ -419,6 +421,30 @@ Feature work happens on short-lived `feat/`, `fix/`, `refactor/` and friends cut
 the tip of `main`, integrate by pull request into `main`, and are deleted on merge.
 Rules, the branch protection behind them, and the commit prefixes are in
 [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/branching.md](docs/branching.md).
+
+## After a git pull
+
+Two things go stale on a pull and neither is checked in, so nothing repairs them on
+its own: the env file that feeds compose's `${...}` lines (`.env` for the stable stack,
+`dev-stack.env` for the dev one) and the config that lives *inside* the running
+workspaces (`~/.grok/AGENTS.md`, `~/.grok/config.toml`, `~/.shared/vscode/settings.json`,
+`~/.tmux.conf`, `~/.coder/...`, `~/.agents/...`), which the templates seed on first
+boot and never revisit.
+
+```sh
+bazelisk run //scripts:update-configs -- all --dry-run
+```
+
+```sh
+bazelisk run //scripts:update-configs -- all --interactive
+```
+
+`env` ports your values onto the new twin and explains every key that still needs a
+value; `workspace` re-materialises the workspace copies, and a file you hand-edit in a
+workspace is left alone. Run `workspace` from a **host** shell - inside a workspace the
+`docker` CLI only reaches that workspace's own DinD sidecar, which is why `status`
+there prints which daemon it asked. [config-updates.md](docs/config-updates.md) has
+both passes, the flags, and what the tool refuses to do.
 
 ## Public subdomains (optional)
 
@@ -846,6 +872,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── spark-configure.sh   # assert the per-Spark setup; --apply writes the override file
 │   ├── spark-verify.sh      # read-only fleet check
 │   ├── storage-clean.sh     # interactive janitor for the persistent layer
+│   ├── update-configs.sh    # after a pull: port the env files, reseed workspace config
 │   └── validate.sh          # the local gate behind //:validate
 └── templates/
     ├── common/                   # single-copy payloads, staged beside each main.tf

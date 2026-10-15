@@ -13,6 +13,9 @@ Prefer Bazelisk. Make is a shim.
 - scripts: `bazelisk run //scripts:<stem> -- <args>` (keep dashes)
 - dev stack: `bazelisk run //scripts:dev-stack -- up|down|status|logs|reset`
 - new workspace: `bazelisk run //scripts:new-workspace -- --dry-run <git-url>`
+- config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
+  (`workspace` addresses docker, and inside a workspace the CLI only reaches that
+  workspace's own DinD sidecar — run it in a host shell or name `--container`/`--home`)
 
 `scripts/setup-host.sh` is the only script run from shell (installs Bazelisk). Everything else is a Bazel target.
 
