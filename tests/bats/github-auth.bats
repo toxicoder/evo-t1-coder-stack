@@ -130,8 +130,12 @@ setup() {
 }
 
 @test "auth: a piped token goes to gh on stdin and never to stdout" {
-  STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=0 \
-    run bash -c "printf 'ghp_SECRETVAL-do-not-leak\n' | bash '${SCRIPT}' auth coder-alice-ws1 -"
+  # The STUB_DOCKER_EXEC_* pair travels as `env` arguments, not as `run`
+  # prefix assignments: a prefix on a function call has no portable export
+  # contract, and if it leaks the docker stub replays the in-container chain
+  # on the HOST, where a CI runner's real docker/gh decide the verdict.
+  run env STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=0 \
+    bash -c "printf 'ghp_SECRETVAL-do-not-leak\n' | bash '${SCRIPT}' auth coder-alice-ws1 -"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"gh credential installed"* ]]
   [[ "${output}" != *"SECRETVAL"* ]]
@@ -140,8 +144,10 @@ setup() {
 }
 
 @test "auth: a bare container name still reads the piped token, and keeps it out of argv" {
-  STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=0 \
-    run bash -c "printf 'ghp_SECRETVAL-do-not-leak\n' | bash '${SCRIPT}' auth coder-alice-ws1"
+  # Same `env`-pinned canned mode as the - form above: the outcome may not
+  # depend on whether this runner can reach a docker daemon or a real gh.
+  run env STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=0 \
+    bash -c "printf 'ghp_SECRETVAL-do-not-leak\n' | bash '${SCRIPT}' auth coder-alice-ws1"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"gh credential installed"* ]]
   assert_not_match "no token in the reply" 'SECRETVAL' "${output}"
