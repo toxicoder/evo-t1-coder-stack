@@ -910,9 +910,10 @@ cause, recipe, and what a fix costs - is in
   on an older golden image. Rebuild it with `bazelisk run //scripts:build-dev-image`,
   then rebuild the workspace: the image is fixed at create time.
 - **`Cannot connect to the Docker daemon at tcp://dind:2375`** - the sidecar is
-  unhealthy, its image was never pulled, or the workspace was created with DinD off
-  (`DOCKER_HOST` is only injected when it is on - check the *docker-in-docker* tile). An
-  absent image fails the build at **plan** time with
+  unhealthy, its image was never pulled, or the workspace was created with DinD off.
+  `DOCKER_HOST` is only injected when the toggle is on under the `workspace`
+  template, and always under `devcontainer`, so read the *docker-in-docker* tile
+  rather than the variable. An absent image fails the build at **plan** time with
   `did not find docker image 'docker:29.8.1-dind'`.
 - **`... .terraform.lock.hcl is missing`** from `push-template` - a note, not a failure:
   no lockfile is committed under `templates/`.
@@ -924,7 +925,9 @@ cause, recipe, and what a fix costs - is in
 - **Workspace cannot reach LiteLLM** - `CODER_ACCESS_URL` has to be an `https://` URL (a
   LAN IP, or the public coder name in public mode; never `localhost` / `127.0.0.1`) and
   the workspace has to resolve `host.docker.internal`. Agent traffic ignores that URL
-  and dials `host.docker.internal:3002`.
+  and dials `host.docker.internal:3002`. A failing **LiteLLM** button is the other
+  lane: the app link rides the coder name on a `/@<owner>/<ws>.<agent>/apps/<slug>`
+  path, so `curl` on the `litellm` subdomain tells you nothing about it.
 - **Browser editor (code-server) stays unhealthy** - check the three in order: the
   install script's log in the Scripts/Log tab, `curl -fsS localhost:13337/healthz` from
   inside the workspace, and whether the browser is on `https://` with a trusted cert

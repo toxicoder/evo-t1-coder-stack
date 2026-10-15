@@ -7,9 +7,15 @@ targets are described in [README.md](../README.md) and
 Each fence below is one copy-paste action. A heading quotes the error string where there
 is one, so start with `grep -n` on the text you saw.
 
-Placeholders: `<wsid>` is a workspace id, `coder-<wsid>` the workspace container,
-`coder-<wsid>-dind-sidecar` its daemon sidecar. What runs "from the stack host" needs
-the docker CLI there; `bazelisk run //scripts:...` runs from the checkout.
+Placeholders: `<wsid>` is a workspace id and `<ws>` a workspace name. The workspace
+container is `coder-<owner>-<ws>` (so `coder-alx-self-coder`); the `<wsid>` form names
+the DinD pieces around it - the sidecar `coder-<wsid>-dind-sidecar`, on the network
+`coder-<wsid>-dind`, with its own `coder-<wsid>-dind-lib` volume. What runs "from the
+stack host" needs a shell there: inside a workspace `docker` addresses that workspace's
+own private daemon through `DOCKER_HOST=tcp://dind:2375`, so a `docker inspect` aimed at
+the stack's `coder` or `router` container and run from inside a workspace queries the
+wrong daemon and answers `no such container`. `bazelisk run //scripts:...` also runs
+from the checkout.
 
 ## Model lane: Spark, LiteLLM, the agent backends
 
@@ -105,12 +111,86 @@ A chat that starts but narrates instead of calling tools is the no-Spark case ab
 
 ### Workspace cannot reach LiteLLM -> `CODER_ACCESS_URL`, or `host.docker.internal`
 
+Two lanes reach that port and they share nothing but the destination, so a probe on one
+answers nothing about the other.
+
+- The **model lane**: a process inside the workspace dials
+  `http://host.docker.internal:4000/v1` directly. `host.docker.internal` is the docker
+  bridge gateway (`172.17.0.1`), compose publishes the proxy's container port 4000 on
+  host port 4000, and nothing between the two authenticates. `LITELLM_BASE_URL` and the
+  coding CLIs use this lane.
+- The **app lane**: the **LiteLLM** button in the Coder dashboard, at
+  `https://<coder name>/@<owner>/<ws>.<agent>/apps/litellm`. `coder_app.litellm` sets
+  `subdomain = false`, so that path rides the *coder* name and `coder:3000`, and
+  `litellm-gmktecbeast.` is never consulted. See the next heading.
+
+The checks that apply to either lane:
+
 - `CODER_ACCESS_URL` must be an `https://` URL: a LAN IP, or the public coder name in
   public mode. Never `localhost` and never `127.0.0.1`.
 - The workspace container must resolve `host.docker.internal`; the model lane reaches
   LiteLLM through that host gateway, and so does `LITELLM_BASE_URL`.
 - Agent traffic ignores that URL and dials `host.docker.internal:3002`; see the
   `coder_agent_url` template variable.
+
+### A workspace app link answers `Bad Gateway` -> find who answered
+
+The **LiteLLM** and **Open VS Code Web** buttons are Coder *apps*: their URL is
+`/@<owner>/<ws>.<agent>/apps/<slug>` on the coder hostname, because both `coder_app`
+blocks set `subdomain = false`. So a failing app link is an app-lane failure, and a 200
+from `litellm-gmktecbeast.` is not evidence about it.
+
+Two hops can answer 502 on that path: this box's nginx, when `coder:3000` will not
+resolve or connect, and Coder's own Go proxy, whose `ReverseProxy` ErrorHandler
+fires when the app upstream answers nothing. Two reads tell them apart, both from
+the stack host:
+
+```sh
+docker logs --tail 400 coder | grep -i 'failed to proxy request to application'
+```
+
+```sh
+docker logs --tail 200 router | grep -Ei 'error|502|upstream'
+```
+
+- A hit in the first means Coder tried the upstream and gave up, so the fault sits on
+  this box: check the devcontainer or workspace container first, then `DOCKER_HOST`.
+- `X-Coder-Request-Id` on the response, beside `X-Coder-Build-Version`, means Coder's
+  own Go proxy answered, so Traefik and Cloudflare let the request through and the
+  fault sits behind them. Nothing on this box sets `Via` or `CF-RAY`.
+- `X-Evo-Proxy` names the `server_name` that matched here: `coder`, `litellm`, `kasm`
+  or `homepage`. Its absence means the request never reached this box's nginx.
+- Neither header, and a `Server: cloudflare` with a `cf-ray` instead: Traefik or
+  Cloudflare answered, and there is nothing on this box to read.
+
+To take the same reading from inside the workspace, replay the path on `:8080`, the
+published `router` port. That reaches `coder:3000` through the sidecar while
+bypassing Traefik, Authelia and the WAN, so a reply there that differs from the
+browser's `https://` URL names the cloud hops.
+
+```sh
+curl -sS --noproxy '*' -o /dev/null -w 'litellm %{http_code} %{content_type}\n' \
+  http://host.docker.internal:4000/health/liveliness
+```
+
+```sh
+curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: coder-gmktecbeast.overeazy.io' \
+  http://host.docker.internal:8080/@<owner>/<ws>.main/apps/litellm
+```
+
+`--noproxy '*'` matters: with a proxy set in the environment curl hands the name to the
+proxy instead of resolving it, and `000` or a 5xx then describes the proxy.
+
+- `000` on the first probe means nothing listened on 4000. A `200 application/json`
+  means LiteLLM answered, so the model lane is healthy and the app lane failed
+  somewhere else.
+- `000` on the second probe means the private lane is down as well, so the public
+  failure is not a cloud-side one. `421` means the Host header matched no
+  `server_name` here, which is what a rewritten Host looks like.
+- A `404` is what this stack answers for an unknown app slug or an agent that is not
+  Connected; the agent is the text after the first `.` in `<ws>.<agent>`.
+- Signed into Authelia with the link still failing puts the fault behind Authelia: the
+  app path is gated by the same policy as the rest of the coder name.
 
 ## Workspaces: startup, images, the toolchain inside them
 
@@ -179,8 +259,12 @@ bazelisk run //scripts:build-dev-image
 Cause: the sidecar is unhealthy, its image was never pulled, or the workspace was
 created with DinD off.
 
-- `DOCKER_HOST` is only injected when the toggle is on; check the workspace's
-  *docker-in-docker* metadata tile to see which state you are in.
+- `DOCKER_HOST` is injected per template, not per toggle. `templates/workspace` sets
+  it only while the toggle is on; `templates/devcontainer` sets it always, because
+  that template always provisions the sidecar and the `devcontainer` CLI has to
+  reach its daemon either way. So a set `DOCKER_HOST` tells you the template; the
+  *docker-in-docker* metadata tile tells you the state (the devcontainer template
+  always reads `on (tcp://dind:2375)`, the workspace one reads `off` when unset).
 - Three separate reads, from the stack host. The first prints `unhealthy` rather than
   an error when the daemon fails its own probe, and `no such container` when the
   workspace has no sidecar at all:

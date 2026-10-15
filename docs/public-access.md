@@ -29,6 +29,15 @@ the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000)
 - Nothing in this path replaces the LAN routes: `https://<lan-ip>/` still serves the
   dashboard on the self-signed cert, and `https://<lan-ip>:3001` still serves Coder's
   own TLS listener.
+- A workspace **app** link (the **LiteLLM** and **Open VS Code Web** buttons) rides the
+  coder row of that table. Both `coder_app` blocks set `subdomain = false`, so their
+  URL keeps the `/@<owner>/<ws>.<agent>/apps/<slug>` path form and goes to `coder:3000`
+  on its way to `host.docker.internal:4000`. A 502 on that link is an app-lane failure
+  and `litellm-gmktecbeast.` took no part in it.
+- Every `location` adds `X-Evo-Proxy` with the upstream name, and `always` is what
+  makes it survive a 502. Read it beside `X-Coder-Request-Id`, which Coder's own proxy
+  sets on an answered request: neither header means the request stopped at Traefik or
+  Cloudflare, and `421` means the Host header matched no server block here.
 
 ## The four names
 
@@ -76,7 +85,8 @@ This repo cannot verify any of it; check it on the Traefik box.
 2. The original Host header preserved - a rewritten one comes back as `421`.
 3. Any authentication as the Traefik router's middleware. The sidecar forwards what it
    receives and authenticates nothing, so a name whose router skips the auth middleware
-   reaches its container the same way the LAN does.
+   reaches its container the same way the LAN does. The app path is behind that policy
+   like the rest of its name, so an expired session surfaces there too.
 4. DNS records for all four names, each one label deep. A missing record shows up as a
    DNS error, a rewritten Host as `421`. All four names resolve Cloudflare-proxied and
    complete the TLS handshake, verified from this box.
