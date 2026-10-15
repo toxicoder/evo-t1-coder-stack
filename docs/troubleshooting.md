@@ -297,9 +297,15 @@ bazelisk run //scripts:github-auth -- check [container] [repo-url]
 bazelisk run //scripts:github-auth -- auth <container> - < PAT
 ```
 
-  That PAT is the only credential when the owner connected no account, and one the
-  next `gh_token_refresh` replaces with a minted pair while an account is connected.
-  `gh auth logout`, or a rebuild, clears it either way.
+  A manual PAT is legitimate in two cases: the workspace owner connected no Coder
+  account, so nothing can be minted, or the minted/App credential was revoked or has
+  expired. It REPLACES the per-start minted credential for that workspace, so treat it
+  as a stand-in and rotate or remove it in GitHub -> Applications when the work ends.
+- A PAT is never typed as an argument any more: argv is readable through `ps` and the
+  token lands in shell history. Pipe it in (`echo "$TOKEN" | bazelisk run
+  //scripts:github-auth -- auth <container> -`) or run `auth <container>` alone and
+  answer the hidden prompt. In the line above, `-` is the only argument after the
+  container and `< PAT` is a shell redirect, not an argument.
 
 ## UI and logins
 

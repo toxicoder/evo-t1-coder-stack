@@ -28,17 +28,17 @@
 #       and verdicts only; never token bytes.
 #   scripts/github-auth.sh auth <container> [-]
 #       Install a write-capable credential into that ONE workspace: the PAT
-#       arrives on stdin (the - form, or a TTY prompt; a bare second argument
-#       works too but lands the token in `ps` and history — prefer piping it
-#       in), goes through `gh auth login --hostname github.com --with-token`
-#       inside the container, and `gh auth setup-git` wires git's credential
-#       helper to gh. Replaces the gh login that host had before. While an
-#       agent-env token exists gh keeps preferring that over the store, and
-#       when the workspace's owner connected an account the next
-#       `gh_token_refresh` run (start, then every 6 hours) rewrites the store
-#       with a freshly minted pair — the installed PAT therefore stands in
-#       mainly for accounts that are not connected. Rotate or remove the PAT
-#       in GitHub -> Settings -> Applications when work ends.
+#       arrives on stdin only (the - form, or a TTY prompt). A second argument
+#       is refused: argv is readable through `ps` by any other process in that
+#       container and the token lands in shell history. The token then goes to
+#       `gh auth login --hostname github.com --with-token` inside the
+#       container, and `gh auth setup-git` wires git's credential helper to gh,
+#       replacing the gh login that host had before. Legitimate when the owner
+#       connected no Coder account (nothing can be minted) or the minted/App
+#       credential was revoked or expired. While an agent-env token exists gh
+#       prefers that over the store, and the next `gh_token_refresh` run
+#       (start, then every 6 hours) rewrites the store with a minted pair.
+#       Rotate or remove the PAT in GitHub -> Applications when work ends.
 #
 # Auth: the docker CLI plus, inside each workspace, whatever sh, curl, gh,
 # timeout and coder resolve to there (a healthy workspace has them all).
@@ -75,7 +75,9 @@ running_workspaces() {
 # a repo path is given, whether that credential can read the repo. The probe
 # runs as one POSIX sh -c inside the container, so PATH and env there decide
 # what really answers, exactly like a real git clone would; this function
-# itself never prints a token value.
+# itself never prints a token value, and it hands that credential to curl on
+# stdin through curl's --config - channel instead of in curl's argv, where any
+# other process in the container could read it from `ps`.
 # Globals:
 #   None
 # Arguments:
@@ -103,20 +105,20 @@ probe_workspace() {
       tok="${mint}"
     fi
     if [ -z "${tok}" ]; then
-      printf "%s: NO GitHub credential (git will prompt and be refused); fix: scripts/github-auth.sh auth %s - < PAT\n" "${ws}" "${ws}"
+      printf "%s: NO GitHub credential (git will prompt and be refused); fix: pipe a PAT into scripts/github-auth.sh auth %s -\n" "${ws}" "${ws}"
       exit 0
     fi
     if [ -z "${repo}" ]; then
       printf "%s: credential present (source: %s); pass the repo URL to check its grants\n" "${ws}" "${src}"
       exit 0
     fi
-    if ! body=$(curl -s --max-time 10 -H "Authorization: token ${tok}" "https://api.github.com/repos/${repo}"); then
+    if ! body=$(printf "header = \"Authorization: token ${tok}\"\n" | curl -s --max-time 10 --config - "https://api.github.com/repos/${repo}"); then
       printf "%s: credential present (source: %s); api.github.com gave no useful answer for %s (offline? probe again)\n" "${ws}" "${src}" "${repo}"
       exit 0
     fi
     case "${body}" in
       *"Resource not accessible"*)
-        printf "%s: credential present (source: %s) but NOT GRANTED on %s — auth would authenticate and still be denied (that is the push 403); fix: grant the token/App Contents write on that repo, or scripts/github-auth.sh auth %s - < PAT\n" "${ws}" "${src}" "${repo}" "${ws}"
+        printf "%s: credential present (source: %s) but NOT GRANTED on %s -- auth would authenticate and still be denied (that is the push 403); fix: grant the token/App Contents write on that repo, or pipe a PAT into scripts/github-auth.sh auth %s -\n" "${ws}" "${src}" "${repo}" "${ws}"
         ;;
       *"full_name"*)
         printf "%s: credential present (source: %s) and %s is readable through it (read proves the credential is live; a token that can only READ still cannot push — grant Contents:write too, or check the App grant)\n" "${ws}" "${src}" "${repo}"
@@ -175,7 +177,10 @@ auth_workspace() {
 # Globals:
 #   None
 # Arguments:
-#   $1.. - subcommand, optional container, optional repo URL or -
+#   $1.. - subcommand, then for check an optional container and repo URL, or
+#     for auth the container and optionally - (a PAT as a further argument is
+#     refused, because argv is readable through ps and keeps the token in
+#     shell history)
 # Outputs:
 #   probe_workspace / auth_workspace output
 # Returns:
@@ -219,17 +224,21 @@ main() {
       shift
       local container="${1:-}"
       [[ -n ${container} ]] || die "usage: github-auth.sh auth <container> [-]  (- or nothing: read the PAT from stdin)"
+      # A PAT never travels in argv: any other process in that container can
+      # read it through ps, and the token lands in shell history, so only -
+      # (read the PAT from stdin) or nothing (prompt) may follow the container.
+      if [[ $# -gt 2 || ${2:-} != "-" && $# -gt 1 ]]; then
+        die "github-auth.sh: a PAT is never an argument (argv is readable through ps and lands in shell history): pipe it in with 'github-auth.sh auth ${container} -', or run 'github-auth.sh auth ${container}' to be prompted"
+      fi
       local pat=""
-      if [[ ${2:-} == "-" || $# -lt 2 ]]; then
-        if [[ $# -ge 2 || ! -t 0 ]]; then
-          read -r pat || true
-        else
-          printf 'Paste the GitHub token (input not echoed): ' >&2
-          read -rs pat || true
-          printf '\n' >&2
-        fi
+      # - or a non-TTY stdin means the PAT is on stdin; a bare container at a
+      # TTY prompts for it. Either way it reaches gh on stdin, never in argv.
+      if [[ $# -eq 1 && -t 0 ]]; then
+        printf 'Paste the GitHub token (input not echoed): ' >&2
+        read -rs pat || true
+        printf '\n' >&2
       else
-        pat="${2}"
+        read -r pat || true
       fi
       auth_workspace "${container}" "${pat}"
       ;;
