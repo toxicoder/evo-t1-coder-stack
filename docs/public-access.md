@@ -35,9 +35,9 @@ the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000)
   on its way to `host.docker.internal:4000`. A 502 on that link is an app-lane failure
   and `litellm-gmktecbeast.` took no part in it.
 - Every `location` adds `X-Evo-Proxy` with the upstream name, and `always` is what
-  makes it survive a 502. Read it beside `Coder-Trace-Id`, which Coder's own proxy
-  sets: neither header means the request stopped at Traefik or Cloudflare, and `421`
-  means the Host header matched no `server_name` here.
+  makes it survive a 502. Read it beside `X-Coder-Request-Id`, which Coder's own proxy
+  sets on an answered request: neither header means the request stopped at Traefik or
+  Cloudflare, and `421` means the Host header matched no server block here.
 
 ## The four names
 

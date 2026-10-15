@@ -155,15 +155,18 @@ docker logs --tail 200 router | grep -Ei 'error|502|upstream'
 
 - A hit in the first means Coder tried the upstream and gave up, so the fault sits on
   this box: check the devcontainer or workspace container first, then `DOCKER_HOST`.
-- `Coder-Trace-Id` on the response means Coder's own Go proxy answered, so Traefik and
-  Cloudflare let the request through and the fault sits behind them.
+- `X-Coder-Request-Id` on the response, beside `X-Coder-Build-Version`, means Coder's
+  own Go proxy answered, so Traefik and Cloudflare let the request through and the
+  fault sits behind them. Nothing on this box sets `Via` or `CF-RAY`.
 - `X-Evo-Proxy` names the `server_name` that matched here: `coder`, `litellm`, `kasm`
   or `homepage`. Its absence means the request never reached this box's nginx.
 - Neither header, and a `Server: cloudflare` with a `cf-ray` instead: Traefik or
   Cloudflare answered, and there is nothing on this box to read.
 
-To take the same reading from inside the workspace, replay the path there: that reaches
-the private listener directly and bypasses Traefik, Authelia and the WAN.
+To take the same reading from inside the workspace, replay the path on `:8080`, the
+published `router` port. That reaches `coder:3000` through the sidecar while
+bypassing Traefik, Authelia and the WAN, so a reply there that differs from the
+browser's `https://` URL names the cloud hops.
 
 ```sh
 curl -sS --noproxy '*' -o /dev/null -w 'litellm %{http_code} %{content_type}\n' \
