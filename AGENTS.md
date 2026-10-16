@@ -21,7 +21,7 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other
   workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
   of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, or the
-  `"__evoxT1Stack": true` key) is stack-owned: change the seed in this repo and
+  `"__evoT1Stack": true` key) is stack-owned: change the seed in this repo and
   re-materialize it, never the copy that lives in a workspace.
 - Bazel behaves the same here, so `//:test-fast`, `//:lint` and
   `bazelisk run //scripts:<stem>` all still run.
@@ -36,6 +36,7 @@ Prefer Bazelisk. Make is a shim.
 - gate: `bazelisk run //:validate`
 - scripts: `bazelisk run //scripts:<stem> -- <args>` (keep dashes)
 - dev stack: `bazelisk run //scripts:dev-stack -- up|down|status|logs|reset`
+- prod (stable) stack: `bazelisk run //scripts:prod-stack -- up|down|status|logs|reset`
 - new workspace: `bazelisk run //scripts:new-workspace -- --dry-run <git-url>`
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that

@@ -29,7 +29,8 @@ bazelisk test //:lint --test_tag_filters=manual
 bazelisk run //:fix
 bazelisk run //:validate
 bazelisk run //scripts:dev-stack -- status            # dev stack (the default project)
-bazelisk run //scripts:dev-stack -- status --project-name evo-t1-coder-stack   # stable stack
+bazelisk run //scripts:prod-stack -- status           # stable stack (default project evo-t1-prod)
+bazelisk run //scripts:prod-stack -- status --project-name evo-t1-coder-stack   # hand-raised stack
 ```
 
 | Target | What it runs |
@@ -40,7 +41,8 @@ bazelisk run //scripts:dev-stack -- status --project-name evo-t1-coder-stack   #
 | `//:fix` | buildifier and shfmt write mode |
 | `//scripts:<stem>` | One operator CLI: `bazelisk run //scripts:<stem> -- <args>`, e.g. `//scripts:dev-stack -- up`, `//scripts:new-workspace -- --dry-run <url>` |
 
-`make test`/`bats`/`lint`/`fix`/`validate` and the `stack-*` shims are the same commands;
+`make test`/`bats`/`lint`/`fix`/`validate` and the `stack-*`/`prod-stack-*` shims are the
+same commands;
 `make help` lists them. `//:test-fast` does not start Compose, pull models, or SSH to a Spark
 box: the suites exercise those scripts against `tests/bats/tool_stubs`. `bazelisk run
 //scripts:<stem> -- <args>` is how a human runs one of them for real.
