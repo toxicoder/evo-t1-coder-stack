@@ -53,6 +53,7 @@ bazelisk run //:validate
 bazelisk run //:fix
 bazelisk run //scripts:dev-stack -- status                      # the dev stack
 bazelisk run //scripts:dev-stack -- status --project-name evo-t1-coder-stack   # the stable stack
+bazelisk run //scripts:prod-stack -- status                     # the stable stack, as prod-stack names it (evo-t1-prod)
 bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.git
 ```
 
@@ -100,12 +101,17 @@ templates; a staged copy that lacks either payload fails the push early by desig
   `coder_parameter` of the same name that receives its value in both templates
   (`mutable = true`, default empty): extra git URLs for the workspace's clone folders,
   given as `url1,url2` or one URL per line. The flag exists on
-  `bazelisk run //scripts:new-workspace` only — `dev-stack` has no `--additional-repos`
-  (its flags are `-p`, `-f`, `-e`, `--tail`, `--follow`, `--json`, `-y`, `-h`).
-- `--project-name` — every `dev-stack` subcommand (`up`, `down`, `status`, `logs`, `reset`),
-  default `evo-t1-dev`, the dev sandbox. The env file follows the name: the dev project takes
-  `dev-stack.env` beside the compose file when one exists, and any other project gets none, so a
-  run aimed at the stable stack never picks up the dev host ports.
+  `bazelisk run //scripts:new-workspace` only - the stack runners (`dev-stack`,
+  `prod-stack`) have no `--additional-repos` (their flags are `-p`, `-f`, `-e`,
+  `--tail`, `--follow`, `--json`, `-y`, `-h`).
+- `--project-name` - every stack-runner subcommand (`up`, `down`, `status`, `logs`, `reset`),
+  on both `dev-stack` and `prod-stack`. `dev-stack` defaults to `evo-t1-dev`, the dev sandbox;
+  `prod-stack` defaults to `evo-t1-prod`, the stable stack it brings up, and it addresses a
+  stable stack brought up by hand with `--project-name evo-t1-coder-stack` (the checkout
+  folder's name). The env file follows the runner: the dev project takes `dev-stack.env`
+  beside the compose file when one exists, and any other project gets none, so a run aimed at
+  the stable stack never picks up the dev host ports; `prod-stack` names no env file unless
+  `-e` does, and compose then reads the `.env` beside the compose file itself.
 - `--check` — the read-only mode `scripts/setup-host.sh` and `scripts/bootstrap.sh` both
   take. `setup-host --check` names the tools that are missing and installs nothing;
   `bootstrap --check` prints the same probes the full run makes (tools, compose plugin,

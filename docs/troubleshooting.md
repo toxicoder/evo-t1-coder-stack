@@ -1,7 +1,7 @@
 # Troubleshooting
 
-Deep, symptom-first list. The operational `dev-stack`, `search-check` and `spark-verify`
-targets are described in [README.md](../README.md) and
+Deep, symptom-first list. The operational `dev-stack`/`prod-stack`, `search-check` and
+`spark-verify` targets are described in [README.md](../README.md) and
 [project-conventions.md](project-conventions.md).
 
 Each fence below is one copy-paste action. A heading quotes the error string where there
@@ -24,14 +24,16 @@ from the checkout.
 - The `ollama` service is IPEX-LLM on the Arc 140T, not Ollama from a registry.
 - `runners=[ipex_llm]` in its logs is that GPU backend confirming itself.
 
-Stable stack (drop `--project-name` on the dev stack, where it defaults to
-`evo-t1-dev`):
+Stable stack (`prod-stack` addresses the `evo-t1-prod` project by default; name
+`--project-name evo-t1-coder-stack` to read a stack brought up by hand under the
+checkout folder's own project name):
 
 ```sh
-bazelisk run //scripts:dev-stack -- logs --follow --project-name evo-t1-coder-stack --tail 200 ollama
+bazelisk run //scripts:prod-stack -- logs --follow --tail 200 ollama
 ```
 
-The same command aimed at the dev stack, so with the default project name:
+The same command aimed at the dev stack, so with `dev-stack` and its default
+project name (`evo-t1-dev`):
 
 ```sh
 bazelisk run //scripts:dev-stack -- logs --tail 200 ollama

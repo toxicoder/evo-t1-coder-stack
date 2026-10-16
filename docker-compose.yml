@@ -267,9 +267,10 @@ services:
   # search-check.sh probes with `curl --noproxy '*'`. 8181 rather than 8080,
   # which router already publishes, or 8888, which the remote Spark boxes
   # answer on: one port number for this service everywhere in the repo.
+  # No container_name is pinned: a pinned name is global to the Docker daemon,
+  # so dev and stable could never both run one; hostname is per-project.
   searxng:
     image: searxng/searxng:latest
-    container_name: searxng
     hostname: searxng
     restart: unless-stopped
     ports:

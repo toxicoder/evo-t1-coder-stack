@@ -53,7 +53,15 @@ buy nothing and cost a re-test.
   `bazelisk run //scripts:dev-stack -- up` (README "Two stacks on one box"). It is a
   second compose project with its own name, volumes and host ports, so the stable
   instance keeps running while you test. `--project-name evo-t1-coder-stack` addresses
-  the production one instead, and `dev-stack` picks the matching env file either way.
+  the production one instead, and `dev-stack` then names no env file, leaving that run
+  on the `.env` beside the compose file.
+- Test against the **stable** stack with `bazelisk run //scripts:prod-stack -- up`,
+  which addresses the `evo-t1-prod` project by default (`PROD_PROJECT` on the `make`
+  shim, or `--project-name`, names another; `evo-t1-coder-stack` is the project a
+  stable stack brought up by hand lives under). With both stacks up, the
+  container-level CLIs (`pull-models`, `push-template`, `coder-agents`,
+  `dashboard-password`) address the oldest matching container, so stop the dev stack
+  first when a check has to run against it.
 - A workspace takes ONE repository by default. `--additional-repos` on
   `//scripts:new-workspace` (and the `additional_repos` template parameter it fills)
   exists for the case where a workspace genuinely needs siblings beside the primary

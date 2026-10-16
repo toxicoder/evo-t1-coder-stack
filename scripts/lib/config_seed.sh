@@ -45,8 +45,10 @@ STACK_MARKER_JSON='"__evoT1Stack": true'
 
 # STACK_LITELLM_URL - the stack's one model-transport address as a workspace
 # sees it. A workspace reaches LiteLLM through the host's published port, so
-# the rendered editor settings must carry this exact spelling.
-STACK_LITELLM_URL='http://host.docker.internal:4000/v1'
+# the rendered editor settings must carry this exact spelling. The 4000 default
+# is the stable stack's port: an env-file reseed for a dev stack that remapped
+# LITELLM_PORT overrides it here (or with refresh-configs --litellm-url).
+STACK_LITELLM_URL="${STACK_LITELLM_URL:-http://host.docker.internal:4000/v1}"
 
 # @function seed_seed_targets
 # Print the reseed set, one "<target path>\t<payload kind>:<source>" line per

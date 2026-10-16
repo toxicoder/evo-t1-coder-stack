@@ -10,7 +10,9 @@
 # carried API keys) and leaves JSON that still parses, --dry-run writes
 # nothing, and no docker run helper container is ever started. Docker only
 # ever resolves through the tool stub; --home points the whole flow at a
-# scratch tree so no test needs a daemon.
+# scratch tree so no test needs a daemon. The LiteLLM address is never
+# hardcoded either: --litellm-url (and the STACK_LITELLM_URL default) repoint
+# a reseed at a stack environment that remapped LITELLM_PORT.
 #
 # The whole suite skips while scripts/refresh-configs.sh is absent: a suite
 # for a script that does not exist yet has no right to fail the gate.
@@ -211,4 +213,33 @@ coder-ws2-dind-sidecar'
   # seed_container_exec and seed_target_owner ran their probe scripts, and
   # seed_container_seed drove the whole reseed list through them.
   [ "$(stub_log_count docker)" -gt 0 ]
+}
+
+@test "refresh-configs: --litellm-url renders the url this stack environment publishes" {
+  local scratch
+  scratch="$(make_scratch)"
+  scratch_home "${scratch}/home"
+  # A dev stack that remapped LITELLM_PORT has to reseed a settings.json
+  # pointing at ITS LiteLLM: 4000 is stable's port, so a hardcoded default
+  # would repoint the workspace at the other stack environment.
+  run --separate-stderr bash "${REFRESH}" --litellm-url http://host.docker.internal:14000/v1 --home "${scratch}/home"
+  [ "${status}" -eq 0 ]
+  assert_contains_file "remapped url rendered" "${scratch}/home/.shared/vscode/settings.json" ':14000/v1'
+  assert_not_match "stable url absent" ':4000/v1' "$(cat "${scratch}/home/.shared/vscode/settings.json")"
+}
+
+@test "refresh-configs: STACK_LITELLM_URL from the environment repoints the reseed too" {
+  local scratch
+  scratch="$(make_scratch)"
+  scratch_home "${scratch}/home"
+  run --separate-stderr env STACK_LITELLM_URL=http://host.docker.internal:14000/v1 bash "${REFRESH}" --home "${scratch}/home"
+  [ "${status}" -eq 0 ]
+  assert_contains_file "env url rendered" "${scratch}/home/.shared/vscode/settings.json" ':14000/v1'
+}
+
+@test "refresh-configs: --litellm-url without a value is a usage error" {
+  run --separate-stderr bash "${REFRESH}" --litellm-url
+  [ "${status}" -ne 0 ]
+  assert_match "usage shown on a valueless flag" 'usage: refresh-configs' "${output}"
+  assert_match "flag named on stderr" 'litellm-url needs a url' "${stderr}"
 }

@@ -50,7 +50,7 @@ The reseed set is the seven home-relative targets the templates seed -
 `~/.shared/vscode/settings.json` - and the same rule applies as in
 `refresh-configs`: a file is replaced only while it still carries its
 `managed-by: evo-t1-coder-stack` marker (or, for the settings file, its
-`"__evoxT1Stack": true` key), so a config you hand-edit in a terminal is your
+`"__evoT1Stack": true` key), so a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
 so.
 
@@ -113,6 +113,8 @@ you try a change on a scratch tree before pointing a live stack at it. See
   and `roo.openaiApiKey` are carried forward.
 
 Inside a running container the same seven targets are `refresh-configs`'s job
-too: same reseed set, same marker rule, and `--json` for a machine-readable
-answer. [grok-build-and-agents.md](grok-build-and-agents.md) covers the profile
+too: same reseed set, same marker rule, `--json` for a machine-readable
+answer, and `--litellm-url <url>` for a stack environment that publishes
+LiteLLM on a port other than 4000 (the reseeded `settings.json` then still
+names that stack's own model transport). [grok-build-and-agents.md](grok-build-and-agents.md) covers the profile
 volume and what seeds on first boot.
