@@ -1,1 +1,269 @@
-IyEvdXNyL2Jpbi9lbnYgYmF0cwojIHNoZWxsY2hlY2sgc2hlbGw9YmFzaAojCiMgIyMgcHJvZC1zdGFjay5iYXRzIOKAlCBoZXJtZXRpYyBjb3ZlcmFnZSBmb3Igc2NyaXB0cy9wcm9kLXN0YWNrLnNoLgojCiMgRm91ciB0aGluZ3MgYXJlIHBpbm5lZCBoZXJlLCBiZWNhdXNlIHRoZXkgYXJlIHRoZSB3aG9sZSBjb250cmFjdCBvZiB0aGUKIyBzY3JpcHQ6IHRoZSBjb21wb3NlIHByb2plY3QgZGVmYXVsdHMgdG8gZXZvLXQxLXByb2QgYW5kIC0tcHJvamVjdC1uYW1lCiMgcmVuYW1lcyBpdCAoaW5jbHVkaW5nIHRvIHRoZSBjaGVja291dC1mb2xkZXIgbmFtZSBhIHN0YWNrIGJyb3VnaHQgdXAgYnkgaGFuZAojIGxpdmVzIHVuZGVyKSwgYW4gdW5rbm93biBzdWJjb21tYW5kIGlzIGEgdXNhZ2UgZXJyb3IgcmF0aGVyIHRoYW4gYW4KIyBhcmJpdHJhcnkgYWN0aW9uLCBgc3RhdHVzYCBhbnN3ZXJzIHdpdGggb25lLWxpbmUgcmVwb3J0cyB3aGVuIHRoZSBkb2NrZXIgQ0xJCiMgaXMgZGVhZCAoYm90aCBDTEkgc3BlbGxpbmdzIHJlc29sdmUgdGhyb3VnaCB0aGUgdG9vbCBzdHVicywgd2hpY2ggY2FuIGJlCiMgZm9yY2VkIHRvIHJlZnVzZSBldmVyeSBwcm9iZSB3aXRoIFNUVUJfRE9DS0VSX1JDPTEg4oCUIHRlc3QgaG9zdHMgbWF5IGNhcnJ5IGEKIyByZWFsIENMSSBhbmQgYSBsaXZlIGRhZW1vbiksIGFuZCBgcmVzZXRgIHJlZnVzZXMgdG8gZGVzdHJveSBhIHN0YWNrIHdpdGhvdXQKIyBpdHMgY29uZmlybWF0aW9uIGZsYWcuIFRoZSBlbnYtZmlsZSBoYWxmIGlzIHBpbm5lZCB0b286IG5vIGF1dG8tcGljayAodW5saWtlCiMgZGV2LXN0YWNrIGFuZCBpdHMgZGV2LXN0YWNrLmVudiksIGFuZCB0aGUgVVJMIHJlcG9ydCByZWFkcyB0aGUgLmVudiBiZXNpZGUKIyB0aGUgY29tcG9zZSBmaWxlIHdoZW4gLS1lbnYtZmlsZSBuYW1lcyBub25lLgojCiMgVGhlIHdob2xlIHN1aXRlIHNraXBzIHdoaWxlIHNjcmlwdHMvcHJvZC1zdGFjay5zaCBpcyBhYnNlbnQ6IGEgc3VpdGUgZm9yIGEKIyBzY3JpcHQgdGhhdCBkb2VzIG5vdCBleGlzdCB5ZXQgaGFzIG5vIHJpZ2h0IHRvIGZhaWwgdGhlIGdhdGUuCiMKIyBkb2NrZXIgYW5kIGRvY2tlci1jb21wb3NlIGFyZSBzdHVicy4gTm90aGluZyBoZXJlIGNyZWF0ZXMgYSBjb21wb3NlIHByb2plY3QKIyBvciB0YWxrcyB0byBhIGRhZW1vbi4KIwojIFVzYWdlOiBiYXRzIHRlc3RzL2JhdHMvcHJvZC1zdGFjay5iYXRzCgpiYXRzX3JlcXVpcmVfbWluaW11bV92ZXJzaW9uIDEuNS4wCgojIHNoZWxsY2hlY2sgc291cmNlPS9kZXYvbnVsbApsb2FkICd0ZXN0X2hlbHBlcicKClJFUE9fUk9PVD0iIgpTVEFDSz0iIgoKc2V0dXAoKSB7CiAgUkVQT19ST09UPSIkKGJhdHNfY2Fub25pY2FsX3JlcG9fcm9vdCkiIHx8IHNraXAgImNhbm5vdCBsb2NhdGUgdGhlIHJlcG8gcm9vdCAobm8gZG9ja2VyLWNvbXBvc2UueW1sIG1hcmtlcikiCiAgU1RBQ0s9IiR7UkVQT19ST09UfS9zY3JpcHRzL3Byb2Qtc3RhY2suc2giCiAgaWYgWyAhIC1mICIke1NUQUNLfSIgXTsgdGhlbgogICAgc2tpcCAic2NyaXB0cy9wcm9kLXN0YWNrLnNoIGlzIG5vdCBpbiB0aGUgdHJlZSIKICBmaQogIGV4cG9ydCBTVFVCX0xPRz0iJHtCQVRTX1RFU1RfVE1QRElSfS9zdHViLWxvZ3MiCiAgbWtkaXIgLXAgIiR7U1RVQl9MT0d9IgogIHVzZV9zdHVicyBkb2NrZXIgZG9ja2VyLWNvbXBvc2UKfQoKQHRlc3QgInByb2Qtc3RhY2s6IGFuIHVua25vd24gc3ViY29tbWFuZCBwcmludHMgdGhlIHVzYWdlIGFuZCB0b3VjaGVzIG5vdGhpbmciIHsKICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgYmFzaCAiJHtTVEFDS30iIGRlc3Ryb3kKICBbICIke3N0YXR1c30iIC1uZSAwIF0KICBhc3NlcnRfbWF0Y2ggInVzYWdlIiAndXNhZ2U6IHByb2Qtc3RhY2snICIke291dHB1dH0iCiAgWyAiJChzdHViX2xvZ19jb3VudCBkb2NrZXIpIiAtZXEgMCBdCiAgWyAiJChzdHViX2xvZ19jb3VudCBkb2NrZXItY29tcG9zZSkiIC1lcSAwIF0KfQoKQHRlc3QgInByb2Qtc3RhY2s6IHN0YXR1cyByZXBvcnRzIGFuIHVucmVzcG9uc2l2ZSBkb2NrZXIgQ0xJIGFuZCBzdGlsbCBleGl0cyAwIiB7CiAgIyBTYW1lIGhlcm1ldGljIHNoYXBlIGFzIGRldi1zdGFjay5iYXRzOiBTVFVCX0RPQ0tFUl9SQz0xIG1ha2VzIHRoZSBzdHVicwogICMgcmVmdXNlIGV2ZXJ5IHByb2JlIChpbmZvLCBjb21wb3NlIHZlcnNpb24sIHBzKSwgc28gbm8gZGFlbW9uIGlzIHJlYWNoYWJsZQogICMgZnJvbSBoZXJlIGFuZCB0aGUgcmVwb3J0IGtlZXBzIGl0cyBvbmUtbGluZSBhbnN3ZXJzLgogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBlbnYgU1RVQl9ET0NLRVJfUkM9MSBiYXNoICIke1NUQUNLfSIgc3RhdHVzCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgYXNzZXJ0X21hdGNoICJkYWVtb24gbGluZSIgJ2RhZW1vbjogbm90IHJlYWNoYWJsZScgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggInByb2plY3QgbGluZSIgJ15wcm9qZWN0OiBldm8tdDEtcHJvZCQnICIke291dHB1dH0iCn0KCkB0ZXN0ICJwcm9kLXN0YWNrOiB0aGUgY29tcG9zZSBwcm9qZWN0IGlzIGV2by10MS1wcm9kIHVubGVzcyAtLXByb2plY3QtbmFtZSBzYXlzIG90aGVyd2lzZSIgewogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBiYXNoICIke1NUQUNLfSIgc3RhdHVzCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgYXNzZXJ0X21hdGNoICJkZWZhdWx0IHByb2plY3QiICdldm8tdDEtcHJvZCcgIiQoc3R1Yl9sb2cgZG9ja2VyKSQoc3R1Yl9sb2cgZG9ja2VyLWNvbXBvc2UpIgp9CgpAdGVzdCAicHJvZC1zdGFjazogLS1wcm9qZWN0LW5hbWUgcmVuYW1lcyB0aGUgY29tcG9zZSBwcm9qZWN0IGl0IGFkZHJlc3NlcyIgewogICMgVGhlIHJlbmFtZSBjYXNlIGlzIG5vdCBjb3NtZXRpYzogYSBzdGFjayBicm91Z2h0IHVwIGJ5IGhhbmQgbGl2ZXMgdW5kZXIgdGhlCiAgIyBjaGVja291dCBmb2xkZXIncyBuYW1lLCBhbmQgbmFtaW5nIHRoYXQgZm9sZGVyIGhlcmUgYWRkcmVzc2VzIGV4YWN0bHkgaXQuCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGJhc2ggIiR7U1RBQ0t9IiBzdGF0dXMgLS1wcm9qZWN0LW5hbWUgZXZvLXQxLXN0YWJsZQogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXQogIGFzc2VydF9tYXRjaCAicmVuYW1lZCBwcm9qZWN0IiAnZXZvLXQxLXN0YWJsZScgIiQoc3R1Yl9sb2cgZG9ja2VyKSQoc3R1Yl9sb2cgZG9ja2VyLWNvbXBvc2UpIgogIGFzc2VydF9ub3RfbWF0Y2ggImRlZmF1bHQgbmFtZSIgJ2V2by10MS1wcm9kJyAiJChzdHViX2xvZyBkb2NrZXIpJChzdHViX2xvZyBkb2NrZXItY29tcG9zZSkiCn0KCkB0ZXN0ICJwcm9kLXN0YWNrOiByZXNldCB3aXRob3V0IHRoZSBjb25maXJtYXRpb24gZmxhZyBkZXN0cm95cyBub3RoaW5nIiB7CiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGJhc2ggIiR7U1RBQ0t9IiByZXNldAogIGFzc2VydF9tYXRjaCAicmVmdXNlZCIgJ2NvbmZpcm0nICIke291dHB1dH0iCiAgYXNzZXJ0X25vdF9tYXRjaCAibm8gdGVhcmRvd24iICcoXnwgKWRvd24oIHwkKScgIiQoc3R1Yl9sb2cgZG9ja2VyKSQoc3R1Yl9sb2cgZG9ja2VyLWNvbXBvc2UpIgp9CgpAdGVzdCAicHJvZC1zdGFjazogbG9ncyBwYXNzZXMgLS10YWlsLCAtLWZvbGxvdyBhbmQgYW55IHNlcnZpY2UgbmFtZXMgdG8gY29tcG9zZSIgewogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBiYXNoICIke1NUQUNLfSIgbG9ncyAtLXRhaWwgMjAwIGNvZGVyCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgYXNzZXJ0X21hdGNoICJ0YWlsIGFuZCBzZXJ2aWNlIiAnXC1wIGV2by10MS1wcm9kIC4qLWYgLiovZG9ja2VyLWNvbXBvc2VcLnltbCBsb2dzIC0tdGFpbCAyMDAgY29kZXIkJyAiJHtvdXRwdXR9IgoKICAjIEEgcmVuYW1lZCBwcm9qZWN0IGhhcyB0byByZWFjaCBjb21wb3NlIHdoYXRldmVyIHNpZGUgb2YgdGhlIHN1YmNvbW1hbmQgdGhlCiAgIyBmbGFncyBzaXQgb24gKG1ha2UgcHJvZC1zdGFjay1sb2dzIHNwZWxscyB0aGUgc2FtZSBjYWxsIHdpdGggLS1wcm9qZWN0LW5hbWUKICAjIGJldHdlZW4gdGhlIHN1YmNvbW1hbmQgYW5kIHRoZSB0YWlsKS4KICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgYmFzaCAiJHtTVEFDS30iIGxvZ3MgLS1wcm9qZWN0LW5hbWUgZXZvLXQxLXN0YWJsZSAtLXRhaWwgMjAwIGNvZGVyCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgYXNzZXJ0X21hdGNoICJyZW5hbWVkIHByb2plY3QiICdcLXAgZXZvLXQxLXN0YWJsZSAuKi1mIC4qL2RvY2tlci1jb21wb3NlXC55bWwgbG9ncyAtLXRhaWwgMjAwIGNvZGVyJCcgIiR7b3V0cHV0fSIKCiAgIyAtZiBiZWxvbmdzIHRvIC0tZmlsZTsgLS1mb2xsb3cgaXMgdGhlIGZsYWcgdGhhdCBmb2xsb3dzLCBhbmQgaXQgaXMgdGhlIG9uZQogICMgdGhlIHVzYWdlIGJsb2NrIGFkdmVydGlzZXMuCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGJhc2ggIiR7U1RBQ0t9IiBsb2dzIC0tZm9sbG93IC0tdGFpbCA1IGNvZGVyIGxpdGVsbG0KICBbICIke3N0YXR1c30iIC1lcSAwIF0KICBhc3NlcnRfbWF0Y2ggImZvbGxvdyIgJ1wtZiAuKi9kb2NrZXItY29tcG9zZVwueW1sIGxvZ3MgLWYgLS10YWlsIDUgY29kZXIgbGl0ZWxsbSQnICIke291dHB1dH0iCn0KCkB0ZXN0ICJwcm9kLXN0YWNrOiBhbiBlbnYgZmlsZSBnaXZlbiB3aXRoIC0tZW52LWZpbGUgdHJhdmVscyB0byBjb21wb3NlIGFuZCB0byB0aGUgcmVwb3J0IiB7CiAgc2NyYXRjaD0iJChtYWtlX3NjcmF0Y2gpIgogIGNhdCA+IiR7c2NyYXRjaH0vY3VzdG9tLmVudiIgPDwnRU5WJwpTVEFDS19MQU5fSE9TVD1ib3guZXhhbXBsZQpDT0RFUl9IVFRQX1BPUlQ9MTMwMDEKRU5WCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGJhc2ggIiR7U1RBQ0t9IiBzdGF0dXMgLS1lbnYtZmlsZSAiJHtzY3JhdGNofS9jdXN0b20uZW52IgogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXQogIGFzc2VydF9tYXRjaCAiZW52IGZpbGUgcmVwb3J0ZWQiICdlbnYtZmlsZTogLipjdXN0b21cLmVudicgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggImVudiBmaWxlIGZvcndhcmRlZCIgJ1wtXC1lbnYtZmlsZSAuKi9jdXN0b21cLmVudicgIiQoc3R1Yl9sb2cgZG9ja2VyKSIKfQoKIyDilIDilIAgSGVscGVyLWxldmVsIGNvdmVyYWdlIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KIyBUaGUgc2V2ZW4gdGVzdHMgYWJvdmUgZHJpdmUgdGhlIHNjcmlwdCBhcyBhIHdob2xlOyB0aGUgZm91ciBiZWxvdyBsb2FkIG9uZQojIGhlbHBlciBhdCBhIHRpbWUgKHRlc3RzL2V4dHJhY3RfZm4ucHkpLCBiZWNhdXNlIC8vdGVzdHM6c2hlbGxfaW52ZW50b3J5IGZhaWxzCiMgd2hlbiBhIGZ1bmN0aW9uIHVuZGVyIHNjcmlwdHMvIGlzIG5hbWVkIGJ5IG5vIGFzc2VydGluZyB0ZXN0LiBkb2NrZXIgYW5kCiMgZG9ja2VyLWNvbXBvc2UgYXJlIHN0aWxsIHN0dWJzOiBub3RoaW5nIGhlcmUgcmVhY2hlcyBhIGRhZW1vbi4KCmxvYWRfZm4oKSB7CiAgbG9hZF9zaGVsbF9mdW5jdGlvbiAiJHtSRVBPX1JPT1R9LyQxIiAiJDIiCn0KCkB0ZXN0ICJwcm9kLXN0YWNrOiByZXNvbHZlX3JlcG9fcm9vdCBuZWVkcyBhIGNvbXBvc2UgZmlsZSBBTkQgYSBkb2NrZXIgQ0xJIiB7CiAgbG9hZF9mbiBzY3JpcHRzL2xpYi9jb21tb24uc2ggaGFzX3Rvb2wKICBsb2FkX2ZuIHNjcmlwdHMvcHJvZC1zdGFjay5zaCByZXNvbHZlX3JlcG9fcm9vdAogIFNFTEZfRElSPSIke1JFUE9fUk9PVH0iCiAgcnVuIHJlc29sdmVfcmVwb19yb290CiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgIyAke1JFUE9fUk9PVH0gaXMgdGhlIGNoZWNrb3V0IHVuZGVyIGBiYXRzYCBhbmQgdGhlIHJ1bmZpbGVzIGNvcHkgdW5kZXIgQmF6ZWw7CiAgIyBlaXRoZXIgd2F5IGl0IGlzIHRoZSBvbmUgZGlyZWN0b3J5IHRoaXMgdGVzdCBrbm93cyBob2xkcyBkb2NrZXItY29tcG9zZS55bWwuCiAgYXNzZXJ0X2VxICJwcm92ZW4gcm9vdCIgIiR7UkVQT19ST09UfSIgIiR7b3V0cHV0fSIKCiAgIyBOZWl0aGVyIGhhbGYgYWxvbmUgaXMgcHJvb2Y6IHRoaXMgc2NyYXRjaCBkaXIgaGFzIG5vIGNvbXBvc2UgZmlsZSwgYW5kIHRoZQogICMgc2hhZG93ZWQgaGFzX3Rvb2wgc2F5cyBubyBkb2NrZXIgQ0xJIGVpdGhlciwgd2hpY2ggaXMgdGhlIHNhbmRib3ggY2FzZS4KICBzY3JhdGNoPSIke0JBVFNfVEVTVF9UTVBESVJ9L3VucHJvdmVuIgogIG1rZGlyIC1wICIke3NjcmF0Y2h9IgogIGNkICIke3NjcmF0Y2h9IgogIFNFTEZfRElSPSIke3NjcmF0Y2h9IgogIFJFUE9fUk9PVD0iJHtzY3JhdGNofSIKICBoYXNfdG9vbCgpIHsgcmV0dXJuIDE7IH0KICBydW4gcmVzb2x2ZV9yZXBvX3Jvb3QKICBbICIke3N0YXR1c30iIC1lcSA1IF0KICBhc3NlcnRfbWF0Y2ggInVucHJvdmVuIHJvb3QiICd1bnJlc29sdmFibGUgcmVwbyByb290JyAiJHtvdXRwdXR9Igp9CgpAdGVzdCAicHJvZC1zdGFjazogY29tcG9zZV9jbGkgYW5kIGNvbXBvc2VfcHJlZml4IG5hbWUgdGhlIENMSSBhbmQgdGhlIHByb2plY3QiIHsKICBsb2FkX2ZuIHNjcmlwdHMvbGliL2NvbW1vbi5zaCBoYXNfdG9vbAogIGxvYWRfZm4gc2NyaXB0cy9wcm9kLXN0YWNrLnNoIGNvbXBvc2VfY2xpCiAgWyAiJChjb21wb3NlX2NsaSkiID0gImRvY2tlciBjb21wb3NlIiBdCgogIFBST0pFQ1Q9ImV2by10MS1zdGFibGUiCiAgQ09NUE9TRV9GSUxFPSIke1JFUE9fUk9PVH0vZG9ja2VyLWNvbXBvc2UueW1sIgogIEVOVl9GSUxFPSIiCiAgbG9hZF9mbiBzY3JpcHRzL3Byb2Qtc3RhY2suc2ggY29tcG9zZV9wcmVmaXgKICBhc3NlcnRfZXEgIm5vIGVudiBmaWxlIiBcCiAgICAiZG9ja2VyIGNvbXBvc2UgLXAgZXZvLXQxLXN0YWJsZSAtZiAke1JFUE9fUk9PVH0vZG9ja2VyLWNvbXBvc2UueW1sIiBcCiAgICAiJChjb21wb3NlX3ByZWZpeCkiCiAgRU5WX0ZJTEU9IiR7QkFUU19URVNUX1RNUERJUn0vY3VzdG9tLmVudiIKICBhc3NlcnRfbWF0Y2ggImVudiBmaWxlIiAnXC1cLWVudi1maWxlIC4qL2N1c3RvbVwuZW52JyAiJChjb21wb3NlX3ByZWZpeCkiCn0KCkB0ZXN0ICJwcm9kLXN0YWNrOiByZXBvcnRfc3RhY2sgcmVwb3J0cyBhIG1pc3NpbmcgZG9ja2VyIGFuZCBhbiB1bnByb3ZlbiByb290IiB7CiAgbG9hZF9mbiBzY3JpcHRzL2xpYi9jb21tb24uc2ggaGFzX3Rvb2wKICBsb2FkX2ZuIHNjcmlwdHMvbGliL2NvbW1vbi5zaCBlbnZfZ2V0CiAgUFJPSkVDVD0iZXZvLXQxLXByb2QiCiAgQ09NUE9TRV9GSUxFPSIiCiAgRU5WX0ZJTEU9IiIKICBsb2FkX2ZuIHNjcmlwdHMvcHJvZC1zdGFjay5zaCByZXBvcnRfc3RhY2sKICBsb2FkX2ZuIHNjcmlwdHMvcHJvZC1zdGFjay5zaCBjb21wb3NlX2NsaQogIGxvYWRfZm4gc2NyaXB0cy9wcm9kLXN0YWNrLnNoIGNvbXBvc2VfcHJlZml4CgogICMgTm8gZG9ja2VyIENMSSBhdCBhbGw6IGZvdXIgbGluZXMsIGFuZCB0aGUgcmVwb3J0IHN0aWxsIGV4aXRzIDAuCiAgaGFzX3Rvb2woKSB7IHJldHVybiAxOyB9CiAgcnVuIHJlcG9ydF9zdGFjawogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXQogIGFzc2VydF9tYXRjaCAiZG9ja2VyIGxpbmUiICdeZG9ja2VyOiBub3Qgb24gUEFUSCcgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggImRhZW1vbiBsaW5lIiAnXmRhZW1vbjogbm90IGNoZWNrZWQnICIke291dHB1dH0iCgogICMgZG9ja2VyIG9uIFBBVEggYnV0IG5vIHByb3ZlbiBjaGVja291dDogdGhlIGZpbGUgbGluZSBzYXlzIHNvLCBhbmQgdGhlIGBwc2AKICAjIGNvbW1hbmQgdGhhdCB3b3VsZCBoYXZlIG5lZWRlZCBhIGNvbXBvc2UgZmlsZSBpcyBuZXZlciBidWlsdC4KICBoYXNfdG9vbCgpIHsgY29tbWFuZCAtdiAiJHsxfSIgPi9kZXYvbnVsbCAyPiYxOyB9CiAgcnVuIHJlcG9ydF9zdGFjawogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXQogIGFzc2VydF9tYXRjaCAibm8gY29tcG9zZSBmaWxlIiAnbm8gY2FuZGlkYXRlIGhvbGRzJyAiJHtvdXRwdXR9IgogIGFzc2VydF9ub3RfbWF0Y2ggIm5vIHBzIiAnIHBzJCcgIiR7b3V0cHV0fSIKfQoKQHRlc3QgInByb2Qtc3RhY2s6IHJlcG9ydF91cmxzIHByaW50cyB0aGUgZm91ciBvcmlnaW5zIGFuZCB3aGVyZSB0aGUgcGFzc3dvcmQgbGl2ZXMiIHsKICBsb2FkX2ZuIHNjcmlwdHMvbGliL2NvbW1vbi5zaCBlbnZfZ2V0CiAgbG9hZF9mbiBzY3JpcHRzL3Byb2Qtc3RhY2suc2ggcmVwb3J0X3VybHMKICBFTlZfRklMRT0iJHtCQVRTX1RFU1RfVE1QRElSfS9wcm9kLXN0YWNrLmVudiIKICBDT01QT1NFX0ZJTEU9IiR7UkVQT19ST09UfS9kb2NrZXItY29tcG9zZS55bWwiCiAgY2F0ID4iJHtFTlZfRklMRX0iIDw8J0VOVicKU1RBQ0tfTEFOX0hPU1Q9Ym94LmV4YW1wbGUKQ09ERVJfSFRUUF9QT1JUPTEzMDAxCkxJVEVMTE1fUE9SVD0xNDAwMApLQVNNX1VJX1BPUlQ9MTQ0NDMKSE9NRVBBR0VfSFRUUFNfUE9SVD0xNDQzClNUQUNLX0RBU0hCT0FSRF9VUkw9aHR0cHM6Ly9kYXNoYm9hcmQuZXhhbXBsZQpTVEFDS19DT0RFUl9VUkw9aHR0cHM6Ly9jb2Rlci5leGFtcGxlClNUQUNLX0xJVEVMTE1fVVJMPWh0dHA6Ly9saXRlbGxtLmV4YW1wbGU6MTQwMDAKSE9NRVBBR0VfQVVUSF9QQVNTV09SRD1zM2NyM3Qtbm90LXByaW50ZWQKRU5WCiAgcnVuIHJlcG9ydF91cmxzCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgYXNzZXJ0X21hdGNoICJkYXNoYm9hcmQgb3JpZ2luIiAnXmRhc2hib2FyZDogaHR0cHM6Ly9kYXNoYm9hcmQuZXhhbXBsZSQnICIke291dHB1dH0iCiAgYXNzZXJ0X21hdGNoICJsaXRlbGxtIG9yaWdpbiIgJ15saXRlbGxtOiAraHR0cDovL2xpdGVsbG0uZXhhbXBsZToxNDAwMCQnICIke291dHB1dH0iCiAgYXNzZXJ0X21hdGNoICJwYXNzd29yZCBsaXZlcyIgJ0hPTUVQQUdFX0FVVEhfUEFTU1dPUkQgaW4gLiovcHJvZC1zdGFjay5lbnYnICIke291dHB1dH0iCiAgYXNzZXJ0X21hdGNoICJuZXh0IGNvbW1hbmQiICdebmV4dDogK2JhemVsaXNrIHJ1biAvL3NjcmlwdHM6cHJvZC1zdGFjayAtLSBsb2dzJyAiJHtvdXRwdXR9IgogIGFzc2VydF9ub3RfbWF0Y2ggIm5vIHNlY3JldCIgJ3MzY3IzdC1ub3QtcHJpbnRlZCcgIiR7b3V0cHV0fSIKCiAgIyBBbiBlbnYgZmlsZSB0aGF0IGRvZXMgbm90IGV4aXN0IGtlZXBzIHRoZSBwb3J0IGZhbGxiYWNrcywgbm90IGVtcHR5IFVSTHMuCiAgIyBUaGUgbG9hZF9mbiBjb3BpZXMgcnVuIHdpdGggQmF0cycgb3duIG9wdGlvbnM7IHRoZSBzdHJpY3Qtc2hlbGwgZHVwbGljYXRlCiAgIyBvZiB0aGlzIGNhc2UgbGl2ZXMgaW4gdGhlIG5leHQgdGVzdCwgd2hlcmUgcHJvZHVjdGlvbidzIGVycmV4aXQgaXMgYWN0aXZlLgogIEVOVl9GSUxFPSIke0JBVFNfVEVTVF9UTVBESVJ9L21pc3NpbmcuZW52IgogIHJ1biByZXBvcnRfdXJscwogIGFzc2VydF9tYXRjaCAiZmFsbGJhY2sgZGFzaGJvYXJkIiAnXmRhc2hib2FyZDogaHR0cHM6Ly9sb2NhbGhvc3Q6NDQzJCcgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggImZhbGxiYWNrIGNvZGVyIiAnXmNvZGVyOiAraHR0cHM6Ly9sb2NhbGhvc3Q6MzAwMSQnICIke291dHB1dH0iCn0KCkB0ZXN0ICJwcm9kLXN0YWNrOiByZXBvcnRfdXJscyBzdXJ2aXZlcyBhIG1pc3NpbmcgZW52IGZpbGUgdW5kZXIgc3RyaWN0IHNoZWxsIG9wdGlvbnMiIHsKICAjIFByb2R1Y3Rpb24gcnVucyByZXBvcnRfdXJscyBpbnNpZGUgYHNldCAtZXVvIHBpcGVmYWlsYCwgd2hlcmUgYSBmYWlsaW5nCiAgIyBlbnZfZ2V0IHdvdWxkIGFib3J0IHRoZSB3aG9sZSBzY3JpcHQgb24gYSBmcmVzaCBjbG9uZSAobm8gLmVudiB5ZXQpLiBUaGUKICAjIGRyaXZlciBiZWxvdyByZXByb2R1Y2VzIHRob3NlIG9wdGlvbnMgc28gYHJ1bmAgY2FuIG5ldmVyIG1hc2sgdGhlIGFib3J0OgogICMgc291cmNpbmcgY29tbW9uLnNoIGlzIGV4YWN0bHkgd2hhdCBwcm9kLXN0YWNrLnNoIGl0c2VsZiBkb2VzLgogIGxvY2FsIGY9IiR7QkFUU19URVNUX1RNUERJUn0vc3RyaWN0LXJlcG9ydC11cmxzLnNoIgogIHsKICAgIHByaW50ZiAnJXNcbicgJyMhL3Vzci9iaW4vZW52IGJhc2gnICdzZXQgLWV1byBwaXBlZmFpbCcgXAogICAgICAic291cmNlICcke1JFUE9fUk9PVH0vc2NyaXB0cy9saWIvY29tbW9uLnNoJyIgXAogICAgICAic291cmNlICcke1JFUE9fUk9PVH0vdGVzdHMvdGVzdF9oZWxwZXJzLnNoJyIgXAogICAgICAibG9hZF9zaGVsbF9mdW5jdGlvbiAnJHtSRVBPX1JPT1R9L3NjcmlwdHMvcHJvZC1zdGFjay5zaCcgcmVwb3J0X3VybHMiIFwKICAgICAgIkVOVl9GSUxFPScke0JBVFNfVEVTVF9UTVBESVJ9L21pc3NpbmcuZW52JyIgXAogICAgICAiQ09NUE9TRV9GSUxFPScke1JFUE9fUk9PVH0vZG9ja2VyLWNvbXBvc2UueW1sJyIgXAogICAgICAncmVwb3J0X3VybHMnCiAgfSA+ICIke2Z9IgogIGNobW9kICt4ICIke2Z9IgogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBiYXNoICIke2Z9IgogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXQogIGFzc2VydF9tYXRjaCAiZmFsbGJhY2sgZGFzaGJvYXJkIiAnXmRhc2hib2FyZDogaHR0cHM6Ly9sb2NhbGhvc3Q6NDQzJCcgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggImZhbGxiYWNrIGNvZGVyIiAnXmNvZGVyOiAraHR0cHM6Ly9sb2NhbGhvc3Q6MzAwMSQnICIke291dHB1dH0iCiAgYXNzZXJ0X21hdGNoICJuZXh0IGNvbW1hbmQiICdebmV4dDogK2JhemVsaXNrIHJ1biAvL3NjcmlwdHM6cHJvZC1zdGFjayAtLSBsb2dzJyAiJHtvdXRwdXR9Igp9CgpAdGVzdCAicHJvZC1zdGFjazogcnVuX2NvbXBvc2UgcmVmdXNlcyB0byBndWVzcyBhbmQgcHJpbnRzIHRoZSBjb21tYW5kIGl0IHJ1bnMiIHsKICBsb2FkX2ZuIHNjcmlwdHMvbGliL2NvbW1vbi5zaCBoYXNfdG9vbAogIGxvYWRfZm4gc2NyaXB0cy9wcm9kLXN0YWNrLnNoIGNvbXBvc2VfY2xpCiAgbG9hZF9mbiBzY3JpcHRzL3Byb2Qtc3RhY2suc2ggcnVuX2NvbXBvc2UKICBQUk9KRUNUPSJldm8tdDEtcHJvZCIKICBDT01QT1NFX0ZJTEU9IiR7UkVQT19ST09UfS9kb2NrZXItY29tcG9zZS55bWwiCiAgRU5WX0ZJTEU9IiIKCiAgaGFzX3Rvb2woKSB7IHJldHVybiAxOyB9CiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIHJ1bl9jb21wb3NlIHBzCiAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdCiAgYXNzZXJ0X21hdGNoICJyZWZ1c2VkIiAnbm8gY29tcG9zZSBDTEknICIke3N0ZGVycn0iCgogIGhhc190b29sKCkgeyBjb21tYW5kIC12ICIkezF9IiA+L2Rldi9udWxsIDI+JjE7IH0KICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgcnVuX2NvbXBvc2UgbG9ncyAtLXRhaWwgMjAgY29kZXIKICBbICIke3N0YXR1c30iIC1lcSAwIF0KICAjIFRoZSBwcm9qZWN0IG5hbWUgYW5kIHRoZSBjb21wb3NlIGZpbGUgdHJhdmVsIHdpdGggdGhlIHN1YmNvbW1hbmQ6IGNvbXBvc2UKICAjIHJlYWRzIHRoZW0gYmVmb3JlIGl0LCBhbmQgYSBjYWxsIHRoYXQgbGVhdmVzIHRoZW0gb3V0IGFkZHJlc3NlcyB3aGljaGV2ZXIKICAjIHByb2plY3QgdGhlIGNhbGxpbmcgZm9sZGVyIGltcGxpZXMsIHNvIHRoaXMgcGlucyB0aGUgd2hvbGUgY29tbWFuZCBsaW5lLgogIGFzc2VydF9tYXRjaCAiY29tbWFuZCBsaW5lIiBcCiAgICAnZG9ja2VyIGNvbXBvc2UgLXAgZXZvLXQxLXByb2QgLWYgLiovZG9ja2VyLWNvbXBvc2VcLnltbCBsb2dzIC0tdGFpbCAyMCBjb2RlcicgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggInNlcnZpY2UgZm9yd2FyZGVkIiAnIC1wIGV2by10MS1wcm9kIC1mIC4qL2RvY2tlci1jb21wb3NlXC55bWwgbG9ncyAtLXRhaWwgMjAgY29kZXIkJyBcCiAgICAiJChzdHViX2xvZyBkb2NrZXIpIgp9Cg==
+#!/usr/bin/env bats
+# shellcheck shell=bash
+#
+# ## prod-stack.bats — hermetic coverage for scripts/prod-stack.sh.
+#
+# Four things are pinned here, because they are the whole contract of the
+# script: the compose project defaults to evo-t1-prod and --project-name
+# renames it (including to the checkout-folder name a stack brought up by hand
+# lives under), an unknown subcommand is a usage error rather than an
+# arbitrary action, `status` answers with one-line reports when the docker CLI
+# is dead (both CLI spellings resolve through the tool stubs, which can be
+# forced to refuse every probe with STUB_DOCKER_RC=1 — test hosts may carry a
+# real CLI and a live daemon), and `reset` refuses to destroy a stack without
+# its confirmation flag. The env-file half is pinned too: no auto-pick (unlike
+# dev-stack and its dev-stack.env), and the URL report reads the .env beside
+# the compose file when --env-file names none.
+#
+# The whole suite skips while scripts/prod-stack.sh is absent: a suite for a
+# script that does not exist yet has no right to fail the gate.
+#
+# docker and docker-compose are stubs. Nothing here creates a compose project
+# or talks to a daemon.
+#
+# Usage: bats tests/bats/prod-stack.bats
+
+bats_require_minimum_version 1.5.0
+
+# shellcheck source=/dev/null
+load 'test_helper'
+
+REPO_ROOT=""
+STACK=""
+
+setup() {
+  REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
+  STACK="${REPO_ROOT}/scripts/prod-stack.sh"
+  if [ ! -f "${STACK}" ]; then
+    skip "scripts/prod-stack.sh is not in the tree"
+  fi
+  export STUB_LOG="${BATS_TEST_TMPDIR}/stub-logs"
+  mkdir -p "${STUB_LOG}"
+  use_stubs docker docker-compose
+}
+
+@test "prod-stack: an unknown subcommand prints the usage and touches nothing" {
+  run --separate-stderr bash "${STACK}" destroy
+  [ "${status}" -ne 0 ]
+  assert_match "usage" 'usage: prod-stack' "${output}"
+  [ "$(stub_log_count docker)" -eq 0 ]
+  [ "$(stub_log_count docker-compose)" -eq 0 ]
+}
+
+@test "prod-stack: status reports an unresponsive docker CLI and still exits 0" {
+  # Same hermetic shape as dev-stack.bats: STUB_DOCKER_RC=1 makes the stubs
+  # refuse every probe (info, compose version, ps), so no daemon is reachable
+  # from here and the report keeps its one-line answers.
+  run --separate-stderr env STUB_DOCKER_RC=1 bash "${STACK}" status
+  [ "${status}" -eq 0 ]
+  assert_match "daemon line" 'daemon: not reachable' "${output}"
+  assert_match "project line" '^project: evo-t1-prod$' "${output}"
+}
+
+@test "prod-stack: the compose project is evo-t1-prod unless --project-name says otherwise" {
+  run --separate-stderr bash "${STACK}" status
+  [ "${status}" -eq 0 ]
+  assert_match "default project" 'evo-t1-prod' "$(stub_log docker)$(stub_log docker-compose)"
+}
+
+@test "prod-stack: --project-name renames the compose project it addresses" {
+  # The rename case is not cosmetic: a stack brought up by hand lives under the
+  # checkout folder's name, and naming that folder here addresses exactly it.
+  run --separate-stderr bash "${STACK}" status --project-name evo-t1-stable
+  [ "${status}" -eq 0 ]
+  assert_match "renamed project" 'evo-t1-stable' "$(stub_log docker)$(stub_log docker-compose)"
+  assert_not_match "default name" 'evo-t1-prod' "$(stub_log docker)$(stub_log docker-compose)"
+}
+
+@test "prod-stack: reset without the confirmation flag destroys nothing" {
+  run --separate-stderr bash "${STACK}" reset
+  assert_match "refused" 'confirm' "${output}"
+  assert_not_match "no teardown" '(^| )down( |$)' "$(stub_log docker)$(stub_log docker-compose)"
+}
+
+@test "prod-stack: logs passes --tail, --follow and any service names to compose" {
+  run --separate-stderr bash "${STACK}" logs --tail 200 coder
+  [ "${status}" -eq 0 ]
+  assert_match "tail and service" '\-p evo-t1-prod .*-f .*/docker-compose\.yml logs --tail 200 coder$' "${output}"
+
+  # A renamed project has to reach compose whatever side of the subcommand the
+  # flags sit on (make prod-stack-logs spells the same call with --project-name
+  # between the subcommand and the tail).
+  run --separate-stderr bash "${STACK}" logs --project-name evo-t1-stable --tail 200 coder
+  [ "${status}" -eq 0 ]
+  assert_match "renamed project" '\-p evo-t1-stable .*-f .*/docker-compose\.yml logs --tail 200 coder$' "${output}"
+
+  # -f belongs to --file; --follow is the flag that follows, and it is the one
+  # the usage block advertises.
+  run --separate-stderr bash "${STACK}" logs --follow --tail 5 coder litellm
+  [ "${status}" -eq 0 ]
+  assert_match "follow" '\-f .*/docker-compose\.yml logs -f --tail 5 coder litellm$' "${output}"
+}
+
+@test "prod-stack: an env file given with --env-file travels to compose and to the report" {
+  scratch="$(make_scratch)"
+  cat >"${scratch}/custom.env" <<'ENV'
+STACK_LAN_HOST=box.example
+CODER_HTTP_PORT=13001
+ENV
+  run --separate-stderr bash "${STACK}" status --env-file "${scratch}/custom.env"
+  [ "${status}" -eq 0 ]
+  assert_match "env file reported" 'env-file: .*custom\.env' "${output}"
+  assert_match "env file forwarded" '\-\-env-file .*/custom\.env' "$(stub_log docker)"
+}
+
+# ── Helper-level coverage ----------------------------------------------------
+# The seven tests above drive the script as a whole; the four below load one
+# helper at a time (tests/extract_fn.py), because //tests:shell_inventory fails
+# when a function under scripts/ is named by no asserting test. docker and
+# docker-compose are still stubs: nothing here reaches a daemon.
+
+load_fn() {
+  load_shell_function "${REPO_ROOT}/$1" "$2"
+}
+
+@test "prod-stack: resolve_repo_root needs a compose file AND a docker CLI" {
+  load_fn scripts/lib/common.sh has_tool
+  load_fn scripts/prod-stack.sh resolve_repo_root
+  SELF_DIR="${REPO_ROOT}"
+  run resolve_repo_root
+  [ "${status}" -eq 0 ]
+  # ${REPO_ROOT} is the checkout under `bats` and the runfiles copy under Bazel;
+  # either way it is the one directory this test knows holds docker-compose.yml.
+  assert_eq "proven root" "${REPO_ROOT}" "${output}"
+
+  # Neither half alone is proof: this scratch dir has no compose file, and the
+  # shadowed has_tool says no docker CLI either, which is the sandbox case.
+  scratch="${BATS_TEST_TMPDIR}/unproven"
+  mkdir -p "${scratch}"
+  cd "${scratch}"
+  SELF_DIR="${scratch}"
+  REPO_ROOT="${scratch}"
+  has_tool() { return 1; }
+  run resolve_repo_root
+  [ "${status}" -eq 5 ]
+  assert_match "unproven root" 'unresolvable repo root' "${output}"
+}
+
+@test "prod-stack: compose_cli and compose_prefix name the CLI and the project" {
+  load_fn scripts/lib/common.sh has_tool
+  load_fn scripts/prod-stack.sh compose_cli
+  [ "$(compose_cli)" = "docker compose" ]
+
+  PROJECT="evo-t1-stable"
+  COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+  ENV_FILE=""
+  load_fn scripts/prod-stack.sh compose_prefix
+  assert_eq "no env file" \
+    "docker compose -p evo-t1-stable -f ${REPO_ROOT}/docker-compose.yml" \
+    "$(compose_prefix)"
+  ENV_FILE="${BATS_TEST_TMPDIR}/custom.env"
+  assert_match "env file" '\-\-env-file .*/custom\.env' "$(compose_prefix)"
+}
+
+@test "prod-stack: report_stack reports a missing docker and an unproven root" {
+  load_fn scripts/lib/common.sh has_tool
+  load_fn scripts/lib/common.sh env_get
+  PROJECT="evo-t1-prod"
+  COMPOSE_FILE=""
+  ENV_FILE=""
+  load_fn scripts/prod-stack.sh report_stack
+  load_fn scripts/prod-stack.sh compose_cli
+  load_fn scripts/prod-stack.sh compose_prefix
+
+  # No docker CLI at all: four lines, and the report still exits 0.
+  has_tool() { return 1; }
+  run report_stack
+  [ "${status}" -eq 0 ]
+  assert_match "docker line" '^docker: not on PATH' "${output}"
+  assert_match "daemon line" '^daemon: not checked' "${output}"
+
+  # docker on PATH but no proven checkout: the file line says so, and the `ps`
+  # command that would have needed a compose file is never built.
+  has_tool() { command -v "${1}" >/dev/null 2>&1; }
+  run report_stack
+  [ "${status}" -eq 0 ]
+  assert_match "no compose file" 'no candidate holds' "${output}"
+  assert_not_match "no ps" ' ps$' "${output}"
+}
+
+@test "prod-stack: report_urls prints the four origins and where the password lives" {
+  load_fn scripts/lib/common.sh env_get
+  load_fn scripts/prod-stack.sh report_urls
+  ENV_FILE="${BATS_TEST_TMPDIR}/prod-stack.env"
+  COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+  cat >"${ENV_FILE}" <<'ENV'
+STACK_LAN_HOST=box.example
+CODER_HTTP_PORT=13001
+LITELLM_PORT=14000
+KASM_UI_PORT=14443
+HOMEPAGE_HTTPS_PORT=1443
+STACK_DASHBOARD_URL=https://dashboard.example
+STACK_CODER_URL=https://coder.example
+STACK_LITELLM_URL=http://litellm.example:14000
+HOMEPAGE_AUTH_PASSWORD=s3cr3t-not-printed
+ENV
+  run report_urls
+  [ "${status}" -eq 0 ]
+  assert_match "dashboard origin" '^dashboard: https://dashboard.example$' "${output}"
+  assert_match "litellm origin" '^litellm: +http://litellm.example:14000$' "${output}"
+  assert_match "password lives" 'HOMEPAGE_AUTH_PASSWORD in .*/prod-stack.env' "${output}"
+  assert_match "next command" '^next: +bazelisk run //scripts:prod-stack -- logs' "${output}"
+  assert_not_match "no secret" 's3cr3t-not-printed' "${output}"
+
+  # An env file that does not exist keeps the port fallbacks, not empty URLs.
+  # The load_fn copies run with Bats' own options; the strict-shell duplicate
+  # of this case lives in the next test, where production's errexit is active.
+  ENV_FILE="${BATS_TEST_TMPDIR}/missing.env"
+  run report_urls
+  assert_match "fallback dashboard" '^dashboard: https://localhost:443$' "${output}"
+  assert_match "fallback coder" '^coder: +https://localhost:3001$' "${output}"
+}
+
+@test "prod-stack: report_urls survives a missing env file under strict shell options" {
+  # Production runs report_urls inside `set -euo pipefail`, where a failing
+  # env_get would abort the whole script on a fresh clone (no .env yet). The
+  # driver below reproduces those options so `run` can never mask the abort:
+  # sourcing common.sh is exactly what prod-stack.sh itself does.
+  local f="${BATS_TEST_TMPDIR}/strict-report-urls.sh"
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
+      "source '${REPO_ROOT}/scripts/lib/common.sh'" \
+      "source '${REPO_ROOT}/tests/test_helpers.sh'" \
+      "load_shell_function '${REPO_ROOT}/scripts/prod-stack.sh' report_urls" \
+      "ENV_FILE='${BATS_TEST_TMPDIR}/missing.env'" \
+      "COMPOSE_FILE='${REPO_ROOT}/docker-compose.yml'" \
+      'report_urls'
+  } > "${f}"
+  chmod +x "${f}"
+  run --separate-stderr bash "${f}"
+  [ "${status}" -eq 0 ]
+  assert_match "fallback dashboard" '^dashboard: https://localhost:443$' "${output}"
+  assert_match "fallback coder" '^coder: +https://localhost:3001$' "${output}"
+  assert_match "next command" '^next: +bazelisk run //scripts:prod-stack -- logs' "${output}"
+}
+
+@test "prod-stack: run_compose refuses to guess and prints the command it runs" {
+  load_fn scripts/lib/common.sh has_tool
+  load_fn scripts/prod-stack.sh compose_cli
+  load_fn scripts/prod-stack.sh run_compose
+  PROJECT="evo-t1-prod"
+  COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+  ENV_FILE=""
+
+  has_tool() { return 1; }
+  run --separate-stderr run_compose ps
+  [ "${status}" -eq 1 ]
+  assert_match "refused" 'no compose CLI' "${stderr}"
+
+  has_tool() { command -v "${1}" >/dev/null 2>&1; }
+  run --separate-stderr run_compose logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  # The project name and the compose file travel with the subcommand: compose
+  # reads them before it, and a call that leaves them out addresses whichever
+  # project the calling folder implies, so this pins the whole command line.
+  assert_match "command line" \
+    'docker compose -p evo-t1-prod -f .*/docker-compose\.yml logs --tail 20 coder' "${output}"
+  assert_match "service forwarded" ' -p evo-t1-prod -f .*/docker-compose\.yml logs --tail 20 coder$' \
+    "$(stub_log docker)"
+}

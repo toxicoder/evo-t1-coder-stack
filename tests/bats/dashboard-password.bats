@@ -1,1 +1,261 @@
-IyEvdXNyL2Jpbi9lbnYgYmF0cwojIHNoZWxsY2hlY2sgc2hlbGw9YmFzaAojCiMgIyMgZGFzaGJvYXJkLXBhc3N3b3JkLmJhdHMgLSBoZXJtZXRpYyBjb3ZlcmFnZSBmb3Igc2NyaXB0cy9kYXNoYm9hcmQtcGFzc3dvcmQuc2gKIwojIFRocmVlIGNvbnRyYWN0cyBhcmUgcGlubmVkIGhlcmUuCiMKIyAoMSkgVGhlIHBhc3N3b3JkIG5ldmVyIHJlYWNoZXMgYXJndi4gQSBuZXcgdmFsdWUgY2Fubm90IGJlIGdpdmVuIGFzIGFuIGFyZ3VtZW50CiMgICAgICh0aGF0IGlzIGEgcmVmdXNhbCB0aGUgc2NyaXB0IGl0c2VsZiBtYWtlcyksIHRoZSBwcm9tcHQgcmVhZHMgbmV2ZXIgcmVhY2gKIyAgICAgZG9ja2VyJ3MgYXJndiwgYW5kIG5vIHRlc3QgYXNzZXJ0cyBhIGZsb3cgd2hlcmUgdGhleSB3b3VsZC4KIyAoMikgVGhlIGVudiBmaWxlIGlzIGVkaXRlZCBpbiBwbGFjZSwgb25lIEhPTUVQQUdFX0FVVEhfUEFTU1dPUkQgbGluZSwgbW9kZSA2MDAsCiMgICAgIGFuZCBldmVyeSB0ZXN0IHBvaW50cyBEQVNIQk9BUkRfRU5WX0ZJTEUgYXQgYSBzY3JhdGNoIGZpbGUuIFRoZSBjaGVja291dCdzCiMgICAgIG93biAuZW52IGlzIG5ldmVyIHJlYWQsIHByaW50ZWQsIG9yIHdyaXR0ZW4gYnkgdGhpcyBzdWl0ZS4KIyAoMykgVGhlIGFwcGx5IHBhdGggYWRkcmVzc2VzIHRoZSBkYWVtb24gZGlyZWN0bHksIHRoZW4gcmVjcmVhdGVzIHRocm91Z2ggdGhlCiMgICAgIGNvbXBvc2UgcHJvamVjdCB0aGUgY29udGFpbmVyJ3Mgb3duIGxhYmVscyBuYW1lOiBgZG9ja2VyIHBzYCB3aXRoIG5vIC1wLy1mLAojICAgICB0aGVuIGBkb2NrZXIgaW5zcGVjdGAgZm9yIGNvbS5kb2NrZXIuY29tcG9zZS5wcm9qZWN0ICsgcHJvamVjdC5jb25maWdfZmlsZXMsCiMgICAgIHRoZW4gYGRvY2tlciBjb21wb3NlIC1wIDxwcm9qZWN0PiAtZiA8ZmlsZT4gdXAgLWQgLS1mb3JjZS1yZWNyZWF0ZSBob21lcGFnZWAuCiMgICAgIEEgYmFyZSBjb21wb3NlIGNvbW1hbmQgb3IgYSBwbGFpbiByZXN0YXJ0IGlzIHdoYXQgdXNlZCB0byBiZSB3cm9uZyBoZXJlLgojCiMgZG9ja2VyIGFuZCB0aW1lb3V0IHJlc29sdmUgdG8gdGhlIGNvcGllcyBpbiB0ZXN0cy9iYXRzL3Rvb2xfc3R1YnMvICh1c2Vfc3R1YnMpLAojIHNvIGBjb21tYW5kIC12IGRvY2tlcmAgcGFzc2VzIGFuZCB0aGUgdW5xdW90ZWQgJHtET0NLRVJfQklOfSArIHRpbWVvdXQoMSkgcHJvYmVzCiMgbGFuZCBvbiBhIHN0dWIgdGhhdCBuZXZlciBvcGVucyBhIHNvY2tldC4gV2l0aCBET0NLRVJfQklOIGxlZnQgYXQgaXRzIGRlZmF1bHQKIyB0aGUgc3R1YiBzd2FsbG93cyB0aGUgdHdvIGBpbnNwZWN0IC1mIC4uLmAgcHJvYmVzIChpdHMgYCpjb25maWcqYCBjYXNlIG1hdGNoZXMKIyB0aGUgbGFiZWwgZm9ybWF0IHN0cmluZywgd2hpY2ggbmFtZXMgY29tLmRvY2tlci5jb21wb3NlLnByb2plY3QuY29uZmlnX2ZpbGVzKSwKIyBzbyB0aG9zZSBydW5zIGNhbiBvbmx5IGV2ZXIgcmVhY2ggdGhlIHNjcmlwdCdzICJjYW5ub3QgdGVsbCIgcmVmdXNhbHMgLSB0aGF0IGlzCiMgd2hhdCB0aGUgbGFzdCB0d28gY29tcG9zZS10YXJnZXQgdGVzdHMgcGluLiBmYWtlX2RhZW1vbiB3cml0ZXMgYSB0aHJvd2F3YXkKIyBkYWVtb24gdGhhdCBhbnN3ZXJzIHRoZSBsYWJlbCBwcm9iZSBhbmQgbWlycm9ycyB0aGUgY29udGFpbmVyJ3MgZW52LCB3aGljaCBpcwojIGhvdyB0aGUgcmVjcmVhdGUtYW5kLXZlcmlmeSBoYWxmIGdldHMgYXNzZXJ0ZWQuCiMKIyBVc2FnZTogYmF0cyB0ZXN0cy9iYXRzL2Rhc2hib2FyZC1wYXNzd29yZC5iYXRzICAgKGZyb20gYW55IGN3ZCkKIwojIFNhZmV0eTogc3R1YiBvbmx5LiBOb3RoaW5nIGhlcmUgbmVlZHMgYSBkYWVtb24sIGEgbmV0d29yaywgb3IgdGhlIHJlYWwgLmVudi4KCmJhdHNfcmVxdWlyZV9taW5pbXVtX3ZlcnNpb24gMS41LjAKCiMgc2hlbGxjaGVjayBzb3VyY2U9L2Rldi9udWxsCmxvYWQgJ3Rlc3RfaGVscGVyJwoKUkVQT19ST09UPSIiClNDUklQVD0iIgpTQ1JBVENIPSIiCgpzZXR1cCgpIHsKICBSRVBPX1JPT1Q9IiQoYmF0c19jYW5vbmljYWxfcmVwb19yb290KSIgfHwgc2tpcCAiY2Fubm90IGxvY2F0ZSB0aGUgcmVwbyByb290IChubyBkb2NrZXItY29tcG9zZS55bWwgbWFya2VyKSIKICBTQ1JJUFQ9IiR7UkVQT19ST09UfS9zY3JpcHRzL2Rhc2hib2FyZC1wYXNzd29yZC5zaCIKICBpZiBbICEgLWYgIiR7U0NSSVBUfSIgXTsgdGhlbgogICAgc2tpcCAic2NyaXB0cy9kYXNoYm9hcmQtcGFzc3dvcmQuc2ggaXMgbm90IGluIHRoZSB0cmVlIgogIGZpCiAgZXhwb3J0IFNUVUJfTE9HPSIke0JBVFNfVEVTVF9UTVBESVJ9L3N0dWItbG9ncyIKICBta2RpciAtcCAiJHtTVFVCX0xPR30iCiAgdXNlX3N0dWJzIGRvY2tlciB0aW1lb3V0CiAgU0NSQVRDSD0iJChtYWtlX3NjcmF0Y2gpIgogICMgQSBzY3JhdGNoIGVudiBmaWxlIHdpdGggYSBzdGFsZSBwYXNzd29yZCBpbiBpdCwgcGx1cyB0aGUgdHdvIHByb21wdCBlbnRyaWVzIGEKICAjIC0tcHJvbXB0IHJ1biByZWFkcy4gMjIgY2hhcmFjdGVycywgc28gdGhlIGxlbmd0aCBmbG9vciBpcyBuZXZlciB0aGUgcXVlc3Rpb24uCiAgcHJpbnRmICclc1xuJXNcbicgJ0hPTUVQQUdFX0FVVEhfUEFTU1dPUkQ9b2xkLXBhc3N3b3JkLTEyMzQnICdTVEFDS19MQU5fSE9TVD1ib3guZXhhbXBsZScgPiIke1NDUkFUQ0h9L3guZW52IgogIHByaW50ZiAnJXNcbiVzXG4nICdyb3RhdGVkLXBhc3N3ZC1hYmNkZWZnaCcgJ3JvdGF0ZWQtcGFzc3dkLWFiY2RlZmdoJyA+IiR7U0NSQVRDSH0vaW4iCn0KCiMgZmFrZV9kYWVtb24gPHBzLWJvZHk+IFtwcm9qZWN0fGNvbXBvc2UtZmlsZV0gW2ZpbGUtdG8tbWlycm9yLWFzLWNvbnRhaW5lci1lbnZdCiMgUmVwbGFjZSB0aGUgY29waWVkIGRvY2tlciBzdHViIHdpdGggYSBkYWVtb24gdGhhdCBhbnN3ZXJzIHRoZSB0aHJlZSBwcm9iZXMgdGhlCiMgYXBwbHkgcGF0aCBtYWtlczogdGhlIGRhZW1vbi13aWRlIHBzIChvbmUgInNlcnZpY2V8Y29udGFpbmVyIiBsaW5lIHBlciBydW5uaW5nCiMgY29udGFpbmVyKSwgdGhlIGxhYmVsIHByb2JlIHRoYXQgbmFtZXMgdGhlIGNvbXBvc2UgcHJvamVjdCBhbmQgZmlsZSwgYW5kIHRoZQojIGVudiBwcm9iZSB0aGF0IHJlcG9ydHMgdGhlIHJ1bm5pbmcgY29udGFpbmVyJ3MgZW52aXJvbm1lbnQuIEFuIGVtcHR5IHByb2plY3QKIyBtZWFucyAibm8gY29tcG9zZSBsYWJlbHMiOyB0aGUgZW52IGFuc3dlciBpcyBjb3BpZWQgb3V0IG9mIDxmaWxlPiBhdCBjYWxsCiMgdGltZSwgc28gYSBwcmUtcmV3cml0ZSBjb3B5IHJlYWRzIGFzIGEgY29udGFpbmVyIHRoYXQga2VwdCB0aGUgb2xkIHBhc3N3b3JkLgojIEV2ZXJ5IGFyZ3YgaXMgc3RpbGwgcmVjb3JkZWQgdG8gJHtTVFVCX0xPR30vZG9ja2VyLmxvZywgcHJlZml4ZWQgImRvY2tlciAiLgpmYWtlX2RhZW1vbigpIHsKICBsb2NhbCBiaW49IiR7QkFUU19URVNUX1RNUERJUj99L2JpbiIKICBleHBvcnQgRkFLRV9QUz0iJHsxLX0iCiAgZXhwb3J0IEZBS0VfVEFSR0VUPSIkezItfSIKICBleHBvcnQgRkFLRV9FTlZGSUxFPSIkezM6LS9kZXYvbnVsbH0iCiAgY2F0ID4iJHtiaW59L2RvY2tlciIgPDwnU1RVQicKIyEvdXNyL2Jpbi9lbnYgYmFzaApzZXQgLXUKcHJpbnRmICdkb2NrZXIgJXNcbicgIiQqIiA+PiIke1NUVUJfTE9HOi0vZGV2L251bGx9L2RvY2tlci5sb2ciCmFyZ3Y9IiAkKiAiCmNhc2UgIiR7YXJndn0iIGluCiAgKiIgcHMgIiopCiAgICBpZiBbIC1uICIke0ZBS0VfUFN9IiBdOyB0aGVuIHByaW50ZiAnJXNcbicgIiR7RkFLRV9QU30iOyBmaQogICAgZXhpdCAiJHtGQUtFX1BTX1JDOi0wfSIKICAgIDs7CiAgKkNvbmZpZy5MYWJlbHMqKQogICAgcHJpbnRmICclc1xuJyAiJHtGQUtFX1RBUkdFVH0iCiAgICBleGl0IDAKICAgIDs7CiAgKkNvbmZpZy5FbnYqKQogICAgZ3JlcCAnXkhPTUVQQUdFX0FVVEhfUEFTU1dPUkQ9JyAiJHtGQUtFX0VOVkZJTEV9IiAyPi9kZXYvbnVsbCB8fCB0cnVlCiAgICBleGl0IDAKICAgIDs7CmVzYWMKZXhpdCAwClNUVUIKICBjaG1vZCA3NTUgIiR7YmlufS9kb2NrZXIiCn0KCiMgdW5jaGFuZ2VkX2VudiA8ZmlsZT4gLSB0cnVlIHdoaWxlIDxmaWxlPiBzdGlsbCBob2xkcyB0aGUgdHdvIGxpbmVzIHNldHVwIHdyb3RlLgp1bmNoYW5nZWRfZW52KCkgewogIGFzc2VydF9jb250YWluc19maWxlICJlbnYgZmlsZSB1bnRvdWNoZWQiICIkezF9IiAnXkhPTUVQQUdFX0FVVEhfUEFTU1dPUkQ9b2xkLXBhc3N3b3JkLTEyMzQkJyAmJgogICAgYXNzZXJ0X2NvbnRhaW5zX2ZpbGUgImVudiBmaWxlIHVudG91Y2hlZCIgIiR7MX0iICdeU1RBQ0tfTEFOX0hPU1Q9Ym94XC5leGFtcGxlJCcKfQoKQHRlc3QgImRhc2hib2FyZC1wYXNzd29yZDogLS1oZWxwIG9ubHkgcHJpbnRzIHRoZSB1c2FnZSIgewogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBiYXNoICIke1NDUklQVH0iIC0taGVscAogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXSB8fCBmYWlsICJoZWxwIGV4aXRlZCAke3N0YXR1c30iCiAgYXNzZXJ0X21hdGNoICJ1c2FnZSBsaW5lIiAnXnVzYWdlOiBzY3JpcHRzL2Rhc2hib2FyZC1wYXNzd29yZFwuc2gnICIke291dHB1dH0iCiAgYXNzZXJ0X21hdGNoICJkb2N1bWVudHMgLS1wcm9tcHQiICctLXByb21wdCcgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggImRvY3VtZW50cyAtLWxlbmd0aCIgJy0tbGVuZ3RoJyAiJHtvdXRwdXR9IgogIGFzc2VydF9tYXRjaCAiZG9jdW1lbnRzIC0tbm8tYXBwbHkiICctLW5vLWFwcGx5JyAiJHtvdXRwdXR9IgogICMgVGhlcmUgaXMgZGVsaWJlcmF0ZWx5IG5vIGZsYWcgZm9yIHRoZSBlbnYgZmlsZSBvciB0aGUgY29tcG9zZSBwcm9qZWN0OiB0aGUKICAjIGhlbHAgdGV4dCBzYXlzIHNvIGJ5IG5vdCBuYW1pbmcgZWl0aGVyLgogIGFzc2VydF9ub3RfbWF0Y2ggIm5vIGVudi1maWxlIGZsYWciICctLWVudi1maWxlJyAiJHtvdXRwdXR9IgogIGFzc2VydF9ub3RfbWF0Y2ggIm5vIHByb2plY3QgZmxhZyIgJy0tcHJvamVjdC1uYW1lJyAiJHtvdXRwdXR9IgogIFsgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIgLWVxIDAgXSB8fCBmYWlsICJoZWxwIHJlYWNoZWQgZG9ja2VyOiAkKHN0dWJfbG9nIGRvY2tlcikiCiAgdW5jaGFuZ2VkX2VudiAiJHtTQ1JBVENIfS94LmVudiIKfQoKQHRlc3QgImRhc2hib2FyZC1wYXNzd29yZDogYSBwYXNzd29yZCBnaXZlbiBhcyBhbiBhcmd1bWVudCBpcyByZWZ1c2VkIiB7CiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGJhc2ggIiR7U0NSSVBUfSIgLS1uby1hcHBseSAnaHVudGVyMmh1bnRlcjJodW50ZXIyJwogIFsgIiR7c3RhdHVzfSIgLWVxIDEgXSB8fCBmYWlsICJhbiBhcmd2IHBhc3N3b3JkIHdhcyBub3QgcmVmdXNlZCAoJHtzdGF0dXN9KSIKICBhc3NlcnRfbWF0Y2ggInJlZnVzZWQiICdhIG5ldyBwYXNzd29yZCBjYW5ub3QgYmUgZ2l2ZW4gYXMgYW4gYXJndW1lbnQnICIke3N0ZGVycn0iCiAgYXNzZXJ0X21hdGNoICJzYXlzIHdoeSIgJ3NoZWxsIGhpc3RvcnknICIke3N0ZGVycn0iCiAgYXNzZXJ0X25vdF9tYXRjaCAidmFsdWUgbm90IHByaW50ZWQiICdodW50ZXIyaHVudGVyMmh1bnRlcjInICIke291dHB1dH0iCiAgYXNzZXJ0X25vdF9tYXRjaCAidmFsdWUgbm90IGVjaG9lZCB0byBkb2NrZXIiICdodW50ZXIyaHVudGVyMmh1bnRlcjInICIkKHN0dWJfbG9nIGRvY2tlcikiCiAgWyAiJChzdHViX2xvZ19jb3VudCBkb2NrZXIpIiAtZXEgMCBdIHx8IGZhaWwgImRvY2tlciB3YXMgY2FsbGVkOiAkKHN0dWJfbG9nIGRvY2tlcikiCn0KCkB0ZXN0ICJkYXNoYm9hcmQtcGFzc3dvcmQ6IC0tbm8tYXBwbHkgcmVmdXNlcyBhbiBlbnYgZmlsZSB0aGF0IGlzIG1pc3NpbmcsIG9yIG9uZSBpdCBjYW5ub3Qgd3JpdGUiIHsKICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52ICJEQVNIQk9BUkRfRU5WX0ZJTEU9JHtTQ1JBVENIfS9hYnNlbnQuZW52IiBiYXNoICIke1NDUklQVH0iIC0tbm8tYXBwbHkKICBbICIke3N0YXR1c30iIC1lcSAxIF0gfHwgZmFpbCAiYSBtaXNzaW5nIGVudiBmaWxlIHdhcyBub3QgcmVmdXNlZCAoJHtzdGF0dXN9KSIKICBhc3NlcnRfbWF0Y2ggIm5hbWVzIHRoZSBmaWxlIiAnYWJzZW50XC5lbnYgbm90IGZvdW5kJyAiJHtzdGRlcnJ9IgogIGFzc2VydF9tYXRjaCAicG9pbnRzIGF0IHRoZSBib290c3RyYXAgc2NyaXB0IiAnZmlyc3QgYm9vdFw/IHJ1biBcLi9zY3JpcHRzL2Jvb3RzdHJhcFwuc2ggdG8gY3JlYXRlIGl0JyAiJHtzdGRlcnJ9IgogIGFzc2VydF9maWxlX25vdF9leGlzdHMgIm5vIGVudiBmaWxlIHdhcyBjcmVhdGVkIiAiJHtTQ1JBVENIfS9hYnNlbnQuZW52IgogIGNobW9kIDQ0NCAiJHtTQ1JBVENIfS94LmVudiIKICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52ICJEQVNIQk9BUkRfRU5WX0ZJTEU9JHtTQ1JBVENIfS94LmVudiIgYmFzaCAiJHtTQ1JJUFR9IiAtLXByb21wdCA8IiR7U0NSQVRDSH0vaW4iCiAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdIHx8IGZhaWwgImEgcmVhZC1vbmx5IGVudiBmaWxlIHdhcyBub3QgcmVmdXNlZCAoJHtzdGF0dXN9KSIKICBhc3NlcnRfbWF0Y2ggInJlZnVzZXMgYSBmaWxlIGl0IGNhbm5vdCB3cml0ZSIgJ2lzIG5vdCBib3RoIHJlYWRhYmxlIGFuZCB3cml0YWJsZSBieSB0aGlzIHVzZXInICIke3N0ZGVycn0iCiAgYXNzZXJ0X25vdF9tYXRjaCAidGhlIG9sZCB2YWx1ZSBpcyBub3QgcHJpbnRlZCIgJ29sZC1wYXNzd29yZC0xMjM0JyAiJHtvdXRwdXR9IgogIFsgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIgLWVxIDAgXSB8fCBmYWlsICJkb2NrZXIgd2FzIGNhbGxlZDogJChzdHViX2xvZyBkb2NrZXIpIgp9CgpAdGVzdCAiZGFzaGJvYXJkLXBhc3N3b3JkOiAtLW5vLWFwcGx5IHJld3JpdGVzIG9ubHkgdGhlIHBhc3N3b3JkIGxpbmUsIHdpdGggZG9ja2VyIG5vd2hlcmUiIHsKICBwcmludGYgJyVzXG4lc1xuJXNcbicgJ0hPTUVQQUdFX0FVVEhfUEFTU1dPUkQ9Zmlyc3Qtb2xkZXItcGFzcycgJ09USEVSX0tFWT0xJyAnSE9NRVBBR0VfQVVUSF9QQVNTV09SRD1zZWNvbmQtb2xkZXItcGFzcycgPiIke1NDUkFUQ0h9L2R1cC5lbnYiCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiAiREFTSEJPQVJEX0VOVl9GSUxFPSR7U0NSQVRDSH0vZHVwLmVudiIgYmFzaCAiJHtTQ1JJUFR9IiAtLXByb21wdCAtLW5vLWFwcGx5IDwiJHtTQ1JBVENIfS9pbiIKICBbICIke3N0YXR1c30iIC1lcSAwIF0gfHwgZmFpbCAiLS1uby1hcHBseSBleGl0ZWQgJHtzdGF0dXN9OiAke3N0ZGVycn0iCiAgYXNzZXJ0X2VxICJvbmUgcGFzc3dvcmQgbGluZSIgJzEnICIkKGdyZXAgLWMgJ15IT01FUEFHRV9BVVRIX1BBU1NXT1JEPScgIiR7U0NSQVRDSH0vZHVwLmVudiIpIgogIGFzc2VydF9tYXRjaCAidGhlIG5ldyB2YWx1ZSBsYW5kZWQiICdeSE9NRVBBR0VfQVVUSF9QQVNTV09SRD1yb3RhdGVkLXBhc3N3ZC1hYmNkZWZnaCQnICIkKGNhdCAiJHtTQ1JBVENIfS9kdXAuZW52IikiCiAgYXNzZXJ0X25vdF9tYXRjaCAiYm90aCBzdGFsZSB2YWx1ZXMgYXJlIGdvbmUiICdvbGRlci1wYXNzJyAiJChjYXQgIiR7U0NSQVRDSH0vZHVwLmVudiIpIgogIGFzc2VydF9tYXRjaCAidGhlIG5laWdoYm91ciBsaW5lIHN1cnZpdmVkIiAnXk9USEVSX0tFWT0xJCcgIiQoY2F0ICIke1NDUkFUQ0h9L2R1cC5lbnYiKSIKICBhc3NlcnRfbWF0Y2ggInNheXMgaXQgc3RheWVkIG9mZmxpbmUiICdub3QgYXBwbGllZDogcmVydW4gd2l0aG91dCAtLW5vLWFwcGx5JyAiJHtvdXRwdXR9IgogICMgVGhlIGNvbW1hbmQgaXQgc2tpcHBlZCBpcyBuYW1lZCBpbiBmdWxsOiBhbiBvcGVyYXRvciBhcHBseWluZyBpdCBieSBoYW5kIGhhcwogICMgdG8gYmUgYWJsZSB0byBjb3B5IGl0LCBhbmQgYHJlc3RhcnRgIHdvdWxkIGtlZXAgdGhlIG9sZCB2YWx1ZSBpbiB0aGUgZW52LgogIGFzc2VydF9tYXRjaCAibmFtZXMgdGhlIHJlY3JlYXRlIGl0IHNraXBwZWQiICdkb2NrZXIgY29tcG9zZSB1cCAtZCAtLWZvcmNlLXJlY3JlYXRlIGhvbWVwYWdlJyAiJHtvdXRwdXR9IgogIGFzc2VydF9ub3RfbWF0Y2ggInJlc3RhcnQgaXMgbmV2ZXIgc3VnZ2VzdGVkIiAnY29tcG9zZSByZXN0YXJ0JyAiJHtvdXRwdXR9IgogIFsgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIgLWVxIDAgXSB8fCBmYWlsICJkb2NrZXIgd2FzIGNhbGxlZDogJChzdHViX2xvZyBkb2NrZXIpIgp9CgpAdGVzdCAiZGFzaGJvYXJkLXBhc3N3b3JkOiAtLWxlbmd0aCBhbmQgdGhlIHByb21wdCBlbnRyaWVzIGFyZSBjaGVja2VkIGJlZm9yZSAuZW52IG1vdmVzIG9uIiB7CiAgbG9jYWwgYmFkCiAgZm9yIGJhZCBpbiAnJyAnYWJjJyAnMCcgJzYwMCc7IGRvCiAgICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52ICJEQVNIQk9BUkRfRU5WX0ZJTEU9JHtTQ1JBVENIfS94LmVudiIgYmFzaCAiJHtTQ1JJUFR9IiAtLWxlbmd0aCAiJHtiYWR9IgogICAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdIHx8IGZhaWwgIi0tbGVuZ3RoICR7YmFkfSBleGl0ZWQgJHtzdGF0dXN9IgogICAgYXNzZXJ0X21hdGNoICJyZWZ1c2VzIC0tbGVuZ3RoICR7YmFkfSIgJy0tbGVuZ3RoIG11c3QgYmUnICIke3N0ZGVycn0iCiAgICBhc3NlcnRfbm90X21hdGNoICJub3RoaW5nIHdhcyBhcHBsaWVkIGZvciAtLWxlbmd0aCAke2JhZH0iICd1cGRhdGVkIEhPTUVQQUdFX0FVVEhfUEFTU1dPUkQnICIke291dHB1dH0iCiAgZG9uZQogIGFzc2VydF9jb250YWluc19maWxlICJ0aGUga2V5IGxpbmUgc3Vydml2ZXMgYSByZXdyaXRlIiAiJHtTQ1JBVENIfS94LmVudiIgJ15IT01FUEFHRV9BVVRIX1BBU1NXT1JEPW9sZC1wYXNzd29yZC0xMjM0JCcKICBwcmludGYgJyVzXG4lc1xuJyAnZmlyc3QtZW50cnktdmFsdWUtYWJjZGVmJyAnc2Vjb25kLWVudHJ5LXZhbHVlLXh5eicgPiIke1NDUkFUQ0h9L21pc21hdGNoLmluIgogIHByaW50ZiAnJXNcbiVzXG4nICdzaG9ydCcgJ3Nob3J0JyA+IiR7U0NSQVRDSH0vc2hvcnQuaW4iCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiAiREFTSEJPQVJEX0VOVl9GSUxFPSR7U0NSQVRDSH0veC5lbnYiIGJhc2ggIiR7U0NSSVBUfSIgLS1wcm9tcHQgPCIke1NDUkFUQ0h9L21pc21hdGNoLmluIgogIFsgIiR7c3RhdHVzfSIgLWVxIDEgXSB8fCBmYWlsICJtaXNtYXRjaGVkIGVudHJpZXMgd2VyZSBhY2NlcHRlZCAoJHtzdGF0dXN9KSIKICBhc3NlcnRfbWF0Y2ggIm1pc21hdGNoIHJlZnVzZWQiICd0aGUgdHdvIGVudHJpZXMgZGlkIG5vdCBtYXRjaDsgbm90aGluZyB3YXMgY2hhbmdlZCcgIiR7c3RkZXJyfSIKICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52ICJEQVNIQk9BUkRfRU5WX0ZJTEU9JHtTQ1JBVENIfS94LmVudiIgYmFzaCAiJHtTQ1JJUFR9IiAtLXByb21wdCA8IiR7U0NSQVRDSH0vc2hvcnQuaW4iCiAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdIHx8IGZhaWwgImEgc2hvcnQgcGFzc3dvcmQgd2FzIGFjY2VwdGVkICgke3N0YXR1c30pIgogIGFzc2VydF9tYXRjaCAic2hvcnQgcGFzc3dvcmQgcmVmdXNlZCIgJ3Bhc3N3b3JkIHRvbyBzaG9ydDogYXQgbGVhc3QgMTIgY2hhcmFjdGVycyByZXF1aXJlZCBcKGdvdCA1XCknICIke3N0ZGVycn0iCiAgdW5jaGFuZ2VkX2VudiAiJHtTQ1JBVENIfS94LmVudiIKICBbICIkKHN0dWJfbG9nX2NvdW50IGRvY2tlcikiIC1lcSAwIF0gfHwgZmFpbCAiZG9ja2VyIHdhcyBjYWxsZWQ6ICQoc3R1Yl9sb2cgZG9ja2VyKSIKfQoKQHRlc3QgImRhc2hib2FyZC1wYXNzd29yZDogd2l0aCBubyBkb2NrZXIsIG9yIGEgZGFlbW9uIHRoYXQgd2lsbCBub3QgYW5zd2VyLCAuZW52IGlzIGxlZnQgYWxvbmUgb3IgdGhlIHJ1biBzdG9wcyIgewogICMgTm8gZG9ja2VyIG9uIFBBVEggYXQgYWxsOiB0aGUgZ3VhcmQgcnVucyBiZWZvcmUgdGhlIHJld3JpdGUsIHNvIHRoZSBmaWxlCiAgIyBzdGlsbCBob2xkcyB0aGUgcGFzc3dvcmQgdGhlIG9wZXJhdG9yIGlzIGxvZ2dlZCBpbiB3aXRoLgogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBlbnYgIkRPQ0tFUl9CSU49bm9kb2NrZXIiICJEQVNIQk9BUkRfRU5WX0ZJTEU9JHtTQ1JBVENIfS94LmVudiIgYmFzaCAiJHtTQ1JJUFR9IiAtLXByb21wdCA8IiR7U0NSQVRDSH0vaW4iCiAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdIHx8IGZhaWwgImEgbWlzc2luZyBkb2NrZXIgYmluYXJ5IHdhcyBub3QgcmVmdXNlZCAoJHtzdGF0dXN9KSIKICBhc3NlcnRfbWF0Y2ggIm5hbWVzIHRoZSBvZmZsaW5lIHdheSBvdXQiICdkb2NrZXIgbm90IGZvdW5kIG9uIFBBVEggXCh1c2UgLS1uby1hcHBseSB0byB1cGRhdGUgXC5lbnYgb25seVwpJyAiJHtzdGRlcnJ9IgogIHVuY2hhbmdlZF9lbnYgIiR7U0NSQVRDSH0veC5lbnYiCgogICMgQSBkYWVtb24gdGhhdCBhbnN3ZXJzIHRoZSBkYWVtb24td2lkZSBwcm9iZSB3aXRoIGFuIGVycm9yIGlzIGFuc3dlcmVkLCBub3QKICAjIGlnbm9yZWQ6IHRoZSByZWZ1c2FsIHF1b3RlcyBkb2NrZXIncyBvd24gdGV4dCBiYWNrLgogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBlbnYgIlNUVUJfQ09NUE9TRV9QUz1FcnJvcjogZGlhbCB1bml4IC92YXIvcnVuL2RvY2tlci5zb2NrOiBjb25uZWN0OiBjb25uZWN0aW9uIHJlZnVzZWQiICJTVFVCX0NPTVBPU0VfUFNfUkM9MSIgXAogICAgIkRBU0hCT0FSRF9FTlZfRklMRT0ke1NDUkFUQ0h9L3guZW52IiBiYXNoICIke1NDUklQVH0iIC0tcHJvbXB0IDwiJHtTQ1JBVENIfS9pbiIKICBbICIke3N0YXR1c30iIC1lcSAxIF0gfHwgZmFpbCAiYSBmYWlsaW5nIGRhZW1vbiBwcm9iZSBkaWQgbm90IHN0b3AgdGhlIHJ1biAoJHtzdGF0dXN9KSIKICBhc3NlcnRfbWF0Y2ggInF1b3RlcyB0aGUgZmFpbGVkIHByb2JlIiAnY291bGQgbm90IHF1ZXJ5IHRoZSBkb2NrZXIgZGFlbW9uOiBFcnJvcjogZGlhbCB1bml4JyAiJHtzdGRlcnJ9IgogIGFzc2VydF9tYXRjaCAidGhlIHJld3JpdGUgaGFkIGFscmVhZHkgbGFuZGVkIiAndXBkYXRlZCBIT01FUEFHRV9BVVRIX1BBU1NXT1JEIGluIC4qL3hcLmVudicgIiR7b3V0cHV0fSIKICBhc3NlcnRfbm90X21hdGNoICJubyBjb21wb3NlIHdhcyBhdHRlbXB0ZWQiICdkb2NrZXIgY29tcG9zZScgIiQoc3R1Yl9sb2cgZG9ja2VyKSIKfQoKQHRlc3QgImRhc2hib2FyZC1wYXNzd29yZDogYSBkYWVtb24gd2l0aCBubyBob21lcGFnZSBjb250YWluZXIgcmVmdXNlcyB0byByZWNyZWF0ZSBhbnl0aGluZyIgewogICMgQm90aCBjb250YWluZXJzIGNhcnJ5IGEgc2VydmljZSBsYWJlbDsgbmVpdGhlciBpcyB0aGUgaG9tZXBhZ2Ugc2VydmljZS4gVGhlCiAgIyBsYWJlbCBjb2x1bW4gaXMgbWF0Y2hlZCBhcyBhIHdob2xlIGZpZWxkLCBzbyB4aG9tZXBhZ2UgaXMgbm90IGEgaG9tb255bS4KICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52ICJTVFVCX0NPTVBPU0VfUFM9ZGJ8c3RhY2stZGItMQp4ZGJ8c3RhY2staG9tZS0xIiAiREFTSEJPQVJEX0VOVl9GSUxFPSR7U0NSQVRDSH0veC5lbnYiIGJhc2ggIiR7U0NSSVBUfSIgLS1wcm9tcHQgPCIke1NDUkFUQ0h9L2luIgogIFsgIiR7c3RhdHVzfSIgLWVxIDEgXSB8fCBmYWlsICJhbiBlbXB0eSBjb250YWluZXIgbGlzdCBkaWQgbm90IHN0b3AgdGhlIHJ1biAoJHtzdGF0dXN9KSIKICBhc3NlcnRfbWF0Y2ggInJlZnVzZXMgd2l0aG91dCB0aGUgY29udGFpbmVyIiAnY291bGQgbm90IGZpbmQgdGhlIGhvbWVwYWdlIGNvbnRhaW5lciBvbiB0aGUgZG9ja2VyIGRhZW1vbiBcKHVzZSAtLW5vLWFwcGx5IHRvIHVwZGF0ZSBcLmVudiBvbmx5XCknICIke3N0ZGVycn0iCiAgIyBUaGUgb25lIGRhZW1vbiBjYWxsIGlzIHRoZSBkYWVtb24td2lkZSBgZG9ja2VyIHBzYDogbm8gLXAgYW5kIG5vIC1mLCBiZWNhdXNlCiAgIyBhIHByb2plY3QgcmVzb2x2ZWQgZnJvbSB0aGlzIHNjcmlwdCdzIGN3ZCBpcyBhIGRpZmZlcmVudCBwcm9qZWN0LgogIGFzc2VydF9lcSAib25lIGRhZW1vbiBwcm9iZSIgJzEnICIkKHN0dWJfbG9nX2NvdW50IGRvY2tlcikiCiAgYXNzZXJ0X21hdGNoICJ0aGUgcHJvYmUgaXMgZGFlbW9uLXdpZGUiICdeZG9ja2VyIHBzIC0tZm9ybWF0ICcgIiQoc3R1Yl9sb2cgZG9ja2VyKSIKICBhc3NlcnRfbm90X21hdGNoICJ0aGUgcHJvYmUgc2NvcGVkIGEgcHJvamVjdCIgJyAtcCAnICIkKHN0dWJfbG9nIGRvY2tlcikiCiAgYXNzZXJ0X25vdF9tYXRjaCAibm8gY29tcG9zZSB3YXMgYXR0ZW1wdGVkIiAnZG9ja2VyIGNvbXBvc2UnICIkKHN0dWJfbG9nIGRvY2tlcikiCn0KCkB0ZXN0ICJkYXNoYm9hcmQtcGFzc3dvcmQ6IHRoZSBvbGRlc3QgbGFiZWxsZWQgaG9tZXBhZ2UgY29udGFpbmVyIGFuc3dlcnMsIGFuZCBhbiB1bnJlYWRhYmxlIGNvbXBvc2UgdGFyZ2V0IHN0b3BzIHRoZSBydW4iIHsKICAjIFR3byBjb250YWluZXJzIGNhcnJ5IHRoZSBob21lcGFnZSBsYWJlbDogZG9ja2VyIHBzIGxpc3RzIHRoZSBuZXdlc3QgZmlyc3QsIHNvCiAgIyB0aGUgc2NyaXB0IG11c3QgdGFrZSB0aGUgTEFTVCBvbmUgKHRoZSBvbGRlciBzdGFjayksIGFuZCBpdCBtdXN0IGFzayB0aGF0CiAgIyBjb250YWluZXIncyBvd24gbGFiZWxzIHJhdGhlciB0aGFuIGFzc3VtaW5nIGEgcHJvamVjdCBmcm9tIHRoZSBjd2QuCiAgZXhwb3J0IFNUVUJfQ09NUE9TRV9QUz0naG9tZXBhZ2V8aG9tZS1uZXcKaG9tZXBhZ2V8aG9tZS1vbGQnCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiAiREFTSEJPQVJEX0VOVl9GSUxFPSR7U0NSQVRDSH0veC5lbnYiIGJhc2ggIiR7U0NSSVBUfSIgLS1wcm9tcHQgPCIke1NDUkFUQ0h9L2luIgogIFsgIiR7c3RhdHVzfSIgLWVxIDEgXSB8fCBmYWlsICJhbiB1bmtub3duIGNvbXBvc2UgdGFyZ2V0IGRpZCBub3Qgc3RvcCB0aGUgcnVuICgke3N0YXR1c30pIgogIGFzc2VydF9tYXRjaCAicmVmdXNlcyB0byBndWVzcyBhIHByb2plY3QiICdhbnN3ZXJzIHRvIG5vIGNvbXBvc2UgcHJvamVjdCB0aGlzIHNoZWxsIGNhbiByZWFkJyAiJHtzdGRlcnJ9IgogIGFzc2VydF9tYXRjaCAicG9pbnRzIGF0IGEgbWFudWFsIHJlY3JlYXRlIiAncmVjcmVhdGUgaXQgYnkgaGFuZCBmcm9tIHRoZSBjaGVja291dCByb290OiBkb2NrZXIgY29tcG9zZSB1cCAtZCAtLWZvcmNlLXJlY3JlYXRlIGhvbWVwYWdlJyAiJHtzdGRlcnJ9IgogIGFzc2VydF9tYXRjaCAidGhlIG9sZGVyIGNvbnRhaW5lciB3YXMgaW5zcGVjdGVkIiAnQ29uZmlnXC5MYWJlbHMuKiBob21lLW9sZCQnICIkKHN0dWJfbG9nIGRvY2tlcikiCiAgYXNzZXJ0X25vdF9tYXRjaCAibm8gcmVjcmVhdGUgd2l0aG91dCBhIGNvbXBvc2UgdGFyZ2V0IiAnY29tcG9zZSAtcCcgIiQoc3R1Yl9sb2cgZG9ja2VyKSIKICBhc3NlcnRfbm90X21hdGNoICJubyBwYXNzd29yZCB3YXMgbGVmdCBiZWhpbmQgaW4gYXJndiIgJ3JvdGF0ZWQtcGFzc3dkLWFiY2RlZmdoJyAiJChzdHViX2xvZyBkb2NrZXIpIgp9CgpAdGVzdCAiZGFzaGJvYXJkLXBhc3N3b3JkOiB0aGUgcmVjcmVhdGUgbmFtZXMgdGhlIGNvbXBvc2UgcHJvamVjdCBhbmQgZmlsZSB0aGUgbGFiZWxzIGdhdmUiIHsKICBwcmludGYgJyVzXG4nICdzZXJ2aWNlczonICcgIGhvbWVwYWdlOicgPiIke1NDUkFUQ0h9L2NvbXBvc2UueW1sIgogIGZha2VfZGFlbW9uICdob21lcGFnZXxob21lLW5ldwpob21lcGFnZXxob21lLW9sZCcgInByb2Qtc3RhY2t8JHtTQ1JBVENIfS9jb21wb3NlLnltbCIgIiR7U0NSQVRDSH0veC5lbnYiCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiAiREFTSEJPQVJEX0VOVl9GSUxFPSR7U0NSQVRDSH0veC5lbnYiIGJhc2ggIiR7U0NSSVBUfSIgLS1wcm9tcHQgPCIke1NDUkFUQ0h9L2luIgogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXSB8fCBmYWlsICJhIHJlc29sdmFibGUgY29tcG9zZSB0YXJnZXQgZXhpdGVkICR7c3RhdHVzfTogJHtzdGRlcnJ9IgogIGFzc2VydF9tYXRjaCAiZm91ciBkYWVtb24gY2FsbHMiICdeZG9ja2VyIGNvbXBvc2UgLXAgcHJvZC1zdGFjayAtZiAuKi9jb21wb3NlXC55bWwgdXAgLWQgLS1mb3JjZS1yZWNyZWF0ZSBob21lcGFnZSQnICIkKHN0dWJfbG9nIGRvY2tlcikiCiAgYXNzZXJ0X2VxICJwcywgbGFiZWxzLCByZWNyZWF0ZSwgZW52IiAnNCcgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIKICBhc3NlcnRfbm90X21hdGNoICJhIHJlc3RhcnQgaXMgbm90IGEgcmVjcmVhdGUiICdyZXN0YXJ0JyAiJChzdHViX2xvZyBkb2NrZXIpIgogIGFzc2VydF9tYXRjaCAidGhlIHJ1bm5pbmcgY29udGFpbmVyIHdhcyB2ZXJpZmllZCIgJ3ZlcmlmaWVkOiB0aGUgcnVubmluZyBjb250YWluZXIgaGFzIHRoZSBuZXcgcGFzc3dvcmQnICIke291dHB1dH0iCiAgYXNzZXJ0X25vdF9tYXRjaCAidGhlIHBhc3N3b3JkIG5ldmVyIHJlYWNoZXMgZG9ja2VyIGFyZ3YiICdyb3RhdGVkLXBhc3N3ZC1hYmNkZWZnaCcgIiQoc3R1Yl9sb2cgZG9ja2VyKSIKICBhc3NlcnRfbm90X21hdGNoICJubyBjd2QtcmVzb2x2ZWQgcHJvamVjdCIgJ2NvbXBvc2UgLXAgZXZvLXQxJyAiJChzdHViX2xvZyBkb2NrZXIpIgp9CgpAdGVzdCAiZGFzaGJvYXJkLXBhc3N3b3JkOiBhIHJlY3JlYXRlIHRoZSBydW5uaW5nIGNvbnRhaW5lciBjYW5ub3QgY29uZmlybSBpcyByZXBvcnRlZCwgbm90IGNlbGVicmF0ZWQiIHsKICAjIEZpcnN0OiB0aGUgY29udGFpbmVyIGFuc3dlcnMgd2l0aCB0aGUgcGFzc3dvcmQgaXQgd2FzIGNyZWF0ZWQgd2l0aCwgd2hpY2ggaXMKICAjIHN0aWxsIHRoZSBvbGQgb25lLiBUaGUgcmVjcmVhdGUgcmVidWlsdCBub3RoaW5nLCBhbmQgc2F5aW5nICJ2ZXJpZmllZCIgaGVyZQogICMgd291bGQgbGVhdmUgZXZlcnkgYnJvd3NlciBzaWduZWQgb3V0IGFnYWluc3QgYSBwYXNzd29yZCBub2JvZHkga25vd3MuCiAgcHJpbnRmICclc1xuJyAnSE9NRVBBR0VfQVVUSF9QQVNTV09SRD1vbGQtcGFzc3dvcmQtMTIzNCcgJ1NUQUNLX0xBTl9IT1NUPWJveC5leGFtcGxlJyA+IiR7U0NSQVRDSH0vc3RhbGUuZW52IgogIHByaW50ZiAnJXNcbicgJ3NlcnZpY2VzOicgJyAgaG9tZXBhZ2U6JyA+IiR7U0NSQVRDSH0vY29tcG9zZS55bWwiCiAgZmFrZV9kYWVtb24gJ2hvbWVwYWdlfGhvbWUtb2xkJyAicHJvZC1zdGFja3wke1NDUkFUQ0h9L2NvbXBvc2UueW1sIiAiJHtTQ1JBVENIfS9zdGFsZS5lbnYiCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiAiREFTSEJPQVJEX0VOVl9GSUxFPSR7U0NSQVRDSH0veC5lbnYiIGJhc2ggIiR7U0NSSVBUfSIgLS1wcm9tcHQgPCIke1NDUkFUQ0h9L2luIgogIFsgIiR7c3RhdHVzfSIgLWVxIDEgXSB8fCBmYWlsICJhIHJlY3JlYXRlIHRoYXQga2VwdCB0aGUgb2xkIHBhc3N3b3JkIHJlcG9ydGVkIHN1Y2Nlc3MgKCR7c3RhdHVzfSkiCiAgYXNzZXJ0X21hdGNoICJuYW1lcyB0aGUgZmFpbGVkIHJlY3JlYXRlIiAndGhlIHJ1bm5pbmcgY29udGFpbmVyIHN0aWxsIGhhcyB0aGUgb2xkIHBhc3N3b3JkJyAiJHtzdGRlcnJ9IgogIGFzc2VydF9tYXRjaCAicG9pbnRzIGF0IHRoZSBjb21wb3NlIGxvZ3MiICdjaGVjazogZG9ja2VyIGNvbXBvc2UgbG9ncyBob21lcGFnZScgIiR7c3RkZXJyfSIKICBhc3NlcnRfbm90X21hdGNoICJubyBmYWxzZSBzdWNjZXNzIGNsYWltIiAndmVyaWZpZWQ6IHRoZSBydW5uaW5nIGNvbnRhaW5lcicgIiR7b3V0cHV0fSIKICBhc3NlcnRfbWF0Y2ggInRoZSByZWNyZWF0ZSByZWFsbHkgd2FzIGFkZHJlc3NlZCIgJ15kb2NrZXIgY29tcG9zZSAtcCBwcm9kLXN0YWNrIC1mICcgIiQoc3R1Yl9sb2cgZG9ja2VyKSIKICAjIFRoZW46IGEgY29udGFpbmVyIHdob3NlIGVudmlyb25tZW50IGNhcnJpZXMgbm8gc3VjaCBrZXkgYXQgYWxsLiBTYW1lIHJlZnVzYWwKICAjIHNoYXBlIC0gdGhlIHNjcmlwdCB3aWxsIG5vdCBjYWxsIGEgcm90YXRlIHZlcmlmaWVkIG9uIGFuIGVudiBpdCBjYW5ub3QgcmVhZC4KICBwcmludGYgJyVzXG4nICdTVEFDS19MQU5fSE9TVD1ib3guZXhhbXBsZScgPiIke1NDUkFUQ0h9L25va2V5LmVudiIKICBmYWtlX2RhZW1vbiAnaG9tZXBhZ2V8aG9tZS1vbGQnICJwcm9kLXN0YWNrfCR7U0NSQVRDSH0vY29tcG9zZS55bWwiICIke1NDUkFUQ0h9L25va2V5LmVudiIKICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52ICJEQVNIQk9BUkRfRU5WX0ZJTEU9JHtTQ1JBVENIfS94LmVudiIgYmFzaCAiJHtTQ1JJUFR9IiAtLXByb21wdCA8IiR7U0NSQVRDSH0vaW4iCiAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdIHx8IGZhaWwgImFuIGVudiB3aXRoIG5vIHBhc3N3b3JkIGVudHJ5IGRpZCBub3Qgc3RvcCB0aGUgcnVuICgke3N0YXR1c30pIgogIGFzc2VydF9tYXRjaCAicmVmdXNlcyB0byBjbGFpbSBhIHJvdGF0ZSBpdCBjYW5ub3Qgc2VlIiAndGhlIGhvbWVwYWdlIGNvbnRhaW5lciBoYXMgbm8gSE9NRVBBR0VfQVVUSF9QQVNTV09SRCBlbnRyeTsgY2hlY2s6IGRvY2tlciBjb21wb3NlIGNvbmZpZycgIiR7c3RkZXJyfSIKICBhc3NlcnRfbm90X21hdGNoICJubyBmYWxzZSBzdWNjZXNzIGNsYWltIiAndmVyaWZpZWQ6IHRoZSBydW5uaW5nIGNvbnRhaW5lcicgIiR7b3V0cHV0fSIKfQo=
+#!/usr/bin/env bats
+# shellcheck shell=bash
+#
+# ## dashboard-password.bats - hermetic coverage for scripts/dashboard-password.sh
+#
+# Three contracts are pinned here.
+#
+# (1) The password never reaches argv. A new value cannot be given as an argument
+#     (that is a refusal the script itself makes), the prompt reads never reach
+#     docker's argv, and no test asserts a flow where they would.
+# (2) The env file is edited in place, one HOMEPAGE_AUTH_PASSWORD line, mode 600,
+#     and every test points DASHBOARD_ENV_FILE at a scratch file. The checkout's
+#     own .env is never read, printed, or written by this suite.
+# (3) The apply path addresses the daemon directly, then recreates through the
+#     compose project the container's own labels name: `docker ps` with no -p/-f,
+#     then `docker inspect` for com.docker.compose.project + project.config_files,
+#     then `docker compose -p <project> -f <file> up -d --force-recreate homepage`.
+#     A bare compose command or a plain restart is what used to be wrong here.
+#
+# docker and timeout resolve to the copies in tests/bats/tool_stubs/ (use_stubs),
+# so `command -v docker` passes and the unquoted ${DOCKER_BIN} + timeout(1) probes
+# land on a stub that never opens a socket. With DOCKER_BIN left at its default
+# the stub swallows the two `inspect -f ...` probes (its `*config*` case matches
+# the label format string, which names com.docker.compose.project.config_files),
+# so those runs can only ever reach the script's "cannot tell" refusals - that is
+# what the last two compose-target tests pin. fake_daemon writes a throwaway
+# daemon that answers the label probe and mirrors the container's env, which is
+# how the recreate-and-verify half gets asserted.
+#
+# Usage: bats tests/bats/dashboard-password.bats   (from any cwd)
+#
+# Safety: stub only. Nothing here needs a daemon, a network, or the real .env.
+
+bats_require_minimum_version 1.5.0
+
+# shellcheck source=/dev/null
+load 'test_helper'
+
+REPO_ROOT=""
+SCRIPT=""
+SCRATCH=""
+
+setup() {
+  REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
+  SCRIPT="${REPO_ROOT}/scripts/dashboard-password.sh"
+  if [ ! -f "${SCRIPT}" ]; then
+    skip "scripts/dashboard-password.sh is not in the tree"
+  fi
+  export STUB_LOG="${BATS_TEST_TMPDIR}/stub-logs"
+  mkdir -p "${STUB_LOG}"
+  use_stubs docker timeout
+  SCRATCH="$(make_scratch)"
+  # A scratch env file with a stale password in it, plus the two prompt entries a
+  # --prompt run reads. 22 characters, so the length floor is never the question.
+  printf '%s\n%s\n' 'HOMEPAGE_AUTH_PASSWORD=old-password-1234' 'STACK_LAN_HOST=box.example' >"${SCRATCH}/x.env"
+  printf '%s\n%s\n' 'rotated-passwd-abcdefgh' 'rotated-passwd-abcdefgh' >"${SCRATCH}/in"
+}
+
+# fake_daemon <ps-body> [project|compose-file] [file-to-mirror-as-container-env]
+# Replace the copied docker stub with a daemon that answers the three probes the
+# apply path makes: the daemon-wide ps (one "service|container" line per running
+# container), the label probe that names the compose project and file, and the
+# env probe that reports the running container's environment. An empty project
+# means "no compose labels"; the env answer is copied out of <file> at call
+# time, so a pre-rewrite copy reads as a container that kept the old password.
+# Every argv is still recorded to ${STUB_LOG}/docker.log, prefixed "docker ".
+fake_daemon() {
+  local bin="${BATS_TEST_TMPDIR?}/bin"
+  export FAKE_PS="${1-}"
+  export FAKE_TARGET="${2-}"
+  export FAKE_ENVFILE="${3:-/dev/null}"
+  cat >"${bin}/docker" <<'STUB'
+#!/usr/bin/env bash
+set -u
+printf 'docker %s\n' "$*" >>"${STUB_LOG:-/dev/null}/docker.log"
+argv=" $* "
+case "${argv}" in
+  *" ps "*)
+    if [ -n "${FAKE_PS}" ]; then printf '%s\n' "${FAKE_PS}"; fi
+    exit "${FAKE_PS_RC:-0}"
+    ;;
+  *Config.Labels*)
+    printf '%s\n' "${FAKE_TARGET}"
+    exit 0
+    ;;
+  *Config.Env*)
+    grep '^HOMEPAGE_AUTH_PASSWORD=' "${FAKE_ENVFILE}" 2>/dev/null || true
+    exit 0
+    ;;
+esac
+exit 0
+STUB
+  chmod 755 "${bin}/docker"
+}
+
+# unchanged_env <file> - true while <file> still holds the two lines setup wrote.
+unchanged_env() {
+  assert_contains_file "env file untouched" "${1}" '^HOMEPAGE_AUTH_PASSWORD=old-password-1234$' &&
+    assert_contains_file "env file untouched" "${1}" '^STACK_LAN_HOST=box\.example$'
+}
+
+@test "dashboard-password: --help only prints the usage" {
+  run --separate-stderr bash "${SCRIPT}" --help
+  [ "${status}" -eq 0 ] || fail "help exited ${status}"
+  assert_match "usage line" '^usage: scripts/dashboard-password\.sh' "${output}"
+  assert_match "documents --prompt" '--prompt' "${output}"
+  assert_match "documents --length" '--length' "${output}"
+  assert_match "documents --no-apply" '--no-apply' "${output}"
+  # There is deliberately no flag for the env file or the compose project: the
+  # help text says so by not naming either.
+  assert_not_match "no env-file flag" '--env-file' "${output}"
+  assert_not_match "no project flag" '--project-name' "${output}"
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "help reached docker: $(stub_log docker)"
+  unchanged_env "${SCRATCH}/x.env"
+}
+
+@test "dashboard-password: a password given as an argument is refused" {
+  run --separate-stderr bash "${SCRIPT}" --no-apply 'hunter2hunter2hunter2'
+  [ "${status}" -eq 1 ] || fail "an argv password was not refused (${status})"
+  assert_match "refused" 'a new password cannot be given as an argument' "${stderr}"
+  assert_match "says why" 'shell history' "${stderr}"
+  assert_not_match "value not printed" 'hunter2hunter2hunter2' "${output}"
+  assert_not_match "value not echoed to docker" 'hunter2hunter2hunter2' "$(stub_log docker)"
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
+}
+
+@test "dashboard-password: --no-apply refuses an env file that is missing, or one it cannot write" {
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/absent.env" bash "${SCRIPT}" --no-apply
+  [ "${status}" -eq 1 ] || fail "a missing env file was not refused (${status})"
+  assert_match "names the file" 'absent\.env not found' "${stderr}"
+  assert_match "points at the bootstrap script" 'first boot\? run \./scripts/bootstrap\.sh to create it' "${stderr}"
+  assert_file_not_exists "no env file was created" "${SCRATCH}/absent.env"
+  chmod 444 "${SCRATCH}/x.env"
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 1 ] || fail "a read-only env file was not refused (${status})"
+  assert_match "refuses a file it cannot write" 'is not both readable and writable by this user' "${stderr}"
+  assert_not_match "the old value is not printed" 'old-password-1234' "${output}"
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
+}
+
+@test "dashboard-password: --no-apply rewrites only the password line, with docker nowhere" {
+  printf '%s\n%s\n%s\n' 'HOMEPAGE_AUTH_PASSWORD=first-older-pass' 'OTHER_KEY=1' 'HOMEPAGE_AUTH_PASSWORD=second-older-pass' >"${SCRATCH}/dup.env"
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/dup.env" bash "${SCRIPT}" --prompt --no-apply <"${SCRATCH}/in"
+  [ "${status}" -eq 0 ] || fail "--no-apply exited ${status}: ${stderr}"
+  assert_eq "one password line" '1' "$(grep -c '^HOMEPAGE_AUTH_PASSWORD=' "${SCRATCH}/dup.env")"
+  assert_match "the new value landed" '^HOMEPAGE_AUTH_PASSWORD=rotated-passwd-abcdefgh$' "$(cat "${SCRATCH}/dup.env")"
+  assert_not_match "both stale values are gone" 'older-pass' "$(cat "${SCRATCH}/dup.env")"
+  assert_match "the neighbour line survived" '^OTHER_KEY=1$' "$(cat "${SCRATCH}/dup.env")"
+  assert_match "says it stayed offline" 'not applied: rerun without --no-apply' "${output}"
+  # The command it skipped is named in full: an operator applying it by hand has
+  # to be able to copy it, and `restart` would keep the old value in the env.
+  assert_match "names the recreate it skipped" 'docker compose up -d --force-recreate homepage' "${output}"
+  assert_not_match "restart is never suggested" 'compose restart' "${output}"
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
+}
+
+@test "dashboard-password: --length and the prompt entries are checked before .env moves on" {
+  local bad
+  for bad in '' 'abc' '0' '600'; do
+    run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --length "${bad}"
+    [ "${status}" -eq 1 ] || fail "--length ${bad} exited ${status}"
+    assert_match "refuses --length ${bad}" '--length must be' "${stderr}"
+    assert_not_match "nothing was applied for --length ${bad}" 'updated HOMEPAGE_AUTH_PASSWORD' "${output}"
+  done
+  assert_contains_file "the key line survives a rewrite" "${SCRATCH}/x.env" '^HOMEPAGE_AUTH_PASSWORD=old-password-1234$'
+  printf '%s\n%s\n' 'first-entry-value-abcdef' 'second-entry-value-xyz' >"${SCRATCH}/mismatch.in"
+  printf '%s\n%s\n' 'short' 'short' >"${SCRATCH}/short.in"
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/mismatch.in"
+  [ "${status}" -eq 1 ] || fail "mismatched entries were accepted (${status})"
+  assert_match "mismatch refused" 'the two entries did not match; nothing was changed' "${stderr}"
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/short.in"
+  [ "${status}" -eq 1 ] || fail "a short password was accepted (${status})"
+  assert_match "short password refused" 'password too short: at least 12 characters required \(got 5\)' "${stderr}"
+  unchanged_env "${SCRATCH}/x.env"
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
+}
+
+@test "dashboard-password: with no docker, or a daemon that will not answer, .env is left alone or the run stops" {
+  # No docker on PATH at all: the guard runs before the rewrite, so the file
+  # still holds the password the operator is logged in with.
+  run --separate-stderr env "DOCKER_BIN=nodocker" "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 1 ] || fail "a missing docker binary was not refused (${status})"
+  assert_match "names the offline way out" 'docker not found on PATH \(use --no-apply to update \.env only\)' "${stderr}"
+  unchanged_env "${SCRATCH}/x.env"
+
+  # A daemon that answers the daemon-wide probe with an error is answered, not
+  # ignored: the refusal quotes docker's own text back.
+  run --separate-stderr env "STUB_COMPOSE_PS=Error: dial unix /var/run/docker.sock: connect: connection refused" "STUB_COMPOSE_PS_RC=1" \
+    "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 1 ] || fail "a failing daemon probe did not stop the run (${status})"
+  assert_match "quotes the failed probe" 'could not query the docker daemon: Error: dial unix' "${stderr}"
+  assert_match "the rewrite had already landed" 'updated HOMEPAGE_AUTH_PASSWORD in .*/x\.env' "${output}"
+  assert_not_match "no compose was attempted" 'docker compose' "$(stub_log docker)"
+}
+
+@test "dashboard-password: a daemon with no homepage container refuses to recreate anything" {
+  # Both containers carry a service label; neither is the homepage service. The
+  # label column is matched as a whole field, so xhomepage is not a homonym.
+  run --separate-stderr env "STUB_COMPOSE_PS=db|stack-db-1
+xdb|stack-home-1" "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 1 ] || fail "an empty container list did not stop the run (${status})"
+  assert_match "refuses without the container" 'could not find the homepage container on the docker daemon \(use --no-apply to update \.env only\)' "${stderr}"
+  # The one daemon call is the daemon-wide `docker ps`: no -p and no -f, because
+  # a project resolved from this script's cwd is a different project.
+  assert_eq "one daemon probe" '1' "$(stub_log_count docker)"
+  assert_match "the probe is daemon-wide" '^docker ps --format ' "$(stub_log docker)"
+  assert_not_match "the probe scoped a project" ' -p ' "$(stub_log docker)"
+  assert_not_match "no compose was attempted" 'docker compose' "$(stub_log docker)"
+}
+
+@test "dashboard-password: the oldest labelled homepage container answers, and an unreadable compose target stops the run" {
+  # Two containers carry the homepage label: docker ps lists the newest first, so
+  # the script must take the LAST one (the older stack), and it must ask that
+  # container's own labels rather than assuming a project from the cwd.
+  export STUB_COMPOSE_PS='homepage|home-new
+homepage|home-old'
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 1 ] || fail "an unknown compose target did not stop the run (${status})"
+  assert_match "refuses to guess a project" 'answers to no compose project this shell can read' "${stderr}"
+  assert_match "points at a manual recreate" 'recreate it by hand from the checkout root: docker compose up -d --force-recreate homepage' "${stderr}"
+  assert_match "the older container was inspected" 'Config\.Labels.* home-old$' "$(stub_log docker)"
+  assert_not_match "no recreate without a compose target" 'compose -p' "$(stub_log docker)"
+  assert_not_match "no password was left behind in argv" 'rotated-passwd-abcdefgh' "$(stub_log docker)"
+}
+
+@test "dashboard-password: the recreate names the compose project and file the labels gave" {
+  printf '%s\n' 'services:' '  homepage:' >"${SCRATCH}/compose.yml"
+  fake_daemon 'homepage|home-new
+homepage|home-old' "prod-stack|${SCRATCH}/compose.yml" "${SCRATCH}/x.env"
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 0 ] || fail "a resolvable compose target exited ${status}: ${stderr}"
+  assert_match "four daemon calls" '^docker compose -p prod-stack -f .*/compose\.yml up -d --force-recreate homepage$' "$(stub_log docker)"
+  assert_eq "ps, labels, recreate, env" '4' "$(stub_log_count docker)"
+  assert_not_match "a restart is not a recreate" 'restart' "$(stub_log docker)"
+  assert_match "the running container was verified" 'verified: the running container has the new password' "${output}"
+  assert_not_match "the password never reaches docker argv" 'rotated-passwd-abcdefgh' "$(stub_log docker)"
+  assert_not_match "no cwd-resolved project" 'compose -p evo-t1' "$(stub_log docker)"
+}
+
+@test "dashboard-password: a recreate the running container cannot confirm is reported, not celebrated" {
+  # First: the container answers with the password it was created with, which is
+  # still the old one. The recreate rebuilt nothing, and saying "verified" here
+  # would leave every browser signed out against a password nobody knows.
+  printf '%s\n' 'HOMEPAGE_AUTH_PASSWORD=old-password-1234' 'STACK_LAN_HOST=box.example' >"${SCRATCH}/stale.env"
+  printf '%s\n' 'services:' '  homepage:' >"${SCRATCH}/compose.yml"
+  fake_daemon 'homepage|home-old' "prod-stack|${SCRATCH}/compose.yml" "${SCRATCH}/stale.env"
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 1 ] || fail "a recreate that kept the old password reported success (${status})"
+  assert_match "names the failed recreate" 'the running container still has the old password' "${stderr}"
+  assert_match "points at the compose logs" 'check: docker compose logs homepage' "${stderr}"
+  assert_not_match "no false success claim" 'verified: the running container' "${output}"
+  assert_match "the recreate really was addressed" '^docker compose -p prod-stack -f ' "$(stub_log docker)"
+  # Then: a container whose environment carries no such key at all. Same refusal
+  # shape - the script will not call a rotate verified on an env it cannot read.
+  printf '%s\n' 'STACK_LAN_HOST=box.example' >"${SCRATCH}/nokey.env"
+  fake_daemon 'homepage|home-old' "prod-stack|${SCRATCH}/compose.yml" "${SCRATCH}/nokey.env"
+  run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
+  [ "${status}" -eq 1 ] || fail "an env with no password entry did not stop the run (${status})"
+  assert_match "refuses to claim a rotate it cannot see" 'the homepage container has no HOMEPAGE_AUTH_PASSWORD entry; check: docker compose config' "${stderr}"
+  assert_not_match "no false success claim" 'verified: the running container' "${output}"
+}

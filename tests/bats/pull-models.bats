@@ -1,1 +1,211 @@
-IyEvdXNyL2Jpbi9lbnYgYmF0cwojIHNoZWxsY2hlY2sgc2hlbGw9YmFzaAojCiMgIyMgcHVsbC1tb2RlbHMuYmF0cyAtIGhlcm1ldGljIGNvdmVyYWdlIGZvciBzY3JpcHRzL3B1bGwtbW9kZWxzLnNoCiMKIyBXaGF0IHRoaXMgc3VpdGUgcGlucyBpcyB0aGUgc2hhcGUgb2YgdGhlIGRvY2tlciB0cmFmZmljLCBiZWNhdXNlIHRoYXQgaXMgdGhlCiMgd2hvbGUgY29udHJhY3Qgb2YgdGhlIHNjcmlwdDoKIwojICAgLSBPTkUgZGFlbW9uLXdpZGUgYGRvY2tlciBwcyAtLWZvcm1hdCAuLi5gIHByb2JlLCBjYXJyeWluZyBubyAtcC8tZiBhbmQgbm8KIyAgICAgYGNvbXBvc2VgIHN1YmNvbW1hbmQgKHNjcmlwdHMvbGliL2NvZGVyX2FwaS5zaCBmaW5kcyB0aGUgb2xsYW1hIGNvbnRhaW5lcgojICAgICBieSBTRVJWSUNFIExBQkVMIGFjcm9zcyB0aGUgd2hvbGUgZGFlbW9uOyBhIHByb2plY3Qtc2NvcGVkIHByb2JlIHdhcyB0aGUKIyAgICAgb2xkIGRlc2lnbiBhbmQgaXQgcmVhZCBldmVyeSBsaXZlIHN0YWNrIGFzICJub3QgcnVubmluZyIgZnJvbSBhIGZvcmVpZ24KIyAgICAgY3dkLCB3aGljaCBpcyB3aGVyZSBgYmF6ZWxpc2sgcnVuIC8vc2NyaXB0czpwdWxsLW1vZGVsc2AgbGl2ZXMpOwojICAgLSB0aGUgY29udGFpbmVyIHRoZSBwdWxscyBsYW5kIGluIGlzIHRoZSBvbmUgdGhhdCBwcm9iZSBuYW1lZCAtIHRoZSBMQVNUCiMgICAgIGxpbmUgd2hvc2Ugc2VydmljZSBmaWVsZCBpcyBleGFjdGx5IGBvbGxhbWFgLCBzaW5jZSBgZG9ja2VyIHBzYCBsaXN0cwojICAgICBuZXdlc3QgZmlyc3QgYW5kIHRoZSBvbGRlc3QgY29udGFpbmVyIGlzIHRoZSBzdGFibGUgc3RhY2snczsKIyAgIC0gb25lIGBkb2NrZXIgZXhlYyAtaSA8Y29udGFpbmVyPiBiYXNoIC1sYyAuLi5gIHBlciBtb2RlbCwgdGhlbiBhIGNsb3NpbmcKIyAgICAgYC4vb2xsYW1hIGxpc3RgLCBldmVyeSBvbmUgb2YgdGhlbSBpbnNpZGUgdGhhdCBjb250YWluZXIgYW5kIG5vbmUgb2YgdGhlbQojICAgICBjYXBwZWQgYnkgdGltZW91dCgxKTsKIyAgIC0gd2hpY2ggbW9kZWxzLCBpbiB3aGF0IG9yZGVyOiBPTExBTUFfTU9ERUxTIGZyb20gdGhlIC5lbnYgYmVzaWRlIHRoZSBzY3JpcHQKIyAgICAgYmVhdHMgb25lIHNldCBpbiB0aGUgY2FsbGVyJ3MgZW52aXJvbm1lbnQsIGFuZCBuZWl0aGVyIGlzIGxvb2tlZCBmb3IgaW4KIyAgICAgdGhlIGN3ZC4KIwojIEhlcm1ldGljIGJ5IGNvbnN0cnVjdGlvbjogZG9ja2VyIGFuZCB0aW1lb3V0IHJlc29sdmUgdG8gdGhlIGNvcGllcyBpbgojIHRlc3RzL2JhdHMvdG9vbF9zdHVicy8gKHVzZV9zdHVicyksIGFuZCB0aGUgc2NyaXB0IHJ1bnMgZnJvbSBhIHRocm93YXdheSByZXBvCiMgcm9vdCBidWlsdCBieSBmYWtlX3Jvb3QsIHNvIG5vIHRlc3QgY29uc3VsdHMgYSBsaXZlIGRhZW1vbiBvciB0aGUgY2hlY2tvdXQncwojIG93biAuZW52LiBTVFVCX0NPTVBPU0VfUFMgYW5zd2VycyB0aGUgcHMgcHJvYmUgKFNUVUJfQ09NUE9TRV9QU19SQyBzZXRzIGl0cwojIGV4aXQgc3RhdHVzKTsgU1RVQl9ET0NLRVJfRVhFQ19SVU49MCBrZWVwcyB0aGUgaW4tY29udGFpbmVyIGNvbW1hbmQgY2FubmVkCiMgcmF0aGVyIHRoYW4gZXhlY3V0ZWQgb24gdGhlIGhvc3QuCiMKIyBVc2FnZTogYmF0cyB0ZXN0cy9iYXRzL3B1bGwtbW9kZWxzLmJhdHMgICAoZnJvbSBhbnkgY3dkKQojCiMgU2FmZXR5OiBzdHViIG9ubHkuIE5vdGhpbmcgaGVyZSBuZWVkcyBhIGRhZW1vbiwgYSBtb2RlbCwgb3IgYSBuZXR3b3JrLgoKYmF0c19yZXF1aXJlX21pbmltdW1fdmVyc2lvbiAxLjUuMAoKIyBzaGVsbGNoZWNrIHNvdXJjZT0vZGV2L251bGwKbG9hZCAndGVzdF9oZWxwZXInCgpSRVBPX1JPT1Q9IiIKU0NSSVBUPSIiCgpzZXR1cCgpIHsKICBSRVBPX1JPT1Q9IiQoYmF0c19jYW5vbmljYWxfcmVwb19yb290KSIgfHwgc2tpcCAiY2Fubm90IGxvY2F0ZSB0aGUgcmVwbyByb290IChubyBkb2NrZXItY29tcG9zZS55bWwgbWFya2VyKSIKICBTQ1JJUFQ9IiR7UkVQT19ST09UfS9zY3JpcHRzL3B1bGwtbW9kZWxzLnNoIgogIGlmIFsgISAtZiAiJHtTQ1JJUFR9IiBdOyB0aGVuCiAgICBza2lwICJzY3JpcHRzL3B1bGwtbW9kZWxzLnNoIGlzIG5vdCBpbiB0aGUgdHJlZSIKICBmaQogIHVzZV9zdHVicyBkb2NrZXIgdGltZW91dAogICMgVGhlIGRvY2tlciBzdHViJ3MgZGVmYXVsdCBpcyB0byBleGVjIHRoZSBpbi1jb250YWluZXIgY29tbWFuZCBvbiB0aGUgaG9zdC4KICAjIEhlcmUgdGhhdCBjb21tYW5kIGlzIGBjZCAvbGxtL29sbGFtYSAmJiAuL29sbGFtYSBwdWxsIC4uLmAsIHdoaWNoIGhhcwogICMgbm90aGluZyB0byBjZCBpbnRvIGFuZCBmYWlsczogY2FubmVkIGFuc3dlcnMga2VlcCB0aGUgZXhlY3Mgc3R1YnMsIHNvIGEKICAjIGdyZWVuIHJ1biBwcm92ZXMgdGhlIGFyZ3YgdGhlIHNjcmlwdCBidWlsdCBhbmQgbm90aGluZyBtb3JlLgogIGV4cG9ydCBTVFVCX0RPQ0tFUl9FWEVDX1JVTj0wCn0KCiMgZmFrZV9yb290IFtlbnYtbGluZS4uLl0gLSBwcmludCBhIHRocm93YXdheSByZXBvIHJvb3QgaG9sZGluZyB0aGUgc2NyaXB0IHVuZGVyCiMgdGVzdCwgc2NyaXB0cy9saWIvICh3aGljaCBpdCBzb3VyY2VzIGFmdGVyIGl0cyBvd24gcmVwby1yb290IGNkKSBhbmQgYSAuZW52CiMgaG9sZGluZyBhbnkgbGluZXMgZ2l2ZW4uIEFuIGVtcHR5IC5lbnYgc3RpbGwgbWF0dGVyczogdGhlIHNjcmlwdCBzb3VyY2VzIGl0LCBzbwojIGEgdGVzdCB0aGF0IHdhbnRzIGEgY2FsbGVyLXN1cHBsaWVkIE9MTEFNQV9NT0RFTFMgdG8gd2luIG5lZWRzIG9uZSB0byBleGlzdC4KZmFrZV9yb290KCkgewogIGxvY2FsIHJvb3Q9IiR7QkFUU19URVNUX1RNUERJUj99L3Jvb3QiCiAgbWtkaXIgLXAgIiR7cm9vdH0vc2NyaXB0cy9saWIiCiAgOiA+IiR7cm9vdH0vLmVudiIKICBpZiBbICIkIyIgLWd0IDAgXTsgdGhlbgogICAgcHJpbnRmICclc1xuJyAiJEAiID4+IiR7cm9vdH0vLmVudiIKICBmaQogIGNwICIke1JFUE9fUk9PVH0vc2NyaXB0cy9wdWxsLW1vZGVscy5zaCIgIiR7cm9vdH0vc2NyaXB0cy8iCiAgY3AgIiR7UkVQT19ST09UfS9zY3JpcHRzL2xpYi8iKi5zaCAiJHtyb290fS9zY3JpcHRzL2xpYi8iCiAgcHJpbnRmICclcycgIiR7cm9vdH0iCn0KCkB0ZXN0ICJwdWxsLW1vZGVsczogd2l0aCBub3RoaW5nIG5hbWluZyBhIG1vZGVsLCB0aGUgZGVmYXVsdCBwYWlyIGlzIHB1bGxlZCBpbiBvcmRlciIgewogIHJvb3Q9IiQoZmFrZV9yb290KSIKICBzY3JhdGNoPSIkKG1ha2Vfc2NyYXRjaCkiCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiAtQyAiJHtzY3JhdGNofSIgU1RVQl9DT01QT1NFX1BTPSdvbGxhbWF8aXBleC1vbGxhbWEtMScgXAogICAgYmFzaCAiJHtyb290fS9zY3JpcHRzL3B1bGwtbW9kZWxzLnNoIgogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXQogICMgVGhlIHdob2xlIHN0ZG91dCwgYnl0ZSBmb3IgYnl0ZTogdHdvIHB1bGxzLCBhIGJsYW5rIGxpbmUsIHRoZW4gdGhlIGxpc3QuCiAgW1sgIiR7b3V0cHV0fSIgPT0gJCdwdWxsaW5nIHF3ZW4yLjUtY29kZXI6MzJiIC4uLlxucHVsbGluZyBxd2VuMi41LWNvZGVyOjE0YiAuLi5cblxuTW9kZWxzIGF2YWlsYWJsZSBvbiB0aGUgSVBFWC1MTE0gT2xsYW1hIHNlcnZpY2U6JyBdXQogICMgRm91ciBkb2NrZXIgY2FsbHM6IHRoZSBwcm9iZSwgb25lIHB1bGwgcGVyIG1vZGVsLCBhbmQgdGhlIGxpc3QgdGhhdCBjbG9zZXMKICAjIHRoZSBydW4uIE5vdGhpbmcgaW4gdGhhdCBsaXN0IGlzIGFkZHJlc3NlZCB0aHJvdWdoIGEgY29tcG9zZSBwcm9qZWN0LgogIFsgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIgLWVxIDQgXQogIFsgIiQoc3R1Yl9sb2dfbGFzdCBkb2NrZXIpIiA9ICJkb2NrZXIgZXhlYyAtaSBpcGV4LW9sbGFtYS0xIGJhc2ggLWxjIGNkIC9sbG0vb2xsYW1hICYmIC4vb2xsYW1hIGxpc3QiIF0KfQoKQHRlc3QgInB1bGwtbW9kZWxzOiBPTExBTUFfTU9ERUxTIGluIHRoZSAuZW52IGJlc2lkZSB0aGUgc2NyaXB0IG5hbWVzIHRoZSBtb2RlbHMiIHsKICByb290PSIkKGZha2Vfcm9vdCAnT0xMQU1BX01PREVMUz0icGhpLTQtbWluaTo0YiB0aW55LXN0dXJhbDoxYiInKSIKICBzY3JhdGNoPSIkKG1ha2Vfc2NyYXRjaCkiCiAgIyBBIGRlY295IC5lbnYgaW4gdGhlIGN3ZDogdGhlIHNjcmlwdCBjZHMgdG8gaXRzIG93biByZXBvIHJvb3QgZmlyc3QsIHNvIHRoaXMKICAjIG9uZSBtdXN0IGJlIGlnbm9yZWQuIEl0IGlzIHRoZSBzYW1lIHRyYXAgdGhlIGRhZW1vbi13aWRlIHByb2JlIGZpeGVkLgogIHByaW50ZiAnJXNcbicgJ09MTEFNQV9NT0RFTFM9ImRlY295LW1vZGVsIicgPiIke3NjcmF0Y2h9Ly5lbnYiCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiAtQyAiJHtzY3JhdGNofSIgU1RVQl9DT01QT1NFX1BTPSdvbGxhbWF8aXBleC1vbGxhbWEtMScgXAogICAgYmFzaCAiJHtyb290fS9zY3JpcHRzL3B1bGwtbW9kZWxzLnNoIgogIFsgIiR7c3RhdHVzfSIgLWVxIDAgXQogIFtbICIke291dHB1dH0iID09ICJwdWxsaW5nIHBoaS00LW1pbmk6NGIgLi4uIiQnXG4nInB1bGxpbmcgdGlueS1zdHVyYWw6MWIgLi4uIiogXV0KICBbWyAiJHtvdXRwdXR9IiAhPSAqImRlY295LW1vZGVsIiogXV0KICBbWyAiJHtvdXRwdXR9IiAhPSAqInF3ZW4yLjUtY29kZXIiKiBdXQogIFsgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIgLWVxIDQgXQogIFtbICIkKHN0dWJfbG9nIGRvY2tlcikiICE9ICpkZWNveS1tb2RlbCogXV0KfQoKQHRlc3QgInB1bGwtbW9kZWxzOiBPTExBTUFfTU9ERUxTIGluIHRoZSBlbnZpcm9ubWVudCByZXBsYWNlcyB0aGUgZGVmYXVsdCBwYWlyIiB7CiAgcm9vdD0iJChmYWtlX3Jvb3QpIgogIHNjcmF0Y2g9IiQobWFrZV9zY3JhdGNoKSIKICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52IC1DICIke3NjcmF0Y2h9IiBTVFVCX0NPTVBPU0VfUFM9J29sbGFtYXxpcGV4LW9sbGFtYS0xJyBcCiAgICBPTExBTUFfTU9ERUxTPSdtaXh0cmFsLTh4MjJiJyBiYXNoICIke3Jvb3R9L3NjcmlwdHMvcHVsbC1tb2RlbHMuc2giCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgW1sgIiR7b3V0cHV0fSIgPT0gKiJwdWxsaW5nIG1peHRyYWwtOHgyMmIgLi4uIiogXV0KICBbWyAiJHtvdXRwdXR9IiAhPSAqInF3ZW4yLjUtY29kZXIiKiBdXQogICMgT25lIG1vZGVsLCBzbyBvbmUgcHJvYmUsIG9uZSBwdWxsIGFuZCB0aGUgbGlzdDogdGhlIGxpc3QgaXMgc3BsaXQgb24KICAjIHdoaXRlc3BhY2UsIGFuZCBhbiBlbXB0eSBPTExBTUFfTU9ERUxTIGluIC5lbnYgd291bGQgaGF2ZSBmYWxsZW4gYmFjayB0bwogICMgdGhlIGRlZmF1bHQgcGFpci4KICBbICIkKHN0dWJfbG9nX2NvdW50IGRvY2tlcikiIC1lcSAzIF0KICBbICIkKHN0dWJfbG9nX2xhc3QgZG9ja2VyKSIgPSAiZG9ja2VyIGV4ZWMgLWkgaXBleC1vbGxhbWEtMSBiYXNoIC1sYyBjZCAvbGxtL29sbGFtYSAmJiAuL29sbGFtYSBsaXN0IiBdCn0KCkB0ZXN0ICJwdWxsLW1vZGVsczogYSBkYWVtb24gdGhhdCBkb2VzIG5vdCBhbnN3ZXIgaXMgcmVwb3J0ZWQsIHdpdGggdGhlIGRvY2tlci1hY2Nlc3MgaGludCIgewogIHJvb3Q9IiQoZmFrZV9yb290KSIKICAjIFNUVUJfQ09NUE9TRV9QU19SQz0xIGlzIHRoZSBzaGFwZSBvZiBhIGhvc3Qgd2l0aG91dCBkb2NrZXIgYWNjZXNzOiB0aGUgcHMKICAjIHByb2JlIGFuc3dlcnMgKHdpdGggZG9ja2VyJ3Mgb3duIGVycm9yIHRleHQpIGFuZCBmYWlscy4gVGhlIHNjcmlwdCBtdXN0IHNheQogICMgc28gYW5kIHN0b3AsIG5vdCBnbyBsb29raW5nIGZvciBhbiBvbGxhbWEgY29udGFpbmVyIGluIGEgc3RhY2sgaXQgY2Fubm90CiAgIyBzZWUuIFRoZSBhbnN3ZXIgYXJyaXZlcyBvbiB0aGUgcHJvYmUncyBzdGRvdXQsIHNvIGl0IHJlYWNoZXMgdGhlIG1lc3NhZ2UuCiAgcnVuIC0tc2VwYXJhdGUtc3RkZXJyIGVudiBTVFVCX0NPTVBPU0VfUFM9J0Nhbm5vdCBjb25uZWN0IHRvIHRoZSBEb2NrZXIgZGFlbW9uIGF0IHVuaXg6Ly8vdmFyL3J1bi9kb2NrZXIuc29jay4gSXMgdGhlIGRvY2tlciBkYWVtb24gcnVubmluZz8nIFwKICAgIFNUVUJfQ09NUE9TRV9QU19SQz0xIGJhc2ggIiR7cm9vdH0vc2NyaXB0cy9wdWxsLW1vZGVscy5zaCIKICBbICIke3N0YXR1c30iIC1lcSAxIF0KICBhc3NlcnRfbWF0Y2ggInJlZnVzYWwiIFwKICAgICdeZXJyb3I6IGNvdWxkIG5vdCBxdWVyeSB0aGUgc3RhY2s6IENhbm5vdCBjb25uZWN0IHRvIHRoZSBEb2NrZXIgZGFlbW9uIGF0IHVuaXg6Ly8vdmFyL3J1bi9kb2NrZXJcLnNvY2tcLiBJcyB0aGUgZG9ja2VyIGRhZW1vbiBydW5uaW5nXD8kJyBcCiAgICAiJHtzdGRlcnJ9IgogICMgVGhlIHNlcGFyYXRvciBiZXR3ZWVuICJhY2Nlc3MiIGFuZCAicnVuIiBpcyBhbiBlbSBkYXNoLiAuKiBzd2FsbG93cyBpdAogICMgd2hldGhlciB0aGUgcmVnZXggZW5naW5lIGNvdW50cyBieXRlcyBvciBjaGFyYWN0ZXJzICh0aGUgZG90IHdvdWxkIGVhdCBvbmx5CiAgIyBvbmUgb2YgdGhlIGRhc2gncyB0aHJlZSBieXRlcyB1bmRlciBhIEMgbG9jYWxlKSwgYW5kIHRoZSBmaWxlIHN0YXlzIEFTQ0lJLgogIGFzc2VydF9tYXRjaCAiZG9ja2VyLWFjY2VzcyBoaW50IiAnXiB7N310aGlzIHNjcmlwdCBuZWVkcyBkb2NrZXIgYWNjZXNzIC4qcnVuIGl0IHdpdGggc3Vkbywgb3IgYWRkIHlvdXIgdXNlciB0byB0aGUgZG9ja2VyIGdyb3VwJCcgIiR7c3RkZXJyfSIKICAjIE9uZSBkb2NrZXIgY2FsbCwgdGhlIGZhaWxlZCBwcm9iZTogbm8gZXhlYyBtYXkgYmUgYWltZWQgYXQgYW4gdW5rbm93bgogICMgY29udGFpbmVyLCBhbmQgbm8gY29tcG9zZSBjYWxsIG1heSByZXNvbHZlIGEgcHJvamVjdCBmcm9tIHRoaXMgY3dkLgogIFsgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIgLWVxIDEgXQogIFtbICIkKHN0dWJfbG9nIGRvY2tlcikiID09ICJkb2NrZXIgcHMgLS1mb3JtYXQgIiogXV0KICBbWyAiJChzdHViX2xvZyBkb2NrZXIpIiAhPSAqImRvY2tlciBjb21wb3NlICIqIF1dCn0KCkB0ZXN0ICJwdWxsLW1vZGVsczogYSBzdGFjayB3aXRob3V0IGFuIG9sbGFtYSBzZXJ2aWNlIGlzIHJlZnVzZWQsIGFuZCBub3RoaW5nIGlzIHB1bGxlZCIgewogIHJvb3Q9IiQoZmFrZV9yb290KSIKICAjIEFuIGVtcHR5IHBzIGFuc3dlciBpcyAidGhlIGRhZW1vbiBhbnN3ZXJlZCBhbmQgbm90aGluZyBpcyBydW5uaW5nIi4KICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52IFNUVUJfQ09NUE9TRV9QUz0nJyBiYXNoICIke3Jvb3R9L3NjcmlwdHMvcHVsbC1tb2RlbHMuc2giCiAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdCiAgYXNzZXJ0X2VxICJub3RoaW5nIHJ1bm5pbmciIFwKICAgICQnZXJyb3I6IHRoZSBvbGxhbWEgc2VydmljZSBpcyBub3QgcnVubmluZyAoc3RhcnQgdGhlIHN0YWNrIHdpdGg6IGRvY2tlciBjb21wb3NlIHVwIC1kKVxuICAgICAgIGlmIGl0IGlzIGluIGEgcmVzdGFydCBsb29wLCBjaGVjazogZG9ja2VyIGNvbXBvc2UgbG9ncyAtLXRhaWwgMTAwIG9sbGFtYScgXAogICAgIiR7c3RkZXJyfSIKCiAgIyBTZXJ2aWNlcyB0aGF0IGFyZSBydW5uaW5nIGFyZSBub3QgdGhlIG9sbGFtYSBzZXJ2aWNlOiB0aGUgbGFiZWwgY29sdW1uIGlzCiAgIyBtYXRjaGVkIGFzIGEgd2hvbGUgZmllbGQsIHNvIGEgY29udGFpbmVyIG1lcmVseSBOQU1FRCBhZnRlciBvbmUgYW5zd2VycyBmb3IKICAjIG5vdGhpbmcgZWl0aGVyLgogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBlbnYgU1RVQl9DT01QT1NFX1BTPSQnZGJ8c3RhY2stZGItMVxuY29kZXJ8c3RhY2stY29kZXItMVxub3RoZXJ8b2xsYW1hLXNpZGVjYXItMScgXAogICAgYmFzaCAiJHtyb290fS9zY3JpcHRzL3B1bGwtbW9kZWxzLnNoIgogIFsgIiR7c3RhdHVzfSIgLWVxIDEgXQogIGFzc2VydF9lcSAidGhlIHdyb25nIHNlcnZpY2VzIiBcCiAgICAkJ2Vycm9yOiB0aGUgb2xsYW1hIHNlcnZpY2UgaXMgbm90IHJ1bm5pbmcgKHN0YXJ0IHRoZSBzdGFjayB3aXRoOiBkb2NrZXIgY29tcG9zZSB1cCAtZClcbiAgICAgICBpZiBpdCBpcyBpbiBhIHJlc3RhcnQgbG9vcCwgY2hlY2s6IGRvY2tlciBjb21wb3NlIGxvZ3MgLS10YWlsIDEwMCBvbGxhbWEnIFwKICAgICIke3N0ZGVycn0iCiAgIyBUd28gcHJvYmVzLCBhbmQgc3RpbGwgbm8gZXhlYzogYSBwdWxsIGludG8gdGhlIHdyb25nIGNvbnRhaW5lciB3b3VsZCBkb3dubG9hZAogICMgMzUgR0IgaW50byBhIHNlcnZpY2UgdGhhdCBpcyBub3QgT2xsYW1hLgogIFsgIiQoc3R1Yl9sb2dfY291bnQgZG9ja2VyKSIgLWVxIDIgXQogIFtbICIkKHN0dWJfbG9nIGRvY2tlcikiICE9IConZXhlYyAnKiBdXQp9CgpAdGVzdCAicHVsbC1tb2RlbHM6IHRoZSBwdWxsIGxhbmRzIGluIHRoZSBvbGRlc3Qgb2xsYW1hIGNvbnRhaW5lciwgd2hpY2ggcHMgbGlzdHMgbGFzdCIgewogIHJvb3Q9IiQoZmFrZV9yb290KSIKICAjIGBkb2NrZXIgcHNgIGxpc3RzIG5ld2VzdCBmaXJzdCwgc28gYSBMQVRFUiBsaW5lIGlzIHRoZSBPTERFUiBjb250YWluZXI6IHdpdGgKICAjIHRoZSBkZXYgc3RhY2sgdXAgYmVzaWRlIHRoZSBzdGFibGUgb25lLCB0aGUgbGFzdCBtYXRjaCBpcyB0aGUgc3RhYmxlIG9uZSdzCiAgIyBjb3B5LCBhbmQgdGhhdCBpcyB0aGUgY29udGFpbmVyIHRoaXMgc2NyaXB0IG11c3QgcHVsbCBpbnRvLgogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBlbnYgU1RVQl9DT01QT1NFX1BTPSQnY29kZXJ8ZGV2LWNvZGVyLTFcbm9sbGFtYXxkZXYtb2xsYW1hLTFcbm9sbGFtYXxzdGFibGUtb2xsYW1hLTEnIFwKICAgIE9MTEFNQV9NT0RFTFM9J20xJyBiYXNoICIke3Jvb3R9L3NjcmlwdHMvcHVsbC1tb2RlbHMuc2giCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgWyAiJChzdHViX2xvZ19jb3VudCBkb2NrZXIpIiAtZXEgMyBdCiAgW1sgIiQoc3R1Yl9sb2cgZG9ja2VyKSIgIT0gKiJkb2NrZXIgZXhlYyAtaSBkZXYtb2xsYW1hLTEiKiBdXQogIFtbICIkKHN0dWJfbG9nIGRvY2tlcikiICE9ICoiZG9ja2VyIGV4ZWMgLWkgZGV2LWNvZGVyLTEiKiBdXQogIFtbICIkKHN0dWJfbG9nIGRvY2tlcikiID09ICoiZG9ja2VyIGV4ZWMgLWkgc3RhYmxlLW9sbGFtYS0xIGJhc2ggLWxjIGNkIC9sbG0vb2xsYW1hICYmIC4vb2xsYW1hIHB1bGwgJ20xJyIqIF1dCn0KCkB0ZXN0ICJwdWxsLW1vZGVsczogdGhlIHByb2JlIGlzIGRhZW1vbi13aWRlIGFuZCBjYXBwZWQsIHRoZSBwdWxscyBhcmUgbmVpdGhlciIgewogIHJvb3Q9IiQoZmFrZV9yb290KSIKICBydW4gLS1zZXBhcmF0ZS1zdGRlcnIgZW52IFNUVUJfQ09NUE9TRV9QUz0nb2xsYW1hfGlwZXgtb2xsYW1hLTEnIE9MTEFNQV9NT0RFTFM9J20xIG0yJyBcCiAgICBiYXNoICIke3Jvb3R9L3NjcmlwdHMvcHVsbC1tb2RlbHMuc2giCiAgWyAiJHtzdGF0dXN9IiAtZXEgMCBdCiAgYXNzZXJ0X25vdF9tYXRjaCAiY29tcG9zZSBzdWJjb21tYW5kIiAnZG9ja2VyIGNvbXBvc2UgJyAiJChzdHViX2xvZyBkb2NrZXIpIgogIGFzc2VydF9ub3RfbWF0Y2ggInByb2plY3Qgb3IgZmlsZSBmbGFnIiAnICgtcHwtZikgJyAiJChzdHViX2xvZyBkb2NrZXIpIgogICMgVGhlIHByb2JlIGFza3MgdGhlIGRhZW1vbjsgYSBwcm9qZWN0LXNjb3BlZCBwcm9iZSBpcyB0aGUgYnVnIHRoaXMgc2VhbQogICMgZXhpc3RzIHRvIGtpbGwsIGFuZCBpdCB3b3VsZCBhbHNvIGFkZHJlc3Mgd2hpY2hldmVyIHByb2plY3QgdGhlIGNhbGxpbmcKICAjIGZvbGRlciBoYXBwZW5zIHRvIGltcGx5LgogIFtbICIkKHN0dWJfbG9nIGRvY2tlcikiID09ICJkb2NrZXIgcHMgLS1mb3JtYXQgIiogXV0KICBbWyAiJChzdHViX2xvZyBkb2NrZXIpIiA9PSAqJ3t7LkxhYmVsICJjb20uZG9ja2VyLmNvbXBvc2Uuc2VydmljZSJ9fXx7ey5OYW1lc319JyogXV0KICAjIHRpbWVvdXQoMSkgY2FwcyB0aGUgcHJvYmUgb25seTogYSBmaXJzdCBwdWxsIGlzIHRlbnMgb2YgZ2lnYWJ5dGVzIGFuZCB3b3VsZAogICMgZmFpbCBvbiB0aGUgY2xvY2sgYmVmb3JlIGl0IGZhaWxlZCBvbiB0aGUgbmV0d29yay4KICBbICIkKHN0dWJfbG9nX2NvdW50IHRpbWVvdXQpIiAtZXEgMSBdCiAgWyAiJChzdHViX2xvZ19sYXN0IHRpbWVvdXQpIiA9ICJ0aW1lb3V0IDIwIGRvY2tlciBwcyAtLWZvcm1hdCB7ey5MYWJlbCBcImNvbS5kb2NrZXIuY29tcG9zZS5zZXJ2aWNlXCJ9fXx7ey5OYW1lc319IiBdCiAgW1sgIiQoc3R1Yl9sb2cgZG9ja2VyKSIgPT0gKiJkb2NrZXIgZXhlYyAtaSBpcGV4LW9sbGFtYS0xIGJhc2ggLWxjICIqIF1dCn0KCkB0ZXN0ICJwdWxsLW1vZGVsczogYSBwdWxsIHRoYXQgZmFpbHMgc3RvcHMgdGhlIHJ1biBiZWZvcmUgdGhlIGxpc3QiIHsKICByb290PSIkKGZha2Vfcm9vdCkiCiAgIyBBIGNhbm5lZCBub24temVybyBleGVjIGFuc3dlciBzdGFuZHMgaW4gZm9yIGEgcHVsbCB0aGF0IGZhaWxzIChubyBzcGFjZSwgbm8KICAjIG5ldHdvcmspLiBOb3RoaW5nIGhlcmUgcmV0cmllcywgY29udGludWVzIHRvIHRoZSBuZXh0IG1vZGVsLCBvciBwcmV0ZW5kcyB0aGUKICAjIG1vZGVscyBhcmUgYXZhaWxhYmxlLgogIHJ1biAtLXNlcGFyYXRlLXN0ZGVyciBlbnYgU1RVQl9DT01QT1NFX1BTPSdvbGxhbWF8aXBleC1vbGxhbWEtMScgT0xMQU1BX01PREVMUz0nbTEgbTInIFwKICAgIFNUVUJfRE9DS0VSX0VYRUNfUkM9MSBiYXNoICIke3Jvb3R9L3NjcmlwdHMvcHVsbC1tb2RlbHMuc2giCiAgWyAiJHtzdGF0dXN9IiAtZXEgMSBdCiAgW1sgIiR7b3V0cHV0fSIgPT0gKiJwdWxsaW5nIG0xIC4uLiIqIF1dCiAgW1sgIiR7b3V0cHV0fSIgIT0gKiJwdWxsaW5nIG0yIC4uLiIqIF1dCiAgW1sgIiR7b3V0cHV0fSIgIT0gKiJNb2RlbHMgYXZhaWxhYmxlIiogXV0KICAjIFByb2JlLCBvbmUgcHVsbCwgYW5kIHRoZSBydW4gaXMgb3Zlci4KICBbICIkKHN0dWJfbG9nX2NvdW50IGRvY2tlcikiIC1lcSAyIF0KfQo=
+#!/usr/bin/env bats
+# shellcheck shell=bash
+#
+# ## pull-models.bats - hermetic coverage for scripts/pull-models.sh
+#
+# What this suite pins is the shape of the docker traffic, because that is the
+# whole contract of the script:
+#
+#   - ONE daemon-wide `docker ps --format ...` probe, carrying no -p/-f and no
+#     `compose` subcommand (scripts/lib/coder_api.sh finds the ollama container
+#     by SERVICE LABEL across the whole daemon; a project-scoped probe was the
+#     old design and it read every live stack as "not running" from a foreign
+#     cwd, which is where `bazelisk run //scripts:pull-models` lives);
+#   - the container the pulls land in is the one that probe named - the LAST
+#     line whose service field is exactly `ollama`, since `docker ps` lists
+#     newest first and the oldest container is the stable stack's;
+#   - one `docker exec -i <container> bash -lc ...` per model, then a closing
+#     `./ollama list`, every one of them inside that container and none of them
+#     capped by timeout(1);
+#   - which models, in what order: OLLAMA_MODELS from the .env beside the script
+#     beats one set in the caller's environment, and neither is looked for in
+#     the cwd.
+#
+# Hermetic by construction: docker and timeout resolve to the copies in
+# tests/bats/tool_stubs/ (use_stubs), and the script runs from a throwaway repo
+# root built by fake_root, so no test consults a live daemon or the checkout's
+# own .env. STUB_COMPOSE_PS answers the ps probe (STUB_COMPOSE_PS_RC sets its
+# exit status); STUB_DOCKER_EXEC_RUN=0 keeps the in-container command canned
+# rather than executed on the host.
+#
+# Usage: bats tests/bats/pull-models.bats   (from any cwd)
+#
+# Safety: stub only. Nothing here needs a daemon, a model, or a network.
+
+bats_require_minimum_version 1.5.0
+
+# shellcheck source=/dev/null
+load 'test_helper'
+
+REPO_ROOT=""
+SCRIPT=""
+
+setup() {
+  REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
+  SCRIPT="${REPO_ROOT}/scripts/pull-models.sh"
+  if [ ! -f "${SCRIPT}" ]; then
+    skip "scripts/pull-models.sh is not in the tree"
+  fi
+  use_stubs docker timeout
+  # The docker stub's default is to exec the in-container command on the host.
+  # Here that command is `cd /llm/ollama && ./ollama pull ...`, which has
+  # nothing to cd into and fails: canned answers keep the execs stubs, so a
+  # green run proves the argv the script built and nothing more.
+  export STUB_DOCKER_EXEC_RUN=0
+}
+
+# fake_root [env-line...] - print a throwaway repo root holding the script under
+# test, scripts/lib/ (which it sources after its own repo-root cd) and a .env
+# holding any lines given. An empty .env still matters: the script sources it, so
+# a test that wants a caller-supplied OLLAMA_MODELS to win needs one to exist.
+fake_root() {
+  local root="${BATS_TEST_TMPDIR?}/root"
+  mkdir -p "${root}/scripts/lib"
+  : >"${root}/.env"
+  if [ "$#" -gt 0 ]; then
+    printf '%s\n' "$@" >>"${root}/.env"
+  fi
+  cp "${REPO_ROOT}/scripts/pull-models.sh" "${root}/scripts/"
+  cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
+  printf '%s' "${root}"
+}
+
+@test "pull-models: with nothing naming a model, the default pair is pulled in order" {
+  root="$(fake_root)"
+  scratch="$(make_scratch)"
+  run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  # The whole stdout, byte for byte: two pulls, a blank line, then the list.
+  [[ "${output}" == $'pulling qwen2.5-coder:32b ...\npulling qwen2.5-coder:14b ...\n\nModels available on the IPEX-LLM Ollama service:' ]]
+  # Four docker calls: the probe, one pull per model, and the list that closes
+  # the run. Nothing in that list is addressed through a compose project.
+  [ "$(stub_log_count docker)" -eq 4 ]
+  [ "$(stub_log_last docker)" = "docker exec -i ipex-ollama-1 bash -lc cd /llm/ollama && ./ollama list" ]
+}
+
+@test "pull-models: OLLAMA_MODELS in the .env beside the script names the models" {
+  root="$(fake_root 'OLLAMA_MODELS="phi-4-mini:4b tiny-stural:1b"')"
+  scratch="$(make_scratch)"
+  # A decoy .env in the cwd: the script cds to its own repo root first, so this
+  # one must be ignored. It is the same trap the daemon-wide probe fixed.
+  printf '%s\n' 'OLLAMA_MODELS="decoy-model"' >"${scratch}/.env"
+  run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == "pulling phi-4-mini:4b ..."$'\n'"pulling tiny-stural:1b ..."* ]]
+  [[ "${output}" != *"decoy-model"* ]]
+  [[ "${output}" != *"qwen2.5-coder"* ]]
+  [ "$(stub_log_count docker)" -eq 4 ]
+  [[ "$(stub_log docker)" != *decoy-model* ]]
+}
+
+@test "pull-models: OLLAMA_MODELS in the environment replaces the default pair" {
+  root="$(fake_root)"
+  scratch="$(make_scratch)"
+  run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    OLLAMA_MODELS='mixtral-8x22b' bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"pulling mixtral-8x22b ..."* ]]
+  [[ "${output}" != *"qwen2.5-coder"* ]]
+  # One model, so one probe, one pull and the list: the list is split on
+  # whitespace, and an empty OLLAMA_MODELS in .env would have fallen back to
+  # the default pair.
+  [ "$(stub_log_count docker)" -eq 3 ]
+  [ "$(stub_log_last docker)" = "docker exec -i ipex-ollama-1 bash -lc cd /llm/ollama && ./ollama list" ]
+}
+
+@test "pull-models: a daemon that does not answer is reported, with the docker-access hint" {
+  root="$(fake_root)"
+  # STUB_COMPOSE_PS_RC=1 is the shape of a host without docker access: the ps
+  # probe answers (with docker's own error text) and fails. The script must say
+  # so and stop, not go looking for an ollama container in a stack it cannot
+  # see. The answer arrives on the probe's stdout, so it reaches the message.
+  run --separate-stderr env STUB_COMPOSE_PS='Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' \
+    STUB_COMPOSE_PS_RC=1 bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 1 ]
+  assert_match "refusal" \
+    '^error: could not query the stack: Cannot connect to the Docker daemon at unix:///var/run/docker\.sock\. Is the docker daemon running\?$' \
+    "${stderr}"
+  # The separator between "access" and "run" is an em dash. .* swallows it
+  # whether the regex engine counts bytes or characters (the dot would eat only
+  # one of the dash's three bytes under a C locale), and the file stays ASCII.
+  assert_match "docker-access hint" '^ {7}this script needs docker access .*run it with sudo, or add your user to the docker group$' "${stderr}"
+  # One docker call, the failed probe: no exec may be aimed at an unknown
+  # container, and no compose call may resolve a project from this cwd.
+  [ "$(stub_log_count docker)" -eq 1 ]
+  [[ "$(stub_log docker)" == "docker ps --format "* ]]
+  [[ "$(stub_log docker)" != *"docker compose "* ]]
+}
+
+@test "pull-models: a stack without an ollama service is refused, and nothing is pulled" {
+  root="$(fake_root)"
+  # An empty ps answer is "the daemon answered and nothing is running".
+  run --separate-stderr env STUB_COMPOSE_PS='' bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 1 ]
+  assert_eq "nothing running" \
+    $'error: the ollama service is not running (start the stack with: docker compose up -d)\n       if it is in a restart loop, check: docker compose logs --tail 100 ollama' \
+    "${stderr}"
+
+  # Services that are running are not the ollama service: the label column is
+  # matched as a whole field, so a container merely NAMED after one answers for
+  # nothing either.
+  run --separate-stderr env STUB_COMPOSE_PS=$'db|stack-db-1\ncoder|stack-coder-1\nother|ollama-sidecar-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 1 ]
+  assert_eq "the wrong services" \
+    $'error: the ollama service is not running (start the stack with: docker compose up -d)\n       if it is in a restart loop, check: docker compose logs --tail 100 ollama' \
+    "${stderr}"
+  # Two probes, and still no exec: a pull into the wrong container would download
+  # 35 GB into a service that is not Ollama.
+  [ "$(stub_log_count docker)" -eq 2 ]
+  [[ "$(stub_log docker)" != *'exec '* ]]
+}
+
+@test "pull-models: the pull lands in the oldest ollama container, which ps lists last" {
+  root="$(fake_root)"
+  # `docker ps` lists newest first, so a LATER line is the OLDER container: with
+  # the dev stack up beside the stable one, the last match is the stable one's
+  # copy, and that is the container this script must pull into.
+  run --separate-stderr env STUB_COMPOSE_PS=$'coder|dev-coder-1\nollama|dev-ollama-1\nollama|stable-ollama-1' \
+    OLLAMA_MODELS='m1' bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  [ "$(stub_log_count docker)" -eq 3 ]
+  [[ "$(stub_log docker)" != *"docker exec -i dev-ollama-1"* ]]
+  [[ "$(stub_log docker)" != *"docker exec -i dev-coder-1"* ]]
+  [[ "$(stub_log docker)" == *"docker exec -i stable-ollama-1 bash -lc cd /llm/ollama && ./ollama pull 'm1'"* ]]
+}
+
+@test "pull-models: the probe is daemon-wide and capped, the pulls are neither" {
+  root="$(fake_root)"
+  run --separate-stderr env STUB_COMPOSE_PS='ollama|ipex-ollama-1' OLLAMA_MODELS='m1 m2' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  assert_not_match "compose subcommand" 'docker compose ' "$(stub_log docker)"
+  assert_not_match "project or file flag" ' (-p|-f) ' "$(stub_log docker)"
+  # The probe asks the daemon; a project-scoped probe is the bug this seam
+  # exists to kill, and it would also address whichever project the calling
+  # folder happens to imply.
+  [[ "$(stub_log docker)" == "docker ps --format "* ]]
+  [[ "$(stub_log docker)" == *'{{.Label "com.docker.compose.service"}}|{{.Names}}'* ]]
+  # timeout(1) caps the probe only: a first pull is tens of gigabytes and would
+  # fail on the clock before it failed on the network.
+  [ "$(stub_log_count timeout)" -eq 1 ]
+  [ "$(stub_log_last timeout)" = "timeout 20 docker ps --format {{.Label \"com.docker.compose.service\"}}|{{.Names}}" ]
+  [[ "$(stub_log docker)" == *"docker exec -i ipex-ollama-1 bash -lc "* ]]
+}
+
+@test "pull-models: a pull that fails stops the run before the list" {
+  root="$(fake_root)"
+  # A canned non-zero exec answer stands in for a pull that fails (no space, no
+  # network). Nothing here retries, continues to the next model, or pretends the
+  # models are available.
+  run --separate-stderr env STUB_COMPOSE_PS='ollama|ipex-ollama-1' OLLAMA_MODELS='m1 m2' \
+    STUB_DOCKER_EXEC_RC=1 bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"pulling m1 ..."* ]]
+  [[ "${output}" != *"pulling m2 ..."* ]]
+  [[ "${output}" != *"Models available"* ]]
+  # Probe, one pull, and the run is over.
+  [ "$(stub_log_count docker)" -eq 2 ]
+}
