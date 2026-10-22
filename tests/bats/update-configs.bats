@@ -87,11 +87,14 @@ scratch_root() {
   mkdir -p "${nowhere}" "${proven}/scripts"
   printf 'x\n' >"${proven}/docker-compose.yml"
 
-  # Shadowed, not exported: these three are what the probe reads, and a
+  # Shadowed, not exported: these four are what the probe reads, and a
   # leftover value from the harness would answer the question for it.
-  local REPO_ROOT=""
-  local GITHUB_WORKSPACE=""
-  local SELF_DIR="${nowhere}"
+  # BUILD_WORKSPACE_DIRECTORY is assigned (not local) so a Bazel-exported
+  # value is overwritten for the `run` subshell too.
+  REPO_ROOT=""
+  GITHUB_WORKSPACE=""
+  BUILD_WORKSPACE_DIRECTORY=""
+  SELF_DIR="${nowhere}"
   cd "${nowhere}"
 
   run --separate-stderr resolve_repo_root
@@ -119,6 +122,26 @@ scratch_root() {
   run --separate-stderr resolve_repo_root
   [ "${status}" -eq 0 ]
   assert_eq "the copy beside the script is a root" "${proven}/scripts/.." "${output}"
+}
+
+@test "update-configs: resolve_repo_root prefers BUILD_WORKSPACE_DIRECTORY over PWD" {
+  # bazelisk run sets cwd to the runfiles copy (which has docker-compose.yml
+  # and .env.example) and BUILD_WORKSPACE_DIRECTORY to the checkout, which is
+  # the only place the gitignored live .env lives.
+  load_shell_function "${SCRIPT}" resolve_repo_root
+  workspace="$(make_scratch)/workspace"
+  runfiles="$(make_scratch)/runfiles"
+  mkdir -p "${workspace}" "${runfiles}/scripts"
+  printf 'x\n' >"${workspace}/docker-compose.yml"
+  printf 'x\n' >"${runfiles}/docker-compose.yml"
+  REPO_ROOT=""
+  unset GITHUB_WORKSPACE
+  BUILD_WORKSPACE_DIRECTORY="${workspace}"
+  cd "${runfiles}"
+  SELF_DIR="${runfiles}/scripts"
+  run --separate-stderr resolve_repo_root
+  [ "${status}" -eq 0 ]
+  assert_eq "workspace wins" "${workspace}" "${output}"
 }
 
 @test "update-configs: env_pairs pairs every twin with its live file, dotfile included" {

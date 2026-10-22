@@ -203,7 +203,9 @@ reach the dev stack when `dev-stack.env` exists.
 
 6. Start the **stable** (production) stack. `prod-stack` addresses it by default, as the
    compose project `evo-t1-prod`, on the default ports and with the `.env` beside the
-   compose file read by compose itself.
+   compose file read by compose itself. Postgres only honours `CODER_PG_PASSWORD` on
+   first volume init; the db wrapper re-applies it on every start, so a later secret
+   rotation does not leave Coder crash-looping on `password authentication failed`.
 
    ```sh
    bazelisk run //scripts:prod-stack -- up

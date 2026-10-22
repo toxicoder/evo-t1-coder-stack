@@ -45,7 +45,9 @@ repo can verify.
   only `change-me-*` placeholders. `scripts/bootstrap.sh` generates fresh
   values; rotate any value that was ever shared. Never commit `.env`, API
   keys, or SSH material. `proxy/certs/` is git-ignored too — the private key
-  never enters git.
+  never enters git. `CODER_PG_PASSWORD` is re-applied on every db start
+  (the image only honours it on first volume init), so rotating it in `.env`
+  and running `prod-stack up` is enough.
 - **The push token.** `scripts/push-template.sh` cannot use a CLI session (the
   public API is gated by Authelia, which answers unauthenticated CLI probes with an
   HTML page), so it mints an API key by inserting a row into the stack's own Postgres

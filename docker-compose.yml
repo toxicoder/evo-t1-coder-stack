@@ -153,14 +153,26 @@ services:
   db:
     image: postgres:17
     restart: unless-stopped
+    # The image only honours POSTGRES_PASSWORD on first volume init. The
+    # wrapper re-applies it on every start (local socket is trust) so a later
+    # CODER_PG_PASSWORD rotation in .env does not leave Coder crash-looping
+    # with "password authentication failed for user coder". The healthcheck
+    # authenticates over TCP with that same password, so Coder is not started
+    # until the role matches .env.
+    entrypoint: ["/usr/local/bin/pg-apply-password.sh"]
     environment:
       POSTGRES_USER: coder
       POSTGRES_PASSWORD: ${CODER_PG_PASSWORD:-change-me-postgres}
       POSTGRES_DB: coder
     volumes:
       - coder-db:/var/lib/postgresql/data
+      - ./scripts/lib/pg-apply-password.sh:/usr/local/bin/pg-apply-password.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U coder"]
+      test:
+        [
+          "CMD-SHELL",
+          'pg_isready -U "$$POSTGRES_USER" && PGPASSWORD="$$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "$$POSTGRES_USER" -d "$$POSTGRES_DB" -c "SELECT 1" >/dev/null',
+        ]
       interval: 5s
       timeout: 5s
       retries: 20

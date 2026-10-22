@@ -14,7 +14,9 @@ bazelisk run //scripts:update-configs -- all
 ```
 
 Run it after you pull, not before: a pull is what changes the templates these
-tools copy from.
+tools copy from. `bazelisk run` feeds the real checkout (`BUILD_WORKSPACE_DIRECTORY`),
+not the runfiles copy, so the env pass rewrites the live `.env` beside
+`docker-compose.yml`.
 
 ## What goes stale
 
