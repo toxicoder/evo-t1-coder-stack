@@ -340,3 +340,31 @@ ENV
   assert_match "service forwarded" ' -p evo-t1-dev -f .*/docker-compose\.yml logs --tail 20 coder$' \
     "$(stub_log docker)"
 }
+
+@test "dev-stack: up restarts coder when recent logs show postgres password auth failure" {
+  workspace="$(make_scratch)/workspace"
+  mkdir -p "${workspace}"
+  cp "${REPO_ROOT}/docker-compose.yml" "${workspace}/docker-compose.yml"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" \
+    STUB_COMPOSE_LOGS='pq: password authentication failed for user "coder"' \
+    bash "${STACK}" up
+  [ "${status}" -eq 0 ]
+  assert_match "compose up" 'up -d' "$(stub_log docker)"
+  assert_match "read coder logs" 'logs --tail 30 coder' "$(stub_log docker)"
+  assert_match "bounced coder" 'restart coder' "$(stub_log docker)"
+  assert_match "announced" 'restarting coder' "${output}"
+}
+
+@test "dev-stack: up does not restart coder when postgres auth is clean" {
+  workspace="$(make_scratch)/workspace"
+  mkdir -p "${workspace}"
+  cp "${REPO_ROOT}/docker-compose.yml" "${workspace}/docker-compose.yml"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" \
+    STUB_COMPOSE_LOGS='Started HTTP listener at http://0.0.0.0:3000' \
+    bash "${STACK}" up
+  [ "${status}" -eq 0 ]
+  assert_match "compose up" 'up -d' "$(stub_log docker)"
+  assert_not_match "no bounce" 'restart coder' "$(stub_log docker)"
+}

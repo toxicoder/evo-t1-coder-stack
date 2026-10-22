@@ -87,6 +87,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SELF_DIR}/lib/common.sh"
 # shellcheck source=lib/host_state.sh disable=SC1091
 source "${SELF_DIR}/lib/host_state.sh"
+# shellcheck source=lib/pg-apply-password.sh disable=SC1091
+source "${SELF_DIR}/lib/pg-apply-password.sh"
 
 PROJECT="evo-t1-prod"
 COMPOSE_FILE=""
@@ -111,7 +113,9 @@ usage: prod-stack [--project-name <name>] [--file <file>] [--env-file <file>]
                   [--tail <n>] [--follow] [--json] [--yes]
                   <up | down | status | logs [service...]> [same flags]
 
-  up            docker compose up -d for the stable project, then the URL summary
+  up            docker compose up -d for the stable project, re-apply the
+                Postgres role password from .env, bounce coder if it was
+                failing auth, then the URL summary
   down          stop the stable project and keep its volumes
   status        read-only report: compose CLI, daemon, project, services
   logs          print compose logs (default: the last 100 lines per service;
@@ -463,6 +467,7 @@ main() {
     up)
       repair_stale_runfiles "${root}" 0 || true
       run_compose up -d
+      restart_coder_if_pg_auth_failed
       if [[ -t 0 ]]; then
         host_dns_report /etc/resolv.conf github.com || true
       fi

@@ -115,9 +115,13 @@ USAGE
 
 # @function resolve_repo_root
 # Print the repo root this run reads payloads from: the first candidate that
-# holds docker-compose.yml (the marker of a real checkout).
+# holds docker-compose.yml (the marker of a real checkout). `bazelisk run`
+# sets BUILD_WORKSPACE_DIRECTORY to the real checkout and cwd to the runfiles
+# copy, which has docker-compose.yml and the .env.example twin but not the
+# gitignored live .env; that candidate has to beat $PWD so the env pass
+# rewrites the operator's file.
 # Globals:
-#   REPO_ROOT, GITHUB_WORKSPACE
+#   REPO_ROOT, BUILD_WORKSPACE_DIRECTORY, GITHUB_WORKSPACE
 # Arguments:
 #   None
 # Outputs:
@@ -129,6 +133,9 @@ resolve_repo_root() {
   local candidate
   if [ -n "${REPO_ROOT:-}" ]; then
     candidates+=("${REPO_ROOT}")
+  fi
+  if [ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]; then
+    candidates+=("${BUILD_WORKSPACE_DIRECTORY}")
   fi
   if [ -n "${GITHUB_WORKSPACE:-}" ]; then
     candidates+=("${GITHUB_WORKSPACE}")
