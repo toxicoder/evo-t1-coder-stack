@@ -5,10 +5,11 @@ launcher (//tools:exec_shell.bzl) plus one sh_binary wrapper per scripts/*.sh,
 so `bazelisk run //scripts:<stem> -- <args>` works from a foreign cwd and from
 a checkout whose scripts are mode 100644. Entry scripts cd to a repo root they
 resolve themselves and then read repo files by path, so the compose file, both
-template payload trees, the golden-image pins, litellm/config.yaml and the two
-.env samples ride along in runfiles (//:stack_data), and every scripts/**.sh
-rides along too (:doc_sources) — a sourced lib must resolve inside the sandbox
-just like the entry script that sources it.
+template payload trees, the golden-image pins, litellm/config.yaml, homepage/**,
+proxy/*.conf, searxng/settings.yml and the two .env samples ride along in
+runfiles (//:stack_data), and every scripts/**.sh rides along too
+(:doc_sources) — a sourced lib must resolve inside the sandbox just like the
+entry script that sources it.
 """
 
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")

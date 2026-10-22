@@ -26,9 +26,12 @@ exports_files([
 
 # Payload the operational scripts read by path after they resolve a repo root:
 # the compose file, both template payload trees, the golden-image pins, the
-# LiteLLM routing file, the SearXNG settings, the two .env samples, and the
-# license that ships beside them. scripts/**.sh reaches runfiles through
-# //scripts:doc_sources, not here.
+# LiteLLM routing file, the SearXNG settings, the Homepage dashboard files,
+# the nginx proxy confs, the two .env samples, and the license that ships
+# beside them. proxy/certs/ is .bazelignored (bootstrap issues those on the
+# host); compose bind-mounts for the certs therefore need the real checkout,
+# which bazel run names as BUILD_WORKSPACE_DIRECTORY. scripts/**.sh reaches
+# runfiles through //scripts:doc_sources, not here.
 filegroup(
     name = "stack_data",
     srcs = [
@@ -38,8 +41,10 @@ filegroup(
         "docker-compose.yml",
     ] + glob(
         [
+            "homepage/**",
             "images/dev/**",
             "litellm/**",
+            "proxy/**",
             "searxng/**",
             "templates/**",
         ],

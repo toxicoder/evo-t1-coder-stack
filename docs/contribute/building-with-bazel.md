@@ -73,9 +73,12 @@ with bash, so a checkout whose scripts are mode `100644` still builds.
 
 Each CLI target also declares the repo files that script reads by path — `//:stack_data`
 (`docker-compose.yml`, both `templates/**` payload trees, `images/dev/**`, `litellm/**`,
-`searxng/**`, the two `.env` samples, `LICENSE`) and `//scripts:doc_sources` (every
-`scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves too). Without them a sandboxed run
-would read a partial copy of the repo and fail for the wrong reason. A new top-level payload
-directory has to be added to that `glob` by hand: `test-fast` and `lint` only see repo files
-that travel in runfiles, so an unlisted directory is invisible to the harness rather than
-checked loosely.
+`searxng/**`, `homepage/**`, `proxy/**`, the two `.env` samples, `LICENSE`) and
+`//scripts:doc_sources` (every `scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves
+too). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
+`bazelisk run` of a stack runner prefers `BUILD_WORKSPACE_DIRECTORY` — the real checkout —
+over the runfiles copy as the compose project directory. Without the committed payloads a
+sandboxed run would read a partial copy of the repo and fail for the wrong reason. A new
+top-level payload directory has to be added to that `glob` by hand: `test-fast` and `lint`
+only see repo files that travel in runfiles, so an unlisted directory is invisible to the
+harness rather than checked loosely.

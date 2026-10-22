@@ -164,6 +164,36 @@ load_fn() {
   assert_match "unproven root" 'unresolvable repo root' "${output}"
 }
 
+@test "dev-stack: resolve_repo_root prefers BUILD_WORKSPACE_DIRECTORY over PWD" {
+  # bazelisk run sets cwd to the runfiles copy (which has docker-compose.yml)
+  # and BUILD_WORKSPACE_DIRECTORY to the checkout. Compose bind mounts and
+  # `.env` have to come from the checkout: proxy/certs/ is bazelignored.
+  load_fn scripts/lib/common.sh has_tool
+  load_fn scripts/dev-stack.sh resolve_repo_root
+  workspace="$(make_scratch)/workspace"
+  runfiles="$(make_scratch)/runfiles"
+  mkdir -p "${workspace}" "${runfiles}/scripts"
+  touch "${workspace}/docker-compose.yml" "${runfiles}/docker-compose.yml"
+  REPO_ROOT=""
+  unset GITHUB_WORKSPACE
+  BUILD_WORKSPACE_DIRECTORY="${workspace}"
+  cd "${runfiles}"
+  SELF_DIR="${runfiles}/scripts"
+  run resolve_repo_root
+  [ "${status}" -eq 0 ]
+  assert_eq "workspace wins" "${workspace}" "${output}"
+}
+
+@test "dev-stack: status reports the BUILD_WORKSPACE_DIRECTORY compose file" {
+  workspace="$(make_scratch)/workspace"
+  mkdir -p "${workspace}"
+  cp "${REPO_ROOT}/docker-compose.yml" "${workspace}/docker-compose.yml"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" bash "${STACK}" status
+  [ "${status}" -eq 0 ]
+  assert_match "workspace compose file" "file: ${workspace}/docker-compose.yml" "${output}"
+}
+
 @test "dev-stack: compose_cli and compose_prefix name the CLI and the project" {
   load_fn scripts/lib/common.sh has_tool
   load_fn scripts/dev-stack.sh compose_cli

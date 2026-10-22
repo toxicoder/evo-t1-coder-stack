@@ -17,6 +17,28 @@ the stack's `coder` or `router` container and run from inside a workspace querie
 wrong daemon and answers `no such container`. `bazelisk run //scripts:...` also runs
 from the checkout.
 
+## Stack bring-up
+
+### `not a directory: Are you trying to mount a directory onto a file` -> missing compose bind-mount source
+
+Cause: `docker compose` resolved `./proxy/homepage.conf` (or another file bind
+mount) next to a compose file that did not have that file. Under `bazelisk run`
+that file used to be the runfiles copy, which only holds `//:stack_data`. Docker
+then created a directory at the source path and failed mounting it onto nginx's
+`/etc/nginx/conf.d/default.conf`, which is a file in the image.
+
+Fix: `homepage/**` and `proxy/*.conf` belong in `//:stack_data`, and the stack
+runners prefer `BUILD_WORKSPACE_DIRECTORY` (the real checkout) so relative
+mounts and bootstrap-issued `proxy/certs/` resolve there. Re-run from the stack
+host:
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+```
+
+The same command with `dev-stack` brings the dev project up. A leftover
+`homepage-proxy` container from the failed create is recreated on that `up`.
+
 ## Model lane: Spark, LiteLLM, the agent backends
 
 ### How do I know the IPEX-LLM server came up? -> look for `runners=[ipex_llm]`
