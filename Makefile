@@ -7,9 +7,12 @@
 #   bazelisk run //:fix
 #   bazelisk run //scripts:<stem> -- <args>
 #
-# This Makefile exists for muscle memory. Every target delegates to Bazelisk:
-# nothing here runs a script by path. scripts/setup-host.sh is the one script
-# the repo documents for direct shell use, and it runs before Bazel exists.
+# This Makefile exists for muscle memory. Every target delegates to Bazelisk,
+# except stack-up / prod-stack-up which run `bash scripts/setup-host.sh --repair`
+# first: leftover Docker bind-mounts in Bazel's runfiles tree make `bazelisk run`
+# fail creating prod-stack.runfiles (Permission denied on evo-t1.svg) before any
+# script in the target can run. setup-host.sh is the one script the repo
+# documents for direct shell use.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
@@ -83,6 +86,7 @@ bootstrap:
 
 stack-up:
 	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
+	@bash scripts/setup-host.sh --repair || true
 	$(BAZEL) run //scripts:dev-stack -- up --project-name $(PROJECT)
 
 stack-down:
@@ -103,6 +107,7 @@ stack-reset:
 
 prod-stack-up:
 	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
+	@bash scripts/setup-host.sh --repair || true
 	$(BAZEL) run //scripts:prod-stack -- up --project-name $(PROD_PROJECT)
 
 prod-stack-down:

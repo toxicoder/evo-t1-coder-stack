@@ -454,32 +454,44 @@ Rules, the branch protection behind them, and the commit prefixes are in
 
 ## After a git pull
 
-Two things go stale on a pull and neither is checked in, so nothing repairs them on
-its own: the env file that feeds compose's `${...}` lines (`.env` for the stable stack,
-`dev-stack.env` for the dev one) and the config that lives *inside* the running
-workspaces (`~/.grok/AGENTS.md`, `~/.grok/config.toml`, `~/.shared/vscode/settings.json`,
-`~/.tmux.conf`, `~/.coder/...`, `~/.agents/...`), which the templates seed on first
-boot and never revisit.
+From a **host** shell, in the checkout:
 
 ```sh
-bazelisk run //scripts:update-configs -- all --dry-run
+git pull
+bash scripts/setup-host.sh --repair
+bazelisk run //scripts:update-configs -- all
+bazelisk run //scripts:prod-stack -- up
 ```
 
-```sh
-bazelisk run //scripts:update-configs -- all --interactive
-```
+`--repair` is the recovery Bazel cannot do itself. Leftover Docker bind-mounts in
+`bazel-out/.../prod-stack.runfiles` (a directory sitting where
+`homepage/assets/icons/evo-t1.svg` belongs, or a root-owned copy) make the next
+`bazelisk run //scripts:prod-stack` die with `FileAccessException ... Permission
+denied` before the stack script starts. `make prod-stack-up` runs `--repair` first.
+`--check` lists leftovers and whether `github.com` resolves, and writes nothing.
 
-`env` ports your values onto the new twin and explains every key that still needs a
-value; `workspace` re-materialises the workspace copies, and a file you hand-edit in a
-workspace is left alone. Run `workspace` from a **host** shell - inside a workspace the
-`docker` CLI only reaches that workspace's own DinD sidecar, which is why `status`
-there prints which daemon it asked. A dev stack that remapped `LITELLM_PORT` away from
-4000 needs that address named too:
-`bazelisk run //scripts:refresh-configs -- --litellm-url http://host.docker.internal:<PORT>/v1`
+`update-configs env` on a TTY keeps every value you already set, reuses a sibling
+env file (`.env` filling `dev-stack.env`) for a new key, and walks you through new
+keys, placeholders (`change-me…`, `NOTSET`, `YOUR_LAN_IP`) and empty values.
+`--dry-run` is the report-only shape. `workspace` re-materialises the stack-owned
+copies inside running workspaces; a file you hand-edit is left alone. Run
+`workspace` from a **host** shell - inside a workspace the `docker` CLI only reaches
+that workspace's own DinD sidecar, which is why `status` there prints which daemon
+it asked.
+
+If `git pull` itself fails with `Could not resolve host: github.com`, Docker or
+Kasm has made Tailscale MagicDNS (`100.100.100.100`) unreachable and it was the
+only nameserver. `bash scripts/setup-host.sh --check` prints the diagnosis and the
+copy-paste (`sudo tailscale set --accept-dns=false`). The stack never flips
+Tailscale for you.
+
+A dev stack that remapped `LITELLM_PORT` away from 4000 needs that address named
+too: `bazelisk run //scripts:refresh-configs -- --litellm-url http://host.docker.internal:<PORT>/v1`
 re-renders `settings.json` against that stack's own LiteLLM port, where the default
 `http://host.docker.internal:4000/v1` names the stable stack's.
 [config-updates.md](docs/config-updates.md) has both passes, the flags, and what the
-tool refuses to do.
+tool refuses to do. [troubleshooting.md](docs/troubleshooting.md) quotes both error
+strings.
 
 ## Public subdomains (optional)
 

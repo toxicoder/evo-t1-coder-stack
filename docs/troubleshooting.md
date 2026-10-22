@@ -39,6 +39,52 @@ bazelisk run //scripts:prod-stack -- up
 The same command with `dev-stack` brings the dev project up. A leftover
 `homepage-proxy` container from the failed create is recreated on that `up`.
 
+A failed bind from an older runfiles compose file can also leave a **directory**
+(or a root-owned file) at `homepage/assets/icons/evo-t1.svg` inside
+`bazel-out/.../prod-stack.runfiles`. The next `bazelisk run` then dies before
+the stack script starts; that spelling is the next heading.
+
+### `FileAccessException` / `Permission denied` on `homepage/assets/icons/evo-t1.svg` -> leftover runfiles bind-mount
+
+Cause: an older `bazelisk run` used the runfiles copy of `docker-compose.yml`, so
+compose mounted `./homepage/assets/icons` from `bazel-out`. Docker then created a
+directory where `evo-t1.svg` belongs, or the homepage container chowned those
+files to root. Bazel cannot recreate `prod-stack.runfiles` over that leftover,
+and the stack script never starts, so a repair inside `prod-stack` cannot help.
+
+Fix: recover from a shell, then re-run. `--repair` uses sudo when chmod is not
+enough:
+
+```sh
+bash scripts/setup-host.sh --repair
+bazelisk run //scripts:prod-stack -- up
+```
+
+`make prod-stack-up` (and `make stack-up`) run `--repair` first. Bare
+`bash scripts/setup-host.sh` repairs leftovers and then installs any missing
+host tools. `bash scripts/setup-host.sh --check` lists leftover paths without
+writing.
+
+### `Could not resolve host: github.com` -> Tailscale MagicDNS is the only nameserver
+
+Cause: `/etc/resolv.conf` names only Tailscale MagicDNS (`100.100.100.100`).
+Docker's iptables, and Kasm's privileged nested dockerd, can make that stub
+unreachable. When it is, **every** lookup dies, including `github.com`, so
+`git pull` over HTTPS fails. This is host DNS, not GitHub auth.
+
+The stack never flips Tailscale for you. Keep a public resolver beside MagicDNS,
+then retry `git pull`:
+
+```sh
+bash scripts/setup-host.sh --check
+sudo tailscale set --accept-dns=false
+```
+
+`--check` prints which nameservers are in play and whether `github.com` resolves.
+Other ways to keep a public resolver: add `1.1.1.1` / `8.8.8.8` as a global
+nameserver in the Tailscale admin DNS page, or drop a systemd-resolved drop-in
+(`DNS=1.1.1.1 8.8.8.8`) and restart `systemd-resolved`.
+
 ## Model lane: Spark, LiteLLM, the agent backends
 
 ### How do I know the IPEX-LLM server came up? -> look for `runners=[ipex_llm]`

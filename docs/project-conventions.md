@@ -42,7 +42,10 @@ Tests are hermetic: docker, ssh, curl, git and the other external tools resolve 
 Bazelisk is the only ingress, with one exception: `scripts/setup-host.sh`. That script is a
 one-time host bootstrap — it installs Bazelisk, the shell/Starlark lint toolchain
 (shellcheck, shfmt, buildifier) and Terraform — so it has to run before Bazel exists, and
-stays the single documented `bash scripts/setup-host.sh`.
+stays the single documented `bash scripts/setup-host.sh`. `--repair` is the other half of
+that exemption: leftover Docker bind-mounts in Bazel's runfiles tree make
+`bazelisk run //scripts:prod-stack` die creating `prod-stack.runfiles` (`Permission
+denied` on `homepage/assets/icons/evo-t1.svg`) before any stack script can run.
 
 Everything else is a Bazel target:
 
@@ -113,11 +116,13 @@ templates; a staged copy that lacks either payload fails the push early by desig
   the stable stack never picks up the dev host ports; `prod-stack` names no env file unless
   `-e` does, and compose then reads the `.env` beside the compose file itself.
 - `--check` — the read-only mode `scripts/setup-host.sh` and `scripts/bootstrap.sh` both
-  take. `setup-host --check` names the tools that are missing and installs nothing;
-  `bootstrap --check` prints the same probes the full run makes (tools, compose plugin,
-  placeholder secrets by name, hosts, certs, GPU, images) and writes nothing. An
-  unrecognised argument in either script is an error, never a silent fall-through to the
-  mutating run.
+  take. `setup-host --check` names the tools that are missing, leftover runfiles that
+  will make `bazelisk run` fail with Permission denied, and whether `github.com`
+  resolves, and installs nothing; `setup-host --repair` is the recovery for those
+  leftovers (uses sudo when chmod is not enough). `bootstrap --check` prints the same
+  probes the full run makes (tools, compose plugin, placeholder secrets by name, hosts,
+  certs, GPU, images) and writes nothing. An unrecognised argument in either script is
+  an error, never a silent fall-through to the mutating run.
 - GitHub auth is Coder External Auth, id `primary-github`. There is no GitHub-token
   template variable and no PAT in any agent env map.
 
