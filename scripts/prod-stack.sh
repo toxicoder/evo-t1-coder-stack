@@ -36,9 +36,15 @@
 #
 # 3. Where the repo root is. Bazel runs this from a sandbox or a runfiles copy
 #    that holds *copies* of the repo, so the root is read from ${REPO_ROOT:-} /
-#    ${GITHUB_WORKSPACE:-} / $PWD and then PROVEN by two probes: the compose
-#    file must exist and `docker` must be on PATH. An unproven root is
-#    reported as `unresolvable repo root` and nothing runs.
+#    ${BUILD_WORKSPACE_DIRECTORY:-} / ${GITHUB_WORKSPACE:-} / $PWD and then
+#    PROVEN by two probes: the compose file must exist and `docker` must be on
+#    PATH. `bazelisk run` sets BUILD_WORKSPACE_DIRECTORY to the real checkout;
+#    that candidate has to beat $PWD, because Bazel's cwd is the runfiles tree,
+#    which has docker-compose.yml but not gitignored `.env` or bazelignored
+#    proxy/certs/. Relative compose bind mounts resolve next to the compose
+#    file, so a runfiles compose file makes Docker create missing sources as
+#    directories and then fail mounting them onto nginx files. An unproven root
+#    is reported as `unresolvable repo root` and nothing runs.
 #
 # 4. What destroys data. `reset` is the one command that destroys volumes, so
 #    it stops and asks for `--yes` first; without it, nothing is destroyed.
@@ -130,7 +136,7 @@ USAGE
 # Print the repo root this run should use: the first candidate that holds
 # docker-compose.yml AND has docker on PATH.
 # Globals:
-#   REPO_ROOT, GITHUB_WORKSPACE
+#   REPO_ROOT, BUILD_WORKSPACE_DIRECTORY, GITHUB_WORKSPACE
 # Arguments:
 #   None
 # Outputs:
@@ -142,6 +148,9 @@ resolve_repo_root() {
   local candidate
   if [ -n "${REPO_ROOT:-}" ]; then
     candidates+=("${REPO_ROOT}")
+  fi
+  if [ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]; then
+    candidates+=("${BUILD_WORKSPACE_DIRECTORY}")
   fi
   if [ -n "${GITHUB_WORKSPACE:-}" ]; then
     candidates+=("${GITHUB_WORKSPACE}")
