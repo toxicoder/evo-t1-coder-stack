@@ -150,10 +150,13 @@ reach the dev stack when `dev-stack.env` exists.
 
 - The Compose **project name** namespaces one stack's volumes and networks, and the
   **env file** supplies its host ports.
-- `//scripts:dev-stack` names the project on every call and picks the env file that
-  belongs to it, so one target drives either stack and cannot guess wrong.
-- The name it assumes is the **dev** sandbox (`evo-t1-dev`). The stable stack is
-  `evo-t1-coder-stack`, the checkout folder's name.
+- `//scripts:dev-stack` and `//scripts:prod-stack` name the project on every call and
+  carry the compose file with it, so neither can land on the wrong stack by guessing the
+  folder it was called from. `dev-stack` also picks the env file that belongs to the dev
+  project; `prod-stack` passes none unless `-e` names one.
+- The name each assumes is a sandbox: `evo-t1-dev` for `dev-stack`, `evo-t1-prod` for
+  `prod-stack`. A stack brought up by hand sits under `evo-t1-coder-stack`, the checkout
+  folder's name, so `--project-name` has to name that folder to address it.
 
 ### First boot
 
@@ -198,8 +201,16 @@ reach the dev stack when `dev-stack.env` exists.
    bazelisk run //scripts:bootstrap
    ```
 
-6. Start the **stable** (production) stack. The project name travels, so this works
-   from any directory.
+6. Start the **stable** (production) stack. `prod-stack` addresses it by default, as the
+   compose project `evo-t1-prod`, on the default ports and with the `.env` beside the
+   compose file read by compose itself.
+
+   ```sh
+   bazelisk run //scripts:prod-stack -- up
+   ```
+
+   A stable stack you brought up by hand runs under the checkout folder's name instead.
+   The project name travels, so this names it from any directory:
 
    ```sh
    bazelisk run //scripts:dev-stack -- up --project-name evo-t1-coder-stack
@@ -299,19 +310,32 @@ they sit on different host ports so both can bind at once.
 
 | | stable (production) | dev (testing) |
 |---|---|---|
-| Compose project | `evo-t1-coder-stack`, the checkout folder's name | `evo-t1-dev` |
-| Env file (host ports) | `.env` | `dev-stack.env` |
-| Volume prefix | `evo-t1-coder-stack_` | `evo-t1-dev_` |
+| Compose project | `evo-t1-prod` (`prod-stack`'s default), or `evo-t1-coder-stack`, the checkout folder's name, for a stack brought up by hand | `evo-t1-dev` |
+| Stack runner (default project) | `prod-stack` (`evo-t1-prod`) | `dev-stack` (`evo-t1-dev`) |
+| Env file (host ports) | `.env`, which compose reads when `--env-file` names none | `dev-stack.env` |
+| Volume prefix | `evo-t1-prod_`, or `evo-t1-coder-stack_` for a hand-raised stack | `evo-t1-dev_` |
+
+`evo-t1-prod` and `evo-t1-coder-stack` are two projects, not two spellings of one:
+`prod-stack` addresses the first unless `-p` names another.
 
 ### Bring either one up
 
-The stable stack, from anywhere, because the project name travels:
+The stable stack, from anywhere, because the project name travels. `prod-stack` names the
+stable project for you - `evo-t1-prod` by default, and `-p` (or `PROD_PROJECT` on the
+`make` shim) names another:
 
 ```sh
-bazelisk run //scripts:dev-stack -- up --project-name evo-t1-coder-stack
+bazelisk run //scripts:prod-stack -- up
 ```
 
-The dev stack - the default project, on ports shifted by 10000:
+A stable stack you brought up by hand lives under the checkout folder's name, so name
+that folder; `prod-stack` does not guess it, and `dev-stack` takes the same flag:
+
+```sh
+bazelisk run //scripts:prod-stack -- up --project-name evo-t1-coder-stack
+```
+
+The dev stack - the dev project, on ports shifted by 10000:
 
 ```sh
 bazelisk run //scripts:dev-stack -- up
@@ -320,7 +344,7 @@ bazelisk run //scripts:dev-stack -- up
 Stop either one and keep its volumes:
 
 ```sh
-bazelisk run //scripts:dev-stack -- down --project-name evo-t1-coder-stack
+bazelisk run //scripts:prod-stack -- down
 ```
 
 ```sh
@@ -351,10 +375,12 @@ That maps 3001 to 13001, 443 to 10443, 80 to 10080 and 2112 to 12112.
    and let compose derive the name from that folder.
 2. A hand-written `docker compose` call takes the name from its own folder, so away
    from the checkout root it needs `-f <path>/docker-compose.yml` and the name.
-   `dev-stack` always passes both.
+   `dev-stack` and `prod-stack` always pass both (`-p` and `-f`).
 3. The env file comes with the project name: a run naming the dev project reads
    `dev-stack.env` when that file exists, and any other project gets no `--env-file`
-   at all, so dev port numbers stay out of a run aimed at another stack.
+   at all, so dev port numbers stay out of a run aimed at another stack. `prod-stack`
+   names no env file unless `-e` says so, which leaves the stable stack on the `.env`
+   beside the compose file.
 4. **One port, one stack.** A dev run on the stable stack's ports cannot bind them
    twice, and a `dev-stack.env` still carrying the stable numbers isolates nothing.
 5. `reset` and `down --volumes` destroy data, and naming the stable project there
@@ -406,11 +432,15 @@ bazelisk run //:fix
 ### The `make` shims
 
 They delegate to the same targets (`test`, `lint`, `fix`, `validate`,
-`stack-up`/`stack-down`/`stack-status`/`stack-logs`/`stack-reset`). They pass `PROJECT`
-as `--project-name`, default `evo-t1-dev`, so this is the stable stack:
+`stack-up`/`stack-down`/`stack-status`/`stack-logs`/`stack-reset` and the five
+`prod-stack-*` twins). The `stack-*` shims pass `PROJECT` (default `evo-t1-dev`, the dev
+stack) and the `prod-stack-*` shims pass `PROD_PROJECT` (default `evo-t1-prod`, the
+stable stack, on default ports) as `--project-name`, so either family can be repointed
+at another project:
 
 ```sh
 make stack-up PROJECT=evo-t1-coder-stack
+make prod-stack-up PROD_PROJECT=evo-t1-coder-stack
 ```
 
 ### Branching
@@ -443,8 +473,13 @@ bazelisk run //scripts:update-configs -- all --interactive
 value; `workspace` re-materialises the workspace copies, and a file you hand-edit in a
 workspace is left alone. Run `workspace` from a **host** shell - inside a workspace the
 `docker` CLI only reaches that workspace's own DinD sidecar, which is why `status`
-there prints which daemon it asked. [config-updates.md](docs/config-updates.md) has
-both passes, the flags, and what the tool refuses to do.
+there prints which daemon it asked. A dev stack that remapped `LITELLM_PORT` away from
+4000 needs that address named too:
+`bazelisk run //scripts:refresh-configs -- --litellm-url http://host.docker.internal:<PORT>/v1`
+re-renders `settings.json` against that stack's own LiteLLM port, where the default
+`http://host.docker.internal:4000/v1` names the stable stack's.
+[config-updates.md](docs/config-updates.md) has both passes, the flags, and what the
+tool refuses to do.
 
 ## Public subdomains (optional)
 
@@ -491,7 +526,13 @@ side, is in [docs/public-access.md](docs/public-access.md).
    bazelisk run //scripts:bootstrap
    ```
 
-3. Recreate the stack you are switching (both, if both are up):
+3. Recreate the stack you are switching (both, if both are up). `prod-stack` names the
+   stable project for you; `dev-stack` needs `--project-name` to reach it from away
+   from the checkout root:
+
+   ```sh
+   bazelisk run //scripts:prod-stack -- up
+   ```
 
    ```sh
    bazelisk run //scripts:dev-stack -- up --project-name evo-t1-coder-stack
@@ -552,6 +593,10 @@ Roo and Kilo therefore default to `agent`.
    ```sh
    docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml restart litellm
    ```
+
+   Neither runner has a `restart` subcommand; `bazelisk run //scripts:prod-stack -- status`
+   and `bazelisk run //scripts:prod-stack -- logs litellm` read the stable stack back
+   before and after that call.
 
 The two tool-capable aliases also back the control-plane chat: `scripts/coder-agents.sh`
 registers `agent` (default) and `chat` as the Coder Agents chat model configs, so an
@@ -865,6 +910,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
 │   ├── new-workspace.sh     # git URL -> workspace: picks the template + parameters
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
+│   ├── prod-stack.sh        # up / down / status / logs / reset for the stable stack
 │   ├── push-template.sh     # pushes both templates from inside the coder container
 │   ├── refresh-configs.sh   # re-materialize the tracked config seeds in a workspace
 │   ├── search-check.sh      # probe the search lane, one GET per engine x query

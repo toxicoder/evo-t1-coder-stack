@@ -40,6 +40,9 @@
 #                        a scratch tree instead of a real workspace)
 #   --home <dir>         treat this HOST directory as a workspace HOME tree
 #                        (developer dry-runs and the Bats suites only)
+#   --litellm-url <url>  the model-transport address to render into a reseeded
+#                        settings.json; name it when this stack environment
+#                        remapped LITELLM_PORT away from the default 4000
 #   -h, --help           print the usage and exit 0
 #
 # Exit codes: 0 for a completed run and for every "nothing to do" skip
@@ -68,6 +71,7 @@ usage() {
   cat <<'USAGE'
 usage: refresh-configs [--dry-run] [--force] [--json]
                        [--container <name> ...] [--home <dir> ...]
+                       [--litellm-url <url>]
 
 Rewrites the stack-owned workspace configs (the reseed list lives in
 scripts/lib/config_seed.sh) from this checkout into the named containers;
@@ -78,12 +82,15 @@ stay untouched unless --force overrides that.
 Options: --dry-run (report only), --force (overwrite user-owned files too),
 --json (machine output on stdout, prose on stderr), --container <name>,
 --container-root <dir> (path prefix inside the target, default /home/coder),
---home <dir> (host directory shaped like a workspace HOME; dev use), -h/--help.
+--home <dir> (host directory shaped like a workspace HOME; dev use),
+--litellm-url <url> (the model-transport address rendered into a reseeded
+settings.json; default http://host.docker.internal:4000/v1), -h/--help.
 
 Examples (each line is the whole command, run from the repo root):
   bazelisk run //scripts:refresh-configs -- --dry-run
   bazelisk run //scripts:refresh-configs -- --force
   bazelisk run //scripts:refresh-configs -- --container coder-demo --dry-run
+  bazelisk run //scripts:refresh-configs -- --litellm-url http://host.docker.internal:14000/v1
 USAGE
 }
 
@@ -125,7 +132,8 @@ resolve_repo_root() {
 # Parse argv, pick the reseed targets (containers, or a host HOME tree),
 # and hand each one to seed_container_seed through one shared staging file.
 # Globals:
-#   JSON_MODE
+#   JSON_MODE, STACK_LITELLM_URL (a --litellm-url argv wins over the default
+#   carried from lib/config_seed.sh, and is assigned before the reseed loop)
 # Arguments:
 #   "$@" - the argv documented in the file header
 # Outputs:
@@ -168,6 +176,16 @@ main() {
           exit 1
         fi
         targets+=("h:$2")
+        shift
+        ;;
+      --litellm-url)
+        if [ $# -lt 2 ]; then
+          err "--litellm-url needs a url"
+          usage
+          exit 1
+        fi
+        # shellcheck disable=SC2034 # seed_render_settings (lib/config_seed.sh) is the reader
+        STACK_LITELLM_URL="$2"
         shift
         ;;
       -h | --help)
