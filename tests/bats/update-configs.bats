@@ -143,6 +143,12 @@ scratch_root() {
   run --separate-stderr env_pairs "${hidden}"
   assert_match "the hidden twin is paired too" '\.env[[:space:]].*\.env\.example$' "${output}"
 
+  # dev-stack.env is generated and has no twin of its own; it still has to be
+  # walked, so it pairs with .env.example.
+  printf 'X=1\n' >"${hidden}/dev-stack.env"
+  run --separate-stderr env_pairs "${hidden}"
+  assert_match "the generated live file is paired" 'dev-stack\.env[[:space:]].*\.env\.example$' "${output}"
+
   # A missing root is a report, not a failure.
   run --separate-stderr env_pairs "${BATS_TEST_TMPDIR}/nowhere"
   [ "${status}" -eq 0 ]
@@ -167,7 +173,23 @@ scratch_root() {
   [ "${status}" -eq 1 ]
 }
 
+@test "update-configs: is_placeholder_value treats YOUR_LAN_IP as unfinished" {
+  load_shell_function "${SCRIPT}" is_placeholder_value
+
+  run --separate-stderr is_placeholder_value ""
+  [ "${status}" -eq 0 ]
+  run --separate-stderr is_placeholder_value "change-me-please"
+  [ "${status}" -eq 0 ]
+  run --separate-stderr is_placeholder_value "NOTSET"
+  [ "${status}" -eq 0 ]
+  run --separate-stderr is_placeholder_value "https://YOUR_LAN_IP:3001"
+  [ "${status}" -eq 0 ]
+  run --separate-stderr is_placeholder_value "https://coder.example.invalid"
+  [ "${status}" -eq 1 ]
+}
+
 @test "update-configs: key_state describes a value and never prints it" {
+  load_shell_function "${SCRIPT}" is_placeholder_value
   load_shell_function "${SCRIPT}" key_state
 
   run --separate-stderr key_state ""
@@ -176,6 +198,8 @@ scratch_root() {
   assert_eq "a placeholder" 'still the placeholder' "${output}"
   run --separate-stderr key_state "NOTSET"
   assert_eq "the unset sentinel" 'still the placeholder' "${output}"
+  run --separate-stderr key_state "https://YOUR_LAN_IP:3001"
+  assert_eq "the LAN-IP token" 'still the placeholder' "${output}"
   run --separate-stderr key_state "https://coder.example.invalid"
   assert_eq "a real value" 'set' "${output}"
 
@@ -229,6 +253,7 @@ scratch_root() {
 }
 
 @test "update-configs: env_sync reconciles one pair and writes the merge where told" {
+  load_shell_function "${SCRIPT}" is_placeholder_value
   load_shell_function "${SCRIPT}" key_state
   load_shell_function "${SCRIPT}" env_retired_keys
   load_shell_function "${SCRIPT}" env_sync
@@ -270,6 +295,7 @@ scratch_root() {
 }
 
 @test "update-configs: env_ask lists what is missing and only writes through a terminal" {
+  load_shell_function "${SCRIPT}" is_placeholder_value
   load_shell_function "${SCRIPT}" key_state
   load_shell_function "${SCRIPT}" key_comment
   load_shell_function "${SCRIPT}" is_secret_key
@@ -286,7 +312,7 @@ scratch_root() {
   # Prompting off: the keys are listed, nothing is asked and nothing is written.
   run --separate-stderr env_ask "${root}/project.env.example" "${file}" 0
   [ "${status}" -eq 0 ]
-  assert_match "the count is stated" '2 key\(s\) still hold a placeholder or an empty value' "${output}"
+  assert_match "the count is stated" '2 key\(s\) to review' "${output}"
   assert_match "the placeholder key is named" 'THING_TOKEN' "${output}"
   assert_match "the empty key is named" 'THING_URL' "${output}"
   assert_contains_file "the file is untouched" "${file}" '^THING_TOKEN=change-me$'
@@ -346,7 +372,7 @@ scratch_root() {
   # out, where the reason it was set stays readable.
   assert_contains_file "the retired key is parked, commented out" "${root}/project.env" \
     '^#RETIRED_SECRET=stale-value$'
-  [ "$(stat -c '%a' "${root}/project.env")" = "600" ]
+  [ "$(stat -c '%a' "${root}/project.env" 2>/dev/null || stat -f '%OLp' "${root}/project.env")" = "600" ]
 }
 
 @test "update-configs: a checkout with no live env file says so and moves on" {
@@ -370,6 +396,85 @@ scratch_root() {
   assert_match "the retired key is reported" '1 key\(s\) this update no longer reads' "${output}"
   assert_contains_file "the retired key is parked, not deleted" "${root}/project.env" \
     '^#THING_TOKEN=keepme-secret$'
+}
+
+@test "update-configs: env_live_files names only the live files that exist" {
+  load_shell_function "${SCRIPT}" env_pairs
+  load_shell_function "${SCRIPT}" env_live_files
+
+  local root
+  root="$(scratch_root)"
+  printf 'K=1\n' >"${root}/project.env.example"
+  printf 'K=1\n' >"${root}/.env.example"
+  printf 'K=keep\n' >"${root}/.env"
+  printf 'K=dev\n' >"${root}/dev-stack.env"
+
+  run --separate-stderr env_live_files "${root}"
+  [ "${status}" -eq 0 ]
+  assert_match "the root env file is listed" '\.env$' "${output}"
+  assert_match "the generated live file is listed" 'dev-stack.env' "${output}"
+  assert_not_match "the twin is not a live file" 'project.env$' "${output}"
+}
+
+@test "update-configs: env_reuse_value prefers a sibling's real value over a placeholder" {
+  load_shell_function "${SCRIPT}" is_placeholder_value
+  load_shell_function "${SCRIPT}" env_reuse_value
+
+  local root
+  root="$(scratch_root)"
+  printf 'THING_TOKEN=change-me\n' >"${root}/dev-stack.env"
+  printf 'THING_TOKEN=keepme-secret\n' >"${root}/.env"
+
+  run --separate-stderr env_reuse_value THING_TOKEN "${root}/dev-stack.env" \
+    "${root}/.env" "${root}/dev-stack.env"
+  assert_eq "the sibling's value is reused" 'keepme-secret' "${output}"
+
+  run --separate-stderr env_reuse_value MISSING "${root}/dev-stack.env" "${root}/.env"
+  [ -z "${output}" ]
+}
+
+@test "update-configs: env_set_key rewrites one assignment and env_seed_live copies the twin" {
+  load_shell_function "${SCRIPT}" env_set_key
+  load_shell_function "${SCRIPT}" env_seed_live
+
+  local root
+  root="$(scratch_root)"
+  printf '# the token\nTHING_TOKEN=change-me\nKEEP=x\n' >"${root}/project.env.example"
+  printf 'THING_TOKEN=change-me\nKEEP=x\n' >"${root}/project.env"
+
+  run --separate-stderr env_set_key "${root}/project.env" THING_TOKEN 'keepme-secret'
+  [ "${status}" -eq 0 ]
+  assert_contains_file "the key was rewritten" "${root}/project.env" '^THING_TOKEN=keepme-secret$'
+  assert_contains_file "the neighbour is untouched" "${root}/project.env" '^KEEP=x$'
+
+  run --separate-stderr env_seed_live "${root}/project.env.example" "${root}/fresh.env"
+  [ "${status}" -eq 0 ]
+  assert_match "the create is announced" 'created fresh.env from project.env.example' "${output}"
+  assert_contains_file "the twin was copied" "${root}/fresh.env" '^THING_TOKEN=change-me$'
+  [ "$(stat -c '%a' "${root}/fresh.env" 2>/dev/null || stat -f '%OLp' "${root}/fresh.env")" = "600" ]
+}
+
+@test "update-configs: env_ask lists a key that is new this update" {
+  load_shell_function "${SCRIPT}" is_placeholder_value
+  load_shell_function "${SCRIPT}" is_secret_key
+  load_shell_function "${SCRIPT}" key_state
+  load_shell_function "${SCRIPT}" key_comment
+  load_shell_function "${SCRIPT}" env_reuse_value
+  load_shell_function "${SCRIPT}" env_set_key
+  load_shell_function "${SCRIPT}" env_ask
+  STACK_SECRET_KEYS='KEY SECRET TOKEN PASSWORD'
+
+  local root
+  root="$(scratch_root)"
+  printf 'OLD=keep\nNEW_KEY=default-value\n' >"${root}/project.env.example"
+  printf 'OLD=keep\nNEW_KEY=default-value\n' >"${root}/project.env"
+  printf 'OLD=keep\n' >"${root}/orig.env"
+
+  run --separate-stderr env_ask "${root}/project.env.example" "${root}/project.env" 0 \
+    "${root}/orig.env"
+  [ "${status}" -eq 0 ]
+  assert_match "the new key is listed" 'NEW_KEY' "${output}"
+  assert_not_match "a kept key is not listed" 'OLD' "${output}"
 }
 
 @test "update-configs: env --interactive without a terminal warns and fills nothing" {

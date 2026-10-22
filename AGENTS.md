@@ -42,7 +42,7 @@ Prefer Bazelisk. Make is a shim.
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that
   workspace's own DinD sidecar — run it in a host shell or name `--container`/`--home`)
 
-`scripts/setup-host.sh` is the only script run from shell (installs Bazelisk). Everything else is a Bazel target.
+`scripts/setup-host.sh` is the only script run from shell (installs Bazelisk; `--repair` recovers leftover runfiles so `bazelisk run` can start). Everything else is a Bazel target.
 
 Done means `//:test-fast` + lint green. Stack changes must be verified on the dev stack first.
 

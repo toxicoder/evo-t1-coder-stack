@@ -49,6 +49,8 @@
 #   env / workspace / all  what to refresh; `all` is env then workspace
 #   --dry-run            report the plan without writing anything
 #   -i, --interactive    stop and ask about every key that still needs a value
+#                        (the default on a TTY; --non-interactive turns it off)
+#   --non-interactive    never prompt; list what would be asked
 #   --force              reseed user-owned workspace files too
 #   --from <dir>         read the payloads from this checkout (default: the one
 #                        this script was run from, or $REPO_ROOT)
@@ -66,6 +68,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SELF_DIR}/lib/common.sh"
 # shellcheck source=lib/config_seed.sh disable=SC1091
 source "${SELF_DIR}/lib/config_seed.sh"
+# shellcheck source=lib/host_state.sh disable=SC1091
+source "${SELF_DIR}/lib/host_state.sh"
 
 # STACK_SECRET_KEYS - the name fragments that mark an env key as holding a
 # credential. These are named in a report, never printed with their value.
@@ -83,25 +87,27 @@ STACK_SECRET_KEYS='KEY SECRET TOKEN PASSWORD'
 #   0
 usage() {
   cat <<'USAGE'
-usage: update-configs [--dry-run] [--interactive] [--force] [--from <dir>]
-                      [--home <dir> ...] [--container <name> ...] env | workspace | all
+usage: update-configs [--dry-run] [--interactive] [--non-interactive] [--force]
+                      [--from <dir>] [--home <dir> ...] [--container <name> ...]
+                      env | workspace | all
 
   env        port your env file's values onto the new <name>.env.example twin
-             (.env, dev-stack.env), explaining every key that still needs a
-             value when --interactive is on
+             (.env, and dev-stack.env when that file exists). Existing values
+             are kept; a sibling env file can fill a new key; a TTY walks you
+             through new keys, placeholders and empty values
   workspace  re-materialize the stack-owned workspace configs from this
              checkout, and name any rendered file that would re-render on the
              target's next start
   all        env, then workspace
 
-Options: --dry-run (report only), --interactive (ask about what is missing),
---force (reseed user-owned files too), --from <dir> (read the payloads from
-that checkout), --home <dir> (a host directory shaped like a workspace HOME),
---container <name>, -h/--help.
+Options: --dry-run (report only), --interactive (ask; the default on a TTY),
+--non-interactive (never prompt), --force (reseed user-owned files too),
+--from <dir> (read the payloads from that checkout), --home <dir> (a host
+directory shaped like a workspace HOME), --container <name>, -h/--help.
 
 Examples (each line is the whole command, run from the repo root):
   bazelisk run //scripts:update-configs -- env --dry-run
-  bazelisk run //scripts:update-configs -- env --interactive
+  bazelisk run //scripts:update-configs -- env
   bazelisk run //scripts:update-configs -- workspace --dry-run
   bazelisk run //scripts:update-configs -- workspace --home ~/scratch/home
 USAGE
@@ -162,7 +168,53 @@ env_pairs() {
     [[ -n ${example} ]] || continue
     printf '%s\t%s\n' "${example%.example}" "${example}"
   done < <(find "${root}" -maxdepth 1 -type f -name '*.env.example' | sort)
+  # dev-stack.env is generated from .env (ports shifted); it has no twin of
+  # its own. Pair it with .env.example so a pull still walks it.
+  if [[ -f ${root}/dev-stack.env && ! -f ${root}/dev-stack.env.example ]]; then
+    if [[ -f ${root}/.env.example ]]; then
+      printf '%s\t%s\n' "${root}/dev-stack.env" "${root}/.env.example"
+    elif [[ -f ${root}/.env.sample ]]; then
+      printf '%s\t%s\n' "${root}/dev-stack.env" "${root}/.env.sample"
+    fi
+  fi
   return 0
+}
+
+# @function env_live_files
+# Print the live env files under a root that actually exist.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the repo root to scan
+# Outputs:
+#   One path per line
+# Returns:
+#   0, always
+env_live_files() {
+  local live
+  while IFS=$'\t' read -r live _; do
+    if [[ -n ${live} && -f ${live} ]]; then
+      printf '%s\n' "${live}"
+    fi
+  done < <(env_pairs "${1:-}")
+  return 0
+}
+
+# @function is_placeholder_value
+# Succeed when an env value is empty or still a shipped placeholder.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the value to classify
+# Outputs:
+#   Nothing
+# Returns:
+#   0 when the value is empty, change-me*, NOTSET, or carries YOUR_LAN_IP
+is_placeholder_value() {
+  case "${1:-}" in
+    '' | change-me* | NOTSET | *YOUR_LAN_IP*) return 0 ;;
+  esac
+  return 1
 }
 
 # @function is_secret_key
@@ -197,11 +249,95 @@ is_secret_key() {
 # Returns:
 #   0, always
 key_state() {
+  if ! is_placeholder_value "${1:-}"; then
+    printf 'set'
+    return 0
+  fi
   case "${1:-}" in
     '') printf 'empty' ;;
-    change-me* | NOTSET) printf 'still the placeholder' ;;
-    *) printf 'set' ;;
+    *) printf 'still the placeholder' ;;
   esac
+  return 0
+}
+
+# @function env_reuse_value
+# Print a reusable value for one key from a sibling env file: the first
+# non-placeholder assignment of that key, so a new key in dev-stack.env can
+# keep the secret already set in .env.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the key
+#   $2 - the live file being filled (skipped)
+#   $3.. - sibling live files to read
+# Outputs:
+#   The value on stdout, or nothing
+# Returns:
+#   0, always
+env_reuse_value() {
+  local key="${1:-}" current="${2:-}" file="" value=""
+  shift 2
+  for file in "$@"; do
+    if [[ -z ${file} || ${file} == "${current}" || ! -f ${file} ]]; then
+      continue
+    fi
+    value="$(env_get "${file}" "${key}")"
+    if ! is_placeholder_value "${value}"; then
+      printf '%s\n' "${value}"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# @function env_set_key
+# Replace one assignment in an env file through awk and ENVIRON, never through
+# a shell re-parse of the line.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the env file
+#   $2 - the key
+#   $3 - the new value
+# Outputs:
+#   Nothing
+# Returns:
+#   0 when the file was rewritten, 1 when it could not be
+env_set_key() {
+  local file="${1:-}" key="${2:-}" value="${3:-}" stage=""
+  [[ -f ${file} && -n ${key} ]] || return 1
+  stage="$(mktemp "${TMPDIR:-/tmp}/evoT1Env.XXXXXX")" || return 1
+  if ! UCKEY="${key}" UCVAL="${value}" awk '
+    BEGIN { n = ENVIRON["UCKEY"]; v = ENVIRON["UCVAL"] }
+    index($0, n "=") == 1 { print n "=" v; next }
+    { print }
+  ' "${file}" >"${stage}"; then
+    rm -f "${stage}"
+    return 1
+  fi
+  mv "${stage}" "${file}"
+  return 0
+}
+
+# @function env_seed_live
+# Create a live env file from its example twin, mode 600.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the example twin
+#   $2 - the live path to write
+# Outputs:
+#   One created line
+# Returns:
+#   0 when the file was written, 1 when the twin is missing
+env_seed_live() {
+  local example="${1:-}" live="${2:-}"
+  if [[ ! -f ${example} ]]; then
+    return 1
+  fi
+  cp "${example}" "${live}"
+  chmod 600 "${live}"
+  log "created ${live##*/} from ${example##*/}"
   return 0
 }
 
@@ -354,25 +490,31 @@ env_sync() {
 }
 
 # @function env_ask
-# Walk one env file and prompt for every key that is still empty or still
-# carries a placeholder, with the explanation the twin carries above it. With
-# prompting off the same keys are only listed, which is what --dry-run and a CI
-# run get. An answer reaches the file through awk and ENVIRON, never through a
-# shell re-parse of the line, and a closed stdin never blocks or hangs.
+# Walk one env file and prompt for every key that is new, still empty, or still
+# a placeholder, with the explanation the twin carries above it. A sibling env
+# file can supply a reusable value (Enter keeps it). With prompting off the
+# same keys are only listed. A closed stdin never blocks or hangs.
 # Globals:
 #   None
 # Arguments:
 #   $1 - the example twin (for the explanations)
 #   $2 - the env file to read
 #   $3 - 1 to prompt (default 0; 0 lists instead)
+#   $4 - snapshot of the live file from before the merge ("" = every key is new)
+#   $5.. - sibling live files to reuse values from
 # Outputs:
 #   The prompt block per unresolved key, or the list of them
 # Returns:
 #   0, always
 env_ask() {
-  local example="${1:-}" file="${2:-}" ask="${3:-0}"
-  local -a missing=()
-  local line key value answer="" stage=""
+  local example="${1:-}" file="${2:-}" ask="${3:-0}" orig="${4:-}"
+  local -a missing=() reuse_files=()
+  local line key value orig_val="" answer="" reuse="" default=""
+
+  if [[ $# -ge 5 ]]; then
+    shift 4
+    reuse_files=("$@")
+  fi
 
   if [[ ! -f ${file} ]]; then
     return 0
@@ -386,9 +528,15 @@ env_ask() {
     case "${line}" in \#*) continue ;; esac
     key="${line%%=*}"
     value="${line#*=}"
-    case "${value}" in
-      '' | change-me* | NOTSET) missing+=("${key}") ;;
-    esac
+    orig_val=""
+    if [[ -n ${orig} && -f ${orig} ]]; then
+      orig_val="$(env_get "${orig}" "${key}")"
+    fi
+    if is_placeholder_value "${value}"; then
+      missing+=("${key}")
+    elif [[ -z ${orig_val} ]]; then
+      missing+=("${key}")
+    fi
   done <"${file}"
 
   if [[ ${#missing[@]} -eq 0 ]]; then
@@ -396,7 +544,7 @@ env_ask() {
   fi
 
   if [[ ${ask} != "1" ]]; then
-    note "${file##*/}: ${#missing[@]} key(s) still hold a placeholder or an empty value"
+    note "${file##*/}: ${#missing[@]} key(s) to review (new, empty, or still a placeholder)"
     for key in "${missing[@]}"; do
       printf '  %s\n' "${key}"
     done
@@ -404,22 +552,29 @@ env_ask() {
   fi
 
   if [[ ! -t 0 ]]; then
-    warn "no terminal to ask through: ${#missing[@]} key(s) still hold a placeholder or an" \
-      "empty value and stay as they are (rerun in a terminal, without --dry-run, to fill)"
+    warn "no terminal to ask through: ${#missing[@]} key(s) to review and stay as they are" \
+      "(rerun in a terminal, without --dry-run, to fill)"
     return 0
   fi
 
-  stage="$(mktemp "${TMPDIR:-/tmp}/evoT1Env.XXXXXX")" || {
-    warn "${file##*/}: nowhere to stage the answers - the file is left as it was"
-    return 0
-  }
-
   for key in "${missing[@]}"; do
     value="$(env_get "${file}" "${key}")"
+    default="$(env_get "${example}" "${key}")"
+    reuse="$(env_reuse_value "${key}" "${file}" "${reuse_files[@]+"${reuse_files[@]}"}")"
     printf '\n%s: %s\n' "${key}" "$(key_comment "${example}" "${key}" |
       sed 's/^#[[:space:]]\{0,1\}//' | grep -vE '^[[:space:]]*$' | head -n 3 | tr '\n' ' ')"
-    printf '  Current value: %s. Type a new value, or nothing to leave it.\n' \
-      "$(key_state "${value}")"
+    printf '  Current value: %s.\n' "$(key_state "${value}")"
+    if [[ -n ${reuse} ]]; then
+      printf '  A reusable value is already set in a sibling env file. Enter to keep it.\n'
+    elif ! is_placeholder_value "${default}"; then
+      if is_secret_key "${key}"; then
+        printf '  The example default is set. Enter to keep it, or type a new value.\n'
+      else
+        printf '  Enter to keep %s, or type a new value.\n' "${default}"
+      fi
+    else
+      printf '  Type a new value, or nothing to leave it.\n'
+    fi
     if is_secret_key "${key}"; then
       printf '  This key holds a credential, so what you type is not echoed.\n'
       read -rs -r answer || answer=""
@@ -428,23 +583,20 @@ env_ask() {
       read -r answer || answer=""
     fi
     if [[ -z ${answer} ]]; then
-      continue
+      if is_placeholder_value "${value}" && [[ -n ${reuse} ]]; then
+        answer="${reuse}"
+        printf '  %s reused from a sibling env file.\n' "${key}"
+      else
+        continue
+      fi
     fi
-    if ! UCKEY="${key}" UCVAL="${answer}" awk '
-      BEGIN { n = ENVIRON["UCKEY"]; v = ENVIRON["UCVAL"] }
-      index($0, n "=") == 1 { print n "=" v; next }
-      { print }
-    ' "${file}" >"${stage}"; then
+    if ! env_set_key "${file}" "${key}" "${answer}"; then
       warn "${key}: the answer could not be written - the file is left as it was"
-      rm -f "${stage}"
       return 0
     fi
-    mv "${stage}" "${file}"
-    : >"${stage}"
     printf '  %s set.\n' "${key}"
   done
 
-  rm -f "${stage}"
   return 0
 }
 
@@ -491,8 +643,8 @@ daemon_vantage() {
 #   0 when the plan ran or nothing addressed a target; 1 on a usage error;
 #   5 when no repo root can be proven
 main() {
-  local -a targets=()
-  local root="" stage="" live="" example="" home="" target=""
+  local -a targets=() siblings=()
+  local root="" stage="" live="" example="" home="" target="" answer=""
   local mode="${1:-}"
 
   case "${mode}" in
@@ -511,6 +663,10 @@ main() {
     case "$1" in
       --dry-run) DRY_RUN=1 ;;
       -i | --interactive) ASK=1 ;;
+      --non-interactive)
+        ASK=0
+        NO_ASK=1
+        ;;
       --force) FORCE=1 ;;
       --from)
         if [ $# -lt 2 ]; then
@@ -557,15 +713,43 @@ main() {
 
   root="$(resolve_repo_root)" || return 5
 
+  if [[ ${DRY_RUN:-0} != "1" && ${NO_ASK:-0} != "1" && -t 0 ]]; then
+    ASK=1
+  fi
+
   if [[ ${mode} == "env" || ${mode} == "all" ]]; then
     log "env files reconcile against the twin under ${root}"
+    if [[ -t 0 ]]; then
+      host_dns_report /etc/resolv.conf github.com || true
+    fi
+    siblings=()
+    while IFS= read -r live; do
+      siblings+=("${live}")
+    done < <(env_live_files "${root}")
     while IFS=$'\t' read -r live example; do
       if [[ -z ${live} ]]; then
         continue
       fi
       if [[ ! -f ${live} ]]; then
-        note "no ${live##*/} here: this checkout ships ${example##*/} and nothing to port onto it"
-        continue
+        if [[ ${ASK:-0} == "1" && -t 0 && ${DRY_RUN:-0} != "1" ]]; then
+          printf '\nNo %s here. Create it from %s and walk through the keys? [Y/n] ' \
+            "${live##*/}" "${example##*/}"
+          read -r answer || answer=""
+          case "${answer}" in
+            n | N | no | No | NO)
+              note "no ${live##*/} here: skipped"
+              continue
+              ;;
+          esac
+          if ! env_seed_live "${example}" "${live}"; then
+            note "no ${live##*/} here: this checkout ships ${example##*/} and nothing to port onto it"
+            continue
+          fi
+          siblings+=("${live}")
+        else
+          note "no ${live##*/} here: this checkout ships ${example##*/} and nothing to port onto it"
+          continue
+        fi
       fi
       if [[ ! -w ${live} ]]; then
         warn "${live##*/} is not writable here - skipped"
@@ -573,9 +757,10 @@ main() {
       fi
       log "--- ${live##*/} ---"
       stage="$(mktemp -d "${TMPDIR:-/tmp}/evoT1Env.XXXXXX")"
+      cp "${live}" "${stage}/orig"
       if [[ ${DRY_RUN:-0} == "1" ]]; then
         env_sync "${live}" "${example}" ""
-        env_ask "${example}" "${live}" 0
+        env_ask "${example}" "${live}" 0 "${stage}/orig" "${siblings[@]+"${siblings[@]}"}"
       else
         env_sync "${live}" "${example}" "${stage}/next"
         if [[ ! -f ${stage}/next ]]; then
@@ -584,7 +769,8 @@ main() {
           chmod 600 "${stage}/next"
           mv "${stage}/next" "${live}"
           log "  ${live##*/} rewritten from ${example##*/}"
-          env_ask "${example}" "${live}" "${ASK:-0}"
+          env_ask "${example}" "${live}" "${ASK:-0}" "${stage}/orig" \
+            "${siblings[@]+"${siblings[@]}"}"
         fi
       fi
       rm -rf "${stage}"

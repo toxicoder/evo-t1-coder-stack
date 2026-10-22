@@ -7,7 +7,8 @@ are not looking closely at the diff.
 
 ```sh
 bazelisk run //scripts:update-configs -- env --dry-run
-bazelisk run //scripts:update-configs -- env --interactive
+bazelisk run //scripts:update-configs -- env
+bazelisk run //scripts:update-configs -- env --non-interactive
 bazelisk run //scripts:update-configs -- workspace --dry-run
 bazelisk run //scripts:update-configs -- all
 ```
@@ -37,11 +38,16 @@ that have been **start**ed or **restart**ed since the push - **stop** and
 ## The two passes
 
 `env` reconciles one env file with its twin. It keeps every value you have set,
-fills a key the twin adds with the twin's default, and moves a key the twin no
-longer declares into a commented trailer at the end of the file - parked, with
-its value and its explanation still readable, rather than deleted. The rewrite
-lands in a staging file and replaces the live file only at the end, with mode
-`600` kept.
+fills a key the twin adds with the twin's default (or a reusable value already
+set in a sibling live file - `.env` filling `dev-stack.env`), and moves a key
+the twin no longer declares into a commented trailer at the end of the file -
+parked, with its value and its explanation still readable, rather than deleted.
+The rewrite lands in a staging file and replaces the live file only at the end,
+with mode `600` kept. On a TTY the pass then walks every key that is new, still
+empty, or still a placeholder (`change-me…`, `NOTSET`, `YOUR_LAN_IP`): Enter
+keeps a sibling's value or the example default. A missing live file is created
+from the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
+list those keys and write no answers.
 
 `workspace` re-materialises the stack-owned config inside the targets you name.
 The reseed set is the seven home-relative targets the templates seed -
@@ -61,7 +67,8 @@ so.
 | Flag | Effect |
 |---|---|
 | `--dry-run` | print the plan, write nothing |
-| `-i`, `--interactive` | stop and ask about every key that still needs a value |
+| `-i`, `--interactive` | stop and ask about every key that still needs a value (the default on a TTY) |
+| `--non-interactive` | never prompt; list what would be asked |
 | `--force` | reseed workspace files that carry no marker either |
 | `--from <dir>` | read the payloads from that checkout instead of this one |
 | `--home <dir>` | treat that host directory as a workspace `HOME` |
@@ -70,14 +77,16 @@ so.
 Every flag goes **after** the subcommand, so `update-configs --dry-run env` is a
 usage error and prints the usage rather than guessing.
 
-`--interactive` is what makes the env pass safe to run half-awake. For every key
-whose value is empty or still `change-me…`/`NOTSET` it prints the explanation the
-twin carries above that key and prompts for a value. A key whose name carries
-`KEY`, `SECRET`, `TOKEN` or `PASSWORD` is echoed nowhere - the report says `set`
-or `empty` and the prompt does not echo what you type - so a screenful of this
-output is safe to paste into an issue. With no terminal to prompt through the
-pass warns and leaves those keys alone, which is why `--dry-run` is the shape
-that belongs in a script or CI.
+On a TTY the env pass asks by default (`-i`/`--interactive` is then a no-op;
+`--non-interactive` turns it off). For every key that is new this pull, still
+empty, or still `change-me…`/`NOTSET`/`YOUR_LAN_IP` it prints the explanation the
+twin carries above that key and prompts for a value. Enter keeps a reusable
+value already set in a sibling env file, or the example default. A key whose
+name carries `KEY`, `SECRET`, `TOKEN` or `PASSWORD` is echoed nowhere - the
+report says `set` or `empty` and the prompt does not echo what you type - so a
+screenful of this output is safe to paste into an issue. With no terminal to
+prompt through the pass warns and leaves those keys alone, which is why
+`--dry-run` / `--non-interactive` is the shape that belongs in a script or CI.
 
 ## Where to run it
 

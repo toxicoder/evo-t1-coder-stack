@@ -11,9 +11,17 @@ needs (Bazelisk, shellcheck, shfmt, buildifier, Terraform), so it necessarily ru
 Bazel exists — that is its whole exemption, not a convenience:
 
 ```sh
-bash scripts/setup-host.sh          # first bootstrap on a fresh host
-bash scripts/setup-host.sh --check  # report what is missing, install nothing
+bash scripts/setup-host.sh          # repair leftovers, then install what is missing
+bash scripts/setup-host.sh --check  # report tools, leftover runfiles and DNS; write nothing
+bash scripts/setup-host.sh --repair # recover leftover runfiles so bazelisk run can start
 ```
+
+`--repair` is the recovery when `bazelisk run //scripts:prod-stack` dies creating
+the runfiles tree (`FileAccessException ... Permission denied` on
+`homepage/assets/icons/evo-t1.svg`). Bazel never reaches the stack script, so the
+repair has to live in this shell entry point. `--check` also reports whether
+`github.com` resolves (Tailscale MagicDNS as the only nameserver is the usual
+cause of `Could not resolve host: github.com` after a compose `up`).
 
 Everything else is a Bazel target, including every `scripts/*.sh`. CI repeats both halves
 from a clean runner: the composite action `.github/actions/setup-bazel` installs the same host

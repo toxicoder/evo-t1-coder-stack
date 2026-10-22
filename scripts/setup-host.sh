@@ -21,41 +21,64 @@
 # never ran this script `bazelisk test //:lint` goes green having checked nothing.
 # That is the hole this closes.
 #
+# It also repairs leftover Docker bind-mounts in Bazel's runfiles tree. An older
+# `bazelisk run` used the runfiles copy of docker-compose.yml, so compose mounted
+# homepage/assets/icons from bazel-out; the homepage container then chowned those
+# files (or Docker created a directory where evo-t1.svg belongs). The next
+# `bazelisk run //scripts:prod-stack` dies creating the runfiles tree with
+# Permission denied. --repair is the recovery that does not need Bazel to start.
+#
 # Usage (both forms work from any directory):
-#   bash scripts/setup-host.sh          # install what is missing
-#   bash scripts/setup-host.sh --check  # report what is missing, install nothing
+#   bash scripts/setup-host.sh          # repair leftovers, then install what is missing
+#   bash scripts/setup-host.sh --check  # report tools, leftovers and DNS; write nothing
+#   bash scripts/setup-host.sh --repair # repair leftovers only
 #
 # Options:
-#   --check       probe only: print one line per tool and exit 0, writing nothing
+#   --check       probe only: print the report and exit 0, writing nothing
+#   --repair      repair leftover runfiles (uses sudo when chmod is not enough)
 #   -h, --help    print this help and exit 0
 #
-# Exit codes: 0 when every tool is present, and for --check whatever is missing;
-# 1 when an install was asked for and something stayed missing (no package
-# manager, no network, or a package this host's repositories do not carry).
+# Exit codes: 0 when every tool is present, for --check, and for a completed
+# --repair; 1 when an install was asked for and something stayed missing, or
+# when --repair could not take ownership of a leftover path.
 
 set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh disable=SC1091
+source "${SELF_DIR}/lib/common.sh"
+# shellcheck source=lib/host_state.sh disable=SC1091
+source "${SELF_DIR}/lib/host_state.sh"
 
 REQUIRED_TOOLS=(bazelisk shellcheck shfmt buildifier terraform)
 
 check_only=0
+repair_only=0
 
 for arg in "$@"; do
   case "${arg}" in
     --check)
       check_only=1
       ;;
+    --repair)
+      repair_only=1
+      ;;
     -h | --help)
       cat <<'HELP'
-usage: bash scripts/setup-host.sh [--check]
+usage: bash scripts/setup-host.sh [--check] [--repair]
 
 Probe the host tools the Bazel targets need — bazelisk, shellcheck, shfmt,
-buildifier, terraform — and install the ones that are missing.
+buildifier, terraform — install the ones that are missing, and repair leftover
+Docker bind-mounts in Bazel's runfiles tree that make `bazelisk run` fail with
+Permission denied on homepage/assets/icons/evo-t1.svg.
 
-  --check     report what is missing and stop: installs nothing, writes nothing
+  --check     report tools, leftovers and DNS; write nothing
+  --repair    repair leftovers only (uses sudo when chmod is not enough)
   -h, --help  this help
 
-  bash scripts/setup-host.sh          # first bootstrap on a fresh host
-  bash scripts/setup-host.sh --check  # what is missing right now
+  bash scripts/setup-host.sh          # repair, then install what is missing
+  bash scripts/setup-host.sh --check  # what is missing or leftover right now
+  bash scripts/setup-host.sh --repair # the recovery when bazelisk run cannot start
 HELP
       exit 0
       ;;
@@ -65,6 +88,10 @@ HELP
       ;;
   esac
 done
+
+# The checkout this script lives in: repair looks at bazel-out beside it.
+# SETUP_ROOT is overridable so the Bats suite can point it at a scratch tree.
+SETUP_ROOT="${SETUP_ROOT:-$(cd "${SELF_DIR}/.." && pwd)}"
 
 # One pass builds the report, so --check and the install run print the same lines.
 present=()
@@ -80,20 +107,22 @@ done
 if [ "${#present[@]}" -gt 0 ]; then
   printf 'present: %s\n' "${present[*]}"
 fi
-
-if [ "${#missing[@]}" -eq 0 ]; then
-  echo "setup-host: every tool the Bazel targets need is on PATH."
-  exit 0
+if [ "${#missing[@]}" -gt 0 ]; then
+  printf 'missing: %s\n' "${missing[*]}"
 fi
 
-printf 'missing: %s\n' "${missing[*]}"
-
 if [ "${check_only}" = "1" ]; then
-  echo "note: --check installed nothing and wrote nothing."
-  echo '  Run "bash scripts/setup-host.sh" (no flags) to install what is missing,'
-  echo '  or run "bazelisk test //:lint --test_tag_filters=manual" knowing that a'
-  echo "  linter which is not on PATH is SKIPPED, not passed: a lint gate with no"
-  echo "  linter in it proves nothing."
+  report_stale_runfiles "${SETUP_ROOT}"
+  host_dns_report /etc/resolv.conf github.com || true
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "note: --check installed nothing and wrote nothing."
+    echo '  Run "bash scripts/setup-host.sh" (no flags) to install what is missing,'
+    echo '  or run "bazelisk test //:lint --test_tag_filters=manual" knowing that a'
+    echo "  linter which is not on PATH is SKIPPED, not passed: a lint gate with no"
+    echo "  linter in it proves nothing."
+  else
+    echo "setup-host: every tool the Bazel targets need is on PATH."
+  fi
   exit 0
 fi
 
@@ -102,6 +131,27 @@ fi
 sudo_cmd=""
 if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
   sudo_cmd="sudo"
+fi
+
+use_sudo=0
+if [ -n "${sudo_cmd}" ]; then
+  use_sudo=1
+fi
+repair_stale_runfiles "${SETUP_ROOT}" "${use_sudo}" || {
+  echo "setup-host: leftover runfiles could not all be repaired (see warnings above)" >&2
+  if [ "${repair_only}" = "1" ]; then
+    exit 1
+  fi
+}
+
+if [ "${repair_only}" = "1" ]; then
+  echo "setup-host: runfiles repair finished."
+  exit 0
+fi
+
+if [ "${#missing[@]}" -eq 0 ]; then
+  echo "setup-host: every tool the Bazel targets need is on PATH."
+  exit 0
 fi
 
 # Homebrew carries all five as core formulae, so the macOS branch names no version:
