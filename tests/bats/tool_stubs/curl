@@ -11,7 +11,12 @@
 #   -o <file>           write the body to <file> (it is not echoed to stdout)
 #   --data-binary @-    drain stdin so piped bodies never block the caller
 # STUB_CURL_OUT is a file holding the body, or the literal body itself.
-# STUB_CURL_RC (default 0 when OUT is set, else 22) overrides the exit code.
+# STUB_CURL_RC (default 0 when OUT or STATUS is set, else 22) overrides the
+# exit code. STUB_CURL_STATUS is the canned HTTP status for probes that read
+# the -w '%{http_code}' write-out: with -o it prints the status on stdout
+# after storing the body, without -o it appends the status after the body.
+# A script that reads the whole -o body from stdout gets the unchanged
+# default answer until it opts into STUB_CURL_STATUS or STUB_CURL_OUT.
 # Records one argv line to $STUB_LOG/curl.log when STUB_LOG is set.
 #
 # Usage (in a .bats file): use_stubs curl; STUB_CURL_OUT='{"ok":true}' \
@@ -35,14 +40,26 @@ done
 
 body=""
 rc="${STUB_CURL_RC:-}"
+status="${STUB_CURL_STATUS:-}"
 if [ -n "${STUB_CURL_OUT:-}" ]; then
   if [ -f "${STUB_CURL_OUT}" ]; then body="$(cat "${STUB_CURL_OUT}")"; else body="${STUB_CURL_OUT}"; fi
+  rc="${rc:-0}"
+fi
+# A canned status counts as "an HTTP answer arrived", so it also defaults
+# the exit code to 0, like a real transport success. Callers that never set
+# STUB_CURL_STATUS keep the old empty-body + exit-22 default, byte for byte.
+if [ -n "${status}" ]; then
   rc="${rc:-0}"
 fi
 rc="${rc:-22}"
 
 if [ -n "${outfile}" ]; then
   printf '%s' "${body}" >"${outfile}"
+  if [ -n "${status}" ]; then printf '%s\n' "${status}"; fi
+  exit "${rc}"
+fi
+if [ -n "${status}" ]; then
+  printf '%s\n%s\n' "${body}" "${status}"
   exit "${rc}"
 fi
 printf '%s' "${body}"
