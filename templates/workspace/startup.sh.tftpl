@@ -379,8 +379,10 @@ fi
 ln -sfn "$shared_settings" "$user_settings"
 
 # --- Grok Build config --------------------------------------------------------
-# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the offline MCP
-# stack, the subagent sizing, and the two per-workspace knobs — the default model
+# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, the gated
+# searxng search entry (on by default, with Grok's native web_search kept off as
+# the secondary lane), the subagent sizing, and the two per-workspace knobs -
+# the default model
 # picked in the create form and anything typed into the config-extras field. Both
 # of those only differ per workspace while the profile is private (or this file is
 # unmanaged): on a shared profile volume this is ONE file for every workspace the

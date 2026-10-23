@@ -203,6 +203,25 @@ The checks that apply to either lane:
 - Agent traffic ignores that URL and dials `host.docker.internal:3002`; see the
   `coder_agent_url` template variable.
 
+### Search never answers (or answers empty) -> prove the search lane before blaming the MCP hop
+
+Search rides the self-hosted SearXNG through the `searxng` MCP stdio server, declared by
+default (`search_mcp` defaults to true). Two probes split the fault in half:
+
+- `bazelisk run //scripts:search-check` (or `scripts/search-check.sh` from a shell that
+  can reach the host gateway) dials the service directly. It reads `$SEARXNG_URL`
+  before its `http://127.0.0.1:8181` default, and every workspace's agent env carries
+  that key, so a workspace-side probe needs no `--url`. It separates engines that
+  answered, engines that were unresponsive, and an empty result page.
+- `grok mcp doctor searxng` inside the workspace probes the MCP hop. A healthy
+  search-check plus a failed handshake points at the server, the URL or the port.
+
+If the lane stays down, keep search working: set `disable_web_search = false` in the
+workspace's `~/.grok/config.toml` and start a new session (Grok's native search lane is
+the secondary option and off by default), and park the failing server with
+`search_mcp = false` on the next template push (`SEARCH_MCP=false` in `.env` applies it
+to every new workspace).
+
 ### A workspace app link answers `Bad Gateway` -> find who answered
 
 The **LiteLLM** and **Open VS Code Web** buttons are Coder *apps*: their URL is

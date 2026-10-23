@@ -71,3 +71,24 @@ variable "github_mcp" {
   description = "When true, the rendered ~/.grok/config.toml declares the github MCP HTTP server, which is how Grok Build gets its GitHub tools. It authenticates with the $GH_TOKEN reference the agent environment fills from the External Auth provider, so with no provider linked — or no GitHub account connected by the workspace owner — the server has nothing to authenticate with and Grok Build loses its GitHub tools. Off by default keeps the offline-first MCP list lean."
   default     = false
 }
+
+# The self-hosted SearXNG lane reaches Grok Build as an MCP stdio server: the
+# searxng-mcp-server package is pinned in the golden image and needs to be told
+# which instance to dial. Unlike github_mcp this switch is on by default: search
+# is the one lane every session may want, and nothing else in the box answers it.
+variable "search_mcp" {
+  type        = bool
+  description = "When true (the default), the rendered ~/.grok/config.toml declares the searxng MCP stdio server, which is how Grok Build gets its search lane. Set SEARCH_MCP=false in the stack's env file and re-push to drop the block everywhere."
+  default     = true
+}
+
+# The SearXNG base URL as the dev container reaches it: through the host gateway,
+# at the port the compose file publishes (8181 by default; a dev stack that
+# remapped STACK_SEARCH_PORT gets its own port through push-template.sh). The
+# package's compiled-in default (localhost:8888) names nothing that exists on
+# this box, so the URL is always supplied.
+variable "searxng_url" {
+  type        = string
+  description = "Base URL of the self-hosted SearXNG instance the rendered search lane dials, e.g. http://host.docker.internal:8181."
+  default     = "http://host.docker.internal:8181"
+}

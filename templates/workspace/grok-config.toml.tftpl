@@ -18,6 +18,17 @@
 # the very end of the file. Both are per-workspace, so with the Grok profile set to
 # "private" two workspaces can legitimately disagree about either one.
 
+# Grok's native web_search is the SECONDARY search lane, and it is off by
+# default on purpose: no model transport this box ships serves hosted search
+# (LiteLLM answers "tools of type 'web_search' are not supported: this server
+# runs function tools only") and the client-side scrape path burns calls the
+# same way. Search goes through the gated [mcp_servers.searxng] stdio server
+# below instead, which answers directly. Proof before opt-in: prove the lane
+# down first (`bazelisk run //scripts:search-check`, or `grok mcp doctor
+# searxng`), then flip this key to false and start a new session - that step
+# alone is what flips the secondary lane back on.
+disable_web_search = true
+
 [models]
 # `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
 # tool_calls array on this runtime. The Arc (IPEX-LLM Ollama) aliases below
@@ -26,7 +37,9 @@
 # Each key here names the model that serves that role. The CLI's own default
 # for the web_search role is a hosted model, so all three roles below stay on
 # the local Spark lane; supports_backend_search = false keeps that search
-# client-side (local fetch, then the model summarises the result).
+# client-side (local fetch, then the model summarises the result) and off by
+# default, while the always-on search lane for this box is the gated
+# [mcp_servers.searxng] server below.
 default = "${grok_default_model}"
 session_summary = "agent"
 image_description = "agent"
@@ -153,9 +166,10 @@ limit_behavior = "queue"
 explore = "agent"
 plan = "agent"
 
-# MCP servers: the default render declares none. This file used to seed five
-# offline stdio servers here (filesystem, memory, sequential-thinking, git and
-# time) plus the gated github HTTP entry below. Every session trace collected
+# MCP servers: the default render declares exactly one, the gated searxng
+# server below. This file used to seed five offline stdio servers here
+# (filesystem, memory, sequential-thinking, git and time) plus the gated
+# github HTTP entry. Every session trace collected
 # on this machine called none of their tools, and a declared-but-unused
 # server still spends each session's start on its handshake and keeps its
 # tool schemas in every context, so the default config names none of them.
@@ -166,8 +180,10 @@ plan = "agent"
 # Deliberately absent for other reasons, because they need outbound network or
 # a credential this workspace does not carry: context7 (docs CDN), sentry
 # (OAuth to mcp.sentry.dev), postgres (needs a live DSN), fetch (PySocks/egress
-# proxy). github is the one server this file can still switch on: an HTTP MCP
-# server wired to the GH_TOKEN env var, and only when this template renders it.
+# proxy). The gated searxng entry below and the gated github HTTP entry are the
+# two servers this file can still switch on, each gated on a template
+# variable: search_mcp defaults to true, so searxng renders unless a push
+# passes search_mcp=false; github_mcp defaults to false.
 #
 # What is left out is simply not defined here, so there is nothing to disable;
 # if you add one later and want it parked rather than deleted, list its name
@@ -187,6 +203,41 @@ enabled = true
 headers = { Authorization = "Bearer $${GH_TOKEN}" }
 
 %{endif~}
+
+%{if search_mcp~}
+# Rendered only when search_mcp is on, and that template variable defaults to
+# true, so this block ships unless a push passes --var search_mcp=false (or sets
+# SEARCH_MCP=false in .env, which push-template.sh relays). It wires the
+# self-hosted SearXNG service as a stdio MCP server: this box's default search
+# lane.
+#
+# The binary is baked into the golden image (images/dev/Dockerfile installs
+# searxng-mcp-server at the version pinned in images/dev/tool-versions.env,
+# currently 0.5.1). Launching it by absolute path keeps the first boot offline:
+# npx would look for the package in its cache or on the npm registry, and the
+# image build clears that cache, so an `npx -y` launch means a fresh registry
+# download on every new workspace before search works at all.
+[mcp_servers.searxng]
+command = "/opt/npm-global/bin/searxng-mcp-server"
+
+# The one key this server reads. Its compiled-in default (http://localhost:8888)
+# names nothing on this box, so the URL is always rendered: 8181 is the host
+# port both compose stacks publish (docker-compose.yml maps STACK_SEARCH_PORT,
+# default 8181, to the container's 8181), and push-template.sh derives this
+# value from STACK_SEARCH_PORT, so a dev stack that remapped the port pushes a
+# config that dials the port it actually has.
+#
+# Prove the route with `bazelisk run //scripts:search-check` (it reads the same
+# SEARXNG_URL, which main.tf also puts in coder_agent's env) and the server's
+# handshake
+# with `grok mcp doctor searxng`. If the lane stays down, two knobs keep search
+# working: push with search_mcp off to park this server, and set
+# disable_web_search = false at the top of this file (then start a new session)
+# to fall back to Grok's native search lane.
+env = { SEARXNG_URL = "${search_url}" }
+
+%{endif~}
+
 [mcp]
 max_output_bytes = 40000
 

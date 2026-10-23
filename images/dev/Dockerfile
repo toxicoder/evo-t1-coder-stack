@@ -58,6 +58,7 @@ ARG NODE_VERSION_DEFAULT=24 \
     MYPY_VERSION=2.3.1 \
     MCP_NODE_SERVERS_VERSION=2026.8.31 \
     MCP_PY_SERVERS_VERSION=2026.8.18 \
+    SEARXNG_MCP_SERVER_VERSION=0.5.1 \
     GO_VERSION=1.24.13 \
     PROTOBUF_GO_MODULE=google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12 \
     PROTOC_GEN_GO_GRPC_MODULE=google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1 \
@@ -508,14 +509,23 @@ RUN for pair in "22:${NODE_22_VERSION}" "24:${NODE_24_VERSION}"; do \
     # Globals once, into the shared prefix. prettier is held at the
     # nvidia-dgx-spark-lab pin (3.9.4) rather than npm `latest` (3.9.9) so `//:fix`
     # and `//:lints:yaml_format` stay byte-identical with that repo.
+    # searxng-mcp-server is the self-hosted SearXNG search MCP stdio server the
+    # templates' search lane declares by absolute path below (/opt/npm-global/bin/
+    # searxng-mcp-server). An `npx -y` launch would re-download it every boot:
+    # the cache clean below leaves nothing to reuse and npx ignores the prefix.
+    # It declares engines.node >=22.19, which both pinned Node majors satisfy, so
+    # it installs against the default (24) prefix. Pinning it here keeps this
+    # image's copy and the templates' pinned version naming the same release.
     && npm install -g --no-audit --no-fund \
          "prettier@${PRETTIER_VERSION}" \
          "@modelcontextprotocol/server-filesystem@${MCP_NODE_SERVERS_VERSION}" \
          "@modelcontextprotocol/server-memory@${MCP_NODE_SERVERS_VERSION}" \
          "@modelcontextprotocol/server-sequential-thinking@${MCP_NODE_SERVERS_VERSION}" \
+         "searxng-mcp-server@${SEARXNG_MCP_SERVER_VERSION}" \
     && npm cache clean --force \
     && chmod -R a+rX /opt/node /opt/npm-global \
     && prettier --version \
+    && test -x /opt/npm-global/bin/searxng-mcp-server \
     && ls /opt/npm-global/bin
 
 # ── uv + Python tool envs (ruff, mypy, offline MCP servers) ─────────────────
