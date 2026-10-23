@@ -155,6 +155,9 @@ load_fn() {
   run github_auth_provider_id "${BATS_TEST_TMPDIR}/bad.env"
   [ "${status}" -eq 1 ]
   [[ "${output}" == *"not a Coder provider id"* ]]
+  # Production always passes the path. A no-arg call is SC2120 (function
+  # references $1 but none are ever passed) and fails //lints:shell on Linux.
+  grep -Fq 'github_auth_id="$(github_auth_provider_id coder.env)"' "${REPO_ROOT}/scripts/push-template.sh"
 }
 
 @test "push-template: icon_data_url_guard rejects an SVG whose data URL exceeds 256 characters" {

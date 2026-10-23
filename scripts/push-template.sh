@@ -566,7 +566,7 @@ fi
 # pushed template is explicit. Never source coder.env: empty
 # CODER_EXTERNAL_AUTH_* keys crash-loop the server, and the rest of that file
 # is secrets.
-github_auth_id="$(github_auth_provider_id)"
+github_auth_id="$(github_auth_provider_id coder.env)"
 vars+=(--var "github_auth_id=${github_auth_id}")
 log "github_auth_id=${github_auth_id} (Coder External Auth provider the templates declare)"
 
