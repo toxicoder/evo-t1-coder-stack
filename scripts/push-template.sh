@@ -76,21 +76,14 @@
 #   CODER_PUSH_TOKEN_MINUTES=10      lifetime of the minted token
 # The push plumbing (stack_ps, stack_container, psql_sql, psql_query, coder_exec
 # and the per-template push / verify / description helpers) lives in
-# scripts/lib/coder_api.sh and scripts/lib/template-push.sh, sourced right after
-# the repo-root cd below. That file honours PROBE_TIMEOUT and
+# scripts/lib/coder_api.sh and scripts/lib/template-push.sh, sourced from
+# SELF_DIR below. That file honours PROBE_TIMEOUT and
 # VERIFY_TIMEOUT, so the assignments further down still win over its defaults.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/template-push.sh disable=SC1091
-source "scripts/lib/template-push.sh" # sources common.sh + coder_api.sh itself
-
-# Ordered: a dependent template pushes last so a partial failure leaves the
-# base template usable. Each entry is "<template-name>:<directory>".
-TEMPLATES_DEFAULT=("workspace:templates/workspace")
-[ -f templates/devcontainer/main.tf ] &&
-  TEMPLATES_DEFAULT+=("devcontainer:templates/devcontainer")
+source "${SELF_DIR}/lib/template-push.sh" # sources common.sh + coder_api.sh itself
 
 CODER_SERVICE="${CODER_CONTAINER_SERVICE:-coder}"
 DB_SERVICE="${CODER_DB_SERVICE:-db}"
@@ -154,6 +147,61 @@ skip() {
   printf '%s\n' "$*"
   exit 0
 }
+
+# @function resolve_repo_root
+# Print the repo root this run reads templates and .env from: the first
+# candidate that holds docker-compose.yml. `bazelisk run` sets
+# BUILD_WORKSPACE_DIRECTORY to the real checkout and cwd to the runfiles
+# copy, which has docker-compose.yml and the templates as symlinks into the
+# execroot, but not the gitignored live .env. That candidate has to beat
+# both the script's own tree and $PWD so the push tars regular files and
+# reads the operator's .env. The script tree beats $PWD: `bazelisk test`
+# also has docker-compose.yml in cwd (the test runfiles), and whole-script
+# tests launch `bash /fake-root/scripts/push-template.sh` from there.
+# Globals:
+#   REPO_ROOT, BUILD_WORKSPACE_DIRECTORY, GITHUB_WORKSPACE, SELF_DIR
+# Arguments:
+#   None
+# Outputs:
+#   The root on stdout, or nothing
+# Returns:
+#   The root on stdout; prints the complaint and returns 5 when none is proven
+resolve_repo_root() {
+  local -a candidates=()
+  local candidate
+  if [ -n "${REPO_ROOT:-}" ]; then
+    candidates+=("${REPO_ROOT}")
+  fi
+  if [ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]; then
+    candidates+=("${BUILD_WORKSPACE_DIRECTORY}")
+  fi
+  if [ -n "${GITHUB_WORKSPACE:-}" ]; then
+    candidates+=("${GITHUB_WORKSPACE}")
+  fi
+  candidates+=("${SELF_DIR}/..")
+  candidates+=("${PWD}")
+
+  for candidate in "${candidates[@]}"; do
+    if [ -f "${candidate}/docker-compose.yml" ]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+  printf 'error: unresolvable repo root: no proven checkout in %s (need docker-compose.yml)\n' \
+    "${candidates[*]}" >&2
+  return 5
+}
+
+root="$(resolve_repo_root)" || exit 5
+cd "${root}"
+
+# Ordered: a dependent template pushes last so a partial failure leaves the
+# base template usable. Each entry is "<template-name>:<directory>". The
+# paths are relative to the resolved checkout, so a bazelisk-run copy sees
+# regular files rather than runfiles symlinks.
+TEMPLATES_DEFAULT=("workspace:templates/workspace")
+[ -f templates/devcontainer/main.tf ] &&
+  TEMPLATES_DEFAULT+=("devcontainer:templates/devcontainer")
 
 # Read .env by sed rather than sourcing it: the file is user-editable, and with
 # `set -e` a parse error or a stray command substitution there aborts the script.
@@ -590,7 +638,9 @@ preset_desc_guard() {
 # Per-template plumbing (scripts/lib/template-push.sh, sourced above):
 # template_push_one streams the directory as a tar on stdin — .terraform/ excluded,
 # because it is gitignored provider cache and pushing it would put the plan's
-# provider binaries into the version's Filestore row — with no timeout cap, since a
+# provider binaries into the version's Filestore row, and symlinks dereferenced,
+# because a bazelisk-run runfiles tree is links that Coder cannot follow after
+# unpack — with no timeout cap, since a
 # server-side Terraform plan+apply legitimately takes minutes and the buildinfo
 # probe above already proved the server answers. template_verify_active then reads
 # the active version back: a push can exit 0 while leaving the template inactive (a

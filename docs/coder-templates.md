@@ -66,15 +66,21 @@ Presets collapse the create form to one click.
 
 `bazelisk run //scripts:push-template` runs `scripts/push-template.sh`.
 
-1. It resolves the running stack on the Docker **daemon** by container label, never
+1. It resolves the repo root from `BUILD_WORKSPACE_DIRECTORY` (the real checkout
+   `bazelisk run` names) ahead of the runfiles copy, so `.env` and the template
+   files are regular files rather than execroot symlinks.
+2. It resolves the running stack on the Docker **daemon** by container label, never
    through a cwd-resolved compose project.
-2. Per template it checks `main.tf` exists (otherwise "run this from the repo root") and
+3. Per template it checks `main.tf` exists (otherwise "run this from the repo root") and
    notes a missing `.terraform.lock.hcl`.
-3. It rejects a `coder_workspace_preset` description over Coder's 128-**byte** ceiling.
-4. It streams the source as a tar on stdin.
-5. It confirms an **active** version.
-6. It re-sends the template's own description.
-7. It re-pins **Autostop** to *Disabled*.
+4. It rejects a `coder_workspace_preset` description over Coder's 128-**byte** ceiling.
+5. It streams the source as a tar on stdin, with symlinks dereferenced into regular
+   files. Coder's provisioner unpacks that archive into an empty workdir and does
+   not follow host paths, so a stored runfiles symlink plans as "No configuration
+   files".
+6. It confirms an **active** version.
+7. It re-sends the template's own description.
+8. It re-pins **Autostop** to *Disabled*.
 
 ### What it does and does not do
 
@@ -138,8 +144,9 @@ The script mints a short-lived token by inserting a row into the stack's own Pos
   Filestore row, not as files it scans on disk.
 - The tar is built from a throwaway staging copy, not from the template dir itself.
   `.terraform/` is excluded (pushing it would put the plan's provider binaries into the
-  version's Filestore row) and the `templates/common/` payloads are copied in beside
-  `main.tf`.
+  version's Filestore row), symlinks are dumped as their targets (`tar -h`), and the
+  `templates/common/` payloads are copied in beside `main.tf`. A staged copy that still
+  holds a symlink is refused before the CLI runs.
 - Then, per template, it confirms an **active** template version. A push can exit 0 and
   still leave the template inactive if its Terraform run failed, which shows up as the
   template missing from the create dropdown.

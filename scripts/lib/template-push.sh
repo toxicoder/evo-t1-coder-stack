@@ -20,6 +20,11 @@
 #     seed payloads (GROK_BUILD_AGENTS.md and vscode-alt.svg, kept one level
 #     above the template dirs under common/) ride along in every staged copy,
 #     because that is where the server-side Terraform reads them from.
+#   - Symlinks are dereferenced (`tar -h`) so the archive holds regular files.
+#     `bazelisk run` materializes templates as runfiles links into the execroot,
+#     and Coder's provisioner unpacks the tar into an empty workdir that cannot
+#     follow those host paths. A stored symlink therefore plans as "No
+#     configuration files".
 #   - No timeout cap on the push itself: a server-side Terraform plan+apply
 #     legitimately takes minutes; capping it would fail correct pushes.
 #   - Credentials travel in the environment (via `docker exec -e NAME` flags),
@@ -59,12 +64,15 @@ fi
 # references inside the pushed copy, which is why the copy must carry them.
 # The staged tree then streams as the tar on stdin. .terraform/ is excluded:
 # it is gitignored provider cache, and pushing it would put the plan's
-# provider binaries into the version's Filestore row. A missing payload is a
-# hard stop - the push would die in the server's Terraform anyway; naming the
-# missing file here costs the operator one line instead of a confused
-# debugging session there. A run that never resolved CODER_CONTAINER (or a
-# staging copy that lost a payload) stops the same way, before any CLI call.
-# Trailing arguments are appended verbatim to the CLI
+# provider binaries into the version's Filestore row. Symlinks are dumped as
+# their targets (`tar -h`): a runfiles tree is all links, and Coder unpacks
+# the archive without following host paths, so a stored symlink plans as an
+# empty Terraform directory. A missing payload is a hard stop - the push
+# would die in the server's Terraform anyway; naming the missing file here
+# costs the operator one line instead of a confused debugging session there.
+# A run that never resolved CODER_CONTAINER (or a staging copy that lost a
+# payload, or that still holds a symlink) stops the same way, before any CLI
+# call. Trailing arguments are appended verbatim to the CLI
 # line, so a caller's shared `--var` array passes through:
 #   template_push_one "$name" "$dir" ${vars[@]+"${vars[@]}"}
 # The token stays out of argv via -e NAME (value through the environment);
@@ -72,17 +80,20 @@ fi
 # either half, exactly the role compose's -T -i pair used to play.
 # @function template_push_one
 # Stage a template dir with the common payload copies, then push it as a tar.
-# .terraform is excluded; a staged copy always carries the payloads, and a
-# payload missing from common/ (or an unresolved CODER_CONTAINER) fails the
-# push before the CLI runs.
+# .terraform is excluded; symlinks are dereferenced into regular files; a
+# staged copy always carries the payloads, and a payload missing from
+# common/ (or an unresolved CODER_CONTAINER, or a leftover symlink) fails
+# the push before the CLI runs.
 # Globals:
 #   DOCKER_BIN, CODER_CONTAINER, CONTAINER_API_URL, session_token
 # Arguments:
 #   $1 - template name; $2 - directory; remaining args pass to templates push
 # Outputs:
-#   The coder CLI's output; one error line per missing payload on stderr
+#   The coder CLI's output; one error line per missing payload, missing
+#   staged main.tf, or leftover symlink on stderr
 # Returns:
-#   The pipeline's status; 1 when the staging dir, a payload, or the copy fails
+#   The pipeline's status; 1 when the staging dir, a payload, a leftover
+#   symlink, or the copy fails
 template_push_one() {
   local name="$1" dir="$2"
   shift 2
@@ -109,15 +120,29 @@ template_push_one() {
   # directly, so the common payload copies can be dropped in beside main.tf -
   # and they overwrite any same-named file the dir still carries: one source
   # of truth per payload, so the per-template twins cannot drift back apart.
-  if ! { tar -C "${dir}" --exclude=./.terraform -cf - . | tar -xf - -C "${stage}" &&
+  # -h dumps symlink targets as regular files: bazelisk run's runfiles tree
+  # is links into the execroot, and Coder unpacks this tar in an empty
+  # workdir that cannot follow those host paths (coder/coder#19310).
+  if ! { tar -C "${dir}" --exclude=./.terraform -h -cf - . | tar -xf - -C "${stage}" &&
     cp -f "${common}"/* "${stage}/"; }; then
     rm -rf "${stage}"
     printf 'error: %s: could not stage %s (with %s) - nothing was pushed\n' \
       "${name}" "${dir}" "${common}" >&2
     return 1
   fi
+  if [ ! -f "${stage}/main.tf" ]; then
+    rm -rf "${stage}"
+    printf 'error: %s: staged copy has no main.tf - nothing was pushed\n' "${name}" >&2
+    return 1
+  fi
+  if [ -n "$(find "${stage}" -type l)" ]; then
+    rm -rf "${stage}"
+    printf 'error: %s: staged copy still contains a symlink - Coder unpacks the archive without following host runfiles links, so this would plan as an empty directory\n' \
+      "${name}" >&2
+    return 1
+  fi
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  tar -C "${stage}" -cf - . |
+  tar -C "${stage}" -h -cf - . |
     CODER_URL="${CONTAINER_API_URL:-}" CODER_SESSION_TOKEN="${session_token:-}" \
       ${DOCKER_BIN} exec -i -e CODER_URL -e CODER_SESSION_TOKEN "${CODER_CONTAINER}" \
       coder templates push "${name}" --directory - --yes "$@"

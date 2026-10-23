@@ -975,6 +975,9 @@ cause, recipe, and what a fix costs - is in
   template, and always under `devcontainer`, so read the *docker-in-docker* tile
   rather than the variable. An absent image fails the build at **plan** time with
   `did not find docker image 'docker:29.8.1-dind'`.
+- **`Error: No configuration files`** from `push-template` - the tar stored
+  runfiles symlinks and Coder unpacked them into an empty Terraform directory.
+  Pull the fix and re-run `bazelisk run //scripts:push-template` on the stack host.
 - **`... .terraform.lock.hcl is missing`** from `push-template` - a note, not a failure:
   no lockfile is committed under `templates/`.
 - **`unexpected non-JSON response "text/html; charset=utf-8"`** from a host `coder`
