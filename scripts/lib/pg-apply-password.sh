@@ -23,7 +23,8 @@
 # an already-running coder container that was crash-looping on the old
 # password has to be bounced once the role has caught up.
 #
-# Usage (compose, as the db entrypoint):
+# Usage (compose, as the db entrypoint; command: ["postgres"] is required
+# because a compose entrypoint override clears the image CMD):
 #   /usr/local/bin/pg-apply-password.sh postgres
 #
 # Usage (from a stack runner, after common.sh):
@@ -113,6 +114,28 @@ pg_wait_ready() {
   return 0
 }
 
+# @function compose_up_or_diagnose_db
+# Run compose up -d; on failure print recent db logs so the operator sees why.
+# Globals:
+#   None (calls run_compose when that function exists)
+# Arguments:
+#   None
+# Outputs:
+#   compose's own output; on failure, a note and the last db logs
+# Returns:
+#   0 when up succeeds; 1 when run_compose is missing; otherwise compose's status
+compose_up_or_diagnose_db() {
+  if ! declare -f run_compose >/dev/null 2>&1; then
+    return 1
+  fi
+  if run_compose up -d; then
+    return 0
+  fi
+  printf 'error: compose up failed; last db logs follow\n' >&2
+  run_compose logs --tail 80 db || true
+  return 1
+}
+
 # @function restart_coder_if_pg_auth_failed
 # Bounce coder when recent compose logs show postgres password auth failure.
 # Globals:
@@ -153,6 +176,17 @@ pg_apply_password_entrypoint() {
   local pid=0 role db
   role="${POSTGRES_USER:-postgres}"
   db="${POSTGRES_DB:-${role}}"
+
+  # A compose `entrypoint:` override clears the image CMD, so this wrapper
+  # can be exec'd with no arguments. docker-entrypoint.sh then does
+  # `exec "$@"` with an empty argv, which is a bash no-op, and the
+  # container exits 0 without starting postgres. Default the same way the
+  # image entrypoint does: no args, or a leading flag, means postgres.
+  if [[ $# -eq 0 ]]; then
+    set -- postgres
+  elif [[ ${1:0:1} == '-' ]]; then
+    set -- postgres "$@"
+  fi
 
   docker-entrypoint.sh "$@" &
   pid=$!

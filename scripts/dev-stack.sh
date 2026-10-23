@@ -488,7 +488,7 @@ main() {
       ;;
     up)
       repair_stale_runfiles "${root}" 0 || true
-      run_compose up -d
+      compose_up_or_diagnose_db
       restart_coder_if_pg_auth_failed
       if [[ -t 0 ]]; then
         host_dns_report /etc/resolv.conf github.com || true
