@@ -13,11 +13,17 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   never the daemon running Coder/LiteLLM/Ollama/Kasm. An empty `docker ps` here is
   normal; it does not mean the stack is down.
 - Whole-stack commands (`dev-stack`, `refresh-configs`, `storage-clean`, `pull-models`,
-  `search-check`, `spark-verify`, `github-auth check`) work on the stack host or on the
-  fleet, not on this workspace, so run them in a host shell. `search-check` probes
+  `search-check`, `spark-verify`) work on the stack host or on the fleet, not on this
+  workspace, so run them in a host shell. `search-check` probes
   `http://127.0.0.1:8181` by default and reads `$SEARXNG_URL` first; the agent env inside a
   workspace carries `SEARXNG_URL` (default `http://host.docker.internal:8181`), so a
   workspace-side probe needs no `--url`.
+- `github-auth check` (also `bazelisk run //scripts:github-auth -- check`) works from
+  either place: on the host it enumerates the labeled workspace containers via docker,
+  or probes a named container; inside a workspace it runs SELF mode with no docker and
+  no `DOCKER_HOST`, probing this environment's own credential chain and printing one
+  `self:` line. Pass only the repo URL there; a named container is refused with a
+  pointer to the host shell.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
   `:3002` the Coder agent tunnel, `:8181` SearXNG.
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other

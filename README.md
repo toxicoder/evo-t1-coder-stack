@@ -1012,9 +1012,13 @@ cause, recipe, and what a fix costs - is in
 - **Private-repo clone or push denied while a credential is present** - the **grant**
   is the problem, not the credential format: a connected-but-unscoped credential
   authenticates and is still refused (403, or 404 where GitHub hides a private repo's
-  existence). It covers `https://github.com/...` remotes only, so a `git@github.com:`
-  or `ssh://` URL needs an SSH key you placed yourself, which this stack provisions
-  nowhere. The doctor: `bazelisk run //scripts:github-auth -- check [container] [repo-url]`.
+  existence). A public repo answers read probes for any authenticated caller, so a
+  passing read proves nothing about push. It covers `https://github.com/...` remotes
+  only, so a `git@github.com:` or `ssh://` URL needs an SSH key you placed yourself,
+  which this stack provisions nowhere. The doctor answers "can this credential WRITE
+  to that repo?": `bazelisk run //scripts:github-auth -- check [container] [repo-url]`
+  from a host shell, or the same command without the container slot from inside a
+  workspace (SELF mode).
 - **Kasm wizard gone after install** - expected; use :4443. Reset means removing the
   `kasm-data` volume, which destroys all Kasm config.
 - **Coder login problems** - the first registered account is the site admin. If the UI

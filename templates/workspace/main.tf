@@ -516,10 +516,11 @@ resource "coder_script" "gh_token_refresh" {
   display_name = "Refresh GitHub token for gh"
   icon         = "/icon/github.svg"
   run_on_start = true
-  # Longer than the token's own lifetime, so the credential is never already
-  # expired by the time something in the workspace reaches for it. Coder uses
-  # 6-field cron (seconds minutes hours day month dow); the Unix 5-field form
-  # `0 */6 * * *` warns at plan time.
+  # The minted token lives about an hour, so between refreshes the gh auth
+  # store can hold an expired credential; `scripts/github-auth.sh check`
+  # reports that as REJECTED and `coder external-auth access-token` re-mints
+  # on demand. Coder uses 6-field cron (seconds minutes hours day month dow);
+  # the Unix 5-field form `0 */6 * * *` warns at plan time.
   cron    = "0 0 */6 * * *"
   timeout = 30
 
