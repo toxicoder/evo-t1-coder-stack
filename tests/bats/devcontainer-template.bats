@@ -12,11 +12,17 @@
 # plain workspace container (the host bind), /home/coder when no repository
 # was named. Also pins the empty-URL clone guard both startup.sh.tftpl
 # twins keep, the truthful wording of the no-devcontainer.json warning, and the
-# one common GROK_BUILD_AGENTS.md that the seed stage copies into place.
+# one common GROK_BUILD_AGENTS.md that the seed stage copies into place. It also
+# pins the search lane: the gated [mcp_servers.searxng] block and the
+# disable_web_search key exist identically in both grok-config.toml.tftpl
+# twins, both main.tf twins feed search_mcp/search_url into that render and
+# carry SEARXNG_URL into the agent environment, and both coder.tf twins
+# declare the two template variables the pushes will pass.
 #
 # Usage: bats tests/bats/devcontainer-template.bats
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
-# twins and templates/common/GROK_BUILD_AGENTS.md; writes nothing.
+# twins, the two grok-config.toml.tftpl twins, the two main.tf twins, the two
+# coder.tf twins and templates/common/GROK_BUILD_AGENTS.md; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -115,6 +121,56 @@ setup() {
     run grep -F '${grok_build_agents}' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
     run grep -F 'grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))' "${tpl_dir}/main.tf"
+    [ "${status}" -eq 0 ]
+  done
+}
+
+@test "search lane: both config twins carry the gated searxng block and the off-key for native search" {
+  # search_mcp (template default: true) gates the [mcp_servers.searxng] block,
+  # and push-template.sh passes its --var array to BOTH pushes, so the block and
+  # its gate have to exist in each twin; a twin that lost the gate would render
+  # the server unconditionally or never, depending on the pushed default. The
+  # literal greps pin the block shape (absolute binary path, threaded
+  # SEARXNG_URL) and the position rule for disable_web_search: it is a
+  # top-level key, so the file must emit it before the first [table] header or
+  # the render is invalid TOML.
+  local tpl dw ft
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    run grep -F '%{if search_mcp~}' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'command = "/opt/npm-global/bin/searxng-mcp-server"' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'env = { SEARXNG_URL = "${search_url}" }' "${tpl}"
+    [ "${status}" -eq 0 ]
+    dw="$(grep -n -m1 -F 'disable_web_search = true' "${tpl}" | cut -d: -f1)"
+    ft="$(grep -n -m1 -e '^\[' "${tpl}" | cut -d: -f1)"
+    [ -n "${dw}" ]
+    [ -n "${ft}" ]
+    [ "${dw}" -lt "${ft}" ]
+  done
+}
+
+@test "search lane: the main.tf twins feed the gate and the probe agrees with the lane" {
+  # search_mcp/search_url are render-map keys in both main.tf twins (the
+  # boolean arrives as a real Terraform bool, so coder.tf has to declare it),
+  # and searxng_url also travels into the coder agent env as SEARXNG_URL, so
+  # search-check.sh (which reads $SEARXNG_URL first) probes the same port the
+  # rendered [mcp_servers.searxng] block dials.
+  local tf ctf
+  for tf in "${REPO_ROOT}/templates/workspace/main.tf" "${REPO_ROOT}/templates/devcontainer/main.tf"; do
+    run grep -Eq 'search_mcp[[:space:]]+=[[:space:]]+var\.search_mcp' "${tf}"
+    [ "${status}" -eq 0 ]
+    run grep -Eq 'search_url[[:space:]]+=[[:space:]]+var\.searxng_url' "${tf}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'SEARXNG_URL = var.searxng_url' "${tf}"
+    [ "${status}" -eq 0 ]
+  done
+  for ctf in "${REPO_ROOT}/templates/workspace/coder.tf" "${REPO_ROOT}/templates/devcontainer/coder.tf"; do
+    run grep -F 'variable "search_mcp"' "${ctf}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'variable "searxng_url"' "${ctf}"
     [ "${status}" -eq 0 ]
   done
 }

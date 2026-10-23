@@ -15,8 +15,9 @@
 #   5b. seeds the shared code-server User settings if that file is absent, then
 #       links the editor at it (one file per owner, not re-merged each start)
 #   6. writes ~/.grok/config.toml (only while this stack owns the file): the
-#      model catalog with this workspace's default model alias
-#      (no MCP servers declared by default), and anything the create form put in "Grok config extras"
+#      model catalog with this workspace's default model alias, the gated
+#      searxng MCP entry (on by default), Grok's native web_search off by
+#      default, and anything the create form put in "Grok config extras"
 #   7. seeds the GitHub credential plumbing (git's github.com credential helper),
 #      and only when a GitHub token was supplied and both git and gh exist
 #   8. clones the repository named by the create form onto the shared
@@ -56,7 +57,10 @@
 # additional_repos, dc_dir, build_devcontainer and vscode_settings.
 # grok_config arrives already rendered from grok-config.toml.tftpl, whose own
 # keys are litellm_url, grok_default_model, workspace_affinity_key,
-# grok_config_extra and github_mcp — the last one only gates text,
+# grok_config_extra, github_mcp, search_mcp and search_url - the two boolean
+# keys only gate text (github_mcp and search_mcp decide whether their
+# [mcp_servers.*] block appears; search_url supplies the URL the searxng block
+# dials),
 # the affinity key is a per-workspace routing hint (a workspace UUID, not a
 # secret), and the token's own bytes never appear in the result. The one
 # GH_TOKEN reference that config template does emit is dollar-escaped, so it
@@ -399,10 +403,10 @@ ln -sfn "$shared_settings" "$user_settings"
 
 # --- Grok Build config --------------------------------------------------------
 # Rendered from grok-config.toml.tftpl: the LiteLLM model catalog (with this
-# workspace's default model alias, from the create form), the MCP stack — the
-# offline servers plus the gated github one, which appears only when a GitHub
-# token was supplied — and the subagent sizing, with anything the create form
-# put in "Grok config extras" appended at the end. Ownership is decided by the
+# workspace's default model alias, from the create form), the MCP stack - the
+# gated searxng search entry (on by default, dialing the stack's own SearXNG)
+# beside the gated github entry (off by default) - and the subagent sizing,
+# with anything the create form put in "Grok config extras" appended at the end. Ownership is decided by the
 # marker comment below: while it is present the stack re-renders the file on
 # every start, and deleting that one line hands the file over to the user for
 # good. On a shared profile volume that file usually already exists — another of

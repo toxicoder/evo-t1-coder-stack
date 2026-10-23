@@ -403,19 +403,25 @@ resource "coder_agent" "main" {
 
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
-    # resolve, so all five are declared together. github_mcp is a *boolean* gate in
-    # there — it only decides whether the [mcp_servers.github] block appears — and
-    # no token is part of the decision: no credential bytes are ever interpolated
-    # into the rendered script or into config.toml, which only ever names GH_TOKEN
+    # resolve, so all seven are declared together. github_mcp and search_mcp are
+    # *boolean* gates in there - each only decides whether its [mcp_servers.*]
+    # block appears - and no token is part of the decision: no credential bytes
+    # are ever interpolated into the rendered script or into config.toml, which
+    # only ever names GH_TOKEN
     # and lets the CLI expand that reference from the agent environment.
     # workspace_affinity_key is the per-workspace LiteLLM session-affinity key,
-    # rendered into the [models] extra_headers.
+    # rendered into the [models] extra_headers. search_mcp gates the searxng MCP
+    # stdio block and search_url carries the SearXNG base URL that block dials,
+    # which is where the host's published port (8181 by default, higher on a dev
+    # stack) reaches the rendered config.
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
       litellm_url            = var.litellm_url
       grok_default_model     = data.coder_parameter.grok_default_model.value
       grok_config_extra      = data.coder_parameter.grok_config_extra.value
       github_mcp             = var.github_mcp
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
+      search_mcp             = var.search_mcp
+      search_url             = var.searxng_url
     })
     # The whole orchestration-protocol payload, read verbatim from
     # GROK_BUILD_AGENTS.md and interpolated into the quoted heredoc that
@@ -458,6 +464,11 @@ resource "coder_agent" "main" {
     # scripts/github-auth.sh and in-workspace `coder external-auth` calls read
     # it; default is Coder's injected GitHub App (`github`).
     CODER_GITHUB_AUTH_ID = var.github_auth_id
+    # The stack's self-hosted search lane, in the shape search-check.sh reads it
+    # ($SEARXNG_URL, defaulting to 127.0.0.1:8181 when unset) and in the shape the
+    # gated [mcp_servers.searxng] block dials; one variable feeds both, so the
+    # probe and the lane can never disagree about the address.
+    SEARXNG_URL = var.searxng_url
     # No CODER_AGENT_EXP_* overrides on purpose (verified against the v2.36.6
     # binary + its agentcontextconfig source): these keys REPLACE the agent's
     # discovery defaults rather than appending to them, and the defaults are

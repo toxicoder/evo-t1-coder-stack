@@ -152,9 +152,13 @@ installed yourself under `~/.grok/bin`.
   untouched.
 - It is **not** a model transport, so `web_search = "agent"` and
   `supports_backend_search = false` stay as they are and the agent's own `web_search`
-  tool still digests through the `agent` alias. Handing SearXNG to the agent as an
-  MCP stdio server is a separate change, gated on what the probe measures. Measure
-  the lane with:
+  tool still digests through the `agent` alias. It is also not the *default* search
+  tool: `disable_web_search = true` keeps that secondary lane off (it has no hosted
+  backend on this box anyway - LiteLLM answers "tools of type 'web_search' are not
+  supported"). Search works by default through the `searxng` MCP stdio server instead:
+  both templates render that block gated on `search_mcp`, which defaults to true.
+  When the self-hosted lane is down, flip `disable_web_search` to false and start a
+  new session to fall back to the native one. Measure the lane with:
 
   ```sh
   bazelisk run //scripts:search-check
@@ -163,15 +167,19 @@ installed yourself under `~/.grok/bin`.
   An empty result page and "no answer" are different answers, which is why the probe
   reports which one it got.
 
-- **MCP servers: none declared by default.** The five offline stdio servers
-  (`filesystem`, `memory`, `sequential-thinking`, `git` and `time`) stay pre-installed
-  in the image (`npm -g` for the first three, `uv tool` for the Python two), but the
-  rendered `config.toml` names none of them: the session traces collected on this
-  machine called none of their tools, and a declared-but-unused server still costs
-  every session its handshake time and tool schemas. Declare one by hand and check a
-  stubborn server with `grok mcp doctor <name>` inside a workspace. The `github`
-  server is the opt-in exception: it needs a token and outbound network, so
-  `github_mcp` decides on its own whether the block is rendered.
+- **MCP servers: the default render declares exactly one, the gated `searxng`
+  server.** It names the pre-installed `searxng-mcp-server` binary (pinned in
+  `images/dev/tool-versions.env` and baked into the golden image), is gated on
+  `search_mcp` (default true) and dials the service above through `SEARXNG_URL`.
+  The five offline stdio servers (`filesystem`, `memory`, `sequential-thinking`,
+  `git` and `time`) stay pre-installed in the image (`npm -g` for the first
+  three, `uv tool` for the Python two), but the rendered `config.toml` names
+  none of them: the session traces collected on this machine called none of
+  their tools, and a declared-but-unused server still costs every session its
+  handshake time and tool schemas. Declare one by hand and check a stubborn
+  server with `grok mcp doctor <name>` inside a workspace. The `github` server
+  is the opt-in other exception: it needs a token and outbound network, so
+  `github_mcp` (default false) decides on its own whether the block is rendered.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
   default `http://host.docker.internal:4000/v1`; model alias `agent`, with
   `coder`/`coder-fast`/`chat` listed in `__evoT1StackModels`). The seed is

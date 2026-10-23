@@ -473,6 +473,62 @@ logs_absent() {
   grep -Fq -- '--var litellm_key=sk-from-checkout-0123456789abcdef' "${STUB_LOG}/docker.log"
 }
 
+@test "push-template: SEARCH_MCP=false passes --var search_mcp=false for both templates" {
+  root="$(fake_root push-template.sh 'SEARCH_MCP=false')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"search_mcp=false passed from SEARCH_MCP"* ]]
+  grep -Fq -- '--var search_mcp=false' "${STUB_LOG}/docker.log"
+  # One vars array serves both pushes, so the off switch cannot reach one template
+  # only; the port still travels with it because searxng_url is always passed.
+  [ "$(grep -cF -- '--var search_mcp=false' "${STUB_LOG}/docker.log")" -eq 2 ]
+  grep -Fq -- '--var searxng_url=http://host.docker.internal:8181' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: SEARCH_MCP=true or unset passes no search_mcp var and keeps the default port" {
+  # Default-ON polarity: the template declares search_mcp = true, so anything other
+  # than an explicit false must push nothing at all.
+  root="$(fake_root push-template.sh 'SEARCH_MCP=true')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} != *"search_mcp"* ]]
+  # A push did happen, so the absence below proves the script passed nothing.
+  grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
+  logs_absent 'search_mcp' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var searxng_url=http://host.docker.internal:8181' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: STACK_SEARCH_PORT=18181 pushes the remapped search port" {
+  # The dev stack may publish SearXNG somewhere other than 8181; the pushed URL has
+  # to name that port or every workspace dials a port nothing listens on.
+  root="$(fake_root push-template.sh 'STACK_SEARCH_PORT=18181')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"searxng_url=http://host.docker.internal:18181 passed from STACK_SEARCH_PORT in .env"* ]]
+  grep -Fq -- '--var searxng_url=http://host.docker.internal:18181' "${STUB_LOG}/docker.log"
+  logs_absent 'host.docker.internal:8181' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: a blank or non-numeric STACK_SEARCH_PORT falls back to 8181" {
+  root="$(fake_root push-template.sh 'STACK_SEARCH_PORT=')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"searxng_url=http://host.docker.internal:8181 passed from the default"* ]]
+  grep -Fq -- '--var searxng_url=http://host.docker.internal:8181' "${STUB_LOG}/docker.log"
+}
+
 # ── template-push.sh (moved from lib.bats; keep these assertions) ──────────
 
 source_libs() {

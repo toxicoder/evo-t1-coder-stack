@@ -583,6 +583,35 @@ if [ "$(env_get GITHUB_MCP)" = "true" ]; then
   log "github_mcp passed from GITHUB_MCP (github MCP server on for every workspace)"
 fi
 
+# search_mcp is the search lane's toggle, with the opposite polarity to github_mcp:
+# both templates declare search_mcp with a "true" default, so only an explicit
+# SEARCH_MCP=false has to say anything. Unset, empty or "true" passes nothing and the
+# template default stands. Neither name carries a credential: the SearXNG this lane
+# dials is an unauthenticated LAN service.
+if [ "$(env_get SEARCH_MCP)" = "false" ]; then
+  vars+=(--var "search_mcp=false")
+  log "search_mcp=false passed from SEARCH_MCP (search MCP server off for every workspace)"
+fi
+
+# searxng_url is always passed. A workspace's search lane dials the host through its
+# own Docker gateway (host.docker.internal), where the compose network does not help,
+# so this URL has to name the port the stack actually publishes: docker-compose.yml
+# maps "${STACK_SEARCH_PORT:-8181}:8181" for the searxng service. A dev stack that
+# remapped that port therefore needs its own template push -- a pushed :8181 would
+# send every workspace's search calls to a port nothing listens on. A blank or
+# non-numeric value falls back to 8181 instead of being pushed verbatim, so a typo
+# in .env degrades to the default lane rather than to an unusable one.
+search_port="$(env_get STACK_SEARCH_PORT)"
+search_port_from="STACK_SEARCH_PORT in .env"
+case "${search_port}" in
+  '' | *[!0-9]*)
+    search_port=8181
+    search_port_from="the default (STACK_SEARCH_PORT in .env is unset, empty or not a port)"
+    ;;
+esac
+vars+=(--var "searxng_url=http://host.docker.internal:${search_port}")
+log "searxng_url=http://host.docker.internal:${search_port} passed from ${search_port_from} (the search lane dials the host gateway, so the port must match the one the stack publishes)"
+
 # repo_url is passed only when .env carries a NON-EMPTY REPO_URL, gated the same
 # way as coder_agent_url above: both templates' create forms now carry an
 # optional Git repository field, and this variable prefills it. `workspace`

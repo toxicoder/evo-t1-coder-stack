@@ -97,6 +97,9 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   +-- :8181 ----> SearXNG metasearch (loopback + LAN face) - keyless engines only,
   |               no key, no account, no request logging. A workspace reaches it
   |               through the host gateway, so the workspace networks stay untouched.
+  |               Both templates render it into the workspace config.toml as the
+  |               MCP server `searxng` (gated on `search_mcp`, default on); Grok's
+  |               native web_search stays off by default as the secondary lane.
   |               Measure the lane with `bazelisk run //scripts:search-check`
   |               (an empty answer is not an answered one).
   |
@@ -136,7 +139,7 @@ port binds once, so two stacks on one box need two sets.
 | 3000 | 13000 | Kasm | First-boot install wizard (`KASM_WIZARD_PORT`) |
 | 4443 | 14443 | Kasm | Workspaces UI after install (`KASM_UI_PORT`) |
 | 4000 | 14000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
-| 8181 | 18181 | SearXNG | Metasearch (`STACK_SEARCH_PORT`) - published, because a workspace reaches the host through its gateway, where the compose network does not help |
+| 8181 | 18181 | SearXNG | Metasearch (`STACK_SEARCH_PORT`) - published, because a workspace reaches the host through its gateway, where the compose network does not help. `push-template.sh` reads this key and pushes `--var searxng_url=http://host.docker.internal:<that port>`, so a remapped port reaches each new workspace's config |
 | — | — | Homepage app | `3000` on the compose network only - reached through the proxy |
 | — | — | Ollama | `11434` on the compose network only - deliberately not published |
 
@@ -779,7 +782,11 @@ The list format, the two clone paths, and what `--dry-run` prints:
   files, so *roughly in sync* is the bar, not transactional sharing.
 - Five offline MCP stdio servers ship pre-installed but stay undeclared by default, and
   `searxng` (host 8181) is the search lane, not a model transport:
-  `bazelisk run //scripts:search-check` measures it.
+  `bazelisk run //scripts:search-check` measures it. It reaches the agent as the
+  `searxng` MCP stdio server, declared by default (`search_mcp` defaults to true;
+  `SEARCH_MCP=false` in `.env` opts a whole stack out). Grok's native search lane
+  stays off (`disable_web_search = true`) as the easy fallback when the self-hosted
+  one is down.
 
 ### Coder Agents (control-plane)
 

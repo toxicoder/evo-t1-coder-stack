@@ -14,8 +14,10 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   normal; it does not mean the stack is down.
 - Whole-stack commands (`dev-stack`, `refresh-configs`, `storage-clean`, `pull-models`,
   `search-check`, `spark-verify`, `github-auth check`) work on the stack host or on the
-  fleet, not on this workspace, so run them in a host shell. `search-check` defaults to
-  `http://127.0.0.1:8181` on that host, so here pass `--url http://host.docker.internal:8181`.
+  fleet, not on this workspace, so run them in a host shell. `search-check` probes
+  `http://127.0.0.1:8181` by default and reads `$SEARXNG_URL` first; the agent env inside a
+  workspace carries `SEARXNG_URL` (default `http://host.docker.internal:8181`), so a
+  workspace-side probe needs no `--url`.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
   `:3002` the Coder agent tunnel, `:8181` SearXNG.
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other

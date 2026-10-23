@@ -167,7 +167,14 @@ Nothing else about GitHub travels in a `--var`.
 | `GROK_PROFILE_MODE` | `--var grok_profile_mode=` | when non-empty; the retired `GROK_PROFILE_SHARE` maps (`true` to `shared`, `false` to `private`) |
 | `REPO_URL` | `--var repo_url=` | only when present and non-empty |
 | `GITHUB_MCP` | `--var github_mcp=true` | only when the value is `true` |
+| `SEARCH_MCP` | `--var search_mcp=false` | only when the value is `false` (the search lane is on by default; any other value pushes nothing and the template default stands) |
+| `STACK_SEARCH_PORT` | `--var searxng_url=http://host.docker.internal:<port>` | always; a blank or non-numeric value falls back to `8181` |
 
+- A dev stack that moved the search port needs its own template push: `searxng_url`
+  is derived from `STACK_SEARCH_PORT` as read from `.env`, so a push made while
+  `dev-stack.env` carries `18181` still names `8181` unless the key is set in `.env`
+  too. A workspace dials the host gateway, where the compose network does not help,
+  so the port in the rendered `SEARXNG_URL` has to be the one actually published.
 - `repo_url` prefills the Git repository field on both create forms. `workspace` defaults
   to no clone and `devcontainer` to the coder/coder demo repo, which is why a blank
   `REPO_URL=` line stays unpassed.

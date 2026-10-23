@@ -282,9 +282,12 @@ services:
   # Self-hosted metasearch: the search lane. grok-config.toml keeps
   # supports_backend_search = false on every model alias, so the CLI's built-in
   # search tool has no hosted backend to call and each search is a client-side
-  # scrape whose answer the `agent` alias then digests. Handing SearXNG to the
-  # agent as an MCP stdio server is a second, dependent change; this one only
-  # stands the service up, plus scripts/search-check.sh to measure it.
+  # scrape whose answer the `agent` alias then digests. SearXNG also reaches
+  # the agent as an MCP stdio server: both workspace templates render
+  # [mcp_servers.searxng] behind the search_mcp flag (default on), and its
+  # rendered SEARXNG_URL dials this service's published port through the
+  # workspace's gateway. scripts/search-check.sh measures the route before
+  # anything is blamed on the MCP hop.
   #
   # Kept off the model lane on purpose: SearXNG would otherwise forward every
   # query through the proxy that lane uses, so egress stays direct here and
