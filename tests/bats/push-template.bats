@@ -202,6 +202,21 @@ logs_absent() {
   logs_absent 'templates push' "${STUB_LOG}/docker.log"
 }
 
+@test "push-template: a too-large vscode-alt.svg fails before templates push" {
+  # Coder v2.36 stores workspace_apps.icon as varchar(256). A 5 KB SVG used
+  # to survive every local check and die inside the provisioner with
+  # pq: value too long. The guard has to fire before the CLI runs.
+  root="$(fake_root push-template.sh)"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  printf 'x%.0s' {1..200} >"${root}/templates/common/vscode-alt.svg"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 1 ]
+  [[ ${stderr} == *"varchar(256)"* ]]
+  logs_absent 'templates push' "${STUB_LOG}/docker.log"
+}
+
 @test "push-template: a missing lockfile is a note, and the push still happens" {
   root="$(fake_root push-template.sh)"
   running_stack

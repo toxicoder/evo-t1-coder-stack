@@ -664,8 +664,10 @@ bazelisk run //scripts:push-template -- devcontainer
 - `templates/common/` exists once and both templates consume it:
   `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline) and
   `vscode-alt.svg` (the editor icon), staged beside each staged `main.tf` and read
-  there with `file()` / `filebase64()`. A push missing either payload fails early by
-  design. Every other `.tftpl` payload is copied per template - edit both twins.
+  there with `file()` / `filebase64()`. The SVG stays small enough that the
+  inlined data URL fits Coder v2.36's 256-character `workspace_apps.icon` column.
+  A push missing either payload, or an SVG that would overflow that column, fails
+  early by design. Every other `.tftpl` payload is copied per template - edit both twins.
 - `bootstrap.sh` calls the same push, and skips with a one-line reason while the coder
   or db container is down or nobody has registered yet.
 - A template whose push or verification failed is counted in the
@@ -975,6 +977,11 @@ cause, recipe, and what a fix costs - is in
   template, and always under `devcontainer`, so read the *docker-in-docker* tile
   rather than the variable. An absent image fails the build at **plan** time with
   `did not find docker image 'docker:29.8.1-dind'`.
+- **`pq: value too long for type character varying(256)`** from `push-template` -
+  `coder_app.code_server` inlined a `vscode-alt.svg` whose data URL overflowed
+  Coder v2.36's `workspace_apps.icon` `varchar(256)` column. The SVG is a compact
+  ribbon now, and `push-template` rejects a too-large copy locally. Pull the fix
+  and re-run `bazelisk run //scripts:push-template` on the stack host.
 - **`Error: No configuration files`** from `push-template` - the tar stored
   runfiles symlinks and Coder unpacked them into an empty Terraform directory.
   Pull the fix and re-run `bazelisk run //scripts:push-template` on the stack host.

@@ -84,7 +84,9 @@ only `settings.json.tftpl` is byte-identical across the two directories, so edit
 copies of that payload. `templates/common/` exists once above the twins instead and
 holds the two single-copy payloads: `GROK_BUILD_AGENTS.md` (the orchestration protocol
 the startup scripts seed into every workspace's `~/.grok/AGENTS.md`, read with `file()`)
-and `vscode-alt.svg` (the editor icon, read with `filebase64()`). The push
+and `vscode-alt.svg` (the editor icon, read with `filebase64()`). The SVG stays
+small enough that the resulting data URL fits Coder v2.36's 256-character
+`workspace_apps.icon` column. The push
 (`scripts/push-template.sh` through `template_push_one` in `scripts/lib/template-push.sh`)
 stages both beside each template's staged `main.tf` copy, which is the only place the
 server-side Terraform can read them from, so editing the common copy changes both

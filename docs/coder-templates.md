@@ -45,7 +45,9 @@ Two templates live under `templates/`, and a push covers both.
 
 - `GROK_BUILD_AGENTS.md` is the orchestration-protocol seed text the startup scripts
   inline into every workspace's `~/.grok/AGENTS.md` (read with `file()`).
-- `vscode-alt.svg` is the editor icon (read with `filebase64()`).
+- `vscode-alt.svg` is the editor icon (read with `filebase64()`). It stays small
+  enough that the resulting `data:image/svg+xml;base64,...` URL fits Coder
+  v2.36's `workspace_apps.icon` column (`varchar(256)`).
 - Both are staged by the push plumbing beside each staged `main.tf` copy, which is the
   only place the server-side Terraform can read them from.
 - A push whose staged copy is missing either payload fails early, by design.
@@ -74,13 +76,15 @@ Presets collapse the create form to one click.
 3. Per template it checks `main.tf` exists (otherwise "run this from the repo root") and
    notes a missing `.terraform.lock.hcl`.
 4. It rejects a `coder_workspace_preset` description over Coder's 128-**byte** ceiling.
-5. It streams the source as a tar on stdin, with symlinks dereferenced into regular
+5. It rejects a `vscode-alt.svg` whose inlined data URL would exceed Coder's
+   256-character `workspace_apps.icon` column.
+6. It streams the source as a tar on stdin, with symlinks dereferenced into regular
    files. Coder's provisioner unpacks that archive into an empty workdir and does
    not follow host paths, so a stored runfiles symlink plans as "No configuration
    files".
-6. It confirms an **active** version.
-7. It re-sends the template's own description.
-8. It re-pins **Autostop** to *Disabled*.
+7. It confirms an **active** version.
+8. It re-sends the template's own description.
+9. It re-pins **Autostop** to *Disabled*.
 
 ### What it does and does not do
 
@@ -610,7 +614,10 @@ helpers point at a folder that was never cloned.
 - The custom icon `templates/common/vscode-alt.svg` travels as a
   `data:image/svg+xml;base64` data URL read from `templates/common/`. Coder serves icons
   only from its bundled `/icon/*` set or from a full `https`/`data` URL, and that icon is
-  not bundled.
+  not bundled. `workspace_apps.icon` is `varchar(256)` on Coder v2.36, so the SVG is a
+  compact ribbon whose data URL fits that column; a larger file fails `templates push`
+  with `pq: value too long for type character varying(256)`. `push-template` rejects
+  that locally, before the CLI runs.
 
 ### Editor settings seed
 

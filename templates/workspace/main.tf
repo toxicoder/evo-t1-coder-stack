@@ -536,10 +536,13 @@ resource "coder_script" "gh_token_refresh" {
 # push-template exactly like GROK_BUILD_AGENTS.md and read back through the
 # local below. Coder resolves an icon either against its bundled icon set or
 # through a full https:/data: URL, and vscode-alt.svg is not bundled, hence
-# the data URL. Forking also removes a module download from every `terraform
-# init`: with the module the registry answered every template build, and an
-# unpinned release there could rewrite this workspace's editor without a
-# commit in this repo.
+# the data URL. workspace_apps.icon is varchar(256) on Coder v2.36, so the
+# SVG has to stay small enough that this URL fits; a larger file fails
+# templates push with pq: value too long for type character varying(256).
+# Forking also removes a module download from every terraform init: with
+# the module the registry answered every template build, and an unpinned
+# release there could rewrite this workspace's editor without a commit in
+# this repo.
 #
 # The fork keeps the behaviour this stack actually used and drops the rest:
 # reuse the installed copy instead of re-downloading on every start (the
@@ -553,7 +556,8 @@ resource "coder_script" "gh_token_refresh" {
 
 locals {
   # One private icon, inlined because Coder serves /icon/ only from its
-  # bundled set, where no vscode-alt.svg exists.
+  # bundled set, where no vscode-alt.svg exists. Keep the SVG compact: the
+  # resulting data URL has to fit workspace_apps.icon (varchar(256)).
   vscode_alt_icon = "data:image/svg+xml;base64,${filebase64("${path.module}/vscode-alt.svg")}"
 }
 
