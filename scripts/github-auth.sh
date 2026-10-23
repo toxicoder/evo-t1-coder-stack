@@ -5,12 +5,14 @@
 #
 # A workspace talks to github.com over HTTPS, and git consults credential
 # sources in this order: GH_TOKEN/GITHUB_TOKEN from the agent environment (they
-# exist only when the owner connected a GitHub account to the `primary-github`
-# external-auth provider), then whatever the gh CLI holds — that env token
-# first, then the stored login in the per-workspace gh auth store that the
-# gh_token_refresh coder_script re-mints on start and every 6 hours — and only
-# then a direct `coder external-auth access-token primary-github` mint. A
-# credential that authenticates but was never GRANTED the repository still
+# exist only when the owner connected a GitHub account to the External Auth
+# provider named by CODER_GITHUB_AUTH_ID, default `github`), then whatever the
+# gh CLI holds — that env token first, then the stored login in the
+# per-workspace gh auth store that the gh_token_refresh coder_script re-mints
+# on start and every 6 hours — and only then a direct
+# `coder external-auth access-token` mint (CODER_GITHUB_AUTH_ID, then
+# `primary-github` for workspaces that still declare the legacy custom-OAuth
+# id). A credential that authenticates but was never GRANTED the repository still
 # fails clone/push: private repos answer 403 or 404 (a GitHub App or OAuth
 # grant without write scope answers "Resource not accessible by integration").
 # This script makes that state visible from the host, and fixes the
@@ -94,13 +96,17 @@ probe_workspace() {
     ws="$1"
     repo="$2"
     tok=""; src="none"
+    id="${CODER_GITHUB_AUTH_ID:-github}"
     if [ -n "${GITHUB_TOKEN:-}${GH_TOKEN:-}" ]; then
       src="env token (GITHUB_TOKEN/GH_TOKEN)"
       tok="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
     elif command -v gh >/dev/null 2>&1 && gh_tok=$(gh auth token 2>/dev/null) && [ -n "${gh_tok}" ]; then
       src="gh stored login"
       tok="${gh_tok}"
-    elif mint=$(timeout 15 coder external-auth access-token primary-github 2>/dev/null) && [ -n "${mint}" ]; then
+    elif mint=$(timeout 15 coder external-auth access-token "${id}" 2>/dev/null) && [ -n "${mint}" ]; then
+      src="Coder external-auth minted token"
+      tok="${mint}"
+    elif [ "${id}" != "primary-github" ] && mint=$(timeout 15 coder external-auth access-token primary-github 2>/dev/null) && [ -n "${mint}" ]; then
       src="Coder external-auth minted token"
       tok="${mint}"
     fi

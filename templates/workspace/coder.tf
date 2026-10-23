@@ -59,11 +59,20 @@ variable "grok_profile_mode" {
 }
 
 # There is deliberately no GitHub *token* variable in this file. A workspace's
-# GitHub credential comes from the `primary-github` External Auth provider (see
-# the data source in main.tf), which mints a short-lived per-host token for the
-# workspace owner's own connected account — nothing long-lived is declared here,
-# pushed with the template, or written to a file.
-#
+# GitHub credential comes from the Coder External Auth provider named by
+# github_auth_id (see the data source in main.tf), which mints a short-lived
+# per-host token for the workspace owner's own connected account — nothing
+# long-lived is declared here, pushed with the template, or written to a file.
+# The id is not a credential: Coder CE v2.36 injects a managed GitHub App whose
+# id is "github" when coder.env is absent; a custom OAuth app in coder.env keeps
+# its own CODER_EXTERNAL_AUTH_0_ID, which push-template.sh forwards here so
+# existing account links keep working.
+variable "github_auth_id" {
+  type        = string
+  description = "Coder External Auth provider id the template declares. Default matches Coder's injected GitHub App (id github) so a deploy with no coder.env can push. When coder.env sets CODER_EXTERNAL_AUTH_0_ID, push-template.sh forwards that value."
+  default     = "github"
+}
+
 # Declaring the github MCP server is not enough for it to be usable, and a server
 # that cannot handshake is dead weight in every session, so this switch decides
 # on its own whether the [mcp_servers.github] block is rendered. With no GitHub

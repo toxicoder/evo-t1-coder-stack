@@ -176,7 +176,7 @@ plan = "agent"
 %{if github_mcp~}
 # Rendered only when github_mcp is on; with it off this whole block is absent
 # from the file. There is no token to gate it on any more: the credential comes
-# from the `primary-github` External Auth provider, so a session whose owner
+# from the Coder External Auth provider (id github by default), so a session whose owner
 # connected no GitHub account has no GH_TOKEN in its environment and simply fails
 # this server's handshake (and so does one whose token expired while the
 # workspace slept, until coder_script.gh_token_refresh mints the next one). The

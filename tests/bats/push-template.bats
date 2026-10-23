@@ -245,6 +245,8 @@ logs_absent() {
   # Every CLI line the seams build, with the token kept out of argv: the
   # passthrough resolves `coder` to the stub, so argv is the whole proof.
   grep -Fq -- 'coder templates push workspace --directory - --yes --var image=evo-t1-dev:latest' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var github_auth_id=github' "${STUB_LOG}/docker.log"
+  [[ ${output} == *"github_auth_id=github"* ]]
   grep -Fq -- 'coder templates versions list workspace --column id --column active' "${STUB_LOG}/docker.log"
   grep -Fq -- 'coder templates edit workspace --description' "${STUB_LOG}/docker.log"
   # Autostop is pinned off on both templates, so a new workspace starts with no deadline.
@@ -256,6 +258,43 @@ logs_absent() {
   # The whole chain addresses the daemon directly: not one call may resolve a
   # compose project from the cwd (the class of bug this shape exists to kill).
   logs_absent 'docker compose' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: coder.env CODER_EXTERNAL_AUTH_0_ID is forwarded as github_auth_id" {
+  root="$(fake_root push-template.sh)"
+  printf '%s\n' 'CODER_EXTERNAL_AUTH_0_ID=primary-github' 'CODER_EXTERNAL_AUTH_0_CLIENT_SECRET=s3cret' >"${root}/coder.env"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh" workspace
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"github_auth_id=primary-github"* ]]
+  [[ ${output} != *"s3cret"* ]]
+  grep -Fq -- '--var github_auth_id=primary-github' "${STUB_LOG}/docker.log"
+  logs_absent 's3cret' "${STUB_LOG}"/*.log
+}
+
+@test "push-template: an empty CODER_EXTERNAL_AUTH_0_ID still declares github" {
+  root="$(fake_root push-template.sh)"
+  printf '%s\n' 'CODER_EXTERNAL_AUTH_0_ID=' >"${root}/coder.env"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh" workspace
+  [ "${status}" -eq 0 ]
+  grep -Fq -- '--var github_auth_id=github' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: a garbage CODER_EXTERNAL_AUTH_0_ID fails before templates push" {
+  root="$(fake_root push-template.sh)"
+  printf '%s\n' 'CODER_EXTERNAL_AUTH_0_ID=not a valid id' >"${root}/coder.env"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh" workspace
+  [ "${status}" -eq 1 ]
+  [[ ${stderr} == *"not a Coder provider id"* ]]
+  logs_absent 'templates push' "${STUB_LOG}/docker.log"
 }
 
 @test "push-template: no ACTIVE row counts both templates as failed (exit 1)" {

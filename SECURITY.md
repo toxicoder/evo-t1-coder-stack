@@ -71,8 +71,8 @@ repo can verify.
   redacted in `coder_metadata.workspace_info`. Anyone with that key can use every
   alias, including the Spark boxes, so treat a workspace as holding LAN credentials.
   A workspace may also hold `GH_TOKEN` / `GITHUB_TOKEN` in that environment, but only
-  for a workspace whose owner has connected a GitHub account to the `primary-github`
-  external-auth provider — there is no GitHub-token template variable and no PAT in
+  for a workspace whose owner has connected a GitHub account to the External Auth
+  provider (id `github` by default) — there is no GitHub-token template variable and no PAT in
   `.env`, so an owner who connected nothing has no GitHub credential anywhere. The
   pair reaches the workspace as environment, like `LITELLM_API_KEY`, plus one copy
   per workspace that the `gh_token_refresh` script writes into the gh auth store
