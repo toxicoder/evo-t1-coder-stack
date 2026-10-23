@@ -26,7 +26,7 @@ setup() {
   SCRIPT="${REPO_ROOT}/scripts/github-auth.sh"
   [[ -f "${SCRIPT}" ]] || skip "scripts/github-auth.sh not reachable from ${REPO_ROOT}"
   use_stubs docker curl timeout coder gh
-  unset GH_TOKEN GITHUB_TOKEN
+  unset GH_TOKEN GITHUB_TOKEN CODER_GITHUB_AUTH_ID
 }
 
 @test "check: lists every labeled workspace and never invents a credential" {
@@ -118,6 +118,27 @@ setup() {
   [ "${status}" -ne 0 ]
   [[ "${output}" == *"never an argument"* ]]
   assert_eq "no docker call at all" "0" "$(stub_log_count docker)"
+}
+
+@test "check: a minted token uses github when CODER_GITHUB_AUTH_ID is unset" {
+  unset GH_TOKEN GITHUB_TOKEN CODER_GITHUB_AUTH_ID
+  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CODER_OUT="minted-token-secret" \
+    run bash "${SCRIPT}" check coder-alice-ws1
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"source: Coder external-auth minted token"* ]]
+  [[ "${output}" != *"minted-token-secret"* ]]
+  assert_match "default id is github" 'access-token github' "$(stub_log coder)"
+}
+
+@test "check: CODER_GITHUB_AUTH_ID overrides the minted provider id" {
+  unset GH_TOKEN GITHUB_TOKEN
+  export CODER_GITHUB_AUTH_ID=primary-github
+  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CODER_OUT="minted-token-secret" \
+    run bash "${SCRIPT}" check coder-alice-ws1
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"source: Coder external-auth minted token"* ]]
+  assert_match "custom id" 'access-token primary-github' "$(stub_log coder)"
+  assert_not_match "does not also try github first" 'access-token github' "$(stub_log coder)"
 }
 
 @test "shape: every function block the docs promise is still there" {

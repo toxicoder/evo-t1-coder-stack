@@ -440,8 +440,8 @@ fi
 
 # --- GitHub credential plumbing (best effort) ----------------------------------
 # Only ever runs when a token exists. main.tf puts GH_TOKEN and GITHUB_TOKEN in
-# the agent environment when the owner has connected the `primary-github`
-# External Auth provider (environment only: never a template variable, never a
+# the agent environment when the owner has connected the External Auth
+# provider named by CODER_GITHUB_AUTH_ID (environment only: never a template variable, never a
 # git-tracked file, never printed), gh prefers either one from the environment,
 # and `gh auth git-credential` is the helper that lets plain git use that same
 # env token — so `git push` and `gh pr create` work with the token living no

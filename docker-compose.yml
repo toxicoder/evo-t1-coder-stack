@@ -21,29 +21,34 @@ services:
   coder:
     image: ghcr.io/coder/coder:v2.36.6
     restart: unless-stopped
-    # Optional file, absent by default: create ./coder.env (next to this file,
-    # gitignored) only to enable the Coder external-auth broker for GitHub
-    # credentials — the one place CODER_EXTERNAL_AUTH_0_* keys may live. The
-    # server parses every DEFINED CODER_EXTERNAL_AUTH_* key, empty included,
-    # and treats it as a configured provider: an empty one yields provider ""
-    # with an invalid id, `coder server` exits with
-    # "convert external auth config: ..." and restart: unless-stopped turns
-    # that into a crash loop (shipped empty in bf7e36d; crashed live exactly
-    # this way). So define the keys here, fully filled, or not at all:
+    # Optional file, absent by default. Leave it absent to use Coder CE's
+    # injected GitHub App (provider id `github`, device-flow); the templates
+    # declare that id by default. Create ./coder.env (next to this file,
+    # gitignored) only for a *custom* GitHub OAuth app — the one place
+    # CODER_EXTERNAL_AUTH_0_* keys may live. The server parses every DEFINED
+    # CODER_EXTERNAL_AUTH_* key, empty included, and treats it as a configured
+    # provider: an empty one yields provider "" with an invalid id, `coder
+    # server` exits with "convert external auth config: ..." and restart:
+    # unless-stopped turns that into a crash loop (shipped empty in bf7e36d;
+    # crashed live exactly this way). A filled coder.env also suppresses the
+    # injected App, so the id here must match what push-template.sh forwards
+    # as github_auth_id (it reads CODER_EXTERNAL_AUTH_0_ID). Define the keys
+    # fully filled, or not at all:
     #   CODER_EXTERNAL_AUTH_0_ID=primary-github
     #   CODER_EXTERNAL_AUTH_0_TYPE=github
     #   CODER_EXTERNAL_AUTH_0_CLIENT_ID=<GitHub OAuth App client id>
     #   CODER_EXTERNAL_AUTH_0_CLIENT_SECRET=<GitHub OAuth App client secret>
     #   CODER_EXTERNAL_AUTH_0_REVOKE_URL=https://github.com/settings/connections/applications/<client id>
     # (an omitted REGEX matches every github.com remote; set it only to tell
-    # several providers/hosts apart). Once present, connect your GitHub
-    # account in Coder (Settings -> external auth) and each workspace's agent
-    # mints SHORT-LIVED per-host tokens on demand via its GIT_ASKPASS
-    # helper. The GitHub-side callback URL is
-    # <CODER_ACCESS_URL>/external-auth/primary-github/callback, and the App/OAuth
-    # grant must INCLUDE the repos workspaces clone: a connected-but-unscoped
-    # token authenticates and is still denied on clone/push (403/404) — check
-    # that first — `scripts/github-auth.sh check` runs this probe from the host.
+    # several providers/hosts apart). Connect your GitHub account in Coder
+    # (Settings -> external auth) and each workspace's agent mints SHORT-LIVED
+    # per-host tokens on demand via its GIT_ASKPASS helper. The GitHub-side
+    # callback URL is <CODER_ACCESS_URL>/external-auth/<id>/callback (`github`
+    # for the injected App, `primary-github` for the sample custom app), and
+    # the App/OAuth grant must INCLUDE the repos workspaces clone: a
+    # connected-but-unscoped token authenticates and is still denied on
+    # clone/push (403/404) — check that first — `scripts/github-auth.sh check`
+    # runs this probe from the host.
     # `required: false` needs Docker Compose v2.24+ (older
     # compose refuses a missing env file at parse time, loudly).
     env_file:

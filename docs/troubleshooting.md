@@ -472,7 +472,7 @@ bazelisk run //scripts:new-workspace -- <git-url>
   connected-but-unscoped credential authenticates and is still refused: 403, or 404
   where GitHub hides a private repo's existence.
 - Check the GitHub side first. The grant behind the credential - the GitHub OAuth app
-  installation that the `primary-github` external-auth provider minted its token from -
+  installation that the External Auth provider (id `github` by default) minted its token from -
   has to include the repository the workspace clones.
 - Then check the URL scheme. That credential covers `https://github.com/...` remotes
   only, so a `git@github.com:` or `ssh://` URL gets neither helper nor askpass token

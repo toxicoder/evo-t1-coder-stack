@@ -139,6 +139,24 @@ load_fn() {
   [ "${status}" -eq 0 ]
 }
 
+@test "push-template: github_auth_provider_id defaults to github and forwards a custom coder.env id" {
+  load_fn scripts/push-template.sh die
+  load_fn scripts/push-template.sh github_auth_provider_id
+  [ "$(github_auth_provider_id "${BATS_TEST_TMPDIR}/no-such.env")" = "github" ]
+  : >"${BATS_TEST_TMPDIR}/empty.env"
+  [ "$(github_auth_provider_id "${BATS_TEST_TMPDIR}/empty.env")" = "github" ]
+  printf 'CODER_EXTERNAL_AUTH_0_ID=\n' >"${BATS_TEST_TMPDIR}/blank.env"
+  [ "$(github_auth_provider_id "${BATS_TEST_TMPDIR}/blank.env")" = "github" ]
+  printf 'CODER_EXTERNAL_AUTH_0_ID="primary-github"\n' >"${BATS_TEST_TMPDIR}/quoted.env"
+  [ "$(github_auth_provider_id "${BATS_TEST_TMPDIR}/quoted.env")" = "primary-github" ]
+  printf 'CODER_EXTERNAL_AUTH_0_ID=primary-github\n' >"${BATS_TEST_TMPDIR}/custom.env"
+  [ "$(github_auth_provider_id "${BATS_TEST_TMPDIR}/custom.env")" = "primary-github" ]
+  printf 'CODER_EXTERNAL_AUTH_0_ID=bad id\n' >"${BATS_TEST_TMPDIR}/bad.env"
+  run github_auth_provider_id "${BATS_TEST_TMPDIR}/bad.env"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"not a Coder provider id"* ]]
+}
+
 @test "push-template: icon_data_url_guard rejects an SVG whose data URL exceeds 256 characters" {
   load_fn scripts/push-template.sh die
   load_fn scripts/push-template.sh icon_data_url_guard

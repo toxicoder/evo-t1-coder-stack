@@ -53,7 +53,7 @@ Done means `//:test-fast` + lint green. Stack changes must be verified on the de
 - `searxng/settings.yml`, `homepage/**`, `proxy/*.conf` — payloads bind-mounted read-only. `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML only under `homepage/config/*.yaml` and `litellm/config.yaml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
 - Runtime is `docker compose`. Do not add Kubernetes.
-- LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (`primary-github`); never introduce a static token or PAT.
+- LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env); never introduce a static token or PAT.
 
 ## Working rules
 - Short-lived branch from tip of `main` (`feat/`, `fix/`, `refactor/`, …), one change per branch, PR into `main`.

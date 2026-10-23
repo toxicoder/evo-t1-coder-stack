@@ -94,7 +94,7 @@ while the managed block is intact.
 - `github_mcp` (default `false`) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
   `${GH_TOKEN}` **by name**, so no token value is ever part of a template variable.
-  The agent environment fills it from the `primary-github` External Auth provider; a
+  The agent environment fills it from the Coder External Auth provider (id `github` by default); a
   workspace whose owner connected no GitHub account renders the block anyway and pays
   one failed handshake per session.
 - `grok_config_extra` appends whatever the create form's **Grok config extras** field

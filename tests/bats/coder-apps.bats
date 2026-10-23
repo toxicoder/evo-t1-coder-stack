@@ -92,6 +92,31 @@ app_block() {
   done
 }
 
+@test "github: both twins declare External Auth via var.github_auth_id" {
+  # Coder CE injects a GitHub App whose id is "github" when coder.env is
+  # absent. Hardcoding primary-github made templates push fail at activation
+  # with "external auth provider primary-github is not configured".
+  local tpl
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    grep -Fq 'id       = var.github_auth_id' "${tpl}"
+    grep -Fq 'cron    = "0 0 */6 * * *"' "${tpl}"
+    grep -Fq 'CODER_GITHUB_AUTH_ID = var.github_auth_id' "${tpl}"
+    grep -Fq "coder external-auth access-token '\${var.github_auth_id}'" "${tpl}"
+  done
+  if grep -E 'id[[:space:]]*=[[:space:]]*"primary-github"' "${TEMPLATE_TWINS[@]}"; then
+    return 1
+  fi
+}
+
+@test "github: both twins default github_auth_id to Coder's injected App id" {
+  local tf
+  for tf in "${REPO_ROOT}/templates/workspace/coder.tf" "${REPO_ROOT}/templates/devcontainer/coder.tf"; do
+    [ -f "${tf}" ]
+    grep -Fq 'variable "github_auth_id"' "${tf}"
+    sed -n '/variable "github_auth_id"/,/^}/p' "${tf}" | grep -Fq 'default     = "github"'
+  done
+}
+
 @test "app lane: LiteLLM keeps dialling the host gateway from inside" {
   # The app link reaches the proxy through the workspace, never through
   # litellm-gmktecbeast. A literal published port would name one machine's

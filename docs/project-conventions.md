@@ -125,8 +125,11 @@ templates; a staged copy that lacks either payload fails the push early by desig
   probes the full run makes (tools, compose plugin, placeholder secrets by name, hosts,
   certs, GPU, images) and writes nothing. An unrecognised argument in either script is
   an error, never a silent fall-through to the mutating run.
-- GitHub auth is Coder External Auth, id `primary-github`. There is no GitHub-token
-  template variable and no PAT in any agent env map.
+- GitHub auth is Coder External Auth, id `github` by default (Coder's injected
+  GitHub App when coder.env is absent). A custom OAuth app in coder.env keeps
+  its `CODER_EXTERNAL_AUTH_0_ID` (commonly `primary-github`); push-template.sh
+  forwards that id. There is no GitHub-token template variable and no PAT in
+  any agent env map.
 
 Runtime stays `docker compose`: Bazel runs the CLIs that drive Compose and never talks to a
 daemon, a Spark box, or a model registry by itself. No Kubernetes layer.

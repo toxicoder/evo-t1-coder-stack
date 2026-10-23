@@ -689,9 +689,11 @@ bazelisk run //scripts:new-workspace -- --additional-repos "https://github.com/f
 GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
 
 - An `ssh://` or `git@` URL reaches nothing here - this stack provisions no SSH keys.
-- The path is Coder's external-auth broker, provider id `primary-github`, configured
-  **once** in `coder.env` (beside `docker-compose.yml`) and linked to **both**
-  templates.
+- The path is Coder's external-auth broker. With no `coder.env`, Coder CE injects
+  a GitHub App whose id is `github`, and both templates declare that id by
+  default. A custom OAuth app lives in `coder.env` (beside `docker-compose.yml`);
+  `push-template.sh` forwards `CODER_EXTERNAL_AUTH_0_ID` so the templates declare
+  the same id. Link that provider to **both** templates.
 - Fill every `CODER_EXTERNAL_AUTH_0_*` key or omit them all. A defined-but-empty key
   crash-loops the server, which is why these keys live in `coder.env` and not in `.env`.
 - Then connect your GitHub account under Settings -> Tokens / external auth.

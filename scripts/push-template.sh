@@ -220,6 +220,37 @@ env_get() {
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true
 }
 
+# @function github_auth_provider_id
+# Print the Coder External Auth provider id the templates should declare.
+# coder.env's CODER_EXTERNAL_AUTH_0_ID wins when set (a custom GitHub OAuth
+# app suppresses Coder's injected default); otherwise Coder v2.36 injects a
+# GitHub App whose id is "github", which is what a default deploy has.
+# Globals:
+#   die
+# Arguments:
+#   $1 - optional path to coder.env (default: coder.env)
+# Outputs:
+#   The provider id on stdout; never prints other coder.env keys
+# Returns:
+#   0, or die on a value that is not a Coder provider id
+github_auth_provider_id() {
+  local file="${1:-coder.env}" value=""
+  if [ -f "${file}" ]; then
+    value="$(sed -n 's|^CODER_EXTERNAL_AUTH_0_ID=||p' "${file}" 2>/dev/null | tail -n 1 |
+      sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true)"
+  fi
+  if [ -z "${value}" ]; then
+    printf '%s' github
+    return 0
+  fi
+  case "${value}" in
+    *[!A-Za-z0-9._-]*)
+      die "CODER_EXTERNAL_AUTH_0_ID in ${file} is not a Coder provider id (got ${value})"
+      ;;
+  esac
+  printf '%s' "${value}"
+}
+
 # @function first_line
 # Print the first non-blank line of a block of text.
 # Globals:
@@ -527,14 +558,26 @@ if [ -n "${grok_profile_mode}" ]; then
   log "grok_profile_mode=${grok_profile_mode} passed from ${profile_mode_key} in .env"
 fi
 
-# github_mcp is the only GitHub key that still travels as a --var, and it is a
-# boolean toggle, not a credential: it decides whether the rendered
-# ~/.grok/config.toml declares the github MCP HTTP server at all. The token that
-# server authenticates with is never passed here — there is no GitHub-token
-# template variable any more. A workspace's GitHub credential comes from the
-# `primary-github` External Auth provider, which the agent resolves per start
-# (see the coder_script in each template's main.tf), so nothing in this script,
-# in .env, or in a rendered config.toml ever holds a personal access token.
+# github_auth_id is the External Auth provider the templates declare. It is an
+# id, not a credential. Coder CE v2.36 injects a GitHub App whose id is
+# "github" when coder.env is absent; a custom OAuth app in coder.env names its
+# own CODER_EXTERNAL_AUTH_0_ID (commonly primary-github) and that value is
+# forwarded so existing account links keep working. Always passed so the
+# pushed template is explicit. Never source coder.env: empty
+# CODER_EXTERNAL_AUTH_* keys crash-loop the server, and the rest of that file
+# is secrets.
+github_auth_id="$(github_auth_provider_id)"
+vars+=(--var "github_auth_id=${github_auth_id}")
+log "github_auth_id=${github_auth_id} (Coder External Auth provider the templates declare)"
+
+# github_mcp is a boolean toggle, not a credential: it decides whether the
+# rendered ~/.grok/config.toml declares the github MCP HTTP server at all. The
+# token that server authenticates with is never passed here — there is no
+# GitHub-token template variable. A workspace's GitHub credential comes from
+# the External Auth provider named by github_auth_id, which the agent resolves
+# per start (see the coder_script in each template's main.tf), so nothing in
+# this script, in .env, or in a rendered config.toml ever holds a personal
+# access token.
 if [ "$(env_get GITHUB_MCP)" = "true" ]; then
   vars+=(--var "github_mcp=true")
   log "github_mcp passed from GITHUB_MCP (github MCP server on for every workspace)"

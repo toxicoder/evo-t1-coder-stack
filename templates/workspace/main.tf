@@ -30,16 +30,21 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
-# GitHub auth for the whole stack is ONE Coder External Auth provider, id
-# `primary-github`, created in the Coder UI against a GitHub OAuth app and then
-# linked to this template. `optional` is load-bearing: without it a plan against
-# an owner who never connected a GitHub account fails outright instead of
-# coming up without a credential, which is the ordinary case here. A minted
-# token arrives in the agent environment below and is re-minted by
+# GitHub auth for the whole stack is ONE Coder External Auth provider. The id
+# is var.github_auth_id (default "github"): Coder CE v2.36 injects a managed
+# GitHub App with that id when no CODER_EXTERNAL_AUTH_* keys are set. A custom
+# OAuth app in coder.env uses its own id (commonly primary-github);
+# push-template.sh forwards CODER_EXTERNAL_AUTH_0_ID so those account links
+# keep working. `optional` is load-bearing: without it a plan against an owner
+# who never connected a GitHub account fails outright instead of coming up
+# without a credential, which is the ordinary case here. A minted token arrives
+# in the agent environment below and is re-minted by
 # coder_script.gh_token_refresh, because it expires long before the workspace
 # does — and an owner who connected nothing gets no GitHub credential anywhere.
+# Template *import* still requires this id to exist on the deployment even with
+# optional = true, which is why the default matches the injected App.
 data "coder_external_auth" "github" {
-  id       = "primary-github"
+  id       = var.github_auth_id
   optional = true
 }
 
@@ -449,6 +454,10 @@ resource "coder_agent" "main" {
     # from the create-form dropdown, so it always agrees with the [models] default
     # the startup script renders.
     GROK_DEFAULT_MODEL = data.coder_parameter.grok_default_model.value
+    # Non-secret: the External Auth provider id this workspace mints from.
+    # scripts/github-auth.sh and in-workspace `coder external-auth` calls read
+    # it; default is Coder's injected GitHub App (`github`).
+    CODER_GITHUB_AUTH_ID = var.github_auth_id
     # No CODER_AGENT_EXP_* overrides on purpose (verified against the v2.36.6
     # binary + its agentcontextconfig source): these keys REPLACE the agent's
     # discovery defaults rather than appending to them, and the defaults are
@@ -466,7 +475,7 @@ resource "coder_agent" "main" {
     # does not exist would make every docker command in the workspace fail with
     # a confusing connection error instead of the plain "command not found".
     local.dind_enabled ? { DOCKER_HOST = local.dind_host } : {},
-    # Minted per owner by the `primary-github` provider above, and only when that
+    # Minted per owner by the External Auth provider above, and only when that
     # owner connected a GitHub account: with no connection this map is empty and
     # the workspace gets exactly the environment it had before any of this
     # existed. When present the pair travels as environment variables, like
@@ -497,19 +506,21 @@ resource "coder_script" "gh_token_refresh" {
   icon         = "/icon/github.svg"
   run_on_start = true
   # Longer than the token's own lifetime, so the credential is never already
-  # expired by the time something in the workspace reaches for it.
-  cron    = "0 */6 * * *"
+  # expired by the time something in the workspace reaches for it. Coder uses
+  # 6-field cron (seconds minutes hours day month dow); the Unix 5-field form
+  # `0 */6 * * *` warns at plan time.
+  cron    = "0 0 */6 * * *"
   timeout = 30
 
   script = <<-EOT
     #!/bin/bash
     set -u
-    # No coder CLI in the image, or no `primary-github` provider linked to this
+    # No coder CLI in the image, or no External Auth provider linked to this
     # template: there is nothing to mint from, and saying so is not news.
     command -v coder >/dev/null 2>&1 || exit 0
-    token="$(coder external-auth access-token primary-github 2>/dev/null || true)"
+    token="$(coder external-auth access-token '${var.github_auth_id}' 2>/dev/null || true)"
     if [ -z "$token" ]; then
-      echo "no GitHub token for this account: connect the 'primary-github' provider in Coder (Settings -> Tokens -> external auth) and reconnect your GitHub account, then restart the workspace." >&2
+      echo "no GitHub token for this account: connect the '${var.github_auth_id}' provider in Coder (Settings -> Tokens -> external auth) and reconnect your GitHub account, then restart the workspace." >&2
       exit 0
     fi
     # gh reads either name from the environment, and `gh auth git-credential` is
