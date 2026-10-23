@@ -139,6 +139,23 @@ load_fn() {
   [ "${status}" -eq 0 ]
 }
 
+@test "push-template: icon_data_url_guard rejects an SVG whose data URL exceeds 256 characters" {
+  load_fn scripts/push-template.sh die
+  load_fn scripts/push-template.sh icon_data_url_guard
+  svg="${BATS_TEST_TMPDIR}/vscode-alt.svg"
+  # 172 bytes -> 4*ceil(172/3)+26 = 258, just over the column.
+  printf 'x%.0s' {1..172} >"${svg}"
+  run icon_data_url_guard "${svg}"
+  [ "${status}" -eq 1 ]
+  assert_match "varchar" '256' "${output}"
+  printf '%s\n' '<svg/>' >"${svg}"
+  run icon_data_url_guard "${svg}"
+  [ "${status}" -eq 0 ]
+  # A missing file is template_push_one's job, so this guard stays silent.
+  run icon_data_url_guard "${BATS_TEST_TMPDIR}/no-such.svg"
+  [ "${status}" -eq 0 ]
+}
+
 @test "push-template: cleanup_token deletes the push token" {
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/coder_api.sh"

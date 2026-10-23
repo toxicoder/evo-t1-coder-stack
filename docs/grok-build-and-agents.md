@@ -57,6 +57,9 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 - The icon travels as a `data:image/svg+xml;base64` data URL read from
   `templates/common/vscode-alt.svg`: Coder serves icons only from its bundled
   `/icon/*` set or a full `https`/`data` URL, and that icon is not bundled.
+  `workspace_apps.icon` is `varchar(256)` on Coder v2.36, so the SVG is a compact
+  ribbon whose data URL fits that column; a larger file fails `templates push`
+  with `pq: value too long for type character varying(256)`.
 
 ## The Grok Build CLI in the golden image
 

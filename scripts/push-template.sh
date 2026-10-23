@@ -562,6 +562,36 @@ fi
 # template, and because a token per template would have to be minted and dropped
 # inside the loop, where a failure between the two leaves it alive.
 
+# Coder v2.36 stores workspace_apps.icon as varchar(256). Both templates inline
+# templates/common/vscode-alt.svg as a data:image/svg+xml;base64 URL into
+# coder_app.code_server (and the matching coder_script). Terraform's filebase64()
+# emits unwrapped standard base64, whose length is 4*ceil(n/3); the prefix is 26
+# characters. A 5 KB SVG produced a ~7 k character URL and failed the push with
+# pq: value too long for type character varying(256) at insert agent app. Catch
+# that here, on the common copy both templates stage, before the CLI runs.
+# A missing file is template_push_one's job, so this returns 0 when the path
+# is absent and only dies on a file that would overflow the column.
+# @function icon_data_url_guard
+# Reject a vscode-alt.svg whose inlined data URL would exceed 256 characters.
+# Globals:
+#   die
+# Arguments:
+#   $1 - path to vscode-alt.svg
+# Outputs:
+#   An error via die when the data URL would not fit
+# Returns:
+#   0 when the file is missing or the data URL fits; does not return when it does not
+icon_data_url_guard() {
+  local svg="$1" bytes url_len
+  [ -f "${svg}" ] || return 0
+  bytes="$(wc -c <"${svg}")"
+  bytes="${bytes//[!0-9]/}"
+  url_len=$((4 * ((bytes + 2) / 3) + 26))
+  if [ "${url_len}" -gt 256 ]; then
+    die "${svg}: inlined data URL is ${url_len} characters (Coder's workspace_apps.icon column is varchar(256))"
+  fi
+}
+
 # Coder's API caps a workspace-preset description at 128 bytes, and the provider
 # only reports that during the plan, which is the slowest place to learn it.
 # Measured here instead. Only coder_workspace_preset blocks are checked:
@@ -695,6 +725,7 @@ for entry in "${selected[@]}"; do
     log "      terraform -chdir=${dir} init -backend=false"
   fi
   preset_desc_guard "${dir}"
+  icon_data_url_guard "$(dirname "${dir}")/common/vscode-alt.svg"
 
   log "pushing ${dir} as template ${name} (image ${dev_image}) to ${CONTAINER_API_URL} in ${CODER_SERVICE} ..."
   push_rc=0

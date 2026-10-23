@@ -676,8 +676,10 @@ resource "coder_devcontainer" "repo" {
 # the same fork in templates/workspace/main.tf: the module hardcodes
 # /icon/code.svg and has no icon input, so the stack's own
 # templates/common/vscode-alt.svg travels as a data: URL (the local below
-# says why the file has to travel), the editor binary is installed fresh
-# into /tmp/code-server on every start because both modes rebuild the
+# says why the file has to travel, and why it has to stay small:
+# workspace_apps.icon is varchar(256) on Coder v2.36), the editor binary
+# is installed fresh into /tmp/code-server on every start because both
+# modes rebuild the
 # container that hosts the editor (a persistent prefix would hold nothing),
 # and no machine settings are passed, so a machine-scoped copy cannot
 # override the user file anywhere.
@@ -696,7 +698,8 @@ resource "coder_devcontainer" "repo" {
 
 locals {
   # One private icon, inlined because Coder serves /icon/ only from its
-  # bundled set, where no vscode-alt.svg exists.
+  # bundled set, where no vscode-alt.svg exists. Keep the SVG compact: the
+  # resulting data URL has to fit workspace_apps.icon (varchar(256)).
   vscode_alt_icon = "data:image/svg+xml;base64,${filebase64("${path.module}/vscode-alt.svg")}"
 }
 

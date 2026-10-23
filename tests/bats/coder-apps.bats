@@ -6,7 +6,10 @@
 # editor button's icon is a private SVG inlined as a data URI, because Coder
 # serves /icon/ only from its own bundled set and that set has no
 # vscode-alt.svg; the same local also feeds coder_script.code_server, so
-# dropping it moves the editor button and the script row together. The proxied
+# dropping it moves the editor button and the script row together. The data
+# URL has to stay at or under 256 characters: Coder v2.36 stores
+# workspace_apps.icon as varchar(256), and a longer value fails templates
+# push with pq: value too long for type character varying(256). The proxied
 # apps ride the path form (/@<owner>/<ws>.<agent>/apps/<slug>) on the coder
 # hostname: subdomain stays false because nothing on this box publishes a
 # wildcard origin, and share stays owner, so a working <service>-name subdomain
@@ -49,6 +52,18 @@ app_block() {
     run grep -F 'vscode_alt_icon = "data:image/svg+xml;base64,${filebase64("${path.module}/vscode-alt.svg")}"' "${tpl}"
     [ "${status}" -eq 0 ]
   done
+}
+
+@test "icon: the inlined data URL fits Coder's varchar(256) workspace_apps.icon column" {
+  # filebase64() emits unwrapped standard base64 (4*ceil(n/3)); the prefix
+  # data:image/svg+xml;base64, is 26 characters. A 5 KB SVG produced a ~7 k
+  # character URL and died at insert agent app.
+  local svg="${REPO_ROOT}/templates/common/vscode-alt.svg" bytes url_len
+  [ -f "${svg}" ]
+  bytes="$(wc -c <"${svg}")"
+  bytes="${bytes//[!0-9]/}"
+  url_len=$((4 * ((bytes + 2) / 3) + 26))
+  [ "${url_len}" -le 256 ]
 }
 
 @test "icon: the editor button keeps its icon, not just the script row" {

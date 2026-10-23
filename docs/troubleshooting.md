@@ -364,6 +364,26 @@ docker pull docker:29.8.1-dind
 
 ## Terraform and the host `coder` CLI
 
+### `pq: value too long for type character varying(256)` from `push-template` -> editor icon data URL
+
+- Symptom: `coder templates push` plans, then dies during "Cleaning Up" with
+  `internal provisionerserver error: execute transaction: insert resource: insert
+  agent app: upsert app: pq: value too long for type character varying(256)`.
+  Coder logs `coder_app's id was unexpectedly empty` and then that Postgres error
+  at `inserting template import job resource`.
+- Cause: both templates inline `templates/common/vscode-alt.svg` as a
+  `data:image/svg+xml;base64` URL on `coder_app.code_server`. Coder v2.36 stores
+  `workspace_apps.icon` as `varchar(256)`. A multi-kilobyte SVG produces a data
+  URL thousands of characters long, and the insert fails. The provisioner
+  reports it at `insert agent app: upsert app`.
+- Fix: the SVG is a compact ribbon whose data URL fits the column, and
+  `push-template` rejects a too-large copy locally before talking to the server.
+  Pull this commit onto the stack host and re-run:
+
+```sh
+bazelisk run //scripts:push-template
+```
+
 ### `Error: No configuration files` from `push-template` -> runfiles symlinks in the tar
 
 - Symptom: both templates fail during "Detecting persistent resources" with
