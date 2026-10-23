@@ -36,6 +36,10 @@ setup() {
   export STUB_LOG="${BATS_TEST_TMPDIR}/stub-logs"
   mkdir -p "${STUB_LOG}"
   use_stubs docker timeout curl psql coder
+  # bazelisk run exports BUILD_WORKSPACE_DIRECTORY; a leaked value would make
+  # fake_root resolve the real checkout instead of the throwaway tree.
+  unset BUILD_WORKSPACE_DIRECTORY GITHUB_WORKSPACE REPO_ROOT || true
+  REPO_ROOT="$(bats_canonical_repo_root)"
 }
 
 # fake_root <script> [env-line...] — print a throwaway repo root holding the
@@ -317,6 +321,104 @@ logs_absent() {
   grep -Fq -- '-e CODER_SESSION_TOKEN' "${STUB_LOG}/docker.log"
 }
 
+@test "push-template: resolve_repo_root only accepts a directory holding docker-compose.yml" {
+  load_shell_function "${REPO_ROOT}/scripts/push-template.sh" resolve_repo_root
+
+  local nowhere="${BATS_TEST_TMPDIR}/nowhere"
+  local proven="${BATS_TEST_TMPDIR}/proven"
+  mkdir -p "${nowhere}" "${proven}/scripts"
+  printf 'x\n' >"${proven}/docker-compose.yml"
+
+  REPO_ROOT=""
+  GITHUB_WORKSPACE=""
+  BUILD_WORKSPACE_DIRECTORY=""
+  SELF_DIR="${nowhere}"
+  cd "${nowhere}"
+
+  run --separate-stderr resolve_repo_root
+  [ "${status}" -eq 5 ]
+  [[ ${stderr} == *"unresolvable repo root"* ]]
+  [[ ${stderr} == *"need docker-compose.yml"* ]]
+
+  cd "${proven}"
+  run --separate-stderr resolve_repo_root
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${proven}" ]
+
+  cd "${nowhere}"
+  REPO_ROOT="${proven}"
+  run --separate-stderr resolve_repo_root
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${proven}" ]
+
+  SELF_DIR="${proven}/scripts"
+  REPO_ROOT=""
+  cd "${nowhere}"
+  run --separate-stderr resolve_repo_root
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${proven}/scripts/.." ]
+}
+
+@test "push-template: resolve_repo_root prefers the script tree over PWD" {
+  # bazelisk test sets cwd to a runfiles tree that also has docker-compose.yml.
+  # Whole-script tests launch bash /fake-root/scripts/push-template.sh from
+  # there and must still resolve the fake root, not the harness cwd.
+  load_shell_function "${REPO_ROOT}/scripts/push-template.sh" resolve_repo_root
+  script_tree="$(make_scratch)/script-tree"
+  harness_cwd="$(make_scratch)/harness-cwd"
+  mkdir -p "${script_tree}/scripts" "${harness_cwd}"
+  printf 'x\n' >"${script_tree}/docker-compose.yml"
+  printf 'x\n' >"${harness_cwd}/docker-compose.yml"
+  REPO_ROOT=""
+  unset GITHUB_WORKSPACE
+  BUILD_WORKSPACE_DIRECTORY=""
+  SELF_DIR="${script_tree}/scripts"
+  cd "${harness_cwd}"
+  run --separate-stderr resolve_repo_root
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${script_tree}/scripts/.." ]
+}
+
+@test "push-template: resolve_repo_root prefers BUILD_WORKSPACE_DIRECTORY over PWD" {
+  load_shell_function "${REPO_ROOT}/scripts/push-template.sh" resolve_repo_root
+  workspace="$(make_scratch)/workspace"
+  runfiles="$(make_scratch)/runfiles"
+  mkdir -p "${workspace}" "${runfiles}/scripts"
+  printf 'x\n' >"${workspace}/docker-compose.yml"
+  printf 'x\n' >"${runfiles}/docker-compose.yml"
+  REPO_ROOT=""
+  unset GITHUB_WORKSPACE
+  BUILD_WORKSPACE_DIRECTORY="${workspace}"
+  cd "${runfiles}"
+  SELF_DIR="${runfiles}/scripts"
+  run --separate-stderr resolve_repo_root
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${workspace}" ]
+}
+
+@test "push-template: BUILD_WORKSPACE_DIRECTORY .env beats the script copy" {
+  # bazelisk run launches the runfiles copy of the script; the live .env
+  # lives in the checkout named by BUILD_WORKSPACE_DIRECTORY.
+  root="$(fake_root push-template.sh 'LITELLM_MASTER_KEY=change-me-from-runfiles')"
+  checkout="$(make_scratch)/checkout"
+  mkdir -p "${checkout}/scripts/lib" "${checkout}/templates/workspace" \
+    "${checkout}/templates/devcontainer" "${checkout}/templates/common"
+  : >"${checkout}/docker-compose.yml"
+  printf '%s\n' 'LITELLM_MASTER_KEY=sk-from-checkout-0123456789abcdef' >"${checkout}/.env"
+  cp -R "${root}/templates/." "${checkout}/templates/"
+  : >"${checkout}/templates/workspace/.terraform.lock.hcl"
+  : >"${checkout}/templates/devcontainer/.terraform.lock.hcl"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  export BUILD_WORKSPACE_DIRECTORY="${checkout}"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"litellm_key passed from LITELLM_MASTER_KEY (value not shown)"* ]]
+  [[ ${output} != *"sk-from-checkout-0123456789abcdef"* ]]
+  grep -Fq -- '--var litellm_key=sk-from-checkout-0123456789abcdef' "${STUB_LOG}/docker.log"
+}
+
 # ── template-push.sh (moved from lib.bats; keep these assertions) ──────────
 
 source_libs() {
@@ -391,6 +493,45 @@ source_libs() {
     printf 'leak: .terraform reached the pushed tar\n' >&2
     return 1
   fi
+}
+
+@test "template-push: runfiles symlinks land as regular files in the tar" {
+  source_libs
+  # bazelisk run materializes templates/** as symlinks into the execroot.
+  # Coder unpacks the archive in an empty workdir and does not follow those
+  # host paths, so a stored symlink plans as "No configuration files".
+  mkdir -p "${BATS_TEST_TMPDIR}/real" "${BATS_TEST_TMPDIR}/runfiles/tpl" \
+    "${BATS_TEST_TMPDIR}/runfiles/common"
+  printf '%s\n' 'resource "coder_script" "x" {}' >"${BATS_TEST_TMPDIR}/real/main.tf"
+  printf '%s\n' 'startup-body' >"${BATS_TEST_TMPDIR}/real/startup.sh.tftpl"
+  printf '%s\n' '# Role' >"${BATS_TEST_TMPDIR}/real/GROK_BUILD_AGENTS.md"
+  printf '%s\n' '<svg/>' >"${BATS_TEST_TMPDIR}/real/vscode-alt.svg"
+  ln -s "${BATS_TEST_TMPDIR}/real/main.tf" "${BATS_TEST_TMPDIR}/runfiles/tpl/main.tf"
+  ln -s "${BATS_TEST_TMPDIR}/real/startup.sh.tftpl" "${BATS_TEST_TMPDIR}/runfiles/tpl/startup.sh.tftpl"
+  ln -s "${BATS_TEST_TMPDIR}/real/GROK_BUILD_AGENTS.md" "${BATS_TEST_TMPDIR}/runfiles/common/GROK_BUILD_AGENTS.md"
+  ln -s "${BATS_TEST_TMPDIR}/real/vscode-alt.svg" "${BATS_TEST_TMPDIR}/runfiles/common/vscode-alt.svg"
+  printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' >"${BATS_TEST_TMPDIR}/bin/tar-sink"
+  chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
+  export DOCKER_BIN=tar-sink
+  export CODER_CONTAINER=stack-coder-1
+  template_push_one tpl-runfiles "${BATS_TEST_TMPDIR}/runfiles/tpl"
+  if [ ! -f "${STUB_LOG}/push.tar" ]; then
+    printf 'FAIL: no tar stream reached the sink\n' >&2
+    return 1
+  fi
+  tar -tvf "${STUB_LOG}/push.tar" >"${BATS_TEST_TMPDIR}/listing.txt"
+  if grep -E 'main\.tf|startup\.sh\.tftpl|GROK_BUILD_AGENTS\.md|vscode-alt\.svg' "${BATS_TEST_TMPDIR}/listing.txt" | grep -q ' -> '; then
+    printf 'FAIL: archive stored a symlink instead of file contents:\n%s\n' "$(cat "${BATS_TEST_TMPDIR}/listing.txt")" >&2
+    return 1
+  fi
+  mkdir -p "${BATS_TEST_TMPDIR}/extracted"
+  tar -xf "${STUB_LOG}/push.tar" -C "${BATS_TEST_TMPDIR}/extracted"
+  [ -f "${BATS_TEST_TMPDIR}/extracted/main.tf" ]
+  [ ! -L "${BATS_TEST_TMPDIR}/extracted/main.tf" ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/main.tf")" = 'resource "coder_script" "x" {}' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/startup.sh.tftpl")" = 'startup-body' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/GROK_BUILD_AGENTS.md")" = '# Role' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/vscode-alt.svg")" = '<svg/>' ]
 }
 
 @test "template-push: a tree without the seed payload is refused before the CLI runs" {

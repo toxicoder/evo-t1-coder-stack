@@ -84,8 +84,9 @@ Each CLI target also declares the repo files that script reads by path — `//:s
 `searxng/**`, `homepage/**`, `proxy/**`, the two `.env` samples, `LICENSE`) and
 `//scripts:doc_sources` (every `scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves
 too). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
-`bazelisk run` of a stack runner prefers `BUILD_WORKSPACE_DIRECTORY` — the real checkout —
-over the runfiles copy as the compose project directory. Without the committed payloads a
+`bazelisk run` of a stack runner or of `push-template` prefers `BUILD_WORKSPACE_DIRECTORY` — the real checkout —
+over the runfiles copy as the compose project directory, the live `.env`, and the template tree (runfiles
+`templates/**` are symlinks that Coder cannot follow after unpack). Without the committed payloads a
 sandboxed run would read a partial copy of the repo and fail for the wrong reason. A new
 top-level payload directory has to be added to that `glob` by hand: `test-fast` and `lint`
 only see repo files that travel in runfiles, so an unlisted directory is invisible to the

@@ -364,6 +364,25 @@ docker pull docker:29.8.1-dind
 
 ## Terraform and the host `coder` CLI
 
+### `Error: No configuration files` from `push-template` -> runfiles symlinks in the tar
+
+- Symptom: both templates fail during "Detecting persistent resources" with
+  `Terraform initialized in an empty directory!` / `Error: No configuration files`.
+  Coder logs `unpacking source archive  size_bytes=30720` (tens of KB, not the
+  ~120 KB of real `.tf` / `.tftpl` contents).
+- Cause: `bazelisk run` executes from the runfiles tree, where `templates/**` are
+  symlinks into the execroot. A tar that stores those links unpacks in the
+  provisioner as dangling paths, so Terraform sees no `.tf` files. The two
+  `templates/common/` payloads still land (copied with `cp`, which follows
+  links), which is why the archive is small rather than empty.
+- Fix: `push-template` now prefers `BUILD_WORKSPACE_DIRECTORY` (the live
+  checkout) and stages with `tar -h` so the archive holds regular files. Pull
+  this commit onto the stack host and re-run:
+
+```sh
+bazelisk run //scripts:push-template
+```
+
 ### `.terraform.lock.hcl is missing` -> a note, not a failure
 
 - `bazelisk run //scripts:push-template` prints it because no lockfile is committed
