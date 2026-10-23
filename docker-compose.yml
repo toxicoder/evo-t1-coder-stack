@@ -159,7 +159,14 @@ services:
     # with "password authentication failed for user coder". The healthcheck
     # authenticates over TCP with that same password, so Coder is not started
     # until the role matches .env.
+    #
+    # command: ["postgres"] is load-bearing: a compose `entrypoint:` override
+    # clears the image CMD, so without it the wrapper is exec'd with no
+    # arguments, docker-entrypoint.sh's `exec "$@"` is a no-op, the
+    # container exits 0 in tens of milliseconds, and `depends_on: service_healthy`
+    # fails with "container evo-t1-prod-db-1 is unhealthy".
     entrypoint: ["/usr/local/bin/pg-apply-password.sh"]
+    command: ["postgres"]
     environment:
       POSTGRES_USER: coder
       POSTGRES_PASSWORD: ${CODER_PG_PASSWORD:-change-me-postgres}

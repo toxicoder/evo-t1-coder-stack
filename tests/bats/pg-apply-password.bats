@@ -37,6 +37,9 @@ setup() {
   local compose="${REPO_ROOT}/docker-compose.yml"
   assert_file_exists "compose file" "${compose}"
   assert_match "entrypoint" 'pg-apply-password\.sh' "$(cat "${compose}")"
+  # Overriding entrypoint clears the image CMD; without this the wrapper
+  # is exec'd with no args and the container exits 0 without starting postgres.
+  assert_match "command postgres" 'command: \["postgres"\]' "$(cat "${compose}")"
   assert_match "tcp healthcheck uses PGPASSWORD" 'PGPASSWORD=' "$(cat "${compose}")"
   assert_file_exists "wrapper is a regular file" "${LIB}"
 }
@@ -93,6 +96,34 @@ EOF
   assert_match "psql user" 'psql -U coder -d coder -v ON_ERROR_STOP=1 -q$' "$(stub_log_last psql)"
 }
 
+@test "pg-apply-password: compose_up_or_diagnose_db is a no-op failure without run_compose" {
+  unset -f run_compose 2>/dev/null || true
+  run --separate-stderr compose_up_or_diagnose_db
+  [ "${status}" -eq 1 ]
+}
+
+@test "pg-apply-password: compose_up_or_diagnose_db prints db logs when up fails" {
+  local logf="${STUB_LOG}/run_compose.log"
+  : >"${logf}"
+  run_compose() {
+    printf 'run_compose %s\n' "$*" >>"${STUB_LOG}/run_compose.log"
+    if [[ $* == *up* ]]; then
+      return 1
+    fi
+    if [[ $* == *logs* ]]; then
+      printf '%s\n' 'db: exec /usr/local/bin/pg-apply-password.sh: empty argv, exited 0'
+    fi
+    return 0
+  }
+
+  run --separate-stderr compose_up_or_diagnose_db
+  [ "${status}" -eq 1 ]
+  assert_match "note" 'last db logs follow' "${stderr}"
+  assert_match "db log body" 'empty argv, exited 0' "${output}"
+  assert_match "asked up" 'up -d' "$(cat "${logf}")"
+  assert_match "asked db logs" 'logs --tail 80 db' "$(cat "${logf}")"
+}
+
 @test "pg-apply-password: restart_coder_if_pg_auth_failed is a no-op without run_compose" {
   unset -f run_compose 2>/dev/null || true
   run --separate-stderr restart_coder_if_pg_auth_failed
@@ -129,6 +160,7 @@ EOF
 @test "pg-apply-password: pg_apply_password_entrypoint applies POSTGRES_PASSWORD once postgres is ready" {
   cat >"${BATS_TEST_TMPDIR}/bin/docker-entrypoint.sh" <<'EOF'
 #!/bin/sh
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "docker-entrypoint $*" >> "${STUB_LOG}/docker-entrypoint.sh.log"; fi
 exit 0
 EOF
   cat >"${BATS_TEST_TMPDIR}/bin/pg_isready" <<'EOF'
@@ -145,4 +177,25 @@ EOF
   [ "${status}" -eq 0 ]
   assert_match "applied" 'aligned role coder with POSTGRES_PASSWORD' "${output}"
   assert_match "psql user" 'psql -U coder -d coder -v ON_ERROR_STOP=1 -q$' "$(stub_log_last psql)"
+  assert_match "image cmd" 'docker-entrypoint postgres' "$(cat "${STUB_LOG}/docker-entrypoint.sh.log")"
+}
+
+@test "pg-apply-password: pg_apply_password_entrypoint defaults empty argv to postgres" {
+  cat >"${BATS_TEST_TMPDIR}/bin/docker-entrypoint.sh" <<'EOF'
+#!/bin/sh
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "docker-entrypoint $*" >> "${STUB_LOG}/docker-entrypoint.sh.log"; fi
+exit 0
+EOF
+  cat >"${BATS_TEST_TMPDIR}/bin/pg_isready" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod 755 "${BATS_TEST_TMPDIR}/bin/docker-entrypoint.sh" "${BATS_TEST_TMPDIR}/bin/pg_isready"
+  export POSTGRES_USER=coder
+  export POSTGRES_PASSWORD=rotated-secret
+  export POSTGRES_DB=coder
+
+  run --separate-stderr bash "${LIB}"
+  [ "${status}" -eq 0 ]
+  assert_match "defaulted cmd" 'docker-entrypoint postgres' "$(cat "${STUB_LOG}/docker-entrypoint.sh.log")"
 }

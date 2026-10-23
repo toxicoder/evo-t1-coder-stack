@@ -325,3 +325,20 @@ ENV
   assert_match "compose up" 'up -d' "$(stub_log docker)"
   assert_not_match "no bounce" 'restart coder' "$(stub_log docker)"
 }
+
+@test "prod-stack: up prints db logs when compose up fails" {
+  workspace="$(make_scratch)/workspace"
+  mkdir -p "${workspace}"
+  cp "${REPO_ROOT}/docker-compose.yml" "${workspace}/docker-compose.yml"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" \
+    STUB_COMPOSE_UP_RC=1 \
+    STUB_COMPOSE_LOGS='dependency failed to start: container evo-t1-prod-db-1 is unhealthy' \
+    bash "${STACK}" up
+  [ "${status}" -ne 0 ]
+  assert_match "compose up" 'up -d' "$(stub_log docker)"
+  assert_match "db logs" 'logs --tail 80 db' "$(stub_log docker)"
+  assert_match "note" 'last db logs follow' "${stderr}"
+  assert_match "unhealthy body" 'evo-t1-prod-db-1 is unhealthy' "${output}"
+  assert_not_match "no bounce" 'restart coder' "$(stub_log docker)"
+}

@@ -16,6 +16,16 @@ set -u
 
 if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "psql $*" >> "${STUB_LOG}/psql.log"; fi
 
+# Real psql reads the ALTER USER statement from stdin. Drain it here so a
+# producer running under `set -o pipefail` (the db entrypoint) does not get
+# SIGPIPE when this stub exits before the write; that race failed the
+# entrypoint test on Linux CI and not on macOS.
+if [ -n "${STUB_LOG:-}" ]; then
+  cat >>"${STUB_LOG}/psql.stdin"
+else
+  cat >/dev/null
+fi
+
 if [ -n "${STUB_PSQL_OUT:-}" ]; then
   if [ -f "${STUB_PSQL_OUT}" ]; then cat "${STUB_PSQL_OUT}"; else printf '%s\n' "${STUB_PSQL_OUT}"; fi
 fi
