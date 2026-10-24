@@ -3,17 +3,21 @@
 # ## github-auth.bats - the workspace GitHub credential doctor and one-line auth.
 #
 # Pins the seam added after the first desktop->workspace PR nearly shipped a
-# PR-creating session onto a credential that cannot write: git consults the
-# env token, then gh, then the external-auth mint, and a credential that
-# READS can still be refused every WRITE call. A public repo answers
-# api.github.com /repos with 200 for any authenticated caller, so the read
-# probe could print a false pass; the write probe keys on the HTTP status of
-# the receive-pack ref advertisement instead (200-with-refs is PUSH-READY,
-# 403 REFUSED-GRANT, 404 NOT VISIBLE, 401 REJECTED). STUB_CURL_STATUS plus
-# STUB_CURL_OUT drive those verdicts through the shared curl stub. The
-# docker/curl/timeout/coder/gh stubs keep this hermetic: running_workspaces,
-# credential_probe, probe_self, probe_workspace, auth_workspace, and main all
-# run against stubs only.
+# PR-creating session onto a credential that cannot write, and then after a
+# second session pasted a working PAT into the gh auth store and still got the
+# push 403: git consults the env pair first, then the gh auth store, then the
+# external-auth mint, and a credential that READS can still be refused every
+# WRITE call. A public repo answers api.github.com /repos with 200 for any
+# authenticated caller, so the read probe could print a false pass; the write
+# probe keys on the HTTP status of the receive-pack ref advertisement instead
+# (200-with-refs is PUSH-READY, 403 REFUSED-GRANT, 404 NOT VISIBLE, 401
+# REJECTED) and answers it per credential, so a store copy that holds the same
+# token as the env pair is named once and a store copy that holds a different
+# one is answered beside it. STUB_CURL_STATUS plus STUB_CURL_OUT drive those
+# verdicts through the shared curl stub. The docker/curl/timeout/coder/gh
+# stubs keep this hermetic: running_workspaces, credential_probe,
+# normalize_repo_path, slot_name, probe_self, probe_workspace, auth_workspace,
+# and main all run against stubs only.
 #
 # Usage: bats tests/bats/github-auth.bats
 # Safety: reads scripts/github-auth.sh and the stub bin; writes nothing outside
@@ -219,8 +223,104 @@ setup() {
   assert_not_match "does not also try github first" 'access-token github' "$(stub_log coder)"
 }
 
+@test "check: the chain answers every credential that could cover the repo" {
+  # The trap this exists for: a pasted PAT in the gh auth store sits behind
+  # the env pair, so answering only the first slot found hid the one
+  # credential that might have been able to write.
+  export GH_TOKEN="ghu_APPTOKEN" CODER_WORKSPACE_ID=ws-test
+  run env STUB_GH_TOKEN='ghp_PATTOKEN' STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "self: credential present (source: env token (GITHUB_TOKEN/GH_TOKEN)) but REFUSED-GRANT"* ]]
+  [[ "${lines[1]}" == "self: credential present (source: gh stored login) [shadowed:"* ]]
+  [[ "${output}" == *"GH_TOKEN= GITHUB_TOKEN= <command>"* ]]
+  [[ "${output}" == *"classic personal access token"* ]]
+  [[ "${output}" != *"APPTOKEN"* ]]
+  [[ "${output}" != *"PATTOKEN"* ]]
+  assert_eq "one probe per credential" "2" "$(stub_log_count curl)"
+}
+
+@test "check: one token held twice is one credential, answered once" {
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run env STUB_GH_TOKEN='SECRETVAL-do-not-leak' STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${output}" == *"REFUSED-GRANT"* ]]
+  assert_eq "the store copy is not a second credential" "1" "$(stub_log_count curl)"
+}
+
+@test "check: --source names a slot the env pair outranks and says so" {
+  export GH_TOKEN="ghu_APPTOKEN" CODER_WORKSPACE_ID=ws-test
+  run env STUB_GH_TOKEN='ghp_PATTOKEN' STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check --source=gh https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${lines[0]}" == "self: credential present (source: gh stored login) [shadowed:"* ]]
+  [[ "${output}" == *"[shadowed: the env pair outranks this slot"* ]]
+  assert_eq "one probe, of the named slot" "1" "$(stub_log_count curl)"
+}
+
+@test "check: --source=mint mints the token instead of reading the store" {
+  # The minted token equals the env pair for a moment (a fresh start, or right
+  # after gh_token_refresh), and that is the case where trusting the store
+  # copy would be a different question, so the named slot still has to answer.
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run env STUB_CODER_OUT='minted-token-secret' STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check --source=mint https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == "self: credential present (source: Coder external-auth minted token)"* ]]
+  [[ "${output}" != *"SECRETVAL"* ]]
+  [[ "${output}" != *"minted-token-secret"* ]]
+  assert_match "the mint was minted, not read" 'access-token github' "$(stub_log coder)"
+}
+
+@test "check: --source refuses a slot that does not exist" {
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run bash "${SCRIPT}" check --source=docker-key https://github.com/alx/notes
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"--source takes chain (default), env, gh or mint"* ]]
+  assert_eq "nothing was probed" "0" "$(stub_log_count curl)"
+}
+
+@test "check: a pasted browser URL still names the repository, slash and .git or not" {
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run env STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check https://github.com/alx/notes/
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"REFUSED-GRANT on alx/notes"* ]]
+  run stub_log curl
+  assert_match "the probe path keeps no trailing slash" 'github.com/alx/notes.git/info/refs' "${output}"
+  assert_not_match "no doubled .git" 'notes/.git' "${output}"
+}
+
+@test "check: a path below the repository is refused, never probed" {
+  # github.com serves no ref advertisement under a tree or blob path, so a
+  # probe of one answers about an address that does not exist.
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run bash "${SCRIPT}" check https://github.com/alx/notes/tree/main/README.md
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"A path below owner/repo names no repository"* ]]
+  assert_eq "nothing was probed" "0" "$(stub_log_count curl)"
+}
+
+@test "check: the scp-style and ssh:// remotes normalize to the same probe" {
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run env STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check git@github.com:alx/notes.git
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"REFUSED-GRANT on alx/notes "* ]]
+  assert_eq "one probe" "1" "$(stub_log_count curl)"
+}
+
 @test "shape: every function block the docs promise is still there" {
-  for fn in running_workspaces credential_probe probe_self probe_workspace auth_workspace main; do
+  for fn in running_workspaces credential_probe normalize_repo_path slot_name probe_self probe_workspace auth_workspace main; do
     grep -Fq "${fn}()" "${SCRIPT}" || {
       echo "github-auth.sh lost its ${fn} function" >&2
       return 1
