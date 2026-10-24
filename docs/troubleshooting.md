@@ -348,6 +348,23 @@ docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retr
 bazelisk run //scripts:build-dev-image
 ```
 
+### `Permission denied` / `jq: error: Could not open file` on `~/.shared/vscode/settings.json` -> empty named volume is root-owned
+
+Cause: Docker creates an empty named volume as `root:root` 755. The
+`vscode-settings-<owner-id>` volume is empty on first use (the image has no
+files there to copy in), so `coder` cannot write `settings.json`. `jq` and
+`python` then fail because the file was never created. `already cloned, skipping`
+on the next line is informational: the clone already exists.
+
+Fix: the template chowns that volume (and the shared `~/.grok` profile volume)
+to the home owner before the seed, and skips `jq`/`python` when the write
+fails. Push the templates and restart the workspace; there is nothing to delete.
+
+```sh
+bazelisk run //scripts:push-template
+coder restart <workspace>
+```
+
 ### Grok profile missing in a fresh workspace -> startup already finished, so read the log
 
 - `startup_script` is blocking, so it finished before the agent reported ready and
@@ -504,6 +521,37 @@ correct and is coder accessible from your browser?`
   in this repo's compose file sets the provisioner's Terraform.
 
 ## Editor, credentials, the clone
+
+### `Unexpanded count argument on block "coder_app.coder_ui"` -> apps were gated on start_count
+
+Cause: `coder/preview` warns when a `coder_app` `count` is not expanded at
+workspace-create preview. `start_count` is that value. The default is then
+assumed to be 1.
+
+Fix: `coder_app` resources are not gated on `start_count` (scripts, metadata
+and the container still are). Push the templates; new creates stop showing the
+warning. Existing workspaces pick it up on the next update to the new template
+version.
+
+```sh
+bazelisk run //scripts:push-template
+```
+
+### VS Code Web opens `/home/coder` instead of the cloned repository -> last workspace won
+
+Cause: path-based Coder apps drop the `?folder=` query before the browser sees
+it, and code-server restores the last opened workspace (often `/home/coder`).
+The clone itself is fine (`already cloned, skipping` is not a failure).
+
+Fix: the inlined fork starts code-server with `--ignore-last-opened` and the
+clone folder as a positional argument (`/home/coder/workspace/<repo>` on the
+`workspace` template). Push the templates and restart so the editor process
+relaunches.
+
+```sh
+bazelisk run //scripts:push-template
+coder restart <workspace>
+```
 
 ### Browser editor (code-server) stays unhealthy -> check these three, in order
 

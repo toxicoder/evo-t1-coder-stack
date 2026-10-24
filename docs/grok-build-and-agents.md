@@ -46,12 +46,14 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   an inlined fork (`coder_script.code_server` + `coder_app.code_server`), because the
   upstream module hardcodes `/icon/code.svg` and has no icon input. `workspace`
   installs code-server only when it is missing from `/home/coder/.local/share/code-server`
-  and starts it with `--auth none --port 13337 --app-name "VS Code Web"`, passing no
-  settings payload. `devcontainer` has no persistent prefix to reuse, so it installs
-  fresh under `/tmp/code-server` on every start.
+  and starts it with `--auth none --port 13337 --app-name "VS Code Web"
+  --ignore-last-opened <folder>`, passing no settings payload. `devcontainer` has no
+  persistent prefix to reuse, so it installs fresh under `/tmp/code-server` on every
+  start.
 - The editor opens on `http://localhost:13337/?folder=<urlencoded>`: the
   `coder_app` resource in `coder/coder` `~> 2.18` has no `folder` argument, so the
-  folder rides in the URL. `workspace` uses `/home/coder/workspace/<repo>` (and
+  folder rides in the URL and as a positional argument to the code-server binary
+  with `--ignore-last-opened`. `workspace` uses `/home/coder/workspace/<repo>` (and
   `/home/coder` with no repository); `devcontainer` uses `/workspaces/<repo>` inside a
   built dev container and `/srv/coder-devcontainers/<workspace-id>/<repo>` on the
   plain container.
@@ -187,7 +189,9 @@ installed yourself under `~/.grok/bin`.
   `settings.json.tftpl`, copied onto the per-owner volume
   `vscode-settings-<owner-id>` (mounted at `~/.shared/vscode/settings.json`) only
   while that file is absent, and symlinked from
-  `~/.local/share/code-server/User/settings.json`. Edits stick, and every workspace
+  `~/.local/share/code-server/User/settings.json`. Startup chowns that volume to
+  the home owner before the first write (empty named volumes are `root:root`
+  755). Edits stick, and every workspace
   that owner has shares the file; delete it to copy the template in again. From the
   host it is the volume's `settings.json`:
 

@@ -5,7 +5,8 @@
 #
 # Pins the seam behind VS Code's "Workspace does not exist. Please select
 # another workspace to open." dialog: the inlined code-server fork bakes its
-# folder argument into the app URL (?folder=<urlencoded>), so that folder
+# folder argument into the app URL (?folder=<urlencoded>) and as a positional
+# CLI argument with --ignore-last-opened, so that folder
 # must resolve INSIDE the environment that hosts code-server —
 # /workspaces/<repo-name> inside the dev container (the devcontainer CLI's
 # default mount target), /srv/coder-devcontainers/<ws-id>/<repo-name> on the
@@ -46,9 +47,14 @@ setup() {
 }
 
 @test "editor: code-server's folder URL names the per-mode editor_folder local" {
-  # The inlined code-server fork carries the folder only as the ?folder=
-  # query on the app URL (coder_app has no folder argument).
+  # The inlined code-server fork carries the folder as the ?folder=
+  # query on the app URL (coder_app has no folder argument) and as a
+  # positional CLI argument with --ignore-last-opened.
   run grep -F 'folder=${urlencode(local.editor_folder)}' "${DC_TF}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'FOLDER="${local.editor_folder}"' "${DC_TF}"
+  [ "${status}" -eq 0 ]
+  run grep -F -- '--ignore-last-opened "$${FOLDER}"' "${DC_TF}"
   [ "${status}" -eq 0 ]
   # The one-path shape is what caused the dialog: with the dev-container
   # toggle on, code-server runs inside the dev container, where the host

@@ -541,7 +541,11 @@ bazelisk run //scripts:new-workspace -- --plain git@git.example.com:org/private.
 
 ## Inside the workspace container
 
-Each template creates one Docker container per workspace.
+Each template creates one Docker container per workspace. Extra named volumes
+(`vscode-settings-<owner-id>` at `~/.shared/vscode`, and `grok-profile-<owner-id>`
+at `~/.grok` in shared mode) are chowned to the home owner at the start of
+`startup.sh.tftpl`, because Docker creates an empty named volume as `root:root`
+755 and the agent runs as `coder`.
 
 - Image from `images/dev/Dockerfile` (overridable with the `image` variable) carrying:
   Node 22 + 24, Python 3.12 + 3.11, Go 1.24, Bazelisk/buildifier,
@@ -619,7 +623,8 @@ helpers point at a folder that was never cloned.
   upstream module hardcodes `/icon/code.svg` and has no icon input.
 - The `workspace` fork installs code-server **only when it is missing** from
   `/home/coder/.local/share/code-server`, and starts it with
-  `--auth none --port 13337 --app-name "VS Code Web"`, passing no settings payload. The
+  `--auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened <folder>`,
+  passing no settings payload. The
   editor's settings live on the per-owner `vscode-settings-<owner-id>` volume seed, not
   in a per-start merge.
 - The `devcontainer` fork has no persistent prefix to reuse - both toggle modes rebuild
@@ -628,7 +633,13 @@ helpers point at a folder that was never cloned.
   User settings copy.
 - Both twins' `coder_app` opens on `http://localhost:13337/?folder=<urlencoded>`. The
   `coder_app` resource in `coder/coder` `~> 2.18` has no `folder` argument, so the
-  folder rides in the URL (and in the Web Terminal's `command`).
+  folder rides in the URL, in the Web Terminal's `command`, and as a positional
+  argument to the code-server binary with `--ignore-last-opened` (path-based apps
+  drop the query string, and without that flag the last restored workspace wins).
+- `coder_app` resources are not gated on `start_count`. `coder/preview` warns
+  `Unexpanded count argument on block coder_app.*` when they are: that value is
+  not expanded at workspace-create preview. Scripts, metadata and the container
+  stay gated.
 - The custom icon `templates/common/vscode-alt.svg` travels as a
   `data:image/svg+xml;base64` data URL read from `templates/common/`. Coder serves icons
   only from its bundled `/icon/*` set or from a full `https`/`data` URL, and that icon is
@@ -640,7 +651,11 @@ helpers point at a folder that was never cloned.
 ### Editor settings seed
 
 - `settings.json.tftpl` is copied once, the first time `~/.shared/vscode/settings.json`
-  is missing, onto the per-owner volume `vscode-settings-<owner-id>`.
+  is missing, onto the per-owner volume `vscode-settings-<owner-id>`. Startup chowns
+  that volume (and the shared `~/.grok` profile volume) to the home owner before
+  the write: an empty Docker named volume is `root:root` 755, and the agent runs
+  as `coder`. A failed write logs a warning instead of running `jq`/`python`
+  against a file that was never created.
 - code-server's User settings file is a symlink to that path, so every workspace that
   owner has opens the same file, and an edit - in any workspace, or from the host by
   mounting the volume - is not overwritten on the next start. Delete the file to reseed
