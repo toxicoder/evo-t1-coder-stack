@@ -5,12 +5,14 @@
 #
 # Pins the seams the host-assistant feature rests on: approvals stay manual,
 # the terminal backend stays local (so dangerous-command checks stay on),
-# models go through LiteLLM's `agent` alias, and the three git-tracked skills
-# exist beside the seed. The live volume copy is out of scope; this suite
-# reads the checkout payload only.
+# models go through LiteLLM's `agent` alias, the three git-tracked skills
+# exist beside the seed, and compose interpolation defaults for dashboard
+# basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider). The
+# live volume copy is out of scope; this suite reads the checkout payload
+# and docker-compose.yml only.
 #
 # Usage: bazelisk test //tests:bats_hermes_config_test   (from any cwd)
-# Safety: reads hermes/; writes nothing.
+# Safety: reads hermes/, docker-compose.yml, .env.sample; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -64,4 +66,24 @@ setup() {
   assert_file_exists "evo-stack-ops" "${REPO_ROOT}/hermes/skills/evo-stack-ops/SKILL.md"
   assert_file_exists "coder-workspace" "${REPO_ROOT}/hermes/skills/coder-workspace/SKILL.md"
   assert_file_exists "model-routing" "${REPO_ROOT}/hermes/skills/model-routing/SKILL.md"
+}
+
+@test "hermes compose: dashboard basic-auth interpolation defaults stay non-empty" {
+  # An empty `${HERMES_DASHBOARD_PASSWORD:-}` interpolates to "" when .env
+  # lacks the key; the bundled plugin then skips registration and the
+  # gateway crash-loops on 0.0.0.0. Defaults must match .env.sample.
+  local compose="${REPO_ROOT}/docker-compose.yml"
+  local sample="${REPO_ROOT}/.env.sample"
+  assert_file_exists "compose file" "${compose}"
+  assert_file_exists "env sample" "${sample}"
+  assert_contains_file "username fallback" "${compose}" \
+    'HERMES_DASHBOARD_BASIC_AUTH_USERNAME: \$\{HERMES_DASHBOARD_USER:-admin\}'
+  assert_contains_file "password fallback" "${compose}" \
+    'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: \$\{HERMES_DASHBOARD_PASSWORD:-change-me-hermes\}'
+  assert_contains_file "secret fallback" "${compose}" \
+    'HERMES_DASHBOARD_BASIC_AUTH_SECRET: \$\{HERMES_DASHBOARD_SECRET:-change-me-hermes-secret\}'
+  assert_contains_file "sample password" "${sample}" \
+    '^HERMES_DASHBOARD_PASSWORD=change-me-hermes$'
+  assert_contains_file "sample secret" "${sample}" \
+    '^HERMES_DASHBOARD_SECRET=change-me-hermes-secret$'
 }

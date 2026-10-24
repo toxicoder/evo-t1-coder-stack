@@ -665,20 +665,42 @@ bazelisk run //scripts:github-auth -- auth <container> - < PAT
 
 ## UI and logins
 
-### Hermes dashboard will not bind / Chat tab is empty -> auth, then approvals
+### `Refusing to bind dashboard to 0.0.0.0` -> empty Hermes basic-auth env
 
-- A non-loopback bind (`HERMES_DASHBOARD_HOST=0.0.0.0`) without basic-auth env
-  is a boot error since the June 2026 hardening. `HERMES_DASHBOARD_INSECURE` is a
-  no-op. Check `HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` /
-  `HERMES_DASHBOARD_SECRET` in `.env` (bootstrap replaces the `change-me-*`
-  placeholders) and `bazelisk run //scripts:prod-stack -- logs hermes`.
-- The Chat tab is a PTY over WebSocket on the same port. Approvals render as
-  cards there; a mutating command that seems to hang is waiting for the card.
-  Seeded `approvals.mode` is `manual` — never `off`.
-- `hermes-init` must exit 0 before `hermes` starts. If the gateway loops on
-  a missing `config.yaml`, the named volume was not seeded: run
-  `bazelisk run //scripts:hermes-bootstrap -- --help` and recreate.
-- Full access / mounts / socket-risk notes: [hermes.md](hermes.md).
+Cause: Hermes v0.22.5 refuses a non-loopback bind when no
+`DashboardAuthProvider` is registered. The bundled basic-auth plugin skips
+registration when the password is empty. Compose interpolation
+`${HERMES_DASHBOARD_PASSWORD:-}` (empty default) did that after a pull that
+added the Hermes keys: `.env` never gained them, so `prod-stack up` without
+`bootstrap` / `update-configs` crash-looped the gateway. The logs repeat
+"no auth providers are registered" and do not mention `plugins.disabled`.
+
+Fix: compose interpolation defaults now match `.env.sample`
+(`change-me-hermes` / `change-me-hermes-secret`). Recreate the service:
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+```
+
+Sign-in is `HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` from `.env`
+(default `admin` / `change-me-hermes` until bootstrap rotates the
+placeholders). To fill missing keys and replace those placeholders:
+
+```sh
+bazelisk run //scripts:bootstrap --
+bazelisk run //scripts:prod-stack -- up
+```
+
+`HERMES_DASHBOARD_INSECURE` is a no-op. Logs:
+`bazelisk run //scripts:prod-stack -- logs hermes`.
+
+The Chat tab is a PTY over WebSocket on the same port. Approvals render as
+cards there; a mutating command that seems to hang is waiting for the card.
+Seeded `approvals.mode` is `manual` — never `off`. `hermes-init` must exit 0
+before `hermes` starts. If the gateway loops on a missing `config.yaml`, the
+named volume was not seeded: run
+`bazelisk run //scripts:hermes-bootstrap -- --help` and recreate. Full
+access / mounts / socket-risk notes: [hermes.md](hermes.md).
 
 ### Kasm wizard gone after install -> expected
 
