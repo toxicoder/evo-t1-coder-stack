@@ -703,7 +703,12 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
   the same id. Link that provider to **both** templates.
 - Fill every `CODER_EXTERNAL_AUTH_0_*` key or omit them all. A defined-but-empty key
   crash-loops the server, which is why these keys live in `coder.env` and not in `.env`.
-- Then connect your GitHub account under Settings -> Tokens / external auth.
+- Then connect your GitHub account under Settings -> Tokens / external auth. An empty
+  [github.com/settings/apps](https://github.com/settings/apps) page is not a misconfiguration:
+  with `auth_type=client_secret` Coder has no App to install, and Coder's built-in GitHub
+  App only earns a page there once a provider pointing at it exists. Until something is
+  installed and granted, that page simply has nothing to **Configure**, and the credential
+  the provider mints still authenticates - it just cannot write to a private repository.
 - Each workspace's agent then injects a `GIT_ASKPASS` helper that mints short-lived
   per-host tokens on demand, alongside a `GH_TOKEN`/`GITHUB_TOKEN` pair in the agent
   environment.
@@ -737,18 +742,22 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
 
 ### `scripts/github-auth.sh`, the per-workspace doctor
 
-- `check [container] [repo-url]` names the credential a workspace's git/gh would
-  present and answers "can this credential WRITE to the repository you point it at?",
-  by probing the receive-pack ref advertisement that endpoint `git push` negotiates
-  through (full usage: `scripts/github-auth.sh --help`). On the host it enumerates the
-  labeled workspace containers with docker, or probes a named container alone. Inside
-  a workspace it runs SELF mode with no docker: this environment's own credential
-  chain, one `self:` line, and a named container there is refused with a pointer to
-  the host.
+- `check [container] [repo-url] [--source=<slot>]` names the credentials a workspace's
+  git and gh could present and answers "can this credential WRITE to the repository you
+  point it at?", by probing the receive-pack ref advertisement that endpoint `git push`
+  negotiates through (full usage: `scripts/github-auth.sh --help`). On the host it
+  enumerates the labeled workspace containers with docker, or probes a named container
+  alone. Inside a workspace it runs SELF mode with no docker: this environment's own
+  credential chain, one `self:` line per credential, and a named container there is
+  refused with a pointer to the host. `--source=chain` (the default) answers every
+  credential that could cover that repository; `--source=env`, `--source=gh` or
+  `--source=mint` answers one slot and marks the answer shadowed while the env pair
+  stands, because git and gh consult that pair first and never reach the store.
+  `GH_TOKEN= GITHUB_TOKEN= <command>` is how you make them use the stored credential.
 - `auth <container> - < PAT` installs a write-capable PAT into that workspace's gh auth
   store. That is legitimate in two cases: the owner connected no Coder account, so
-  nothing can be minted, or the minted (or GitHub App) credential was revoked or has
-  expired.
+  nothing can be minted, or the minted (or GitHub App) credential is revoked, expired,
+  or simply was never granted the repository you are pointed at.
 - Installing one REPLACES the credential that workspace was presenting. While an
   account *is* connected the store holds a minted pair and the next `gh_token_refresh`
   run (start, then every 6 hours) rewrites it, so the PAT is a stand-in, not a second

@@ -22,8 +22,10 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   either place: on the host it enumerates the labeled workspace containers via docker,
   or probes a named container; inside a workspace it runs SELF mode with no docker and
   no `DOCKER_HOST`, probing this environment's own credential chain and printing one
-  `self:` line. Pass only the repo URL there; a named container is refused with a
-  pointer to the host shell.
+  `self:` line per credential. `--source=<slot>` (chain, env, gh, mint) narrows it to
+  one slot, and any answer about a slot the env pair outranks is labelled `shadowed`,
+  because git and gh consult `GH_TOKEN`/`GITHUB_TOKEN` first. Pass only the repo URL
+  there; a named container is refused with a pointer to the host shell.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
   `:3002` the Coder agent tunnel, `:8181` SearXNG.
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other

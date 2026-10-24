@@ -1018,7 +1018,8 @@ cause, recipe, and what a fix costs - is in
   which this stack provisions nowhere. The doctor answers "can this credential WRITE
   to that repo?": `bazelisk run //scripts:github-auth -- check [container] [repo-url]`
   from a host shell, or the same command without the container slot from inside a
-  workspace (SELF mode).
+  workspace (SELF mode). It answers per credential and marks a credential that the
+  agent env token outranks as `shadowed`, since git and gh consult that pair first.
 - **Kasm wizard gone after install** - expected; use :4443. Reset means removing the
   `kasm-data` volume, which destroys all Kasm config.
 - **Coder login problems** - the first registered account is the site admin. If the UI

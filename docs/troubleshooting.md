@@ -495,12 +495,18 @@ bazelisk run //scripts:new-workspace -- <git-url>
   caller, so a credential that READS a repo can still be refused every WRITE to it.
 - Check the GitHub side first. The grant behind the credential - the GitHub OAuth app
   installation that the External Auth provider (id `github` by default) minted its token from -
-  has to include the repository the workspace clones or pushes.
+  has to include the repository the workspace clones or pushes. An empty
+  [github.com/settings/apps](https://github.com/settings/apps) page is the usual surprise
+  here: it means no App is installed under your account, so there is no **Configure** link
+  to click and nothing to grant, while the provider itself stays configured and keeps
+  minting tokens that authenticate. Coder's own built-in GitHub App only appears on that
+  page once a provider pointing at it is configured, and a private repository is never
+  visible to a credential that was never granted it.
 - Then check the URL scheme. That credential covers `https://github.com/...` remotes
   only, so a `git@github.com:` or `ssh://` URL gets neither helper nor askpass token
   and needs an SSH key you placed yourself, which this stack provisions nowhere.
-- The doctor, from a host shell or from inside a workspace, names the credential a
-  workspace's git/gh presents and answers "can this credential WRITE to the repo you
+- The doctor, from a host shell or from inside a workspace, names the credentials a
+  workspace's git and gh could present and answers "can this credential WRITE to the repo you
   pass?". It probes the endpoint `git push` negotiates through: one GET of
   `<repo>.git/info/refs?service=git-receive-pack`. A REFUSED-GRANT answer means the
   credential authenticates while every write to that repo is denied; NOT VISIBLE
@@ -508,15 +514,29 @@ bazelisk run //scripts:new-workspace -- <git-url>
   refuses the credential outright, as it does an expired mint:
 
 ```sh
-bazelisk run //scripts:github-auth -- check [container] [repo-url]
+bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>]
 ```
 
   On the host it enumerates the labeled workspace containers with docker and probes
   each (a named container checks just that one). Inside a workspace the docker CLI
   reaches only that workspace's DinD sidecar, so the same command runs SELF mode
   with no docker: one probe of this environment's own credential chain, printed as
-  one `self:` line. Pass only the repo URL there; a named container is refused and
-  pointed at the host shell. Full usage: `scripts/github-auth.sh --help`.
+  one `self:` line per credential. Pass only the repo URL there; a named container is
+  refused and pointed at the host shell. The repo URL may be the clone URL or the
+  browser URL, with or without a trailing slash and `.git`; a path below `owner/repo`
+  is refused rather than probed, because it names no repository. Full usage:
+  `scripts/github-auth.sh --help`.
+- `--source=chain` (the default) probes every credential that could answer for that
+  repository; `--source=env`, `--source=gh` or `--source=mint` answers one slot and
+  labels the answer **shadowed** when the env pair outranks it. That label matters:
+  while `GH_TOKEN`/`GITHUB_TOKEN` carry a token, git and gh consult that token and
+  never reach the gh auth store, so a PAT you pasted into the store is not the
+  credential a push would use. To check or use the stored credential anyway, clear
+  the pair for that one command:
+
+```sh
+GH_TOKEN= GITHUB_TOKEN= git push -u origin <branch>
+```
 
 - Or install a write-capable PAT into one workspace's gh auth store, on stdin:
 
@@ -525,9 +545,11 @@ bazelisk run //scripts:github-auth -- auth <container> - < PAT
 ```
 
   A manual PAT is legitimate in two cases: the workspace owner connected no Coder
-  account, so nothing can be minted, or the minted/App credential was revoked or has
-  expired. It REPLACES the per-start minted credential for that workspace, so treat it
-  as a stand-in and rotate or remove it in GitHub -> Applications when the work ends.
+  account, so nothing can be minted, or the minted/App credential is missing the
+  repository - revoked or expired counts the same way, because the answer that proves
+  either is NOT VISIBLE or REJECTED, not a passing read. It REPLACES the per-start
+  minted credential for that workspace, so treat it as a stand-in and rotate or remove
+  it in GitHub -> Applications when the work ends.
 - A PAT is never typed as an argument any more: argv is readable through `ps` and the
   token lands in shell history. Pipe it in (`echo "$TOKEN" | bazelisk run
   //scripts:github-auth -- auth <container> -`) or run `auth <container>` alone and
