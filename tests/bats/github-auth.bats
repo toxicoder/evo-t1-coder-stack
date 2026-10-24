@@ -19,7 +19,7 @@
 # normalize_repo_path, slot_name, probe_self, probe_workspace, auth_workspace,
 # and main all run against stubs only.
 #
-# Usage: bats tests/bats/github-auth.bats
+# Usage: bazelisk test //tests:bats_github_auth_test   (from any cwd)
 # Safety: reads scripts/github-auth.sh and the stub bin; writes nothing outside
 # the per-test scratch.
 

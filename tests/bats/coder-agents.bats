@@ -17,7 +17,7 @@
 # — a psql that echoes the id back out of the statement, the way `returning id`
 # answers on a real server.
 #
-# Usage: bats tests/bats/coder-agents.bats   (from any cwd)
+# Usage: bazelisk test //tests:bats_coder_agents_test   (from any cwd)
 #
 # Safety: stub only. Nothing here needs a daemon, a database or a network.
 
@@ -90,7 +90,7 @@ logs_absent() {
   export STUB_COMPOSE_PS=''
   run --separate-stderr bash "${root}/scripts/coder-agents.sh"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "skipped: the coder service is not running yet (start the stack with: docker compose up -d)" ]
+  [ "${output}" = "skipped: the coder service is not running yet (start the stack with: bazelisk run //scripts:prod-stack -- up)" ]
   [ "$(stub_log_count psql)" -eq 0 ]
 }
 
@@ -99,7 +99,7 @@ logs_absent() {
   export STUB_COMPOSE_PS='db|stack-db-1'
   run --separate-stderr bash "${root}/scripts/coder-agents.sh"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "skipped: the coder service is not running yet (start the stack with: docker compose up -d)" ]
+  [ "${output}" = "skipped: the coder service is not running yet (start the stack with: bazelisk run //scripts:prod-stack -- up)" ]
   [ "$(stub_log_count docker)" -eq 1 ]
 }
 
@@ -118,8 +118,9 @@ logs_absent() {
   running_stack
   run --separate-stderr bash "${root}/scripts/coder-agents.sh" --dry-run
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 6 ]
-  [ "${lines[0]}" = "dry run (no changes; rerun without --dry-run to apply):" ]
+  [ "${#lines[@]}" -eq 7 ]
+  [[ ${lines[0]} == *"probing the Coder API"* ]]
+  [ "${lines[1]}" = "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):" ]
   [[ ${output} == *"pin model overrides general+explore -> agent"* ]]
   # The probes may read; nothing may be written: no token minted, no API call.
   [ "$(stub_log_count psql)" -eq 0 ]
@@ -132,7 +133,7 @@ logs_absent() {
   run --separate-stderr bash "${root}/scripts/coder-agents.sh" --nonsense
   [ "${status}" -eq 1 ]
   # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
-  [ "${stderr}" = "error: usage: ${root}/scripts/coder-agents.sh [--dry-run|--apply] (default: --apply)" ]
+  [ "${stderr}" = "error: usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] (default: --apply)" ]
 }
 
 @test "coder-agents: an unanswered buildinfo probe is a hard failure (curl 22, empty body)" {
@@ -143,9 +144,9 @@ logs_absent() {
   [ "${status}" -eq 1 ]
   # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
   [[ ${stderr} == "error: the Coder API at http://127.0.0.1:3000 is not answering inside the coder container ()"* ]]
-  [[ ${stderr} == *"check: docker compose logs --tail 100 coder"* ]]
+  [[ ${stderr} == *"check: bazelisk run //scripts:prod-stack -- logs --tail 100 coder"* ]]
   # The probe is capped, and it reaches curl through the docker-exec passthrough.
-  [ "$(stub_log_last timeout)" = "timeout 20 docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
+  [ "$(stub_log_last timeout)" = "timeout -k 2 20 docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
   [ "$(stub_log_last docker)" = "docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
   [ "$(stub_log_last curl)" = "curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
 }
@@ -245,8 +246,12 @@ logs_absent() {
   run --separate-stderr bash "${root}/scripts/coder-agents.sh"
   [ "${status}" -eq 1 ]
   [[ ${output} == *"note: LITELLM_MASTER_KEY is empty in .env — using the compose interpolation default"* ]]
+  [[ ${output} == *"listing AI providers at http://127.0.0.1:3000 (up to 20s)"* ]]
   [[ ${output} == *"creating AI provider litellm (base_url http://litellm:4000/v1)"* ]]
   logs_absent 'change-me-litellm' "${STUB_LOG}"/*.log
+  # api_read is capped with --kill-after; without -k, docker exec -i under
+  # bazelisk run waits forever on the open stdin pipe.
+  [[ "$(stub_log timeout)" == *"timeout -k 2 20 docker exec -i"* ]]
 }
 
 @test "coder-agents: CODER_AGENTS_USER narrows the mint, and a bad name is fatal" {
@@ -286,7 +291,7 @@ source_coder_api() {
   export DB_CONTAINER=stack-db-1
   run --separate-stderr psql_sql "SELECT 1;"
   [ "${status}" -eq 0 ]
-  [[ "$(stub_log_last timeout)" == "timeout 20 docker exec -i stack-db-1 psql "* ]]
+  [[ "$(stub_log_last timeout)" == "timeout -k 2 20 docker exec -i stack-db-1 psql "* ]]
   [[ "$(stub_log_last psql)" == *"ON_ERROR_STOP=1 -q -c SELECT 1;"* ]]
 
   export STUB_PSQL_RC=1
@@ -315,6 +320,13 @@ source_coder_api() {
   [[ "$(stub_log_last docker)" != *kid-secret* ]]
 }
 
+@test "coder_api: stack_timeout prefixes GNU --kill-after so docker exec cannot pin bazelisk run" {
+  source_coder_api
+  run --separate-stderr stack_timeout 20 docker ps --format '{{.Names}}'
+  [ "${status}" -eq 0 ]
+  [ "$(stub_log_last timeout)" = "timeout -k 2 20 docker ps --format {{.Names}}" ]
+}
+
 @test "coder_api: DOCKER_BIN override (two words) still execs through timeout" {
   source_libs
   printf '#!/usr/bin/env bash\nshift\nexec docker "$@"\n' > "${BATS_TEST_TMPDIR}/bin/fakebin"
@@ -336,7 +348,7 @@ source_coder_api() {
   # is allowed to appear — it is data, not addressing.
   [[ "$(stub_log_last docker)" == "docker ps --format "* ]]
   [[ "$(stub_log_last docker)" != *"docker compose "* ]]
-  [[ "$(stub_log_last timeout)" == "timeout 20 docker ps --format "* ]]
+  [[ "$(stub_log_last timeout)" == "timeout -k 2 20 docker ps --format "* ]]
 }
 
 @test "coder_api: stack_container picks the oldest container and matches whole fields" {

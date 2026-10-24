@@ -200,16 +200,19 @@ Nothing else about GitHub travels in a `--var`.
 - A missing `docker`, `timeout`, `tar` or `openssl`, a stack that is not running, or no
   active Coder account is a *skip*: a one-line reason and exit 0. `bootstrap.sh` calls
   this script, and a fresh clone has none of those prerequisites yet.
-- `SKIP_TEMPLATE_PUSH=1 bash scripts/bootstrap.sh` skips the step.
+- `SKIP_TEMPLATE_PUSH=1 bazelisk run //scripts:bootstrap` skips the step.
 - A `DEV_IMAGE` that is not in the local image store is a note, not a stop: build it
   first with `bazelisk run //scripts:build-dev-image`.
 
 ## The same push, by hand
 
-The raw equivalent streams the same tar and makes the same CLI call the script makes for
-each template. It execs into the daemon's `coder` container by name.
+The supported push is `bazelisk run //scripts:push-template`: no arguments pushes every
+template, a template name retries just that one, and the image tag comes from `DEV_IMAGE`
+in `.env`. The raw equivalent below is what that script does internally — it streams the
+same tar and makes the same CLI call the script makes for each template, execing into the
+daemon's `coder` container by name.
 
-The raw form below addresses the stack through `docker compose` instead, so it names the
+That form addresses the stack through `docker compose` instead, so it names the
 project with `-p`. From the checkout root the folder name would have said the same thing.
 
 The service appears twice by necessity: the first `coder` selects the compose service, the
@@ -761,8 +764,9 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
   push, and reads prove nothing about write: a private repository hidden from the
   credential answers 403 or 404 on both lanes, and a public one answers a read probe
   with 200 for any authenticated caller, so a read-only credential passes a read test
-  while every write to that repo is denied. `scripts/github-auth.sh check <repo-url>`
-  asks the write question directly: one GET of
+  while every write to that repo is denied.
+  `bazelisk run //scripts:github-auth -- check <repo-url>` asks the write question
+  directly: one GET of
   `<repo>.git/info/refs?service=git-receive-pack`, the endpoint `git push` itself
   negotiates through.
 - Nothing long-lived lives in any file, env or template: the rendered `config.toml`
@@ -783,7 +787,8 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
 - `check [container] [repo-url] [--source=<slot>]` names the credentials a workspace's
   git and gh could present and answers "can this credential WRITE to the repository you
   point it at?", by probing the receive-pack ref advertisement that endpoint `git push`
-  negotiates through (full usage: `scripts/github-auth.sh --help`). On the host it
+  negotiates through (full usage:
+  `bazelisk run //scripts:github-auth -- --help`). On the host it
   enumerates the labeled workspace containers with docker, or probes a named container
   alone. Inside a workspace it runs SELF mode with no docker: this environment's own
   credential chain, one `self:` line per credential, and a named container there is

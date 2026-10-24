@@ -4,9 +4,10 @@
 # ## timeout — deterministic timeout(1) stub (test fixture; never ships)
 #
 # Purpose: stand in for timeout(1) so capped probes and execs stay hermetic.
-# Strips a leading duration (e.g. "20", "5.5"), then execs the rest — the
-# remaining argv is what the suite asserts on. Records the full invocation
-# (cap included) to $STUB_LOG/timeout.log when STUB_LOG is set.
+# Logs the full argv (including GNU -k/--kill-after), then strips GNU options
+# and the duration (e.g. "20", "5.5") before execing the rest — the remaining
+# argv is what the suite asserts on the docker/curl/ssh stubs. Records the
+# full invocation to $STUB_LOG/timeout.log when STUB_LOG is set.
 #
 # Usage (in a .bats file): use_stubs timeout curl; run probe_http 5 <url>
 # Safety: stub only. Never bounds anything by real time and never execs a
@@ -14,6 +15,38 @@
 set -u
 
 if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "timeout $*" >>"${STUB_LOG}/timeout.log"; fi
+
+# GNU timeout puts options before DURATION. Production wrappers pass
+# `-k 2` (--kill-after) so a docker exec that ignores SIGTERM still
+# exits; strip those here so the remaining argv is still the command.
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -k | --kill-after)
+      shift
+      if [ "$#" -gt 0 ]; then
+        shift
+      fi
+      ;;
+    --kill-after=*)
+      shift
+      ;;
+    -s | --signal)
+      shift
+      if [ "$#" -gt 0 ]; then
+        shift
+      fi
+      ;;
+    --signal=*)
+      shift
+      ;;
+    --preserve-status | --foreground | -v | --verbose)
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 
 if printf '%s\n' "${1:-}" | grep -Eq '^[0-9]+(\.[0-9]+)?$'; then
   shift

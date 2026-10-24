@@ -3,7 +3,7 @@
 # ## common.bats — unit coverage for scripts/lib/common.sh
 #
 # Hermetic: timeout and docker resolve through tests/bats/tool_stubs.
-# Usage: bats tests/bats/common.bats
+# Usage: bazelisk test //tests:bats_common_test   (from any cwd)
 # Safety: no daemon, no network.
 
 bats_require_minimum_version 1.5.0

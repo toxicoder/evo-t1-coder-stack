@@ -22,6 +22,11 @@
 # DASHBOARD_ENV_FILE overrides the .env path for test harnesses only. There is
 # deliberately no flag for it: a flag that names a file this script overwrites
 # is the one thing you do not want a keystroke away from mistyping.
+#
+# Usage:
+#   bazelisk run //scripts:dashboard-password
+#   bazelisk run //scripts:dashboard-password -- --prompt
+#   bazelisk run //scripts:dashboard-password -- --no-apply
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -63,7 +68,7 @@ trap cleanup EXIT
 #   0
 usage() {
   cat <<'EOF'
-usage: scripts/dashboard-password.sh [--prompt] [-l|--length N] [--no-apply]
+usage: bazelisk run //scripts:dashboard-password -- [--prompt] [-l|--length N] [--no-apply]
 
 Change the dashboard login password stored as HOMEPAGE_AUTH_PASSWORD in .env,
 then recreate the homepage container so it picks the new value up.
@@ -131,7 +136,7 @@ done
 
 if [ ! -f "${ENV_FILE}" ]; then
   echo "error: ${ENV_FILE} not found" >&2
-  echo "       first boot? run ./scripts/bootstrap.sh to create it" >&2
+  echo "       first boot? run bazelisk run //scripts:bootstrap to create it" >&2
   exit 1
 fi
 { [ -r "${ENV_FILE}" ] && [ -w "${ENV_FILE}" ]; } ||
@@ -158,13 +163,24 @@ case "${MODE}" in
     esac
     ;;
   prompt)
-    # read -rs keeps the value out of both echo and the history file. With a
-    # redirected stdin the two reads come back empty, which the length floor
-    # below rejects, so a non-tty run can never write a blank password.
+    # read -rs keeps the value out of both echo and the history file. A
+    # redirected stdin with two lines (the bats suites) returns immediately.
+    # bazelisk run keeps a pipe open with no EOF, so a non-TTY read is
+    # time-bounded: without -t it would wait forever.
     printf 'new dashboard password: '
-    IFS= read -rs first
+    if [ -t 0 ]; then
+      IFS= read -rs first
+    else
+      IFS= read -rs -t 15 first ||
+        die "--prompt got no password on stdin within 15s (pipe two lines, or run from a terminal: bazelisk run //scripts:dashboard-password -- --prompt)"
+    fi
     printf '\nrepeat it:              '
-    IFS= read -rs second
+    if [ -t 0 ]; then
+      IFS= read -rs second
+    else
+      IFS= read -rs -t 15 second ||
+        die "--prompt got no second line on stdin within 15s"
+    fi
     printf '\n'
     [ "${first}" = "${second}" ] || die "the two entries did not match; nothing was changed"
     new_password="${first}"
@@ -290,8 +306,8 @@ fi
 
 if [ "${APPLY}" = 0 ]; then
   echo
-  echo "not applied: rerun without --no-apply, or run"
-  echo "  docker compose up -d --force-recreate homepage"
+  echo "not applied: rerun without --no-apply:"
+  echo "  bazelisk run //scripts:dashboard-password"
 else
   # The homepage container is FOUND on the daemon, by container label, and then
   # recreated inside the compose project that created it — never through a
@@ -310,7 +326,7 @@ else
   compose_file="${compose_target#*|}"
   if [ -z "${compose_proj}" ] || [ -z "${compose_file}" ] ||
     [ "${compose_file}" = "${compose_target}" ] || [ ! -f "${compose_file}" ]; then
-    die "the homepage container answers to no compose project this shell can read; recreate it by hand from the checkout root: docker compose up -d --force-recreate homepage"
+    die "the homepage container answers to no compose project this shell can read; from the checkout root run: docker compose up -d --force-recreate homepage (or bazelisk run //scripts:prod-stack -- up, then bazelisk run //scripts:dashboard-password)"
   fi
 
   # -p and -f rebuild the addressing the stack was started with, from any
@@ -326,15 +342,15 @@ else
   # no `head -n 1` anywhere in this branch, because closing a pipe early would
   # hand docker a SIGPIPE that pipefail would report as a spurious failure.
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  container_env="$(timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${HOME_CONTAINER}" 2>/dev/null || true)"
+  container_env="$(stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${HOME_CONTAINER}" 2>/dev/null || true)"
   env_line="$(printf '%s\n' "${container_env}" | grep "^${KEY}=" || true)"
-  [ -n "${env_line}" ] || die "the homepage container has no ${KEY} entry; check: docker compose config"
+  [ -n "${env_line}" ] || die "the homepage container has no ${KEY} entry; check: bazelisk run //scripts:prod-stack -- status"
 
   in_container="${env_line#"${KEY}="}"
   if [ "$(hash_of "${in_container}")" = "${want_hash}" ]; then
     echo "verified: the running container has the new password"
   else
-    die "the running container still has the old password — the recreate did not take; check: docker compose logs homepage"
+    die "the running container still has the old password — the recreate did not take; check: bazelisk run //scripts:prod-stack -- logs --tail 100 homepage"
   fi
 fi
 

@@ -2,9 +2,10 @@
 
 ## Issues
 
-- For bugs, include `docker compose ps`, the relevant
-  `docker compose logs <service>` excerpt, and the non-secret parts of your
-  `.env`.
+- For bugs, paste `docker compose ps` and the relevant log excerpt -
+  `bazelisk run //scripts:prod-stack -- logs --tail 100 <service>` prints it for the
+  stable stack, `bazelisk run //scripts:dev-stack -- logs --tail 100 <service>` for the
+  dev one - plus the non-secret parts of your `.env`.
 - For hardware questions, state the machine: this stack targets the GMKtec
   EVO-T1 (Ultra 9 285H / Arc 140T / 96 GB DDR5). IPEX-LLM behavior varies
   between Intel iGPUs.

@@ -45,7 +45,7 @@
 #   bazelisk run //scripts:search-check -- --engines google,brave
 #   bazelisk run //scripts:search-check -- --queries "python 3.12 datetime.fromisoformat"
 #   SEARXNG_URL=http://127.0.0.1:8181 bazelisk run //scripts:search-check
-#   bash scripts/search-check.sh --help            # the same script, from the repo root
+#   bazelisk run //scripts:search-check -- --help
 #
 # Options (accepted anywhere in argv):
 #   --url URL        where to probe (default: $SEARXNG_URL when set, else
@@ -170,7 +170,7 @@ source "${COMMON_LIB}"
 #   0
 usage() {
   cat <<'USAGE'
-usage: search-check [--url URL] [--engines LIST] [--queries LIST]
+usage: bazelisk run //scripts:search-check -- [--url URL] [--engines LIST] [--queries LIST]
                     [--timeout SECS] [--json] [--help]
 
 Proves whether the self-hosted search path actually returns results, and for

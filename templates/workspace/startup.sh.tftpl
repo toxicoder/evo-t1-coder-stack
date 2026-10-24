@@ -611,7 +611,7 @@ if [ -n "$repo_url_raw" ]; then
   elif ! command -v git >/dev/null 2>&1; then
     echo "WARNING: git is not installed in the workspace container, so" \
       "$repo_url_raw was not cloned into $target. This template expects the" \
-      "golden image (scripts/build-dev-image.sh), which ships git." >&2
+      "golden image (bazelisk run //scripts:build-dev-image), which ships git." >&2
   else
     # -- before the URL: the value is user input and must never parse as an option.
     if run_clone clone -- "$repo_url_raw" "$target"; then

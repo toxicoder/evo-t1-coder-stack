@@ -14,7 +14,7 @@
 # The whole suite skips while scripts/storage-clean.sh is absent: a suite
 # for a script that does not exist yet has no right to fail the gate.
 #
-# Usage: bats tests/bats/storage-clean.bats
+# Usage: bazelisk test //tests:bats_storage_clean_test   (from any cwd)
 # Safety: reads the template payloads and the two scripts; writes only under
 # the per-test scratch tree.
 
@@ -39,16 +39,41 @@ setup() {
 
 # seed_cache <home> <name> <date> - one file under the swept caches, stamped
 # with a given age so --older-than has real boundary cases to sort.
+# <date> is YYYY-MM-DD; GNU and BSD touch both honour that once rewritten.
 seed_cache() {
+  local path day compact
   mkdir -p "${1}/.grok/logs"
-  printf 'x\n' >"${1}/.grok/logs/${2}"
-  touch -d "${3}" "${1}/.grok/logs/${2}"
+  path="${1}/.grok/logs/${2}"
+  day="${3}"
+  printf 'x\n' >"${path}"
+  if ! touch -d "${day}T00:00:00" "${path}" 2>/dev/null; then
+    compact="$(printf '%s' "${day}" | tr -d '-')"
+    touch -t "${compact}0000" "${path}"
+  fi
+}
+
+# days_ago <n> — YYYY-MM-DD for n days before today (GNU date -d, BSD date -v).
+days_ago() {
+  if date -u -d "${1} days ago" +%F >/dev/null 2>&1; then
+    date -u -d "${1} days ago" +%F
+  else
+    date -u -v-"${1}"d +%F
+  fi
+}
+
+# checksum_tree <dir> — sorted per-file hashes (sha256sum or BSD shasum).
+checksum_tree() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "${1}" && find . -type f -exec sha256sum {} + | sort)
+  else
+    (cd "${1}" && find . -type f -exec shasum -a 256 {} + | sort)
+  fi
 }
 
 @test "storage-clean: help, an unknown flag, and a bad --older-than all print the usage" {
   run --separate-stderr bash "${CLEAN}" --help
   [ "${status}" -eq 0 ]
-  assert_match "help text" 'usage: storage-clean' "${output}"
+  assert_match "help text" 'usage: bazelisk run //scripts:storage-clean --' "${output}"
 
   run bash "${CLEAN}" --older-than abc
   [ "${status}" -ne 0 ]
@@ -62,22 +87,22 @@ seed_cache() {
   seed_cache "${scratch}/home" old.log '2000-01-01'
   seed_cache "${scratch}/home" fresh.log "$(date +%F)"
   before="${scratch}/before.sha"
-  ( cd "${scratch}/home" && find . -type f -exec sha256sum {} + | sort ) >"${before}"
+  checksum_tree "${scratch}/home" >"${before}"
 
   STUB_DOCKER_RC=1 run --separate-stderr env STUB_DOCKER_RC=1 bash "${CLEAN}" --check --home "${scratch}/home"
   [ "${status}" -eq 0 ]
   assert_match "stale listed" 'stale: .*old\.log' "${output}"
   assert_not_match "fresh kept out of the list" 'fresh\.log' "${output}"
   after="${scratch}/after.sha"
-  ( cd "${scratch}/home" && find . -type f -exec sha256sum {} + | sort ) >"${after}"
+  checksum_tree "${scratch}/home" >"${after}"
   cmp -s "${before}" "${after}"
 }
 
 @test "storage-clean: --older-than counts by age, not by presence" {
   local scratch
   scratch="$(make_scratch)"
-  seed_cache "${scratch}/home" six.log "$(date -d '6 days ago' +%F)"
-  seed_cache "${scratch}/home" four.log "$(date -d '4 days ago' +%F)"
+  seed_cache "${scratch}/home" six.log "$(days_ago 6)"
+  seed_cache "${scratch}/home" four.log "$(days_ago 4)"
   run bash "${CLEAN}" --check --older-than 5 --home "${scratch}/home"
   [ "${status}" -eq 0 ]
   assert_match "six-day file listed" 'six\.log' "${output}"
@@ -192,6 +217,8 @@ seed_cache() {
   run seed_container_exec "" "echo x" sh
   [ "${status}" -ne 0 ]
   assert_eq "empty container rejected" "1" "${status}"
+  run seed_container_exec --stdin "" "echo x" sh
+  [ "${status}" -ne 0 ]
 
   local stage
   stage="$(mktemp -d "${BATS_TEST_TMPDIR}/stage.XXXXXX")"

@@ -5,7 +5,7 @@
 # Each test evals the production function (tests/extract_fn.py) and asserts on
 # its result. docker, curl, ssh, psql and timeout are stubs.
 #
-# Usage: bats tests/bats/entry-fns.bats
+# Usage: bazelisk test //tests:bats_entry_fns_test   (from any cwd)
 # Safety: stub only. No daemon and no network.
 
 bats_require_minimum_version 1.5.0
@@ -22,6 +22,9 @@ setup() {
   use_stubs docker timeout curl psql ssh
   export STUB_CURL_RC=0
   export STUB_CURL_OUT='ok'
+  # api_read / api_write / cleanup_token call stack_timeout from coder_api.sh.
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/scripts/lib/coder_api.sh"
 }
 
 load_fn() {

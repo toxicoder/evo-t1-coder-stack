@@ -20,7 +20,7 @@
 # daemon: --home points the workspace pass at a scratch tree, and
 # STUB_COMPOSE_PS / STUB_COMPOSE_PS_RC drive the stub's two daemon shapes.
 #
-# Usage: bats tests/bats/update-configs.bats
+# Usage: bazelisk test //tests:bats_update_configs_test   (from any cwd)
 # Safety: hermetic. Reads the repo tree; writes only under the per-test scratch.
 
 bats_require_minimum_version 1.5.0
@@ -61,15 +61,15 @@ scratch_root() {
 @test "update-configs: --help prints the usage, and so does every usage error" {
   run --separate-stderr bash "${SCRIPT}" --help
   [ "${status}" -eq 0 ]
-  assert_match "help text" 'usage: update-configs' "${output}"
+  assert_match "help text" 'usage: bazelisk run //scripts:update-configs --' "${output}"
 
   run --separate-stderr bash "${SCRIPT}"
   [ "${status}" -eq 1 ]
-  assert_match "usage on a bare call" 'usage: update-configs' "${output}"
+  assert_match "usage on a bare call" 'usage: bazelisk run //scripts:update-configs --' "${output}"
 
   run --separate-stderr bash "${SCRIPT}" --dry-run
   [ "${status}" -eq 1 ]
-  assert_match "a flag before the subcommand is a usage error" 'usage: update-configs' "${output}"
+  assert_match "a flag before the subcommand is a usage error" 'usage: bazelisk run //scripts:update-configs --' "${output}"
 
   run --separate-stderr bash "${SCRIPT}" env --bogus
   [ "${status}" -eq 1 ]

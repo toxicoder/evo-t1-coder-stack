@@ -93,7 +93,7 @@
 #     out of any log.
 #   - Not being able to create anything — no coder CLI, or one that is logged out —
 #     prints the manual route and exits 0. That is a "not yet" state, not an error,
-#     and re-running this script is always safe.
+#     and re-running bazelisk run //scripts:new-workspace is always safe.
 #   - The probe clone is --depth 1 --no-checkout under a mktemp -d tree that the
 #     EXIT trap removes, so no copy of the repository is left on disk.
 
@@ -101,7 +101,7 @@ set -euo pipefail
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 # SELF_DIR, not pwd: this script never cds, and the seam must be findable however
-# it is invoked (bash scripts/new-workspace.sh, ./scripts/…, from any cwd).
+# it is invoked (bazelisk run //scripts:new-workspace, from any cwd).
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # die, first_line and has_tool come from the shared seam, byte-identical to the
 # copies that used to live here. log and note stay local on purpose: the seam's
@@ -151,7 +151,7 @@ note() { printf 'note: %s\n' "$*"; }
 #   0
 usage() {
   cat <<'EOF'
-usage: new-workspace.sh [options] <git-url> [workspace-name]
+usage: bazelisk run //scripts:new-workspace -- [options] <git-url> [workspace-name]
 
 Probe <git-url> for a dev container, then create a Coder workspace on the
 matching template: devcontainer when the repository carries one, workspace
@@ -249,7 +249,7 @@ done
 URL="${positional[0]-}"
 NAME_FORCED="${positional[1]-}"
 
-[ -n "$URL" ] || die "no git URL given (usage: new-workspace.sh [options] <git-url> [workspace-name])"
+[ -n "$URL" ] || die "no git URL given (usage: bazelisk run //scripts:new-workspace -- [options] <git-url> [workspace-name])"
 
 if [ "$FORCE_PLAIN" = 1 ] && [ "$FORCE_DC" = 1 ]; then
   die "--plain forces the workspace template and --devcontainer forces the devcontainer template: pick one"
@@ -452,7 +452,7 @@ log "creating workspace '${NAME}' (build runs in the background — --no-wait; w
 create_rc=0
 create_hint=""
 if ! has_tool coder; then
-  create_hint="no coder CLI on PATH, so nothing was created: install the 'coder' CLI (https://coder.com/docs/install — the binary is 'coder'), then run 'coder login <url>' with this stack's Coder URL (https://<host>:3001 on the LAN, or http://127.0.0.1:3000 from inside the coder container) and re-run this command"
+  create_hint="no coder CLI on PATH, so nothing was created: install the 'coder' CLI (https://coder.com/docs/install — the binary is 'coder'), then run 'coder login <url>' with this stack's Coder URL (https://<host>:3001 on the LAN, or http://127.0.0.1:3000 from inside the coder container) and re-run bazelisk run //scripts:new-workspace -- ${URL} ${NAME}"
   create_rc=1
 elif [ -n "${CODER_SESSION_TOKEN:-}" ]; then
   if [ -z "${CODER_URL:-}" ]; then
@@ -462,7 +462,7 @@ elif [ -n "${CODER_SESSION_TOKEN:-}" ]; then
     log '$ coder create ... (CODER_URL=${CODER_URL} with the token by name, not by value)'
     if ! CODER_URL="$CODER_URL" CODER_SESSION_TOKEN="$CODER_SESSION_TOKEN" \
       coder create -t "$TEMPLATE_CHOSEN" "${params[@]}" "$NAME"; then
-      create_hint="the create failed with the token from the environment: a rejected token means it belongs to another deployment, so mint a fresh one in the Coder UI (Settings → Tokens, or 'coder tokens create' inside the coder container), export CODER_URL and CODER_SESSION_TOKEN again, and re-run this command"
+      create_hint="the create failed with the token from the environment: a rejected token means it belongs to another deployment, so mint a fresh one in the Coder UI (Settings → Tokens, or 'coder tokens create' inside the coder container), export CODER_URL and CODER_SESSION_TOKEN again, and re-run bazelisk run //scripts:new-workspace -- ${URL} ${NAME}"
       create_rc=1
     fi
   fi
@@ -472,7 +472,7 @@ else
   # honest way to tell. One attempt, then the manual route — no login is faked.
   log "\$ ${create_line}"
   if ! coder create -t "$TEMPLATE_CHOSEN" "${params[@]}" "$NAME"; then
-    create_hint="if that read 'You are not currently logged in', the CLI has no session to spend: run 'coder login <url>' with this stack's Coder URL (https://<host>:3001 on the LAN, or http://127.0.0.1:3000 from inside the coder container) and re-run this command"
+    create_hint="if that read 'You are not currently logged in', the CLI has no session to spend: run 'coder login <url>' with this stack's Coder URL (https://<host>:3001 on the LAN, or http://127.0.0.1:3000 from inside the coder container) and re-run bazelisk run //scripts:new-workspace -- ${URL} ${NAME}"
     create_rc=1
   fi
 fi
@@ -502,17 +502,22 @@ Nothing was created. Two ways to do it by hand, with the same values:
    when it did not, then pick the matching preset or set the fields by hand,
    and press Create.
 
-2. Terminal, from the stack repository on the stack host — a token from the
-   Coder Tokens page or 'coder tokens create', pasted by name so it stays out
-   of shell history:
+2. Terminal, from the checkout on the stack host — log the host coder CLI in
+   (coder login https://<host>:3001) then re-run:
 
-   docker compose exec -T -e CODER_URL=http://127.0.0.1:3000 -e CODER_SESSION_TOKEN \\
+   bazelisk run //scripts:new-workspace -- ${URL} ${NAME}
+
+   Or, with a token from the Coder Tokens page or 'coder tokens create' inside
+   the coder container, pasted by name so it stays out of shell history:
+
+   docker compose -p evo-t1-prod exec -T -e CODER_URL=http://127.0.0.1:3000 -e CODER_SESSION_TOKEN \\
      coder coder create -t ${TEMPLATE_CHOSEN} ${params[*]} ${NAME}
 
    (The first 'coder' names the compose service, the second is the CLI inside
    it — see scripts/push-template.sh for why the CLI belongs inside the
-   container. Keep 'use_devcontainer=false' out of the line if that template
-   got it while your repository actually carries a dev container — then the
-   probe was wrong, and the flag was not needed.)
+   container. Use -p evo-t1-dev when that is the stack you are on. Keep
+   'use_devcontainer=false' out of the line if that template got it while your
+   repository actually carries a dev container — then the probe was wrong, and
+   the flag was not needed.)
 EOF
 exit 0

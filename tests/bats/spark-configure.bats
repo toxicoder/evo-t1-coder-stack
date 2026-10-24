@@ -4,7 +4,7 @@
 #
 # Entry-script cases for spark-configure.sh are added beside these lib cases.
 # Hermetic: curl, ssh, and timeout resolve through tests/bats/tool_stubs.
-# Usage: bats tests/bats/spark-configure.bats
+# Usage: bazelisk test //tests:bats_spark_configure_test   (from any cwd)
 # Safety: no daemon, no network, no Spark box.
 
 bats_require_minimum_version 1.5.0

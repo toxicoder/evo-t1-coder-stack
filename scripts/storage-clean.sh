@@ -67,7 +67,7 @@ source "${SELF_DIR}/lib/config_seed.sh"
 #   0
 usage() {
   cat <<'USAGE'
-usage: storage-clean [--check] [--yes] [--older-than <days>]
+usage: bazelisk run //scripts:storage-clean -- [--check] [--yes] [--older-than <days>]
                      [--project-name <name>] [--container <name> ...]
                      [--home <dir> ...]
 
@@ -312,8 +312,16 @@ main() {
       act=1
     else
       printf 'sweep stale files and re-sync configs in %s? [y/N] ' "${t#*:}"
-      if ! IFS= read -r answer; then
-        answer=""
+      if [ -t 0 ]; then
+        if ! IFS= read -r answer; then
+          answer=""
+        fi
+      else
+        # bazelisk run keeps stdin open with no EOF; without -t this waits forever.
+        # A piped y/n (or </dev/null) still returns immediately.
+        if ! IFS= read -r -t 15 answer; then
+          answer=""
+        fi
       fi
       case "${answer}" in
         [yY] | [yY][eE][sS])

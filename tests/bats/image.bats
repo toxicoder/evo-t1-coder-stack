@@ -2,7 +2,7 @@
 #
 # ## image.bats — pin check for the golden dev image, with no docker build.
 #
-# Usage: bats tests/bats/image.bats
+# Usage: bazelisk test //tests:bats_image_test   (from any cwd)
 # Safety: reads the repo Dockerfile and tool-versions.env; writes only under
 # the bats temp directory.
 

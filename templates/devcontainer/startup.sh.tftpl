@@ -654,7 +654,7 @@ elif [ -e "$target" ]; then
 elif ! command -v git >/dev/null 2>&1; then
   echo "WARNING: git is not installed in the workspace container, so $repo_url_raw" \
     "was not cloned into $target — the dev container build will fail. This template" \
-    "expects the golden image (scripts/build-dev-image.sh), which ships git." >&2
+    "expects the golden image (bazelisk run //scripts:build-dev-image), which ships git." >&2
 else
   # -- before the URL: the value is user input and must never parse as an option.
   if run_clone clone -- "$repo_url_raw" "$target"; then
@@ -713,7 +713,7 @@ for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n'
       "alone and skipping the clone. Remove it from the stack host if it should not be there." >&2
   elif ! command -v git >/dev/null 2>&1; then
     echo "WARNING: git is not installed, so $extra_url was not cloned into $extra_target." \
-      "This template expects the golden image (scripts/build-dev-image.sh), which ships git." >&2
+      "This template expects the golden image (bazelisk run //scripts:build-dev-image), which ships git." >&2
   elif run_clone clone -- "$extra_url" "$extra_target"; then
     echo "cloned $extra_url into $extra_target"
     if [ -n "$clone_owner" ]; then

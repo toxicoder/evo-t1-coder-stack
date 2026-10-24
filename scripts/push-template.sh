@@ -61,7 +61,7 @@
 #   bazelisk run //scripts:push-template            # every template in TEMPLATES_DEFAULT
 #   bazelisk run //scripts:push-template -- devcontainer
 #                                             # name filter args, for retrying one
-#   SKIP_TEMPLATE_PUSH=1 bash scripts/bootstrap.sh   # bootstrap skips this step
+#   SKIP_TEMPLATE_PUSH=1 bazelisk run //scripts:bootstrap   # bootstrap skips this step
 # Names are validated against TEMPLATES_DEFAULT before anything touches docker, and
 # an unknown one is a user error: it exits non-zero rather than skipping. Push order
 # is always TEMPLATES_DEFAULT order, whatever the argument order.
@@ -344,24 +344,25 @@ fi
 CODER_CONTAINER="$(stack_container "${running}" "${CODER_SERVICE}")"
 DB_CONTAINER="$(stack_container "${running}" "${DB_SERVICE}")"
 if [ -z "${CODER_CONTAINER}" ]; then
-  skip "skipped: the ${CODER_SERVICE} service is not running yet (start the stack with: docker compose up -d)"
+  skip "skipped: the ${CODER_SERVICE} service is not running yet (start the stack with: bazelisk run //scripts:prod-stack -- up)"
 fi
 if [ -z "${DB_CONTAINER}" ]; then
-  skip "skipped: the ${DB_SERVICE} service is not running, so no push token can be minted (start the stack with: docker compose up -d)"
+  skip "skipped: the ${DB_SERVICE} service is not running, so no push token can be minted (start the stack with: bazelisk run //scripts:prod-stack -- up)"
 fi
 
 # Prove the in-container API is answering before minting anything. curl is used
 # rather than the coder CLI because it needs no credential: a 200 here separates
 # "the container is wedged" from "the token was rejected".
-buildinfo="$(timeout "${PROBE_TIMEOUT}" \
+log "probing the Coder API at ${CONTAINER_API_URL} inside ${CODER_SERVICE} (up to ${PROBE_TIMEOUT}s) ..."
+buildinfo="$(stack_timeout "${PROBE_TIMEOUT}" \
   docker exec -i "${CODER_CONTAINER}" \
   curl -fsS -m 5 "${CONTAINER_API_URL}/api/v2/buildinfo" </dev/null 2>&1)" || probe_rc=$?
 probe_rc="${probe_rc:-0}"
 if [ "${probe_rc}" != "0" ]; then
   if [ "${probe_rc}" = "124" ]; then
-    skip "skipped: no answer within ${PROBE_TIMEOUT}s from ${CONTAINER_API_URL} inside ${CODER_SERVICE} — the server may still be starting: docker compose logs --tail 100 ${CODER_SERVICE}"
+    skip "skipped: no answer within ${PROBE_TIMEOUT}s from ${CONTAINER_API_URL} inside ${CODER_SERVICE} — the server may still be starting: bazelisk run //scripts:prod-stack -- logs --tail 100 ${CODER_SERVICE}"
   fi
-  die "the Coder API at ${CONTAINER_API_URL} is not answering inside the ${CODER_SERVICE} container ($(first_line "${buildinfo}")) — check: docker compose logs --tail 100 ${CODER_SERVICE}"
+  die "the Coder API at ${CONTAINER_API_URL} is not answering inside the ${CODER_SERVICE} container ($(first_line "${buildinfo}")) — check: bazelisk run //scripts:prod-stack -- logs --tail 100 ${CODER_SERVICE}"
 fi
 
 dev_image="$(env_get DEV_IMAGE)"
@@ -464,9 +465,9 @@ case "${inserted}:${insert_rc}" in
       '' | *YOUR_LAN_IP*) access_url_hint="https://<host>:3001" ;;
     esac
     if [ -n "${PUSH_USER}" ]; then
-      skip "skipped: ${PUSH_USER} is not an active human Coder account, so no push token could be minted — check it with: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c 'select username, status from users'"
+      skip "skipped: ${PUSH_USER} is not an active human Coder account, so no push token could be minted — check it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c 'select username, status from users'"
     fi
-    skip "skipped: no active Coder account with the site owner role — open ${access_url_hint} and register the first account, it becomes the site admin, then re-run this script."
+    skip "skipped: no active Coder account with the site owner role — open ${access_url_hint} and register the first account, it becomes the site admin, then re-run: bazelisk run //scripts:push-template"
     ;;
   *)
     printf '%s\n' "${inserted}" >&2
@@ -482,7 +483,7 @@ session_token="${key_id}-${key_secret}"
 # `docker compose` cannot perturb compose's own ${CODER_*} interpolation. Passing
 # them this way (rather than as -e NAME=VALUE, and with -e NAME on the compose exec
 # line) keeps the token out of the argv that `ps` shows while the command runs.
-# coder_exec — with the capped `timeout "${VERIFY_TIMEOUT}"` in front of it, the -T
+# coder_exec — with the capped `stack_timeout "${VERIFY_TIMEOUT}"` in front of it, the -T
 # that keeps progress output parseable, and the </dev/null that frees stdin — comes
 # from scripts/lib/coder_api.sh, sourced above.
 
@@ -822,7 +823,7 @@ for entry in "${selected[@]}"; do
   template_push_one "${name}" "${dir}" ${vars[@]+"${vars[@]}"} || push_rc=$?
   if [ "${push_rc}" != "0" ]; then
     # The CLI's own plan/apply output already went to the terminal above.
-    printf 'error: the push of %s failed (exit %s) — check the server with: docker compose logs --tail 100 %s\n' \
+    printf 'error: the push of %s failed (exit %s) — check the server with: bazelisk run //scripts:prod-stack -- logs --tail 100 %s\n' \
       "${name}" "${push_rc}" "${CODER_SERVICE}" >&2
     failed=$((failed + 1))
     continue
@@ -850,7 +851,7 @@ for entry in "${selected[@]}"; do
     if template_set_description "${name}" "${template_description}"; then
       log "template ${name}: description set (chat-agent routing hint)"
     else
-      log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --description '...'"
+      log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker exec ${CODER_CONTAINER} coder templates edit ${name} --description '...'"
     fi
   fi
 
@@ -860,7 +861,7 @@ for entry in "${selected[@]}"; do
   if template_set_autostop_off "${name}"; then
     log "template ${name}: autostop default set to disabled (workspaces start with a nil TTL)"
   else
-    log "note: ${name}: autostop could not be switched off — until it is, a new workspace from this template starts with an autostop deadline. Retry from the host: docker compose exec ${CODER_SERVICE} coder templates edit ${name} --default-ttl 0 --activity-bump 0"
+    log "note: ${name}: autostop could not be switched off — until it is, a new workspace from this template starts with an autostop deadline. Retry from the host: docker exec ${CODER_CONTAINER} coder templates edit ${name} --default-ttl 0 --activity-bump 0"
   fi
   log "template ${name} pushed; active version ${active_id}"
 done
@@ -872,7 +873,7 @@ done
 # Disarm before the delete so the delete runs once, deliberately.
 trap - EXIT
 psql_sql "${cleanup_sql}" >/dev/null 2>&1 ||
-  log "note: the push token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
+  log "note: the push token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
 
 if [ "${failed}" != "0" ]; then
   printf '%s of %s template(s) did not reach an active version\n' "${failed}" "${#selected[@]}" >&2

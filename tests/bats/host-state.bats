@@ -8,7 +8,7 @@
 # Docker-created directory or root-owned file in Bazel's runfiles tree (the
 # next bazelisk run dies creating prod-stack.runfiles on evo-t1.svg).
 #
-# Usage: bats tests/bats/host-state.bats
+# Usage: bazelisk test //tests:bats_host_state_test   (from any cwd)
 # Safety: hermetic. Writes only under the per-test scratch; no daemon, no
 # sudo, no real /etc/resolv.conf.
 

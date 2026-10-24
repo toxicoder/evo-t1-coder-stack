@@ -20,7 +20,7 @@
 # The whole suite skips while scripts/search-check.sh is absent: a suite for a
 # script that does not exist yet has no right to fail the gate.
 #
-# Usage: bats tests/bats/search-check.bats
+# Usage: bazelisk test //tests:bats_search_check_test   (from any cwd)
 # Safety: stubs and canned reply bodies only. No live service, no Docker, no
 # network.
 
@@ -180,7 +180,7 @@ PROBE_CURL
 @test "search-check: --help answers with the usage block and probes nothing" {
   run --separate-stderr bash "${SCRIPT}" --help
   [ "${status}" -eq 0 ]
-  assert_match "usage names its own flags" 'usage: search-check \[--url URL\]' "${output}"
+  assert_match "usage names its own flags" 'usage: bazelisk run //scripts:search-check -- \[--url URL\]' "${output}"
   assert_match "usage states the exit codes" '2 =$' "${output}"
   [ "$(stub_log_count curl)" -eq 0 ]
 }
@@ -250,7 +250,10 @@ PROBE_CURL
     skip "the host tools the probe path shells out to are not all on PATH"
   fi
 
-  run --separate-stderr env PATH="${plain}" bash "${SCRIPT}" --url http://127.0.0.1:8181 --engines wikipedia --queries 'alpha beta gamma' --timeout 2
+  # Invoke this suite's bash by absolute path: staging `bash` can copy a
+  # 3.2 /bin/bash that cannot parse the script, and `env PATH=... bash` would
+  # then pick that copy.
+  run --separate-stderr env PATH="${plain}" "${BASH}" "${SCRIPT}" --url http://127.0.0.1:8181 --engines wikipedia --queries 'alpha beta gamma' --timeout 2
   [ "${status}" -eq 0 ]
   assert_match "reason printed" 'curl is not on PATH' "${output}"
   assert_not_match "nothing probed" 'search-check: http' "${output}"
@@ -404,7 +407,7 @@ duckduckgo" "$(split_list ' brave , duckduckgo ')"
   run --separate-stderr usage_error '--timeout needs a whole number of seconds, got abc'
   [ "${status}" -eq 2 ]
   assert_match "the complaint names the flag" 'timeout needs a whole number' "${stderr}"
-  assert_match "the usage block comes with it" 'usage: search-check \[--url URL\]' "${output}"
+  assert_match "the usage block comes with it" 'usage: bazelisk run //scripts:search-check -- \[--url URL\]' "${output}"
 }
 
 @test "search-check: pair_facts and total_facts read one field order" {
@@ -487,7 +490,7 @@ duckduckgo" "$(split_list ' brave , duckduckgo ')"
 
   record_pair "http://127.0.0.1:8181" "brave" "alpha beta gamma"
   record_pair "http://127.0.0.1:8181" "brave" "brave search"
-  assert_eq "one line per pair, appended" "2" "$(wc -l <"${work}/brave.pairs")"
+  assert_eq "one line per pair, appended" "2" "$(wc -l <"${work}/brave.pairs" | tr -d '[:space:]')"
   assert_eq "second query kept whole" "brave|ok|200|3|0.42|no" "$(tail -n 1 "${work}/brave.pairs")"
   assert_match "GET keeps the query encoded" 'q=brave search' "$(stub_log curl)"
 }
@@ -539,10 +542,15 @@ duckduckgo" "$(split_list ' brave , duckduckgo ')"
   [ "${status}" -eq 0 ]
   [ -z "$(find "${tmp}" -mindepth 1)" ]
 
-  # A run whose scratch directory is gone before the probe starts still exits
-  # with the documented usage error and no partial table.
-  local gone="${SCRATCH}/gone"
-  run --separate-stderr env TMPDIR="${gone}" bash "${SCRIPT}" --engines wikipedia
+  # A run whose mktemp cannot create the scratch directory still exits with
+  # the documented usage error and no partial table. TMPDIR tricks are not
+  # enough: BSD mktemp falls back to /tmp when TMPDIR is missing, a file, or
+  # unwritable, so the probe is a mktemp on PATH that always fails.
+  local failbin="${SCRATCH}/fail-mktemp"
+  mkdir -p "${failbin}"
+  printf '%s\n' '#!/bin/sh' 'exit 1' >"${failbin}/mktemp"
+  chmod 755 "${failbin}/mktemp"
+  run --separate-stderr env PATH="${failbin}:${PATH}" bash "${SCRIPT}" --engines wikipedia
   [ "${status}" -eq 2 ]
   assert_match "scratch failure is a usage error" 'scratch directory' "${stderr}"
 }
