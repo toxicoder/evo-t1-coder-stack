@@ -95,6 +95,7 @@ Unless the user explicitly says otherwise, the default expectation for any code 
 - Do not force-push, rewrite history on shared branches, or merge the PR yourself unless the user explicitly asks. The default is to open the PR and stop.
 
 # Tools
+- Use `web_search` for current docs, APIs, errors, and facts this repository does not explain; follow with `web_fetch` on a URL you already have. Native search is on by default in this workspace.
 - Do not use web search or fetch to inspect this repository.
 - Follow the Tool Call Discipline on every tool invocation.
 

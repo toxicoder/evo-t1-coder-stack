@@ -18,16 +18,14 @@
 # the very end of the file. Both are per-workspace, so with the Grok profile set to
 # "private" two workspaces can legitimately disagree about either one.
 
-# Grok's native web_search is the SECONDARY search lane, and it is off by
-# default on purpose: no model transport this box ships serves hosted search
-# (LiteLLM answers "tools of type 'web_search' are not supported: this server
-# runs function tools only") and the client-side scrape path burns calls the
-# same way. Search goes through the gated [mcp_servers.searxng] stdio server
-# below instead, which answers directly. Proof before opt-in: prove the lane
-# down first (`bazelisk run //scripts:search-check`, or `grok mcp doctor
-# searxng`), then flip this key to false and start a new session - that step
-# alone is what flips the secondary lane back on.
-disable_web_search = true
+# Grok's native web_search is the DEFAULT search lane, on by default. No
+# model transport this box ships serves hosted search (LiteLLM answers
+# "tools of type 'web_search' are not supported: this server runs function
+# tools only"), so the client-side scrape path is what runs and the agent
+# alias digests the result. The gated [mcp_servers.searxng] stdio server
+# below is the fallback. To park native search, set this key to true and
+# start a new session.
+disable_web_search = false
 
 [models]
 # `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
@@ -37,9 +35,9 @@ disable_web_search = true
 # Each key here names the model that serves that role. The CLI's own default
 # for the web_search role is a hosted model, so all three roles below stay on
 # the local Spark lane; supports_backend_search = false keeps that search
-# client-side (local fetch, then the model summarises the result) and off by
-# default, while the always-on search lane for this box is the gated
-# [mcp_servers.searxng] server below.
+# client-side (local fetch, then the model summarises the result). Native
+# web_search is on by default; the gated [mcp_servers.searxng] server below
+# is the fallback lane.
 default = "${grok_default_model}"
 session_summary = "agent"
 image_description = "agent"
@@ -185,8 +183,8 @@ plan = "agent"
 # environment plus outbound network on the first fetch (later identical lookups
 # inside the TTL come from the local SQLite cache instead). So the three gated
 # entries this file can switch on are: search_mcp defaults to true, so searxng
-# renders unless a push passes search_mcp=false; github_mcp defaults to false;
-# context7_mcp defaults to false.
+# renders as the fallback search lane unless a push passes search_mcp=false;
+# github_mcp defaults to false; context7_mcp defaults to false.
 #
 # What is left out is simply not defined here, so there is nothing to disable;
 # if you add one later and want it parked rather than deleted, list its name
@@ -229,8 +227,8 @@ env = { CONTEXT7_API_KEY = "$${CONTEXT7_API_KEY}" }
 # Rendered only when search_mcp is on, and that template variable defaults to
 # true, so this block ships unless a push passes --var search_mcp=false (or sets
 # SEARCH_MCP=false in .env, which push-template.sh relays). It wires the
-# self-hosted SearXNG service as a stdio MCP server: this box's default search
-# lane.
+# self-hosted SearXNG service as a stdio MCP server: this box's fallback
+# search lane.
 #
 # The binary is baked into the golden image (images/dev/Dockerfile installs
 # searxng-mcp-server at the version pinned in images/dev/tool-versions.env,
@@ -251,10 +249,9 @@ command = "/opt/npm-global/bin/searxng-mcp-server"
 # Prove the route with `bazelisk run //scripts:search-check` (it reads the same
 # SEARXNG_URL, which main.tf also puts in coder_agent's env) and the server's
 # handshake
-# with `grok mcp doctor searxng`. If the lane stays down, two knobs keep search
-# working: push with search_mcp off to park this server, and set
-# disable_web_search = false at the top of this file (then start a new session)
-# to fall back to Grok's native search lane.
+# with `grok mcp doctor searxng`. Native search is already on; this server is
+# the fallback. Park it with search_mcp off, or park native search with
+# disable_web_search = true at the top of this file (then start a new session).
 env = { SEARXNG_URL = "${search_url}" }
 
 %{endif~}

@@ -86,8 +86,9 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                  code-server, the web terminal and the terminal profiles all
   |                  start on that clone
   |                * ~/.grok/config.toml rendered by the template: model aliases
-  |                  (default + role fallbacks) plus the searxng MCP server declared
-  |                  by default; github and context7 are opt-in
+  |                  (default + role fallbacks), native web_search on by default,
+  |                  plus the searxng MCP server as the fallback; github and
+  |                  context7 are opt-in
   |                * Cline / Kilo Code ---> host.docker.internal:4000
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
@@ -106,10 +107,11 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |               no key, no account, no request logging. A workspace reaches it
   |               through the host gateway, so the workspace networks stay untouched.
   |               Both templates render it into the workspace config.toml as the
-  |               MCP server `searxng` (gated on `search_mcp`, default on); Grok's
-  |               native web_search stays off by default as the secondary lane.
-  |               Measure the lane with `bazelisk run //scripts:search-check`
-  |               (an empty answer is not an answered one).
+  |               MCP server `searxng` (gated on `search_mcp`, default on), the
+  |               fallback search lane. Grok's native web_search is the default
+  |               (`disable_web_search = false`). Measure the SearXNG lane with
+  |               `bazelisk run //scripts:search-check` (an empty answer is not
+  |               an answered one).
   |
   +-- :3000 ----> Kasm install wizard (first boot only)
   +-- :4443 ----> Kasm Workspaces UI (privileged DinD desktop streaming)
@@ -808,13 +810,12 @@ The list format, the two clone paths, and what `--dry-run` prints:
 - One shared profile is one `config.toml` for every workspace that owner owns, and the
   last boot to re-render it wins - which is also true of the SQLite memory and index
   files, so *roughly in sync* is the bar, not transactional sharing.
-- Five offline MCP stdio servers ship pre-installed but stay undeclared by default, and
-  `searxng` (host 8181) is the search lane, not a model transport:
+- Five offline MCP stdio servers ship pre-installed but stay undeclared by default.
+  Grok's native search lane is on (`disable_web_search = false`). `searxng` (host
+  8181) is the fallback search lane, not a model transport:
   `bazelisk run //scripts:search-check` measures it. It reaches the agent as the
   `searxng` MCP stdio server, declared by default (`search_mcp` defaults to true;
-  `SEARCH_MCP=false` in `.env` opts a whole stack out). Grok's native search lane
-  stays off (`disable_web_search = true`) as the easy fallback when the self-hosted
-  one is down.
+  `SEARCH_MCP=false` in `.env` opts a whole stack out).
 - Two further servers are opt-in and off by default: `github` (`GITHUB_MCP=true`) and
   `context7` (`CONTEXT7_MCP=true`, then re-push templates). Context7 runs the official
   docs server behind `mcp-cache-proxy`, so the first lookup of a library needs network

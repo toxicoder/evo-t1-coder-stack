@@ -164,13 +164,13 @@ installed yourself under `~/.grok/bin`.
   untouched.
 - It is **not** a model transport, so `web_search = "agent"` and
   `supports_backend_search = false` stay as they are and the agent's own `web_search`
-  tool still digests through the `agent` alias. It is also not the *default* search
-  tool: `disable_web_search = true` keeps that secondary lane off (it has no hosted
-  backend on this box anyway - LiteLLM answers "tools of type 'web_search' are not
-  supported"). Search works by default through the `searxng` MCP stdio server instead:
-  both templates render that block gated on `search_mcp`, which defaults to true.
-  When the self-hosted lane is down, flip `disable_web_search` to false and start a
-  new session to fall back to the native one. Measure the lane with:
+  tool still digests through the `agent` alias. Native search is the default:
+  `disable_web_search = false` keeps the `web_search` tool in the session (it has no
+  hosted backend on this box - LiteLLM answers "tools of type 'web_search' are not
+  supported" - so the client-side scrape path is what runs). The `searxng` MCP stdio
+  server is the fallback: both templates render that block gated on `search_mcp`,
+  which defaults to true. To park native search, set `disable_web_search` to true
+  and start a new session. Measure the self-hosted lane with:
 
   ```sh
   bazelisk run //scripts:search-check
@@ -180,9 +180,10 @@ installed yourself under `~/.grok/bin`.
   reports which one it got.
 
 - **MCP servers: the default render declares exactly one, the gated `searxng`
-  server.** It names the pre-installed `searxng-mcp-server` binary (pinned in
-  `images/dev/tool-versions.env` and baked into the golden image), is gated on
-  `search_mcp` (default true) and dials the service above through `SEARXNG_URL`.
+  server (the fallback search lane).** It names the pre-installed
+  `searxng-mcp-server` binary (pinned in `images/dev/tool-versions.env` and baked
+  into the golden image), is gated on `search_mcp` (default true) and dials the
+  service above through `SEARXNG_URL`.
   The five offline stdio servers (`filesystem`, `memory`, `sequential-thinking`,
   `git` and `time`) stay pre-installed in the image (`npm -g` for the first
   three, `uv tool` for the Python two), but the rendered `config.toml` names
