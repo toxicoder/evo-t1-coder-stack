@@ -24,6 +24,11 @@ request as the only way back into `main`.
   so there is no `staging` or `production` branch to patch and then remember to merge back.
 - Name the branch after the change, not the author, and keep the commit subject imperative
   with one of `feat:`, `fix:`, `docs:`, `test:`, `chore:`, `ci:`, `refactor:`.
+- Below the subject leave one empty line, then the bullet points, and leave an empty line
+  between every two bullets, so each bullet is its own paragraph. The same rule is in
+  `templates/common/GROK_BUILD_AGENTS.md`, which is the text every workspace seeds into
+  `~/.grok/AGENTS.md`, so a commit written by an agent and one written by hand read the
+  same way in `git log`.
 
 ## CI and protection
 
