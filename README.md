@@ -1,7 +1,7 @@
 # EVO-T1 Coder Stack
 
-One `docker compose up` turns a GMKtec EVO-T1 (Intel Ultra 9 285H, Arc 140T iGPU,
-96 GB DDR5) into a self-hosted dev-workspace server.
+One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra 9
+285H, Arc 140T iGPU, 96 GB DDR5) into a self-hosted dev-workspace server.
 
 - **Coder** - the control plane: provisions one Docker container per workspace.
 - **IPEX-LLM Ollama** - local models on the Arc 140T. **LiteLLM** is the one
@@ -219,7 +219,7 @@ reach the dev stack when `dev-stack.env` exists.
    The project name travels, so this names it from any directory:
 
    ```sh
-   bazelisk run //scripts:dev-stack -- up --project-name evo-t1-coder-stack
+   bazelisk run //scripts:prod-stack -- up --project-name evo-t1-coder-stack
    ```
 
    Start the **dev** stack instead, or beside it - on ports shifted by 10000:
@@ -357,10 +357,15 @@ bazelisk run //scripts:prod-stack -- down
 bazelisk run //scripts:dev-stack -- down
 ```
 
-Check what is actually running before you destroy anything:
+Check what is actually running before you destroy anything. Each runner reports its own
+project, so ask both:
 
 ```sh
-docker compose ls
+bazelisk run //scripts:prod-stack -- status
+```
+
+```sh
+bazelisk run //scripts:dev-stack -- status
 ```
 
 ### Give the dev stack its own ports
@@ -448,6 +453,9 @@ at another project:
 make stack-up PROJECT=evo-t1-coder-stack
 make prod-stack-up PROD_PROJECT=evo-t1-coder-stack
 ```
+
+Bazelisk is still the ingress and the shim only saves typing the flag - the same call
+is `bazelisk run //scripts:prod-stack -- up --project-name evo-t1-coder-stack`.
 
 ### Branching
 

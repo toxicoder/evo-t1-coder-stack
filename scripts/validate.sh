@@ -8,7 +8,6 @@
 #
 # Usage:
 #   bazelisk run //:validate
-#   ./scripts/validate.sh
 
 set -euo pipefail
 

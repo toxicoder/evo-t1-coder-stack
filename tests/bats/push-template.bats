@@ -19,7 +19,7 @@
 # fixtures/push-template/psql-token — a psql that echoes the id back out of the
 # statement, the way `returning id` answers on a real server.
 #
-# Usage: bats tests/bats/push-template.bats   (from any cwd)
+# Usage: bazelisk test //tests:bats_push_template_test   (from any cwd)
 #
 # Safety: stub only. Nothing here needs a daemon, a database or a network.
 
@@ -122,7 +122,7 @@ logs_absent() {
   export STUB_COMPOSE_PS=''
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "skipped: the coder service is not running yet (start the stack with: docker compose up -d)" ]
+  [ "${output}" = "skipped: the coder service is not running yet (start the stack with: bazelisk run //scripts:prod-stack -- up)" ]
   [ "$(stub_log_count psql)" -eq 0 ]
 }
 
@@ -141,7 +141,7 @@ logs_absent() {
   export STUB_COMPOSE_PS='coder|stack-coder-1'
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 0 ]
-  [ "${output}" = "skipped: the db service is not running, so no push token can be minted (start the stack with: docker compose up -d)" ]
+  [ "${output}" = "skipped: the db service is not running, so no push token can be minted (start the stack with: bazelisk run //scripts:prod-stack -- up)" ]
 }
 
 @test "push-template: an unanswered buildinfo probe is a hard failure (curl 22)" {
@@ -152,7 +152,7 @@ logs_absent() {
   [ "${status}" -eq 1 ]
   # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
   [[ ${stderr} == "error: the Coder API at http://127.0.0.1:3000 is not answering inside the coder container ()"* ]]
-  [ "$(stub_log_last timeout)" = "timeout 20 docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
+  [ "$(stub_log_last timeout)" = "timeout -k 2 20 docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
   [ "$(stub_log_last docker)" = "docker exec -i stack-coder-1 curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
   [ "$(stub_log_last curl)" = "curl -fsS -m 5 http://127.0.0.1:3000/api/v2/buildinfo" ]
 }

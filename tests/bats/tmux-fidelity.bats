@@ -11,7 +11,7 @@
 # against a throwaway HOME, and pins the editor terminal keys both
 # settings.json.tftpl twins must keep.
 #
-# Usage: bats tests/bats/tmux-fidelity.bats
+# Usage: bazelisk test //tests:bats_tmux_fidelity_test   (from any cwd)
 # Safety: reads the four template payload files; writes only under the
 # per-test scratch tree.
 

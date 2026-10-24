@@ -56,6 +56,12 @@ same commands;
 box: the suites exercise those scripts against `tests/bats/tool_stubs`. `bazelisk run
 //scripts:<stem> -- <args>` is how a human runs one of them for real.
 
+Those operator runs are bounded: a script's non-interactive `docker exec` closes stdin
+(`</dev/null`), and the docker wrappers go through `timeout(1)` with `--kill-after`, so a
+`bazelisk run //scripts:<stem>` cannot sit forever the way `docker exec -i` did under
+`bazelisk run`, waiting for an EOF that never came. `logs --follow` is the intentional
+long-running exception, and you stop it with Ctrl-C.
+
 ## What Bazel brings
 
 - **Hermetic sandbox.** `test --spawn_strategy=local,sandboxed` and `build

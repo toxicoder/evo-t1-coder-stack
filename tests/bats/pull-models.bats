@@ -28,7 +28,7 @@
 # exit status); STUB_DOCKER_EXEC_RUN=0 keeps the in-container command canned
 # rather than executed on the host.
 #
-# Usage: bats tests/bats/pull-models.bats   (from any cwd)
+# Usage: bazelisk test //tests:bats_pull_models_test   (from any cwd)
 #
 # Safety: stub only. Nothing here needs a daemon, a model, or a network.
 
@@ -144,7 +144,7 @@ fake_root() {
   run --separate-stderr env STUB_COMPOSE_PS='' bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 1 ]
   assert_eq "nothing running" \
-    $'error: the ollama service is not running (start the stack with: docker compose up -d)\n       if it is in a restart loop, check: docker compose logs --tail 100 ollama' \
+    $'error: the ollama service is not running (start the stack with: bazelisk run //scripts:prod-stack -- up)\n       if it is in a restart loop, check: bazelisk run //scripts:prod-stack -- logs --tail 100 ollama' \
     "${stderr}"
 
   # Services that are running are not the ollama service: the label column is
@@ -154,7 +154,7 @@ fake_root() {
     bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 1 ]
   assert_eq "the wrong services" \
-    $'error: the ollama service is not running (start the stack with: docker compose up -d)\n       if it is in a restart loop, check: docker compose logs --tail 100 ollama' \
+    $'error: the ollama service is not running (start the stack with: bazelisk run //scripts:prod-stack -- up)\n       if it is in a restart loop, check: bazelisk run //scripts:prod-stack -- logs --tail 100 ollama' \
     "${stderr}"
   # Two probes, and still no exec: a pull into the wrong container would download
   # 35 GB into a service that is not Ollama.
@@ -191,7 +191,7 @@ fake_root() {
   # timeout(1) caps the probe only: a first pull is tens of gigabytes and would
   # fail on the clock before it failed on the network.
   [ "$(stub_log_count timeout)" -eq 1 ]
-  [ "$(stub_log_last timeout)" = "timeout 20 docker ps --format {{.Label \"com.docker.compose.service\"}}|{{.Names}}" ]
+  [ "$(stub_log_last timeout)" = "timeout -k 2 20 docker ps --format {{.Label \"com.docker.compose.service\"}}|{{.Names}}" ]
   [[ "$(stub_log docker)" == *"docker exec -i ipex-ollama-1 bash -lc "* ]]
 }
 

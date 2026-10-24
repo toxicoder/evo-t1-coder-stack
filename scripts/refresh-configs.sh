@@ -69,7 +69,7 @@ source "${SELF_DIR}/lib/config_seed.sh"
 #   0
 usage() {
   cat <<'USAGE'
-usage: refresh-configs [--dry-run] [--force] [--json]
+usage: bazelisk run //scripts:refresh-configs -- [--dry-run] [--force] [--json]
                        [--container <name> ...] [--home <dir> ...]
                        [--litellm-url <url>]
 

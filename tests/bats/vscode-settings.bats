@@ -8,7 +8,7 @@
 # per-owner volume, while the dev-container template's code-server fork
 # merges it into the dev container's private copy only while the toggle is on.
 #
-# Usage: bats tests/bats/vscode-settings.bats
+# Usage: bazelisk test //tests:bats_vscode_settings_test   (from any cwd)
 # Safety: reads the two template dirs; writes nothing.
 
 bats_require_minimum_version 1.5.0

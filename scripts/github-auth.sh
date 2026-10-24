@@ -23,8 +23,8 @@
 # prints REFUSED-GRANT, never a pass, and every verdict names the next command.
 #
 # Usage:
-#   scripts/github-auth.sh check [repo-url] [--source=<slot>]            (inside a workspace)
-#   scripts/github-auth.sh check [container] [repo-url] [--source=<slot>]  (on the stack host)
+#   bazelisk run //scripts:github-auth -- check [repo-url] [--source=<slot>]            (inside a workspace)
+#   bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>]  (on the stack host)
 #       Inside a workspace (CODER_WORKSPACE_ID set) the docker CLI addresses
 #       that workspace's own DinD sidecar, never the host daemon, so check
 #       runs SELF mode there: no docker at all, one probe of this
@@ -50,7 +50,7 @@
 #       shadowed ones; env, gh or mint probes just that slot and says beside
 #       the answer that git and gh consult the env pair first.
 #       Prints slot names, kinds and verdicts; never token bytes.
-#   scripts/github-auth.sh auth <container> [-]
+#   bazelisk run //scripts:github-auth -- auth <container> [-]
 #       Install a write-capable credential into that ONE workspace: the PAT
 #       arrives on stdin only (the - form, or a TTY prompt). A second argument
 #       is refused: argv is readable through `ps` by any other process in that
@@ -178,9 +178,9 @@ fi
 # when nothing else can answer, and --source=mint asks for one every time.
 mktok=""
 if [ "${sel}" = mint ] || { [ "${sel}" = chain ] && [ -z "${cands}" ]; }; then
-  mktok="$(timeout 15 coder external-auth access-token "${id}" 2>/dev/null)" || mktok=""
+  mktok="$(timeout -k 2 15 coder external-auth access-token "${id}" 2>/dev/null)" || mktok=""
   if [ -z "${mktok}" ] && [ "${id}" != "primary-github" ]; then
-    mktok="$(timeout 15 coder external-auth access-token primary-github 2>/dev/null)" || mktok=""
+    mktok="$(timeout -k 2 15 coder external-auth access-token primary-github 2>/dev/null)" || mktok=""
   fi
 fi
 if [ -n "${mktok}" ]; then
@@ -194,7 +194,7 @@ else
   want="${sel}"
 fi
 if [ -z "${cands}" ]; then
-  printf '%s: NO GitHub credential (git will prompt and be refused); fix: pipe a PAT into scripts/github-auth.sh auth %s -\n' "${ws}" "${fix}"
+  printf '%s: NO GitHub credential (git will prompt and be refused); fix: pipe a PAT into bazelisk run //scripts:github-auth -- auth %s -\n' "${ws}" "${fix}"
   exit 0
 fi
 # @function slot_name
@@ -379,7 +379,7 @@ probe_workspace() {
 auth_workspace() {
   local container="$1" pat="$2"
   if [[ -z ${pat} ]]; then
-    warn "${container}: empty PAT - nothing installed (pipe the token: echo \$TOKEN | scripts/github-auth.sh auth ${container} -)"
+    warn "${container}: empty PAT - nothing installed (pipe the token: echo \$TOKEN | bazelisk run //scripts:github-auth -- auth ${container} -)"
     return 1
   fi
   # login exits non-zero on its own when the token fails to authenticate.
@@ -422,7 +422,7 @@ main() {
               *) die "github-auth.sh: --source takes chain (default), env, gh or mint (got --source=${sel})" ;;
             esac
             ;;
-          *) die "github-auth.sh: unknown flag ${1} (usage: github-auth.sh check [container] [repo-url] [--source=<slot>])" ;;
+          *) die "github-auth.sh: unknown flag ${1} (usage: bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>])" ;;
         esac
         shift
       done
@@ -469,12 +469,12 @@ main() {
     auth)
       shift
       local container="${1:-}"
-      [[ -n ${container} ]] || die "usage: github-auth.sh auth <container> [-]  (- or nothing: read the PAT from stdin)"
+      [[ -n ${container} ]] || die "usage: bazelisk run //scripts:github-auth -- auth <container> [-]  (- or nothing: read the PAT from stdin)"
       # A PAT never travels in argv: any other process in that container can
       # read it through ps, and the token lands in shell history, so only -
       # (read the PAT from stdin) or nothing (prompt) may follow the container.
       if [[ $# -gt 2 || ${2:-} != "-" && $# -gt 1 ]]; then
-        die "github-auth.sh: a PAT is never an argument (argv is readable through ps and lands in shell history): pipe it in with 'github-auth.sh auth ${container} -', or run 'github-auth.sh auth ${container}' to be prompted"
+        die "github-auth.sh: a PAT is never an argument (argv is readable through ps and lands in shell history): pipe it in with 'bazelisk run //scripts:github-auth -- auth ${container} -', or run 'bazelisk run //scripts:github-auth -- auth ${container}' to be prompted"
       fi
       local pat=""
       # - or a non-TTY stdin means the PAT is on stdin; a bare container at a
@@ -484,7 +484,8 @@ main() {
         read -rs pat || true
         printf '\n' >&2
       else
-        read -r pat || true
+        # bazelisk run keeps stdin open with no EOF; without -t this waits forever.
+        IFS= read -r -t 15 pat || true
       fi
       auth_workspace "${container}" "${pat}"
       ;;
@@ -495,7 +496,7 @@ main() {
       sed -n '2,/^$/p' "${BASH_SOURCE[0]}"
       ;;
     *)
-      die "usage: github-auth.sh check [container] [repo-url] [--source=<slot>] | auth <container> [-] | -h"
+      die "usage: bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>] | auth <container> [-] | -h"
       ;;
   esac
 }

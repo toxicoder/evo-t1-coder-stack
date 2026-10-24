@@ -59,9 +59,10 @@
 # shell from the environment, so neither ever lands in a host-visible argv.
 #
 # Usage:
-#   bash scripts/coder-agents.sh                 # apply: write what is missing
-#   bash scripts/coder-agents.sh --dry-run       # print the intended end state only
-#   SKIP_CODER_AGENTS=1 bash scripts/bootstrap.sh   # bootstrap skips this step
+#   bazelisk run //scripts:coder-agents                  # apply: write what is missing
+#   bazelisk run //scripts:coder-agents -- --dry-run     # print the intended end state only
+#   bazelisk run //scripts:coder-agents -- --apply       # same as the default
+#   SKIP_CODER_AGENTS=1 bazelisk run //scripts:bootstrap # bootstrap skips this step
 # Overrides (rare; each exists for a stack that renamed something in compose):
 #   CODER_CONTAINER_SERVICE=coder    compose service holding the server
 #   CODER_DB_SERVICE=db              compose service holding Postgres
@@ -101,7 +102,7 @@ for arg in "$@"; do
   case "${arg}" in
     --dry-run) MODE=dry-run ;;
     --apply) MODE=apply ;;
-    *) die "usage: $0 [--dry-run|--apply] (default: --apply)" ;;
+    *) die "usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] (default: --apply)" ;;
   esac
 done
 
@@ -194,23 +195,24 @@ fi
 CODER_CONTAINER="$(stack_container "${running}" "${CODER_SERVICE}")"
 DB_CONTAINER="$(stack_container "${running}" "${DB_SERVICE}")"
 if [ -z "${CODER_CONTAINER}" ]; then
-  skip "skipped: the ${CODER_SERVICE} service is not running yet (start the stack with: docker compose up -d)"
+  skip "skipped: the ${CODER_SERVICE} service is not running yet (start the stack with: bazelisk run //scripts:prod-stack -- up)"
 fi
 if [ -z "${DB_CONTAINER}" ]; then
-  skip "skipped: the ${DB_SERVICE} service is not running, so no admin token can be minted (start the stack with: docker compose up -d)"
+  skip "skipped: the ${DB_SERVICE} service is not running, so no admin token can be minted (start the stack with: bazelisk run //scripts:prod-stack -- up)"
 fi
 
 # curl is used rather than the coder CLI because it needs no session file;
 # the coder image ships it (push-template.sh relies on the same probe).
-buildinfo="$(timeout "${PROBE_TIMEOUT}" \
+log "probing the Coder API at ${CONTAINER_API_URL} inside ${CODER_SERVICE} (up to ${PROBE_TIMEOUT}s) ..."
+buildinfo="$(stack_timeout "${PROBE_TIMEOUT}" \
   docker exec -i "${CODER_CONTAINER}" \
   curl -fsS -m 5 "${CONTAINER_API_URL}/api/v2/buildinfo" </dev/null 2>&1)" || probe_rc=$?
 probe_rc="${probe_rc:-0}"
 if [ "${probe_rc}" != "0" ]; then
   if [ "${probe_rc}" = "124" ]; then
-    skip "skipped: no answer within ${PROBE_TIMEOUT}s from ${CONTAINER_API_URL} inside ${CODER_SERVICE} — the server may still be starting: docker compose logs --tail 100 ${CODER_SERVICE}"
+    skip "skipped: no answer within ${PROBE_TIMEOUT}s from ${CONTAINER_API_URL} inside ${CODER_SERVICE} — the server may still be starting: bazelisk run //scripts:prod-stack -- logs --tail 100 ${CODER_SERVICE}"
   fi
-  die "the Coder API at ${CONTAINER_API_URL} is not answering inside the ${CODER_SERVICE} container ($(first_line "${buildinfo}")) — check: docker compose logs --tail 100 ${CODER_SERVICE}"
+  die "the Coder API at ${CONTAINER_API_URL} is not answering inside the ${CODER_SERVICE} container ($(first_line "${buildinfo}")) — check: bazelisk run //scripts:prod-stack -- logs --tail 100 ${CODER_SERVICE}"
 fi
 
 # ── The intended end state ──────────────────────────────────────────────────
@@ -225,7 +227,7 @@ MODEL_CHAT_DISPLAY="Coder Agents — tool-calling (Arc IPEX-LLM qwen2.5:7b)"
 
 # ── Dry-run prints the plan and stops before any write (no token minted) ──
 if [ "${MODE}" = "dry-run" ]; then
-  log "dry run (no changes; rerun without --dry-run to apply):"
+  log "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):"
   log "  ensure AI provider ${PROVIDER_NAME} (type openai-compat, enabled, base_url ${PROVIDER_URL}, api_keys: [LITELLM_MASTER_KEY from .env, or the compose placeholder — hidden])"
   log "  ensure chat model config agent (context_limit 262144, is_default true)"
   log "  ensure chat model config chat (context_limit 32768)"
@@ -235,6 +237,7 @@ if [ "${MODE}" = "dry-run" ]; then
 fi
 
 # ── Mint a short-lived token (same trust model as push-template.sh) ────────
+log "minting a short-lived API token in ${DB_SERVICE} (up to ${PROBE_TIMEOUT}s) ..."
 command -v openssl >/dev/null 2>&1 ||
   skip "skipped: openssl is not on PATH, so no API token can be generated"
 
@@ -304,9 +307,9 @@ case "${inserted}:${insert_rc}" in
       '' | *YOUR_LAN_IP*) access_url_hint="https://<host>:3001" ;;
     esac
     if [ -n "${AGENTS_USER}" ]; then
-      skip "skipped: ${AGENTS_USER} is not an active human Coder account, so no token could be minted — check: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c 'select username, status from users'"
+      skip "skipped: ${AGENTS_USER} is not an active human Coder account, so no token could be minted — check: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c 'select username, status from users'"
     fi
-    skip "skipped: no active Coder account with the site owner role — open ${access_url_hint} and register the first account, it becomes the site admin, then re-run this script."
+    skip "skipped: no active Coder account with the site owner role — open ${access_url_hint} and register the first account, it becomes the site admin, then re-run: bazelisk run //scripts:coder-agents -- --apply"
     ;;
   *)
     printf '%s\n' "${inserted}" >&2
@@ -333,11 +336,13 @@ session_token="${key_id}-${key_secret}"
 #   0 on a 2xx body; curl's status otherwise
 api_read() {
   # $1 = path. Prints the body; a non-2xx exits non-zero (curl -f).
+  # stdin is closed: bazelisk run keeps a pipe open, and `docker exec -i`
+  # waits for EOF on that pipe even though curl does not read stdin.
   CODER_SESSION_TOKEN="${session_token}" \
-    timeout "${API_TIMEOUT}" docker exec -i \
+    stack_timeout "${API_TIMEOUT}" docker exec -i \
     -e CODER_SESSION_TOKEN "${CODER_CONTAINER}" \
     sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" "$1"' \
-    sh "${CONTAINER_API_URL}${1}"
+    sh "${CONTAINER_API_URL}${1}" </dev/null
 }
 
 # @function api_write
@@ -353,7 +358,7 @@ api_read() {
 api_write() {
   # $1 = method, $2 = path, $3 = JSON body.
   printf '%s' "$3" | CODER_SESSION_TOKEN="${session_token}" \
-    timeout "${API_TIMEOUT}" docker exec -i \
+    stack_timeout "${API_TIMEOUT}" docker exec -i \
     -e CODER_SESSION_TOKEN "${CODER_CONTAINER}" \
     sh -c 'curl -fsS -m 15 -H "Authorization: Bearer $CODER_SESSION_TOKEN" -H "Content-Type: application/json" -X "$1" --data-binary @- "$2"' \
     sh "$1" "${CONTAINER_API_URL}${2}"
@@ -426,11 +431,12 @@ if [ -z "${litellm_key}" ]; then
   log "note: LITELLM_MASTER_KEY is empty in .env — using the compose interpolation default (rotate it in .env + this script's env override if you rotate the proxy's key)"
 fi
 
+log "listing AI providers at ${CONTAINER_API_URL} (up to ${API_TIMEOUT}s) ..."
 provider_list_rc=0
 provider_list="$(api_read "/api/v2/ai/providers")" || provider_list_rc=$?
 if [ "${provider_list_rc}" != "0" ]; then
   printf '%s\n' "${provider_list}" >&2
-  die "could not list AI providers — the minted token was rejected or the API failed (check: docker compose logs --tail 100 ${CODER_SERVICE})"
+  die "could not list AI providers — the minted token was rejected or the API failed (check: bazelisk run //scripts:prod-stack -- logs --tail 100 ${CODER_SERVICE})"
 fi
 
 provider_body=""
@@ -474,7 +480,7 @@ if [ "${provider_exists}" = "1" ]; then
     patch_body="${patch_body}}"
     log "provider ${PROVIDER_NAME}: drift in ${provider_drift}, patching"
     if ! api_write PATCH "/api/v2/ai/providers/${PROVIDER_NAME}" "${patch_body}" >/dev/null; then
-      die "provider ${PROVIDER_NAME} exists but its ${provider_drift} drifted, and patching it failed — edit in the UI (Admin -> AI Providers) or delete and re-run this script"
+      die "provider ${PROVIDER_NAME} exists but its ${provider_drift} drifted, and patching it failed — edit in the UI (Admin -> AI Providers) or delete and re-run bazelisk run //scripts:coder-agents -- --apply"
     fi
   fi
 else
@@ -644,7 +650,7 @@ fi
 # Disarm before the delete so the delete runs once, deliberately.
 trap - EXIT
 psql_sql "${cleanup_sql}" >/dev/null 2>&1 ||
-  log "note: the token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker compose exec ${DB_SERVICE} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
+  log "note: the token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
 
 log "Coder Agents wiring complete: provider ${PROVIDER_NAME}, model configs (agent default + chat fallback), four model pins, system prompt."
 log "Spot-check in the UI: start an Agents chat, pick a workspace, and ask it to list files — a tool call in the reply means the loop is live."

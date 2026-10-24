@@ -47,7 +47,7 @@ repo can verify.
   keys, or SSH material. `proxy/certs/` is git-ignored too — the private key
   never enters git. `CODER_PG_PASSWORD` is re-applied on every db start
   (the image only honours it on first volume init), so rotating it in `.env`
-  and running `prod-stack up` is enough.
+  and running `bazelisk run //scripts:prod-stack -- up` is enough.
 - **The push token.** `scripts/push-template.sh` cannot use a CLI session (the
   public API is gated by Authelia, which answers unauthenticated CLI probes with an
   HTML page), so it mints an API key by inserting a row into the stack's own Postgres

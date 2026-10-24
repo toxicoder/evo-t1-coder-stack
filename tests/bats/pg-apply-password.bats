@@ -10,7 +10,7 @@
 # docker-entrypoint.sh / pg_isready stand-ins are stubs; nothing here starts
 # a database.
 #
-# Usage: bats tests/bats/pg-apply-password.bats
+# Usage: bazelisk test //tests:bats_pg_apply_password_test   (from any cwd)
 
 bats_require_minimum_version 1.5.0
 

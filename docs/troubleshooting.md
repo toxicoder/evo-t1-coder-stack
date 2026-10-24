@@ -60,10 +60,10 @@ bash scripts/setup-host.sh --repair
 bazelisk run //scripts:prod-stack -- up
 ```
 
-`make prod-stack-up` (and `make stack-up`) run `--repair` first. Bare
-`bash scripts/setup-host.sh` repairs leftovers and then installs any missing
-host tools. `bash scripts/setup-host.sh --check` lists leftover paths without
-writing.
+`bazelisk run //scripts:prod-stack -- up` is the command that pair recovers with; the
+`make prod-stack-up` (and `make stack-up`) shims run `--repair` before calling that same
+target. Bare `bash scripts/setup-host.sh` repairs leftovers and then installs any missing
+host tools. `bash scripts/setup-host.sh --check` lists leftover paths without writing.
 
 ### `Could not resolve host: github.com` -> Tailscale MagicDNS is the only nameserver
 
@@ -162,7 +162,8 @@ bazelisk run //scripts:spark-configure -- <host> --apply
 
 - Or repoint `SPARK1_OPENAI_URL`, `SPARK2_OPENAI_URL` and `SPARK3_OPENAI_URL` in `.env`
   at a tool-capable OpenAI-compatible endpoint, then restart the proxy so it re-reads
-  them:
+  them. The stack runners have no `restart` subcommand, so this one stays a direct
+  compose call:
 
 ```sh
 docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
@@ -422,7 +423,8 @@ docker pull docker:29.8.1-dind
   `devcontainer` cannot fetch `module "devcontainers_cli"` from
   `registry.coder.com`. Both lookups fail with
   `dial tcp: lookup … on 127.0.0.11:53: server misbehaving`. Coder itself
-  stays up; `docker compose logs coder` repeats the same Terraform lines.
+  stays up; `bazelisk run //scripts:prod-stack -- logs coder` repeats the same Terraform
+  lines.
 - Cause: provisionerd runs `terraform init` inside the `coder` container.
   Docker's embedded DNS (`127.0.0.11`) forwards names it does not know to
   the host resolver. When that resolver is Tailscale MagicDNS only, or
@@ -630,7 +632,7 @@ bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<sl
   refused and pointed at the host shell. The repo URL may be the clone URL or the
   browser URL, with or without a trailing slash and `.git`; a path below `owner/repo`
   is refused rather than probed, because it names no repository. Full usage:
-  `scripts/github-auth.sh --help`.
+  `bazelisk run //scripts:github-auth -- --help`.
 - `--source=chain` (the default) probes every credential that could answer for that
   repository; `--source=env`, `--source=gh` or `--source=mint` answers one slot and
   labels the answer **shadowed** when the env pair outranks it. That label matters:

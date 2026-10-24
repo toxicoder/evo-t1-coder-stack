@@ -233,7 +233,8 @@ Measured on a harness boot of this config against the live Spark boxes, before
    non-empty. An empty key fails every request inside the proxy, before it ever reaches
    the box.
 
-Stable stack:
+Neither stack runner has a `restart` subcommand (`up`, `down`, `status`, `logs`, `reset`
+are the whole set), so the proxy restart stays a direct compose call. Stable stack:
 
 ```sh
 docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm

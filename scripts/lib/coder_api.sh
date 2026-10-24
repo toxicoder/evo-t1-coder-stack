@@ -32,13 +32,39 @@
 # left unquoted at the call sites below, which is what lets that override work.
 # timeout(1) is an external binary and can exec an EXECUTABLE FILE only, never a
 # shell function, so every wrapper here keeps the command after the timeout cap
-# starting at DOCKER_BIN itself.
+# starting at DOCKER_BIN itself. stack_timeout adds --kill-after so a docker
+# exec that ignores SIGTERM (the bazelisk-run stdin hang: `docker exec -i`
+# waits for EOF on a pipe that never closes) still exits.
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 DB_SERVICE="${DB_SERVICE:-db}"
 DB_USER="${DB_USER:-coder}"
 DB_NAME="${DB_NAME:-coder}"
 CODER_SERVICE="${CODER_SERVICE:-coder}"
 PROBE_TIMEOUT="${PROBE_TIMEOUT:-20}"
+# Seconds GNU timeout waits after SIGTERM before SIGKILL. docker exec -i can
+# ignore SIGTERM while it waits for stdin; without this, `timeout 20` never
+# returns under `bazelisk run`.
+TIMEOUT_KILL_AFTER="${TIMEOUT_KILL_AFTER:-2}"
+
+# @function stack_timeout
+# Run one command under timeout(1) with --kill-after so it cannot pin the
+# process. bazelisk run keeps stdin open; docker exec -i waits for EOF on
+# that pipe unless the caller also redirects stdin (the wrappers below use
+# </dev/null).
+# Globals:
+#   TIMEOUT_KILL_AFTER
+# Arguments:
+#   $1 - cap in seconds
+#   $2... - command and arguments
+# Outputs:
+#   The command's own stdout and stderr
+# Returns:
+#   The command's status, or 124 when timeout cuts it off
+stack_timeout() {
+  local cap="$1"
+  shift
+  timeout -k "${TIMEOUT_KILL_AFTER:-2}" "${cap}" "$@"
+}
 
 # ── Discovery ────────────────────────────────────────────────────────────────
 
@@ -59,7 +85,7 @@ PROBE_TIMEOUT="${PROBE_TIMEOUT:-20}"
 #   0 when the daemon answered; the command's status otherwise
 stack_ps() {
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} ps \
+  stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} ps \
     --format '{{.Label "com.docker.compose.service"}}|{{.Names}}' </dev/null 2>&1
 }
 
@@ -106,7 +132,7 @@ stack_container() {
 #   0 when the daemon answered; the command's status otherwise
 stack_compose_target() {
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} inspect -f \
+  stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} inspect -f \
     '{{index .Config.Labels "com.docker.compose.project"}}|{{index .Config.Labels "com.docker.compose.project.config_files"}}' \
     "${1}" </dev/null 2>&1
 }
@@ -132,7 +158,7 @@ stack_compose_target() {
 psql_sql() {
   [ -n "${DB_CONTAINER:-}" ] || return 1
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} exec -i "${DB_CONTAINER}" \
+  stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} exec -i "${DB_CONTAINER}" \
     psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q -c "$1" </dev/null 2>&1
 }
 
@@ -152,7 +178,7 @@ psql_sql() {
 psql_query() {
   [ -n "${DB_CONTAINER:-}" ] || return 1
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} exec -i "${DB_CONTAINER}" \
+  stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} exec -i "${DB_CONTAINER}" \
     psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 -q -tAc "$1" </dev/null 2>&1 |
     tr -d '[:space:]'
 }
@@ -177,7 +203,7 @@ coder_exec() {
   [ -n "${CODER_CONTAINER:-}" ] || return 1
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
   CODER_URL="${CONTAINER_API_URL:-}" CODER_SESSION_TOKEN="${session_token:-}" \
-    timeout "${VERIFY_TIMEOUT:-${PROBE_TIMEOUT}}" ${DOCKER_BIN} exec -i \
+    stack_timeout "${VERIFY_TIMEOUT:-${PROBE_TIMEOUT}}" ${DOCKER_BIN} exec -i \
     -e CODER_URL -e CODER_SESSION_TOKEN "${CODER_CONTAINER}" \
     coder "$@" </dev/null
 }

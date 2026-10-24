@@ -15,7 +15,7 @@
 # wildcard origin, and share stays owner, so a working <service>-name subdomain
 # never proves a failing app link worked.
 #
-# Usage: bats tests/bats/coder-apps.bats
+# Usage: bazelisk test //tests:bats_coder_apps_test   (from any cwd)
 # Safety: reads templates/workspace/main.tf, templates/devcontainer/main.tf and
 # templates/common/vscode-alt.svg; writes nothing.
 

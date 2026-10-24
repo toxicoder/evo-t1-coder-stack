@@ -27,7 +27,7 @@
 # daemon that answers the label probe and mirrors the container's env, which is
 # how the recreate-and-verify half gets asserted.
 #
-# Usage: bats tests/bats/dashboard-password.bats   (from any cwd)
+# Usage: bazelisk test //tests:bats_dashboard_password_test   (from any cwd)
 #
 # Safety: stub only. Nothing here needs a daemon, a network, or the real .env.
 
@@ -102,7 +102,7 @@ unchanged_env() {
 @test "dashboard-password: --help only prints the usage" {
   run --separate-stderr bash "${SCRIPT}" --help
   [ "${status}" -eq 0 ] || fail "help exited ${status}"
-  assert_match "usage line" '^usage: scripts/dashboard-password\.sh' "${output}"
+  assert_match "usage line" '^usage: bazelisk run //scripts:dashboard-password --' "${output}"
   assert_match "documents --prompt" '--prompt' "${output}"
   assert_match "documents --length" '--length' "${output}"
   assert_match "documents --no-apply" '--no-apply' "${output}"
@@ -128,7 +128,7 @@ unchanged_env() {
   run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/absent.env" bash "${SCRIPT}" --no-apply
   [ "${status}" -eq 1 ] || fail "a missing env file was not refused (${status})"
   assert_match "names the file" 'absent\.env not found' "${stderr}"
-  assert_match "points at the bootstrap script" 'first boot\? run \./scripts/bootstrap\.sh to create it' "${stderr}"
+  assert_match "points at the bootstrap script" 'first boot\? run bazelisk run //scripts:bootstrap to create it' "${stderr}"
   assert_file_not_exists "no env file was created" "${SCRATCH}/absent.env"
   chmod 444 "${SCRATCH}/x.env"
   run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
@@ -149,7 +149,7 @@ unchanged_env() {
   assert_match "says it stayed offline" 'not applied: rerun without --no-apply' "${output}"
   # The command it skipped is named in full: an operator applying it by hand has
   # to be able to copy it, and `restart` would keep the old value in the env.
-  assert_match "names the recreate it skipped" 'docker compose up -d --force-recreate homepage' "${output}"
+  assert_match "names the recreate it skipped" 'bazelisk run //scripts:dashboard-password' "${output}"
   assert_not_match "restart is never suggested" 'compose restart' "${output}"
   [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
 }
@@ -217,7 +217,7 @@ homepage|home-old'
   run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
   [ "${status}" -eq 1 ] || fail "an unknown compose target did not stop the run (${status})"
   assert_match "refuses to guess a project" 'answers to no compose project this shell can read' "${stderr}"
-  assert_match "points at a manual recreate" 'recreate it by hand from the checkout root: docker compose up -d --force-recreate homepage' "${stderr}"
+  assert_match "points at a manual recreate" 'docker compose up -d --force-recreate homepage' "${stderr}"
   assert_match "the older container was inspected" 'Config\.Labels.* home-old$' "$(stub_log docker)"
   assert_not_match "no recreate without a compose target" 'compose -p' "$(stub_log docker)"
   assert_not_match "no password was left behind in argv" 'rotated-passwd-abcdefgh' "$(stub_log docker)"
@@ -247,7 +247,7 @@ homepage|home-old' "prod-stack|${SCRATCH}/compose.yml" "${SCRATCH}/x.env"
   run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
   [ "${status}" -eq 1 ] || fail "a recreate that kept the old password reported success (${status})"
   assert_match "names the failed recreate" 'the running container still has the old password' "${stderr}"
-  assert_match "points at the compose logs" 'check: docker compose logs homepage' "${stderr}"
+  assert_match "points at the compose logs" 'check: bazelisk run //scripts:prod-stack -- logs --tail 100 homepage' "${stderr}"
   assert_not_match "no false success claim" 'verified: the running container' "${output}"
   assert_match "the recreate really was addressed" '^docker compose -p prod-stack -f ' "$(stub_log docker)"
   # Then: a container whose environment carries no such key at all. Same refusal
@@ -256,6 +256,6 @@ homepage|home-old' "prod-stack|${SCRATCH}/compose.yml" "${SCRATCH}/x.env"
   fake_daemon 'homepage|home-old' "prod-stack|${SCRATCH}/compose.yml" "${SCRATCH}/nokey.env"
   run --separate-stderr env "DASHBOARD_ENV_FILE=${SCRATCH}/x.env" bash "${SCRIPT}" --prompt <"${SCRATCH}/in"
   [ "${status}" -eq 1 ] || fail "an env with no password entry did not stop the run (${status})"
-  assert_match "refuses to claim a rotate it cannot see" 'the homepage container has no HOMEPAGE_AUTH_PASSWORD entry; check: docker compose config' "${stderr}"
+  assert_match "refuses to claim a rotate it cannot see" 'the homepage container has no HOMEPAGE_AUTH_PASSWORD entry; check: bazelisk run //scripts:prod-stack -- status' "${stderr}"
   assert_not_match "no false success claim" 'verified: the running container' "${output}"
 }

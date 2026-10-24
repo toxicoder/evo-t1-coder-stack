@@ -4,6 +4,10 @@
 #
 # Pull the Ollama models listed in OLLAMA_MODELS (.env) into the IPEX-LLM
 # container. First run is a large download (~35 GB for the default set).
+#
+# Usage:
+#   bazelisk run //scripts:pull-models
+#   OLLAMA_MODELS='qwen2.5:7b' bazelisk run //scripts:pull-models
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -32,8 +36,8 @@ if ! running="$(stack_ps)"; then
 fi
 OLLAMA_CONTAINER="$(stack_container "${running}" ollama)"
 if [ -z "${OLLAMA_CONTAINER}" ]; then
-  echo "error: the ollama service is not running (start the stack with: docker compose up -d)" >&2
-  echo "       if it is in a restart loop, check: docker compose logs --tail 100 ollama" >&2
+  echo "error: the ollama service is not running (start the stack with: bazelisk run //scripts:prod-stack -- up)" >&2
+  echo "       if it is in a restart loop, check: bazelisk run //scripts:prod-stack -- logs --tail 100 ollama" >&2
   exit 1
 fi
 

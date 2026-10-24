@@ -21,7 +21,7 @@
 # docker and docker-compose are stubs. Nothing here creates a compose project
 # or talks to a daemon.
 #
-# Usage: bats tests/bats/prod-stack.bats
+# Usage: bazelisk test //tests:bats_prod_stack_test   (from any cwd)
 
 bats_require_minimum_version 1.5.0
 
@@ -45,7 +45,7 @@ setup() {
 @test "prod-stack: an unknown subcommand prints the usage and touches nothing" {
   run --separate-stderr bash "${STACK}" destroy
   [ "${status}" -ne 0 ]
-  assert_match "usage" 'usage: prod-stack' "${output}"
+  assert_match "usage" 'usage: bazelisk run //scripts:prod-stack --' "${output}"
   [ "$(stub_log_count docker)" -eq 0 ]
   [ "$(stub_log_count docker-compose)" -eq 0 ]
 }

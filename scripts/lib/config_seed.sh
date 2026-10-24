@@ -20,7 +20,9 @@
 #     JSON key, or it is user-owned. A file that lost its marker was edited
 #     by a human; reseeding leaves such a file alone unless --force is used.
 #   - Container traffic is one `docker exec -i <name> sh -c <script> sh
-#     <args...>` per probe or write (with stdin redirected for writes). No
+#     <args...>` per probe or write. Probes close stdin (bazelisk run keeps
+#     a pipe open, and docker exec -i waits for EOF on it); writes pass
+#     --stdin and redirect the payload. No
 #     `docker run`, no helper container, and no dev-only file ever lands in a
 #     workspace volume. Paths and marker texts travel as separate argv words,
 #     never interpolated into the script body, so the Bats docker stub can
@@ -86,25 +88,37 @@ seed_seed_targets() {
 # @function seed_container_exec
 # Run one POSIX sh snippet inside a running container with its arguments kept
 # as separate argv words. With docker stubbed or absent this same argv shape
-# runs on the host instead, which is how the Bats suites replay it.
+# runs on the host instead, which is how the Bats suites replay it. Stdin is
+# closed unless the first argument is --stdin (payload writes).
 # Globals:
 #   None
 # Arguments:
-#   $1 - container name
-#   $2 - the POSIX sh script body
-#   $3.. - the script's own arguments ($1, $2 ... inside it)
+#   $1 - optional --stdin to inherit stdin; otherwise stdin is /dev/null
+#   $1 or $2 - container name
+#   $2 or $3 - the POSIX sh script body
+#   remaining - the script's own arguments ($1, $2 ... inside it)
 # Outputs:
 #   Whatever the script printed
 # Returns:
 #   The script's status; 1 when the arguments are incomplete or the docker
 #   CLI refused the exec
 seed_container_exec() {
-  local container="${1:-}" script="${2:-}"
+  local inherit_stdin=0 container script
+  if [[ ${1:-} == --stdin ]]; then
+    inherit_stdin=1
+    shift
+  fi
+  container="${1:-}"
+  script="${2:-}"
   shift 2
   if [[ -z ${container} || -z ${script} ]]; then
     return 1
   fi
-  docker exec -i "${container}" sh -c "${script}" sh "$@"
+  if [[ ${inherit_stdin} == 1 ]]; then
+    docker exec -i "${container}" sh -c "${script}" sh "$@"
+  else
+    docker exec -i "${container}" sh -c "${script}" sh "$@" </dev/null
+  fi
 }
 
 # @function seed_target_owner
@@ -474,7 +488,7 @@ seed_container_seed() {
     if [[ -z ${target} ]]; then
       mkdir -p "$(dirname "${path}")"
       cp "${staged}" "${path}"
-    elif ! seed_container_exec "${target}" '
+    elif ! seed_container_exec --stdin "${target}" '
         if [ ! -e "${1}" ]; then
           mkdir -p "$(dirname "${1}")" || exit 1
         fi

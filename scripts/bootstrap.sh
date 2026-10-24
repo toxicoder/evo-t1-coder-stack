@@ -11,8 +11,8 @@
 #   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
 #   - build the golden workspace image if it is missing, then push the template
-#   - wire the Coder Agents chat agent with scripts/coder-agents.sh
-#   - check the Spark fleet with scripts/spark-configure.sh and scripts/spark-verify.sh
+#   - wire the Coder Agents chat agent with bazelisk run //scripts:coder-agents
+#   - check the Spark fleet with bazelisk run //scripts:spark-configure and //scripts:spark-verify
 #
 # The last four are the steps a fresh clone used to have to be told about in the
 # README. All run at the very end, after every fast check, so a broken box still
@@ -21,10 +21,10 @@
 # switched off prints why and lets bootstrap finish its "Next steps" output, because
 # bootstrap is idempotent and re-running it is the normal recovery path.
 #
-#   SKIP_DEV_IMAGE_BUILD=1 bash scripts/bootstrap.sh   # print-only, as before
-#   SKIP_TEMPLATE_PUSH=1   bash scripts/bootstrap.sh   # no coder templates push
-#   SKIP_CODER_AGENTS=1    bash scripts/bootstrap.sh   # no Coder Agents model wiring
-#   SKIP_SPARKS=1          bash scripts/bootstrap.sh   # no Spark fleet check
+#   SKIP_DEV_IMAGE_BUILD=1 bazelisk run //scripts:bootstrap   # print-only, as before
+#   SKIP_TEMPLATE_PUSH=1   bazelisk run //scripts:bootstrap   # no coder templates push
+#   SKIP_CODER_AGENTS=1    bazelisk run //scripts:bootstrap   # no Coder Agents model wiring
+#   SKIP_SPARKS=1          bazelisk run //scripts:bootstrap   # no Spark fleet check
 #
 # All four are read from the process environment only, never from .env — an .env that
 # silently disables provisioning steps would be unreadable to debug.
@@ -77,7 +77,7 @@ for arg in "$@"; do
       ;;
     -h | --help)
       cat <<'HELP'
-usage: bash scripts/bootstrap.sh [--check]
+usage: bazelisk run //scripts:bootstrap -- [--check]
 
 Prepare the stack for first boot. --check reads the same inputs and writes
 nothing: it reports the missing tools, the placeholder secrets, the missing
@@ -554,7 +554,7 @@ else
   agents_rc=0
   bash "${ROOT_DIR}/scripts/coder-agents.sh" --apply || agents_rc=$?
   if [ "${agents_rc}" != "0" ]; then
-    echo "warning: the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: bazelisk run //scripts:coder-agents -- --dry-run (once the stack is up), then re-run with --apply."
+    echo "warning: the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: bazelisk run //scripts:coder-agents -- --dry-run (once the stack is up), then re-run bazelisk run //scripts:coder-agents -- --apply."
   fi
 fi
 
@@ -601,7 +601,7 @@ fi
 echo
 echo "Next steps:"
 echo "  1. bazelisk run //scripts:build-dev-image   # one-time polyglot workspace image (re-run if the build above failed)"
-echo "  2. docker compose up -d"
+echo "  2. bazelisk run //scripts:prod-stack -- up"
 # Public mode wins for the browser-facing steps: those names resolve from
 # anywhere and Traefik serves them a real certificate, so printing the LAN form
 # would send remote users to an address their machine cannot reach.

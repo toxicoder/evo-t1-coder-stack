@@ -28,7 +28,7 @@
 # Both main.tf twins pin public Docker DNS upstreams on the workspace and DinD
 # containers so github.com does not SERVFAIL through host MagicDNS.
 #
-# Usage: bats tests/bats/devcontainer-template.bats
+# Usage: bazelisk test //tests:bats_devcontainer_template_test   (from any cwd)
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
 # twins, the two grok-config.toml.tftpl twins, the two main.tf twins, the two
 # coder.tf twins and templates/common/GROK_BUILD_AGENTS.md; writes nothing.

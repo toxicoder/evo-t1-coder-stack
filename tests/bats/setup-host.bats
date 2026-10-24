@@ -7,7 +7,7 @@
 # the recovery when bazelisk run cannot even start (leftover Docker bind-mounts
 # in the runfiles tree). --check writes nothing; an unknown flag is an error.
 #
-# Usage: bats tests/bats/setup-host.bats
+# Usage: bazelisk test //tests:bats_setup_host_test   (from any cwd)
 # Safety: hermetic. --repair is aimed at a scratch tree via SETUP_ROOT.
 # setup() sets SETUP_SKIP_DNS=1 so existing --repair cases never touch host
 # DNS or real Tailscale (`sudo tailscale` bypasses PATH stubs via secure_path).

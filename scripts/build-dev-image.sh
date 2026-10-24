@@ -20,9 +20,9 @@
 #     a versioned value if you want an immutable reference.
 #
 # Usage:
-#   ./scripts/build-dev-image.sh                 # build evo-t1-dev:latest
-#   DEV_IMAGE_TAG=evo-t1-dev:v1 ./scripts/build-dev-image.sh
-#   DOCKER="sudo docker" ./scripts/build-dev-image.sh   # if docker needs root
+#   bazelisk run //scripts:build-dev-image                 # build evo-t1-dev:latest
+#   DEV_IMAGE_TAG=evo-t1-dev:v1 bazelisk run //scripts:build-dev-image
+#   DOCKER="sudo docker" bazelisk run //scripts:build-dev-image   # if docker needs root
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

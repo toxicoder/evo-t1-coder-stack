@@ -17,7 +17,7 @@
 # The whole suite skips while scripts/refresh-configs.sh is absent: a suite
 # for a script that does not exist yet has no right to fail the gate.
 #
-# Usage: bats tests/bats/refresh-configs.bats
+# Usage: bazelisk test //tests:bats_refresh_configs_test   (from any cwd)
 # Safety: reads the template payloads and the two scripts; writes only under
 # the per-test scratch tree.
 
@@ -52,11 +52,11 @@ scratch_home() {
 @test "refresh-configs: --help and an unknown option both print the usage" {
   run --separate-stderr bash "${REFRESH}" --help
   [ "${status}" -eq 0 ]
-  assert_match "help text" 'usage: refresh-configs' "${output}"
+  assert_match "help text" 'usage: bazelisk run //scripts:refresh-configs --' "${output}"
 
   run --separate-stderr bash "${REFRESH}" --bogus
   [ "${status}" -ne 0 ]
-  assert_match "usage shown on a bad flag" 'usage: refresh-configs' "${output}"
+  assert_match "usage shown on a bad flag" 'usage: bazelisk run //scripts:refresh-configs --' "${output}"
   # The usage paths never consult the (stubbed) docker CLI.
   [ "$(stub_log_count docker)" -eq 0 ]
 }
@@ -240,6 +240,6 @@ coder-ws2-dind-sidecar'
 @test "refresh-configs: --litellm-url without a value is a usage error" {
   run --separate-stderr bash "${REFRESH}" --litellm-url
   [ "${status}" -ne 0 ]
-  assert_match "usage shown on a valueless flag" 'usage: refresh-configs' "${output}"
+  assert_match "usage shown on a valueless flag" 'usage: bazelisk run //scripts:refresh-configs --' "${output}"
   assert_match "flag named on stderr" 'litellm-url needs a url' "${stderr}"
 }

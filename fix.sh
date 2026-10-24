@@ -6,7 +6,6 @@
 #
 # Usage:
 #   bazelisk run //:fix
-#   ./fix.sh
 #
 # @function main
 # Format BUILD files and shell sources.

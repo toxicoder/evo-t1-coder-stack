@@ -13,7 +13,7 @@
 # generated files come from the checkout. The coder service also pins public
 # DNS upstreams so terraform init does not depend on host MagicDNS.
 #
-# Usage: bats tests/bats/stack-data.bats
+# Usage: bazelisk test //tests:bats_stack_data_test   (from any cwd)
 # Safety: reads docker-compose.yml and the payload tree; writes nothing.
 
 bats_require_minimum_version 1.5.0

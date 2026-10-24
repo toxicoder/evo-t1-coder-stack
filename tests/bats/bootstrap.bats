@@ -5,7 +5,7 @@
 # Hermetic: curl is the stub. openssl and sed are the host tools, pointed at
 # scratch files. The entry script is not executed here (it provisions certs
 # and may build an image).
-# Usage: bats tests/bats/bootstrap.bats
+# Usage: bazelisk test //tests:bats_bootstrap_test   (from any cwd)
 
 bats_require_minimum_version 1.5.0
 

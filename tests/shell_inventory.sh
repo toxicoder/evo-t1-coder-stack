@@ -5,8 +5,8 @@
 # Fail when a production function under scripts/ is not named under tests/.
 #
 # Usage:
-#   bash tests/shell_inventory.sh
 #   bazelisk test //tests:shell_inventory
+#   bash tests/shell_inventory.sh
 
 set -euo pipefail
 export LC_ALL=C

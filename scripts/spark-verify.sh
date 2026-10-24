@@ -6,14 +6,14 @@
 # routes to.
 #
 # Usage:
-#   ./scripts/spark-verify.sh                              # assert-only, the fleet named in .env
-#   ./scripts/spark-verify.sh spark-1.lan                  # assert-only, one host
-#   ./scripts/spark-verify.sh --json                       # one JSON object per host
-#   ./scripts/spark-verify.sh --no-tests <host>            # skip the recipe's own probes
-#   VISION=1 ./scripts/spark-verify.sh <host>               # also run visioncheck.py
-#   SPARK_HOSTS="host1 host2" ./scripts/spark-verify.sh    # process env; overrides the .env-derived fleet
+#   bazelisk run //scripts:spark-verify                              # assert-only, the fleet named in .env
+#   bazelisk run //scripts:spark-verify -- spark-1.lan               # assert-only, one host
+#   bazelisk run //scripts:spark-verify -- --json                    # one JSON object per host
+#   bazelisk run //scripts:spark-verify -- --no-tests <host>         # skip the recipe's own probes
+#   VISION=1 bazelisk run //scripts:spark-verify -- <host>            # also run visioncheck.py
+#   SPARK_HOSTS="host1 host2" bazelisk run //scripts:spark-verify    # process env; overrides the .env-derived fleet
 #
-# Callable on its own and callable from scripts/bootstrap.sh, which runs it with
+# Callable on its own and callable from bazelisk run //scripts:bootstrap, which runs it with
 # --no-tests as its last step. Nothing here writes to a Spark and nothing here starts or
 # restarts a server: the only files this creates are sparks/<host>.jsonl inside this
 # repo, and the recipe probes below are read-only calls against a server that is already
@@ -42,9 +42,9 @@
 #                                             with a shorter window
 #        scripts/visioncheck.py              only when VISION=1
 #        scripts/bench.py --suite --seed 1 --jsonl run.jsonl --clients 1,2,4,5
-#      --no-tests skips all four. scripts/bootstrap.sh passes it: a 195k prompt plus a
-#      1/2/4/5-client sweep costs minutes per box and would stall a re-run of bootstrap
-#      on a box that already works.
+#      --no-tests skips all four. bazelisk run //scripts:bootstrap passes --no-tests: a 195k
+#      prompt plus a 1/2/4/5-client sweep costs minutes per box and would stall a re-run of
+#      bootstrap on a box that already works.
 #   4. Drift, which is the point of this script: model id, served model, PARALLEL and
 #      streams.max, the CONTEXT window, the image tag and the KV dtype are collected for
 #      every box that answered and compared with each other. Any key that comes back
@@ -59,7 +59,7 @@
 # Unreachable is not a failure. A host that does not answer — no DNS entry (a default
 # fleet derived from .env can name placeholder hostnames, which never resolve), no
 # route, no ssh credentials, or a box with no server on it — prints WHY and still exits
-# 0, because that is a "not yet" state and re-running this script is the recovery path.
+# 0, because that is a "not yet" state and re-running bazelisk run //scripts:spark-verify is the recovery path.
 # Exit 1 means a box that COULD be reached disagrees with the fleet's contract or with
 # one of its peers.
 #
@@ -84,7 +84,7 @@ cd "$(dirname "$0")/.."
 #   0
 log() {
   # With --json, stdout stays exactly one JSON object per host: every prose line goes to
-  # stderr instead, so `spark-verify.sh --json | jq` parses and `2>/dev/null` silences
+  # stderr instead, so `bazelisk run //scripts:spark-verify -- --json | jq` parses and `2>/dev/null` silences
   # the commentary without losing it.
   if [ -n "${json:-}" ]; then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi
 }
@@ -104,7 +104,7 @@ die() {
 }
 
 # The fleet's contract, as facts to CHECK. Nothing here is ever written anywhere: use
-# scripts/spark-configure.sh --apply to change what a box actually runs with.
+# bazelisk run //scripts:spark-configure -- --apply to change what a box actually runs with.
 JSON_ESCAPE_SED='s/["\\]/\\&/g' # one sed program, quoted: escape \ and " in one pass
 model_id="Qwen3.8-Flash-Next"
 parallel_want=5
@@ -175,7 +175,7 @@ while [ "$#" -gt 0 ]; do
       exit 0
       ;;
     -*)
-      die "unknown option '$1' — usage: ./scripts/spark-verify.sh [options] [host ...] (see --help)"
+      die "unknown option '$1' — usage: bazelisk run //scripts:spark-verify -- [options] [host ...] (see --help)"
       ;;
     *)
       hosts+=("$1")
@@ -226,7 +226,7 @@ fi
 
 # VISION decides whether visioncheck.py runs, not whether the box has a GPU: it is read
 # from the process environment, defaulting to the recipe's own VISION=1, so
-# `VISION=0 ./scripts/spark-verify.sh` is how you re-check a box you know is text-only.
+# `VISION=0 bazelisk run //scripts:spark-verify` is how you re-check a box you know is text-only.
 vision="${VISION:-1}"
 
 # Neither probe needs ssh, so neither waits for it. The boxes may publish :8888
@@ -858,7 +858,7 @@ if [ -n "${drift}" ]; then
   log ""
   log "FAIL: the checked boxes do not agree — ${drift}"
   log 'note: mixed images or mixed parallel settings across the boxes is exactly what this check is for, and the proxy cannot see it: they all sit behind one `agent` model group whose session pins ride on top of least-busy routing, so pinned and unpinned requests keep going to the odd box.'
-  log "note: read the details with ./scripts/spark-configure.sh <host> and write the fleet's values with ./scripts/spark-configure.sh --apply <host> (add --restart to restart a running server), then re-run this script."
+  log "note: read the details with bazelisk run //scripts:spark-configure -- <host> and write the fleet's values with bazelisk run //scripts:spark-configure -- --apply <host> (add --restart to restart a running server), then re-run bazelisk run //scripts:spark-verify."
   exit 1
 fi
 

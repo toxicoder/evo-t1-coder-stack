@@ -87,7 +87,7 @@ STACK_SECRET_KEYS='KEY SECRET TOKEN PASSWORD'
 #   0
 usage() {
   cat <<'USAGE'
-usage: update-configs [--dry-run] [--interactive] [--non-interactive] [--force]
+usage: bazelisk run //scripts:update-configs -- [--dry-run] [--interactive] [--non-interactive] [--force]
                       [--from <dir>] [--home <dir> ...] [--container <name> ...]
                       env | workspace | all
 
@@ -584,10 +584,18 @@ env_ask() {
     fi
     if is_secret_key "${key}"; then
       printf '  This key holds a credential, so what you type is not echoed.\n'
-      read -rs -r answer || answer=""
+      if [ -t 0 ]; then
+        read -rs -r answer || answer=""
+      else
+        IFS= read -rs -r -t 15 answer || answer=""
+      fi
       printf '\n'
     else
-      read -r answer || answer=""
+      if [ -t 0 ]; then
+        read -r answer || answer=""
+      else
+        IFS= read -r -t 15 answer || answer=""
+      fi
     fi
     if [[ -z ${answer} ]]; then
       if is_placeholder_value "${value}" && [[ -n ${reuse} ]]; then

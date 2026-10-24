@@ -7,7 +7,7 @@
 # git is a per-test fake. docker, timeout, and coder are the shared stubs.
 # Nothing here clones a remote or talks to a daemon.
 #
-# Usage: bats tests/bats/workspace.bats
+# Usage: bazelisk test //tests:bats_workspace_test   (from any cwd)
 
 bats_require_minimum_version 1.5.0
 
@@ -125,7 +125,7 @@ source_libs() {
 @test "new-workspace.sh: --help prints the flag list and creates nothing" {
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --help
   [ "${status}" -eq 0 ]
-  [ "${lines[0]}" = "usage: new-workspace.sh [options] <git-url> [workspace-name]" ]
+  [ "${lines[0]}" = "usage: bazelisk run //scripts:new-workspace -- [options] <git-url> [workspace-name]" ]
   assert_match "dry-run" '--dry-run' "${output}"
   [ "$(stub_log_count git)" -eq 0 ]
   [ "$(stub_log_count coder)" -eq 0 ]

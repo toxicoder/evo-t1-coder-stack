@@ -10,7 +10,7 @@
 # workspace_affinity_key into the templatefile call, so the pin cannot die
 # silently by one side drifting.
 #
-# Usage: bats tests/bats/litellm-config.bats
+# Usage: bazelisk test //tests:bats_litellm_config_test   (from any cwd)
 # Safety: reads litellm/config.yaml and the two template dirs; writes nothing.
 
 bats_require_minimum_version 1.5.0

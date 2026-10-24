@@ -109,7 +109,7 @@ CONFIRMED=0
 #   0
 usage() {
   cat <<'USAGE'
-usage: prod-stack [--project-name <name>] [--file <file>] [--env-file <file>]
+usage: bazelisk run //scripts:prod-stack -- [--project-name <name>] [--file <file>] [--env-file <file>]
                   [--tail <n>] [--follow] [--json] [--yes]
                   <up | down | status | logs [service...]> [same flags]
 

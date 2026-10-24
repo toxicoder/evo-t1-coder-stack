@@ -6,8 +6,8 @@
 # has a `# @function` block with Globals, Arguments, Outputs, and Returns.
 #
 # Usage:
-#   bash tests/doc_coverage.sh
 #   bazelisk test //tests:doc_coverage
+#   bash tests/doc_coverage.sh
 
 set -euo pipefail
 
