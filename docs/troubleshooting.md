@@ -587,10 +587,26 @@ bazelisk run //scripts:new-workspace -- <git-url>
 - On the workspace page, click **GitHub reauth**. Coder opens `/external-auth/<id>`
   (device flow for the injected App, OAuth for a custom app in `coder.env`). If the
   page says you are already authenticated, click **Reauthenticate**.
+- If that page says "You must install the GitHub App to clone private repositories"
+  and lists no accounts, the device-flow login already succeeded. Click **Install
+  GitHub App** on the workspace (or open
+  [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new)),
+  grant the private repos, then restart. Coder's injected provider omits
+  `AppInstallURL`, so the warning on `/external-auth/github` is unlinked plaintext.
 - Restart the workspace afterwards so `GH_TOKEN` and the gh auth store match the new
   grant. `git` via `GIT_ASKPASS` remints without that restart.
-- Existing workspaces pick up the button after `bazelisk run //scripts:push-template`
+- Existing workspaces pick up the buttons after `bazelisk run //scripts:push-template`
   and a workspace update to the new template version.
+
+### gh_token_refresh says gh would not store the minted token
+
+- The refresh script inherits `GH_TOKEN`/`GITHUB_TOKEN` from the agent. `gh auth
+  login --with-token` refuses stdin while those names are set. Current templates
+  unset the pair, log out, then log in with `--git-protocol https`, and print gh's
+  stderr (token redacted) if that still fails.
+- Inside the workspace, run `GH_TOKEN= GITHUB_TOKEN= gh auth status`. Then click
+  **GitHub reauth**, finish device-code login, install the Coder GitHub App if the
+  reauth page says to, and restart.
 
 ### Private-repo clone or push denied while a credential is present -> the grant, not the format
 
@@ -600,15 +616,17 @@ bazelisk run //scripts:new-workspace -- <git-url>
   answers 404, or 403, on the read lane and the write lane alike). And reads prove
   nothing about push: a public repo answers read probes for any authenticated
   caller, so a credential that READS a repo can still be refused every WRITE to it.
-- Check the GitHub side first. The grant behind the credential - the GitHub OAuth app
+- Check the GitHub side first. The grant behind the credential - the GitHub App
   installation that the External Auth provider (id `github` by default) minted its token from -
   has to include the repository the workspace clones or pushes. An empty
   [github.com/settings/apps](https://github.com/settings/apps) page is the usual surprise
   here: it means no App is installed under your account, so there is no **Configure** link
   to click and nothing to grant, while the provider itself stays configured and keeps
-  minting tokens that authenticate. Coder's own built-in GitHub App only appears on that
-  page once a provider pointing at it is configured, and a private repository is never
-  visible to a credential that was never granted it.
+  minting tokens that authenticate. Install Coder's App from the workspace **Install
+  GitHub App** button, or at
+  [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new),
+  grant the repo, then restart. A private repository is never visible to a credential
+  that was never granted it.
 - Then check the URL scheme. That credential covers `https://github.com/...` remotes
   only, so a `git@github.com:` or `ssh://` URL gets neither helper nor askpass token
   and needs an SSH key you placed yourself, which this stack provisions nowhere.

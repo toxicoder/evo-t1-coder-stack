@@ -279,7 +279,7 @@ for slot in ${want}; do
             hint="that is no grant on this repo: a classic PAT needs the repo scope and a fine-grained token needs that repository ticked, so mint one that has it and pipe it into bazelisk run //scripts:github-auth -- auth ${fix} -"
             ;;
           *)
-            hint="grant the GitHub App behind that token access to this repo (GitHub -> Settings -> Applications -> <app> -> Configure -> Repository access); an empty Applications page means no App is installed under your account, so there is nothing to Configure there, and the other way out is a write-scope PAT (check --source=gh says whether the gh auth store already holds one that can write; if it does not, install one with bazelisk run //scripts:github-auth -- auth ${fix} -)"
+            hint="grant the GitHub App behind that token access to this repo (GitHub -> Settings -> Applications -> <app> -> Configure -> Repository access); an empty Applications page means no App is installed under your account, so install Coder's at https://github.com/apps/coder/installations/new (or click Install GitHub App on the workspace), grant this repo, then restart; the other way out is a write-scope PAT (check --source=gh says whether the gh auth store already holds one that can write; if it does not, install one with bazelisk run //scripts:github-auth -- auth ${fix} -)"
             ;;
         esac
         ;;
@@ -383,8 +383,12 @@ auth_workspace() {
     return 1
   fi
   # login exits non-zero on its own when the token fails to authenticate.
+  # Unset the minted env pair first: gh prefers GH_TOKEN/GITHUB_TOKEN over
+  # stdin, and a workspace that already has the pair makes `--with-token`
+  # refuse ("The value of the GH_TOKEN environment variable is being used
+  # for authentication") the same way gh_token_refresh used to.
   if printf '%s\n' "${pat}" | docker exec -i "${container}" sh -c \
-    'umask 077; gh auth logout --hostname github.com >/dev/null 2>&1 || true; gh auth login --hostname github.com --git-protocol https --with-token && gh auth setup-git && gh api /user >/dev/null'; then
+    'umask 077; unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth logout --hostname github.com >/dev/null 2>&1 || true; gh auth login --hostname github.com --git-protocol https --with-token && gh auth setup-git && gh api /user >/dev/null'; then
     log "${container}: gh credential installed (rotate or remove it in GitHub -> Applications when work ends)"
   else
     warn "${container}: gh refused the token, or no gh/credential plumbing inside - nothing changed"

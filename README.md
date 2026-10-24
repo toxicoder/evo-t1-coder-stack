@@ -784,7 +784,10 @@ The list format, the two clone paths, and what `--dry-run` prints:
   after **VS Code Web** at `order = 5`) takes that slot and `cd`s to the clone folder,
   so the terminal outside the editor starts inside the project too. **GitHub reauth**
   (`order = 7`) sits next to it and opens Coder's `/external-auth/<id>` page so a
-  workspace can reconnect GitHub from the agent bar.
+  workspace can reconnect GitHub from the agent bar. **Install GitHub App**
+  (`order = 8`) opens `https://github.com/apps/coder/installations/new` for the
+  injected App, because that reauth page's "install the GitHub App" warning is
+  unlinked plaintext.
 
 ### Grok Build state: one shared profile per user
 
@@ -1072,7 +1075,8 @@ cause, recipe, and what a fix costs - is in
   passing read proves nothing about push. It covers `https://github.com/...` remotes
   only, so a `git@github.com:` or `ssh://` URL needs an SSH key you placed yourself,
   which this stack provisions nowhere. Reconnect from the workspace page with
-  **GitHub reauth**, then restart so `GH_TOKEN` matches the new grant. The doctor
+  **GitHub reauth**, install the Coder GitHub App with **Install GitHub App** if
+  that page says to, then restart so `GH_TOKEN` matches the new grant. The doctor
   answers "can this credential WRITE to that repo?":
   `bazelisk run //scripts:github-auth -- check [container] [repo-url]`
   from a host shell, or the same command without the container slot from inside a

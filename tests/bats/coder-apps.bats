@@ -133,6 +133,58 @@ app_block() {
   done
 }
 
+@test "github: both twins surface Install GitHub App for the injected Coder App" {
+  # The injected provider omits AppInstallURL, so /external-auth/github
+  # prints the empty-installations warning as unlinked plaintext. This
+  # button is the clickable install path for slug coder. count is the
+  # github_auth_id template variable (preview-safe), not start_count.
+  # A custom OAuth id hides it; that slug is not coder.
+  local tpl block
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    grep -Fq 'coder_github_app_install_url = "https://github.com/apps/coder/installations/new"' "${tpl}"
+    block="$(app_block "${tpl}" github_app_install)"
+    [ -n "${block}" ]
+    printf '%s\n' "${block}" | grep -qE 'count[[:space:]]*=[[:space:]]*var.github_auth_id == "github" \? 1 : 0'
+    printf '%s\n' "${block}" | grep -qE 'display_name[[:space:]]*=[[:space:]]*"Install GitHub App"'
+    printf '%s\n' "${block}" | grep -qE 'slug[[:space:]]*=[[:space:]]*"github-app-install"'
+    printf '%s\n' "${block}" | grep -qE 'external[[:space:]]*=[[:space:]]*true'
+    printf '%s\n' "${block}" | grep -qE 'open_in[[:space:]]*=[[:space:]]*"tab"'
+    printf '%s\n' "${block}" | grep -qE 'icon[[:space:]]*=[[:space:]]*"/icon/github.svg"'
+    printf '%s\n' "${block}" | grep -qE 'url[[:space:]]*=[[:space:]]*local.coder_github_app_install_url'
+    printf '%s\n' "${block}" | grep -qE 'order[[:space:]]*=[[:space:]]*8'
+    if printf '%s\n' "${block}" | grep -qE 'share[[:space:]]*='; then
+      return 1
+    fi
+    if printf '%s\n' "${block}" | grep -q start_count; then
+      echo "${tpl} coder_app.github_app_install still uses start_count" >&2
+      return 1
+    fi
+  done
+}
+
+@test "github: both twins write the gh auth store with the env pair cleared" {
+  # gh_token_refresh inherits GH_TOKEN/GITHUB_TOKEN from the agent, and
+  # `gh auth login --with-token` refuses while those names are set. The
+  # old swallowed-stderr note ("the minted token is valid but gh would
+  # not take it") hid that. Unset, logout, --git-protocol https, then
+  # login; on failure print gh's stderr (token redacted) and the App
+  # install URL.
+  local tpl
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    grep -Fq 'unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN' "${tpl}"
+    grep -Fq 'gh auth logout --hostname github.com' "${tpl}"
+    grep -Fq 'gh auth login --hostname github.com --git-protocol https --with-token' "${tpl}"
+    grep -Fq 'gh auth setup-git' "${tpl}"
+    grep -Fq 'gh would not store the minted GitHub token' "${tpl}"
+    grep -Fq 'GH_TOKEN= GITHUB_TOKEN= gh auth status' "${tpl}"
+    grep -Fq 'click Install GitHub App on this workspace' "${tpl}"
+    if grep -Fq 'the minted token is valid but gh would not take it' "${tpl}"; then
+      echo "${tpl} still swallows gh auth login stderr" >&2
+      return 1
+    fi
+  done
+}
+
 @test "github: both twins default github_auth_id to Coder's injected App id" {
   local tf
   for tf in "${REPO_ROOT}/templates/workspace/coder.tf" "${REPO_ROOT}/templates/devcontainer/coder.tf"; do
@@ -164,7 +216,7 @@ app_block() {
   # is stopped. Scripts, metadata and the container stay gated.
   local tpl app block
   for tpl in "${TEMPLATE_TWINS[@]}"; do
-    for app in code_server web_terminal github_reauth litellm coder_ui; do
+    for app in code_server web_terminal github_reauth github_app_install litellm coder_ui; do
       block="$(app_block "${tpl}" "${app}")"
       [ -n "${block}" ]
       if printf '%s\n' "${block}" | grep -q start_count; then
