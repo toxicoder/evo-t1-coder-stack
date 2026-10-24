@@ -129,3 +129,182 @@ answer, and `--litellm-url <url>` for a stack environment that publishes
 LiteLLM on a port other than 4000 (the reseeded `settings.json` then still
 names that stack's own model transport). [grok-build-and-agents.md](grok-build-and-agents.md) covers the profile
 volume and what seeds on first boot.
+
+## GitHub external auth and coder.env
+
+`.env.sample` deliberately carries no GitHub credential of any kind, so the env
+pass has nothing to reconcile here: the twin declares no `CODER_EXTERNAL_AUTH_0_*`
+key and `update-configs` will never add one. Those keys belong in `coder.env`
+beside `docker-compose.yml` (gitignored), which is not a file this tool touches.
+
+**A defined-but-empty key crash-loops the server.** Any `CODER_EXTERNAL_AUTH_0_*`
+counts as a configured provider even when its value is empty, and an empty key
+makes `coder server` exit at boot with `external auth provider "" doesn't have a
+valid id` - which the compose restart policy turns into a crash loop. Do not set
+only `CODER_EXTERNAL_AUTH_0_APP_INSTALL_URL` either: it suppresses the injected
+App like any other key in the set. A custom GitHub App belongs in `coder.env`
+fully filled, including
+`APP_INSTALL_URL=https://github.com/apps/<slug>/installations/new`.
+
+**Leave `coder.env` absent for the usual case.** Coder CE injects its own GitHub
+App (provider id `github`, device flow) and both templates declare that id by
+default, so `bazelisk run //scripts:push-template` works with no extra file.
+Workspace owners connect GitHub under Settings -> Tokens / external auth.
+
+**Create `coder.env` only for a *custom* GitHub OAuth app**, and fill EVERY key -
+`ID` names the provider and `TYPE` says what kind it is. Restart coder to apply
+the file.
+
+```sh
+CODER_EXTERNAL_AUTH_0_ID=primary-github
+CODER_EXTERNAL_AUTH_0_TYPE=github
+CODER_EXTERNAL_AUTH_0_CLIENT_ID=<GitHub OAuth App client id>
+CODER_EXTERNAL_AUTH_0_CLIENT_SECRET=<GitHub OAuth App client secret>
+CODER_EXTERNAL_AUTH_0_REVOKE_URL=https://github.com/settings/connections/applications/<client id>
+#CODER_EXTERNAL_AUTH_0_REGEX=github\.com  (only to tell providers/hosts apart;
+#   omitted matches every github.com remote)
+```
+
+- `push-template.sh` reads `CODER_EXTERNAL_AUTH_0_ID` from `coder.env` and
+  forwards it as `--var github_auth_id=` so the templates declare the same id.
+  Changing the id orphans existing GitHub account links.
+- Then connect your GitHub account in Coder (Settings -> Tokens / external auth)
+  and link the same provider to **both** workspace templates (Templates -> edit
+  -> External Auth).
+- The callback URL on the GitHub side is
+  `<CODER_ACCESS_URL>/external-auth/<id>/callback` - `github` for the injected
+  App, `primary-github` for the sample app above.
+
+**Device-flow login is not the App install.** Private repos need the Coder GitHub
+App at <https://github.com/apps/coder/installations/new> (the workspace "Install
+GitHub App" button), then a restart so `GH_TOKEN` remints. The App installation (or
+token grant) must include the repos you clone: a connected-but-unscoped credential
+authenticates and is still DENIED on private repos (403), which is the first thing
+to check when a clone or push is refused.
+
+**How the token reaches a workspace.** A workspace that does get a token gets it
+twice, as `GH_TOKEN` and `GITHUB_TOKEN` in its agent environment, and the
+template's `gh_token_refresh` coder_script re-mints that pair on start and every 6
+hours after that (cron `0 0 */6 * * *`) because a minted token expires long before
+the workspace does. Check it from inside a workspace with `gh auth status`, or run
+`bazelisk run //scripts:github-auth -- check` there for one line per credential
+slot. [coder-templates.md](coder-templates.md#github-credentials-for-a-workspace)
+covers the same path from the template side.
+
+**Never a static PAT in `.env`.** `.env.sample` used to carry a `GITHUB_TOKEN=`
+line holding a long-lived fine-grained PAT, which `push-template.sh` forwarded to
+both templates as a template variable, into every workspace's environment. That
+path is gone: there is no such template variable and no such key in the twin. A
+workspace's GitHub credential comes from the External Auth provider alone, so an
+owner who connected nothing has no GitHub credential anywhere - unless they install
+one per workspace:
+
+```sh
+bash scripts/github-auth.sh auth <container> - < PAT
+```
+
+That pipes a PAT straight into that container's `gh` credential store - no `.env`
+edit, no template push - and `gh auth logout` inside the container, or a rebuild,
+removes it. The repositories a token can reach are whatever that GitHub app
+installation was granted.
+
+## Grok profile mode
+
+`GROK_PROFILE_MODE` in the twin is the default for the template variable
+`grok_profile_mode`, which the create form also shows per workspace as the **Grok
+profile** dropdown. Read once per push, so changing the default here needs
+`bazelisk run //scripts:push-template`. Overriding it for one workspace happens on
+that dropdown and needs a rebuild, like `dind`.
+
+- `shared` (the default): every workspace of a user mounts that user's shared
+  grok-profile volume nested inside `/home/coder`, so `config.toml`, the MCP warm
+  caches, `memory-v2`, skills and a self-installed CLI are one profile shared by
+  that account's workspaces. It is re-rendered on every start and the
+  **last-started workspace wins** for all of them.
+- `private`: no nested mount. Each workspace gets a private `~/.grok` on its own
+  home volume, so its `config.toml` - plus memory, skills and logs - differs per
+  workspace and dies with the workspace.
+- A workspace moving `shared` -> `private` starts on an empty profile: nothing is
+  copied and the shared volume is left alone.
+
+Switching either way is a **rebuild**, not a stop/start, because the nested mount
+is decided when the workspace is built.
+[grok-build-and-agents.md](grok-build-and-agents.md) covers what the shared
+profile holds and what seeds on first boot; the `workspace` pass above never
+reseeds `~/.grok/config.toml` for exactly that reason.
+
+## Public hosts and the dashboard
+
+`STACK_PUBLIC_HOSTS` is the one switch. Empty keeps everything below LAN-only and
+every derived `STACK_*_URL` stays empty; otherwise set the comma-separated public
+names in the form this stack was installed with:
+
+```sh
+STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io
+```
+
+- Entries are DNS names, not URLs: no scheme, no port, no path. The entry with no
+  prefix is the dashboard.
+- Each service name is **one label** under the zone and carries its prefix with a
+  **HYPHEN**. A wildcard certificate covers exactly one label, so the dotted
+  two-label form (`coder.gmktecbeast.`) has no certificate at the public edge and
+  the browser fails with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` before Traefik sees
+  the request. Keep the hyphen when adding a service.
+- `bootstrap.sh` derives `STACK_DASHBOARD_URL` / `STACK_CODER_URL` /
+  `STACK_KASM_URL` / `STACK_LITELLM_URL` from the prefix on each entry (`coder-` /
+  `kasm-` / `litellm-`, dotted form still recognised) and upgrades
+  `CODER_ACCESS_URL` to the coder name, so Coder builds workspace links on a secure
+  context with a real certificate.
+- The names also go into `HOMEPAGE_ALLOWED_HOSTS` (compose appends this raw value)
+  and into the Coder certificate's subjectAltName.
+- On the other side, the Traefik owns TLS for those names and must forward plain
+  HTTP to this box's router container **with the original Host header intact** -
+  `proxy/router.conf` picks the service from `$http_host` and listens on
+  `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host gets a `421` from the
+  router's default server, homepage rejects the request, and the browser warns on
+  the cert.
+
+Set the names in `.env`, and in `dev-stack.env` too when a dev stack runs beside
+the stable one, then re-run `bazelisk run //scripts:bootstrap` and recreate the
+stack you switched. Hermes is deliberately absent from the list: its dashboard
+stays on LAN / Tailscale `:9119` with HTTP basic auth, and there is no `hermes-*`
+public name or `proxy/router.conf` vhost for it.
+[public-access.md](public-access.md) has the request path, the four names and the
+checks to run on the Traefik box.
+
+## Spark / agent model group
+
+The `agent` model group is three deployments behind one LiteLLM alias, one per
+Spark box, and these are the keys that fill it:
+
+- `SPARKn_OLLAMA_URL` are the Ollama endpoints behind the `spark-<n>` aliases. The
+  placeholder hostnames are on purpose: replace them with real Ollama URLs or
+  leave them as-is, and those aliases simply fail when used.
+- `SPARKn_OPENAI_URL` are the OpenAI-compatible `/v1` endpoints. A workspace pins
+  its session to one healthy box (the `session_affinity` check, fed by the static
+  `x-litellm-session-id` header every workspace sends) while fresh session-id-less
+  traffic fans out by `least-busy`, shortest in-flight queue first.
+- `SPARK_n_API_KEY` is the bearer token for each endpoint. TensorFold is
+  vLLM-lineage, so treat it like vLLM/SGLang: any non-empty string is accepted
+  unless the server was started with `--api-key`, in which case set the REAL key
+  per box. Empty is not a working value - LiteLLM v1.102.1 fails every request at
+  client construction (`AuthenticationError`, before reaching the box) and `agent`
+  falls back to `coder`. The placeholder `local-spark` is not a secret and is
+  ignored by a keyless backend.
+- `SPARKn_HEALTH_URL` (kept commented in the twin) feed the dashboard's per-box
+  Spark cards - one widget per box, so no card assumes one "usual" box. Compose
+  already defaults each to `http://spark-<n>.lan:8888/health`, so these are
+  overrides for real hostnames, not requirements.
+- `AGENT_MODEL_URL` is the single `/v1/models` URL the "Agent backend" card uses
+  for both its browser link and its status probe. All three boxes serve the same
+  model id, so point it at any reachable one; the per-box health keys are what tell
+  you which box answered.
+
+Leaving all three `SPARKn_OPENAI_URL` keys empty keeps `agent` defined but
+unusable: LiteLLM then falls back to `coder`, the Arc alias. That fallback is what
+the card exists to catch. Grok Build, Cline and Roo need structured tool calls,
+which the Arc IPEX-LLM Ollama returns as plain text for the Qwen2.5-Coder weights;
+`coder` and `coder-fast` stay useful for completion and fill-in work, and `chat`
+(`qwen2.5:7b`) does emit real tool calls.
+[litellm-routing.md](litellm-routing.md) covers the alias table, the picker, the
+pin and the measured tool-call limitation.
