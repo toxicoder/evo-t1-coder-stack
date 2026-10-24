@@ -284,21 +284,22 @@ report_stack() {
 }
 
 # @function report_urls
-# Print where the running stack can be opened (dashboard, Coder, LiteLLM, Kasm),
-# then where the dashboard password lives and one command worth running next.
+# Print where the running stack can be opened (dashboard, Coder, LiteLLM, Kasm,
+# Hermes), then where the dashboard password lives and one command worth
+# running next.
 # Globals:
 #   ENV_FILE, COMPOSE_FILE
 # Arguments:
 #   None
 # Outputs:
-#   Four URL lines, then the password-location and next-step lines
+#   URL lines, then the password-location and next-step lines
 # Returns:
 #   0
 report_urls() {
-  local host coder_port litellm_port kasm_port dash_port coder_url litellm_url dash_url env_src
+  local host coder_port litellm_port kasm_port dash_port hermes_port coder_url litellm_url dash_url hermes_url env_src
   host=""
-  # The env file is the only place these five keys live: compose interpolates
-  # them from --env-file when one is named and from the .env beside the compose
+  # The env file is the only place these keys live: compose interpolates them
+  # from --env-file when one is named and from the .env beside the compose
   # file when it is not, so the same lookup works for both modes.
   env_src="${ENV_FILE:-}"
   if [ -z "${env_src}" ]; then
@@ -312,13 +313,16 @@ report_urls() {
   litellm_port="$(env_get "${env_src}" LITELLM_PORT)"
   kasm_port="$(env_get "${env_src}" KASM_UI_PORT)"
   dash_port="$(env_get "${env_src}" HOMEPAGE_HTTPS_PORT)"
+  hermes_port="$(env_get "${env_src}" HERMES_DASHBOARD_PORT)"
   coder_url="$(env_get "${env_src}" STACK_CODER_URL)"
   litellm_url="$(env_get "${env_src}" STACK_LITELLM_URL)"
   dash_url="$(env_get "${env_src}" STACK_DASHBOARD_URL)"
+  hermes_url="$(env_get "${env_src}" STACK_HERMES_URL)"
   printf 'dashboard: %s\n' "${dash_url:-https://${host}:${dash_port:-443}}"
   printf 'coder:     %s\n' "${coder_url:-https://${host}:${coder_port:-3001}}"
   printf 'litellm:   %s\n' "${litellm_url:-http://${host}:${litellm_port:-4000}}"
   printf 'kasm:      https://%s:%s\n' "${host}" "${kasm_port:-4443}"
+  printf 'hermes:    %s\n' "${hermes_url:-http://${host}:${hermes_port:-9119}}"
   printf 'password:  the dashboard login password is HOMEPAGE_AUTH_PASSWORD in %s (rotate it with bazelisk run //scripts:dashboard-password)\n' \
     "${env_src}"
   printf 'next:      bazelisk run //scripts:prod-stack -- logs --tail 200 coder\n'

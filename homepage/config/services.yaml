@@ -222,3 +222,15 @@
         href: "{{HOMEPAGE_VAR_KASM_URL}}"
         description: Streamed desktops on :4443 (the :3000 wizard is first boot only)
         siteMonitor: https://kasm:4443/
+
+- Host:
+    # siteMonitor only: /api/status answers unauthenticated (it reports that
+    # auth is required) so the card can go UP/DOWN without a dashboard cookie.
+    # No customapi widget — the JSON shape is not a contract we pin, and a
+    # mapping error would render an error block under the title.
+    - Hermes:
+        icon: mdi-console
+        href: "{{HOMEPAGE_VAR_HERMES_URL}}"
+        description: On-device host assistant - Chat tab is the interactive
+          terminal with approval prompts (LAN / Tailscale only)
+        siteMonitor: http://hermes:9119/api/status

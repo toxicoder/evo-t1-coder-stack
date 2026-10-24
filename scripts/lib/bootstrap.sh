@@ -151,6 +151,41 @@ classify_public_entry() {
   esac
 }
 
+# @function stack_host_path
+# Print the physical path of the stack checkout. Prefer
+# BUILD_WORKSPACE_DIRECTORY (bazelisk run names the real checkout) so a
+# runfiles cwd cannot become the hermes bind source.
+# Globals:
+#   BUILD_WORKSPACE_DIRECTORY
+# Arguments:
+#   None
+# Outputs:
+#   One absolute path
+# Returns:
+#   0
+stack_host_path() {
+  if [ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ] && [ -f "${BUILD_WORKSPACE_DIRECTORY}/docker-compose.yml" ]; then
+    (cd "${BUILD_WORKSPACE_DIRECTORY}" && pwd -P)
+    return 0
+  fi
+  pwd -P
+}
+
+# @function host_user_ids
+# Print the calling user's uid:gid. hermes-init chowns /opt/data to this pair
+# so the gateway can reopen the seed after s6 drops privileges.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   uid:gid
+# Returns:
+#   0
+host_user_ids() {
+  printf '%s:%s\n' "$(id -u)" "$(id -g)"
+}
+
 # @function dind_image_ref
 # Print the dind_image string from a Terraform file, or the default tag.
 # Globals:

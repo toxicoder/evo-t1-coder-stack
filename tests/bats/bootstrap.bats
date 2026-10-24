@@ -80,6 +80,25 @@ setup() {
   [ "$(classify_public_entry 'bad_name')" = "skip dns" ]
 }
 
+@test "bootstrap: stack_host_path prefers BUILD_WORKSPACE_DIRECTORY over cwd" {
+  mkdir -p "${BATS_TEST_TMPDIR}/checkout" "${BATS_TEST_TMPDIR}/runfiles"
+  : >"${BATS_TEST_TMPDIR}/checkout/docker-compose.yml"
+  BUILD_WORKSPACE_DIRECTORY="${BATS_TEST_TMPDIR}/checkout"
+  cd "${BATS_TEST_TMPDIR}/runfiles"
+  [ "$(stack_host_path)" = "$(cd "${BATS_TEST_TMPDIR}/checkout" && pwd -P)" ]
+}
+
+@test "bootstrap: stack_host_path falls back to the physical cwd" {
+  unset BUILD_WORKSPACE_DIRECTORY || true
+  mkdir -p "${BATS_TEST_TMPDIR}/here"
+  cd "${BATS_TEST_TMPDIR}/here"
+  [ "$(stack_host_path)" = "$(pwd -P)" ]
+}
+
+@test "bootstrap: host_user_ids prints uid:gid" {
+  [ "$(host_user_ids)" = "$(id -u):$(id -g)" ]
+}
+
 @test "bootstrap: dind_image_ref reads the terraform pin and falls back" {
   printf '  dind_image = "docker:29.8.1-dind"\n' > main.tf
   [ "$(dind_image_ref main.tf)" = "docker:29.8.1-dind" ]

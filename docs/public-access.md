@@ -48,6 +48,10 @@ the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000)
 | `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (`proxy_ssl_verify off`) |
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 
+Hermes is **not** in that list. Its dashboard stays on LAN / Tailscale `:9119` with
+HTTP basic auth; there is no `hermes-*` public name and no `proxy/router.conf`
+server block for it. Do not add one. See [hermes.md](hermes.md).
+
 ## Getting the naming right
 
 - Each name is **one label under the zone**, and each service prefix joins it with a

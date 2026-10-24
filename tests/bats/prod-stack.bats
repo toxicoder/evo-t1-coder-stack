@@ -217,7 +217,7 @@ load_fn() {
   assert_not_match "no ps" ' ps$' "${output}"
 }
 
-@test "prod-stack: report_urls prints the four origins and where the password lives" {
+@test "prod-stack: report_urls prints the origins and where the password lives" {
   load_fn scripts/lib/common.sh env_get
   load_fn scripts/prod-stack.sh report_urls
   ENV_FILE="${BATS_TEST_TMPDIR}/prod-stack.env"
@@ -237,6 +237,7 @@ ENV
   [ "${status}" -eq 0 ]
   assert_match "dashboard origin" '^dashboard: https://dashboard.example$' "${output}"
   assert_match "litellm origin" '^litellm: +http://litellm.example:14000$' "${output}"
+  assert_match "hermes origin" '^hermes: +http://box.example:9119$' "${output}"
   assert_match "password lives" 'HOMEPAGE_AUTH_PASSWORD in .*/prod-stack.env' "${output}"
   assert_match "next command" '^next: +bazelisk run //scripts:prod-stack -- logs' "${output}"
   assert_not_match "no secret" 's3cr3t-not-printed' "${output}"
@@ -248,6 +249,7 @@ ENV
   run report_urls
   assert_match "fallback dashboard" '^dashboard: https://localhost:443$' "${output}"
   assert_match "fallback coder" '^coder: +https://localhost:3001$' "${output}"
+  assert_match "fallback hermes" '^hermes: +http://localhost:9119$' "${output}"
 }
 
 @test "prod-stack: report_urls survives a missing env file under strict shell options" {
@@ -270,6 +272,7 @@ ENV
   [ "${status}" -eq 0 ]
   assert_match "fallback dashboard" '^dashboard: https://localhost:443$' "${output}"
   assert_match "fallback coder" '^coder: +https://localhost:3001$' "${output}"
+  assert_match "fallback hermes" '^hermes: +http://localhost:9119$' "${output}"
   assert_match "next command" '^next: +bazelisk run //scripts:prod-stack -- logs' "${output}"
 }
 

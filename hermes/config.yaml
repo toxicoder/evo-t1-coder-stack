@@ -1,0 +1,46 @@
+# managed-by: evo-t1-coder-stack
+#
+# Seed config for the on-device Hermes assistant (hermes-agent v0.22.5). It is
+# copied into the Hermes data volume as $HERMES_HOME/config.yaml, so edit it here
+# and re-materialize the volume — never edit the copy the container reads.
+#
+# Shape follows the upstream config reference; keys not named here keep their
+# upstream defaults on purpose (no mcp_servers block, no per-deployment caps —
+# LiteLLM owns routing and this stack never adds rpm/tpm limits).
+model:
+  # OpenAI-compatible transport: the stack's LiteLLM proxy on the compose network.
+  provider: custom
+  # LiteLLM alias `agent` — the tool-capable Spark lane (real tool_calls array).
+  # If every Spark box is down the alias falls back to `coder` inside LiteLLM,
+  # whose tool calls come back as plain text and cannot drive the agent loop; the
+  # Arc-side fallback is `chat` (qwen2.5:7b), which does emit tool_calls. Move to
+  # it without touching this file: `hermes config set model.model chat`.
+  model: agent
+  base_url: http://litellm:4000/v1
+  # Expanded from the environment (the Hermes container's env / its own .env), so
+  # no secret byte lands in git. LITELLM_MASTER_KEY is the only credential this
+  # assistant holds; there is no GitHub token here by design.
+  api_key: ${LITELLM_MASTER_KEY}
+
+terminal:
+  # `local`, not `docker`: the docker backend runs the command inside a fresh
+  # container and skips the dangerous-command approvals this file depends on.
+  backend: local
+  # Identical-path checkout: compose bind-mounts STACK_HOST_PATH at the same
+  # path inside the container (empty-var CI fallback is /opt/stack). Hermes
+  # expands this from the environment the way it expands api_key.
+  cwd: ${STACK_HOST_PATH}
+  timeout: 180
+
+approvals:
+  # manual: every flagged command waits for the operator. `smart` is not used for
+  # v1 and `off` must never be set — the docker socket is mounted in this container.
+  mode: manual
+  timeout: 300
+  cron_mode: deny
+  unattended_mode: deny
+
+skills:
+  # The git-tracked skills tree, bind-mounted read-only beside the checkout.
+  external_dirs:
+    - /opt/stack-skills

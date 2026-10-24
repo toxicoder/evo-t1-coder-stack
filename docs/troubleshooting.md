@@ -665,6 +665,21 @@ bazelisk run //scripts:github-auth -- auth <container> - < PAT
 
 ## UI and logins
 
+### Hermes dashboard will not bind / Chat tab is empty -> auth, then approvals
+
+- A non-loopback bind (`HERMES_DASHBOARD_HOST=0.0.0.0`) without basic-auth env
+  is a boot error since the June 2026 hardening. `HERMES_DASHBOARD_INSECURE` is a
+  no-op. Check `HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` /
+  `HERMES_DASHBOARD_SECRET` in `.env` (bootstrap replaces the `change-me-*`
+  placeholders) and `bazelisk run //scripts:prod-stack -- logs hermes`.
+- The Chat tab is a PTY over WebSocket on the same port. Approvals render as
+  cards there; a mutating command that seems to hang is waiting for the card.
+  Seeded `approvals.mode` is `manual` — never `off`.
+- `hermes-init` must exit 0 before `hermes` starts. If the gateway loops on
+  a missing `config.yaml`, the named volume was not seeded: run
+  `bazelisk run //scripts:hermes-bootstrap -- --help` and recreate.
+- Full access / mounts / socket-risk notes: [hermes.md](hermes.md).
+
 ### Kasm wizard gone after install -> expected
 
 - The wizard only listens on `:3000` at first boot; after install, use `:4443`.

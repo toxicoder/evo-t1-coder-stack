@@ -49,7 +49,7 @@ main() {
   fi
   if python3 -c 'import yaml' >/dev/null 2>&1; then
     echo "-> yaml parse"
-    python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('homepage/config/*.yaml')+['litellm/config.yaml']]"
+    python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('homepage/config/*.yaml')+['litellm/config.yaml','hermes/config.yaml']]"
   else
     echo "-> PyYAML not installed, skipping yaml parse"
   fi

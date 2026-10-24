@@ -8,15 +8,17 @@ landing page) and Kasm Workspaces (streamed desktops).
 ### What it shows
 
 A card per service, with status pulled from each service's own API over the compose
-network - `http://coder:3000`, `http://litellm:4000`, `http://ollama:11434` - so
-nothing here needs a daemon credential. The header carries boxed tiles for host CPU,
-memory, CPU temperature, disk and `eth0` throughput, beside the clock, local weather
-(open-meteo, keyless) and a DuckDuckGo search.
+network - `http://coder:3000`, `http://litellm:4000`, `http://ollama:11434`,
+`http://hermes:9119/api/status` - so nothing here needs a daemon credential. The
+header carries boxed tiles for host CPU, memory, CPU temperature, disk and `eth0`
+throughput, beside the clock, local weather (open-meteo, keyless) and a DuckDuckGo
+search.
 
-Card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL`,
-which default to LAN URLs built from `STACK_LAN_HOST` and the port variables. Change a
-port or re-detect the LAN IP and the links follow; set `STACK_PUBLIC_HOSTS` and they
-follow the public names.
+Card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL` /
+`STACK_HERMES_URL`, which default to LAN URLs built from `STACK_LAN_HOST` and the
+port variables. Change a port or re-detect the LAN IP and the links follow; set
+`STACK_PUBLIC_HOSTS` and the first three follow the public names. Hermes stays on
+the LAN (`:9119`) even in public mode — see [hermes.md](hermes.md).
 
 ### Login
 
@@ -71,7 +73,10 @@ only sees the container's own netns (`lo`/`eth0`) - `/sys/class/net` is namespac
 the host Wi-Fi NIC stays invisible even with `/sys` mounted. That tile reads `eth0`.
 
 The docker socket stays unmounted: service status comes from each service's API, which
-avoids handing the dashboard a root-equivalent host credential.
+avoids handing the dashboard a root-equivalent host credential. The Hermes card in the
+**Host** group is the same pattern (`siteMonitor` of `http://hermes:9119/api/status`);
+the Hermes container itself *does* mount the socket — that credential lives there, not
+here. See [hermes.md](hermes.md).
 
 ### Look
 
