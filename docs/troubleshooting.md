@@ -489,19 +489,34 @@ bazelisk run //scripts:new-workspace -- <git-url>
 
 - The denial is about the **grant**, not the credential format. A
   connected-but-unscoped credential authenticates and is still refused: 403, or 404
-  where GitHub hides a private repo's existence.
+  where GitHub hides a private repo's existence (a repo hidden from the credential
+  answers 404, or 403, on the read lane and the write lane alike). And reads prove
+  nothing about push: a public repo answers read probes for any authenticated
+  caller, so a credential that READS a repo can still be refused every WRITE to it.
 - Check the GitHub side first. The grant behind the credential - the GitHub OAuth app
   installation that the External Auth provider (id `github` by default) minted its token from -
-  has to include the repository the workspace clones.
+  has to include the repository the workspace clones or pushes.
 - Then check the URL scheme. That credential covers `https://github.com/...` remotes
   only, so a `git@github.com:` or `ssh://` URL gets neither helper nor askpass token
   and needs an SSH key you placed yourself, which this stack provisions nowhere.
-- The doctor, from the stack host, names the credential each running workspace
-  presents and says whether it is granted on the repo you pass:
+- The doctor, from a host shell or from inside a workspace, names the credential a
+  workspace's git/gh presents and answers "can this credential WRITE to the repo you
+  pass?". It probes the endpoint `git push` negotiates through: one GET of
+  `<repo>.git/info/refs?service=git-receive-pack`. A REFUSED-GRANT answer means the
+  credential authenticates while every write to that repo is denied; NOT VISIBLE
+  means the repo is hidden from the credential (or absent); REJECTED means github.com
+  refuses the credential outright, as it does an expired mint:
 
 ```sh
 bazelisk run //scripts:github-auth -- check [container] [repo-url]
 ```
+
+  On the host it enumerates the labeled workspace containers with docker and probes
+  each (a named container checks just that one). Inside a workspace the docker CLI
+  reaches only that workspace's DinD sidecar, so the same command runs SELF mode
+  with no docker: one probe of this environment's own credential chain, printed as
+  one `self:` line. Pass only the repo URL there; a named container is refused and
+  pointed at the host shell. Full usage: `scripts/github-auth.sh --help`.
 
 - Or install a write-capable PAT into one workspace's gh auth store, on stdin:
 

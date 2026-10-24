@@ -84,12 +84,18 @@ repo can verify.
   `credential.https://github.com.helper = !gh auth git-credential` and `gh`
   prefers the environment variable, falling back to that auth-store copy. The
   minted token is short-lived and per-host, so keep the GitHub-side grant narrow
-  anyway: it decides which repositories the workspace can reach, and a
-  connected-but-unscoped credential authenticates and is still denied on clone/push.
-  `scripts/github-auth.sh` reads that state from the host: `check` names which
+  anyway: it decides which repositories the workspace can write to, and a
+  connected-but-unscoped credential authenticates and is denied on every write to a
+  repo it can read (reads prove nothing about write: a public repo answers read
+  probes for any authenticated caller). `scripts/github-auth.sh` reads that state
+  from the host and from inside a workspace (inside a workspace, where docker
+  reaches only the workspace's own DinD sidecar, `check` runs SELF mode with no
+  docker and probes this environment's own credential chain): `check` names which
   credential a workspace's git/gh would present (env pair, auth-store copy, or
-  direct mint) and whether the grant covers a given repo (sources and verdicts
-  only, never token bytes); `auth` pipes a PAT into one container's gh
+  direct mint) and whether that credential can WRITE to a given repo - one
+  read-only GET of the `git-receive-pack` ref advertisement, the endpoint `git push`
+  negotiates through, printing sources and verdicts only, never token bytes; `auth`
+  pipes a PAT into one container's gh
   credential store, where it stands in for a workspace whose owner connected no
   account — with a connected account, the next `gh_token_refresh` run (start,
   then every 6 hours) rewrites that store with a minted pair. `gh auth logout`

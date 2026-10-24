@@ -708,13 +708,20 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
   per-host tokens on demand, alongside a `GH_TOKEN`/`GITHUB_TOKEN` pair in the agent
   environment.
 - `gh_token_refresh` (a `coder_script`) re-mints that pair on start and every 6 hours;
-  the minted token expires in about an hour, so a 6-hour cadence keeps it ahead of
-  expiry. `coder external-auth access-token` answers with a live token (refreshed
-  server-side first) or with the re-authentication URL and exit 1; with no connected
-  account the script prints its one note and exits 0, and mints nothing.
+  the minted token expires in about an hour, so between refreshes the gh auth store
+  can hold an expired credential for hours mid-day (check reports that staleness as
+  REJECTED). `coder external-auth access-token` is the live path when the store goes
+  stale: it re-mints on demand and answers with a live token, or with the
+  re-authentication URL and exit 1; with no connected account the refresh script
+  prints its one note and exits 0, and mints nothing.
 - A token that authenticates but was never GRANTED the repository still fails clone and
-  push: a private repository answers 403 or 404. Read access is the floor, so "no read
-  grant" means push is denied too.
+  push, and reads prove nothing about write: a private repository hidden from the
+  credential answers 403 or 404 on both lanes, and a public one answers a read probe
+  with 200 for any authenticated caller, so a read-only credential passes a read test
+  while every write to that repo is denied. `scripts/github-auth.sh check <repo-url>`
+  asks the write question directly: one GET of
+  `<repo>.git/info/refs?service=git-receive-pack`, the endpoint `git push` itself
+  negotiates through.
 - Nothing long-lived lives in any file, env or template: the rendered `config.toml`
   names `GH_TOKEN` and nothing else, and the pair stops at the workspace container's edge
   (a dev container built on the sidecar is not handed either key).
@@ -730,8 +737,14 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
 
 ### `scripts/github-auth.sh`, the per-workspace doctor
 
-- `check [container] [repo-url]` names the credential each running workspace would
-  present and says whether it is granted on the repository you point it at.
+- `check [container] [repo-url]` names the credential a workspace's git/gh would
+  present and answers "can this credential WRITE to the repository you point it at?",
+  by probing the receive-pack ref advertisement that endpoint `git push` negotiates
+  through (full usage: `scripts/github-auth.sh --help`). On the host it enumerates the
+  labeled workspace containers with docker, or probes a named container alone. Inside
+  a workspace it runs SELF mode with no docker: this environment's own credential
+  chain, one `self:` line, and a named container there is refused with a pointer to
+  the host.
 - `auth <container> - < PAT` installs a write-capable PAT into that workspace's gh auth
   store. That is legitimate in two cases: the owner connected no Coder account, so
   nothing can be minted, or the minted (or GitHub App) credential was revoked or has

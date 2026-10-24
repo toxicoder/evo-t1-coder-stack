@@ -1,13 +1,19 @@
 #!/usr/bin/env bats
 #
-# ## github-auth.bats — the workspace GitHub credential doctor and one-line auth.
+# ## github-auth.bats - the workspace GitHub credential doctor and one-line auth.
 #
 # Pins the seam added after the first desktop->workspace PR nearly shipped a
 # PR-creating session onto a credential that cannot write: git consults the
-# env token, then gh, then the external-auth mint, and an unscoped credential
-# authenticates while still being denied (403 Resource not accessible). The
-# docker/curl/timeout/coder/gh stubs keep this hermetic — probe_workspace,
-# running_workspaces, auth_workspace, and main all run against stubs only.
+# env token, then gh, then the external-auth mint, and a credential that
+# READS can still be refused every WRITE call. A public repo answers
+# api.github.com /repos with 200 for any authenticated caller, so the read
+# probe could print a false pass; the write probe keys on the HTTP status of
+# the receive-pack ref advertisement instead (200-with-refs is PUSH-READY,
+# 403 REFUSED-GRANT, 404 NOT VISIBLE, 401 REJECTED). STUB_CURL_STATUS plus
+# STUB_CURL_OUT drive those verdicts through the shared curl stub. The
+# docker/curl/timeout/coder/gh stubs keep this hermetic: running_workspaces,
+# credential_probe, probe_self, probe_workspace, auth_workspace, and main all
+# run against stubs only.
 #
 # Usage: bats tests/bats/github-auth.bats
 # Safety: reads scripts/github-auth.sh and the stub bin; writes nothing outside
@@ -21,12 +27,21 @@ load 'test_helper'
 REPO_ROOT=""
 SCRIPT=""
 
+# The write-probe body that a write-capable credential gets back from
+# github.com (the literal advertisement start), and the body that proves the
+# probe's discriminator is the status, not the wording.
+AD_BODY="001f# service=git-receive-pack 00001234deadbeef HEAD agent=git/2.43.0"
+
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SCRIPT="${REPO_ROOT}/scripts/github-auth.sh"
   [[ -f "${SCRIPT}" ]] || skip "scripts/github-auth.sh not reachable from ${REPO_ROOT}"
   use_stubs docker curl timeout coder gh
+  # Host-mode pin: on a dev box this env variable defines "inside a
+  # workspace", where check must run SELF mode with zero docker calls.
+  # Host-mode tests must therefore not inherit it; SELF tests set it.
   unset GH_TOKEN GITHUB_TOKEN CODER_GITHUB_AUTH_ID
+  unset CODER_WORKSPACE_ID
 }
 
 @test "check: lists every labeled workspace and never invents a credential" {
@@ -52,44 +67,165 @@ setup() {
 
 @test "check: the env token is reported by source and never printed" {
   export GH_TOKEN="SECRETVAL-do-not-leak"
-  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_OUT='{"full_name":"alx/notes"}' \
-    run bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  run env STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_STATUS=200 \
+    STUB_CURL_OUT="${AD_BODY}" \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"source: env token"* ]]
-  [[ "${output}" == *"readable through it"* ]]
+  [[ "${output}" == *"PUSH-READY"* ]]
   [[ "${output}" != *"SECRETVAL-do-not-leak"* ]]
   run stub_log curl
-  [[ "${output}" == *"api.github.com/repos/alx/notes"* ]]
+  [[ "${output}" == *"github.com/alx/notes.git/info/refs?service=git-receive-pack"* ]]
+  [[ "${output}" != *"SECRETVAL"* ]]
 }
 
-@test "check: a connected-but-unscoped credential is named, not swallowed" {
+@test "check: a read-only credential is named REFUSED-GRANT, with the grant fix pointer" {
   export GH_TOKEN="SECRETVAL-do-not-leak"
-  STUB_COMPOSE_PS="coder-alice-ws1" \
-    STUB_CURL_OUT='{"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com"}' \
-    run bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  run env STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"NOT GRANTED on alx/notes"* ]]
-  [[ "${output}" == *"scripts/github-auth.sh auth"* ]]
+  [[ "${output}" == *"REFUSED-GRANT on alx/notes"* ]]
+  [[ "${output}" == *"Repository access"* ]]
+  [[ "${output}" == *"bazelisk run //scripts:github-auth -- auth coder-alice-ws1 -"* ]]
+  [[ "${output}" != *"SECRETVAL-do-not-leak"* ]]
+}
+
+@test "check: a 403 body that reads differently still lands in REFUSED-GRANT" {
+  export GH_TOKEN="SECRETVAL-do-not-leak"
+  run env STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='{"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com"}' \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"REFUSED-GRANT"* ]]
+}
+
+@test "check: 404 means NOT VISIBLE, so clone and push would both fail" {
+  export GH_TOKEN="SECRETVAL-do-not-leak"
+  run env STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_STATUS=404 \
+    STUB_CURL_OUT='Not Found' \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"NOT VISIBLE"* ]]
+  [[ "${output}" == *"clone and push would both fail"* ]]
+}
+
+@test "check: 401 means REJECTED, with the re-mint and reconnect hint" {
+  export GH_TOKEN="SECRETVAL-do-not-leak"
+  run env STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_STATUS=401 \
+    STUB_CURL_OUT='Bad credentials' \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"REJECTED"* ]]
+  [[ "${output}" == *"re-mint"* ]]
+  [[ "${output}" == *"Coder UI"* ]]
 }
 
 @test "check: an offline probe says offline, never a false pass" {
   export GH_TOKEN="SECRETVAL-do-not-leak"
-  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_OUT="" STUB_CURL_RC=22 \
-    run bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  run env STUB_COMPOSE_PS="coder-alice-ws1" \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"no useful answer"* ]]
+  [[ "${output}" != *"PUSH-READY"* ]]
 }
 
-@test "check: the probe sends the header through curl --config -, never through curl argv" {
+@test "check: a 200 whose body does not advertise refs is not a write pass" {
   export GH_TOKEN="SECRETVAL-do-not-leak"
-  STUB_COMPOSE_PS="coder-alice-ws1" STUB_DOCKER_EXEC_RUN=1 \
-    STUB_CURL_OUT='{"full_name":"alx/notes"}' \
-    run bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  run env STUB_COMPOSE_PS="coder-alice-ws1" STUB_CURL_STATUS=200 STUB_CURL_OUT='{}' \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"readable through it"* ]]
-  assert_match "curl gets its header from stdin" '--config -' "$(stub_log curl)"
+  [[ "${output}" == *"no useful answer"* ]]
+  [[ "${output}" != *"PUSH-READY"* ]]
+}
+
+@test "check: the probe sends the credential through curl --config -, never through curl argv" {
+  export GH_TOKEN="SECRETVAL-do-not-leak"
+  run env STUB_DOCKER_EXEC_RUN=1 STUB_COMPOSE_PS="coder-alice-ws1" \
+    STUB_CURL_STATUS=200 STUB_CURL_OUT="${AD_BODY}" \
+    bash "${SCRIPT}" check coder-alice-ws1 https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"PUSH-READY"* ]]
+  assert_match "curl gets its credential from stdin" '--config -' "$(stub_log curl)"
+  assert_match "probe hits the receive-pack endpoint" 'info/refs\?service=git-receive-pack' "$(stub_log curl)"
   assert_not_match "no token in curl argv" 'SECRETVAL' "$(stub_log curl)"
   assert_eq "one probe per container" "1" "$(stub_log_count curl)"
+}
+
+@test "check: inside a workspace, check probes this environment and never calls docker" {
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run env STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${lines[0]}" == "self: "* ]]
+  [[ "${output}" == *"REFUSED-GRANT"* ]]
+  [[ "${output}" == *"Repository access"* ]]
+  [[ "${output}" != *"SECRETVAL"* ]]
+  assert_eq "docker never called" "0" "$(stub_log_count docker)"
+  assert_eq "one probe, run locally" "1" "$(stub_log_count curl)"
+}
+
+@test "check: SELF mode names the gh credential source and keeps token bytes unprinted" {
+  export CODER_WORKSPACE_ID=ws-test
+  run env STUB_GH_TOKEN='ghu_SECRETVAL-do-not-leak' STUB_CURL_STATUS=200 \
+    STUB_CURL_OUT="${AD_BODY}" \
+    bash "${SCRIPT}" check https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == "self: credential present (source: gh stored login) and"* ]]
+  [[ "${output}" == *"PUSH-READY"* ]]
+  [[ "${output}" != *"SECRETVAL"* ]]
+  assert_eq "docker never called" "0" "$(stub_log_count docker)"
+  assert_not_match "no token in curl argv" 'SECRETVAL' "$(stub_log curl)"
+}
+
+@test "check: SELF mode without a repo URL prints the local credential line and probes nothing" {
+  export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
+  run bash "${SCRIPT}" check
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == "self: credential present"* ]]
+  [[ "${output}" == *"pass the repo URL to check its grants"* ]]
+  [[ "${output}" != *"SECRETVAL"* ]]
+  assert_eq "docker never called" "0" "$(stub_log_count docker)"
+  assert_eq "no probe without a repo URL" "0" "$(stub_log_count curl)"
+}
+
+@test "check: inside a workspace a named container argument is refused with a host pointer" {
+  export CODER_WORKSPACE_ID=ws-test
+  run bash "${SCRIPT}" check coder-bob-ws1 https://github.com/alx/notes
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"this is a workspace shell"* ]]
+  assert_eq "docker never called" "0" "$(stub_log_count docker)"
+}
+
+@test "check: a minted token uses github when CODER_GITHUB_AUTH_ID is unset" {
+  unset GH_TOKEN GITHUB_TOKEN CODER_GITHUB_AUTH_ID
+  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CODER_OUT="minted-token-secret" \
+    run bash "${SCRIPT}" check coder-alice-ws1
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"source: Coder external-auth minted token"* ]]
+  [[ "${output}" != *"minted-token-secret"* ]]
+  assert_match "default id is github" 'access-token github' "$(stub_log coder)"
+}
+
+@test "check: CODER_GITHUB_AUTH_ID overrides the minted provider id" {
+  unset GH_TOKEN GITHUB_TOKEN
+  export CODER_GITHUB_AUTH_ID=primary-github
+  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CODER_OUT="minted-token-secret" \
+    run bash "${SCRIPT}" check coder-alice-ws1
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"source: Coder external-auth minted token"* ]]
+  assert_match "custom id" 'access-token primary-github' "$(stub_log coder)"
+  assert_not_match "does not also try github first" 'access-token github' "$(stub_log coder)"
+}
+
+@test "shape: every function block the docs promise is still there" {
+  for fn in running_workspaces credential_probe probe_self probe_workspace auth_workspace main; do
+    grep -Fq "${fn}()" "${SCRIPT}" || {
+      echo "github-auth.sh lost its ${fn} function" >&2
+      return 1
+    }
+  done
 }
 
 @test "auth: an empty piped token is refused without touching docker" {
@@ -120,36 +256,6 @@ setup() {
   assert_eq "no docker call at all" "0" "$(stub_log_count docker)"
 }
 
-@test "check: a minted token uses github when CODER_GITHUB_AUTH_ID is unset" {
-  unset GH_TOKEN GITHUB_TOKEN CODER_GITHUB_AUTH_ID
-  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CODER_OUT="minted-token-secret" \
-    run bash "${SCRIPT}" check coder-alice-ws1
-  [ "${status}" -eq 0 ]
-  [[ "${output}" == *"source: Coder external-auth minted token"* ]]
-  [[ "${output}" != *"minted-token-secret"* ]]
-  assert_match "default id is github" 'access-token github' "$(stub_log coder)"
-}
-
-@test "check: CODER_GITHUB_AUTH_ID overrides the minted provider id" {
-  unset GH_TOKEN GITHUB_TOKEN
-  export CODER_GITHUB_AUTH_ID=primary-github
-  STUB_COMPOSE_PS="coder-alice-ws1" STUB_CODER_OUT="minted-token-secret" \
-    run bash "${SCRIPT}" check coder-alice-ws1
-  [ "${status}" -eq 0 ]
-  [[ "${output}" == *"source: Coder external-auth minted token"* ]]
-  assert_match "custom id" 'access-token primary-github' "$(stub_log coder)"
-  assert_not_match "does not also try github first" 'access-token github' "$(stub_log coder)"
-}
-
-@test "shape: every function block the docs promise is still there" {
-  for fn in running_workspaces probe_workspace auth_workspace main; do
-    grep -Fq "${fn}()" "${SCRIPT}" || {
-      echo "github-auth.sh lost its ${fn} function" >&2
-      return 1
-    }
-  done
-}
-
 @test "auth: a piped token goes to gh on stdin and never to stdout" {
   # The STUB_DOCKER_EXEC_* pair travels as `env` arguments, not as `run`
   # prefix assignments: a prefix on a function call has no portable export
@@ -166,7 +272,7 @@ setup() {
 
 @test "auth: a bare container name still reads the piped token, and keeps it out of argv" {
   # Same `env`-pinned canned mode as the - form above: the outcome may not
-  # depend on whether this runner can reach a docker daemon or a real gh.
+  # depend on whether this runner can reach a real docker daemon or gh.
   run env STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=0 \
     bash -c "printf 'ghp_SECRETVAL-do-not-leak\n' | bash '${SCRIPT}' auth coder-alice-ws1"
   [ "${status}" -eq 0 ]
