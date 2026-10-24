@@ -14,6 +14,8 @@
 #   router          nginx Host-header router for the public subdomains; the
 #                   main Traefik terminates TLS and forwards plain HTTP here
 #                   (host STACK_PROXY_HTTP_PORT, default 8080)
+#   hermes-init     one-shot seed of the hermes-data volume (config.yaml, SOUL.md)
+#   hermes          Hermes Agent + Web Dashboard (host 9119, LAN/Tailscale only)
 #
 # Secrets live in .env (see .env.sample). Never commit .env.
 
@@ -400,6 +402,7 @@ services:
       HOMEPAGE_VAR_CODER_URL: ${STACK_CODER_URL:-https://${STACK_LAN_HOST:-localhost}:${CODER_HTTP_PORT:-3001}}
       HOMEPAGE_VAR_LITELLM_URL: ${STACK_LITELLM_URL:-http://${STACK_LAN_HOST:-localhost}:${LITELLM_PORT:-4000}}
       HOMEPAGE_VAR_KASM_URL: ${STACK_KASM_URL:-https://${STACK_LAN_HOST:-localhost}:${KASM_UI_PORT:-4443}}
+      HOMEPAGE_VAR_HERMES_URL: ${STACK_HERMES_URL:-http://${STACK_LAN_HOST:-localhost}:${HERMES_DASHBOARD_PORT:-9119}}
       HOMEPAGE_VAR_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
       # The agent backend lives off-box on the LAN, so compose DNS does not
       # apply: the same LAN URL serves both the browser href and the server-side
@@ -475,8 +478,80 @@ services:
       - litellm
       - kasm
 
+  # One-shot seed of the named hermes-data volume from the git-tracked hermes/
+  # tree. restart: "no" (quoted: YAML 1.1 would otherwise parse a bare no as
+  # boolean false) so a successful run stays exited; hermes waits on
+  # service_completed_successfully. Runs as root so it can chown the volume
+  # to HERMES_UID after writing: a fresh named volume is root-owned, and the
+  # gateway's s6 drops to that uid. The gateway service itself has no user:
+  # key — s6 needs root to drop.
+  hermes-init:
+    image: nousresearch/hermes-agent:v0.22.5
+    restart: "no"
+    environment:
+      HERMES_UID: ${HERMES_UID:-1000}
+      HERMES_GID: ${HERMES_GID:-1000}
+      STACK_HOST_PATH: ${STACK_HOST_PATH:-/opt/stack}
+    volumes:
+      - hermes-data:/opt/data
+      - ./hermes:/seed:ro
+      - ./scripts:/scripts:ro
+    entrypoint: ["/bin/bash", "-c"]
+    # Compose interpolates HERMES_UID/GID from .env at parse time (a $$ escape
+    # would leave a literal $$ that bash would expand as PID). Recreate the
+    # init container after changing those keys.
+    command:
+      - |
+        set -euo pipefail
+        /scripts/hermes-bootstrap.sh --in-container
+        chown -R ${HERMES_UID:-1000}:${HERMES_GID:-1000} /opt/data
+
+  # On-device host assistant: official Hermes Agent + Web Dashboard (Chat tab
+  # is a PTY over WebSocket with approval prompts). LAN / Tailscale only —
+  # there is no public hermes-* vhost. docker.sock is mounted (root-equivalent,
+  # same standing as coder); the seeded config.yaml keeps approvals.mode:
+  # manual and that must stay. The checkout is bind-mounted at the identical
+  # host path (STACK_HOST_PATH) so `docker compose` through the socket resolves
+  # bind sources on the daemon; empty STACK_HOST_PATH (CI `compose config`)
+  # falls back to .:/opt/stack.
+  hermes:
+    image: nousresearch/hermes-agent:v0.22.5
+    restart: unless-stopped
+    command: ["gateway", "run"]
+    environment:
+      HERMES_DASHBOARD: "1"
+      HERMES_DASHBOARD_HOST: "0.0.0.0"
+      HERMES_DASHBOARD_PORT: "9119"
+      HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_USER:-admin}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:-}
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_SECRET:-}
+      HERMES_UID: ${HERMES_UID:-1000}
+      HERMES_GID: ${HERMES_GID:-1000}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
+      STACK_HOST_PATH: ${STACK_HOST_PATH:-/opt/stack}
+    ports:
+      - "${HERMES_DASHBOARD_PORT:-9119}:9119"
+    volumes:
+      - hermes-data:/opt/data
+      - ${STACK_HOST_PATH:-.}:${STACK_HOST_PATH:-/opt/stack}
+      - ./hermes/skills:/opt/stack-skills:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-980}"
+    # Same public resolvers as coder: git pull from inside Hermes must not
+    # depend on host MagicDNS (see the coder dns comment).
+    dns:
+      - "1.1.1.1"
+      - "8.8.8.8"
+    depends_on:
+      litellm:
+        condition: service_started
+      hermes-init:
+        condition: service_completed_successfully
+
 volumes:
   coder-home:
   coder-db:
   ollama-models:
   kasm-data:
+  hermes-data:

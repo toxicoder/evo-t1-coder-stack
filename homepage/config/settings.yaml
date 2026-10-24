@@ -69,5 +69,6 @@ layout:
     columns: 3
     useEqualHeights: false
   Desktops: {}
+  Host: {}
   Stack docs: {}
   Repo: {}

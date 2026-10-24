@@ -8,6 +8,8 @@ One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra
   OpenAI-compatible door in front of them, plus optional NVIDIA Spark boxes.
 - **Kasm Workspaces** - streams desktops. **Homepage** - the dashboard that links them
   all and shows live status.
+- **Hermes** - on-device host assistant (official Web Dashboard on :9119, Chat tab
+  with approval prompts). LAN / Tailscale only.
 - **SearXNG** - the keyless metasearch lane.
 
 The box runs **two isolated copies** of the stack on purpose: a *stable* one you work
@@ -32,12 +34,14 @@ script meant to run straight from a shell, and it runs before Bazel exists.
 9. [Coder workspace templates](#coder-workspace-templates)
 10. [Workspaces, terminals and agents](#workspaces-terminals-and-agents)
 11. [Kasm](#kasm), [Homepage dashboard](#homepage-dashboard),
+   [Hermes host assistant](#hermes-host-assistant),
    [Memory budget](#memory-budget), [What not to run here](#what-not-to-run-here)
 12. [Why this shape](#why-this-shape), [Repo layout](#repo-layout),
     [Troubleshooting](#troubleshooting)
 
 The long version of each topic sits in a page beside this one, linked where it applies:
 [coder-templates.md](docs/coder-templates.md), [dashboard.md](docs/dashboard.md),
+[hermes.md](docs/hermes.md),
 [grok-build-and-agents.md](docs/grok-build-and-agents.md),
 [litellm-routing.md](docs/litellm-routing.md),
 [public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
@@ -93,6 +97,9 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                 |           one `agent` group, one deployment per Spark box,
   |                 |           the only tool-capable path)
   |
+  +-- :9119 ----> Hermes Web Dashboard (host assistant; Chat tab + approvals;
+  |               LAN / Tailscale only, basic auth). Models via LiteLLM.
+  |
   +-- (no host port) IPEX-LLM Ollama on the Arc 140T (/dev/dri)
   |
   +-- :8181 ----> SearXNG metasearch (loopback + LAN face) - keyless engines only,
@@ -124,6 +131,8 @@ LAN clients (laptops, phones, the EVO-T1 itself)
    over the compose network.
 6. **Public subdomains are opt-in and additive.** The LAN shape above is the default
    and stays intact when the four public names are on.
+7. **Hermes is LAN / Tailscale only.** The dashboard publishes `:9119` with HTTP basic
+   auth. There is no public `hermes-*` name and no `proxy/router.conf` vhost for it.
 
 ## Ports
 
@@ -140,6 +149,7 @@ port binds once, so two stacks on one box need two sets.
 | 3000 | 13000 | Kasm | First-boot install wizard (`KASM_WIZARD_PORT`) |
 | 4443 | 14443 | Kasm | Workspaces UI after install (`KASM_UI_PORT`) |
 | 4000 | 14000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
+| 9119 | 19119 | Hermes | Host-assistant Web Dashboard (`HERMES_DASHBOARD_PORT`) - Chat tab + approvals; LAN / Tailscale only, HTTP basic auth |
 | 8181 | 18181 | SearXNG | Metasearch (`STACK_SEARCH_PORT`) - published, because a workspace reaches the host through its gateway, where the compose network does not help. `push-template.sh` reads this key and pushes `--var searxng_url=http://host.docker.internal:<that port>`, so a remapped port reaches each new workspace's config |
 | — | — | Homepage app | `3000` on the compose network only - reached through the proxy |
 | — | — | Ollama | `11434` on the compose network only - deliberately not published |
@@ -377,7 +387,7 @@ and the LAN host, and move every published port by 10000:
 awk -F= '{ if ($1 ~ /^[A-Z0-9_]*PORT$/ && $2 ~ /^[0-9]+$/) print $1 "=" $2 + 10000; else print }' .env > dev-stack.env
 ```
 
-That maps 3001 to 13001, 443 to 10443, 80 to 10080 and 2112 to 12112.
+That maps 3001 to 13001, 443 to 10443, 80 to 10080, 2112 to 12112 and 9119 to 19119.
 
 ### Rules that keep them apart
 
@@ -876,6 +886,22 @@ keyless) and a DuckDuckGo search.
 Full detail (mounts, `custom.css`, widget URLs, the wallpaper trick):
 [docs/dashboard.md](docs/dashboard.md).
 
+## Hermes host assistant
+
+[Hermes Agent](https://github.com/nousresearch/hermes-agent) is the on-device assistant
+for this host: the official Web Dashboard on `:9119` (dev `:19119`), Chat tab with
+approval prompts, models through the existing LiteLLM `agent` alias. It mounts the
+stack checkout at `STACK_HOST_PATH` and the docker socket (root-equivalent, same
+standing as Coder), so approvals stay `manual`.
+
+- **URL:** `http://<host>:9119` - plain HTTP, basic auth
+  (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`).
+- **LAN / Tailscale only.** No public `hermes-*` name.
+- **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the
+  dangerous-command checker on.
+
+Full detail (mounts, skills, bootstrap, security): [docs/hermes.md](docs/hermes.md).
+
 ## Memory budget
 
 96 GB DDR5, CPU + iGPU unified. Only models you actually load are resident; Ollama
@@ -897,7 +923,9 @@ keeps them in RAM until they age out.
 - **Public internet exposure beyond the optional mode above.** The default install
   assumes a trusted LAN or VPN: the dashboard has an nginx sidecar with a self-signed
   cert and its own password gate, which is far short of a real reverse proxy, and
-  nothing at all stands in front of Coder, LiteLLM or Kasm.
+  nothing at all stands in front of Coder, LiteLLM, Hermes or Kasm. Hermes in
+  particular stays off the public edge: its dashboard binds `:9119` with basic auth
+  and there is no `hermes-*` Traefik name.
 - **Heavy video encode or render.** The Arc 140T is strong for LLM inference; do not
   plan media pipelines around it.
 - **Multi-tenant teams.** A handful of trusted users, not an org-wide SaaS.
@@ -934,6 +962,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 .
 ├── docker-compose.yml
 ├── .env.sample            # canonical env template (.env.example is a copy)
+├── hermes/                # Hermes seed: config.yaml, SOUL.md, skills (ro-mounted)
 ├── homepage/config/       # dashboard: services, widgets, settings, bookmarks, custom.css
 ├── homepage/assets/icons/ # dashboard wallpaper + header logo, served at /icons/
 ├── images/dev/            # golden workspace image
@@ -950,6 +979,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
 │   ├── github-auth.sh       # GitHub credential doctor
+│   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
 │   ├── new-workspace.sh     # git URL -> workspace: picks the template + parameters
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container

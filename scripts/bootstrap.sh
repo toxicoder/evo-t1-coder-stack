@@ -122,7 +122,7 @@ if [ "${check_only}" = "1" ]; then
     echo ".env: missing — a full run would create it from .env.sample"
   else
     echo "secrets (key names only, never values):"
-    for probe_key in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD; do
+    for probe_key in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET; do
       if grep -q "^${probe_key}=change-me" .env; then
         echo "  ${probe_key}: still a change-me placeholder — a full run would replace it"
       fi
@@ -203,7 +203,7 @@ if [ -f .env.sample ]; then
 fi
 
 # Only replace values still carrying the sample placeholder.
-for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD; do
+for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET; do
   if grep -q "^${var}=change-me" .env; then
     set_secret "$var"
   fi
@@ -465,6 +465,17 @@ else
   echo "warning: could not detect the docker group GID; set DOCKER_GID in .env if workspace creation fails with 'Cannot connect to the Docker daemon'."
 fi
 
+# Hermes bind-mounts this checkout at the same host path so `docker compose`
+# through the mounted socket resolves bind sources on the daemon. Always
+# refresh: a moved clone would otherwise keep a stale path.
+upsert_env STACK_HOST_PATH "$(stack_host_path)"
+
+# hermes-init chowns /opt/data to this pair so the gateway can reopen the
+# seed after s6 drops privileges. Refresh on every run, matching DOCKER_GID.
+ids="$(host_user_ids)"
+upsert_env HERMES_UID "${ids%%:*}"
+upsert_env HERMES_GID "${ids##*:}"
+
 # Agent mode (Grok Build, Cline, Roo) needs structured tool calls, and the Arc
 # Qwen2.5-Coder weights cannot produce them: they return the call as plain text
 # with finish_reason "stop". The Spark-backed `agent` alias (one alias, one
@@ -617,3 +628,6 @@ echo '  7. bazelisk run //scripts:spark-verify -- --no-tests   # read-only Spark
 echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 echo "  9. Dashboard: ${dash_reach_url}/ (login password: the HOMEPAGE_AUTH_PASSWORD line in .env, never printed here — bazelisk run //scripts:dashboard-password rotates it)"
 echo " 10. LiteLLM: ${litellm_reach_url}/health — the transport every agent routes through; bazelisk run //scripts:dev-stack -- status reports on the whole stack at once"
+hermes_port="$(env_get .env HERMES_DASHBOARD_PORT)"
+hermes_reach_url="$(env_get .env STACK_HERMES_URL)"
+echo " 11. Hermes: ${hermes_reach_url:-http://${stack_lan_host:-<host>}:${hermes_port:-9119}} — on-device host assistant (LAN/Tailscale only; basic auth is HERMES_DASHBOARD_USER / HERMES_DASHBOARD_PASSWORD in .env, never printed here). Docs: docs/hermes.md"

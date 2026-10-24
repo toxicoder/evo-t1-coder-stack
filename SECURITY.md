@@ -33,6 +33,18 @@ repo can verify.
 - **Ollama is internal-only.** IPEX-LLM Ollama listens on 11434 inside the
   compose network only and is deliberately not published to the host.
   Never add a `11434:11434` port mapping.
+- **Hermes is LAN / Tailscale only and root-equivalent.** The official dashboard
+  publishes `:9119` with HTTP basic auth (`HERMES_DASHBOARD_USER` /
+  `HERMES_DASHBOARD_PASSWORD`); a non-loopback bind without a provider is a boot
+  error (`HERMES_DASHBOARD_INSECURE` is a deprecated no-op). There is no public
+  `hermes-*` name and no `proxy/router.conf` vhost for it — do not add one.
+  The container mounts the host docker socket (same standing as `coder`) and the
+  stack checkout at `STACK_HOST_PATH`, so a command it runs can affect the real
+  host. The seeded config keeps `approvals.mode: manual`, `cron_mode: deny`,
+  `unattended_mode: deny`, and `terminal.backend: local` (the `docker` backend
+  skips dangerous-command checks). Never set the mode to `off`. Secrets stay in
+  `.env` and the `hermes-data` volume; there is no GitHub PAT in Hermes. See
+  [docs/hermes.md](docs/hermes.md).
 - **Dashboard.** The Homepage container publishes no port; `homepage-proxy`
   owns :80 / :443 with a self-signed cert that `bootstrap.sh` issues, so the
   encryption is real but untrusted, and the redirect on :80 is the only thing

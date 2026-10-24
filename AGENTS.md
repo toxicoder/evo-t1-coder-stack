@@ -1,6 +1,6 @@
 # evo-t1-coder-stack
 
-Compose stack for GMKtec EVO-T1: Coder + LiteLLM + IPEX-LLM Ollama + Kasm + Homepage. Operator docs in README.md. Shell conventions in docs/project-conventions.md. Branching in docs/branching.md.
+Compose stack for GMKtec EVO-T1: Coder + LiteLLM + IPEX-LLM Ollama + Kasm + Homepage + Hermes. Operator docs in README.md. Hermes host assistant in docs/hermes.md. Shell conventions in docs/project-conventions.md. Branching in docs/branching.md.
 
 ## Where you run
 
@@ -27,7 +27,8 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   because git and gh consult `GH_TOKEN`/`GITHUB_TOKEN` first. Pass only the repo URL
   there; a named container is refused with a pointer to the host shell.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
-  `:3002` the Coder agent tunnel, `:8181` SearXNG.
+  `:3002` the Coder agent tunnel, `:8181` SearXNG, `:9119` Hermes dashboard
+  (LAN/Tailscale only; the host assistant, not a workspace agent).
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other
   workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
   of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, or the
@@ -60,7 +61,7 @@ Done means `//:test-fast` + lint green. Stack changes must be verified on the de
 - `scripts/*.sh` — operator CLIs; `scripts/lib/*.sh` — sourced helpers (do not copy log/die helpers).
 - `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline) and `vscode-alt.svg` (the editor icon), each staged by the push plumbing beside the staged `main.tf` and read there with `file()` / `filebase64()`; pushing without either fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
-- `searxng/settings.yml`, `homepage/**`, `proxy/*.conf` — payloads bind-mounted read-only. `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML only under `homepage/config/*.yaml` and `litellm/config.yaml`.
+- `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, and `hermes/config.yaml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
 - Runtime is `docker compose`. Do not add Kubernetes.
 - LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env); never introduce a static token or PAT.
