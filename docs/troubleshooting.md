@@ -532,6 +532,16 @@ On `devcontainer`:
 bazelisk run //scripts:new-workspace -- <git-url>
 ```
 
+### GitHub token expired, or the workspace has no GitHub account -> GitHub reauth
+
+- On the workspace page, click **GitHub reauth**. Coder opens `/external-auth/<id>`
+  (device flow for the injected App, OAuth for a custom app in `coder.env`). If the
+  page says you are already authenticated, click **Reauthenticate**.
+- Restart the workspace afterwards so `GH_TOKEN` and the gh auth store match the new
+  grant. `git` via `GIT_ASKPASS` remints without that restart.
+- Existing workspaces pick up the button after `bazelisk run //scripts:push-template`
+  and a workspace update to the new template version.
+
 ### Private-repo clone or push denied while a credential is present -> the grant, not the format
 
 - The denial is about the **grant**, not the credential format. A

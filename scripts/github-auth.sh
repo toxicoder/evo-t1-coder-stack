@@ -289,7 +289,7 @@ for slot in ${want}; do
         printf '%s and %s answered PUSH-READY (%s)\n' "${line}" "${repo}" "${clause}"
         ;;
       REJECTED)
-        printf '%s but REJECTED (%s): re-mint it with coder external-auth access-token %s from a workspace shell, or reconnect the provider in the Coder UI (Settings -> Tokens -> external auth)\n' "${line}" "${clause}" "${id}"
+        printf '%s but REJECTED (%s): re-mint it with coder external-auth access-token %s from a workspace shell, or click GitHub reauth on the workspace in the Coder UI\n' "${line}" "${clause}" "${id}"
         ;;
       "no useful answer")
         printf '%s and %s gave no useful answer (%s)\n' "${line}" "${repo}" "${clause}"

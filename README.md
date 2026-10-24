@@ -763,7 +763,9 @@ The list format, the two clone paths, and what `--dry-run` prints:
 - `display_apps.web_terminal` stays **off** - it would open a shell on the agent's
   working dir, `/home/coder`. The custom **Web Terminal** `coder_app` (`order = 6`,
   after **VS Code Web** at `order = 5`) takes that slot and `cd`s to the clone folder,
-  so the terminal outside the editor starts inside the project too.
+  so the terminal outside the editor starts inside the project too. **GitHub reauth**
+  (`order = 7`) sits next to it and opens Coder's `/external-auth/<id>` page so a
+  workspace can reconnect GitHub from the agent bar.
 
 ### Grok Build state: one shared profile per user
 
@@ -1025,8 +1027,10 @@ cause, recipe, and what a fix costs - is in
   existence). A public repo answers read probes for any authenticated caller, so a
   passing read proves nothing about push. It covers `https://github.com/...` remotes
   only, so a `git@github.com:` or `ssh://` URL needs an SSH key you placed yourself,
-  which this stack provisions nowhere. The doctor answers "can this credential WRITE
-  to that repo?": `bazelisk run //scripts:github-auth -- check [container] [repo-url]`
+  which this stack provisions nowhere. Reconnect from the workspace page with
+  **GitHub reauth**, then restart so `GH_TOKEN` matches the new grant. The doctor
+  answers "can this credential WRITE to that repo?":
+  `bazelisk run //scripts:github-auth -- check [container] [repo-url]`
   from a host shell, or the same command without the container slot from inside a
   workspace (SELF mode). It answers per credential and marks a credential that the
   agent env token outranks as `shadowed`, since git and gh consult that pair first.

@@ -122,6 +122,7 @@ setup() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"REJECTED"* ]]
   [[ "${output}" == *"re-mint"* ]]
+  [[ "${output}" == *"GitHub reauth"* ]]
   [[ "${output}" == *"Coder UI"* ]]
 }
 
