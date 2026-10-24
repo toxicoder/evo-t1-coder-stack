@@ -26,7 +26,9 @@
 # environment, both coder.tf twins declare those two variables, and both
 # startup.sh.tftpl twins seed the proxy config from an npx-free heredoc.
 # Both main.tf twins pin public Docker DNS upstreams on the workspace and DinD
-# containers so github.com does not SERVFAIL through host MagicDNS.
+# containers so github.com does not SERVFAIL through host MagicDNS. It also
+# pins the editor's agent_id: concat+splat of coder_devcontainer.repo so the
+# ungated coder_app does not index [0] of an empty tuple during the stop plan.
 #
 # Usage: bazelisk test //tests:bats_devcontainer_template_test   (from any cwd)
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
@@ -80,6 +82,23 @@ setup() {
   # this guard is what routes that case to /home/coder.
   run grep -F 'repo_set = trimspace(data.coder_parameter.repo_url.value) != ""' "${DC_TF}"
   [ "${status}" -eq 0 ]
+}
+
+@test "editor: code-server agent_id uses concat+splat instead of indexing repo[0] off use_dc" {
+  # coder_devcontainer.repo is count-gated on use_dc AND start_count. Template
+  # import's ephemeral (stop) plan is start_count=0, so the tuple is empty even
+  # when use_dc is true (the default). Apps stay ungated (coder/preview plus
+  # the stopped page), and a use_dc ? repo[0].subagent_id ternary then fails
+  # with "Invalid index ... empty tuple". concat of the splat never indexes
+  # an empty collection: the sub-agent wins when it exists, the parent agent
+  # holds the button otherwise. Both the ungated app and the start_count-gated
+  # script share that local so a later copy cannot reintroduce the ternary.
+  run grep -F -- 'code_server_agent_id = concat(coder_devcontainer.repo[*].subagent_id, [coder_agent.main.id])[0]' "${DC_TF}"
+  [ "${status}" -eq 0 ]
+  n="$(grep -c -E 'agent_id[[:space:]]+=[[:space:]]+local\.code_server_agent_id' "${DC_TF}")"
+  assert_eq "${DC_TF} wires code_server_agent_id on the script and the app" "2" "${n}"
+  run grep -F 'coder_devcontainer.repo[0].subagent_id' "${DC_TF}"
+  [ "${status}" -ne 0 ]
 }
 
 @test "editor: bind source and Web Terminal keep the host-side folder spelling" {
