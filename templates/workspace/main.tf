@@ -412,17 +412,18 @@ resource "coder_agent" "main" {
 
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
-    # resolve, so all seven are declared together. github_mcp and search_mcp are
-    # *boolean* gates in there - each only decides whether its [mcp_servers.*]
-    # block appears - and no token is part of the decision: no credential bytes
-    # are ever interpolated into the rendered script or into config.toml, which
-    # only ever names GH_TOKEN
-    # and lets the CLI expand that reference from the agent environment.
+    # resolve, so all eight are declared together. github_mcp, search_mcp and
+    # context7_mcp are *boolean* gates in there - each only decides whether its
+    # [mcp_servers.*] block appears - and no token is part of the decision: no
+    # credential bytes are ever interpolated into the rendered script or into
+    # config.toml, which only ever names GH_TOKEN and CONTEXT7_API_KEY
+    # and lets the CLI expand those references from the agent environment.
     # workspace_affinity_key is the per-workspace LiteLLM session-affinity key,
     # rendered into the [models] extra_headers. search_mcp gates the searxng MCP
     # stdio block and search_url carries the SearXNG base URL that block dials,
     # which is where the host's published port (8181 by default, higher on a dev
-    # stack) reaches the rendered config.
+    # stack) reaches the rendered config. context7_mcp gates the cached context7
+    # stdio block; its key travels only through the agent environment below.
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
       litellm_url            = var.litellm_url
       grok_default_model     = data.coder_parameter.grok_default_model.value
@@ -431,6 +432,7 @@ resource "coder_agent" "main" {
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
       search_mcp             = var.search_mcp
       search_url             = var.searxng_url
+      context7_mcp           = var.context7_mcp
     })
     # The whole orchestration-protocol payload, read verbatim from
     # GROK_BUILD_AGENTS.md and interpolated into the quoted heredoc that
@@ -507,6 +509,10 @@ resource "coder_agent" "main" {
     # template variable or a rendered file, and the rendered config.toml only ever
     # references GH_TOKEN by name.
     length(data.coder_external_auth.github.access_token) > 0 ? { GH_TOKEN = data.coder_external_auth.github.access_token, GITHUB_TOKEN = data.coder_external_auth.github.access_token } : {},
+    # Only present when the template variable is non-empty: the rendered
+    # config.toml names CONTEXT7_API_KEY, it never carries the value, and the CLI
+    # expands that reference from the agent environment at run time.
+    length(var.context7_api_key) > 0 ? { CONTEXT7_API_KEY = var.context7_api_key } : {},
   )
 }
 

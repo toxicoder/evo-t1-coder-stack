@@ -57,15 +57,17 @@
 # additional_repos, dc_dir, build_devcontainer and vscode_settings.
 # grok_config arrives already rendered from grok-config.toml.tftpl, whose own
 # keys are litellm_url, grok_default_model, workspace_affinity_key,
-# grok_config_extra, github_mcp, search_mcp and search_url - the two boolean
-# keys only gate text (github_mcp and search_mcp decide whether their
-# [mcp_servers.*] block appears; search_url supplies the URL the searxng block
+# grok_config_extra, github_mcp, search_mcp, search_url and context7_mcp - the
+# three boolean keys only gate text (github_mcp, search_mcp and context7_mcp
+# each decide whether their [mcp_servers.*] block appears; search_url supplies
+# the URL the searxng block
 # dials),
 # the affinity key is a per-workspace routing hint (a workspace UUID, not a
-# secret), and the token's own bytes never appear in the result. The one
-# GH_TOKEN reference that config template does emit is dollar-escaped, so it
-# stays literal text inside the quoted heredoc below
-# and reaches config.toml unchanged, for the CLI to expand from the environment.
+# secret), and the token's own bytes never appear in the result. The
+# GH_TOKEN and CONTEXT7_API_KEY references that config template does emit are
+# dollar-escaped, so they
+# stay literal text inside the quoted heredoc below
+# and reach config.toml unchanged, for the CLI to expand from the environment.
 
 set -u
 
@@ -466,6 +468,34 @@ GROK_CONFIG_EOF
   } >"$HOME/.grok/config.toml" || true
   rm -f "$cli_block"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
+fi
+
+# --- Context7 cache-proxy config ---------------------------------------------
+# Seeded only while absent, so a hand-edited copy survives restarts. Lives
+# under ~/.grok so a shared grok-profile volume reuses the SQLite cache across
+# that owner's workspaces. The JSON names no secret: empty CONTEXT7_API_KEY
+# tells mcp-cache-proxy to inherit process.env.
+mkdir -p "$HOME/.grok/mcp-cache-proxy" 2>/dev/null || true
+if [ ! -f "$HOME/.grok/mcp-cache-proxy/config.json" ]; then
+  cat >"$HOME/.grok/mcp-cache-proxy/config.json" <<'MCP_CACHE_PROXY_EOF'
+{
+  "servers": {
+    "context7": {
+      "command": "/opt/npm-global/bin/context7-mcp",
+      "args": [],
+      "env": { "CONTEXT7_API_KEY": "" },
+      "cacheTtlSeconds": 43200,
+      "negativeCacheTtlSeconds": 300
+    }
+  },
+  "cache": {
+    "path": "/home/coder/.grok/mcp-cache-proxy/cache.db",
+    "maxSizeBytes": 104857600,
+    "defaultTtlSeconds": 43200
+  }
+}
+MCP_CACHE_PROXY_EOF
+  chmod 600 "$HOME/.grok/mcp-cache-proxy/config.json" 2>/dev/null || true
 fi
 
 # Second pass: grok's installer and the seed above may have created files as

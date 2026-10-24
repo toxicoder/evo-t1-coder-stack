@@ -18,9 +18,15 @@
 # disable_web_search key exist identically in both grok-config.toml.tftpl
 # twins, both main.tf twins feed search_mcp/search_url into that render and
 # carry SEARXNG_URL into the agent environment, and both coder.tf twins
-# declare the two template variables the pushes will pass. Both main.tf twins
-# pin public Docker DNS upstreams on the workspace and DinD containers so
-# github.com does not SERVFAIL through host MagicDNS.
+# declare the two template variables the pushes will pass. It also pins the
+# context7 lane: the gated [mcp_servers.context7] block, which launches
+# mcp-cache-proxy by absolute path and never through npx, exists identically
+# in both grok-config.toml.tftpl twins, both main.tf twins feed
+# context7_mcp/context7_api_key into that render and into the agent
+# environment, both coder.tf twins declare those two variables, and both
+# startup.sh.tftpl twins seed the proxy config from an npx-free heredoc.
+# Both main.tf twins pin public Docker DNS upstreams on the workspace and DinD
+# containers so github.com does not SERVFAIL through host MagicDNS.
 #
 # Usage: bats tests/bats/devcontainer-template.bats
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
@@ -179,6 +185,84 @@ setup() {
     run grep -F 'variable "search_mcp"' "${ctf}"
     [ "${status}" -eq 0 ]
     run grep -F 'variable "searxng_url"' "${ctf}"
+    [ "${status}" -eq 0 ]
+  done
+}
+
+@test "context7 lane: both config twins carry the gated cached context7 block" {
+  # context7_mcp (template default: false) gates the [mcp_servers.context7]
+  # block, and push-template.sh passes one --var array to BOTH pushes, so the
+  # gate and the block have to exist in each twin; a twin that lost the gate
+  # would render the server unconditionally or never, depending on the pushed
+  # default. The greps pin the block shape: the mcp-cache-proxy wrapper by
+  # absolute path, the proxy config it is pointed at, and the CONTEXT7_API_KEY
+  # reference the CLI expands from the environment ($$ is the Terraform escape,
+  # so the file itself spells the doubled dollars). npx is allowed only in the
+  # comments that explain why it is wrong, so the ban is scoped to the heredoc
+  # the startup twins use to seed that proxy config.
+  local tpl st blob
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    run grep -F '%{if context7_mcp~}' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F '[mcp_servers.context7]' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'command = "/opt/npm-global/bin/mcp-cache-proxy"' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'args = ["--config", "/home/coder/.grok/mcp-cache-proxy/config.json"]' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'env = { CONTEXT7_API_KEY = "$${CONTEXT7_API_KEY}" }' "${tpl}"
+    [ "${status}" -eq 0 ]
+  done
+  # The seed names the real context7 binary, baked into the golden image, so a
+  # new workspace never hits the npm registry on first boot.
+  for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
+    [[ -f "${st}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
+    run grep -F '"command": "/opt/npm-global/bin/context7-mcp"' "${st}"
+    [ "${status}" -eq 0 ]
+    blob="$(awk '/MCP_CACHE_PROXY_EOF/{f=!f;next} f' "${st}")"
+    [ -n "${blob}" ]
+    if grep -Fq 'npx' <<<"${blob}"; then
+      printf 'leak: the mcp-cache-proxy heredoc in %s launches npx\n' "${st}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "context7 lane: both main.tf twins feed the gate and both coder.tf twins declare the variables" {
+  # context7_mcp/context7_api_key are render-map keys in both main.tf twins
+  # (the boolean arrives as a real Terraform bool, so coder.tf has to declare
+  # it), and the key joins the agent environment only when it is non-empty -
+  # that guard is what keeps a blank .env line from overriding the template
+  # default. The startup twins carry the quoted heredoc that seeds the proxy
+  # config, including the SQLite cache file the wrapper writes.
+  local tf ctf st
+  for tf in "${REPO_ROOT}/templates/workspace/main.tf" "${REPO_ROOT}/templates/devcontainer/main.tf"; do
+    run grep -Eq 'context7_mcp[[:space:]]+=[[:space:]]+var\.context7_mcp' "${tf}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'CONTEXT7_API_KEY = var.context7_api_key' "${tf}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'length(var.context7_api_key) > 0 ? { CONTEXT7_API_KEY = var.context7_api_key } : {}' "${tf}"
+    [ "${status}" -eq 0 ]
+  done
+  for ctf in "${REPO_ROOT}/templates/workspace/coder.tf" "${REPO_ROOT}/templates/devcontainer/coder.tf"; do
+    run grep -F 'variable "context7_mcp"' "${ctf}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'variable "context7_api_key"' "${ctf}"
+    [ "${status}" -eq 0 ]
+  done
+  for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
+    run grep -F "<<'MCP_CACHE_PROXY_EOF'" "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -Fx 'MCP_CACHE_PROXY_EOF' "${st}"
+    [ "${status}" -eq 0 ]
+    # The script writes the file under $HOME (the coder user's own ~/.grok, so
+    # a shared grok-profile volume reuses the cache); only the cache path the
+    # proxy itself opens is spelled absolutely inside the heredoc.
+    run grep -F 'cat >"$HOME/.grok/mcp-cache-proxy/config.json"' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -F '/home/coder/.grok/mcp-cache-proxy/cache.db' "${st}"
     [ "${status}" -eq 0 ]
   done
 }

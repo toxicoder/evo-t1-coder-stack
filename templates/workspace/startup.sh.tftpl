@@ -51,7 +51,13 @@
 # ($name or $${name}; the braced form is only safe when escaped this way). The
 # only interpolations Terraform has to resolve are the five variables main.tf
 # passes: grok_build_agents, grok_config, repo_url, additional_repos and
-# vscode_settings.
+# vscode_settings. grok_config arrives already rendered from
+# grok-config.toml.tftpl, whose boolean gate keys are github_mcp, search_mcp
+# and context7_mcp - each only decides whether its [mcp_servers.*] block
+# appears - and no credential byte is part of that decision: the GH_TOKEN and
+# CONTEXT7_API_KEY references that config template does emit are dollar-escaped,
+# so they stay literal text inside the quoted heredoc below, for the CLI to
+# expand from the agent environment.
 
 set -u
 
@@ -443,6 +449,34 @@ GROK_CONFIG_EOF
   } >"$HOME/.grok/config.toml" || true
   rm -f "$cli_block"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
+fi
+
+# --- Context7 cache-proxy config ---------------------------------------------
+# Seeded only while absent, so a hand-edited copy survives restarts. Lives
+# under ~/.grok so a shared grok-profile volume reuses the SQLite cache across
+# that owner's workspaces. The JSON names no secret: empty CONTEXT7_API_KEY
+# tells mcp-cache-proxy to inherit process.env.
+mkdir -p "$HOME/.grok/mcp-cache-proxy" 2>/dev/null || true
+if [ ! -f "$HOME/.grok/mcp-cache-proxy/config.json" ]; then
+  cat >"$HOME/.grok/mcp-cache-proxy/config.json" <<'MCP_CACHE_PROXY_EOF'
+{
+  "servers": {
+    "context7": {
+      "command": "/opt/npm-global/bin/context7-mcp",
+      "args": [],
+      "env": { "CONTEXT7_API_KEY": "" },
+      "cacheTtlSeconds": 43200,
+      "negativeCacheTtlSeconds": 300
+    }
+  },
+  "cache": {
+    "path": "/home/coder/.grok/mcp-cache-proxy/cache.db",
+    "maxSizeBytes": 104857600,
+    "defaultTtlSeconds": 43200
+  }
+}
+MCP_CACHE_PROXY_EOF
+  chmod 600 "$HOME/.grok/mcp-cache-proxy/config.json" 2>/dev/null || true
 fi
 
 # Second pass: grok's installer and the seed above may have created files as
