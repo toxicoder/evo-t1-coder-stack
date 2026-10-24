@@ -108,6 +108,31 @@ app_block() {
   fi
 }
 
+@test "github: both twins surface a GitHub reauth button on the workspace page" {
+  # Coder v2.36 serves connect/reauth at /external-auth/<id>. That page
+  # needs the user's Coder browser session (OAuth redirect or device
+  # flow), so the app is external and opens access_url, with the id the
+  # templates already declare. A hardcoded /external-auth/github would
+  # miss a custom OAuth app in coder.env. share is mutually exclusive
+  # with external. The empty-token refresh note points at this button.
+  local tpl block
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    block="$(app_block "${tpl}" github_reauth)"
+    [ -n "${block}" ]
+    printf '%s\n' "${block}" | grep -qE 'display_name[[:space:]]*=[[:space:]]*"GitHub reauth"'
+    printf '%s\n' "${block}" | grep -qE 'slug[[:space:]]*=[[:space:]]*"github-reauth"'
+    printf '%s\n' "${block}" | grep -qE 'external[[:space:]]*=[[:space:]]*true'
+    printf '%s\n' "${block}" | grep -qE 'open_in[[:space:]]*=[[:space:]]*"slim-window"'
+    printf '%s\n' "${block}" | grep -qE 'icon[[:space:]]*=[[:space:]]*"/icon/github.svg"'
+    printf '%s\n' "${block}" | grep -qF 'url          = "${data.coder_workspace.me.access_url}/external-auth/${var.github_auth_id}"'
+    printf '%s\n' "${block}" | grep -qE 'order[[:space:]]*=[[:space:]]*7'
+    if printf '%s\n' "${block}" | grep -qE 'share[[:space:]]*='; then
+      return 1
+    fi
+    grep -Fq 'click GitHub reauth on this workspace in the Coder UI' "${tpl}"
+  done
+}
+
 @test "github: both twins default github_auth_id to Coder's injected App id" {
   local tf
   for tf in "${REPO_ROOT}/templates/workspace/coder.tf" "${REPO_ROOT}/templates/devcontainer/coder.tf"; do

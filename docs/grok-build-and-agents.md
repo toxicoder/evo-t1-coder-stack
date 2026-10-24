@@ -37,7 +37,8 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   default terminal still opens.
 - `display_apps.web_terminal` stays **off**: it would open a shell on the agent's
   working dir (`/home/coder`). A custom command-type `coder_app` named **Web
-  Terminal** (`order = 6`, after **VS Code Web** at `order = 5`) takes that slot,
+  Terminal** (`order = 6`, after **VS Code Web** at `order = 5`, before **GitHub
+  reauth** at `order = 7`) takes that slot,
   `cd`s to the clone folder - an empty `repo_url` keeps it on `/home/coder` - and
   execs a login shell. Like the built-in, it reads no `terminal.integrated.*`
   settings.

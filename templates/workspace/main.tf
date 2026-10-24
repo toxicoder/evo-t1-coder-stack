@@ -532,7 +532,7 @@ resource "coder_script" "gh_token_refresh" {
     command -v coder >/dev/null 2>&1 || exit 0
     token="$(coder external-auth access-token '${var.github_auth_id}' 2>/dev/null || true)"
     if [ -z "$token" ]; then
-      echo "no GitHub token for this account: connect the '${var.github_auth_id}' provider in Coder (Settings -> Tokens -> external auth) and reconnect your GitHub account, then restart the workspace." >&2
+      echo "no GitHub token for this account: click GitHub reauth on this workspace in the Coder UI, then restart the workspace." >&2
       exit 0
     fi
     # gh reads either name from the environment, and `gh auth git-credential` is
@@ -635,8 +635,8 @@ resource "coder_app" "code_server" {
 
   # The agent bar shows this as "VS Code Web" (display_name; the static
   # "VS Code Desktop" helper from display_apps keeps its own label, so the two
-  # editor buttons read differently now) and sorts it before the LiteLLM (10)
-  # and Coder UI (11) custom apps (lowest order first; static helper buttons
+  # editor buttons read differently now) and sorts it before GitHub reauth (7),
+  # LiteLLM (10) and Coder UI (11) (lowest order first; static helper buttons
   # are not reorderable per Coder's resource-ordering docs).
   order   = 5
   open_in = "tab"
@@ -668,6 +668,27 @@ resource "coder_app" "web_terminal" {
   icon         = "/icon/terminal.svg"
   command      = "cd ${local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"} 2>/dev/null; exec /bin/bash -l"
   order        = 6
+}
+
+# One-click GitHub connect/reauth on the workspace page: Coder v2.36's
+# /external-auth/<id> page (device flow or OAuth, plus a Reauthenticate
+# control when the account is already linked). external = true so it
+# opens in the user's Coder browser session; the id is var.github_auth_id
+# so a custom OAuth app in coder.env still hits the provider the
+# templates declare. Stays on the main agent so a failed clone still
+# leaves the button on the same bar as the terminal. After reconnecting,
+# restart the workspace (or wait for gh_token_refresh) so GH_TOKEN and the
+# gh auth store match the new grant; GIT_ASKPASS remints live without that.
+resource "coder_app" "github_reauth" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  slug         = "github-reauth"
+  display_name = "GitHub reauth"
+  icon         = "/icon/github.svg"
+  external     = true
+  open_in      = "slim-window"
+  url          = "${data.coder_workspace.me.access_url}/external-auth/${var.github_auth_id}"
+  order        = 7
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,
