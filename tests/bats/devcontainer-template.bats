@@ -17,7 +17,9 @@
 # disable_web_search key exist identically in both grok-config.toml.tftpl
 # twins, both main.tf twins feed search_mcp/search_url into that render and
 # carry SEARXNG_URL into the agent environment, and both coder.tf twins
-# declare the two template variables the pushes will pass.
+# declare the two template variables the pushes will pass. Both main.tf twins
+# pin public Docker DNS upstreams on the workspace and DinD containers so
+# github.com does not SERVFAIL through host MagicDNS.
 #
 # Usage: bats tests/bats/devcontainer-template.bats
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
@@ -172,5 +174,23 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'variable "searxng_url"' "${ctf}"
     [ "${status}" -eq 0 ]
+  done
+}
+
+@test "dns: both templates pin public Docker DNS upstreams on workspace and dind containers" {
+  # Host MagicDNS-only resolv.conf is what made terraform init inside coder
+  # SERVFAIL registry.terraform.io; the same lookup fails github.com from a
+  # workspace. Compose pins the pair on coder; the twins pin it on every
+  # terraform-created container so a later git clone does not need a second
+  # host DNS fix. MagicDNS is not a container nameserver.
+  local tf n
+  for tf in "${REPO_ROOT}/templates/workspace/main.tf" "${REPO_ROOT}/templates/devcontainer/main.tf"; do
+    [[ -f "${tf}" ]] || skip "template not reachable from ${REPO_ROOT}"
+    run grep -F 'container_dns = ["1.1.1.1", "8.8.8.8"]' "${tf}"
+    [ "${status}" -eq 0 ]
+    n="$(grep -c -F 'dns = local.container_dns' "${tf}")"
+    assert_eq "${tf} applies container_dns twice (dind + workspace)" "2" "${n}"
+    run grep -F 'dns = ["100.100.100.100"' "${tf}"
+    [ "${status}" -ne 0 ]
   done
 }

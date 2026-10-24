@@ -158,6 +158,18 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Public resolvers become Docker's embedded-DNS upstream for this
+    # service. The container's resolv.conf still names 127.0.0.11, so
+    # compose service names (`db`) keep working; only names Docker does
+    # not know are forwarded here. On this box /etc/resolv.conf often
+    # names only Tailscale MagicDNS, and Docker's iptables (or Kasm's
+    # nested dockerd) can make that stub unreachable from a container.
+    # Terraform init then dies with:
+    #   lookup registry.terraform.io on 127.0.0.11:53: server misbehaving
+    # (and the same for registry.coder.com). Do not list MagicDNS here.
+    dns:
+      - "1.1.1.1"
+      - "8.8.8.8"
 
   db:
     image: postgres:17

@@ -10,7 +10,8 @@
 # a file in the nginx image (`homepage.conf` -> `/etc/nginx/conf.d/default.conf`).
 # `proxy/certs/` is bazelignored (bootstrap issues those on the host) and is
 # skipped here: the stack runners prefer BUILD_WORKSPACE_DIRECTORY so those
-# generated files come from the checkout.
+# generated files come from the checkout. The coder service also pins public
+# DNS upstreams so terraform init does not depend on host MagicDNS.
 #
 # Usage: bats tests/bats/stack-data.bats
 # Safety: reads docker-compose.yml and the payload tree; writes nothing.
@@ -49,4 +50,19 @@ setup() {
     checked=$((checked + 1))
   done < <(sed -n 's|^[[:space:]]*- \(\./[^:]*\):.*|\1|p' "${COMPOSE}")
   [[ "${checked}" -gt 0 ]] || skip "no relative compose bind mounts in ${COMPOSE}"
+}
+
+@test "stack_data: coder forwards public DNS so terraform init does not depend on MagicDNS" {
+  local block
+  block="$(awk '
+    /^  coder:[[:space:]]*$/ { p=1 }
+    p && /^  [a-z0-9_-]+:/ && !/^  coder:/ { exit }
+    p { print }
+  ' "${COMPOSE}")"
+  assert_match "dns key" '^    dns:' "${block}"
+  assert_match "cloudflare resolver" '1\.1\.1\.1' "${block}"
+  assert_match "google resolver" '8\.8\.8\.8' "${block}"
+  assert_match "the terraform symptom is named" 'registry\.terraform\.io' "${block}"
+  assert_not_match "MagicDNS is not a dns list entry" \
+    '^[[:space:]]+- ["'"'"']?100\.100\.100\.100' "${block}"
 }

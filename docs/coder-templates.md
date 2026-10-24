@@ -92,6 +92,12 @@ Presets collapse the create form to one click.
   `coder/coder` `~> 2.18` and `kreuzwerker/docker` `~> 4.6` in `required_providers`; Coder
   pushes with a warning when no lockfile sits beside them. `coder_devcontainer` needs a
   server `>= 2.21`, which this stack runs (v2.36.6).
+- `terraform init` on the server still talks to `registry.terraform.io` (and
+  `registry.coder.com` for `devcontainer`'s `devcontainers_cli` module), even
+  when a previous provider version is cached. The `coder` compose service
+  forwards those lookups to `1.1.1.1` / `8.8.8.8` so a host whose only
+  nameserver is Tailscale MagicDNS does not SERVFAIL the push. Recreate
+  `coder` after pulling that compose change (`prod-stack up`) before pushing.
 - `templates push` carries no description (`push` has no `--description` flag), so
   `templates edit --description` is the write. That text is the routing hint the Coder
   Agents chat reads when it picks a template to provision.

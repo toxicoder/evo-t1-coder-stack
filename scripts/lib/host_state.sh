@@ -15,7 +15,12 @@
 #   - This box also runs Tailscale MagicDNS. When `/etc/resolv.conf` names only
 #     100.100.100.100, a Docker/Kasm iptables change that makes that stub
 #     unreachable takes out ALL host DNS, including github.com, so `git pull`
-#     prints `Could not resolve host: github.com`.
+#     prints `Could not resolve host: github.com`. The same forwarding is what
+#     made `terraform init` inside the coder container SERVFAIL
+#     registry.terraform.io (`lookup … on 127.0.0.11:53: server misbehaving`).
+#     Compose pins public resolvers on the coder service (and the templates
+#     pin the same pair on workspace/DinD containers) so a template push does
+#     not wait on this host fix; `git pull` on the host still does.
 #
 # These helpers diagnose both and repair the runfiles leftover. They never
 # rewrite Tailscale's own settings: flipping `--accept-dns` is an operator
