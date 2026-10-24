@@ -91,6 +91,8 @@ setup() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"REFUSED-GRANT on alx/notes"* ]]
   [[ "${output}" == *"Repository access"* ]]
+  [[ "${output}" == *"https://github.com/apps/coder/installations/new"* ]]
+  [[ "${output}" == *"Install GitHub App"* ]]
   [[ "${output}" == *"bazelisk run //scripts:github-auth -- auth coder-alice-ws1 -"* ]]
   [[ "${output}" != *"SECRETVAL-do-not-leak"* ]]
 }
@@ -369,6 +371,7 @@ setup() {
   [[ "${output}" != *"SECRETVAL"* ]]
   run stub_log docker
   [[ "${output}" == *"auth login"* ]]
+  [[ "${output}" == *"unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN"* ]]
 }
 
 @test "auth: a bare container name still reads the piped token, and keeps it out of argv" {
@@ -380,6 +383,7 @@ setup() {
   [[ "${output}" == *"gh credential installed"* ]]
   assert_not_match "no token in the reply" 'SECRETVAL' "${output}"
   assert_match "gh still got the token on stdin" 'auth login' "$(stub_log docker)"
+  assert_match "env pair cleared before login" 'unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN' "$(stub_log docker)"
   assert_not_match "no token in the docker argv log" 'SECRETVAL' "$(stub_log docker)"
   assert_eq "one docker call" "1" "$(stub_log_count docker)"
 }

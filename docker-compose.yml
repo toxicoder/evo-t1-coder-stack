@@ -50,8 +50,18 @@ services:
     # the App/OAuth grant must INCLUDE the repos workspaces clone: a
     # connected-but-unscoped token authenticates and is still denied on
     # clone/push (403/404) - reads prove nothing about push, since a public repo
-    # answers read probes for any authenticated caller. `scripts/github-auth.sh
-    # check` answers "can this credential WRITE to that repo?": one GET of
+    # answers read probes for any authenticated caller. Device-flow login is
+    # not the App install: Coder's injected provider omits AppInstallURL, so
+    # /external-auth/github prints "You must install the GitHub App..." as
+    # unlinked plaintext. Workspaces surface
+    # https://github.com/apps/coder/installations/new as Install GitHub App.
+    # Do not set only CODER_EXTERNAL_AUTH_0_APP_INSTALL_URL (any
+    # CODER_EXTERNAL_AUTH_0_* suppresses the injected App; an empty key
+    # crash-loops coder). A custom GitHub App belongs in coder.env fully
+    # filled, including
+    # APP_INSTALL_URL=https://github.com/apps/<slug>/installations/new.
+    # `scripts/github-auth.sh check` answers "can this credential WRITE to
+    # that repo?": one GET of
     # <repo>.git/info/refs?service=git-receive-pack, the endpoint git push
     # negotiates through, run from the host or from inside a workspace (SELF
     # mode, no docker).

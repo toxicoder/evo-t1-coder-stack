@@ -516,6 +516,18 @@ resource "coder_agent" "main" {
   )
 }
 
+# Public install URL of Coder CE's injected GitHub App (slug `coder`).
+# maybeAppendDefaultGithubExternalAuthProvider sets Type/ClientID/DeviceFlow
+# only, so /external-auth/github renders "You must install the GitHub App to
+# clone private repositories" as unlinked plaintext (AppInstallationsURL is
+# still set, which is what flips that warning on). Workspace buttons and the
+# refresh notes use this URL instead of a coder.env AppInstallURL key: any
+# CODER_EXTERNAL_AUTH_0_* suppresses the injected App, and an empty one
+# crash-loops coder.
+locals {
+  coder_github_app_install_url = "https://github.com/apps/coder/installations/new"
+}
+
 # What keeps the pair above from going stale. Coder mints a per-host token that
 # expires in about an hour, the agent environment is rendered once per start, and
 # a workspace that stays up for a day would otherwise spend most of it holding a
@@ -535,9 +547,10 @@ resource "coder_script" "gh_token_refresh" {
   # store can hold an expired credential; `scripts/github-auth.sh check`
   # reports that as REJECTED and `coder external-auth access-token` re-mints
   # on demand. Coder uses 6-field cron (seconds minutes hours day month dow);
-  # the Unix 5-field form `0 */6 * * *` warns at plan time.
+  # the Unix 5-field form `0 */6 * * *` warns at plan time. logout + login +
+  # setup-git plus GitHub's token validate can exceed a 30s cap.
   cron    = "0 0 */6 * * *"
-  timeout = 30
+  timeout = 60
 
   script = <<-EOT
     #!/bin/bash
@@ -547,17 +560,33 @@ resource "coder_script" "gh_token_refresh" {
     command -v coder >/dev/null 2>&1 || exit 0
     token="$(coder external-auth access-token '${var.github_auth_id}' 2>/dev/null || true)"
     if [ -z "$token" ]; then
-      echo "no GitHub token for this account: click GitHub reauth on this workspace in the Coder UI, then restart the workspace." >&2
+      echo "no GitHub token for this account: click GitHub reauth on this workspace in the Coder UI, finish the GitHub device-code login, then restart the workspace." >&2
+      if [ '${var.github_auth_id}' = github ]; then
+        echo "private repos also need the Coder GitHub App installed and granted: click Install GitHub App on this workspace, or open ${local.coder_github_app_install_url}" >&2
+      fi
       exit 0
     fi
-    # gh reads either name from the environment, and `gh auth git-credential` is
-    # what plain git asks for an HTTPS credential — but both read it at
-    # invocation time, so the token has to be reachable from a shell, not only
-    # from the agent's start-time environment. Hence the store write, at 0600
-    # and per workspace, which `gh auth status` reads back.
+    # gh prefers GH_TOKEN/GITHUB_TOKEN over the auth store, and this
+    # coder_script inherits the minted pair, so `gh auth login --with-token`
+    # refuses with "The value of the GH_TOKEN environment variable is being
+    # used for authentication" unless those names are cleared for the write.
+    # The store still has to be written: shells launched outside the agent
+    # env have no pair, and `gh auth status` reads the store.
     if command -v gh >/dev/null 2>&1; then
-      printf '%s' "$token" | gh auth login --hostname github.com --with-token >/dev/null 2>&1 ||
-        echo "the minted token is valid but gh would not take it — check 'gh auth status' inside the workspace." >&2
+      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+      gh auth logout --hostname github.com >/dev/null 2>&1 || true
+      if gh_err="$(printf '%s' "$token" | gh auth login --hostname github.com --git-protocol https --with-token 2>&1)"; then
+        gh auth setup-git >/dev/null 2>&1 || true
+      else
+        safe_err="$${gh_err//"$token"/<token>}"
+        echo "gh would not store the minted GitHub token." >&2
+        echo "gh said: $${safe_err}" >&2
+        echo "next: inside the workspace run: GH_TOKEN= GITHUB_TOKEN= gh auth status" >&2
+        echo "then click GitHub reauth on this workspace in the Coder UI, finish device-code login, and restart." >&2
+        if [ '${var.github_auth_id}' = github ]; then
+          echo "if the reauth page says to install the GitHub App, click Install GitHub App (or open ${local.coder_github_app_install_url}), grant the private repos, and restart." >&2
+        fi
+      fi
     fi
     exit 0
   EOT
@@ -660,8 +689,8 @@ resource "coder_app" "code_server" {
   # The agent bar shows this as "VS Code Web" (display_name; the static
   # "VS Code Desktop" helper from display_apps keeps its own label, so the two
   # editor buttons read differently now) and sorts it before GitHub reauth (7),
-  # LiteLLM (10) and Coder UI (11) (lowest order first; static helper buttons
-  # are not reorderable per Coder's resource-ordering docs).
+  # Install GitHub App (8), LiteLLM (10) and Coder UI (11) (lowest order first;
+  # static helper buttons are not reorderable per Coder's resource-ordering docs).
   order   = 5
   open_in = "tab"
 
@@ -702,6 +731,9 @@ resource "coder_app" "web_terminal" {
 # leaves the button on the same bar as the terminal. After reconnecting,
 # restart the workspace (or wait for gh_token_refresh) so GH_TOKEN and the
 # gh auth store match the new grant; GIT_ASKPASS remints live without that.
+# Device-flow login is not the App install: an already-authenticated visit
+# to this URL with zero installations prints Coder's empty-installations
+# warning. Install GitHub App (order 8) is the clickable path for that.
 resource "coder_app" "github_reauth" {
   agent_id     = coder_agent.main.id
   slug         = "github-reauth"
@@ -711,6 +743,24 @@ resource "coder_app" "github_reauth" {
   open_in      = "slim-window"
   url          = "${data.coder_workspace.me.access_url}/external-auth/${var.github_auth_id}"
   order        = 7
+}
+
+# The injected GitHub App's empty-installations page has no Install link
+# (no AppInstallURL) and the large Install button also needs
+# viewDeploymentConfig. This workspace button is the clickable install
+# path for slug `coder`. Hidden when github_auth_id is a custom OAuth
+# app (that slug is not coder). count is the template variable, not
+# start_count, so workspace-create preview expands it.
+resource "coder_app" "github_app_install" {
+  count        = var.github_auth_id == "github" ? 1 : 0
+  agent_id     = coder_agent.main.id
+  slug         = "github-app-install"
+  display_name = "Install GitHub App"
+  icon         = "/icon/github.svg"
+  external     = true
+  open_in      = "tab"
+  url          = local.coder_github_app_install_url
+  order        = 8
 }
 
 # The LiteLLM proxy is reachable from the workspace through the host gateway,

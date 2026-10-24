@@ -603,7 +603,8 @@ helpers point at a folder that was never cloned.
   SSH helper.
 - A separate in-browser **code-server** editor is Coder's VS Code fork (no local VS
   Code), labelled **VS Code Web** with `order = 5` so it sorts before GitHub reauth (7),
-  LiteLLM (10) and Coder UI (11) and reads apart from the **VS Code Desktop** helper.
+  Install GitHub App (8), LiteLLM (10) and Coder UI (11) and reads apart from the
+  **VS Code Desktop** helper.
 - A custom **Web Terminal** command-app at `order = 6` takes the terminal slot. Custom
   apps are ordered among themselves; static helper buttons have no `order` or `icon` knob
   in this Coder release and are not reorderable.
@@ -611,7 +612,15 @@ helpers point at a folder that was never cloned.
   `/external-auth/<id>` page in a slim window on the user's Coder session: connect, or
   **Reauthenticate** when the account is already linked. It stays on the main agent so
   a failed clone (or a `devcontainer` subagent that never starts) still leaves the
-  button on the workspace page.
+  button on the workspace page. Device-flow login is not the App install: with the
+  injected App (id `github`) that page prints "You must install the GitHub App to
+  clone private repositories" as unlinked plaintext, because Coder omits
+  `AppInstallURL` on the default provider.
+- An **Install GitHub App** external app (`order = 8`, same icon, opens in a tab)
+  is the clickable install path for that default App:
+  `https://github.com/apps/coder/installations/new`. It is declared only while
+  `github_auth_id` is `github`. After installing, grant the private repos the
+  workspace clones, then restart so `GH_TOKEN` remints.
 - Memory (90 percent) and disk (85 percent, `/home/coder`) usage gauges, six resource
   metadata tiles sampled every 30s - four `coder stat` calls (`cpu --host`,
   `mem --host`, `disk --path /home/coder`, `cpu --host`) and two awk one-liners for swap
@@ -750,10 +759,14 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
 - Then connect your GitHub account. On a running workspace, click **GitHub reauth** on
   the agent bar (Coder v2.36's `/external-auth/<id>` page; use **Reauthenticate** if the
   page says you are already authenticated). First-time connect also works from the
-  workspace create/update form and from Settings -> Tokens / external auth. An empty
+  workspace create/update form and from Settings -> Tokens / external auth. Device-flow
+  login is not enough for private repos: install Coder's GitHub App with **Install
+  GitHub App** on the same bar (or open
+  [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new)),
+  grant those repositories, then restart. An empty
   [github.com/settings/apps](https://github.com/settings/apps) page is not a misconfiguration:
   with `auth_type=client_secret` Coder has no App to install, and Coder's built-in GitHub
-  App only earns a page there once a provider pointing at it exists. Until something is
+  App only earns a page there once it is installed on the account. Until something is
   installed and granted, that page simply has nothing to **Configure**, and the credential
   the provider mints still authenticates - it just cannot write to a private repository.
 - Each workspace's agent then injects a `GIT_ASKPASS` helper that mints short-lived
@@ -765,10 +778,12 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
   REJECTED). `coder external-auth access-token` is the live path when the store goes
   stale: it re-mints on demand and answers with a live token, or with the
   re-authentication URL and exit 1; with no connected account the refresh script
-  prints its one note (pointing at **GitHub reauth**) and exits 0, and mints nothing.
+  prints its one note (pointing at **GitHub reauth**, and at **Install GitHub App**
+  when the injected App is in use) and exits 0, and mints nothing.
   After a reconnect, restart the workspace (or wait for the next `gh_token_refresh`)
   so `GH_TOKEN` and the gh auth store match the new grant; `GIT_ASKPASS` remints live
-  without that.
+  without that. The refresh script unsets `GH_TOKEN`/`GITHUB_TOKEN` before
+  `gh auth login --with-token`, because gh refuses stdin while those names are set.
 - A token that authenticates but was never GRANTED the repository still fails clone and
   push, and reads prove nothing about write: a private repository hidden from the
   credential answers 403 or 404 on both lanes, and a public one answers a read probe
