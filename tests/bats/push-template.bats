@@ -529,6 +529,66 @@ logs_absent() {
   grep -Fq -- '--var searxng_url=http://host.docker.internal:8181' "${STUB_LOG}/docker.log"
 }
 
+@test "push-template: CONTEXT7_MCP=true passes --var context7_mcp=true for both templates" {
+  root="$(fake_root push-template.sh 'CONTEXT7_MCP=true')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"context7_mcp passed from CONTEXT7_MCP"* ]]
+  grep -Fq -- '--var context7_mcp=true' "${STUB_LOG}/docker.log"
+  # One vars array serves both pushes, so the cached context7 server cannot be
+  # turned on for one template only.
+  [ "$(grep -cF -- '--var context7_mcp=true' "${STUB_LOG}/docker.log")" -eq 2 ]
+}
+
+@test "push-template: CONTEXT7_MCP=false passes no context7_mcp var and keeps the default" {
+  # Default-OFF polarity: the templates declare context7_mcp = false, so only an
+  # explicit true has to say anything; false (like unset) leaves the default
+  # untouched rather than pushing a redundant off switch.
+  root="$(fake_root push-template.sh 'CONTEXT7_MCP=false')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} != *"context7_mcp"* ]]
+  # A push did happen, so the absence below proves the script passed nothing.
+  grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
+  logs_absent 'context7_mcp' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: a Context7 key travels as a --var and is never printed" {
+  root="$(fake_root push-template.sh 'CONTEXT7_API_KEY=ctx7-secret-test-0123456789abcdef')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"context7_api_key passed from CONTEXT7_API_KEY (value not shown)"* ]]
+  [[ ${output} != *"ctx7-secret-test-0123456789abcdef"* ]]
+  [[ ${stderr} != *"ctx7-secret-test-0123456789abcdef"* ]]
+  # The key is a --var by design (visible in that one process's argv, inside the
+  # container, for the length of the push). The session token never is.
+  grep -Fq -- '--var context7_api_key=ctx7-secret-test-0123456789abcdef' "${STUB_LOG}/docker.log"
+  logs_absent 'CODER_SESSION_TOKEN=|[0-9a-f]{10}-[0-9a-f]{22}' "${STUB_LOG}"/*.log
+}
+
+@test "push-template: an empty Context7 key is not passed and never printed" {
+  # A blank line in .env must not override the empty template default, and the
+  # whole context7_api_key var must stay out of the push.
+  root="$(fake_root push-template.sh 'CONTEXT7_API_KEY=')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} != *"context7_api_key"* ]]
+  grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
+  logs_absent 'context7_api_key' "${STUB_LOG}/docker.log"
+}
+
 # ── template-push.sh (moved from lib.bats; keep these assertions) ──────────
 
 source_libs() {

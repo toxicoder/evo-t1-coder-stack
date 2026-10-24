@@ -178,12 +178,15 @@ plan = "agent"
 # stubborn one with `grok mcp doctor <name>`.
 #
 # Deliberately absent for other reasons, because they need outbound network or
-# a credential this workspace does not carry: context7 (docs CDN), sentry
-# (OAuth to mcp.sentry.dev), postgres (needs a live DSN), fetch (PySocks/egress
-# proxy). The gated searxng entry below and the gated github HTTP entry are the
-# two servers this file can still switch on, each gated on a template
-# variable: search_mcp defaults to true, so searxng renders unless a push
-# passes search_mcp=false; github_mcp defaults to false.
+# a credential this workspace does not carry: sentry (OAuth to mcp.sentry.dev),
+# postgres (needs a live DSN), fetch (PySocks/egress proxy). Context7 is no
+# longer in that list: it is now an optional cached local process, rendered only
+# when context7_mcp is on, and it still needs CONTEXT7_API_KEY in the agent
+# environment plus outbound network on the first fetch (later identical lookups
+# inside the TTL come from the local SQLite cache instead). So the three gated
+# entries this file can switch on are: search_mcp defaults to true, so searxng
+# renders unless a push passes search_mcp=false; github_mcp defaults to false;
+# context7_mcp defaults to false.
 #
 # What is left out is simply not defined here, so there is nothing to disable;
 # if you add one later and want it parked rather than deleted, list its name
@@ -201,6 +204,24 @@ plan = "agent"
 url = "https://api.githubcopilot.com/mcp/"
 enabled = true
 headers = { Authorization = "Bearer $${GH_TOKEN}" }
+
+%{endif~}
+%{if context7_mcp~}
+# Cached Context7 MCP: official @upstash/context7-mcp wrapped by mcp-cache-proxy
+# for local SQLite caching of resolve-library-id / query-docs results.
+# Rendered only when context7_mcp is on; with it off this whole block is absent.
+# Requires CONTEXT7_API_KEY in the agent environment and outbound network on
+# first fetch; later identical lookups within the TTL are served from the
+# local SQLite cache under ~/.grok/mcp-cache-proxy/. The file only ever names
+# the key; the CLI expands $${CONTEXT7_API_KEY} from the environment.
+# Binaries are baked into the golden image; launching by absolute path keeps
+# the first boot off the npm registry (npx would re-download).
+[mcp_servers.context7]
+command = "/opt/npm-global/bin/mcp-cache-proxy"
+args = ["--config", "/home/coder/.grok/mcp-cache-proxy/config.json"]
+enabled = true
+startup_timeout_sec = 120
+env = { CONTEXT7_API_KEY = "$${CONTEXT7_API_KEY}" }
 
 %{endif~}
 

@@ -100,6 +100,15 @@ while the managed block is intact.
   The agent environment fills it from the Coder External Auth provider (id `github` by default); a
   workspace whose owner connected no GitHub account renders the block anyway and pays
   one failed handshake per session.
+- `context7_mcp` (default `false`) adds the cached `context7` stdio MCP server. Grok
+  launches `/opt/npm-global/bin/mcp-cache-proxy` with
+  `--config /home/coder/.grok/mcp-cache-proxy/config.json`, and that proxy fronts the
+  official `/opt/npm-global/bin/context7-mcp`; both are pre-installed in the golden
+  image, so nothing is fetched with `npx` at launch. The proxy config names
+  `$CONTEXT7_API_KEY` and nothing else: the key reaches the workspace environment from
+  the sensitive template variable `context7_api_key`, filled by the push from
+  `CONTEXT7_API_KEY` in the host `.env` - not from Coder External Auth, which is what
+  fills `GH_TOKEN` above.
 - `grok_config_extra` appends whatever the create form's **Grok config extras** field
   holds, verbatim under its own comment header.
 - The managed block is guarded by a `managed-by: evo-t1-coder-stack` marker, so a
@@ -181,8 +190,19 @@ installed yourself under `~/.grok/bin`.
   their tools, and a declared-but-unused server still costs every session its
   handshake time and tool schemas. Declare one by hand and check a stubborn
   server with `grok mcp doctor <name>` inside a workspace. The `github` server
-  is the opt-in other exception: it needs a token and outbound network, so
+  is one opt-in exception: it needs a token and outbound network, so
   `github_mcp` (default false) decides on its own whether the block is rendered.
+- The `context7` server (library and API docs) is the other opt-in exception, and the
+  only cached one. `context7_mcp` (default false) decides the same way, and the block it
+  renders runs `mcp-cache-proxy` in front of the official `context7-mcp` - two packages
+  pinned in `images/dev/tool-versions.env` and baked into the golden image, so turning
+  it on takes an image rebuild plus a template push, not just a flag. The proxy keeps
+  its SQLite cache under `~/.grok/mcp-cache-proxy/`, which rides the owner's shared
+  profile volume in `shared` mode, and the cache TTL is 12 h: the first lookup of a
+  library reaches the Context7 API and needs both network and `CONTEXT7_API_KEY`, while
+  an identical lookup inside the TTL is answered locally. Two tools, in order -
+  `resolve-library-id`, then `query-docs` on the id it returns. Prove it with
+  `grok mcp doctor context7` inside a workspace.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
   default `http://host.docker.internal:4000/v1`; model alias `agent`, with
   `coder`/`coder-fast`/`chat` listed in `__evoT1StackModels`). The seed is

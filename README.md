@@ -82,7 +82,8 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                  code-server, the web terminal and the terminal profiles all
   |                  start on that clone
   |                * ~/.grok/config.toml rendered by the template: model aliases
-  |                  (default + role fallbacks); no MCP server declared by default
+  |                  (default + role fallbacks) plus the searxng MCP server declared
+  |                  by default; github and context7 are opt-in
   |                * Cline / Kilo Code ---> host.docker.internal:4000
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
@@ -793,6 +794,11 @@ The list format, the two clone paths, and what `--dry-run` prints:
   `SEARCH_MCP=false` in `.env` opts a whole stack out). Grok's native search lane
   stays off (`disable_web_search = true`) as the easy fallback when the self-hosted
   one is down.
+- Two further servers are opt-in and off by default: `github` (`GITHUB_MCP=true`) and
+  `context7` (`CONTEXT7_MCP=true`, then re-push templates). Context7 runs the official
+  docs server behind `mcp-cache-proxy`, so the first lookup of a library needs network
+  and `CONTEXT7_API_KEY` while repeats inside the 12 h TTL come from local SQLite. Long
+  form: [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
 
 ### Coder Agents (control-plane)
 

@@ -173,6 +173,8 @@ Nothing else about GitHub travels in a `--var`.
 | `GROK_PROFILE_MODE` | `--var grok_profile_mode=` | when non-empty; the retired `GROK_PROFILE_SHARE` maps (`true` to `shared`, `false` to `private`) |
 | `REPO_URL` | `--var repo_url=` | only when present and non-empty |
 | `GITHUB_MCP` | `--var github_mcp=true` | only when the value is `true` |
+| `CONTEXT7_MCP` | `--var context7_mcp=true` | only when the value is `true` |
+| `CONTEXT7_API_KEY` | `--var context7_api_key=...` | only when non-empty; the value is never logged |
 | `SEARCH_MCP` | `--var search_mcp=false` | only when the value is `false` (the search lane is on by default; any other value pushes nothing and the template default stands) |
 | `STACK_SEARCH_PORT` | `--var searxng_url=http://host.docker.internal:<port>` | always; a blank or non-numeric value falls back to `8181` |
 
@@ -305,6 +307,8 @@ workspace.
 | `additional_repos` | `""` | The **Git repositories (additional)** textarea under the repository field. Extra URLs cloned into their own folder beside `repo_url`. |
 | `grok_profile_mode` | `shared` | `shared` mounts the owner's shared `~/.grok` profile volume; `private` gives that workspace a private `~/.grok` on its own home volume. Also the default behind the per-workspace **Grok profile** dropdown; switching a live workspace between the two modes needs a rebuild. |
 | `github_mcp` | `false` | Wires the `github` MCP HTTP server into Grok's rendered `config.toml`. Its `Authorization` header names `$GH_TOKEN` and nothing else, so no token value is ever part of a template variable. |
+| `context7_mcp` | `false` | Wires the cached `context7` MCP stdio server into Grok's rendered `config.toml`. |
+| `context7_api_key` | `""`, `sensitive` | Handed to the workspace as `CONTEXT7_API_KEY`. The rendered file names the variable. |
 | `grok_config_extra` | `""` | The **Grok config extras** textarea: free-form TOML appended verbatim, under a comment header, to that workspace's rendered `~/.grok/config.toml`. |
 
 Notes on the two dropdowns that take a custom value:
@@ -314,7 +318,9 @@ Notes on the two dropdowns that take a custom value:
 - The provider requires a parameter default to be one of its options, which is why a
   custom `--var` value is injected as its own option instead of being dropped.
 - A `github_mcp` of `true` with no GitHub account connected gives that workspace a server
-  that fails its handshake once per session.
+  that fails its handshake once per session. A `context7_mcp` of `true` with an empty
+  `context7_api_key` is the same shape: the block renders, and the server fails its
+  handshake once per session.
 
 ## Autostop and TTLs
 

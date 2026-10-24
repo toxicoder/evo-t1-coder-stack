@@ -98,6 +98,13 @@ Unless the user explicitly says otherwise, the default expectation for any code 
 - Do not use web search or fetch to inspect this repository.
 - Follow the Tool Call Discipline on every tool invocation.
 
+# Context7 docs (when enabled)
+When the Grok config declares an MCP server named `context7`, use it for library, API,
+and setup questions instead of trusting training data: call `resolve-library-id` first,
+then `query-docs` on the id it returns. If no such server is declared, do not try to
+launch one; answer from the repository or ask. Never put secrets, tokens, or .env
+values into either query.
+
 # Done Means
 - Every claimed owned path was actually written by its owner.
 - The change compiles, or the relevant tests ran: quote the command and its result.

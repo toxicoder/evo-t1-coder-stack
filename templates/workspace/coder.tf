@@ -104,3 +104,22 @@ variable "searxng_url" {
   description = "Base URL of the self-hosted SearXNG instance the rendered search lane dials, e.g. http://host.docker.internal:8181."
   default     = "http://host.docker.internal:8181"
 }
+
+# Cached Context7 MCP is network-dependent and needs a CONTEXT7_API_KEY, so this
+# switch decides on its own whether the [mcp_servers.context7] block is rendered.
+# Off by default keeps the offline-first MCP list lean. A true value with an
+# empty key still renders the block and pays one failed handshake per session.
+variable "context7_mcp" {
+  type        = bool
+  description = "When true, the rendered ~/.grok/config.toml declares the cached context7 MCP stdio server (mcp-cache-proxy wrapping the official @upstash/context7-mcp). It authenticates with the $CONTEXT7_API_KEY reference the agent environment fills from var.context7_api_key, so with no key the server has nothing to authenticate with. Off by default keeps the offline-first MCP list lean."
+  default     = false
+}
+
+# The Context7 API key. Sensitive: never printed, never interpolated into
+# config.toml or startup.sh. Empty default means the agent env omits the key.
+variable "context7_api_key" {
+  type        = string
+  description = "Context7 API key handed to the workspace as CONTEXT7_API_KEY when non-empty. The rendered config.toml only names the variable."
+  default     = ""
+  sensitive   = true
+}

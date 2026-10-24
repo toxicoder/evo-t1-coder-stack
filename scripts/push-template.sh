@@ -583,6 +583,24 @@ if [ "$(env_get GITHUB_MCP)" = "true" ]; then
   log "github_mcp passed from GITHUB_MCP (github MCP server on for every workspace)"
 fi
 
+# context7_mcp is a boolean toggle, not a credential: it decides whether the
+# rendered ~/.grok/config.toml declares the cached context7 MCP stdio server.
+# The API key that server authenticates with is never part of this decision -
+# it travels separately as context7_api_key when CONTEXT7_API_KEY is set.
+if [ "$(env_get CONTEXT7_MCP)" = "true" ]; then
+  vars+=(--var "context7_mcp=true")
+  log "context7_mcp passed from CONTEXT7_MCP (cached context7 MCP server on for every workspace)"
+fi
+
+# context7_api_key is sensitive with an empty default. Pass it only when .env
+# carries a non-empty CONTEXT7_API_KEY so a blank line does not override the
+# template default. The value is never printed.
+context7_api_key="$(env_get CONTEXT7_API_KEY)"
+if [ -n "${context7_api_key}" ]; then
+  vars+=(--var "context7_api_key=${context7_api_key}")
+  log "context7_api_key passed from CONTEXT7_API_KEY (value not shown)"
+fi
+
 # search_mcp is the search lane's toggle, with the opposite polarity to github_mcp:
 # both templates declare search_mcp with a "true" default, so only an explicit
 # SEARCH_MCP=false has to say anything. Unset, empty or "true" passes nothing and the

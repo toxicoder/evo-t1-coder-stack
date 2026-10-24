@@ -59,6 +59,8 @@ ARG NODE_VERSION_DEFAULT=24 \
     MCP_NODE_SERVERS_VERSION=2026.8.31 \
     MCP_PY_SERVERS_VERSION=2026.8.18 \
     SEARXNG_MCP_SERVER_VERSION=0.5.1 \
+    CONTEXT7_MCP_VERSION=4.4.4 \
+    MCP_CACHE_PROXY_VERSION=0.5.0 \
     GO_VERSION=1.24.13 \
     PROTOBUF_GO_MODULE=google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12 \
     PROTOC_GEN_GO_GRPC_MODULE=google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1 \
@@ -361,6 +363,8 @@ RUN case "${TARGETARCH}" in \
     && ln -sf /opt/npm-global/bin/mcp-server-filesystem /usr/local/bin/mcp-server-filesystem \
     && ln -sf /opt/npm-global/bin/mcp-server-memory /usr/local/bin/mcp-server-memory \
     && ln -sf /opt/npm-global/bin/mcp-server-sequential-thinking /usr/local/bin/mcp-server-sequential-thinking \
+    && ln -sf /opt/npm-global/bin/context7-mcp /usr/local/bin/context7-mcp \
+    && ln -sf /opt/npm-global/bin/mcp-cache-proxy /usr/local/bin/mcp-cache-proxy \
     && ln -sf /usr/local/go/bin/stringer /usr/local/bin/stringer \
     # The protoc release zip ships bin/protoc alone — the Go plugins come from
     # `go install` below, which writes them to GOBIN (/usr/local/go/bin). They are
@@ -516,16 +520,24 @@ RUN for pair in "22:${NODE_22_VERSION}" "24:${NODE_24_VERSION}"; do \
     # It declares engines.node >=22.19, which both pinned Node majors satisfy, so
     # it installs against the default (24) prefix. Pinning it here keeps this
     # image's copy and the templates' pinned version naming the same release.
+    # @upstash/context7-mcp and mcp-cache-proxy are baked the same way for the
+    # optional context7 lane: that server is launched by absolute path from
+    # /opt/npm-global/bin too, so an `npx -y` launch would re-download both from
+    # the registry on every boot.
     && npm install -g --no-audit --no-fund \
          "prettier@${PRETTIER_VERSION}" \
          "@modelcontextprotocol/server-filesystem@${MCP_NODE_SERVERS_VERSION}" \
          "@modelcontextprotocol/server-memory@${MCP_NODE_SERVERS_VERSION}" \
          "@modelcontextprotocol/server-sequential-thinking@${MCP_NODE_SERVERS_VERSION}" \
          "searxng-mcp-server@${SEARXNG_MCP_SERVER_VERSION}" \
+         "@upstash/context7-mcp@${CONTEXT7_MCP_VERSION}" \
+         "mcp-cache-proxy@${MCP_CACHE_PROXY_VERSION}" \
     && npm cache clean --force \
     && chmod -R a+rX /opt/node /opt/npm-global \
     && prettier --version \
     && test -x /opt/npm-global/bin/searxng-mcp-server \
+    && test -x /opt/npm-global/bin/context7-mcp \
+    && test -x /opt/npm-global/bin/mcp-cache-proxy \
     && ls /opt/npm-global/bin
 
 # ── uv + Python tool envs (ruff, mypy, offline MCP servers) ─────────────────

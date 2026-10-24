@@ -142,6 +142,13 @@ repo can verify.
   but the trust boundary widens to GitHub, outside the LAN, as soon as an owner
   connects a GitHub account (and `github_mcp` stays off by default precisely so a
   workspace does not gain GitHub tools it was never meant to have). See README, "Grok Build state: one shared profile per user".
+- **The optional `context7` MCP server follows that same rule and the same default.**
+  `CONTEXT7_API_KEY`, when it is set, also travels in the workspace environment, and the
+  rendered `config.toml` only names `$CONTEXT7_API_KEY` - never the value. The push
+  forwards it as the sensitive `context7_api_key` template variable and does not log
+  what it carries. `context7_mcp` stays off by default precisely so a workspace gains
+  no network-dependent docs tool it was never meant to have; with the flag on and a
+  key present, the trust boundary widens again, outbound to Context7's API this time.
 - **Workspace code-server.** Each workspace runs Coder's code-server fork on
   13337 with `--auth none`, published as a `coder_app` with `share = "owner"`
   and `subdomain = false` (this stack sets no `CODER_WILDCARD_ACCESS_URL`, so
