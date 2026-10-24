@@ -20,11 +20,15 @@
 #     registry.terraform.io (`lookup … on 127.0.0.11:53: server misbehaving`).
 #     Compose pins public resolvers on the coder service (and the templates
 #     pin the same pair on workspace/DinD containers) so a template push does
-#     not wait on this host fix; `git pull` on the host still does.
+#     not wait on this host fix. `setup-host --repair` is what repairs the
+#     host resolver itself: a systemd-resolved drop-in (1.1.1.1 / 8.8.8.8)
+#     plus `tailscale set --accept-dns=false`, with MagicDNS kept for `ts.net`
+#     via a resolved split-DNS binding when resolvectl is present.
 #
-# These helpers diagnose both and repair the runfiles leftover. They never
-# rewrite Tailscale's own settings: flipping `--accept-dns` is an operator
-# choice, and the report names the copy-paste that does it.
+# These helpers diagnose both, repair the runfiles leftover, and (on Linux)
+# install that public-DNS pair. `--check` still writes nothing. Test seams:
+# SETUP_SKIP_DNS=1, SETUP_DNS_DRY_RUN=1, SETUP_DNS_OS, SETUP_DNS_LOOKUP,
+# SETUP_RESOLV_CONF, SETUP_RESOLVED_DROPIN.
 #
 # Usage (from an entry script, after `set -euo pipefail`):
 #   # shellcheck source=lib/host_state.sh disable=SC1091
@@ -39,6 +43,17 @@ fi
 # MAGICDNS_NS - Tailscale's on-box resolver. When it is the only nameserver,
 # every lookup (github.com included) dies the moment the stub is unreachable.
 MAGICDNS_NS='100.100.100.100'
+
+# PUBLIC_DNS_PRIMARY / PUBLIC_DNS_SECONDARY - the pair --repair installs so
+# github.com still resolves when MagicDNS is unreachable. Same addresses the
+# coder compose service uses as Docker's embedded-DNS upstream.
+PUBLIC_DNS_PRIMARY='1.1.1.1'
+PUBLIC_DNS_SECONDARY='8.8.8.8'
+
+# RESOLVED_DROPIN_DEFAULT - systemd-resolved drop-in --repair writes. Named
+# so an operator can find it; not a Tailscale file, so accept-dns=false does
+# not remove it.
+RESOLVED_DROPIN_DEFAULT='/etc/systemd/resolved.conf.d/evo-t1-public-dns.conf'
 
 # @function host_nameservers
 # Print the nameserver addresses from a resolv.conf, one per line.
@@ -96,7 +111,7 @@ host_dns_kind() {
 # @function host_can_resolve
 # Succeed when the host resolver returns at least one address for a name.
 # Globals:
-#   None
+#   SETUP_DNS_LOOKUP - 1 force success, 0 force failure; unset uses the resolver
 # Arguments:
 #   $1 - hostname (default github.com)
 # Outputs:
@@ -105,6 +120,10 @@ host_dns_kind() {
 #   0 when a lookup returned a line, 1 otherwise
 host_can_resolve() {
   local name="${1:-github.com}"
+  case "${SETUP_DNS_LOOKUP:-}" in
+    1) return 0 ;;
+    0) return 1 ;;
+  esac
   if command -v getent >/dev/null 2>&1; then
     [[ -n $(getent hosts "${name}" 2>/dev/null | head -n 1) ]]
     return
@@ -127,7 +146,7 @@ PY
 # cause on this box (Tailscale MagicDNS as the only nameserver, then Docker
 # or Kasm making 100.100.100.100 unreachable).
 # Globals:
-#   MAGICDNS_NS
+#   MAGICDNS_NS, PUBLIC_DNS_PRIMARY, PUBLIC_DNS_SECONDARY, RESOLVED_DROPIN_DEFAULT
 # Arguments:
 #   $1 - resolv.conf path (default /etc/resolv.conf)
 #   $2 - hostname to probe (default github.com)
@@ -148,10 +167,9 @@ host_dns_report() {
       note "Tailscale MagicDNS (${MAGICDNS_NS}) is the only nameserver in ${file}." \
         "Docker's iptables (and Kasm's privileged nested dockerd) can make that stub" \
         "unreachable; when it is, every lookup dies, not just tailnet names."
-      note "Keep a public resolver beside MagicDNS, then retry git pull:"
-      note "  sudo tailscale set --accept-dns=false"
-      note "  # or add 1.1.1.1 / 8.8.8.8 as a global nameserver in the Tailscale admin DNS page"
-      note "  # or: printf '[Resolve]\\nDNS=1.1.1.1 8.8.8.8\\n' | sudo tee /etc/systemd/resolved.conf.d/evo-t1-public-dns.conf && sudo systemctl restart systemd-resolved"
+      note "Repair with: bash scripts/setup-host.sh --repair"
+      note "That writes ${RESOLVED_DROPIN_DEFAULT} (${PUBLIC_DNS_PRIMARY} ${PUBLIC_DNS_SECONDARY})" \
+        "and runs: sudo tailscale set --accept-dns=false"
       ;;
     empty)
       note "${file} lists no nameserver. Restore one (LAN resolver, 1.1.1.1, or Tailscale MagicDNS) and retry."
@@ -160,6 +178,239 @@ host_dns_report() {
       note "Check ${file} and that UDP/53 to its nameserver still works after docker compose up."
       ;;
   esac
+  return 1
+}
+
+# @function public_dns_servers
+# Print the public resolvers --repair installs, one per line.
+# Globals:
+#   PUBLIC_DNS_PRIMARY, PUBLIC_DNS_SECONDARY
+# Arguments:
+#   None
+# Outputs:
+#   Two nameserver addresses
+# Returns:
+#   0, always
+public_dns_servers() {
+  printf '%s\n' "${PUBLIC_DNS_PRIMARY}" "${PUBLIC_DNS_SECONDARY}"
+  return 0
+}
+
+# @function resolved_dropin_body
+# Print the systemd-resolved drop-in that names the public resolvers.
+# Globals:
+#   PUBLIC_DNS_PRIMARY, PUBLIC_DNS_SECONDARY
+# Arguments:
+#   None
+# Outputs:
+#   A [Resolve] unit fragment
+# Returns:
+#   0, always
+resolved_dropin_body() {
+  printf '%s\n' \
+    '# Written by evo-t1-coder-stack setup-host --repair.' \
+    '# Public resolvers so github.com still resolves when Tailscale MagicDNS is unreachable.' \
+    '[Resolve]' \
+    "DNS=${PUBLIC_DNS_PRIMARY} ${PUBLIC_DNS_SECONDARY}" \
+    'FallbackDNS=8.8.4.4 1.0.0.1'
+  return 0
+}
+
+# @function host_has_public_nameserver
+# Succeed when resolv.conf already lists a nameserver that is not MagicDNS
+# or the systemd stub.
+# Globals:
+#   MAGICDNS_NS
+# Arguments:
+#   $1 - resolv.conf path (default /etc/resolv.conf)
+# Outputs:
+#   Nothing
+# Returns:
+#   0 when a public nameserver is present, 1 otherwise
+host_has_public_nameserver() {
+  local file="${1:-/etc/resolv.conf}" ns=""
+  while IFS= read -r ns; do
+    [[ -n ${ns} ]] || continue
+    case "${ns}" in
+      "${MAGICDNS_NS}" | fd7a:115c:a1e0::53 | 127.0.0.53 | 127.0.0.54) continue ;;
+      *) return 0 ;;
+    esac
+  done <<<"$(host_nameservers "${file}")"
+  return 1
+}
+
+# @function write_resolved_dropin
+# Write the systemd-resolved drop-in at $1. Uses sudo only when the path is
+# not writable.
+# Globals:
+#   PUBLIC_DNS_PRIMARY, PUBLIC_DNS_SECONDARY
+# Arguments:
+#   $1 - drop-in path
+#   $2 - 1 to use sudo when the path is not writable (default 0)
+# Outputs:
+#   One line when the file is written
+# Returns:
+#   0 when the file is written, 1 otherwise
+write_resolved_dropin() {
+  local dest="${1:-}" use_sudo="${2:-0}" parent=""
+  [[ -n ${dest} ]] || return 1
+  parent="$(dirname "${dest}")"
+  if [[ ! -d ${parent} ]]; then
+    mkdir -p "${parent}" 2>/dev/null || true
+    if [[ ! -d ${parent} && ${use_sudo} == "1" ]] && command -v sudo >/dev/null 2>&1; then
+      sudo mkdir -p "${parent}" 2>/dev/null || true
+    fi
+  fi
+  if resolved_dropin_body >"${dest}" 2>/dev/null; then
+    log "wrote ${dest} (public DNS ${PUBLIC_DNS_PRIMARY} ${PUBLIC_DNS_SECONDARY})"
+    return 0
+  fi
+  if [[ ${use_sudo} == "1" ]] && command -v sudo >/dev/null 2>&1; then
+    if resolved_dropin_body | sudo tee "${dest}" >/dev/null; then
+      log "wrote ${dest} (public DNS ${PUBLIC_DNS_PRIMARY} ${PUBLIC_DNS_SECONDARY})"
+      return 0
+    fi
+  fi
+  warn "cannot write ${dest} — re-run: bash scripts/setup-host.sh --repair"
+  return 1
+}
+
+# @function append_public_nameservers
+# Append the public resolvers to a regular-file resolv.conf that still has
+# none. A symlink (systemd-resolved stub) is left alone.
+# Globals:
+#   PUBLIC_DNS_PRIMARY, PUBLIC_DNS_SECONDARY
+# Arguments:
+#   $1 - resolv.conf path
+#   $2 - 1 to use sudo when the file is not writable (default 0)
+# Outputs:
+#   One line when the file is changed
+# Returns:
+#   0 when a public nameserver is present, the path is a symlink, or the
+#   file is absent; 1 when append failed
+append_public_nameservers() {
+  local file="${1:-}" use_sudo="${2:-0}"
+  [[ -n ${file} ]] || return 1
+  if [[ ! -f ${file} || -L ${file} ]]; then
+    return 0
+  fi
+  if host_has_public_nameserver "${file}"; then
+    return 0
+  fi
+  if printf 'nameserver %s\nnameserver %s\n' \
+    "${PUBLIC_DNS_PRIMARY}" "${PUBLIC_DNS_SECONDARY}" >>"${file}" 2>/dev/null; then
+    log "appended public nameservers to ${file}"
+    return 0
+  fi
+  if [[ ${use_sudo} == "1" ]] && command -v sudo >/dev/null 2>&1; then
+    if printf 'nameserver %s\nnameserver %s\n' \
+      "${PUBLIC_DNS_PRIMARY}" "${PUBLIC_DNS_SECONDARY}" |
+      sudo tee -a "${file}" >/dev/null; then
+      log "appended public nameservers to ${file}"
+      return 0
+    fi
+  fi
+  warn "cannot append nameservers to ${file} — re-run: bash scripts/setup-host.sh --repair"
+  return 1
+}
+
+# @function ensure_host_public_dns
+# On Linux, install public resolvers beside Tailscale MagicDNS so github.com
+# still resolves when 100.100.100.100 is unreachable. Writes a systemd-resolved
+# drop-in, runs `tailscale set --accept-dns=false`, and binds MagicDNS to
+# ts.net via resolvectl when present. Darwin is a no-op.
+# Globals:
+#   SETUP_SKIP_DNS, SETUP_DNS_DRY_RUN, SETUP_DNS_OS, MAGICDNS_NS,
+#   PUBLIC_DNS_PRIMARY, PUBLIC_DNS_SECONDARY, RESOLVED_DROPIN_DEFAULT
+# Arguments:
+#   $1 - resolv.conf path (default /etc/resolv.conf)
+#   $2 - systemd-resolved drop-in path (default RESOLVED_DROPIN_DEFAULT)
+#   $3 - 1 to use sudo (default 0)
+# Outputs:
+#   Diagnosis and repair lines
+# Returns:
+#   0 when github.com resolves (or the OS is not Linux, or SETUP_SKIP_DNS=1);
+#   1 when the lookup still fails after the repair
+ensure_host_public_dns() {
+  local file="${1:-/etc/resolv.conf}"
+  local dropin="${2:-${RESOLVED_DROPIN_DEFAULT}}"
+  local use_sudo="${3:-0}"
+  local os="" kind="" dry_run=0 ts=() resolved=() rctl=()
+
+  if [[ ${SETUP_SKIP_DNS:-0} == "1" ]]; then
+    return 0
+  fi
+
+  os="${SETUP_DNS_OS:-$(uname -s)}"
+  case "${os}" in
+    Linux) ;;
+    *)
+      note "host public DNS repair is Linux-only (this host is ${os}); --check still reports."
+      host_dns_report "${file}" github.com || true
+      return 0
+      ;;
+  esac
+
+  kind="$(host_dns_kind "${file}")"
+  if [[ ${kind} != "magicdns-only" && ${kind} != "empty" ]] && host_can_resolve github.com; then
+    log "dns: github.com resolves (${kind}); public DNS repair not needed"
+    return 0
+  fi
+
+  if [[ -n ${SETUP_DNS_DRY_RUN:-} ]]; then
+    dry_run=1
+  fi
+
+  log "dns: installing public resolvers (${PUBLIC_DNS_PRIMARY} ${PUBLIC_DNS_SECONDARY}) beside MagicDNS"
+  if ! write_resolved_dropin "${dropin}" "${use_sudo}"; then
+    host_dns_report "${file}" github.com || true
+    return 1
+  fi
+
+  if [[ ${dry_run} -eq 1 ]]; then
+    log "would: tailscale set --accept-dns=false"
+    log "would: systemctl restart systemd-resolved"
+    log "would: resolvectl dns tailscale0 ${MAGICDNS_NS}"
+    log "would: resolvectl domain tailscale0 ts.net"
+    log "would: resolvectl default-route tailscale0 false"
+  else
+    if command -v tailscale >/dev/null 2>&1; then
+      ts=(tailscale)
+      if [[ ${use_sudo} == "1" ]] && command -v sudo >/dev/null 2>&1; then
+        ts=(sudo tailscale)
+      fi
+      if "${ts[@]}" set --accept-dns=false; then
+        log "tailscale set --accept-dns=false"
+      else
+        warn "tailscale set --accept-dns=false failed"
+      fi
+    else
+      note "tailscale is not on PATH; run: sudo tailscale set --accept-dns=false"
+    fi
+    if command -v systemctl >/dev/null 2>&1; then
+      resolved=(systemctl)
+      if [[ ${use_sudo} == "1" ]] && command -v sudo >/dev/null 2>&1; then
+        resolved=(sudo systemctl)
+      fi
+      "${resolved[@]}" restart systemd-resolved 2>/dev/null || true
+    fi
+    if command -v resolvectl >/dev/null 2>&1; then
+      rctl=(resolvectl)
+      if [[ ${use_sudo} == "1" ]] && command -v sudo >/dev/null 2>&1; then
+        rctl=(sudo resolvectl)
+      fi
+      "${rctl[@]}" dns tailscale0 "${MAGICDNS_NS}" 2>/dev/null || true
+      "${rctl[@]}" domain tailscale0 ts.net 2>/dev/null || true
+      "${rctl[@]}" default-route tailscale0 false 2>/dev/null || true
+    fi
+    append_public_nameservers "${file}" "${use_sudo}" || true
+  fi
+
+  if host_can_resolve github.com; then
+    log "dns: github.com resolves after public DNS repair"
+    return 0
+  fi
+  host_dns_report "${file}" github.com || true
   return 1
 }
 
