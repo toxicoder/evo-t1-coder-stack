@@ -15,7 +15,7 @@
 # twins keep, the truthful wording of the no-devcontainer.json warning, and the
 # one common GROK_BUILD_AGENTS.md that the seed stage copies into place. It also
 # pins the search lane: the gated [mcp_servers.searxng] block and the
-# disable_web_search key exist identically in both grok-config.toml.tftpl
+# disable_web_search = false key exist identically in both grok-config.toml.tftpl
 # twins, both main.tf twins feed search_mcp/search_url into that render and
 # carry SEARXNG_URL into the agent environment, and both coder.tf twins
 # declare the two template variables the pushes will pass. It also pins the
@@ -150,6 +150,8 @@ setup() {
   run head -n 1 "${common_md}"
   [ "${status}" -eq 0 ]
   [ "${lines[0]}" = "# Role" ]
+  run grep -F 'Use `web_search`' "${common_md}"
+  [ "${status}" -eq 0 ]
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
     run grep -F '${grok_build_agents}' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
@@ -158,15 +160,15 @@ setup() {
   done
 }
 
-@test "search lane: both config twins carry the gated searxng block and the off-key for native search" {
+@test "search lane: both config twins carry the gated searxng block and the on-key for native search" {
   # search_mcp (template default: true) gates the [mcp_servers.searxng] block,
   # and push-template.sh passes its --var array to BOTH pushes, so the block and
   # its gate have to exist in each twin; a twin that lost the gate would render
   # the server unconditionally or never, depending on the pushed default. The
   # literal greps pin the block shape (absolute binary path, threaded
   # SEARXNG_URL) and the position rule for disable_web_search: it is a
-  # top-level key, so the file must emit it before the first [table] header or
-  # the render is invalid TOML.
+  # top-level key (false: native search is the default lane), so the file must
+  # emit it before the first [table] header or the render is invalid TOML.
   local tpl dw ft
   for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
     "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
@@ -177,7 +179,7 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'env = { SEARXNG_URL = "${search_url}" }' "${tpl}"
     [ "${status}" -eq 0 ]
-    dw="$(grep -n -m1 -F 'disable_web_search = true' "${tpl}" | cut -d: -f1)"
+    dw="$(grep -n -m1 -F 'disable_web_search = false' "${tpl}" | cut -d: -f1)"
     ft="$(grep -n -m1 -e '^\[' "${tpl}" | cut -d: -f1)"
     [ -n "${dw}" ]
     [ -n "${ft}" ]

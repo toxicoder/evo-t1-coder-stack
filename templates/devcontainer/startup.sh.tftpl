@@ -15,9 +15,9 @@
 #   5b. seeds the shared code-server User settings if that file is absent, then
 #       links the editor at it (one file per owner, not re-merged each start)
 #   6. writes ~/.grok/config.toml (only while this stack owns the file): the
-#      model catalog with this workspace's default model alias, the gated
-#      searxng MCP entry (on by default), Grok's native web_search off by
-#      default, and anything the create form put in "Grok config extras"
+#      model catalog with this workspace's default model alias, Grok's native
+#      web_search on by default, the gated searxng MCP entry (on by default as
+#      the fallback), and anything the create form put in "Grok config extras"
 #   7. seeds the GitHub credential plumbing (git's github.com credential helper),
 #      and only when a GitHub token was supplied and both git and gh exist
 #   8. clones the repository named by the create form onto the shared
@@ -424,9 +424,10 @@ ln -sfn "$shared_settings" "$user_settings"
 
 # --- Grok Build config --------------------------------------------------------
 # Rendered from grok-config.toml.tftpl: the LiteLLM model catalog (with this
-# workspace's default model alias, from the create form), the MCP stack - the
-# gated searxng search entry (on by default, dialing the stack's own SearXNG)
-# beside the gated github entry (off by default) - and the subagent sizing,
+# workspace's default model alias, from the create form), native web_search on
+# by default, the MCP stack - the gated searxng search entry (on by default as
+# the fallback, dialing the stack's own SearXNG) beside the gated github entry
+# (off by default) - and the subagent sizing,
 # with anything the create form put in "Grok config extras" appended at the end. Ownership is decided by the
 # marker comment below: while it is present the stack re-renders the file on
 # every start, and deleting that one line hands the file over to the user for
