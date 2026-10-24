@@ -702,10 +702,14 @@ resource "coder_devcontainer" "repo" {
 # split is the whole point of the toggle - the editor hung off the
 # dev-container sub-agent alone, so a repo that ships no devcontainer.json
 # got no dev container, hence no sub-agent, hence no editor and no terminal
-# profile at all. HCL does not evaluate the untaken branch of a ternary, so
-# coder_devcontainer.repo[0] never indexes an empty tuple in the off case -
-# the same shape templates/workspace uses for its count-gated
-# data.docker_image.dind[0].id. Attaching any app/script/env to the
+# profile at all. coder_devcontainer.repo is count-gated on use_dc AND
+# start_count, so the tuple is empty on a stopped workspace even when the
+# toggle is on (template import's ephemeral plan is that case, and use_dc
+# defaults to true). Apps stay ungated so they remain on the stopped page;
+# a use_dc ? repo[0].subagent_id ternary then fails with "Invalid index
+# ... empty tuple". local.code_server_agent_id is concat+splat: the
+# sub-agent when that resource exists, the parent agent otherwise.
+# Attaching any app/script/env to the
 # dev-container sub-agent makes the dev container terraform-managed: a
 # repo's own customizations.coder.apps are then ignored (displayApps still
 # apply). display_apps.vscode on the parent agent is only the desktop helper.
@@ -740,11 +744,17 @@ locals {
   # bundled set, where no vscode-alt.svg exists. Keep the SVG compact: the
   # resulting data URL has to fit workspace_apps.icon (varchar(256)).
   vscode_alt_icon = "data:image/svg+xml;base64,${filebase64("${path.module}/vscode-alt.svg")}"
+
+  # Sub-agent when coder_devcontainer.repo exists (toggle on AND started);
+  # parent agent when the tuple is empty (toggle off, or stopped). concat
+  # of the splat never indexes [0] of an empty tuple, which is what the
+  # use_dc ? repo[0].subagent_id ternary did during the stop plan.
+  code_server_agent_id = concat(coder_devcontainer.repo[*].subagent_id, [coder_agent.main.id])[0]
 }
 
 resource "coder_script" "code_server" {
   count        = data.coder_workspace.me.start_count
-  agent_id     = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
+  agent_id     = local.code_server_agent_id
   display_name = "code-server"
   icon         = local.vscode_alt_icon
 
@@ -804,7 +814,7 @@ resource "coder_script" "code_server" {
 # should also stay on the page while the workspace is stopped. Scripts,
 # metadata and the container stay gated.
 resource "coder_app" "code_server" {
-  agent_id = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
+  agent_id = local.code_server_agent_id
   slug     = "code-server"
 
   url          = "http://localhost:13337/?folder=${urlencode(local.editor_folder)}"

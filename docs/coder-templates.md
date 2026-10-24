@@ -649,6 +649,15 @@ helpers point at a folder that was never cloned.
   `Unexpanded count argument on block coder_app.*` when they are: that value is
   not expanded at workspace-create preview. Scripts, metadata and the container
   stay gated.
+- The `devcontainer` editor cannot set `agent_id` with
+  `local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id`.
+  `coder_devcontainer.repo` is also gated on `start_count`, so the stop /
+  template-import ephemeral plan has an empty tuple even with the toggle on
+  (the default), and that ternary then fails with `Invalid index` / `empty
+  tuple`. `local.code_server_agent_id` is
+  `concat(coder_devcontainer.repo[*].subagent_id, [coder_agent.main.id])[0]`:
+  the sub-agent when that resource exists, the parent agent on the stopped
+  page. The start-gated `coder_script.code_server` uses the same local.
 - The custom icon `templates/common/vscode-alt.svg` travels as a
   `data:image/svg+xml;base64` data URL read from `templates/common/`. Coder serves icons
   only from its bundled `/icon/*` set or from a full `https`/`data` URL, and that icon is
