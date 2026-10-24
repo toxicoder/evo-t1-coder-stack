@@ -156,3 +156,35 @@ app_block() {
     fi
   done
 }
+
+@test "app lane: coder_app resources are not gated on start_count" {
+  # coder/preview warns "Unexpanded count argument on block coder_app.*" when
+  # count is start_count: that value is not expanded at workspace-create
+  # preview, so the parser assumes 1. Apps should exist while the workspace
+  # is stopped. Scripts, metadata and the container stay gated.
+  local tpl app block
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    for app in code_server web_terminal github_reauth litellm coder_ui; do
+      block="$(app_block "${tpl}" "${app}")"
+      [ -n "${block}" ]
+      if printf '%s\n' "${block}" | grep -q start_count; then
+        echo "${tpl} coder_app.${app} still uses start_count" >&2
+        return 1
+      fi
+    done
+  done
+}
+
+@test "editor: both twins pass editor_folder to code-server as a CLI argument" {
+  # Path-based coder_app URLs drop the ?folder= query before the browser
+  # sees it, and without --ignore-last-opened the last restored workspace
+  # (often /home/coder) wins. The binary has to receive the folder itself.
+  local tpl ws
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    grep -Fq 'FOLDER="${local.editor_folder}"' "${tpl}"
+    grep -Fq -- '--ignore-last-opened "$${FOLDER}"' "${tpl}"
+    grep -Fq 'folder=${urlencode(local.editor_folder)}' "${tpl}"
+  done
+  ws="${REPO_ROOT}/templates/workspace/main.tf"
+  grep -Fq -- 'editor_folder = local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"' "${ws}"
+}

@@ -311,9 +311,12 @@ locals {
   repo_set = trimspace(data.coder_parameter.repo_url.value) != ""
 
   # The folder the code-server window opens on, spelled for the environment
-  # that hosts code-server — a ?folder= that resolves to nothing is VS Code's
+  # that hosts code-server. A ?folder= that resolves to nothing is VS Code's
   # "Workspace does not exist. Please select another workspace to open."
-  # dialog, which is what one host-side path for both modes caused:
+  # dialog, which is what one host-side path for both modes caused. The
+  # inlined fork also passes this as a positional CLI argument with
+  # --ignore-last-opened, because path-based apps often drop the query
+  # before the browser sees it.
   # dev-container mode runs code-server inside the dev container (the module
   # takes the dev-container sub-agent as its agent), where the devcontainer
   # CLI bind-mounts the clone at /workspaces/<repo-name> and gives the
@@ -681,7 +684,7 @@ resource "coder_devcontainer" "repo" {
 
 # In-browser VS Code (Coder's code-server fork) on port 13337, on the cloned
 # folder in either mode, spelled the way the environment hosting it reads it
-# (editor_folder, riding in the app URL's ?folder= query): /workspaces/<repo-name>
+# (editor_folder, in the app URL's ?folder= query and as a CLI argument): /workspaces/<repo-name>
 # inside the dev container when the toggle is on,
 # /srv/coder-devcontainers/<ws-id>/<repo-name> on the plain workspace
 # container when it is off, /home/coder when no repository was named. A
@@ -739,10 +742,11 @@ resource "coder_script" "code_server" {
   display_name = "code-server"
   icon         = local.vscode_alt_icon
 
-  # The folder has to reach the app URL too: coder_app in coder/coder 2.18
-  # has no `folder` argument, so the ?folder= query in the URL below is the
-  # only way to say which folder the editor opens on, and it has to be
-  # spelled the way the hosting environment reads it (editor_folder).
+  # The folder has to reach the binary as well as the app URL: coder_app
+  # in coder/coder 2.18 has no `folder` argument, so the ?folder= query in
+  # the URL below is one pin, and the CLI argument plus --ignore-last-opened
+  # is the other. Both spell the path the hosting environment reads
+  # (editor_folder).
 
   script = <<-EOT
     #!/usr/bin/env bash
@@ -778,14 +782,22 @@ resource "coder_script" "code_server" {
       fi
     fi
     echo "Running code-server in the background (log: /tmp/code-server.log)."
-    "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" > /tmp/code-server.log 2>&1 &
+    # Positional folder plus --ignore-last-opened: path-based coder_app
+    # URLs drop the ?folder= query before the browser sees it, and without
+    # this flag the last restored workspace (often /home/coder) wins.
+    FOLDER="${local.editor_folder}"
+    "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &
   EOT
 
   run_on_start = true
 }
 
+# Apps are not gated on start_count. coder/preview warns "Unexpanded count
+# argument on block coder_app.*" when count is start_count: that value is
+# not expanded at workspace-create preview, so the parser assumes 1. Apps
+# should also stay on the page while the workspace is stopped. Scripts,
+# metadata and the container stay gated.
 resource "coder_app" "code_server" {
-  count    = data.coder_workspace.me.start_count
   agent_id = local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id
   slug     = "code-server"
 
@@ -825,7 +837,6 @@ resource "coder_app" "code_server" {
 # button starting a dead terminal instead of a shell someone can fix the clone
 # from. Spelled out against `terraform validate` only.
 resource "coder_app" "web_terminal" {
-  count        = data.coder_workspace.me.start_count
   agent_id     = coder_agent.main.id
   slug         = "web-terminal"
   display_name = "Web Terminal"
@@ -845,7 +856,6 @@ resource "coder_app" "web_terminal" {
 # restart the workspace (or wait for gh_token_refresh) so GH_TOKEN and the
 # gh auth store match the new grant; GIT_ASKPASS remints live without that.
 resource "coder_app" "github_reauth" {
-  count        = data.coder_workspace.me.start_count
   agent_id     = coder_agent.main.id
   slug         = "github-reauth"
   display_name = "GitHub reauth"
@@ -860,7 +870,6 @@ resource "coder_app" "github_reauth" {
 # so the agent can proxy it as an app. share = "owner" keeps it off the rest of
 # the LAN; healthcheck needs all three of url, interval and threshold.
 resource "coder_app" "litellm" {
-  count        = data.coder_workspace.me.start_count
   agent_id     = coder_agent.main.id
   slug         = "litellm"
   display_name = "LiteLLM"
@@ -880,7 +889,6 @@ resource "coder_app" "litellm" {
 # Surfaced rather than proxied: these are host services the agent cannot proxy
 # on the workspace's loopback, so they open on the client machine.
 resource "coder_app" "coder_ui" {
-  count        = data.coder_workspace.me.start_count
   agent_id     = coder_agent.main.id
   slug         = "coder"
   display_name = "Coder"

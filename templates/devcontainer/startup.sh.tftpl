@@ -74,6 +74,21 @@ if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
   SUDO="sudo"
 fi
 
+# Extra named volumes Docker creates empty (vscode-settings-<owner-id>, and
+# grok-profile-<owner-id> in shared mode) are root:root 755. The agent runs as
+# coder, so a first-boot write into them is Permission denied unless they
+# belong to whoever owns $HOME first. $SUDO is empty when this script is
+# already root, and sudo on the golden image (NOPASSWD).
+home_owner="$(stat -Lc '%u:%g' "$HOME" 2>/dev/null || true)"
+[ "$home_owner" = "0:0" ] && home_owner=""
+if [ -z "$home_owner" ] && id coder >/dev/null 2>&1; then
+  home_owner="$(id -u coder):$(id -g coder)"
+fi
+if [ -n "$home_owner" ]; then
+  mkdir -p "$HOME/.shared/vscode" "$HOME/.grok" 2>/dev/null || true
+  $SUDO chown -R "$home_owner" "$HOME/.shared" "$HOME/.grok" 2>/dev/null || true
+fi
+
 # --- tmux -------------------------------------------------------------------
 if ! command -v tmux >/dev/null 2>&1; then
   $SUDO apt-get update -y >/dev/null
@@ -375,23 +390,27 @@ mkdir -p "$HOME/.shared/vscode" "$HOME/.local/share/code-server/User"
 shared_settings="$HOME/.shared/vscode/settings.json"
 user_settings="$HOME/.local/share/code-server/User/settings.json"
 if [ ! -f "$shared_settings" ]; then
-  cat >"$shared_settings" <<'VSCODE_SETTINGS_EOF'
+  if cat >"$shared_settings" <<'VSCODE_SETTINGS_EOF'
 ${vscode_settings}
 VSCODE_SETTINGS_EOF
-  if [ -n "$${LITELLM_API_KEY:-}" ]; then
-    tmp_settings="$(mktemp)"
-    if command -v jq >/dev/null 2>&1 && jq --arg k "$LITELLM_API_KEY" \
-      '.["cline.apiKey"]=$k | .["roo.openaiApiKey"]=$k' \
-      "$shared_settings" >"$tmp_settings"; then
-      mv "$tmp_settings" "$shared_settings"
-    elif command -v python3 >/dev/null 2>&1; then
-      rm -f "$tmp_settings"
-      SETTINGS_PATH="$shared_settings" python3 -c 'import json, os; p = os.environ["SETTINGS_PATH"]; d = json.load(open(p)); k = os.environ["LITELLM_API_KEY"]; d["cline.apiKey"] = k; d["roo.openaiApiKey"] = k; json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")'
-    else
-      rm -f "$tmp_settings"
+  then
+    if [ -n "$${LITELLM_API_KEY:-}" ]; then
+      tmp_settings="$(mktemp)"
+      if command -v jq >/dev/null 2>&1 && jq --arg k "$LITELLM_API_KEY" \
+        '.["cline.apiKey"]=$k | .["roo.openaiApiKey"]=$k' \
+        "$shared_settings" >"$tmp_settings"; then
+        mv "$tmp_settings" "$shared_settings"
+      elif command -v python3 >/dev/null 2>&1; then
+        rm -f "$tmp_settings"
+        SETTINGS_PATH="$shared_settings" python3 -c 'import json, os; p = os.environ["SETTINGS_PATH"]; d = json.load(open(p)); k = os.environ["LITELLM_API_KEY"]; d["cline.apiKey"] = k; d["roo.openaiApiKey"] = k; json.dump(d, open(p, "w"), indent=2); open(p, "a").write("\n")'
+      else
+        rm -f "$tmp_settings"
+      fi
     fi
+    chmod 600 "$shared_settings" 2>/dev/null || true
+  else
+    echo "WARNING: could not write $shared_settings — the vscode-settings volume is not writable. Editor settings were not seeded." >&2
   fi
-  chmod 600 "$shared_settings" 2>/dev/null || true
 fi
 # A regular file here is the old per-workspace copy. Keep it beside the link
 # once, then point the editor at the shared file on every start so a workspace
@@ -449,18 +468,10 @@ GROK_CONFIG_EOF
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
 fi
 
-# The agent may run as root against a persistent home volume, which leaves the
-# Grok directories root-owned and unreadable for the workspace user; hand them
-# back to whoever owns $HOME.
-if [ "$(id -u)" = "0" ]; then
-  home_owner="$(stat -Lc '%u:%g' "$HOME" 2>/dev/null || true)"
-  [ "$home_owner" = "0:0" ] && home_owner=""
-  if [ -z "$home_owner" ] && id coder >/dev/null 2>&1; then
-    home_owner="$(id -u coder):$(id -g coder)"
-  fi
-  if [ -n "$home_owner" ]; then
-    chown -R "$home_owner" "$HOME/.grok" "$HOME/.shared" 2>/dev/null || true
-  fi
+# Second pass: grok's installer and the seed above may have created files as
+# root when the agent ran as root; hand them back to whoever owns $HOME.
+if [ -n "$home_owner" ]; then
+  $SUDO chown -R "$home_owner" "$HOME/.grok" "$HOME/.shared" 2>/dev/null || true
 fi
 
 # --- GitHub credential plumbing (best effort) ---------------------------------

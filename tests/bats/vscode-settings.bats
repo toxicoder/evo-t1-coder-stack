@@ -84,6 +84,14 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'if [ ! -f "$shared_settings" ]; then' "${startup}"
     [ "${status}" -eq 0 ]
+    # Empty named volumes are root:root 755; chown before the first write, and
+    # do not run jq/python against a file the cat never created.
+    run grep -F '$SUDO chown -R "$home_owner" "$HOME/.shared" "$HOME/.grok"' "${startup}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'if cat >"$shared_settings"' "${startup}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'the vscode-settings volume is not writable' "${startup}"
+    [ "${status}" -eq 0 ]
     run grep -F 'ln -sfn "$shared_settings" "$user_settings"' "${startup}"
     [ "${status}" -eq 0 ]
     run grep -F '$${user_settings}.pre-shared' "${startup}"
