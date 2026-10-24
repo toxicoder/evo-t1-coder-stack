@@ -43,8 +43,11 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
 - `HERMES_DASHBOARD_INSECURE` is a deprecated no-op. Setting it changes nothing and buys
   nothing.
 - Compose supplies the provider: `HERMES_DASHBOARD_BASIC_AUTH_USERNAME`,
-  `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` and `HERMES_DASHBOARD_BASIC_AUTH_SECRET`, all
-  fed from `.env`.
+  `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` and `HERMES_DASHBOARD_BASIC_AUTH_SECRET`,
+  interpolated from `.env` with the same non-empty fallbacks `.env.sample`
+  carries (`admin` / `change-me-hermes` / `change-me-hermes-secret`). An empty
+  interpolation default is a boot error on `0.0.0.0`: the plugin skips
+  registration and the gateway refuses to bind.
 - The result fails closed: no credentials, no dashboard. There is no unauthenticated
   read-only mode to fall back to.
 

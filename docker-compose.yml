@@ -522,9 +522,14 @@ services:
       HERMES_DASHBOARD: "1"
       HERMES_DASHBOARD_HOST: "0.0.0.0"
       HERMES_DASHBOARD_PORT: "9119"
+      # v0.22.5 fail-closed: a 0.0.0.0 bind with no DashboardAuthProvider is a
+      # boot error. The bundled basic-auth plugin skips registration when
+      # username or password is empty, so these interpolation defaults must
+      # stay non-empty (same shape as LITELLM_MASTER_KEY). They match
+      # .env.sample; bootstrap replaces the change-me-* placeholders in .env.
       HERMES_DASHBOARD_BASIC_AUTH_USERNAME: ${HERMES_DASHBOARD_USER:-admin}
-      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:-}
-      HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_SECRET:-}
+      HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: ${HERMES_DASHBOARD_PASSWORD:-change-me-hermes}
+      HERMES_DASHBOARD_BASIC_AUTH_SECRET: ${HERMES_DASHBOARD_SECRET:-change-me-hermes-secret}
       HERMES_UID: ${HERMES_UID:-1000}
       HERMES_GID: ${HERMES_GID:-1000}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
