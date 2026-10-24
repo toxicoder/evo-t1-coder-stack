@@ -72,24 +72,32 @@ Docker's iptables, and Kasm's privileged nested dockerd, can make that stub
 unreachable. When it is, **every** lookup dies, including `github.com`, so
 `git pull` over HTTPS fails. This is host DNS, not GitHub auth.
 
-The stack never flips Tailscale for you. Keep a public resolver beside MagicDNS,
-then retry `git pull`:
+On Linux, `bash scripts/setup-host.sh --repair` writes
+`/etc/systemd/resolved.conf.d/evo-t1-public-dns.conf` (`DNS=1.1.1.1 8.8.8.8`),
+runs `sudo tailscale set --accept-dns=false`, and keeps MagicDNS for `ts.net`
+via `resolvectl` split-DNS. `--check` still writes nothing.
+
+A checkout that does not yet contain that `--repair` (the usual case: `git pull`
+is already failing) needs the same commands by hand, then pull:
 
 ```sh
-bash scripts/setup-host.sh --check
 sudo tailscale set --accept-dns=false
+sudo mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nDNS=1.1.1.1 8.8.8.8\nFallbackDNS=8.8.4.4 1.0.0.1\n' | sudo tee /etc/systemd/resolved.conf.d/evo-t1-public-dns.conf
+sudo systemctl restart systemd-resolved
+git pull
+bash scripts/setup-host.sh --repair
 ```
 
 `--check` prints which nameservers are in play and whether `github.com` resolves.
 Other ways to keep a public resolver: add `1.1.1.1` / `8.8.8.8` as a global
-nameserver in the Tailscale admin DNS page, or drop a systemd-resolved drop-in
-(`DNS=1.1.1.1 8.8.8.8`) and restart `systemd-resolved`.
+nameserver in the Tailscale admin DNS page.
 
 The same MagicDNS-only resolver is what makes Terraform inside the `coder`
 container SERVFAIL `registry.terraform.io` (`127.0.0.11:53: server misbehaving`).
 That spelling lives under "Terraform and the host `coder` CLI" below. Compose
 pins public resolvers on `coder` so a template push does not wait on this host
-fix; `git pull` on the host still does.
+fix.
 
 ## Model lane: Spark, LiteLLM, the agent backends
 
@@ -417,9 +425,10 @@ bazelisk run //scripts:prod-stack -- up
 bazelisk run //scripts:push-template
 ```
 
-The stack still does not flip Tailscale. Host `git pull` still needs a public
-resolver beside MagicDNS (heading above). Existing workspaces pick up the
-container DNS on the next start after this template version is active.
+Host `git pull` still needs a public resolver beside MagicDNS when the host
+itself is MagicDNS-only (heading above; `setup-host --repair` on Linux).
+Existing workspaces pick up the container DNS on the next start after this
+template version is active.
 
 ### `pq: value too long for type character varying(256)` from `push-template` -> editor icon data URL
 

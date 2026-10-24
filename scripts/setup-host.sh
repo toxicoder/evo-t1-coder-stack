@@ -28,19 +28,27 @@
 # `bazelisk run //scripts:prod-stack` dies creating the runfiles tree with
 # Permission denied. --repair is the recovery that does not need Bazel to start.
 #
+# On Linux, default and --repair also install public DNS (1.1.1.1 / 8.8.8.8)
+# beside Tailscale MagicDNS so `git pull` still resolves github.com when Docker
+# or Kasm has made 100.100.100.100 unreachable: a systemd-resolved drop-in plus
+# `tailscale set --accept-dns=false`, with MagicDNS kept for ts.net. --check
+# still writes nothing. Darwin is a no-op for that step.
+#
 # Usage (both forms work from any directory):
-#   bash scripts/setup-host.sh          # repair leftovers, then install what is missing
+#   bash scripts/setup-host.sh          # repair leftovers and DNS, then install
 #   bash scripts/setup-host.sh --check  # report tools, leftovers and DNS; write nothing
-#   bash scripts/setup-host.sh --repair # repair leftovers only
+#   bash scripts/setup-host.sh --repair # repair leftovers and Linux public DNS
 #
 # Options:
 #   --check       probe only: print the report and exit 0, writing nothing
-#   --repair      repair leftover runfiles (uses sudo when chmod is not enough)
+#   --repair      repair leftover runfiles and Linux public DNS (uses sudo
+#                 when chmod / /etc is not writable)
 #   -h, --help    print this help and exit 0
 #
 # Exit codes: 0 when every tool is present, for --check, and for a completed
-# --repair; 1 when an install was asked for and something stayed missing, or
-# when --repair could not take ownership of a leftover path.
+# --repair; 1 when an install was asked for and something stayed missing, when
+# --repair could not take ownership of a leftover path, or when github.com
+# still does not resolve after the DNS repair.
 
 set -euo pipefail
 
@@ -68,17 +76,20 @@ for arg in "$@"; do
 usage: bash scripts/setup-host.sh [--check] [--repair]
 
 Probe the host tools the Bazel targets need — bazelisk, shellcheck, shfmt,
-buildifier, terraform — install the ones that are missing, and repair leftover
+buildifier, terraform — install the ones that are missing, repair leftover
 Docker bind-mounts in Bazel's runfiles tree that make `bazelisk run` fail with
-Permission denied on homepage/assets/icons/evo-t1.svg.
+Permission denied on homepage/assets/icons/evo-t1.svg, and on Linux install
+public DNS (1.1.1.1 / 8.8.8.8) so github.com still resolves when Tailscale
+MagicDNS is the only nameserver.
 
   --check     report tools, leftovers and DNS; write nothing
-  --repair    repair leftovers only (uses sudo when chmod is not enough)
+  --repair    repair leftovers and Linux public DNS (uses sudo when chmod
+              or /etc is not enough)
   -h, --help  this help
 
   bash scripts/setup-host.sh          # repair, then install what is missing
   bash scripts/setup-host.sh --check  # what is missing or leftover right now
-  bash scripts/setup-host.sh --repair # the recovery when bazelisk run cannot start
+  bash scripts/setup-host.sh --repair # runfiles + public DNS; no Bazel needed
 HELP
       exit 0
       ;;
@@ -113,7 +124,7 @@ fi
 
 if [ "${check_only}" = "1" ]; then
   report_stale_runfiles "${SETUP_ROOT}"
-  host_dns_report /etc/resolv.conf github.com || true
+  host_dns_report "${SETUP_RESOLV_CONF:-/etc/resolv.conf}" github.com || true
   if [ "${#missing[@]}" -gt 0 ]; then
     echo "note: --check installed nothing and wrote nothing."
     echo '  Run "bash scripts/setup-host.sh" (no flags) to install what is missing,'
@@ -137,16 +148,33 @@ use_sudo=0
 if [ -n "${sudo_cmd}" ]; then
   use_sudo=1
 fi
+runfiles_rc=0
 repair_stale_runfiles "${SETUP_ROOT}" "${use_sudo}" || {
   echo "setup-host: leftover runfiles could not all be repaired (see warnings above)" >&2
-  if [ "${repair_only}" = "1" ]; then
-    exit 1
-  fi
+  runfiles_rc=1
 }
 
+dns_rc=0
+if ! ensure_host_public_dns \
+  "${SETUP_RESOLV_CONF:-/etc/resolv.conf}" \
+  "${SETUP_RESOLVED_DROPIN:-${RESOLVED_DROPIN_DEFAULT}}" \
+  "${use_sudo}"; then
+  echo "setup-host: host DNS still cannot resolve github.com (see warnings above)" >&2
+  dns_rc=1
+fi
+
 if [ "${repair_only}" = "1" ]; then
-  echo "setup-host: runfiles repair finished."
+  if [ "${runfiles_rc}" = "0" ]; then
+    echo "setup-host: runfiles repair finished."
+  fi
+  if [ "${runfiles_rc}" != "0" ] || [ "${dns_rc}" != "0" ]; then
+    exit 1
+  fi
   exit 0
+fi
+
+if [ "${dns_rc}" != "0" ]; then
+  exit 1
 fi
 
 if [ "${#missing[@]}" -eq 0 ]; then

@@ -472,8 +472,10 @@ bazelisk run //scripts:prod-stack -- up
 `bazel-out/.../prod-stack.runfiles` (a directory sitting where
 `homepage/assets/icons/evo-t1.svg` belongs, or a root-owned copy) make the next
 `bazelisk run //scripts:prod-stack` die with `FileAccessException ... Permission
-denied` before the stack script starts. `make prod-stack-up` runs `--repair` first.
-`--check` lists leftovers and whether `github.com` resolves, and writes nothing.
+denied` before the stack script starts. On Linux it also installs public DNS
+(`1.1.1.1` / `8.8.8.8`) beside Tailscale MagicDNS so `git pull` still resolves
+`github.com`. `make prod-stack-up` runs `--repair` first. `--check` lists
+leftovers and whether `github.com` resolves, and writes nothing.
 
 `update-configs env` on a TTY keeps every value you already set, reuses a sibling
 env file (`.env` filling `dev-stack.env`) for a new key, and walks you through new
@@ -486,9 +488,11 @@ it asked.
 
 If `git pull` itself fails with `Could not resolve host: github.com`, Docker or
 Kasm has made Tailscale MagicDNS (`100.100.100.100`) unreachable and it was the
-only nameserver. `bash scripts/setup-host.sh --check` prints the diagnosis and the
-copy-paste (`sudo tailscale set --accept-dns=false`). The stack never flips
-Tailscale for you.
+only nameserver. Run the copy-paste under
+[troubleshooting.md](docs/troubleshooting.md) (`Could not resolve host: github.com`)
+on the current checkout, then `git pull`. After that, `bash scripts/setup-host.sh --repair`
+is the durable path (Linux: resolved drop-in plus `tailscale set --accept-dns=false`,
+MagicDNS kept for `ts.net`).
 
 A dev stack that remapped `LITELLM_PORT` away from 4000 needs that address named
 too: `bazelisk run //scripts:refresh-configs -- --litellm-url http://host.docker.internal:<PORT>/v1`

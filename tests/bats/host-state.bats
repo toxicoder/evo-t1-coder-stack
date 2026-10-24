@@ -25,6 +25,8 @@ setup() {
   source "${REPO_ROOT}/scripts/lib/common.sh"
   # shellcheck source=/dev/null
   source "${REPO_ROOT}/scripts/lib/host_state.sh"
+  unset SETUP_SKIP_DNS SETUP_DNS_DRY_RUN SETUP_DNS_OS SETUP_DNS_LOOKUP \
+    SETUP_RESOLV_CONF SETUP_RESOLVED_DROPIN || true
 }
 
 @test "host_state: host_nameservers reads nameserver lines and skips comments" {
@@ -88,11 +90,132 @@ setup() {
   assert_match "Could not resolve host is quoted" 'Could not resolve host' "${output}"
   assert_match "MagicDNS is named" '100\.100\.100\.100' "${output}"
   assert_match "the repair command is named" 'tailscale set --accept-dns=false' "${output}"
+  assert_match "setup-host --repair is named" 'setup-host.sh --repair' "${output}"
 
   host_can_resolve() { return 0; } # shellcheck disable=SC2329
   run --separate-stderr host_dns_report "${file}" github.com
   [ "${status}" -eq 0 ]
   assert_match "a working lookup is a one-liner" 'github.com resolves' "${output}"
+}
+
+@test "host_state: public_dns_servers prints the pair --repair installs" {
+  run --separate-stderr public_dns_servers
+  [ "${status}" -eq 0 ]
+  assert_match "cloudflare" '^1\.1\.1\.1$' "${output}"
+  assert_match "google" '^8\.8\.8\.8$' "${output}"
+}
+
+@test "host_state: resolved_dropin_body is a systemd-resolved [Resolve] fragment" {
+  run --separate-stderr resolved_dropin_body
+  [ "${status}" -eq 0 ]
+  assert_match "section" '\[Resolve\]' "${output}"
+  assert_match "DNS pair" 'DNS=1\.1\.1\.1 8\.8\.8\.8' "${output}"
+  assert_match "FallbackDNS" 'FallbackDNS=8\.8\.4\.4 1\.0\.0\.1' "${output}"
+  assert_match "names this repo" 'evo-t1-coder-stack' "${output}"
+}
+
+@test "host_state: host_has_public_nameserver ignores MagicDNS and the stub" {
+  local file="${BATS_TEST_TMPDIR}/resolv.conf"
+
+  printf 'nameserver 100.100.100.100\n' >"${file}"
+  run --separate-stderr host_has_public_nameserver "${file}"
+  [ "${status}" -eq 1 ]
+
+  printf 'nameserver 127.0.0.53\n' >"${file}"
+  run --separate-stderr host_has_public_nameserver "${file}"
+  [ "${status}" -eq 1 ]
+
+  printf 'nameserver 100.100.100.100\nnameserver 1.1.1.1\n' >"${file}"
+  run --separate-stderr host_has_public_nameserver "${file}"
+  [ "${status}" -eq 0 ]
+
+  printf 'search lan\n' >"${file}"
+  run --separate-stderr host_has_public_nameserver "${file}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "host_state: write_resolved_dropin writes the drop-in under a scratch path" {
+  local dest="${BATS_TEST_TMPDIR}/resolved.conf.d/evo-t1-public-dns.conf"
+
+  run --separate-stderr write_resolved_dropin "${dest}" 0
+  [ "${status}" -eq 0 ]
+  [ -f "${dest}" ]
+  assert_match "path is named" 'evo-t1-public-dns.conf' "${output}"
+  grep -q 'DNS=1.1.1.1 8.8.8.8' "${dest}"
+  grep -q 'FallbackDNS=8.8.4.4 1.0.0.1' "${dest}"
+}
+
+@test "host_state: append_public_nameservers fills a regular MagicDNS-only file and skips a symlink" {
+  local file="${BATS_TEST_TMPDIR}/resolv.conf"
+  local real="${BATS_TEST_TMPDIR}/real-resolv.conf"
+  local link="${BATS_TEST_TMPDIR}/link-resolv.conf"
+
+  printf 'nameserver 100.100.100.100\n' >"${file}"
+  run --separate-stderr append_public_nameservers "${file}" 0
+  [ "${status}" -eq 0 ]
+  assert_match "append is named" 'appended public nameservers' "${output}"
+  grep -q 'nameserver 1.1.1.1' "${file}"
+  grep -q 'nameserver 8.8.8.8' "${file}"
+
+  run --separate-stderr append_public_nameservers "${file}" 0
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+
+  printf 'nameserver 100.100.100.100\n' >"${real}"
+  ln -s "${real}" "${link}"
+  run --separate-stderr append_public_nameservers "${link}" 0
+  [ "${status}" -eq 0 ]
+  assert_not_match "symlink is not rewritten" '1\.1\.1\.1' "$(cat "${real}")"
+}
+
+@test "host_state: ensure_host_public_dns dry-run writes the drop-in and does not rewrite resolv.conf" {
+  local file="${BATS_TEST_TMPDIR}/resolv.conf"
+  local dropin="${BATS_TEST_TMPDIR}/resolved.conf.d/evo-t1-public-dns.conf"
+  printf 'nameserver 100.100.100.100\n' >"${file}"
+
+  export SETUP_DNS_OS=Linux SETUP_DNS_DRY_RUN=1 SETUP_DNS_LOOKUP=1
+  unset SETUP_SKIP_DNS
+  run --separate-stderr ensure_host_public_dns "${file}" "${dropin}" 0
+  [ "${status}" -eq 0 ]
+  [ -f "${dropin}" ]
+  grep -q 'DNS=1.1.1.1 8.8.8.8' "${dropin}"
+  assert_match "accept-dns is dry-run" 'would: tailscale set --accept-dns=false' "${output}"
+  assert_match "resolved restart is dry-run" 'would: systemctl restart systemd-resolved' "${output}"
+  assert_match "split-DNS is dry-run" 'would: resolvectl domain tailscale0 ts.net' "${output}"
+  assert_not_match "resolv.conf is not appended in dry-run" 'appended public nameservers' "${output}"
+  assert_not_match "MagicDNS stays the only NS" 'nameserver 1\.1\.1\.1' "$(cat "${file}")"
+}
+
+@test "host_state: ensure_host_public_dns skips Darwin and SETUP_SKIP_DNS" {
+  local file="${BATS_TEST_TMPDIR}/resolv.conf"
+  local dropin="${BATS_TEST_TMPDIR}/skip.d/evo-t1-public-dns.conf"
+  printf 'nameserver 100.100.100.100\n' >"${file}"
+
+  export SETUP_SKIP_DNS=1 SETUP_DNS_OS=Linux SETUP_DNS_DRY_RUN=1
+  run --separate-stderr ensure_host_public_dns "${file}" "${dropin}" 0
+  [ "${status}" -eq 0 ]
+  [ ! -e "${dropin}" ]
+  [ -z "${output}" ]
+
+  unset SETUP_SKIP_DNS
+  export SETUP_DNS_OS=Darwin SETUP_DNS_DRY_RUN=1 SETUP_DNS_LOOKUP=1
+  run --separate-stderr ensure_host_public_dns "${file}" "${dropin}" 0
+  [ "${status}" -eq 0 ]
+  [ ! -e "${dropin}" ]
+  assert_match "Darwin is a no-op" 'Linux-only' "${output}"
+}
+
+@test "host_state: ensure_host_public_dns skips a working stub resolver" {
+  local file="${BATS_TEST_TMPDIR}/resolv.conf"
+  local dropin="${BATS_TEST_TMPDIR}/stub.d/evo-t1-public-dns.conf"
+  printf 'nameserver 127.0.0.53\n' >"${file}"
+
+  export SETUP_DNS_OS=Linux SETUP_DNS_LOOKUP=1 SETUP_DNS_DRY_RUN=1
+  unset SETUP_SKIP_DNS
+  run --separate-stderr ensure_host_public_dns "${file}" "${dropin}" 0
+  [ "${status}" -eq 0 ]
+  [ ! -e "${dropin}" ]
+  assert_match "no repair" 'public DNS repair not needed' "${output}"
 }
 
 @test "host_state: runfiles_relpath strips the runfiles prefix" {

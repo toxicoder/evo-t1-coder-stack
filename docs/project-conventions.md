@@ -46,6 +46,9 @@ stays the single documented `bash scripts/setup-host.sh`. `--repair` is the othe
 that exemption: leftover Docker bind-mounts in Bazel's runfiles tree make
 `bazelisk run //scripts:prod-stack` die creating `prod-stack.runfiles` (`Permission
 denied` on `homepage/assets/icons/evo-t1.svg`) before any stack script can run.
+On Linux it also writes a systemd-resolved drop-in (`1.1.1.1` / `8.8.8.8`) and
+runs `tailscale set --accept-dns=false` so host `git pull` still resolves
+`github.com` when MagicDNS is the only nameserver.
 
 Everything else is a Bazel target:
 
@@ -121,7 +124,8 @@ templates; a staged copy that lacks either payload fails the push early by desig
   take. `setup-host --check` names the tools that are missing, leftover runfiles that
   will make `bazelisk run` fail with Permission denied, and whether `github.com`
   resolves, and installs nothing; `setup-host --repair` is the recovery for those
-  leftovers (uses sudo when chmod is not enough). `bootstrap --check` prints the same
+  leftovers and, on Linux, for MagicDNS-only host DNS (uses sudo when chmod or
+  `/etc` is not enough). `bootstrap --check` prints the same
   probes the full run makes (tools, compose plugin, placeholder secrets by name, hosts,
   certs, GPU, images) and writes nothing. An unrecognised argument in either script is
   an error, never a silent fall-through to the mutating run.

@@ -11,8 +11,9 @@
 # except stack-up / prod-stack-up which run `bash scripts/setup-host.sh --repair`
 # first: leftover Docker bind-mounts in Bazel's runfiles tree make `bazelisk run`
 # fail creating prod-stack.runfiles (Permission denied on evo-t1.svg) before any
-# script in the target can run. setup-host.sh is the one script the repo
-# documents for direct shell use.
+# script in the target can run, and on Linux --repair also installs public DNS
+# so host git pull still resolves github.com. setup-host.sh is the one script
+# the repo documents for direct shell use.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
