@@ -989,6 +989,12 @@ cause, recipe, and what a fix costs - is in
   Coder v2.36's `workspace_apps.icon` `varchar(256)` column. The SVG is a compact
   ribbon now, and `push-template` rejects a too-large copy locally. Pull the fix
   and re-run `bazelisk run //scripts:push-template` on the stack host.
+- **`lookup registry.terraform.io on 127.0.0.11:53: server misbehaving`** from
+  `push-template` - Terraform init inside `coder` cannot reach the provider
+  registry because Docker's embedded DNS is forwarding to Tailscale MagicDNS.
+  Recreate `coder` so compose's public DNS upstreams apply, then re-push:
+  `bazelisk run //scripts:prod-stack -- up` and
+  `bazelisk run //scripts:push-template`.
 - **`Error: No configuration files`** from `push-template` - the tar stored
   runfiles symlinks and Coder unpacked them into an empty Terraform directory.
   Pull the fix and re-run `bazelisk run //scripts:push-template` on the stack host.

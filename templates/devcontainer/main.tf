@@ -365,6 +365,13 @@ locals {
   # Separate from the network name so `docker volume ls` reads unambiguously.
   dind_store   = "coder-${data.coder_workspace.me.id}-dind-lib"
   dind_sidecar = "coder-${data.coder_workspace.me.id}-dind-sidecar"
+  # Public resolvers Docker's embedded DNS forwards to for names it does
+  # not know. The container resolv.conf still names 127.0.0.11, so
+  # network aliases (`dind`) and extra_hosts (`host.docker.internal`)
+  # keep working. Host MagicDNS-only resolv.conf is what made terraform
+  # init inside coder SERVFAIL registry.terraform.io, and the same
+  # lookup fails github.com from a workspace. Do not list MagicDNS here.
+  container_dns = ["1.1.1.1", "8.8.8.8"]
 }
 
 resource "coder_agent" "main" {
@@ -1103,6 +1110,8 @@ resource "docker_container" "dind" {
     aliases = [local.dind_alias]
   }
 
+  dns = local.container_dns
+
   healthcheck {
     test         = ["CMD-SHELL", "docker version >/dev/null 2>&1 || exit 1"]
     interval     = "15s"
@@ -1189,6 +1198,8 @@ resource "docker_container" "workspace" {
     host = "host.docker.internal"
     ip   = "host-gateway"
   }
+
+  dns = local.container_dns
 
   volumes {
     container_path = "/home/coder"

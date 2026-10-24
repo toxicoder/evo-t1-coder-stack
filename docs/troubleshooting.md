@@ -85,6 +85,12 @@ Other ways to keep a public resolver: add `1.1.1.1` / `8.8.8.8` as a global
 nameserver in the Tailscale admin DNS page, or drop a systemd-resolved drop-in
 (`DNS=1.1.1.1 8.8.8.8`) and restart `systemd-resolved`.
 
+The same MagicDNS-only resolver is what makes Terraform inside the `coder`
+container SERVFAIL `registry.terraform.io` (`127.0.0.11:53: server misbehaving`).
+That spelling lives under "Terraform and the host `coder` CLI" below. Compose
+pins public resolvers on `coder` so a template push does not wait on this host
+fix; `git pull` on the host still does.
+
 ## Model lane: Spark, LiteLLM, the agent backends
 
 ### How do I know the IPEX-LLM server came up? -> look for `runners=[ipex_llm]`
@@ -382,6 +388,38 @@ docker pull docker:29.8.1-dind
 - Fix with the `docker pull` above, or turn DinD off for that workspace.
 
 ## Terraform and the host `coder` CLI
+
+### `lookup registry.terraform.io on 127.0.0.11:53: server misbehaving` from `push-template` -> coder cannot reach the Terraform registry
+
+- Symptom: `bazelisk run //scripts:push-template` queues, then dies during
+  "Initializing Terraform Directory". `workspace` cannot list versions for
+  `coder/coder` and `kreuzwerker/docker` on `registry.terraform.io`;
+  `devcontainer` cannot fetch `module "devcontainers_cli"` from
+  `registry.coder.com`. Both lookups fail with
+  `dial tcp: lookup … on 127.0.0.11:53: server misbehaving`. Coder itself
+  stays up; `docker compose logs coder` repeats the same Terraform lines.
+- Cause: provisionerd runs `terraform init` inside the `coder` container.
+  Docker's embedded DNS (`127.0.0.11`) forwards names it does not know to
+  the host resolver. When that resolver is Tailscale MagicDNS only, or
+  Docker/Kasm iptables has made `100.100.100.100` unreachable from a
+  container, every public lookup SERVFAILs. The host CLI is fine; only the
+  provisioner job dies. The lockfile reuse lines (`Reusing previous version
+  from the dependency lock file`) do not skip the registry: Terraform still
+  fetches the discovery document.
+- Fix: `docker-compose.yml` sets `dns: [1.1.1.1, 8.8.8.8]` on the `coder`
+  service (embedded DNS still answers `db` and other compose names). Both
+  templates pin the same resolvers on the workspace and DinD containers so
+  a later `git clone` of `github.com` does not hit the same SERVFAIL. Recreate
+  `coder` so the new upstreams apply, then push:
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+bazelisk run //scripts:push-template
+```
+
+The stack still does not flip Tailscale. Host `git pull` still needs a public
+resolver beside MagicDNS (heading above). Existing workspaces pick up the
+container DNS on the next start after this template version is active.
 
 ### `pq: value too long for type character varying(256)` from `push-template` -> editor icon data URL
 
