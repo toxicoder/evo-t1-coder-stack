@@ -33,7 +33,11 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
   of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, or the
   `"__evoT1Stack": true` key) is stack-owned: change the seed in this repo and
-  re-materialize it, never the copy that lives in a workspace.
+  re-materialize it, never the copy that lives in a workspace. `~/.grok/notes-setup.sh`
+  and `~/.grok/notes/` (the canonical per-repo scratch `notes.md`) are both stack-owned
+  and rewritten on every start; that start also sets `core.excludesFile` to
+  `~/.grok/notes/exclude` when you never set it, which is why `notes.md` and
+  `.scratch-notes.md` are ignored in every repo here.
 - Bazel behaves the same here, so `//:test-fast`, `//:lint` and
   `bazelisk run //scripts:<stem>` all still run.
 

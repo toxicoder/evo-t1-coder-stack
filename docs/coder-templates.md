@@ -50,7 +50,9 @@ Two templates live under `templates/`, and a push covers both.
   v2.36's `workspace_apps.icon` column (`varchar(256)`).
 - `notes-setup.sh` is the library behind each clone's private `notes.md`. The
   startup script inlines it with `file()` the same way, writes it into
-  `~/.grok/`, sources it, and calls `notes_materialize` per clone.
+  `~/.grok/`, sources it, and calls `notes_materialize` per clone. That call also
+  seeds the ignore entries that keep the file uncommitted; see "What is shared" in
+  `docs/grok-build-and-agents.md` for what it writes into git config.
 - All three are staged by the push plumbing beside each staged `main.tf` copy, which is the
   only place the server-side Terraform can read them from.
 - A push whose staged copy is missing any of them fails early, by design.

@@ -382,12 +382,22 @@ fi
 # clone stage further down calls notes_materialize with it. The live file is a
 # regular file on the clone bind rather than a link into ~/.grok, because the dev
 # container built on the sidecar mounts that bind and has its own ~/.grok.
+#
+# Written beside its target and moved in: two of this owner's workspaces can boot
+# at once against the one shared volume, and a sibling must never source a
+# half-written library.
 mkdir -p "$HOME/.grok" 2>/dev/null || true
-cat >"$HOME/.grok/notes-setup.sh" <<'NOTES_SETUP_EOF'
+notes_lib="$HOME/.grok/notes-setup.sh"
+notes_lib_tmp="$(mktemp "$notes_lib.XXXXXX" 2>/dev/null)" || notes_lib_tmp="$notes_lib.$$"
+if cat >"$notes_lib_tmp" <<'NOTES_SETUP_EOF'
 ${notes_setup}
 NOTES_SETUP_EOF
+then
+  mv -f "$notes_lib_tmp" "$notes_lib" 2>/dev/null || true
+fi
+rm -f "$notes_lib_tmp" 2>/dev/null || true
 # shellcheck disable=SC1090
-. "$HOME/.grok/notes-setup.sh" 2>/dev/null || true
+. "$notes_lib" 2>/dev/null || true
 
 # --- Editor settings ----------------------------------------------------------
 # One settings.json per owner, on the vscode-settings-<owner-id> volume main.tf
@@ -654,6 +664,20 @@ run_clone() {
   fi
 }
 
+# The notes stage writes files into the workspace home and runs git config
+# --global, so it follows run_clone's identity rule rather than the agent's uid:
+# run as root it would rename a root-owned ~/.gitconfig over the workspace user's
+# and leave notes.md unreadable on an already-cloned folder.
+run_notes() {
+  if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
+    $clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c \
+      '. "$NOTES_SETUP_LIB" 2>/dev/null || exit 0
+       notes_materialize "$1" "$2"' _ "$1" "$2"
+  else
+    notes_materialize "$1" "$2"
+  fi
+}
+
 if [ -z "$repo_url_raw" ]; then
   # An empty Git repository field names nothing to clone and nothing to build a
   # dev container from, so the clone chain stays quiet and the dev-container
@@ -666,7 +690,7 @@ elif [ -d "$target/.git" ]; then
   # Re-fetching is the user's call: a pull here could conflict mid-edit or fail
   # on a dirty tree, and either way the workspace would start on code nobody chose.
   echo "$repo_folder: already cloned, skipping"
-  notes_materialize "$target" "$repo_url_raw" || true
+  run_notes "$target" "$repo_url_raw" || true
 elif [ -e "$target" ]; then
   echo "WARNING: $target exists but is not a git repository — leaving it alone and" \
     "skipping the clone. Remove it from the stack host if it should not be there." >&2
@@ -680,7 +704,7 @@ else
     echo "cloned $repo_url_raw into $target"
     # Before the chown: the notes file and the .git/info/exclude write are ours
     # to make, and the recursive chown below settles their ownership.
-    notes_materialize "$target" "$repo_url_raw" || true
+    run_notes "$target" "$repo_url_raw" || true
     if [ -n "$clone_owner" ]; then
       chown -R "$clone_owner" "$target" 2>/dev/null || true
     fi
@@ -730,7 +754,7 @@ for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n'
   extra_target="$dc_dir/$extra_folder"
   if [ -d "$extra_target/.git" ]; then
     echo "$extra_folder: already cloned, skipping"
-    notes_materialize "$extra_target" "$extra_url" || true
+    run_notes "$extra_target" "$extra_url" || true
   elif [ -e "$extra_target" ]; then
     echo "WARNING: $extra_target exists but is not a git repository — leaving it" \
       "alone and skipping the clone. Remove it from the stack host if it should not be there." >&2
@@ -739,7 +763,7 @@ for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n'
       "This template expects the golden image (bazelisk run //scripts:build-dev-image), which ships git." >&2
   elif run_clone clone -- "$extra_url" "$extra_target"; then
     echo "cloned $extra_url into $extra_target"
-    notes_materialize "$extra_target" "$extra_url" || true
+    run_notes "$extra_target" "$extra_url" || true
     if [ -n "$clone_owner" ]; then
       chown -R "$clone_owner" "$extra_target" 2>/dev/null || true
     fi

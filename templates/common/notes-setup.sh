@@ -1,4 +1,5 @@
 # shellcheck shell=bash
+# managed-by: evo-t1-coder-stack
 #
 # ## notes-setup.sh — private per-repository scratch notes (sourced; never
 # executed)
@@ -13,8 +14,8 @@
 # Invariants:
 #   - Best-effort throughout: every function returns 0 after putting its complaint
 #     on stderr, because a workspace start must not hinge on a scratch file. The
-#     startup scripts run with `set -u`, so an unset or empty argument is a normal
-#     input here, not an error.
+#     startup scripts run with `set -u`, so an unset or empty argument — HOME
+#     included — is a normal input here, not an error.
 #   - The live file is never a symlink to ~/.grok. On the devcontainer template the
 #     inner container mounts the clone bind and gets a different ~/.grok, so a
 #     symlink there would point at nothing inside it.
@@ -23,6 +24,12 @@
 #   - Nothing here commits the file. The excludes it writes (global excludesFile
 #     plus the clone's own .git/info/exclude) are the belt; this repo's .gitignore
 #     is the braces for clones of this repo itself.
+#   - A file the developer owns is never rewritten, only appended to, and only
+#     when core.excludesFile names an absolute path: git expands a leading ~ when
+#     it reads that value and this shell does not, so an unexpanded path would
+#     create a stray "./~" instead of touching the real file.
+#   - A key is only ever used as a path suffix, so dot segments are refused
+#     rather than allowed to walk out of ~/.grok/notes/.
 #
 # Usage (from the rendered startup script, which inlines this file from
 # templates/common/ through main.tf's notes_setup key):
@@ -36,14 +43,15 @@
 # Globals:
 #   None
 # Arguments:
-#   $1 - remote or clone URL: https://, ssh:// or the scp-style git@host: form,
-#     with or without a trailing slash and .git
+#   $1 - remote or clone URL: https://, ssh:// (with or without a port) or the
+#     scp-style git@host: form, with or without a trailing slash and .git
 # Outputs:
-#   Lowercased host/owner/repo on stdout; nothing when the URL has no owner/repo
+#   Lowercased host/owner/repo on stdout; nothing for an unusable input
 # Returns:
-#   0 on success; 1 when the input is empty or carries no owner/repo pair
+#   0 on success; 1 when the input is empty, carries no owner/repo pair, or holds
+#   a . or .. segment
 notes_repo_key() {
-  local raw="${1:-}" rest="" host="" owner="" repo=""
+  local raw="${1:-}" rest="" host="" owner="" repo="" tail=""
   if [ -z "${raw}" ]; then
     return 1
   fi
@@ -60,16 +68,27 @@ notes_repo_key() {
   case "${rest}" in
     *"@"*) rest="${rest#*@}" ;;
   esac
-  # The scp form separates host from path with a colon rather than a slash; a
-  # colon that follows a slash is a port, which the split below drops anyway.
+  # A colon ends the host in both remaining shapes: host:owner/repo is the scp
+  # spelling and host:22/owner/repo is a ported ssh:// URL. What follows the
+  # colon decides which, because the two spellings of one repository have to
+  # produce one key — a port kept as a path segment would split them.
   if [[ ${rest} == *:* && ${rest%%:*} != */* ]]; then
-    rest="${rest%%:*}/${rest#*:}"
+    tail="${rest#*:}"
+    if [[ ${tail%%/*} =~ ^[0-9]+$ ]]; then
+      rest="${rest%%:*}/${tail#*/}"
+    else
+      rest="${rest%%:*}/${tail}"
+    fi
   fi
   rest="${rest%.git}"
   # host plus at least owner/repo; anything shallower is not a repository.
   case "${rest}" in
     */*/*) : ;;
     *) return 1 ;;
+  esac
+  # Padded so a leading or trailing dot segment still reads as /./ or /../.
+  case "/${rest}/" in
+    *"/./"* | *"/../"*) return 1 ;;
   esac
   host="${rest%%/*}"
   repo="${rest##*/}"
@@ -90,15 +109,15 @@ notes_repo_key() {
 #   $1 - repo key as host/owner/repo (may hold more slashes; a GitLab subgroup
 #     keeps them all, which is what keeps two same-named repos apart)
 # Outputs:
-#   $HOME/.grok/notes/<key>/notes.md on stdout; nothing for an empty key
+#   $HOME/.grok/notes/<key>/notes.md on stdout; nothing for a unusable input
 # Returns:
-#   0 always (the empty-key case is a 1, so a caller can skip)
+#   0 on success; 1 when the key or HOME is empty, so the caller skips
 notes_canonical_path() {
-  local key="${1:-}"
-  if [ -z "${key}" ]; then
+  local key="${1:-}" home="${HOME:-}"
+  if [ -z "${key}" ] || [ -z "${home}" ]; then
     return 1
   fi
-  printf '%s\n' "${HOME}/.grok/notes/${key}/notes.md"
+  printf '%s\n' "${home}/.grok/notes/${key}/notes.md"
 }
 
 # notes_live_name <clone-root> — the file name a clone may hold notes under.
@@ -122,27 +141,35 @@ notes_live_name() {
   fi
 }
 
-# notes_append_once <file> <line> — append <line> to <file> when it is absent.
+# notes_append_once <file> <line...> — append each line to a file when absent.
 # @function notes_append_once
-# Append one line to a gitignore-style file, leaving it untouched when present.
+# Append lines to a gitignore-style file, leaving the lines already in it alone.
 # Globals:
 #   None
 # Arguments:
-#   $1 - file to append to (created when missing); $2 - the line
+#   $1 - file to append to (created when missing); remaining args - the lines
 # Outputs:
-#   A write error on stderr
+#   One line per entry that could not be written, on stderr
 # Returns:
 #   0 always — an unwritable excludes file must not stop a workspace start
 notes_append_once() {
-  local file="${1:-}" line="${2:-}"
-  if [ -z "${file}" ] || [ -z "${line}" ]; then
+  local file="${1:-}" line=""
+  if [ "$#" -lt 2 ] || [ -z "${file}" ]; then
     return 0
   fi
-  if ! grep -qxF -- "${line}" "${file}" 2>/dev/null; then
-    if ! printf '%s\n' "${line}" >>"${file}" 2>/dev/null; then
-      printf 'notes: could not add %s to %s\n' "${line}" "${file}" >&2
-    fi
+  shift
+  # A hand-edited ignore file often has no final newline, and appending into
+  # that would fuse the developer's last pattern with ours.
+  if [ -s "${file}" ] && [ -n "$(tail -c 1 "${file}" 2>/dev/null)" ]; then
+    printf '\n' >>"${file}" 2>/dev/null || true
   fi
+  for line in "$@"; do
+    if [ -n "${line}" ] && ! grep -qxF -- "${line}" "${file}" 2>/dev/null; then
+      if ! printf '%s\n' "${line}" >>"${file}" 2>/dev/null; then
+        printf 'notes: could not add %s to %s\n' "${line}" "${file}" >&2
+      fi
+    fi
+  done
   return 0
 }
 
@@ -154,32 +181,41 @@ notes_append_once() {
 # Arguments:
 #   $1 - clone root (the per-clone excludes; skipped when it holds no .git)
 # Outputs:
-#   One line per unwritable excludes file on stderr
+#   One line per excludes file it could not write, or per unusable
+#   core.excludesFile, on stderr
 # Returns:
 #   0 always
 notes_ensure_excludes() {
-  local root="${1:-}" dir="${HOME}/.grok/notes" stack_exclude="" user_exclude="" name=""
-  stack_exclude="${dir}/exclude"
-  mkdir -p "${dir}" 2>/dev/null || true
-  for name in notes.md .scratch-notes.md; do
-    notes_append_once "${stack_exclude}" "${name}"
-  done
-  # Never clobber a file the developer owns: when core.excludesFile already points
-  # somewhere, that file gets the two lines instead of being replaced.
-  user_exclude="$(git config --global --get core.excludesFile 2>/dev/null || true)"
-  if [ -z "${user_exclude}" ]; then
-    git config --global core.excludesFile "${stack_exclude}" 2>/dev/null || true
-  else
-    mkdir -p "$(dirname "${user_exclude}")" 2>/dev/null || true
-    for name in notes.md .scratch-notes.md; do
-      notes_append_once "${user_exclude}" "${name}"
-    done
+  local root="${1:-}" home="${HOME:-}" stack_exclude="" user_exclude=""
+  if [ -n "${home}" ]; then
+    stack_exclude="${home}/.grok/notes/exclude"
+    mkdir -p "${home}/.grok/notes" 2>/dev/null || true
+    notes_append_once "${stack_exclude}" notes.md .scratch-notes.md
+    # Never clobber a file the developer owns: when core.excludesFile already
+    # points somewhere, that file gets the two lines instead of being replaced.
+    user_exclude="$(git config --global --get core.excludesFile 2>/dev/null || true)"
+    # git expands a leading ~ when it reads the value; the shell here has to do
+    # the same before the path means anything. A ~user form stays as it is and
+    # falls through to the absolute-path rule below.
+    case "${user_exclude}" in
+      \~) user_exclude="${home}" ;;
+      \~/*) user_exclude="${home}/${user_exclude#\~/}" ;;
+    esac
+    if [ -z "${user_exclude}" ]; then
+      git config --global core.excludesFile "${stack_exclude}" 2>/dev/null || true
+    elif [[ ${user_exclude} == /* ]]; then
+      mkdir -p "$(dirname "${user_exclude}")" 2>/dev/null || true
+      notes_append_once "${user_exclude}" notes.md .scratch-notes.md
+    else
+      # A relative value resolves against whatever directory git runs in, so
+      # appending here would write next to a clone rather than where it applies.
+      printf 'notes: core.excludesFile=%s is not absolute — only %s was updated\n' \
+        "${user_exclude}" "${stack_exclude}" >&2
+    fi
   fi
   if [ -n "${root}" ] && [ -d "${root}/.git" ]; then
     mkdir -p "${root}/.git/info" 2>/dev/null || true
-    for name in notes.md .scratch-notes.md; do
-      notes_append_once "${root}/.git/info/exclude" "${name}"
-    done
+    notes_append_once "${root}/.git/info/exclude" notes.md .scratch-notes.md
   fi
   return 0
 }
@@ -209,13 +245,15 @@ notes_materialize() {
   }
   live="${root}/$(notes_live_name "${root}")"
   canon="$(notes_canonical_path "${key}")" || return 0
-  mkdir -p "$(dirname "${live}")" 2>/dev/null || true
   mkdir -p "$(dirname "${canon}")" 2>/dev/null || true
   if [ ! -e "${live}" ]; then
     if [ -f "${canon}" ]; then
       cp -f "${canon}" "${live}" 2>/dev/null || true
     else
-      stub="Private scratch notes for this repository. Not committed. Canonical copy: ~/.grok/notes/${key}/notes.md (survives workspace recreate)."
+      # The profile-volume path is the workspace container's, which is not the
+      # home a nested dev container sees, so it is named as the volume's entry
+      # rather than as a file the reader can cd to.
+      stub="Private scratch notes for this repository. Not committed. Canonical copy on this owner's shared Grok profile volume: ${canon} (survives workspace recreate)."
       printf '%s\n' "${stub}" >"${live}" 2>/dev/null || true
     fi
   fi

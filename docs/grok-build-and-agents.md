@@ -154,6 +154,17 @@ it when a recreate leaves the clone without one. `grok_profile_mode=private` mou
 shared volume, so those notes die with that workspace; `shared` is the default. Like
 `config.toml`, the last workspace started for a given user and repository wins.
 
+Two things about that start are worth knowing before you go looking for a vanished
+setting. Boot **writes `git config --global core.excludesFile`** — but only when you
+have not set it yourself. Left unset it points at `~/.grok/notes/exclude`, which lists
+`notes.md` and `.scratch-notes.md`, so from then on *every* git repository in that
+workspace ignores both names at any depth; if you already set the option, those two
+lines are appended to the file it names and nothing else about it is touched. Boot also
+drops the same two lines into each clone's own `.git/info/exclude`, which is the layer
+that works even with no global config at all. And when a repository tracks a `notes.md`
+of its own, the scratch file is written as `.scratch-notes.md` beside it instead — your
+clone is never asked to delete somebody else's committed file.
+
 ### Caveats, honestly
 
 - Keyed by **owner id**, never host-wide and never cross-user: another user's

@@ -638,11 +638,11 @@ source_libs() {
 
 @test "template-push: the seed payloads ride inside the pushed tar" {
   source_libs
-  # The server-side Terraform reads GROK_BUILD_AGENTS.md and notes-setup.sh
-  # (both file(), into the startup script) and vscode-alt.svg (filebase64(),
-  # into the editor icon)
-  # from inside the pushed copy, so the staging must drop all three common copies
-  # into the tar and .terraform/ must stay out. The sink DOCKER_BIN stands in
+  # The server-side Terraform reads GROK_BUILD_AGENTS.md (file(), into the
+  # startup script), notes-setup.sh (file(), into the same script) and
+  # vscode-alt.svg (filebase64(), into the editor icon) from inside the pushed
+  # copy, so the staging must drop all three common copies into the tar and
+  # .terraform/ must stay out. The sink DOCKER_BIN stands in
   # for `docker exec -i`: it drains stdin into a file instead of
   # exec'ing the coder stub, which is how the tar stream becomes inspectable.
   mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"

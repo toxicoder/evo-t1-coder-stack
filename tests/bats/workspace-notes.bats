@@ -5,13 +5,15 @@
 #
 # Pins templates/common/notes-setup.sh, the library the startup twins source
 # before their clone stage: the remote-to-key normalization every clone is
-# filed under, the profile-volume path that copy survives a workspace recreate
-# at, the name used when a repository tracks notes.md itself, and the
-# restore-then-seed-then-copy-back order notes_materialize runs in. Also pins
-# the excludes it writes (a repo-root scratch file must never be committable)
-# and the wiring both templates need: main.tf's file() feed, the heredoc that
-# writes the library into ~/.grok, and the sourcing that makes notes_materialize
-# a command.
+# filed under (one key per repository, port spellings included), the
+# profile-volume path that copy survives a workspace recreate at, the name used
+# when a repository tracks notes.md itself, and the restore-then-seed-then-copy
+# back order notes_materialize runs in. Also pins the excludes it writes — a
+# repo-root scratch file must never be committable, and a global excludesFile
+# the developer owns is only ever appended to, expanded and absolute or not —
+# and the wiring both templates need: main.tf's file() feed, the atomic write
+# that publishes the library into ~/.grok, and running the stage as the clone
+# owner whenever the clone stage does the same.
 #
 # Usage: bazelisk test //tests:bats_workspace_notes_test   (from any cwd)
 #
@@ -63,6 +65,9 @@ canon_of() {
     "https://github.com/Owner/Repo.git" \
     "git@github.com:Owner/Repo.git" \
     "ssh://git@github.com/Owner/Repo.git" \
+    "ssh://git@github.com:22/Owner/Repo.git" \
+    "ssh://git@github.com:2222/Owner/Repo.git" \
+    "https://github.com:8080/Owner/Repo.git" \
     "https://github.com/Owner/Repo.git/" \
     "https://github.com/Owner/Repo" \
     "git@github.com:owner/repo/"; do
@@ -71,14 +76,31 @@ canon_of() {
     [ "${lines[0]}" = "github.com/owner/repo" ] ||
       { printf 'FAIL: %s -> %s\n' "${url}" "${lines[0]}" >&2; return 1; }
   done
+  # One repository, one canonical file: a port is transport, not part of the key,
+  # so the ssh-with-port and scp spellings must not fork it in two.
+  [ "$(notes_repo_key "ssh://git@github.com:22/acme/repo.git")" = "$(notes_repo_key "git@github.com:acme/repo")" ]
 }
 
 @test "notes_repo_key: an input with no owner/repo fails instead of inventing a key" {
   local url
-  for url in "" "garbage" "https://github.com/owner" "github.com/repo.git" "/just/a/path"; do
+  for url in "" "garbage" "https://github.com/owner" "github.com/repo.git" "/just/a/path" "ssh://git@github.com:22"; do
     run notes_repo_key "${url}"
     [ "${status}" -eq 1 ] || { printf 'FAIL: %s accepted\n' "${url}" >&2; return 1; }
     [ -z "${output}" ]
+  done
+}
+
+@test "notes_repo_key: a dot segment is refused rather than kept as path" {
+  # The key becomes a path suffix under ~/.grok/notes/, so ./ and ../ in a URL
+  # would put the canonical copy outside that tree.
+  local url
+  for url in \
+    "https://github.com/../../foo/bar" \
+    "https://github.com/acme/./repo" \
+    "https://github.com/acme/repo/.." \
+    "ssh://git@github.com/acme/../../etc/passwd"; do
+    run notes_repo_key "${url}"
+    [ "${status}" -eq 1 ] || { printf 'FAIL: %s accepted\n' "${url}" >&2; return 1; }
   done
 }
 
@@ -138,8 +160,12 @@ canon_of() {
   [ -f "$(canon_of "github.com/acme/stub")" ]
   run cat "${clone}/notes.md"
   [[ ${lines[0]} == *"Not committed"* ]]
-  [[ ${lines[0]} == *"~/.grok/notes/github.com/acme/stub/notes.md"* ]]
+  [[ ${lines[0]} == *"/.grok/notes/github.com/acme/stub/notes.md"* ]]
   [[ ${lines[0]} == *"survives workspace recreate"* ]]
+  # The path is the workspace container's, so it must be named as the shared
+  # profile volume's entry and not as a file the reader can open in place.
+  [[ ${lines[0]} == *"profile volume"* ]]
+  [[ ${lines[0]} != "~/.grok/"* ]]
 }
 
 @test "notes_materialize: a tracked notes.md is left alone and the scratch name is used" {
@@ -218,6 +244,62 @@ canon_of() {
   grep -qxF '.scratch-notes.md' "${mine}"
 }
 
+@test "notes_ensure_excludes: an excludesFile with no final newline is not fused" {
+  local mine
+  mine="${HOME}/.config/git/ignore"
+  mkdir -p "$(dirname "${mine}")"
+  # Hand-edited ignore files routinely end without the newline, and appending
+  # straight into that would destroy the developer's last pattern.
+  printf '%s' '*.swp' >"${mine}"
+  git config --global core.excludesFile "${mine}"
+  notes_ensure_excludes "$(make_clone "https://github.com/acme/nonl.git")"
+  [ "$(sed -n '1p' "${mine}")" = "*.swp" ]
+  grep -qxF '*.swp' "${mine}"
+  grep -qxF 'notes.md' "${mine}"
+  grep -qxF '.scratch-notes.md' "${mine}"
+  if grep -qF 'swpnotes.md' "${mine}"; then
+    printf 'FAIL: the appended line fused with the last one:\n%s\n' "$(cat "${mine}")" >&2
+    return 1
+  fi
+  # The next start still sees both names as whole lines.
+  notes_ensure_excludes "$(make_clone "https://github.com/acme/nonl.git")"
+  [ "$(grep -cxF 'notes.md' "${mine}")" -eq 1 ]
+}
+
+@test "notes_ensure_excludes: a ~ in core.excludesFile expands to HOME" {
+  local workdir
+  git config --global core.excludesFile '~/.gitignore_global'
+  # The cwd matters: an unexpanded path is created relative to wherever git
+  # happens to run, which is how a literal ./~ directory shows up in a clone.
+  workdir="$(make_scratch)/cwd"
+  mkdir -p "${workdir}"
+  (cd "${workdir}" && notes_ensure_excludes "$(make_clone "https://github.com/acme/tilde.git")")
+  grep -qxF 'notes.md' "${HOME}/.gitignore_global"
+  grep -qxF '.scratch-notes.md' "${HOME}/.gitignore_global"
+  [ "$(git config --global --get core.excludesFile)" = '~/.gitignore_global' ]
+  [ -z "$(ls -A "${workdir}")" ]
+  if [ -e "${HOME}/~" ]; then
+    printf 'FAIL: a literal ~ directory was created under HOME\n' >&2
+    return 1
+  fi
+}
+
+@test "notes_ensure_excludes: a relative core.excludesFile is left alone, not written next to the clone" {
+  local clone workdir
+  clone="$(make_clone "https://github.com/acme/relative.git")"
+  git config --global core.excludesFile 'my-ignores'
+  workdir="$(make_scratch)/cwd"
+  mkdir -p "${workdir}"
+  (cd "${workdir}" && notes_ensure_excludes "${clone}") 2>"${BATS_TEST_TMPDIR}/err.txt"
+  # git resolves that value against the cwd, so appending here would drop a file
+  # beside a clone instead of where it applies; only the stack exclude gets them.
+  grep -qxF 'notes.md' "${HOME}/.grok/notes/exclude"
+  [ ! -e "${workdir}/my-ignores" ]
+  [ ! -e "${clone}/my-ignores" ]
+  grep -qF 'not absolute' "${BATS_TEST_TMPDIR}/err.txt"
+  [ "$(git config --global --get core.excludesFile)" = 'my-ignores' ]
+}
+
 @test "a clone ends up with nothing untracked to commit" {
   local clone status_line
   clone="$(make_clone "https://github.com/acme/clean.git")"
@@ -235,7 +317,7 @@ canon_of() {
   fi
   # What the rendered startup script actually runs: the heredoc body, sourced
   # under the script's own `set -u`, then called with the empty inputs a
-  # home-directory workspace produces.
+  # home-directory workspace produces, HOME unset included.
   {
     printf '%s\n' '#!/usr/bin/env bash' 'set -u'
     cat "${NOTES_LIB}"
@@ -244,6 +326,9 @@ canon_of() {
       'notes_ensure_excludes ""' \
       'notes_live_name ""' \
       'notes_repo_key' \
+      'HOME= notes_canonical_path "github.com/a/b" || true' \
+      'HOME= notes_ensure_excludes "" ' \
+      'HOME= notes_materialize "$PWD" "https://github.com/a/b.git"' \
       'declare -F notes_materialize >/dev/null'
   } >"${rendered}"
   run bash "${rendered}"
@@ -257,14 +342,34 @@ canon_of() {
     [[ -f "${tpl}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
     run grep -F '${notes_setup}' "${tpl}"
     [ "${status}" -eq 0 ] || { printf 'FAIL: %s lost the notes_setup interpolation\n' "${tpl}" >&2; return 1; }
-    run grep -F "cat >\"\$HOME/.grok/notes-setup.sh\" <<'NOTES_SETUP_EOF'" "${tpl}"
+    # Published by mv, never truncated in place: a sibling workspace booting on
+    # the same shared volume must never source a half-written library.
+    run grep -F 'if cat >"$notes_lib_tmp" <<'"'"'NOTES_SETUP_EOF'"'"'' "${tpl}"
     [ "${status}" -eq 0 ]
-    run grep -F '. "$HOME/.grok/notes-setup.sh"' "${tpl}"
+    run grep -F 'mv -f "$notes_lib_tmp" "$notes_lib"' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F '. "$notes_lib" 2>/dev/null || true' "${tpl}"
     [ "${status}" -eq 0 ]
     # Every clone path gets the call: primary and extras, on both the already
     # cloned branch and the just-cloned one.
-    [ "$(grep -c 'notes_materialize "\$target"' "${tpl}")" -eq 2 ]
-    [ "$(grep -c 'notes_materialize "\$extra_target"' "${tpl}")" -eq 2 ]
+    [ "$(grep -c 'run_notes "\$target"' "${tpl}")" -eq 2 ]
+    [ "$(grep -c 'run_notes "\$extra_target"' "${tpl}")" -eq 2 ]
+  done
+}
+
+@test "startup wiring: the notes stage follows the clone stage's identity rule" {
+  local tpl
+  for tpl in "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
+    # Both branches of run_notes call the library, and the privileged one drops
+    # to the clone owner the same way run_clone does — otherwise a root agent
+    # leaves a root-owned ~/.gitconfig and notes.md behind.
+    [ "$(grep -c 'notes_materialize "\$1" "\$2"' "${tpl}")" -eq 2 ]
+    run grep -F '$clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c' "${tpl}"
+    [ "${status}" -eq 0 ] || { printf 'FAIL: %s runs the notes stage as the agent, not the clone owner\n' "${tpl}" >&2; return 1; }
+    run grep -F '. "$NOTES_SETUP_LIB" 2>/dev/null || exit 0' "${tpl}"
+    [ "${status}" -eq 0 ]
   done
 }
 
