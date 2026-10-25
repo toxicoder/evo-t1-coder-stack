@@ -51,8 +51,11 @@ docs_node_is_ready() {
   fi
 
   # process.versions.node is "22.14.0" with no "v" prefix: take the first dotted part.
+  # A non-numeric operand is read as a variable name, which `set -u` makes fatal, so a probe
+  # that answers anything but a plain number counts as too old rather than aborting here.
   local node_major
   node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  [[ ${node_major} =~ ^[0-9]+$ ]] || node_major=0
   if [[ ${node_major} -lt 22 ]]; then
     error "Node ${node_major} is too old for Next 16 (docs-site/package.json requires node >=22)."
     exit 1

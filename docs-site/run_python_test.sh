@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Bazel entry point for the nav generator's unittest suite, which lives beside the
-# docs-site sources as test_gen_nav.py.
+# Runs the nav generator's unittest suite, which lives beside the docs-site sources as
+# test_gen_nav.py.
 #
-# Usage (from a bazel run): run_python_test.sh
+# Called by `bazelisk test //docs-site:nav_test`, and by the `docs` job of
+# .github/workflows/ci.yml as `bash run_python_test.sh` from docs-site/.
 set -euo pipefail
 
 if [[ -n ${BUILD_WORKSPACE_DIRECTORY:-} && -d "${BUILD_WORKSPACE_DIRECTORY}/docs-site" ]]; then
@@ -13,6 +14,5 @@ else
   cd "$SCRIPT_DIR"
 fi
 
-# discover keeps the package dir importable so the tests can `import gen_nav` etc.
-# out of scripts/.
+# -p pins the run to this one suite; test_gen_nav.py adds scripts/ to sys.path for `import gen_nav`.
 exec python3 -m unittest discover -s . -p test_gen_nav.py -t . -v

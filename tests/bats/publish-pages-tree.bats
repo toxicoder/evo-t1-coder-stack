@@ -135,8 +135,7 @@ load_publish_unit() {
 }
 
 @test "publish-pages-tree: the gh-pages commit is the Actions bot's and the checkout's config stays clean" {
-  # The identity has to land on the commit, not in .git/config: that config is shared by
-  # the checkout and its worktrees, so writing it would author the operator's next commits.
+  # The config probe below is the point: the identity reached the commit, not .git/config.
   load_publish_unit
   local origin clone
   origin="${BATS_TEST_TMPDIR}/ident-origin.git"
