@@ -267,10 +267,12 @@ shows a worked example.
   **HYPHEN**: a wildcard certificate covers exactly one label, so the dotted
   two-label form has no certificate at the public edge.
 - `bootstrap.sh` derives `STACK_DASHBOARD_URL` / `STACK_CODER_URL` /
-  `STACK_KASM_URL` / `STACK_LITELLM_URL` from the prefix on each entry (`coder-` /
-  `kasm-` / `litellm-`, dotted form still recognised) and upgrades
-  `CODER_ACCESS_URL` to the coder name, so Coder builds workspace links on a secure
-  context with a real certificate.
+  `STACK_KASM_URL` / `STACK_LITELLM_URL` / `STACK_HERMES_URL` from the prefix on
+  each entry (`coder-` / `kasm-` / `litellm-` / `hermes-`, dotted form still
+  recognised) and upgrades `CODER_ACCESS_URL` to the coder name, so Coder builds
+  workspace links on a secure context with a real certificate. Compose sets
+  `HERMES_DASHBOARD_PUBLIC_URL` from `STACK_HERMES_URL` (the Chat tab's Host and
+  Origin).
 - The names also go into `HOMEPAGE_ALLOWED_HOSTS` (compose appends this raw value)
   and into the Coder certificate's subjectAltName.
 - The Traefik on the other box owns TLS for those names and must forward plain
@@ -280,9 +282,9 @@ shows a worked example.
 
 Set the names in `.env`, and in `dev-stack.env` too when a dev stack runs beside
 the stable one, then re-run `bazelisk run //scripts:bootstrap` and recreate the
-stack you switched. Hermes is deliberately absent from the list: its dashboard
-stays on LAN / Tailscale `:9119` with HTTP basic auth, and there is no `hermes-*`
-public name or `proxy/router.conf` vhost for it.
+stack you switched. A `hermes-*` or `hermes.*` entry is part of that list:
+bootstrap writes `STACK_HERMES_URL`, and the LAN `:9119` listener stays either
+way. Leave the hermes name out and the Homepage card keeps the LAN URL.
 [public-access.md](public-access.md) owns the naming rule, the measured
 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` on the dotted form, the request path and the
 checks to run on the Traefik box.

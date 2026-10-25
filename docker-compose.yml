@@ -15,7 +15,8 @@
 #                   main Traefik terminates TLS and forwards plain HTTP here
 #                   (host STACK_PROXY_HTTP_PORT, default 8080)
 #   hermes-init     one-shot seed of the hermes-data volume (config.yaml, SOUL.md)
-#   hermes          Hermes Agent + Web Dashboard (host 9119, LAN/Tailscale only)
+#   hermes          Hermes Agent + Web Dashboard (host 9119 stays published;
+#                   public access is additive via the router)
 #
 # Secrets live in .env (see .env.sample). Never commit .env.
 
@@ -487,6 +488,9 @@ services:
       - coder
       - litellm
       - kasm
+      # hermes is deliberately omitted: hermes-init is a one-shot that hermes
+      # waits on, and a failed seed must not take the other public names off
+      # :8080. A missing hermes upstream is a 502 on that Host only.
 
   # One-shot seed of the named hermes-data volume from the git-tracked hermes/
   # tree. restart: "no" (quoted: YAML 1.1 would otherwise parse a bare no as
@@ -517,13 +521,14 @@ services:
         chown -R ${HERMES_UID:-1000}:${HERMES_GID:-1000} /opt/data
 
   # On-device host assistant: official Hermes Agent + Web Dashboard (Chat tab
-  # is a PTY over WebSocket with approval prompts). LAN / Tailscale only —
-  # there is no public hermes-* vhost. docker.sock is mounted (root-equivalent,
-  # same standing as coder); the seeded config.yaml keeps approvals.mode:
-  # manual and that must stay. The checkout is bind-mounted at the identical
-  # host path (STACK_HOST_PATH) so `docker compose` through the socket resolves
-  # bind sources on the daemon; empty STACK_HOST_PATH (CI `compose config`)
-  # falls back to .:/opt/stack.
+  # is a PTY over WebSocket with approval prompts). LAN :9119 stays published;
+  # public access is additive via the router when STACK_PUBLIC_HOSTS names a
+  # hermes-* host. docker.sock is mounted (root-equivalent, same standing as
+  # coder); the seeded config.yaml keeps approvals.mode: manual and that must
+  # stay. The checkout is bind-mounted at the identical host path
+  # (STACK_HOST_PATH) so `docker compose` through the socket resolves bind
+  # sources on the daemon; empty STACK_HOST_PATH (CI `compose config`) falls
+  # back to .:/opt/stack.
   hermes:
     image: nousresearch/hermes-agent:v0.22.5
     restart: unless-stopped
@@ -532,6 +537,9 @@ services:
       HERMES_DASHBOARD: "1"
       HERMES_DASHBOARD_HOST: "0.0.0.0"
       HERMES_DASHBOARD_PORT: "9119"
+      # Empty on LAN-only. bootstrap writes STACK_HERMES_URL from a public
+      # hermes-* name; the seed config does not carry public_url.
+      HERMES_DASHBOARD_PUBLIC_URL: ${STACK_HERMES_URL:-}
       # v0.22.5 fail-closed: a 0.0.0.0 bind with no DashboardAuthProvider is a
       # boot error. The bundled basic-auth plugin skips registration when
       # username or password is empty, so these interpolation defaults must

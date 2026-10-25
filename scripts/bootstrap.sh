@@ -280,6 +280,7 @@ public_dashboard_url=""
 public_coder_url=""
 public_kasm_url=""
 public_litellm_url=""
+public_hermes_url=""
 raw_public_hosts="$(sed -n 's|^STACK_PUBLIC_HOSTS=||p' .env | tail -n 1)"
 
 while IFS= read -r entry; do
@@ -307,6 +308,7 @@ while IFS= read -r entry; do
     coder) public_coder_url="${url}" ;;
     kasm) public_kasm_url="${url}" ;;
     litellm) public_litellm_url="${url}" ;;
+    hermes) public_hermes_url="${url}" ;;
     *) public_dashboard_url="${url}" ;;
   esac
   public_entries+=("${entry}")
@@ -362,6 +364,7 @@ upsert_env STACK_DASHBOARD_URL "${public_dashboard_url}"
 upsert_env STACK_CODER_URL "${public_coder_url}"
 upsert_env STACK_KASM_URL "${public_kasm_url}"
 upsert_env STACK_LITELLM_URL "${public_litellm_url}"
+upsert_env STACK_HERMES_URL "${public_hermes_url}"
 
 # Coder builds every workspace link and the `coder login` target from
 # CODER_ACCESS_URL, so the public name is the whole point of public mode: the
@@ -629,5 +632,5 @@ echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443
 echo "  9. Dashboard: ${dash_reach_url}/ (login password: the HOMEPAGE_AUTH_PASSWORD line in .env, never printed here — bazelisk run //scripts:dashboard-password rotates it)"
 echo " 10. LiteLLM: ${litellm_reach_url}/health — the transport every agent routes through; bazelisk run //scripts:dev-stack -- status reports on the whole stack at once"
 hermes_port="$(env_get .env HERMES_DASHBOARD_PORT)"
-hermes_reach_url="$(env_get .env STACK_HERMES_URL)"
-echo " 11. Hermes: ${hermes_reach_url:-http://${stack_lan_host:-<host>}:${hermes_port:-9119}} — on-device host assistant (LAN/Tailscale only; basic auth is HERMES_DASHBOARD_USER / HERMES_DASHBOARD_PASSWORD in .env, never printed here). Docs: docs/hermes.md"
+hermes_reach_url="${public_hermes_url:-http://${stack_lan_host:-<host>}:${hermes_port:-9119}}"
+echo " 11. Hermes: ${hermes_reach_url} — on-device host assistant (basic auth is HERMES_DASHBOARD_USER / HERMES_DASHBOARD_PASSWORD in .env, never printed here). Docs: docs/hermes.md"

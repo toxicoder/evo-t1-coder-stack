@@ -17,8 +17,8 @@ repo can verify.
   proxy-side policy you configure — not by ad-hoc port-forwarding, which skips both.
   LiteLLM requires `LITELLM_MASTER_KEY` for every request; Coder has its own login, and
   once either name resolves publicly assume it is being probed.
-- **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder and the dashboard can be
-  reachable from the WAN. Keep the Coder login strong: that account is the site admin
+- **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder, the dashboard and
+  Hermes can be reachable from the WAN. Keep the Coder login strong: that account is the site admin
   and the control plane it authenticates to creates containers on this host's docker
   socket. The dashboard's NextAuth password (`HOMEPAGE_AUTH_PASSWORD`) stays the only
   gate unless an Authelia policy covers the new names too, and that policy is an
@@ -29,21 +29,27 @@ repo can verify.
   LAN-oriented and is now WAN-reachable. The `router` sidecar itself publishes plain HTTP
   (`${STACK_PROXY_HTTP_PORT:-8080}`) and enforces no policy beyond refusing an unknown
   Host: on the LAN, sending a matching Host header to that port reaches the same upstreams
-  without Traefik or Authelia in the path, so treat 8080 as a LAN-only port.
+  without Traefik or Authelia in the path, so treat 8080 as a LAN-only port. For Hermes
+  that bypass still has HTTP basic auth; leave the Authelia policy on the public name.
 - **Ollama is internal-only.** IPEX-LLM Ollama listens on 11434 inside the
   compose network only and is deliberately not published to the host.
   Never add a `11434:11434` port mapping.
-- **Hermes is LAN / Tailscale only and root-equivalent.** The official dashboard
-  publishes `:9119` with HTTP basic auth (`HERMES_DASHBOARD_USER` /
-  `HERMES_DASHBOARD_PASSWORD`); a non-loopback bind without a provider is a boot
-  error (`HERMES_DASHBOARD_INSECURE` is a deprecated no-op). There is no public
-  `hermes-*` name and no `proxy/router.conf` vhost for it — do not add one.
-  The container mounts the host docker socket (same standing as `coder`) and the
-  stack checkout at `STACK_HOST_PATH`, so a command it runs can affect the real
-  host. The seeded config keeps `approvals.mode: manual`, `cron_mode: deny`,
-  `unattended_mode: deny`, and `terminal.backend: local` (the `docker` backend
-  skips dangerous-command checks). Never set the mode to `off`. Secrets stay in
-  `.env` and the `hermes-data` volume; there is no GitHub PAT in Hermes. See
+- **Hermes is root-equivalent, and a public name is supported.** The fifth name
+  (`hermes-*` in `STACK_PUBLIC_HOSTS`, for example
+  `hermes-gmktecbeast.overeazy.io`) follows the same Cloudflare → Traefik →
+  Authelia → `:8080` path as the dashboard and Coder, and the router sends it to
+  `hermes:9119`. Leave Authelia on this name: it is an interactive session, not
+  an API bypass. HTTP basic auth (`HERMES_DASHBOARD_USER` /
+  `HERMES_DASHBOARD_PASSWORD`) stays. v0.22.5 refuses a `0.0.0.0` bind with no
+  provider (`HERMES_DASHBOARD_INSECURE` is a deprecated no-op). On the LAN,
+  `:9119` and `:8080` with a matching Host both skip Authelia, so that basic
+  auth is load-bearing. The container mounts the host docker socket (same
+  standing as a public `coder`) and the stack checkout at `STACK_HOST_PATH`, so
+  a command it runs can affect the real host. The seeded config keeps
+  `approvals.mode: manual`, `cron_mode: deny`, `unattended_mode: deny`, and
+  `terminal.backend: local` (the `docker` backend skips dangerous-command
+  checks). Never set the mode to `off`. Secrets stay in `.env` and the
+  `hermes-data` volume; there is no GitHub PAT in Hermes. See
   [docs/hermes.md](docs/hermes.md).
 - **Dashboard.** The Homepage container publishes no port; `homepage-proxy`
   owns :80 / :443 with a self-signed cert that `bootstrap.sh` issues, so the

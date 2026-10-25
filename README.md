@@ -11,7 +11,8 @@ One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra
 - **Kasm Workspaces** - streams desktops. **Homepage** - the dashboard that links them
   all and shows live status.
 - **Hermes** - on-device host assistant (official Web Dashboard on :9119, Chat tab
-  with approval prompts). LAN / Tailscale only.
+  with approval prompts). LAN `:9119` stays; the public name is opt-in with the
+  other public hosts.
 - **SearXNG** - the keyless metasearch lane.
 
 The box runs **two isolated copies** of the stack on purpose: a *stable* one you work
@@ -108,7 +109,8 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                 |           the only tool-capable path)
   |
   +-- :9119 ----> Hermes Web Dashboard (host assistant; Chat tab + approvals;
-  |               LAN / Tailscale only, basic auth). Models via LiteLLM.
+  |               basic auth). LAN port stays; the public name is opt-in and
+  |               arrives through the :8080 router. Models via LiteLLM.
   |
   +-- (no host port) IPEX-LLM Ollama on the Arc 140T (/dev/dri)
   |
@@ -141,9 +143,11 @@ LAN clients (laptops, phones, the EVO-T1 itself)
    cannot load a certificate, so the nginx sidecar owns :80 and :443 and proxies to it
    over the compose network.
 6. **Public subdomains are opt-in and additive.** The LAN shape above is the default
-   and stays intact when the four public names are on.
-7. **Hermes is LAN / Tailscale only.** The dashboard publishes `:9119` with HTTP basic
-   auth. There is no public `hermes-*` name and no `proxy/router.conf` vhost for it.
+   and stays intact when the five public names are on.
+7. **Hermes publishes `:9119` with HTTP basic auth.** The public `hermes-*` name is
+   the supported opt-in in that same list: Authelia in front, basic auth still on
+   (LAN `:9119` and a matching Host on `:8080` never see Authelia), and the docker
+   socket still root-equivalent. Traefik aims at `:8080`, not at `:9119`.
 
 ## Ports
 
@@ -160,7 +164,7 @@ port binds once, so two stacks on one box need two sets.
 | 3000 | 13000 | Kasm | First-boot install wizard (`KASM_WIZARD_PORT`) |
 | 4443 | 14443 | Kasm | Workspaces UI after install (`KASM_UI_PORT`) |
 | 4000 | 14000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
-| 9119 | 19119 | Hermes | Host-assistant Web Dashboard (`HERMES_DASHBOARD_PORT`) - Chat tab + approvals; LAN / Tailscale only, HTTP basic auth |
+| 9119 | 19119 | Hermes | Host-assistant Web Dashboard (`HERMES_DASHBOARD_PORT`) - Chat tab + approvals; LAN listener with HTTP basic auth. The public name is opt-in and reaches it through the router on 8080 |
 | 8181 | 18181 | SearXNG | Metasearch (`STACK_SEARCH_PORT`) - published, because a workspace reaches the host through its gateway, where the compose network does not help. `push-template.sh` reads this key and pushes `--var searxng_url=http://host.docker.internal:<that port>`, so a remapped port reaches each new workspace's config |
 | — | — | Homepage app | `3000` on the compose network only - reached through the proxy |
 | — | — | Ollama | `11434` on the compose network only - deliberately not published |
@@ -535,11 +539,11 @@ strings.
 ## Public subdomains (optional)
 
 The default shape is LAN-only. One extra `.env` variable, `STACK_PUBLIC_HOSTS`
-(comma-separated), additionally serves the same four services on public names over real
+(comma-separated), additionally serves the same five services on public names over real
 TLS. Full detail, including what `bootstrap` rewrites and how to check the Traefik
 side, is in [docs/public-access.md](docs/public-access.md).
 
-### The four names
+### The five names
 
 | Name | Upstream |
 |---|---|
@@ -547,13 +551,15 @@ side, is in [docs/public-access.md](docs/public-access.md).
 | `coder-gmktecbeast.overeazy.io` | `coder:3000` - plain listener |
 | `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (TLS verify off) |
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
+| `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
 
 The rules that make those names work, and what to check when one of them misbehaves,
 are on
 [docs/public-access.md](docs/public-access.md): the one-label-under-the-zone shape a
 wildcard certificate allows, the `bootstrap` run that rewrites them, the recreate that
-applies it, the plain-HTTP hop to the `router` sidecar, and why the four names 302 to
-Authelia while the workspace agents and LiteLLM never reach it.
+applies it, the plain-HTTP hop to the `router` sidecar on `:8080` (every name,
+including Hermes - not `:9119`), and why the interactive names 302 to
+Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
 
 ## LiteLLM model aliases
 
@@ -767,11 +773,13 @@ approval prompts, models through the existing LiteLLM `agent` alias. It mounts t
 stack checkout at `STACK_HOST_PATH` and the docker socket (root-equivalent, same
 standing as Coder), so approvals stay `manual`.
 
-- **URL:** `http://<host>:9119` - plain HTTP, basic auth
-  (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`).
-- **LAN / Tailscale only.** No public `hermes-*` name.
+- **URL:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, basic auth
+  (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`). The LAN
+  port stays. The public name `https://hermes-gmktecbeast.overeazy.io` is
+  opt-in through `STACK_PUBLIC_HOSTS`: Authelia in front, the same basic auth
+  behind it, Traefik pointed at `:8080`.
 - **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the
-  dangerous-command checker on.
+  dangerous-command checker on. The docker socket stays root-equivalent.
 
 Full detail (mounts, skills, bootstrap, security): [docs/hermes.md](docs/hermes.md).
 
@@ -796,9 +804,10 @@ keeps them in RAM until they age out.
 - **Public internet exposure beyond the optional mode above.** The default install
   assumes a trusted LAN or VPN: the dashboard has an nginx sidecar with a self-signed
   cert and its own password gate, which is far short of a real reverse proxy, and
-  nothing at all stands in front of Coder, LiteLLM, Hermes or Kasm. Hermes in
-  particular stays off the public edge: its dashboard binds `:9119` with basic auth
-  and there is no `hermes-*` Traefik name.
+  nothing at all stands in front of Coder, LiteLLM, Hermes or Kasm until
+  `STACK_PUBLIC_HOSTS` is set. Public Hermes is that supported opt-in: Authelia
+  plus Hermes basic auth, Traefik aimed at this box's `:8080`, and the container
+  still root-equivalent on the docker socket.
 - **Heavy video encode or render.** The Arc 140T is strong for LLM inference; do not
   plan media pipelines around it.
 - **Multi-tenant teams.** A handful of trusted users, not an org-wide SaaS.

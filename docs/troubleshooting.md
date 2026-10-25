@@ -10,7 +10,7 @@ tags: [troubleshooting, operate, errors]
 - The model lane: Spark boxes, LiteLLM, and the agent backends
 - Workspaces: startup, the golden image, the toolchain inside them
 - Docker-in-Docker, Terraform, and the host `coder` CLI
-- Editor, credentials, the clone, and the UI logins
+- Editor, credentials, the clone, UI logins, and the public Hermes name (`421`, Chat `4403`)
 
 **What this enables**
 
@@ -280,8 +280,8 @@ docker logs --tail 200 router | grep -Ei 'error|502|upstream'
 - `X-Coder-Request-Id` on the response, beside `X-Coder-Build-Version`, means Coder's
   own Go proxy answered, so Traefik and Cloudflare let the request through and the
   fault sits behind them. Nothing on this box sets `Via` or `CF-RAY`.
-- `X-Evo-Proxy` names the `server_name` that matched here: `coder`, `litellm`, `kasm`
-  or `homepage`. Its absence means the request never reached this box's nginx.
+- `X-Evo-Proxy` names the `server_name` that matched here: `coder`, `litellm`, `kasm`,
+  `homepage` or `hermes`. Its absence means the request never reached this box's nginx.
 - Neither header, and a `Server: cloudflare` with a `cf-ray` instead: Traefik or
   Cloudflare answered, and there is nothing on this box to read.
 
@@ -737,6 +737,57 @@ before `hermes` starts. If the gateway loops on a missing `config.yaml`, the
 named volume was not seeded: run
 `bazelisk run //scripts:hermes-bootstrap -- --help` and recreate. Full
 access / mounts / socket-risk notes: [hermes.md](hermes.md).
+
+### Public `hermes-gmktecbeast` answers `421` -> no vhost, a rewritten Host, or Traefik aimed past the router
+
+Cause: this box's `router` answers `421` when the Host matches no `server_name`.
+The hermes vhost lives in `proxy/router.conf` (hardcoded, like the other public
+names). Traefik pointed at `:9119` never hits that file. A rewritten Host also
+misses every block.
+
+The public backend is the same hop as the other names. Replay it from a
+workspace, which reaches the published router and skips Cloudflare, Traefik and
+Authelia:
+
+```sh
+curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: hermes-gmktecbeast.overeazy.io' \
+  http://host.docker.internal:8080/
+```
+
+- `421` means this box has no vhost for that Host. Recreate `router` so it
+  mounts the conf that lists `server_name hermes-gmktecbeast.overeazy.io`.
+- Anything else means the router matched (Hermes basic auth is `401` until you
+  send credentials). A `421` only on the public URL, with this probe succeeding,
+  is a rewritten Host or a Traefik backend that is not `:8080`.
+- `STACK_PUBLIC_HOSTS` does not create the vhost. It is what bootstrap writes
+  into `STACK_HERMES_URL` / `HERMES_DASHBOARD_PUBLIC_URL` for the Chat tab.
+
+### Chat tab never connects, or the socket closes `4403` -> public URL, trusted proxies, or a dropped Upgrade
+
+Cause: the Chat tab is a WebSocket on `/api/pty` and `/api/ws`. Hermes sends a
+keepalive every 20 seconds. Close code `4403` is the Host / Origin / peer guard.
+
+- `HERMES_DASHBOARD_PUBLIC_URL` has to be the public origin. Bootstrap writes
+  `STACK_HERMES_URL` from a `hermes-*` or `hermes.*` entry, and compose copies
+  that into `HERMES_DASHBOARD_PUBLIC_URL`. The variable is environment: recreate
+  the container after bootstrap.
+- The seed sets `dashboard.trusted_proxies` to `["172.16.0.0/12"]` so Hermes
+  honours `X-Forwarded-Proto` (Secure cookie and `wss`). A `hermes-data` volume
+  from before that seed keeps the old file until you reseed. `<mount>` is the
+  host directory of that volume:
+
+```sh
+bazelisk run //scripts:hermes-bootstrap -- --data <mount> --force
+```
+
+  `hermes config set` on `dashboard.trusted_proxies` is the in-container
+  alternative. `HERMES_DASHBOARD_PUBLIC_URL` does not need that reseed.
+- Traefik and Authelia have to pass `Upgrade`. Cloudflare's orange-cloud proxy
+  has WebSockets on by default. A page that loads and a Chat tab that dies is
+  this hop, not the basic-auth provider.
+
+The `0.0.0.0` bind refusal above is a different failure: empty basic-auth env,
+not this public path. Full notes: [hermes.md](hermes.md).
 
 ### Kasm wizard gone after install -> expected
 

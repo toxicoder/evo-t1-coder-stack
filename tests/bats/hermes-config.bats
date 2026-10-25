@@ -6,13 +6,15 @@
 # Pins the seams the host-assistant feature rests on: approvals stay manual,
 # the terminal backend stays local (so dangerous-command checks stay on),
 # models go through LiteLLM's `agent` alias, the three git-tracked skills
-# exist beside the seed, and compose interpolation defaults for dashboard
-# basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider). The
-# live volume copy is out of scope; this suite reads the checkout payload
-# and docker-compose.yml only.
+# exist beside the seed, compose interpolation defaults for dashboard
+# basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider),
+# HERMES_DASHBOARD_PUBLIC_URL comes from STACK_HERMES_URL, the seed trusts
+# the router subnet, and proxy/router.conf vhosts the public hermes name.
+# The live volume copy is out of scope; this suite reads the checkout
+# payload, docker-compose.yml, and proxy/router.conf only.
 #
 # Usage: bazelisk test //tests:bats_hermes_config_test   (from any cwd)
-# Safety: reads hermes/, docker-compose.yml, .env.sample; writes nothing.
+# Safety: reads hermes/, docker-compose.yml, .env.sample, proxy/router.conf; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -86,4 +88,27 @@ setup() {
     '^HERMES_DASHBOARD_PASSWORD=change-me-hermes$'
   assert_contains_file "sample secret" "${sample}" \
     '^HERMES_DASHBOARD_SECRET=change-me-hermes-secret$'
+}
+
+@test "hermes compose: public URL comes from STACK_HERMES_URL" {
+  local compose="${REPO_ROOT}/docker-compose.yml"
+  assert_file_exists "compose file" "${compose}"
+  assert_contains_file "public url env" "${compose}" \
+    'HERMES_DASHBOARD_PUBLIC_URL: \$\{STACK_HERMES_URL:-\}'
+}
+
+@test "hermes config: dashboard trusts the router subnet" {
+  assert_contains_file "trusted proxies" "${CONFIG}" \
+    'trusted_proxies: \["172\.16\.0\.0/12"\]'
+}
+
+@test "hermes router: public vhost proxies the dashboard" {
+  local router="${REPO_ROOT}/proxy/router.conf"
+  assert_file_exists "router conf" "${router}"
+  assert_contains_file "hermes server name" "${router}" \
+    'server_name hermes-gmktecbeast\.overeazy\.io'
+  assert_contains_file "hermes upstream" "${router}" \
+    'http://hermes:9119'
+  assert_contains_file "forwarded host" "${router}" \
+    'proxy_set_header X-Forwarded-Host'
 }
