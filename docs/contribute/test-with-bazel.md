@@ -9,6 +9,7 @@ tags: [bats, tests, bazel, contributing]
 - The layout: suites, helpers, stubs and fixtures
 - The two inventory gates that tie a production function to a test
 - Running one suite, from any directory
+- Which runtime actually gates a merge, and which one is a convenience
 - The stub-PATH recipe, and the two paths a suite may take
 - Sandbox-safe repo-root probing
 
@@ -16,6 +17,7 @@ tags: [bats, tests, bazel, contributing]
 
 - Adding a test that passes in the Bazel sandbox and on a laptop
 - Making a new function satisfy `//tests:shell_inventory` without guessing
+- Reproducing a CI failure locally by running the suites in the image CI runs them in
 
 Every suite under `tests/` is hermetic Bats: it runs against stubs and a throwaway tree,
 never against a daemon, a network, or the operator's real `.env`.
@@ -71,6 +73,25 @@ A suite is one cached action. Its `.bats` file, `test_helper.bash`, `test_helper
 `bats_runner.sh` and the `scripts/**.sh` plus stub/fixture files it declares as `data` are
 its inputs, so editing one script re-runs only the suites that read it, and an unchanged
 suite replays its cached PASS.
+
+## Which runtime gates
+
+The merge gate is the Linux golden image — the same `images/dev/Dockerfile` the Coder
+workspaces boot and CI builds:
+
+```bash
+bazelisk test //:test-fast                                     # inside the contributor container
+bazelisk run //scripts:test-in-image --                        # from any host with docker
+```
+
+- Inside the contributor dev container ([devcontainer.md](devcontainer.md)) the commands
+  above are exactly what CI runs.
+- On a host that is not that container, `//scripts:test-in-image` docker-runs
+  `evo-t1-dev:latest` and runs them there.
+- A native `bazelisk test` on macOS is convenience only: the BSD userland differs from the
+  GNU one in the image (`sed`, `date`, `find`, `sort`), so a red run there is not proof of a
+  defect and a green one is not the run that unlocks the merge button. CI and branch
+  protection gate on the image result either way.
 
 ## The two paths a suite may use
 

@@ -1,0 +1,39 @@
+{
+  "name": "evo-t1 contributor",
+  "build": {
+    "context": "../images/dev",
+    "dockerfile": "Dockerfile"
+  },
+  "remoteUser": "coder",
+  "updateRemoteUserUID": true,
+  "containerEnv": {
+    "EVO_T1_DEVCONTAINER": "1",
+    "SEARXNG_URL": "http://host.docker.internal:8181"
+  },
+  "remoteEnv": {
+    "EVO_T1_DEVCONTAINER": "1"
+  },
+  "runArgs": [
+    "--add-host=host.docker.internal:host-gateway"
+  ],
+  "mounts": [
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+  ],
+  "postCreateCommand": "bash -lc 'if [ -S /var/run/docker.sock ]; then sudo setfacl -m u:coder:rw /var/run/docker.sock 2>/dev/null || sudo chmod a+rw /var/run/docker.sock 2>/dev/null || true; fi; bash scripts/seed-dev-env.sh --devcontainer'",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "bazelbuild.vscode-bazel",
+        "timonwong.shellcheck",
+        "foxundermoon.shell-format",
+        "hashicorp.terraform",
+        "ms-azuretools.vscode-docker",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "tmux",
+        "editor.formatOnSave": true
+      }
+    }
+  }
+}

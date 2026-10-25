@@ -18,8 +18,10 @@ tags: [overview, start, stack]
 This repository brings up one Compose project on a GMKtec EVO-T1 (Intel Core Ultra 9
 285H, Arc 140T iGPU, 96 GB DDR5) and keeps it runnable by conversation, by dashboard, or
 by `bazelisk`. Everything is a Bazel target addressed as
-`bazelisk run //scripts:<stem> -- <args>`; `scripts/setup-host.sh` is the only script
-meant to run straight from a shell.
+`bazelisk run //scripts:<stem> -- <args>`. On the stack host, `scripts/setup-host.sh` is
+the one script meant to run straight from a shell. On a laptop, reopen the repo in the
+[contributor environment](contribute/devcontainer.md) or run
+`bazelisk run //scripts:test-in-image`.
 
 The box deliberately runs **two isolated copies** of the stack: a stable one you work in
 and a dev one you break. [Two stacks on one box](https://github.com/toxicoder/evo-t1-coder-stack#two-stacks-on-one-box)
@@ -46,8 +48,8 @@ what a `git pull` leaves behind.
   />
   <Card
     title="Contribute"
-    href="/contribute/building-with-bazel/"
-    description="The Bazel targets a change runs through before it reaches main."
+    href="/contribute/devcontainer/"
+    description="The golden image, the contributor container, and the Bazel gates a change runs through."
   />
 </Cards>
 

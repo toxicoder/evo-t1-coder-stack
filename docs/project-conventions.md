@@ -55,10 +55,13 @@ Tests are hermetic: docker, ssh, curl, git and the other external tools resolve 
 
 ## Ingress
 
-Bazelisk is the only ingress, with one exception: `scripts/setup-host.sh`. That script is a
-one-time host bootstrap — it installs Bazelisk, the shell/Starlark lint toolchain
+Bazelisk is the only ingress, with one exception: `scripts/setup-host.sh`. That script is
+the **stack host's** bootstrap — it installs Bazelisk, the shell/Starlark lint toolchain
 (shellcheck, shfmt, buildifier) and Terraform — so it has to run before Bazel exists, and
-stays the single documented `bash scripts/setup-host.sh`. `--repair` is the other half of
+stays the single documented `bash scripts/setup-host.sh`. On a laptop you do not run it:
+the contributor container or `bazelisk run //scripts:test-in-image` brings the same pinned
+toolchain in from `images/dev/` instead
+([contribute/devcontainer.md](contribute/devcontainer.md)). `--repair` is the other half of
 that exemption: leftover Docker bind-mounts in Bazel's runfiles tree make
 `bazelisk run //scripts:prod-stack` die creating `prod-stack.runfiles` (`Permission
 denied` on `homepage/assets/icons/evo-t1.svg`) before any stack script can run.
@@ -119,10 +122,17 @@ templates; a staged copy that lacks any one of them fails the push early by desi
   template name `devcontainer`), always backed by its own DinD sidecar. Its sibling is
   `workspace`: directory `templates/workspace`, template name `workspace`, the plain
   dev container with the optional `dind` parameter.
-- `devcontainer.json` — a file the *repository* carries, never one this repo ships.
-  `coder_devcontainer.repo` in `templates/devcontainer/main.tf` sets no `config_path`, so
-  `@devcontainers/cli` on the DinD sidecar searches the clone for
-  `.devcontainer/devcontainer.json` (or a `devcontainer.json` anywhere inside it).
+- `devcontainer.json` — a file the *application repository* carries, and the one thing the
+  `devcontainer` template builds. `coder_devcontainer.repo` in
+  `templates/devcontainer/main.tf` sets no `config_path`, so `@devcontainers/cli` on the
+  DinD sidecar searches the clone for `.devcontainer/devcontainer.json` (or a
+  `devcontainer.json` anywhere inside it). This repo ships a `.devcontainer/` of its own —
+  the **contributor** one for a laptop and CI, built from `images/dev/Dockerfile` — and it
+  is not that nested kind: `.devcontainer/contributor-env` alongside it makes
+  `probe_repo` answer a miss, so a Coder workspace of this repo stays on the `workspace`
+  template instead of building its own container inside its own DinD sidecar. Other
+  repositories keep carrying their own nested dev-container files, and those are still a
+  probe hit. See [contribute/devcontainer.md](contribute/devcontainer.md).
 - `additional_repos` — the `--additional-repos` flag on the new-workspace CLI, and the
   `coder_parameter` of the same name that receives its value in both templates
   (`mutable = true`, default empty): extra git URLs for the workspace's clone folders,

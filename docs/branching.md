@@ -24,9 +24,15 @@ request as the only way back into `main`.
 - `main` is the only long-lived branch. It stays green and deployable: `main` is what a
   machine is built from, so a merge to `main` is by definition deployable to the stack host.
 - Nothing is committed straight to `main`. Integration into `main` is by pull request, and a
-  PR is only mergeable once CI is green: `bazelisk test //:test-fast` and
-  `bazelisk test //:lint --test_tag_filters=manual`. `bash scripts/setup-host.sh` installs
-  the toolchain those two need; `bazelisk run //:validate` runs both of them locally, plus
+  PR is only mergeable once CI is green:
+  `bazelisk test //:test-fast` and `bazelisk test //:lint --test_tag_filters=manual`, both
+  executed inside the golden image (`images/dev/Dockerfile`) that CI builds with buildx and
+  docker-runs — the toolchain comes from that image, not from anything installed onto the
+  runner. Locally, run them the same way: inside the contributor container
+  ([contribute/devcontainer.md](contribute/devcontainer.md)) or with
+  `bazelisk run //scripts:test-in-image --`. `bash scripts/setup-host.sh` is the bootstrap
+  for the stack host, where the suites have to run on the host itself;
+  `bazelisk run //:validate` runs both of the checks plus
   `docker compose config -q` and the `.env.sample`/`.env.example` comparison — that is the
   pre-PR gate.
 
@@ -50,7 +56,9 @@ request as the only way back into `main`.
 
 - CI runs only for `push` to `main` and for `pull_request` targeting `main`.
 - Branch protection on `main` should require a pull request before pushing, and the two
-  Bazel checks before merging.
+  Bazel checks before merging — `//:test-fast` and `//:lint`, run inside the golden image
+  the workflow builds, so a green check means the suite passed on the Linux toolchain the
+  stack actually ships rather than on whatever the runner image carried that day.
 - Environments are where future protection rules and secrets go, per environment:
   `development`, `staging`, `production`. `production` stays restricted to `main` — or to
   tags — with required reviewers. See the header comment in `.github/workflows/ci.yml`.

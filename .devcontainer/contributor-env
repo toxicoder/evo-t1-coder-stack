@@ -1,0 +1,9 @@
+# Contributor environment sentinel (laptop / CI only).
+#
+# This repository's .devcontainer is the golden images/dev image plus
+# scripts/seed-dev-env.sh. It is not a nested Coder toolchain. new-workspace's
+# probe_repo treats a clone that tracks this file as a miss (return 3), so
+# Coder workspaces of this repo stay on the workspace template.
+#
+# Do not copy this file into other repositories. Those should keep their own
+# .devcontainer.json as a real nested-devcontainer signal.

@@ -112,6 +112,11 @@ clone_folder_of_url() {
 # tracked files, so a dev container can be recognised without a working copy.
 # <work> arrives as an argument rather than being read from the caller, so nothing
 # here depends on a global the entry script happens to own.
+# The sentinel .devcontainer/contributor-env marks a contributor env for the repo
+# itself (laptop / CI) rather than a nested Coder toolchain. It outranks every
+# other signal: a clone that tracks it is a miss even when it also tracks
+# .devcontainer/devcontainer.json, which is how this repo keeps its own Coder
+# workspaces on the workspace template.
 # Globals:
 #   None
 # Arguments:
@@ -123,7 +128,8 @@ clone_folder_of_url() {
 #   Nothing on stdout; the file listing stays inside the function
 # Returns:
 #   0 when a dev container is tracked, 1 when the clone fails, 2 when the listing
-#   fails, 3 when it lists no dev container
+#   fails, 3 when it lists no dev container or tracks only the contributor-env
+#   sentinel
 probe_repo() {
   # --filter=blob:none is deliberately absent: it is not honoured by older
   # servers, and a private Gitea on the LAN is where it would be tried.
@@ -135,6 +141,11 @@ probe_repo() {
   listing="$(git -C "$dst" ls-tree -r --name-only HEAD 2>>"${work}/probe.err")" || rc=$?
   if [ "$rc" != 0 ]; then
     return 2
+  fi
+  # Sentinel first: a repo that ships its own contributor .devcontainer is a miss
+  # even though the path test below would match it as a hit.
+  if printf '%s\n' "$listing" | grep -qE '(^|/)\.devcontainer/contributor-env$'; then
+    return 3
   fi
   if printf '%s\n' "$listing" | grep -qE \
     '(^|/)\.devcontainer/|(^|/)\.github/devcontainers/|(^|/)devcontainer\.(json|yml)$'; then

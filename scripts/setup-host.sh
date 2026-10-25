@@ -2,11 +2,18 @@
 #
 # ## setup-host.sh — one-time host bootstrap: Bazelisk + the lint toolchain.
 #
-# The only script in this repo meant to run straight from a shell, and it has to:
-# Bazel is the ingress for everything else, and a fresh host has no Bazel until this
-# runs. CI does the same job on a clean runner through
-# .github/scripts/install-lint-tools.sh, which is apt-and-cURL shaped and runs with
-# sudo — this is the laptop and stack-host version of that step.
+# The only script in this repo meant to run straight from a shell, and only on
+# the stack host: Bazel is the ingress for everything else, and a fresh host has
+# no Bazel until this runs. A laptop uses the contributor dev container (or
+# bazelisk run //scripts:test-in-image) instead. CI docker-runs the same golden
+# image (images/dev/Dockerfile) and does not call this script.
+#
+# On Linux the releases this fetches — bazelisk, shfmt, buildifier, terraform — come
+# from images/dev/tool-versions.env through scripts/lib/tool_pins.sh, the same pins
+# the golden dev image builds from, so bumping a pin there moves the image, CI and a
+# workstation together and cannot leave this script on an older release. Terraform's
+# asset is a zip; this extracts the terraform member rather than installing the
+# archive. Darwin keeps the convenience path: unpinned Homebrew formulae.
 #
 # What it probes for is the five binaries the Bazel targets shell out to:
 #
@@ -57,6 +64,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SELF_DIR}/lib/common.sh"
 # shellcheck source=lib/host_state.sh disable=SC1091
 source "${SELF_DIR}/lib/host_state.sh"
+# shellcheck source=lib/tool_pins.sh disable=SC1091
+source "${SELF_DIR}/lib/tool_pins.sh"
 
 REQUIRED_TOOLS=(bazelisk shellcheck shfmt buildifier terraform)
 
@@ -182,8 +191,66 @@ if [ "${#missing[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# Homebrew carries all five as core formulae, so the macOS branch names no version:
-# brew picks the same shfmt and buildifier the CI action downloads by hand.
+# @function setup_host_tool_url
+# Print the pinned Linux release URL for one host tool. The version comes from
+# images/dev/tool-versions.env, never from this script.
+# Globals:
+#   None
+# Arguments:
+#   $1 - path to the pin file (from tool_pins_file)
+#   $2 - tool to fetch: bazelisk, shfmt, buildifier, or terraform
+#   $3 - goarch from tool_pins_goarch (amd64 or arm64)
+# Outputs:
+#   One HTTPS URL on stdout; terraform's ends in .zip and needs a member extract
+# Returns:
+#   0 when the tool and its pin resolve; 1 when they do not (unknown tool,
+#   unknown arch, or a KEY missing from the pin file)
+setup_host_tool_url() {
+  tool_pins_linux_url "${1:-}" "${2:-}" "${3:-}"
+}
+
+# @function setup_host_extract_member
+# Write one member of a release zip to a path, so the archive itself is never
+# what gets installed as the tool.
+# Globals:
+#   None
+# Arguments:
+#   $1 - path to the downloaded zip
+#   $2 - member name inside the zip (terraform)
+#   $3 - path to write the extracted member to
+# Outputs:
+#   The extracted file at $3; nothing on stdout
+# Returns:
+#   0 when the member was extracted; 1 when no unzip/bsdtar is available or the
+#   zip or member is missing
+setup_host_extract_member() {
+  local zip="${1:-}" member="${2:-}" dest="${3:-}" part=""
+  [ -s "${zip}" ] || return 1
+  [ -n "${member}" ] && [ -n "${dest}" ] || return 1
+  part="${dest}.extracted"
+  if command -v unzip >/dev/null 2>&1; then
+    if ! unzip -p "${zip}" "${member}" >"${part}" 2>/dev/null; then
+      rm -f "${part}"
+      return 1
+    fi
+  elif command -v bsdtar >/dev/null 2>&1; then
+    if ! bsdtar -xOf "${zip}" "${member}" >"${part}" 2>/dev/null; then
+      rm -f "${part}"
+      return 1
+    fi
+  else
+    return 1
+  fi
+  if [ ! -s "${part}" ]; then
+    rm -f "${part}"
+    return 1
+  fi
+  mv "${part}" "${dest}"
+}
+
+# Homebrew carries all five as core formulae, so the macOS branch stays the
+# convenience path: it names no version and pins nothing. The pinned Linux path
+# below is what tracks images/dev/tool-versions.env.
 if command -v brew >/dev/null 2>&1; then
   echo "installing with Homebrew (brew install) ..."
   for tool in "${missing[@]}"; do
@@ -194,10 +261,11 @@ if command -v brew >/dev/null 2>&1; then
     fi
   done
 elif command -v apt-get >/dev/null 2>&1; then
-  # The Linux branch mirrors CI's installer: shellcheck from apt, shfmt and
-  # buildifier from the same two GitHub releases, bazelisk from its own release.
-  # Terraform is the one this will not guess at: its apt repository has to be
-  # added first, so the operator is told rather than handed a wrong URL.
+  # The Linux branch mirrors CI's installer: shellcheck from apt, and the other
+  # four from the releases the golden image builds — bazelisk, shfmt and
+  # buildifier are raw binaries, terraform arrives as a zip whose terraform
+  # member is what gets installed. Every URL comes from the pin file; nothing
+  # here names a version.
   echo "installing with apt-get and the upstream release binaries ..."
   apt=(apt-get)
   if [ -n "${sudo_cmd}" ]; then
@@ -209,50 +277,50 @@ elif command -v apt-get >/dev/null 2>&1; then
       echo "  apt-get install shellcheck did not work — install it by hand" >&2
   fi
   bin_dir="/usr/local/bin"
-  arch="$(uname -m)"
-  case "${arch}" in
-    x86_64 | amd64) goarch=amd64 ;;
-    aarch64 | arm64) goarch=arm64 ;;
-    *) goarch="" ;;
-  esac
+  pins="$(tool_pins_file "${SETUP_ROOT}")"
+  machine="$(uname -m)"
+  goarch="$(tool_pins_goarch "${machine}")" || goarch=""
   tmp="$(mktemp -d 2>/dev/null || true)"
   if [ -z "${tmp}" ]; then
     tmp=""
   fi
   if [ -n "${tmp}" ] && [ -n "${goarch}" ] && command -v curl >/dev/null 2>&1; then
     for tool in "${missing[@]}"; do
-      case "${tool}" in
-        bazelisk)
-          url="https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-${goarch}"
-          ;;
-        shfmt)
-          url="https://github.com/mvdan/sh/releases/download/v3.11.0/shfmt_v3.11.0_linux_${goarch}"
-          ;;
-        buildifier)
-          url="https://github.com/bazelbuild/buildtools/releases/download/v8.2.0/buildifier-linux-${goarch}"
-          ;;
-        *)
-          echo "  ${tool}: nothing to fetch here — Terraform needs the HashiCorp apt" \
-            "repository (or https://releases.hashicorp.com/terraform), then re-run this." >&2
-          continue
-          ;;
-      esac
+      # apt owns shellcheck above; the four pinned releases are the fetch list.
+      if [ "${tool}" = "shellcheck" ]; then
+        continue
+      fi
+      if ! url="$(setup_host_tool_url "${pins}" "${tool}" "${goarch}")"; then
+        echo "  ${tool}: no pinned Linux release in ${pins##*/} — install it by hand" >&2
+        continue
+      fi
       echo "  fetching ${tool} from ${url}"
-      if curl -fsSL "${url}" -o "${tmp}/${tool}" && [ -s "${tmp}/${tool}" ]; then
-        chmod 755 "${tmp}/${tool}"
-        if [ -n "${sudo_cmd}" ]; then
-          sudo install -m 0755 "${tmp}/${tool}" "${bin_dir}/${tool}" ||
-            echo "  ${tool}: fetched, but ${bin_dir} is not writable even with sudo" >&2
-        else
-          install -m 0755 "${tmp}/${tool}" "${bin_dir}/${tool}" ||
-            echo "  ${tool}: fetched, but ${bin_dir} is not writable here" >&2
-        fi
-      else
+      if ! curl -fsSL "${url}" -o "${tmp}/${tool}" || [ ! -s "${tmp}/${tool}" ]; then
         echo "  ${tool}: nothing was fetched (no network, or no curl)" >&2
+        continue
+      fi
+      install_src="${tmp}/${tool}"
+      if [ "${tool}" = "terraform" ]; then
+        # The release is a zip: terraform is one member of it, so the archive
+        # must never be what is installed under the tool's name.
+        if ! setup_host_extract_member "${tmp}/${tool}" terraform "${tmp}/${tool}.bin"; then
+          echo "  terraform: the zip was fetched but its member could not be unpacked —" \
+            "install unzip (or unpack the release by hand) and re-run this" >&2
+          continue
+        fi
+        install_src="${tmp}/${tool}.bin"
+      fi
+      chmod 755 "${install_src}"
+      if [ -n "${sudo_cmd}" ]; then
+        sudo install -m 0755 "${install_src}" "${bin_dir}/${tool}" ||
+          echo "  ${tool}: fetched, but ${bin_dir} is not writable even with sudo" >&2
+      else
+        install -m 0755 "${install_src}" "${bin_dir}/${tool}" ||
+          echo "  ${tool}: fetched, but ${bin_dir} is not writable here" >&2
       fi
     done
   else
-    echo "  no curl, or an unsupported arch (${arch}): install the tools above by hand" >&2
+    echo "  no curl, or an unsupported arch (${machine}): install the tools above by hand" >&2
   fi
   if [ -n "${tmp}" ]; then
     rm -rf "${tmp}"

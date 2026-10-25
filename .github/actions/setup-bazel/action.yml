@@ -3,24 +3,26 @@ description: Install Bazelisk and restore disk/repository caches for CI jobs.
 
 inputs:
   install-lint-tools:
-    description: Install shellcheck, shfmt, and buildifier
+    description: Install shellcheck, shfmt, buildifier (and terraform when missing)
     required: false
     default: "true"
 
 runs:
   using: composite
   steps:
+    # Bazelisk comes from images/dev/tool-versions.env (BAZELISK_VERSION) through
+    # scripts/lib/tool_pins.sh, so the runner gets the release the golden image builds.
     - name: Install Bazelisk
       shell: bash
       run: |
         set -euo pipefail
-        arch="$(uname -m)"
-        case "$arch" in
-          x86_64|amd64) barch=amd64 ;;
-          aarch64|arm64) barch=arm64 ;;
-          *) echo "unsupported arch: $arch" >&2; exit 1 ;;
-        esac
-        curl -fsSL "https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-linux-${barch}" \
+        source "${GITHUB_WORKSPACE}/scripts/lib/tool_pins.sh"
+        pins="$(tool_pins_file "${GITHUB_WORKSPACE}")"
+        arch="$(tool_pins_goarch)" || {
+          echo "unsupported arch: $(uname -m)" >&2
+          exit 1
+        }
+        curl -fsSL "$(tool_pins_linux_url "${pins}" bazelisk "${arch}")" \
           -o "${RUNNER_TEMP}/bazelisk"
         chmod +x "${RUNNER_TEMP}/bazelisk"
         mkdir -p "${HOME}/bin"

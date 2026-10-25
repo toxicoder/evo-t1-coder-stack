@@ -35,6 +35,7 @@ _BATS_COMMON = [
     "//scripts:doc_sources",
     "//docs:manage-docs.sh",
     "//:stack_data",
+    "//:ci_workflows",
 ] + glob(
     [
         "bats/tool_stubs/**",
