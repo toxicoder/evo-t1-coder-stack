@@ -11,9 +11,9 @@
 # back order notes_materialize runs in. Also pins the excludes it writes — a
 # repo-root scratch file must never be committable, and a global excludesFile
 # the developer owns is only ever appended to, expanded and absolute or not —
-# and the wiring both templates need: main.tf's file() feed, the atomic write
-# that publishes the library into ~/.grok, and running the stage as the clone
-# owner whenever the clone stage does the same.
+# and the wiring both templates need: main.tf's file() feed, the atomic and
+# clone-user-readable write that publishes the library into ~/.grok, and running
+# the stage as the clone owner whenever the clone stage does the same.
 #
 # Usage: bazelisk test //tests:bats_workspace_notes_test   (from any cwd)
 #
@@ -153,18 +153,18 @@ canon_of() {
 }
 
 @test "notes_materialize: neither copy existing seeds the stub header" {
-  local clone
+  local clone want
   clone="$(make_clone "https://github.com/acme/stub.git")"
   notes_materialize "${clone}"
   [ -f "${clone}/notes.md" ]
   [ -f "$(canon_of "github.com/acme/stub")" ]
+  # What the stub has to get right is where the copy that survives a recreate
+  # lives, and it has to be spelled as a real path: the workspace container's
+  # ~/.grok is not a directory a nested dev container can open, so a ~-prefixed
+  # one would send the reader somewhere that does not exist.
+  want="$(notes_canonical_path "github.com/acme/stub")"
   run cat "${clone}/notes.md"
-  [[ ${lines[0]} == *"Not committed"* ]]
-  [[ ${lines[0]} == *"/.grok/notes/github.com/acme/stub/notes.md"* ]]
-  [[ ${lines[0]} == *"survives workspace recreate"* ]]
-  # The path is the workspace container's, so it must be named as the shared
-  # profile volume's entry and not as a file the reader can open in place.
-  [[ ${lines[0]} == *"profile volume"* ]]
+  [[ ${lines[0]} == *"${want}"* ]]
   [[ ${lines[0]} != "~/.grok/"* ]]
 }
 
@@ -242,6 +242,11 @@ canon_of() {
   grep -qxF '*.swp' "${mine}"
   grep -qxF 'notes.md' "${mine}"
   grep -qxF '.scratch-notes.md' "${mine}"
+  # The stack's own exclude file exists only to be the global one. With the
+  # developer's file named, nothing would ever read it, so it stays unwritten —
+  # while the directory under it still holds the canonical notes copies.
+  [ ! -e "${HOME}/.grok/notes/exclude" ]
+  [ -d "${HOME}/.grok/notes" ]
 }
 
 @test "notes_ensure_excludes: an excludesFile with no final newline is not fused" {
@@ -292,12 +297,36 @@ canon_of() {
   mkdir -p "${workdir}"
   (cd "${workdir}" && notes_ensure_excludes "${clone}") 2>"${BATS_TEST_TMPDIR}/err.txt"
   # git resolves that value against the cwd, so appending here would drop a file
-  # beside a clone instead of where it applies; only the stack exclude gets them.
-  grep -qxF 'notes.md' "${HOME}/.grok/notes/exclude"
+  # beside a clone instead of where it applies. The clone's own exclude still
+  # covers both names, and the file git would never read stays unwritten.
+  grep -qxF 'notes.md' "${clone}/.git/info/exclude"
+  grep -qxF '.scratch-notes.md' "${clone}/.git/info/exclude"
+  [ ! -e "${HOME}/.grok/notes/exclude" ]
   [ ! -e "${workdir}/my-ignores" ]
   [ ! -e "${clone}/my-ignores" ]
   grep -qF 'not absolute' "${BATS_TEST_TMPDIR}/err.txt"
   [ "$(git config --global --get core.excludesFile)" = 'my-ignores' ]
+}
+
+@test "notes_ensure_excludes: a core.excludesFile that names a directory is refused" {
+  local clone workdir
+  clone="$(make_clone "https://github.com/acme/direxclude.git")"
+  # '~' expands to HOME, a directory: being absolute is not enough, and appending
+  # into a directory can only fail — twice per start, once per name.
+  git config --global core.excludesFile '~'
+  workdir="$(make_scratch)/cwd"
+  mkdir -p "${workdir}"
+  (cd "${workdir}" && notes_ensure_excludes "${clone}") 2>"${BATS_TEST_TMPDIR}/err.txt"
+  grep -qF 'is a directory' "${BATS_TEST_TMPDIR}/err.txt"
+  # Nothing was invented inside the named directory, nothing beside the clone,
+  # and the value the developer set survives untouched.
+  [ ! -e "${HOME}/notes.md" ]
+  [ ! -e "${HOME}/.scratch-notes.md" ]
+  [ ! -e "${HOME}/.grok/notes/exclude" ]
+  [ ! -e "${workdir}/~" ]
+  [ ! -e "${clone}/~" ]
+  grep -qxF 'notes.md' "${clone}/.git/info/exclude"
+  [ "$(git config --global --get core.excludesFile)" = '~' ]
 }
 
 @test "a clone ends up with nothing untracked to commit" {
@@ -335,41 +364,40 @@ canon_of() {
   [ "${status}" -eq 0 ]
 }
 
-@test "startup wiring: both twins write, source and call the library" {
-  local tpl
+@test "startup wiring: both twins publish, source and run the library as the clone owner" {
+  local tpl pat q="'"
   for tpl in "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" \
     "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"; do
     [[ -f "${tpl}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
-    run grep -F '${notes_setup}' "${tpl}"
-    [ "${status}" -eq 0 ] || { printf 'FAIL: %s lost the notes_setup interpolation\n' "${tpl}" >&2; return 1; }
-    # Published by mv, never truncated in place: a sibling workspace booting on
-    # the same shared volume must never source a half-written library.
-    run grep -F 'if cat >"$notes_lib_tmp" <<'"'"'NOTES_SETUP_EOF'"'"'' "${tpl}"
-    [ "${status}" -eq 0 ]
-    run grep -F 'mv -f "$notes_lib_tmp" "$notes_lib"' "${tpl}"
-    [ "${status}" -eq 0 ]
-    run grep -F '. "$notes_lib" 2>/dev/null || true' "${tpl}"
-    [ "${status}" -eq 0 ]
+    # Properties, not source lines: the payload has to reach the script through
+    # the interpolation, be published through a temp file so a sibling boot never
+    # sources a half-written library, be readable by the clone user, be sourced,
+    # and then run under the runner that owns the workspace home.
+    for pat in '${notes_setup}' 'mktemp ' 'mv -f ' '. "$notes_lib"' \
+      '$clone_runner env HOME=' '$NOTES_SETUP_LIB' 'notes_materialize '; do
+      if ! grep -qF -- "${pat}" "${tpl}"; then
+        printf 'FAIL: %s lost the wiring for "%s"\n' "${tpl}" "${pat}" >&2
+        return 1
+      fi
+    done
+    # The heredoc has to stay quoted, or the shell expands the library's own
+    # $1 and $HOME on the way in.
+    if ! grep -qF -- "<<${q}NOTES_SETUP_EOF${q}" "${tpl}"; then
+      printf 'FAIL: %s feeds the library through an unquoted heredoc\n' "${tpl}" >&2
+      return 1
+    fi
+    # The chmod belongs to the publish step, between the rename in and the temp
+    # cleanup: mv keeps mktemp's 0600, and the clone user has to read the library
+    # before the clone stage's chown ever runs.
+    if ! sed -n '/mv -f "$notes_lib_tmp"/,/rm -f "$notes_lib_tmp"/p' "${tpl}" |
+      grep -q 'chmod 0644 "$notes_lib"'; then
+      printf 'FAIL: %s publishes the library without making it readable\n' "${tpl}" >&2
+      return 1
+    fi
     # Every clone path gets the call: primary and extras, on both the already
     # cloned branch and the just-cloned one.
     [ "$(grep -c 'run_notes "\$target"' "${tpl}")" -eq 2 ]
     [ "$(grep -c 'run_notes "\$extra_target"' "${tpl}")" -eq 2 ]
-  done
-}
-
-@test "startup wiring: the notes stage follows the clone stage's identity rule" {
-  local tpl
-  for tpl in "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" \
-    "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"; do
-    [[ -f "${tpl}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
-    # Both branches of run_notes call the library, and the privileged one drops
-    # to the clone owner the same way run_clone does — otherwise a root agent
-    # leaves a root-owned ~/.gitconfig and notes.md behind.
-    [ "$(grep -c 'notes_materialize "\$1" "\$2"' "${tpl}")" -eq 2 ]
-    run grep -F '$clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c' "${tpl}"
-    [ "${status}" -eq 0 ] || { printf 'FAIL: %s runs the notes stage as the agent, not the clone owner\n' "${tpl}" >&2; return 1; }
-    run grep -F '. "$NOTES_SETUP_LIB" 2>/dev/null || exit 0' "${tpl}"
-    [ "${status}" -eq 0 ]
   done
 }
 

@@ -730,42 +730,42 @@ source_libs() {
   [ -z "$(stub_log coder)" ]
 }
 
-@test "template-push: a half-filled common dir names only the payload that is gone" {
+@test "template-push: a common dir missing one payload names only that payload" {
   source_libs
-  # The guard lists the payloads, not the directory: with the seed text and the
-  # notes library there and the icon gone, only the icon may be named - and the
-  # run must still refuse before the CLI runs.
-  mkdir -p "${BATS_TEST_TMPDIR}/tpl-nosvg" "${BATS_TEST_TMPDIR}/common"
-  printf '%s\n' 'resource "coder_script" "z" {}' > "${BATS_TEST_TMPDIR}/tpl-nosvg/main.tf"
-  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
-  printf '%s\n' '# notes library' > "${BATS_TEST_TMPDIR}/common/notes-setup.sh"
-  export CODER_CONTAINER=stack-coder-1
-  run --separate-stderr template_push_one tpl3 "${BATS_TEST_TMPDIR}/tpl-nosvg"
-  [ "${status}" -eq 1 ]
-  [[ ${stderr} == *"common/vscode-alt.svg is missing"* ]]
-  [[ ${stderr} != *"GROK_BUILD_AGENTS.md is missing"* ]]
-  [[ ${stderr} != *"notes-setup.sh is missing"* ]]
-  [ -z "$(stub_log docker)" ]
-  [ -z "$(stub_log coder)" ]
-}
-
-@test "template-push: a common dir missing only notes-setup.sh is refused" {
-  source_libs
-  # The notes library reaches the workspace through main.tf's notes_setup file()
-  # read, so a copy that lost it would plan on the server and fail there. Only
-  # the file that is gone may be named.
-  mkdir -p "${BATS_TEST_TMPDIR}/tpl-nonotes" "${BATS_TEST_TMPDIR}/common"
-  printf '%s\n' 'resource "coder_script" "n" {}' > "${BATS_TEST_TMPDIR}/tpl-nonotes/main.tf"
-  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
-  printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
-  export CODER_CONTAINER=stack-coder-1
-  run --separate-stderr template_push_one tpl5 "${BATS_TEST_TMPDIR}/tpl-nonotes"
-  [ "${status}" -eq 1 ]
-  [[ ${stderr} == *"common/notes-setup.sh is missing"* ]]
-  [[ ${stderr} != *"vscode-alt.svg is missing"* ]]
-  [[ ${stderr} != *"GROK_BUILD_AGENTS.md is missing"* ]]
-  [ -z "$(stub_log docker)" ]
-  [ -z "$(stub_log coder)" ]
+  # The guard lists the payloads, not the directory. For each of the three, the
+  # two that are present must stay unnamed and the one that is gone must be
+  # named - and every run must still refuse before the CLI runs.
+  local payloads=("GROK_BUILD_AGENTS.md" "vscode-alt.svg" "notes-setup.sh")
+  local gone keep i=0
+  for gone in "${payloads[@]}"; do
+    rm -rf "${BATS_TEST_TMPDIR}/tpl-one" "${BATS_TEST_TMPDIR}/common"
+    mkdir -p "${BATS_TEST_TMPDIR}/tpl-one" "${BATS_TEST_TMPDIR}/common"
+    printf '%s\n' 'resource "coder_script" "z" {}' >"${BATS_TEST_TMPDIR}/tpl-one/main.tf"
+    for keep in "${payloads[@]}"; do
+      if [ "${keep}" != "${gone}" ]; then
+        printf '%s\n' "payload ${keep}" >"${BATS_TEST_TMPDIR}/common/${keep}"
+      fi
+    done
+    export CODER_CONTAINER=stack-coder-1
+    run --separate-stderr template_push_one "tpl-fold-$i" "${BATS_TEST_TMPDIR}/tpl-one"
+    i=$((i + 1))
+    if [ "${status}" -ne 1 ]; then
+      printf 'FAIL: a common dir without %s was pushed anyway\n' "${gone}" >&2
+      return 1
+    fi
+    if [[ ${stderr} != *"common/${gone} is missing"* ]]; then
+      printf 'FAIL: %s went unnamed; stderr:\n%s\n' "${gone}" "${stderr}" >&2
+      return 1
+    fi
+    for keep in "${payloads[@]}"; do
+      if [ "${keep}" != "${gone}" ] && [[ ${stderr} == *"common/${keep} is missing"* ]]; then
+        printf 'FAIL: %s named a payload that was present\n' "${gone}" >&2
+        return 1
+      fi
+    done
+    [ -z "$(stub_log docker)" ]
+    [ -z "$(stub_log coder)" ]
+  done
 }
 
 @test "template-push: template_verify_active reads the ACTIVE row and fails without one" {

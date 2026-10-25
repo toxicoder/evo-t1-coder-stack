@@ -25,17 +25,23 @@
 #     plus the clone's own .git/info/exclude) are the belt; this repo's .gitignore
 #     is the braces for clones of this repo itself.
 #   - A file the developer owns is never rewritten, only appended to, and only
-#     when core.excludesFile names an absolute path: git expands a leading ~ when
+#     when core.excludesFile names an absolute file: git expands a leading ~ when
 #     it reads that value and this shell does not, so an unexpanded path would
-#     create a stray "./~" instead of touching the real file.
+#     create a stray "./~" instead of touching the real file, and a value that
+#     names a directory has no file to append to at all.
 #   - A key is only ever used as a path suffix, so dot segments are refused
 #     rather than allowed to walk out of ~/.grok/notes/.
 #
 # Usage (from the rendered startup script, which inlines this file from
-# templates/common/ through main.tf's notes_setup key):
+# templates/common/ through main.tf's notes_setup key). The script sources the copy
+# it just published and then reaches this library only through its run_notes
+# wrapper, which is what calls notes_materialize for one clone:
 #   # shellcheck disable=SC1090
 #   . "$HOME/.grok/notes-setup.sh" 2>/dev/null || true
-#   notes_materialize "$clone_dir" "$clone_url" || true
+#   run_notes "$clone_dir" "$clone_url"
+# run_notes runs it as the uid that owns the workspace home, because the git
+# --global writes and the live-file write have to be made by that user: as the
+# agent's uid they rename a root-owned ~/.gitconfig over the workspace user's.
 
 # notes_repo_key <url> — normalize a git remote or clone URL to host/owner/repo.
 # @function notes_repo_key
@@ -161,11 +167,13 @@ notes_append_once() {
   # A hand-edited ignore file often has no final newline, and appending into
   # that would fuse the developer's last pattern with ours.
   if [ -s "${file}" ] && [ -n "$(tail -c 1 "${file}" 2>/dev/null)" ]; then
-    printf '\n' >>"${file}" 2>/dev/null || true
+    # Braces, not a redirect on the command: a failed > is reported by the shell
+    # itself, on the stderr that redirect has not been installed on yet.
+    { printf '\n' >>"${file}"; } 2>/dev/null || true
   fi
   for line in "$@"; do
     if [ -n "${line}" ] && ! grep -qxF -- "${line}" "${file}" 2>/dev/null; then
-      if ! printf '%s\n' "${line}" >>"${file}" 2>/dev/null; then
+      if ! { printf '%s\n' "${line}" >>"${file}"; } 2>/dev/null; then
         printf 'notes: could not add %s to %s\n' "${line}" "${file}" >&2
       fi
     fi
@@ -189,8 +197,10 @@ notes_ensure_excludes() {
   local root="${1:-}" home="${HOME:-}" stack_exclude="" user_exclude=""
   if [ -n "${home}" ]; then
     stack_exclude="${home}/.grok/notes/exclude"
+    # The canonical copies of every repo's notes live under here, so the directory
+    # is made whatever config says; the exclude file inside it is only written
+    # when git is actually going to read it.
     mkdir -p "${home}/.grok/notes" 2>/dev/null || true
-    notes_append_once "${stack_exclude}" notes.md .scratch-notes.md
     # Never clobber a file the developer owns: when core.excludesFile already
     # points somewhere, that file gets the two lines instead of being replaced.
     user_exclude="$(git config --global --get core.excludesFile 2>/dev/null || true)"
@@ -202,15 +212,22 @@ notes_ensure_excludes() {
       \~/*) user_exclude="${home}/${user_exclude#\~/}" ;;
     esac
     if [ -z "${user_exclude}" ]; then
+      # Nothing was named, so the file set here is the one git will consult.
+      notes_append_once "${stack_exclude}" notes.md .scratch-notes.md
       git config --global core.excludesFile "${stack_exclude}" 2>/dev/null || true
-    elif [[ ${user_exclude} == /* ]]; then
-      mkdir -p "$(dirname "${user_exclude}")" 2>/dev/null || true
-      notes_append_once "${user_exclude}" notes.md .scratch-notes.md
-    else
+    elif [[ ${user_exclude} != /* ]]; then
       # A relative value resolves against whatever directory git runs in, so
       # appending here would write next to a clone rather than where it applies.
-      printf 'notes: core.excludesFile=%s is not absolute — only %s was updated\n' \
-        "${user_exclude}" "${stack_exclude}" >&2
+      printf 'notes: core.excludesFile=%s is not absolute — only .git/info/exclude was updated\n' \
+        "${user_exclude}" >&2
+    elif [ -d "${user_exclude}" ]; then
+      # An absolute path is not enough: a directory has no lines to append to,
+      # and a doomed write there would say so twice per start.
+      printf 'notes: core.excludesFile=%s is a directory — only .git/info/exclude was updated\n' \
+        "${user_exclude}" >&2
+    else
+      mkdir -p "$(dirname "${user_exclude}")" 2>/dev/null || true
+      notes_append_once "${user_exclude}" notes.md .scratch-notes.md
     fi
   fi
   if [ -n "${root}" ] && [ -d "${root}/.git" ]; then

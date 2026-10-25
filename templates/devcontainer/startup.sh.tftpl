@@ -394,6 +394,10 @@ ${notes_setup}
 NOTES_SETUP_EOF
 then
   mv -f "$notes_lib_tmp" "$notes_lib" 2>/dev/null || true
+  # mktemp creates 0600 and mv keeps that mode, which would leave the library
+  # unreadable to the clone user until the clone stage's chown. It is stack-owned
+  # and holds no secret, so publish it 0644 in the same step.
+  chmod 0644 "$notes_lib" 2>/dev/null || true
 fi
 rm -f "$notes_lib_tmp" 2>/dev/null || true
 # shellcheck disable=SC1090
