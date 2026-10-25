@@ -43,6 +43,13 @@ session_summary = "agent"
 image_description = "agent"
 web_search = "agent"
 
+# Thinking level a new session starts on. The Spark lane (Qwen3.8-Flash-Next)
+# answers low / medium / xhigh — there is no `high` on this runtime, which is
+# why the [model."agent"] block below advertises exactly those three. A request
+# can still pick another level; the agent-low / agent-medium / agent-xhigh
+# aliases below pin one in LiteLLM instead, for callers that cannot send one.
+default_reasoning_effort = "xhigh"
+
 # Global streaming-idle deadline for every model that does not pin its own
 # value below: the compaction summary, the web_search digest and the image
 # description all ride this lane, and on a busy Spark a large compaction
@@ -69,6 +76,86 @@ model = "agent"
 base_url = "${litellm_url}"
 name = "Agent (DGX Spark vLLM)"
 description = "Primary agent model; emits native tool_calls"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+# The three levels this runtime actually answers. `high` is deliberately
+# absent: Qwen3.8-Flash-Next does not support it, and advertising it puts a
+# level in the picker that the Spark lane fails or silently downgrades.
+[[model."agent".reasoning_efforts]]
+id = "low"
+value = "low"
+label = "Low"
+description = "Fastest responses. Best for simple tasks."
+default = false
+
+[[model."agent".reasoning_efforts]]
+id = "medium"
+value = "medium"
+label = "Medium"
+description = "Strong quality with a faster turnaround."
+default = false
+
+[[model."agent".reasoning_efforts]]
+id = "xhigh"
+value = "xhigh"
+label = "Extra High"
+description = "Maximum reasoning for the hardest tasks."
+default = true
+
+# Same Spark lane with the thinking level baked into the LiteLLM alias instead
+# of carried per request: for callers that have no reasoning-effort field at
+# all (the editor extensions, a curl in a script). Everything else — tool
+# calling, timeouts, the session-affinity header inherited from [models] —
+# matches [model."agent"] above. supports_reasoning_effort stays false here on
+# purpose: the proxy decides the level, so the client has nothing to override.
+[model."agent-low"]
+model = "agent-low"
+base_url = "${litellm_url}"
+name = "Agent (DGX Spark vLLM, thinking low)"
+description = "Spark agent lane; thinking baked to low in LiteLLM"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+[model."agent-medium"]
+model = "agent-medium"
+base_url = "${litellm_url}"
+name = "Agent (DGX Spark vLLM, thinking medium)"
+description = "Spark agent lane; thinking baked to medium in LiteLLM"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1200
+
+[model."agent-xhigh"]
+model = "agent-xhigh"
+base_url = "${litellm_url}"
+name = "Agent (DGX Spark vLLM, thinking extra high)"
+description = "Spark agent lane; thinking baked to xhigh in LiteLLM"
 api_backend = "chat_completions"
 env_key = "LITELLM_API_KEY"
 context_window = 262144

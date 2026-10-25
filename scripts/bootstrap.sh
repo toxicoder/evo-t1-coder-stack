@@ -557,8 +557,9 @@ fi
 # has a chat model config, and its subagent lanes (general/explore/compaction/
 # title_generation) default to nothing once pinned lanes are wanted.
 # scripts/coder-agents.sh writes all of that through the server API — the
-# `litellm` provider, the `agent` + `chat` model configs, the four lane pins, and
-# the system-prompt addendum that teaches delegation to the Grok Build CLI. It
+# `litellm` provider, the `agent` + thinking + `chat` model configs, the four
+# lane pins, and the system-prompt addendum that teaches delegation to the Grok
+# Build CLI. It
 # mints its own short-lived admin token from Postgres (like push-template.sh),
 # skips cleanly while the stack is down or nobody has registered yet, and reuses
 # what is already wired, so this step is safe to re-run beside the push above.
@@ -626,7 +627,7 @@ litellm_reach_url="${public_litellm_url:-http://${stack_lan_host:-<host>}:${lite
 echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
 echo "  4. bazelisk run //scripts:push-template   # re-run after step 3 if the push above skipped (image=${dev_image})"
 echo "  5. bazelisk run //scripts:pull-models   # pulls the OLLAMA_MODELS listed in .env"
-echo "  6. bazelisk run //scripts:coder-agents -- --apply   # wires the control-plane chat agent: LiteLLM provider + model configs + lane pins + system prompt (skipped on a cold box; re-run it after steps 2-3)"
+echo "  6. bazelisk run //scripts:coder-agents -- --apply   # wires the control-plane chat agent (LiteLLM provider + thinking models + pins + system prompt). prod-stack/dev-stack up also start this with --wait after compose is up, so registering the first account is enough; re-run --apply if you skipped that."
 echo '  7. bazelisk run //scripts:spark-verify -- --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep)'
 echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 echo "  9. Dashboard: ${dash_reach_url}/ (login password: the HOMEPAGE_AUTH_PASSWORD line in .env, never printed here — bazelisk run //scripts:dashboard-password rotates it)"

@@ -19,9 +19,10 @@
 # Compose bind-mounts this file read-only; the healthcheck authenticates over
 # TCP with PGPASSWORD so Coder is not started until the role matches .env.
 #
-# The stack runners also source this file for restart_coder_if_pg_auth_failed:
-# an already-running coder container that was crash-looping on the old
-# password has to be bounced once the role has caught up.
+# The stack runners also source this file for restart_coder_if_pg_auth_failed
+# (bounce coder after a password rotation) and start_coder_agents_wait (the
+# Coder Agents seeder after compose up, so the first registered owner still
+# gets providers without an Admin UI pass).
 #
 # Usage (compose, as the db entrypoint; command: ["postgres"] is required
 # because a compose entrypoint override clears the image CMD):
@@ -160,6 +161,34 @@ restart_coder_if_pg_auth_failed() {
     log "coder: postgres role password now matches .env; restarting coder so it reconnects"
   fi
   run_compose restart coder
+}
+
+# @function start_coder_agents_wait
+# Background scripts/coder-agents.sh --apply --wait so first-user-later still
+# gets the LiteLLM provider and model configs. Missing seeder (scratch tests
+# that copy only docker-compose.yml) is a no-op. SKIP_CODER_AGENTS skips it.
+# Globals:
+#   SKIP_CODER_AGENTS, CODER_AGENTS_WAIT_SECS
+# Arguments:
+#   $1 - repo root that holds scripts/coder-agents.sh
+# Outputs:
+#   One note line when the seeder starts or is skipped by SKIP_CODER_AGENTS
+# Returns:
+#   0
+start_coder_agents_wait() {
+  local seeder="$1/scripts/coder-agents.sh"
+  local wait_secs
+  if [ -n "${SKIP_CODER_AGENTS:-}" ]; then
+    printf 'note: Coder Agents wiring skipped (SKIP_CODER_AGENTS is set)\n'
+    return 0
+  fi
+  if [ ! -f "${seeder}" ]; then
+    return 0
+  fi
+  wait_secs="${CODER_AGENTS_WAIT_SECS:-1800}"
+  printf 'note: Coder Agents seeder starting in the background (waits up to %ss for the first owner)\n' "${wait_secs}"
+  bash "${seeder}" --apply --wait="${wait_secs}" >/dev/null 2>&1 &
+  return 0
 }
 
 # @function pg_apply_password_entrypoint

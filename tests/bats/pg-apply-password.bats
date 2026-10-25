@@ -157,6 +157,35 @@ EOF
   assert_match "bounced" 'restart coder' "$(cat "${logf}")"
 }
 
+@test "pg-apply-password: start_coder_agents_wait is a no-op when the seeder is missing" {
+  run --separate-stderr start_coder_agents_wait "${BATS_TEST_TMPDIR}/no-such-root"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}
+
+@test "pg-apply-password: start_coder_agents_wait honours SKIP_CODER_AGENTS" {
+  SKIP_CODER_AGENTS=1 run --separate-stderr start_coder_agents_wait "${REPO_ROOT}"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"SKIP_CODER_AGENTS is set"* ]]
+}
+
+@test "pg-apply-password: start_coder_agents_wait backgrounds the seeder when it exists" {
+  local root="${BATS_TEST_TMPDIR}/seed-root" args="${BATS_TEST_TMPDIR}/seeder.args"
+  mkdir -p "${root}/scripts"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s"\n' "${args}" >"${root}/scripts/coder-agents.sh"
+  chmod 755 "${root}/scripts/coder-agents.sh"
+  CODER_AGENTS_WAIT_SECS=12 run --separate-stderr start_coder_agents_wait "${root}"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"waits up to 12s for the first owner"* ]]
+  i=0
+  while [ ! -f "${args}" ] && [ "${i}" -lt 20 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -f "${args}" ]
+  [[ $(cat "${args}") == *"--apply --wait=12"* ]]
+}
+
 @test "pg-apply-password: pg_apply_password_entrypoint applies POSTGRES_PASSWORD once postgres is ready" {
   cat >"${BATS_TEST_TMPDIR}/bin/docker-entrypoint.sh" <<'EOF'
 #!/bin/sh

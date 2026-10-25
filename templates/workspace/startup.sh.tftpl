@@ -578,6 +578,12 @@ if [ -n "$repo_url_raw" ]; then
   repo_folder="$(printf '%s' "$repo_folder" | sed 's/[^A-Za-z0-9._-]/-/g')"
   printf '%s' "$repo_folder" | grep -qE '^[A-Za-z0-9]' || repo_folder="repo"
   target="/home/coder/workspace/$repo_folder"
+  # Made before git runs, and before the code-server script's own mkdir: the
+  # editor starts in parallel with this stage, and an empty tree here is a
+  # folder VS Code can open while the clone is still writing. An empty
+  # directory is also what git clone accepts, so this does not change what
+  # gets cloned — the guard below still refuses anything that is not empty.
+  mkdir -p -- "$target" 2>/dev/null || true
 
   # Whichever user the workspace really belongs to: the owner of $HOME when the
   # agent runs as root (same rule as the ~/.grok chown above), otherwise whoever
@@ -601,6 +607,10 @@ if [ -n "$repo_url_raw" ]; then
   mkdir -p -- /home/coder/workspace 2>/dev/null || true
   if [ -n "$clone_owner" ]; then
     chown "$clone_owner" /home/coder/workspace 2>/dev/null || true
+    # Same rule for the folder created above: a root agent would otherwise
+    # leave it root-owned and the clone, which runs as the workspace user,
+    # would die writing .git inside it.
+    chown "$clone_owner" "$target" 2>/dev/null || true
   fi
 
   # Clone as the workspace user, never as root, so their credentials (a helper,
@@ -648,7 +658,11 @@ if [ -n "$repo_url_raw" ]; then
     # nobody chose.
     echo "$repo_folder: already cloned, skipping"
     run_notes "$target" "$repo_url_raw" || true
-  elif [ -e "$target" ]; then
+  elif [ -e "$target" ] && [ -n "$(ls -A -- "$target" 2>/dev/null)" ]; then
+    # Emptiness is tested, not just existence: the mkdir above and the one in
+    # coder_script.code_server both leave an empty folder on a first boot, and
+    # git clone into an empty folder is exactly what is wanted. A folder with
+    # anything in it is still not ours to touch.
     echo "WARNING: $target exists but is not a git repository — leaving it" \
       "alone and skipping the clone. Remove it if it should not be there." >&2
   elif ! command -v git >/dev/null 2>&1; then
@@ -671,7 +685,8 @@ if [ -n "$repo_url_raw" ]; then
       # clone on failure; nothing here deletes a folder that may hold work.
       echo "==============================================================" >&2
       echo "WARNING: the repository clone failed — the editor and the terminals" \
-        "open on $target, which does not exist." >&2
+        "open on $target, which is empty: this script creates the folder" \
+        "for the editor before git runs." >&2
       echo "  repository: $repo_url_raw" >&2
       echo "  target:     $target" >&2
       echo "  The two likely causes:" >&2

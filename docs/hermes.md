@@ -91,7 +91,12 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
 
 - Hermes talks to the LiteLLM proxy the stack already runs: base URL
   `http://litellm:4000/v1`, model alias **`agent`**. That is the tool-capable Spark lane,
-  which is what an agent loop needs.
+  which is what an agent loop needs, and it stays the default.
+- `agent` also thinks hard by default: it bakes `reasoning_effort: xhigh`.
+  **`agent-low`**, **`agent-medium`** and **`agent-xhigh`** are the thinking variants of
+  it - the same Qwen3.8-Flash-Next on the same three Spark boxes, with real
+  `tool_calls` and that level baked into the alias instead. Use one when a run needs a
+  different level; Qwen3.8-Flash-Next takes `low`, `medium` and `xhigh` and nothing else.
 - The key is `LITELLM_MASTER_KEY`, substituted from the environment into the seeded
   `config.yaml`. Do not copy the key into a Hermes file - one secret, one owner.
 - Fallbacks, in the order worth trying them:
@@ -101,8 +106,8 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
     those weights write the tool call into the message body as plain text, so agent
     turns silently lose their tools. See
     [litellm-routing.md](litellm-routing.md#tool-calls-the-measured-limitation).
-- Switch it inside the container with `hermes config set model.model chat`, which edits
-  the live config under `/opt/data`.
+- Switch it inside the container with `hermes config set model.model chat` (or
+  `agent-medium` for a thinking level), which edits the live config under `/opt/data`.
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
 

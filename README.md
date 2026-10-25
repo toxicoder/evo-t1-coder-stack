@@ -302,10 +302,12 @@ reach the dev stack when `dev-stack.env` exists.
    bazelisk run //scripts:push-template
    ```
 
-3. **Wire the control-plane chat agent.** Print the intended end state, then apply it.
-   It creates the `litellm` AI provider, the two chat model configs, the subagent lane
-   pins and the system-prompt addendum through the server API, leaves no credential
-   behind, and repairs a drifted provider when re-run.
+3. **Wire the control-plane chat agent.** `prod-stack` / `dev-stack` `up` already start
+   this with `--wait` after compose is up, so registering the first account is enough:
+   the seeder writes the `litellm` AI provider, the `agent` default plus
+   `agent-low` / `agent-medium` / `agent-xhigh` thinking aliases and the `chat`
+   fallback, the subagent lane pins, and the system-prompt addendum. No extra Coder UI
+   setup. Re-run `--apply` if you skipped that, or print the plan first:
 
    ```sh
    bazelisk run //scripts:coder-agents -- --dry-run
@@ -315,8 +317,9 @@ reach the dev stack when `dev-stack.env` exists.
    bazelisk run //scripts:coder-agents -- --apply
    ```
 
-4. **Create a workspace** from a git URL. The same choice by hand is: create a
-   workspace in the UI, pick the template, fill the **Git repository** field.
+4. **Create a workspace.** The sample `REPO_URL` prefills this stack's own repo, so
+   **VS Code Web** opens `~/workspace/evo-t1-coder-stack`. A different git URL still
+   works from the create form, or:
 
    ```sh
    bazelisk run //scripts:new-workspace -- https://github.com/org/repo.git
@@ -571,7 +574,10 @@ measured 30-request burst, the **Agent backend** card) are in
 
 | Alias | Model | Backend | Structured tool calls |
 |---|---|---|---|
-| `agent` | `Qwen3.8-Flash-Next` | `SPARK1/2/3_OPENAI_URL` (TensorFold on :8888, optional) | yes (measured) |
+| `agent` | `Qwen3.8-Flash-Next` | `SPARK1/2/3_OPENAI_URL` (TensorFold on :8888, optional); thinking `xhigh` by default, request can pick `low` / `medium` / `xhigh` | yes (measured) |
+| `agent-low` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low` | yes (same as `agent`) |
+| `agent-medium` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `medium` | yes (same as `agent`) |
+| `agent-xhigh` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh` | yes (same as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
@@ -583,9 +589,10 @@ emit structured tool calls on this box's IPEX-LLM Ollama, so agent mode needs th
 `agent` lane or the small `chat` model. The measurement, the TTL and `least-busy`
 routing, the `agent` -> `coder` fallback, the burst that produced it, and the two
 `docker compose restart litellm` commands (one per stack) are on
-[docs/litellm-routing.md](docs/litellm-routing.md). The two tool-capable aliases are also
-what `scripts/coder-agents.sh` registers as the Coder Agents chat models, so an alias
-edited here moves in the Agents dropdowns too.
+[docs/litellm-routing.md](docs/litellm-routing.md). `scripts/coder-agents.sh` registers
+`agent` (default), the three thinking aliases, and `chat` as the Coder Agents chat
+models, so an alias edited here moves in the Agents dropdowns too. There is no `high`
+level on this runtime.
 
 ## Coder workspace templates
 
@@ -857,7 +864,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 ├── scripts/
 │   ├── bootstrap.sh          # .env + secrets + access URL + certs + checks
 │   ├── build-dev-image.sh   # builds images/dev -> evo-t1-dev:latest
-│   ├── coder-agents.sh      # wires the control-plane chat agent
+│   ├── coder-agents.sh      # wires the control-plane chat agent (LiteLLM + thinking models)
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
 │   ├── github-auth.sh       # GitHub credential doctor

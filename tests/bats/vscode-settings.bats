@@ -75,6 +75,37 @@ setup() {
   done
 }
 
+@test "settings: the model list names every alias the Grok config catalogues" {
+  # The editor's model picker reads this array; it has to carry the Spark lane
+  # and its three baked-thinking aliases alongside the Arc fallbacks, or the
+  # extensions offer aliases the rendered ~/.grok/config.toml does not define.
+  # `high` stays out of every spelling: Qwen3.8-Flash-Next does not answer it.
+  local a b need unfolded models
+  a="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
+  b="${REPO_ROOT}/templates/devcontainer/settings.json.tftpl"
+  for need in \
+    '"agent"' '"agent-low"' '"agent-medium"' '"agent-xhigh"' \
+    '"coder"' '"coder-fast"' '"chat"'; do
+    run grep -F "${need}" "${a}"
+    [ "${status}" -eq 0 ] || { echo "missing ${need} in ${a}" >&2; return 1; }
+  done
+  run grep -F '"agent-high"' "${a}"
+  [ "${status}" -ne 0 ] || { echo "agent-high is not a level this runtime answers" >&2; return 1; }
+  # Same array, both copies, in the pinned order.
+  unfolded="$(sed 's/\$\${/${/g' "${a}")"
+  models="$(printf '%s' "${unfolded}" | python3 -c \
+    'import json,sys; print(" ".join(json.load(sys.stdin)["__evoT1StackModels"]))')"
+  assert_eq "the seed lists every stack alias" \
+    "agent agent-low agent-medium agent-xhigh coder coder-fast chat" "${models}"
+  cmp -s "${a}" "${b}"
+  # The keys that make the editor open on the folder the script pins: no
+  # restored window, no startup editor.
+  for need in '"window.restoreWindows": "none"' '"workbench.startupEditor": "none"'; do
+    run grep -F "${need}" "${a}"
+    [ "${status}" -eq 0 ] || { echo "missing ${need} in the seed" >&2; return 1; }
+  done
+}
+
 @test "settings: both startups seed once and both mains mount the shared volume" {
   local startup main
   for startup in \

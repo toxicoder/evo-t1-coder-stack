@@ -617,6 +617,16 @@ repo_folder="$(printf '%s' "$repo_leaf" | sed 's/\.git$//')"
 repo_folder="$(printf '%s' "$repo_folder" | sed 's/[^A-Za-z0-9._-]/-/g')"
 printf '%s' "$repo_folder" | grep -qE '^[A-Za-z0-9]' || repo_folder="repo"
 target="$dc_dir/$repo_folder"
+# Made before git runs, and before the code-server script's own mkdir: the
+# editor starts in parallel with this stage, and an empty tree here is a folder
+# VS Code can open while the clone is still writing. Skipped with no repository
+# named — then nothing clones here, and an empty leaf would only be a folder an
+# additional repository could later trip over. An empty directory is also what
+# git clone accepts, so this does not change what gets cloned: the guard below
+# still refuses anything that is not empty.
+if [ -n "$repo_url_raw" ]; then
+  mkdir -p -- "$target" 2>/dev/null || true
+fi
 
 # Whichever user the workspace really belongs to: the owner of $HOME when the
 # agent runs as root (same rule as the ~/.grok chown above), otherwise whoever is
@@ -640,6 +650,10 @@ clone_home=""
 mkdir -p -- "$dc_dir" 2>/dev/null || true
 if [ -n "$clone_owner" ]; then
   chown "$clone_owner" "$dc_dir" 2>/dev/null || true
+  # Same rule for the clone folder created above: a root agent would otherwise
+  # leave it root-owned and the clone, which runs as the workspace user, would
+  # die writing .git inside it.
+  chown "$clone_owner" "$target" 2>/dev/null || true
 fi
 
 # Clone as the workspace user, never as root, so their credentials (a helper,
@@ -694,7 +708,11 @@ elif [ -d "$target/.git" ]; then
   # on a dirty tree, and either way the workspace would start on code nobody chose.
   echo "$repo_folder: already cloned, skipping"
   run_notes "$target" "$repo_url_raw" || true
-elif [ -e "$target" ]; then
+elif [ -e "$target" ] && [ -n "$(ls -A -- "$target" 2>/dev/null)" ]; then
+  # Emptiness is tested, not just existence: the mkdir above and the one in
+  # coder_script.code_server both leave an empty folder on a first boot, and
+  # git clone into an empty folder is exactly what is wanted. A folder with
+  # anything in it is still not ours to touch.
   echo "WARNING: $target exists but is not a git repository — leaving it alone and" \
     "skipping the clone. Remove it from the stack host if it should not be there." >&2
 elif ! command -v git >/dev/null 2>&1; then

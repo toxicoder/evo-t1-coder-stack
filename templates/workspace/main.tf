@@ -82,6 +82,24 @@ locals {
       name        = "agent (DGX Spark vLLM)"
       description = "Primary agent model; emits native tool_calls"
     },
+    # Same Spark lane with the thinking level baked into the LiteLLM alias;
+    # `agent` above takes the level per request instead. Descriptions stay the
+    # ones the [model.*] blocks in grok-config.toml.tftpl carry.
+    {
+      value       = "agent-low"
+      name        = "agent-low (Spark, thinking low)"
+      description = "Spark agent lane; thinking baked to low in LiteLLM"
+    },
+    {
+      value       = "agent-medium"
+      name        = "agent-medium (Spark, thinking medium)"
+      description = "Spark agent lane; thinking baked to medium in LiteLLM"
+    },
+    {
+      value       = "agent-xhigh"
+      name        = "agent-xhigh (Spark, thinking extra high)"
+      description = "Spark agent lane; thinking baked to xhigh in LiteLLM"
+    },
     {
       value       = "coder"
       name        = "coder (Arc iGPU)"
@@ -658,6 +676,22 @@ resource "coder_script" "code_server" {
     # URLs drop the ?folder= query before the browser sees it, and without
     # this flag the last restored workspace (often /home/coder) wins.
     FOLDER="${local.editor_folder}"
+    # This script and the startup script's clone stage race: both run at agent
+    # start, and a folder code-server cannot stat gets VS Code's "Workspace
+    # does not exist" dialog and the last window instead of the clone. Create
+    # the folder (the clone stage makes it too, as early as it can) and then
+    # give a first-start clone at most 60 s to land its .git. The loop returns
+    # the moment .git appears, so a warm start — folder already cloned — adds
+    # nothing to the launch. /home/coder is skipped: nothing clones there and
+    # waiting on it would only delay the editor by the full timeout.
+    mkdir -p -- "$${FOLDER}" 2>/dev/null || true
+    if [ "$${FOLDER}" != "/home/coder" ]; then
+      waited=0
+      while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do
+        sleep 1
+        waited=$$((waited + 1))
+      done
+    fi
     "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &
   EOT
 
