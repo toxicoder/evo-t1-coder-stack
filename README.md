@@ -20,8 +20,11 @@ in and a *dev* one you break. [Spin up the stack](#spin-up-the-stack) has the
 commands; [Two stacks on one box](#two-stacks-on-one-box) explains the split.
 
 Everything is a Bazel target, addressed as `bazelisk run //scripts:<stem> -- <args>`
-(`<stem>` is the file name under `scripts/`). `scripts/setup-host.sh` is the only
-script meant to run straight from a shell, and it runs before Bazel exists.
+(`<stem>` is the file name under `scripts/`). On the stack host,
+`scripts/setup-host.sh` is the one script meant to run straight from a shell, and it
+runs before Bazel exists. On a laptop, reopen this repo in the
+[contributor dev container](docs/contribute/devcontainer.md) or run
+`bazelisk run //scripts:test-in-image`.
 
 ## Read me first
 
@@ -441,6 +444,11 @@ That maps 3001 to 13001, 443 to 10443, 80 to 10080, 2112 to 12112 and 9119 to 19
 Test a stack-affecting change on the dev stack before it becomes a pull request, then
 hand its volumes back with `reset --yes`.
 
+The merge-gate runtime is the golden image in `images/dev/`. Open this checkout in the
+[contributor dev container](docs/contribute/devcontainer.md), or run
+`bazelisk run //scripts:test-in-image --` from a host that is not that container.
+Native Darwin `bazelisk test` is a convenience path.
+
 ### The gates
 
 ```sh
@@ -649,8 +657,10 @@ Deep detail: [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md) and
 `bazelisk run //scripts:new-workspace -- <git-url> [name]` picks the template by
 shallow-cloning the repository on the host and looking for a dev container:
 `.devcontainer/`, `.github/devcontainers/`, or a `devcontainer.json`/`.yml` anywhere in
-the tree. Found: `devcontainer`. Not found: `workspace`. Probe failed: `workspace`, with
-a warning.
+the tree. Found: `devcontainer`. Not found: `workspace`. A tracked
+`.devcontainer/contributor-env` is a miss even when `devcontainer.json` sits beside it,
+so a Coder workspace of *this* repo stays on `workspace` (the `.devcontainer/` here is
+the laptop/CI contributor env). Probe failed: `workspace`, with a warning.
 
 Decision only, creates nothing:
 
@@ -851,6 +861,9 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 .
 ├── docker-compose.yml
 ├── .env.sample            # canonical env template (.env.example is a copy)
+├── .devcontainer/         # laptop/CI contributor env (probe sentinel keeps Coder on workspace)
+│   ├── contributor-env    # new-workspace treats this as a miss; do not copy to other repos
+│   └── devcontainer.json
 ├── hermes/                # Hermes seed: config.yaml, SOUL.md, skills (ro-mounted)
 ├── homepage/config/       # dashboard: services, widgets, settings, bookmarks, custom.css
 ├── homepage/assets/icons/ # dashboard wallpaper + header logo, served at /icons/
@@ -876,10 +889,12 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── push-template.sh     # pushes both templates from inside the coder container
 │   ├── refresh-configs.sh   # re-materialize the tracked config seeds in a workspace
 │   ├── search-check.sh      # probe the search lane, one GET per engine x query
-│   ├── setup-host.sh        # the one script run straight from a shell
+│   ├── seed-dev-env.sh      # materialize grok/settings/notes into a laptop or CI home
+│   ├── setup-host.sh        # stack-host bootstrap; the one script run straight from a shell
 │   ├── spark-configure.sh   # assert the per-Spark setup; --apply writes the override file
 │   ├── spark-verify.sh      # read-only fleet check
 │   ├── storage-clean.sh     # interactive janitor for the persistent layer
+│   ├── test-in-image.sh     # run the Bazel gates inside evo-t1-dev:latest
 │   ├── update-configs.sh    # after a pull: port the env files, reseed workspace config
 │   └── validate.sh          # the local gate behind //:validate
 └── templates/

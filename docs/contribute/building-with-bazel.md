@@ -6,7 +6,8 @@ tags: [bazel, build, contributing]
 
 **What's on this page**
 
-- Host bootstrap: the one script run straight from a shell
+- Stack-host bootstrap: the one script run straight from a shell
+- The contributor path — the dev container, or `test-in-image` — and where it fits
 - The daily commands, and the Makefile shim over them
 - What Bazel brings over running the scripts directly
 - Script targets, runfiles, and why a new `scripts/*.sh` is a target automatically
@@ -15,14 +16,32 @@ tags: [bazel, build, contributing]
 
 - Running any operator CLI from a foreign working directory with pinned inputs
 - Adding a script without editing a BUILD file
+- Getting the same Bazel, Bats, shellcheck and Terraform that CI uses without installing
+  any of them
 
 Bazelisk is how this repo runs tests, lint, and the operator CLIs. The Makefile targets call
 the same commands. [test-with-bazel.md](test-with-bazel.md) covers the Bats harness;
-[../branching.md](../branching.md) the branch rules that CI guards.
+[../branching.md](../branching.md) the branch rules that CI guards;
+[devcontainer.md](devcontainer.md) the container that carries the toolchain.
 
-## Host bootstrap
+## The contributor path
 
-`scripts/setup-host.sh` is the only script run straight from a shell. It installs what Bazel
+The toolchain Bazel drives comes from one Linux golden image, `images/dev/Dockerfile`, and
+the contributor path is that image rather than a set of tools installed on your machine:
+
+- Open the checkout in the contributor dev container (`.devcontainer/devcontainer.json`
+  builds it) and run the commands below unchanged.
+- Or, from a machine that is not in that container, `bazelisk run //scripts:test-in-image --`
+  docker-runs `evo-t1-dev:latest` and runs the gate inside it.
+
+Both give you the GNU userland the gate runs on, which a macOS laptop cannot promise
+natively. Neither replaces the bootstrap below — that one is for the stack host.
+
+## Stack-host bootstrap
+
+`scripts/setup-host.sh` is the only script run straight from a shell, and it is the
+**stack host's** bootstrap: the box that runs Coder, LiteLLM, Ollama, Kasm, Homepage and
+Hermes, where Compose and Bazel have to live on the host itself. It installs what Bazel
 needs (Bazelisk, shellcheck, shfmt, buildifier, Terraform), so it necessarily runs before
 Bazel exists — that is its whole exemption, not a convenience:
 
@@ -40,10 +59,12 @@ DNS so `github.com` still resolves when Tailscale MagicDNS is the only
 nameserver (`Could not resolve host: github.com` after a compose `up`). `--check`
 reports that lookup and writes nothing.
 
-Everything else is a Bazel target, including every `scripts/*.sh`. CI repeats both halves
-from a clean runner: the composite action `.github/actions/setup-bazel` installs the same host
-tools through `.github/scripts/install-lint-tools.sh`, and the workflow then runs the two
-suites below.
+Everything else is a Bazel target, including every `scripts/*.sh`. CI repeats the gate from
+a clean runner inside the same golden image: `.github/workflows/ci.yml` builds
+`images/dev` with buildx and the Actions layer cache and docker-runs the two suites below in
+it, so the bazel job does not install the pins onto the runner at all — the image already
+carries them. The persistent cache on that path is the buildx GHA layer cache, so a pull
+request that leaves `images/dev/**` alone replays the image layers.
 
 ## Daily commands
 
@@ -53,6 +74,7 @@ bazelisk test //tests:bats_common_test
 bazelisk test //:lint --test_tag_filters=manual
 bazelisk run //:fix
 bazelisk run //:validate
+bazelisk run //scripts:test-in-image --               # the same gate, inside evo-t1-dev:latest
 bazelisk run //scripts:dev-stack -- status            # dev stack (the default project)
 bazelisk run //scripts:prod-stack -- status           # stable stack (default project evo-t1-prod)
 bazelisk run //scripts:prod-stack -- status --project-name evo-t1-coder-stack   # hand-raised stack
@@ -65,6 +87,8 @@ bazelisk run //scripts:prod-stack -- status --project-name evo-t1-coder-stack   
 | `//:validate` | test-fast, lint, `docker compose config -q`, `.env.sample` vs `.env.example`, terraform fmt when terraform is installed |
 | `//:fix` | buildifier and shfmt write mode |
 | `//scripts:<stem>` | One operator CLI: `bazelisk run //scripts:<stem> -- <args>`, e.g. `//scripts:dev-stack -- up`, `//scripts:new-workspace -- --dry-run <url>` |
+| `//scripts:test-in-image` | The merge gate inside `evo-t1-dev:latest`, for a machine that is not the contributor container |
+| `//scripts:seed-dev-env` | Materialize a contributor home (Grok config, editor settings, notes, tmux, helpers) from the workspace templates |
 
 `make test`/`bats`/`lint`/`fix`/`validate` and the `stack-*`/`prod-stack-*` shims are the
 same commands;
@@ -87,9 +111,12 @@ long-running exception, and you stop it with Ctrl-C.
 - **Action cache.** An action's outputs are keyed on its inputs and command line, so an
   unchanged suite replays its cached PASS instead of re-running Bats.
 - **Local disk and repository cache.** `.bazelrc` points `--disk_cache` at
-  `~/.cache/bazel-disk` and `--repository_cache` at `~/.cache/bazel-repo`; CI restores and
-  saves both through `actions/cache` (`.github/actions/setup-bazel`). No remote cache is
-  configured — the same two flags would take a `--remote_cache=<uri>` endpoint later.
+  `~/.cache/bazel-disk` and `--repository_cache` at `~/.cache/bazel-repo`. A contributor
+  container and a Coder workspace reuse those directories across runs. CI docker-runs the
+  gate with `HOME=/tmp` and `USER=$(id -un)`, so those Bazel caches are per-job and Bazel
+  can name a uid the image passwd file does not list; the cache that survives there is
+  the image's buildx GHA cache. No remote cache is configured — the same two flags
+  would take a `--remote_cache=<uri>` endpoint later.
 
 ## Script targets and runfiles
 
@@ -103,8 +130,9 @@ launcher pattern at the repo root.
 with bash, so a checkout whose scripts are mode `100644` still builds.
 
 Each CLI target also declares the repo files that script reads by path — `//:stack_data`
-(`docker-compose.yml`, both `templates/**` payload trees, `images/dev/**`, `litellm/**`,
-`searxng/**`, `homepage/**`, `proxy/**`, the two `.env` samples, `LICENSE`) and
+(`docker-compose.yml`, both `templates/**` payload trees, `images/dev/**`,
+`.devcontainer/**`, `litellm/**`, `searxng/**`, `homepage/**`, `proxy/**`, the two `.env`
+samples, `LICENSE`) and
 `//scripts:doc_sources` (every `scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves
 too). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
 `bazelisk run` of a stack runner or of `push-template` prefers `BUILD_WORKSPACE_DIRECTORY` — the real checkout —

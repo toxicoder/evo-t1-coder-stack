@@ -122,6 +122,67 @@ source_libs() {
   [ "${rc}" -eq 2 ]
 }
 
+@test "workspace: probe_repo returns 0 for every dev container shape when the sentinel is absent" {
+  source_libs
+  work="$(make_scratch)"
+  # Only .devcontainer/devcontainer.json, no sentinel — the ordinary foreign-repo case.
+  export STUB_GIT_TREE_OUT=".devcontainer/devcontainer.json"
+  rc=0
+  probe_repo "${work}" "https://example.com/x/y.git" "${work}/repo" || rc=$?
+  [ "${rc}" -eq 0 ]
+  export STUB_GIT_TREE_OUT=$'README.md\n.github/devcontainers/devcontainer.json\nsrc/main.sh'
+  rc=0
+  probe_repo "${work}" "https://example.com/x/y.git" "${work}/repo" || rc=$?
+  [ "${rc}" -eq 0 ]
+  export STUB_GIT_TREE_OUT=$'README.md\ndevcontainer.yml'
+  rc=0
+  probe_repo "${work}" "https://example.com/x/y.git" "${work}/repo" || rc=$?
+  [ "${rc}" -eq 0 ]
+}
+
+@test "workspace: probe_repo returns 3 when the contributor-env sentinel outranks the dev container" {
+  source_libs
+  work="$(make_scratch)"
+  # This repo's own listing: the sentinel is tracked beside a real devcontainer.json.
+  export STUB_GIT_TREE_OUT=$'README.md\n.devcontainer/contributor-env\n.devcontainer/devcontainer.json'
+  rc=0
+  probe_repo "${work}" "https://example.com/x/y.git" "${work}/repo" || rc=$?
+  [ "${rc}" -eq 3 ]
+  # The sentinel alone is still a miss.
+  export STUB_GIT_TREE_OUT=".devcontainer/contributor-env"
+  rc=0
+  probe_repo "${work}" "https://example.com/x/y.git" "${work}/repo" || rc=$?
+  [ "${rc}" -eq 3 ]
+  # A sentinel below the repo root outranks it the same way.
+  export STUB_GIT_TREE_OUT=$'pkg/.devcontainer/contributor-env\n.devcontainer/devcontainer.json'
+  rc=0
+  probe_repo "${work}" "https://example.com/x/y.git" "${work}/repo" || rc=$?
+  [ "${rc}" -eq 3 ]
+  # The name is anchored: a file merely starting with the sentinel name is not one.
+  export STUB_GIT_TREE_OUT=".devcontainer/contributor-env-template"
+  rc=0
+  probe_repo "${work}" "https://example.com/x/y.git" "${work}/repo" || rc=$?
+  [ "${rc}" -eq 0 ]
+}
+
+@test "repo: .devcontainer ships both devcontainer.json and the contributor-env sentinel" {
+  # probe_repo's miss depends on the tracked sentinel, so a deleted sentinel must
+  # not pass unnoticed. It is only visible here while the suite's data carries
+  # .devcontainer/** (//:stack_data in the root BUILD.bazel).
+  local dc="${REPO_ROOT}/.devcontainer"
+  [[ -d ${dc} ]] || skip ".devcontainer/** is not in this suite's data; add it to //:stack_data so the sentinel cannot vanish unnoticed"
+  [[ -f ${dc}/devcontainer.json ]]
+  [[ -f ${dc}/contributor-env ]]
+}
+
+@test "new-workspace.sh: --dry-run stays on workspace for a repo shipping the sentinel" {
+  export STUB_GIT_TREE_OUT=$'README.md\n.devcontainer/contributor-env\n.devcontainer/devcontainer.json'
+  run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run https://github.com/foo/evo-t1-coder-stack.git
+  [ "${status}" -eq 0 ]
+  assert_match "probe" '^probe:    no dev container found$' "${output}"
+  assert_match "template" '^template: workspace$' "${output}"
+}
+
 @test "new-workspace.sh: --help prints the flag list and creates nothing" {
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --help
   [ "${status}" -eq 0 ]

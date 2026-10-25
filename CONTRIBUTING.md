@@ -42,6 +42,31 @@ reviewers, so it can only ever deploy what `main` already proved. Nothing in thi
 repo declares an environment or a deploy job today, so an environment branch would
 buy nothing and cost a re-test.
 
+## How to develop
+
+One Linux golden image (`images/dev/Dockerfile`, pins in
+`images/dev/tool-versions.env`) is the contributor and test runtime on macOS, Linux and
+GitHub — the same image the Coder workspaces boot. Pick either path; you install nothing:
+
+- **Contributor dev container.** Open the checkout in VS Code (or a compatible editor) with
+  Dev Containers and *Reopen in Container*. `.devcontainer/devcontainer.json` builds
+  `../images/dev/Dockerfile`, runs as `coder`, sets `EVO_T1_DEVCONTAINER=1`, mounts the
+  docker socket, and its `postCreateCommand` runs `bash scripts/seed-dev-env.sh --devcontainer`
+  to materialize the Grok config, editor settings, notes, tmux and helpers from the
+  templates Coder uses. Then run the commands below unchanged.
+- **`test-in-image`.** From a machine that is not that container,
+  `bazelisk run //scripts:test-in-image --` docker-runs `evo-t1-dev:latest` and runs the
+  same suites inside it — the fastest way to reproduce a CI failure. Build the tag first
+  with `bazelisk run //scripts:build-dev-image` if your daemon lacks it.
+
+CI builds that same image with buildx and the Actions cache and docker-runs `//:test-fast`,
+`//:lint`, `//:validate` and the docs-site Node checks inside it, so the local and the
+merge-time run are the same run. A native `bazelisk test` on macOS is a convenience, not a
+merge path (BSD versus GNU userland). `docs/contribute/devcontainer.md` is the full page;
+`bash scripts/setup-host.sh` stays the **stack host** bootstrap and is not part of this
+path. The repo's `.devcontainer/contributor-env` sentinel is what keeps a Coder workspace
+of *this* repo on the `workspace` template — do not copy it into another repository.
+
 ## Pull requests
 
 - Keep diffs small and focused; keep the architecture (Coder + LiteLLM +
@@ -68,7 +93,8 @@ buy nothing and cost a re-test.
   exists for the case where a workspace genuinely needs siblings beside the primary
   clone; a change that adds another repository to a workspace without being asked
   for is a defect, not a convenience.
-- Validate locally before opening. Bazelisk is the ingress:
+- Validate locally before opening, in the contributor container or through
+  `bazelisk run //scripts:test-in-image --`. Bazelisk is the ingress:
 
   ```sh
   bazelisk test //:test-fast

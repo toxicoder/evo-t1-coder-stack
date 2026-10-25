@@ -74,6 +74,10 @@
     "title": "Contribute",
     "pages": [
       {
+        "title": "Contributor environment",
+        "path": "contribute/devcontainer.md"
+      },
+      {
         "title": "Building with Bazel",
         "path": "contribute/building-with-bazel.md"
       },

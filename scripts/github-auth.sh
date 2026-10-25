@@ -25,13 +25,14 @@
 # Usage:
 #   bazelisk run //scripts:github-auth -- check [repo-url] [--source=<slot>]            (inside a workspace)
 #   bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>]  (on the stack host)
-#       Inside a workspace (CODER_WORKSPACE_ID set) the docker CLI addresses
-#       that workspace's own DinD sidecar, never the host daemon, so check
-#       runs SELF mode there: no docker at all, one probe of this
-#       environment's own credential chain, printed as `self:` lines. On the
-#       host (CODER_WORKSPACE_ID empty) check lists the labeled workspace
-#       containers via docker ps and probes each; a named container checks
-#       just that one. The optional container slot and the optional repo URL
+#       Inside a workspace (CODER_WORKSPACE_ID set) or a contributor
+#       devcontainer (EVO_T1_DEVCONTAINER=1) the docker CLI addresses a
+#       sidecar or the workstation daemon, never the stack host's workspace
+#       fleet, so check runs SELF mode there: no docker at all, one probe of
+#       this environment's own credential chain, printed as `self:` lines. On
+#       the host (both unset) check lists the labeled workspace containers
+#       via docker ps and probes each; a named container checks just that
+#       one. The optional container slot and the optional repo URL
 #   may come in either order, and the container slot only exists on a host.
 #       repo-url takes the clone URL or the browser URL, with or without a
 #       trailing slash and with or without .git, and it takes the scp-style
@@ -305,12 +306,30 @@ PROBE
 
 # ── Commands ───────────────────────────────────────────────────────────────
 
+# @function in_self_env
+# True when this process is a Coder workspace or a contributor devcontainer,
+# so check must probe this environment instead of enumerating docker
+# containers (docker here is a sidecar or the workstation daemon, never the
+# stack host's workspace fleet).
+# Globals:
+#   CODER_WORKSPACE_ID, EVO_T1_DEVCONTAINER
+# Arguments:
+#   None
+# Outputs:
+#   Nothing
+# Returns:
+#   0 when SELF mode applies, 1 otherwise
+in_self_env() {
+  [[ -n ${CODER_WORKSPACE_ID:-} || ${EVO_T1_DEVCONTAINER:-} == 1 ]]
+}
+
 # @function probe_self
 # SELF mode: run the credential probe directly in THIS environment (inside a
-# workspace that is the workspace's own credential chain; no docker
-# anywhere, because docker here addresses the DinD sidecar, never the host
-# daemon). No container is enumerated and none is named: one report line per
-# credential, prefixed "self:".
+# workspace or contributor devcontainer that is this environment's own
+# credential chain; no docker anywhere, because docker here addresses a
+# sidecar or the workstation daemon, never the host fleet). No container is
+# enumerated and none is named: one report line per credential, prefixed
+# "self:".
 # Globals:
 #   None
 # Arguments:
@@ -399,7 +418,7 @@ auth_workspace() {
 # @function main
 # Parse the subcommand and drive one or every workspace.
 # Globals:
-#   CODER_WORKSPACE_ID
+#   CODER_WORKSPACE_ID, EVO_T1_DEVCONTAINER
 # Arguments:
 #   $1.. - subcommand, then for check the optional --source=<slot> selector,
 #     an optional container (host only) and an optional repo URL in either
@@ -407,8 +426,9 @@ auth_workspace() {
 #     argument is refused, because argv is readable through ps and keeps the
 #     token in shell history)
 # Outputs:
-#   credential_probe output via probe_self (inside a workspace, where a named
-#   container argument is refused) or via probe_workspace (on a host)
+#   credential_probe output via probe_self (inside a workspace or contributor
+#   devcontainer, where a named container argument is refused) or via
+#   probe_workspace (on a host)
 # Returns:
 #   0, or 1 on a refused argument or a dead docker daemon
 main() {
@@ -441,14 +461,15 @@ main() {
           die "github-auth.sh: pass a github.com repository - the clone or browser URL of one repo, with or without .git (got ${repo_url}). A path below owner/repo names no repository, and probing it would describe the wrong address."
         fi
       fi
-      if [[ -n ${CODER_WORKSPACE_ID:-} ]]; then
+      if in_self_env; then
         # Inside a workspace the docker CLI addresses this workspace's own
-        # DinD sidecar, never the host daemon, so there is nothing to
-        # enumerate and a daemon that looks empty here proves nothing.
-        # Probe this environment's own credential chain instead, and never
-        # hand a probe to docker.
+        # DinD sidecar; inside a contributor devcontainer it addresses the
+        # workstation daemon. Neither is the stack host's workspace fleet,
+        # so there is nothing to enumerate and a daemon that looks empty
+        # here proves nothing. Probe this environment's own credential
+        # chain instead, and never hand a probe to docker.
         if [[ -n ${target} ]]; then
-          die "github-auth.sh: CODER_WORKSPACE_ID is set, so this is a workspace shell: check probes this workspace's own credential (pass only the repo URL; a named container can be checked from the stack host)"
+          die "github-auth.sh: this is a workspace shell (CODER_WORKSPACE_ID or EVO_T1_DEVCONTAINER is set): check probes this environment's own credential (pass only the repo URL; a named container can be checked from the stack host)"
         fi
         probe_self "${repo}" "${sel}"
       elif [[ -n ${target} ]]; then

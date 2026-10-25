@@ -537,6 +537,13 @@ bazelisk run //scripts:new-workspace -- --plain git@git.example.com:org/private.
   directory, from the host, and lists the tracked files.
 - It looks for a dev container in `.devcontainer/`, `.github/devcontainers/`, or a
   `devcontainer.json`/`devcontainer.yml` anywhere in the tree.
+- A tracked `.devcontainer/contributor-env` outranks every other signal: the probe is a
+  **miss** even when the same clone also tracks `.devcontainer/devcontainer.json`. That is
+  how this repo keeps its own Coder workspaces on `workspace` — the `.devcontainer/` it
+  ships is the contributor one for a laptop and CI, not a nested toolchain to rebuild
+  inside the workspace's own DinD sidecar (see
+  [contribute/devcontainer.md](contribute/devcontainer.md)). Application repositories do
+  not carry the sentinel, so their dev containers stay a hit.
 - Found means `devcontainer`; not found means `workspace`. A probe that fails **entirely**
   is also a `workspace` answer, with a warning.
 - The clone is a plain `git clone` from the host, so it consults the host's own git

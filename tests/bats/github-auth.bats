@@ -45,7 +45,7 @@ setup() {
   # workspace", where check must run SELF mode with zero docker calls.
   # Host-mode tests must therefore not inherit it; SELF tests set it.
   unset GH_TOKEN GITHUB_TOKEN CODER_GITHUB_AUTH_ID
-  unset CODER_WORKSPACE_ID
+  unset CODER_WORKSPACE_ID EVO_T1_DEVCONTAINER
 }
 
 @test "check: lists every labeled workspace and never invents a credential" {
@@ -205,6 +205,48 @@ setup() {
   assert_eq "docker never called" "0" "$(stub_log_count docker)"
 }
 
+@test "in_self_env: a contributor devcontainer is SELF without CODER_WORKSPACE_ID" {
+  load_shell_function "${SCRIPT}" in_self_env
+  unset CODER_WORKSPACE_ID EVO_T1_DEVCONTAINER
+  run in_self_env
+  [ "${status}" -ne 0 ]
+  export CODER_WORKSPACE_ID=ws-test
+  unset EVO_T1_DEVCONTAINER
+  run in_self_env
+  [ "${status}" -eq 0 ]
+  unset CODER_WORKSPACE_ID
+  export EVO_T1_DEVCONTAINER=1
+  run in_self_env
+  [ "${status}" -eq 0 ]
+  export EVO_T1_DEVCONTAINER=0
+  run in_self_env
+  [ "${status}" -ne 0 ]
+}
+
+@test "check: EVO_T1_DEVCONTAINER=1 probes this environment and never calls docker" {
+  export GH_TOKEN="SECRETVAL-do-not-leak" EVO_T1_DEVCONTAINER=1
+  unset CODER_WORKSPACE_ID
+  run env STUB_CURL_STATUS=403 \
+    STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
+    bash "${SCRIPT}" check https://github.com/alx/notes
+  [ "${status}" -eq 0 ]
+  [[ "${lines[0]}" == "self: "* ]]
+  [[ "${output}" == *"REFUSED-GRANT"* ]]
+  [[ "${output}" != *"SECRETVAL"* ]]
+  assert_eq "docker never called" "0" "$(stub_log_count docker)"
+  assert_eq "one probe, run locally" "1" "$(stub_log_count curl)"
+}
+
+@test "check: EVO_T1_DEVCONTAINER=1 refuses a named container with a host pointer" {
+  export EVO_T1_DEVCONTAINER=1
+  unset CODER_WORKSPACE_ID
+  run bash "${SCRIPT}" check coder-bob-ws1 https://github.com/alx/notes
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"this is a workspace shell"* ]]
+  [[ "${output}" == *"EVO_T1_DEVCONTAINER"* ]]
+  assert_eq "docker never called" "0" "$(stub_log_count docker)"
+}
+
 @test "check: a minted token uses github when CODER_GITHUB_AUTH_ID is unset" {
   unset GH_TOKEN GITHUB_TOKEN CODER_GITHUB_AUTH_ID
   STUB_COMPOSE_PS="coder-alice-ws1" STUB_CODER_OUT="minted-token-secret" \
@@ -323,7 +365,7 @@ setup() {
 }
 
 @test "shape: every function block the docs promise is still there" {
-  for fn in running_workspaces credential_probe normalize_repo_path slot_name probe_self probe_workspace auth_workspace main; do
+  for fn in running_workspaces credential_probe normalize_repo_path slot_name probe_self probe_workspace auth_workspace in_self_env main; do
     grep -Fq "${fn}()" "${SCRIPT}" || {
       echo "github-auth.sh lost its ${fn} function" >&2
       return 1

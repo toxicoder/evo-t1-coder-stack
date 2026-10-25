@@ -13,6 +13,24 @@ name: ci
 #
 # `main` is the only long-lived branch: it stays green and deployable, and every
 # change reaches it through a pull request. See docs/branching.md.
+#
+# Where the toolchain comes from: both jobs build the golden workspace image
+# (images/dev/Dockerfile — the image Coder workspaces boot, and what a
+# contributor dev container uses) with buildx and the GHA layer cache, then run
+# the gates INSIDE it. shellcheck, shfmt, buildifier, bazelisk and node are the
+# image's copies, so a laptop, the contributor container and CI all answer with
+# the same versions, and no job installs anything.
+#
+# Why not `container:` — the image ends at `USER coder` (uid 1000), while the
+# runner bind-mounts the checkout as the runner uid (1001). Every gate therefore
+# runs through `docker run --user "$(id -u):$(id -g)"` with $GITHUB_WORKSPACE at
+# /work, so the mount is writable and permission tests see a non-root identity.
+# HOME=/tmp and USER=$(id -un) give Bazel a writable home and a name for a
+# uid the image passwd file does not list. scripts/test-in-image.sh uses the
+# same uid:gid default on a workstation.
+#
+# The image is published to ghcr.io from `main` only (packages: write above is
+# what lets that push happen; a fork PR has no registry token and never pushes).
 
 on:
   push:
@@ -22,6 +40,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -33,16 +52,41 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: ./.github/actions/setup-bazel
-        with:
-          install-lint-tools: "true"
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Bazel test-fast and lint
-        env:
-          CI: "true"
+      # main alone publishes; a fork PR builds from the GHA layer cache and
+      # pushes nothing, so it needs no registry credential at all.
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build the golden dev image
+        uses: docker/build-push-action@v6
+        with:
+          context: images/dev
+          file: images/dev/Dockerfile
+          tags: |
+            evo-t1-dev:latest
+            ghcr.io/${{ github.repository }}/evo-t1-dev:latest
+          # Load the build into the runner's daemon so the next step can docker
+          # run it; push only where we are allowed to publish.
+          load: true
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Bazel test-fast, lint and validate in the image
         run: |
-          bazelisk test //:test-fast --config=ci
-          bazelisk test //:lint --config=ci --test_tag_filters=manual
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            -e CI=true -e HOME=/tmp -e USER="$(id -un)" \
+            --add-host=host.docker.internal:host-gateway \
+            evo-t1-dev:latest \
+            bash -lc 'bazelisk test //:test-fast --config=ci && bazelisk test //:lint --config=ci --test_tag_filters=manual && VALIDATE_INNER=1 bazelisk run //:validate'
 
       - name: Compose and env sample
         run: |
@@ -50,32 +94,34 @@ jobs:
           cmp .env.sample .env.example
 
   # The exported site is deploy-docs.yml's job; this proves the pages compile, the
-  # page contract holds, and nav.json still matches the files on disk.
+  # page contract holds, and nav.json still matches the files on disk. Same image
+  # as the bazel job (its build is a GHA layer-cache hit), because the site is
+  # built by the node and python the image pins — not by whatever
+  # actions/setup-node happens to install.
   docs:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: docs-site
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # Load only: the bazel job is the one that publishes on main. Repeating
+      # the build here is a GHA layer-cache hit of the same Dockerfile.
+      - name: Build the golden dev image
+        uses: docker/build-push-action@v6
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: docs-site/package-lock.json
+          context: images/dev
+          file: images/dev/Dockerfile
+          tags: evo-t1-dev:latest
+          load: true
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Install
-        run: npm ci --legacy-peer-deps
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Unit
-        run: npm run unit
-
-      - name: Nav
-        run: npm run nav:check
-
-      - name: Nav generator tests
-        run: bash run_python_test.sh
+      - name: Docs site in the image
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$GITHUB_WORKSPACE:/work" -w /work/docs-site \
+            -e CI=true -e HOME=/tmp -e USER="$(id -un)" -e NEXT_TELEMETRY_DISABLED=1 \
+            evo-t1-dev:latest \
+            bash -lc 'npm ci --legacy-peer-deps && npm run typecheck && npm run unit && npm run nav:check && bash run_python_test.sh'

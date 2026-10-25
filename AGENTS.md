@@ -41,6 +41,14 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   `.scratch-notes.md` are ignored in every repo here.
 - Bazel behaves the same here, so `//:test-fast`, `//:lint` and
   `bazelisk run //scripts:<stem>` all still run.
+- `EVO_T1_DEVCONTAINER=1` instead of `CODER_WORKSPACE_ID` means the **contributor** dev
+  container (laptop or the CI image built from `images/dev/`), not a Coder workspace: same
+  golden image, `github-auth check` runs SELF there too, and
+  `bazelisk run //scripts:test-in-image --` is the host ingress that docker-runs the gate in
+  `evo-t1-dev:latest`. Coder workspaces of *this* repo still stay on the `workspace`
+  template — `.devcontainer/contributor-env` makes `new-workspace`'s probe a miss, so never
+  copy that sentinel into another repo. `scripts/setup-host.sh` remains the stack-host
+  bootstrap only.
 
 ## Commands
 Prefer Bazelisk. Make is a shim.
@@ -57,10 +65,16 @@ Prefer Bazelisk. Make is a shim.
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that
   workspace's own DinD sidecar — run it in a host shell or name `--container`/`--home`)
+- contributor seed (laptop/CI home, devcontainer postCreate):
+  `bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--devcontainer] [--force] [--dry-run]`
+- gate inside the golden image, from a host that is not the contributor container:
+  `bazelisk run //scripts:test-in-image --`
 
-`scripts/setup-host.sh` is the only script run from shell (installs Bazelisk; `--repair` recovers leftover runfiles so `bazelisk run` can start, and on Linux installs public DNS so host `git pull` still resolves github.com). Everything else is a Bazel target.
+`scripts/setup-host.sh` is the only script run from shell, and only on the stack host (installs Bazelisk; `--repair` recovers leftover runfiles so `bazelisk run` can start, and on Linux installs public DNS so host `git pull` still resolves github.com). Everywhere else the toolchain comes from the golden image. Everything else is a Bazel target.
 
-Done means `//:test-fast` + lint green. Stack changes must be verified on the dev stack first.
+Done means `//:test-fast` + lint green — inside the contributor container or
+`evo-t1-dev:latest` (`//scripts:test-in-image`); a native Darwin run is convenience only.
+Stack changes must be verified on the dev stack first.
 
 ## Structure
 - `scripts/*.sh` — operator CLIs; `scripts/lib/*.sh` — sourced helpers (do not copy log/die helpers).
