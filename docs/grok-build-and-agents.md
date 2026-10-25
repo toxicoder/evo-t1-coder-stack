@@ -141,8 +141,18 @@ in `shared` mode**.
 
 ### What is shared
 
-In `shared` mode: `config.toml`, `skills/`, `memory-v2/`, `sessions/`, and a CLI you
+In `shared` mode: `config.toml`, `skills/`, `memory-v2/`, `sessions/`, `notes/` (the
+canonical copy of each repository's private scratch `notes.md`), and a CLI you
 installed yourself under `~/.grok/bin`.
+
+`notes/<host>/<owner>/<repo>/notes.md` is keyed per git remote, so every clone a
+workspace holds — the primary and each additional repository — has its own file. What you
+edit is the regular file at the clone root: that is what the editor, the terminal and a
+nested dev container all see, since the inner container mounts the clone bind and has
+its own `~/.grok`. The startup script copies that file here on every start and restores
+it when a recreate leaves the clone without one. `grok_profile_mode=private` mounts no
+shared volume, so those notes die with that workspace; `shared` is the default. Like
+`config.toml`, the last workspace started for a given user and repository wins.
 
 ### Caveats, honestly
 

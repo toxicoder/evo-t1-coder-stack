@@ -157,6 +157,11 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))' "${tpl_dir}/main.tf"
     [ "${status}" -eq 0 ]
+    # Same single-copy rule for the per-repo notes library: without this feed
+    # the startup heredoc would render an empty library and every
+    # notes_materialize call in the clone stage would die on a missing command.
+    run grep -F 'notes_setup = file("${path.module}/notes-setup.sh")' "${tpl_dir}/main.tf"
+    [ "${status}" -eq 0 ]
   done
 }
 

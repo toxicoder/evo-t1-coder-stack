@@ -25,6 +25,8 @@
 #      points at, so it has to exist before the agent builds the dev container —
 #      and says so out loud when the clone carries no devcontainer configuration
 #      for the CLI to build
+#   8b. puts a private notes.md in every clone folder on that bind, restoring it
+#       from the shared profile volume and keeping that volume up to date
 #
 # ~/.grok is not necessarily this workspace's own directory. In "shared" mode
 # (main.tf's grok_profile_mode, and the default) the container mounts the
@@ -52,9 +54,9 @@
 # Note: this file is rendered by Terraform templatefile(); shell variables are
 # written with a doubled dollar sign ($name or $${name}; the braced form is only
 # safe when escaped this way) so the rendered script keeps them. The only
-# interpolations Terraform has to resolve here are the seven variables main.tf
+# interpolations Terraform has to resolve here are the eight variables main.tf
 # passes into this script: grok_build_agents, grok_config, repo_url,
-# additional_repos, dc_dir, build_devcontainer and vscode_settings.
+# additional_repos, dc_dir, build_devcontainer, vscode_settings and notes_setup.
 # grok_config arrives already rendered from grok-config.toml.tftpl, whose own
 # keys are litellm_url, grok_default_model, workspace_affinity_key,
 # grok_config_extra, github_mcp, search_mcp, search_url and context7_mcp - the
@@ -372,6 +374,21 @@ ${grok_build_agents}
 GROK_AGENTS_EOF
 fi
 
+# --- Private per-repo notes ---------------------------------------------------
+# The library behind each clone's notes.md. Unlike the seed above it is rewritten
+# on every start: it is stack-owned code, and the copy on the shared ~/.grok
+# volume must be the one this template shipped. main.tf reads
+# templates/common/notes-setup.sh and hands the text to the heredoc below; the
+# clone stage further down calls notes_materialize with it. The live file is a
+# regular file on the clone bind rather than a link into ~/.grok, because the dev
+# container built on the sidecar mounts that bind and has its own ~/.grok.
+mkdir -p "$HOME/.grok" 2>/dev/null || true
+cat >"$HOME/.grok/notes-setup.sh" <<'NOTES_SETUP_EOF'
+${notes_setup}
+NOTES_SETUP_EOF
+# shellcheck disable=SC1090
+. "$HOME/.grok/notes-setup.sh" 2>/dev/null || true
+
 # --- Editor settings ----------------------------------------------------------
 # One settings.json per owner, on the vscode-settings-<owner-id> volume main.tf
 # mounts at ~/.shared/vscode. The first boot that finds the file missing copies
@@ -649,6 +666,7 @@ elif [ -d "$target/.git" ]; then
   # Re-fetching is the user's call: a pull here could conflict mid-edit or fail
   # on a dirty tree, and either way the workspace would start on code nobody chose.
   echo "$repo_folder: already cloned, skipping"
+  notes_materialize "$target" "$repo_url_raw" || true
 elif [ -e "$target" ]; then
   echo "WARNING: $target exists but is not a git repository — leaving it alone and" \
     "skipping the clone. Remove it from the stack host if it should not be there." >&2
@@ -660,6 +678,9 @@ else
   # -- before the URL: the value is user input and must never parse as an option.
   if run_clone clone -- "$repo_url_raw" "$target"; then
     echo "cloned $repo_url_raw into $target"
+    # Before the chown: the notes file and the .git/info/exclude write are ours
+    # to make, and the recursive chown below settles their ownership.
+    notes_materialize "$target" "$repo_url_raw" || true
     if [ -n "$clone_owner" ]; then
       chown -R "$clone_owner" "$target" 2>/dev/null || true
     fi
@@ -709,6 +730,7 @@ for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n'
   extra_target="$dc_dir/$extra_folder"
   if [ -d "$extra_target/.git" ]; then
     echo "$extra_folder: already cloned, skipping"
+    notes_materialize "$extra_target" "$extra_url" || true
   elif [ -e "$extra_target" ]; then
     echo "WARNING: $extra_target exists but is not a git repository — leaving it" \
       "alone and skipping the clone. Remove it from the stack host if it should not be there." >&2
@@ -717,6 +739,7 @@ for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n'
       "This template expects the golden image (bazelisk run //scripts:build-dev-image), which ships git." >&2
   elif run_clone clone -- "$extra_url" "$extra_target"; then
     echo "cloned $extra_url into $extra_target"
+    notes_materialize "$extra_target" "$extra_url" || true
     if [ -n "$clone_owner" ]; then
       chown -R "$clone_owner" "$extra_target" 2>/dev/null || true
     fi

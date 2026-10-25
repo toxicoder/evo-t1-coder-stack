@@ -475,6 +475,11 @@ resource "coder_agent" "main" {
     # why the path below resolves. chomp() drops the payload's own trailing
     # newline so the seeded file ends on its last line.
     grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))
+    # The per-repo notes library, interpolated verbatim into the quoted heredoc
+    # that writes ~/.grok/notes-setup.sh in startup.sh.tftpl. One copy under
+    # templates/common/ again, staged beside this file the same way; it is
+    # sourced rather than seeded as data, so nothing chomps it.
+    notes_setup = file("${path.module}/notes-setup.sh")
     # Injected verbatim into the script, which is safe enough: this is the
     # workspace creator's own input and they already hold a shell in this
     # container. The script quotes it anyway so a URL with spaces survives.

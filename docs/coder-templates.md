@@ -48,9 +48,12 @@ Two templates live under `templates/`, and a push covers both.
 - `vscode-alt.svg` is the editor icon (read with `filebase64()`). It stays small
   enough that the resulting `data:image/svg+xml;base64,...` URL fits Coder
   v2.36's `workspace_apps.icon` column (`varchar(256)`).
-- Both are staged by the push plumbing beside each staged `main.tf` copy, which is the
+- `notes-setup.sh` is the library behind each clone's private `notes.md`. The
+  startup script inlines it with `file()` the same way, writes it into
+  `~/.grok/`, sources it, and calls `notes_materialize` per clone.
+- All three are staged by the push plumbing beside each staged `main.tf` copy, which is the
   only place the server-side Terraform can read them from.
-- A push whose staged copy is missing either payload fails early, by design.
+- A push whose staged copy is missing any of them fails early, by design.
 - Editing the common copy changes both templates; the staged copy overwrites any
   same-named file the template dir still carries.
 
