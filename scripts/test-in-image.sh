@@ -43,8 +43,9 @@
 #   --image TAG    image to run; default $DEV_IMAGE_TAG when set, else
 #                  evo-t1-dev:latest
 #   --build        docker build even when the tag is already present
-#   --user USER    user the container runs as (default root, which owns the
-#                  bind mount it writes its Bazel output tree into)
+#   --user USER    user the container runs as (default this process's
+#                  uid:gid, so the bind mount stays writable and chmod-based
+#                  tests still see a non-root identity)
 #   --             everything after this is handed to bazelisk verbatim
 #   -h, --help     print this usage and exit 0
 #
@@ -87,9 +88,10 @@ evo-t1-dev:latest) with this checkout bind-mounted at /work, so a host that is
 not the contributor dev container still proves the gates against the image's
 own toolchain. The image is built first when the tag is missing.
 
-Defaults: image evo-t1-dev:latest (or $DEV_IMAGE_TAG), user root, and the
-bazelisk args are "test //:test-fast". With EVO_T1_DEVCONTAINER=1 this is
-already that image, so no container is started and bazelisk runs here.
+Defaults: image evo-t1-dev:latest (or $DEV_IMAGE_TAG), user this process's
+uid:gid, and the bazelisk args are "test //:test-fast". With
+EVO_T1_DEVCONTAINER=1 this is already that image, so no container is
+started and bazelisk runs here.
 
 Options: --image TAG, --build (build even when the tag exists), --user USER,
 -- (hand everything after it to bazelisk), -h/--help.
@@ -221,10 +223,10 @@ test_in_image_build() {
 
 # @function test_in_image_run
 # Run the gates in the image: the checkout bind-mounted read-write at /work,
-# that as the cwd, and bazelisk as the command. --user defaults to root because
-# that is the uid which owns the Bazel output tree it writes into the bind
-# mount; host.docker.internal is mapped so a gate that probes the stack host
-# resolves the same way it does in a workspace.
+# that as the cwd, and bazelisk as the command. --user defaults to this
+# process's uid:gid so the bind mount stays writable and permission tests
+# still see a non-root identity; host.docker.internal is mapped so a gate
+# that probes the stack host resolves the same way it does in a workspace.
 # Globals:
 #   CI (passed through when the caller exported it)
 # Arguments:
@@ -235,7 +237,7 @@ test_in_image_build() {
 # Outputs:
 #   One status line, then the bazelisk output
 # Returns:
-#   The container's exit status; 1 when no tag, root, or bazelisk argv was given
+#   The container's exit status; 1 when no tag or bazelisk argv was given
 test_in_image_run() {
   if [ "$#" -lt 4 ]; then
     err "test_in_image_run: needs a tag, a repo root, a user and at least one bazelisk arg"
@@ -247,9 +249,12 @@ test_in_image_run() {
     err "test_in_image_run: the tag and the repo root must be non-empty"
     return 1
   fi
-  log "running bazelisk $* in ${tag} as ${user:-root} against ${root}"
+  if [ -z "${user}" ]; then
+    user="$(id -u):$(id -g)"
+  fi
+  log "running bazelisk $* in ${tag} as ${user} against ${root}"
   docker run --rm \
-    --user "${user:-root}" \
+    --user "${user}" \
     -v "${root}:/work" \
     -w /work \
     -e CI \

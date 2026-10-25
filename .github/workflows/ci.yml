@@ -21,10 +21,12 @@ name: ci
 # image's copies, so a laptop, the contributor container and CI all answer with
 # the same versions, and no job installs anything.
 #
-# Why not `container:` — the image ends at `USER coder`, while the runner mounts
-# the checkout at a path only root can write there. Every gate therefore runs
-# through `docker run --user root` with $GITHUB_WORKSPACE bind-mounted at /work,
-# which is also how scripts/test-in-image.sh runs them on a workstation.
+# Why not `container:` — the image ends at `USER coder` (uid 1000), while the
+# runner bind-mounts the checkout as the runner uid (1001). Every gate therefore
+# runs through `docker run --user "$(id -u):$(id -g)"` with $GITHUB_WORKSPACE at
+# /work, so the mount is writable and permission tests see a non-root identity.
+# HOME=/tmp is that numeric uid's writable home. scripts/test-in-image.sh uses
+# the same uid:gid default on a workstation.
 #
 # The image is published to ghcr.io from `main` only (packages: write above is
 # what lets that push happen; a fork PR has no registry token and never pushes).
@@ -78,7 +80,7 @@ jobs:
 
       - name: Bazel test-fast, lint and validate in the image
         run: |
-          docker run --rm --user root \
+          docker run --rm --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             -e CI=true -e HOME=/tmp \
             --add-host=host.docker.internal:host-gateway \
@@ -117,7 +119,7 @@ jobs:
 
       - name: Docs site in the image
         run: |
-          docker run --rm --user root \
+          docker run --rm --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/work" -w /work/docs-site \
             -e CI=true -e HOME=/tmp -e NEXT_TELEMETRY_DISABLED=1 \
             evo-t1-dev:latest \

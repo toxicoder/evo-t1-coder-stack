@@ -151,9 +151,10 @@ installing the toolchain onto that machine:
 bazelisk run //scripts:test-in-image --
 ```
 
-That is the host ingress: it `docker run`s `evo-t1-dev:latest` as `--user root` and runs the
-same suites CI runs, so a macOS laptop gets the Linux result without a Linux box. Build the
-tag first with `bazelisk run //scripts:build-dev-image` if the daemon does not have it.
+That is the host ingress: it `docker run`s `evo-t1-dev:latest` as this process's uid:gid
+(`$(id -u):$(id -g)`) and runs the same suites CI runs, so a macOS laptop gets the Linux
+result without a Linux box. Build the tag first with `bazelisk run //scripts:build-dev-image`
+if the daemon does not have it.
 
 Native `bazelisk test` on macOS is a convenience, not a merge path. The suites run there,
 but the BSD userland differs from the GNU one the image ships (`sed`, `date`, `find`,

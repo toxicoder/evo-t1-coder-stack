@@ -6,7 +6,7 @@
 # proves the gates inside the golden image, so the exact docker command line is
 # what matters. A missing tag is built from images/dev/Dockerfile with
 # images/dev as the context and tagged locally; the gates then run through
-# docker run with the checkout bind-mounted at /work, --user root, and bazelisk
+# docker run with the checkout bind-mounted at /work, --user <host uid:gid>, and bazelisk
 # as the command ("test //:test-fast" unless argv said otherwise). --image
 # repoints the tag, DEV_IMAGE_TAG does the same from the environment, --build
 # rebuilds even a tag that already exists, and everything after -- reaches
@@ -215,10 +215,10 @@ script_default_tag() {
   assert_match "stack host resolvable" '--add-host=host.docker.internal:host-gateway' "${line}"
   assert_match "bazelisk is the command" 'evo-t1-dev:latest bazelisk test //:lint --test_tag_filters=manual$' "${line}"
 
-  # An empty user is the root default, and a missing argument is a caller bug.
+  # An empty user is this process's uid:gid, and a missing argument is a caller bug.
   run test_in_image_run evo-t1-dev:latest "${REPO_ROOT}" "" test //:test-fast
   [ "${status}" -eq 0 ]
-  assert_match "root by default" '--user root' "$(stub_log_last docker)"
+  assert_match "host uid by default" "--user $(id -u):$(id -g)" "$(stub_log_last docker)"
   run test_in_image_run
   [ "${status}" -ne 0 ]
 }
@@ -237,7 +237,7 @@ script_default_tag() {
   assert_match "context is images/dev" "${REPO_ROOT}/images/dev$" "${log}"
   line="$(stub_log_last docker)"
   assert_match "then run" '^docker run ' "${line}"
-  assert_match "as root" '--user root' "${line}"
+  assert_match "as host uid" "--user $(id -u):$(id -g)" "${line}"
   assert_match "checkout mounted" "-v ${REPO_ROOT}:/work" "${line}"
   assert_match "cwd is the mount" '-w /work' "${line}"
   assert_match "scratch HOME" '-e HOME=/tmp' "${line}"

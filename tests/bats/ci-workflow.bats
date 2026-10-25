@@ -2,9 +2,10 @@
 #
 # ## ci-workflow.bats — CI runs the golden image, not a runner toolchain.
 #
-# The merge gate is images/dev/Dockerfile docker-run as --user root. These
-# tests lock that shape so a later change cannot slip back to jobs.*.container,
-# actions/setup-node, or ./.github/actions/setup-bazel on the bazel/docs jobs.
+# The merge gate is images/dev/Dockerfile docker-run as the host uid:gid.
+# These tests lock that shape so a later change cannot slip back to
+# jobs.*.container, actions/setup-node, or ./.github/actions/setup-bazel on
+# the bazel/docs jobs.
 #
 # Usage: bazelisk test //tests:bats_ci_workflow_test   (from any cwd)
 # Safety: reads .github/workflows/ci.yml; writes nothing.
@@ -68,7 +69,10 @@ setup() {
   assert_contains_file "build context" "${CI_YML}" 'context: images/dev'
   assert_contains_file "dockerfile" "${CI_YML}" 'file: images/dev/Dockerfile'
   assert_contains_file "local tag" "${CI_YML}" 'evo-t1-dev:latest'
-  assert_contains_file "docker run as root" "${CI_YML}" 'docker run --rm --user root'
+  if ! grep -Fq 'docker run --rm --user "$(id -u):$(id -g)"' "${CI_YML}"; then
+    printf 'FAIL: docker run as host uid missing from %s\n' "${CI_YML}" >&2
+    return 1
+  fi
   assert_contains_file "validate inner" "${CI_YML}" 'VALIDATE_INNER=1 bazelisk run //:validate'
   assert_contains_file "docs npm in image" "${CI_YML}" 'npm ci --legacy-peer-deps'
   assert_contains_file "packages write" "${CI_YML}" 'packages: write'
