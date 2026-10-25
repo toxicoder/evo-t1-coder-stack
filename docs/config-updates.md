@@ -240,8 +240,8 @@ reseeds `~/.grok/config.toml` for exactly that reason.
 
 `STACK_PUBLIC_HOSTS` is the one switch. Empty keeps everything below LAN-only and
 every derived `STACK_*_URL` stays empty; otherwise set the comma-separated public
-DNS names in the form this stack was installed with, and let `.env.sample` carry
-the literal. The rules:
+DNS names in the hyphenated one-label form the rules below define; `.env.sample`
+shows a worked example.
 
 - Entries are DNS names, not URLs: no scheme, no port, no path. The entry with no
   prefix is the dashboard.
