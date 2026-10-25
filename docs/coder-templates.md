@@ -671,7 +671,9 @@ helpers point at a folder that was never cloned.
   `--auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened <folder>`,
   passing no settings payload. Before that launch it `mkdir -p`s the folder and, when
   the folder is not `/home/coder`, waits up to 60 s for `<folder>/.git` so a first-start
-  clone and the editor no longer race. `coder_agent.dir` stays unset: the agent would
+  clone and the editor no longer race. That wait loop increments with
+  `waited=$((waited + 1))` (one dollar): HCL heredocs only escape `$${...}`, and
+  Coder runs the body as `bash -c`, so `$$((` would expand `$$` to the PID. `coder_agent.dir` stays unset: the agent would
   chdir there before `startup.sh`, and a missing clone folder would fail the agent. The
   editor's settings live on the per-owner `vscode-settings-<owner-id>` volume seed, not
   in a per-start merge.

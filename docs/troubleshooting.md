@@ -596,6 +596,22 @@ version.
 bazelisk run //scripts:push-template
 ```
 
+### `bash: -c: line 32: syntax error near unexpected token '('` after "Running code-server in the background" -> HCL `$$((` in the editor wait loop
+
+Cause: Coder runs every `coder_script` as `bash -c`. HCL heredocs in `main.tf` only
+escape `$${name}` to `${name}`; `$$((` is two literal dollars. The editor wait loop
+then becomes `waited=<pid>((waited + 1))`, which is the syntax error. The echo
+before the loop still prints. `already cloned, skipping` on the next line is the
+concurrent clone stage, not the failure.
+
+Fix: the increment is `waited=$((waited + 1))` (one dollar). Push the templates and
+restart so the editor script relaunches.
+
+```sh
+bazelisk run //scripts:push-template
+coder restart <workspace>
+```
+
 ### VS Code Web opens `/home/coder` instead of the cloned repository -> last workspace won
 
 Cause: path-based Coder apps drop the `?folder=` query before the browser sees

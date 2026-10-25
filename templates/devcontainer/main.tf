@@ -868,7 +868,10 @@ resource "coder_script" "code_server" {
       waited=0
       while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do
         sleep 1
-        waited=$$((waited + 1))
+        # HCL only escapes $${...}. $$(( is two literal dollars; Coder
+        # runs this body as bash -c, so $$ becomes the PID and the leftover
+        # (( is "syntax error near unexpected token '('".
+        waited=$((waited + 1))
       done
     fi
     "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &

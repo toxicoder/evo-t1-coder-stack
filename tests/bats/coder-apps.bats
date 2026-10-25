@@ -45,6 +45,19 @@ app_block() {
   sed -n "/^resource \"coder_app\" \"$2\" {/,/^}/p" "$1"
 }
 
+# Print coder_script.code_server the way Coder's agent parses it: HCL
+# interpolates ${...} at apply, and the only string escape is $${ → ${.
+# Coder then runs that body as bash -c, so $$((waited + 1)) is two dollars
+# and expands $$ to the PID.
+hcl_code_server_script() {
+  awk '
+    $0 ~ /^resource "coder_script" "code_server" \{/ { in_res = 1 }
+    in_res && $0 ~ /script = <<-EOT/ { in_h = 1; next }
+    in_h && $0 ~ /^[[:space:]]*EOT[[:space:]]*$/ { exit }
+    in_h { print }
+  ' "$1" | sed 's/\$\${/${/g'
+}
+
 @test "icon: both twins build the editor icon from the common SVG copy" {
   # filebase64() reads beside main.tf, so the icon only resolves while
   # templates/common/vscode-alt.svg exists and push-template stages it there.
@@ -257,7 +270,14 @@ app_block() {
     grep -Fq 'mkdir -p -- "$${FOLDER}"' "${tpl}"
     grep -Fq 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${tpl}"
     grep -Fq 'while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do' "${tpl}"
-    grep -Fq 'waited=$$((waited + 1))' "${tpl}"
+    # HCL heredocs only escape $${...}. $$(( is two literal dollars, and
+    # Coder's agent runs this body as bash -c, which expands $$ to the PID
+    # then dies on the leftover (( : "syntax error near unexpected token '('".
+    grep -Fq 'waited=$((waited + 1))' "${tpl}"
+    if grep -Fq 'waited=$$((waited + 1))' "${tpl}"; then
+      echo "${tpl}: wait-loop increment is two HCL-literal dollars; Coder bash -c expands them to the PID" >&2
+      return 1
+    fi
     # Order matters as much as presence: waiting after the launch is a no-op.
     l_folder="$(grep -n -F 'FOLDER="${local.editor_folder}"' "${tpl}" | head -n 1 | cut -d: -f1)"
     l_mkdir="$(grep -n -F 'mkdir -p -- "$${FOLDER}"' "${tpl}" | head -n 1 | cut -d: -f1)"
@@ -273,6 +293,29 @@ app_block() {
     fi
     if [[ ! "${l_guard}" -gt "${l_folder}" || ! "${l_wait}" -gt "${l_guard}" || ! "${l_wait}" -lt "${l_launch}" ]]; then
       echo "${tpl}: the .git wait is not between the FOLDER assignment and the launch" >&2
+      return 1
+    fi
+  done
+}
+
+@test "editor: the rendered code-server script is valid bash -c input" {
+  # Coder's agent runs coder_script bodies as bash -c (agentssh CreateCommand).
+  # HCL leaves $$(( as two dollars, and that is a syntax error on the wait
+  # loop: the echo before it still prints, then bash dies on the leftover ((.
+  local tpl script
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    script="$(hcl_code_server_script "${tpl}")"
+    [ -n "${script}" ] || { echo "${tpl}: empty code-server script" >&2; return 1; }
+    printf '%s\n' "${script}" | grep -Fq 'waited=$((waited + 1))' || {
+      echo "${tpl}: rendered script lost the one-dollar increment" >&2
+      return 1
+    }
+    if printf '%s\n' "${script}" | grep -Fq 'waited=$$((waited + 1))'; then
+      echo "${tpl}: rendered script still has two-dollar arithmetic" >&2
+      return 1
+    fi
+    if ! printf '%s\n' "${script}" | bash -n; then
+      echo "${tpl}: rendered code-server script is not valid bash" >&2
       return 1
     fi
   done
