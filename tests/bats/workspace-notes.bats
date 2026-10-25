@@ -369,12 +369,10 @@ canon_of() {
   for tpl in "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" \
     "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"; do
     [[ -f "${tpl}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
-    # Properties, not source lines: the payload has to reach the script through
-    # the interpolation, be published through a temp file so a sibling boot never
-    # sources a half-written library, be readable by the clone user, be sourced,
-    # and then run under the runner that owns the workspace home.
-    for pat in '${notes_setup}' 'mktemp ' 'mv -f ' '. "$notes_lib"' \
-      '$clone_runner env HOME=' '$NOTES_SETUP_LIB' 'notes_materialize '; do
+    # Every pattern is anchored on the notes stage, so each one can still fail:
+    # a generic 'mktemp ' or '$clone_runner env HOME=' also matches other stages.
+    for pat in '${notes_setup}' 'mv -f "$notes_lib_tmp"' '. "$notes_lib"' \
+      '$clone_runner env HOME="$clone_home" NOTES_SETUP_LIB' '. "$NOTES_SETUP_LIB"'; do
       if ! grep -qF -- "${pat}" "${tpl}"; then
         printf 'FAIL: %s lost the wiring for "%s"\n' "${tpl}" "${pat}" >&2
         return 1
@@ -386,14 +384,17 @@ canon_of() {
       printf 'FAIL: %s feeds the library through an unquoted heredoc\n' "${tpl}" >&2
       return 1
     fi
-    # The chmod belongs to the publish step, between the rename in and the temp
-    # cleanup: mv keeps mktemp's 0600, and the clone user has to read the library
-    # before the clone stage's chown ever runs.
-    if ! sed -n '/mv -f "$notes_lib_tmp"/,/rm -f "$notes_lib_tmp"/p' "${tpl}" |
-      grep -q 'chmod 0644 "$notes_lib"'; then
+    # Published world-readable, before the rename: mv keeps mktemp's 0600, and
+    # the rename is what puts the path in reach of a sibling boot.
+    if ! sed -n '/mktemp "$notes_lib/,/rm -f "$notes_lib_tmp"/p' "${tpl}" |
+      grep -q 'chmod 0644 "$notes_lib_tmp"'; then
       printf 'FAIL: %s publishes the library without making it readable\n' "${tpl}" >&2
       return 1
     fi
+    # Both run_notes branches materialize: the privileged one inside the runner's
+    # shell, the plain one directly. Only the stage comment names the function
+    # otherwise, so the count is what pins the unprivileged path.
+    [ "$(grep -c 'notes_materialize "\$1" "\$2"' "${tpl}")" -eq 2 ]
     # Every clone path gets the call: primary and extras, on both the already
     # cloned branch and the just-cloned one.
     [ "$(grep -c 'run_notes "\$target"' "${tpl}")" -eq 2 ]

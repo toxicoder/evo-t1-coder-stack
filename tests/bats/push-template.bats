@@ -592,6 +592,10 @@ logs_absent() {
 
 # ── template-push.sh (moved from lib.bats; keep these assertions) ──────────
 
+# The payload files every template's main.tf reads from the staged copy; the
+# template_push_one guard has to name exactly these and nothing else.
+payloads=(GROK_BUILD_AGENTS.md vscode-alt.svg notes-setup.sh)
+
 source_libs() {
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/common.sh"
@@ -723,20 +727,21 @@ source_libs() {
   export CODER_CONTAINER=stack-coder-1
   run --separate-stderr template_push_one tpl2 "${BATS_TEST_TMPDIR}/tpl-noseed"
   [ "${status}" -eq 1 ]
-  [[ ${stderr} == *"common/GROK_BUILD_AGENTS.md is missing"* ]]
-  [[ ${stderr} == *"common/vscode-alt.svg is missing"* ]]
-  [[ ${stderr} == *"common/notes-setup.sh is missing"* ]]
+  local payload
+  for payload in "${payloads[@]}"; do
+    [[ ${stderr} == *"common/${payload} is missing"* ]]
+  done
+  [ "$(grep -c ' is missing' <<<"${stderr}")" -eq "${#payloads[@]}" ]
   [ -z "$(stub_log docker)" ]
   [ -z "$(stub_log coder)" ]
 }
 
 @test "template-push: a common dir missing one payload names only that payload" {
   source_libs
-  # The guard lists the payloads, not the directory. For each of the three, the
-  # two that are present must stay unnamed and the one that is gone must be
+  # The guard lists the payloads, not the directory. For each payload in turn the
+  # ones that are present must stay unnamed and the one that is gone must be
   # named - and every run must still refuse before the CLI runs.
-  local payloads=("GROK_BUILD_AGENTS.md" "vscode-alt.svg" "notes-setup.sh")
-  local gone keep i=0
+  local gone keep
   for gone in "${payloads[@]}"; do
     rm -rf "${BATS_TEST_TMPDIR}/tpl-one" "${BATS_TEST_TMPDIR}/common"
     mkdir -p "${BATS_TEST_TMPDIR}/tpl-one" "${BATS_TEST_TMPDIR}/common"
@@ -747,8 +752,7 @@ source_libs() {
       fi
     done
     export CODER_CONTAINER=stack-coder-1
-    run --separate-stderr template_push_one "tpl-fold-$i" "${BATS_TEST_TMPDIR}/tpl-one"
-    i=$((i + 1))
+    run --separate-stderr template_push_one tpl-fold "${BATS_TEST_TMPDIR}/tpl-one"
     if [ "${status}" -ne 1 ]; then
       printf 'FAIL: a common dir without %s was pushed anyway\n' "${gone}" >&2
       return 1
@@ -757,12 +761,9 @@ source_libs() {
       printf 'FAIL: %s went unnamed; stderr:\n%s\n' "${gone}" "${stderr}" >&2
       return 1
     fi
-    for keep in "${payloads[@]}"; do
-      if [ "${keep}" != "${gone}" ] && [[ ${stderr} == *"common/${keep} is missing"* ]]; then
-        printf 'FAIL: %s named a payload that was present\n' "${gone}" >&2
-        return 1
-      fi
-    done
+    # Exactly one name in the output, so the payloads that are present stayed
+    # unnamed without walking the list a second time.
+    [ "$(grep -c ' is missing' <<<"${stderr}")" -eq 1 ]
     [ -z "$(stub_log docker)" ]
     [ -z "$(stub_log coder)" ]
   done

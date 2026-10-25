@@ -39,9 +39,7 @@
 #   # shellcheck disable=SC1090
 #   . "$HOME/.grok/notes-setup.sh" 2>/dev/null || true
 #   run_notes "$clone_dir" "$clone_url"
-# run_notes runs it as the uid that owns the workspace home, because the git
-# --global writes and the live-file write have to be made by that user: as the
-# agent's uid they rename a root-owned ~/.gitconfig over the workspace user's.
+# run_notes runs it as the uid that owns the workspace home.
 
 # notes_repo_key <url> — normalize a git remote or clone URL to host/owner/repo.
 # @function notes_repo_key
@@ -218,13 +216,11 @@ notes_ensure_excludes() {
     elif [[ ${user_exclude} != /* ]]; then
       # A relative value resolves against whatever directory git runs in, so
       # appending here would write next to a clone rather than where it applies.
-      printf 'notes: core.excludesFile=%s is not absolute — only .git/info/exclude was updated\n' \
-        "${user_exclude}" >&2
+      printf 'notes: core.excludesFile=%s is not absolute\n' "${user_exclude}" >&2
     elif [ -d "${user_exclude}" ]; then
       # An absolute path is not enough: a directory has no lines to append to,
       # and a doomed write there would say so twice per start.
-      printf 'notes: core.excludesFile=%s is a directory — only .git/info/exclude was updated\n' \
-        "${user_exclude}" >&2
+      printf 'notes: core.excludesFile=%s is a directory\n' "${user_exclude}" >&2
     else
       mkdir -p "$(dirname "${user_exclude}")" 2>/dev/null || true
       notes_append_once "${user_exclude}" notes.md .scratch-notes.md
