@@ -16,6 +16,7 @@ Usage:
   bazelisk run //docs-site:typecheck     # next typegen + tsc --noEmit
   bazelisk test //docs-site:unit         # Vitest suite (widgets, transforms, page contract)
   bazelisk test //docs-site:nav_test     # the nav generator's own tests
+  bazelisk run //docs-site:build && bazelisk test //docs-site:verify  # verify reads docs-site/out/
   bazelisk run //docs-site:npm -- <args> # escape hatch
 """
 
@@ -149,7 +150,6 @@ sh_test(
     name = "nav_test",
     size = "small",
     srcs = ["run_python_test.sh"],
-    args = ["test_gen_nav.py"],
     data = _NPM_DATA,
     tags = ["no-sandbox"],
     visibility = ["//visibility:public"],

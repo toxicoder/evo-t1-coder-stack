@@ -48,72 +48,26 @@ _DOCS_COMMON_DATA = [
     "//docs-site:sources",
 ]
 
-sh_binary(
-    name = "serve",
-    srcs = ["manage-docs.sh"],
-    args = ["serve"],
-    data = _DOCS_COMMON_DATA,
-    visibility = ["//visibility:public"],
-)
+# One target per manage-docs.sh subcommand; `docs` keeps the historical name for the build.
+_DOCS_SUBCOMMANDS = {
+    "serve": "serve",
+    "docs": "build",
+    "preview": "preview",
+    "verify": "verify",
+    "typecheck": "typecheck",
+    "test": "test",
+    "nav": "nav",
+    "status": "status",
+    "clean": "clean",
+}
 
-sh_binary(
-    name = "docs",
-    srcs = ["manage-docs.sh"],
-    args = ["build"],
-    data = _DOCS_COMMON_DATA,
-    visibility = ["//visibility:public"],
-)
-
-sh_binary(
-    name = "preview",
-    srcs = ["manage-docs.sh"],
-    args = ["preview"],
-    data = _DOCS_COMMON_DATA,
-    visibility = ["//visibility:public"],
-)
-
-sh_binary(
-    name = "verify",
-    srcs = ["manage-docs.sh"],
-    args = ["verify"],
-    data = _DOCS_COMMON_DATA,
-    visibility = ["//visibility:public"],
-)
-
-sh_binary(
-    name = "typecheck",
-    srcs = ["manage-docs.sh"],
-    args = ["typecheck"],
-    data = _DOCS_COMMON_DATA,
-    visibility = ["//visibility:public"],
-)
-
-sh_binary(
-    name = "test",
-    srcs = ["manage-docs.sh"],
-    args = ["test"],
-    data = _DOCS_COMMON_DATA,
-    visibility = ["//visibility:public"],
-)
-
-sh_binary(
-    name = "nav",
-    srcs = ["manage-docs.sh"],
-    args = ["nav"],
-    data = _DOCS_COMMON_DATA,
-    visibility = ["//visibility:public"],
-)
-
-sh_binary(
-    name = "status",
-    srcs = ["manage-docs.sh"],
-    args = ["status"],
-    visibility = ["//visibility:public"],
-)
-
-sh_binary(
-    name = "clean",
-    srcs = ["manage-docs.sh"],
-    args = ["clean"],
-    visibility = ["//visibility:public"],
-)
+[
+    sh_binary(
+        name = name,
+        srcs = ["manage-docs.sh"],
+        args = [command],
+        data = _DOCS_COMMON_DATA,
+        visibility = ["//visibility:public"],
+    )
+    for name, command in _DOCS_SUBCOMMANDS.items()
+]

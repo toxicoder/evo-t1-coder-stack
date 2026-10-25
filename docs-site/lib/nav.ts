@@ -80,10 +80,10 @@ export function buildPageTree(source: NavSource): Root {
       defaultOpen: true,
       children: pages
     };
-    const first = pages[0];
+    const firstPage = tab.pages[0];
     // A tab whose first page is its overview gets it as the folder index, so the tab label
-    // itself lands on the section page.
-    if (first && /(^|\/)index$/.test(withoutExtension(tab.pages[0]!.path))) folder.index = first;
+    // itself lands on the section page. `pages[i]` is the item for `tab.pages[i]`.
+    if (firstPage && /(^|\/)index$/.test(withoutExtension(firstPage.path))) folder.index = pages[0];
     return folder;
   });
 

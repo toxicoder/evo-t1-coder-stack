@@ -32,11 +32,6 @@ export function generateStaticParams() {
 
 const tree = buildPageTree(source);
 
-/** Source link for a page: the copy on the branch this export was built from. */
-function editUrl(path: string): string {
-  return repoFileUrl(`docs/${path}`);
-}
-
 interface PageProps {
   params: Promise<{ slug?: string[] }>;
 }
@@ -87,7 +82,7 @@ export default async function DocsRoute({ params }: PageProps) {
           <PageFooter items={neighborsOf(source, page.path)}>
             <div className="flex flex-wrap items-center gap-4 pt-6">
               <PageBreadcrumb />
-              <EditOnGitHub href={editUrl(page.path)} className="ms-auto">
+              <EditOnGitHub href={repoFileUrl(`docs/${page.path}`)} className="ms-auto">
                 Edit this page
               </EditOnGitHub>
             </div>

@@ -17,10 +17,10 @@ import { docs } from "./content";
  * slug path.  The published aliases add their own prefix through `basePath` in
  * `next.config.ts`, which is why the URLs here stay root-relative.
  */
-export const DOCS_ROUTE = "/";
+const DOCS_ROUTE = "/";
 
 /** A link target that has been resolved to something renderable. */
-export interface ResolvedHref {
+interface ResolvedHref {
   href: string | undefined;
   /** Set for targets that leave the site, so the caller can add `target`/`rel`. */
   external?: boolean;

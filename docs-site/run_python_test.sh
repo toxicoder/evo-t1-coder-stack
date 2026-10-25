@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Bazel entry point for the python unittest suites that live beside the docs-site sources
-# (currently the nav generator's).
+# Bazel entry point for the nav generator's unittest suite, which lives beside the
+# docs-site sources as test_gen_nav.py.
 #
-# Usage (from a bazel run): run_python_test.sh <test_module.py> [more args]
+# Usage (from a bazel run): run_python_test.sh
 set -euo pipefail
 
 if [[ -n ${BUILD_WORKSPACE_DIRECTORY:-} && -d "${BUILD_WORKSPACE_DIRECTORY}/docs-site" ]]; then
@@ -13,19 +13,6 @@ else
   cd "$SCRIPT_DIR"
 fi
 
-if [[ $# -eq 0 ]]; then
-  echo "usage: $(basename "$0") <test_module.py> [unittest args...]" >&2
-  exit 2
-fi
-
-TEST_MODULE="$1"
-shift
-
-if [[ ! -f ${TEST_MODULE} ]]; then
-  echo "test module ${TEST_MODULE} not found in $(pwd)" >&2
-  exit 1
-fi
-
 # discover keeps the package dir importable so the tests can `import gen_nav` etc.
 # out of scripts/.
-exec python3 -m unittest discover -s . -p "${TEST_MODULE}" -t . -v "$@"
+exec python3 -m unittest discover -s . -p test_gen_nav.py -t . -v

@@ -78,4 +78,4 @@ jobs:
         run: npm run nav:check
 
       - name: Nav generator tests
-        run: python3 -m unittest discover -s . -p test_gen_nav.py -t .
+        run: bash run_python_test.sh

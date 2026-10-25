@@ -86,19 +86,26 @@ assert_pages_tree_file_sizes() {
   fi
 }
 
-# @function configure_pages_git_identity
-# Attribute the gh-pages commit to the Actions bot on the current repository.
+# @function export_pages_git_identity
+# Attribute the gh-pages commit to the Actions bot.
+# The identity travels on the commit through the environment: this script runs from
+# the source checkout, and writing user.name/user.email there would author every
+# commit the operator makes afterwards (a linked worktree shares that config).
 # Globals:
-#   None
+#   GIT_AUTHOR_NAME, GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL (write)
 # Arguments:
 #   None
 # Outputs:
 #   None
 # Returns:
 #   0
-configure_pages_git_identity() {
-  git config user.name "github-actions[bot]"
-  git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+export_pages_git_identity() {
+  local bot="github-actions[bot]"
+  local bot_email="41898282+${bot}@users.noreply.github.com"
+  export GIT_AUTHOR_NAME="${bot}"
+  export GIT_AUTHOR_EMAIL="${bot_email}"
+  export GIT_COMMITTER_NAME="${bot}"
+  export GIT_COMMITTER_EMAIL="${bot_email}"
 }
 
 # @function cleanup_pages_worktree
@@ -173,7 +180,7 @@ publish_pages_tree() {
   PAGES_WORKTREE=""
   trap cleanup_pages_worktree EXIT
 
-  configure_pages_git_identity
+  export_pages_git_identity
   add_pages_worktree
 
   git -C "${PAGES_WORKTREE}" rm -rf --quiet . 2>/dev/null || true

@@ -111,7 +111,8 @@ function shouldSkipGlossaryParent(parent: { type: string; name?: string }): bool
 }
 
 /**
- * Wrap the first occurrence of each known term in a paragraph with an `<abbr>` element.
+ * Wrap every occurrence of a known term with an `<abbr>` element, except inside links,
+ * headings and inline code.
  *
  * @returns A remark transformer.
  */

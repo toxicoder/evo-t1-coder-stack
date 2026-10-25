@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * Root layout: applies the Voltage theme and mounts the framework providers.
+ * Root layout: mounts the framework providers and the site stylesheet.
  *
  * `suppressHydrationWarning` is required by `next-themes`: its theme script rewrites the
  * `class` attribute on `<html>` before React hydrates, which otherwise trips the mismatch

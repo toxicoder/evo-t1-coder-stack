@@ -48,6 +48,32 @@ assembled_tree() {
   done
 }
 
+# seeded_origin <origin> <clone> — a bare origin carrying main, cloned for the publisher
+# to stand in. The publisher only ever pushes gh-pages, so main must exist already.
+seeded_origin() {
+  local origin="$1" clone="$2"
+  git init -q --bare "${origin}"
+  git clone -q "${origin}" "${clone}"
+  (
+    cd "${clone}" &&
+      git checkout -q -b main &&
+      printf '# x\n' >README.md &&
+      git add README.md &&
+      git commit -qm "seed" &&
+      git push -q origin main
+  )
+}
+
+# load_publish_unit — publish_pages_tree and everything it calls. extract_fn.py loads one
+# function at a time, so an end-to-end run against a local origin needs the whole set.
+load_publish_unit() {
+  local fn
+  for fn in publish_pages_tree assert_assembled_pages_tree assert_pages_tree_file_sizes \
+    export_pages_git_identity add_pages_worktree cleanup_pages_worktree; do
+    load_shell_function "${SCRIPT}" "${fn}"
+  done
+}
+
 @test "publish-pages-tree: a tree with a root page, .nojekyll and one alias is accepted" {
   load_shell_function "${SCRIPT}" assert_assembled_pages_tree
   assembled_tree "${BATS_TEST_TMPDIR}/site" latest
@@ -108,15 +134,27 @@ assembled_tree() {
   [[ ${stderr} == *"Usage: publish-pages-tree.sh <assembled-dir>"* ]]
 }
 
-@test "publish-pages-tree: the commit identity is the Actions bot" {
-  load_shell_function "${SCRIPT}" configure_pages_git_identity
-  git init -q "${BATS_TEST_TMPDIR}/ident"
+@test "publish-pages-tree: the gh-pages commit is the Actions bot's and the checkout's config stays clean" {
+  # The identity has to land on the commit, not in .git/config: that config is shared by
+  # the checkout and its worktrees, so writing it would author the operator's next commits.
+  load_publish_unit
+  local origin clone
+  origin="${BATS_TEST_TMPDIR}/ident-origin.git"
+  clone="${BATS_TEST_TMPDIR}/ident-clone"
+  seeded_origin "${origin}" "${clone}"
+  assembled_tree "${BATS_TEST_TMPDIR}/ident" latest
   (
-    cd "${BATS_TEST_TMPDIR}/ident" &&
-      configure_pages_git_identity &&
-      [ "$(git config user.name)" = "github-actions[bot]" ] &&
-      [ "$(git config user.email)" = "41898282+github-actions[bot]@users.noreply.github.com" ]
+    cd "${clone}" &&
+      export RUNNER_TEMP="${BATS_TEST_TMPDIR}/tmp" GITHUB_REF_NAME=feat/foo GITHUB_SHA=deadbeef &&
+      publish_pages_tree "${BATS_TEST_TMPDIR}/ident"
   )
+
+  local bot="github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>"
+  run git -C "${origin}" log --format='%an <%ae> %cn <%ce>' -1 gh-pages
+  [ "${output}" = "${bot} ${bot}" ]
+
+  run git -C "${clone}" config --local --get user.name
+  [ -z "${output}" ]
 }
 
 @test "publish-pages-tree: the worktree is created off origin and cleaned up again" {
@@ -136,27 +174,11 @@ assembled_tree() {
 }
 
 @test "publish-pages-tree: publishing keeps every alias dir in the gh-pages gitignore" {
-  # publish_pages_tree calls every other function in the file, so the whole unit
-  # has to be loaded for one end-to-end run against a local origin.
-  load_shell_function "${SCRIPT}" publish_pages_tree
-  load_shell_function "${SCRIPT}" assert_assembled_pages_tree
-  load_shell_function "${SCRIPT}" assert_pages_tree_file_sizes
-  load_shell_function "${SCRIPT}" configure_pages_git_identity
-  load_shell_function "${SCRIPT}" add_pages_worktree
-  load_shell_function "${SCRIPT}" cleanup_pages_worktree
+  load_publish_unit
   local origin clone
   origin="${BATS_TEST_TMPDIR}/origin.git"
   clone="${BATS_TEST_TMPDIR}/clone"
-  git init -q --bare "${origin}"
-  git clone -q "${origin}" "${clone}"
-  (
-    cd "${clone}" &&
-      git checkout -q -b main &&
-      printf '# x\n' >README.md &&
-      git add README.md &&
-      git commit -qm "seed" &&
-      git push -q origin main
-  )
+  seeded_origin "${origin}" "${clone}"
 
   assembled_tree "${BATS_TEST_TMPDIR}/pub" feat-foo
   (

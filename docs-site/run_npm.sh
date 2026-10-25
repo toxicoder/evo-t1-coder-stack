@@ -12,7 +12,8 @@ set -euo pipefail
 
 # `bazel run` executes from bazel-out; prefer BUILD_WORKSPACE_DIRECTORY so the build runs in
 # the real checkout. The Next build reads its pages from the sibling docs/ directory, which
-# does not resolve reliably through the runfiles sandbox.
+# does not resolve reliably through the runfiles sandbox, and node_modules plus the export
+# land where a developer can see and commit them.
 if [[ -n ${BUILD_WORKSPACE_DIRECTORY:-} && -d "${BUILD_WORKSPACE_DIRECTORY}/docs-site" ]]; then
   cd "${BUILD_WORKSPACE_DIRECTORY}/docs-site"
 else
@@ -44,7 +45,7 @@ case "$SUBCMD" in
     ;;
   dev)
     ensure_deps
-    # Dev resources are served cross-origin when addressed by IP, which Next rejects.
+    # --hostname localhost is load-bearing; see the serve arm of docs/manage-docs.sh.
     exec $CMD run dev -- --hostname localhost "$@"
     ;;
   build)
@@ -57,7 +58,6 @@ case "$SUBCMD" in
     ;;
   serve)
     ensure_deps
-    # scripts/serve_static.mjs takes positional [port] [root].
     exec $CMD run serve -- "$@"
     ;;
   typecheck)

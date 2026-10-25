@@ -16,8 +16,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Node strips the types, so the checked prefix is the same basePath() the export baked in.
+// Node strips the types, so these are the same basePath() and extension rule the export used.
 import { basePath as publishedBasePath } from "../lib/site.ts";
+import { withoutExtension } from "../lib/href.ts";
 
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const siteRoot = resolve(packageRoot, "..");
@@ -35,8 +36,9 @@ function check(name, ok, detail) {
 
 /** Address a page publishes at: no extension, no trailing `index`, trailing slash. */
 function urlFor(path) {
-  const slug = path.replace(/\.(?:md|mdx)$/iu, "");
-  const segments = slug.split("/").filter((segment) => segment.length > 0 && segment !== "index");
+  const segments = withoutExtension(path)
+    .split("/")
+    .filter((segment) => segment.length > 0 && segment !== "index");
   return segments.length > 0 ? `/${segments.join("/")}/` : "/";
 }
 
@@ -94,7 +96,7 @@ if (basePath.length > 0) {
   );
 }
 
-check("every navigation page is exported", pages.length > 0, `${pages.length} pages in nav.json`);
+check("nav.json declares pages", pages.length > 0, `${pages.length} pages in nav.json`);
 
 if (problems.length > 0) {
   console.error(`verify_site: ${problems.length} problem(s)`);

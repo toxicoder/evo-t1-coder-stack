@@ -3,9 +3,9 @@
 @import "fumadocs-ui/css/preset.css";
 
 /*
- * Overeazy Voltage palette for the documentation site chrome: warm paper/stone surfaces,
- * copper-amber primary. `@theme` registers the tokens with Tailwind so `bg-fd-background`
- * and friends resolve, and `.dark` overrides them for the scheme `next-themes` toggles.
+ * Chrome palette for the documentation site: warm paper/stone surfaces, copper-amber
+ * primary. `@theme` registers the tokens with Tailwind so `bg-fd-background` and friends
+ * resolve, and `.dark` overrides them for the scheme `next-themes` toggles.
  */
 @theme {
   --color-fd-background: #f5f2ee;

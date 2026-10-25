@@ -94,9 +94,10 @@ jobs:
           rm -rf "_site/${DOCS_ALIAS}"
           mkdir -p "_site/${DOCS_ALIAS}"
           (cd docs-site && npm run build)
+          cp -r docs-site/out/. "_site/${DOCS_ALIAS}/"
+          # After the cp: verify asserts every nav page exists in the directory it reads.
           # Same DOCS_ALIAS as the build, so the asset prefix it checks is the one it wrote.
           (cd docs-site && npm run verify -- "../_site/${DOCS_ALIAS}")
-          cp -r docs-site/out/. "_site/${DOCS_ALIAS}/"
 
           touch _site/.nojekyll
           cp docs-site/pages-root-index.html _site/index.html

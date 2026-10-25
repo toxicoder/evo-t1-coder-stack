@@ -16,8 +16,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -n ${BUILD_WORKSPACE_DIRECTORY:-} ]]; then
-  # `bazel run` executes from bazel-out; build and serve the real checkout so node_modules
-  # and the export land where a developer can see and commit them.
+  # `bazel run` executes from bazel-out. Why the build belongs in the real checkout is in
+  # the preamble of docs-site/run_npm.sh.
   REPO_ROOT="${BUILD_WORKSPACE_DIRECTORY}"
   SCRIPT_DIR="${REPO_ROOT}/docs"
 else
@@ -52,9 +52,9 @@ docs_node_is_ready() {
 
   # process.versions.node is "22.14.0" with no "v" prefix: take the first dotted part.
   local node_major
-  node_major="$(node -p 'Number.parseInt(process.versions.node.split(".")[0], 10)' 2>/dev/null || echo 0)"
-  if [[ ! ${node_major:-0} =~ ^[0-9]+$ ]] || [[ ${node_major:-0} -lt 20 ]]; then
-    error "Node ${node:-unknown} is too old for Next 16 (need 20+, 22 recommended)."
+  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+  if [[ ${node_major} -lt 22 ]]; then
+    error "Node ${node_major} is too old for Next 16 (docs-site/package.json requires node >=22)."
     exit 1
   fi
 
@@ -89,7 +89,7 @@ check_content() {
 }
 
 # @function open_browser
-# Open the dev server, when a browser opener exists and auto-open is on.
+# Open the dev server when auto-open is on.
 # Globals:
 #   AUTO_OPEN_BROWSER, PORT
 # Arguments:
@@ -101,13 +101,8 @@ check_content() {
 open_browser() {
   local url="http://127.0.0.1:${PORT}"
   if [[ $AUTO_OPEN_BROWSER == "true" ]]; then
-    if command -v python3 &>/dev/null; then
-      python3 -m webbrowser "$url" 2>/dev/null || true
-    elif [[ $OSTYPE == "darwin"* ]]; then
-      open "$url" 2>/dev/null || true
-    elif command -v xdg-open &>/dev/null; then
-      xdg-open "$url" 2>/dev/null || true
-    fi
+    # python3's webbrowser module already picks the platform opener (open, xdg-open, ...).
+    python3 -m webbrowser "$url" 2>/dev/null || true
   fi
 }
 
