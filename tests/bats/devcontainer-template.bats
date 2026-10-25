@@ -64,6 +64,18 @@ setup() {
   [ "${status}" -eq 0 ]
   run grep -F -- '--ignore-last-opened "$${FOLDER}"' "${DC_TF}"
   [ "${status}" -eq 0 ]
+  # The clone runs in the startup script while this script starts beside it, so
+  # the folder is created first and the launch waits (at most 60 s) for the
+  # clone's .git: a folder code-server cannot stat gets VS Code's "Workspace
+  # does not exist" dialog instead of the repository. /home/coder stays exempt.
+  run grep -F 'mkdir -p -- "$${FOLDER}"' "${DC_TF}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${DC_TF}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do' "${DC_TF}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'waited=$$((waited + 1))' "${DC_TF}"
+  [ "${status}" -eq 0 ]
   # The one-path shape is what caused the dialog: with the dev-container
   # toggle on, code-server runs inside the dev container, where the host
   # /srv/coder-devcontainers/... spelling names no folder, so the URL must

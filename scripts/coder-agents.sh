@@ -26,14 +26,15 @@
 #      this script sends — the provider key must match the live proxy, not
 #      the (empty) .env line.
 #
-#   2. Chat model configs for the two tool-capable aliases in
-#      litellm/config.yaml: `agent` (Spark vLLM lane, 262144-token window,
-#      made the default) and `chat` (Arc qwen2.5:7b, 32768, the offline
-#      substitute). `coder` and `coder-fast` are deliberately NOT registered:
-#      on this stack's IPEX-LLM runtime those weights return tool calls as
-#      plain text with no tool_calls, and an agent turn without callable
-#      tools cannot browse or edit — registering them would only add a
-#      silently broken model to the pickers.
+#   2. Chat model configs for the tool-capable aliases in litellm/config.yaml:
+#      `agent` (Spark vLLM lane, 262144-token window, made the default, LiteLLM
+#      bakes reasoning_effort xhigh), `agent-low` / `agent-medium` /
+#      `agent-xhigh` (same lane with a baked thinking level), and `chat` (Arc
+#      qwen2.5:7b, 32768, the offline substitute). `coder` and `coder-fast` are
+#      deliberately NOT registered: on this stack's IPEX-LLM runtime those
+#      weights return tool calls as plain text with no tool_calls, and an agent
+#      turn without callable tools cannot browse or edit — registering them
+#      would only add a silently broken model to the pickers.
 #      context_limit is the agent's own compaction budget, so it is pinned to
 #      each alias's serving window (70% default compaction threshold applies).
 #
@@ -62,7 +63,10 @@
 #   bazelisk run //scripts:coder-agents                  # apply: write what is missing
 #   bazelisk run //scripts:coder-agents -- --dry-run     # print the intended end state only
 #   bazelisk run //scripts:coder-agents -- --apply       # same as the default
+#   bazelisk run //scripts:coder-agents -- --apply --wait  # apply, polling up to 1800s for the first owner
+#   bazelisk run //scripts:coder-agents -- --apply --wait=60
 #   SKIP_CODER_AGENTS=1 bazelisk run //scripts:bootstrap # bootstrap skips this step
+#   CODER_AGENTS_WAIT_SECS=1800                          # stack `up` forwards this as --wait=
 # Overrides (rare; each exists for a stack that renamed something in compose):
 #   CODER_CONTAINER_SERVICE=coder    compose service holding the server
 #   CODER_DB_SERVICE=db              compose service holding Postgres
@@ -98,11 +102,20 @@ die() {
 }
 
 MODE=apply
+WAIT_SECS=0
+USAGE="usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] [--wait[=SECONDS]] (default: --apply)"
 for arg in "$@"; do
   case "${arg}" in
     --dry-run) MODE=dry-run ;;
     --apply) MODE=apply ;;
-    *) die "usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] (default: --apply)" ;;
+    --wait) WAIT_SECS=1800 ;;
+    --wait=*)
+      WAIT_SECS="${arg#--wait=}"
+      case "${WAIT_SECS}" in
+        '' | *[!0-9]*) die "${USAGE}" ;;
+      esac
+      ;;
+    *) die "${USAGE}" ;;
   esac
 done
 
@@ -217,12 +230,16 @@ fi
 
 # ── The intended end state ──────────────────────────────────────────────────
 # Model aliases match litellm/config.yaml: `agent` = the tool-capable Spark
-# lane (Qwen3.8-Flash-Next, 262144-token window, LiteLLM degrades it to the
-# text-only `coder` when every Spark box is dark — a last resort visible in
-# spend logs), `chat` = the Arc qwen2.5:7b, tool-capable and always on the
+# lane (Qwen3.8-Flash-Next, 262144-token window, LiteLLM bakes reasoning_effort
+# xhigh and degrades to the text-only `coder` when every Spark box is dark),
+# `agent-low` / `agent-medium` / `agent-xhigh` = the same lane with a baked
+# thinking level, `chat` = the Arc qwen2.5:7b, tool-capable and always on the
 # compose network. context_limit is the agent's compaction budget and is set
 # to each alias's serving window; the compression threshold keeps its default.
 MODEL_AGENT_DISPLAY="Coder Agents — tool-calling (Spark vLLM Qwen3.8-Flash-Next)"
+MODEL_AGENT_LOW_DISPLAY="Coder Agents — tool-calling (Spark, thinking low)"
+MODEL_AGENT_MEDIUM_DISPLAY="Coder Agents — tool-calling (Spark, thinking medium)"
+MODEL_AGENT_XHIGH_DISPLAY="Coder Agents — tool-calling (Spark, thinking extra high)"
 MODEL_CHAT_DISPLAY="Coder Agents — tool-calling (Arc IPEX-LLM qwen2.5:7b)"
 
 # ── Dry-run prints the plan and stops before any write (no token minted) ──
@@ -230,6 +247,9 @@ if [ "${MODE}" = "dry-run" ]; then
   log "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):"
   log "  ensure AI provider ${PROVIDER_NAME} (type openai-compat, enabled, base_url ${PROVIDER_URL}, api_keys: [LITELLM_MASTER_KEY from .env, or the compose placeholder — hidden])"
   log "  ensure chat model config agent (context_limit 262144, is_default true)"
+  log "  ensure chat model config agent-low (context_limit 262144)"
+  log "  ensure chat model config agent-medium (context_limit 262144)"
+  log "  ensure chat model config agent-xhigh (context_limit 262144)"
   log "  ensure chat model config chat (context_limit 32768)"
   log "  pin model overrides general+explore -> agent (or chat if only chat exists); compaction+title_generation -> chat (or agent)"
   log "  ensure deployment system prompt (custom text appended to Coder's default)"
@@ -297,25 +317,41 @@ where u.status = 'active' and not u.deleted and not u.is_service_account
 order by (u.rbac_roles && '{owner}'::text[]) desc, u.last_seen_at desc
 limit 1
 returning id;"
-insert_rc=0
-inserted="$(psql_query "${insert_sql}")" || insert_rc=$?
-case "${inserted}:${insert_rc}" in
-  "${key_id}:0") ;;
-  ':0')
-    access_url_hint="$(env_get CODER_ACCESS_URL)"
-    case "${access_url_hint}" in
-      '' | *YOUR_LAN_IP*) access_url_hint="https://<host>:3001" ;;
-    esac
-    if [ -n "${AGENTS_USER}" ]; then
-      skip "skipped: ${AGENTS_USER} is not an active human Coder account, so no token could be minted — check: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c 'select username, status from users'"
-    fi
-    skip "skipped: no active Coder account with the site owner role — open ${access_url_hint} and register the first account, it becomes the site admin, then re-run: bazelisk run //scripts:coder-agents -- --apply"
-    ;;
-  *)
-    printf '%s\n' "${inserted}" >&2
-    die "could not mint an API token in ${DB_NAME}.api_keys (exit ${insert_rc}) — pass an explicit admin with CODER_AGENTS_USER=<username>"
-    ;;
-esac
+wait_until=0
+if [ "${WAIT_SECS}" -gt 0 ]; then
+  wait_until=$(($(date +%s) + WAIT_SECS))
+fi
+waited_note=0
+while true; do
+  insert_rc=0
+  inserted="$(psql_query "${insert_sql}")" || insert_rc=$?
+  case "${inserted}:${insert_rc}" in
+    "${key_id}:0") break ;;
+    ':0')
+      now="$(date +%s)"
+      if [ "${WAIT_SECS}" -gt 0 ] && [ "${now}" -lt "${wait_until}" ]; then
+        if [ "${waited_note}" = "0" ]; then
+          log "waiting up to ${WAIT_SECS}s for the first Coder owner — register at the access URL, then this seeder continues"
+          waited_note=1
+        fi
+        sleep 2
+        continue
+      fi
+      access_url_hint="$(env_get CODER_ACCESS_URL)"
+      case "${access_url_hint}" in
+        '' | *YOUR_LAN_IP*) access_url_hint="https://<host>:3001" ;;
+      esac
+      if [ -n "${AGENTS_USER}" ]; then
+        skip "skipped: ${AGENTS_USER} is not an active human Coder account, so no token could be minted — check: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c 'select username, status from users'"
+      fi
+      skip "skipped: no active Coder account with the site owner role — open ${access_url_hint} and register the first account, it becomes the site admin, then re-run: bazelisk run //scripts:coder-agents -- --apply"
+      ;;
+    *)
+      printf '%s\n' "${inserted}" >&2
+      die "could not mint an API token in ${DB_NAME}.api_keys (exit ${insert_rc}) — pass an explicit admin with CODER_AGENTS_USER=<username>"
+      ;;
+  esac
+done
 
 session_token="${key_id}-${key_secret}"
 
@@ -509,7 +545,7 @@ fi
 # Globals:
 #   UUID_RE, api_read
 # Arguments:
-#   $1 - model alias (agent or chat)
+#   $1 - model alias (agent, agent-low, agent-medium, agent-xhigh, or chat)
 # Outputs:
 #   The uuid, or nothing when the list cannot be read or has no row
 # Returns:
@@ -528,6 +564,9 @@ model_config_id() {
 }
 
 agent_id="$(model_config_id agent)"
+agent_low_id="$(model_config_id agent-low)"
+agent_medium_id="$(model_config_id agent-medium)"
+agent_xhigh_id="$(model_config_id agent-xhigh)"
 chat_id="$(model_config_id chat)"
 
 # @function create_model_config
@@ -567,6 +606,33 @@ else
   # uuid is reread rather than trusted from the POST body (same shape, one
   # extra call, no assumption about partial success).
   agent_id="$(model_config_id agent)"
+fi
+
+if [ -n "${agent_low_id}" ]; then
+  log "model config agent-low: already present (left untouched)"
+else
+  log "creating model config agent-low (context_limit 262144)"
+  create_model_config "agent-low" "${MODEL_AGENT_LOW_DISPLAY}" 262144 false ||
+    die "the agent-low model config could not be created — re-run after the server is healthy"
+  agent_low_id="$(model_config_id agent-low)"
+fi
+
+if [ -n "${agent_medium_id}" ]; then
+  log "model config agent-medium: already present (left untouched)"
+else
+  log "creating model config agent-medium (context_limit 262144)"
+  create_model_config "agent-medium" "${MODEL_AGENT_MEDIUM_DISPLAY}" 262144 false ||
+    die "the agent-medium model config could not be created — re-run after the server is healthy"
+  agent_medium_id="$(model_config_id agent-medium)"
+fi
+
+if [ -n "${agent_xhigh_id}" ]; then
+  log "model config agent-xhigh: already present (left untouched)"
+else
+  log "creating model config agent-xhigh (context_limit 262144)"
+  create_model_config "agent-xhigh" "${MODEL_AGENT_XHIGH_DISPLAY}" 262144 false ||
+    die "the agent-xhigh model config could not be created — re-run after the server is healthy"
+  agent_xhigh_id="$(model_config_id agent-xhigh)"
 fi
 
 if [ -n "${chat_id}" ]; then
@@ -652,5 +718,5 @@ trap - EXIT
 psql_sql "${cleanup_sql}" >/dev/null 2>&1 ||
   log "note: the token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
 
-log "Coder Agents wiring complete: provider ${PROVIDER_NAME}, model configs (agent default + chat fallback), four model pins, system prompt."
+log "Coder Agents wiring complete: provider ${PROVIDER_NAME}, model configs (agent default + thinking aliases + chat fallback), four model pins, system prompt."
 log "Spot-check in the UI: start an Agents chat, pick a workspace, and ask it to list files — a tool call in the reply means the loop is live."

@@ -9,6 +9,7 @@ tags: [litellm, models, routing, spark]
 - The one front door every client dials, and why nothing else is published
 - The alias table, and which backend each alias resolves to
 - Tool calls: the measured limitation and the path that supports them
+- Thinking levels: what `agent` bakes, and what the baked aliases change
 - Routing inside the `agent` group, and the `agent` to `coder` fallback
 - Reading the routing back, and editing an alias safely
 
@@ -57,7 +58,8 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 - `model_list:` is the alias list; `router_settings:` is the routing.
 - `routing_strategy: least-busy` is the picker;
   `optional_pre_call_checks: ["session_affinity"]` is the pinning layer above it.
-- `fallbacks:` carries one hop, `agent: ["coder"]`, the degrade path.
+- `fallbacks:` carries the degrade path `agent: ["coder"]`, repeated for each thinking
+  alias, because those groups go down with exactly the same boxes.
 - `allowed_fails: 40` and `cooldown_time: 5` decide when a box stops being a candidate.
 - `background_health_checks: true`, with `health_check_interval: 30` and
   `health_check_concurrency: 5`, re-probe a box on their own, so recovery does not
@@ -72,6 +74,9 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 | Alias | Model | Backend | Structured tool calls |
 |---|---|---|---|
 | `agent` | `Qwen3.8-Flash-Next` | `SPARK1/2/3_OPENAI_URL` (TensorFold on :8888 - one deployment per Spark box, optional) | yes (measured) |
+| `agent-low` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `low` | yes (same model and boxes as `agent`) |
+| `agent-medium` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `medium` | yes (same model and boxes as `agent`) |
+| `agent-xhigh` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh` | yes (same model and boxes as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
@@ -82,6 +87,24 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 
 - The `agent` row is ONE model group with three deployments, one per Spark box,
   all equal.
+- The three `agent-*` rows are that same lane with a thinking level baked into
+  `litellm_params.reasoning_effort`. Qwen3.8-Flash-Next takes `low`, `medium` and
+  `xhigh` and nothing else - there is no `high` - so the level is a name to pick
+  rather than a knob to turn, and `agent-low` / `agent-medium` / `agent-xhigh` are
+  how the level reaches Coder Agents: its model dropdown chooses an alias, not a
+  request parameter.
+- `agent` is not the unthinking default. It bakes `reasoning_effort: xhigh`, so a
+  Coder Agents chat on the default alias thinks hard, and `agent-xhigh` asks the
+  box for the same level by name. A `reasoning_effort` the client sends in the
+  request still wins over the baked one.
+- Those three groups reuse the same `SPARK1/2/3_OPENAI_URL` / `SPARK_n_API_KEY`
+  pairs as `agent`. They are separate model groups on the same hardware, not three
+  more boxes: routing state is per group, so least-busy's counters and the session
+  pin are computed inside a group and two chats on different aliases can land on the
+  same box at once. What does not change is the box - 5 full 262144-token streams in
+  total, whichever aliases arrive on it. This is not the "two deployments on one
+  box" mistake below, which is about a single group counting two URLs on one machine
+  as two machines.
 - The `spark-*` rows are a different thing: the same Qwen2.5-Coder and Qwen2.5
   weights, served over Ollama on the Spark boxes instead of on the Arc.
 - `unverified` on the `spark-*` rows means exactly that: this box never ran them
@@ -110,10 +133,12 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 
 - Agent mode therefore needs either the Spark `agent` lane or the small `chat` model.
 - Grok Build, Cline, Roo and Kilo all default to `agent`.
-- `scripts/coder-agents.sh` registers only `agent` (default) and `chat` as Coder Agents
-  chat model configs, for the same reason: an agent turn without callable tools cannot
-  browse or edit, so registering `coder` or `coder-fast` would only add a visibly broken
-  model to the pickers.
+- `scripts/coder-agents.sh` registers `agent` (default),
+  `agent-low`/`agent-medium`/`agent-xhigh`, and `chat` as Coder Agents chat model
+  configs, for the same reason: an agent turn without callable tools cannot browse or
+  edit, so registering `coder` or `coder-fast` would only add a visibly broken model to
+  the pickers. The four Spark aliases all drive tools, so all four are registerable - the
+  thinking aliases are there to make the level selectable from that picker.
 
 ## Routing inside the `agent` group
 
@@ -136,7 +161,10 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
   cooldown, and for any request with no session id.
 - Health checks, cooldowns and those counters all attribute per deployment through
   `model_info.id`, which is why each box carries a unique id: `agent-spark-1`,
-  `agent-spark-2`, `agent-spark-3`.
+  `agent-spark-2`, `agent-spark-3`. Each thinking group has its own triple -
+  `agent-low-spark-1/2/3`, `agent-medium-spark-1/2/3`, `agent-xhigh-spark-1/2/3` - so the
+  same physical box is a separate deployment, with its own health state and its own
+  in-flight counter, inside every group it belongs to.
 - A cooled box therefore stays visibly out of `healthy_deployments` instead of blending
   into the group's aggregate stats.
 
@@ -189,6 +217,9 @@ traceparent and baggage, plus `metadata.session_id` in the body.
   `coder`, which is text-only.
 - Chat stays usable while agent mode quietly loses its tools. That is the point of the
   hop, not an accident.
+- Each thinking alias carries the same hop of its own - `agent-low: ["coder"]`, and the
+  same for `agent-medium` and `agent-xhigh`. Groups are independent, so none of them
+  inherits `agent`'s entry, and all four go down with exactly the same boxes.
 - It used to be a chain, `agent -> agent-fast -> coder`. `agent-fast` was a second alias
   for the same model on a second box with a lower output ceiling; one group of three equal
   deployments already covers every reachable box, so the chain collapsed to one acyclic
@@ -254,8 +285,9 @@ docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml rest
 
 ### Where an alias edit lands
 
-- `scripts/coder-agents.sh` registers `agent` (default) and `chat` as the Coder Agents
-  chat model configs, through `CODER_AGENTS_PROVIDER_URL`
+- `scripts/coder-agents.sh` registers `agent` (default),
+  `agent-low`/`agent-medium`/`agent-xhigh`, and `chat` as the Coder Agents chat model
+  configs, through `CODER_AGENTS_PROVIDER_URL`
   (default `http://litellm:4000/v1`).
 - So an alias edited or deleted in `litellm/config.yaml` moves in the Agents model
   dropdowns exactly as it does in the CLI.

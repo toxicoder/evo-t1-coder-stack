@@ -118,9 +118,12 @@ logs_absent() {
   running_stack
   run --separate-stderr bash "${root}/scripts/coder-agents.sh" --dry-run
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 7 ]
+  [ "${#lines[@]}" -eq 10 ]
   [[ ${lines[0]} == *"probing the Coder API"* ]]
   [ "${lines[1]}" = "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):" ]
+  [[ ${output} == *"ensure chat model config agent-low"* ]]
+  [[ ${output} == *"ensure chat model config agent-medium"* ]]
+  [[ ${output} == *"ensure chat model config agent-xhigh"* ]]
   [[ ${output} == *"pin model overrides general+explore -> agent"* ]]
   # The probes may read; nothing may be written: no token minted, no API call.
   [ "$(stub_log_count psql)" -eq 0 ]
@@ -133,7 +136,7 @@ logs_absent() {
   run --separate-stderr bash "${root}/scripts/coder-agents.sh" --nonsense
   [ "${status}" -eq 1 ]
   # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
-  [ "${stderr}" = "error: usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] (default: --apply)" ]
+  [ "${stderr}" = "error: usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] [--wait[=SECONDS]] (default: --apply)" ]
 }
 
 @test "coder-agents: an unanswered buildinfo probe is a hard failure (curl 22, empty body)" {
@@ -169,6 +172,24 @@ logs_absent() {
   [ "${status}" -eq 0 ]
   [[ ${output} == *"skipped: no active Coder account with the site owner role"* ]]
   [[ ${output} == *"https://<host>:3001"* ]]
+}
+
+@test "coder-agents: --wait=1 still skips when nobody has registered" {
+  root="$(fake_root)"
+  running_stack
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh" --apply --wait=1
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"waiting up to 1s for the first Coder owner"* ]]
+  [[ ${output} == *"skipped: no active Coder account with the site owner role"* ]]
+}
+
+@test "coder-agents: --wait with a non-numeric budget is a usage error" {
+  root="$(fake_root)"
+  running_stack
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh" --wait=abc
+  [ "${status}" -eq 1 ]
+  # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
+  [ "${stderr}" = "error: usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] [--wait[=SECONDS]] (default: --apply)" ]
 }
 
 @test "coder-agents: an answered psql still needs the id back (40-hex echo != id)" {

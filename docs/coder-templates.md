@@ -190,9 +190,11 @@ Nothing else about GitHub travels in a `--var`.
   `dev-stack.env` carries `18181` still names `8181` unless the key is set in `.env`
   too. A workspace dials the host gateway, where the compose network does not help,
   so the port in the rendered `SEARXNG_URL` has to be the one actually published.
-- `repo_url` prefills the Git repository field on both create forms. `workspace` defaults
-  to no clone and `devcontainer` to the coder/coder demo repo, which is why a blank
-  `REPO_URL=` line stays unpassed.
+- `repo_url` prefills the Git repository field on both create forms. The Terraform
+  default is still no clone (`workspace`) or the coder/coder demo (`devcontainer`).
+  `.env.sample` sets `REPO_URL` to this stack's GitHub URL, so a normal push prefills
+  `https://github.com/toxicoder/evo-t1-coder-stack.git` and **VS Code Web** opens
+  `~/workspace/evo-t1-coder-stack`. A blank `REPO_URL=` line stays unpassed.
 - There is no GitHub-token template variable, so no push ever carries a personal access
   token. See [GitHub credentials for a workspace](#github-credentials-for-a-workspace).
 - `coder_agent_url` exists so agents keep dialing the local plain listener when
@@ -281,8 +283,10 @@ What a create form shows, in `workspace` order.
    default and is also injected as its own option, so a custom tag still reaches the
    container while the form stays honest about what it is building.
 2. **Docker-in-docker** (`dind`, Yes/No radio, immutable).
-3. **Git repository** (`repo_url`, input, mutable, default empty). Anything you type is
-   cloned into the workspace on the next start.
+3. **Git repository** (`repo_url`, input, mutable). The Terraform default is empty
+   (`workspace`) or the coder/coder demo (`devcontainer`); after a push that forwards
+   `.env` `REPO_URL` (this stack's own repo in the sample) the form prefills that URL.
+   Anything you type is cloned into the workspace on the next start.
 4. **Git repositories (additional)** (`additional_repos`, textarea, mutable, default
    empty).
 5. **Grok profile** (`grok_profile_mode`, dropdown, immutable, default `shared`).
@@ -309,11 +313,11 @@ workspace.
 | `image` | `evo-t1-dev:latest` | Seeds the **Workspace image** dropdown default. In `devcontainer` it decides nothing about the toolchain inside the editor. |
 | `litellm_url` | `http://host.docker.internal:4000/v1` | Reached through the Docker host gateway. |
 | `litellm_key` | `""`, `sensitive` | Handed to the workspace as `LITELLM_API_KEY`. Sensitive: pass the LiteLLM master key when creating a workspace. |
-| `grok_default_model` | `agent` | One of the four LiteLLM aliases. `agent` is the tool-capable Spark lane; each Spark box is a deployment inside `agent`. |
+| `grok_default_model` | `agent` | One of the LiteLLM aliases. `agent` is the tool-capable Spark lane (thinking `xhigh` by default, picker `low` / `medium` / `xhigh`); `agent-low` / `agent-medium` / `agent-xhigh` bake the level into the alias. |
 | `docker_socket` | `""` | Optional Docker socket URI; empty means the provider default. |
 | `coder_agent_url` | `http://host.docker.internal:3002` | The URL the agent dials. Kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent traffic through the reverse proxy. Empty keeps the provider-rendered access URL. |
 | `dind` | `false` | Turns on the per-workspace privileged daemon described below. Does not exist in `devcontainer`. |
-| `repo_url` | `""` in `workspace`, `https://github.com/coder/coder` in `devcontainer` | Prefills the **Git repository** field. Both templates clone that URL on the first start; a later start leaves a folder that already holds a `.git` alone. `REPO_URL` in `.env` overrides the default. |
+| `repo_url` | `""` in `workspace`, `https://github.com/coder/coder` in `devcontainer` (Terraform); `.env.sample` `REPO_URL` overrides both to this stack's GitHub URL | Prefills the **Git repository** field. Both templates clone that URL on the first start; a later start leaves a folder that already holds a `.git` alone. `REPO_URL` in `.env` overrides the default. The sample value is this stack's own repo so **VS Code Web** opens `~/workspace/evo-t1-coder-stack`. |
 | `additional_repos` | `""` | The **Git repositories (additional)** textarea under the repository field. Extra URLs cloned into their own folder beside `repo_url`. |
 | `grok_profile_mode` | `shared` | `shared` mounts the owner's shared `~/.grok` profile volume; `private` gives that workspace a private `~/.grok` on its own home volume. Also the default behind the per-workspace **Grok profile** dropdown; switching a live workspace between the two modes needs a rebuild. |
 | `github_mcp` | `false` | Wires the `github` MCP HTTP server into Grok's rendered `config.toml`. Its `Authorization` header names `$GH_TOKEN` and nothing else, so no token value is ever part of a template variable. |
@@ -323,8 +327,9 @@ workspace.
 
 Notes on the two dropdowns that take a custom value:
 
-- The four `grok_default_model` aliases are `agent`, `coder`, `coder-fast` and `chat`,
-  plus a **Custom** entry when the variable names another one.
+- The `grok_default_model` aliases are `agent`, `agent-low`, `agent-medium`,
+  `agent-xhigh`, `coder`, `coder-fast` and `chat`, plus a **Custom** entry when the
+  variable names another one.
 - The provider requires a parameter default to be one of its options, which is why a
   custom `--var` value is injected as its own option instead of being dropped.
 - A `github_mcp` of `true` with no GitHub account connected gives that workspace a server
@@ -593,9 +598,11 @@ at `~/.grok` in shared mode) are chowned to the home owner at the start of
    for files that are absent.
 6. Renders `~/.grok/config.toml` (no MCP servers declared by default).
 7. **Clones a non-empty Git repository field** into `/home/coder/workspace/<repo-name>`
-   (in `devcontainer`, onto the `/srv/coder-devcontainers/<workspace-id>` bind). This is
-   idempotent, runs as the workspace user so their git credentials are consulted, and
-   refuses to touch an existing non-git folder there.
+   (in `devcontainer`, onto the `/srv/coder-devcontainers/<workspace-id>` bind). The
+   script creates that folder first (`mkdir -p` plus a chown to the workspace user) so
+   the editor's wait loop can see it, then clones into it. This is idempotent, runs as
+   the workspace user so their git credentials are consulted, and refuses to touch an
+   existing non-empty non-git folder there. An empty pre-created target still clones.
 
 The repository leaf is derived the same way in `main.tf` and in `startup.sh.tftpl`:
 split on `/`, drop empty segments, take the last, drop a trailing `.git`, map every
@@ -649,7 +656,10 @@ helpers point at a folder that was never cloned.
 - The `workspace` fork installs code-server **only when it is missing** from
   `/home/coder/.local/share/code-server`, and starts it with
   `--auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened <folder>`,
-  passing no settings payload. The
+  passing no settings payload. Before that launch it `mkdir -p`s the folder and, when
+  the folder is not `/home/coder`, waits up to 60 s for `<folder>/.git` so a first-start
+  clone and the editor no longer race. `coder_agent.dir` stays unset: the agent would
+  chdir there before `startup.sh`, and a missing clone folder would fail the agent. The
   editor's settings live on the per-owner `vscode-settings-<owner-id>` volume seed, not
   in a per-start merge.
 - The `devcontainer` fork has no persistent prefix to reuse - both toggle modes rebuild

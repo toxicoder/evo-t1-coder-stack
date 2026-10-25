@@ -16,8 +16,9 @@
 # never proves a failing app link worked.
 #
 # Usage: bazelisk test //tests:bats_coder_apps_test   (from any cwd)
-# Safety: reads templates/workspace/main.tf, templates/devcontainer/main.tf and
-# templates/common/vscode-alt.svg; writes nothing.
+# Safety: reads templates/workspace/main.tf, templates/devcontainer/main.tf,
+# both startup.sh.tftpl twins and templates/common/vscode-alt.svg; writes
+# nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -239,4 +240,85 @@ app_block() {
   done
   ws="${REPO_ROOT}/templates/workspace/main.tf"
   grep -Fq -- 'editor_folder = local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"' "${ws}"
+}
+
+@test "editor: both twins create the folder and wait out the clone before launching" {
+  # The clone runs in the agent's startup script while this script starts
+  # beside it, so a first boot can hand code-server a folder that does not
+  # exist yet — VS Code answers that with "Workspace does not exist" and
+  # restores the last window (/home/coder) instead of the clone. The script
+  # mkdirs the folder so the path always resolves, then polls for the clone's
+  # .git for at most 60 s, returning as soon as it lands. Both steps have to
+  # sit between the FOLDER assignment and the launch line, and /home/coder has
+  # to stay exempt: nothing clones there, so waiting on it would only delay
+  # the editor by the whole timeout.
+  local tpl l_folder l_mkdir l_wait l_guard l_launch
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    grep -Fq 'mkdir -p -- "$${FOLDER}"' "${tpl}"
+    grep -Fq 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${tpl}"
+    grep -Fq 'while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do' "${tpl}"
+    grep -Fq 'waited=$$((waited + 1))' "${tpl}"
+    # Order matters as much as presence: waiting after the launch is a no-op.
+    l_folder="$(grep -n -F 'FOLDER="${local.editor_folder}"' "${tpl}" | head -n 1 | cut -d: -f1)"
+    l_mkdir="$(grep -n -F 'mkdir -p -- "$${FOLDER}"' "${tpl}" | head -n 1 | cut -d: -f1)"
+    l_wait="$(grep -n -F 'while [ ! -e "$${FOLDER}/.git" ]' "${tpl}" | head -n 1 | cut -d: -f1)"
+    l_guard="$(grep -n -F 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${tpl}" | head -n 1 | cut -d: -f1)"
+    l_launch="$(grep -n -F -- '--ignore-last-opened "$${FOLDER}"' "${tpl}" | head -n 1 | cut -d: -f1)"
+    for l in "${l_folder}" "${l_mkdir}" "${l_wait}" "${l_guard}" "${l_launch}"; do
+      [ -n "${l}" ] || { echo "${tpl}: missing a line of the code-server launch" >&2; return 1; }
+    done
+    if [[ ! "${l_mkdir}" -gt "${l_folder}" || ! "${l_mkdir}" -lt "${l_launch}" ]]; then
+      echo "${tpl}: the mkdir is not between the FOLDER assignment and the launch" >&2
+      return 1
+    fi
+    if [[ ! "${l_guard}" -gt "${l_folder}" || ! "${l_wait}" -gt "${l_guard}" || ! "${l_wait}" -lt "${l_launch}" ]]; then
+      echo "${tpl}: the .git wait is not between the FOLDER assignment and the launch" >&2
+      return 1
+    fi
+  done
+}
+
+@test "editor: the clone stage pre-creates its target so the editor can open it early" {
+  # The startup script owns the clone and the code-server script races it; the
+  # folder has to exist on the clone side too, and be owned by the user git
+  # runs as, or the editor opens an empty tree that the clone can never fill.
+  local startup l_mkdir l_clone
+  for startup in \
+    "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"; do
+    grep -Fq 'mkdir -p -- "$target"' "${startup}"
+    # The folder a root agent creates stays writable for the workspace user's
+    # git only if it is chowned alongside the parent.
+    grep -Fq 'chown "$clone_owner" "$target" 2>/dev/null || true' "${startup}"
+    # Creating the target must not turn the "not a git repository" guard into
+    # a permanent skip: it tests for content, not just existence.
+    grep -Fq '[ -e "$target" ] && [ -n "$(ls -A -- "$target" 2>/dev/null)" ]' "${startup}"
+    # And the clone still runs.
+    grep -Fq 'run_clone clone -- "$repo_url_raw" "$target"' "${startup}"
+    # The mkdir has to precede the clone, or it saves the editor nothing.
+    l_mkdir="$(grep -n -F 'mkdir -p -- "$target"' "${startup}" | head -n 1 | cut -d: -f1)"
+    l_clone="$(grep -n -F 'run_clone clone -- "$repo_url_raw" "$target"' "${startup}" | head -n 1 | cut -d: -f1)"
+    [ -n "${l_mkdir}" ] && [ -n "${l_clone}" ]
+    if [[ ! "${l_mkdir}" -lt "${l_clone}" ]]; then
+      echo "${startup}: the target mkdir runs after the clone" >&2
+      return 1
+    fi
+  done
+}
+
+@test "editor: neither twin points coder_agent.dir at the clone folder" {
+  # The agent chdirs into its dir before startup.sh runs, so a dir naming the
+  # not-yet-cloned folder fails the agent itself — the clone would never start
+  # and the editor would have nothing to open. The folder belongs to the
+  # editor app and its script; the agent stays on the (unset) home dir, which
+  # is also why display_apps keeps the built-in web_terminal off.
+  local tpl block
+  for tpl in "${TEMPLATE_TWINS[@]}"; do
+    block="$(sed -n '/^resource "coder_agent" "main" {/,/^}/p' "${tpl}")"
+    [ -n "${block}" ]
+    if printf '%s\n' "${block}" | grep -qE '^[[:space:]]*dir[[:space:]]*='; then
+      echo "${tpl}: coder_agent.main sets dir; the agent would fail before the clone" >&2
+      return 1
+    fi
+  done
 }

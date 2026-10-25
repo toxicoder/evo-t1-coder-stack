@@ -65,7 +65,12 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   with `--ignore-last-opened`. `workspace` uses `/home/coder/workspace/<repo>` (and
   `/home/coder` with no repository); `devcontainer` uses `/workspaces/<repo>` inside a
   built dev container and `/srv/coder-devcontainers/<workspace-id>/<repo>` on the
-  plain container.
+  plain container. On first start the inlined `coder_script.code_server` creates that
+  folder and waits up to 60 s for `.git` (skipped when the folder is `/home/coder`) so
+  the clone can land before code-server launches. `coder_agent.dir` stays unset: the
+  agent would chdir there before `startup.sh`, and a missing clone folder would fail
+  the agent. With the sample `REPO_URL` that folder is
+  `/home/coder/workspace/evo-t1-coder-stack`.
 - The icon travels as a `data:image/svg+xml;base64` data URL read from
   `templates/common/vscode-alt.svg`: Coder serves icons only from its bundled
   `/icon/*` set or a full `https`/`data` URL, and that icon is not bundled.
@@ -95,10 +100,16 @@ while the managed block is intact.
 
 - `[models] default` points at the `grok_default_model` alias - `agent` unless the
   template variable or the create form's **Grok default model** dropdown names
-  another.
-- The four aliases (`agent`, `coder`, `coder-fast`, `chat`) are defined with
-  `base_url` set to `litellm_url` and `env_key = "LITELLM_API_KEY"`. The key is
-  injected as an environment variable, so it never appears in a file.
+  another. `[models] default_reasoning_effort = "xhigh"`. The Spark lane answers
+  `low` / `medium` / `xhigh`; `high` is never advertised.
+- The seven aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `coder`,
+  `coder-fast`, `chat`) are defined with `base_url` set to `litellm_url` and
+  `env_key = "LITELLM_API_KEY"`. The key is injected as an environment variable, so
+  it never appears in a file. `agent` carries three
+  `[[model."agent".reasoning_efforts]]` tables (`xhigh` is the default). The
+  `agent-low` / `agent-medium` / `agent-xhigh` aliases set
+  `supports_reasoning_effort = false` because LiteLLM bakes the level for callers
+  that have no reasoning-effort field.
 - `[models]` also carries `extra_headers` with
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
   workspace's traffic to one healthy Spark box. Under a shared profile the
@@ -236,7 +247,8 @@ clone is never asked to delete somebody else's committed file.
   `grok mcp doctor context7` inside a workspace.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
   default `http://host.docker.internal:4000/v1`; model alias `agent`, with
-  `coder`/`coder-fast`/`chat` listed in `__evoT1StackModels`). The seed is
+  `agent-low`/`agent-medium`/`agent-xhigh`/`coder`/`coder-fast`/`chat` listed in
+  `__evoT1StackModels`). The seed is
   `settings.json.tftpl`, copied onto the per-owner volume
   `vscode-settings-<owner-id>` (mounted at `~/.shared/vscode/settings.json`) only
   while that file is absent, and symlinked from
@@ -287,17 +299,24 @@ The chat agent is compiled into coderd unconditionally.
 
 ### Model wiring
 
-Scripted, idempotent, re-runnable. Print the plan:
+Scripted, idempotent, re-runnable, and already started from `prod-stack` /
+`dev-stack` `up` (`--apply --wait`, default 1800 s). Registering the first account
+is the only operator step: the seeder continues once an owner exists, and the Agents
+page is usable with no extra Coder UI setup. Print the plan:
 
 ```sh
 bazelisk run //scripts:coder-agents -- --dry-run
 ```
 
-Apply it:
+Apply it (or re-run after a skip):
 
 ```sh
 bazelisk run //scripts:coder-agents -- --apply
 ```
+
+`--wait` (or `--wait=SECONDS`) polls for that first owner instead of skip-0.
+`SKIP_CODER_AGENTS=1` skips bootstrap and stack-up seeding. `CODER_AGENTS_WAIT_SECS`
+is what stack `up` forwards as `--wait=`.
 
 A chat turn needs an enabled chat model config - the chat's own pick, else the
 deployment default, else it errors before the first tool call - and that wiring is
@@ -314,13 +333,15 @@ drives the server's experimental chat API:
   `change-me-litellm` interpolation default, and that default is what gets sent.
   Created when absent, drift-patched when an existing provider carries a drifted
   `base_url` or key.
-- chat model configs `agent` (context limit 262144, set as the default) and `chat`
-  (32768), for models not already registered. `coder` and `coder-fast` stay out on
-  purpose: on this stack's IPEX-LLM runtime those weights return tool calls as plain
-  text with no `tool_calls`, and an agent turn without callable tools cannot browse
-  or edit, so registering them would only add a silently broken model to the
-  pickers. `context_limit` is the agent's own compaction budget (a 70 per cent
-  default compaction threshold applies), which is why it is pinned per alias.
+- chat model configs `agent` (context limit 262144, set as the default; LiteLLM bakes
+  `reasoning_effort` `xhigh`), `agent-low` / `agent-medium` / `agent-xhigh` (same
+  lane with a baked thinking level, not default), and `chat` (32768), for models not
+  already registered. `coder` and `coder-fast` stay out on purpose: on this stack's
+  IPEX-LLM runtime those weights return tool calls as plain text with no
+  `tool_calls`, and an agent turn without callable tools cannot browse or edit, so
+  registering them would only add a silently broken model to the pickers.
+  `context_limit` is the agent's own compaction budget (a 70 per cent default
+  compaction threshold applies), which is why it is pinned per alias.
 - pins for the four auxiliary lanes - `general` and `explore` (the two subagent
   types) take `agent`, `compaction` and `title_generation` (the helper calls) take
   `chat` - written only for lanes that carry no pin yet, so an admin's own pins stay
