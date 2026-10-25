@@ -5,6 +5,11 @@ checked in, `git pull` cannot fix either one for you. `update-configs` is the
 one command that refreshes both, and it is written to be safe to run when you
 are not looking closely at the diff.
 
+The last four sections are also the long form of the notes `.env.sample` keeps
+to one or two lines: GitHub external auth, Grok profile mode, public hosts, and
+the Spark `agent` model group. Where a topic page already owns a subject, this
+page points at it instead of restating it.
+
 ```sh
 bazelisk run //scripts:update-configs -- env --dry-run
 bazelisk run //scripts:update-configs -- env
@@ -155,16 +160,17 @@ Workspace owners connect GitHub under Settings -> Tokens / external auth.
 `ID` names the provider and `TYPE` says what kind it is. Restart coder to apply
 the file.
 
-```sh
+```dotenv
 CODER_EXTERNAL_AUTH_0_ID=primary-github
 CODER_EXTERNAL_AUTH_0_TYPE=github
 CODER_EXTERNAL_AUTH_0_CLIENT_ID=<GitHub OAuth App client id>
 CODER_EXTERNAL_AUTH_0_CLIENT_SECRET=<GitHub OAuth App client secret>
 CODER_EXTERNAL_AUTH_0_REVOKE_URL=https://github.com/settings/connections/applications/<client id>
-#CODER_EXTERNAL_AUTH_0_REGEX=github\.com  (only to tell providers/hosts apart;
-#   omitted matches every github.com remote)
+#CODER_EXTERNAL_AUTH_0_REGEX=github\.com
 ```
 
+- `CODER_EXTERNAL_AUTH_0_REGEX` is only for telling providers or hosts apart;
+  omitted, it matches every `github.com` remote.
 - `push-template.sh` reads `CODER_EXTERNAL_AUTH_0_ID` from `coder.env` and
   forwards it as `--var github_auth_id=` so the templates declare the same id.
   Changing the id orphans existing GitHub account links.
@@ -177,19 +183,16 @@ CODER_EXTERNAL_AUTH_0_REVOKE_URL=https://github.com/settings/connections/applica
 
 **Device-flow login is not the App install.** Private repos need the Coder GitHub
 App at <https://github.com/apps/coder/installations/new> (the workspace "Install
-GitHub App" button), then a restart so `GH_TOKEN` remints. The App installation (or
-token grant) must include the repos you clone: a connected-but-unscoped credential
-authenticates and is still DENIED on private repos (403), which is the first thing
-to check when a clone or push is refused.
+GitHub App" button), then a restart so `GH_TOKEN` remints. The grant must include
+the repos you clone, or a connected credential authenticates and is still 403.
 
-**How the token reaches a workspace.** A workspace that does get a token gets it
-twice, as `GH_TOKEN` and `GITHUB_TOKEN` in its agent environment, and the
-template's `gh_token_refresh` coder_script re-mints that pair on start and every 6
-hours after that (cron `0 0 */6 * * *`) because a minted token expires long before
-the workspace does. Check it from inside a workspace with `gh auth status`, or run
-`bazelisk run //scripts:github-auth -- check` there for one line per credential
-slot. [coder-templates.md](coder-templates.md#github-credentials-for-a-workspace)
-covers the same path from the template side.
+**How the token reaches a workspace.** It arrives as `GH_TOKEN` and `GITHUB_TOKEN`
+in the agent environment, and the template's `gh_token_refresh` coder_script
+re-mints that pair on start and every 6 hours (`0 0 */6 * * *`) because a minted
+token expires first. Check it with `gh auth status` inside the workspace, or
+`bazelisk run //scripts:github-auth -- check` for one line per credential slot.
+[coder-templates.md](coder-templates.md#github-credentials-for-a-workspace) owns
+the template-side detail.
 
 **Never a static PAT in `.env`.** `.env.sample` used to carry a `GITHUB_TOKEN=`
 line holding a long-lived fine-grained PAT, which `push-template.sh` forwarded to
@@ -200,7 +203,7 @@ owner who connected nothing has no GitHub credential anywhere - unless they inst
 one per workspace:
 
 ```sh
-bash scripts/github-auth.sh auth <container> - < PAT
+bazelisk run //scripts:github-auth -- auth <container> - < PAT
 ```
 
 That pipes a PAT straight into that container's `gh` credential store - no `.env`
@@ -239,17 +242,15 @@ reseeds `~/.grok/config.toml` for exactly that reason.
 every derived `STACK_*_URL` stays empty; otherwise set the comma-separated public
 names in the form this stack was installed with:
 
-```sh
+```dotenv
 STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io
 ```
 
 - Entries are DNS names, not URLs: no scheme, no port, no path. The entry with no
   prefix is the dashboard.
 - Each service name is **one label** under the zone and carries its prefix with a
-  **HYPHEN**. A wildcard certificate covers exactly one label, so the dotted
-  two-label form (`coder.gmktecbeast.`) has no certificate at the public edge and
-  the browser fails with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` before Traefik sees
-  the request. Keep the hyphen when adding a service.
+  **HYPHEN**: a wildcard certificate covers exactly one label, so the dotted
+  two-label form has no certificate at the public edge.
 - `bootstrap.sh` derives `STACK_DASHBOARD_URL` / `STACK_CODER_URL` /
   `STACK_KASM_URL` / `STACK_LITELLM_URL` from the prefix on each entry (`coder-` /
   `kasm-` / `litellm-`, dotted form still recognised) and upgrades
@@ -257,22 +258,21 @@ STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gm
   context with a real certificate.
 - The names also go into `HOMEPAGE_ALLOWED_HOSTS` (compose appends this raw value)
   and into the Coder certificate's subjectAltName.
-- On the other side, the Traefik owns TLS for those names and must forward plain
+- The Traefik on the other box owns TLS for those names and must forward plain
   HTTP to this box's router container **with the original Host header intact** -
   `proxy/router.conf` picks the service from `$http_host` and listens on
-  `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host gets a `421` from the
-  router's default server, homepage rejects the request, and the browser warns on
-  the cert.
+  `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host comes back as `421`.
 
 Set the names in `.env`, and in `dev-stack.env` too when a dev stack runs beside
 the stable one, then re-run `bazelisk run //scripts:bootstrap` and recreate the
 stack you switched. Hermes is deliberately absent from the list: its dashboard
 stays on LAN / Tailscale `:9119` with HTTP basic auth, and there is no `hermes-*`
 public name or `proxy/router.conf` vhost for it.
-[public-access.md](public-access.md) has the request path, the four names and the
+[public-access.md](public-access.md) owns the naming rule, the measured
+`ERR_SSL_VERSION_OR_CIPHER_MISMATCH` on the dotted form, the request path and the
 checks to run on the Traefik box.
 
-## Spark / agent model group
+## Spark agent model group
 
 The `agent` model group is three deployments behind one LiteLLM alias, one per
 Spark box, and these are the keys that fill it:
@@ -281,9 +281,8 @@ Spark box, and these are the keys that fill it:
   placeholder hostnames are on purpose: replace them with real Ollama URLs or
   leave them as-is, and those aliases simply fail when used.
 - `SPARKn_OPENAI_URL` are the OpenAI-compatible `/v1` endpoints. A workspace pins
-  its session to one healthy box (the `session_affinity` check, fed by the static
-  `x-litellm-session-id` header every workspace sends) while fresh session-id-less
-  traffic fans out by `least-busy`, shortest in-flight queue first.
+  its session to one healthy box; fresh session-id-less traffic fans out by
+  `least-busy`, shortest in-flight queue first.
 - `SPARK_n_API_KEY` is the bearer token for each endpoint. TensorFold is
   vLLM-lineage, so treat it like vLLM/SGLang: any non-empty string is accepted
   unless the server was started with `--api-key`, in which case set the REAL key
@@ -302,9 +301,8 @@ Spark box, and these are the keys that fill it:
 
 Leaving all three `SPARKn_OPENAI_URL` keys empty keeps `agent` defined but
 unusable: LiteLLM then falls back to `coder`, the Arc alias. That fallback is what
-the card exists to catch. Grok Build, Cline and Roo need structured tool calls,
-which the Arc IPEX-LLM Ollama returns as plain text for the Qwen2.5-Coder weights;
-`coder` and `coder-fast` stay useful for completion and fill-in work, and `chat`
-(`qwen2.5:7b`) does emit real tool calls.
-[litellm-routing.md](litellm-routing.md) covers the alias table, the picker, the
-pin and the measured tool-call limitation.
+the "Agent backend" card exists to catch - Grok Build, Cline and Roo need
+structured tool calls, which the Arc IPEX-LLM Ollama returns as plain text for the
+Qwen2.5-Coder weights. [litellm-routing.md](litellm-routing.md) owns the alias
+table, the picker, the pin, and the measured tool-call limitation (including which
+aliases do emit real calls).
