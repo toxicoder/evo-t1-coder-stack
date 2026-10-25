@@ -455,7 +455,9 @@ main() {
     # where no checkout could be proven; anything that would drive compose cannot
     # guess where the compose file is, and stops instead.
     if [ "${action}" = "status" ]; then
+      section "Status"
       report_stack
+      summary
       return 0
     fi
     return 5
@@ -466,9 +468,12 @@ main() {
 
   case "${action}" in
     status)
+      section "Status"
       report_stack
       ;;
     up)
+      section "Compose"
+      phase "compose up"
       repair_stale_runfiles "${root}" 0 || true
       compose_up_or_diagnose_db
       restart_coder_if_pg_auth_failed
@@ -476,12 +481,17 @@ main() {
       if [[ -t 0 ]]; then
         host_dns_report /etc/resolv.conf github.com || true
       fi
+      section "Endpoints"
       report_urls
       ;;
     down)
+      section "Compose"
+      phase "compose down"
       run_compose down --remove-orphans
       ;;
     logs)
+      section "Logs"
+      phase "compose logs"
       if [ "${LOG_FOLLOW}" = "1" ]; then
         run_compose logs -f --tail "${LOG_TAIL}" ${services[@]+"${services[@]}"}
       else
@@ -490,12 +500,16 @@ main() {
       ;;
     reset)
       if [ "${CONFIRMED}" != "1" ]; then
-        echo "reset refused: pass --yes to confirm destroying the ${PROJECT} volumes"
+        log "reset refused: pass --yes to confirm destroying the ${PROJECT} volumes"
+        summary
         return 1
       fi
+      section "Compose"
+      phase "compose down --volumes"
       run_compose down --volumes --remove-orphans
       ;;
   esac
+  summary
 }
 
 if [[ ${BASH_SOURCE[0]} == "${0}" ]]; then

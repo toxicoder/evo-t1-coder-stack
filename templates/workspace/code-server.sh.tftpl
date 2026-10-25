@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# tftpl: coder_script body; $${shell} stays a shell var; $${terraform_var} is passed from main.tf.
+# Fork of the module's run.sh, trimmed to this stack: reuse the copy the
+# first install left under the prefix, otherwise install standalone there,
+# then start code-server on port 13337.
+set -eu
+PREFIX="/home/coder/.local/share/code-server"
+CS_BIN="$${PREFIX}/bin/code-server"
+if [ ! -x "$${CS_BIN}" ]; then
+  curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}"
+fi
+if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
+  ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
+fi
+echo "Running code-server in the background (log: /tmp/code-server.log)."
+# Positional folder plus --ignore-last-opened: path-based coder_app
+# URLs drop the ?folder= query before the browser sees it, and without
+# this flag the last restored workspace (often /home/coder) wins.
+FOLDER="${editor_folder}"
+# This script and the startup script's clone stage race: both run at agent
+# start, and a folder code-server cannot stat gets VS Code's "Workspace
+# does not exist" dialog and the last window instead of the clone. Create
+# the folder (the clone stage makes it too, as early as it can) and then
+# give a first-start clone at most 60 s to land its .git. The loop returns
+# the moment .git appears, so a warm start — folder already cloned — adds
+# nothing to the launch. /home/coder is skipped: nothing clones there and
+# waiting on it would only delay the editor by the full timeout.
+mkdir -p -- "$${FOLDER}" 2>/dev/null || true
+if [ "$${FOLDER}" != "/home/coder" ]; then
+  waited=0
+  while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do
+    sleep 1
+    # templatefile() escapes a dollar only before "{", so this line reaches
+    # bash as written: one $, one arithmetic expansion. Doubling it ($$(( )
+    # is the bug to avoid — Coder runs this body as bash -c, where $$ is the
+    # PID and the leftover (( is "syntax error near unexpected token '('".
+    waited=$((waited + 1))
+  done
+fi
+"$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &

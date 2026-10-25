@@ -8,7 +8,7 @@ tags: [conventions, shell, style, contributing]
 
 - The file header and the function docstring block both gates require
 - Ingress rules: what runs from a shell and what is a Bazel target
-- Script and template conventions, and the payload copies they share
+- One language per file, the shared log contract, and the payload copies the templates share
 - Names, flags, and the style guide shell follows
 
 **What this enables**
@@ -88,6 +88,18 @@ bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.gi
 ## Scripts
 
 - No `eval`. Prefer `"${var}"`, `[[ ]]`, and `$(...)`.
+- One language per file where reasonable. A bash, python, or awk program that lives
+  inside another file is its own tested file, imported with `source`, `cat` + `sh -c`
+  / `ssh`, `python3 file.py`, `awk -f`, or Terraform `file()` / `templatefile()`. Keep
+  1–3 line awk, usage heredocs, Dockerfiles, YAML data, docs fences, and
+  `python3 -m webbrowser`. Remote probes are POSIX and self-contained under
+  `scripts/lib/probes/`; the host `cat`s them and tests run the file with `sh`.
+- Operator CLIs source `scripts/lib/common.sh` and do not redefine `log` / `die` /
+  `skip`. Grouping: `section` prints `== name ==`, `phase` prints `-> text`, `ok`
+  prints `ok: text`, `summary` prints `summary: N ok, W warnings, F failed` plus
+  `  failed: …` and optional `next: cmd`. `JSON_MODE` set sends prose to stderr.
+  CLIs without `--json` unset `JSON_MODE` after source. Keep prefixes `warning:` /
+  `note:` / `error:`.
 - A script never runs another repo script by relative path, and never assumes the cwd is the
   checkout: it resolves the repo root from `${REPO_ROOT:-}` / `${GITHUB_WORKSPACE:-}` and then
   probes for it (see the harness doc), because a Bazel sandbox may only hold a copy.
@@ -104,23 +116,28 @@ DinD-backed one) keep independent `.tftpl` payload copies (`startup.sh.tftpl`,
 `settings.json.tftpl`, `grok-config.toml.tftpl`). The twins must change together — today
 only `settings.json.tftpl` is byte-identical across the two directories, so edit both
 copies of that payload. `templates/common/` exists once above the twins instead and
-holds the three single-copy payloads: `GROK_BUILD_AGENTS.md` (the orchestration protocol
-the startup scripts seed into every workspace's `~/.grok/AGENTS.md`, read with `file()`),
-`vscode-alt.svg` (the editor icon, read with `filebase64()`), and `notes-setup.sh`
-(the library behind each clone's private `notes.md`, also read with `file()`, inlined
-into the startup script and sourced there). The SVG stays
-small enough that the resulting data URL fits Coder v2.36's 256-character
+holds the single-copy payloads both templates consume: `GROK_BUILD_AGENTS.md`,
+`vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`,
+`vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `coder-agents.md`,
+`mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`. Markdown and JSON are
+read with `file()` (chomp the markdown); shell helpers that Terraform must not
+re-interpolate are also `file()` (so `$folder` stays `$folder`); `gh-token-refresh.sh.tftpl`
+is `templatefile()` because it interpolates `${github_auth_id}`. `coder_script`
+bodies are sibling `.tftpl` files next to each `main.tf` (`code-server.sh.tftpl`,
+and on `devcontainer` also `dind-bootstrap.sh.tftpl`) rendered with `templatefile()`.
+The SVG stays small enough that the resulting data URL fits Coder v2.36's 256-character
 `workspace_apps.icon` column. The push
 (`scripts/push-template.sh` through `template_push_one` in `scripts/lib/template-push.sh`)
-stages all three beside each template's staged `main.tf` copy, which is the only place the
+stages every common payload beside each template's staged `main.tf` copy, which is the only place the
 server-side Terraform can read them from, so editing the common copy changes both
 templates; a staged copy that lacks any one of them fails the push early by design.
 
 Dollar escaping differs across those two layers. A `templatefile()` `.tftpl` treats `$$`
-as an escaped `$` everywhere (`$name` or `$${name}`). An HCL heredoc in `main.tf`
-(`<<-EOT`) only escapes `$${name}` to `${name}`; a lone `$` is already literal, so
-shell arithmetic is `$((...))` with one dollar. `$$((` is two dollars, and Coder
-runs `coder_script` bodies as `bash -c`, which expands `$$` to the PID.
+as an escaped `$` everywhere (`$name` or `$${name}`), and leaves `$((` arithmetic
+alone. An HCL heredoc in `main.tf` (`<<-EOT`) only escapes `$${name}` to `${name}`;
+a lone `$` is already literal, so shell arithmetic is `$((...))` with one dollar.
+`$$((` is two dollars, and Coder runs `coder_script` bodies as `bash -c`, which
+expands `$$` to the PID. Do not wrap `templatefile()` in `chomp()`.
 
 ## Names and flags
 

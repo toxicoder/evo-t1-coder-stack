@@ -341,7 +341,9 @@ if ! has_tool curl; then
   # Nothing can be measured, which is a "not yet" state and not a failure: the
   # same contract spark-verify.sh keeps. Printed through `note` so --json keeps
   # stdout clean, and exit 0 is reserved for "every pair answered".
+  section "Search"
   note "curl is not on PATH, so no engine could be probed and nothing was measured"
+  summary
   exit 0
 fi
 
@@ -671,6 +673,9 @@ if [ -z "${JSON_MODE:-}" ]; then
   log "search-check: ${search_url} with ${#engines[@]} engine(s) x ${#queries[@]} query(ies) = $((${#engines[@]} * ${#queries[@]})) pair(s), ${cap}s per request"
 fi
 
+section "Probe"
+phase "probe ${search_url}"
+
 for engine in "${engines[@]}"; do
   for query in "${queries[@]}"; do
     record_pair "${search_url}" "${engine}" "${query}"
@@ -683,6 +688,7 @@ done
 # shown two answers.
 engine_list="${engines[*]}"
 
+section "Report"
 if [ -n "${JSON_MODE:-}" ]; then
   render_json "${engine_list}"
 fi
@@ -734,6 +740,10 @@ print_notes "${engine_list}"
 # A non-zero exit that still printed the table is the point: wire this into
 # validate.sh or CI and the row that went red is already on the log.
 read -ra aggregate <<<"$(total_facts "${engine_list}")"
+if [ "${aggregate[1]}" = "${aggregate[0]}" ]; then
+  ok "search-check"
+fi
+summary
 if [ "${aggregate[1]}" != "${aggregate[0]}" ]; then
   exit 1
 fi

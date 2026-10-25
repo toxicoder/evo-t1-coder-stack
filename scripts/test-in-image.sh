@@ -53,6 +53,9 @@
 #   DEV_IMAGE_TAG            the default tag when --image is absent
 #   EVO_T1_DEVCONTAINER=1    already inside the golden image: no docker call at
 #                            all, bazelisk is exec'd in this environment
+#   CI                       passed into the container when set
+#   VALIDATE_INNER           passed into the container when set (//:validate)
+#   NEXT_TELEMETRY_DISABLED  passed into the container when set (docs site)
 #
 # Exit codes: 0 when the gates passed; 1 on a usage error, a missing docker CLI,
 # or a failed gate; 5 when no checkout can be proven (no docker-compose.yml).
@@ -62,6 +65,9 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh disable=SC1091
 source "${SELF_DIR}/lib/common.sh"
+# This CLI has no --json mode: a leftover JSON_MODE in the environment would
+# otherwise route every report line to stderr and leave stdout empty.
+unset JSON_MODE
 
 # DEFAULT_IMAGE_TAG — the local golden tag build-dev-image.sh produces. No
 # registry host and no dot in it, so the daemon reads it as a local name and
@@ -231,6 +237,8 @@ test_in_image_build() {
 # resolves the same way it does in a workspace.
 # Globals:
 #   CI (passed through when the caller exported it)
+#   VALIDATE_INNER (passed through when the caller exported it)
+#   NEXT_TELEMETRY_DISABLED (passed through when the caller exported it)
 #   USER (passed through when set, else this process's login name)
 # Arguments:
 #   $1 - image tag
@@ -261,6 +269,8 @@ test_in_image_run() {
     -v "${root}:/work" \
     -w /work \
     -e CI \
+    -e VALIDATE_INNER \
+    -e NEXT_TELEMETRY_DISABLED \
     -e HOME=/tmp \
     -e "USER=${USER:-$(id -un)}" \
     --add-host=host.docker.internal:host-gateway \
@@ -351,17 +361,24 @@ main() {
   root="$(resolve_repo_root)" || exit 5
   tag="$(test_in_image_tag "${image}")"
 
+  section "Golden image gates"
+
   if [ "${force_build}" -eq 1 ]; then
+    phase "build ${tag}"
     note "--build - rebuilding ${tag}"
     test_in_image_build "${tag}" "${root}"
   elif ! test_in_image_image_present "${tag}"; then
+    phase "build ${tag}"
     note "${tag} is not in the local image store - building it"
     test_in_image_build "${tag}" "${root}"
   else
     note "${tag} is already in the local image store"
   fi
 
+  phase "run bazelisk in ${tag}"
   test_in_image_run "${tag}" "${root}" "${user}" "${bazel_args[@]}"
+  ok "gates passed in ${tag}"
+  summary
   return 0
 }
 

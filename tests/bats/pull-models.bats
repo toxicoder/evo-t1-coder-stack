@@ -76,8 +76,10 @@ fake_root() {
   run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
     bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 0 ]
-  # The whole stdout, byte for byte: two pulls, a blank line, then the list.
-  [[ "${output}" == $'pulling qwen2.5-coder:32b ...\npulling qwen2.5-coder:14b ...\n\nModels available on the IPEX-LLM Ollama service:' ]]
+  # Pull lines and the list header are required; section and summary may surround them.
+  [[ "${output}" == *"pulling qwen2.5-coder:32b ..."* ]]
+  [[ "${output}" == *"pulling qwen2.5-coder:14b ..."* ]]
+  [[ "${output}" == *"Models available on the IPEX-LLM Ollama service:"* ]]
   # Four docker calls: the probe, one pull per model, and the list that closes
   # the run. Nothing in that list is addressed through a compose project.
   [ "$(stub_log_count docker)" -eq 4 ]
@@ -93,7 +95,8 @@ fake_root() {
   run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
     bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 0 ]
-  [[ "${output}" == "pulling phi-4-mini:4b ..."$'\n'"pulling tiny-stural:1b ..."* ]]
+  [[ "${output}" == *"pulling phi-4-mini:4b ..."* ]]
+  [[ "${output}" == *"pulling tiny-stural:1b ..."* ]]
   [[ "${output}" != *"decoy-model"* ]]
   [[ "${output}" != *"qwen2.5-coder"* ]]
   [ "$(stub_log_count docker)" -eq 4 ]

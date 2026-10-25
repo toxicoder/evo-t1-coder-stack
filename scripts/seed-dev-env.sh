@@ -43,6 +43,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SELF_DIR}/lib/common.sh"
 # shellcheck source=lib/config_seed.sh disable=SC1091
 source "${SELF_DIR}/lib/config_seed.sh"
+# This CLI has no --json mode: a leftover JSON_MODE would send the report to stderr.
+unset JSON_MODE
 
 # @function usage
 # Print the flag list on stdout, so a typo prints something readable.
@@ -152,19 +154,8 @@ seed_render_grok_config() {
   # Drop the gated blocks a contributor seed does not turn on. The search
   # block's own if/endif lines go too, but its body stays. Every endif is
   # consumed so a kept block does not leave a directive behind.
-  if ! awk '
-    BEGIN { skip = 0 }
-    /%\{if github_mcp~\}/ { skip = 1; next }
-    /%\{if context7_mcp~\}/ { skip = 1; next }
-    /%\{if grok_config_extra != ""~\}/ { skip = 1; next }
-    /%\{if search_mcp~\}/ { next }
-    /%\{endif~\}/ {
-      if (skip) { skip = 0; next }
-      next
-    }
-    skip { next }
-    { print }
-  ' "${src}" | sed \
+  # SELF_DIR is the entry's scripts/ dir; extracted-function tests set it too.
+  if ! awk -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/tftpl_strip_gates.awk" "${src}" | sed \
     -e "s|\\\$\\\$${lbrace}|${dollar}${lbrace}|g" \
     -e "s|\${litellm_url}|${STACK_LITELLM_URL}|g" \
     -e 's|\${grok_default_model}|agent|g' \
@@ -181,8 +172,8 @@ seed_render_grok_config() {
 
 # @function seed_write_helpers
 # Rewrite the two terminal helpers startup cats on every boot. They carry no
-# ownership marker. A doubled dollar in the heredoc unfolds to one dollar so
-# the scripts expand at run time. --dry-run reports and writes nothing.
+# ownership marker. Copied from templates/common/ (the same files startup
+# interpolates via file()). --dry-run reports and writes nothing.
 # Globals:
 #   None
 # Arguments:
@@ -190,23 +181,17 @@ seed_render_grok_config() {
 #   $2 - repo root (payload source)
 #   $3 - 1 to report without writing (default 0)
 # Outputs:
-#   One line per helper; one note when a heredoc block is missing
+#   One line per helper; one note when a payload file is missing
 # Returns:
 #   0, always
 seed_write_helpers() {
   local home="${1:-}" root="${2:-}" preview="${3:-0}"
-  local src="" name="" delim="" path="" body="" lbrace="" dollar='$'
-  # Same octal brace as seed_render_grok_config: the unfold sed must not put
-  # a raw brace in this function body.
-  lbrace="$(printf '\173')"
-  src="${root}/templates/workspace/startup.sh.tftpl"
+  local src="" name="" path=""
   for name in grok-build-terminal vscode-terminal-tmux; do
-    case "${name}" in
-      grok-build-terminal) delim="GROK_BUILD_HELPER" ;;
-      vscode-terminal-tmux) delim="TMUX_ATTACH_HELPER" ;;
-    esac
+    src="${root}/templates/common/${name}.sh"
     path="${home}/.grok/bin/${name}"
-    if ! body="$(seed_extract_tftpl_block "${src}" "${delim}")"; then
+    if [[ ! -f ${src} ]]; then
+      note "no ${src} to copy - skipped"
       continue
     fi
     if [[ ${preview} == "1" ]]; then
@@ -214,7 +199,7 @@ seed_write_helpers() {
       continue
     fi
     mkdir -p "${home}/.grok/bin"
-    if ! printf '%s\n' "${body}" | sed -e "s|\\\$\\\$${lbrace}|${dollar}${lbrace}|g" >"${path}"; then
+    if ! cp "${src}" "${path}"; then
       note "could not write ${path} - skipped"
       rm -f "${path}"
       continue
@@ -496,15 +481,24 @@ seed_dev_env() {
   if [[ ${preview} != "1" ]]; then
     mkdir -p -- "${home}"
   fi
+  section "contributor home"
   log "--- ${home} (contributor home) ---"
   stage="$(mktemp -d "${TMPDIR:-/tmp}/evoT1Seed.XXXXXX")"
+  phase "writing helpers, notes, and editor links"
   seed_container_seed "" "${home}" "${root}" "${stage}" "${preview}" "${force}"
   seed_write_helpers "${home}" "${root}" "${preview}"
   seed_write_notes_lib "${home}" "${root}" "${preview}"
   seed_link_vscode_settings "${home}" "${preview}"
+  phase "rendering grok config"
   seed_write_grok_config "${home}" "${root}" "${preview}" "${force}"
+  phase "writing bashrc PATH"
   seed_write_bashrc_path "${home}" "${preview}"
   rm -rf "${stage}"
+  if [[ ${preview} == "1" ]]; then
+    ok "planned contributor home ${home}"
+  else
+    ok "contributor home ${home}"
+  fi
   return 0
 }
 
@@ -582,6 +576,7 @@ main() {
 
   seed_dev_env "${home}" "${root}" "${preview}" "${force}" || exit 1
   seed_setup_git_credential "${home}" "${devcontainer}" "${preview}"
+  summary
   return 0
 }
 

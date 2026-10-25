@@ -31,6 +31,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# shellcheck source=lib/common.sh disable=SC1091
+source "scripts/lib/common.sh"
+# No --json mode: an inherited JSON_MODE would send every line to stderr.
+unset JSON_MODE
+
 # shellcheck source=lib/coder_api.sh disable=SC1091
 source "scripts/lib/coder_api.sh"
 
@@ -89,21 +94,6 @@ A generated password is printed once, here and nowhere else; it then lives in
 EOF
 }
 
-# @function die
-# Print an error on stderr and exit 1.
-# Globals:
-#   None
-# Arguments:
-#   $* - error text, without the "error: " prefix
-# Outputs:
-#   "error: ..." on stderr
-# Returns:
-#   Does not return; exits 1
-die() {
-  echo "error: $*" >&2
-  exit 1
-}
-
 MODE=generate
 LENGTH=24
 APPLY=1
@@ -135,7 +125,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ ! -f "${ENV_FILE}" ]; then
-  echo "error: ${ENV_FILE} not found" >&2
+  err "${ENV_FILE} not found"
   echo "       first boot? run bazelisk run //scripts:bootstrap to create it" >&2
   exit 1
 fi
@@ -284,6 +274,7 @@ write_env_line() {
   chmod 600 "${ENV_FILE}"
 }
 
+section "Rewrite"
 write_env_line "${new_password}"
 
 want_hash="$(hash_of "${new_password}")"
@@ -293,7 +284,8 @@ in_file="$(read_env_value "${KEY}")"
 if [ "$(hash_of "${in_file}")" != "${want_hash}" ]; then
   die "${ENV_FILE} does not hold the value that was written; nothing was applied"
 fi
-echo "updated ${KEY} in ${ENV_FILE} (mode 600)"
+log "updated ${KEY} in ${ENV_FILE} (mode 600)"
+ok "rewrote ${KEY} in ${ENV_FILE}"
 
 if [ "${MODE}" = "generate" ]; then
   # Printed before the docker steps, not after: if compose then fails, this value
@@ -304,11 +296,12 @@ if [ "${MODE}" = "generate" ]; then
   echo "shown only now — it lives in ${ENV_FILE} (chmod 600), which is gitignored."
 fi
 
+section "Apply"
 if [ "${APPLY}" = 0 ]; then
-  echo
-  echo "not applied: rerun without --no-apply:"
-  echo "  bazelisk run //scripts:dashboard-password"
+  log "not applied: rerun without --no-apply:"
+  log "  bazelisk run //scripts:dashboard-password"
 else
+  phase "recreate the homepage container"
   # The homepage container is FOUND on the daemon, by container label, and then
   # recreated inside the compose project that created it — never through a
   # cwd-resolved project (scripts/lib/coder_api.sh: a bare `docker compose`
@@ -348,12 +341,16 @@ else
 
   in_container="${env_line#"${KEY}="}"
   if [ "$(hash_of "${in_container}")" = "${want_hash}" ]; then
-    echo "verified: the running container has the new password"
+    log "verified: the running container has the new password"
+    ok "homepage container"
   else
     die "the running container still has the old password — the recreate did not take; check: bazelisk run //scripts:prod-stack -- logs --tail 100 homepage"
   fi
 fi
 
-echo
-echo "note: existing dashboard sessions stay valid until they expire — the session"
-echo "cookie is signed by HOMEPAGE_AUTH_SECRET, which did not change."
+note "existing dashboard sessions stay valid until they expire — the session cookie is signed by HOMEPAGE_AUTH_SECRET, which did not change."
+if [ "${APPLY}" = 0 ]; then
+  summary "bazelisk run //scripts:dashboard-password"
+else
+  summary
+fi

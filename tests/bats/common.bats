@@ -137,6 +137,37 @@ line two")"; b="$(first_line "   ")"; printf "[%s][%s]" "${a}" "${b}"'
   has_tool bash
 }
 
+@test "common: section, phase, and ok format grouping lines" {
+  run --separate-stderr bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; section Bootstrap; phase checking docker; ok compose plugin"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'\n== Bootstrap ==\n-> checking docker\nok: compose plugin' ]
+}
+
+@test "common: summary counts ok/warn/fail and lists failures" {
+  run --separate-stderr bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; ok one; warn two; fail_item boom; summary 'bazelisk run //scripts:prod-stack -- up'"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'ok: one\nwarning: two\nsummary: 1 ok, 1 warnings, 1 failed\n  failed: boom\nnext: bazelisk run //scripts:prod-stack -- up' ]
+  [ "${stderr}" = "error: boom" ]
+}
+
+@test "common: section/phase/ok/summary go to stderr under JSON_MODE" {
+  run --separate-stderr bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; JSON_MODE=1; export JSON_MODE; phase wait; ok ready; summary"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+  [ "${stderr}" = $'-> wait\nok: ready\nsummary: 1 ok, 0 warnings, 0 failed' ]
+}
+
+@test "common: skip prints via log and exits 0, stderr under JSON_MODE" {
+  run --separate-stderr bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; skip 'not yet'"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "not yet" ]
+  [ -z "${stderr}" ]
+  run --separate-stderr bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; JSON_MODE=1; export JSON_MODE; skip 'not yet'"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+  [ "${stderr}" = "not yet" ]
+}
+
 @test "common: die prints on stderr and exits 1" {
   run --separate-stderr bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; die 'boom here'"
   [ "${status}" -eq 1 ]

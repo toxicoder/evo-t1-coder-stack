@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# tftpl: coder_script body; $${shell} stays a shell var; $${terraform_var} is passed from main.tf.
+# Fork of the module's run.sh, trimmed to this stack: install fresh into
+# /tmp/code-server on every start (both toggle modes rebuild the
+# container that hosts the editor, so a persistent prefix would hold
+# nothing), seed or merge the settings map when the dev-container toggle
+# handed one in, then start code-server on port 13337.
+set -eu
+PREFIX="/tmp/code-server"
+CS_BIN="$${PREFIX}/bin/code-server"
+curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}"
+if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
+  ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
+fi
+SETTINGS_B64='${settings_b64}'
+if [ -n "$${SETTINGS_B64}" ]; then
+  SETTINGS_FILE="$${HOME}/.local/share/code-server/User/settings.json"
+  mkdir -p "$(dirname "$${SETTINGS_FILE}")"
+  printf '%s' "$${SETTINGS_B64}" | base64 -d > "$${SETTINGS_FILE}.seed"
+  if [ ! -f "$${SETTINGS_FILE}" ]; then
+    mv "$${SETTINGS_FILE}.seed" "$${SETTINGS_FILE}"
+  elif command -v jq >/dev/null 2>&1; then
+    if jq -s '.[0] * .[1]' "$${SETTINGS_FILE}" "$${SETTINGS_FILE}.seed" > "$${SETTINGS_FILE}.new"; then
+      mv "$${SETTINGS_FILE}.new" "$${SETTINGS_FILE}"
+    else
+      printf 'Could not merge: keeping the settings file that is already there.\n'
+    fi
+    rm -f "$${SETTINGS_FILE}.seed" "$${SETTINGS_FILE}.new"
+  else
+    printf 'No jq on PATH: keeping the settings file that is already there.\n'
+    rm -f "$${SETTINGS_FILE}.seed"
+  fi
+fi
+echo "Running code-server in the background (log: /tmp/code-server.log)."
+# Positional folder plus --ignore-last-opened: path-based coder_app
+# URLs drop the ?folder= query before the browser sees it, and without
+# this flag the last restored workspace (often /home/coder) wins.
+FOLDER="${editor_folder}"
+# This script and the startup script's clone stage race: both run at agent
+# start, and a folder code-server cannot stat gets VS Code's "Workspace
+# does not exist" dialog and the last window instead of the clone. Create
+# the folder (the clone stage makes it too, as early as it can) and then
+# give a first-start clone at most 60 s to land its .git. The loop returns
+# the moment .git appears, so a warm start — folder already cloned — adds
+# nothing to the launch, and in dev-container mode the clone is already
+# there before this container exists. /home/coder is skipped: nothing
+# clones there and waiting on it would only delay the editor.
+mkdir -p -- "$${FOLDER}" 2>/dev/null || true
+if [ "$${FOLDER}" != "/home/coder" ]; then
+  waited=0
+  while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do
+    sleep 1
+    # templatefile() escapes a dollar only before "{", so this line reaches
+    # bash as written: one $, one arithmetic expansion. Doubling it ($$(( )
+    # is the bug to avoid — Coder runs this body as bash -c, where $$ is the
+    # PID and the leftover (( is "syntax error near unexpected token '('".
+    waited=$((waited + 1))
+  done
+fi
+"$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &

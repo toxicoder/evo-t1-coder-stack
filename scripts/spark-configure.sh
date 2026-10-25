@@ -68,51 +68,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# @function log
-# Print one status line. Spark scripts send it to stderr when --json is set.
-# Globals:
-#   json (Spark scripts; empty means stdout)
-# Arguments:
-#   $* - text to print
-# Outputs:
-#   The text on stdout, or stderr when json is set
-# Returns:
-#   0
-log() {
-  # With --json, stdout stays exactly one JSON object per host: every prose line goes to
-  # stderr instead, so `bazelisk run //scripts:spark-configure -- --json | jq` parses and `2>/dev/null` silences
-  # the commentary without losing it.
-  if [ -n "${json:-}" ]; then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi
-}
-# @function die
-# Print an error on stderr and exit 1.
-# Globals:
-#   None
-# Arguments:
-#   $* - error text, without the "error: " prefix
-# Outputs:
-#   "error: ..." on stderr
-# Returns:
-#   Does not return; exits 1
-die() {
-  printf 'error: %s\n' "$*" >&2
-  exit 1
-}
-# Expected states, not errors: exit 0 so callers (bootstrap) keep going.
-# @function skip
-# Print a not-yet line and exit 0 so callers such as bootstrap keep going.
-# Globals:
-#   None
-# Arguments:
-#   $* - reason text
-# Outputs:
-#   The reason on stdout (spark-configure routes it through log)
-# Returns:
-#   Does not return; exits 0
-skip() {
-  log "$*"
-  exit 0
-}
+# shellcheck source=lib/spark.sh disable=SC1091
+source "scripts/lib/spark.sh" # sources scripts/lib/common.sh
+# A leftover JSON_MODE in the environment would hide the human output before
+# --json is ever parsed; --json below is the only thing that sets it.
+unset JSON_MODE
 
 # The twelve settings this script owns. The defaults are the recipe's own and stay as
 # shipped: PARALLEL 5 is the recipe default (4 is the escape hatch for a box ALSO
@@ -128,7 +88,6 @@ TENSORFOLD_IMAGE_TOKENS=16384 VISION_MAX_IMAGES=50"
 
 apply=""
 restart=""
-json=""
 ssh_user="${SPARK_SSH_USER:-${LOGNAME:-}}"
 ssh_port=22
 timeout_s=120
@@ -136,7 +95,6 @@ probe_cap=15
 http_cap=8
 recipe_dir='${HOME}/Qwen3.8-Flash-Next-Single-DGX-Spark-TensorFold'
 container="qwen38-flash-next-tf"
-JSON_ESCAPE_SED='s/["\\]/\\&/g' # one sed program, quoted: escape \ and " in one pass
 model_id="Qwen3.8-Flash-Next"
 container_env="/opt/qwen38-flash-next/.env"
 
@@ -160,7 +118,7 @@ if [ "$#" -gt 0 ]; then
         shift
         ;;
       --json)
-        json=1
+        JSON_MODE=1
         shift
         ;;
       --dry-run)
@@ -293,50 +251,6 @@ ssh_run() {
   fi
 }
 
-# json_value: print $1 as a JSON value. A check that never ran prints null, because a
-# quoted string would claim a number was taken and a bare one would not parse; a pair
-# of values prints as a JSON array, which is how the two context-window figures stay
-# distinguishable from one measurement.
-# @function json_value
-# Print one JSON scalar: null when empty, a bare integer, or a quoted string.
-# Globals:
-#   None
-# Arguments:
-#   $1 - value, optional
-# Outputs:
-#   null, a bare integer, or a quoted string
-# Returns:
-#   0
-json_value() {
-  if [ "$#" -lt 1 ] || [ -z "$1" ]; then
-    printf 'null'
-    return
-  fi
-  case "$1" in
-    *[!0-9]*) printf '"%s"' "$1" ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
-
-# json_escape: strip the JSON delimiters this script could ever interpolate into a
-# value and cap the length, so --json stays one parseable object per host even when a
-# remote tool answers with a multi-line error.
-# @function json_escape
-# Escape text so it can sit inside one JSON string.
-# Globals:
-#   JSON_ESCAPE_SED when this copy clips remote replies
-# Arguments:
-#   $1 - raw text
-# Outputs:
-#   Escaped text. The coder-agents copy also turns newlines into \\n.
-# Returns:
-#   0
-json_escape() {
-  local trimmed
-  trimmed="$(printf '%s' "$1" | sed -E "${JSON_ESCAPE_SED}" | tr -d '\n\r')"
-  printf '%s' "${trimmed:0:180}"
-}
-
 # @function first_line
 # Print the first non-blank line of a block of text.
 # Globals:
@@ -442,113 +356,7 @@ live_value() {
 # Returns:
 #   0
 probe_script() {
-  cat <<'PROBE'
-# @function say
-# Print one key=value line on the remote probe host.
-# Globals:
-#   None
-# Arguments:
-#   $1 - line to print
-# Outputs:
-#   The line on stdout
-# Returns:
-#   0
-say() {
-  printf '%s\n' "$1"
-}
-if command -v docker >/dev/null 2>&1; then
-  have_docker=present
-  docker_runtimes="$(docker info --format '{{.ServerVersion}} {{.SecurityOptions}} {{.Runtimes}}' 2>/dev/null | cut -c1-200)"
-else
-  have_docker=missing
-  docker_runtimes=missing
-fi
-if [ -d /dev/dri ]; then
-  dri=present
-else
-  dri=missing
-fi
-disk_kb="$(df -Pbk / 2>/dev/null | tail -n 1 | awk '{print $4}')"
-[ -n "${disk_kb}" ] || disk_kb=0
-disk_gib="$(awk -v kb="${disk_kb}" 'BEGIN { printf "%.1f", kb / 1048576 }')"
-mem_gib="$(awk '/MemAvailable/ { printf "%.1f", $2 / 1048576 }' /proc/meminfo 2>/dev/null)"
-[ -n "${mem_gib}" ] || mem_gib=0
-keys="PARALLEL CONTEXT KV_DTYPE SERVED_NAME PORT MAX_TOKENS TENSORFOLD_MEMORY_RESERVE_GIB TENSORFOLD_PREFILL_ROWS TENSORFOLD_MTP_COPY VISION TENSORFOLD_IMAGE_TOKENS VISION_MAX_IMAGES"
-say "have_docker=${have_docker}"
-say "docker_runtimes=${docker_runtimes}"
-say "dri=${dri}"
-say "disk_free_gib=${disk_gib}"
-say "mem_free_gib=${mem_gib}"
-say "recipe_dir=${RECIPE_DIR:-}"
-if [ -d "${RECIPE_DIR:-/nonexistent}" ]; then
-  say "clone=present"
-else
-  say "clone=missing"
-fi
-if [ -f "${RECIPE_DIR:-/nonexistent}/.env" ]; then
-  say "env_file=present"
-else
-  say "env_file=missing"
-fi
-if [ -f "${RECIPE_DIR:-/nonexistent}/scripts/config.sh" ]; then
-  say "config_sh=present"
-else
-  say "config_sh=missing"
-fi
-say "container_state=$(docker ps --no-trunc --format '{{.Names}} {{.State}}' 2>/dev/null | grep "^${CONTAINER} " | tail -n 1 | cut -d' ' -f2-)"
-cenv="$(docker inspect "${CONTAINER}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)"
-# A server started with plain docker run and -e flags has CUDA_VISIBLE_DEVICES in its
-# environment and no recipe clone behind it, so start.sh restart cannot re-derive its
-# settings: that is the case that gets a hand-run command printed, never executed.
-say "gpu_env=missing"
-printf '%s\n' "${cenv}" | grep -q 'CUDA_VISIBLE_DEVICES=' && say "gpu_env=present"
-for key in $keys; do
-  # Read the two files as text, never source them: this body runs under `sh` on the
-  # box, where one bad line in a hand-edited .env would abort the whole probe, and
-  # the reason the repo's own env_get reads with sed instead of sourcing is the same.
-  value=""
-  for recipe_file in "${RECIPE_DIR:-/nonexistent}/scripts/config.sh" "${RECIPE_DIR:-/nonexistent}/.env"; do
-    if [ -f "${recipe_file}" ]; then
-      found="$(sed -n "s|^${key}=||p" "${recipe_file}" 2>/dev/null | tail -n 1 | tr -d "\"'")"
-      if [ -n "${found}" ]; then
-        value="${found}"
-      fi
-    fi
-  done
-  [ -n "${value}" ] || value=NOTSET
-  say "recipe.${key}=${value}"
-done
-if [ -n "${cenv}" ]; then
-  for key in $keys; do
-    value="$(printf '%s\n' "${cenv}" | grep "^${key}=" | tail -n 1 | cut -d= -f2- | tr ' ' '_')"
-    [ -n "${value}" ] || value=NOTSET
-    say "inspect.${key}=${value}"
-  done
-fi
-say report_end
-PROBE
-}
-
-# probe_http: one capped HTTP GET, printing the body or nothing at all. "Nothing
-# answered" is a result and not an error here, and it stays distinguishable from
-# "answered and looks right": an empty body means unmeasured, never a pass. The
-# command substitution below holds no nested one — that nesting is what the ssh
-# plumbing in this file has to avoid, so it is avoided everywhere else too.
-# @function probe_http
-# Print the body of one capped HTTP GET, or nothing when it does not answer.
-# Globals:
-#   probe_tool or has_timeout and http_cap, depending on the caller
-# Arguments:
-#   Spark entry scripts: $1 - URL. spark.sh: $1 - cap seconds, $2 - URL.
-# Outputs:
-#   The body, or nothing
-# Returns:
-#   0
-probe_http() {
-  # $1 = URL, and probe_tool is either `timeout <cap> curl -m 5` or `curl -m 5`.
-  local out=""
-  out="$("${probe_tool[@]}" "$1" 2>/dev/null || true)"
-  printf '%s' "${out}"
+  cat "scripts/lib/probes/spark-configure.sh"
 }
 
 # report_get: the value the probe script recorded for key $1 in report file $2, or
@@ -585,15 +393,11 @@ hosts_checked=0
 hosts_ready=0
 hosts_skipped=0
 hosts_failed=0
-blank=0
 
 for host in ${hosts[@]+"${hosts[@]}"}; do
-  # One JSON object per line in --json mode, with no blank line between them, so the
-  # whole run can be piped straight into jq or tee'd into sparks/<host>.jsonl.
-  if [ -z "${json}" ] && [ "${blank}" = 1 ]; then
-    printf '\n'
-  fi
-  blank=1
+  # section/phase go through log, so --json keeps them on stderr and stdout stays
+  # one JSON object per line, with no blank line between them.
+  section "host ${host}"
   hosts_checked=$((hosts_checked + 1))
 
   probe="${work}/${host}.probe"
@@ -613,8 +417,9 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # session first would report a healthy server as unreachable. Each one is capped
   # twice over — timeout(1) around a curl that carries its own -m — because a
   # black-holed address must not be able to stall this loop (see probe_tool above).
+  phase "probing http://${host}:${server_port}"
   "${probe_tool[@]}" "http://${host}:${server_port}/v1/models" >"${models}" 2>/dev/null || true
-  health="$(probe_http "http://${host}:${server_port}/health")"
+  health="$(probe_http "${http_cap}" "http://${host}:${server_port}/health")"
 
   # ── the remote half: one flat script, one ssh round trip ────────────────────
   # probe_script below emits the whole remote body as ONE flat sh script into
@@ -634,6 +439,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   } >"${probe}"
   payload="$(base64 <"${probe}" | tr -d '\n')"
 
+  phase "probing ${target} over ssh"
   ssh_rc=0
   ssh_out="$(ssh_run "${target}" "printf '%s' '${payload}' | base64 -d | sh" "${probe_cap}" 2>"${stderr_file}")" ||
     ssh_rc=$?
@@ -799,7 +605,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     reason="no ${container} container on this box, and a cold server is never started here"
   fi
 
-  if [ "${json}" = 1 ]; then
+  if [ -n "${JSON_MODE:-}" ]; then
     # --json: one JSON object per host, one line each, for jq or for a dashboard. A
     # check that never ran prints null (see json_value) rather than a plausible 0.
     printf '{"host":"%s","checked":%s,"reason":"%s","model_id":"%s","served":%s,"streams_max":%s,"requests_running":%s,"context_length":%s,"missing_prereq":"%s","config":"%s","gpu_env":"%s"}\n' \

@@ -2,10 +2,10 @@
 #
 # ## ci-workflow.bats — CI runs the golden image, not a runner toolchain.
 #
-# The merge gate is images/dev/Dockerfile docker-run as the host uid:gid.
-# These tests lock that shape so a later change cannot slip back to
-# jobs.*.container, actions/setup-node, or ./.github/actions/setup-bazel on
-# the bazel/docs jobs.
+# The merge gate is images/dev/Dockerfile, run through scripts/test-in-image.sh
+# as the host uid:gid. These tests lock that shape so a later change cannot
+# slip back to an inlined docker run, jobs.*.container, actions/setup-node, or
+# ./.github/actions/setup-bazel on the bazel/docs jobs.
 #
 # Usage: bazelisk test //tests:bats_ci_workflow_test   (from any cwd)
 # Safety: reads .github/workflows/ci.yml; writes nothing.
@@ -64,22 +64,35 @@ setup() {
   [[ -f ${CI_YML} ]] || skip "ci.yml is not in the tree"
 }
 
-@test "ci workflow: both jobs docker-run the golden image as the host uid" {
+@test "ci workflow: both jobs run the gates through test-in-image in the golden image" {
   assert_contains_file "buildx" "${CI_YML}" 'docker/setup-buildx-action'
   assert_contains_file "build context" "${CI_YML}" 'context: images/dev'
   assert_contains_file "dockerfile" "${CI_YML}" 'file: images/dev/Dockerfile'
   assert_contains_file "local tag" "${CI_YML}" 'evo-t1-dev:latest'
-  if ! grep -Fq 'docker run --rm --user "$(id -u):$(id -g)"' "${CI_YML}"; then
-    printf 'FAIL: docker run as host uid missing from %s\n' "${CI_YML}" >&2
-    return 1
-  fi
-  if ! grep -Fq '-e USER="$(id -un)"' "${CI_YML}"; then
-    printf 'FAIL: USER env for Bazel missing from %s\n' "${CI_YML}" >&2
-    return 1
-  fi
-  assert_contains_file "validate inner" "${CI_YML}" 'VALIDATE_INNER=1 bazelisk run //:validate'
-  assert_contains_file "docs npm in image" "${CI_YML}" 'npm ci --legacy-peer-deps'
+  assert_contains_file "gates via test-in-image" "${CI_YML}" '\./scripts/test-in-image\.sh'
+  assert_contains_file "test-fast gate" "${CI_YML}" 'test //:test-fast --config=ci'
+  assert_contains_file "lint gate" "${CI_YML}" 'test //:lint --config=ci --test_tag_filters=manual'
+  assert_contains_file "validate inner" "${CI_YML}" 'VALIDATE_INNER=1 \./scripts/test-in-image\.sh -- run //:validate'
+  assert_contains_file "docs typecheck and unit" "${CI_YML}" '//docs-site:typecheck //docs-site:unit --test_tag_filters=manual'
+  assert_contains_file "docs nav test" "${CI_YML}" '//docs-site:nav_test'
+  assert_contains_file "docs nav check" "${CI_YML}" '//docs-site:npm -- run nav:check'
+  ci_refute_line "inline docker run" 'docker run'
+  ci_refute_line "inline npm ci" 'npm ci --legacy-peer-deps'
+  ci_refute_line "test-fast is not manual-filtered" 'test-fast.*test_tag_filters'
+  ci_refute_line "nav_test is not manual-filtered" 'nav_test.*test_tag_filters'
   assert_contains_file "packages write" "${CI_YML}" 'packages: write'
+
+  local image_script="${REPO_ROOT}/scripts/test-in-image.sh"
+  [[ -f ${image_script} ]] || skip "scripts/test-in-image.sh is not in the tree"
+  assert_contains_file "docker run" "${image_script}" 'docker run --rm'
+  assert_contains_file "host user" "${image_script}" '--user'
+  assert_contains_file "USER env for Bazel" "${image_script}" '-e "USER='
+  assert_contains_file "CI passed through" "${image_script}" '-e CI'
+  assert_contains_file "add-host" "${image_script}" '--add-host=host.docker.internal:host-gateway'
+
+  local deploy="${REPO_ROOT}/.github/workflows/deploy-docs.yml"
+  [[ -f ${deploy} ]] || skip "deploy-docs.yml is not in the tree"
+  assert_contains_file "docs alias script" "${deploy}" 'scripts/ci/docs-alias\.sh'
 }
 
 @test "ci workflow: no Actions container key and no runner toolchain installers" {

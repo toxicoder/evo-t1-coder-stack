@@ -103,41 +103,15 @@ set -euo pipefail
 # SELF_DIR, not pwd: this script never cds, and the seam must be findable however
 # it is invoked (bazelisk run //scripts:new-workspace, from any cwd).
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# die, first_line and has_tool come from the shared seam, byte-identical to the
-# copies that used to live here. log and note stay local on purpose: the seam's
-# versions move prose to stderr under an inherited JSON_MODE, and this script has
-# no --json mode to earn that.
+# die, first_line and has_tool come from the shared seam. This script has no
+# --json mode, so an inherited JSON_MODE must not move the report to stderr.
 # shellcheck source=lib/common.sh disable=SC1091
 source "${SELF_DIR}/lib/common.sh"
+unset JSON_MODE
 # The name/folder derivations and the probe clone live in lib/workspace.sh, which
 # is pure: sourcing it creates no workspace, runs no clone and writes no file.
 # shellcheck source=lib/workspace.sh disable=SC1091
 source "${SELF_DIR}/lib/workspace.sh"
-
-# @function log
-# Print one status line on stdout — this script has no --json mode, so nothing
-# here ever moves prose to stderr.
-# Globals:
-#   None
-# Arguments:
-#   $* - text to print
-# Outputs:
-#   The text on stdout
-# Returns:
-#   0
-log() { printf '%s\n' "$*"; }
-
-# @function note
-# Print one line of soft commentary, never a failure.
-# Globals:
-#   None
-# Arguments:
-#   $* - note text, with the "note: " prefix added
-# Outputs:
-#   "note: ..." on stdout
-# Returns:
-#   0
-note() { printf 'note: %s\n' "$*"; }
 
 # @function usage
 # Print this script's own help — the same flag list as the header block above.
@@ -347,7 +321,9 @@ PROBE_STATE="skipped (a --plain/--dind/--template choice decided the template al
 # tracked, 3 for "checked, nothing found", and 1 or 2 for "could not check" (a
 # failed clone or a failed ls-tree) — the last of which the case below reports.
 
+section "Probe"
 if [ "$PROBE_SKIPPED" = 0 ]; then
+  phase "clone ${URL} and look for a dev container"
   if ! has_tool git; then
     PROBE_STATE="probe skipped: git is not installed on this host"
     note "git is not installed here, so the repository cannot be probed — assuming no dev container (the workspace template), which clones inside the workspace anyway; install git and re-run if that assumption matters"
@@ -440,6 +416,7 @@ if [ "$DRY_RUN" = 1 ]; then
   log ""
   log "would run:"
   log "  ${create_line}"
+  summary "bazelisk run //scripts:new-workspace -- ${URL} ${NAME}"
   exit 0
 fi
 
@@ -447,7 +424,8 @@ fi
 # Three states, kept apart: a host coder CLI to drive, an explicit URL+token
 # pair from the environment (the shape scripts/push-template.sh uses), or
 # neither — which lands in the manual route rather than in a guess.
-log ""
+section "Create"
+phase "create workspace ${NAME} on template ${TEMPLATE_CHOSEN}"
 log "creating workspace '${NAME}' (build runs in the background — --no-wait; watch it with: coder ls, coder logs ${NAME})"
 create_rc=0
 create_hint=""
@@ -483,6 +461,7 @@ if [ "$create_rc" = 0 ]; then
   log "the workspace clones the repository to ${CLONE_PATH}, and code-server and"
   log "Grok Build open and run on that folder; watch the build with coder ls /"
   log "coder logs ${NAME}, or open the workspace in the Coder UI."
+  summary "coder logs ${NAME}"
   exit 0
 fi
 

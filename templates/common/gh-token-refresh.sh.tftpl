@@ -1,0 +1,37 @@
+#!/bin/bash
+# tftpl: coder_script body; $${shell} stays a shell var; $${terraform_var} is passed from main.tf.
+set -u
+# No coder CLI in the image, or no External Auth provider linked to this
+# template: there is nothing to mint from, and saying so is not news.
+command -v coder >/dev/null 2>&1 || exit 0
+token="$(coder external-auth access-token '${github_auth_id}' 2>/dev/null || true)"
+if [ -z "$token" ]; then
+  echo "no GitHub token for this account: click GitHub reauth on this workspace in the Coder UI, finish the GitHub device-code login, then restart the workspace." >&2
+  if [ '${github_auth_id}' = github ]; then
+    echo "private repos also need the Coder GitHub App installed and granted: click Install GitHub App on this workspace, or open ${coder_github_app_install_url}" >&2
+  fi
+  exit 0
+fi
+# gh prefers GH_TOKEN/GITHUB_TOKEN over the auth store, and this
+# coder_script inherits the minted pair, so `gh auth login --with-token`
+# refuses with "The value of the GH_TOKEN environment variable is being
+# used for authentication" unless those names are cleared for the write.
+# The store still has to be written: shells launched outside the agent
+# env have no pair, and `gh auth status` reads the store.
+if command -v gh >/dev/null 2>&1; then
+  unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+  gh auth logout --hostname github.com >/dev/null 2>&1 || true
+  if gh_err="$(printf '%s' "$token" | gh auth login --hostname github.com --git-protocol https --with-token 2>&1)"; then
+    gh auth setup-git >/dev/null 2>&1 || true
+  else
+    safe_err="$${gh_err//"$token"/<token>}"
+    echo "gh would not store the minted GitHub token." >&2
+    echo "gh said: $${safe_err}" >&2
+    echo "next: inside the workspace run: GH_TOKEN= GITHUB_TOKEN= gh auth status" >&2
+    echo "then click GitHub reauth on this workspace in the Coder UI, finish device-code login, and restart." >&2
+    if [ '${github_auth_id}' = github ]; then
+      echo "if the reauth page says to install the GitHub App, click Install GitHub App (or open ${coder_github_app_install_url}), grant the private repos, and restart." >&2
+    fi
+  fi
+fi
+exit 0

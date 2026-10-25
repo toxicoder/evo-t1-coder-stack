@@ -54,9 +54,11 @@
 # Note: this file is rendered by Terraform templatefile(); shell variables are
 # written with a doubled dollar sign ($name or $${name}; the braced form is only
 # safe when escaped this way) so the rendered script keeps them. The only
-# interpolations Terraform has to resolve here are the eight variables main.tf
+# interpolations Terraform has to resolve here are the fourteen variables main.tf
 # passes into this script: grok_build_agents, grok_config, repo_url,
-# additional_repos, dc_dir, build_devcontainer, vscode_settings and notes_setup.
+# additional_repos, dc_dir, build_devcontainer, vscode_settings, notes_setup,
+# tmux_conf, grok_build_terminal, vscode_terminal_tmux,
+# grok_build_delegation_skill, coder_agents and mcp_cache_proxy.
 # grok_config arrives already rendered from grok-config.toml.tftpl, whose own
 # keys are litellm_url, grok_default_model, workspace_affinity_key,
 # grok_config_extra, github_mcp, search_mcp, search_url and context7_mcp - the
@@ -114,38 +116,7 @@ fi
 if [ ! -f "$HOME/.tmux.conf" ] \
    || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.tmux.conf"; then
   cat >"$HOME/.tmux.conf" <<'TMUX_CONF_EOF'
-# managed-by: evo-t1-coder-stack -- stack-seeded. Delete this line (or the
-# whole file) to take terminal fidelity over: the workspace boot reseeds this
-# file only while the marker line above is present.
-
-# Scrolling and selection belong to tmux, not to the browser or the SSH
-# client: the wheel walks copy-mode history and a drag starts a tmux
-# selection. To select against tmux instead, hold Alt (xterm.js) or Shift
-# (most native terminals and SSH clients) while dragging.
-set -g mouse on
-
-# Copy-mode copies leave through OSC 52 into the client terminal's system
-# clipboard. xterm.js (code-server) and Ghostty/kitty/WezTerm/iTerm2 honour
-# OSC 52; iTerm2 needs "Allow clipboard to be modified" ticked first and
-# xterm.js needs its clipboard allowance on, or the copy never leaves tmux.
-# allow-passthrough keeps that route open for an app inside the pane
-# (vim's `+` register) instead of only for tmux's own copy-mode.
-set -g set-clipboard on
-set -g allow-passthrough on
-
-# vi copy mode: v begins a selection, y copies and releases, Escape clears.
-setw -g mode-keys vi
-bind-key -T copy-mode-vi v send-keys -X begin-selection
-bind-key -T copy-mode-vi y send-keys -X copy-selection-and-cancel
-bind-key -T copy-mode-vi Escape send-keys -X clear-selection
-
-# Release the pointer after a drag-select: copy and drop out of copy-mode
-# instead of parking in it.
-bind-key -T copy-mode-vi MouseDragEnd1Pane send-keys -X copy-selection-and-cancel
-
-# One history per pane, big enough that a reattached terminal still reaches
-# the output a closed tab produced.
-set -g history-limit 50000
+${tmux_conf}
 TMUX_CONF_EOF
 else
   echo "WARNING: $HOME/.tmux.conf carries no evo-t1-coder-stack marker -" \
@@ -200,26 +171,7 @@ export PATH="$HOME/.grok/bin:$PATH"
 # in templates/workspace's startup.sh.tftpl — keep the two copies byte-identical.
 mkdir -p "$HOME/.grok/bin"
 cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
-#!/bin/bash
-export PATH="$HOME/.grok/bin:$PATH"
-# The project root, not $PWD: the editor opens on the clone's root, and a
-# terminal opened in a subfolder must still rejoin that same session and agent
-# run rather than starting a second one beside it.
-repo_root="$PWD"
-if command -v git >/dev/null 2>&1; then
-  top="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
-  [ -n "$top" ] && repo_root="$top"
-fi
-folder=$(basename "$repo_root")
-hash=$(printf '%s' "$repo_root" | cksum 2>/dev/null | awk '{print substr($1, 1, 6)}')
-[ -n "$hash" ] || hash=$(printf '%s' "$repo_root" | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-6)
-[ -n "$hash" ] || hash="root"
-session="grok-build-$${folder}-$${hash}"
-if command -v grok >/dev/null 2>&1; then
-  exec tmux new-session -A -s "$session" -c "$PWD" -- grok --cwd "$repo_root"
-fi
-# Grok CLI missing (offline first boot): still resume the session as a shell.
-exec tmux new-session -A -s "$session" -c "$PWD"
+${grok_build_terminal}
 GROK_BUILD_HELPER
 chmod +x "$HOME/.grok/bin/grok-build-terminal"
 
@@ -228,16 +180,7 @@ chmod +x "$HOME/.grok/bin/grok-build-terminal"
 # never kills running processes and another terminal (or an SSH client) can
 # rejoin the same session. No tmux (offline first boot): plain login shell.
 cat >"$HOME/.grok/bin/vscode-terminal-tmux" <<'TMUX_ATTACH_HELPER'
-#!/bin/bash
-folder=$(basename "$PWD")
-hash=$(printf '%s' "$PWD" | cksum 2>/dev/null | awk '{print substr($1, 1, 6)}')
-[ -n "$hash" ] || hash=$(printf '%s' "$PWD" | od -An -tx1 2>/dev/null | tr -d ' \n' | cut -c1-6)
-[ -n "$hash" ] || hash="root"
-session="vscode-$${folder}-$${hash}"
-if ! command -v tmux >/dev/null 2>&1; then
-  exec /bin/bash -l
-fi
-exec tmux -u new-session -A -s "$session" -c "$PWD"
+${vscode_terminal_tmux}
 TMUX_ATTACH_HELPER
 chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
 
@@ -274,54 +217,7 @@ chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
 if [ ! -f "$HOME/.coder/skills/grok-build-delegation/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/grok-build-delegation" 2>/dev/null
   cat >"$HOME/.coder/skills/grok-build-delegation/SKILL.md" <<'AGENT_SKILL_MD_EOF'
----
-name: grok-build-delegation
-description: "Delegate big multi-file work to the Grok Build CLI (`grok`, also on PATH as `agent`): run it headless as a tracked background process, then review its diff and run the project tests before reporting done."
----
-
-<!-- managed-by: evo-t1-coder-stack — stack-seeded. Delete this file to take the
-     skill over: the workspace boot reseeds it only while the file is absent. -->
-
-# Grok Build delegation
-
-## Small ask — handle it yourself
-
-Single-file or short-readable work (read a file, tweak one file, run one
-command): do it yourself with `read_file`, `edit_files` and `execute`. Do not
-delegate — delegation costs a review pass and buys nothing on a small ask.
-
-## Big task — delegate through `execute`
-
-Multi-file refactor, framework adoption, test suites, a new app: anything that
-needs many tool calls against a real repository. Run the Grok Build CLI
-headless instead of driving the edits yourself, via `execute`:
-
-    execute: grok -p "<the task brief, with its acceptance criteria>" --cwd <repo> --permission-mode acceptEdits --max-turns <budget>
-
-Rules:
-
-1. Write the brief first: goal, the repo path, and the acceptance criteria —
-   the commands or behaviour that prove the task is done. Delegation without
-   criteria has nothing to review the delegated diff against.
-2. Start it as a TRACKED BACKGROUND PROCESS and poll its output (re-`execute`
-   to re-check the tracked process/log, or reattach to its tmux session) —
-   `execute` only waits a short window per tool call (about a minute), so a
-   synchronous foreground `grok -p` would die mid-run on any big task.
-3. When it exits, REVIEW before anything else: `git diff` in the repo (plus
-   `git status` for new files), then RUN the project's own tests or build
-   against the criteria you wrote.
-4. Only then report done. If grok exited non-zero, hit the timeout, or the
-   diff fails the criteria, fall back to doing the work yourself — say so in
-   the reply rather than reporting or relaunching unreviewed results.
-
-## Environment facts
-
-- `grok` lives at `/usr/local/bin/grok` and may also be called as `agent`
-  (the symlink beside it).
-- LiteLLM is already exported into workspace shells: `LITELLM_BASE_URL` plus
-  the key in `LITELLM_API_KEY`; the CLI's default model alias `agent` is the
-  tool-call-capable one. Never print or embed `$LITELLM_API_KEY` in a command,
-  file or reply — reference it by name only.
+${grok_build_delegation_skill}
 AGENT_SKILL_MD_EOF
 fi
 
@@ -336,20 +232,7 @@ fi
 
 if [ ! -f "$HOME/.coder/AGENTS.md" ]; then
   cat >"$HOME/.coder/AGENTS.md" <<'AGENT_INSTR_MD_EOF'
-<!-- managed-by: evo-t1-coder-stack — stack-seeded. Delete this file to take the
-     instructions over: the workspace boot reseeds it only while it is absent. -->
-
-# Deployment-wide agent instructions
-
-- Small asks (single file, short-read, one-off command): handle them directly
-  with `read_file` / `edit_files` / `execute`. Do not delegate what you can
-  read and edit yourself.
-- Big multi-file work (refactors, framework adoption, test suites, new apps):
-  route it through the `grok-build-delegation` skill — delegate to the Grok
-  Build CLI (`grok`, also callable as `agent`) in the workspace, then review
-  the delegated `git diff` and run the project's tests before calling it done.
-- Keep secrets out of commands and file contents. Never print `$LITELLM_API_KEY`
-  — reference env vars by name, never by value.
+${coder_agents}
 AGENT_INSTR_MD_EOF
 fi
 
@@ -515,22 +398,7 @@ fi
 mkdir -p "$HOME/.grok/mcp-cache-proxy" 2>/dev/null || true
 if [ ! -f "$HOME/.grok/mcp-cache-proxy/config.json" ]; then
   cat >"$HOME/.grok/mcp-cache-proxy/config.json" <<'MCP_CACHE_PROXY_EOF'
-{
-  "servers": {
-    "context7": {
-      "command": "/opt/npm-global/bin/context7-mcp",
-      "args": [],
-      "env": { "CONTEXT7_API_KEY": "" },
-      "cacheTtlSeconds": 43200,
-      "negativeCacheTtlSeconds": 300
-    }
-  },
-  "cache": {
-    "path": "/home/coder/.grok/mcp-cache-proxy/cache.db",
-    "maxSizeBytes": 104857600,
-    "defaultTtlSeconds": 43200
-  }
-}
+${mcp_cache_proxy}
 MCP_CACHE_PROXY_EOF
   chmod 600 "$HOME/.grok/mcp-cache-proxy/config.json" 2>/dev/null || true
 fi

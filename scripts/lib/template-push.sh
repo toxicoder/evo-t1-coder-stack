@@ -17,8 +17,10 @@
 #     non-zero CLI exit surfaces to the caller as a failed command line, which
 #     is exactly what the entry scripts count and report.
 #   - What ships is a staging copy, never the template dir itself: the stack's
-#     seed payloads (GROK_BUILD_AGENTS.md, vscode-alt.svg and notes-setup.sh,
-#     kept one level above the template dirs under common/) ride along in every
+#     seed payloads (GROK_BUILD_AGENTS.md, vscode-alt.svg, notes-setup.sh,
+#     tmux.conf, the two terminal helpers, the Coder Agents skill/instructions,
+#     mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above
+#     the template dirs under common/) ride along in every
 #     staged copy, because that is where the server-side Terraform reads them
 #     from.
 #   - Symlinks are dereferenced (`tar -h`) so the archive holds regular files.
@@ -58,12 +60,15 @@ fi
 # template_push_one <name> <dir> [push-args...] - push <dir> as template
 # <name>, but never <dir> itself: copy it into a throwaway staging dir, then
 # overwrite every file of the stack's common payload dir (GROK_BUILD_AGENTS.md,
-# vscode-alt.svg and notes-setup.sh, kept one level above the template dirs
-# under common/) there with the common copies. Both templates' main.tf reads
-# those payloads - the seed text and the notes library are inlined into the
-# startup script through file(), the editor icon is read with filebase64() -
-# and the server resolves those references inside the pushed copy, which is why
-# the copy must carry them.
+# vscode-alt.svg, notes-setup.sh, tmux.conf, grok-build-terminal.sh,
+# vscode-terminal-tmux.sh, grok-build-delegation.SKILL.md, coder-agents.md,
+# mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above the
+# template dirs under common/) there with the common copies. Both templates'
+# main.tf reads those payloads - seed text, notes library, tmux, helpers,
+# agent skill/instructions and the gh-token-refresh body through file() /
+# templatefile(), the editor icon with filebase64() - and the server resolves
+# those references inside the pushed copy, which is why the copy must carry
+# them.
 # The staged tree then streams as the tar on stdin. .terraform/ is excluded:
 # it is gitignored provider cache, and pushing it would put the plan's
 # provider binaries into the version's Filestore row. Symlinks are dumped as
@@ -107,7 +112,17 @@ template_push_one() {
     return 1
   fi
   common="$(dirname "${dir}")/common"
-  for payload in GROK_BUILD_AGENTS.md vscode-alt.svg notes-setup.sh; do
+  for payload in \
+    GROK_BUILD_AGENTS.md \
+    vscode-alt.svg \
+    notes-setup.sh \
+    tmux.conf \
+    grok-build-terminal.sh \
+    vscode-terminal-tmux.sh \
+    grok-build-delegation.SKILL.md \
+    coder-agents.md \
+    mcp-cache-proxy.json \
+    gh-token-refresh.sh.tftpl; do
     if [ ! -f "${common}/${payload}" ]; then
       printf 'error: %s: %s/%s is missing - main.tf reads it from the pushed copy, so no push works without it\n' \
         "${name}" "${common}" "${payload}" >&2

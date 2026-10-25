@@ -162,6 +162,9 @@ COMMON_LIB="$(find_common_lib common.sh "${REPO_ROOT:-${GITHUB_WORKSPACE:-}}")" 
 
 # shellcheck source=lib/common.sh disable=SC1091
 source "${COMMON_LIB}"
+# This CLI has no --json mode: a leftover JSON_MODE would route every report
+# line to stderr and leave stdout empty.
+unset JSON_MODE
 
 # @function usage
 # Print the flag list and the exit-code contract on stdout, so a typo prints
@@ -340,7 +343,11 @@ main() {
       die "--data is required on the host: point it at the Hermes data directory (the volume compose mounts at /opt/data)"
   fi
 
+  section "Hermes"
+  phase "seed config.yaml and SOUL.md"
   seed_hermes_data "${seed_dir}" "${data_dir}" "${force}"
+  ok "hermes seed"
+  summary
 }
 
 main "$@"

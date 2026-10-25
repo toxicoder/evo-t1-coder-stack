@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "context7": {
+      "command": "/opt/npm-global/bin/context7-mcp",
+      "args": [],
+      "env": { "CONTEXT7_API_KEY": "" },
+      "cacheTtlSeconds": 43200,
+      "negativeCacheTtlSeconds": 300
+    }
+  },
+  "cache": {
+    "path": "/home/coder/.grok/mcp-cache-proxy/cache.db",
+    "maxSizeBytes": 104857600,
+    "defaultTtlSeconds": 43200
+  }
+}

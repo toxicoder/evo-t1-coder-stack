@@ -40,6 +40,10 @@ if ! declare -f log >/dev/null 2>&1; then
   source "${SELF_DIR}/common.sh"
 fi
 
+# _HOST_STATE_DIR - this lib's directory, so the python fallback is found by
+# absolute path and never by the caller's cwd.
+_HOST_STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # MAGICDNS_NS - Tailscale's on-box resolver. When it is the only nameserver,
 # every lookup (github.com included) dies the moment the stub is unreachable.
 MAGICDNS_NS='100.100.100.100'
@@ -129,13 +133,7 @@ host_can_resolve() {
     return
   fi
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "${name}" <<'PY' 2>/dev/null
-import socket, sys
-try:
-    socket.getaddrinfo(sys.argv[1], None)
-except OSError:
-    sys.exit(1)
-PY
+    python3 "${_HOST_STATE_DIR}/host_resolve.py" "${name}" 2>/dev/null
     return
   fi
   return 1

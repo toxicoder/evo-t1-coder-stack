@@ -32,16 +32,19 @@ log() {
 }
 
 # @function warn
-# Print a soft warning. Never a failure.
+# Print a soft warning. Never a failure. Counts toward summary.
 # Globals:
-#   JSON_MODE (via log)
+#   JSON_MODE (via log), SUMMARY_WARN
 # Arguments:
 #   $* - warning text, without the "warning: " prefix
 # Outputs:
 #   "warning: ..." via log
 # Returns:
 #   0
-warn() { log "warning: $*"; }
+warn() {
+  log "warning: $*"
+  SUMMARY_WARN=$((${SUMMARY_WARN:-0} + 1))
+}
 
 # @function note
 # Print soft commentary. Never a failure.
@@ -86,16 +89,105 @@ die() {
 # Print an expected non-error state and exit 0, so callers such as
 # scripts/bootstrap.sh keep going.
 # Globals:
-#   None
+#   JSON_MODE (via log)
 # Arguments:
 #   $* - message
 # Outputs:
-#   The message on stdout
+#   The message via log (stderr when JSON_MODE is set)
 # Returns:
 #   Does not return; exits 0
 skip() {
-  printf '%s\n' "$*"
+  log "$*"
   exit 0
+}
+
+# @function section
+# Print a grouping header so a multi-step CLI's phases stay visually separate.
+# Globals:
+#   JSON_MODE (via log)
+# Arguments:
+#   $* - section title
+# Outputs:
+#   A blank line, then "== title =="
+# Returns:
+#   0
+section() {
+  log ""
+  log "== $* =="
+}
+
+# @function phase
+# Print a phase line before a step that can take seconds.
+# Globals:
+#   JSON_MODE (via log)
+# Arguments:
+#   $* - what this step is doing
+# Outputs:
+#   "-> ..." via log
+# Returns:
+#   0
+phase() { log "-> $*"; }
+
+# @function ok
+# Print a successful item and count it for summary.
+# Globals:
+#   JSON_MODE (via log), SUMMARY_OK
+# Arguments:
+#   $* - item text, without the "ok: " prefix
+# Outputs:
+#   "ok: ..." via log
+# Returns:
+#   0
+ok() {
+  log "ok: $*"
+  SUMMARY_OK=$((${SUMMARY_OK:-0} + 1))
+}
+
+# @function fail_item
+# Record a failure without exiting, so a CLI can keep going and summarize.
+# Globals:
+#   SUMMARY_FAIL, SUMMARY_FAIL_ITEMS
+# Arguments:
+#   $* - failure text, without the "error: " prefix
+# Outputs:
+#   "error: ..." on stderr
+# Returns:
+#   0
+fail_item() {
+  err "$*"
+  SUMMARY_FAIL=$((${SUMMARY_FAIL:-0} + 1))
+  if [ -n "${SUMMARY_FAIL_ITEMS:-}" ]; then
+    SUMMARY_FAIL_ITEMS="${SUMMARY_FAIL_ITEMS}
+$*"
+  else
+    SUMMARY_FAIL_ITEMS="$*"
+  fi
+}
+
+# @function summary
+# Print the run's counts, any recorded failures, and an optional next command.
+# Globals:
+#   JSON_MODE (via log), SUMMARY_OK, SUMMARY_WARN, SUMMARY_FAIL, SUMMARY_FAIL_ITEMS
+# Arguments:
+#   $1 - optional next-step command, printed as "next: ..."
+# Outputs:
+#   "summary: N ok, W warnings, F failed", then one "  failed: ..." line per
+#   fail_item, then "next: ..." when $1 is set
+# Returns:
+#   0
+summary() {
+  local line=""
+  log "summary: ${SUMMARY_OK:-0} ok, ${SUMMARY_WARN:-0} warnings, ${SUMMARY_FAIL:-0} failed"
+  if [ -n "${SUMMARY_FAIL_ITEMS:-}" ]; then
+    while IFS= read -r line; do
+      [ -n "${line}" ] && log "  failed: ${line}"
+    done <<EOF
+${SUMMARY_FAIL_ITEMS}
+EOF
+  fi
+  if [ -n "${1:-}" ]; then
+    log "next: $1"
+  fi
 }
 
 # ── Key=value readers ──────────────────────────────────────────────────────────

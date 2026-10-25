@@ -25,6 +25,7 @@ WS_STARTUP=""
 DC_STARTUP=""
 WS_SETTINGS=""
 DC_SETTINGS=""
+COMMON_TMUX=""
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
@@ -32,74 +33,77 @@ setup() {
   DC_STARTUP="${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"
   WS_SETTINGS="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
   DC_SETTINGS="${REPO_ROOT}/templates/devcontainer/settings.json.tftpl"
+  COMMON_TMUX="${REPO_ROOT}/templates/common/tmux.conf"
   local f
-  for f in "${WS_STARTUP}" "${DC_STARTUP}" "${WS_SETTINGS}" "${DC_SETTINGS}"; do
+  for f in "${WS_STARTUP}" "${DC_STARTUP}" "${WS_SETTINGS}" "${DC_SETTINGS}" "${COMMON_TMUX}"; do
     [ -f "${f}" ] || skip "template payload missing: ${f}"
   done
 }
 
-# extract_tmux_seed <src> <dest> — copy the tmux seed stage (the if/else/fi
-# block that writes $HOME/.tmux.conf, guard line through closing `fi`) from a
-# startup template into <dest>. Fails unless the guard appears exactly once
-# and is followed by a lone-`fi` terminator, so the extractor cannot
-# silently grab the wrong region.
-extract_tmux_seed() {
-  python3 - "$1" "$2" <<'PY'
-import sys
-src, dest = sys.argv[1], sys.argv[2]
-lines = open(src).read().splitlines(True)
-guard = 'if [ ! -f "$HOME/.tmux.conf" ] \\'
-starts = [i for i, l in enumerate(lines) if l.startswith(guard)]
-if len(starts) != 1:
-    sys.exit("seed guard found %d times in %s" % (len(starts), src))
-start = starts[0]
-end = next((i for i in range(start, len(lines)) if lines[i].rstrip("\n") == "fi"), None)
-if end is None:
-    sys.exit("seed block never terminates with a lone 'fi' in %s" % src)
-with open(dest, "w") as fh:
-    fh.write("".join(lines[start:end + 1]))
-PY
+# extract_tmux_guard <src> <dest> — copy the tmux ownership if/else/fi from a
+# startup twin (the interpolated ${tmux_conf} heredoc plus the warning branch).
+extract_tmux_guard() {
+  awk '
+    $0 ~ /^if \[ ! -f "\$HOME\/\.tmux\.conf" \] \\/ { start = 1 }
+    start { print }
+    start && $0 == "fi" { exit }
+  ' "$1" >"$2"
+  [ -s "$2" ] || {
+    echo "seed guard missing from $1" >&2
+    return 1
+  }
 }
 
-@test "tmux seed: both startup twins carry the same seed stage" {
+# runnable_tmux_seed <dest> — the same guard, writing templates/common/tmux.conf
+# the way templatefile interpolates ${tmux_conf} at apply.
+runnable_tmux_seed() {
+  {
+    printf '%s\n' \
+      'if [ ! -f "$HOME/.tmux.conf" ] \' \
+      "   || grep -qs 'managed-by: evo-t1-coder-stack' \"\$HOME/.tmux.conf\"; then" \
+      "  cat >\"\$HOME/.tmux.conf\" <<'TMUX_CONF_EOF'"
+    cat "${COMMON_TMUX}"
+    printf '%s\n' \
+      'TMUX_CONF_EOF' \
+      'else' \
+      '  echo "WARNING: $HOME/.tmux.conf carries no evo-t1-coder-stack marker -" \' \
+      '    "leaving it alone. Remove the marker line to keep your own tmux config." >&2' \
+      'fi'
+  } >"$1"
+}
+
+@test "tmux seed: both startup twins interpolate the common tmux.conf" {
   local a="${BATS_TEST_TMPDIR}/seed-ws.sh" b="${BATS_TEST_TMPDIR}/seed-dc.sh"
-  extract_tmux_seed "${WS_STARTUP}" "${a}"
-  extract_tmux_seed "${DC_STARTUP}" "${b}"
+  extract_tmux_guard "${WS_STARTUP}" "${a}"
+  extract_tmux_guard "${DC_STARTUP}" "${b}"
   cmp -s "${a}" "${b}"
+  grep -Fq '${tmux_conf}' "${a}"
   # A drifted twin would seed a different terminal for one hosting mode.
-  grep -Fc 'set -g mouse on' "${a}" | grep -qx 1
-  grep -Fc 'set -g set-clipboard on' "${a}" | grep -qx 1
-  grep -Fc 'set -g allow-passthrough on' "${a}" | grep -qx 1
-  grep -Fc 'setw -g mode-keys vi' "${a}" | grep -qx 1
-  grep -Fc 'history-limit 50000' "${a}" | grep -qx 1
-  grep -Fc 'MouseDragEnd1Pane' "${a}" | grep -qx 1
+  grep -Fc 'set -g mouse on' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc 'set -g set-clipboard on' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc 'set -g allow-passthrough on' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc 'setw -g mode-keys vi' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc 'history-limit 50000' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc 'MouseDragEnd1Pane' "${COMMON_TMUX}" | grep -qx 1
 }
 
-@test "tmux seed: the heredoc stays interpolation-clean and the markers balance" {
-  local script="${BATS_TEST_TMPDIR}/seed-ic.sh" f count
+@test "tmux seed: the common payload stays interpolation-clean and twins keep the guard" {
+  local f
+  # Terraform interpolates ${ and %{ inside templatefile(). The payload file
+  # must carry neither, or the seed text mutates at template build time.
+  run grep -F '${' "${COMMON_TMUX}"
+  [ "${status}" -ne 0 ] || { echo "live interpolation in templates/common/tmux.conf" >&2; return 1; }
+  run grep -F '%{' "${COMMON_TMUX}"
+  [ "${status}" -ne 0 ] || { echo "live directive in templates/common/tmux.conf" >&2; return 1; }
   for f in "${WS_STARTUP}" "${DC_STARTUP}"; do
-    # Exactly two TMUX_CONF_EOF markers per file: the seed stage's opening
-    # heredoc and its terminator. scripts/lib/config_seed.sh extracts the
-    # seed payload between these markers, so the count is load-bearing.
-    count="$(grep -c 'TMUX_CONF_EOF' "${f}")"
-    [ "${count}" -eq 2 ] || { echo "TMUX_CONF_EOF count is ${count} in ${f}" >&2; return 1; }
-    # Terraform interpolates ${ and %{ inside templatefile(). The seed block
-    # must carry neither, or the seed text mutates at template build time.
-    extract_tmux_seed "${f}" "${script}"
-    run grep -F '${' "${script}"
-    [ "${status}" -ne 0 ] || { echo "live interpolation in seed block of ${f}" >&2; return 1; }
-    run grep -F '%{' "${script}"
-    [ "${status}" -ne 0 ] || { echo "live directive in seed block of ${f}" >&2; return 1; }
-  done
-  # The warning branch survives in both twins:
-  for f in "${WS_STARTUP}" "${DC_STARTUP}"; do
+    grep -Fq '${tmux_conf}' "${f}"
     assert_contains_file "warning branch" "${f}" 'carries no evo-t1-coder-stack marker'
   done
 }
 
 @test "tmux seed: a fresh HOME receives the fidelity config verbatim" {
   local script="${BATS_TEST_TMPDIR}/seed.sh" home="${BATS_TEST_TMPDIR}/home"
-  extract_tmux_seed "${WS_STARTUP}" "${script}"
+  runnable_tmux_seed "${script}"
   mkdir -p "${home}"
   run env HOME="${home}" bash "${script}"
   [ "${status}" -eq 0 ]
@@ -114,7 +118,7 @@ PY
 
 @test "tmux seed: a marker-free tmux.conf is user-owned and survives" {
   local script="${BATS_TEST_TMPDIR}/seed.sh" home="${BATS_TEST_TMPDIR}/home"
-  extract_tmux_seed "${WS_STARTUP}" "${script}"
+  runnable_tmux_seed "${script}"
   mkdir -p "${home}"
   printf 'set -g mouse off\nset -g scrollback 200\n' >"${home}/.tmux.conf"
   run env HOME="${home}" bash "${script}"
@@ -127,7 +131,7 @@ PY
 
 @test "tmux seed: a marked file is rewritten to the stack defaults" {
   local script="${BATS_TEST_TMPDIR}/seed.sh" home="${BATS_TEST_TMPDIR}/home"
-  extract_tmux_seed "${DC_STARTUP}" "${script}"
+  runnable_tmux_seed "${script}"
   mkdir -p "${home}"
   printf '# managed-by: evo-t1-coder-stack -- stale\nset -g mouse off\n' >"${home}/.tmux.conf"
   run env HOME="${home}" bash "${script}"

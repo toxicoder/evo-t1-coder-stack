@@ -465,6 +465,17 @@ resource "coder_agent" "main" {
     # templates/common/ again, staged beside this file the same way; it is
     # sourced rather than seeded as data, so nothing chomps it.
     notes_setup = file("${path.module}/notes-setup.sh")
+    # tmux.conf, the two terminal helpers, the Coder Agents skill/instructions,
+    # and the mcp-cache-proxy JSON: one copy under templates/common/, staged
+    # beside this file the same way GROK_BUILD_AGENTS.md is. Shell and JSON stay
+    # un-chomped so the seeded files keep their trailing newline; markdown
+    # payloads chomp like grok_build_agents.
+    tmux_conf                   = file("${path.module}/tmux.conf")
+    grok_build_terminal         = file("${path.module}/grok-build-terminal.sh")
+    vscode_terminal_tmux        = file("${path.module}/vscode-terminal-tmux.sh")
+    grok_build_delegation_skill = chomp(file("${path.module}/grok-build-delegation.SKILL.md"))
+    coder_agents                = chomp(file("${path.module}/coder-agents.md"))
+    mcp_cache_proxy             = file("${path.module}/mcp-cache-proxy.json")
     # Injected verbatim into the script, which is safe enough: this is the
     # workspace creator's own input and they already hold a shell in this
     # container. The script quotes it anyway so a URL with spaces survives.
@@ -575,44 +586,10 @@ resource "coder_script" "gh_token_refresh" {
   cron    = "0 0 */6 * * *"
   timeout = 60
 
-  script = <<-EOT
-    #!/bin/bash
-    set -u
-    # No coder CLI in the image, or no External Auth provider linked to this
-    # template: there is nothing to mint from, and saying so is not news.
-    command -v coder >/dev/null 2>&1 || exit 0
-    token="$(coder external-auth access-token '${var.github_auth_id}' 2>/dev/null || true)"
-    if [ -z "$token" ]; then
-      echo "no GitHub token for this account: click GitHub reauth on this workspace in the Coder UI, finish the GitHub device-code login, then restart the workspace." >&2
-      if [ '${var.github_auth_id}' = github ]; then
-        echo "private repos also need the Coder GitHub App installed and granted: click Install GitHub App on this workspace, or open ${local.coder_github_app_install_url}" >&2
-      fi
-      exit 0
-    fi
-    # gh prefers GH_TOKEN/GITHUB_TOKEN over the auth store, and this
-    # coder_script inherits the minted pair, so `gh auth login --with-token`
-    # refuses with "The value of the GH_TOKEN environment variable is being
-    # used for authentication" unless those names are cleared for the write.
-    # The store still has to be written: shells launched outside the agent
-    # env have no pair, and `gh auth status` reads the store.
-    if command -v gh >/dev/null 2>&1; then
-      unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
-      gh auth logout --hostname github.com >/dev/null 2>&1 || true
-      if gh_err="$(printf '%s' "$token" | gh auth login --hostname github.com --git-protocol https --with-token 2>&1)"; then
-        gh auth setup-git >/dev/null 2>&1 || true
-      else
-        safe_err="$${gh_err//"$token"/<token>}"
-        echo "gh would not store the minted GitHub token." >&2
-        echo "gh said: $${safe_err}" >&2
-        echo "next: inside the workspace run: GH_TOKEN= GITHUB_TOKEN= gh auth status" >&2
-        echo "then click GitHub reauth on this workspace in the Coder UI, finish device-code login, and restart." >&2
-        if [ '${var.github_auth_id}' = github ]; then
-          echo "if the reauth page says to install the GitHub App, click Install GitHub App (or open ${local.coder_github_app_install_url}), grant the private repos, and restart." >&2
-        fi
-      fi
-    fi
-    exit 0
-  EOT
+  script = templatefile("${path.module}/gh-token-refresh.sh.tftpl", {
+    github_auth_id               = var.github_auth_id
+    coder_github_app_install_url = local.coder_github_app_install_url
+  })
 }
 
 # In-browser VS Code (Coder's code-server fork) on port 13337. display_apps.vscode
@@ -657,46 +634,9 @@ resource "coder_script" "code_server" {
   display_name = "code-server"
   icon         = local.vscode_alt_icon
 
-  script = <<-EOT
-    #!/usr/bin/env bash
-    # Fork of the module's run.sh, trimmed to this stack: reuse the copy the
-    # first install left under the prefix, otherwise install standalone there,
-    # then start code-server on port 13337.
-    set -eu
-    PREFIX="/home/coder/.local/share/code-server"
-    CS_BIN="$${PREFIX}/bin/code-server"
-    if [ ! -x "$${CS_BIN}" ]; then
-      curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}"
-    fi
-    if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
-      ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
-    fi
-    echo "Running code-server in the background (log: /tmp/code-server.log)."
-    # Positional folder plus --ignore-last-opened: path-based coder_app
-    # URLs drop the ?folder= query before the browser sees it, and without
-    # this flag the last restored workspace (often /home/coder) wins.
-    FOLDER="${local.editor_folder}"
-    # This script and the startup script's clone stage race: both run at agent
-    # start, and a folder code-server cannot stat gets VS Code's "Workspace
-    # does not exist" dialog and the last window instead of the clone. Create
-    # the folder (the clone stage makes it too, as early as it can) and then
-    # give a first-start clone at most 60 s to land its .git. The loop returns
-    # the moment .git appears, so a warm start — folder already cloned — adds
-    # nothing to the launch. /home/coder is skipped: nothing clones there and
-    # waiting on it would only delay the editor by the full timeout.
-    mkdir -p -- "$${FOLDER}" 2>/dev/null || true
-    if [ "$${FOLDER}" != "/home/coder" ]; then
-      waited=0
-      while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do
-        sleep 1
-        # HCL only escapes $${...}. $$(( is two literal dollars; Coder
-        # runs this body as bash -c, so $$ becomes the PID and the leftover
-        # (( is "syntax error near unexpected token '('".
-        waited=$((waited + 1))
-      done
-    fi
-    "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &
-  EOT
+  script = templatefile("${path.module}/code-server.sh.tftpl", {
+    editor_folder = local.editor_folder
+  })
 
   run_on_start = true
 }

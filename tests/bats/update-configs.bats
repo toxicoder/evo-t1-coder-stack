@@ -37,6 +37,10 @@ setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SCRIPT="${REPO_ROOT}/scripts/update-configs.sh"
   LIB_DIR="${REPO_ROOT}/scripts/lib"
+  # env_set_key and key_comment name their awk payloads through SELF_DIR, which
+  # the entry script sets at source time; a test that lifts one function has to
+  # supply the same context.
+  SELF_DIR="${REPO_ROOT}/scripts"
   if [ ! -f "${SCRIPT}" ] || [ ! -f "${LIB_DIR}/config_seed.sh" ]; then
     skip "scripts/update-configs.sh or its lib is not in the tree"
   fi
