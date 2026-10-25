@@ -5,10 +5,10 @@ checked in, `git pull` cannot fix either one for you. `update-configs` is the
 one command that refreshes both, and it is written to be safe to run when you
 are not looking closely at the diff.
 
-The last four sections are also the long form of the notes `.env.sample` keeps
-to one or two lines: GitHub external auth, Grok profile mode, public hosts, and
-the Spark `agent` model group. Where a topic page already owns a subject, this
-page points at it instead of restating it.
+These four sections are also the long form of the `.env.sample` comments that
+point here: GitHub external auth, Grok profile mode, public hosts, and the
+Spark `agent` model group. Where a topic page already owns a subject, this page
+points at it instead of restating it.
 
 ```sh
 bazelisk run //scripts:update-configs -- env --dry-run
@@ -240,11 +240,8 @@ reseeds `~/.grok/config.toml` for exactly that reason.
 
 `STACK_PUBLIC_HOSTS` is the one switch. Empty keeps everything below LAN-only and
 every derived `STACK_*_URL` stays empty; otherwise set the comma-separated public
-names in the form this stack was installed with:
-
-```dotenv
-STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io
-```
+DNS names in the form this stack was installed with, and let `.env.sample` carry
+the literal. The rules:
 
 - Entries are DNS names, not URLs: no scheme, no port, no path. The entry with no
   prefix is the dashboard.
@@ -291,9 +288,7 @@ Spark box, and these are the keys that fill it:
   falls back to `coder`. The placeholder `local-spark` is not a secret and is
   ignored by a keyless backend.
 - `SPARKn_HEALTH_URL` (kept commented in the twin) feed the dashboard's per-box
-  Spark cards - one widget per box, so no card assumes one "usual" box. Compose
-  already defaults each to `http://spark-<n>.lan:8888/health`, so these are
-  overrides for real hostnames, not requirements.
+  Spark cards - one widget per box, so no card assumes one "usual" box.
 - `AGENT_MODEL_URL` is the single `/v1/models` URL the "Agent backend" card uses
   for both its browser link and its status probe. All three boxes serve the same
   model id, so point it at any reachable one; the per-box health keys are what tell
