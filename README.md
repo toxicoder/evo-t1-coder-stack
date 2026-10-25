@@ -99,9 +99,8 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                  code-server, the web terminal and the terminal profiles all
   |                  start on that clone
   |                * ~/.grok/config.toml rendered by the template: model aliases
-  |                  (default + role fallbacks), native web_search on by default,
-  |                  plus the searxng MCP server as the fallback; github and
-  |                  context7 are opt-in
+  |                  (default + role fallbacks); native web_search and the github,
+  |                  context7 and searxng MCP servers on by default
   |                * Cline / Kilo Code ---> host.docker.internal:4000
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
@@ -571,6 +570,10 @@ wildcard certificate allows, the `bootstrap` run that rewrites them, the recreat
 applies it, the plain-HTTP hop to the `router` sidecar on `:8080` (every name,
 including Hermes - not `:9119`), and why the interactive names 302 to
 Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
+The other machine needs one file: the paste-ready Traefik config - five routers, TLS
+on all of them, `passHostHeader: true`, Authelia on the four interactive names and the
+long-lived timeouts - is
+[docs/public-access.md#traefik-configuration](docs/public-access.md#traefik-configuration).
 
 ## LiteLLM model aliases
 

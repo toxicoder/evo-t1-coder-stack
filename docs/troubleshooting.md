@@ -8,9 +8,9 @@ tags: [troubleshooting, operate, errors]
 
 - Stack bring-up: bootstrap, ports, containers that refuse to start
 - The model lane: Spark boxes, LiteLLM, and the agent backends
-- Workspaces: startup, the golden image, the toolchain inside them
+- Workspaces: startup, the golden image, Grok Build (`/learn`, MCP), the toolchain
 - Docker-in-Docker, Terraform, and the host `coder` CLI
-- Editor, credentials, the clone, UI logins, and the public Hermes name (`421`, Chat `4403`)
+- Editor, credentials, the clone, UI logins, and the public names (`421`, Chat `4403`, Traefik)
 
 **What this enables**
 
@@ -255,6 +255,26 @@ server with `search_mcp = false` on the next template push (`SEARCH_MCP=false` i
 `disable_web_search = true` in the workspace's `~/.grok/config.toml` and start a
 new session.
 
+### Context7 or GitHub tools missing in Grok Build -> parked MCP block, or a handshake with nothing to authenticate
+
+The three MCP servers (`github`, `context7`, `searxng`) ship by default. Park one
+with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` / `SEARCH_MCP=false` in `.env` and
+a template re-push. `grok mcp doctor` inside the workspace lists the declared
+servers and their handshake.
+
+- A missing `[mcp_servers.github]` or `[mcp_servers.context7]` in
+  `~/.grok/config.toml` means the last push passed `--var …=false`, or the
+  workspace started from an older template. Re-push and restart the workspace
+  so the managed `config.toml` re-renders.
+- A declared github server that fails handshake: the owner has not connected
+  GitHub External Auth, so `$GH_TOKEN` is empty. Use the **GitHub reauth** app,
+  then start a new Grok session.
+- A declared context7 server that fails handshake: empty `CONTEXT7_API_KEY` is
+  the supported public-rate-limit shape. A key in `.env` plus a re-push fills
+  the env; the block still renders with no key.
+- Discover live tool names with `search_tool`, then call `use_tool` with that
+  schema. Do not hardcode MCP tool names from memory.
+
 ### A workspace app link answers `Bad Gateway` -> find who answered
 
 The **LiteLLM** and **Open VS Code Web** buttons are Coder *apps*: their URL is
@@ -356,6 +376,25 @@ docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retr
 - Then open a new terminal; `PATH` there already includes `~/.grok/bin`.
 - Permanent fix: rebuild the image and the workspace, which then starts from the
   image's own copy. See the next two entries for the command.
+
+### `/learn` missing from Grok Build on code-server web -> the golden image still pins an older CLI
+
+Cause: `/learn` is a bundled user-invocable skill of Grok Build 1.0.70, not a
+terminal slash-command this repo seeds. Workspaces still running the previous
+pin (1.0.44) have no bundled learn, and a self-installed `~/.grok/bin/grok` that
+sits first on PATH hides the image's copy.
+
+```sh
+bash -lc 'command -v grok; grok --version'
+```
+
+- `1.0.70` (or later) at `/usr/local/bin/grok` is the image that ships `/learn`.
+  Rebuild `images/dev` after the pin bump (`scripts/build-dev-image.sh`), re-push
+  the templates, and start a new workspace (or restart one so the **Grok Build**
+  terminal profile execs the new binary).
+- `~/.grok/bin/grok` first on PATH is a leftover installer copy: move it aside
+  so `/usr/local/bin/grok` wins.
+- Pin notes: [grok-build-and-agents.md](grok-build-and-agents.md).
 
 ### `docker` -> `command not found` inside a workspace -> an older image, or the wrong preset
 
@@ -761,6 +800,11 @@ curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: hermes-gmktecbeast.overeazy.i
   is a rewritten Host or a Traefik backend that is not `:8080`.
 - `STACK_PUBLIC_HOSTS` does not create the vhost. It is what bootstrap writes
   into `STACK_HERMES_URL` / `HERMES_DASHBOARD_PUBLIC_URL` for the Chat tab.
+  `bootstrap` now also warns when a name in that list is missing from
+  `proxy/router.conf`.
+- The paste-ready Traefik file (one backend at `:8080`, `passHostHeader: true`,
+  Authelia on the four interactive names, LiteLLM without Authelia) is in
+  [public-access.md#traefik-configuration](public-access.md#traefik-configuration).
 
 ### Chat tab never connects, or the socket closes `4403` -> public URL, trusted proxies, or a dropped Upgrade
 

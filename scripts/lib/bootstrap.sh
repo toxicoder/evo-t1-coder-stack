@@ -204,3 +204,33 @@ dind_image_ref() {
   fi
   printf '%s\n' "${image:-docker:29.8.1-dind}"
 }
+
+# @function warn_missing_router_hosts
+# Warn when a public DNS name is not a server_name in proxy/router.conf.
+# Globals:
+#   None
+# Arguments:
+#   $1 - path to router.conf
+#   remaining - DNS names
+# Outputs:
+#   One warning line per unmatched name on stdout
+# Returns:
+#   0
+warn_missing_router_hosts() {
+  local conf="${1:-}"
+  if [ -z "${conf}" ] || [ ! -f "${conf}" ]; then
+    return 0
+  fi
+  shift
+  local names=("$@")
+  local name
+  for name in ${names[@]+"${names[@]}"}; do
+    [ -n "${name}" ] || continue
+    # Fixed string, trailing semicolon included: a bare "gmktecbeast" must not
+    # be satisfied by the "coder-gmktecbeast" block that merely ends with it.
+    if ! grep -Fq -- "server_name ${name};" "${conf}"; then
+      echo "warning: ${name} is not a server_name in ${conf}: the router answers 421 for that Host, so add the server block or fix STACK_PUBLIC_HOSTS"
+    fi
+  done
+  return 0
+}

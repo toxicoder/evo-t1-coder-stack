@@ -266,25 +266,30 @@ plan = "agent"
 # a credential this workspace does not carry: sentry (OAuth to mcp.sentry.dev),
 # postgres (needs a live DSN), fetch (PySocks/egress proxy). Context7 is no
 # longer in that list: it is now an optional cached local process, rendered only
-# when context7_mcp is on, and it still needs CONTEXT7_API_KEY in the agent
+# when context7_mcp is on, and it wants a usable CONTEXT7_API_KEY in the agent
 # environment plus outbound network on the first fetch (later identical lookups
-# inside the TTL come from the local SQLite cache instead). So the three gated
-# entries this file can switch on are: search_mcp defaults to true, so searxng
-# renders as the fallback search lane unless a push passes search_mcp=false;
-# github_mcp defaults to false; context7_mcp defaults to false.
+# inside the TTL come from the local SQLite cache instead). All three gated
+# entries this file can switch on default to true, so each one ships unless a
+# push passes --var <name>=false: search_mcp renders the searxng fallback search
+# lane, github_mcp the hosted GitHub HTTP server, context7_mcp the cached
+# context7 stdio server. Park one by setting its .env key (SEARCH_MCP,
+# GITHUB_MCP, CONTEXT7_MCP) to false and re-pushing — push-template.sh relays it.
 #
 # What is left out is simply not defined here, so there is nothing to disable;
 # if you add one later and want it parked rather than deleted, list its name
 # in `disabled_mcp_servers = ["..."]` (top-level key, string array).
 
 %{if github_mcp~}
-# Rendered only when github_mcp is on; with it off this whole block is absent
-# from the file. There is no token to gate it on any more: the credential comes
-# from the Coder External Auth provider (id github by default), so a session whose owner
-# connected no GitHub account has no GH_TOKEN in its environment and simply fails
-# this server's handshake (and so does one whose token expired while the
-# workspace slept, until coder_script.gh_token_refresh mints the next one). The
-# token itself stays in the environment — this file only ever names it.
+# Rendered only when github_mcp is on, and that template variable defaults to
+# true, so this block ships unless a push passes --var github_mcp=false (or sets
+# GITHUB_MCP=false in .env, which push-template.sh relays); with it off this
+# whole block is absent from the file. There is no token to gate it on any more:
+# the credential comes from the Coder External Auth provider (id github by
+# default), so a session whose owner connected no GitHub account has no GH_TOKEN
+# in its environment and simply fails this server's handshake (and so does one
+# whose token expired while the workspace slept, until
+# coder_script.gh_token_refresh mints the next one). The token itself stays in
+# the environment — this file only ever names it.
 [mcp_servers.github]
 url = "https://api.githubcopilot.com/mcp/"
 enabled = true
@@ -294,9 +299,12 @@ headers = { Authorization = "Bearer $${GH_TOKEN}" }
 %{if context7_mcp~}
 # Cached Context7 MCP: official @upstash/context7-mcp wrapped by mcp-cache-proxy
 # for local SQLite caching of resolve-library-id / query-docs results.
-# Rendered only when context7_mcp is on; with it off this whole block is absent.
-# Requires CONTEXT7_API_KEY in the agent environment and outbound network on
-# first fetch; later identical lookups within the TTL are served from the
+# Rendered only when context7_mcp is on, and that template variable defaults to
+# true, so this block ships unless a push passes --var context7_mcp=false (or
+# sets CONTEXT7_MCP=false in .env, which push-template.sh relays). The key is
+# optional: an empty CONTEXT7_API_KEY still renders the block, and that server
+# then fails its handshake once per session. A real key needs outbound network
+# on first fetch; later identical lookups within the TTL are served from the
 # local SQLite cache under ~/.grok/mcp-cache-proxy/. The file only ever names
 # the key; the CLI expands $${CONTEXT7_API_KEY} from the environment.
 # Binaries are baked into the golden image; launching by absolute path keeps
@@ -325,6 +333,7 @@ env = { CONTEXT7_API_KEY = "$${CONTEXT7_API_KEY}" }
 # download on every new workspace before search works at all.
 [mcp_servers.searxng]
 command = "/opt/npm-global/bin/searxng-mcp-server"
+enabled = true
 
 # The one key this server reads. Its compiled-in default (http://localhost:8888)
 # names nothing on this box, so the URL is always rendered: 8181 is the host

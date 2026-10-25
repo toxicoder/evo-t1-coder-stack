@@ -179,12 +179,15 @@ Nothing else about GitHub travels in a `--var`.
 | `CODER_AGENT_URL` | `--var coder_agent_url=` | only when the key is present at all |
 | `GROK_PROFILE_MODE` | `--var grok_profile_mode=` | when non-empty; the retired `GROK_PROFILE_SHARE` maps (`true` to `shared`, `false` to `private`) |
 | `REPO_URL` | `--var repo_url=` | only when present and non-empty |
-| `GITHUB_MCP` | `--var github_mcp=true` | only when the value is `true` |
-| `CONTEXT7_MCP` | `--var context7_mcp=true` | only when the value is `true` |
+| `GITHUB_MCP` | `--var github_mcp=false` | only when the value is `false` (the github MCP server is on by default; any other value pushes nothing and the template default stands) |
+| `CONTEXT7_MCP` | `--var context7_mcp=false` | only when the value is `false` (the cached context7 MCP server is on by default; any other value pushes nothing and the template default stands) |
 | `CONTEXT7_API_KEY` | `--var context7_api_key=...` | only when non-empty; the value is never logged |
 | `SEARCH_MCP` | `--var search_mcp=false` | only when the value is `false` (the SearXNG MCP fallback is on by default; any other value pushes nothing and the template default stands) |
 | `STACK_SEARCH_PORT` | `--var searxng_url=http://host.docker.internal:<port>` | always; a blank or non-numeric value falls back to `8181` |
 
+- `GITHUB_MCP`, `CONTEXT7_MCP` and `SEARCH_MCP` share one polarity: all three MCP blocks
+  ship from the template default (`true`), so the only value worth setting is `false`,
+  and `true`/unset/empty pushes nothing at all.
 - A dev stack that moved the search port needs its own template push: `searxng_url`
   is derived from `STACK_SEARCH_PORT` as read from `.env`, so a push made while
   `dev-stack.env` carries `18181` still names `8181` unless the key is set in `.env`
@@ -320,8 +323,8 @@ workspace.
 | `repo_url` | `""` in `workspace`, `https://github.com/coder/coder` in `devcontainer` (Terraform); `.env.sample` `REPO_URL` overrides both to this stack's GitHub URL | Prefills the **Git repository** field. Both templates clone that URL on the first start; a later start leaves a folder that already holds a `.git` alone. `REPO_URL` in `.env` overrides the default. The sample value is this stack's own repo so **VS Code Web** opens `~/workspace/evo-t1-coder-stack`. |
 | `additional_repos` | `""` | The **Git repositories (additional)** textarea under the repository field. Extra URLs cloned into their own folder beside `repo_url`. |
 | `grok_profile_mode` | `shared` | `shared` mounts the owner's shared `~/.grok` profile volume; `private` gives that workspace a private `~/.grok` on its own home volume. Also the default behind the per-workspace **Grok profile** dropdown; switching a live workspace between the two modes needs a rebuild. |
-| `github_mcp` | `false` | Wires the `github` MCP HTTP server into Grok's rendered `config.toml`. Its `Authorization` header names `$GH_TOKEN` and nothing else, so no token value is ever part of a template variable. |
-| `context7_mcp` | `false` | Wires the cached `context7` MCP stdio server into Grok's rendered `config.toml`. |
+| `github_mcp` | `true` | Wires the `github` MCP HTTP server into Grok's rendered `config.toml`. Its `Authorization` header names `$GH_TOKEN` and nothing else, so no token value is ever part of a template variable. Set `GITHUB_MCP=false` and re-push to drop the block. |
+| `context7_mcp` | `true` | Wires the cached `context7` MCP stdio server into Grok's rendered `config.toml`. The key is optional, so it ships without one. Set `CONTEXT7_MCP=false` and re-push to drop the block. |
 | `context7_api_key` | `""`, `sensitive` | Handed to the workspace as `CONTEXT7_API_KEY`. The rendered file names the variable. |
 | `grok_config_extra` | `""` | The **Grok config extras** textarea: free-form TOML appended verbatim, under a comment header, to that workspace's rendered `~/.grok/config.toml`. |
 
@@ -335,7 +338,9 @@ Notes on the two dropdowns that take a custom value:
 - A `github_mcp` of `true` with no GitHub account connected gives that workspace a server
   that fails its handshake once per session. A `context7_mcp` of `true` with an empty
   `context7_api_key` is the same shape: the block renders, and the server fails its
-  handshake once per session.
+  handshake once per session. Both are the pushed default now, so that shape is what a
+  fresh deploy gets — `CONTEXT7_API_KEY` is optional and nothing in git carries a key.
+  Park either one with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` in `.env` and re-push.
 
 ## Autostop and TTLs
 
@@ -603,7 +608,8 @@ at `~/.grok` in shared mode) are chowned to the home owner at the start of
 4. Writes the two terminal-profile tmux helpers (see below).
 5. Seeds the shared code-server User settings and the Coder Agents context files, only
    for files that are absent.
-6. Renders `~/.grok/config.toml` (no MCP servers declared by default).
+6. Renders `~/.grok/config.toml` (the three gated MCP servers ship by default; the five
+   offline stdio ones are not declared).
 7. **Clones a non-empty Git repository field** into `/home/coder/workspace/<repo-name>`
    (in `devcontainer`, onto the `/srv/coder-devcontainers/<workspace-id>` bind). The
    script creates that folder first (`mkdir -p` plus a chown to the workspace user) so

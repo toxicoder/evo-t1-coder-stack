@@ -530,25 +530,62 @@ logs_absent() {
   grep -Fq -- '--var searxng_url=http://host.docker.internal:8181' "${STUB_LOG}/docker.log"
 }
 
-@test "push-template: CONTEXT7_MCP=true passes --var context7_mcp=true for both templates" {
-  root="$(fake_root push-template.sh 'CONTEXT7_MCP=true')"
+@test "push-template: GITHUB_MCP=false passes --var github_mcp=false for both templates" {
+  # Default-ON polarity, same shape as SEARCH_MCP: the templates declare
+  # github_mcp = true, so only an explicit false has to say anything.
+  root="$(fake_root push-template.sh 'GITHUB_MCP=false')"
   running_stack
   psql_token_variant
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 0 ]
-  [[ ${output} == *"context7_mcp passed from CONTEXT7_MCP"* ]]
-  grep -Fq -- '--var context7_mcp=true' "${STUB_LOG}/docker.log"
-  # One vars array serves both pushes, so the cached context7 server cannot be
-  # turned on for one template only.
-  [ "$(grep -cF -- '--var context7_mcp=true' "${STUB_LOG}/docker.log")" -eq 2 ]
+  [[ ${output} == *"github_mcp=false passed from GITHUB_MCP"* ]]
+  grep -Fq -- '--var github_mcp=false' "${STUB_LOG}/docker.log"
+  # One vars array serves both pushes, so the github server cannot be turned off
+  # for one template only.
+  [ "$(grep -cF -- '--var github_mcp=false' "${STUB_LOG}/docker.log")" -eq 2 ]
+  # The toggle is the only thing that travels: the GitHub credential comes from
+  # the External Auth provider, so no token-shaped var may ever ride the push.
+  logs_absent '--var [Gg][Hh]_?[Tt]oken' "${STUB_LOG}/docker.log"
 }
 
-@test "push-template: CONTEXT7_MCP=false passes no context7_mcp var and keeps the default" {
-  # Default-OFF polarity: the templates declare context7_mcp = false, so only an
-  # explicit true has to say anything; false (like unset) leaves the default
-  # untouched rather than pushing a redundant off switch.
+@test "push-template: GITHUB_MCP=true or unset passes no github_mcp var" {
+  # Default-ON polarity: the template declares github_mcp = true, so anything other
+  # than an explicit false must push nothing at all rather than a redundant on
+  # switch (which would also be the one way to ask for a token the script must not
+  # carry).
+  root="$(fake_root push-template.sh 'GITHUB_MCP=true')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} != *"github_mcp"* ]]
+  # A push did happen, so the absence below proves the script passed nothing.
+  grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
+  logs_absent 'github_mcp' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: CONTEXT7_MCP=false passes --var context7_mcp=false for both templates" {
   root="$(fake_root push-template.sh 'CONTEXT7_MCP=false')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"context7_mcp=false passed from CONTEXT7_MCP"* ]]
+  grep -Fq -- '--var context7_mcp=false' "${STUB_LOG}/docker.log"
+  # One vars array serves both pushes, so the cached context7 server cannot be
+  # turned off for one template only.
+  [ "$(grep -cF -- '--var context7_mcp=false' "${STUB_LOG}/docker.log")" -eq 2 ]
+}
+
+@test "push-template: CONTEXT7_MCP=true or unset passes no context7_mcp var and keeps the default" {
+  # Default-ON polarity: the templates declare context7_mcp = true, so anything
+  # other than an explicit false must push nothing at all; true (like unset) leaves
+  # the default untouched rather than pushing a redundant on switch. The key is
+  # separate and stays empty here, which is the supported default shape.
+  root="$(fake_root push-template.sh 'CONTEXT7_MCP=true')"
   running_stack
   psql_token_variant
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"

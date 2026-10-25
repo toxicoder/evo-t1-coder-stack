@@ -349,8 +349,14 @@ fi
 # interpolated: main.tf reads GROK_BUILD_AGENTS.md (the stack keeps one copy
 # in templates/common/, and the push stages it into this template's pushed
 # copy) and hands its text to the heredoc below, which copies it in, renamed.
-# Only if absent - a hand-edited copy is user-owned and stays untouched.
-if [ ! -f "$HOME/.grok/AGENTS.md" ]; then
+#
+# The marker line in the payload is the ownership flag, on the same contract as
+# ~/.grok/config.toml: while it is present this stage rewrites the file on every
+# start, so every Grok Build session follows the protocol this template shipped.
+# Deleting the marker (or the file's marker line) hands the file to the user for
+# good, and a hand-edited, marker-free copy is never touched again.
+if [ ! -f "$HOME/.grok/AGENTS.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/AGENTS.md"; then
   mkdir -p "$HOME/.grok" 2>/dev/null
   cat >"$HOME/.grok/AGENTS.md" <<'GROK_AGENTS_EOF'
 ${grok_build_agents}

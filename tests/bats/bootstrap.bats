@@ -106,3 +106,41 @@ setup() {
   [ "$(dind_image_ref main.tf)" = "docker:29.8.1-dind" ]
   [ "$(dind_image_ref missing.tf)" = "docker:29.8.1-dind" ]
 }
+
+@test "bootstrap: warn_missing_router_hosts is silent for a served name" {
+  printf '    server_name gmktecbeast.overeazy.io;\n' > router.conf
+  run warn_missing_router_hosts router.conf gmktecbeast.overeazy.io
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}
+
+@test "bootstrap: warn_missing_router_hosts warns once per unserved name" {
+  printf '    server_name gmktecbeast.overeazy.io;\n' > router.conf
+  run warn_missing_router_hosts router.conf coder-gmktecbeast.overeazy.io hermes-gmktecbeast.overeazy.io
+  [ "${status}" -eq 0 ]
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[0]}" == "warning:"*"coder-gmktecbeast.overeazy.io"* ]]
+  [[ "${lines[1]}" == "warning:"*"hermes-gmktecbeast.overeazy.io"* ]]
+}
+
+@test "bootstrap: warn_missing_router_hosts will not match on a name suffix" {
+  printf '    server_name coder-gmktecbeast.overeazy.io;\n' > router.conf
+  run warn_missing_router_hosts router.conf gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io
+  [ "${status}" -eq 0 ]
+  [ "${#lines[@]}" -eq 1 ]
+  [[ "${lines[0]}" == "warning:"*"gmktecbeast.overeazy.io is not a server_name"* ]]
+  [[ "${lines[0]}" != *"coder-gmktecbeast.overeazy.io is not a server_name"* ]]
+}
+
+@test "bootstrap: warn_missing_router_hosts no-ops on a missing conf or no names" {
+  run warn_missing_router_hosts no-such-router.conf gmktecbeast.overeazy.io
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+  printf '    server_name gmktecbeast.overeazy.io;\n' > router.conf
+  run warn_missing_router_hosts router.conf
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+  run warn_missing_router_hosts
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}

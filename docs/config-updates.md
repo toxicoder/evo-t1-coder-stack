@@ -279,6 +279,10 @@ shows a worked example.
   HTTP to this box's router container **with the original Host header intact** -
   `proxy/router.conf` picks the service from `$http_host` and listens on
   `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host comes back as `421`.
+  That box needs one file, and the paste-ready version of it - one `loadBalancer`
+  at `:8080`, a router per name, Authelia on the four interactive names, the
+  long-lived timeouts - is
+  [public-access.md#traefik-configuration](public-access.md#traefik-configuration).
 
 Set the names in `.env`, and in `dev-stack.env` too when a dev stack runs beside
 the stable one, then re-run `bazelisk run //scripts:bootstrap` and recreate the
