@@ -333,6 +333,14 @@ if [ -n "${raw_public_hosts}" ] && [ "${raw_public_hosts}" != "${public_hosts}" 
   upsert_env STACK_PUBLIC_HOSTS "${public_hosts}"
 fi
 
+# The names above go into HOMEPAGE_ALLOWED_HOSTS and the cert SANs no matter what
+# nginx holds, so a host that was renamed in .env but never added to the router's
+# vhost table would survive bootstrap and only show up as a 421 after the
+# recreate. One grep per accepted name, before any of the slow steps below.
+if [ -n "${public_hosts}" ]; then
+  warn_missing_router_hosts "proxy/router.conf" ${public_entries[@]+"${public_entries[@]}"}
+fi
+
 # The self-signed pair below still serves the LAN origin, so public mode needs
 # the LAN IP as well as the DNS names. STACK_LAN_HOST may legitimately be empty
 # on a first run, or hold a public name someone copied from CODER_ACCESS_URL

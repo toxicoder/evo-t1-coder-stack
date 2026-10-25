@@ -13,18 +13,19 @@
 # plain workspace container (the host bind), /home/coder when no repository
 # was named. Also pins the empty-URL clone guard both startup.sh.tftpl
 # twins keep, the truthful wording of the no-devcontainer.json warning, and the
-# one common GROK_BUILD_AGENTS.md that the seed stage copies into place. It also
-# pins the search lane: the gated [mcp_servers.searxng] block and the
-# disable_web_search = false key exist identically in both grok-config.toml.tftpl
-# twins, both main.tf twins feed search_mcp/search_url into that render and
-# carry SEARXNG_URL into the agent environment, and both coder.tf twins
-# declare the two template variables the pushes will pass. It also pins the
-# context7 lane: the gated [mcp_servers.context7] block, which launches
-# mcp-cache-proxy by absolute path and never through npx, exists identically
-# in both grok-config.toml.tftpl twins, both main.tf twins feed
+# one common GROK_BUILD_AGENTS.md that the seed stage copies into place (line 1
+# is still "# Role"; the managed-by marker sits on line 2 so a stack-owned copy
+# reseeds). It also pins the search lane: the gated [mcp_servers.searxng] block
+# and the disable_web_search = false key exist identically in both
+# grok-config.toml.tftpl twins, both main.tf twins feed search_mcp/search_url
+# into that render and carry SEARXNG_URL into the agent environment, and both
+# coder.tf twins declare the two template variables the pushes will pass. It
+# also pins the context7 and github lanes: both gated MCP blocks exist
+# identically in both grok-config.toml.tftpl twins, both coder.tf twins
+# default github_mcp/search_mcp/context7_mcp to true, both main.tf twins feed
 # context7_mcp/context7_api_key into that render and into the agent
-# environment, both coder.tf twins declare those two variables, and both
-# startup.sh.tftpl twins seed the proxy config from an npx-free heredoc.
+# environment, and both startup.sh.tftpl twins seed the proxy config from an
+# npx-free heredoc.
 # Both main.tf twins pin public Docker DNS upstreams on the workspace and DinD
 # containers so github.com does not SERVFAIL through host MagicDNS. It also
 # pins the editor's agent_id: concat+splat of coder_devcontainer.repo so the
@@ -151,21 +152,30 @@ setup() {
   # templates/common/, and push-template stages that copy into each
   # template's pushed tar - a template travels as its own tarball and the
   # server reads the payload from inside the pushed copy, so every copy must
-  # carry it. Two failures are pinned here: the payload growing a second
-  # line above its content (the seeded ~/.grok/AGENTS.md must start at
-  # "# Role" - the managed-by marker stayed out on purpose), and either twin
-  # losing the interpolation or the main.tf feed for it, which would leave
-  # the seed stage writing an empty file.
+  # carry it. Two failures are pinned here: a line growing above "# Role"
+  # (Grok reads that heading as the role), and either twin losing the
+  # interpolation or the main.tf feed for it, which would leave the seed
+  # stage writing an empty file. The managed-by marker sits on line 2 so
+  # refresh-configs and the startup reseed can rewrite a stack-owned copy
+  # without putting HTML above the heading. A marker-free hand edit is
+  # left alone.
   local common_md="${REPO_ROOT}/templates/common/GROK_BUILD_AGENTS.md"
   [ -f "${common_md}" ] ||
     skip "no common GROK_BUILD_AGENTS.md payload under ${REPO_ROOT}/templates/common"
-  run head -n 1 "${common_md}"
+  run head -n 2 "${common_md}"
   [ "${status}" -eq 0 ]
   [ "${lines[0]}" = "# Role" ]
+  [ "${lines[1]}" = "<!-- managed-by: evo-t1-coder-stack -->" ]
   run grep -F 'Use `web_search`' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'search_tool' "${common_md}"
   [ "${status}" -eq 0 ]
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
     run grep -F '${grok_build_agents}' "${tpl_dir}/startup.sh.tftpl"
+    [ "${status}" -eq 0 ]
+    run grep -F 'if [ ! -f "$HOME/.grok/AGENTS.md" ]' "${tpl_dir}/startup.sh.tftpl"
+    [ "${status}" -eq 0 ]
+    run grep -F '"$HOME/.grok/AGENTS.md"; then' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
     run grep -F 'grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))' "${tpl_dir}/main.tf"
     [ "${status}" -eq 0 ]
@@ -194,6 +204,9 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'command = "/opt/npm-global/bin/searxng-mcp-server"' "${tpl}"
     [ "${status}" -eq 0 ]
+    run grep -A 4 -F '[mcp_servers.searxng]' "${tpl}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"enabled = true"* ]]
     run grep -F 'env = { SEARXNG_URL = "${search_url}" }' "${tpl}"
     [ "${status}" -eq 0 ]
     dw="$(grep -n -m1 -F 'disable_web_search = false' "${tpl}" | cut -d: -f1)"
@@ -228,7 +241,7 @@ setup() {
 }
 
 @test "context7 lane: both config twins carry the gated cached context7 block" {
-  # context7_mcp (template default: false) gates the [mcp_servers.context7]
+  # context7_mcp (template default: true) gates the [mcp_servers.context7]
   # block, and push-template.sh passes one --var array to BOTH pushes, so the
   # gate and the block have to exist in each twin; a twin that lost the gate
   # would render the server unconditionally or never, depending on the pushed
@@ -252,6 +265,9 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'env = { CONTEXT7_API_KEY = "$${CONTEXT7_API_KEY}" }' "${tpl}"
     [ "${status}" -eq 0 ]
+    run grep -A 6 -F '[mcp_servers.context7]' "${tpl}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"enabled = true"* ]]
   done
   # The seed names the real context7 binary, baked into the golden image, so a
   # new workspace never hits the npm registry on first boot.
@@ -302,6 +318,44 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F '/home/coder/.grok/mcp-cache-proxy/cache.db' "${st}"
     [ "${status}" -eq 0 ]
+  done
+}
+
+@test "mcp gates: github, searxng and context7 default on in both twins" {
+  # All three MCP blocks ship unless a push passes --var <name>=false. The
+  # coder.tf defaults are the contract push-template.sh relies on (it only
+  # forwards an explicit false). A twin that flipped one default back to
+  # false would drop that server from every workspace that did not also set
+  # the matching .env key to true, which the push no longer does.
+  local tpl ctf var
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    run grep -F '%{if github_mcp~}' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F '[mcp_servers.github]' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'url = "https://api.githubcopilot.com/mcp/"' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -A 4 -F '[mcp_servers.github]' "${tpl}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"enabled = true"* ]]
+    run grep -F '%{if search_mcp~}' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F '[mcp_servers.searxng]' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F '%{if context7_mcp~}' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F '[mcp_servers.context7]' "${tpl}"
+    [ "${status}" -eq 0 ]
+  done
+  for ctf in "${REPO_ROOT}/templates/workspace/coder.tf" "${REPO_ROOT}/templates/devcontainer/coder.tf"; do
+    for var in github_mcp search_mcp context7_mcp; do
+      run grep -F "variable \"${var}\"" "${ctf}"
+      [ "${status}" -eq 0 ]
+      block="$(sed -n "/variable \"${var}\"/,/^}/p" "${ctf}")"
+      [[ "${block}" == *"default     = true"* ]]
+    done
   done
 }
 

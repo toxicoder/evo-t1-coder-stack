@@ -63,19 +63,21 @@ variable "github_auth_id" {
 
 # Declaring the github MCP server is not enough for it to be usable, and a server
 # that cannot handshake is dead weight in every session, so this switch decides
-# on its own whether the [mcp_servers.github] block is rendered. With no GitHub
-# account connected, the block still appears and pays one failed handshake per
-# session, which is the cheaper failure: no credential exists to leak.
+# on its own whether the [mcp_servers.github] block is rendered. It is on by
+# default, because the GitHub lane is what most sessions here want. With no
+# GitHub account connected the block still appears and pays one failed handshake
+# per session, which is the cheaper failure: no credential exists to leak.
 variable "github_mcp" {
   type        = bool
-  description = "When true, the rendered ~/.grok/config.toml declares the github MCP HTTP server, which is how Grok Build gets its GitHub tools. It authenticates with the $GH_TOKEN reference the agent environment fills from the External Auth provider, so with no provider linked — or no GitHub account connected by the workspace owner — the server has nothing to authenticate with and Grok Build loses its GitHub tools. Off by default keeps the offline-first MCP list lean."
-  default     = false
+  description = "When true (the default), the rendered ~/.grok/config.toml declares the github MCP HTTP server, which is how Grok Build gets its GitHub tools. It authenticates with the $GH_TOKEN reference the agent environment fills from the External Auth provider, so with no provider linked — or no GitHub account connected by the workspace owner — the server has nothing to authenticate with and Grok Build loses its GitHub tools. Set GITHUB_MCP=false in the stack's env file and re-push to drop the block everywhere."
+  default     = true
 }
 
 # The self-hosted SearXNG lane reaches Grok Build as an MCP stdio server: the
 # searxng-mcp-server package is pinned in the golden image and needs to be told
-# which instance to dial. Unlike github_mcp this switch is on by default: search
-# is the one lane every session may want, and nothing else in the box answers it.
+# which instance to dial. Like github_mcp and context7_mcp this switch is on by
+# default: search is the one lane every session may want, and nothing else in the
+# box answers it.
 variable "search_mcp" {
   type        = bool
   description = "When true (the default), the rendered ~/.grok/config.toml declares the searxng MCP stdio server, which is how Grok Build gets its search lane. Set SEARCH_MCP=false in the stack's env file and re-push to drop the block everywhere."
@@ -93,14 +95,15 @@ variable "searxng_url" {
   default     = "http://host.docker.internal:8181"
 }
 
-# Cached Context7 MCP is network-dependent and needs a CONTEXT7_API_KEY, so this
+# Cached Context7 MCP is network-dependent and wants a CONTEXT7_API_KEY, so this
 # switch decides on its own whether the [mcp_servers.context7] block is rendered.
-# Off by default keeps the offline-first MCP list lean. A true value with an
-# empty key still renders the block and pays one failed handshake per session.
+# It is on by default like the other two: the key is optional, and a true value
+# with an empty key still renders the block and pays one failed handshake per
+# session, which is the cheaper failure next to a workspace with no docs lane.
 variable "context7_mcp" {
   type        = bool
-  description = "When true, the rendered ~/.grok/config.toml declares the cached context7 MCP stdio server (mcp-cache-proxy wrapping the official @upstash/context7-mcp). It authenticates with the $CONTEXT7_API_KEY reference the agent environment fills from var.context7_api_key, so with no key the server has nothing to authenticate with. Off by default keeps the offline-first MCP list lean."
-  default     = false
+  description = "When true (the default), the rendered ~/.grok/config.toml declares the cached context7 MCP stdio server (mcp-cache-proxy wrapping the official @upstash/context7-mcp). It authenticates with the $CONTEXT7_API_KEY reference the agent environment fills from var.context7_api_key, so with no key the server has nothing to authenticate with. Set CONTEXT7_MCP=false in the stack's env file and re-push to drop the block everywhere."
+  default     = true
 }
 
 # The Context7 API key. Sensitive: never printed, never interpolated into

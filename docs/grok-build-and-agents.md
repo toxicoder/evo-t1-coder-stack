@@ -82,15 +82,25 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 
 - Baked in at `/usr/local/bin/grok`, with an `agent` link beside it, **outside** the
   `/home/coder` home volume, so a rebuilt volume cannot lose it.
-- Pinned as `GROK_VERSION` in `images/dev/tool-versions.env` (1.0.44 at the time of
-  writing). The image build unpacks that pinned `.zst` and runs `grok --version` in
-  two PATH contexts as a build-time smoke check.
+- Pinned as `GROK_VERSION` in `images/dev/tool-versions.env` (1.0.70 at the time of
+  writing, mirrored as the Dockerfile `ARG` default). The image build unpacks that
+  pinned `.zst` and runs `grok --version` in two PATH contexts as a build-time smoke
+  check.
 - Each template's startup script probes `command -v grok` on every start and
   re-downloads from `https://x.ai/cli/install.sh` - bounded, with retries - only
   while `grok` is missing from PATH. That installer follows the `stable` pointer, not
-  this pin.
+  this pin. It deliberately does **not** fetch on every boot: the bake-in under
+  `/usr/local/bin` is the upgrade path, so shipping a new CLI means bumping the pin,
+  rebuilding the image (`scripts/build-dev-image.sh`) and re-pushing the templates.
 - A self-installed CLI under `~/.grok/bin` stays first on the login-shell PATH, so it
   wins over the baked copy.
+- **`/learn` is a bundled skill of this CLI**, not something the terminal adds: 1.0.70
+  ships it in its bundled manifest (`public-2026-10-20-r1`) as a user-invocable skill,
+  and the pin this image carried before did not include it. Once the image is rebuilt
+  and the templates re-pushed it shows up in the Grok Build slash menu, in the
+  code-server web terminal profile named **Grok Build** included, because that
+  profile execs the same `/usr/local/bin/grok` binary. Nothing to install and nothing
+  to seed: an older CLI in `~/.grok/bin` is the one case that still hides it.
 
 ## The rendered `~/.grok` config
 
@@ -114,14 +124,16 @@ while the managed block is intact.
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
   workspace's traffic to one healthy Spark box. Under a shared profile the
   last-booted workspace's key wins for the whole fleet.
-- `github_mcp` (default `false`) adds the `github` HTTP MCP server
+- `github_mcp` (default `true`, so the block renders unless you park it with
+  `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
   `${GH_TOKEN}` **by name**, so no token value is ever part of a template variable.
   The agent environment fills it from the Coder External Auth provider (id `github` by default); a
   workspace whose owner connected no GitHub account renders the block anyway and pays
   one failed handshake per session.
-- `context7_mcp` (default `false`) adds the cached `context7` stdio MCP server. Grok
-  launches `/opt/npm-global/bin/mcp-cache-proxy` with
+- `context7_mcp` (default `true`, parked the same way with `CONTEXT7_MCP=false`) adds
+  the cached `context7` stdio MCP server. Grok launches
+  `/opt/npm-global/bin/mcp-cache-proxy` with
   `--config /home/coder/.grok/mcp-cache-proxy/config.json`, and that proxy fronts the
   official `/opt/npm-global/bin/context7-mcp`; both are pre-installed in the golden
   image, so nothing is fetched with `npx` at launch. The proxy config names
@@ -220,29 +232,37 @@ clone is never asked to delete somebody else's committed file.
   An empty result page and "no answer" are different answers, which is why the probe
   reports which one it got.
 
-- **MCP servers: the default render declares exactly one, the gated `searxng`
-  server (the fallback search lane).** It names the pre-installed
-  `searxng-mcp-server` binary (pinned in `images/dev/tool-versions.env` and baked
-  into the golden image), is gated on `search_mcp` (default true) and dials the
-  service above through `SEARXNG_URL`.
+- **MCP servers: the default render declares three - `github`, `context7` and the
+  gated `searxng` server (the fallback search lane).** Each is a boolean gate in the
+  template, so one env flag parks exactly one block and a template re-push applies it
+  fleet-wide: `GITHUB_MCP=false`, `CONTEXT7_MCP=false`, `SEARCH_MCP=false`.
+  The `searxng` block names the pre-installed `searxng-mcp-server` binary (pinned in
+  `images/dev/tool-versions.env` and baked into the golden image), is gated on
+  `search_mcp` (default true) and dials the service above through `SEARXNG_URL`.
   The five offline stdio servers (`filesystem`, `memory`, `sequential-thinking`,
   `git` and `time`) stay pre-installed in the image (`npm -g` for the first
   three, `uv tool` for the Python two), but the rendered `config.toml` names
   none of them: the session traces collected on this machine called none of
   their tools, and a declared-but-unused server still costs every session its
   handshake time and tool schemas. Declare one by hand and check a stubborn
-  server with `grok mcp doctor <name>` inside a workspace. The `github` server
-  is one opt-in exception: it needs a token and outbound network, so
-  `github_mcp` (default false) decides on its own whether the block is rendered.
-- The `context7` server (library and API docs) is the other opt-in exception, and the
-  only cached one. `context7_mcp` (default false) decides the same way, and the block it
+  server with `grok mcp doctor <name>` inside a workspace.
+- The `github` server (`https://api.githubcopilot.com/mcp/`) renders by default even
+  though it needs a token and outbound network: with GitHub tools on, the agent can
+  drive the repository it is working in, and the cheaper failure is the block that
+  renders with no credential and pays one failed handshake per session. `github_mcp`
+  (default true) is the gate; `$GH_TOKEN` comes from Coder External Auth, never from a
+  PAT.
+- The `context7` server (library and API docs) also renders by default, and is the
+  only cached one. `context7_mcp` (default true) is its gate, and the block it
   renders runs `mcp-cache-proxy` in front of the official `context7-mcp` - two packages
-  pinned in `images/dev/tool-versions.env` and baked into the golden image, so turning
-  it on takes an image rebuild plus a template push, not just a flag. The proxy keeps
-  its SQLite cache under `~/.grok/mcp-cache-proxy/`, which rides the owner's shared
+  pinned in `images/dev/tool-versions.env` and baked into the golden image, so parking
+  or restoring it is a flag plus a template push, while changing the packages
+  themselves takes an image rebuild. The proxy keeps its SQLite cache under
+  `~/.grok/mcp-cache-proxy/`, which rides the owner's shared
   profile volume in `shared` mode, and the cache TTL is 12 h: the first lookup of a
-  library reaches the Context7 API and needs both network and `CONTEXT7_API_KEY`, while
-  an identical lookup inside the TTL is answered locally. Two tools, in order -
+  library reaches the Context7 API and needs both network and `CONTEXT7_API_KEY`
+  (optional - empty means the public rate limit), while an identical lookup inside the
+  TTL is answered locally. Two tools, in order -
   `resolve-library-id`, then `query-docs` on the id it returns. Prove it with
   `grok mcp doctor context7` inside a workspace.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,

@@ -572,25 +572,29 @@ vars+=(--var "github_auth_id=${github_auth_id}")
 log "github_auth_id=${github_auth_id} (Coder External Auth provider the templates declare)"
 
 # github_mcp is a boolean toggle, not a credential: it decides whether the
-# rendered ~/.grok/config.toml declares the github MCP HTTP server at all. The
-# token that server authenticates with is never passed here — there is no
-# GitHub-token template variable. A workspace's GitHub credential comes from
-# the External Auth provider named by github_auth_id, which the agent resolves
+# rendered ~/.grok/config.toml declares the github MCP HTTP server at all. Both
+# templates declare it with a "true" default, so only an explicit GITHUB_MCP=false
+# has to say anything; unset, empty or "true" passes nothing and the template
+# default stands. The token that server authenticates with is never passed here —
+# there is no GitHub-token template variable. A workspace's GitHub credential comes
+# from the External Auth provider named by github_auth_id, which the agent resolves
 # per start (see the coder_script in each template's main.tf), so nothing in
 # this script, in .env, or in a rendered config.toml ever holds a personal
 # access token.
-if [ "$(env_get GITHUB_MCP)" = "true" ]; then
-  vars+=(--var "github_mcp=true")
-  log "github_mcp passed from GITHUB_MCP (github MCP server on for every workspace)"
+if [ "$(env_get GITHUB_MCP)" = "false" ]; then
+  vars+=(--var "github_mcp=false")
+  log "github_mcp=false passed from GITHUB_MCP (github MCP server off for every workspace)"
 fi
 
 # context7_mcp is a boolean toggle, not a credential: it decides whether the
 # rendered ~/.grok/config.toml declares the cached context7 MCP stdio server.
-# The API key that server authenticates with is never part of this decision -
+# Same polarity as github_mcp - both templates declare it "true" by default, so
+# only an explicit CONTEXT7_MCP=false is passed. The API key that server
+# authenticates with is never part of this decision -
 # it travels separately as context7_api_key when CONTEXT7_API_KEY is set.
-if [ "$(env_get CONTEXT7_MCP)" = "true" ]; then
-  vars+=(--var "context7_mcp=true")
-  log "context7_mcp passed from CONTEXT7_MCP (cached context7 MCP server on for every workspace)"
+if [ "$(env_get CONTEXT7_MCP)" = "false" ]; then
+  vars+=(--var "context7_mcp=false")
+  log "context7_mcp=false passed from CONTEXT7_MCP (cached context7 MCP server off for every workspace)"
 fi
 
 # context7_api_key is sensitive with an empty default. Pass it only when .env
@@ -602,9 +606,9 @@ if [ -n "${context7_api_key}" ]; then
   log "context7_api_key passed from CONTEXT7_API_KEY (value not shown)"
 fi
 
-# search_mcp is the search lane's toggle, with the opposite polarity to github_mcp:
-# both templates declare search_mcp with a "true" default, so only an explicit
-# SEARCH_MCP=false has to say anything. Unset, empty or "true" passes nothing and the
+# search_mcp is the search lane's toggle, with the same polarity as github_mcp and
+# context7_mcp: both templates declare all three with a "true" default, so only an
+# explicit SEARCH_MCP=false has to say anything. Unset, empty or "true" passes nothing and the
 # template default stands. Neither name carries a credential: the SearXNG this lane
 # dials is an unauthenticated LAN service.
 if [ "$(env_get SEARCH_MCP)" = "false" ]; then

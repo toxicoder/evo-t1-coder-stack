@@ -9,12 +9,14 @@ tags: [public, tls, traefik, authelia, hermes, operate]
 - The path a public request takes, from the browser to the container
 - The five names, and how to choose them at bootstrap time
 - What `bootstrap.sh` changes when the names are set
+- The Traefik file-provider config the other box needs, pasted as-is
 - Checking the other machine (including the Hermes WebSocket), Authelia, and the two follow-ups left by hand
 
 **What this enables**
 
 - Exposing the stack without breaking the LAN routes anyone at home uses
 - Telling a router problem apart from an Authelia problem when a name fails
+- Putting the five routers on the Traefik box without guessing its timeouts
 
 The default shape is LAN-only. Setting `STACK_PUBLIC_HOSTS` additionally serves the same
 five services on public names over real TLS. It is purely additive: every LAN route
@@ -110,6 +112,105 @@ Set the five names in `.env` (`STACK_PUBLIC_HOSTS`; `.env.sample` lists them, in
 beside the stable one. Then re-run `bootstrap` and recreate the stack you switched. The
 commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
 
+## Traefik configuration
+
+Nothing in this repo configures Traefik. This is the file the other box needs: drop it
+in the directory that box's `providers.file.directory` watches and Traefik picks it up
+without a restart. The shape below is the one Traefik v2 and v3 both read; the
+entryPoint name, the certificate and the middleware name have to match what that box
+already defines, so treat those three as the values to align, not as new requirements.
+
+```yaml
+# evo-t1.yml -- file-provider dynamic config for the EVO-T1 stack.
+# Replace <this-box-lan-ip> with the LAN address of this box.
+http:
+  routers:
+    evo-t1-dashboard:
+      rule: "Host(`gmktecbeast.overeazy.io`)"
+      entryPoints: [websecure]
+      service: evo-t1-router
+      middlewares: [authelia@file]
+      tls: {}
+    evo-t1-coder:
+      rule: "Host(`coder-gmktecbeast.overeazy.io`)"
+      entryPoints: [websecure]
+      service: evo-t1-router
+      middlewares: [authelia@file]
+      tls: {}
+    evo-t1-kasm:
+      rule: "Host(`kasm-gmktecbeast.overeazy.io`)"
+      entryPoints: [websecure]
+      service: evo-t1-router
+      middlewares: [authelia@file]
+      tls: {}
+    evo-t1-litellm:
+      rule: "Host(`litellm-gmktecbeast.overeazy.io`)"
+      entryPoints: [websecure]
+      service: evo-t1-router
+      # No Authelia on this one, on purpose: LiteLLM authenticates from the
+      # Authorization header, and header-carried API traffic cannot pass an
+      # interactive sign-in. LITELLM_MASTER_KEY is the credential here.
+      tls: {}
+    evo-t1-hermes:
+      rule: "Host(`hermes-gmktecbeast.overeazy.io`)"
+      entryPoints: [websecure]
+      service: evo-t1-router
+      middlewares: [authelia@file]
+      tls: {}
+
+  services:
+    evo-t1-router:
+      loadBalancer:
+        # One backend for all five names: the nginx `router` sidecar on this box,
+        # which picks the upstream from the Host header. Never :9119, :3001 or
+        # :4000 -- a router aimed at a container port skips this box's vhost
+        # table and its Host header entirely.
+        servers:
+          - url: "http://<this-box-lan-ip>:8080"
+        passHostHeader: true
+        serversTransport: evo-t1-long
+
+  serversTransports:
+    evo-t1-long:
+      forwardingTimeouts:
+        # 0 = never cut a request off waiting for upstream response headers,
+        # which is what a slow first token from LiteLLM needs.
+        responseHeaderTimeout: "0s"
+        # One transport for every name at Kasm's floor; see the timeouts below.
+        idleConnTimeout: "3600s"
+```
+
+- `passHostHeader: true` is the line that makes this work at all. Without it Traefik
+  sends the upstream URL's host, no `server_name` matches, and this box answers `421`.
+- `authelia@file` is a placeholder for the Authelia middleware that box already
+  declares. Name it exactly as that box names it - a middleware created by labels is
+  `authelia@docker`, and a name Traefik cannot resolve fails the router rather than
+  serving it unauthenticated. The four interactive names carry it; LiteLLM must not.
+- `tls: {}` means "serve whatever certificate matches the SNI", which is the zone's
+  `*.overeazy.io` pair. Add `tls: { certResolver: <name> }` if that box issues through
+  an ACME resolver instead. SNI has to be the public name itself - the wildcard covers
+  exactly one label, which is why the hyphenated one-label form is the only one that
+  handshakes.
+- **WebSockets need nothing here.** Traefik forwards `Upgrade` and `Connection`
+  as-is; there is no `protocol: websocket` to set and no middleware to add. The Hermes
+  Chat tab's `/api/pty` and `/api/ws` open on that alone. They fail only when
+  something in between drops the upgrade, and Cloudflare has WebSockets on by
+  default, so the usual suspect is an Authelia middleware configured to buffer.
+- **Timeouts.** `proxy/router.conf` on this box already holds per-service read
+  timeouts - dashboard 60s, coder and hermes 300s, LiteLLM 600s, Kasm 3600s - so
+  Traefik must not be the shorter link. One transport for all five at `3600s` is the
+  simple choice because Kasm needs that floor anyway. To cap each tier separately,
+  declare one `loadBalancer` service per tier, each pointing at the same
+  `http://<this-box-lan-ip>:8080` with `passHostHeader: true` and its own transport
+  (`evo-t1-coder` / `evo-t1-hermes` at `300s`, `evo-t1-litellm` at `600s`,
+  `evo-t1-kasm` at `3600s`), and point each router at its own service. If a session
+  dies at about a minute with the page still loaded, check the client-facing side
+  too: an entryPoint's `transport.respondingTimeouts.readTimeout` (default 60s) and
+  `idleTimeout` (default 180s) apply to the browser-to-Traefik hop.
+- SearXNG is deliberately absent. It stays LAN-only on `:8181`, which is where the
+  workspaces reach it through `host.docker.internal`; putting it behind Traefik would
+  expose a search box that has no authentication of its own.
+
 ## Checking the other machine
 
 This repo cannot verify any of it; check it on the Traefik box.
@@ -117,7 +218,8 @@ This repo cannot verify any of it; check it on the Traefik box.
 1. A router per name pointing at `http://<this-box-lan-ip>:8080`, including
    `hermes-gmktecbeast.overeazy.io`. That backend is `:8080` with the original Host,
    the same as the other four - not `:9119`. A router aimed at `:9119` skips this
-   box's vhost.
+   box's vhost. The file in [Traefik configuration](#traefik-configuration) is that
+   config; diff what the box runs against it.
 2. The original Host header preserved - a rewritten one comes back as `421`.
 3. Any authentication as the Traefik router's middleware. Authelia already fronts
    `hermes-gmktecbeast.overeazy.io` (the name 302s), the same interactive policy as
