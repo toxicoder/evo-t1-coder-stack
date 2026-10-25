@@ -7,8 +7,9 @@
 # twins a checkout ships, and env_pairs has to FIND them - the one at the repo
 # root is a dotfile, which a plain glob walks straight past, and a pass that
 # finds no twin reports nothing at all. A reconcile keeps what the operator set,
-# parks what the new twin no longer declares instead of deleting it, and prints
-# no value that looks like a credential. --dry-run writes nothing, a usage error
+# always rewrites comment lines from the twin even when every value stays, parks
+# what the new twin no longer declares instead of deleting it, and prints no
+# value that looks like a credential. --dry-run writes nothing, a usage error
 # prints the usage, and the workspace pass says which docker daemon it
 # addressed, because inside a workspace an empty `docker ps` means the
 # workspace's own sidecar and not a stack that is down.
@@ -275,10 +276,27 @@ scratch_root() {
   [ -z "${output}" ]
 }
 
+@test "update-configs: env_has_key treats KEY= empty as present" {
+  load_shell_function "${SCRIPT}" env_has_key
+
+  local file="${BATS_TEST_TMPDIR}/has.env"
+  printf 'KEEP=x\nOPTIONAL=\n' >"${file}"
+
+  run --separate-stderr env_has_key "${file}" KEEP
+  [ "${status}" -eq 0 ]
+  run --separate-stderr env_has_key "${file}" OPTIONAL
+  [ "${status}" -eq 0 ]
+  run --separate-stderr env_has_key "${file}" MISSING
+  [ "${status}" -eq 1 ]
+  run --separate-stderr env_has_key "${BATS_TEST_TMPDIR}/absent.env" KEEP
+  [ "${status}" -eq 1 ]
+}
+
 @test "update-configs: env_sync reconciles one pair and writes the merge where told" {
   load_shell_function "${SCRIPT}" is_placeholder_value
   load_shell_function "${SCRIPT}" key_state
   load_shell_function "${SCRIPT}" env_retired_keys
+  load_shell_function "${SCRIPT}" env_has_key
   load_shell_function "${SCRIPT}" env_sync
 
   local root stage
@@ -300,6 +318,7 @@ scratch_root() {
 
   run --separate-stderr env_sync "${root}/project.env" "${root}/project.env.example" ""
   [ "${status}" -eq 0 ]
+  assert_match "comments would refresh on a report-only walk" 'comments: would refresh from project.env.example' "${output}"
   assert_match "a kept value is reported" 'THING_TOKEN: your value kept' "${output}"
   assert_match "a new key is reported" 'NEW_KEY: new in this update' "${output}"
   assert_match "a retired key is reported" 'OLD_KEY' "${output}"
@@ -310,6 +329,7 @@ scratch_root() {
   stage="$(make_scratch)"
   run --separate-stderr env_sync "${root}/project.env" "${root}/project.env.example" "${stage}/next"
   [ "${status}" -eq 0 ]
+  assert_match "comments refresh is reported on write" 'comments: refreshed from project.env.example' "${output}"
   assert_contains_file "the operator's value survived" "${stage}/next" '^THING_TOKEN=keepme-secret$'
   assert_contains_file "a new key takes the example default" "${stage}/next" '^NEW_KEY=default-value$'
   assert_contains_file "the retired key is parked, not deleted" "${stage}/next" '^#OLD_KEY=stale-value$'
@@ -322,6 +342,7 @@ scratch_root() {
   load_shell_function "${SCRIPT}" key_state
   load_shell_function "${SCRIPT}" key_comment
   load_shell_function "${SCRIPT}" is_secret_key
+  load_shell_function "${SCRIPT}" env_has_key
   load_shell_function "${SCRIPT}" env_ask
   STACK_SECRET_KEYS='KEY SECRET TOKEN PASSWORD'
 
@@ -358,9 +379,12 @@ scratch_root() {
 
   run --separate-stderr bash "${SCRIPT}" env --dry-run --from "${root}"
   [ "${status}" -eq 0 ]
+  assert_match "comments would refresh" 'comments: would refresh from project.env.example' "${output}"
   assert_match "the kept value is reported" 'THING_TOKEN: your value kept' "${output}"
   assert_match "the new key is reported" 'THING_URL: new in this update' "${output}"
   assert_match "the retired key is reported" 'RETIRED_SECRET' "${output}"
+  assert_match "the pass closes with a summary" 'summary: env:' "${output}"
+  assert_match "dry-run is named in the summary" 'dry-run, nothing written' "${output}"
   assert_not_match "a secret value never reaches stdout" 'keepme-secret' "${output}"
 
   # --dry-run is a report: the live file comes out exactly as it went in.
@@ -380,8 +404,10 @@ scratch_root() {
 
   run --separate-stderr bash "${SCRIPT}" env --from "${root}"
   [ "${status}" -eq 0 ]
+  assert_match "comments refresh even while values are kept" 'comments: refreshed from project.env.example' "${output}"
   assert_match "the rewrite is announced" 'project.env rewritten from project.env.example' "${output}"
   assert_match "the per-key detail is printed, not swallowed" 'THING_TOKEN: your value kept' "${output}"
+  assert_match "the pass closes with a summary" 'summary: env:' "${output}"
   assert_not_match "no credential reaches stdout" 'keepme-secret' "${output}"
   assert_not_match "nor does the retired key's value" 'stale-value' "${output}"
 
@@ -484,6 +510,7 @@ scratch_root() {
   load_shell_function "${SCRIPT}" key_comment
   load_shell_function "${SCRIPT}" env_reuse_value
   load_shell_function "${SCRIPT}" env_set_key
+  load_shell_function "${SCRIPT}" env_has_key
   load_shell_function "${SCRIPT}" env_ask
   STACK_SECRET_KEYS='KEY SECRET TOKEN PASSWORD'
 
@@ -511,6 +538,86 @@ scratch_root() {
   assert_match "the missing terminal is named" 'no terminal to ask through' "${output}"
   assert_contains_file "the placeholder is left alone" "${root}/project.env" \
     '^THING_TOKEN=change-me$'
+}
+
+@test "update-configs: env_ask skips an empty key whose example default is empty" {
+  load_shell_function "${SCRIPT}" is_placeholder_value
+  load_shell_function "${SCRIPT}" is_secret_key
+  load_shell_function "${SCRIPT}" key_state
+  load_shell_function "${SCRIPT}" key_comment
+  load_shell_function "${SCRIPT}" env_has_key
+  load_shell_function "${SCRIPT}" env_ask
+  STACK_SECRET_KEYS='KEY SECRET TOKEN PASSWORD'
+
+  local root
+  root="$(scratch_root)"
+  printf 'KEEP=x\nOPTIONAL=\nPLACE=change-me\n' >"${root}/project.env.example"
+  printf 'KEEP=x\nOPTIONAL=\nPLACE=change-me\n' >"${root}/project.env"
+  printf 'KEEP=x\nOPTIONAL=\nPLACE=change-me\n' >"${root}/orig.env"
+
+  run --separate-stderr env_ask "${root}/project.env.example" "${root}/project.env" 0 \
+    "${root}/orig.env"
+  [ "${status}" -eq 0 ]
+  assert_match "an unfinished placeholder is listed" 'PLACE' "${output}"
+  assert_not_match "a filled key is not listed" 'KEEP' "${output}"
+  assert_not_match "an intentional empty is not listed" 'OPTIONAL' "${output}"
+}
+
+@test "update-configs: env rewrites comments even when every value is unchanged" {
+  local root
+  root="$(scratch_root)"
+  printf '# new explanation\nKEEP=x\nOPTIONAL=\n' >"${root}/project.env.example"
+  printf '# old explanation\nKEEP=x\nOPTIONAL=\n' >"${root}/project.env"
+  chmod 600 "${root}/project.env"
+
+  run --separate-stderr bash "${SCRIPT}" env --from "${root}"
+  [ "${status}" -eq 0 ]
+  assert_match "comments refresh is reported" 'comments: refreshed from project.env.example' "${output}"
+  assert_match "unchanged values are named as unchanged" 'values: unchanged' "${output}"
+  assert_match "the rewrite still happens" 'project.env rewritten from project.env.example' "${output}"
+  assert_match "the pass closes with a summary" 'summary: env:' "${output}"
+  assert_contains_file "the twin comment replaced the old one" "${root}/project.env" \
+    '^# new explanation$'
+  assert_contains_file "the value was kept" "${root}/project.env" '^KEEP=x$'
+  assert_contains_file "an intentional empty was kept" "${root}/project.env" '^OPTIONAL=$'
+  if grep -q 'old explanation' "${root}/project.env"; then
+    echo "old comment should have been replaced" >&2
+    return 1
+  fi
+}
+
+@test "update-configs: .env.sample gives every key a comment and blanks after banners" {
+  local sample="${REPO_ROOT}/.env.sample"
+  [ -f "${sample}" ]
+  run --separate-stderr awk '
+    /^# ---/ {
+      banner = 1
+      n = 0
+      next
+    }
+    banner {
+      if ($0 != "") {
+        printf "banner not followed by a blank line: %s\n", $0
+        bad = 1
+      }
+      banner = 0
+      n = 0
+      next
+    }
+    /^[A-Za-z_][A-Za-z0-9_]*=/ {
+      if (n == 0) {
+        printf "key with no comment block: %s\n", $0
+        bad = 1
+      }
+      n = 0
+      next
+    }
+    /^#/ { n++ }
+    /^$/ { n = 0 }
+    END { exit bad+0 }
+  ' "${sample}"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
 }
 
 @test "update-configs: daemon_vantage names the daemon a workspace shell can reach" {
@@ -632,4 +739,6 @@ scratch_root() {
   assert_match "the env pass ran" 'env files reconcile against' "${output}"
   assert_match "the workspace pass ran" 'workspace configs re-materialize from' "${output}"
   assert_match "the placeholder key is still listed" 'THING_TOKEN' "${output}"
+  assert_match "the env pass closes with a summary" 'summary: env:' "${output}"
+  assert_match "the workspace pass closes with a summary" 'summary: workspace:' "${output}"
 }

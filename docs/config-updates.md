@@ -8,6 +8,7 @@ tags: [env, config, update-configs, maintenance]
 
 - Which files go stale and why `git pull` cannot fix them
 - The two passes of `update-configs`, and the flags that select one
+- That env comments always refresh from the twin, even when values stay
 - Where the command may run, and where it refuses to
 - The long form of the `.env.sample` comments: GitHub external auth, Grok profile mode, public hosts, the Spark `agent` group
 
@@ -65,12 +66,16 @@ fills a key the twin adds with the twin's default (or a reusable value already
 set in a sibling live file - `.env` filling `dev-stack.env`), and moves a key
 the twin no longer declares into a commented trailer at the end of the file -
 parked, with its value and its explanation still readable, rather than deleted.
-The rewrite lands in a staging file and replaces the live file only at the end,
-with mode `600` kept. On a TTY the pass then walks every key that is new, still
-empty, or still a placeholder (`change-me…`, `NOTSET`, `YOUR_LAN_IP`): Enter
-keeps a sibling's value or the example default. A missing live file is created
-from the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
-list those keys and write no answers.
+Comment lines always come from the twin, even when every value stays as you
+set it, so a pull that only rewrote an explanation still lands in `.env`. The
+rewrite lands in a staging file and replaces the live file only at the end,
+with mode `600` kept. On a TTY the pass then walks every key that is new this
+pull or still a placeholder (`change-me…`, `NOTSET`, `YOUR_LAN_IP`). An empty
+value whose example default is also empty is the intended value (LAN-only
+`STACK_PUBLIC_HOSTS`, a parked MCP flag) and is not asked again. Enter keeps a
+sibling's value or the example default. A missing live file is created from
+the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
+list those keys and write no answers. A `summary:` line closes the pass.
 
 `workspace` re-materialises the stack-owned config inside the targets you name.
 The reseed set is the seven home-relative targets the templates seed -
@@ -101,10 +106,10 @@ Every flag goes **after** the subcommand, so `update-configs --dry-run env` is a
 usage error and prints the usage rather than guessing.
 
 On a TTY the env pass asks by default (`-i`/`--interactive` is then a no-op;
-`--non-interactive` turns it off). For every key that is new this pull, still
-empty, or still `change-me…`/`NOTSET`/`YOUR_LAN_IP` it prints the explanation the
-twin carries above that key and prompts for a value. Enter keeps a reusable
-value already set in a sibling env file, or the example default. A key whose
+`--non-interactive` turns it off). For every key that is new this pull or still
+`change-me…`/`NOTSET`/`YOUR_LAN_IP` it prints the explanation the twin carries
+above that key and prompts for a value. Enter keeps a reusable value already
+set in a sibling env file, or the example default. A key whose
 name carries `KEY`, `SECRET`, `TOKEN` or `PASSWORD` is echoed nowhere - the
 report says `set` or `empty` and the prompt does not echo what you type - so a
 screenful of this output is safe to paste into an issue. With no terminal to
