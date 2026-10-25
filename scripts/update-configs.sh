@@ -8,7 +8,9 @@
 # ${...} lines (.env at the root, dev-stack.env for the dev project), whose
 # .env.example twin carries the keys and explains them in the comment
 # lines above: a pull that renames, adds or drops a key silently changes what
-# the stack runs on. The other is the stack-owned config that lives INSIDE the
+# the stack runs on. The env pass always rewrites those comment lines from
+# the twin, even when every value stays as you set it, so a pull that only
+# clarified an explanation still lands in .env. The other is the stack-owned config that lives INSIDE the
 # running workspaces (~/.grok/AGENTS.md, ~/.grok/config.toml,
 # ~/.shared/vscode/settings.json, ~/.tmux.conf, ~/.coder/..., ~/.agents/...),
 # which the templates seed on first boot and never revisit. This script is the
@@ -405,25 +407,49 @@ env_retired_keys() {
   return 0
 }
 
-# @function env_sync
-# Reconcile one live env file with its example twin and print what changed:
-# every key the twin adds, every key whose value the operator's file keeps, and
-# every key the twin no longer declares. With a staging file named it also
-# writes the merged result there, line by line off the twin, so each key stays
-# beside the comment that explains it and the file keeps its shape.
+# @function env_has_key
+# Succeed when a live env file contains an assignment for a key, including
+# KEY= with an empty value. env_get cannot tell absent from empty.
 # Globals:
 #   None
+# Arguments:
+#   $1 - the env file
+#   $2 - the key name
+# Outputs:
+#   Nothing
+# Returns:
+#   0 when the file has a KEY= line, 1 otherwise
+env_has_key() {
+  local file="${1:-}" key="${2:-}"
+  [[ -f ${file} && -n ${key} ]] || return 1
+  grep -qE "^${key}=" "${file}"
+}
+
+# @function env_sync
+# Reconcile one live env file with its example twin and print what changed:
+# comment lines always come from the twin (even when every value stays), every
+# key the twin adds, every key whose value the operator's file keeps, and every
+# key the twin no longer declares. With a staging file named it also writes
+# the merged result there, line by line off the twin, so each key stays beside
+# the comment that explains it and the file keeps its shape.
+# Globals:
+#   ENV_SYNC_CUSTOM, ENV_SYNC_NEW, ENV_SYNC_RETIRED, ENV_SYNC_SAME
 # Arguments:
 #   $1 - the live env file (absent for a checkout that has no env file yet)
 #   $2 - the example twin to read
 #   $3 - the staging file to write, or "" to report only
 # Outputs:
-#   One line per added, kept and retired key
+#   A comments line, then one line per added, kept and retired key
 # Returns:
 #   0, always: a pair with nothing to reconcile is a report, not a failure
 env_sync() {
   local live="${1:-}" example="${2:-}" stage="${3:-}"
-  local stale="" key="" value="" default="" line
+  local stale="" key="" value="" default="" line custom_key new_key
+  local -a custom_keys=() new_keys=()
+  ENV_SYNC_CUSTOM=0
+  ENV_SYNC_NEW=0
+  ENV_SYNC_RETIRED=0
+  ENV_SYNC_SAME=0
 
   if [[ ! -f ${example} ]]; then
     note "no ${example:-twin} beside ${live:-this file} - nothing to reconcile it against"
@@ -449,37 +475,60 @@ env_sync() {
 
     key="${line%%=*}"
     default="${line#*=}"
-    value=""
-    if [[ -f ${live} ]]; then
+    if env_has_key "${live}" "${key}"; then
       value="$(env_get "${live}" "${key}")"
-    fi
-
-    if [[ -z ${value} ]]; then
       if [[ -n ${stage} ]]; then
-        printf '%s=%s\n' "${key}" "${default}" >>"${stage}"
+        printf '%s=%s\n' "${key}" "${value}" >>"${stage}"
       fi
-      if [[ -f ${live} ]]; then
-        printf '  %s: new in this update - the example default is %s\n' \
-          "${key}" "$(key_state "${default}")"
+      if [[ ${value} != "${default}" ]]; then
+        custom_keys+=("${key}")
+      else
+        ENV_SYNC_SAME=$((ENV_SYNC_SAME + 1))
       fi
       continue
     fi
 
     if [[ -n ${stage} ]]; then
-      printf '%s=%s\n' "${key}" "${value}" >>"${stage}"
+      printf '%s=%s\n' "${key}" "${default}" >>"${stage}"
     fi
-    if [[ ${value} != "${default}" ]]; then
-      printf '  %s: your value kept\n' "${key}"
+    if [[ -f ${live} ]]; then
+      new_keys+=("${key}")
     fi
   done <"${example}"
 
   stale="$(env_retired_keys "${live}" "${example}")"
+  ENV_SYNC_CUSTOM=${#custom_keys[@]}
+  ENV_SYNC_NEW=${#new_keys[@]}
+  if [[ -n ${stale} ]]; then
+    ENV_SYNC_RETIRED="$(printf '%s\n' "${stale}" | grep -c . || true)"
+  fi
+
+  if [[ ! -f ${live} ]]; then
+    return 0
+  fi
+
+  if [[ -n ${stage} ]]; then
+    printf '  comments: refreshed from %s\n' "${example##*/}"
+  else
+    printf '  comments: would refresh from %s\n' "${example##*/}"
+  fi
+  for custom_key in "${custom_keys[@]+"${custom_keys[@]}"}"; do
+    printf '  %s: your value kept\n' "${custom_key}"
+  done
+  for new_key in "${new_keys[@]+"${new_keys[@]}"}"; do
+    printf '  %s: new in this update - the example default is %s\n' \
+      "${new_key}" "$(key_state "$(env_get "${example}" "${new_key}")")"
+  done
+  if [[ ${#custom_keys[@]} -eq 0 && ${#new_keys[@]} -eq 0 && -z ${stale} ]]; then
+    printf '  values: unchanged\n'
+  fi
+
   if [[ -z ${stale} ]]; then
     return 0
   fi
 
   printf '  %d key(s) this update no longer reads, kept commented out:\n' \
-    "$(printf '%s\n' "${stale}" | grep -c .)"
+    "${ENV_SYNC_RETIRED}"
   while IFS= read -r key; do
     printf '    %s\n' "${key}"
   done <<<"${stale}"
@@ -497,12 +546,14 @@ env_sync() {
 }
 
 # @function env_ask
-# Walk one env file and prompt for every key that is new, still empty, or still
-# a placeholder, with the explanation the twin carries above it. A sibling env
-# file can supply a reusable value (Enter keeps it). With prompting off the
-# same keys are only listed. A closed stdin never blocks or hangs.
+# Walk one env file and prompt for every key that is new, still unfinished, or
+# still a placeholder, with the explanation the twin carries above it. An empty
+# value whose example default is also empty is the intended value and is not
+# asked again. A sibling env file can supply a reusable value (Enter keeps it).
+# With prompting off the same keys are only listed. A closed stdin never
+# blocks or hangs.
 # Globals:
-#   None
+#   ENV_ASK_REVIEW
 # Arguments:
 #   $1 - the example twin (for the explanations)
 #   $2 - the env file to read
@@ -516,7 +567,8 @@ env_sync() {
 env_ask() {
   local example="${1:-}" file="${2:-}" ask="${3:-0}" orig="${4:-}"
   local -a missing=() reuse_files=()
-  local line key value orig_val="" answer="" reuse="" default=""
+  local line key value orig_val="" answer="" reuse="" default="" comment=""
+  ENV_ASK_REVIEW=0
 
   if [[ $# -ge 5 ]]; then
     shift 4
@@ -535,17 +587,21 @@ env_ask() {
     case "${line}" in \#*) continue ;; esac
     key="${line%%=*}"
     value="${line#*=}"
+    default="$(env_get "${example}" "${key}")"
     orig_val=""
     if [[ -n ${orig} && -f ${orig} ]]; then
       orig_val="$(env_get "${orig}" "${key}")"
     fi
-    if is_placeholder_value "${value}"; then
+    if [[ -z ${orig_val} ]] && ! env_has_key "${orig}" "${key}"; then
       missing+=("${key}")
-    elif [[ -z ${orig_val} ]]; then
+    elif [[ -z ${value} && -z ${default} ]]; then
+      continue
+    elif is_placeholder_value "${value}"; then
       missing+=("${key}")
     fi
   done <"${file}"
 
+  ENV_ASK_REVIEW=${#missing[@]}
   if [[ ${#missing[@]} -eq 0 ]]; then
     return 0
   fi
@@ -568,9 +624,13 @@ env_ask() {
     value="$(env_get "${file}" "${key}")"
     default="$(env_get "${example}" "${key}")"
     reuse="$(env_reuse_value "${key}" "${file}" "${reuse_files[@]+"${reuse_files[@]}"}")"
-    printf '\n%s: %s\n' "${key}" "$(key_comment "${example}" "${key}" |
-      sed 's/^#[[:space:]]\{0,1\}//' | grep -vE '^[[:space:]]*$' | head -n 3 | tr '\n' ' ')"
-    printf '  Current value: %s.\n' "$(key_state "${value}")"
+    printf '\n%s\n' "${key}"
+    while IFS= read -r comment; do
+      [[ -n ${comment} ]] || continue
+      printf '  %s\n' "${comment}"
+    done < <(key_comment "${example}" "${key}" |
+      sed 's/^#[[:space:]]\{0,1\}//' | grep -vE '^[[:space:]]*$' | head -n 3)
+    printf '  current: %s\n' "$(key_state "${value}")"
     if [[ -n ${reuse} ]]; then
       printf '  A reusable value is already set in a sibling env file. Enter to keep it.\n'
     elif ! is_placeholder_value "${default}"; then
@@ -653,13 +713,17 @@ daemon_vantage() {
 # Arguments:
 #   "$@" - the argv documented in the file header
 # Outputs:
-#   The reconciliation and reseed report on stdout
+#   The reconciliation and reseed report on stdout, ending in a summary line
+#   per pass
 # Returns:
 #   0 when the plan ran or nothing addressed a target; 1 on a usage error;
 #   5 when no repo root can be proven
 main() {
   local -a targets=() siblings=()
   local root="" stage="" live="" example="" home="" target="" answer=""
+  local env_files=0 env_rewritten=0 env_skipped=0
+  local env_custom=0 env_new=0 env_retired=0 env_review=0
+  local ws_targets=0 ws_skipped=0
   local mode="${1:-}"
 
   case "${mode}" in
@@ -753,26 +817,34 @@ main() {
           case "${answer}" in
             n | N | no | No | NO)
               note "no ${live##*/} here: skipped"
+              env_skipped=$((env_skipped + 1))
               continue
               ;;
           esac
           if ! env_seed_live "${example}" "${live}"; then
             note "no ${live##*/} here: this checkout ships ${example##*/} and nothing to port onto it"
+            env_skipped=$((env_skipped + 1))
             continue
           fi
           siblings+=("${live}")
         else
           note "no ${live##*/} here: this checkout ships ${example##*/} and nothing to port onto it"
+          env_skipped=$((env_skipped + 1))
           continue
         fi
       fi
       if [[ ! -w ${live} ]]; then
         warn "${live##*/} is not writable here - skipped"
+        env_skipped=$((env_skipped + 1))
         continue
       fi
       log "--- ${live##*/} ---"
       stage="$(mktemp -d "${TMPDIR:-/tmp}/evoT1Env.XXXXXX")"
       cp "${live}" "${stage}/orig"
+      ENV_SYNC_CUSTOM=0
+      ENV_SYNC_NEW=0
+      ENV_SYNC_RETIRED=0
+      ENV_ASK_REVIEW=0
       if [[ ${DRY_RUN:-0} == "1" ]]; then
         env_sync "${live}" "${example}" ""
         env_ask "${example}" "${live}" 0 "${stage}/orig" "${siblings[@]+"${siblings[@]}"}"
@@ -786,13 +858,28 @@ main() {
           log "  ${live##*/} rewritten from ${example##*/}"
           env_ask "${example}" "${live}" "${ASK:-0}" "${stage}/orig" \
             "${siblings[@]+"${siblings[@]}"}"
+          env_rewritten=$((env_rewritten + 1))
         fi
       fi
+      env_files=$((env_files + 1))
+      env_custom=$((env_custom + ENV_SYNC_CUSTOM))
+      env_new=$((env_new + ENV_SYNC_NEW))
+      env_retired=$((env_retired + ENV_SYNC_RETIRED))
+      env_review=$((env_review + ENV_ASK_REVIEW))
       rm -rf "${stage}"
     done < <(env_pairs "${root}")
+    log ""
+    if [[ ${DRY_RUN:-0} == "1" ]]; then
+      log "summary: env: ${env_files} file(s) (dry-run, nothing written), ${env_skipped} skipped; comments would refresh; ${env_custom} custom kept, ${env_new} new, ${env_retired} retired, ${env_review} to review"
+    else
+      log "summary: env: ${env_rewritten} file(s) rewritten, ${env_skipped} skipped; comments refreshed; ${env_custom} custom kept, ${env_new} new, ${env_retired} retired, ${env_review} to review"
+    fi
   fi
 
   if [[ ${mode} == "workspace" || ${mode} == "all" ]]; then
+    if [[ ${mode} == "all" ]]; then
+      log ""
+    fi
     log "workspace configs re-materialize from ${root}"
     daemon_vantage
     if [[ ${#targets[@]} -eq 0 ]]; then
@@ -800,6 +887,8 @@ main() {
         note "nothing to reseed from here. The stack's services run on the host's docker" \
           "daemon, which this shell cannot reach. Run this in a host shell, or name the" \
           "target with --container <name> or --home <dir>."
+        log ""
+        log "summary: workspace: nothing to reseed from this shell"
         return 0
       fi
       while IFS= read -r target; do
@@ -808,6 +897,8 @@ main() {
     fi
     if [[ ${#targets[@]} -eq 0 ]]; then
       note "no coder-* workspace container answered on this daemon - nothing to reseed"
+      log ""
+      log "summary: workspace: 0 targets"
       return 0
     fi
     stage="$(mktemp -d "${TMPDIR:-/tmp}/evoT1Seed.XXXXXX")"
@@ -817,22 +908,24 @@ main() {
           log "--- ${target#c:} ---"
           seed_container_seed "${target#c:}" /home/coder "${root}" "${stage}" \
             "${DRY_RUN:-0}" "${FORCE:-0}"
+          ws_targets=$((ws_targets + 1))
           ;;
         h:*)
           home="${target#h:}"
           if [[ ! -d ${home} ]]; then
             warn "no ${home} directory to reseed into - skipped"
+            ws_skipped=$((ws_skipped + 1))
             continue
           fi
           log "--- ${home} (host directory) ---"
           seed_container_seed "" "${home}" "${root}" "${stage}" \
             "${DRY_RUN:-0}" "${FORCE:-0}"
+          ws_targets=$((ws_targets + 1))
           ;;
       esac
     done
-    note "what stays per workspace: ~/.grok/config.toml is rendered inside the" \
-      "workspace, not copied from here (its model list, session-affinity key and" \
-      "editor keys are per-workspace) - start or restart the workspace to re-render it."
+    log ""
+    log "summary: workspace: ${ws_targets} target(s) addressed, ${ws_skipped} skipped; ~/.grok/config.toml re-renders on start/restart"
     rm -rf "${stage}"
   fi
 
