@@ -64,13 +64,17 @@ setup() {
   [[ -f ${CI_YML} ]] || skip "ci.yml is not in the tree"
 }
 
-@test "ci workflow: both jobs docker-run the golden image as root" {
+@test "ci workflow: both jobs docker-run the golden image as the host uid" {
   assert_contains_file "buildx" "${CI_YML}" 'docker/setup-buildx-action'
   assert_contains_file "build context" "${CI_YML}" 'context: images/dev'
   assert_contains_file "dockerfile" "${CI_YML}" 'file: images/dev/Dockerfile'
   assert_contains_file "local tag" "${CI_YML}" 'evo-t1-dev:latest'
   if ! grep -Fq 'docker run --rm --user "$(id -u):$(id -g)"' "${CI_YML}"; then
     printf 'FAIL: docker run as host uid missing from %s\n' "${CI_YML}" >&2
+    return 1
+  fi
+  if ! grep -Fq '-e USER="$(id -un)"' "${CI_YML}"; then
+    printf 'FAIL: USER env for Bazel missing from %s\n' "${CI_YML}" >&2
     return 1
   fi
   assert_contains_file "validate inner" "${CI_YML}" 'VALIDATE_INNER=1 bazelisk run //:validate'

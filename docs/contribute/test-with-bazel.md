@@ -87,7 +87,8 @@ bazelisk run //scripts:test-in-image --                        # from any host w
 - Inside the contributor dev container ([devcontainer.md](devcontainer.md)) the commands
   above are exactly what CI runs.
 - On a host that is not that container, `//scripts:test-in-image` docker-runs
-  `evo-t1-dev:latest` and runs them there.
+  `evo-t1-dev:latest` as this process's uid:gid, with `HOME=/tmp` and `USER` set so
+  Bazel can name that uid, and runs them there.
 - A native `bazelisk test` on macOS is convenience only: the BSD userland differs from the
   GNU one in the image (`sed`, `date`, `find`, `sort`), so a red run there is not proof of a
   defect and a green one is not the run that unlocks the merge button. CI and branch

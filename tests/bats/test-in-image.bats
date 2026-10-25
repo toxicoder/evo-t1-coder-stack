@@ -212,6 +212,7 @@ script_default_tag() {
   assert_match "cwd is the mount" '-w /work' "${line}"
   assert_match "CI passed through" '-e CI' "${line}"
   assert_match "scratch HOME" '-e HOME=/tmp' "${line}"
+  assert_match "USER for bazel" "-e USER=${USER:-$(id -un)}" "${line}"
   assert_match "stack host resolvable" '--add-host=host.docker.internal:host-gateway' "${line}"
   assert_match "bazelisk is the command" 'evo-t1-dev:latest bazelisk test //:lint --test_tag_filters=manual$' "${line}"
 
@@ -241,6 +242,7 @@ script_default_tag() {
   assert_match "checkout mounted" "-v ${REPO_ROOT}:/work" "${line}"
   assert_match "cwd is the mount" '-w /work' "${line}"
   assert_match "scratch HOME" '-e HOME=/tmp' "${line}"
+  assert_match "USER for bazel" "-e USER=${USER:-$(id -un)}" "${line}"
   assert_match "stack host resolvable" '--add-host=host.docker.internal:host-gateway' "${line}"
   assert_match "the default suite" 'bazelisk test //:test-fast$' "${line}"
 }

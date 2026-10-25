@@ -113,8 +113,9 @@ long-running exception, and you stop it with Ctrl-C.
 - **Local disk and repository cache.** `.bazelrc` points `--disk_cache` at
   `~/.cache/bazel-disk` and `--repository_cache` at `~/.cache/bazel-repo`. A contributor
   container and a Coder workspace reuse those directories across runs. CI docker-runs the
-  gate with `HOME=/tmp`, so those Bazel caches are per-job; the cache that survives there
-  is the image's buildx GHA cache. No remote cache is configured — the same two flags
+  gate with `HOME=/tmp` and `USER=$(id -un)`, so those Bazel caches are per-job and Bazel
+  can name a uid the image passwd file does not list; the cache that survives there is
+  the image's buildx GHA cache. No remote cache is configured — the same two flags
   would take a `--remote_cache=<uri>` endpoint later.
 
 ## Script targets and runfiles

@@ -25,8 +25,9 @@ name: ci
 # runner bind-mounts the checkout as the runner uid (1001). Every gate therefore
 # runs through `docker run --user "$(id -u):$(id -g)"` with $GITHUB_WORKSPACE at
 # /work, so the mount is writable and permission tests see a non-root identity.
-# HOME=/tmp is that numeric uid's writable home. scripts/test-in-image.sh uses
-# the same uid:gid default on a workstation.
+# HOME=/tmp and USER=$(id -un) give Bazel a writable home and a name for a
+# uid the image passwd file does not list. scripts/test-in-image.sh uses the
+# same uid:gid default on a workstation.
 #
 # The image is published to ghcr.io from `main` only (packages: write above is
 # what lets that push happen; a fork PR has no registry token and never pushes).
@@ -82,7 +83,7 @@ jobs:
         run: |
           docker run --rm --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
-            -e CI=true -e HOME=/tmp \
+            -e CI=true -e HOME=/tmp -e USER="$(id -un)" \
             --add-host=host.docker.internal:host-gateway \
             evo-t1-dev:latest \
             bash -lc 'bazelisk test //:test-fast --config=ci && bazelisk test //:lint --config=ci --test_tag_filters=manual && VALIDATE_INNER=1 bazelisk run //:validate'
@@ -121,6 +122,6 @@ jobs:
         run: |
           docker run --rm --user "$(id -u):$(id -g)" \
             -v "$GITHUB_WORKSPACE:/work" -w /work/docs-site \
-            -e CI=true -e HOME=/tmp -e NEXT_TELEMETRY_DISABLED=1 \
+            -e CI=true -e HOME=/tmp -e USER="$(id -un)" -e NEXT_TELEMETRY_DISABLED=1 \
             evo-t1-dev:latest \
             bash -lc 'npm ci --legacy-peer-deps && npm run typecheck && npm run unit && npm run nav:check && bash run_python_test.sh'

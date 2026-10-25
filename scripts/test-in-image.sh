@@ -225,14 +225,17 @@ test_in_image_build() {
 # Run the gates in the image: the checkout bind-mounted read-write at /work,
 # that as the cwd, and bazelisk as the command. --user defaults to this
 # process's uid:gid so the bind mount stays writable and permission tests
-# still see a non-root identity; host.docker.internal is mapped so a gate
-# that probes the stack host resolves the same way it does in a workspace.
+# still see a non-root identity. HOME=/tmp and USER=${USER:-$(id -un)} give
+# Bazel a writable home and a name for a uid the image passwd file does not
+# list; host.docker.internal is mapped so a gate that probes the stack host
+# resolves the same way it does in a workspace.
 # Globals:
 #   CI (passed through when the caller exported it)
+#   USER (passed through when set, else this process's login name)
 # Arguments:
 #   $1 - image tag
 #   $2 - proven repo root (the source of the /work bind mount)
-#   $3 - user to run as (empty means root)
+#   $3 - user to run as (empty means this process's uid:gid)
 #   $4... - the bazelisk argv
 # Outputs:
 #   One status line, then the bazelisk output
@@ -259,6 +262,7 @@ test_in_image_run() {
     -w /work \
     -e CI \
     -e HOME=/tmp \
+    -e "USER=${USER:-$(id -un)}" \
     --add-host=host.docker.internal:host-gateway \
     "${tag}" \
     bazelisk "$@"

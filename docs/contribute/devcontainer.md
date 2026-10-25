@@ -152,9 +152,10 @@ bazelisk run //scripts:test-in-image --
 ```
 
 That is the host ingress: it `docker run`s `evo-t1-dev:latest` as this process's uid:gid
-(`$(id -u):$(id -g)`) and runs the same suites CI runs, so a macOS laptop gets the Linux
-result without a Linux box. Build the tag first with `bazelisk run //scripts:build-dev-image`
-if the daemon does not have it.
+(`$(id -u):$(id -g)`), with `HOME=/tmp` and `USER=$(id -un)` so Bazel has a writable home
+and a name for a uid the image passwd file does not list, and runs the same suites CI
+runs. A macOS laptop gets the Linux result without a Linux box. Build the tag first with
+`bazelisk run //scripts:build-dev-image` if the daemon does not have it.
 
 Native `bazelisk test` on macOS is a convenience, not a merge path. The suites run there,
 but the BSD userland differs from the GNU one the image ships (`sed`, `date`, `find`,
@@ -169,8 +170,10 @@ Actions layer cache (`type=gha`), then `docker run`s that image and runs the che
 it: `//:test-fast`, `//:lint`, `//:validate`, and the `docs-site/` Node checks.
 
 - No Actions `container:` key is involved. The job runs on a plain runner and reaches the
-  toolchain through `docker run`, so what gates the merge is an image tag, not whatever the
-  runner image happens to carry that week.
+  toolchain through `docker run --user "$(id -u):$(id -g)"` with `HOME=/tmp` and
+  `USER=$(id -un)`, so what gates the merge is an image tag, the bind-mounted checkout
+  stays writable, permission tests see a non-root identity, and Bazel can name a uid the
+  image passwd file does not list.
 - The Bazel job no longer installs the pins onto the runner: the image already has them at
   the pinned versions.
 - A pull request that does not touch `images/dev/**` replays the cached layers instead of
