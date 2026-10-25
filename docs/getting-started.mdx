@@ -1,0 +1,135 @@
+---
+title: Getting started
+description: First boot on a GMKtec EVO-T1, top to bottom — bootstrap the host, bring the stable stack up, register Coder, push the templates, open a workspace.
+tags: [start, bootstrap, install, coder]
+---
+
+**What's on this page**
+
+- The one-time host bootstrap, and why it is the only step run straight from a shell
+- Bringing the stable stack up and pulling the models
+- Registering the first Coder account, pushing both templates, wiring the chat agent
+- Creating the first workspace from a git URL
+
+**What this enables**
+
+- A working stack on a fresh box without reading the whole README first
+- Knowing which step to re-run when a later one says a prerequisite is missing
+
+The commands are the README's [spin-up section](https://github.com/toxicoder/evo-t1-coder-stack#spin-up-the-stack)
+with the reasoning attached. Run them on the stack host, not inside a workspace: a
+workspace's `docker` addresses its own DinD sidecar, and the whole-stack targets reach the
+daemon that runs Coder.
+
+## Before you start
+
+- A GMKtec EVO-T1 (or any box with the Arc 140T and enough RAM for the model in
+  `OLLAMA_MODELS`) with Docker and Compose v2 installed.
+- The LAN address you will browse to. `CODER_ACCESS_URL` has to be an `https://` URL that
+  is not `localhost`, or a workspace cannot reach LiteLLM.
+
+## First boot
+
+```sh
+git clone https://github.com/toxicoder/evo-t1-coder-stack.git ~/evo-t1-coder-stack
+```
+
+```sh
+cd ~/evo-t1-coder-stack
+```
+
+Create the one file that holds real secrets, and lock it down before anything else reads
+it:
+
+```sh
+cp .env.sample .env
+```
+
+```sh
+chmod 600 .env
+```
+
+Bootstrap the toolchain — the only step that runs before Bazel exists, because it is what
+installs Bazelisk:
+
+```sh
+bash scripts/setup-host.sh
+```
+
+Then look before you change anything. `--check` is read-only: missing tools, placeholder
+secrets, certificates, images.
+
+```sh
+bazelisk run //scripts:bootstrap -- --check
+```
+
+Prepare the box: rotate the secrets, set `CODER_ACCESS_URL`, issue the self-signed
+certificates, build `evo-t1-dev:latest`, pull the DinD image. It is idempotent, so re-run
+it after changing `docker-compose.yml`, `litellm/config.yaml`, `searxng/settings.yml` or
+`proxy/*.conf`.
+
+```sh
+bazelisk run //scripts:bootstrap
+```
+
+Start the stable stack, and pull the models `OLLAMA_MODELS` names (a large download):
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+```
+
+```sh
+bazelisk run //scripts:pull-models
+```
+
+## Once Coder answers
+
+Register the first account — that account is the site admin. Browsers only expose
+`crypto.randomUUID()` in a secure context, so this points at the TLS listener:
+
+```sh
+coder login https://<host>:3001 \
+  --first-user-email you@example.com \
+  --first-user-username you \
+  --first-user-password 'a-long-passphrase' \
+  --first-user-trial=false
+```
+
+Push both templates (`workspace` first, `devcontainer` last). The source travels as a tar
+on stdin and the credential is minted, used and deleted in the same run, so there is no
+host `coder` CLI and no login here:
+
+```sh
+bazelisk run //scripts:push-template
+```
+
+Wire the control-plane chat agent — print the intended end state, then apply it:
+
+```sh
+bazelisk run //scripts:coder-agents -- --dry-run
+```
+
+```sh
+bazelisk run //scripts:coder-agents -- --apply
+```
+
+Create the first workspace. One repository per workspace is the default, and the template
+picks itself from the URL:
+
+```sh
+bazelisk run //scripts:new-workspace -- https://github.com/org/repo.git
+```
+
+Then finish the two browser-only steps: run the Kasm wizard once at `https://<host>:3000`
+and use `https://<host>:4443` after it, and open the dashboard at `https://<host>/` with
+the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap` printed.
+
+## What to read next
+
+- [Coder workspace templates](coder-templates.md) — what the two templates build and which
+  variable does what.
+- [LiteLLM model routing](litellm-routing.md) — why the answer you got came from the box it
+  came from.
+- [Troubleshooting](troubleshooting.md) — start here when a step above says no.
+- [Develop](https://github.com/toxicoder/evo-t1-coder-stack#develop) and
+  [Branching](branching.md) — the gates a change passes on its way back to `main`.

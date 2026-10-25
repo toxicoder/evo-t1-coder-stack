@@ -1,4 +1,20 @@
-# Public subdomains
+---
+title: Public subdomains
+description: Serving the same four services on public names over real TLS, additively, with the LAN shape left intact.
+tags: [public, tls, traefik, authelia, operate]
+---
+
+**What's on this page**
+
+- The path a public request takes, from the browser to the container
+- The four names, and how to choose them at bootstrap time
+- What `bootstrap.sh` changes when the names are set
+- Checking the other machine, Authelia, and the two follow-ups left by hand
+
+**What this enables**
+
+- Exposing the stack without breaking the LAN routes anyone at home uses
+- Telling a router problem apart from an Authelia problem when a name fails
 
 The default shape is LAN-only. Setting `STACK_PUBLIC_HOSTS` additionally serves the same
 four services on public names over real TLS. It is purely additive: every LAN route
@@ -79,7 +95,7 @@ server block for it. Do not add one. See [hermes.md](hermes.md).
 
 Set the four names in `.env`, and in `dev-stack.env` too when a dev stack runs beside
 the stable one. Then re-run `bootstrap` and recreate the stack you switched. The
-commands are in the [README](../README.md#public-subdomains-optional).
+commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
 
 ## Checking the other machine
 
@@ -107,7 +123,7 @@ This repo cannot verify any of it; check it on the Traefik box.
   sign-in. Either leave `litellm-gmktecbeast` outside any policy or add an explicit
   bypass - and then `LITELLM_MASTER_KEY` is the only credential in front of an
   endpoint that went from LAN-only to reachable WAN-wide (see
-  [SECURITY.md](../SECURITY.md)).
+  [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md)).
 - Workspace agents never reach Authelia either way. The template rewrites the agent URL
   to `http://host.docker.internal:3002`, the plain listener published through
   `CODER_AGENT_TUNNEL_PORT`, so agent traffic stays on the box.

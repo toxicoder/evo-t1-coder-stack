@@ -1,23 +1,29 @@
-# LiteLLM model routing
+---
+title: LiteLLM model routing
+description: "The model lane: the aliases in `litellm/config.yaml`, how a request picks a backend, and what happens when a Spark box goes down."
+tags: [litellm, models, routing, spark]
+---
+
+**What's on this page**
+
+- The one front door every client dials, and why nothing else is published
+- The alias table, and which backend each alias resolves to
+- Tool calls: the measured limitation and the path that supports them
+- Routing inside the `agent` group, and the `agent` to `coder` fallback
+- Reading the routing back, and editing an alias safely
+
+**What this enables**
+
+- Moving a workload between the Arc iGPU and a Spark box without touching a workspace
+- Diagnosing a wrong-backend answer from the routing rather than from the client
 
 Deep reference for the model lane: the aliases in `litellm/config.yaml`, how a request
 picks a backend, what a pinned conversation does, and what happens when a Spark box goes
 down.
 
-Short version lives in [README.md](../README.md) ("LiteLLM model aliases"); this file is
+Short version lives in [README.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md) ("LiteLLM model aliases"); this file is
 the long version behind it. Symptom-first checks live in
 [troubleshooting.md](troubleshooting.md).
-
-Contents:
-
-1. [One front door](#one-front-door)
-2. [The alias table](#the-alias-table)
-3. [Tool calls: the measured limitation](#tool-calls-the-measured-limitation)
-4. [Routing inside the `agent` group](#routing-inside-the-agent-group)
-5. [Fallback: `agent` to `coder`](#fallback-agent-to-coder)
-6. [Reading the routing back](#reading-the-routing-back)
-7. [Editing an alias](#editing-an-alias)
-8. [Why this shape](#why-this-shape)
 
 Related: [coder-templates.md](coder-templates.md) (the templates that render
 `~/.grok/config.toml`), [grok-build-and-agents.md](grok-build-and-agents.md) (the CLI and

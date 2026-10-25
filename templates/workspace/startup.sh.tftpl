@@ -25,6 +25,8 @@
 #      /home/coder/workspace/<repo-name> — the folder code-server, the web
 #      terminal and the Grok Build session all open on, so it has to land
 #      before any of them is used
+#   8b. puts a private notes.md in every clone folder, restoring it from the
+#      shared profile volume and keeping that volume up to date
 #
 # ~/.grok is not necessarily this workspace's own directory. With main.tf's
 # grok_profile_mode at "shared" (the default) the container mounts the workspace
@@ -49,9 +51,9 @@
 # Note: this file is rendered by Terraform templatefile(); shell variables
 # are written with a doubled dollar sign so the rendered script keeps them
 # ($name or $${name}; the braced form is only safe when escaped this way). The
-# only interpolations Terraform has to resolve are the five variables main.tf
-# passes: grok_build_agents, grok_config, repo_url, additional_repos and
-# vscode_settings. grok_config arrives already rendered from
+# only interpolations Terraform has to resolve are the six variables main.tf
+# passes: grok_build_agents, grok_config, repo_url, additional_repos,
+# vscode_settings and notes_setup. grok_config arrives already rendered from
 # grok-config.toml.tftpl, whose boolean gate keys are github_mcp, search_mcp
 # and context7_mcp - each only decides whether its [mcp_servers.*] block
 # appears - and no credential byte is part of that decision: the GH_TOKEN and
@@ -355,6 +357,32 @@ ${grok_build_agents}
 GROK_AGENTS_EOF
 fi
 
+# --- Private per-repo notes ---------------------------------------------------
+# The library behind each clone's notes.md. Unlike the seed above it is rewritten
+# on every start: it is stack-owned code, and the copy on the shared ~/.grok
+# volume must be the one this template shipped. main.tf reads
+# templates/common/notes-setup.sh and hands the text to the heredoc below; the
+# clone stage further down calls notes_materialize with it.
+#
+# Written beside its target and moved in: two of this owner's workspaces can boot
+# at once against the one shared volume, and a sibling must never source a
+# half-written library.
+mkdir -p "$HOME/.grok" 2>/dev/null || true
+notes_lib="$HOME/.grok/notes-setup.sh"
+notes_lib_tmp="$(mktemp "$notes_lib.XXXXXX" 2>/dev/null)" || notes_lib_tmp="$notes_lib.$$"
+if cat >"$notes_lib_tmp" <<'NOTES_SETUP_EOF'
+${notes_setup}
+NOTES_SETUP_EOF
+then
+  # mktemp makes 0600 and mv keeps that mode, so the temp is opened up first:
+  # the rename is the first moment $notes_lib exists for anyone to source.
+  chmod 0644 "$notes_lib_tmp" 2>/dev/null || true
+  mv -f "$notes_lib_tmp" "$notes_lib" 2>/dev/null || true
+fi
+rm -f "$notes_lib_tmp" 2>/dev/null || true
+# shellcheck disable=SC1090
+. "$notes_lib" 2>/dev/null || true
+
 # --- Editor settings ----------------------------------------------------------
 # One settings.json per owner, on the vscode-settings-<owner-id> volume main.tf
 # mounts at ~/.shared/vscode. The first boot that finds the file missing copies
@@ -600,11 +628,26 @@ if [ -n "$repo_url_raw" ]; then
     fi
   }
 
+  # The notes stage writes files into the workspace home and runs git config
+  # --global, so it follows run_clone's identity rule rather than the agent's
+  # uid: run as root it would rename a root-owned ~/.gitconfig over the
+  # workspace user's and leave notes.md unreadable on an already-cloned folder.
+  run_notes() {
+    if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
+      $clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c \
+        '. "$NOTES_SETUP_LIB" 2>/dev/null || exit 0
+         notes_materialize "$1" "$2"' _ "$1" "$2"
+    else
+      notes_materialize "$1" "$2"
+    fi
+  }
+
   if [ -d "$target/.git" ]; then
     # Re-fetching is the user's call: a pull here could conflict mid-edit or
     # fail on a dirty tree, and either way the workspace would start on code
     # nobody chose.
     echo "$repo_folder: already cloned, skipping"
+    run_notes "$target" "$repo_url_raw" || true
   elif [ -e "$target" ]; then
     echo "WARNING: $target exists but is not a git repository — leaving it" \
       "alone and skipping the clone. Remove it if it should not be there." >&2
@@ -616,6 +659,9 @@ if [ -n "$repo_url_raw" ]; then
     # -- before the URL: the value is user input and must never parse as an option.
     if run_clone clone -- "$repo_url_raw" "$target"; then
       echo "cloned $repo_url_raw into $target"
+      # Before the chown: the notes file and the .git/info/exclude write are
+      # ours to make, and the recursive chown below settles their ownership.
+      run_notes "$target" "$repo_url_raw" || true
       if [ -n "$clone_owner" ]; then
         chown -R "$clone_owner" "$target" 2>/dev/null || true
       fi
@@ -666,6 +712,7 @@ EXTRA_REPOS_EOF
     extra_target="/home/coder/workspace/$extra_folder"
     if [ -d "$extra_target/.git" ]; then
       echo "$extra_folder: already cloned, skipping"
+      run_notes "$extra_target" "$extra_url" || true
     elif [ -e "$extra_target" ]; then
       echo "WARNING: $extra_target exists but is not a git repository — leaving it" \
         "alone and skipping the clone. Remove it if it should not be there." >&2
@@ -674,6 +721,7 @@ EXTRA_REPOS_EOF
         "$extra_target. This template expects the golden image, which ships git." >&2
     elif run_clone clone -- "$extra_url" "$extra_target"; then
       echo "cloned $extra_url into $extra_target"
+      run_notes "$extra_target" "$extra_url" || true
       if [ -n "$clone_owner" ]; then
         chown -R "$clone_owner" "$extra_target" 2>/dev/null || true
       fi

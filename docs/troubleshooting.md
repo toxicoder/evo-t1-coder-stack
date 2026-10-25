@@ -1,7 +1,24 @@
-# Troubleshooting
+---
+title: Troubleshooting
+description: "Symptom-first list of what breaks on this box: the error string, the cause, the recipe, and what the fix costs."
+tags: [troubleshooting, operate, errors]
+---
+
+**What's on this page**
+
+- Stack bring-up: bootstrap, ports, containers that refuse to start
+- The model lane: Spark boxes, LiteLLM, and the agent backends
+- Workspaces: startup, the golden image, the toolchain inside them
+- Docker-in-Docker, Terraform, and the host `coder` CLI
+- Editor, credentials, the clone, and the UI logins
+
+**What this enables**
+
+- Starting from the error text you actually saw and landing on one command
+- Knowing the cost of a fix before running it, including what it destroys
 
 Deep, symptom-first list. The operational `dev-stack`/`prod-stack`, `search-check` and
-`spark-verify` targets are described in [README.md](../README.md) and
+`spark-verify` targets are described in [README.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md) and
 [project-conventions.md](project-conventions.md).
 
 Each fence below is one copy-paste action. A heading quotes the error string where there

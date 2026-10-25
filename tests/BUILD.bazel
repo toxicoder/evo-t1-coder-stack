@@ -33,6 +33,7 @@ _BATS_COMMON = [
     "extract_fn.py",
     ":bats_tool",
     "//scripts:doc_sources",
+    "//docs:manage-docs.sh",
     "//:stack_data",
 ] + glob(
     [

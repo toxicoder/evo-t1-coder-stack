@@ -69,6 +69,7 @@ fake_root() {
   : >"${root}/templates/devcontainer/.terraform.lock.hcl"
   printf '%s\n' '# Role' >"${root}/templates/common/GROK_BUILD_AGENTS.md"
   printf '%s\n' '<svg/>' >"${root}/templates/common/vscode-alt.svg"
+  printf '%s\n' '# notes library' >"${root}/templates/common/notes-setup.sh"
   cp "${REPO_ROOT}/scripts/${script}" "${root}/scripts/"
   cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
   printf '%s' "${root}"
@@ -591,6 +592,10 @@ logs_absent() {
 
 # ── template-push.sh (moved from lib.bats; keep these assertions) ──────────
 
+# The payload files every template's main.tf reads from the staged copy; the
+# template_push_one guard has to name exactly these and nothing else.
+payloads=(GROK_BUILD_AGENTS.md vscode-alt.svg notes-setup.sh)
+
 source_libs() {
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/common.sh"
@@ -607,6 +612,7 @@ source_libs() {
   printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
   printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
   printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
+  printf '%s\n' '# notes library' > "${BATS_TEST_TMPDIR}/common/notes-setup.sh"
   export CONTAINER_API_URL="http://coder:3002"
   export session_token="kid-secret"
   export CODER_CONTAINER=stack-coder-1
@@ -624,6 +630,7 @@ source_libs() {
   printf '%s\n' 'resource "coder_script" "w" {}' > "${BATS_TEST_TMPDIR}/tpl-nopc/main.tf"
   printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
   printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
+  printf '%s\n' '# notes library' > "${BATS_TEST_TMPDIR}/common/notes-setup.sh"
   export CONTAINER_API_URL="http://coder:3002"
   export session_token="kid-secret"
   run --separate-stderr template_push_one tpl4 "${BATS_TEST_TMPDIR}/tpl-nopc"
@@ -636,9 +643,10 @@ source_libs() {
 @test "template-push: the seed payloads ride inside the pushed tar" {
   source_libs
   # The server-side Terraform reads GROK_BUILD_AGENTS.md (file(), into the
-  # startup script) and vscode-alt.svg (filebase64(), into the editor icon)
-  # from inside the pushed copy, so the staging must drop both common copies
-  # into the tar and .terraform/ must stay out. The sink DOCKER_BIN stands in
+  # startup script), notes-setup.sh (file(), into the same script) and
+  # vscode-alt.svg (filebase64(), into the editor icon) from inside the pushed
+  # copy, so the staging must drop all three common copies into the tar and
+  # .terraform/ must stay out. The sink DOCKER_BIN stands in
   # for `docker exec -i`: it drains stdin into a file instead of
   # exec'ing the coder stub, which is how the tar stream becomes inspectable.
   mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"
@@ -646,6 +654,7 @@ source_libs() {
   printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
   printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
   printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
+  printf '%s\n' '# notes library' > "${BATS_TEST_TMPDIR}/common/notes-setup.sh"
   printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' > "${BATS_TEST_TMPDIR}/bin/tar-sink"
   chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
   export DOCKER_BIN=tar-sink
@@ -659,6 +668,7 @@ source_libs() {
   grep -Fxq './main.tf' "${BATS_TEST_TMPDIR}/members.txt"
   grep -Fxq './GROK_BUILD_AGENTS.md' "${BATS_TEST_TMPDIR}/members.txt"
   grep -Fxq './vscode-alt.svg' "${BATS_TEST_TMPDIR}/members.txt"
+  grep -Fxq './notes-setup.sh' "${BATS_TEST_TMPDIR}/members.txt"
   if grep -qF '.terraform' "${BATS_TEST_TMPDIR}/members.txt"; then
     printf 'leak: .terraform reached the pushed tar\n' >&2
     return 1
@@ -676,10 +686,12 @@ source_libs() {
   printf '%s\n' 'startup-body' >"${BATS_TEST_TMPDIR}/real/startup.sh.tftpl"
   printf '%s\n' '# Role' >"${BATS_TEST_TMPDIR}/real/GROK_BUILD_AGENTS.md"
   printf '%s\n' '<svg/>' >"${BATS_TEST_TMPDIR}/real/vscode-alt.svg"
+  printf '%s\n' 'notes_materialize() { :; }' >"${BATS_TEST_TMPDIR}/real/notes-setup.sh"
   ln -s "${BATS_TEST_TMPDIR}/real/main.tf" "${BATS_TEST_TMPDIR}/runfiles/tpl/main.tf"
   ln -s "${BATS_TEST_TMPDIR}/real/startup.sh.tftpl" "${BATS_TEST_TMPDIR}/runfiles/tpl/startup.sh.tftpl"
   ln -s "${BATS_TEST_TMPDIR}/real/GROK_BUILD_AGENTS.md" "${BATS_TEST_TMPDIR}/runfiles/common/GROK_BUILD_AGENTS.md"
   ln -s "${BATS_TEST_TMPDIR}/real/vscode-alt.svg" "${BATS_TEST_TMPDIR}/runfiles/common/vscode-alt.svg"
+  ln -s "${BATS_TEST_TMPDIR}/real/notes-setup.sh" "${BATS_TEST_TMPDIR}/runfiles/common/notes-setup.sh"
   printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' >"${BATS_TEST_TMPDIR}/bin/tar-sink"
   chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
   export DOCKER_BIN=tar-sink
@@ -690,7 +702,7 @@ source_libs() {
     return 1
   fi
   tar -tvf "${STUB_LOG}/push.tar" >"${BATS_TEST_TMPDIR}/listing.txt"
-  if grep -E 'main\.tf|startup\.sh\.tftpl|GROK_BUILD_AGENTS\.md|vscode-alt\.svg' "${BATS_TEST_TMPDIR}/listing.txt" | grep -q ' -> '; then
+  if grep -E 'main\.tf|startup\.sh\.tftpl|GROK_BUILD_AGENTS\.md|vscode-alt\.svg|notes-setup\.sh' "${BATS_TEST_TMPDIR}/listing.txt" | grep -q ' -> '; then
     printf 'FAIL: archive stored a symlink instead of file contents:\n%s\n' "$(cat "${BATS_TEST_TMPDIR}/listing.txt")" >&2
     return 1
   fi
@@ -702,6 +714,7 @@ source_libs() {
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/startup.sh.tftpl")" = 'startup-body' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/GROK_BUILD_AGENTS.md")" = '# Role' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/vscode-alt.svg")" = '<svg/>' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/notes-setup.sh")" = 'notes_materialize() { :; }' ]
 }
 
 @test "template-push: a tree without the seed payload is refused before the CLI runs" {
@@ -714,27 +727,46 @@ source_libs() {
   export CODER_CONTAINER=stack-coder-1
   run --separate-stderr template_push_one tpl2 "${BATS_TEST_TMPDIR}/tpl-noseed"
   [ "${status}" -eq 1 ]
-  [[ ${stderr} == *"common/GROK_BUILD_AGENTS.md is missing"* ]]
-  [[ ${stderr} == *"common/vscode-alt.svg is missing"* ]]
+  local payload
+  for payload in "${payloads[@]}"; do
+    [[ ${stderr} == *"common/${payload} is missing"* ]]
+  done
+  [ "$(grep -c ' is missing' <<<"${stderr}")" -eq "${#payloads[@]}" ]
   [ -z "$(stub_log docker)" ]
   [ -z "$(stub_log coder)" ]
 }
 
-@test "template-push: a half-filled common dir names only the payload that is gone" {
+@test "template-push: a common dir missing one payload names only that payload" {
   source_libs
-  # The guard lists the payloads, not the directory: with the seed text there
-  # and the icon gone, only the icon may be named - and the run must still
-  # refuse before the CLI runs.
-  mkdir -p "${BATS_TEST_TMPDIR}/tpl-nosvg" "${BATS_TEST_TMPDIR}/common"
-  printf '%s\n' 'resource "coder_script" "z" {}' > "${BATS_TEST_TMPDIR}/tpl-nosvg/main.tf"
-  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
-  export CODER_CONTAINER=stack-coder-1
-  run --separate-stderr template_push_one tpl3 "${BATS_TEST_TMPDIR}/tpl-nosvg"
-  [ "${status}" -eq 1 ]
-  [[ ${stderr} == *"common/vscode-alt.svg is missing"* ]]
-  [[ ${stderr} != *"GROK_BUILD_AGENTS.md is missing"* ]]
-  [ -z "$(stub_log docker)" ]
-  [ -z "$(stub_log coder)" ]
+  # The guard lists the payloads, not the directory. For each payload in turn the
+  # ones that are present must stay unnamed and the one that is gone must be
+  # named - and every run must still refuse before the CLI runs.
+  local gone keep
+  for gone in "${payloads[@]}"; do
+    rm -rf "${BATS_TEST_TMPDIR}/tpl-one" "${BATS_TEST_TMPDIR}/common"
+    mkdir -p "${BATS_TEST_TMPDIR}/tpl-one" "${BATS_TEST_TMPDIR}/common"
+    printf '%s\n' 'resource "coder_script" "z" {}' >"${BATS_TEST_TMPDIR}/tpl-one/main.tf"
+    for keep in "${payloads[@]}"; do
+      if [ "${keep}" != "${gone}" ]; then
+        printf '%s\n' "payload ${keep}" >"${BATS_TEST_TMPDIR}/common/${keep}"
+      fi
+    done
+    export CODER_CONTAINER=stack-coder-1
+    run --separate-stderr template_push_one tpl-fold "${BATS_TEST_TMPDIR}/tpl-one"
+    if [ "${status}" -ne 1 ]; then
+      printf 'FAIL: a common dir without %s was pushed anyway\n' "${gone}" >&2
+      return 1
+    fi
+    if [[ ${stderr} != *"common/${gone} is missing"* ]]; then
+      printf 'FAIL: %s went unnamed; stderr:\n%s\n' "${gone}" "${stderr}" >&2
+      return 1
+    fi
+    # Exactly one name in the output, so the payloads that are present stayed
+    # unnamed without walking the list a second time.
+    [ "$(grep -c ' is missing' <<<"${stderr}")" -eq 1 ]
+    [ -z "$(stub_log docker)" ]
+    [ -z "$(stub_log coder)" ]
+  done
 }
 
 @test "template-push: template_verify_active reads the ACTIVE row and fails without one" {

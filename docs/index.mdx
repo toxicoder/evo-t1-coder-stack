@@ -1,0 +1,73 @@
+---
+title: evo-t1-coder-stack
+description: One compose stack that turns a GMKtec EVO-T1 into a self-hosted dev-workspace server — Coder, LiteLLM, IPEX-LLM Ollama, Kasm, Homepage and Hermes.
+tags: [overview, start, stack]
+---
+
+**What's on this page**
+
+- What runs on the box and which door each service answers on
+- Where to start depending on what you came to do
+- How the sidebar tabs divide the subjects
+
+**What this enables**
+
+- Getting oriented in one screen before opening a terminal
+- Reaching the page that owns a subject from one card, instead of reading four that touch it
+
+This repository brings up one Compose project on a GMKtec EVO-T1 (Intel Core Ultra 9
+285H, Arc 140T iGPU, 96 GB DDR5) and keeps it runnable by conversation, by dashboard, or
+by `bazelisk`. Everything is a Bazel target addressed as
+`bazelisk run //scripts:<stem> -- <args>`; `scripts/setup-host.sh` is the only script
+meant to run straight from a shell.
+
+The box deliberately runs **two isolated copies** of the stack: a stable one you work in
+and a dev one you break. [Two stacks on one box](https://github.com/toxicoder/evo-t1-coder-stack#two-stacks-on-one-box)
+in the README is the short version; [docs/config-updates.md](config-updates.md) covers
+what a `git pull` leaves behind.
+
+## Start here
+
+<Cards>
+  <Card
+    title="Getting started"
+    href="/getting-started/"
+    description="First boot, the order the services come up in, and what to check once Coder answers."
+  />
+  <Card
+    title="Learn the stack"
+    href="/learn/"
+    description="Templates, model routing, the workspace agent, Hermes, conventions, branching."
+  />
+  <Card
+    title="Operate the box"
+    href="/operate/"
+    description="Dashboard and desktops, config refresh, public access, troubleshooting."
+  />
+  <Card
+    title="Contribute"
+    href="/contribute/building-with-bazel/"
+    description="The Bazel targets a change runs through before it reaches main."
+  />
+</Cards>
+
+## What runs here
+
+| Service | Host port | What it is for |
+| --- | ---: | --- |
+| Homepage (+ nginx sidecar) | 80 / 443 | The landing page, and the only thing publishing it |
+| Coder | 3001 | Control plane: one container per workspace |
+| Coder agent tunnel | 3002 | The plain listener a workspace agent dials via `host.docker.internal` |
+| LiteLLM | 4000 | The single OpenAI-compatible door in front of every model |
+| IPEX-LLM Ollama | — | The Arc 140T model runtime, never published to the host |
+| Kasm | 3000 → 4443 | Streamed desktops; the wizard only on first boot |
+| Hermes | 9119 | The host assistant, LAN / Tailscale only |
+| SearXNG | 8181 | Keyless metasearch, the fallback search lane |
+
+Ollama is reachable only from inside the compose network: LiteLLM is the gateway, and it
+is the thing that carries the master key.
+
+The sidebar tabs divide the rest: **Learn** covers how the pieces work, **Operate** covers
+running the box day to day, and **Contribute** covers the gates a change runs through.
+Each subject has exactly one page, and the README links to that page rather than
+repeating it.

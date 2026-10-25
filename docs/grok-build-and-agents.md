@@ -1,18 +1,27 @@
-# Grok Build, Coder Agents, and the workspace terminal
+---
+title: Grok Build, Coder Agents, and the workspace terminal
+description: "What runs inside a workspace and in the Coder control plane: terminal profiles, the shared `~/.grok` profile, and where models come from."
+tags: [grok, agents, workspace, mcp]
+---
+
+**What's on this page**
+
+- Terminal and editor defaults, and the profile the templates seed
+- The Grok Build CLI in the golden image, and how it is pinned
+- The rendered `~/.grok/config.toml`: model aliases and role fallbacks
+- One shared profile volume per user, and what last-booted rewrites
+- The search lane and the MCP servers behind it
+- Coder Agents on the control plane and the model config it needs
+
+**What this enables**
+
+- Changing a model alias in one place and knowing which workspaces see it
+- Explaining why one workspace's `~/.grok` disagrees with another's
+- Deciding between the native search lane and the SearXNG fallback
 
 Deep reference for what runs *inside* a workspace and in the Coder control plane: the
 terminal profiles, the per-user `~/.grok` profile, where the CLI and the chat agent get
 their models, and what the stack seeds for the agent.
-
-Contents:
-
-1. [Terminal and editor defaults](#terminal-and-editor-defaults)
-2. [The Grok Build CLI in the golden image](#the-grok-build-cli-in-the-golden-image)
-3. [The rendered `~/.grok` config](#the-rendered-grok-config)
-4. [Grok Build state: one shared profile per user](#grok-build-state-one-shared-profile-per-user)
-5. [Search lane and MCP servers](#search-lane-and-mcp-servers)
-6. [Coder Agents (control-plane)](#coder-agents-control-plane)
-7. [The delegation sketch](#the-delegation-sketch)
 
 Related: [coder-templates.md](coder-templates.md) (the template files themselves),
 [litellm-routing.md](litellm-routing.md) (what the aliases route to), and
@@ -141,8 +150,29 @@ in `shared` mode**.
 
 ### What is shared
 
-In `shared` mode: `config.toml`, `skills/`, `memory-v2/`, `sessions/`, and a CLI you
+In `shared` mode: `config.toml`, `skills/`, `memory-v2/`, `sessions/`, `notes/` (the
+canonical copy of each repository's private scratch `notes.md`), and a CLI you
 installed yourself under `~/.grok/bin`.
+
+`notes/<host>/<owner>/<repo>/notes.md` is keyed per git remote, so every clone a
+workspace holds — the primary and each additional repository — has its own file. What you
+edit is the regular file at the clone root: that is what the editor, the terminal and a
+nested dev container all see, since the inner container mounts the clone bind and has
+its own `~/.grok`. The startup script copies that file here on every start and restores
+it when a recreate leaves the clone without one. `grok_profile_mode=private` mounts no
+shared volume, so those notes die with that workspace; `shared` is the default. Like
+`config.toml`, the last workspace started for a given user and repository wins.
+
+Two things about that start are worth knowing before you go looking for a vanished
+setting. Boot **writes `git config --global core.excludesFile`** — but only when you
+have not set it yourself. Left unset it points at `~/.grok/notes/exclude`, which lists
+`notes.md` and `.scratch-notes.md`, so from then on *every* git repository in that
+workspace ignores both names at any depth; if you already set the option, those two
+lines are appended to the file it names and nothing else about it is touched. Boot also
+drops the same two lines into each clone's own `.git/info/exclude`, which is the layer
+that works even with no global config at all. And when a repository tracks a `notes.md`
+of its own, the scratch file is written as `.scratch-notes.md` beside it instead — your
+clone is never asked to delete somebody else's committed file.
 
 ### Caveats, honestly
 

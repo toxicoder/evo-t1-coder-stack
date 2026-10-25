@@ -1,0 +1,164 @@
+"""Package purpose: Fumadocs (Next.js App Router) documentation site — npm runners, typecheck and the unit gates.
+
+The site renders the markdown/MDX content in the sibling `docs/` package, so the content
+data dependencies below come from `//docs:content`. Keeping content out of this package
+means the pages stay at the paths the README and the published aliases link to.
+
+The gates here are npm-backed and therefore `manual`: they need a real `node_modules`,
+which `//:test-fast` does not install. CI runs them in the `docs` job of
+`.github/workflows/ci.yml`; `//:validate` and `//:test-fast` stay hermetic.
+
+Usage:
+  bazelisk run //docs-site:install       # npm ci from the pinned lockfile
+  bazelisk run //docs-site:dev           # dev server (hot reload)
+  bazelisk run //docs-site:build         # static export into docs-site/out/
+  bazelisk run //docs-site:build-latest  # export with the /latest basePath
+  bazelisk run //docs-site:typecheck     # next typegen + tsc --noEmit
+  bazelisk test //docs-site:unit         # Vitest suite (widgets, transforms, page contract)
+  bazelisk test //docs-site:nav_test     # the nav generator's own tests
+  bazelisk run //docs-site:build && bazelisk test //docs-site:verify  # verify reads docs-site/out/
+  bazelisk run //docs-site:npm -- <args> # escape hatch
+"""
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:private"])
+
+_NPM_DATA = [
+    ":sources",
+    "//docs:content",
+]
+
+filegroup(
+    name = "sources",
+    srcs = glob(
+        [
+            "app/**",
+            "components/**",
+            "lib/**",
+            "scripts/**",
+            "tests/**",
+            "next.config.ts",
+            "package.json",
+            "package-lock.json",
+            "pages-root-index.html",
+            "postcss.config.mjs",
+            "source.config.ts",
+            "tsconfig.json",
+            "vitest.config.ts",
+            "test_*.py",
+        ],
+        allow_empty = True,
+    ) + [
+        "run_npm.sh",
+        "run_python_test.sh",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(
+    [
+        "package.json",
+        "package-lock.json",
+        "run_npm.sh",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "install",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "dev",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "build",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    visibility = ["//visibility:public"],
+)
+
+# Each published alias is its own export: DOCS_ALIAS sets Next's basePath so the asset
+# URLs carry /<repo>/<alias>/ instead of asking the GitHub Pages root for them.
+sh_binary(
+    name = "build-latest",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "serve",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    visibility = ["//visibility:public"],
+)
+
+# npm-backed checks: tagged manual so //:test-fast and //:lint stay hermetic (a sandboxed
+# test action has no node_modules and must not reach the network for one).
+sh_test(
+    name = "typecheck",
+    size = "medium",
+    timeout = "moderate",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "unit",
+    size = "medium",
+    timeout = "moderate",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+sh_test(
+    name = "verify",
+    size = "medium",
+    timeout = "moderate",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# The nav generator writes the tree the sidebar imports; its tests cover the drift check
+# and the on-disk page validation that //docs-site:nav_test gates.
+sh_test(
+    name = "nav_test",
+    size = "small",
+    srcs = ["run_python_test.sh"],
+    data = _NPM_DATA,
+    tags = ["no-sandbox"],
+    visibility = ["//visibility:public"],
+)
+
+# Generic escape hatch: bazelisk run //docs-site:npm -- ci --force
+sh_binary(
+    name = "npm",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    visibility = ["//visibility:public"],
+)

@@ -1,4 +1,20 @@
-# Building with Bazel
+---
+title: Building with Bazel
+description: Bazelisk as the ingress for tests, lint and the operator CLIs, and what the runfiles layout means for a script you just added.
+tags: [bazel, build, contributing]
+---
+
+**What's on this page**
+
+- Host bootstrap: the one script run straight from a shell
+- The daily commands, and the Makefile shim over them
+- What Bazel brings over running the scripts directly
+- Script targets, runfiles, and why a new `scripts/*.sh` is a target automatically
+
+**What this enables**
+
+- Running any operator CLI from a foreign working directory with pinned inputs
+- Adding a script without editing a BUILD file
 
 Bazelisk is how this repo runs tests, lint, and the operator CLIs. The Makefile targets call
 the same commands. [test-with-bazel.md](test-with-bazel.md) covers the Bats harness;

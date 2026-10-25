@@ -1,0 +1,73 @@
+"""Package purpose: Documentation content — the MDX/markdown pages the Fumadocs site in docs-site/ renders, plus the Bazel entry points that drive it.
+
+The site itself is the Next.js app in `docs-site/` (that package owns the npm runners).
+This package owns the *content*: the pages under `docs/`, the `includes/` the remark
+plugins read, and `manage-docs.sh`, which is what `bazelisk run //docs:*` executes.
+
+Content stays here rather than moving into `docs-site/` so the paths the README links to,
+the published Pages aliases point at, and reviewers diff all stay the paths they always
+were.
+
+Usage:
+  bazelisk run //docs:serve          # dev server with hot reload
+  bazelisk run //docs:docs           # static export into docs-site/out/
+  bazelisk run //docs:preview        # build + serve the export (final check)
+  bazelisk run //docs:status         # toolchain / content status
+  bazelisk run //docs:clean          # drop out/, .next/ and .source/
+"""
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:private"])
+
+# Everything the Next.js app reads out of this directory at build time. `includes/**` is
+# content input (the glossary definitions), not pages, and is excluded from the source.
+filegroup(
+    name = "content",
+    srcs = glob(
+        [
+            "**/*.md",
+            "**/*.mdx",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# The Bats suite for manage-docs.sh reads the script by path, so it travels on its own too.
+exports_files(
+    ["manage-docs.sh"],
+    visibility = [
+        "//lints:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
+
+_DOCS_COMMON_DATA = [
+    ":content",
+    "//docs-site:sources",
+]
+
+# One target per manage-docs.sh subcommand; `docs` keeps the historical name for the build.
+_DOCS_SUBCOMMANDS = {
+    "serve": "serve",
+    "docs": "build",
+    "preview": "preview",
+    "verify": "verify",
+    "typecheck": "typecheck",
+    "test": "test",
+    "nav": "nav",
+    "status": "status",
+    "clean": "clean",
+}
+
+[
+    sh_binary(
+        name = name,
+        srcs = ["manage-docs.sh"],
+        args = [command],
+        data = _DOCS_COMMON_DATA,
+        visibility = ["//visibility:public"],
+    )
+    for name, command in _DOCS_SUBCOMMANDS.items()
+]

@@ -157,6 +157,11 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))' "${tpl_dir}/main.tf"
     [ "${status}" -eq 0 ]
+    # Same single-copy rule for the per-repo notes library: a twin that lost
+    # this feed fails the push outright, because templatefile() rejects the
+    # now-undefined ${notes_setup} interpolation while rendering the script.
+    run grep -F 'notes_setup = file("${path.module}/notes-setup.sh")' "${tpl_dir}/main.tf"
+    [ "${status}" -eq 0 ]
   done
 }
 

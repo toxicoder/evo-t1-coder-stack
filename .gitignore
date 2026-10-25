@@ -1,5 +1,8 @@
 # Secrets / local state — never commit
 .env
+# Per-repo scratch notes the workspace startup materializes at this clone's root
+# (anchored: a notes.md under docs/ or anywhere else stays visible)
+/notes.md
 # Optional per-host Coder external-auth overrides (GitHub OAuth client secret
 # lives here when the broker is enabled); compose mounts it into the coder
 # container only if it exists.
@@ -33,3 +36,14 @@ Thumbs.db
 # Bazel
 /bazel-*
 MODULE.bazel.lock.old
+
+# Docs site: package-lock.json is tracked, everything else here is generated.
+docs-site/out/
+docs-site/.next/
+docs-site/.source/
+docs-site/node_modules/
+docs-site/next-env.d.ts
+docs-site/tsconfig.tsbuildinfo
+__pycache__/
+# Assembly directory a local replay of the deploy job leaves behind.
+/_site/

@@ -33,7 +33,11 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
   of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, or the
   `"__evoT1Stack": true` key) is stack-owned: change the seed in this repo and
-  re-materialize it, never the copy that lives in a workspace.
+  re-materialize it, never the copy that lives in a workspace. `~/.grok/notes-setup.sh`
+  and `~/.grok/notes/` (the canonical per-repo scratch `notes.md`) are both stack-owned
+  and rewritten on every start; that start also sets `core.excludesFile` to
+  `~/.grok/notes/exclude` when you never set it, which is why `notes.md` and
+  `.scratch-notes.md` are ignored in every repo here.
 - Bazel behaves the same here, so `//:test-fast`, `//:lint` and
   `bazelisk run //scripts:<stem>` all still run.
 
@@ -59,7 +63,7 @@ Done means `//:test-fast` + lint green. Stack changes must be verified on the de
 
 ## Structure
 - `scripts/*.sh` — operator CLIs; `scripts/lib/*.sh` — sourced helpers (do not copy log/die helpers).
-- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline) and `vscode-alt.svg` (the editor icon), each staged by the push plumbing beside the staged `main.tf` and read there with `file()` / `filebase64()`; pushing without either fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
+- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline), `vscode-alt.svg` (the editor icon) and `notes-setup.sh` (the library the startup scripts inline, source, and call per clone for its private `notes.md`), each staged by the push plumbing beside the staged `main.tf` and read there with `file()` / `filebase64()`; pushing without any one of them fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
 - `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, and `hermes/config.yaml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
