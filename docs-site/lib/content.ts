@@ -16,7 +16,7 @@ import { metaSchema, pageSchema } from "fumadocs-core/source/schema";
  * tags would silently disappear from the search index.
  */
 export const docSchema = pageSchema.extend({
-  tags: z.union([z.string(), z.array(z.string())]).optional()
+  tags: z.array(z.string()).optional()
 });
 
 /**

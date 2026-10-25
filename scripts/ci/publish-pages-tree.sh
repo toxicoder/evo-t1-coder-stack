@@ -4,9 +4,9 @@
 #
 # The deploy job assembles the site into _site/ (root index.html, .nojekyll and one
 # alias directory) and this script publishes it from a throwaway git worktree. The
-# worktree is the point: Next.js rewrites the tracked docs-site/next-env.d.ts during
-# `next build`, so checking gh-pages out in that same source tree would abort on the
-# dirty path, and a worktree also keeps the source checkout on its own branch.
+# worktree is the point: publishing replaces an entire branch tree, and checking
+# gh-pages out inside the source checkout would move the branch the operator is
+# standing on and mix its work with the published files.
 #
 # One alias is built per run, so every other alias directory has to survive from the
 # previous tree. That is what the gh-pages .gitignore is for: it ignores everything at

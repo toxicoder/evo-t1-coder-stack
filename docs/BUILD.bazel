@@ -34,6 +34,15 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The Bats suite for manage-docs.sh reads the script by path, so it travels on its own too.
+exports_files(
+    ["manage-docs.sh"],
+    visibility = [
+        "//lints:__pkg__",
+        "//tests:__pkg__",
+    ],
+)
+
 _DOCS_COMMON_DATA = [
     ":content",
     "//docs-site:sources",

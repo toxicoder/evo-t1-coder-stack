@@ -7,8 +7,8 @@ import { BRAND, SITE_NAME } from "@/lib/site";
 /**
  * Lowercase brand wordmark with the project name as the docs subtitle.
  *
- * MkDocs rendered the site name as the header title; the brand voice replaces it and the
- * project name moves to the secondary line, which is how the Voltage brand sheet pairs them.
+ * The brand leads and the repository name sits under it, which is the pairing the header
+ * has room for once the nav title is a component rather than a string.
  */
 export function Wordmark({ className }: { className?: string }) {
   return (

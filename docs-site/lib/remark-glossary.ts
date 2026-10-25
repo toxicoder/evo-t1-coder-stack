@@ -1,10 +1,9 @@
 /**
- * Port of the MkDocs `abbr` extension plus its auto-appended definitions file.
+ * Wrap known abbreviations in a hover tooltip.
  *
- * MkDocs read `docs/includes/abbreviations.md` (`*[TERM]: definition` lines) through
- * `pymdownx.snippets` and wrapped each known term in a Material tooltip.  Doing the same as
- * a remark transformer keeps every content page free of the markup: the term stays plain
- * text in the source and becomes a `<GlossaryTerm>` (rendered as `<abbr>`) at build time.
+ * Terms and definitions live in `docs/includes/abbreviations.md` as `*[TERM]: definition`
+ * lines, so a page stays plain markdown: each known term becomes a `<GlossaryTerm>`
+ * (rendered as `<abbr>`) at build time instead of carrying tooltip markup by hand.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -68,29 +67,24 @@ function loadDefinitions(): Map<string, string> {
   return cache;
 }
 
-/** Terms ordered longest-first so `Open WebUI` wins over a shorter overlapping term. */
+/** Terms ordered longest-first, so a multi-word term wins over a shorter one it contains. */
 function sortedTerms(definitions: Map<string, string>): string[] {
   return [...definitions.keys()].sort((a, b) => b.length - a.length || a.localeCompare(b));
 }
 
-/** Regex metacharacters that have to be escaped before terms are joined into an alternation. */
-const REGEX_METACHARACTERS = new Set([".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]"]);
-
 /**
  * Build the alternation used to find candidate terms in one pass.
  *
- * @param terms Terms to match, case-sensitively, as MkDocs' `abbr` does.
+ * @param terms Terms to match case-sensitively, longest first.
  */
 function buildMatcher(terms: string[]): RegExp | undefined {
   if (terms.length === 0) return undefined;
-  const escaped = terms.map((term) =>
-    [...term].map((char) => (REGEX_METACHARACTERS.has(char) ? `\\${char}` : char)).join("")
-  );
+  const escaped = terms.map((term) => term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   return new RegExp(`(?<![\\w.-])(${escaped.join("|")})(?![\\w])`, "g");
 }
 
 /** Element types whose text is not a candidate for abbreviation. */
-const SKIPPED_PARENTS = new Set(["link", "heading", "inlineCode", "abbr"]);
+const SKIPPED_PARENTS = new Set(["link", "heading", "inlineCode"]);
 
 /** JSX names that already carry a glossary tooltip. */
 const SKIPPED_JSX_NAMES = new Set(["abbr", "GlossaryTerm"]);
@@ -98,8 +92,8 @@ const SKIPPED_JSX_NAMES = new Set(["abbr", "GlossaryTerm"]);
 /**
  * Whether a text node's parent is already a glossary tooltip or another skipped container.
  *
- * Injected nodes are `mdxJsxTextElement` with `name: "abbr"`, not `type: "abbr"`. Without
- * that check, `visit` walks into the new element's text child and wraps it again.
+ * An injected tooltip is an `mdxJsxTextElement` named `GlossaryTerm`, so the name check is
+ * what stops `visit` from walking into the new element's text child and wrapping it again.
  *
  * @param parent The unist parent of a text node.
  * @returns True when the text must be left alone.
@@ -136,11 +130,7 @@ export function remarkGlossaryTooltips() {
       if (shouldSkipGlossaryParent(parent)) return;
 
       const text = String((node as { value?: string }).value ?? "");
-      if (text.length === 0 || !matcher.test(text)) {
-        matcher.lastIndex = 0;
-        return;
-      }
-      matcher.lastIndex = 0;
+      if (text.length === 0) return;
 
       const children: unknown[] = [];
       let cursor = 0;

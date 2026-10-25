@@ -32,7 +32,7 @@ export function generateStaticParams() {
 
 const tree = buildPageTree(source);
 
-/** "Edit this page" target, honouring the branch-aware `edit_uri` of the old theme. */
+/** Source link for a page: the copy on the branch this export was built from. */
 function editUrl(path: string): string {
   return repoFileUrl(`docs/${path}`);
 }

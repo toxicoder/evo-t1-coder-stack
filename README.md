@@ -52,6 +52,10 @@ and kept in `docs/` beside this file:
 [troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
 what reading it lets you do.
 
+That address only serves once the repository's **Settings → Pages → Source** is set to
+`gh-pages` (root `/`) — a one-time flip, since the first successful *Deploy
+Documentation* run is what creates the branch.
+
 ## Hardware
 
 Target machine: **GMKtec EVO-T1**

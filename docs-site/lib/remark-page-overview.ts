@@ -8,7 +8,7 @@
  */
 
 const ON_PAGE = /^What's on this page$/u;
-const ENABLES = /^What this enables(?:\s*\/\s*practical use)?$/u;
+const ENABLES = /^What this enables$/u;
 
 /** Loose mdast/JSX node the transformer reads and writes. */
 interface Node {
@@ -108,7 +108,7 @@ function panel(onPageTitle: string, onPageList: Node, enablesTitle: string, enab
  * Wrap the first root-level overview pair in `<PageOverview>`.
  *
  * Nested copies (inside list items) and later examples on the same page are left
- * untouched.  A missing pair is a no-op so generated reference pages stay as they are.
+ * untouched; a page without the pair renders as written.
  *
  * @returns A remark transformer.
  */

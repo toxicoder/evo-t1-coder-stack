@@ -1,17 +1,18 @@
 /**
- * Sidebar and tab structure, transcribed from the information architecture the site shipped
- * with before the migration.
+ * Sidebar and tab structure for the documentation site.
  *
- * MkDocs declared the whole navigation in `mkdocs.yml` under `nav:`; `scripts/gen_nav.py`
- * transcribed it verbatim into `lib/nav.json` (checked in, and CI-checked for drift with
- * `--check`).  The tree is built here rather than inferred from the filesystem because most
- * pages sit flat in `docs/` while belonging to different top-level tabs, which a
- * directory-derived tree cannot express.
+ * The tree is declared in `scripts/gen_nav.py` and written to `lib/nav.json` (checked in,
+ * and drift-checked with `--check`).  It is declared rather than inferred from the
+ * filesystem because most pages sit flat in `docs/` while belonging to different top-level
+ * tabs, which a directory-derived tree cannot express, and because the reading order the
+ * prev/next footer needs is an editorial decision.
  */
 
 import type { Folder, Item, Node, Root } from "fumadocs-core/page-tree";
 import type { ReactNode } from "react";
 import type { LoaderOutput } from "fumadocs-core/source";
+
+import { withoutExtension } from "./href";
 
 /**
  * The slice of the content loader the navigation needs.
@@ -24,15 +25,15 @@ export type NavSource = Pick<LoaderOutput, "getPages">;
 
 import navData from "./nav.json";
 
-/** One entry of the transcribed navigation. */
+/** One entry of the declared navigation. */
 interface NavPage {
-  /** Label shown in the sidebar, exactly as MkDocs rendered it. */
+  /** Label shown in the sidebar. */
   title: string;
   /** Path of the page relative to `docs/`, e.g. `operate/dashboard.md`. */
   path: string;
 }
 
-/** One top-level tab of the transcribed navigation. */
+/** One top-level tab of the declared navigation. */
 interface NavTab {
   title: string;
   pages: NavPage[];
@@ -50,7 +51,7 @@ const NAV = navData as NavTab[];
  * @returns A page node whose URL matches the route the page is served from.
  */
 function toItem(source: NavSource, tabTitle: string, path: string, title: string): Item {
-  const page = source.getPages().find((candidate) => stripExtension(candidate.path) === stripExtension(path));
+  const page = source.getPages().find((candidate) => withoutExtension(candidate.path) === withoutExtension(path));
   if (!page) {
     throw new Error(
       `navigation references a page that is not in the content source: ${path} (tab "${tabTitle}")`
@@ -59,17 +60,11 @@ function toItem(source: NavSource, tabTitle: string, path: string, title: string
   return { $id: `page:${path}`, type: "page", name: title, url: page.url, $ref: page.path };
 }
 
-/** Drop the directory suffix so `foo.md` and `foo.mdx` compare equal. */
-function stripExtension(path: string): string {
-  return path.replace(/\.(?:md|mdx)$/, "");
-}
-
 /**
  * Build the page tree the docs layout renders.
  *
  * Every tab becomes a root folder, which is what makes it appear in the tab strip while the
- * sidebar shows only the pages of the tab the reader is currently in — the behaviour the
- * Material theme produced with `navigation.tabs`.
+ * sidebar shows only the pages of the tab the reader is currently in.
  *
  * @param source Content loader to resolve page URLs against.
  * @returns The root node for `DocsLayout`.
@@ -86,24 +81,23 @@ export function buildPageTree(source: NavSource): Root {
       children: pages
     };
     const first = pages[0];
-    // A tab whose first page is an overview gets it as the folder index, matching the
-    // `index.md` pages MkDocs linked the tab title to.
-    if (first && /(^|\/)index$/.test(stripExtension(tab.pages[0]!.path))) folder.index = first;
+    // A tab whose first page is its overview gets it as the folder index, so the tab label
+    // itself lands on the section page.
+    if (first && /(^|\/)index$/.test(withoutExtension(tab.pages[0]!.path))) folder.index = first;
     return folder;
   });
 
   return { $id: "root", type: "root", name: "Documentation", children };
 }
 
-/** Paths of every page in the navigation, in tab order, for the parity gate. */
+/** Paths of every page in the navigation, in tab order; the page-contract test pins it. */
 export const NAVIGATED_PATHS: string[] = NAV.flatMap((tab) => tab.pages.map((page) => page.path));
 
 /**
  * Previous and next pages in reading order.
  *
- * The Material theme rendered a prev/next footer driven by the order pages appear in `nav:`;
- * the same order is reproduced here from the transcribed navigation so the footer links
- * behave the way they did.
+ * The footer walks the pages in the order they are declared in the navigation, so reading
+ * order follows the sidebar rather than the filesystem.
  *
  * @param source Content loader used to resolve each path to its page node.
  * @param path Path of the current page relative to `docs/`.
@@ -113,9 +107,9 @@ export function neighborsOf(
   source: NavSource,
   path: string
 ): { previous?: PageNodeEntry; next?: PageNodeEntry } {
-  const wanted = stripExtension(path);
+  const wanted = withoutExtension(path);
   const flat = NAV.flatMap((tab) => tab.pages.map((page) => ({ tab: tab.title, page })));
-  const index = flat.findIndex((entry) => stripExtension(entry.page.path) === wanted);
+  const index = flat.findIndex((entry) => withoutExtension(entry.page.path) === wanted);
   if (index === -1) return {};
   const at = (offset: number): PageNodeEntry | undefined => {
     const entry = flat[index + offset];

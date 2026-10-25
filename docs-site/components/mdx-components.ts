@@ -13,8 +13,6 @@
 import { createElement } from "react";
 import Link from "fumadocs-core/link";
 import defaultMdxComponents from "fumadocs-ui/mdx";
-import { Banner } from "fumadocs-ui/components/banner";
-import { Tab, Tabs } from "fumadocs-ui/components/tabs";
 
 import { GlossaryTerm } from "@/components/glossary-term";
 import { Mermaid } from "@/components/mermaid";
@@ -32,8 +30,8 @@ export function mdxComponentsFor(page: Page) {
   /**
    * Anchor used by links inside page content.
    *
-   * The built-in one only rewrites `./`-style hrefs; MkDocs-era content also uses bare
-   * file-relative targets (`resource-guard.md`) that have to become real routes, while
+   * The built-in one only rewrites `./`-style hrefs; the pages also use bare
+   * file-relative targets (`../public-access.md`) that have to become real routes, while
    * off-site links keep opening in a new tab.
    */
   function ContentLink(props: { href?: string } & Record<string, unknown>) {
@@ -50,9 +48,6 @@ export function mdxComponentsFor(page: Page) {
     a: ContentLink,
     abbr: GlossaryTerm,
     GlossaryTerm,
-    Banner,
-    Tab,
-    Tabs,
     Mermaid,
     PageOverview,
     PageOverviewColumn

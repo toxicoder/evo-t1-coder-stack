@@ -8,12 +8,12 @@ tags: [overview, start, stack]
 
 - What runs on the box and which door each service answers on
 - Where to start depending on what you came to do
-- Which page owns which subject, so the answer is looked up once
+- How the sidebar tabs divide the subjects
 
 **What this enables**
 
 - Getting oriented in one screen before opening a terminal
-- Finding the page that owns a subject instead of reading four that touch it
+- Reaching the page that owns a subject from one card, instead of reading four that touch it
 
 This repository brings up one Compose project on a GMKtec EVO-T1 (Intel Core Ultra 9
 285H, Arc 140T iGPU, 96 GB DDR5) and keeps it runnable by conversation, by dashboard, or
@@ -67,20 +67,7 @@ what a `git pull` leaves behind.
 Ollama is reachable only from inside the compose network: LiteLLM is the gateway, and it
 is the thing that carries the master key.
 
-## Who owns what
-
-The README keeps hardware, the shape of the network and the first-boot commands. Each
-subject below has exactly one page, and the README links to it rather than repeating it.
-
-- [Coder workspace templates](coder-templates.md) — both templates, every create-form
-  variable, the push, and DinD.
-- [LiteLLM model routing](litellm-routing.md) — the alias table and which backend answers.
-- [Grok Build, Coder Agents, and the workspace terminal](grok-build-and-agents.md) — what
-  runs inside a workspace.
-- [Hermes host assistant](hermes.md) — the assistant on the host itself.
-- [Dashboard and desktops](dashboard.md) — Homepage cards and Kasm.
-- [Public subdomains](public-access.md) — the additive public shape, and Authelia.
-- [Keeping a checkout's config current](config-updates.md) — what `update-configs` refreshes.
-- [Troubleshooting](troubleshooting.md) — symptom first, recipe second, cost last.
-- [Project conventions](project-conventions.md) and [Branching](branching.md) — the rules a
-  change has to follow before it reaches `main`.
+The sidebar tabs divide the rest: **Learn** covers how the pieces work, **Operate** covers
+running the box day to day, and **Contribute** covers the gates a change runs through.
+Each subject has exactly one page, and the README links to that page rather than
+repeating it.

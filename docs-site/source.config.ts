@@ -3,8 +3,9 @@
  *
  * `mdxOptions` here is merged into Fumadocs' built-in remark/rehype chain (the preset
  * appends these `remarkPlugins` after GFM, heading, image and code-tab handling), so the
- * MkDocs-era behaviours below are added without dropping anything the theme relies on —
- * notably `rehypeToc`, which produces the table of contents rendered by `DocsPage`.
+ * glossary tooltips and the page-overview panel below are added without dropping anything
+ * the theme relies on — notably `rehypeToc`, which produces the table of contents that
+ * `DocsPage` renders.
  */
 
 import { defineConfig } from "fumadocs-mdx/config";

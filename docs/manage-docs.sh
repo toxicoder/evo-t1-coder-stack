@@ -36,15 +36,14 @@ error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
 # @function docs_node_is_ready
 # Ensure Node and npm exist, are new enough for Next 16, and that deps are installed.
 # Globals:
-#   AUTO_SETUP_DOCS, SITE_DIR, SCRIPT_DIR
+#   SITE_DIR
 # Arguments:
-#   $1 - "install" to force an install even when node_modules looks present
+#   None
 # Outputs:
 #   Progress or the failure reason on stdout/stderr
 # Returns:
 #   0 when the toolchain can build; exits the script when it cannot
 docs_node_is_ready() {
-  local force="${1:-}"
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     error "Node.js 22+ and npm are required for the documentation site."
     error "In the devcontainer they are preinstalled; on a host: brew install node@22."
@@ -59,17 +58,12 @@ docs_node_is_ready() {
     exit 1
   fi
 
-  if [[ $force == "install" || ! -x "$SITE_DIR/node_modules/.bin/next" ]]; then
-    if [[ ${AUTO_SETUP_DOCS:-true} == "true" ]]; then
-      info "Installing documentation site dependencies (npm ci)"
-      (cd "$SITE_DIR" && npm ci --legacy-peer-deps) || {
-        error "npm ci failed in docs-site/"
-        exit 1
-      }
-    elif [[ ! -x "$SITE_DIR/node_modules/.bin/next" ]]; then
-      error "docs-site/node_modules is missing. Run: (cd docs-site && npm ci --legacy-peer-deps)"
+  if [[ ! -x "$SITE_DIR/node_modules/.bin/next" ]]; then
+    info "Installing documentation site dependencies (npm ci)"
+    (cd "$SITE_DIR" && npm ci --legacy-peer-deps) || {
+      error "npm ci failed in docs-site/"
       exit 1
-    fi
+    }
   fi
 }
 

@@ -34,13 +34,15 @@ const server = createServer(async (req, res) => {
       join(root, pathname),
       join(root, pathname, "index.html"),
     ];
-    let file = candidates.map((c) => normalize(c)).find((c) => c.startsWith(root + sep) || c === root);
+    let file;
     let body;
     for (const candidate of candidates) {
-      if (!candidate.startsWith(root)) continue;
+      // A plain prefix test would let a sibling `out-secret/` through.
+      const inside = normalize(candidate);
+      if (inside !== root && !inside.startsWith(root + sep)) continue;
       try {
-        body = await readFile(candidate);
-        file = candidate;
+        body = await readFile(inside);
+        file = inside;
         break;
       } catch {
         /* try the next candidate */

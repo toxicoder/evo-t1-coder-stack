@@ -22,8 +22,8 @@ export function mermaidRenderId(reactId: string): string {
  *
  * `remarkMdxMermaid` (registered in `source.config.ts`) rewrites `mermaid` code fences into
  * `<Mermaid chart="…" />`, so this component only has to draw the diagram.  It re-renders
- * when the colour scheme flips so diagrams follow the Voltage theme instead of staying stuck
- * on Mermaid's default palette.
+ * when the colour scheme flips so diagrams follow the site theme instead of staying stuck on
+ * Mermaid's default palette.
  */
 export function Mermaid({ chart }: { chart: string }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -40,7 +40,7 @@ export function Mermaid({ chart }: { chart: string }) {
     let cancelled = false;
 
     void (async () => {
-      const [{ default: mermaid }] = await Promise.all([import("mermaid"), Promise.resolve()]);
+      const { default: mermaid } = await import("mermaid");
       if (cancelled) return;
       mermaid.initialize({
         startOnLoad: false,

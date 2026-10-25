@@ -9,10 +9,10 @@ check_tool shfmt "https://github.com/mvdan/sh"
 cd "${ROOT}"
 
 echo "Running shfmt -d..."
-# templates/common holds the payloads the templates inline and source, so it is
-# first-party shell too. bazel_checkout_root lands on the real checkout, which is
-# where fix.sh, the templates and this payload all live.
-scan_dirs=(scripts lints tests .github templates/common)
+# templates/common holds the payloads the templates inline and source, and docs holds
+# the docs operator CLI, so both are first-party shell too. bazel_checkout_root lands
+# on the real checkout, which is where fix.sh, the templates and these payloads live.
+scan_dirs=(scripts lints tests .github templates/common docs)
 files=()
 while IFS= read -r -d '' file; do
   files+=("${file}")

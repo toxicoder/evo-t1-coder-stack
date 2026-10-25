@@ -1,5 +1,5 @@
 /**
- * Link resolution rules for content written for MkDocs.
+ * Link resolution rules for markdown written file-relative.
  *
  * Kept free of the content source (which is produced by a bundler-time macro) so the rules
  * can be exercised by unit tests.  `lib/source.ts` supplies the page lookup.
@@ -26,21 +26,20 @@ export interface HrefTarget {
 /**
  * Drop a trailing `index` segment from link candidates.
  *
- * An `index` page is published at its directory address (see `keepAuthorSlugs` in
- * `lib/source.ts`), so a link written the MkDocs way — `[Learn the lab](learn/index.md)` —
- * names a file that is never itself a route.  Retrying with the segment removed is what
- * makes those links resolve.
+ * An `index` page is published at its directory address, so
+ * `[Learn the stack](../learn/index.md)` names a file that is never itself a route.
+ * Retrying with the segment removed is what makes those links resolve.
  */
 function withoutIndexSegment(segments: string[]): string[] {
   return segments.at(-1) === "index" ? segments.slice(0, -1) : segments;
 }
 
 /**
- * Resolve an intra-docs link the way MkDocs did.
+ * Resolve an intra-docs link written file-relative.
  *
  * A link target is relative to the file it is written in and keeps its `.md` suffix:
- * `[Resource Guard](resource-guard.md)` inside `docs/operate/index.md` means
- * `docs/resource-guard.md`.  Targets are tried both file-relative and root-relative, and a
+ * `[Public access](../public-access.md)` inside `docs/operate/index.md` means
+ * `docs/public-access.md`.  Targets are tried both file-relative and root-relative, and a
  * trailing `index` is dropped because an `index` page is served at its directory address.
  *
  * @param href Raw `href` from the markdown.
@@ -59,7 +58,7 @@ export function resolveHrefWith(
   if (/^[a-z][\w+.-]*:/iu.test(target) || target.startsWith("//")) return { href, external: true };
 
   const suffix = PathUtils.splitPath(withoutExtension(target)).join("/");
-  // `joinPath` folds `..` segments away, which is exactly the MkDocs file-relative meaning.
+  // `joinPath` folds `..` segments away, which is the file-relative meaning.
   const fromPage = PathUtils.joinPath(PathUtils.dirname(page.path), suffix);
   for (const candidate of [fromPage, suffix]) {
     const segments = PathUtils.splitPath(candidate);

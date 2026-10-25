@@ -15,8 +15,8 @@ import type { HrefTarget } from "../../lib/href";
 /**
  * Page lookup standing in for the content source.
  *
- * URLs follow `keepAuthorSlugs`: the extension is gone and an `index` page is addressed by
- * its directory, which is exactly how the site publishes them.
+ * URLs carry no extension and an `index` page is addressed by its directory, which is how
+ * the loader publishes them.
  */
 const PAGES: HrefTarget[] = [
   { url: "/" },

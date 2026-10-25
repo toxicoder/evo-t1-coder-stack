@@ -16,12 +16,14 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// Node strips the types, so the checked prefix is the same basePath() the export baked in.
+import { basePath as publishedBasePath } from "../lib/site.ts";
+
 const packageRoot = dirname(fileURLToPath(import.meta.url));
 const siteRoot = resolve(packageRoot, "..");
 
 const exportRoot = resolve(siteRoot, process.argv[2] ?? "out");
-const alias = (process.env.DOCS_ALIAS ?? "").trim();
-const basePath = (process.env.NEXT_BASE_PATH ?? "").trim() || (alias ? `/evo-t1-coder-stack/${alias}` : "");
+const basePath = publishedBasePath();
 
 const problems = [];
 
@@ -31,7 +33,7 @@ function check(name, ok, detail) {
   if (!ok) problems.push(name);
 }
 
-/** Address a page publishes at, mirroring keepAuthorSlugs and trailingSlash. */
+/** Address a page publishes at: no extension, no trailing `index`, trailing slash. */
 function urlFor(path) {
   const slug = path.replace(/\.(?:md|mdx)$/iu, "");
   const segments = slug.split("/").filter((segment) => segment.length > 0 && segment !== "index");
@@ -57,7 +59,8 @@ const pages = nav.flatMap((tab) => tab.pages);
 
 check("export has a root index.html", existsSync(join(exportRoot, "index.html")));
 
-for (const page of pages) {  const url = urlFor(page.path);
+for (const page of pages) {
+  const url = urlFor(page.path);
   const htmlPath = join(exportRoot, url, "index.html");
   const html = readHtml(htmlPath);
   if (html === undefined) {

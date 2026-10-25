@@ -18,26 +18,6 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
-/** Viewport-relative box of the dotted term. */
-export interface GlossaryAnchorBox {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-}
-
-/** Measured size of the tooltip surface. */
-export interface GlossaryTooltipSize {
-  width: number;
-  height: number;
-}
-
-/** Viewport used to clamp the tooltip. */
-export interface GlossaryViewport {
-  width: number;
-  height: number;
-}
-
 const GAP = 8;
 const MARGIN = 8;
 
@@ -54,9 +34,9 @@ const MARGIN = 8;
  * @returns `top`/`left` for `position: fixed`.
  */
 export function placeGlossaryTooltip(
-  anchor: GlossaryAnchorBox,
-  tooltip: GlossaryTooltipSize,
-  viewport: GlossaryViewport,
+  anchor: { top: number; left: number; width: number; height: number },
+  tooltip: { width: number; height: number },
+  viewport: { width: number; height: number },
   gap = GAP
 ): { top: number; left: number } {
   const maxLeft = Math.max(MARGIN, viewport.width - tooltip.width - MARGIN);

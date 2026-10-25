@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Bazel entry point for the python unittest suites that live beside the docs-site sources
-# (the nav transcriber and the MkDocs->MDX codemod).
+# (currently the nav generator's).
 #
 # Usage (from a bazel run): run_python_test.sh <test_module.py> [more args]
 set -euo pipefail

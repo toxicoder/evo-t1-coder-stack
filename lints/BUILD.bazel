@@ -17,6 +17,7 @@ sh_test(
     data = [
         "check_tool.sh",
         "//:fix.sh",
+        "//docs:manage-docs.sh",
         "//scripts:doc_sources",
         "//scripts:validate.sh",
     ],
@@ -41,6 +42,7 @@ sh_test(
     data = [
         "check_tool.sh",
         "//:fix.sh",
+        "//docs:manage-docs.sh",
         "//scripts:doc_sources",
         "//scripts:validate.sh",
     ],

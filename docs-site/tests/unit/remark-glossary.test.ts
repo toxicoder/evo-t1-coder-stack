@@ -1,10 +1,9 @@
 /**
  * Tests for the glossary tooltip transformer.
  *
- * The MkDocs site auto-appended `docs/includes/abbreviations.md` and wrapped each known
- * term in a tooltip.  The port has to keep doing that, and it has to keep working when the
- * compiler's working directory is the docs package rather than the repository — which is
- * the case that silently produced zero tooltips once.
+ * The terms come from `docs/includes/abbreviations.md` and are injected at build time, so
+ * the transformer has to find that file whichever package the compiler was started from —
+ * `docs-site/` for `next dev`, the repository root for a Bazel run.
  */
 
 import { describe, expect, it } from "vitest";

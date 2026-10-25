@@ -20,16 +20,12 @@ else
   cd "$SCRIPT_DIR"
 fi
 
-# Map the bazel target name (via $0) to an npm script; sh_test passes the subcommand as $1.
-TARGET_NAME="$(basename "${0:-npm}")"
-SUBCMD="$TARGET_NAME"
+# A named sh_binary already says which script it is through $0; only the generic
+# //docs-site:npm target and a direct `bash run_npm.sh <script>` carry the name in $1.
+SUBCMD="$(basename "${0:-npm}")"
+NPM_ARGS=("$@")
 if [[ $SUBCMD == "run_npm.sh" || $SUBCMD == "npm" ]] && [[ $# -gt 0 ]]; then
   SUBCMD="$1"
-  shift
-fi
-
-# bazel run //docs-site:build invokes "build build" — drop the duplicated subcommand arg.
-if [[ $# -gt 0 && $1 == "$SUBCMD" ]]; then
   shift
 fi
 
@@ -80,15 +76,12 @@ case "$SUBCMD" in
     ensure_deps
     exec $CMD run nav:generate "$@"
     ;;
-  nav-check)
-    ensure_deps
-    exec $CMD run nav:check "$@"
-    ;;
 esac
 
-# Fallback / generic escape hatch: bazel run //docs-site:npm -- <any npm args>
-if [[ $# -gt 0 ]]; then
-  exec $CMD "$@"
+# Escape hatch: bazel run //docs-site:npm -- <any npm args>. The leading word was read as
+# SUBCMD above, so replay the vector exactly as it arrived.
+if [[ ${#NPM_ARGS[@]} -gt 0 ]]; then
+  exec $CMD "${NPM_ARGS[@]}"
 fi
 
 echo "docs-site npm runner. Common:"

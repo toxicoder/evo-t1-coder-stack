@@ -32,7 +32,7 @@ main() {
   fi
   if command -v shfmt >/dev/null 2>&1; then
     echo "   shfmt -w -s -i 2 -ci"
-    find scripts lints tests .github templates/common -name '*.sh' -type f \
+    find scripts lints tests .github templates/common docs -name '*.sh' -type f \
       ! -path '*/tool_stubs/*' ! -path '*/bazel-*/*' \
       -exec shfmt -w -s -i 2 -ci {} +
     shfmt -w -s -i 2 -ci fix.sh

@@ -13,6 +13,8 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { NAVIGATED_PATHS } from "../../lib/nav";
+
 const docsRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "docs");
 
 interface Page {
@@ -89,8 +91,10 @@ function contentLinks(body: string): string[] {
 const pages = contentPages(docsRoot).map(parse);
 
 describe("docs page contract", () => {
-  it("finds the pages the sidebar is built from", () => {
-    expect(pages.length).toBeGreaterThan(10);
+  it("navigates exactly the pages that are on disk", () => {
+    // Both directions: a file left out of NAV never reaches a reader, and a nav entry
+    // without its file fails the build. A bare count would miss either one.
+    expect(pages.map((page) => page.path).sort()).toEqual([...NAVIGATED_PATHS].sort());
   });
 
   for (const page of pages) {

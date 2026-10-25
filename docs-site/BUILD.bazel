@@ -38,7 +38,6 @@ filegroup(
             "lib/**",
             "scripts/**",
             "tests/**",
-            "next-env.d.ts",
             "next.config.ts",
             "package.json",
             "package-lock.json",
@@ -69,7 +68,6 @@ exports_files(
 sh_binary(
     name = "install",
     srcs = ["run_npm.sh"],
-    args = ["install"],
     data = _NPM_DATA,
     visibility = ["//visibility:public"],
 )
@@ -77,7 +75,6 @@ sh_binary(
 sh_binary(
     name = "dev",
     srcs = ["run_npm.sh"],
-    args = ["dev"],
     data = _NPM_DATA,
     visibility = ["//visibility:public"],
 )
@@ -85,7 +82,6 @@ sh_binary(
 sh_binary(
     name = "build",
     srcs = ["run_npm.sh"],
-    args = ["build"],
     data = _NPM_DATA,
     visibility = ["//visibility:public"],
 )
@@ -95,7 +91,6 @@ sh_binary(
 sh_binary(
     name = "build-latest",
     srcs = ["run_npm.sh"],
-    args = ["build-latest"],
     data = _NPM_DATA,
     visibility = ["//visibility:public"],
 )
@@ -103,7 +98,6 @@ sh_binary(
 sh_binary(
     name = "serve",
     srcs = ["run_npm.sh"],
-    args = ["serve"],
     data = _NPM_DATA,
     visibility = ["//visibility:public"],
 )
@@ -115,7 +109,6 @@ sh_test(
     size = "medium",
     timeout = "moderate",
     srcs = ["run_npm.sh"],
-    args = ["typecheck"],
     data = _NPM_DATA,
     tags = [
         "manual",
@@ -129,7 +122,6 @@ sh_test(
     size = "medium",
     timeout = "moderate",
     srcs = ["run_npm.sh"],
-    args = ["unit"],
     data = _NPM_DATA,
     tags = [
         "manual",
@@ -143,7 +135,6 @@ sh_test(
     size = "medium",
     timeout = "moderate",
     srcs = ["run_npm.sh"],
-    args = ["verify"],
     data = _NPM_DATA,
     tags = [
         "manual",

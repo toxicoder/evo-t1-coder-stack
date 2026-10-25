@@ -10,11 +10,10 @@ The declaration names each page by its on-disk spelling. ``validate`` accepts ei
 for a page, because a page that needed JSX is ``.mdx`` and the rest are ``.md``.
 
 Usage:
-    python3 docs-site/scripts/gen_nav.py [--check] [--print]
+    python3 docs-site/scripts/gen_nav.py [--check]
 
 Options:
     --check   Exit 1 if the committed nav.json differs from this declaration.
-    --print   Print the JSON to stdout without writing.
 """
 
 from __future__ import annotations
@@ -131,7 +130,6 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = argparse.ArgumentParser(description="Generate or verify docs-site/lib/nav.json.")
     parser.add_argument("--check", action="store_true", help="fail if the committed file is stale")
-    parser.add_argument("--print", action="store_true", dest="print_only", help="write to stdout")
     args = parser.parse_args(argv)
 
     tabs = to_tree(NAV)
@@ -142,9 +140,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     payload = serialize(tabs)
-    if args.print_only:
-        sys.stdout.write(payload)
-        return 0
 
     existing = OUT_JSON.read_text(encoding="utf-8") if OUT_JSON.is_file() else None
     if args.check:

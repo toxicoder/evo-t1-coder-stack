@@ -94,17 +94,10 @@ describe("remarkPageOverview", () => {
     expect(tree.children?.[1]?.type).toBe("paragraph");
   });
 
-  it("accepts the What this enables / practical use label variant", () => {
+  it("leaves a label the page contract does not allow unwrapped", () => {
     const tree = apply(overviewPair("What this enables / practical use"));
-    const enables = overview(tree)?.children?.[1];
-    expect(enables?.attributes).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "title",
-          value: "What this enables / practical use"
-        })
-      ])
-    );
+    expect(overview(tree)?.name).not.toBe("PageOverview");
+    expect(tree.children).toHaveLength(4);
   });
 
   it("wraps only the first pair when a later example repeats the pattern", () => {

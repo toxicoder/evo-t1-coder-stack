@@ -9,8 +9,9 @@ name: Deploy Documentation
 # bookmarked survives every later deploy.
 #
 # A root index.html forwards bare /evo-t1-coder-stack/ traffic to /latest/.
-# Publish goes through scripts/ci/publish-pages-tree.sh (a git worktree) because Next's
-# rewrite of tracked docs-site/next-env.d.ts would otherwise block the gh-pages push.
+# Publish goes through scripts/ci/publish-pages-tree.sh, which replaces the whole gh-pages
+# tree from a throwaway worktree; doing that in the source checkout would move the branch
+# the operator is standing on.
 #
 # PR docs validation (typecheck, unit, nav:check) lives in ci.yml. This workflow runs on
 # push, or by hand.
@@ -54,14 +55,6 @@ jobs:
       - name: Install docs site dependencies
         run: (cd docs-site && npm ci --legacy-peer-deps)
 
-      - name: Cache Next compile
-        uses: actions/cache@v5
-        with:
-          path: docs-site/.next/cache
-          key: next-${{ runner.os }}-${{ hashFiles('docs-site/package-lock.json', 'docs-site/next.config.ts', 'docs-site/source.config.ts') }}
-          restore-keys: |
-            next-${{ runner.os }}-
-
       - name: Resolve the alias for this ref
         id: alias
         run: |
@@ -101,6 +94,8 @@ jobs:
           rm -rf "_site/${DOCS_ALIAS}"
           mkdir -p "_site/${DOCS_ALIAS}"
           (cd docs-site && npm run build)
+          # Same DOCS_ALIAS as the build, so the asset prefix it checks is the one it wrote.
+          (cd docs-site && npm run verify -- "../_site/${DOCS_ALIAS}")
           cp -r docs-site/out/. "_site/${DOCS_ALIAS}/"
 
           touch _site/.nojekyll
@@ -117,7 +112,9 @@ jobs:
             echo "| Branch | URL |"
             echo "| --- | --- |"
             echo "| ${GITHUB_REF_NAME} | https://toxicoder.github.io/evo-t1-coder-stack/${DOCS_ALIAS}/ |"
-            echo "| latest | https://toxicoder.github.io/evo-t1-coder-stack/latest/ |"
+            if [[ "${DOCS_ALIAS}" != "latest" ]]; then
+              echo "| latest | https://toxicoder.github.io/evo-t1-coder-stack/latest/ |"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
         env:
           DOCS_ALIAS: ${{ steps.alias.outputs.alias }}
