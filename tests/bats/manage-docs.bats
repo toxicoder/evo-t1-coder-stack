@@ -59,6 +59,7 @@ STUB
 }
 
 @test "manage-docs: check_content names the missing site package piece" {
+  load_shell_function "${SCRIPT}" error
   load_shell_function "${SCRIPT}" check_content
   SITE_DIR="${SITE}"
   run --separate-stderr check_content

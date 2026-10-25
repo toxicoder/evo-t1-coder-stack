@@ -8,13 +8,24 @@
  * local `next dev` and the unprefixed export keep an empty path.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { basePath, docsAlias, gitRef, REPO } from "../../lib/site";
 
 const ENV_KEYS = ["NEXT_BASE_PATH", "DOCS_ALIAS", "GITHUB_REF_NAME", "EVO_DOCS_GIT_REF"] as const;
 
 const originalEnv: Record<string, string | undefined> = {};
+for (const key of ENV_KEYS) {
+  originalEnv[key] = process.env[key];
+}
+
+beforeEach(() => {
+  // CI pull_request sets GITHUB_REF_NAME to "<n>/merge". Clearing in afterEach
+  // then restoring originalEnv would put that value back for the next test.
+  for (const key of ENV_KEYS) {
+    delete process.env[key];
+  }
+});
 
 afterEach(() => {
   for (const key of ENV_KEYS) {
@@ -25,11 +36,6 @@ afterEach(() => {
     }
   }
 });
-
-for (const key of ENV_KEYS) {
-  originalEnv[key] = process.env[key];
-  delete process.env[key];
-}
 
 describe("basePath", () => {
   it("is empty for local dev and the unprefixed export", () => {
@@ -101,6 +107,7 @@ describe("gitRef", () => {
   it("falls back to EVO_DOCS_GIT_REF without a ref name", () => {
     process.env.DOCS_ALIAS = "feat-foo";
     process.env.EVO_DOCS_GIT_REF = "feat/foo";
+    delete process.env.GITHUB_REF_NAME;
     expect(gitRef()).toBe("feat/foo");
   });
 
