@@ -232,5 +232,5 @@
         icon: mdi-console
         href: "{{HOMEPAGE_VAR_HERMES_URL}}"
         description: On-device host assistant - Chat tab is the interactive
-          terminal with approval prompts (LAN / Tailscale only)
+          terminal with approval prompts (public name when configured, otherwise LAN)
         siteMonitor: http://hermes:9119/api/status

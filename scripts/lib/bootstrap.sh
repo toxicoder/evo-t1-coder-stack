@@ -147,6 +147,7 @@ classify_public_entry() {
     coder-* | coder.*) printf 'ok coder https://%s\n' "${entry}" ;;
     kasm-* | kasm.*) printf 'ok kasm https://%s\n' "${entry}" ;;
     litellm-* | litellm.*) printf 'ok litellm https://%s\n' "${entry}" ;;
+    hermes-* | hermes.*) printf 'ok hermes https://%s\n' "${entry}" ;;
     *) printf 'ok dashboard https://%s\n' "${entry}" ;;
   esac
 }

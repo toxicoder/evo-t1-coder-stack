@@ -33,8 +33,9 @@ search.
 Card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL` /
 `STACK_HERMES_URL`, which default to LAN URLs built from `STACK_LAN_HOST` and the
 port variables. Change a port or re-detect the LAN IP and the links follow; set
-`STACK_PUBLIC_HOSTS` and the first three follow the public names. Hermes stays on
-the LAN (`:9119`) even in public mode — see [hermes.md](hermes.md).
+`STACK_PUBLIC_HOSTS` and the cards follow the public names. The Hermes card
+follows `STACK_HERMES_URL` when bootstrap sets it, and stays on
+`http://<STACK_LAN_HOST>:9119` when that key is empty. See [hermes.md](hermes.md).
 
 ### Login
 

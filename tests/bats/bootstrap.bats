@@ -75,6 +75,8 @@ setup() {
   [ "$(classify_public_entry coder-box.example)" = "ok coder https://coder-box.example" ]
   [ "$(classify_public_entry kasm.example)" = "ok kasm https://kasm.example" ]
   [ "$(classify_public_entry litellm-box.example)" = "ok litellm https://litellm-box.example" ]
+  [ "$(classify_public_entry hermes-box.example)" = "ok hermes https://hermes-box.example" ]
+  [ "$(classify_public_entry hermes.example)" = "ok hermes https://hermes.example" ]
   [ "$(classify_public_entry box.example)" = "ok dashboard https://box.example" ]
   [ "$(classify_public_entry 'https://box.example')" = "skip url" ]
   [ "$(classify_public_entry 'bad_name')" = "skip dns" ]

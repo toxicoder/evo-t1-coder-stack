@@ -1,15 +1,15 @@
 ---
 title: Public subdomains
-description: Serving the same four services on public names over real TLS, additively, with the LAN shape left intact.
-tags: [public, tls, traefik, authelia, operate]
+description: Serving the same five services on public names over real TLS, additively, with the LAN shape left intact.
+tags: [public, tls, traefik, authelia, hermes, operate]
 ---
 
 **What's on this page**
 
 - The path a public request takes, from the browser to the container
-- The four names, and how to choose them at bootstrap time
+- The five names, and how to choose them at bootstrap time
 - What `bootstrap.sh` changes when the names are set
-- Checking the other machine, Authelia, and the two follow-ups left by hand
+- Checking the other machine (including the Hermes WebSocket), Authelia, and the two follow-ups left by hand
 
 **What this enables**
 
@@ -17,7 +17,7 @@ tags: [public, tls, traefik, authelia, operate]
 - Telling a router problem apart from an Authelia problem when a name fails
 
 The default shape is LAN-only. Setting `STACK_PUBLIC_HOSTS` additionally serves the same
-four services on public names over real TLS. It is purely additive: every LAN route
+five services on public names over real TLS. It is purely additive: every LAN route
 keeps working.
 
 ## The path a public request takes
@@ -26,25 +26,31 @@ keeps working.
 browser
   |
   v
-Traefik (the other machine) -- TLS terminates here on *.overeazy.io
+Cloudflare (orange-cloud proxy; WebSockets on by default)
+  |
+  v
+Traefik (the other LAN server) -- TLS terminates here on *.overeazy.io; Authelia middleware
   | plain HTTP, original Host header preserved
   v
 nginx `router` sidecar (this box: proxy/router.conf, published on :8080)
   | picks one upstream from the Host header
   v
-the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000)
+the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000 / hermes:9119)
 ```
 
 - TLS terminates at Traefik. The `router` sidecar holds no certificate.
-- Its whole job is picking an upstream from the Host header, and an unmatched Host
-  answers `421` rather than a guess, so a mistyped or rewritten Host fails loudly
+- Cloudflare proxies the name (orange cloud) in front of Traefik. WebSockets are on
+  there by default, which is what the Hermes Chat tab needs.
+- The router's whole job is picking an upstream from the Host header, and an unmatched
+  Host answers `421` rather than a guess, so a mistyped or rewritten Host fails loudly
   instead of landing in the wrong service. A rewritten Host matches no server block
   here, so it also arrives as `421`.
 - Kasm is the only hop that speaks TLS to its origin. `proxy_ssl_verify` is off there
-  because the certificate is the one Kasm's installer generates and reissues.
+  because the certificate is the one Kasm's installer generates and reissues. Hermes,
+  like Homepage, Coder and LiteLLM, is plain HTTP at the origin (`http://hermes:9119`).
 - Nothing in this path replaces the LAN routes: `https://<lan-ip>/` still serves the
-  dashboard on the self-signed cert, and `https://<lan-ip>:3001` still serves Coder's
-  own TLS listener.
+  dashboard on the self-signed cert, `https://<lan-ip>:3001` still serves Coder's
+  own TLS listener, and `http://<STACK_LAN_HOST>:9119` still serves Hermes.
 - A workspace **app** link (the **LiteLLM** and **Open VS Code Web** buttons) rides the
   coder row of that table. Both `coder_app` blocks set `subdomain = false`, so their
   URL keeps the `/@<owner>/<ws>.<agent>/apps/<slug>` path form and goes to `coder:3000`
@@ -55,7 +61,7 @@ the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000)
   sets on an answered request: neither header means the request stopped at Traefik or
   Cloudflare, and `421` means the Host header matched no server block here.
 
-## The four names
+## The five names
 
 | Name | `proxy/router.conf` upstream |
 |---|---|
@@ -63,10 +69,13 @@ the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000)
 | `coder-gmktecbeast.overeazy.io` | `coder:3000` - plain listener |
 | `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (`proxy_ssl_verify off`) |
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
+| `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
 
-Hermes is **not** in that list. Its dashboard stays on LAN / Tailscale `:9119` with
-HTTP basic auth; there is no `hermes-*` public name and no `proxy/router.conf`
-server block for it. Do not add one. See [hermes.md](hermes.md).
+Hermes is the same additive hop as the other four. Traefik forwards
+`http://<this-box-lan-ip>:8080` with the original Host, and the router sends that
+Host to `http://hermes:9119`. The LAN URL `http://<STACK_LAN_HOST>:9119` stays.
+HTTP basic auth on the dashboard stays too; Authelia is the extra public gate.
+See [hermes.md](hermes.md).
 
 ## Getting the naming right
 
@@ -85,7 +94,10 @@ server block for it. Do not add one. See [hermes.md](hermes.md).
 
 - `STACK_DASHBOARD_URL`, which compose feeds to `HOMEPAGE_EXTERNAL_URL` so NextAuth
   builds its redirects and Secure cookie from the public origin;
-- `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL`, the card `href`s;
+- `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL` / `STACK_HERMES_URL`,
+  the card `href`s. A `hermes-*` or `hermes.*` entry is what fills `STACK_HERMES_URL`.
+  Compose copies that value into `HERMES_DASHBOARD_PUBLIC_URL`, the Host and Origin
+  the Chat tab checks;
 - an upgraded `CODER_ACCESS_URL` (the public coder name);
 - an extended `HOMEPAGE_ALLOWED_HOSTS` - homepage validates the incoming Host against
   that exact-match list, so an unlisted name fails its host check;
@@ -93,31 +105,44 @@ server block for it. Do not add one. See [hermes.md](hermes.md).
   ones. The LAN cert keeps working; in public mode the browser never sees it, since
   Traefik presents real ones.
 
-Set the four names in `.env`, and in `dev-stack.env` too when a dev stack runs beside
-the stable one. Then re-run `bootstrap` and recreate the stack you switched. The
+Set the five names in `.env` (`STACK_PUBLIC_HOSTS`; `.env.sample` lists them, including
+`hermes-gmktecbeast.overeazy.io`), and in `dev-stack.env` too when a dev stack runs
+beside the stable one. Then re-run `bootstrap` and recreate the stack you switched. The
 commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
 
 ## Checking the other machine
 
 This repo cannot verify any of it; check it on the Traefik box.
 
-1. A router per name pointing at `http://<this-box-lan-ip>:8080`.
+1. A router per name pointing at `http://<this-box-lan-ip>:8080`, including
+   `hermes-gmktecbeast.overeazy.io`. That backend is `:8080` with the original Host,
+   the same as the other four - not `:9119`. A router aimed at `:9119` skips this
+   box's vhost.
 2. The original Host header preserved - a rewritten one comes back as `421`.
-3. Any authentication as the Traefik router's middleware. The sidecar forwards what it
-   receives and authenticates nothing, so a name whose router skips the auth middleware
-   reaches its container the same way the LAN does. The app path is behind that policy
+3. Any authentication as the Traefik router's middleware. Authelia already fronts
+   `hermes-gmktecbeast.overeazy.io` (the name 302s), the same interactive policy as
+   the homepage and Coder names. The sidecar forwards what it receives and
+   authenticates nothing, so a name whose router skips the auth middleware reaches
+   its container the same way the LAN does. The app path is behind that policy
    like the rest of its name, so an expired session surfaces there too.
-4. DNS records for all four names, each one label deep. A missing record shows up as a
-   DNS error, a rewritten Host as `421`. All four names resolve Cloudflare-proxied and
-   complete the TLS handshake, verified from this box.
+4. DNS records for all five names, each one label deep and Cloudflare-proxied (orange
+   cloud). WebSockets are on there by default. A missing record shows up as a DNS
+   error, a rewritten Host as `421`. Homepage, Coder, Kasm and LiteLLM resolve
+   that way and complete the TLS handshake, checked from this box; the Hermes
+   name is the same zone and the same proxy.
+5. WebSocket `Upgrade` forwarded by Traefik and Authelia on the Hermes router. The
+   Chat tab uses `/api/pty` and `/api/ws`, and Hermes sends a keepalive every 20
+   seconds. A proxy that drops `Upgrade` loads the page and then fails the tab.
 
 ## Authelia
 
-- `https://gmktecbeast.overeazy.io/` and the three hyphenated service names 302 to
-  `https://authelia.overeazy.io/`: those zones already have an Authelia policy in front
-  of them (checked from here; the policy itself lives on the Traefik side). Covering a
-  newly named host is an Authelia-side config choice; nothing here adds or requires a
-  policy.
+- `https://gmktecbeast.overeazy.io/`, `coder-gmktecbeast.overeazy.io`,
+  `kasm-gmktecbeast.overeazy.io` and `hermes-gmktecbeast.overeazy.io` 302 to
+  `https://authelia.overeazy.io/`. Homepage, Coder, Kasm and Hermes are interactive
+  sessions, and the Hermes policy is already in place. Covering a newly named host
+  is an Authelia-side config choice; nothing here adds or requires a policy. Hermes
+  is not an API bypass: it stays behind that interactive policy, and after Authelia
+  it asks for its own HTTP basic auth. Both prompts on the public URL are expected.
 - Put LiteLLM behind it and every client breaks: LiteLLM authenticates from the
   `Authorization` header, and header-carried API traffic cannot pass an interactive
   sign-in. Either leave `litellm-gmktecbeast` outside any policy or add an explicit

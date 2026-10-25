@@ -44,3 +44,10 @@ skills:
   # The git-tracked skills tree, bind-mounted read-only beside the checkout.
   external_dirs:
     - /opt/stack-skills
+
+dashboard:
+  # The router sidecar is not loopback, so uvicorn only honours
+  # X-Forwarded-Proto from listed peers. /0 is rejected upstream.
+  # public_url is env HERMES_DASHBOARD_PUBLIC_URL, not this file (the
+  # volume seed is copy-once).
+  trusted_proxies: ["172.16.0.0/12"]

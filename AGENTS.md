@@ -28,7 +28,8 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   there; a named container is refused with a pointer to the host shell.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
   `:3002` the Coder agent tunnel, `:8181` SearXNG, `:9119` Hermes dashboard
-  (LAN/Tailscale only; the host assistant, not a workspace agent).
+  (LAN listener; the public name rides the router on `:8080`; the host
+  assistant, not a workspace agent).
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other
   workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
   of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, or the
