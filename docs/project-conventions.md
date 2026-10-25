@@ -116,6 +116,12 @@ stages all three beside each template's staged `main.tf` copy, which is the only
 server-side Terraform can read them from, so editing the common copy changes both
 templates; a staged copy that lacks any one of them fails the push early by design.
 
+Dollar escaping differs across those two layers. A `templatefile()` `.tftpl` treats `$$`
+as an escaped `$` everywhere (`$name` or `$${name}`). An HCL heredoc in `main.tf`
+(`<<-EOT`) only escapes `$${name}` to `${name}`; a lone `$` is already literal, so
+shell arithmetic is `$((...))` with one dollar. `$$((` is two dollars, and Coder
+runs `coder_script` bodies as `bash -c`, which expands `$$` to the PID.
+
 ## Names and flags
 
 - `devcontainer` — the dev-container template (directory `templates/devcontainer`, Coder

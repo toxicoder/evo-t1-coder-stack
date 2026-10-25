@@ -75,8 +75,12 @@ setup() {
   [ "${status}" -eq 0 ]
   run grep -F 'while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do' "${DC_TF}"
   [ "${status}" -eq 0 ]
-  run grep -F 'waited=$$((waited + 1))' "${DC_TF}"
+  # HCL only escapes $${...}; $$(( is two dollars and bash -c expands $$
+  # to the PID. The increment has to be written with one dollar.
+  run grep -F 'waited=$((waited + 1))' "${DC_TF}"
   [ "${status}" -eq 0 ]
+  run grep -F 'waited=$$((waited + 1))' "${DC_TF}"
+  [ "${status}" -ne 0 ]
   # The one-path shape is what caused the dialog: with the dev-container
   # toggle on, code-server runs inside the dev container, where the host
   # /srv/coder-devcontainers/... spelling names no folder, so the URL must
