@@ -61,25 +61,29 @@ setup() {
   # positional CLI argument with --ignore-last-opened.
   run grep -F 'folder=${urlencode(local.editor_folder)}' "${DC_TF}"
   [ "${status}" -eq 0 ]
-  run grep -F 'FOLDER="${local.editor_folder}"' "${DC_TF}"
+  run grep -F 'code-server.sh.tftpl' "${DC_TF}"
   [ "${status}" -eq 0 ]
-  run grep -F -- '--ignore-last-opened "$${FOLDER}"' "${DC_TF}"
+  local cs="${REPO_ROOT}/templates/devcontainer/code-server.sh.tftpl"
+  [ -f "${cs}" ]
+  run grep -F 'FOLDER="${editor_folder}"' "${cs}"
+  [ "${status}" -eq 0 ]
+  run grep -F -- '--ignore-last-opened "$${FOLDER}"' "${cs}"
   [ "${status}" -eq 0 ]
   # The clone runs in the startup script while this script starts beside it, so
   # the folder is created first and the launch waits (at most 60 s) for the
   # clone's .git: a folder code-server cannot stat gets VS Code's "Workspace
   # does not exist" dialog instead of the repository. /home/coder stays exempt.
-  run grep -F 'mkdir -p -- "$${FOLDER}"' "${DC_TF}"
+  run grep -F 'mkdir -p -- "$${FOLDER}"' "${cs}"
   [ "${status}" -eq 0 ]
-  run grep -F 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${DC_TF}"
+  run grep -F 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${cs}"
   [ "${status}" -eq 0 ]
-  run grep -F 'while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do' "${DC_TF}"
+  run grep -F 'while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do' "${cs}"
   [ "${status}" -eq 0 ]
-  # HCL only escapes $${...}; $$(( is two dollars and bash -c expands $$
-  # to the PID. The increment has to be written with one dollar.
-  run grep -F 'waited=$((waited + 1))' "${DC_TF}"
+  # templatefile interpolates ${...}; $$(( is two dollars and bash -c expands
+  # $$ to the PID. The increment has to be written with one dollar.
+  run grep -F 'waited=$((waited + 1))' "${cs}"
   [ "${status}" -eq 0 ]
-  run grep -F 'waited=$$((waited + 1))' "${DC_TF}"
+  run grep -F 'waited=$$((waited + 1))' "${cs}"
   [ "${status}" -ne 0 ]
   # The one-path shape is what caused the dialog: with the dev-container
   # toggle on, code-server runs inside the dev container, where the host
@@ -275,16 +279,18 @@ setup() {
   done
   # The seed names the real context7 binary, baked into the golden image, so a
   # new workspace never hits the npm registry on first boot.
+  local proxy="${REPO_ROOT}/templates/common/mcp-cache-proxy.json"
+  [ -f "${proxy}" ]
+  run grep -F '"command": "/opt/npm-global/bin/context7-mcp"' "${proxy}"
+  [ "${status}" -eq 0 ]
+  if grep -Fq 'npx' "${proxy}"; then
+    printf 'leak: templates/common/mcp-cache-proxy.json launches npx\n' >&2
+    return 1
+  fi
   for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
     [[ -f "${st}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
-    run grep -F '"command": "/opt/npm-global/bin/context7-mcp"' "${st}"
+    run grep -F '${mcp_cache_proxy}' "${st}"
     [ "${status}" -eq 0 ]
-    blob="$(awk '/MCP_CACHE_PROXY_EOF/{f=!f;next} f' "${st}")"
-    [ -n "${blob}" ]
-    if grep -Fq 'npx' <<<"${blob}"; then
-      printf 'leak: the mcp-cache-proxy heredoc in %s launches npx\n' "${st}" >&2
-      return 1
-    fi
   done
 }
 
@@ -313,16 +319,17 @@ setup() {
   for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
     run grep -F "<<'MCP_CACHE_PROXY_EOF'" "${st}"
     [ "${status}" -eq 0 ]
-    run grep -Fx 'MCP_CACHE_PROXY_EOF' "${st}"
+    run grep -F '${mcp_cache_proxy}' "${st}"
     [ "${status}" -eq 0 ]
     # The script writes the file under $HOME (the coder user's own ~/.grok, so
     # a shared grok-profile volume reuses the cache); only the cache path the
-    # proxy itself opens is spelled absolutely inside the heredoc.
+    # proxy itself opens is spelled absolutely inside the payload.
     run grep -F 'cat >"$HOME/.grok/mcp-cache-proxy/config.json"' "${st}"
     [ "${status}" -eq 0 ]
-    run grep -F '/home/coder/.grok/mcp-cache-proxy/cache.db' "${st}"
-    [ "${status}" -eq 0 ]
   done
+  run grep -F '/home/coder/.grok/mcp-cache-proxy/cache.db' \
+    "${REPO_ROOT}/templates/common/mcp-cache-proxy.json"
+  [ "${status}" -eq 0 ]
 }
 
 @test "mcp gates: github, searxng and context7 default on in both twins" {

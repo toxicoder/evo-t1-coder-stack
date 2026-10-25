@@ -83,23 +83,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# shellcheck source=lib/common.sh disable=SC1091
+source "scripts/lib/common.sh"
+# No --json mode: an inherited JSON_MODE would send every line to stderr.
+unset JSON_MODE
+
 # shellcheck source=lib/coder_api.sh disable=SC1091
 source "scripts/lib/coder_api.sh"
-
-# @function die
-# Print an error on stderr and exit 1.
-# Globals:
-#   None
-# Arguments:
-#   $* - error text, without the "error: " prefix
-# Outputs:
-#   "error: ..." on stderr
-# Returns:
-#   Does not return; exits 1
-die() {
-  printf 'error: %s\n' "$*" >&2
-  exit 1
-}
 
 MODE=apply
 WAIT_SECS=0
@@ -136,32 +126,6 @@ PROBE_TIMEOUT=20
 API_TIMEOUT=20
 UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 
-# @function log
-# Print one status line. Spark scripts send it to stderr when --json is set.
-# Globals:
-#   json (Spark scripts; empty means stdout)
-# Arguments:
-#   $* - text to print
-# Outputs:
-#   The text on stdout, or stderr when json is set
-# Returns:
-#   0
-log() { printf '%s\n' "$*"; }
-# @function skip
-# Print a not-yet line and exit 0 so callers such as bootstrap keep going.
-# Globals:
-#   None
-# Arguments:
-#   $* - reason text
-# Outputs:
-#   The reason on stdout (spark-configure routes it through log)
-# Returns:
-#   Does not return; exits 0
-skip() {
-  printf '%s\n' "$*"
-  exit 0
-}
-
 # Read .env by sed rather than sourcing it (same reason as push-template.sh).
 # @function env_get
 # Read the last assignment of one key from .env without sourcing the file.
@@ -176,20 +140,6 @@ skip() {
 env_get() {
   [ -f .env ] || return 0
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true
-}
-
-# @function first_line
-# Print the first non-blank line of a block of text.
-# Globals:
-#   None
-# Arguments:
-#   $1 - text, which may be empty or all blank
-# Outputs:
-#   That line, or nothing; an all-blank input does not abort the caller
-# Returns:
-#   0
-first_line() {
-  printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | sed -n '1p' || true
 }
 
 # ── Guards ──────────────────────────────────────────────────────────────────
@@ -257,6 +207,8 @@ if [ "${MODE}" = "dry-run" ]; then
 fi
 
 # ── Mint a short-lived token (same trust model as push-template.sh) ────────
+section "Token"
+phase "mint a short-lived API token in ${DB_SERVICE}"
 log "minting a short-lived API token in ${DB_SERVICE} (up to ${PROBE_TIMEOUT}s) ..."
 command -v openssl >/dev/null 2>&1 ||
   skip "skipped: openssl is not on PATH, so no API token can be generated"
@@ -461,12 +413,14 @@ mask_secret() {
 # ${LITELLM_MASTER_KEY:-change-me-litellm}, so the proxy that is running
 # right now was booted demanding that placeholder key. Sending the empty
 # string would configure a provider the live proxy rejects on every request.
+section "AI provider"
 litellm_key="$(env_get LITELLM_MASTER_KEY)"
 if [ -z "${litellm_key}" ]; then
   litellm_key="change-me-litellm"
-  log "note: LITELLM_MASTER_KEY is empty in .env — using the compose interpolation default (rotate it in .env + this script's env override if you rotate the proxy's key)"
+  note "LITELLM_MASTER_KEY is empty in .env — using the compose interpolation default (rotate it in .env + this script's env override if you rotate the proxy's key)"
 fi
 
+phase "list AI providers at ${CONTAINER_API_URL}"
 log "listing AI providers at ${CONTAINER_API_URL} (up to ${API_TIMEOUT}s) ..."
 provider_list_rc=0
 provider_list="$(api_read "/api/v2/ai/providers")" || provider_list_rc=$?
@@ -528,6 +482,7 @@ else
     die "could not create provider ${PROVIDER_NAME} — re-run against a healthy server, or wire it by hand (Admin -> AI Providers)"
   fi
 fi
+ok "AI provider ${PROVIDER_NAME}"
 
 # ── 2. Chat model configs ───────────────────────────────────────────────────
 # Both reads and writes below go through /api/experimental; on v2.36.6 the
@@ -596,6 +551,7 @@ if [ -z "${provider_id}" ]; then
   die "provider ${PROVIDER_NAME} exists but no provider uuid could be read from the API reply"
 fi
 
+section "Chat model configs"
 if [ -n "${agent_id}" ]; then
   log "model config agent: already present (left untouched)"
 else
@@ -643,6 +599,7 @@ else
     die "the chat model config could not be created — re-run after the server is healthy"
   chat_id="$(model_config_id chat)"
 fi
+ok "chat model configs"
 
 # ── 3. Model pins for the four auxiliary lanes ──────────────────────────────
 # general/explore name the subagent types; compaction/title_generation name
@@ -688,10 +645,13 @@ if [ -z "${primary}" ]; then
   # the model pins without a target.
   die "no chat model config could be registered or found; Agents chat needs one — check the LiteLLM aliases against ${PROVIDER_URL}/v1/models"
 fi
+section "Model pins"
+phase "pin the four auxiliary lanes"
 pin_lane general "agent (tool-capable primary)" "${primary}"
 pin_lane explore "agent (tool-capable primary)" "${primary}"
 pin_lane compaction "chat (32k tool-capable fallback)" "${secondary}"
 pin_lane title_generation "chat (32k tool-capable fallback)" "${secondary}"
+ok "model pins"
 
 # ── 4. Deployment system prompt ─────────────────────────────────────────────
 # Exact-match compare (server sanitizes, our text is plain printable ASCII).
@@ -699,6 +659,8 @@ want_prompt='Coder Agents on this stack run against locally served models over t
 For multi-file or whole-module work, delegate to the Grok Build CLI (binary `grok`, also on PATH as `agent`) via a background process using the grok-build-delegation skill, then review its diff and run the project tests yourself; answer small asks directly without delegating.
 Never echo, quote, or write into files the values of $LITELLM_API_KEY, $GH_TOKEN, or $GITHUB_TOKEN found inside a workspace.'
 
+section "System prompt"
+phase "read the deployment system prompt"
 current_prompt="$(api_read "/api/experimental/chats/config/system-prompt")" ||
   die "could not read the deployment system prompt"
 if printf '%s' "${current_prompt}" | grep -qF 'grok-build-delegation skill, then review its diff'; then
@@ -711,12 +673,14 @@ else
     die "the system prompt could not be written — re-run, or paste the same text in the UI (Admin -> Experiments -> Agent Chat)"
   fi
 fi
+ok "system prompt"
 
 # ── Wrap-up ────────────────────────────────────────────────────────────────
 # Disarm before the delete so the delete runs once, deliberately.
 trap - EXIT
 psql_sql "${cleanup_sql}" >/dev/null 2>&1 ||
-  log "note: the token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
+  note "the token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
 
 log "Coder Agents wiring complete: provider ${PROVIDER_NAME}, model configs (agent default + thinking aliases + chat fallback), four model pins, system prompt."
 log "Spot-check in the UI: start an Agents chat, pick a workspace, and ask it to list files — a tool call in the reply means the loop is live."
+summary "start an Agents chat and ask it to list files"

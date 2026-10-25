@@ -27,14 +27,20 @@ load 'test_helper'
 
 REPO_ROOT=""
 TEMPLATE_TWINS=()
+CS_TFTPL_TWINS=()
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   TEMPLATE_TWINS=()
+  CS_TFTPL_TWINS=()
   local tpl
   for tpl in "${REPO_ROOT}/templates/workspace/main.tf" "${REPO_ROOT}/templates/devcontainer/main.tf"; do
     [[ -f "${tpl}" ]] || skip "template payload is not reachable from ${REPO_ROOT}"
     TEMPLATE_TWINS+=("${tpl}")
+  done
+  for tpl in "${REPO_ROOT}/templates/workspace/code-server.sh.tftpl" "${REPO_ROOT}/templates/devcontainer/code-server.sh.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "code-server payload is not reachable from ${REPO_ROOT}"
+    CS_TFTPL_TWINS+=("${tpl}")
   done
 }
 
@@ -45,17 +51,15 @@ app_block() {
   sed -n "/^resource \"coder_app\" \"$2\" {/,/^}/p" "$1"
 }
 
-# Print coder_script.code_server the way Coder's agent parses it: HCL
-# interpolates ${...} at apply, and the only string escape is $${ → ${.
-# Coder then runs that body as bash -c, so $$((waited + 1)) is two dollars
-# and expands $$ to the PID.
+# Print code-server.sh.tftpl the way templatefile + Coder's agent parse it:
+# templatefile interpolates ${editor_folder} / ${settings_b64} and the only
+# string escape is $${ → ${. Coder then runs that body as bash -c, so a
+# two-dollar $$((waited + 1)) expands $$ to the PID.
 hcl_code_server_script() {
-  awk '
-    $0 ~ /^resource "coder_script" "code_server" \{/ { in_res = 1 }
-    in_res && $0 ~ /script = <<-EOT/ { in_h = 1; next }
-    in_h && $0 ~ /^[[:space:]]*EOT[[:space:]]*$/ { exit }
-    in_h { print }
-  ' "$1" | sed 's/\$\${/${/g'
+  sed -e 's/\${editor_folder}/\/home\/coder\/workspace\/demo/g' \
+    -e 's/\${settings_b64}//g' \
+    -e 's/\$\${/${/g' \
+    "$1"
 }
 
 @test "icon: both twins build the editor icon from the common SVG copy" {
@@ -110,13 +114,16 @@ hcl_code_server_script() {
   # Coder CE injects a GitHub App whose id is "github" when coder.env is
   # absent. Hardcoding primary-github made templates push fail at activation
   # with "external auth provider primary-github is not configured".
-  local tpl
+  local tpl refresh
+  refresh="${REPO_ROOT}/templates/common/gh-token-refresh.sh.tftpl"
+  [ -f "${refresh}" ]
   for tpl in "${TEMPLATE_TWINS[@]}"; do
     grep -Fq 'id       = var.github_auth_id' "${tpl}"
     grep -Fq 'cron    = "0 0 */6 * * *"' "${tpl}"
     grep -Fq 'CODER_GITHUB_AUTH_ID = var.github_auth_id' "${tpl}"
-    grep -Fq "coder external-auth access-token '\${var.github_auth_id}'" "${tpl}"
+    grep -Fq 'gh-token-refresh.sh.tftpl' "${tpl}"
   done
+  grep -Fq "coder external-auth access-token '\${github_auth_id}'" "${refresh}"
   if grep -E 'id[[:space:]]*=[[:space:]]*"primary-github"' "${TEMPLATE_TWINS[@]}"; then
     return 1
   fi
@@ -143,7 +150,8 @@ hcl_code_server_script() {
     if printf '%s\n' "${block}" | grep -qE 'share[[:space:]]*='; then
       return 1
     fi
-    grep -Fq 'click GitHub reauth on this workspace in the Coder UI' "${tpl}"
+    grep -Fq 'click GitHub reauth on this workspace in the Coder UI' \
+      "${REPO_ROOT}/templates/common/gh-token-refresh.sh.tftpl"
   done
 }
 
@@ -183,20 +191,23 @@ hcl_code_server_script() {
   # not take it") hid that. Unset, logout, --git-protocol https, then
   # login; on failure print gh's stderr (token redacted) and the App
   # install URL.
-  local tpl
+  local tpl refresh
+  refresh="${REPO_ROOT}/templates/common/gh-token-refresh.sh.tftpl"
+  [ -f "${refresh}" ]
   for tpl in "${TEMPLATE_TWINS[@]}"; do
-    grep -Fq 'unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN' "${tpl}"
-    grep -Fq 'gh auth logout --hostname github.com' "${tpl}"
-    grep -Fq 'gh auth login --hostname github.com --git-protocol https --with-token' "${tpl}"
-    grep -Fq 'gh auth setup-git' "${tpl}"
-    grep -Fq 'gh would not store the minted GitHub token' "${tpl}"
-    grep -Fq 'GH_TOKEN= GITHUB_TOKEN= gh auth status' "${tpl}"
-    grep -Fq 'click Install GitHub App on this workspace' "${tpl}"
-    if grep -Fq 'the minted token is valid but gh would not take it' "${tpl}"; then
-      echo "${tpl} still swallows gh auth login stderr" >&2
-      return 1
-    fi
+    grep -Fq 'gh-token-refresh.sh.tftpl' "${tpl}"
   done
+  grep -Fq 'unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN' "${refresh}"
+  grep -Fq 'gh auth logout --hostname github.com' "${refresh}"
+  grep -Fq 'gh auth login --hostname github.com --git-protocol https --with-token' "${refresh}"
+  grep -Fq 'gh auth setup-git' "${refresh}"
+  grep -Fq 'gh would not store the minted GitHub token' "${refresh}"
+  grep -Fq 'GH_TOKEN= GITHUB_TOKEN= gh auth status' "${refresh}"
+  grep -Fq 'click Install GitHub App on this workspace' "${refresh}"
+  if grep -Fq 'the minted token is valid but gh would not take it' "${refresh}"; then
+    echo "${refresh} still swallows gh auth login stderr" >&2
+    return 1
+  fi
 }
 
 @test "github: both twins default github_auth_id to Coder's injected App id" {
@@ -245,11 +256,14 @@ hcl_code_server_script() {
   # Path-based coder_app URLs drop the ?folder= query before the browser
   # sees it, and without --ignore-last-opened the last restored workspace
   # (often /home/coder) wins. The binary has to receive the folder itself.
-  local tpl ws
-  for tpl in "${TEMPLATE_TWINS[@]}"; do
-    grep -Fq 'FOLDER="${local.editor_folder}"' "${tpl}"
-    grep -Fq -- '--ignore-last-opened "$${FOLDER}"' "${tpl}"
-    grep -Fq 'folder=${urlencode(local.editor_folder)}' "${tpl}"
+  local tf cs ws
+  for tf in "${TEMPLATE_TWINS[@]}"; do
+    grep -Fq 'folder=${urlencode(local.editor_folder)}' "${tf}"
+    grep -Fq 'code-server.sh.tftpl' "${tf}"
+  done
+  for cs in "${CS_TFTPL_TWINS[@]}"; do
+    grep -Fq 'FOLDER="${editor_folder}"' "${cs}"
+    grep -Fq -- '--ignore-last-opened "$${FOLDER}"' "${cs}"
   done
   ws="${REPO_ROOT}/templates/workspace/main.tf"
   grep -Fq -- 'editor_folder = local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"' "${ws}"
@@ -266,20 +280,20 @@ hcl_code_server_script() {
   # to stay exempt: nothing clones there, so waiting on it would only delay
   # the editor by the whole timeout.
   local tpl l_folder l_mkdir l_wait l_guard l_launch
-  for tpl in "${TEMPLATE_TWINS[@]}"; do
+  for tpl in "${CS_TFTPL_TWINS[@]}"; do
     grep -Fq 'mkdir -p -- "$${FOLDER}"' "${tpl}"
     grep -Fq 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${tpl}"
     grep -Fq 'while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do' "${tpl}"
-    # HCL heredocs only escape $${...}. $$(( is two literal dollars, and
-    # Coder's agent runs this body as bash -c, which expands $$ to the PID
-    # then dies on the leftover (( : "syntax error near unexpected token '('".
+    # templatefile interpolates ${...}. $$(( is two dollars, and Coder's
+    # agent runs this body as bash -c, which expands $$ to the PID then
+    # dies on the leftover (( : "syntax error near unexpected token '('".
     grep -Fq 'waited=$((waited + 1))' "${tpl}"
     if grep -Fq 'waited=$$((waited + 1))' "${tpl}"; then
       echo "${tpl}: wait-loop increment is two HCL-literal dollars; Coder bash -c expands them to the PID" >&2
       return 1
     fi
     # Order matters as much as presence: waiting after the launch is a no-op.
-    l_folder="$(grep -n -F 'FOLDER="${local.editor_folder}"' "${tpl}" | head -n 1 | cut -d: -f1)"
+    l_folder="$(grep -n -F 'FOLDER="${editor_folder}"' "${tpl}" | head -n 1 | cut -d: -f1)"
     l_mkdir="$(grep -n -F 'mkdir -p -- "$${FOLDER}"' "${tpl}" | head -n 1 | cut -d: -f1)"
     l_wait="$(grep -n -F 'while [ ! -e "$${FOLDER}/.git" ]' "${tpl}" | head -n 1 | cut -d: -f1)"
     l_guard="$(grep -n -F 'if [ "$${FOLDER}" != "/home/coder" ]; then' "${tpl}" | head -n 1 | cut -d: -f1)"
@@ -303,7 +317,7 @@ hcl_code_server_script() {
   # HCL leaves $$(( as two dollars, and that is a syntax error on the wait
   # loop: the echo before it still prints, then bash dies on the leftover ((.
   local tpl script
-  for tpl in "${TEMPLATE_TWINS[@]}"; do
+  for tpl in "${CS_TFTPL_TWINS[@]}"; do
     script="$(hcl_code_server_script "${tpl}")"
     [ -n "${script}" ] || { echo "${tpl}: empty code-server script" >&2; return 1; }
     printf '%s\n' "${script}" | grep -Fq 'waited=$((waited + 1))' || {

@@ -44,9 +44,11 @@ Two templates live under `templates/`, and a push covers both.
 ### The `templates/common/` payloads
 
 `templates/common/` exists once instead of twice, and both templates consume it.
+`template_push_one` stages every file in this list beside the staged `main.tf`; a
+missing one fails the push before the CLI runs.
 
 - `GROK_BUILD_AGENTS.md` is the orchestration-protocol seed text the startup scripts
-  inline into every workspace's `~/.grok/AGENTS.md` (read with `file()`).
+  inline into every workspace's `~/.grok/AGENTS.md` (read with `file()`, chomped).
 - `vscode-alt.svg` is the editor icon (read with `filebase64()`). It stays small
   enough that the resulting `data:image/svg+xml;base64,...` URL fits Coder
   v2.36's `workspace_apps.icon` column (`varchar(256)`).
@@ -55,9 +57,16 @@ Two templates live under `templates/`, and a push covers both.
   `~/.grok/`, sources it, and calls `notes_materialize` per clone. That call also
   seeds the ignore entries that keep the file uncommitted; see "What is shared" in
   `docs/grok-build-and-agents.md` for what it writes into git config.
-- All three are staged by the push plumbing beside each staged `main.tf` copy, which is the
-  only place the server-side Terraform can read them from.
-- A push whose staged copy is missing any of them fails early, by design.
+- `tmux.conf`, `grok-build-terminal.sh`, and `vscode-terminal-tmux.sh` are the
+  terminal payloads the startup script writes. Helpers use `$folder` (not
+  `$${folder}`) because `file()` contents are not re-interpolated.
+- `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
+  skill and instruction seeds (chomped `file()`).
+- `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
+  writes.
+- `gh-token-refresh.sh.tftpl` is the shared GitHub-token refresh `coder_script`,
+  rendered with `templatefile()` so `${github_auth_id}` and
+  `${coder_github_app_install_url}` interpolate.
 - Editing the common copy changes both templates; the staged copy overwrites any
   same-named file the template dir still carries.
 
@@ -665,22 +674,26 @@ helpers point at a folder that was never cloned.
 
 - Neither template installs code-server through the Registry. Each `main.tf` carries an
   inlined fork (`coder_script.code_server` + `coder_app.code_server`) because that
-  upstream module hardcodes `/icon/code.svg` and has no icon input.
+  upstream module hardcodes `/icon/code.svg` and has no icon input. The script body
+  lives in a sibling `code-server.sh.tftpl` and is rendered with `templatefile()`
+  (workspace: `{ editor_folder = local.editor_folder }`; devcontainer: that plus
+  `settings_b64`). Do not wrap that `templatefile()` in `chomp()`.
 - The `workspace` fork installs code-server **only when it is missing** from
   `/home/coder/.local/share/code-server`, and starts it with
   `--auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened <folder>`,
   passing no settings payload. Before that launch it `mkdir -p`s the folder and, when
   the folder is not `/home/coder`, waits up to 60 s for `<folder>/.git` so a first-start
   clone and the editor no longer race. That wait loop increments with
-  `waited=$((waited + 1))` (one dollar): HCL heredocs only escape `$${...}`, and
-  Coder runs the body as `bash -c`, so `$$((` would expand `$$` to the PID. `coder_agent.dir` stays unset: the agent would
+  `waited=$((waited + 1))` (one dollar) inside the tftpl: `templatefile()` interpolates
+  `${…}` and leaves `$((` alone. `$$((` would expand `$$` to the PID. `coder_agent.dir` stays unset: the agent would
   chdir there before `startup.sh`, and a missing clone folder would fail the agent. The
   editor's settings live on the per-owner `vscode-settings-<owner-id>` volume seed, not
   in a per-start merge.
 - The `devcontainer` fork has no persistent prefix to reuse - both toggle modes rebuild
   the container that hosts the editor - so it installs fresh under `/tmp/code-server` on
-  every start, and bakes the settings seed as base64 into the dev container's private
-  User settings copy.
+  every start, and bakes the settings seed as base64 into `settings_b64` (empty when the
+  toggle is off, so the shell skips the merge). The DinD wait lives in
+  `templates/devcontainer/dind-bootstrap.sh.tftpl`.
 - Both twins' `coder_app` opens on `http://localhost:13337/?folder=<urlencoded>`. The
   `coder_app` resource in `coder/coder` `~> 2.18` has no `folder` argument, so the
   folder rides in the URL, in the Web Terminal's `command`, and as a positional

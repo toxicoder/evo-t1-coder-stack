@@ -155,9 +155,14 @@ setup() {
 
 @test "settings: devcontainer merges the seed only while the dev container is on" {
   local main="${REPO_ROOT}/templates/devcontainer/main.tf"
-  # The seed rides in the fork script's SETTINGS_B64 line, empty (so the
-  # shell skips the whole seed/merge block) when the toggle is off.
-  run grep -F -- '${local.use_dc ? base64encode(jsonencode(local.vscode_module_settings)) : ""}' "${main}"
+  local cs="${REPO_ROOT}/templates/devcontainer/code-server.sh.tftpl"
+  # The seed rides in templatefile's settings_b64, empty (so the shell
+  # skips the whole seed/merge block) when the toggle is off.
+  run grep -F 'settings_b64' "${main}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'base64encode(jsonencode(local.vscode_module_settings))' "${main}"
+  [ "${status}" -eq 0 ]
+  run grep -F "SETTINGS_B64='\${settings_b64}'" "${cs}"
   [ "${status}" -eq 0 ]
   run grep -F 'machine_settings' "${main}"
   [ "${status}" -ne 0 ]

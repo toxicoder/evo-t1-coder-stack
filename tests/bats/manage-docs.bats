@@ -28,9 +28,10 @@ setup() {
   [[ -f "${SCRIPT}" ]] || skip "manage-docs.sh is not reachable from ${REPO_ROOT}"
   REPO="${BATS_TEST_TMPDIR}/repo"
   SITE="${REPO}/docs-site"
-  mkdir -p "${REPO}/docs" "${SITE}/lib" "${SITE}/node_modules/.bin" "${BATS_TEST_TMPDIR}/bin"
+  mkdir -p "${REPO}/docs" "${SITE}/lib" "${SITE}/node_modules/.bin" "${BATS_TEST_TMPDIR}/bin" "${REPO}/scripts/lib"
   cp "${SCRIPT}" "${REPO}/docs/manage-docs.sh"
   chmod +x "${REPO}/docs/manage-docs.sh"
+  cp "${REPO_ROOT}/scripts/lib/common.sh" "${REPO}/scripts/lib/common.sh"
   NPM_LOG="${BATS_TEST_TMPDIR}/npm.log"
 }
 
@@ -59,7 +60,9 @@ STUB
 }
 
 @test "manage-docs: check_content names the missing site package piece" {
-  load_shell_function "${SCRIPT}" error
+  # extract_fn loads one function. check_content calls die, and die calls err.
+  load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" err
+  load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" die
   load_shell_function "${SCRIPT}" check_content
   SITE_DIR="${SITE}"
   run --separate-stderr check_content

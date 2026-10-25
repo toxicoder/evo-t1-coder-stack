@@ -72,6 +72,8 @@ source "${SELF_DIR}/lib/common.sh"
 source "${SELF_DIR}/lib/config_seed.sh"
 # shellcheck source=lib/host_state.sh disable=SC1091
 source "${SELF_DIR}/lib/host_state.sh"
+# This CLI has no --json mode: a leftover JSON_MODE would send the report to stderr.
+unset JSON_MODE
 
 # STACK_SECRET_KEYS - the name fragments that mark an env key as holding a
 # credential. These are named in a report, never printed with their value.
@@ -316,11 +318,8 @@ env_set_key() {
   local file="${1:-}" key="${2:-}" value="${3:-}" stage=""
   [[ -f ${file} && -n ${key} ]] || return 1
   stage="$(mktemp "${TMPDIR:-/tmp}/evoT1Env.XXXXXX")" || return 1
-  if ! UCKEY="${key}" UCVAL="${value}" awk '
-    BEGIN { n = ENVIRON["UCKEY"]; v = ENVIRON["UCVAL"] }
-    index($0, n "=") == 1 { print n "=" v; next }
-    { print }
-  ' "${file}" >"${stage}"; then
+  if ! UCKEY="${key}" UCVAL="${value}" awk \
+    -f "${SELF_DIR}/lib/env_set_key.awk" "${file}" >"${stage}"; then
     rm -f "${stage}"
     return 1
   fi
@@ -369,12 +368,7 @@ key_comment() {
   if [[ ! -f ${file} ]]; then
     return 0
   fi
-  awk -v want="${key}" '
-    index($0, want "=") == 1 { exit }
-    /^#/ { block[++n] = $0; next }
-    /^$|^[^#]/ { n = 0 }
-    END { for (i = 1; i <= n; i++) print block[i] }
-  ' "${file}"
+  awk -v want="${key}" -f "${SELF_DIR}/lib/key_comment.awk" "${file}"
   return 0
 }
 
@@ -797,7 +791,9 @@ main() {
   fi
 
   if [[ ${mode} == "env" || ${mode} == "all" ]]; then
+    section "env"
     log "env files reconcile against the twin under ${root}"
+    phase "reconciling env files"
     if [[ -t 0 ]]; then
       host_dns_report /etc/resolv.conf github.com || true
     fi
@@ -877,10 +873,9 @@ main() {
   fi
 
   if [[ ${mode} == "workspace" || ${mode} == "all" ]]; then
-    if [[ ${mode} == "all" ]]; then
-      log ""
-    fi
+    section "workspace"
     log "workspace configs re-materialize from ${root}"
+    phase "resolving workspace targets"
     daemon_vantage
     if [[ ${#targets[@]} -eq 0 ]]; then
       if [[ -n ${CODER_WORKSPACE_ID:-} ]] || [[ ${DOCKER_HOST:-} == *dind* ]]; then
@@ -902,6 +897,7 @@ main() {
       return 0
     fi
     stage="$(mktemp -d "${TMPDIR:-/tmp}/evoT1Seed.XXXXXX")"
+    phase "reseeding workspace configs"
     for target in "${targets[@]}"; do
       case "${target}" in
         c:*)

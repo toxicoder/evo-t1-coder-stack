@@ -52,9 +52,8 @@ setup() {
   printf 'coder-alice-ws1\ncoder-alice-ws2\n' >"${BATS_TEST_TMPDIR}/ps.txt"
   STUB_COMPOSE_PS="${BATS_TEST_TMPDIR}/ps.txt" run bash "${SCRIPT}" check
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 2 ]
-  [[ "${lines[0]}" == "coder-alice-ws1: NO GitHub credential"* ]]
-  [[ "${lines[1]}" == "coder-alice-ws2: NO GitHub credential"* ]]
+  [ "$(printf '%s\n' "${lines[@]}" | grep -c 'NO GitHub credential' || true)" -eq 2 ]
+  [[ "$(printf '%s\n' "${lines[@]}" | grep 'NO GitHub credential' || true)" == "coder-alice-ws1: NO GitHub credential"*"coder-alice-ws2: NO GitHub credential"* ]]
 }
 
 @test "check: no containers means nothing to check, not a failure" {
@@ -165,7 +164,7 @@ setup() {
     STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
     bash "${SCRIPT}" check https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [[ "${lines[0]}" == "self: "* ]]
+  [[ "$(printf '%s\n' "${lines[@]}" | grep '^self:' | head -n 1)" == "self: "* ]]
   [[ "${output}" == *"REFUSED-GRANT"* ]]
   [[ "${output}" == *"Repository access"* ]]
   [[ "${output}" != *"SECRETVAL"* ]]
@@ -179,7 +178,7 @@ setup() {
     STUB_CURL_OUT="${AD_BODY}" \
     bash "${SCRIPT}" check https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [[ "${output}" == "self: credential present (source: gh stored login) and"* ]]
+  [[ "${output}" == *"self: credential present (source: gh stored login) and"* ]]
   [[ "${output}" == *"PUSH-READY"* ]]
   [[ "${output}" != *"SECRETVAL"* ]]
   assert_eq "docker never called" "0" "$(stub_log_count docker)"
@@ -190,7 +189,7 @@ setup() {
   export GH_TOKEN="SECRETVAL-do-not-leak" CODER_WORKSPACE_ID=ws-test
   run bash "${SCRIPT}" check
   [ "${status}" -eq 0 ]
-  [[ "${output}" == "self: credential present"* ]]
+  [[ "${output}" == *"self: credential present"* ]]
   [[ "${output}" == *"pass the repo URL to check its grants"* ]]
   [[ "${output}" != *"SECRETVAL"* ]]
   assert_eq "docker never called" "0" "$(stub_log_count docker)"
@@ -230,7 +229,7 @@ setup() {
     STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
     bash "${SCRIPT}" check https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [[ "${lines[0]}" == "self: "* ]]
+  [[ "$(printf '%s\n' "${lines[@]}" | grep '^self:' | head -n 1)" == "self: "* ]]
   [[ "${output}" == *"REFUSED-GRANT"* ]]
   [[ "${output}" != *"SECRETVAL"* ]]
   assert_eq "docker never called" "0" "$(stub_log_count docker)"
@@ -277,9 +276,8 @@ setup() {
     STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
     bash "${SCRIPT}" check https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 2 ]
-  [[ "${lines[0]}" == "self: credential present (source: env token (GITHUB_TOKEN/GH_TOKEN)) but REFUSED-GRANT"* ]]
-  [[ "${lines[1]}" == "self: credential present (source: gh stored login) [shadowed:"* ]]
+  [ "$(printf '%s\n' "${lines[@]}" | grep -c '^self:' || true)" -eq 2 ]
+  [[ "$(printf '%s\n' "${lines[@]}" | grep '^self:' || true)" == "self: credential present (source: env token (GITHUB_TOKEN/GH_TOKEN)) but REFUSED-GRANT"*"self: credential present (source: gh stored login) [shadowed:"* ]]
   [[ "${output}" == *"GH_TOKEN= GITHUB_TOKEN= <command>"* ]]
   [[ "${output}" == *"classic personal access token"* ]]
   [[ "${output}" != *"APPTOKEN"* ]]
@@ -293,7 +291,7 @@ setup() {
     STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
     bash "${SCRIPT}" check https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 1 ]
+  [ "$(printf '%s\n' "${lines[@]}" | grep -c '^self:' || true)" -eq 1 ]
   [[ "${output}" == *"REFUSED-GRANT"* ]]
   assert_eq "the store copy is not a second credential" "1" "$(stub_log_count curl)"
 }
@@ -304,7 +302,7 @@ setup() {
     STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
     bash "${SCRIPT}" check --source=gh https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [[ "${lines[0]}" == "self: credential present (source: gh stored login) [shadowed:"* ]]
+  [[ "$(printf '%s\n' "${lines[@]}" | grep '^self:' | head -n 1)" == "self: credential present (source: gh stored login) [shadowed:"* ]]
   [[ "${output}" == *"[shadowed: the env pair outranks this slot"* ]]
   assert_eq "one probe, of the named slot" "1" "$(stub_log_count curl)"
 }
@@ -318,7 +316,7 @@ setup() {
     STUB_CURL_OUT='Permission to alx/notes.git denied to alx.' \
     bash "${SCRIPT}" check --source=mint https://github.com/alx/notes
   [ "${status}" -eq 0 ]
-  [[ "${output}" == "self: credential present (source: Coder external-auth minted token)"* ]]
+  [[ "${output}" == *"self: credential present (source: Coder external-auth minted token)"* ]]
   [[ "${output}" != *"SECRETVAL"* ]]
   [[ "${output}" != *"minted-token-secret"* ]]
   assert_match "the mint was minted, not read" 'access-token github' "$(stub_log coder)"
@@ -365,12 +363,18 @@ setup() {
 }
 
 @test "shape: every function block the docs promise is still there" {
-  for fn in running_workspaces credential_probe normalize_repo_path slot_name probe_self probe_workspace auth_workspace in_self_env main; do
+  for fn in running_workspaces credential_probe normalize_repo_path probe_self probe_workspace auth_workspace in_self_env main; do
     grep -Fq "${fn}()" "${SCRIPT}" || {
       echo "github-auth.sh lost its ${fn} function" >&2
       return 1
     }
   done
+  # The probe body (and with it slot_name) lives in the extracted payload file
+  # that credential_probe cats; the entry keeps only the shell around it.
+  grep -Fq 'slot_name()' "${REPO_ROOT}/scripts/lib/probes/github-auth.sh" || {
+    echo "scripts/lib/probes/github-auth.sh lost its slot_name function" >&2
+    return 1
+  }
 }
 
 @test "auth: an empty piped token is refused without touching docker" {

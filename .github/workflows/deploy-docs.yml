@@ -22,6 +22,7 @@ on:
       - "docs/**"
       - "docs-site/**"
       - "scripts/ci/publish-pages-tree.sh"
+      - "scripts/ci/docs-alias.sh"
       - ".github/workflows/deploy-docs.yml"
   workflow_dispatch:
 
@@ -59,18 +60,7 @@ jobs:
         id: alias
         run: |
           set -euo pipefail
-          case "${GITHUB_REF_NAME}" in
-            main | master) alias="latest" ;;
-            *)
-              # The alias is a URL segment, so anything a branch name may legally carry
-              # that is not URL-safe collapses to a single dash.
-              alias="$(printf '%s' "${GITHUB_REF_NAME}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
-              ;;
-          esac
-          if [[ -z "${alias}" || "${alias}" == *..* ]]; then
-            echo "deploy-docs: ref ${GITHUB_REF_NAME} sanitizes to an unusable alias" >&2
-            exit 1
-          fi
+          alias="$(./scripts/ci/docs-alias.sh "${GITHUB_REF_NAME}")"
           echo "alias=${alias}" >> "${GITHUB_OUTPUT}"
           echo "Publishing ${GITHUB_REF_NAME} as /${alias}/"
 
