@@ -1,0 +1,86 @@
+[
+  {
+    "title": "Start",
+    "pages": [
+      {
+        "title": "Overview",
+        "path": "index.mdx"
+      },
+      {
+        "title": "Getting started",
+        "path": "getting-started.mdx"
+      }
+    ]
+  },
+  {
+    "title": "Learn",
+    "pages": [
+      {
+        "title": "Learn overview",
+        "path": "learn/index.md"
+      },
+      {
+        "title": "Coder workspace templates",
+        "path": "coder-templates.md"
+      },
+      {
+        "title": "LiteLLM routing",
+        "path": "litellm-routing.md"
+      },
+      {
+        "title": "Grok Build and the agents file",
+        "path": "grok-build-and-agents.md"
+      },
+      {
+        "title": "Hermes host assistant",
+        "path": "hermes.md"
+      },
+      {
+        "title": "Project conventions",
+        "path": "project-conventions.md"
+      },
+      {
+        "title": "Branching",
+        "path": "branching.md"
+      }
+    ]
+  },
+  {
+    "title": "Operate",
+    "pages": [
+      {
+        "title": "Operate overview",
+        "path": "operate/index.md"
+      },
+      {
+        "title": "Dashboard",
+        "path": "dashboard.md"
+      },
+      {
+        "title": "Config updates",
+        "path": "config-updates.md"
+      },
+      {
+        "title": "Public access",
+        "path": "public-access.md"
+      },
+      {
+        "title": "Troubleshooting",
+        "path": "troubleshooting.md"
+      }
+    ]
+  },
+  {
+    "title": "Contribute",
+    "pages": [
+      {
+        "title": "Building with Bazel",
+        "path": "contribute/building-with-bazel.md"
+      },
+      {
+        "title": "Testing with Bazel",
+        "path": "contribute/test-with-bazel.md"
+      }
+    ]
+  }
+]

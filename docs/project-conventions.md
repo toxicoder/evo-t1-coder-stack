@@ -1,4 +1,20 @@
-# Project conventions
+---
+title: Project conventions
+description: The shell, function, script, template and naming rules this repo holds itself to, and the gates that enforce them.
+tags: [conventions, shell, style, contributing]
+---
+
+**What's on this page**
+
+- The file header and the function docstring block both gates require
+- Ingress rules: what runs from a shell and what is a Bazel target
+- Script and template conventions, and the payload copies they share
+- Names, flags, and the style guide shell follows
+
+**What this enables**
+
+- Writing a script that passes `//:lint` and `//tests:doc_coverage` first try
+- Matching the house style instead of inventing a local one
 
 Shell follows the [Google Shell Style Guide](https://google.github.io/styleguide/shellguide.html).
 Branch rules live in [branching.md](branching.md); the Bazel harness lives in

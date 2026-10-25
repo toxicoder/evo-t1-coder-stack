@@ -1,4 +1,20 @@
-# Branching
+---
+title: Branching
+description: "Trunk-based branch rules: main is the only long-lived branch, work branches are short-lived, and a pull request is the only way back in."
+tags: [git, branching, ci]
+---
+
+**What's on this page**
+
+- What `main` is allowed to be, and what may not be committed to it
+- How to cut, name and delete a short-lived work branch
+- Where a hotfix branches from and where it lands first
+- What CI runs, what branch protection should require, and where secrets go
+
+**What this enables**
+
+- Naming a branch and a commit so CI and `git log` read the way the rest of the repo does
+- Knowing which green check actually gates a merge into `main`
 
 Trunk-based, GitHub-Flow shaped: one long-lived branch, short-lived work branches, and a pull
 request as the only way back into `main`.

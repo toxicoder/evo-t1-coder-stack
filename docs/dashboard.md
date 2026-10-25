@@ -1,4 +1,20 @@
-# Dashboard and desktops
+---
+title: Dashboard and desktops
+description: "The Homepage dashboard and Kasm Workspaces: what each card reads, how the password is issued, and how a desktop gets streamed."
+tags: [homepage, kasm, dashboard, operate]
+---
+
+**What's on this page**
+
+- What each dashboard card shows and which API it reads
+- The header tiles: CPU, memory, temperature, disk, interface throughput
+- The password gate, the proxy in front of it, and how to rotate the password
+- Kasm's wizard-and-UI port pair, and what resetting it destroys
+
+**What this enables**
+
+- Reading the box's health from one page without a shell
+- Fixing a card that reports down when the service itself is up
 
 Two services that read the box rather than serve code: the Homepage dashboard (the
 landing page) and Kasm Workspaces (streamed desktops).
@@ -100,6 +116,6 @@ what lets the same wallpaper render on the login page.
 - Kasm is a privileged Docker-in-Docker container and the only **always-on** privileged
   service in this stack - the other privileged container is the opt-in workspace DinD
   sidecar. Keep Kasm LAN-only unless you have decided who may reach the public name
-  (see [SECURITY.md](../SECURITY.md)).
+  (see [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md)).
 - Losing the wizard after install is expected: use `:4443`. Resetting Kasm means
   removing the `kasm-data` volume, which destroys all Kasm config.

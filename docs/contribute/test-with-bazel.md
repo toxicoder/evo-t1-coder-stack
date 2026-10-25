@@ -1,4 +1,21 @@
-# Testing with Bazel (the Bats harness)
+---
+title: Testing with Bazel (the Bats harness)
+description: "Hermetic Bats: how a suite is discovered, what the stub PATH gives you, and the two inventory gates a new function has to satisfy."
+tags: [bats, tests, bazel, contributing]
+---
+
+**What's on this page**
+
+- The layout: suites, helpers, stubs and fixtures
+- The two inventory gates that tie a production function to a test
+- Running one suite, from any directory
+- The stub-PATH recipe, and the two paths a suite may take
+- Sandbox-safe repo-root probing
+
+**What this enables**
+
+- Adding a test that passes in the Bazel sandbox and on a laptop
+- Making a new function satisfy `//tests:shell_inventory` without guessing
 
 Every suite under `tests/` is hermetic Bats: it runs against stubs and a throwaway tree,
 never against a daemon, a network, or the operator's real `.env`.

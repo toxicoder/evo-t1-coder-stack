@@ -36,3 +36,15 @@ Thumbs.db
 # Bazel
 /bazel-*
 MODULE.bazel.lock.old
+
+# Docs site: package-lock.json is tracked, everything else here is generated.
+# out/ is the static export the deploy job publishes; .source/ is written by the
+# defineDocs macro; next-env.d.ts is rewritten by `next build`, which is why the
+# Pages publisher checks gh-pages out in its own worktree.
+docs-site/out/
+docs-site/.next/
+docs-site/.source/
+docs-site/node_modules/
+docs-site/next-env.d.ts
+docs-site/tsconfig.tsbuildinfo
+docs-site/scripts/__pycache__/

@@ -48,3 +48,31 @@ jobs:
         run: |
           docker compose config -q
           cmp .env.sample .env.example
+
+  # The exported site is deploy-docs.yml's job; this proves the pages compile, the
+  # page contract holds, and nav.json still matches the files on disk.
+  docs:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs-site
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit
+        run: npm run unit
+
+      - name: Nav
+        run: npm run nav:check

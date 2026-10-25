@@ -1,18 +1,27 @@
-# Grok Build, Coder Agents, and the workspace terminal
+---
+title: Grok Build, Coder Agents, and the workspace terminal
+description: "What runs inside a workspace and in the Coder control plane: terminal profiles, the shared `~/.grok` profile, and where models come from."
+tags: [grok, agents, workspace, mcp]
+---
+
+**What's on this page**
+
+- Terminal and editor defaults, and the profile the templates seed
+- The Grok Build CLI in the golden image, and how it is pinned
+- The rendered `~/.grok/config.toml`: model aliases and role fallbacks
+- One shared profile volume per user, and what last-booted rewrites
+- The search lane and the MCP servers behind it
+- Coder Agents on the control plane and the model config it needs
+
+**What this enables**
+
+- Changing a model alias in one place and knowing which workspaces see it
+- Explaining why one workspace's `~/.grok` disagrees with another's
+- Deciding between the native search lane and the SearXNG fallback
 
 Deep reference for what runs *inside* a workspace and in the Coder control plane: the
 terminal profiles, the per-user `~/.grok` profile, where the CLI and the chat agent get
 their models, and what the stack seeds for the agent.
-
-Contents:
-
-1. [Terminal and editor defaults](#terminal-and-editor-defaults)
-2. [The Grok Build CLI in the golden image](#the-grok-build-cli-in-the-golden-image)
-3. [The rendered `~/.grok` config](#the-rendered-grok-config)
-4. [Grok Build state: one shared profile per user](#grok-build-state-one-shared-profile-per-user)
-5. [Search lane and MCP servers](#search-lane-and-mcp-servers)
-6. [Coder Agents (control-plane)](#coder-agents-control-plane)
-7. [The delegation sketch](#the-delegation-sketch)
 
 Related: [coder-templates.md](coder-templates.md) (the template files themselves),
 [litellm-routing.md](litellm-routing.md) (what the aliases route to), and

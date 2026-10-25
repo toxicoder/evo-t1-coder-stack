@@ -1,0 +1,123 @@
+name: Deploy Documentation
+
+# Publish Fumadocs static exports to gh-pages, one alias per branch.
+# - main / master  -> /latest/
+# - any other branch -> /<sanitized-ref>/  (feat/foo -> feat-foo)
+#
+# Each run builds ONE alias: the branch that triggered it. The prefixes it does not
+# rebuild are archived out of origin/gh-pages, so a work-branch alias a reader still has
+# bookmarked survives every later deploy.
+#
+# A root index.html forwards bare /evo-t1-coder-stack/ traffic to /latest/.
+# Publish goes through scripts/ci/publish-pages-tree.sh (a git worktree) because Next's
+# rewrite of tracked docs-site/next-env.d.ts would otherwise block the gh-pages push.
+#
+# PR docs validation (typecheck, unit, nav:check) lives in ci.yml. This workflow runs on
+# push, or by hand.
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - "docs/**"
+      - "docs-site/**"
+      - "scripts/ci/publish-pages-tree.sh"
+      - ".github/workflows/deploy-docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install docs site dependencies
+        run: (cd docs-site && npm ci --legacy-peer-deps)
+
+      - name: Cache Next compile
+        uses: actions/cache@v5
+        with:
+          path: docs-site/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('docs-site/package-lock.json', 'docs-site/next.config.ts', 'docs-site/source.config.ts') }}
+          restore-keys: |
+            next-${{ runner.os }}-
+
+      - name: Resolve the alias for this ref
+        id: alias
+        run: |
+          set -euo pipefail
+          case "${GITHUB_REF_NAME}" in
+            main | master) alias="latest" ;;
+            *)
+              # The alias is a URL segment, so anything a branch name may legally carry
+              # that is not URL-safe collapses to a single dash.
+              alias="$(printf '%s' "${GITHUB_REF_NAME}" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+              ;;
+          esac
+          if [[ -z "${alias}" || "${alias}" == *..* ]]; then
+            echo "deploy-docs: ref ${GITHUB_REF_NAME} sanitizes to an unusable alias" >&2
+            exit 1
+          fi
+          echo "alias=${alias}" >> "${GITHUB_OUTPUT}"
+          echo "Publishing ${GITHUB_REF_NAME} as /${alias}/"
+
+      - name: Build and assemble the Pages tree
+        env:
+          DOCS_ALIAS: ${{ steps.alias.outputs.alias }}
+        run: |
+          set -euo pipefail
+          rm -rf _site
+          mkdir -p _site
+
+          # Keep every alias this run does not rebuild, so work-branch pages persist.
+          git fetch origin gh-pages || true
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            while IFS= read -r prefix; do
+              [[ "${prefix}" == "${DOCS_ALIAS}" ]] && continue
+              git archive "origin/gh-pages" "${prefix}" | tar -x -C _site
+            done < <(git ls-tree --name-only -d origin/gh-pages)
+          fi
+
+          rm -rf "_site/${DOCS_ALIAS}"
+          mkdir -p "_site/${DOCS_ALIAS}"
+          (cd docs-site && npm run build)
+          cp -r docs-site/out/. "_site/${DOCS_ALIAS}/"
+
+          touch _site/.nojekyll
+          cp docs-site/pages-root-index.html _site/index.html
+
+      - name: Publish to the gh-pages branch
+        run: ./scripts/ci/publish-pages-tree.sh _site
+
+      - name: Report the published URLs
+        run: |
+          {
+            echo "## Documentation published"
+            echo ""
+            echo "| Branch | URL |"
+            echo "| --- | --- |"
+            echo "| ${GITHUB_REF_NAME} | https://toxicoder.github.io/evo-t1-coder-stack/${DOCS_ALIAS}/ |"
+            echo "| latest | https://toxicoder.github.io/evo-t1-coder-stack/latest/ |"
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          DOCS_ALIAS: ${{ steps.alias.outputs.alias }}

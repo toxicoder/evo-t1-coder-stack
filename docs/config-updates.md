@@ -1,4 +1,20 @@
-# Keeping a checkout's config current
+---
+title: Keeping a checkout's config current
+description: What goes stale after a `git pull`, what `update-configs` refreshes, and what it deliberately will not touch.
+tags: [env, config, update-configs, maintenance]
+---
+
+**What's on this page**
+
+- Which files go stale and why `git pull` cannot fix them
+- The two passes of `update-configs`, and the flags that select one
+- Where the command may run, and where it refuses to
+- The long form of the `.env.sample` comments: GitHub external auth, Grok profile mode, public hosts, the Spark `agent` group
+
+**What this enables**
+
+- Bringing an old checkout back to a runnable state with one command
+- Telling a ported env key apart from a value you set yourself and must keep
 
 Two kinds of file go stale in this repo, and because neither of them is
 checked in, `git pull` cannot fix either one for you. `update-configs` is the
@@ -182,9 +198,11 @@ CODER_EXTERNAL_AUTH_0_REVOKE_URL=https://github.com/settings/connections/applica
   App, `primary-github` for the sample app above.
 
 **Device-flow login is not the App install.** Private repos need the Coder GitHub
-App at <https://github.com/apps/coder/installations/new> (the workspace "Install
-GitHub App" button), then a restart so `GH_TOKEN` remints. The grant must include
-the repos you clone, or a connected credential authenticates and is still 403.
+App installed from
+[github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new)
+(the workspace "Install GitHub App" button), then a restart so `GH_TOKEN` remints.
+The grant must include the repos you clone, or a connected credential authenticates
+and is still 403.
 
 **How the token reaches a workspace.** It arrives as `GH_TOKEN` and `GITHUB_TOKEN`
 in the agent environment, and the template's `gh_token_refresh` coder_script

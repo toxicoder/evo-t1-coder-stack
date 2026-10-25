@@ -1,0 +1,110 @@
+"""Package purpose: Documentation content — the MDX/markdown pages the Fumadocs site in docs-site/ renders, plus the Bazel entry points that drive it.
+
+The site itself is the Next.js app in `docs-site/` (that package owns the npm runners).
+This package owns the *content*: the pages under `docs/`, the `includes/` the remark
+plugins read, and `manage-docs.sh`, which is what `bazelisk run //docs:*` executes.
+
+Content stays here rather than moving into `docs-site/` so the paths the README links to,
+the published Pages aliases point at, and reviewers diff all stay the paths they always
+were.
+
+Usage:
+  bazelisk run //docs:serve          # dev server with hot reload
+  bazelisk run //docs:docs           # static export into docs-site/out/
+  bazelisk run //docs:preview        # build + serve the export (final check)
+  bazelisk run //docs:status         # toolchain / content status
+  bazelisk run //docs:clean          # drop out/, .next/ and .source/
+"""
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+package(default_visibility = ["//visibility:private"])
+
+# Everything the Next.js app reads out of this directory at build time. `includes/**` is
+# content input (the glossary definitions), not pages, and is excluded from the source.
+filegroup(
+    name = "content",
+    srcs = glob(
+        [
+            "**/*.md",
+            "**/*.mdx",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+_DOCS_COMMON_DATA = [
+    ":content",
+    "//docs-site:sources",
+]
+
+sh_binary(
+    name = "serve",
+    srcs = ["manage-docs.sh"],
+    args = ["serve"],
+    data = _DOCS_COMMON_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "docs",
+    srcs = ["manage-docs.sh"],
+    args = ["build"],
+    data = _DOCS_COMMON_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "preview",
+    srcs = ["manage-docs.sh"],
+    args = ["preview"],
+    data = _DOCS_COMMON_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "verify",
+    srcs = ["manage-docs.sh"],
+    args = ["verify"],
+    data = _DOCS_COMMON_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "typecheck",
+    srcs = ["manage-docs.sh"],
+    args = ["typecheck"],
+    data = _DOCS_COMMON_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "test",
+    srcs = ["manage-docs.sh"],
+    args = ["test"],
+    data = _DOCS_COMMON_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "nav",
+    srcs = ["manage-docs.sh"],
+    args = ["nav"],
+    data = _DOCS_COMMON_DATA,
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "status",
+    srcs = ["manage-docs.sh"],
+    args = ["status"],
+    visibility = ["//visibility:public"],
+)
+
+sh_binary(
+    name = "clean",
+    srcs = ["manage-docs.sh"],
+    args = ["clean"],
+    visibility = ["//visibility:public"],
+)

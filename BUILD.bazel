@@ -60,6 +60,7 @@ filegroup(
         ".github/actions/setup-bazel/action.yml",
         ".github/scripts/install-lint-tools.sh",
         ".github/workflows/ci.yml",
+        ".github/workflows/deploy-docs.yml",
     ],
     visibility = ["//visibility:public"],
 )

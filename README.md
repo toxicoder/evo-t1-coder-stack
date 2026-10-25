@@ -1,5 +1,7 @@
 # EVO-T1 Coder Stack
 
+[![Docs](https://img.shields.io/badge/docs-toxicoder.github.io-2563eb)](https://toxicoder.github.io/evo-t1-coder-stack/latest/)
+
 One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra 9
 285H, Arc 140T iGPU, 96 GB DDR5) into a self-hosted dev-workspace server.
 
@@ -39,13 +41,16 @@ script meant to run straight from a shell, and it runs before Bazel exists.
 12. [Why this shape](#why-this-shape), [Repo layout](#repo-layout),
     [Troubleshooting](#troubleshooting)
 
-The long version of each topic sits in a page beside this one, linked where it applies:
+The long version of each topic is a page of its own, published at
+[toxicoder.github.io/evo-t1-coder-stack/latest](https://toxicoder.github.io/evo-t1-coder-stack/latest/)
+and kept in `docs/` beside this file:
 [coder-templates.md](docs/coder-templates.md), [dashboard.md](docs/dashboard.md),
 [hermes.md](docs/hermes.md),
 [grok-build-and-agents.md](docs/grok-build-and-agents.md),
 [litellm-routing.md](docs/litellm-routing.md),
 [public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
-[troubleshooting.md](docs/troubleshooting.md).
+[troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
+what reading it lets you do.
 
 ## Hardware
 
@@ -539,59 +544,12 @@ side, is in [docs/public-access.md](docs/public-access.md).
 | `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (TLS verify off) |
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 
-### Get the naming right
-
-- Each name is **one label under the zone**, and each service prefix joins it with a
-  **hyphen**.
-- A wildcard certificate covers exactly one label, so the dotted two-label form
-  (`coder.gmktecbeast.`) has no certificate at the public edge - the browser aborts
-  with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` and Traefik never sees the request.
-- TLS terminates at the main Traefik on the other machine, which forwards plain HTTP to
-  the `router` sidecar on this box (`proxy/router.conf`, published on :8080). That
-  container holds no certificate and only picks an upstream from the Host header; an
-  unmatched Host answers `421` rather than a guess.
-- Nothing here replaces the LAN routes: `https://<lan-ip>/` and
-  `https://<lan-ip>:3001` keep working.
-
-### Turn it on
-
-1. Set the four names in `.env` - and in `dev-stack.env` too if a dev stack runs
-   beside the stable one.
-
-   ```text
-   STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io
-   ```
-
-2. Re-run bootstrap:
-
-   ```sh
-   bazelisk run //scripts:bootstrap
-   ```
-
-3. Recreate the stack you are switching (both, if both are up). `prod-stack` names the
-   stable project for you; `dev-stack` needs `--project-name` to reach it from away
-   from the checkout root:
-
-   ```sh
-   bazelisk run //scripts:prod-stack -- up
-   ```
-
-   ```sh
-   bazelisk run //scripts:dev-stack -- up --project-name evo-t1-coder-stack
-   ```
-
-   ```sh
-   bazelisk run //scripts:dev-stack -- up
-   ```
-
-### Two things to know
-
-- **Authelia:** the four names 302 to `https://authelia.overeazy.io/`, because those
-  zones already have a policy in front of them. Put LiteLLM behind it and every client
-  breaks - LiteLLM authenticates from the `Authorization` header, and header-carried
-  API traffic cannot pass an interactive sign-in.
-- **Workspace agents never reach Authelia either way:** the template rewrites the agent
-  URL to `http://host.docker.internal:3002`, so agent traffic stays on the box.
+The rules that make those names work, and what to check when one of them misbehaves,
+are on
+[docs/public-access.md](docs/public-access.md): the one-label-under-the-zone shape a
+wildcard certificate allows, the `bootstrap` run that rewrites them, the recreate that
+applies it, the plain-HTTP hop to the `router` sidecar, and why the four names 302 to
+Authelia while the workspace agents and LiteLLM never reach it.
 
 ## LiteLLM model aliases
 
@@ -610,40 +568,14 @@ measured 30-request burst, the **Agent backend** card) are in
 | `spark-coder` | `qwen2.5-coder:32b` | `SPARK1_OLLAMA_URL` (NVIDIA Spark, optional) | unverified |
 | `spark-chat` | `qwen2.5:7b` | `SPARK2_OLLAMA_URL` (NVIDIA Spark, optional) | unverified |
 
-### The one fact that changes what you can run
-
-**The Qwen2.5-Coder weights do not emit structured tool calls on this runtime.**
-Measured against this box's IPEX-LLM Ollama (its bundled `ollama` 0.9.3): a request
-with `tools` for `qwen2.5-coder:32b` and `:14b` comes back as plain text with
-`finish_reason: "stop"` and no `tool_calls` field - the model writes the JSON call into
-the message body, which no agent driver can consume. `qwen2.5:7b` on the same runtime
-does return a real `tool_calls` array, so the limitation tracks the model, and agent
-mode needs either the Spark `agent` lane or the small `chat` model. Grok Build, Cline,
-Roo and Kilo therefore default to `agent`.
-
-### Edit an alias
-
-1. Edit `litellm/config.yaml`.
-2. Restart the proxy on the stack you changed. Stable:
-
-   ```sh
-   docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
-   ```
-
-   Dev:
-
-   ```sh
-   docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml restart litellm
-   ```
-
-   Neither runner has a `restart` subcommand; `bazelisk run //scripts:prod-stack -- status`
-   and `bazelisk run //scripts:prod-stack -- logs litellm` read the stable stack back
-   before and after that call.
-
-The two tool-capable aliases also back the control-plane chat: `scripts/coder-agents.sh`
-registers `agent` (default) and `chat` as the Coder Agents chat model configs, so an
-alias edited or deleted here moves in the Agents model dropdowns exactly as it does in
-the CLI.
+One measured fact decides what you can actually run: the Qwen2.5-Coder weights do not
+emit structured tool calls on this box's IPEX-LLM Ollama, so agent mode needs the Spark
+`agent` lane or the small `chat` model. The measurement, the TTL and `least-busy`
+routing, the `agent` -> `coder` fallback, the burst that produced it, and the two
+`docker compose restart litellm` commands (one per stack) are on
+[docs/litellm-routing.md](docs/litellm-routing.md). The two tool-capable aliases are also
+what `scripts/coder-agents.sh` registers as the Coder Agents chat models, so an alias
+edited here moves in the Agents dropdowns too.
 
 ## Coder workspace templates
 
@@ -669,32 +601,20 @@ names, so a typo cannot quietly do nothing):
 bazelisk run //scripts:push-template -- devcontainer
 ```
 
-### Three things to know before you edit one
-
-1. **Everything Coder-facing runs inside the coder container**, against
-   `http://127.0.0.1:3000` - the server's own plain listener, reached without crossing
-   the reverse proxy, Authelia, or the WAN. That is deliberate: `coder login` on the
-   host must reach the API *before* it has a credential, and in public mode the only
-   URL it will use is `CODER_ACCESS_URL`, which Authelia gates. Loopback inside the
-   container cannot be gated, and the push runs the image's own `coder` binary, so
-   client and server are the same build. No host coder CLI and no `coder login` here.
-2. **The credential is minted, used and deleted**: a short-lived row inserted into the
-   stack's own Postgres - the same trust model as `coder reset-password`. It is scoped
-   to minutes, deleted on the way out (including on a failed or interrupted run), never
-   printed, and minted once for the whole run however many templates it covers.
-3. **The source travels as a tar on stdin** (`templates push --directory -`), so
-   nothing is copied into the container or its volumes - and a push is the only thing
-   that registers a template, because Coder stores the source as a Filestore row, not
-   as files it scans on disk.
+Why the push runs inside the coder container against `http://127.0.0.1:3000`, how its
+short-lived Postgres-minted credential is scoped and deleted, and how the source travels
+as a tar on stdin:
+[docs/coder-templates.md](docs/coder-templates.md#how-push-template-works).
 
 ### Also worth knowing
 
 - `templates/common/` exists once and both templates consume it:
-  `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline) and
-  `vscode-alt.svg` (the editor icon), staged beside each staged `main.tf` and read
+  `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline),
+  `vscode-alt.svg` (the editor icon) and `notes-setup.sh` (the library behind each
+  clone's private `notes.md`), staged beside each staged `main.tf` and read
   there with `file()` / `filebase64()`. The SVG stays small enough that the
   inlined data URL fits Coder v2.36's 256-character `workspace_apps.icon` column.
-  A push missing either payload, or an SVG that would overflow that column, fails
+  A push missing any payload, or an SVG that would overflow that column, fails
   early by design. Every other `.tftpl` payload is copied per template - edit both twins.
 - `bootstrap.sh` calls the same push, and skips with a one-line reason while the coder
   or db container is down or nobody has registered yet.
@@ -772,68 +692,13 @@ bazelisk run //scripts:new-workspace -- --additional-repos "url1,url2" https://g
 The list format, the two clone paths, and what `--dry-run` prints:
 [docs/coder-templates.md](docs/coder-templates.md#cloning-more-than-one-repository).
 
-### Terminals
+### Terminals, Grok Build state and Coder Agents
 
-- The default profile is `tmux`, and the `tmux` profile re-joins one shared session per
-  folder (`vscode-<folder>-<hash>`); the automation profile stays `bash`, so build and
-  task commands never wait on tmux. With no tmux (offline first boot) the helper execs
-  a plain login shell, so the default terminal still opens.
-- **Grok Build** keeps its own session, `grok-build-<folder>-<hash>`, keyed off the
-  repository root (`git rev-parse --show-toplevel`) and started with
-  `grok --cwd <repo root>`.
-- `display_apps.web_terminal` stays **off** - it would open a shell on the agent's
-  working dir, `/home/coder`. The custom **Web Terminal** `coder_app` (`order = 6`,
-  after **VS Code Web** at `order = 5`) takes that slot and `cd`s to the clone folder,
-  so the terminal outside the editor starts inside the project too. **GitHub reauth**
-  (`order = 7`) sits next to it and opens Coder's `/external-auth/<id>` page so a
-  workspace can reconnect GitHub from the agent bar. **Install GitHub App**
-  (`order = 8`) opens `https://github.com/apps/coder/installations/new` for the
-  injected App, because that reauth page's "install the GitHub App" warning is
-  unlinked plaintext.
-
-### Grok Build state: one shared profile per user
-
-- `~/.grok` is a **second, nested** mount inside the per-workspace `/home/coder`
-  volume: one Docker volume per person, `grok-profile-<owner-id>`, referenced by name
-  rather than declared as a Terraform resource, mounted read-write at the same path by
-  every workspace of that owner **while that workspace is in `shared` mode**.
-  `config.toml`, `skills/`, `memory-v2/`, `sessions/` and a self-installed CLI under
-  `~/.grok/bin` are all shared, so configuring the CLI once configures the rest of that
-  account's workspaces.
-- Two settings, two places: the template variable `grok_profile_mode` (default
-  `shared`, from `GROK_PROFILE_MODE` in `.env`) and the create form's per-workspace
-  **Grok profile** field. `private` gives one workspace its own `~/.grok` on its home
-  volume, so it can sit outside the shared profile while its siblings stay inside.
-- Switching modes needs a **rebuild** (the nested mount either exists or it does not),
-  and a workspace that goes `shared` -> `private` starts on an empty profile: nothing
-  is copied, and the shared volume is left alone.
-- One shared profile is one `config.toml` for every workspace that owner owns, and the
-  last boot to re-render it wins - which is also true of the SQLite memory and index
-  files, so *roughly in sync* is the bar, not transactional sharing.
-- Five offline MCP stdio servers ship pre-installed but stay undeclared by default.
-  Grok's native search lane is on (`disable_web_search = false`). `searxng` (host
-  8181) is the fallback search lane, not a model transport:
-  `bazelisk run //scripts:search-check` measures it. It reaches the agent as the
-  `searxng` MCP stdio server, declared by default (`search_mcp` defaults to true;
-  `SEARCH_MCP=false` in `.env` opts a whole stack out).
-- Two further servers are opt-in and off by default: `github` (`GITHUB_MCP=true`) and
-  `context7` (`CONTEXT7_MCP=true`, then re-push templates). Context7 runs the official
-  docs server behind `mcp-cache-proxy`, so the first lookup of a library needs network
-  and `CONTEXT7_API_KEY` while repeats inside the 12 h TTL come from local SQLite. Long
-  form: [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
-
-### Coder Agents (control-plane)
-
-- A coding agent that lives in the Coder **server** - a chat UI and an API beside your
-  workspaces, not inside one. Its tools (`read_file`, `edit_files`, `execute`,
-  `spawn_agent`) run against a workspace over that workspace's agent connection, after
-  it consults an **instructions** file and any **skills** it discovers.
-- **Always on; nothing to enable.** `CODER_EXPERIMENTS` in `.env` (empty by default
-  since 2026-10-08) has never gated anything about it - the old `agents` entry was not
-  a recognized experiment name, so the server just logged `ignoring unknown experiment`
-  on every boot. `workspace_external_agent` gates *external* agents (Claude Code,
-  Codex, ...), and nothing here needs it.
-- The delegation sketch lives in `templates/common/GROK_BUILD_AGENTS.md`.
+The `tmux` terminal profiles and the app-bar buttons, the one `~/.grok` volume shared per
+owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP servers
+and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the control-plane Coder
+Agents chat that needs nothing enabled:
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
 
 ## Kasm
 
@@ -1000,6 +865,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 └── templates/
     ├── common/                   # single-copy payloads, staged beside each main.tf
     │   ├── GROK_BUILD_AGENTS.md  # the seed text the startup scripts inline
+    │   ├── notes-setup.sh        # the library that seeds each clone's private notes.md
     │   └── vscode-alt.svg        # the code-server editor icon
     ├── workspace                 # plain dev container (base template, pushed first)
     │   ├── main.tf
@@ -1014,77 +880,19 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 
 ## Troubleshooting
 
-One line each: the symptom and the first thing to check. The full entry for every line -
-cause, recipe, and what a fix costs - is in
-[docs/troubleshooting.md](docs/troubleshooting.md).
+The symptom-first list — the error string, the cause, the recipe, and what the fix costs
+— is one page: [docs/troubleshooting.md](docs/troubleshooting.md). The four entries an
+operator hits most:
 
 - **Grok agent mode narrates instead of calling tools** - an Arc alias answered. Check
   the dashboard's **Agent backend** card, or probe the fleet with
-  `bazelisk run //scripts:spark-verify -- --no-tests`. Keep `SPARK_n_API_KEY`
-  non-empty: an empty key fails every request inside the proxy before it reaches the box.
-- **Coder Agents chat refuses every prompt, or its model dropdown is empty** - this
-  deployment has no model config: `bazelisk run //scripts:coder-agents -- --dry-run`
-  then `-- --apply`.
+  `bazelisk run //scripts:spark-verify -- --no-tests`.
 - **Workspace stuck in *starting*** - startup is blocking by design, so the reason is in
   the workspace startup log (`coder logs <workspace>`).
-- **Image missing tools, or the build aborts mid-layer** - a pinned download failed and
-  printed `curl: (22)`; compare `images/dev/tool-versions.env` with the upstream release.
-- **`grok` or `docker`: `command not found` inside a workspace** - the container started
-  on an older golden image. Rebuild it with `bazelisk run //scripts:build-dev-image`,
-  then rebuild the workspace: the image is fixed at create time.
+- **Private-repo clone or push denied while a credential is present** - the grant is the
+  problem, not the credential format. The doctor answers "can this credential WRITE to
+  that repo?": `bazelisk run //scripts:github-auth -- check [container] [repo-url]` from
+  a host shell, or the same command without the container slot from inside a workspace.
 - **`Cannot connect to the Docker daemon at tcp://dind:2375`** - the sidecar is
-  unhealthy, its image was never pulled, or the workspace was created with DinD off.
-  `DOCKER_HOST` is only injected when the toggle is on under the `workspace`
-  template, and always under `devcontainer`, so read the *docker-in-docker* tile
-  rather than the variable. An absent image fails the build at **plan** time with
-  `did not find docker image 'docker:29.8.1-dind'`.
-- **`pq: value too long for type character varying(256)`** from `push-template` -
-  `coder_app.code_server` inlined a `vscode-alt.svg` whose data URL overflowed
-  Coder v2.36's `workspace_apps.icon` `varchar(256)` column. The SVG is a compact
-  ribbon now, and `push-template` rejects a too-large copy locally. Pull the fix
-  and re-run `bazelisk run //scripts:push-template` on the stack host.
-- **`lookup registry.terraform.io on 127.0.0.11:53: server misbehaving`** from
-  `push-template` - Terraform init inside `coder` cannot reach the provider
-  registry because Docker's embedded DNS is forwarding to Tailscale MagicDNS.
-  Recreate `coder` so compose's public DNS upstreams apply, then re-push:
-  `bazelisk run //scripts:prod-stack -- up` and
-  `bazelisk run //scripts:push-template`.
-- **`Error: No configuration files`** from `push-template` - the tar stored
-  runfiles symlinks and Coder unpacked them into an empty Terraform directory.
-  Pull the fix and re-run `bazelisk run //scripts:push-template` on the stack host.
-- **`... .terraform.lock.hcl is missing`** from `push-template` - a note, not a failure:
-  no lockfile is committed under `templates/`.
-- **`unexpected non-JSON response "text/html; charset=utf-8"`** from a host `coder`
-  command - it is talking to a public subdomain and Authelia is answering its API calls
-  with the sign-in page, which happens with a valid token too. Point the CLI at the
-  container's loopback listener, which nothing can gate; `CODER_ACCESS_URL` itself stays
-  the public name, because browsers need it.
-- **Workspace cannot reach LiteLLM** - `CODER_ACCESS_URL` has to be an `https://` URL (a
-  LAN IP, or the public coder name in public mode; never `localhost` / `127.0.0.1`) and
-  the workspace has to resolve `host.docker.internal`. Agent traffic ignores that URL
-  and dials `host.docker.internal:3002`. A failing **LiteLLM** button is the other
-  lane: the app link rides the coder name on a `/@<owner>/<ws>.<agent>/apps/<slug>`
-  path, so `curl` on the `litellm` subdomain tells you nothing about it.
-- **Browser editor (code-server) stays unhealthy** - check the three in order: the
-  install script's log in the Scripts/Log tab, `curl -fsS localhost:13337/healthz` from
-  inside the workspace, and whether the browser is on `https://` with a trusted cert
-  (plain `http://` is an insecure context, which is what breaks `crypto.randomUUID()`).
-- **Private-repo clone or push denied while a credential is present** - the **grant**
-  is the problem, not the credential format: a connected-but-unscoped credential
-  authenticates and is still refused (403, or 404 where GitHub hides a private repo's
-  existence). A public repo answers read probes for any authenticated caller, so a
-  passing read proves nothing about push. It covers `https://github.com/...` remotes
-  only, so a `git@github.com:` or `ssh://` URL needs an SSH key you placed yourself,
-  which this stack provisions nowhere. Reconnect from the workspace page with
-  **GitHub reauth**, install the Coder GitHub App with **Install GitHub App** if
-  that page says to, then restart so `GH_TOKEN` matches the new grant. The doctor
-  answers "can this credential WRITE to that repo?":
-  `bazelisk run //scripts:github-auth -- check [container] [repo-url]`
-  from a host shell, or the same command without the container slot from inside a
-  workspace (SELF mode). It answers per credential and marks a credential that the
-  agent env token outranks as `shadowed`, since git and gh consult that pair first.
-- **Kasm wizard gone after install** - expected; use :4443. Reset means removing the
-  `kasm-data` volume, which destroys all Kasm config.
-- **Coder login problems** - the first registered account is the site admin. If the UI
-  is unreachable, check `CODER_ACCESS_URL` matches the address you are browsing from
-  (the LAN IP by default, or the public coder name in public mode).
+  unhealthy, its image was never pulled, or the workspace was created with DinD off;
+  read the *docker-in-docker* tile rather than the variable.

@@ -1,4 +1,21 @@
-# Hermes host assistant
+---
+title: Hermes host assistant
+description: "The on-host assistant with the Web Dashboard on :9119: how to reach it, what it may touch, and how approvals gate a mutating command."
+tags: [hermes, dashboard, operate, safety]
+---
+
+**What's on this page**
+
+- How to reach the dashboard, and why it stays on the LAN
+- Sign-in, and which password it uses
+- The models it calls through LiteLLM
+- What the container mounts, and what "be the host" costs
+- Approval prompts, bootstrap seeding, and the skills directory
+
+**What this enables**
+
+- Running stack operations by conversation with a plan and an approval first
+- Keeping the assistant off the public edge while the dashboard stays usable
 
 Hermes is the Nous Research Hermes Agent running as the interactive assistant **on the
 stack host itself**: not inside a workspace, not in a streamed desktop, but with the
@@ -14,7 +31,7 @@ before the mutating command.
 Related: [dashboard.md](dashboard.md) (the card that links here),
 [litellm-routing.md](litellm-routing.md) (the aliases Hermes calls),
 [public-access.md](public-access.md) (why this one stays off the public edge),
-[SECURITY.md](../SECURITY.md).
+[SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
 
 ## Access
 
@@ -131,7 +148,7 @@ bazelisk run //scripts:hermes-bootstrap -- --data <mount> --force
   **new Chat session** and the new skill is offered. Recreate only if it still does not
   show up, since `restart` keeps the old mounts.
 - `SOUL.md` is the identity - voice and stance, a short persona. It is not a fork of
-  [AGENTS.md](../AGENTS.md): the repo's shell conventions stay in that file, where the
+  [AGENTS.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/AGENTS.md): the repo's shell conventions stay in that file, where the
   writers and the linters read them.
 
 ## Security notes
@@ -143,10 +160,10 @@ bazelisk run //scripts:hermes-bootstrap -- --data <mount> --force
   and never paste `LITELLM_MASTER_KEY` into a chat to prove a route works.
 - Prefer structured commands - the existing Bazel scripts and `docker compose` - over
   ad-hoc shell. A script the repo owns is reviewable and test-covered; a one-liner the
-  model invented is neither. See [../AGENTS.md](../AGENTS.md).
+  model invented is neither. See [AGENTS.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/AGENTS.md).
 - No GitHub PAT in Hermes. GitHub auth in this stack is Coder External Auth only, and a
   token here would sit on a container that can both write to the checkout and drive the
-  host daemon. See [SECURITY.md](../SECURITY.md).
+  host daemon. See [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
 
 ## Commands
 
@@ -172,4 +189,4 @@ The stack runners take `up`, `down`, `status`, `logs`, `reset`; `status` and `lo
 where a Hermes that will not bind its port is diagnosed first. Status across the whole
 box, including this card, is in [dashboard.md](dashboard.md); the LAN-versus-public
 routing rules are in [public-access.md](public-access.md), and the service inventory is
-in [README.md](../README.md).
+in [README.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md).

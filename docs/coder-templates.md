@@ -1,27 +1,29 @@
-# Coder workspace templates
+---
+title: Coder workspace templates
+description: "Deep reference for `templates/workspace/` and `templates/devcontainer/`: what they build, how they get pushed, and what every variable means."
+tags: [coder, templates, workspaces, terraform]
+---
+
+**What's on this page**
+
+- What the two templates make, and when the `devcontainer` toggle matters
+- How `push-template.sh` ships the source, and the same push by hand
+- Every create-form field and template variable, with its default
+- Autostop, TTLs, Docker-in-Docker, and the DinD sidecar failure modes
+- Terminal and editor defaults inside the container, and workspace GitHub credentials
+
+**What this enables**
+
+- Choosing between the plain container and the devcontainer before you click create
+- Reading a failed push or a stuck workspace against what the template actually does
+- Changing a template variable without guessing which file owns it
 
 Deep reference for `templates/workspace/` and `templates/devcontainer/`: what they build,
 how they get pushed, what each template variable means, and how the create form and the
 in-editor terminal and editor behave.
 
-Contents:
-
-1. [What the two templates make](#what-the-two-templates-make)
-2. [How `push-template` works](#how-push-template-works)
-3. [The same push, by hand](#the-same-push-by-hand)
-4. [Create-form fields](#create-form-fields)
-5. [Template variables](#template-variables)
-6. [Autostop and TTLs](#autostop-and-ttls)
-7. [Docker-in-docker](#docker-in-docker)
-8. [The `devcontainer` template](#the-devcontainer-template)
-9. [From a git URL: `bazelisk run //scripts:new-workspace`](#from-a-git-url-bazelisk-run-scriptsnew-workspace)
-10. [Inside the workspace container](#inside-the-workspace-container)
-11. [Terminal and editor defaults](#terminal-and-editor-defaults)
-12. [Cloning more than one repository](#cloning-more-than-one-repository)
-13. [GitHub credentials for a workspace](#github-credentials-for-a-workspace)
-
 Related: [project-conventions.md](project-conventions.md) (shell and payload conventions),
-[SECURITY.md](../SECURITY.md), and
+[SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md), and
 [docs/grok-build-and-agents.md](grok-build-and-agents.md)
 (the long prose on the tmux profiles and the Grok Build session).
 
@@ -393,7 +395,7 @@ Details that matter:
 - Nothing is published to the host, and 2375 is reachable only from that workspace's own
   network - which is also why the network is not `internal`. An internal network gets no
   gateway route or NAT, so `host.docker.internal` would resolve and never answer, and the
-  agent would strand. See [SECURITY.md](../SECURITY.md).
+  agent would strand. See [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
 - The daemon image is resolved with `data "docker_image"`, which inspects the host store
   and **never pulls**, so `docker:29.8.1-dind` must already be there. `bootstrap.sh`
   pre-arms it; to do it manually:
