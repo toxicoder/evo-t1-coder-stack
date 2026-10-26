@@ -55,13 +55,16 @@ setup() {
 }
 
 # fake_root [env-line...] - print a throwaway repo root holding the script under
-# test, scripts/lib/ (which it sources after its own repo-root cd) and a .env
-# holding any lines given. An empty .env still matters: the script sources it, so
-# a test that wants a caller-supplied OLLAMA_MODELS to win needs one to exist.
+# test, scripts/lib/ (which it sources after resolving its own repo root) and a
+# .env holding any lines given. The compose file is the marker resolve_checkout
+# proves a checkout with, so a root without one would exit 5 before it got to the
+# models. An empty .env still matters: the script sources it, so a test that wants
+# a caller-supplied OLLAMA_MODELS to win needs one to exist.
 fake_root() {
   local root="${BATS_TEST_TMPDIR?}/root"
   mkdir -p "${root}/scripts/lib"
   : >"${root}/.env"
+  : >"${root}/docker-compose.yml"
   if [ "$#" -gt 0 ]; then
     printf '%s\n' "$@" >>"${root}/.env"
   fi
@@ -70,10 +73,21 @@ fake_root() {
   printf '%s' "${root}"
 }
 
+# unproven_root - print a copy of the script in a tree that holds no marker, the
+# shape of a directory resolve_checkout must refuse to call a checkout.
+unproven_root() {
+  local root="${BATS_TEST_TMPDIR?}/unproven"
+  mkdir -p "${root}/scripts/lib"
+  cp "${REPO_ROOT}/scripts/pull-models.sh" "${root}/scripts/"
+  cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
+  printf '%s' "${root}"
+}
+
 @test "pull-models: with nothing naming a model, the default pair is pulled in order" {
   root="$(fake_root)"
   scratch="$(make_scratch)"
-  run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
     bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 0 ]
   # Pull lines and the list header are required; section and summary may surround them.
@@ -92,7 +106,8 @@ fake_root() {
   # A decoy .env in the cwd: the script cds to its own repo root first, so this
   # one must be ignored. It is the same trap the daemon-wide probe fixed.
   printf '%s\n' 'OLLAMA_MODELS="decoy-model"' >"${scratch}/.env"
-  run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
     bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"pulling phi-4-mini:4b ..."* ]]
@@ -106,7 +121,8 @@ fake_root() {
 @test "pull-models: OLLAMA_MODELS in the environment replaces the default pair" {
   root="$(fake_root)"
   scratch="$(make_scratch)"
-  run --separate-stderr env -C "${scratch}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
     OLLAMA_MODELS='mixtral-8x22b' bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"pulling mixtral-8x22b ..."* ]]
@@ -124,7 +140,8 @@ fake_root() {
   # probe answers (with docker's own error text) and fails. The script must say
   # so and stop, not go looking for an ollama container in a stack it cannot
   # see. The answer arrives on the probe's stdout, so it reaches the message.
-  run --separate-stderr env STUB_COMPOSE_PS='Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' \
+  run --separate-stderr env REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= GITHUB_WORKSPACE= \
+    STUB_COMPOSE_PS='Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' \
     STUB_COMPOSE_PS_RC=1 bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 1 ]
   assert_match "refusal" \
@@ -203,7 +220,8 @@ fake_root() {
   # A canned non-zero exec answer stands in for a pull that fails (no space, no
   # network). Nothing here retries, continues to the next model, or pretends the
   # models are available.
-  run --separate-stderr env STUB_COMPOSE_PS='ollama|ipex-ollama-1' OLLAMA_MODELS='m1 m2' \
+  run --separate-stderr env REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= GITHUB_WORKSPACE= \
+    STUB_COMPOSE_PS='ollama|ipex-ollama-1' OLLAMA_MODELS='m1 m2' \
     STUB_DOCKER_EXEC_RC=1 bash "${root}/scripts/pull-models.sh"
   [ "${status}" -eq 1 ]
   [[ "${output}" == *"pulling m1 ..."* ]]
@@ -211,4 +229,34 @@ fake_root() {
   [[ "${output}" != *"Models available"* ]]
   # Probe, one pull, and the run is over.
   [ "$(stub_log_count docker)" -eq 2 ]
+}
+
+@test "pull-models: the checkout Bazel names beats the tree the script copy sits in" {
+  # The bug this pins: `bazelisk run` execs the runfiles copy of the script, so a
+  # root taken from $0 lands where no .env ever is, and the default model pair
+  # gets pulled while the operator's OLLAMA_MODELS goes unnoticed.
+  root="$(fake_root 'OLLAMA_MODELS="beside-copy:1b"')"
+  checkout="$(mktemp -d "${BATS_TEST_TMPDIR?}/checkout.XXXXXX")"
+  : >"${checkout}/docker-compose.yml"
+  printf '%s\n' 'OLLAMA_MODELS="from-checkout:7b"' >"${checkout}/.env"
+  scratch="$(make_scratch)"
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= GITHUB_WORKSPACE= \
+    BUILD_WORKSPACE_DIRECTORY="${checkout}" STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"pulling from-checkout:7b ..."* ]]
+  [[ "${output}" != *"beside-copy:1b"* ]]
+  [[ "${output}" != *"qwen2.5-coder"* ]]
+}
+
+@test "pull-models: a root that cannot prove itself stops before docker" {
+  root="$(unproven_root)"
+  scratch="$(make_scratch)"
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 5 ]
+  assert_match "the refusal is printed" 'unresolvable repo root' "${stderr}"
+  # Nothing may reach the daemon for a checkout this run could not name.
+  [ "$(stub_log_count docker)" -eq 0 ]
 }

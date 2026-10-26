@@ -210,3 +210,128 @@ line two")"; b="$(first_line "   ")"; printf "[%s][%s]" "${a}" "${b}"'
   [ -z "${output}" ]
 }
 
+# ── resolve_checkout ────────────────────────────────────────────────────────
+# Every CLI that reads the checkout's .env resolves the checkout through this
+# helper, so the candidate order, the marker, and the refusals are the contract.
+# The runfiles refusal is what stops `bazelisk run` from rewriting a throwaway
+# copy of the repo while the checkout keeps the old bytes; the REPO_ROOT
+# exemption is what lets the Bats runner name the copy under test as the root.
+
+proven_checkout() {
+  # Print a fresh directory that proves itself as a checkout.
+  local dir="${BATS_TEST_TMPDIR?}/$1"
+  mkdir -p "${dir}"
+  : >"${dir}/docker-compose.yml"
+  printf '%s' "${dir}"
+}
+
+clear_root_names() {
+  # Drop every inherited checkout name and stand in a directory that holds no
+  # marker: the runner exports REPO_ROOT and cds into the copy of the repo under
+  # test, either of which would otherwise answer before the candidate under test.
+  REPO_ROOT=""
+  BUILD_WORKSPACE_DIRECTORY=""
+  GITHUB_WORKSPACE=""
+  cd "$(mktemp -d "${BATS_TEST_TMPDIR?}/nowhere.XXXXXX")"
+}
+
+@test "common: resolve_checkout takes REPO_ROOT first, then BUILD_WORKSPACE_DIRECTORY" {
+  source_libs
+  local a b c
+  a="$(proven_checkout explicit-a)"
+  b="$(proven_checkout explicit-b)"
+  c="$(proven_checkout explicit-c)"
+  clear_root_names
+  REPO_ROOT="${a}"
+  BUILD_WORKSPACE_DIRECTORY="${b}"
+  GITHUB_WORKSPACE="${c}"
+  run --separate-stderr resolve_checkout "${c}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${a}" ]
+  REPO_ROOT=""
+  run --separate-stderr resolve_checkout "${c}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${b}" ]
+}
+
+@test "common: resolve_checkout falls through to the cwd, then the script's own tree" {
+  source_libs
+  local pwdtree selfroot
+  pwdtree="$(proven_checkout pwd-tree)"
+  selfroot="$(proven_checkout self-tree)"
+  mkdir -p "${selfroot}/scripts"
+  clear_root_names
+  cd "${pwdtree}"
+  run --separate-stderr resolve_checkout "${selfroot}/scripts"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${pwdtree}" ]
+  cd "$(mktemp -d "${BATS_TEST_TMPDIR}/empty.XXXXXX")"
+  run --separate-stderr resolve_checkout "${selfroot}/scripts"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${selfroot}/scripts/.." ]
+}
+
+@test "common: a directory without the marker is refused and the marker is named" {
+  source_libs
+  local bare
+  bare="$(mktemp -d "${BATS_TEST_TMPDIR?}/bare.XXXXXX")"
+  clear_root_names
+  REPO_ROOT="${bare}"
+  BUILD_WORKSPACE_DIRECTORY="${bare}"
+  GITHUB_WORKSPACE="${bare}"
+  run --separate-stderr resolve_checkout "${bare}"
+  [ "${status}" -eq 5 ]
+  assert_match "the refusal is printed" 'unresolvable repo root' "${stderr}"
+  assert_match "the marker it wanted is named" 'need docker-compose.yml' "${stderr}"
+}
+
+@test "common: the proof marker is the caller's choice" {
+  source_libs
+  local tree
+  tree="$(mktemp -d "${BATS_TEST_TMPDIR?}/makefile-tree.XXXXXX")"
+  : >"${tree}/Makefile"
+  clear_root_names
+  REPO_ROOT="${tree}"
+  run --separate-stderr resolve_checkout "${tree}" Makefile
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${tree}" ]
+}
+
+@test "common: a caller that names no directory of its own is refused" {
+  source_libs
+  clear_root_names
+  run --separate-stderr resolve_checkout ""
+  [ "${status}" -eq 5 ]
+  assert_match "the refusal says why" "needs the calling script's own directory" "${stderr}"
+}
+
+@test "common: a Bazel copy is refused as derived, honoured as REPO_ROOT" {
+  source_libs
+  local tree
+  tree="${BATS_TEST_TMPDIR?}/bazel-out/k8-fastbuild/bin/x.runfiles/_main"
+  mkdir -p "${tree}"
+  : >"${tree}/docker-compose.yml"
+  clear_root_names
+  BUILD_WORKSPACE_DIRECTORY="${tree}"
+  run --separate-stderr resolve_checkout "${tree}/scripts"
+  [ "${status}" -eq 5 ]
+  assert_match "the refusal names what it found" 'runfiles copy' "${stderr}"
+  REPO_ROOT="${tree}"
+  BUILD_WORKSPACE_DIRECTORY=""
+  run --separate-stderr resolve_checkout "${tree}/scripts"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${tree}" ]
+}
+
+@test "common: a candidate that does not exist is skipped, not fatal" {
+  source_libs
+  local tree
+  tree="$(proven_checkout after-ghost)"
+  clear_root_names
+  REPO_ROOT="${BATS_TEST_TMPDIR}/does-not-exist"
+  BUILD_WORKSPACE_DIRECTORY="${tree}"
+  run --separate-stderr resolve_checkout "${tree}/scripts"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "${tree}" ]
+}
+
