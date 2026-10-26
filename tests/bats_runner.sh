@@ -80,6 +80,13 @@ else
   runner_real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
   REPO_ROOT="$(cd "$(dirname "${runner_real}")/.." && pwd)"
 fi
+# //tests:shell_coverage points the suites at an instrumented mirror of the
+# production shell so it can count function invocations. The mirror symlinks
+# every other path back into the real tree, so this changes which copy of the
+# production .sh files the suites execute and nothing else.
+if [[ -n ${EVO_COV_MIRROR:-} && -d ${EVO_COV_MIRROR} ]]; then
+  REPO_ROOT="${EVO_COV_MIRROR}"
+fi
 export REPO_ROOT
 cd "${REPO_ROOT}"
 
