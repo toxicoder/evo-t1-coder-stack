@@ -54,11 +54,11 @@
 # Note: this file is rendered by Terraform templatefile(); shell variables are
 # written with a doubled dollar sign ($name or $${name}; the braced form is only
 # safe when escaped this way) so the rendered script keeps them. The only
-# interpolations Terraform has to resolve here are the fourteen variables main.tf
+# interpolations Terraform has to resolve here are the fifteen variables main.tf
 # passes into this script: grok_build_agents, grok_config, repo_url,
 # additional_repos, dc_dir, build_devcontainer, vscode_settings, notes_setup,
 # tmux_conf, grok_build_terminal, vscode_terminal_tmux,
-# grok_build_delegation_skill, coder_agents and mcp_cache_proxy.
+# grok_build_delegation_skill, learn_skill, coder_agents and mcp_cache_proxy.
 # grok_config arrives already rendered from grok-config.toml.tftpl, whose own
 # keys are litellm_url, grok_default_model, workspace_affinity_key,
 # grok_config_extra, github_mcp, search_mcp, search_url and context7_mcp - the
@@ -228,6 +228,25 @@ if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
   mkdir -p "$HOME/.agents/skills/grok-build-delegation" 2>/dev/null
   cp "$HOME/.coder/skills/grok-build-delegation/SKILL.md" \
     "$HOME/.agents/skills/grok-build-delegation/SKILL.md" 2>/dev/null
+fi
+
+# The /learn orientation skill, seeded on the same contract. Upstream /learn is a
+# BUNDLED skill, and the bundle download runs through the CLI's proxy endpoints,
+# which need an x.ai sign-in this stack deliberately does not have: LiteLLM is the
+# only transport, so ~/.grok/bundled/ is never created and the slash name would
+# simply be missing. Writing the file is what makes /learn exist. Same
+# absent-only rule on both copies: delete the file (or edit it) to keep your own.
+if [ ! -f "$HOME/.coder/skills/learn/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/learn" 2>/dev/null
+  cat >"$HOME/.coder/skills/learn/SKILL.md" <<'LEARN_SKILL_MD_EOF'
+${learn_skill}
+LEARN_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/learn/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/learn" 2>/dev/null
+  cp "$HOME/.coder/skills/learn/SKILL.md" \
+    "$HOME/.agents/skills/learn/SKILL.md" 2>/dev/null
 fi
 
 if [ ! -f "$HOME/.coder/AGENTS.md" ]; then

@@ -184,6 +184,8 @@ assert_contributor_home() {
   assert_file_exists "agents instructions" "${home}/.agents/INSTRUCTIONS.md"
   assert_file_exists "coder skill" "${home}/.coder/skills/grok-build-delegation/SKILL.md"
   assert_file_exists "agents skill" "${home}/.agents/skills/grok-build-delegation/SKILL.md"
+  assert_file_exists "coder skill" "${home}/.coder/skills/learn/SKILL.md"
+  assert_file_exists "agents skill" "${home}/.agents/skills/learn/SKILL.md"
   assert_helpers "${home}"
   assert_contains_file "notes lib" "${home}/.grok/notes-setup.sh" 'managed-by: evo-t1-coder-stack'
   assert_grok_config "${home}/.grok/config.toml" "${url}"

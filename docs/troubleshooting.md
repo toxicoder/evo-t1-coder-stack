@@ -434,24 +434,49 @@ docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retr
 - Permanent fix: rebuild the image and the workspace, which then starts from the
   image's own copy. See the next two entries for the command.
 
-### `/learn` missing from Grok Build on code-server web -> the golden image still pins an older CLI
+### `/learn` missing from Grok Build on code-server web -> the CLI's skills bundle needs an x.ai sign-in this stack does not have
 
-Cause: `/learn` is a bundled user-invocable skill of Grok Build 1.0.70, not a
-terminal slash-command this repo seeds. Workspaces still running the previous
-pin (1.0.44) have no bundled learn, and a self-installed `~/.grok/bin/grok` that
-sits first on PATH hides the image's copy.
+Cause: upstream `/learn` is a bundled user-invocable skill, but the bundle is not in
+the binary - the 1.0.70 executable contains no `/learn` string at all - so the CLI
+fetches it at runtime through its proxy endpoints config (`cli-chat-proxy.grok.com`,
+gated by `GROK_SKILLS_BASE_URL`), which needs an x.ai sign-in. LiteLLM is the sole
+model transport here, there is no x.ai credential, and the fetch never runs. The stack
+seeds its own `learn` skill instead, at workspace boot, into
+`~/.coder/skills/learn/SKILL.md` with a twin copy at
+`~/.agents/skills/learn/SKILL.md`, so a missing `/learn` means that seed is missing,
+not that the image is stale.
 
 ```sh
 bash -lc 'command -v grok; grok --version'
+grok inspect --json | grep -n 'learn'
+ls ~/.grok/bundled/skills 2>/dev/null
+ls ~/.agents/skills/learn/SKILL.md ~/.coder/skills/learn/SKILL.md
 ```
 
-- `1.0.70` (or later) at `/usr/local/bin/grok` is the image that ships `/learn`.
-  Rebuild `images/dev` after the pin bump (`scripts/build-dev-image.sh`), re-push
-  the templates, and start a new workspace (or restart one so the **Grok Build**
-  terminal profile execs the new binary).
-- `~/.grok/bin/grok` first on PATH is a leftover installer copy: move it aside
-  so `/usr/local/bin/grok` wins.
-- Pin notes: [grok-build-and-agents.md](grok-build-and-agents.md).
+- A `learn` entry with `userInvocable: true` in the `grok inspect --json` output is the
+  pass condition: the slash command exists on that CLI, and the **Grok Build** terminal
+  profile shows it because that profile execs the same binary.
+- No `learn` entry and both `ls` paths missing: the seed never landed, which means the
+  workspace booted from templates pushed before the seed existed. Re-push the templates
+  and restart the workspace, or reseed into the running container from the stack host:
+  `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>`.
+- Both `ls` paths present but no `learn` entry: the loader dropped the file. Frontmatter
+  must start on line 1, so anything above the opening `---` silently kills the skill.
+- A file you deleted or edited on purpose is not a fault: the boot reseeds each copy
+  only while it is absent. Copy the payload back from
+  `templates/common/learn.SKILL.md` to hand it to the stack again.
+- `ls ~/.grok/bundled/skills` printing nothing is the expected answer, not a symptom:
+  without the sign-in there is no bundled cache at all, on any version. A user-scope
+  skill shadows a same-named bundled one, so if this workspace ever does sign in to
+  x.ai, deleting both seeded copies is what hands `/learn` back to the bundle.
+- `~/.grok/bin/grok` first on PATH is a leftover installer copy: move it aside so
+  `/usr/local/bin/grok` wins. That is the only PATH case, and it does not gate `/learn`.
+- The version line is still worth reading on its own terms: `/usr/local/bin/grok` in the
+  current golden image is 1.0.44 while `images/dev/tool-versions.env` pins
+  `GROK_VERSION=1.0.70`, so the image has not been rebuilt since the pin bump. Rebuilding
+  `images/dev` (`scripts/build-dev-image.sh`) remains the CLI upgrade path - but the
+  seeded `/learn` works on both CLIs, so do not rebuild the image to chase this symptom.
+- Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
 
 ### `grok doctor` flags `voice.no-input-device` or `terminal.limited-color` -> a headless container, and where you ran the command
 

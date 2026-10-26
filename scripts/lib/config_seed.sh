@@ -85,7 +85,9 @@ seed_seed_targets() {
     '~/.coder/AGENTS.md	file:templates/common/coder-agents.md' \
     '~/.agents/INSTRUCTIONS.md	file:templates/common/coder-agents.md' \
     '~/.coder/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md' \
-    '~/.agents/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md'
+    '~/.agents/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md' \
+    '~/.coder/skills/learn/SKILL.md	file:templates/common/learn.SKILL.md' \
+    '~/.agents/skills/learn/SKILL.md	file:templates/common/learn.SKILL.md'
 }
 
 # @function seed_container_exec
