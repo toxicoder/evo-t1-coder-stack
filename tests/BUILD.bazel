@@ -53,6 +53,11 @@ exec_shell(
 bats_file_tests(
     srcs = glob(["bats/*.bats"]),
     common_data = _BATS_COMMON,
+    # run-npm.bats reads docs-site/run_npm.sh, which sits outside the shared
+    # set; named here so the suite runs under its own target instead of skipping.
+    extra_data = {
+        "run-npm.bats": ["//docs-site:sources"],
+    },
     runner = ":bats_runner_exec",
 )
 
@@ -72,6 +77,69 @@ sh_test(
     ] + glob(["bats/**"]),
     tags = [
         "local",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Measured coverage. Non-hermetic by construction: it drives the whole Bats suite
+# with bash xtrace on, so it is manual (//:test-fast stays fast) and runs local.
+exec_shell(
+    name = "shell_cov_exec",
+    src = "coverage/shell_cov.sh",
+    data = [
+        "coverage/aggregate.py",
+        "coverage/instrument.py",
+    ],
+)
+
+sh_test(
+    name = "shell_coverage",
+    size = "medium",
+    timeout = "long",
+    srcs = [":shell_cov_exec"],
+    data = _BATS_COMMON + glob(["bats/*.bats"]) + [
+        "coverage/aggregate.py",
+        "coverage/instrument.py",
+        "coverage/shell_cov.sh",
+        "//docs-site:sources",
+    ],
+    tags = [
+        "local",
+        "manual",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exec_shell(
+    name = "py_cov_exec",
+    src = "coverage/py_cov.sh",
+    data = [
+        "coverage/py_report.py",
+    ],
+)
+
+sh_test(
+    name = "py_coverage",
+    size = "medium",
+    srcs = [":py_cov_exec"],
+    # stack_data carries the docker-compose.yml marker py_cov_repo_root probes
+    # for; the suites themselves have to travel with the target or discover finds
+    # an empty directory and reports full coverage of nothing.
+    data = [
+        "coverage/py_cov.sh",
+        "coverage/py_report.py",
+        "//:stack_data",
+        "//docs-site:sources",
+        "//scripts:doc_sources",
+    ] + glob(
+        ["python/**"],
+        allow_empty = True,
+    ),
+    tags = [
+        "local",
+        "manual",
         "no-sandbox",
     ],
     visibility = ["//visibility:public"],

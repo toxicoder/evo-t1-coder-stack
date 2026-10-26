@@ -78,6 +78,12 @@ case "$SUBCMD" in
     ensure_deps
     exec $CMD run unit "$@"
     ;;
+  unit_coverage)
+    # Same suites as `unit`, with the v8 coverage gate on. $0 is the target name,
+    # so //docs-site:unit_coverage lands here.
+    ensure_deps
+    exec $CMD run unit:coverage "$@"
+    ;;
   verify)
     ensure_deps
     exec $CMD run verify "$@"

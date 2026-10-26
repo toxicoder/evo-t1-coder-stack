@@ -15,6 +15,7 @@ Usage:
   bazelisk run //docs-site:build-latest  # export with the /latest basePath
   bazelisk run //docs-site:typecheck     # next typegen + tsc --noEmit
   bazelisk test //docs-site:unit         # Vitest suite (widgets, transforms, page contract)
+  bazelisk test //docs-site:unit_coverage # the same suites with the v8 coverage gate
   bazelisk test //docs-site:nav_test     # the nav generator's own tests
   bazelisk run //docs-site:build && bazelisk test //docs-site:verify  # verify reads docs-site/out/
   bazelisk run //docs-site:npm -- <args> # escape hatch
@@ -135,6 +136,23 @@ sh_test(
     name = "verify",
     size = "medium",
     timeout = "moderate",
+    srcs = ["run_npm.sh"],
+    data = _NPM_DATA,
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Measured coverage of the site's application code: every function in lib/,
+# components/, app/api/ and scripts/ must be reached by a suite, at the thresholds
+# in vitest.config.ts. Kept out of `unit` so the hermetic-suite ingress stays a
+# pass/fail on behaviour and this stays the coverage question.
+sh_test(
+    name = "unit_coverage",
+    size = "medium",
+    timeout = "long",
     srcs = ["run_npm.sh"],
     data = _NPM_DATA,
     tags = [

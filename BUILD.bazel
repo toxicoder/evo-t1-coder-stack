@@ -29,6 +29,7 @@ exports_files([
 # LiteLLM routing file, the SearXNG settings, the Homepage dashboard files,
 # the Hermes seed (config.yaml, SOUL.md, skills), the nginx proxy confs, the
 # contributor .devcontainer (laptop/CI env plus the probe sentinel), the
+# .githooks that gate a commit and a push, the
 # two .env samples, and the license that ships beside them. proxy/certs/ is .bazelignored (bootstrap issues those on the
 # host); compose bind-mounts for the certs therefore need the real checkout,
 # which bazel run names as BUILD_WORKSPACE_DIRECTORY. scripts/**.sh reaches
@@ -43,6 +44,7 @@ filegroup(
     ] + glob(
         [
             ".devcontainer/**",
+            ".githooks/**",
             "hermes/**",
             "homepage/**",
             "images/dev/**",
@@ -85,7 +87,35 @@ test_suite(
 
 test_suite(
     name = "test",
-    tests = [":test-fast"],
+    tests = [":test-all"],
+    visibility = ["//visibility:public"],
+)
+
+# Everything the repo can check, which is what a pull request has to be green on
+# and what .githooks/pre-push runs. //:test-fast stays the fast hermetic loop a
+# contributor runs continuously; this adds the npm-backed docs gates and the two
+# measured coverage targets, so "all tests pass" has one answer.
+#
+# `manual` keeps it out of `bazelisk test //...` (which stays 47 targets and
+# stays fast); an explicitly named suite runs its manual members regardless, the
+# way //:lint already does. //docs-site:verify is deliberately absent: it reads
+# docs-site/out/, which a clean checkout does not have, and //docs-site:build
+# produces it.
+test_suite(
+    name = "test-all",
+    tags = ["manual"],
+    tests = [
+        "//docs-site:nav_test",
+        "//docs-site:typecheck",
+        "//docs-site:unit",
+        "//docs-site:unit_coverage",
+        "//lints:all",
+        "//tests:bats",
+        "//tests:doc_coverage",
+        "//tests:py_coverage",
+        "//tests:shell_coverage",
+        "//tests:shell_inventory",
+    ],
     visibility = ["//visibility:public"],
 )
 
