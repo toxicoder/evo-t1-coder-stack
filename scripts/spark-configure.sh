@@ -66,13 +66,21 @@ usage() { sed -n '2,27p' "$0"; }
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/spark.sh disable=SC1091
-source "scripts/lib/spark.sh" # sources scripts/lib/common.sh
+source "${SELF_DIR}/lib/spark.sh" # sources scripts/lib/common.sh
 # A leftover JSON_MODE in the environment would hide the human output before
 # --json is ever parsed; --json below is the only thing that sets it.
 unset JSON_MODE
+
+# The default fleet comes from the checkout's .env and this script's own output is
+# sparks/<host>.env, so the checkout is resolved before either is touched:
+# `bazelisk run` executes the runfiles copy, where .env is absent (the fleet would
+# fall back to the placeholder trio) and an --apply write would land in a tree
+# Bazel recreates, leaving the checkout looking untouched.
+ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
+cd "${ROOT_DIR}"
 
 # The twelve settings this script owns. The defaults are the recipe's own and stay as
 # shipped: PARALLEL 5 is the recipe default (4 is the escape hatch for a box ALSO

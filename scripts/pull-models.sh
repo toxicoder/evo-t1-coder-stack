@@ -10,15 +10,22 @@
 #   OLLAMA_MODELS='qwen2.5:7b' bazelisk run //scripts:pull-models
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/common.sh disable=SC1091
-source "scripts/lib/common.sh"
+source "${SELF_DIR}/lib/common.sh"
 # This CLI has no --json mode: a leftover JSON_MODE would route every report
 # line to stderr and leave stdout empty.
 unset JSON_MODE
 # shellcheck source=lib/coder_api.sh disable=SC1091
-source "scripts/lib/coder_api.sh"
+source "${SELF_DIR}/lib/coder_api.sh"
+
+# OLLAMA_MODELS is read from the checkout's .env, so the checkout has to be
+# resolved first: under `bazelisk run` the script's own directory is the runfiles
+# tree, which has no .env, and a silent fall back to the default model list would
+# pull models nobody asked for.
+ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
+cd "${ROOT_DIR}"
 
 if [ -f .env ]; then
   set -a
