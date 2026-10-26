@@ -34,6 +34,12 @@
 # containers so github.com does not SERVFAIL through host MagicDNS. It also
 # pins the editor's agent_id: concat+splat of coder_devcontainer.repo so the
 # ungated coder_app does not index [0] of an empty tuple during the stop plan.
+# It also pins the two startup stages that make the default MCP lanes
+# verifiable: the advisory probe that reads the RENDERED ~/.grok/config.toml,
+# prints one warning per command= path the running golden image does not carry,
+# and can never abort the boot, and the else-path note that tells a workspace
+# left with an unmanaged config what it lost and how to get it back. Both twins
+# have to carry both as identical text.
 #
 # Usage: bazelisk test //tests:bats_devcontainer_template_test   (from any cwd)
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
@@ -427,6 +433,138 @@ setup() {
       [[ "${block}" == *"default     = true"* ]]
     done
   done
+}
+
+@test "mcp lanes: both twins probe every rendered command= against the image" {
+  # Every [mcp_servers.*] block the config template writes names its binary by
+  # the absolute path the golden image bakes (/opt/npm-global/bin/...), so the
+  # rendered config and the running image are two artifacts that have to agree.
+  # Measured failure: a workspace on an image built before that binary existed
+  # booted with the search lane declared and no lane at all, silently, because
+  # only the CLI's own MCP log knew. The advisory stage that follows the render
+  # is the startup-log notice: grep/sed over the rendered file, deduped, one
+  # warning per path that is not an executable, naming the image-remedy and the
+  # npm-remedy at the version images/dev/tool-versions.env pins.
+  local st l l_cfg l_stage l_ctx
+  for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
+    [[ -f "${st}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
+    run grep -F 'MCP command reachability (advisory)' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'check_mcp_commands() {' "${st}"
+    [ "${status}" -eq 0 ]
+    # The extraction shape: only a command= line, only a double-quoted value,
+    # iterated over the unique sorted list.
+    run grep -F '^[[:space:]]*command[[:space:]]*=' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -F '\([^"]*\)' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'sort -u' "${st}"
+    [ "${status}" -eq 0 ]
+    # The line a stuck workspace has to be able to act on.
+    run grep -F 'declares an MCP command that is not executable:' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'npm i -g --prefix /opt/npm-global' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'images/dev/tool-versions.env' "${st}"
+    [ "${status}" -eq 0 ]
+    # Position is the whole point: the probe runs on the file the stage above
+    # just wrote, and before the cache-proxy seed beside it.
+    l_cfg="$(grep -n -m1 -F '${grok_config}' "${st}" | cut -d: -f1)"
+    l_stage="$(grep -n -m1 -F 'check_mcp_commands() {' "${st}" | cut -d: -f1)"
+    l_ctx="$(grep -n -m1 -F 'Context7 cache-proxy config' "${st}" | cut -d: -f1)"
+    for l in "${l_cfg}" "${l_stage}" "${l_ctx}"; do
+      [ -n "${l}" ] || { echo "${st}: cannot locate the render/proxy stages" >&2; return 1; }
+    done
+    if [[ ! "${l_cfg}" -lt "${l_stage}" || ! "${l_stage}" -lt "${l_ctx}" ]]; then
+      echo "${st}: the advisory stage is not between the config render and the cache-proxy seed" >&2
+      return 1
+    fi
+  done
+}
+
+@test "mcp lanes: the advisory stage can never abort a boot" {
+  # This runs on every workspace start, before the clone, so a probe that could
+  # fail is worse than no probe: it would take the terminal and the editor down
+  # with it. Everything optional is swallowed, a missing config returns early,
+  # and the config is read as data (no eval) - then the generated script has to
+  # parse, because a stray ${ or %{ ships verbatim out of templatefile() and
+  # dies at boot rather than at a gate.
+  local st n script
+  for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
+    [[ -f "${st}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
+    run grep -E '^check_mcp_commands \|\| true$' "${st}"
+    [ "${status}" -eq 0 ]
+    n="$(grep -c -F 'check_mcp_commands || true' "${st}")"
+    assert_eq "${st} calls the probe once and only guarded" "1" "${n}"
+    run grep -F '[ -f "$mcp_cfg" ] || return 0' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -F '"$mcp_cfg" 2>/dev/null' "${st}"
+    [ "${status}" -eq 0 ]
+    run grep -Fw 'eval' "${st}"
+    [ "${status}" -ne 0 ]
+    # Render the way templatefile() would: no %{...} gate exists in these two
+    # files, and every ${name} becomes one inert token.
+    script="$(sed -E 's/\$\{[A-Za-z0-9_]+\}/RENDERED/g' "${st}")"
+    [[ -n "${script}" ]] || { echo "${st}: rendered nothing" >&2; return 1; }
+    if ! printf '%s\n' "${script}" | bash -n; then
+      echo "${st}: rendered startup script is not valid bash" >&2
+      return 1
+    fi
+  done
+}
+
+@test "mcp lanes: an unmanaged config says what it costs in both twins" {
+  # The guard re-renders only while the file is absent, a fresh install, or
+  # stack-marked; the else path used to be silent. A config that lost the
+  # marker (or was hand-written) opts the workspace out of every default lane
+  # and the model catalog forever, and nothing ever said so. Semantics must not
+  # move: the same three conditions, plus one note naming the consequence and
+  # the two ways back.
+  local st s e block
+  for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
+    [[ -f "${st}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
+    s="$(grep -n -m1 -F 'if [ ! -f "$HOME/.grok/config.toml" ]' "${st}" | cut -d: -f1)"
+    e="$(grep -n -m1 -F 'check_mcp_commands || true' "${st}" | cut -d: -f1)"
+    [[ -n "${s}" && -n "${e}" ]] || { echo "${st}: cannot locate the config render guard" >&2; return 1; }
+    block="$(sed -n "${s},${e}p" "${st}")"
+    [[ "${block}" == *'[ ! -f "$HOME/.grok/config.toml" ]'* ]] ||
+      { echo "${st}: the render guard lost its absent-file condition" >&2; return 1; }
+    [[ "${block}" == *'[ "$GROK_FRESH_INSTALL" = "1" ]'* ]] ||
+      { echo "${st}: the render guard lost the fresh-install condition" >&2; return 1; }
+    [[ "${block}" == *"grep -qs 'managed-by: evo-t1-coder-stack'"* ]] ||
+      { echo "${st}: the render guard lost the marker condition" >&2; return 1; }
+    [[ "${block}" == *$'\nelse'$'\n'* ]] ||
+      { echo "${st}: the render guard has no else path" >&2; return 1; }
+    [[ "${block}" == *'WARNING: $HOME/.grok/config.toml carries no stack marker'* ]] ||
+      { echo "${st}: the unmanaged-config note is gone" >&2; return 1; }
+    [[ "${block}" == *'running a config the stack does not manage'* ]] ||
+      { echo "${st}: the note names no consequence" >&2; return 1; }
+    [[ "${block}" == *'bazelisk run //scripts:seed-dev-env -- --force'* ]] ||
+      { echo "${st}: the note names no remedy" >&2; return 1; }
+  done
+}
+
+@test "mcp lanes: both twins carry the new stage and note as identical text" {
+  # The twins are independent payload copies (repo rule: edit both when
+  # changing one), so parity here is byte-for-byte on the two new blocks, not a
+  # key string one twin could satisfy with drifted wording.
+  local stage_ws stage_dc note_ws note_dc
+  stage_ws="$(sed -n '/^# --- MCP command reachability/,/^check_mcp_commands || true$/p' "${WS_STARTUP}")"
+  stage_dc="$(sed -n '/^# --- MCP command reachability/,/^check_mcp_commands || true$/p' "${DC_STARTUP}")"
+  note_ws="$(sed -n '/WARNING: \$HOME\/\.grok\/config\.toml carries no stack marker/,/>&2$/p' "${WS_STARTUP}")"
+  note_dc="$(sed -n '/WARNING: \$HOME\/\.grok\/config\.toml carries no stack marker/,/>&2$/p' "${DC_STARTUP}")"
+  [[ -n "${stage_ws}" ]] || { echo "${WS_STARTUP}: no advisory stage to compare" >&2; return 1; }
+  [[ -n "${note_ws}" ]] || { echo "${WS_STARTUP}: no note to compare" >&2; return 1; }
+  if [ "${stage_ws}" != "${stage_dc}" ]; then
+    printf 'drift: the advisory stage differs between the twins\n%s\n' \
+      "$(diff <(printf '%s\n' "${stage_ws}") <(printf '%s\n' "${stage_dc}"))" >&2
+    return 1
+  fi
+  if [ "${note_ws}" != "${note_dc}" ]; then
+    printf 'drift: the unmanaged-config note differs between the twins\n%s\n' \
+      "$(diff <(printf '%s\n' "${note_ws}") <(printf '%s\n' "${note_dc}"))" >&2
+    return 1
+  fi
 }
 
 @test "dns: both templates pin public Docker DNS upstreams on workspace and dind containers" {

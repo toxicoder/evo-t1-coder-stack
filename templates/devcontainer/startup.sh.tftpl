@@ -388,7 +388,46 @@ GROK_CONFIG_EOF
   } >"$HOME/.grok/config.toml" || true
   rm -f "$cli_block"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
+else
+  # Same marker contract as ~/.tmux.conf above: no marker means the file is
+  # user-owned and this stage keeps its hands off it - which is also why the
+  # loss was silent. Say what it costs, because the render above is the only
+  # place this workspace's model catalog and MCP lanes are ever written.
+  echo "WARNING: $HOME/.grok/config.toml carries no stack marker - this" \
+    "workspace is running a config the stack does not manage, so the default" \
+    "MCP lanes and the model catalog never reach it. Delete the file and" \
+    "restart, or re-materialize it with" \
+    "'bazelisk run //scripts:seed-dev-env -- --force'." >&2
 fi
+
+# --- MCP command reachability (advisory) --------------------------------------
+# Every [mcp_servers.*] block the render above writes names its binary by the
+# absolute path the golden image bakes (/opt/npm-global/bin/...), so the config
+# and the image are two artifacts that have to agree - and they do not always.
+# A workspace running an image built before that binary was added boots with a
+# lane that can never start, and the CLI only says so in its own MCP log. This
+# stage reads the RENDERED file, pulls every command = "..." value out of it and
+# names the ones that are not executable files, in the same startup log that
+# wrote the config. Advisory only: one warning line per missing path, never a
+# failed start, so the call below swallows whatever status it returns.
+check_mcp_commands() {
+  local mcp_cfg mcp_cmd
+  mcp_cfg="$HOME/.grok/config.toml"
+  [ -f "$mcp_cfg" ] || return 0
+  while IFS= read -r mcp_cmd; do
+    # sed keeps only a double-quoted value, and a TOML path carries no spaces,
+    # so an empty entry here is an odd line, not a missing binary.
+    [ -n "$mcp_cmd" ] || continue
+    [ -x "$mcp_cmd" ] && continue
+    echo "WARNING: $mcp_cfg declares an MCP command that is not executable:" \
+      "$mcp_cmd - the running image is older than the templates. Rebuild" \
+      "evo-t1-dev (bazelisk run //scripts:build-dev-image), or install it" \
+      "here: npm i -g --prefix /opt/npm-global <package> at the version" \
+      "pinned in images/dev/tool-versions.env." >&2
+  done < <(grep -E '^[[:space:]]*command[[:space:]]*=' "$mcp_cfg" 2>/dev/null \
+    | sed -n 's/.*=[[:space:]]*"\([^"]*\)".*/\1/p' | sort -u)
+}
+check_mcp_commands || true
 
 # --- Context7 cache-proxy config ---------------------------------------------
 # Seeded only while absent, so a hand-edited copy survives restarts. Lives
