@@ -366,6 +366,60 @@ router_settings:
   optional_pre_call_checks: ["session_affinity"]
   allowed_fails: 40
   cooldown_time: 5
+  # TensorFold on the Spark boxes answers an over-admitted stream with the Zig
+  # error value NoRoom as an HTTP 500 body, and the SDK hands it to LiteLLM with
+  # no int status_code. At v1.102.1 that puts it on the status-less branch of
+  # exception_mapping_utils, so the router sees APIConnectionError -- and
+  # RetryPolicy has no APIConnectionErrorRetries field to catch it. DefaultRetries
+  # is the only field that can reach this error, which is why it is set here; do
+  # not "clean it up" into a status-coded field.
+  #
+  # Scoped to the four Spark lanes, so coder (Arc) and chat keep the plain
+  # num_retries path. The four groups are independent: none inherits agent's
+  # entry, so each needs its own six keys.
+  #
+  # The zeros pin the exceptions DefaultRetries would otherwise reach, and
+  # NotFoundError is one of them: at this tag it has no field of its own, so a
+  # typo'd model id would otherwise cost extra attempts before the same error.
+  #
+  # What this does NOT do: because the exception carries no status_code,
+  # _deployment_ids_to_skip_on_retry excludes nothing and
+  # _time_to_sleep_before_retry returns 0 while any deployment is healthy, so
+  # these retries are instant and, under the workspace-wide session pin, land on
+  # the same saturated box. This makes the refusal less likely to surface; the
+  # relocation lives on the box (patch 0029 with TF_FLASHNEXT_ADMIT_RECLAIM=1,
+  # asserted by //scripts:spark-configure) and in keeping in-flight fan-out at or
+  # under a box's PARALLEL, since every subagent of a workspace shares one
+  # x-litellm-session-id.
+  model_group_retry_policy:
+    agent:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 2
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+    agent-low:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 2
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+    agent-medium:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 2
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+    agent-xhigh:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 2
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
   fallbacks:
     - agent: ["coder"]
     - agent-low: ["coder"]
