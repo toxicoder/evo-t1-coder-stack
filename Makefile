@@ -37,7 +37,7 @@ ARGS ?=
 
 .PHONY: help test bats test-all lint fmt fix validate pre-commit hooks hooks-check bootstrap stack-up stack-down stack-status \
 stack-logs stack-reset prod-stack-up prod-stack-down prod-stack-status prod-stack-logs \
-prod-stack-reset new-workspace models spark-configure spark-verify
+prod-stack-reset update-stack new-workspace models spark-configure spark-verify
 
 help:
 	@echo "evo-t1-coder-stack (Bazel primary)"
@@ -57,6 +57,7 @@ help:
 	@echo "    set PROJECT=evo-t1-coder-stack to address the stable stack instead)"
 	@echo "  make prod-stack-up | prod-stack-down | prod-stack-status | prod-stack-logs | prod-stack-reset"
 	@echo "    (PROD_PROJECT=evo-t1-prod: the stable stack, on default ports)"
+	@echo "  make update-stack ARGS=\"--dry-run\"  (git pull, then redeploy what the pull changed)"
 	@echo "  make bootstrap | make models | make spark-verify | make spark-configure"
 	@echo "  make new-workspace ARGS=\"https://host/org/repo.git\"  (ARGS is argv, not a make flag)"
 	@echo ""
@@ -147,6 +148,13 @@ prod-stack-logs:
 prod-stack-reset:
 	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
 	$(BAZEL) run //scripts:prod-stack -- reset --project-name $(PROD_PROJECT)
+
+# Pull the latest code and deploy it. Every step the two `up` shims above only
+# half-apply lives inside the target, including the host repair, so this one
+# needs no `--repair` line of its own. ARGS carries its flags.
+update-stack:
+	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
+	$(BAZEL) run //scripts:update-stack -- $(ARGS)
 
 new-workspace:
 	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi

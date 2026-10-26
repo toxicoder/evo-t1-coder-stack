@@ -67,6 +67,8 @@ Prefer Bazelisk. Make is a shim.
 - scripts: `bazelisk run //scripts:<stem> -- <args>` (keep dashes)
 - dev stack: `bazelisk run //scripts:dev-stack -- up|down|status|logs|reset`
 - prod (stable) stack: `bazelisk run //scripts:prod-stack -- up|down|status|logs|reset`
+- pull + deploy in one step (host shell; `--dry-run` to plan):
+  `bazelisk run //scripts:update-stack`
 - new workspace: `bazelisk run //scripts:new-workspace -- --dry-run <git-url>`
 - MCP lanes: `bazelisk run //scripts:mcp-check` (declared lanes, `command=` binaries,
   lane credentials, and each server's handshake; runs inside a workspace or on the host)

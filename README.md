@@ -521,7 +521,37 @@ Rules, the branch protection behind them, and the commit prefixes are in
 
 ## After a git pull
 
-From a **host** shell, in the checkout:
+From a **host** shell, in the checkout, one command pulls and deploys:
+
+```sh
+bazelisk run //scripts:update-stack
+```
+
+It runs the whole sequence in the order that makes each step land: fast-forwards
+the checkout, re-enters the updated tree, runs the host repair, reconciles the env
+files, converges the compose project, restarts the services whose bind-mounted
+payload actually changed, pushes the Coder templates, reseeds the running
+workspaces, and prints the stack status. It stops the project first when the pull
+touched `docker-compose.yml` or an env file, because `up -d` leaves a service
+deleted from the compose file running. The payload restart is the part no other
+tool here does: editing `litellm/config.yaml` or `homepage/config/services.yaml`
+changes the file behind an unchanged bind mount, so `up -d` reports success and
+keeps the old process.
+
+Useful flags: `--dry-run` prints the plan and changes nothing, `--stack dev`
+drives the dev project, `--restart` forces a stop even for a docs-only pull,
+`--pull-images` also runs `compose pull` (what advances the services pinned to a
+mutable `:latest` tag), `--branch <name>` deploys another branch, and
+`--skip-pull`, `--skip-repair`, `--skip-configs`, `--skip-templates`,
+`--skip-workspaces` drop single steps. `--litellm-url` names a remapped
+`LITELLM_PORT` for the reseed, the way `refresh-configs` does.
+
+It refuses rather than guesses: a tree with uncommitted changes, a detached HEAD,
+and a branch that cannot fast-forward all stop the run before anything reaches the
+network (`--allow-dirty` is the way past the first). It never destroys a volume,
+never reaches `reset`, and never passes `--force` to a reseed.
+
+The steps it replaces, if you want to run them one at a time:
 
 ```sh
 git pull
@@ -922,6 +952,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── storage-clean.sh     # interactive janitor for the persistent layer
 │   ├── test-in-image.sh     # run the Bazel gates inside evo-t1-dev:latest
 │   ├── update-configs.sh    # after a pull: port the env files, reseed workspace config
+│   ├── update-stack.sh      # one step: git pull, then redeploy what the pull changed
 │   └── validate.sh          # the local gate behind //:validate
 └── templates/
     ├── common/                   # single-copy payloads, staged beside each main.tf
