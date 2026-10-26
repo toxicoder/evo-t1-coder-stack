@@ -24,14 +24,12 @@ else
   REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 fi
 SITE_DIR="$REPO_ROOT/docs-site"
+# shellcheck source=../scripts/lib/common.sh disable=SC1091
+source "${REPO_ROOT}/scripts/lib/common.sh"
+unset JSON_MODE
 DEFAULT_PORT=3005
 PORT=${PORT:-$DEFAULT_PORT}
 AUTO_OPEN_BROWSER=true
-
-info() { echo -e "\033[1;34m[INFO]\033[0m $*"; }
-success() { echo -e "\033[1;32m[SUCCESS]\033[0m $*"; }
-warn() { echo -e "\033[1;33m[WARN]\033[0m $*"; }
-error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
 
 # @function docs_node_is_ready
 # Ensure Node and npm exist, are new enough for Next 16, and that deps are installed.
@@ -45,9 +43,8 @@ error() { echo -e "\033[1;31m[ERROR]\033[0m $*" >&2; }
 #   0 when the toolchain can build; exits the script when it cannot
 docs_node_is_ready() {
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
-    error "Node.js 22+ and npm are required for the documentation site."
-    error "In the devcontainer they are preinstalled; on a host: brew install node@22."
-    exit 1
+    err "Node.js 22+ and npm are required for the documentation site."
+    die "In the devcontainer they are preinstalled; on a host: brew install node@22."
   fi
 
   # process.versions.node is "22.14.0" with no "v" prefix: take the first dotted part.
@@ -57,16 +54,12 @@ docs_node_is_ready() {
   node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
   [[ ${node_major} =~ ^[0-9]+$ ]] || node_major=0
   if [[ ${node_major} -lt 22 ]]; then
-    error "Node ${node_major} is too old for Next 16 (docs-site/package.json requires node >=22)."
-    exit 1
+    die "Node ${node_major} is too old for Next 16 (docs-site/package.json requires node >=22)."
   fi
 
   if [[ ! -x "$SITE_DIR/node_modules/.bin/next" ]]; then
-    info "Installing documentation site dependencies (npm ci)"
-    (cd "$SITE_DIR" && npm ci --legacy-peer-deps) || {
-      error "npm ci failed in docs-site/"
-      exit 1
-    }
+    phase "Installing documentation site dependencies (npm ci)"
+    (cd "$SITE_DIR" && npm ci --legacy-peer-deps) || die "npm ci failed in docs-site/"
   fi
 }
 
@@ -82,12 +75,10 @@ docs_node_is_ready() {
 #   0 when the package is complete
 check_content() {
   if [[ ! -f "$SITE_DIR/source.config.ts" ]]; then
-    error "docs-site/source.config.ts not found - the docs app is incomplete."
-    exit 1
+    die "docs-site/source.config.ts not found - the docs app is incomplete."
   fi
   if [[ ! -f "$SITE_DIR/lib/nav.json" ]]; then
-    error "docs-site/lib/nav.json is missing - run: npm run nav:generate in docs-site/"
-    exit 1
+    die "docs-site/lib/nav.json is missing - run: npm run nav:generate in docs-site/"
   fi
 }
 
@@ -123,19 +114,21 @@ case "${1:-help}" in
           shift
           ;;
         *)
-          error "Unknown option for serve: $1"
-          exit 1
+          die "Unknown option for serve: $1"
           ;;
       esac
     done
 
+    section "Serve"
     docs_node_is_ready
     check_content
-    info "Starting the Fumadocs dev server on port ${PORT}..."
+    phase "Starting the Fumadocs dev server on port ${PORT}..."
     open_browser
     # The dev server must be reached over localhost: Next rejects cross-origin dev
     # resources requested via 127.0.0.1, which breaks hydration.
     (cd "$SITE_DIR" && exec npm run dev -- --port "$PORT" --hostname localhost)
+    ok "Fumadocs dev server on port ${PORT} stopped"
+    summary
     ;;
 
   build)
@@ -148,35 +141,38 @@ case "${1:-help}" in
           shift 2
           ;;
         *)
-          error "Unknown option for build: $1"
-          exit 1
+          die "Unknown option for build: $1"
           ;;
       esac
     done
 
+    section "Build"
     docs_node_is_ready
     check_content
     if [[ $ALIAS == "latest" ]]; then
-      info "Building the documentation site as the latest alias (basePath set)..."
+      phase "Building the documentation site as the latest alias (basePath set)..."
       (cd "$SITE_DIR" && npm run build:latest)
     elif [[ -n $ALIAS ]]; then
-      info "Building the documentation site as ${ALIAS} (basePath set)..."
+      phase "Building the documentation site as ${ALIAS} (basePath set)..."
       (cd "$SITE_DIR" && DOCS_ALIAS="$ALIAS" npm run build)
     else
-      info "Building the documentation site (no basePath, for preview and the gates)..."
+      phase "Building the documentation site (no basePath, for preview and the gates)..."
       (cd "$SITE_DIR" && npm run build)
     fi
-    success "Build complete. Output is in docs-site/out/"
+    ok "Build complete. Output is in docs-site/out/"
+    summary
     ;;
 
   preview)
+    section "Preview"
     docs_node_is_ready
     check_content
-    info "Building production preview..."
+    phase "Building production preview..."
     (cd "$SITE_DIR" && npm run build)
-    success "Serving the static export from docs-site/out/ on port ${PORT}..."
+    ok "Serving the static export from docs-site/out/ on port ${PORT}..."
     # scripts/serve_static.mjs takes positional [port] [root].
     (cd "$SITE_DIR" && npm run serve -- "$PORT" out)
+    summary
     ;;
 
   verify)
@@ -203,28 +199,30 @@ case "${1:-help}" in
     ;;
 
   status)
-    echo "=== Documentation Status ==="
-    echo "Content root:          $([[ -d $REPO_ROOT/docs ]] && echo 'docs/' || echo 'MISSING')"
-    echo "Navigation tree:       $([[ -f $SITE_DIR/lib/nav.json ]] && echo 'docs-site/lib/nav.json' || echo 'MISSING (npm run nav:generate)')"
-    echo "source.config.ts:      $([[ -f $SITE_DIR/source.config.ts ]] && echo 'present' || echo 'MISSING')"
+    section "Documentation status"
+    log "Content root:          $([[ -d $REPO_ROOT/docs ]] && echo 'docs/' || echo 'MISSING')"
+    log "Navigation tree:       $([[ -f $SITE_DIR/lib/nav.json ]] && echo 'docs-site/lib/nav.json' || echo 'MISSING (npm run nav:generate)')"
+    log "source.config.ts:      $([[ -f $SITE_DIR/source.config.ts ]] && echo 'present' || echo 'MISSING')"
     if [[ -x "$SITE_DIR/node_modules/.bin/next" ]]; then
-      echo "Dependencies:          installed ($(node -p "require('$SITE_DIR/node_modules/next/package.json').version" 2>/dev/null || echo '?'))"
+      log "Dependencies:          installed ($(node -p "require('$SITE_DIR/node_modules/next/package.json').version" 2>/dev/null || echo '?'))"
     else
-      echo "Dependencies:          not installed (cd docs-site && npm ci --legacy-peer-deps)"
+      log "Dependencies:          not installed (cd docs-site && npm ci --legacy-peer-deps)"
     fi
     if command -v node >/dev/null 2>&1; then
-      echo "Node:                  $(node --version 2>/dev/null || echo 'not in PATH')"
+      log "Node:                  $(node --version 2>/dev/null || echo 'not in PATH')"
     else
-      echo "Node:                  not in PATH"
+      log "Node:                  not in PATH"
     fi
-    echo "Static export:         $([[ -f $SITE_DIR/out/index.html ]] && echo 'docs-site/out/' || echo 'not built (npm run build)')"
-    echo "Default port:          $DEFAULT_PORT"
+    log "Static export:         $([[ -f $SITE_DIR/out/index.html ]] && echo 'docs-site/out/' || echo 'not built (npm run build)')"
+    log "Default port:          $DEFAULT_PORT"
     ;;
 
   clean)
-    info "Cleaning build artifacts..."
+    section "Clean"
+    phase "Cleaning build artifacts..."
     rm -rf "$SITE_DIR/out" "$SITE_DIR/.next" "$SITE_DIR/.source"
-    success "Clean complete."
+    ok "Clean complete."
+    summary
     ;;
 
   help | *)

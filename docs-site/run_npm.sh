@@ -21,6 +21,16 @@ else
   cd "$SCRIPT_DIR"
 fi
 
+# Node's os.homedir() (libuv uv_os_homedir) fails with ENOENT when HOME is
+# unset or names a missing directory and the process uid is not in
+# /etc/passwd. GitHub Actions runs the golden image as the runner uid
+# (1001), and Bazel test actions drop HOME unless --test_env=HOME is set.
+if [[ -z ${HOME:-} || ! -d "${HOME}" ]]; then
+  HOME="${TEST_TMPDIR:-${TMPDIR:-/tmp}}"
+  export HOME
+  mkdir -p "${HOME}"
+fi
+
 # A named sh_binary already says which script it is through $0; only the generic
 # //docs-site:npm target and a direct `bash run_npm.sh <script>` carry the name in $1.
 SUBCMD="$(basename "${0:-npm}")"

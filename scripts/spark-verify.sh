@@ -72,40 +72,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# @function log
-# Print one status line. Spark scripts send it to stderr when --json is set.
-# Globals:
-#   json (Spark scripts; empty means stdout)
-# Arguments:
-#   $* - text to print
-# Outputs:
-#   The text on stdout, or stderr when json is set
-# Returns:
-#   0
-log() {
-  # With --json, stdout stays exactly one JSON object per host: every prose line goes to
-  # stderr instead, so `bazelisk run //scripts:spark-verify -- --json | jq` parses and `2>/dev/null` silences
-  # the commentary without losing it.
-  if [ -n "${json:-}" ]; then printf '%s\n' "$*" >&2; else printf '%s\n' "$*"; fi
-}
-# @function die
-# Print an error on stderr and exit 1.
-# Globals:
-#   None
-# Arguments:
-#   $* - error text, without the "error: " prefix
-# Outputs:
-#   "error: ..." on stderr
-# Returns:
-#   Does not return; exits 1
-die() {
-  printf 'error: %s\n' "$*" >&2
-  exit 1
-}
+# shellcheck source=lib/spark.sh disable=SC1091
+source "scripts/lib/spark.sh" # sources scripts/lib/common.sh
+# A leftover JSON_MODE in the environment would hide the human output before
+# --json is ever parsed; --json below is the only thing that sets it.
+unset JSON_MODE
 
 # The fleet's contract, as facts to CHECK. Nothing here is ever written anywhere: use
 # bazelisk run //scripts:spark-configure -- --apply to change what a box actually runs with.
-JSON_ESCAPE_SED='s/["\\]/\\&/g' # one sed program, quoted: escape \ and " in one pass
 model_id="Qwen3.8-Flash-Next"
 parallel_want=5
 context_want=262144
@@ -116,7 +90,6 @@ recipe_dir='${HOME}/Qwen3.8-Flash-Next-Single-DGX-Spark-TensorFold'
 # changes what a box can serve, not a label, which is why a difference is fatal.
 drift_keys="model_id_seen served_name parallel streams_max context_length context_pairs container_image kv_dtype spark1_openai spark2_openai spark3_openai"
 
-json=""
 tests=1
 ssh_user="${SPARK_SSH_USER:-${LOGNAME:-}}"
 ssh_port=22
@@ -129,7 +102,7 @@ hosts=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --json)
-      json=1
+      JSON_MODE=1
       shift
       ;;
     --no-tests)
@@ -313,90 +286,9 @@ fact_value() {
   report_get "$2" "${work}/${1}.facts"
 }
 
-# env_get: read one key out of .env without sourcing it — the file is user-editable and
-# a parse error in it must not be able to abort this script. Only the three
-# SPARKn_OPENAI_URL routing URLs are read here (the default host list above strips the
-# same keys plus the Ollama URLs), and only to compare them with each other.
-# @function env_get
-# Read the last assignment of one key from .env without sourcing the file.
-# Globals:
-#   None
-# Arguments:
-#   $1 - key name
-# Outputs:
-#   The value with one layer of wrapping quotes removed, or nothing
-# Returns:
-#   0
-env_get() {
-  [ -f .env ] || return 0
-  sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true
-}
-
-# json_value / json_escape: keep --json one parseable object per host. A check that
-# never ran prints null rather than a number that was never taken, and a remote tool's
-# reply is stripped of the delimiters it could otherwise close.
-# @function json_value
-# Print one JSON scalar: null when empty, a bare integer, or a quoted string.
-# Globals:
-#   None
-# Arguments:
-#   $1 - value, optional
-# Outputs:
-#   null, a bare integer, or a quoted string
-# Returns:
-#   0
-json_value() {
-  if [ "$#" -lt 1 ] || [ -z "$1" ]; then
-    printf 'null'
-    return
-  fi
-  case "$1" in
-    *[!0-9]*) printf '"%s"' "$1" ;;
-    *) printf '%s' "$1" ;;
-  esac
-}
-
-# @function json_escape
-# Escape text so it can sit inside one JSON string.
-# Globals:
-#   JSON_ESCAPE_SED when this copy clips remote replies
-# Arguments:
-#   $1 - raw text
-# Outputs:
-#   Escaped text. The coder-agents copy also turns newlines into \\n.
-# Returns:
-#   0
-json_escape() {
-  local trimmed
-  trimmed="$(printf '%s' "$1" | sed -E "${JSON_ESCAPE_SED}" | tr -d '\n\r')"
-  printf '%s' "${trimmed:0:180}"
-}
-
-# probe_http: one capped HTTP GET, printing the body or nothing. "Nothing answered" is a
-# result here and not an error: an empty body stays distinguishable from a body that
-# says something, which is what lets a box with no server on it be a skip and not a
-# failure.
-# @function probe_http
-# Print the body of one capped HTTP GET, or nothing when it does not answer.
-# Globals:
-#   probe_tool or has_timeout and http_cap, depending on the caller
-# Arguments:
-#   Spark entry scripts: $1 - URL. spark.sh: $1 - cap seconds, $2 - URL.
-# Outputs:
-#   The body, or nothing
-# Returns:
-#   0
-probe_http() {
-  # $1 = URL, printed on stdout. One command substitution per call, and no nested one
-  # inside it: the whole file keeps that rule so ssh's argument string stays flat too.
-  local out=""
-  if [ -n "${has_timeout}" ]; then
-    out="$(timeout "${http_cap}" curl -fsS -m 8 "$1" 2>/dev/null || true)"
-  else
-    out="$(curl -fsS -m 8 "$1" 2>/dev/null || true)"
-  fi
-  printf '%s' "${out}"
-}
+# env_get, json_value, json_escape and probe_http all come from
+# scripts/lib/common.sh and scripts/lib/spark.sh (sourced above): the lib copies
+# win, so this file keeps only the policy functions below.
 
 # probe_script: the remote half, one ssh round trip per host, emitted as ONE flat
 # script. It travels base64-encoded inside the ssh command string below, because a
@@ -416,174 +308,7 @@ probe_http() {
 # Returns:
 #   0
 probe_script() {
-  cat <<'PROBE'
-# @function say
-# Print one key=value line on the remote probe host.
-# Globals:
-#   None
-# Arguments:
-#   $1 - line to print
-# Outputs:
-#   The line on stdout
-# Returns:
-#   0
-say() {
-  printf '%s\n' "$1"
-}
-
-# fact: what this box runs with for key $1 — the environment the RUNNING container was
-# started with first, because that is what answers the proxy right now, then the file
-# next to start.sh, because that is what a restart would read. Both are read with grep,
-# never sourced: an answer is data, and a config.sh that had been edited into something
-# hostile must not be executed by this check.
-# @function fact
-# On the remote host, print what key $1 is set to, or NOTSET.
-# Globals:
-#   cenv, RECIPE_DIR
-# Arguments:
-#   $1 - key
-# Outputs:
-#   The value
-# Returns:
-#   0
-fact() {
-  key="$1"
-  value=""
-  if [ -n "${cenv}" ]; then
-    value="$(printf '%s\n' "${cenv}" | grep "^${key}=" | tail -n 1 | cut -d= -f2-)"
-  fi
-  if [ -z "${value}" ]; then
-    file="${RECIPE_DIR}/.env"
-    if [ -f "${file}" ]; then
-      value="$(grep "^${key}=" "${file}" 2>/dev/null | tail -n 1 | cut -d= -f2-)"
-    fi
-  fi
-  if [ -z "${value}" ] && [ -f "${RECIPE_DIR}/scripts/config.sh" ]; then
-    value="$(grep "^${key}=" "${RECIPE_DIR}/scripts/config.sh" 2>/dev/null | tail -n 1 | cut -d= -f2-)"
-  fi
-  [ -n "${value}" ] || value=NOTSET
-  printf '%s' "${value}"
-}
-
-# run_test: run one of the recipe's own probes and print one line — pass or fail plus
-# the first line of whatever it said. A missing script is reported as absent, never
-# guessed at, and none of these four starts a server or restarts one.
-# @function run_test
-# On the remote host, run one recipe probe and print pass or fail.
-# Globals:
-#   RECIPE_DIR, have_timeout, test_cap
-# Arguments:
-#   $1 - probe name; $2... - command to run inside the recipe directory
-# Outputs:
-#   One line: the name, ok or FAIL, and the first line of output
-# Returns:
-#   0
-run_test() {
-  name="$1"
-  shift
-  if [ -n "${have_timeout}" ]; then
-    out="$(cd "${RECIPE_DIR}" && timeout "${test_cap}" "$@" 2>&1 | tail -n 12)"
-  else
-    out="$(cd "${RECIPE_DIR}" && "$@" 2>&1 | tail -n 12)"
-  fi
-  if [ -z "${out}" ]; then
-    printf '%s' "${name}: no output"
-  elif printf '%s\n' "${out}" | tail -n 1 | grep -qEi '^(FAIL|ERROR|Traceback)|failed|error'; then
-    printf '%s' "${name}: FAIL — $(printf '%s\n' "${out}" | grep -v '^[[:space:]]*$' | sed -n '1p' | cut -c1-160)"
-  else
-    printf '%s' "${name}: ok — $(printf '%s\n' "${out}" | grep -v '^[[:space:]]*$' | sed -n '1p' | cut -c1-160)"
-  fi
-}
-
-if command -v docker >/dev/null 2>&1; then
-  have_docker=present
-else
-  have_docker=missing
-fi
-if [ -d /dev/dri ]; then
-  dri=present
-else
-  dri=missing
-fi
-if [ -d "${RECIPE_DIR:-/nonexistent}" ]; then
-  clone_state=present
-else
-  clone_state=missing
-fi
-say "have_docker=${have_docker}"
-say "dri=${dri}"
-say "clone=${clone_state}"
-
-# The image tag, from the container that is running if there is one and from the image
-# store if there is not: two boxes on two different TensorFold builds answer the same
-# model id differently, and nothing else here would notice.
-container_state=absent
-container_image=NOTSET
-if [ "${have_docker}" = present ]; then
-  running="$(docker ps --no-trunc --format '{{.Names}} {{.State}} {{.Image}}' 2>/dev/null | grep "^${CONTAINER} " | tail -n 1)"
-  if [ -n "${running}" ]; then
-    container_state="$(printf '%s' "${running}" | cut -d' ' -f2)"
-    container_image="$(printf '%s' "${running}" | cut -d' ' -f3)"
-  else
-    container_image="$(docker image ls --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -m1 tensorfold)"
-    [ -n "${container_image}" ] || container_image=NOTSET
-  fi
-fi
-say "container_state=${container_state}"
-say "container_image=${container_image}"
-
-cenv=""
-if [ "${have_docker}" = present ]; then
-  cenv="$(docker inspect "${CONTAINER}" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null)"
-fi
-say "served_name=$(fact SERVED_NAME)"
-say "kv_dtype=$(fact KV_DTYPE)"
-say "parallel=$(fact PARALLEL)"
-say "context=$(fact CONTEXT)"
-
-# The window, twice over and from two different places: the four "streams of N
-# prompt/reply tokens (MMMM MiB a stream)" lines and the "startup estimate ... within
-# ... NNNNN tokens" line are what a vLLM-lineage server prints when it was offered the
-# window it actually has, which is a measurement and not a setting someone typed.
-startup_lines="$(docker logs --tail 400 "${CONTAINER}" 2>/dev/null | grep -o 'streams of [0-9]* prompt/reply tokens ([0-9.]* MiB a stream)' | tail -n 1)"
-[ -n "${startup_lines}" ] || startup_lines=NOTSET
-say "context_pairs=${startup_lines}"
-startup_estimate="$(docker logs --tail 400 "${CONTAINER}" 2>/dev/null | grep -o 'startup estimate.*within.*' | tail -n 1)"
-[ -n "${startup_estimate}" ] || startup_estimate=NOTSET
-say "startup_estimate=${startup_estimate}"
-
-# The four read-only probes, in the order the fleet contract lists them. Each one needs
-# a server that is already up, so a box with no container on it runs none of them and
-# says so rather than spending a timeout on each.
-if [ "${clone_state}" = present ] && [ "${RUN_TESTS}" = yes ] && [ "${container_state}" != absent ]; then
-  cd "${RECIPE_DIR}" || say "clone_unreadable=${RECIPE_DIR}"
-  if [ -f scripts/toolcheck.py ]; then
-    say "toolcheck=$(run_test toolcheck.py scripts/toolcheck.py)"
-  else
-    say "toolcheck=absent (no scripts/toolcheck.py in the clone)"
-  fi
-  if [ -f scripts/needle.py ]; then
-    say "needle=$(run_test needle.py scripts/needle.py --length 195000)"
-  else
-    say "needle=absent (no scripts/needle.py in the clone)"
-  fi
-  if [ "${VISION_WANTED}" = 1 ]; then
-    if [ -f scripts/visioncheck.py ]; then
-      say "visioncheck=$(run_test visioncheck.py scripts/visioncheck.py)"
-    else
-      say "visioncheck=absent (no scripts/visioncheck.py in the clone)"
-    fi
-  else
-    say "visioncheck=skipped (VISION is not 1, so a text-only check was not asked for)"
-  fi
-  if [ -f scripts/bench.py ]; then
-    say "bench=$(run_test bench.py scripts/bench.py --suite --seed 1 --jsonl run.jsonl --clients 1,2,4,5)"
-  else
-    say "bench=absent (no scripts/bench.py in the clone)"
-  fi
-fi
-say report_end
-PROBE
+  cat "scripts/lib/probes/spark-verify.sh"
 }
 
 log "spark-verify: fleet verify for ${#hosts[@]} host(s) — read-only, nothing here writes to a Spark"
@@ -600,14 +325,11 @@ fi
 hosts_checked=0
 hosts_unreachable=0
 hosts_failed=0
-blank=0
 
 for host in ${hosts[@]+"${hosts[@]}"}; do
-  # One JSON object per line in --json mode, with nothing printed between them.
-  if [ -z "${json}" ] && [ "${blank}" = 1 ]; then
-    printf '\n'
-  fi
-  blank=1
+  # section/phase go through log, so --json keeps them on stderr and stdout stays
+  # one JSON object per line, with nothing printed between them.
+  section "host ${host}"
   hosts_checked=$((hosts_checked + 1))
 
   models="${work}/${host}.models"
@@ -619,8 +341,9 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # HTTP first, from this box, whatever ssh does afterwards: that is the path the
   # proxy's own health checks and the dashboard's Spark cards take, so it is the
   # answer that describes what the fleet actually sees.
-  models="$(probe_http "http://${host}:${server_port}/v1/models")"
-  health="$(probe_http "http://${host}:${server_port}/health")"
+  phase "probing http://${host}:${server_port}"
+  models="$(probe_http "${http_cap}" "http://${host}:${server_port}/v1/models")"
+  health="$(probe_http "${http_cap}" "http://${host}:${server_port}/health")"
 
   # Then ssh, for what only the box itself can say: the image tag, the container's
   # environment, the recipe clone's config.sh, and the recipe's own probes.
@@ -632,6 +355,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   report_rc=0
   ssh_out=""
   if command -v ssh >/dev/null 2>&1; then
+    phase "probing ${target} over ssh"
     # One flat script, assembled in a file, base64'd into one quoted argument. The five
     # leading assignments are part of that same script, so the remote half still reads
     # as one flat body and the per-host body below keeps appending to it.
@@ -714,9 +438,9 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # The three proxy-side URLs come from .env.sample / docker-compose.yml, not from the
   # box: an :8888 that answers on its plain path is a V1OpenAIChatProvider deployment
   # (chat completions), not a /v1/messages one, and the proxy would not say so.
-  printf 'spark1_openai=%s\n' "$(env_get SPARK1_OPENAI_URL)" >>"${facts}"
-  printf 'spark2_openai=%s\n' "$(env_get SPARK2_OPENAI_URL)" >>"${facts}"
-  printf 'spark3_openai=%s\n' "$(env_get SPARK3_OPENAI_URL)" >>"${facts}"
+  printf 'spark1_openai=%s\n' "$(env_get .env SPARK1_OPENAI_URL)" >>"${facts}"
+  printf 'spark2_openai=%s\n' "$(env_get .env SPARK2_OPENAI_URL)" >>"${facts}"
+  printf 'spark3_openai=%s\n' "$(env_get .env SPARK3_OPENAI_URL)" >>"${facts}"
   if [ -s "${report}" ]; then
     {
       printf 'context_pairs=%s\n' "$(report_get context_pairs "${report}")"
@@ -793,7 +517,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     *) routing="no SPARKn_OPENAI_URL to compare (no .env here, or all three are empty)" ;;
   esac
 
-  if [ "${json}" != 1 ]; then
+  if [ -z "${JSON_MODE:-}" ]; then
     if [ "${verdict}" = OK ]; then
       log "${host} — serving ${model_id}"
     else
@@ -817,7 +541,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     "$(json_escape "${seen_image}")" "$(json_escape "${seen_kv}")" \
     "$(json_escape "${seen_parallel}")" "$(json_escape "${detail}")" >"${work}/${host}.jsonl"
 
-  if [ "${json}" = 1 ]; then
+  if [ -n "${JSON_MODE:-}" ]; then
     cat "${work}/${host}.jsonl"
   fi
   if ! mkdir -p sparks 2>/dev/null; then

@@ -1,0 +1,19 @@
+#!/bin/bash
+# tftpl: coder_script body; $${shell} stays a shell var; $${terraform_var} is passed from main.tf.
+set -u
+if ! command -v docker >/dev/null 2>&1; then
+  echo "the docker CLI is missing — this template needs the golden image (scripts/build-dev-image.sh), which ships the client" >&2
+  exit 1
+fi
+# Explicit -H rather than relying on the inherited DOCKER_HOST, so the log
+# line below always names the endpoint that was actually probed.
+deadline=$(( $(date +%s) + 120 ))
+while ! docker -H ${dind_host} version >/dev/null 2>&1; do
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    echo "the DinD daemon at ${dind_host} never answered 'docker version' within 120s" >&2
+    echo "from the stack host, inspect the sidecar and its logs: docker ps -a --filter name=${dind_sidecar}" >&2
+    exit 1
+  fi
+  sleep 2
+done
+echo "DinD daemon is answering at ${dind_host}"

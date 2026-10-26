@@ -9,14 +9,19 @@
 #
 # Invariants:
 #   - Sourcing this file changes no shell options and runs no docker command.
-#   - The ARG scan matches the historical awk in build-dev-image.sh, including
-#     backslash-continued ARG lines and comment skipping.
+#   - The ARG scan lives in scripts/lib/dockerfile_args.awk and matches the
+#     historical awk in build-dev-image.sh, including backslash-continued ARG
+#     lines and comment skipping.
 #   - Pure text comparison: no docker, no extra dependencies, no sourcing of
 #     scripts/lib/tool_pins.sh.
 #
 # Usage (after the repo-root cd):
 #   # shellcheck source=lib/image.sh disable=SC1091
 #   source "scripts/lib/image.sh"
+
+# _IMAGE_LIB_DIR - this lib's directory, so the awk payloads are found by
+# absolute path and never by the caller's cwd.
+_IMAGE_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # @function dockerfile_arg_names
 # Print the ARG names a Dockerfile declares, one per line, sorted and unique.
@@ -29,19 +34,7 @@
 # Returns:
 #   0
 dockerfile_arg_names() {
-  awk '
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*ARG[[:space:]]/ { inblk = 1 }
-    inblk {
-      line = $0
-      sub(/^[[:space:]]*ARG[[:space:]]+/, "", line)
-      sub(/[[:space:]]*\\[[:space:]]*$/, "", line)
-      gsub(/^[[:space:]]+/, "", line)
-      split(line, kv, /=/)
-      if (kv[1] ~ /^[A-Z0-9_]+$/) print kv[1]
-      inblk = ($0 ~ /[[:space:]]\\[[:space:]]*$/)
-    }
-  ' "$1" | sort -u
+  awk -f "${_IMAGE_LIB_DIR}/dockerfile_args.awk" "$1" | sort -u
 }
 
 # @function missing_version_pins
@@ -78,25 +71,7 @@ missing_version_pins() {
 # Returns:
 #   0
 dockerfile_arg_defaults() {
-  awk '
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*ARG[[:space:]]/ { inblk = 1 }
-    inblk {
-      line = $0
-      sub(/^[[:space:]]*ARG[[:space:]]+/, "", line)
-      sub(/[[:space:]]*\\[[:space:]]*$/, "", line)
-      gsub(/^[[:space:]]+/, "", line)
-      eq = index(line, "=")
-      if (eq > 0) {
-        name = substr(line, 1, eq - 1)
-        value = substr(line, eq + 1)
-        sub(/[[:space:]]+$/, "", name)
-        sub(/[[:space:]]+$/, "", value)
-        if (name ~ /^[A-Z0-9_]+$/) print name "=" value
-      }
-      inblk = ($0 ~ /[[:space:]]\\[[:space:]]*$/)
-    }
-  ' "$1" | sort -u
+  awk -v mode=defaults -f "${_IMAGE_LIB_DIR}/dockerfile_args.awk" "$1" | sort -u
 }
 
 # @function mismatched_arg_defaults

@@ -54,6 +54,9 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SELF_DIR}/lib/common.sh"
 # shellcheck source=lib/config_seed.sh disable=SC1091
 source "${SELF_DIR}/lib/config_seed.sh"
+# This CLI has no --json mode: a leftover JSON_MODE would route every report
+# line to stderr and leave stdout empty.
+unset JSON_MODE
 
 # @function usage
 # Print the subcommand and flag list on stdout, so a typo prints something readable.
@@ -279,7 +282,9 @@ main() {
 
   if [ "${#targets[@]}" -eq 0 ]; then
     if ! has_tool docker; then
+      section "Clean"
       note "docker is not on PATH and no --home tree was named - nothing to clean"
+      summary
       exit 0
     fi
     while IFS= read -r name; do
@@ -287,11 +292,15 @@ main() {
     done < <(seed_workspace_containers)
   fi
 
+  section "Disk"
   report_disk_usage "${project}"
   if [ "${#targets[@]}" -eq 0 ]; then
     note "no coder-* workspace container is running - nothing to sweep or re-sync"
+    summary
     exit 0
   fi
+
+  section "Sweep"
 
   stage="$(mktemp -d "${TMPDIR:-/tmp}/evoT1Clean.XXXXXX")"
   for t in "${targets[@]}"; do
@@ -304,6 +313,7 @@ main() {
       continue
     fi
 
+    phase "clean ${t#*:}"
     log "--- ${t#*:} ---"
     act=0
     if [ -n "${CHECK_ONLY:-}" ]; then
@@ -352,6 +362,8 @@ main() {
     fi
   done
   rm -rf "${stage}"
+  ok "storage-clean"
+  summary
   return 0
 }
 

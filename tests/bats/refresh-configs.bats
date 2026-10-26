@@ -61,17 +61,6 @@ scratch_home() {
   [ "$(stub_log_count docker)" -eq 0 ]
 }
 
-@test "config_seed: seed_extract_tftpl_block lifts the real block and refuses a miss" {
-  # shellcheck source=/dev/null
-  source "${LIB}"
-  local body
-  body="$(seed_extract_tftpl_block "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" TMUX_CONF_EOF)"
-  assert_match "block body" 'set -g mouse on' "${body}"
-  run seed_extract_tftpl_block "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" NO_SUCH_DELIM
-  [ "${status}" -ne 0 ]
-  assert_match "miss is a note" 'skipped' "${output}"
-}
-
 @test "config_seed: seed_seed_targets lists only home-relative reseed targets" {
   # shellcheck source=/dev/null
   source "${LIB}"
@@ -83,6 +72,10 @@ scratch_home() {
   # boundary in the wrong place.
   assert_not_match "no absolute paths" '^/' "${lines}"
   assert_not_match "no dev-only sources" '(scripts|tests)/' "${lines}"
+  # Payloads are repo files (file:) or rendered tftpl (render:). Heredoc
+  # extraction (block:) is gone; tmux and the agent skill live under common/.
+  assert_match "tmux from common" $'file:templates/common/tmux.conf' "${lines}"
+  assert_not_match "no block kind" $'\tblock:' "${lines}"
 }
 
 @test "config_seed: seed_target_owner tells managed from user from absent" {

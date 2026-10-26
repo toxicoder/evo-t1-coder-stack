@@ -25,35 +25,43 @@ main() {
   local root bazel
   root="${BUILD_WORKSPACE_DIRECTORY:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
   cd "${root}"
+  # shellcheck source=lib/common.sh disable=SC1091
+  source "scripts/lib/common.sh"
+  # This CLI has no --json mode: a leftover JSON_MODE would route every report
+  # line to stderr and leave stdout empty.
+  unset JSON_MODE
+  section "Validate"
   if [[ ${VALIDATE_INNER:-} != "1" ]]; then
     bazel="$(command -v bazelisk 2>/dev/null || command -v bazel 2>/dev/null || true)"
     if [[ -n ${bazel} ]]; then
-      echo "-> ${bazel} test //:test-fast //:lint --test_tag_filters=manual"
+      phase "${bazel} test //:test-fast //:lint --test_tag_filters=manual"
       VALIDATE_INNER=1 "${bazel}" test //:test-fast --config=ci
       VALIDATE_INNER=1 "${bazel}" test //:lint --config=ci --test_tag_filters=manual
     else
-      echo "bazelisk is not on PATH" >&2
+      printf 'bazelisk is not on PATH\n' >&2
       return 1
     fi
   fi
-  echo "-> docker compose config -q"
+  phase "docker compose config -q"
   docker compose config -q
-  echo "-> cmp .env.sample .env.example"
+  phase "cmp .env.sample .env.example"
   cmp .env.sample .env.example
   if command -v terraform >/dev/null 2>&1; then
-    echo "-> terraform fmt -check"
+    phase "terraform fmt -check"
     terraform -chdir=templates/workspace fmt -check
     terraform -chdir=templates/devcontainer fmt -check
   else
-    echo "-> terraform not on PATH, skipping fmt -check"
+    phase "terraform not on PATH, skipping fmt -check"
   fi
   if python3 -c 'import yaml' >/dev/null 2>&1; then
-    echo "-> yaml parse"
-    python3 -c "import yaml,glob; [yaml.safe_load(open(f)) for f in glob.glob('homepage/config/*.yaml')+['litellm/config.yaml','hermes/config.yaml']]"
+    phase "yaml parse"
+    python3 scripts/lib/parse_yaml.py homepage/config/*.yaml litellm/config.yaml hermes/config.yaml
   else
-    echo "-> PyYAML not installed, skipping yaml parse"
+    phase "PyYAML not installed, skipping yaml parse"
   fi
-  echo "validate: ok"
+  log "validate: ok"
+  ok "validate"
+  summary
 }
 
 main "$@"

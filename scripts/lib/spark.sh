@@ -97,9 +97,9 @@ derive_spark_hosts() {
 # @function probe_http
 # Print the body of one capped HTTP GET, or nothing when it does not answer.
 # Globals:
-#   probe_tool or has_timeout and http_cap, depending on the caller
+#   None
 # Arguments:
-#   Spark entry scripts: $1 - URL. spark.sh: $1 - cap seconds, $2 - URL.
+#   $1 - cap seconds; $2 - URL
 # Outputs:
 #   The body, or nothing
 # Returns:

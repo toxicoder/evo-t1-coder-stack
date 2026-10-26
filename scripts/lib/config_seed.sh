@@ -39,6 +39,10 @@ if ! declare -f log >/dev/null 2>&1; then
   source "${SELF_DIR}/common.sh"
 fi
 
+# _CONFIG_SEED_DIR — this lib's directory, so probe scripts and json_copy_key.py
+# resolve next to it under bazelisk runfiles and a checkout.
+_CONFIG_SEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # STACK_MARKER_TEXT / STACK_MARKER_JSON - the two spellings of the marker that
 # marks a file as stack-owned. The comment form has to survive being embedded
 # in a heredoc, and the JSON key carries the same promise inside settings.json.
@@ -54,9 +58,8 @@ STACK_LITELLM_URL="${STACK_LITELLM_URL:-http://host.docker.internal:4000/v1}"
 
 # @function seed_seed_targets
 # Print the reseed set, one "<target path>\t<payload kind>:<source>" line per
-# stack-owned target. Kinds: file (copy this repo file), block (lift the
-# quoted-heredoc body out of the startup script), render (render this repo
-# file, substituting ${litellm_url}, $${...} unfolds to ${...}, and carrying
+# stack-owned target. Kinds: file (copy this repo file), render (render this
+# repo file, substituting ${litellm_url}, $${...} unfolds to ${...}, and carrying
 # each target's own cline.apiKey / roo.openaiApiKey forward). Targets are
 # home-relative (~/...) so --container-root can repoint them in a test.
 # A twin pair is listed twice on purpose: the Coder Agents chat reads the
@@ -76,13 +79,13 @@ seed_seed_targets() {
   # --container-root, so nothing here must expand early.
   # shellcheck disable=SC2088
   printf '%s\n' \
-    '~/.tmux.conf	block:templates/workspace/startup.sh.tftpl:TMUX_CONF_EOF' \
+    '~/.tmux.conf	file:templates/common/tmux.conf' \
     '~/.shared/vscode/settings.json	render:templates/workspace/settings.json.tftpl' \
     '~/.grok/AGENTS.md	file:templates/common/GROK_BUILD_AGENTS.md' \
-    '~/.coder/AGENTS.md	block:templates/workspace/startup.sh.tftpl:AGENT_INSTR_MD_EOF' \
-    '~/.agents/INSTRUCTIONS.md	block:templates/workspace/startup.sh.tftpl:AGENT_INSTR_MD_EOF' \
-    '~/.coder/skills/grok-build-delegation/SKILL.md	block:templates/workspace/startup.sh.tftpl:AGENT_SKILL_MD_EOF' \
-    '~/.agents/skills/grok-build-delegation/SKILL.md	block:templates/workspace/startup.sh.tftpl:AGENT_SKILL_MD_EOF'
+    '~/.coder/AGENTS.md	file:templates/common/coder-agents.md' \
+    '~/.agents/INSTRUCTIONS.md	file:templates/common/coder-agents.md' \
+    '~/.coder/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md' \
+    '~/.agents/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md'
 }
 
 # @function seed_container_exec
@@ -147,14 +150,8 @@ seed_target_owner() {
     fi
     return 0
   fi
-  state="$(seed_container_exec "${target}" '
-    if [ ! -e "${1}" ]; then printf "absent"; exit 0; fi
-    if [ ! -r "${1}" ]; then printf "unreadable"; exit 0; fi
-    if grep -qF -e "${2}" -e "${3}" "${1}" 2>/dev/null; then
-      printf "managed"; exit 0
-    fi
-    printf "user"
-  ' sh "${path}" "${STACK_MARKER_TEXT}" "${STACK_MARKER_JSON}")" || {
+  state="$(seed_container_exec "${target}" "$(cat "${_CONFIG_SEED_DIR}/probes/seed-owner.sh")" \
+    sh "${path}" "${STACK_MARKER_TEXT}" "${STACK_MARKER_JSON}")" || {
     return 1
   }
   case "${state}" in
@@ -163,38 +160,6 @@ seed_target_owner() {
     *unreadable*) printf 'unreadable\n' ;;
     *) printf 'user\n' ;;
   esac
-  return 0
-}
-
-# @function seed_extract_tftpl_block
-# Print the body of one quoted-heredoc block (the lines strictly between a
-# line containing <<'DELIM' and the next lone DELIM line) from a .tftpl file.
-# Globals:
-#   None
-# Arguments:
-#   $1 - the .tftpl file to read
-#   $2 - the heredoc delimiter, exactly as the file spells it
-# Outputs:
-#   The block body on stdout; one note on stderr when the block is not there
-# Returns:
-#   0 when a non-empty block was found, 1 when it is absent or empty or the
-#   file cannot be read - never a crash either way
-seed_extract_tftpl_block() {
-  local file="${1:-}" delimiter="${2:-}" body=""
-  if [[ ! -f ${file} ]]; then
-    note "no ${file} to read a ${delimiter} block from - skipped"
-    return 1
-  fi
-  body="$(awk -v opentext="<<'${delimiter}'" -v delim="${delimiter}" '
-      !inside && index($0, opentext) { inside = 1; next }
-      inside && $0 == delim { exit }
-      inside { print }
-    ' "${file}")"
-  if [[ -z ${body} ]]; then
-    note "no ${delimiter} block (or an empty one) in ${file} - skipped"
-    return 1
-  fi
-  printf '%s\n' "${body}"
   return 0
 }
 
@@ -258,20 +223,7 @@ seed_render_settings() {
           rm -f "${rendered}"
           return 1
         fi
-        if ! python3 - "${rendered}" "${current}" "${key}" <<'PY'; then
-import json, sys
-dest, current, key = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(current) as fh:
-    old = json.load(fh)
-if key not in old:
-    sys.exit(0)
-with open(dest) as fh:
-    new = json.load(fh)
-new[key] = old[key]
-with open(dest, "w") as fh:
-    json.dump(new, fh, indent=2)
-    fh.write("\n")
-PY
+        if ! python3 "${_CONFIG_SEED_DIR}/json_copy_key.py" "${rendered}" "${current}" "${key}"; then
           note "${current} carries ${key} but is no longer valid JSON - the reseed stops short of guessing: skipped"
           rm -f "${rendered}"
           return 1
@@ -349,15 +301,8 @@ seed_sweep_stale() {
         done
         return 0
       fi
-      seed_container_exec "${target}" '
-        days="${1}"
-        shift
-        for root in "${@}"; do
-          if [ -d "${root}" ]; then
-            find "${root}" -type f -mtime +"${days}" -print
-          fi
-        done
-      ' sh "${days}" "$@"
+      seed_container_exec "${target}" "$(cat "${_CONFIG_SEED_DIR}/probes/seed-find-mtime.sh")" \
+        sh "${days}" "$@"
       ;;
     delete)
       if [[ -z ${target} ]]; then
@@ -367,15 +312,8 @@ seed_sweep_stale() {
         done
         return 0
       fi
-      seed_container_exec "${target}" '
-        days="${1}"
-        shift
-        for root in "${@}"; do
-          if [ -d "${root}" ]; then
-            find "${root}" -type f -mtime +"${days}" -exec rm -f {} +
-          fi
-        done
-      ' sh "${days}" "$@"
+      seed_container_exec "${target}" "$(cat "${_CONFIG_SEED_DIR}/probes/seed-rm-mtime.sh")" \
+        sh "${days}" "$@"
       ;;
     *)
       return 1
@@ -452,11 +390,6 @@ seed_container_seed() {
         fi
         printf '%s\n' "$(cat "${root}/${source}")" >"${staged}"
         ;;
-      block)
-        if ! seed_extract_tftpl_block "${root}/${source%:*}" "${source##*:}" >"${staged}"; then
-          continue
-        fi
-        ;;
       render)
         if ! seed_render_settings "${root}/${source}" "${staged}" "${current}"; then
           continue
@@ -488,12 +421,8 @@ seed_container_seed() {
     if [[ -z ${target} ]]; then
       mkdir -p "$(dirname "${path}")"
       cp "${staged}" "${path}"
-    elif ! seed_container_exec --stdin "${target}" '
-        if [ ! -e "${1}" ]; then
-          mkdir -p "$(dirname "${1}")" || exit 1
-        fi
-        cat > "${1}"
-      ' sh "${path}" <"${staged}"; then
+    elif ! seed_container_exec --stdin "${target}" "$(cat "${_CONFIG_SEED_DIR}/probes/seed-write.sh")" \
+      sh "${path}" <"${staged}"; then
       printf '  %s: skipped (nothing could be written there)\n' "${name}"
       continue
     fi

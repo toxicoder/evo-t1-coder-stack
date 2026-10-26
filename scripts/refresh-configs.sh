@@ -208,7 +208,9 @@ main() {
 
   if [ "${#targets[@]}" -eq 0 ]; then
     if ! has_tool docker; then
+      section "Reseed"
       note "docker is not on PATH and no --home tree was named - nothing to reseed"
+      summary
       exit 0
     fi
     while IFS= read -r name; do
@@ -216,10 +218,13 @@ main() {
     done < <(seed_workspace_containers)
   fi
   if [ "${#targets[@]}" -eq 0 ]; then
+    section "Reseed"
     note "no coder-* workspace container is running - nothing to reseed"
+    summary
     exit 0
   fi
 
+  section "Reseed"
   stage="$(mktemp -d "${TMPDIR:-/tmp}/evoT1Seed.XXXXXX")"
   stage_log="${stage}/decisions"
   : >"${stage_log}"
@@ -233,6 +238,7 @@ main() {
   for t in "${targets[@]}"; do
     case "${t}" in
       c:*)
+        phase "reseed ${t#c:}"
         log "--- ${t#c:} ---"
         seed_container_seed "${t#c:}" "${CONTAINER_ROOT:-/home/coder}" "${root}" "${stage}" \
           "${DRY_RUN:-0}" "${FORCE:-0}" >"${stage_log}"
@@ -245,6 +251,7 @@ main() {
           warn "no ${t#h:} directory to reseed into - skipped"
           continue
         fi
+        phase "reseed ${t#h:}"
         log "--- ${t#h:} (host directory) ---"
         seed_container_seed "" "${t#h:}" "${root}" "${stage}" \
           "${DRY_RUN:-0}" "${FORCE:-0}" >"${stage_log}"
@@ -275,6 +282,8 @@ main() {
     printf ']}\n'
   fi
   rm -rf "${stage}"
+  ok "reseed"
+  summary
   return 0
 }
 

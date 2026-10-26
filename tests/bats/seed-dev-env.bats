@@ -62,6 +62,8 @@ load_seed_api() {
   source "${REPO_ROOT}/scripts/lib/common.sh"
   # shellcheck source=/dev/null
   source "${REPO_ROOT}/scripts/lib/config_seed.sh"
+  # seed_render_grok_config looks up tftpl_strip_gates.awk next to SELF_DIR.
+  SELF_DIR="${REPO_ROOT}/scripts"
   local name
   for name in \
     usage \

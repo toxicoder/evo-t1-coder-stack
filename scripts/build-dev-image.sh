@@ -31,6 +31,11 @@ IMAGE_DIR="images/dev"
 DOCKERFILE="${IMAGE_DIR}/Dockerfile"
 VERSIONS="${IMAGE_DIR}/tool-versions.env"
 
+# shellcheck source=lib/common.sh disable=SC1091
+source "scripts/lib/common.sh"
+# No --json mode: an inherited JSON_MODE would send every line to stderr.
+unset JSON_MODE
+
 # shellcheck source=lib/image.sh disable=SC1091
 source "scripts/lib/image.sh"
 
@@ -38,32 +43,6 @@ source "scripts/lib/image.sh"
 # loudly on the missing-ARG check below rather than building something unknown.
 DEV_IMAGE_TAG="${DEV_IMAGE_TAG:-evo-t1-dev:latest}"
 DOCKER="${DOCKER:-docker}"
-
-# @function log
-# Print one status line. Spark scripts send it to stderr when --json is set.
-# Globals:
-#   json (Spark scripts; empty means stdout)
-# Arguments:
-#   $* - text to print
-# Outputs:
-#   The text on stdout, or stderr when json is set
-# Returns:
-#   0
-log() { printf '%s\n' "$*"; }
-# @function die
-# Print an error on stderr and exit 1.
-# Globals:
-#   None
-# Arguments:
-#   $* - error text, without the "error: " prefix
-# Outputs:
-#   "error: ..." on stderr
-# Returns:
-#   Does not return; exits 1
-die() {
-  printf 'error: %s\n' "$*" >&2
-  exit 1
-}
 
 [ -f "${DOCKERFILE}" ] || die "${DOCKERFILE} not found (run this from the repo root)"
 [ -f "${VERSIONS}" ] || die "${VERSIONS} not found — it is the single source of version pins"
@@ -81,6 +60,8 @@ export DOCKER_BUILDKIT=1
 # this script exists to show.
 export DOCKER_BUILD_SUMMARY=false
 export DOCKER_BUILD_HISTORYNAME="build-dev-image"
+
+section "Pins"
 
 # ── Read the pins ────────────────────────────────────────────────────────────
 # BASH_SOURCE/pipefail and the KEY=value contract make a plain source safe here;
@@ -134,7 +115,9 @@ done < <(grep -oE '^[A-Z0-9_]+=' "${VERSIONS}" | tr -d '=')
 #   extra_args=(--network=host)   # last resort: DNS for the fetches above
 extra_args=()
 
+section "Build"
 log "building ${DEV_IMAGE_TAG} from ${DOCKERFILE}"
+phase "docker build -t ${DEV_IMAGE_TAG}"
 ${DOCKER} build \
   -f "${DOCKERFILE}" \
   -t "${DEV_IMAGE_TAG}" \
@@ -148,6 +131,7 @@ ${DOCKER} build \
 if ! ${DOCKER} image inspect "${DEV_IMAGE_TAG}" --format '{{.Id}}' >/dev/null 2>&1; then
   die "${DEV_IMAGE_TAG} is not in the local image store after building — workspace creation would try (and fail) to pull it"
 fi
+ok "${DEV_IMAGE_TAG} is in the local image store"
 
 image_id="$(${DOCKER} image inspect "${DEV_IMAGE_TAG}" --format '{{.Id}}' | sed 's/^sha256://')"
 size_bytes="$(${DOCKER} image inspect "${DEV_IMAGE_TAG}" --format '{{.Size}}')"
@@ -160,7 +144,7 @@ human_size="$(awk -v b="${size_bytes}" 'BEGIN {
   printf "%.1f %s", b, u[i]
 }')"
 
-log
+section "Image"
 log "image          ${DEV_IMAGE_TAG}"
 log "image id       ${image_id:0:19}"
 log "built          ${created}"
@@ -168,3 +152,4 @@ log "size           ${human_size} uncompressed (${size_bytes} bytes)"
 log
 log "Pin it into a template with:"
 log "  bazelisk run //scripts:push-template            # pushes both templates, image pinned to ${DEV_IMAGE_TAG}"
+summary "bazelisk run //scripts:push-template"

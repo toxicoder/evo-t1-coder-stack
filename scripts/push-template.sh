@@ -84,6 +84,8 @@ set -euo pipefail
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/template-push.sh disable=SC1091
 source "${SELF_DIR}/lib/template-push.sh" # sources common.sh + coder_api.sh itself
+# No --json mode: an inherited JSON_MODE would send every line to stderr.
+unset JSON_MODE
 
 CODER_SERVICE="${CODER_CONTAINER_SERVICE:-coder}"
 DB_SERVICE="${CODER_DB_SERVICE:-db}"
@@ -106,47 +108,6 @@ PROBE_TIMEOUT=20
 # here too — scripts/lib/template-push.sh carries the identical pattern now.
 # shellcheck disable=SC2034 # read inside the sourced seam, not in this file
 VERIFY_TIMEOUT=60
-
-# @function log
-# Print one status line. Spark scripts send it to stderr when --json is set.
-# Globals:
-#   json (Spark scripts; empty means stdout)
-# Arguments:
-#   $* - text to print
-# Outputs:
-#   The text on stdout, or stderr when json is set
-# Returns:
-#   0
-log() { printf '%s\n' "$*"; }
-# @function die
-# Print an error on stderr and exit 1.
-# Globals:
-#   None
-# Arguments:
-#   $* - error text, without the "error: " prefix
-# Outputs:
-#   "error: ..." on stderr
-# Returns:
-#   Does not return; exits 1
-die() {
-  printf 'error: %s\n' "$*" >&2
-  exit 1
-}
-# Expected states, not errors: exit 0 so callers (bootstrap) keep going.
-# @function skip
-# Print a not-yet line and exit 0 so callers such as bootstrap keep going.
-# Globals:
-#   None
-# Arguments:
-#   $* - reason text
-# Outputs:
-#   The reason on stdout (spark-configure routes it through log)
-# Returns:
-#   Does not return; exits 0
-skip() {
-  printf '%s\n' "$*"
-  exit 0
-}
 
 # @function resolve_repo_root
 # Print the repo root this run reads templates and .env from: the first
@@ -251,24 +212,6 @@ github_auth_provider_id() {
   printf '%s' "${value}"
 }
 
-# @function first_line
-# Print the first non-blank line of a block of text.
-# Globals:
-#   None
-# Arguments:
-#   $1 - text, which may be empty or all blank
-# Outputs:
-#   That line, or nothing; an all-blank input does not abort the caller
-# Returns:
-#   0
-first_line() {
-  # $1 = text; prints its first non-blank line so a tool's own complaint can be
-  # quoted without dumping its whole stderr into this script's output. The `|| true`
-  # is load-bearing: pipefail makes an all-blank input (grep exits 1) abort the
-  # caller, which is an assignment under `set -e`.
-  printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | sed -n '1p' || true
-}
-
 # @function known_templates
 # Print the selectable template names, comma-separated.
 # Globals:
@@ -353,6 +296,8 @@ fi
 # Prove the in-container API is answering before minting anything. curl is used
 # rather than the coder CLI because it needs no credential: a 200 here separates
 # "the container is wedged" from "the token was rejected".
+section "Preflight"
+phase "probe the Coder API inside ${CODER_SERVICE}"
 log "probing the Coder API at ${CONTAINER_API_URL} inside ${CODER_SERVICE} (up to ${PROBE_TIMEOUT}s) ..."
 buildinfo="$(stack_timeout "${PROBE_TIMEOUT}" \
   docker exec -i "${CODER_CONTAINER}" \
@@ -489,6 +434,7 @@ session_token="${key_id}-${key_secret}"
 
 # Authenticated before attempting a Terraform run, so a rejected token reads as an
 # auth problem and not as a failed build.
+phase "authenticate the minted token"
 whoami_out="$(coder_exec whoami 2>&1)" || whoami_rc=$?
 whoami_rc="${whoami_rc:-0}"
 if [ "${whoami_rc}" != "0" ]; then
@@ -498,12 +444,13 @@ fi
 
 # Built once and passed unchanged to every push: both templates declare image,
 # litellm_key and coder_agent_url, so one array serves the whole run.
+section "Variables"
 vars=(--var "image=${dev_image}")
 # The daemon has this image from build-dev-image.sh, never from a registry; if it is
 # gone, workspaces created from either template fail with an opaque pull error. Say
 # so and still push — the image can be built afterwards and re-pushing is cheap.
 if ! docker image inspect "${dev_image}" >/dev/null 2>&1; then
-  log "note: ${dev_image} is not in the local image store — build it first: bazelisk run //scripts:build-dev-image"
+  note "${dev_image} is not in the local image store — build it first: bazelisk run //scripts:build-dev-image"
 fi
 
 # litellm_key is sensitive with an empty default, so an unset LITELLM_MASTER_KEY has
@@ -722,41 +669,7 @@ preset_desc_guard() {
           fi
           ;;
       esac
-    done < <(awk '
-      BEGIN { depth = 0; label = ""; bname = ""; desc = ""; unchecked = "" }
-      function flush() {
-        if (unchecked != "") printf "SKIP\t%s\t%s\t\n", label, bname
-        else if (desc != "") printf "DESC\t%s\t%s\t%s\n", label, bname, desc
-        desc = ""; unchecked = ""
-      }
-      # Braces are counted on a copy of the line, so a brace inside a quoted value
-      # cannot end the block early, and the block is over when the count balances.
-      function braces(line,   copy, n) { copy = line; n = gsub(/[{}]/, "", copy); return n }
-      depth == 0 {
-        if (index($0, "\"coder_workspace_preset\"") > 0) {
-          # Splitting on quotes: field 2 is the resource type, field 4 the block
-          # label, with the text between the quotes as the odd-numbered fields.
-          split($0, q, "\""); label = q[4]
-          gsub(/^[ \t]+|[ \t]+$/, "", label)
-          depth = braces($0)
-          bname = ""; desc = ""; unchecked = ""
-        }
-        next
-      }
-      {
-        if ($0 ~ /^[ \t]*name[ \t]*=/ && bname == "") {
-          bname = $0; sub(/^[^=]*=[ \t]*/, "", bname); sub(/^"/, "", bname); sub(/"$/, "", bname)
-        }
-        if ($0 ~ /^[ \t]*description[ \t]*=/ && desc == "" && unchecked == "") {
-          value = $0; sub(/^[^=]*=[ \t]*/, "", value); sub(/^[ \t]*/, "", value)
-          if (substr(value, 1, 2) == "<<") { unchecked = value }
-          else { sub(/^"/, "", value); sub(/"$/, "", value); desc = value }
-        }
-        depth += braces($0)
-        if (depth <= 0) { flush(); depth = 0 }
-      }
-      END { if (depth > 0) flush() }
-    ' "${f}")
+    done < <(awk -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/preset_desc.awk" "${f}")
   done
 }
 
@@ -806,6 +719,7 @@ preset_desc_guard() {
 # template_set_autostop_off (scripts/lib/template-push.sh) sends that pair: silent on
 # success, non-zero on failure, and the note below stays this script's wording.
 
+section "Templates"
 failed=0
 for entry in "${selected[@]}"; do
   name="${entry%%:*}"
@@ -816,19 +730,19 @@ for entry in "${selected[@]}"; do
   # Coder pushes without a lockfile but warns, and the README's fix is one command;
   # say it here rather than make the operator decode the CLI's warning.
   if [ ! -f "${dir}/.terraform.lock.hcl" ]; then
-    log "note: ${dir}/.terraform.lock.hcl is missing — regenerate it with:"
+    note "${dir}/.terraform.lock.hcl is missing — regenerate it with:"
     log "      terraform -chdir=${dir} init -backend=false"
   fi
   preset_desc_guard "${dir}"
   icon_data_url_guard "$(dirname "${dir}")/common/vscode-alt.svg"
 
+  phase "push ${name} from ${dir}"
   log "pushing ${dir} as template ${name} (image ${dev_image}) to ${CONTAINER_API_URL} in ${CODER_SERVICE} ..."
   push_rc=0
   template_push_one "${name}" "${dir}" ${vars[@]+"${vars[@]}"} || push_rc=$?
   if [ "${push_rc}" != "0" ]; then
     # The CLI's own plan/apply output already went to the terminal above.
-    printf 'error: the push of %s failed (exit %s) — check the server with: bazelisk run //scripts:prod-stack -- logs --tail 100 %s\n' \
-      "${name}" "${push_rc}" "${CODER_SERVICE}" >&2
+    fail_item "the push of ${name} failed (exit ${push_rc}) — check the server with: bazelisk run //scripts:prod-stack -- logs --tail 100 ${CODER_SERVICE}"
     failed=$((failed + 1))
     continue
   fi
@@ -836,6 +750,7 @@ for entry in "${selected[@]}"; do
   # Prints the active version's id on success, so the capture below keeps the
   # one-line-per-template output; the failure text stays in template-push.sh.
   if ! active_id="$(template_verify_active "${name}")"; then
+    fail_item "template ${name} did not reach an active version"
     failed=$((failed + 1))
     continue
   fi
@@ -855,7 +770,7 @@ for entry in "${selected[@]}"; do
     if template_set_description "${name}" "${template_description}"; then
       log "template ${name}: description set (chat-agent routing hint)"
     else
-      log "note: ${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker exec ${CODER_CONTAINER} coder templates edit ${name} --description '...'"
+      note "${name}: the description could not be set — the template still works; the chat agent just picks it blind. Retry from the host: docker exec ${CODER_CONTAINER} coder templates edit ${name} --description '...'"
     fi
   fi
 
@@ -865,9 +780,10 @@ for entry in "${selected[@]}"; do
   if template_set_autostop_off "${name}"; then
     log "template ${name}: autostop default set to disabled (workspaces start with a nil TTL)"
   else
-    log "note: ${name}: autostop could not be switched off — until it is, a new workspace from this template starts with an autostop deadline. Retry from the host: docker exec ${CODER_CONTAINER} coder templates edit ${name} --default-ttl 0 --activity-bump 0"
+    note "${name}: autostop could not be switched off — until it is, a new workspace from this template starts with an autostop deadline. Retry from the host: docker exec ${CODER_CONTAINER} coder templates edit ${name} --default-ttl 0 --activity-bump 0"
   fi
   log "template ${name} pushed; active version ${active_id}"
+  ok "template ${name}"
 done
 
 # One broken template never blocks the others, so the count is the only thing that
@@ -877,9 +793,11 @@ done
 # Disarm before the delete so the delete runs once, deliberately.
 trap - EXIT
 psql_sql "${cleanup_sql}" >/dev/null 2>&1 ||
-  log "note: the push token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
+  note "the push token '${TOKEN_NAME}' could not be deleted from ${DB_NAME}.api_keys — remove it with: docker exec ${DB_CONTAINER} psql -U ${DB_USER} -d ${DB_NAME} -c \"delete from api_keys where token_name = '${TOKEN_NAME}';\""
 
 if [ "${failed}" != "0" ]; then
+  summary
   printf '%s of %s template(s) did not reach an active version\n' "${failed}" "${#selected[@]}" >&2
   exit 1
 fi
+summary "bazelisk run //scripts:coder-agents"

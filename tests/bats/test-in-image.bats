@@ -211,6 +211,8 @@ script_default_tag() {
   assert_match "checkout mounted at /work" "-v ${REPO_ROOT}:/work" "${line}"
   assert_match "cwd is the mount" '-w /work' "${line}"
   assert_match "CI passed through" '-e CI' "${line}"
+  assert_match "VALIDATE_INNER passed through" '-e VALIDATE_INNER' "${line}"
+  assert_match "telemetry passed through" '-e NEXT_TELEMETRY_DISABLED' "${line}"
   assert_match "scratch HOME" '-e HOME=/tmp' "${line}"
   assert_match "USER for bazel" "-e USER=${USER:-$(id -un)}" "${line}"
   assert_match "stack host resolvable" '--add-host=host.docker.internal:host-gateway' "${line}"

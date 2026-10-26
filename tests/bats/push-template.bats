@@ -42,6 +42,38 @@ setup() {
   REPO_ROOT="$(bats_canonical_repo_root)"
 }
 
+# The payload files every template's main.tf reads from the staged copy;
+# template_push_one names exactly these.
+COMMON_PAYLOADS=(
+  GROK_BUILD_AGENTS.md
+  vscode-alt.svg
+  notes-setup.sh
+  tmux.conf
+  grok-build-terminal.sh
+  vscode-terminal-tmux.sh
+  grok-build-delegation.SKILL.md
+  coder-agents.md
+  mcp-cache-proxy.json
+  gh-token-refresh.sh.tftpl
+)
+
+# write_common_payloads <dir> — stub each required common/ file so a throwaway
+# tree satisfies template_push_one's missing-payload guard.
+write_common_payloads() {
+  local dest="$1"
+  mkdir -p "${dest}"
+  printf '%s\n' '# Role' >"${dest}/GROK_BUILD_AGENTS.md"
+  printf '%s\n' '<svg/>' >"${dest}/vscode-alt.svg"
+  printf '%s\n' '# notes library' >"${dest}/notes-setup.sh"
+  printf '%s\n' 'set -g mouse on' >"${dest}/tmux.conf"
+  printf '%s\n' '#!/bin/bash' >"${dest}/grok-build-terminal.sh"
+  printf '%s\n' '#!/bin/bash' >"${dest}/vscode-terminal-tmux.sh"
+  printf '%s\n' '# skill' >"${dest}/grok-build-delegation.SKILL.md"
+  printf '%s\n' '# agents' >"${dest}/coder-agents.md"
+  printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
+  printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
+}
+
 # fake_root <script> [env-line...] — print a throwaway repo root holding the
 # script under test, scripts/lib/ (the seams it sources after its own repo-root
 # cd), a private .env, and the template tree: both template dirs plus their
@@ -67,11 +99,10 @@ fake_root() {
     >"${root}/templates/devcontainer/main.tf"
   : >"${root}/templates/workspace/.terraform.lock.hcl"
   : >"${root}/templates/devcontainer/.terraform.lock.hcl"
-  printf '%s\n' '# Role' >"${root}/templates/common/GROK_BUILD_AGENTS.md"
-  printf '%s\n' '<svg/>' >"${root}/templates/common/vscode-alt.svg"
-  printf '%s\n' '# notes library' >"${root}/templates/common/notes-setup.sh"
+  write_common_payloads "${root}/templates/common"
   cp "${REPO_ROOT}/scripts/${script}" "${root}/scripts/"
   cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
+  cp "${REPO_ROOT}/scripts/lib/"*.awk "${root}/scripts/lib/"
   printf '%s' "${root}"
 }
 
@@ -631,7 +662,7 @@ logs_absent() {
 
 # The payload files every template's main.tf reads from the staged copy; the
 # template_push_one guard has to name exactly these and nothing else.
-payloads=(GROK_BUILD_AGENTS.md vscode-alt.svg notes-setup.sh)
+payloads=("${COMMON_PAYLOADS[@]}")
 
 source_libs() {
   # shellcheck disable=SC1091
@@ -647,9 +678,7 @@ source_libs() {
   mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' 'resource "coder_script" "x" {}' > "${BATS_TEST_TMPDIR}/tpl/main.tf"
   printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
-  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
-  printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
-  printf '%s\n' '# notes library' > "${BATS_TEST_TMPDIR}/common/notes-setup.sh"
+  write_common_payloads "${BATS_TEST_TMPDIR}/common"
   export CONTAINER_API_URL="http://coder:3002"
   export session_token="kid-secret"
   export CODER_CONTAINER=stack-coder-1
@@ -665,9 +694,7 @@ source_libs() {
   # must fail locally with a named cause — never stream a tar at nothing.
   mkdir -p "${BATS_TEST_TMPDIR}/tpl-nopc" "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' 'resource "coder_script" "w" {}' > "${BATS_TEST_TMPDIR}/tpl-nopc/main.tf"
-  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
-  printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
-  printf '%s\n' '# notes library' > "${BATS_TEST_TMPDIR}/common/notes-setup.sh"
+  write_common_payloads "${BATS_TEST_TMPDIR}/common"
   export CONTAINER_API_URL="http://coder:3002"
   export session_token="kid-secret"
   run --separate-stderr template_push_one tpl4 "${BATS_TEST_TMPDIR}/tpl-nopc"
@@ -689,9 +716,7 @@ source_libs() {
   mkdir -p "${BATS_TEST_TMPDIR}/tpl/.terraform" "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' 'resource "coder_script" "x" {}' > "${BATS_TEST_TMPDIR}/tpl/main.tf"
   printf 'junk' > "${BATS_TEST_TMPDIR}/tpl/.terraform/provider.cache"
-  printf '%s\n' '# Role' > "${BATS_TEST_TMPDIR}/common/GROK_BUILD_AGENTS.md"
-  printf '%s\n' '<svg/>' > "${BATS_TEST_TMPDIR}/common/vscode-alt.svg"
-  printf '%s\n' '# notes library' > "${BATS_TEST_TMPDIR}/common/notes-setup.sh"
+  write_common_payloads "${BATS_TEST_TMPDIR}/common"
   printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' > "${BATS_TEST_TMPDIR}/bin/tar-sink"
   chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
   export DOCKER_BIN=tar-sink
@@ -703,9 +728,10 @@ source_libs() {
   fi
   tar -tf "${STUB_LOG}/push.tar" > "${BATS_TEST_TMPDIR}/members.txt"
   grep -Fxq './main.tf' "${BATS_TEST_TMPDIR}/members.txt"
-  grep -Fxq './GROK_BUILD_AGENTS.md' "${BATS_TEST_TMPDIR}/members.txt"
-  grep -Fxq './vscode-alt.svg' "${BATS_TEST_TMPDIR}/members.txt"
-  grep -Fxq './notes-setup.sh' "${BATS_TEST_TMPDIR}/members.txt"
+  local payload
+  for payload in "${payloads[@]}"; do
+    grep -Fxq "./${payload}" "${BATS_TEST_TMPDIR}/members.txt"
+  done
   if grep -qF '.terraform' "${BATS_TEST_TMPDIR}/members.txt"; then
     printf 'leak: .terraform reached the pushed tar\n' >&2
     return 1
@@ -721,14 +747,14 @@ source_libs() {
     "${BATS_TEST_TMPDIR}/runfiles/common"
   printf '%s\n' 'resource "coder_script" "x" {}' >"${BATS_TEST_TMPDIR}/real/main.tf"
   printf '%s\n' 'startup-body' >"${BATS_TEST_TMPDIR}/real/startup.sh.tftpl"
-  printf '%s\n' '# Role' >"${BATS_TEST_TMPDIR}/real/GROK_BUILD_AGENTS.md"
-  printf '%s\n' '<svg/>' >"${BATS_TEST_TMPDIR}/real/vscode-alt.svg"
+  write_common_payloads "${BATS_TEST_TMPDIR}/real"
   printf '%s\n' 'notes_materialize() { :; }' >"${BATS_TEST_TMPDIR}/real/notes-setup.sh"
   ln -s "${BATS_TEST_TMPDIR}/real/main.tf" "${BATS_TEST_TMPDIR}/runfiles/tpl/main.tf"
   ln -s "${BATS_TEST_TMPDIR}/real/startup.sh.tftpl" "${BATS_TEST_TMPDIR}/runfiles/tpl/startup.sh.tftpl"
-  ln -s "${BATS_TEST_TMPDIR}/real/GROK_BUILD_AGENTS.md" "${BATS_TEST_TMPDIR}/runfiles/common/GROK_BUILD_AGENTS.md"
-  ln -s "${BATS_TEST_TMPDIR}/real/vscode-alt.svg" "${BATS_TEST_TMPDIR}/runfiles/common/vscode-alt.svg"
-  ln -s "${BATS_TEST_TMPDIR}/real/notes-setup.sh" "${BATS_TEST_TMPDIR}/runfiles/common/notes-setup.sh"
+  local payload
+  for payload in "${payloads[@]}"; do
+    ln -s "${BATS_TEST_TMPDIR}/real/${payload}" "${BATS_TEST_TMPDIR}/runfiles/common/${payload}"
+  done
   printf '%s\n' '#!/usr/bin/env bash' 'cat > "${STUB_LOG}/push.tar"' >"${BATS_TEST_TMPDIR}/bin/tar-sink"
   chmod 755 "${BATS_TEST_TMPDIR}/bin/tar-sink"
   export DOCKER_BIN=tar-sink
@@ -739,7 +765,7 @@ source_libs() {
     return 1
   fi
   tar -tvf "${STUB_LOG}/push.tar" >"${BATS_TEST_TMPDIR}/listing.txt"
-  if grep -E 'main\.tf|startup\.sh\.tftpl|GROK_BUILD_AGENTS\.md|vscode-alt\.svg|notes-setup\.sh' "${BATS_TEST_TMPDIR}/listing.txt" | grep -q ' -> '; then
+  if grep -E 'main\.tf|startup\.sh\.tftpl|GROK_BUILD_AGENTS\.md|vscode-alt\.svg|notes-setup\.sh|tmux\.conf|grok-build-terminal\.sh|vscode-terminal-tmux\.sh|coder-agents\.md|mcp-cache-proxy\.json|gh-token-refresh\.sh\.tftpl' "${BATS_TEST_TMPDIR}/listing.txt" | grep -q ' -> '; then
     printf 'FAIL: archive stored a symlink instead of file contents:\n%s\n' "$(cat "${BATS_TEST_TMPDIR}/listing.txt")" >&2
     return 1
   fi
@@ -752,6 +778,7 @@ source_libs() {
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/GROK_BUILD_AGENTS.md")" = '# Role' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/vscode-alt.svg")" = '<svg/>' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/notes-setup.sh")" = 'notes_materialize() { :; }' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/tmux.conf")" = 'set -g mouse on' ]
 }
 
 @test "template-push: a tree without the seed payload is refused before the CLI runs" {

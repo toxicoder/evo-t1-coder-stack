@@ -42,6 +42,11 @@
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh disable=SC1091
+source "${SELF_DIR}/lib/common.sh"
+# This CLI has no --json mode: a leftover JSON_MODE would route every report
+# line to stderr and leave stdout empty.
+unset JSON_MODE
 
 # The root is derived, never assumed: $REPO_ROOT or $GITHUB_WORKSPACE when either
 # names a real checkout, otherwise this script's own directory's parent. Under
@@ -57,14 +62,10 @@ if [ ! -f "${ROOT_DIR:-/nonexistent}/docker-compose.yml" ]; then
   ROOT_DIR="${SELF_DIR}/.."
 fi
 if [ ! -f "${ROOT_DIR}/docker-compose.yml" ]; then
-  printf 'error: bootstrap: no docker-compose.yml under %s — run this from the repo root\n' \
-    "${ROOT_DIR}" >&2
-  exit 1
+  die "bootstrap: no docker-compose.yml under ${ROOT_DIR} — run this from the repo root"
 fi
 cd "${ROOT_DIR}"
 
-# shellcheck source=lib/common.sh disable=SC1091
-source "scripts/lib/common.sh"
 # shellcheck source=lib/bootstrap.sh disable=SC1091
 source "scripts/lib/bootstrap.sh"
 
@@ -98,7 +99,9 @@ HELP
 done
 
 if [ "${check_only}" = "1" ]; then
-  echo "bootstrap --check: read-only pass. Nothing below is written, built or pushed."
+  section "Check"
+  log "bootstrap --check: read-only pass. Nothing below is written, built or pushed."
+  section "Tools"
   printf 'tools:'
   for probe_tool in docker openssl terraform git; do
     if command -v "${probe_tool}" >/dev/null 2>&1; then
@@ -108,45 +111,50 @@ if [ "${check_only}" = "1" ]; then
     fi
   done
   printf '\n'
+  section "Compose"
   if command -v docker >/dev/null 2>&1; then
     if docker compose version >/dev/null 2>&1; then
-      echo "compose: docker compose answers, so a full run would reach the daemon"
+      log "compose: docker compose answers, so a full run would reach the daemon"
     else
-      echo "compose: the docker compose plugin is not available — a full run would stop here"
+      log "compose: the docker compose plugin is not available — a full run would stop here"
     fi
   else
-    echo "compose: docker is not on PATH, so a full run would stop here"
+    log "compose: docker is not on PATH, so a full run would stop here"
   fi
 
+  section "Env"
   if [ ! -f .env ]; then
-    echo ".env: missing — a full run would create it from .env.sample"
+    log ".env: missing — a full run would create it from .env.sample"
   else
-    echo "secrets (key names only, never values):"
+    log "secrets (key names only, never values):"
     for probe_key in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET; do
       if grep -q "^${probe_key}=change-me" .env; then
-        echo "  ${probe_key}: still a change-me placeholder — a full run would replace it"
+        log "  ${probe_key}: still a change-me placeholder — a full run would replace it"
       fi
     done
-    echo "hosts: CODER_ACCESS_URL=$(env_get .env CODER_ACCESS_URL)"
-    echo "       STACK_LAN_HOST=$(env_get .env STACK_LAN_HOST)"
-    echo "       STACK_PUBLIC_HOSTS=$(env_get .env STACK_PUBLIC_HOSTS)"
+    log "hosts: CODER_ACCESS_URL=$(env_get .env CODER_ACCESS_URL)"
+    log "       STACK_LAN_HOST=$(env_get .env STACK_LAN_HOST)"
+    log "       STACK_PUBLIC_HOSTS=$(env_get .env STACK_PUBLIC_HOSTS)"
   fi
 
+  section "Certs"
   for cert_pair in proxy/certs/homepage.crt proxy/certs/coder.crt; do
     if [ -f "${cert_pair}" ] && [ -f "${cert_pair%.crt}.key" ]; then
-      echo "certs: ${cert_pair} and its key are present"
+      log "certs: ${cert_pair} and its key are present"
     else
-      echo "certs: ${cert_pair} is missing — a full run would issue it (openssl needed)"
+      log "certs: ${cert_pair} is missing — a full run would issue it (openssl needed)"
     fi
   done
 
+  section "GPU"
   if [ -e /dev/dri ]; then
-    echo "gpu: /dev/dri is present"
+    log "gpu: /dev/dri is present"
   else
-    echo "gpu: no /dev/dri — the IPEX-LLM Ollama service needs the Arc 140T"
+    log "gpu: no /dev/dri — the IPEX-LLM Ollama service needs the Arc 140T"
   fi
 
   if command -v docker >/dev/null 2>&1; then
+    section "Image"
     # Read .env only when it exists: `env_get` on an absent file would hand a
     # failing sed to a pipe, and `set -o pipefail` would end this run there.
     check_image=""
@@ -155,35 +163,33 @@ if [ "${check_only}" = "1" ]; then
     fi
     check_image="${check_image:-evo-t1-dev:latest}"
     if docker image inspect "${check_image}" >/dev/null 2>&1; then
-      echo "image: ${check_image} is in the local image store"
+      log "image: ${check_image} is in the local image store"
     else
-      echo "image: ${check_image} is not built — a full run would build it"
+      log "image: ${check_image} is not built — a full run would build it"
     fi
     check_dind="$(dind_image_ref "${ROOT_DIR}/templates/workspace/main.tf")"
     if docker image inspect "${check_dind}" >/dev/null 2>&1; then
-      echo "image: ${check_dind} is in the local image store"
+      log "image: ${check_dind} is in the local image store"
     else
-      echo "image: ${check_dind} is not pulled — a full run would pull it"
+      log "image: ${check_dind} is not pulled — a full run would pull it"
     fi
   fi
 
-  echo "skipped by --check: the template push, the Coder Agents wiring and the Spark"
-  echo "fleet check, exactly as a full run would run them. Nothing was written."
+  log "skipped by --check: the template push, the Coder Agents wiring and the Spark"
+  log "fleet check, exactly as a full run would run them. Nothing was written."
+  ok "check"
+  summary
   exit 0
 fi
 
-command -v docker >/dev/null 2>&1 || {
-  echo "error: docker not found on PATH" >&2
-  exit 1
-}
-docker compose version >/dev/null 2>&1 || {
-  echo "error: docker compose plugin not available" >&2
-  exit 1
-}
+section "Tools"
+command -v docker >/dev/null 2>&1 || die "docker not found on PATH"
+docker compose version >/dev/null 2>&1 || die "docker compose plugin not available"
 
+section "Env"
 if [ ! -f .env ]; then
   cp .env.sample .env
-  echo "created .env from .env.sample"
+  log "created .env from .env.sample"
 fi
 
 # A .env written before a variable existed would leave the variable unset, so
@@ -197,7 +203,7 @@ if [ -f .env.sample ]; then
     var="${sample_line%%=*}"
     if ! grep -q "^${var}=" .env; then
       printf '%s\n' "${sample_line}" >>.env
-      echo "added ${var} to .env"
+      log "added ${var} to .env"
     fi
   done < <(grep -E '^[A-Z0-9_]+=' .env.sample)
 fi
@@ -221,9 +227,9 @@ if grep -qE "CODER_ACCESS_URL=https?://YOUR_LAN_IP" .env; then
     # Rewrite the host token only, so the scheme the sample carries survives.
     sed_inplace "s|://YOUR_LAN_IP|://${lan_ip}|" .env
     access_url="$(sed -n 's|^CODER_ACCESS_URL=||p' .env | tail -n 1)"
-    echo "set CODER_ACCESS_URL=${access_url}"
+    log "set CODER_ACCESS_URL=${access_url}"
   else
-    echo "warning: could not detect a LAN IP; edit CODER_ACCESS_URL in .env"
+    warn "could not detect a LAN IP; edit CODER_ACCESS_URL in .env"
   fi
 fi
 
@@ -233,7 +239,7 @@ fi
 # serves TLS itself (CODER_TLS_* in compose), so lift any leftover http:// value.
 if grep -q "^CODER_ACCESS_URL=http://" .env; then
   sed_inplace "s|^CODER_ACCESS_URL=http://|CODER_ACCESS_URL=https://|" .env
-  echo "upgraded CODER_ACCESS_URL to https:// (browsers need a secure context for the console)"
+  log "upgraded CODER_ACCESS_URL to https:// (browsers need a secure context for the console)"
 fi
 
 # The dashboard links to Coder/LiteLLM/Kasm and validates its Host header
@@ -248,7 +254,7 @@ if [ -n "${lan_host}" ] && [ "${lan_host}" != "YOUR_LAN_IP" ]; then
   fi
   if ! grep -q "^STACK_LAN_HOST=." .env; then
     sed_inplace "s|^STACK_LAN_HOST=.*|STACK_LAN_HOST=${lan_host}|" .env
-    echo "set STACK_LAN_HOST=${lan_host}"
+    log "set STACK_LAN_HOST=${lan_host}"
   fi
 fi
 
@@ -297,9 +303,9 @@ while IFS= read -r entry; do
   case "${kind}" in
     skip)
       if [ "${role}" = "url" ]; then
-        echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names, not URLs"
+        warn "skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names, not URLs"
       else
-        echo "warning: skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names"
+        warn "skipping '${entry}' in STACK_PUBLIC_HOSTS — entries are DNS names"
       fi
       continue
       ;;
@@ -360,7 +366,7 @@ if [ -n "${public_hosts}" ]; then
     if [ -n "${lan_ip}" ]; then
       upsert_env STACK_LAN_HOST "${lan_ip}"
     else
-      echo "warning: STACK_PUBLIC_HOSTS is set but no LAN IP was detected — set STACK_LAN_HOST in .env so the Coder cert keeps an IP SAN."
+      warn "STACK_PUBLIC_HOSTS is set but no LAN IP was detected — set STACK_LAN_HOST in .env so the Coder cert keeps an IP SAN."
     fi
   fi
 fi
@@ -392,6 +398,7 @@ fi
 # hand-edited CODER_ACCESS_URL): a cert whose SAN no longer matches the host the
 # browser uses turns into an unavoidable certificate warning.
 stack_lan_host="$(sed -n 's|^STACK_LAN_HOST=||p' .env | tail -n 1)"
+section "Certs"
 mkdir -p proxy/certs
 cert_file="proxy/certs/homepage.crt"
 key_file="proxy/certs/homepage.key"
@@ -403,14 +410,15 @@ elif ! openssl x509 -in "${cert_file}" -noout -text 2>/dev/null |
   cert_needs_issue=1
 fi
 if [ "${cert_needs_issue}" = "1" ] && [ -n "${stack_lan_host}" ]; then
+  phase "issue the dashboard cert"
   openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
     -subj "/CN=${stack_lan_host}" \
     -addext "subjectAltName=IP:${stack_lan_host},DNS:localhost,DNS:homepage" \
     -keyout "${key_file}" -out "${cert_file}" 2>/dev/null
   chmod 600 "${key_file}"
-  echo "issued self-signed dashboard cert for ${stack_lan_host} (browsers warn once — expected on a LAN IP)"
+  log "issued self-signed dashboard cert for ${stack_lan_host} (browsers warn once — expected on a LAN IP)"
 elif [ -z "${stack_lan_host}" ]; then
-  echo "warning: no LAN host resolved, so no dashboard cert was issued — homepage-proxy will fail to start until STACK_LAN_HOST is set in .env."
+  warn "no LAN host resolved, so no dashboard cert was issued — homepage-proxy will fail to start until STACK_LAN_HOST is set in .env."
 fi
 
 # The coder container terminates TLS itself (CODER_TLS_* in compose) and mounts
@@ -448,18 +456,20 @@ if [ "${cert_needs_issue}" = "1" ] && [ -n "${stack_lan_host}" ]; then
   for entry in ${public_entries[@]+"${public_entries[@]}"}; do
     coder_san_dns="${coder_san_dns},DNS:${entry}"
   done
+  phase "issue the Coder cert"
   openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 825 \
     -subj "/CN=${stack_lan_host}" \
     -addext "subjectAltName=IP:${stack_lan_host},DNS:localhost,DNS:coder,DNS:host.docker.internal${coder_san_dns}" \
     -keyout "${key_file}" -out "${cert_file}" 2>/dev/null
   chmod 600 "${key_file}"
-  echo "issued self-signed Coder cert for ${stack_lan_host}${public_hosts:+ and ${public_hosts}} (browsers warn once — expected on a LAN IP)"
+  log "issued self-signed Coder cert for ${stack_lan_host}${public_hosts:+ and ${public_hosts}} (browsers warn once — expected on a LAN IP)"
 elif [ -z "${stack_lan_host}" ]; then
-  echo "warning: no LAN host resolved, so no Coder cert was issued — the coder TLS listener will not start until STACK_LAN_HOST is set in .env."
+  warn "no LAN host resolved, so no Coder cert was issued — the coder TLS listener will not start until STACK_LAN_HOST is set in .env."
 fi
 
+section "GPU"
 if [ ! -e /dev/dri ]; then
-  echo "warning: /dev/dri not found — the IPEX-LLM Ollama service needs the Arc 140T (EVO-T1 hardware)."
+  warn "/dev/dri not found — the IPEX-LLM Ollama service needs the Arc 140T (EVO-T1 hardware)."
 fi
 
 # The coder container runs as uid 1000 and needs the host docker group GID to
@@ -471,9 +481,9 @@ if [ -n "${docker_gid}" ]; then
   else
     printf '\n# GID of the host docker group, for the coder container socket access.\nDOCKER_GID=%s\n' "${docker_gid}" >>.env
   fi
-  echo "set DOCKER_GID=${docker_gid}"
+  log "set DOCKER_GID=${docker_gid}"
 else
-  echo "warning: could not detect the docker group GID; set DOCKER_GID in .env if workspace creation fails with 'Cannot connect to the Docker daemon'."
+  warn "could not detect the docker group GID; set DOCKER_GID in .env if workspace creation fails with 'Cannot connect to the Docker daemon'."
 fi
 
 # Hermes bind-mounts this checkout at the same host path so `docker compose`
@@ -508,20 +518,22 @@ probe_agent_endpoint "SPARK3_OPENAI_URL" "$(env_get .env SPARK3_OPENAI_URL)"
 # takes many minutes — anything cheaper should have already failed loudly. A failure
 # stays advisory: bootstrap is the script you re-run to recover, so aborting here
 # would cost the "Next steps" output below.
+section "Image"
 dev_image="$(env_get .env DEV_IMAGE)"
 dev_image="${dev_image:-evo-t1-dev:latest}"
 if docker image inspect "${dev_image}" >/dev/null 2>&1; then
-  echo "workspace image ${dev_image} is present ($(docker image inspect --format '{{.Size}}' "${dev_image}" | awk '{printf "%.0f MB", $1/1024/1024}'))"
+  log "workspace image ${dev_image} is present ($(docker image inspect --format '{{.Size}}' "${dev_image}" | awk '{printf "%.0f MB", $1/1024/1024}'))"
 elif [ -n "${SKIP_DEV_IMAGE_BUILD:-}" ]; then
-  echo "note: workspace image ${dev_image} is not built yet (SKIP_DEV_IMAGE_BUILD is set) — run bazelisk run //scripts:build-dev-image before creating a workspace."
+  note "workspace image ${dev_image} is not built yet (SKIP_DEV_IMAGE_BUILD is set) — run bazelisk run //scripts:build-dev-image before creating a workspace."
 else
-  echo "building workspace image ${dev_image} — several GB of downloads, this takes a few minutes ..."
+  log "building workspace image ${dev_image} — several GB of downloads, this takes a few minutes ..."
+  phase "build ${dev_image}"
   build_rc=0
   DEV_IMAGE_TAG="${dev_image}" bash "${ROOT_DIR}/scripts/build-dev-image.sh" || build_rc=$?
   if [ "${build_rc}" != "0" ]; then
     # Almost always a pinned upstream download that failed or no internet; the build
     # script already printed the layer that stopped.
-    echo "warning: the workspace image ${dev_image} did not build (exit ${build_rc}) — workspaces cannot start until it exists. Retry with: bazelisk run //scripts:build-dev-image"
+    warn "the workspace image ${dev_image} did not build (exit ${build_rc}) — workspaces cannot start until it exists. Retry with: bazelisk run //scripts:build-dev-image"
   fi
 fi
 
@@ -533,13 +545,14 @@ fi
 # on failure: DinD is opt-in, so an offline box still gets a working stack.
 DIND_IMAGE="$(dind_image_ref templates/workspace/main.tf)"
 if docker image inspect "${DIND_IMAGE}" >/dev/null 2>&1; then
-  echo "docker-in-docker image ${DIND_IMAGE} is present"
+  log "docker-in-docker image ${DIND_IMAGE} is present"
 else
-  echo "pulling docker-in-docker image ${DIND_IMAGE} ..."
+  log "pulling docker-in-docker image ${DIND_IMAGE} ..."
+  phase "pull ${DIND_IMAGE}"
   if docker pull "${DIND_IMAGE}" >/dev/null 2>&1; then
-    echo "pulled ${DIND_IMAGE}"
+    log "pulled ${DIND_IMAGE}"
   else
-    echo "warning: ${DIND_IMAGE} did not pull — workspaces with docker-in-docker enabled will fail to build until it is in the local image store (retry: docker pull ${DIND_IMAGE})."
+    warn "${DIND_IMAGE} did not pull — workspaces with docker-in-docker enabled will fail to build until it is in the local image store (retry: docker pull ${DIND_IMAGE})."
   fi
 fi
 
@@ -550,13 +563,15 @@ fi
 # host coder CLI and no `coder login`: it drives the CLI inside the coder container
 # over loopback, and it pushes both templates, workspace first. A non-zero here
 # means at least one of those pushes was attempted and failed.
+section "Templates"
 if [ -n "${SKIP_TEMPLATE_PUSH:-}" ]; then
-  echo "note: template push skipped (SKIP_TEMPLATE_PUSH is set) — run bazelisk run //scripts:push-template after registering an account."
+  note "template push skipped (SKIP_TEMPLATE_PUSH is set) — run bazelisk run //scripts:push-template after registering an account."
 else
   push_rc=0
+  phase "push templates"
   bash "${ROOT_DIR}/scripts/push-template.sh" || push_rc=$?
   if [ "${push_rc}" != "0" ]; then
-    echo "warning: template push failed (exit ${push_rc}) — retry the failed one with: bazelisk run //scripts:push-template -- [name]"
+    warn "template push failed (exit ${push_rc}) — retry the failed one with: bazelisk run //scripts:push-template -- [name]"
   fi
 fi
 
@@ -571,13 +586,15 @@ fi
 # mints its own short-lived admin token from Postgres (like push-template.sh),
 # skips cleanly while the stack is down or nobody has registered yet, and reuses
 # what is already wired, so this step is safe to re-run beside the push above.
+section "Agents"
 if [ -n "${SKIP_CODER_AGENTS:-}" ]; then
-  echo "note: Coder Agents wiring skipped (SKIP_CODER_AGENTS is set) — run bazelisk run //scripts:coder-agents -- --apply after the stack is up."
+  note "Coder Agents wiring skipped (SKIP_CODER_AGENTS is set) — run bazelisk run //scripts:coder-agents -- --apply after the stack is up."
 else
   agents_rc=0
+  phase "wire Coder Agents"
   bash "${ROOT_DIR}/scripts/coder-agents.sh" --apply || agents_rc=$?
   if [ "${agents_rc}" != "0" ]; then
-    echo "warning: the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: bazelisk run //scripts:coder-agents -- --dry-run (once the stack is up), then re-run bazelisk run //scripts:coder-agents -- --apply."
+    warn "the Coder Agents wiring did not complete (exit ${agents_rc}) — check with: bazelisk run //scripts:coder-agents -- --dry-run (once the stack is up), then re-run bazelisk run //scripts:coder-agents -- --apply."
   fi
 fi
 
@@ -606,25 +623,28 @@ fi
 # --no-tests keeps the recipe's own probes — a
 # 195k-token needle plus a 1/2/4/5-client bench sweep, minutes per box — out of a
 # bootstrap run; re-run bazelisk run //scripts:spark-verify (without --no-tests) to get them back.
+section "Spark"
 if [ -n "${SKIP_SPARKS:-}" ]; then
-  echo "note: Spark fleet check skipped (SKIP_SPARKS is set) — run bazelisk run //scripts:spark-verify -- --no-tests to check the boxes."
+  note "Spark fleet check skipped (SKIP_SPARKS is set) — run bazelisk run //scripts:spark-verify -- --no-tests to check the boxes."
 else
   spark_rc=0
+  phase "check Spark config"
   bash "${ROOT_DIR}/scripts/spark-configure.sh" || spark_rc=$?
   if [ "${spark_rc}" != "0" ]; then
-    echo "warning: the Spark config check did not complete (exit ${spark_rc}) — no sparks/<host>.env was written. Name the boxes with SPARK_HOSTS and check SPARK_SSH_USER, then re-run bazelisk run //scripts:spark-configure."
+    warn "the Spark config check did not complete (exit ${spark_rc}) — no sparks/<host>.env was written. Name the boxes with SPARK_HOSTS and check SPARK_SSH_USER, then re-run bazelisk run //scripts:spark-configure."
   fi
   verify_rc=0
+  phase "verify Spark fleet"
   bash "${ROOT_DIR}/scripts/spark-verify.sh" --no-tests || verify_rc=$?
   if [ "${verify_rc}" != "0" ]; then
-    echo "warning: the Spark fleet check failed (exit ${verify_rc}) — either a box disagrees with its peers or its model id is spelled differently from the one litellm/config.yaml declares, and the proxy routes to it either way. Re-run bazelisk run //scripts:spark-verify -- --no-tests for the per-box detail, and bazelisk run //scripts:spark-configure -- --apply <host> to write the fix."
+    warn "the Spark fleet check failed (exit ${verify_rc}) — either a box disagrees with its peers or its model id is spelled differently from the one litellm/config.yaml declares, and the proxy routes to it either way. Re-run bazelisk run //scripts:spark-verify -- --no-tests for the per-box detail, and bazelisk run //scripts:spark-configure -- --apply <host> to write the fix."
   fi
 fi
 
-echo
-echo "Next steps:"
-echo "  1. bazelisk run //scripts:build-dev-image   # one-time polyglot workspace image (re-run if the build above failed)"
-echo "  2. bazelisk run //scripts:prod-stack -- up"
+log ""
+log "Next steps:"
+log "  1. bazelisk run //scripts:build-dev-image   # one-time polyglot workspace image (re-run if the build above failed)"
+log "  2. bazelisk run //scripts:prod-stack -- up"
 # Public mode wins for the browser-facing steps: those names resolve from
 # anywhere and Traefik serves them a real certificate, so printing the LAN form
 # would send remote users to an address their machine cannot reach.
@@ -632,14 +652,16 @@ coder_reach_url="${public_coder_url:-https://<host>:3001}"
 dash_reach_url="${public_dashboard_url:-https://${stack_lan_host:-<host>}}"
 litellm_port="$(env_get .env LITELLM_PORT)"
 litellm_reach_url="${public_litellm_url:-http://${stack_lan_host:-<host>}:${litellm_port:-4000}}"
-echo "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
-echo "  4. bazelisk run //scripts:push-template   # re-run after step 3 if the push above skipped (image=${dev_image})"
-echo "  5. bazelisk run //scripts:pull-models   # pulls the OLLAMA_MODELS listed in .env"
-echo "  6. bazelisk run //scripts:coder-agents -- --apply   # wires the control-plane chat agent (LiteLLM provider + thinking models + pins + system prompt). prod-stack/dev-stack up also start this with --wait after compose is up, so registering the first account is enough; re-run --apply if you skipped that."
-echo '  7. bazelisk run //scripts:spark-verify -- --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep)'
-echo "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
-echo "  9. Dashboard: ${dash_reach_url}/ (login password: the HOMEPAGE_AUTH_PASSWORD line in .env, never printed here — bazelisk run //scripts:dashboard-password rotates it)"
-echo " 10. LiteLLM: ${litellm_reach_url}/health — the transport every agent routes through; bazelisk run //scripts:dev-stack -- status reports on the whole stack at once"
+log "  3. Open ${coder_reach_url} and register the first account (it becomes the site admin)"
+log "  4. bazelisk run //scripts:push-template   # re-run after step 3 if the push above skipped (image=${dev_image})"
+log "  5. bazelisk run //scripts:pull-models   # pulls the OLLAMA_MODELS listed in .env"
+log "  6. bazelisk run //scripts:coder-agents -- --apply   # wires the control-plane chat agent (LiteLLM provider + thinking models + pins + system prompt). prod-stack/dev-stack up also start this with --wait after compose is up, so registering the first account is enough; re-run --apply if you skipped that."
+log '  7. bazelisk run //scripts:spark-verify -- --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep)'
+log "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
+log "  9. Dashboard: ${dash_reach_url}/ (login password: the HOMEPAGE_AUTH_PASSWORD line in .env, never printed here — bazelisk run //scripts:dashboard-password rotates it)"
+log " 10. LiteLLM: ${litellm_reach_url}/health — the transport every agent routes through; bazelisk run //scripts:dev-stack -- status reports on the whole stack at once"
 hermes_port="$(env_get .env HERMES_DASHBOARD_PORT)"
 hermes_reach_url="${public_hermes_url:-http://${stack_lan_host:-<host>}:${hermes_port:-9119}}"
-echo " 11. Hermes: ${hermes_reach_url} — on-device host assistant (basic auth is HERMES_DASHBOARD_USER / HERMES_DASHBOARD_PASSWORD in .env, never printed here). Docs: docs/hermes.md"
+log " 11. Hermes: ${hermes_reach_url} — on-device host assistant (basic auth is HERMES_DASHBOARD_USER / HERMES_DASHBOARD_PASSWORD in .env, never printed here). Docs: docs/hermes.md"
+ok "bootstrap"
+summary "bazelisk run //scripts:prod-stack -- up"

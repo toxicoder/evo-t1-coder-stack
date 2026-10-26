@@ -66,6 +66,9 @@ source "${SELF_DIR}/lib/common.sh"
 source "${SELF_DIR}/lib/host_state.sh"
 # shellcheck source=lib/tool_pins.sh disable=SC1091
 source "${SELF_DIR}/lib/tool_pins.sh"
+# This CLI has no --json mode: a leftover JSON_MODE would route every report
+# line to stderr and leave stdout empty.
+unset JSON_MODE
 
 REQUIRED_TOOLS=(bazelisk shellcheck shfmt buildifier terraform)
 
@@ -103,8 +106,7 @@ HELP
       exit 0
       ;;
     *)
-      printf 'error: setup-host: unknown argument %s (try --help)\n' "${arg}" >&2
-      exit 1
+      die "setup-host: unknown argument ${arg} (try --help)"
       ;;
   esac
 done
@@ -124,25 +126,29 @@ for tool in "${REQUIRED_TOOLS[@]}"; do
   fi
 done
 
+section "Tools"
 if [ "${#present[@]}" -gt 0 ]; then
-  printf 'present: %s\n' "${present[*]}"
+  log "present: ${present[*]}"
 fi
 if [ "${#missing[@]}" -gt 0 ]; then
-  printf 'missing: %s\n' "${missing[*]}"
+  log "missing: ${missing[*]}"
 fi
 
 if [ "${check_only}" = "1" ]; then
+  section "Repair"
   report_stale_runfiles "${SETUP_ROOT}"
   host_dns_report "${SETUP_RESOLV_CONF:-/etc/resolv.conf}" github.com || true
   if [ "${#missing[@]}" -gt 0 ]; then
-    echo "note: --check installed nothing and wrote nothing."
-    echo '  Run "bash scripts/setup-host.sh" (no flags) to install what is missing,'
-    echo '  or run "bazelisk test //:lint --test_tag_filters=manual" knowing that a'
-    echo "  linter which is not on PATH is SKIPPED, not passed: a lint gate with no"
-    echo "  linter in it proves nothing."
+    note "--check installed nothing and wrote nothing."
+    log '  Run "bash scripts/setup-host.sh" (no flags) to install what is missing,'
+    log '  or run "bazelisk test //:lint --test_tag_filters=manual" knowing that a'
+    log "  linter which is not on PATH is SKIPPED, not passed: a lint gate with no"
+    log "  linter in it proves nothing."
   else
-    echo "setup-host: every tool the Bazel targets need is on PATH."
+    log "setup-host: every tool the Bazel targets need is on PATH."
+    ok "setup-host"
   fi
+  summary
   exit 0
 fi
 
@@ -158,24 +164,29 @@ if [ -n "${sudo_cmd}" ]; then
   use_sudo=1
 fi
 runfiles_rc=0
+section "Repair"
+phase "repair leftover runfiles"
 repair_stale_runfiles "${SETUP_ROOT}" "${use_sudo}" || {
-  echo "setup-host: leftover runfiles could not all be repaired (see warnings above)" >&2
+  printf '%s\n' "setup-host: leftover runfiles could not all be repaired (see warnings above)" >&2
   runfiles_rc=1
 }
 
 dns_rc=0
+phase "install public DNS"
 if ! ensure_host_public_dns \
   "${SETUP_RESOLV_CONF:-/etc/resolv.conf}" \
   "${SETUP_RESOLVED_DROPIN:-${RESOLVED_DROPIN_DEFAULT}}" \
   "${use_sudo}"; then
-  echo "setup-host: host DNS still cannot resolve github.com (see warnings above)" >&2
+  printf '%s\n' "setup-host: host DNS still cannot resolve github.com (see warnings above)" >&2
   dns_rc=1
 fi
 
 if [ "${repair_only}" = "1" ]; then
   if [ "${runfiles_rc}" = "0" ]; then
-    echo "setup-host: runfiles repair finished."
+    log "setup-host: runfiles repair finished."
+    ok "runfiles repair"
   fi
+  summary
   if [ "${runfiles_rc}" != "0" ] || [ "${dns_rc}" != "0" ]; then
     exit 1
   fi
@@ -183,11 +194,14 @@ if [ "${repair_only}" = "1" ]; then
 fi
 
 if [ "${dns_rc}" != "0" ]; then
+  summary
   exit 1
 fi
 
 if [ "${#missing[@]}" -eq 0 ]; then
-  echo "setup-host: every tool the Bazel targets need is on PATH."
+  log "setup-host: every tool the Bazel targets need is on PATH."
+  ok "setup-host"
+  summary
   exit 0
 fi
 
@@ -251,13 +265,16 @@ setup_host_extract_member() {
 # Homebrew carries all five as core formulae, so the macOS branch stays the
 # convenience path: it names no version and pins nothing. The pinned Linux path
 # below is what tracks images/dev/tool-versions.env.
+section "Install"
+phase "install missing host tools"
 if command -v brew >/dev/null 2>&1; then
-  echo "installing with Homebrew (brew install) ..."
+  log "installing with Homebrew (brew install) ..."
   for tool in "${missing[@]}"; do
     if brew install "${tool}" >/dev/null 2>&1; then
-      echo "  installed ${tool}"
+      log "  installed ${tool}"
+      ok "${tool}"
     else
-      echo "  brew install ${tool} did not work — check that formula by hand" >&2
+      printf '%s\n' "  brew install ${tool} did not work — check that formula by hand" >&2
     fi
   done
 elif command -v apt-get >/dev/null 2>&1; then
@@ -266,7 +283,7 @@ elif command -v apt-get >/dev/null 2>&1; then
   # buildifier are raw binaries, terraform arrives as a zip whose terraform
   # member is what gets installed. Every URL comes from the pin file; nothing
   # here names a version.
-  echo "installing with apt-get and the upstream release binaries ..."
+  log "installing with apt-get and the upstream release binaries ..."
   apt=(apt-get)
   if [ -n "${sudo_cmd}" ]; then
     apt=(sudo apt-get)
@@ -294,7 +311,7 @@ elif command -v apt-get >/dev/null 2>&1; then
         echo "  ${tool}: no pinned Linux release in ${pins##*/} — install it by hand" >&2
         continue
       fi
-      echo "  fetching ${tool} from ${url}"
+      log "  fetching ${tool} from ${url}"
       if ! curl -fsSL "${url}" -o "${tmp}/${tool}" || [ ! -s "${tmp}/${tool}" ]; then
         echo "  ${tool}: nothing was fetched (no network, or no curl)" >&2
         continue
@@ -326,9 +343,7 @@ elif command -v apt-get >/dev/null 2>&1; then
     rm -rf "${tmp}"
   fi
 else
-  echo "error: no brew and no apt-get: install bazelisk, shellcheck, shfmt, buildifier" \
-    "and terraform by hand, then re-run this script to check them" >&2
-  exit 1
+  die "no brew and no apt-get: install bazelisk, shellcheck, shfmt, buildifier and terraform by hand, then re-run this script to check them"
 fi
 
 # The re-probe is the point: a lint gate that skipped every linter is what this
@@ -343,8 +358,11 @@ done
 if [ "${#still_missing[@]}" -gt 0 ]; then
   printf 'setup-host: still missing: %s — //:lint will skip those checks instead of\n' \
     "${still_missing[*]}"
-  echo "running them."
+  log "running them."
+  summary
   exit 1
 fi
 
-echo "setup-host: every tool the Bazel targets need is on PATH."
+log "setup-host: every tool the Bazel targets need is on PATH."
+ok "setup-host"
+summary

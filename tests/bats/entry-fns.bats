@@ -84,8 +84,9 @@ load_fn() {
 }
 
 @test "coder-agents: create_model_config and pin_lane call the API" {
-  load_fn scripts/coder-agents.sh log
-  load_fn scripts/coder-agents.sh die
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
   load_fn scripts/coder-agents.sh json_escape
   load_fn scripts/coder-agents.sh api_read
   load_fn scripts/coder-agents.sh api_write
@@ -127,8 +128,9 @@ load_fn() {
 }
 
 @test "push-template: preset_desc_guard rejects a description over 128 bytes" {
-  load_fn scripts/push-template.sh log
-  load_fn scripts/push-template.sh die
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
   load_fn scripts/push-template.sh preset_desc_guard
   dir="${BATS_TEST_TMPDIR}/tpl"
   mkdir -p "${dir}"
@@ -143,7 +145,8 @@ load_fn() {
 }
 
 @test "push-template: github_auth_provider_id defaults to github and forwards a custom coder.env id" {
-  load_fn scripts/push-template.sh die
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
   load_fn scripts/push-template.sh github_auth_provider_id
   [ "$(github_auth_provider_id "${BATS_TEST_TMPDIR}/no-such.env")" = "github" ]
   : >"${BATS_TEST_TMPDIR}/empty.env"
@@ -164,7 +167,8 @@ load_fn() {
 }
 
 @test "push-template: icon_data_url_guard rejects an SVG whose data URL exceeds 256 characters" {
-  load_fn scripts/push-template.sh die
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
   load_fn scripts/push-template.sh icon_data_url_guard
   svg="${BATS_TEST_TMPDIR}/vscode-alt.svg"
   # 172 bytes -> 4*ceil(172/3)+26 = 258, just over the column.
@@ -258,11 +262,13 @@ load_fn() {
 }
 
 @test "spark probes: say, fact, run_test, and probe_script" {
-  load_fn scripts/spark-configure.sh say
+  # say/fact/run_test live in the extracted POSIX probe files; probe_script
+  # stays on the entries and prints those files verbatim.
+  load_fn scripts/lib/probes/spark-configure.sh say
   [ "$(say have_docker=present)" = "have_docker=present" ]
-  load_fn scripts/spark-verify.sh say
+  load_fn scripts/lib/probes/spark-verify.sh say
   [ "$(say dri=present)" = "dri=present" ]
-  load_fn scripts/spark-verify.sh fact
+  load_fn scripts/lib/probes/spark-verify.sh fact
   cenv=$'PARALLEL=9\n'
   RECIPE_DIR="${BATS_TEST_TMPDIR}/no-such-recipe"
   [ "$(fact PARALLEL)" = "9" ]
@@ -271,11 +277,14 @@ load_fn() {
   mkdir -p "${RECIPE_DIR}"
   printf '%s\n' 'PARALLEL=3' >"${RECIPE_DIR}/.env"
   [ "$(fact PARALLEL)" = "3" ]
-  load_fn scripts/spark-verify.sh run_test
+  load_fn scripts/lib/probes/spark-verify.sh run_test
   have_timeout=""
   printf '%s\n' 'echo all-good' >"${RECIPE_DIR}/ok.sh"
   chmod +x "${RECIPE_DIR}/ok.sh"
   [ "$(run_test demo bash ./ok.sh)" = "demo: ok — all-good" ]
+  # The entries cat the probe file by repo-root-relative path, which is what the
+  # repo-root cd at the top of each script guarantees in production.
+  cd "${REPO_ROOT}"
   load_fn scripts/spark-configure.sh probe_script
   run probe_script
   assert_match "configure probe ends" 'report_end' "${output}"
@@ -284,13 +293,15 @@ load_fn() {
   assert_match "verify probe defines fact" '^fact()' "${output}"
 }
 
-@test "spark-configure: probe_http prints a body and stays empty on failure" {
-  load_fn scripts/spark-configure.sh probe_http
-  has_timeout=""
-  probe_tool=(curl -fsS -m 5)
+@test "spark: probe_http caps curl and keeps an unanswered probe empty" {
+  # scripts/lib/spark.sh is the only probe_http now; both entries pass cap+url.
+  # shellcheck disable=SC1091
+  source "${REPO_ROOT}/scripts/lib/spark.sh"
   export STUB_CURL_OUT='{"ok":1}'
-  [ "$(probe_http "http://spark.example:8888/health")" = '{"ok":1}' ]
+  [ "$(probe_http 5 "http://spark.example:8888/health")" = '{"ok":1}' ]
+  assert_match "curl still sees its argv" 'curl -fsS -m 5 http://spark.example:8888/health' "$(stub_log_last curl)"
+  [[ "$(stub_log_last timeout)" == timeout* ]]
   export STUB_CURL_RC=22
   export STUB_CURL_OUT=""
-  [ "$(probe_http "http://spark.example:8888/health")" = "" ]
+  [ "$(probe_http 5 "http://spark.example:8888/health")" = "" ]
 }
