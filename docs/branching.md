@@ -25,16 +25,21 @@ request as the only way back into `main`.
   machine is built from, so a merge to `main` is by definition deployable to the stack host.
 - Nothing is committed straight to `main`. Integration into `main` is by pull request, and a
   PR is only mergeable once CI is green:
-  `bazelisk test //:test-fast` and `bazelisk test //:lint --test_tag_filters=manual`, both
+  `bazelisk test //:test-fast`, `bazelisk test //:lint --test_tag_filters=manual` and the
+  full gate `bazelisk test //:test-all`, all
   executed inside the golden image (`images/dev/Dockerfile`) that CI builds with buildx and
   docker-runs — the toolchain comes from that image, not from anything installed onto the
   runner. Locally, run them the same way: inside the contributor container
   ([contribute/devcontainer.md](contribute/devcontainer.md)) or with
   `bazelisk run //scripts:test-in-image --`. `bash scripts/setup-host.sh` is the bootstrap
-  for the stack host, where the suites have to run on the host itself;
-  `bazelisk run //:validate` runs both of the checks plus
-  `docker compose config -q` and the `.env.sample`/`.env.example` comparison — that is the
-  pre-PR gate.
+  for the stack host, where the suites have to run on the host itself.
+  Two things run those checks for you so the gate is not a thing to remember:
+  `bazelisk run //scripts:pre-commit` on demand, and, once
+  `bazelisk run //scripts:install-hooks` has pointed `core.hooksPath` at `.githooks`,
+  `.githooks/pre-commit` on every commit and `.githooks/pre-push` before anything is
+  pushed. `bazelisk run //:validate` runs the fast pair plus
+  `docker compose config -q` and the `.env.sample`/`.env.example` comparison; the
+  pre-PR gate is `//:test-all`, which `//:validate` and the pre-push hook both reach.
 
 ## Work branches
 
