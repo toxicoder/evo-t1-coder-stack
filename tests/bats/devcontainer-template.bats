@@ -15,11 +15,15 @@
 # twins keep, the truthful wording of the no-devcontainer.json warning, and the
 # one common GROK_BUILD_AGENTS.md that the seed stage copies into place (line 1
 # is still "# Role"; the managed-by marker sits on line 2 so a stack-owned copy
-# reseeds). It also pins the search lane: the gated [mcp_servers.searxng] block
-# and the disable_web_search = false key exist identically in both
-# grok-config.toml.tftpl twins, both main.tf twins feed search_mcp/search_url
-# into that render and carry SEARXNG_URL into the agent environment, and both
-# coder.tf twins declare the two template variables the pushes will pass. It
+# reseeds), and the research lanes the seed and the config agree on: native
+# web_search is parked by a top-level disable_web_search key set to true above
+# the first table in both grok-config.toml.tftpl twins (no transport on this box
+# serves that tool type), which leaves the gated [mcp_servers.searxng] block as
+# the search lane, and the seed names that lane (searxng, $SEARXNG_URL,
+# http://host.docker.internal:8181) next to context7 and the child digest
+# contract. It also pins that both main.tf twins feed search_mcp/search_url
+# into that render and carry SEARXNG_URL into the agent environment, and that
+# both coder.tf twins declare the two template variables the pushes will pass. It
 # also pins the context7 and github lanes: both gated MCP blocks exist
 # identically in both grok-config.toml.tftpl twins, both coder.tf twins
 # default github_mcp/search_mcp/context7_mcp to true, both main.tf twins feed
@@ -174,8 +178,12 @@ setup() {
   [ "${status}" -eq 0 ]
   [ "${lines[0]}" = "# Role" ]
   [ "${lines[1]}" = "<!-- managed-by: evo-t1-coder-stack -->" ]
+  # The seed must not send the agent at the native tool any more: no transport
+  # on this box serves a web_search-typed tool, so that instruction cost every
+  # research question a wasted failing turn. "# Research lanes" (pinned in its
+  # own test below) is what replaced it.
   run grep -F 'Use `web_search`' "${common_md}"
-  [ "${status}" -eq 0 ]
+  [ "${status}" -ne 0 ]
   run grep -F 'search_tool' "${common_md}"
   [ "${status}" -eq 0 ]
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
@@ -195,15 +203,19 @@ setup() {
   done
 }
 
-@test "search lane: both config twins carry the gated searxng block and the on-key for native search" {
+@test "search lane: both config twins carry the gated searxng block and the parked native-search key" {
   # search_mcp (template default: true) gates the [mcp_servers.searxng] block,
   # and push-template.sh passes its --var array to BOTH pushes, so the block and
   # its gate have to exist in each twin; a twin that lost the gate would render
   # the server unconditionally or never, depending on the pushed default. The
   # literal greps pin the block shape (absolute binary path, threaded
-  # SEARXNG_URL) and the position rule for disable_web_search: it is a
-  # top-level key (false: native search is the default lane), so the file must
-  # emit it before the first [table] header or the render is invalid TOML.
+  # SEARXNG_URL) and the position rule for disable_web_search: native search is
+  # PARKED because no transport in front of these boxes serves the tool type
+  # (LiteLLM answers "tools of type 'web_search' are not supported"), so the key
+  # is a top-level true, and a top-level key must land before the first [table]
+  # header or the render is invalid TOML. With it parked, the comment the greps
+  # below pin is what names searxng as the lane rather than a fallback, and the
+  # two absence checks keep the twin from claiming native search is on again.
   local tpl dw ft
   for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
     "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
@@ -217,11 +229,21 @@ setup() {
     [[ "${output}" == *"enabled = true"* ]]
     run grep -F 'env = { SEARXNG_URL = "${search_url}" }' "${tpl}"
     [ "${status}" -eq 0 ]
-    dw="$(grep -n -m1 -F 'disable_web_search = false' "${tpl}" | cut -d: -f1)"
+    # -x anchors the key at column 0, so a comment that merely mentions the key
+    # (the [models] note does) cannot satisfy the position rule on its own.
+    dw="$(grep -n -m1 -Fx 'disable_web_search = true' "${tpl}" | cut -d: -f1)"
     ft="$(grep -n -m1 -e '^\[' "${tpl}" | cut -d: -f1)"
     [ -n "${dw}" ]
     [ -n "${ft}" ]
     [ "${dw}" -lt "${ft}" ]
+    # The searxng block is the lane; the old copy called it a fallback and
+    # called native search the lane already in use.
+    run grep -F 'This is the search lane: native' "${tpl}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'Native search is already on' "${tpl}"
+    [ "${status}" -ne 0 ]
+    run grep -F 'the fallback lane' "${tpl}"
+    [ "${status}" -ne 0 ]
   done
 }
 
@@ -246,6 +268,43 @@ setup() {
     run grep -F 'variable "searxng_url"' "${ctf}"
     [ "${status}" -eq 0 ]
   done
+}
+
+@test "research lanes: the seed names the searxng lane, context7, and the parked native tool" {
+  # Both config twins park native search and hand the web to the gated searxng
+  # block (pinned above), and the seed is what tells the agent to go there
+  # instead of spending a turn on the tool the transport rejects. So the seed
+  # has to carry the same story as the config it ships beside: the lane's name,
+  # the variable it dials, the context7 lane the config renders next to it, the
+  # parked key, and the digest contract that keeps raw tool output in the child.
+  # One common copy feeds both twins, so a lapse here is every workspace.
+  local common_md="${REPO_ROOT}/templates/common/GROK_BUILD_AGENTS.md"
+  [ -f "${common_md}" ] ||
+    skip "no common GROK_BUILD_AGENTS.md payload under ${REPO_ROOT}/templates/common"
+  run grep -F '# Research lanes' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F '# Tool output stays out of the parent context' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'the `searxng` MCP tools' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F '$SEARXNG_URL' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'http://host.docker.internal:8181' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F '`context7` first' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'disable_web_search = true' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'the digest contract' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'source URL' "${common_md}"
+  [ "${status}" -eq 0 ]
+  # Stale instruction: the seed must not promise a native lane the config parks,
+  # and must not downgrade searxng to a fallback behind it.
+  run grep -F 'Native search is on by default' "${common_md}"
+  [ "${status}" -ne 0 ]
+  run grep -F 'the fallback lane' "${common_md}"
+  [ "${status}" -ne 0 ]
 }
 
 @test "context7 lane: both config twins carry the gated cached context7 block" {

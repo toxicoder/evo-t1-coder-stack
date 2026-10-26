@@ -18,14 +18,18 @@
 # the very end of the file. Both are per-workspace, so with the Grok profile set to
 # "private" two workspaces can legitimately disagree about either one.
 
-# Grok's native web_search is the DEFAULT search lane, on by default. No
-# model transport this box ships serves hosted search (LiteLLM answers
-# "tools of type 'web_search' are not supported: this server runs function
-# tools only"), so the client-side scrape path is what runs and the agent
-# alias digests the result. The gated [mcp_servers.searxng] stdio server
-# below is the fallback. To park native search, set this key to true and
-# start a new session.
-disable_web_search = false
+# Grok's native web_search is PARKED, and the gated [mcp_servers.searxng] stdio
+# server below is the search lane. Measured 2026-10-25: no model transport this
+# box ships can serve the native tool. The Spark lane refuses the request
+# before anything is fetched, and LiteLLM answers "tools of type 'web_search'
+# are not supported: this server runs function tools only".
+# supports_backend_search = false cannot route around it, because the
+# client-side path still hands the model alias a web_search-typed tool, which
+# is the exact shape the endpoint rejects. "# Research lanes" in
+# ~/.grok/AGENTS.md sends the agent to the searxng tools by default. Set this
+# key to false and start a new session only once the agent has an endpoint that
+# really serves the tool.
+disable_web_search = true
 
 [models]
 # `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
@@ -34,10 +38,11 @@ disable_web_search = false
 # loop after one turn — they stay usable as completion-style fallbacks.
 # Each key here names the model that serves that role. The CLI's own default
 # for the web_search role is a hosted model, so all three roles below stay on
-# the local Spark lane; supports_backend_search = false keeps that search
-# client-side (local fetch, then the model summarises the result). Native
-# web_search is on by default; the gated [mcp_servers.searxng] server below
-# is the fallback lane.
+# the local Spark lane, and supports_backend_search = false on every lane keeps
+# the proxy from ever being asked for a hosted search tool. The web_search role
+# stays filled so that re-enabling native search is a one-key flip at the top of
+# this file; while disable_web_search = true nothing dials it, and the gated
+# [mcp_servers.searxng] server below answers instead.
 default = "${grok_default_model}"
 session_summary = "agent"
 image_description = "agent"
@@ -251,29 +256,32 @@ limit_behavior = "queue"
 explore = "agent"
 plan = "agent"
 
-# MCP servers: the default render declares exactly one, the gated searxng
-# server below. This file used to seed five offline stdio servers here
-# (filesystem, memory, sequential-thinking, git and time) plus the gated
-# github HTTP entry. Every session trace collected
-# on this machine called none of their tools, and a declared-but-unused
-# server still spends each session's start on its handshake and keeps its
-# tool schemas in every context, so the default config names none of them.
-# They stay installed in the golden image, so switching one back on is a
+# MCP servers: three gated entries ship by default, each behind its own boolean
+# that defaults to true. search_mcp renders the searxng stdio server, which is
+# THE search lane (native web_search is parked at the top of this file);
+# context7_mcp renders the cached context7 stdio server, which answers library
+# and API questions; github_mcp renders the hosted GitHub HTTP server. An agent
+# that needs the web or a docs page reaches these, and the "# Research lanes"
+# section of ~/.grok/AGENTS.md sends it there by default.
+#
+# Five more offline stdio servers (filesystem, memory, sequential-thinking, git
+# and time) stay installed in the golden image and stay undeclared here on
+# purpose: every session trace collected on this machine called none of their
+# tools, while a declared-but-unused server still spends each session's start on
+# its handshake and keeps its tool schemas in every context. Declaring one is a
 # one-block edit here (or in the create form's config-extras field); check a
 # stubborn one with `grok mcp doctor <name>`.
 #
-# Deliberately absent for other reasons, because they need outbound network or
-# a credential this workspace does not carry: sentry (OAuth to mcp.sentry.dev),
-# postgres (needs a live DSN), fetch (PySocks/egress proxy). Context7 is no
-# longer in that list: it is now an optional cached local process, rendered only
-# when context7_mcp is on, and it wants a usable CONTEXT7_API_KEY in the agent
-# environment plus outbound network on the first fetch (later identical lookups
-# inside the TTL come from the local SQLite cache instead). All three gated
-# entries this file can switch on default to true, so each one ships unless a
-# push passes --var <name>=false: search_mcp renders the searxng fallback search
-# lane, github_mcp the hosted GitHub HTTP server, context7_mcp the cached
-# context7 stdio server. Park one by setting its .env key (SEARCH_MCP,
-# GITHUB_MCP, CONTEXT7_MCP) to false and re-pushing — push-template.sh relays it.
+# sentry, postgres and fetch are absent for a different reason: each needs
+# outbound network or a credential this workspace does not carry (OAuth to
+# mcp.sentry.dev, a live DSN, a PySocks/egress proxy).
+#
+# Each gate ships unless a push passes --var <name>=false. Park one by setting
+# its .env key (SEARCH_MCP, CONTEXT7_MCP, GITHUB_MCP) to false and re-pushing:
+# push-template.sh relays it to both template pushes. context7 is the lane with
+# the outside dependency: it wants a usable CONTEXT7_API_KEY in the agent
+# environment plus outbound network on the first fetch, and later identical
+# lookups inside the TTL come from its local SQLite cache instead.
 #
 # What is left out is simply not defined here, so there is nothing to disable;
 # if you add one later and want it parked rather than deleted, list its name
@@ -322,8 +330,8 @@ env = { CONTEXT7_API_KEY = "$${CONTEXT7_API_KEY}" }
 # Rendered only when search_mcp is on, and that template variable defaults to
 # true, so this block ships unless a push passes --var search_mcp=false (or sets
 # SEARCH_MCP=false in .env, which push-template.sh relays). It wires the
-# self-hosted SearXNG service as a stdio MCP server: this box's fallback
-# search lane.
+# self-hosted SearXNG service as a stdio MCP server: this box's search lane, and
+# the only one an agent gets by default.
 #
 # The binary is baked into the golden image (images/dev/Dockerfile installs
 # searxng-mcp-server at the version pinned in images/dev/tool-versions.env,
@@ -343,11 +351,11 @@ enabled = true
 # config that dials the port it actually has.
 #
 # Prove the route with `bazelisk run //scripts:search-check` (it reads the same
-# SEARXNG_URL, which main.tf also puts in coder_agent's env) and the server's
-# handshake
-# with `grok mcp doctor searxng`. Native search is already on; this server is
-# the fallback. Park it with search_mcp off, or park native search with
-# disable_web_search = true at the top of this file (then start a new session).
+# SEARXNG_URL, which main.tf also puts in coder_agent's env) and the handshake
+# with `grok mcp doctor searxng`. This is the search lane: native web_search is
+# parked at the top of this file, so an agent that needs the web reaches these
+# tools. Park this lane too with search_mcp off, and a session is left with no
+# search tool at all.
 env = { SEARXNG_URL = "${search_url}" }
 
 %{endif~}

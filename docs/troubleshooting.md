@@ -237,9 +237,15 @@ The checks that apply to either lane:
 
 ### Search never answers (or answers empty) -> prove the search lane before blaming the MCP hop
 
-Search rides Grok's native `web_search` tool by default (`disable_web_search =
-false`). The self-hosted SearXNG MCP stdio server is the fallback, declared by
-default (`search_mcp` defaults to true). Two probes split a SearXNG fault in half:
+The self-hosted SearXNG MCP stdio server is the search lane, declared by default
+(`search_mcp` defaults to true). Grok's native `web_search` is parked: the render sets
+`disable_web_search = true`, because no model transport this box ships serves that
+tool type - LiteLLM's `agent` group answers `tools of type 'web_search' are not
+supported: this server runs function tools only` (HTTP 400) before anything is
+fetched, and `supports_backend_search = false` does not route around it. An agent that
+still spends a turn on a native search call and comes back with that message behaved
+as configured; there is no native lane to fall back to. Two probes split a SearXNG
+fault in half:
 
 - `bazelisk run //scripts:search-check` (or `scripts/search-check.sh` from a shell that
   can reach the host gateway) dials the service directly. It reads `$SEARXNG_URL`
@@ -249,11 +255,16 @@ default (`search_mcp` defaults to true). Two probes split a SearXNG fault in hal
 - `grok mcp doctor searxng` inside the workspace probes the MCP hop. A healthy
   search-check plus a failed handshake points at the server, the URL or the port.
 
-If the SearXNG lane stays down, native search is already on. Park the failing
-server with `search_mcp = false` on the next template push (`SEARCH_MCP=false` in
-`.env` applies it to every new workspace). To park native search instead, set
-`disable_web_search = true` in the workspace's `~/.grok/config.toml` and start a
-new session.
+There is no second lane behind this one, so run both probes before touching anything
+else. A service that answers but a server that will not handshake is the MCP hop; a
+server that cannot launch at all usually means no
+`/opt/npm-global/bin/searxng-mcp-server`, and that binary is baked into the golden
+image - an image that predates it needs a rebuild and a workspace recreate, not a
+config edit. Park the lane with `search_mcp = false` on the next template push
+(`SEARCH_MCP=false` in `.env` applies it to every new workspace) when a session should
+have no search tool at all. To restore the native tool, flip `disable_web_search` to
+false in both template twins and re-push - only for an endpoint that really serves the
+tool, or the 400 comes straight back.
 
 ### Context7 or GitHub tools missing in Grok Build -> parked MCP block, or a handshake with nothing to authenticate
 

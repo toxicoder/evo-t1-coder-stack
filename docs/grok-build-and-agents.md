@@ -17,7 +17,7 @@ tags: [grok, agents, workspace, mcp]
 
 - Changing a model alias in one place and knowing which workspaces see it
 - Explaining why one workspace's `~/.grok` disagrees with another's
-- Deciding between the native search lane and the SearXNG fallback
+- Knowing why the native `web_search` tool is parked and the SearXNG lane answers
 
 Deep reference for what runs *inside* a workspace and in the Coder control plane: the
 terminal profiles, the per-user `~/.grok` profile, where the CLI and the chat agent get
@@ -108,6 +108,10 @@ Rendered per workspace from `templates/workspace/grok-config.toml.tftpl` (and
 `templates/devcontainer/`'s copy of the same payload), and re-rendered idempotently
 while the managed block is intact.
 
+- At top level the render sets `disable_web_search = true`, which parks Grok's native
+  `web_search` tool: no transport this box ships serves that tool type, so the
+  self-hosted `searxng` MCP server is the search lane. The search lane section below
+  carries the measurement and how to flip the key back.
 - `[models] default` points at the `grok_default_model` alias - `agent` unless the
   template variable or the create form's **Grok default model** dropdown names
   another. `[models] default_reasoning_effort = "xhigh"`. The Spark lane answers
@@ -215,27 +219,47 @@ clone is never asked to delete somebody else's committed file.
   for itself: keyless engines only, no key, no account, no request logging. A
   workspace reaches it through the host gateway, so the workspace networks stay
   untouched.
-- It is **not** a model transport, so `web_search = "agent"` and
-  `supports_backend_search = false` stay as they are and the agent's own `web_search`
-  tool still digests through the `agent` alias. Native search is the default:
-  `disable_web_search = false` keeps the `web_search` tool in the session (it has no
-  hosted backend on this box - LiteLLM answers "tools of type 'web_search' are not
-  supported" - so the client-side scrape path is what runs). The `searxng` MCP stdio
-  server is the fallback: both templates render that block gated on `search_mcp`,
-  which defaults to true. To park native search, set `disable_web_search` to true
-  and start a new session. Measure the self-hosted lane with:
+- It is **not** a model transport, and the native tool is parked: both twins render
+  `disable_web_search = true` at top level, so a session starts with no `web_search`
+  tool at all. Measured 2026-10-25: no model transport this box ships serves that
+  tool type. The `agent` group is LiteLLM in front of the Spark boxes
+  (`openai/Qwen3.8-Flash-Next`), and it refuses the request before anything is
+  fetched - `tools of type 'web_search' are not supported: this server runs function
+  tools only`, HTTP 400. `supports_backend_search = false` does not route around it,
+  because the client-side fallback still hands the model alias a `web_search`-typed
+  tool, which is the exact shape that endpoint rejects. The fallback lane fails too:
+  it is the `coder` alias, Ollama `qwen2.5-coder:32b`, and that model is not pulled on
+  the host. So `web_search = "agent"` and `supports_backend_search = false` stay as
+  they are - the role stays filled so re-enabling is a one-key flip - but while the
+  key reads `true` nothing dials it.
+- The `searxng` MCP stdio server is what answers instead, and it is the search lane
+  rather than a fallback: both templates render that block gated on `search_mcp`,
+  which defaults to true. It dials `$SEARXNG_URL` (default
+  `http://host.docker.internal:8181`), the same key `main.tf` puts in the agent
+  environment. Measure the self-hosted lane with:
 
   ```sh
   bazelisk run //scripts:search-check
   ```
 
   An empty result page and "no answer" are different answers, which is why the probe
-  reports which one it got.
+  reports which one it got. It checks the service hop; `grok mcp doctor searxng`
+  inside the workspace checks the MCP hop. The binary it launches
+  (`/opt/npm-global/bin/searxng-mcp-server`) is baked into the golden image, so a
+  probe that answers with results plus a failed handshake is a server, URL or port
+  problem, not a missing package.
+
+- To put native search back on a transport that really serves the tool: flip the key
+  to `false` in the seed - both `templates/workspace/grok-config.toml.tftpl` and
+  `templates/devcontainer/`'s copy - and re-push, which applies it fleet-wide. For one
+  workspace without a push, the create form's **Grok config extras** field appends
+  free-form TOML verbatim to that workspace's file. Either way start a new session,
+  and expect the same 400 back if the endpoint still answers function tools only.
 
 - **MCP servers: the default render declares three - `github`, `context7` and the
-  gated `searxng` server (the fallback search lane).** Each is a boolean gate in the
-  template, so one env flag parks exactly one block and a template re-push applies it
-  fleet-wide: `GITHUB_MCP=false`, `CONTEXT7_MCP=false`, `SEARCH_MCP=false`.
+  gated `searxng` server, which is the search lane itself.** Each is a boolean gate in
+  the template, so one env flag parks exactly one block and a template re-push applies
+  it fleet-wide: `GITHUB_MCP=false`, `CONTEXT7_MCP=false`, `SEARCH_MCP=false`.
   The `searxng` block names the pre-installed `searxng-mcp-server` binary (pinned in
   `images/dev/tool-versions.env` and baked into the golden image), is gated on
   `search_mcp` (default true) and dials the service above through `SEARXNG_URL`.
@@ -265,6 +289,16 @@ clone is never asked to delete somebody else's committed file.
   TTL is answered locally. Two tools, in order -
   `resolve-library-id`, then `query-docs` on the id it returns. Prove it with
   `grok mcp doctor context7` inside a workspace.
+- What the agent is told about all this lives in `~/.grok/AGENTS.md`, inlined from
+  `templates/common/GROK_BUILD_AGENTS.md`. Two sections cover the lanes. **Research
+  lanes** makes a lookup part of the normal loop rather than a last resort: `context7`
+  first for a library, framework, CLI or setup question (that two-tool order), the
+  `searxng` tools for anything else on the web, `web_fetch` for a URL already in hand,
+  and it states that native `web_search` is parked so nobody spends a turn
+  rediscovering the 400. **Tool output stays out of the parent context** makes that
+  tool use delegated work: the child returns a digest - numbered findings, each one
+  claim, one source URL and at most two lines of support, no raw result dumps,
+  confidence stated - and keeps the raw pages to itself.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
   default `http://host.docker.internal:4000/v1`; model alias `agent`, with
   `agent-low`/`agent-medium`/`agent-xhigh`/`coder`/`coder-fast`/`chat` listed in

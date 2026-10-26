@@ -10,7 +10,7 @@
 *[Kasm]: Workspaces that stream desktops from a privileged DinD container.
 *[Homepage]: The dashboard that links the services and shows live status.
 *[Hermes]: The Nous Research host assistant, with the Web Dashboard and its approval prompts.
-*[SearXNG]: The keyless metasearch lane that backs the agent's fallback search.
+*[SearXNG]: The keyless metasearch lane that answers the agent's web searches.
 *[Bazel]: The hermetic build and test system every operator CLI is a target of.
 *[Bazelisk]: Version-aware launcher that runs the Bazel version this repo pins.
 *[Bats]: Bash Automated Testing System; the hermetic suite framework under tests/.
