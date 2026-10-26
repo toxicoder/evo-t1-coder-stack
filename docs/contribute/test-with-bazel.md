@@ -167,31 +167,31 @@ daemon, an `ssh`, or a reachable Spark box — a sandboxed action usually has no
 PATH.
 
 So resolve the root from the environment first, then prove it, and fail loudly when the
-proof fails:
+proof fails. `resolve_checkout` in `scripts/lib/common.sh` is that resolver and every CLI that
+reads a file the checkout alone holds calls it, so do not write a second one. It takes the calling
+script's own directory as its last candidate and the marker to probe for (`docker-compose.yml` by
+default); the call site in every one of those CLIs is this:
 
 ```bash
-find_repo_root() {
-  local root="${REPO_ROOT:-${GITHUB_WORKSPACE:-}}"
-  if [[ -n "${root}" && ! -f "${root}/docker-compose.yml" ]]; then
-    root=""
-  elif [[ -n "${root}" ]] && ! command -v docker >/dev/null 2>&1; then
-    # A checkout that cannot have come from the host: no compose CLI means this is
-    # the Bazel sandbox or some other copy of the repo, not a working stack host.
-    root=""
-  fi
-  if [[ -z "${root}" ]]; then
-    printf 'error: unresolvable repo root\n' >&2
-    return 5
-  fi
-  printf '%s' "${root}"
-}
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh disable=SC1091
+source "${SELF_DIR}/lib/common.sh"
+ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
+cd "${ROOT_DIR}"
 ```
+
+It tries `${REPO_ROOT:-}`, then `${BUILD_WORKSPACE_DIRECTORY:-}`, then `${GITHUB_WORKSPACE:-}`,
+then `${PWD}`, then `${SELF_DIR}/..`, and prints the first candidate that proves out.
 
 - The `${REPO_ROOT:-}` / `${GITHUB_WORKSPACE:-}` default is not decoration: these scripts run
   under `set -euo pipefail`, and a bare `${REPO_ROOT?}` aborts with `REPO_ROOT: parameter not
   set` the moment a sandbox or CI runner leaves the variable unset.
-- The file probe (`-f docker-compose.yml`) says "this is a repo root"; the `command -v` probe
-  of a tool that cannot exist inside the sandbox says "and it is the real checkout, not a
-  copy". Two probes, because either one alone passes in the wrong case.
+- The file probe (`-f "${candidate}/${marker}"`) says "this is a repo root"; refusing a derived
+  candidate whose `pwd -P` lands under `bazel-out/`, `bazel-bin/`, `execroot/`, or a
+  `*.runfiles` tree says "and it is the real checkout, not a copy", because runfiles carries its
+  own copy of the marker. Two probes, because either one alone passes in the wrong case: writing a
+  rotated `.env` or a `sparks/<host>.env` through the runfiles copy reports success while the
+  checkout keeps the old bytes. An explicit `${REPO_ROOT}` is exempt from the second probe — it is
+  a statement about where to work, and this harness points it at the copy of the repo under test.
 - Exit `5` with one `unresolvable repo root` line beats guessing a cwd and half-running a
   fleet check against a copy of the repo.

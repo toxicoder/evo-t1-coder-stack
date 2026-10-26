@@ -82,6 +82,36 @@ bazelisk run //scripts:prod-stack -- up
 target. Bare `bash scripts/setup-host.sh` repairs leftovers and then installs any missing
 host tools. `bash scripts/setup-host.sh --check` lists leftover paths without writing.
 
+### `error: .../.env not found` from `bazelisk run //scripts:dashboard-password` -> the runfiles copy has no working `.env`
+
+Cause: an older target ran the runfiles copy of the script, so `$(dirname "$0")/..`
+was the runfiles tree, and that tree ships only `//:stack_data`. The working `.env`
+is untracked, so it exists only in the checkout, and the rotation reported a missing
+file on a host that had one. The path in the message tells the two apart: a
+`bazel-out/.../dashboard-password.runfiles/...` path is this entry. The same bug had
+`pull-models` pulling its default list instead of the checkout's `OLLAMA_MODELS`,
+`coder-agents` provisioning the compose placeholder `LITELLM_MASTER_KEY` instead of the
+checkout's, and `spark-configure` / `spark-verify` writing `sparks/` output into a tree
+Bazel recreates.
+
+Fix: those six CLIs (`dashboard-password`, `pull-models`, `coder-agents`,
+`spark-verify`, `spark-configure`, `build-dev-image`) resolve the checkout with
+`resolve_checkout` (`scripts/lib/common.sh`) before they read or write anything, so
+they honour `REPO_ROOT` and the `BUILD_WORKSPACE_DIRECTORY` that `bazel run` names.
+When nothing proves out - no candidate holds `docker-compose.yml` outside a
+`bazel-out/`, `bazel-bin/`, `execroot/`, or `*.runfiles` tree - the run exits `5` with one
+`error: unresolvable repo root: ...` line instead of half-running against a copy. Re-run
+from the stack host:
+
+```sh
+bazelisk run //scripts:dashboard-password
+```
+
+The `first boot? run bazelisk run //scripts:bootstrap to create it` hint alongside it
+means the checkout has no `.env` at all: that is the bootstrap path. `DASHBOARD_ENV_FILE`
+points the rotation at another file and exists for test harnesses; there is deliberately
+no flag for it, because a flag that names a file this CLI overwrites is one mistype away.
+
 ### `Could not resolve host: github.com` -> Tailscale MagicDNS is the only nameserver
 
 Cause: `/etc/resolv.conf` names only Tailscale MagicDNS (`100.100.100.100`).
