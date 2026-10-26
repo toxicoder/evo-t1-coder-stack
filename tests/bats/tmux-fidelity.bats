@@ -156,12 +156,17 @@ runnable_tmux_seed() {
 }
 
 # Scratch tmux server for the live read-back test below; the file teardown
-# reaps it when an assertion fails mid-test.
+# reaps it when an assertion fails mid-test. TMUX_TMPDIR keeps the socket inside
+# the per-test scratch tree, and the file itself comes off with the server
+# because tmux leaves the socket behind after a clean shutdown.
 SCRATCH_TMUX_SOCKET=""
+SCRATCH_TMUX_TMPDIR=""
 
 scratch_tmux_reap() {
   [ -n "${SCRATCH_TMUX_SOCKET}" ] || return 0
+  local sock="${SCRATCH_TMUX_TMPDIR}/tmux-$(id -u)/${SCRATCH_TMUX_SOCKET}"
   tmux -L "${SCRATCH_TMUX_SOCKET}" kill-server >/dev/null 2>&1 || true
+  [ -S "${sock}" ] && rm -f "${sock}"
   SCRATCH_TMUX_SOCKET=""
 }
 
@@ -173,7 +178,9 @@ teardown() {
   command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
   local conf="${BATS_TEST_TMPDIR}/tmux.conf"
   cp "${COMMON_TMUX}" "${conf}"
+  SCRATCH_TMUX_TMPDIR="${BATS_TEST_TMPDIR}"
   SCRATCH_TMUX_SOCKET="bats-tmux-fid-$$-${BATS_TEST_NUMBER}"
+  export TMUX_TMPDIR="${SCRATCH_TMUX_TMPDIR}"
   run tmux -L "${SCRATCH_TMUX_SOCKET}" -f "${conf}" new-session -d -s fid -x 80 -y 24 'sleep 30'
   [ "${status}" -eq 0 ] || skip "cannot start a scratch tmux server: ${output}"
   # tmux only warns about an unknown option name and starts anyway, so a typo
