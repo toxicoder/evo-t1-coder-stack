@@ -68,6 +68,57 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 - `num_retries: 2` covers a transient blip; moving off a busy box is routing's job, not
   the retry chain's. `request_timeout: 1200` matches the CLI's own streaming idle
   allowance, so a slow call may take a full twenty minutes before either end gives up.
+- `model_group_retry_policy:` gives the four agent lanes their own `RetryPolicy`. The
+  reason it exists is narrow enough to be worth its own section below.
+
+### When a box answers `NoRoom`
+
+TensorFold on the Spark boxes refuses an over-admitted stream with the Zig error value
+`NoRoom`, delivered as an HTTP 500 body. The OpenAI SDK hands that to LiteLLM with no
+int `status_code`, which at the pinned `v1.102.1` puts it on the status-less branch of
+`exception_mapping_utils`, so the router sees `APIConnectionError`.
+
+`RetryPolicy` in that tag has no `APIConnectionErrorRetries` field. `DefaultRetries` is
+the only field that can reach the error, which is why each agent lane declares one:
+
+```yaml
+model_group_retry_policy:
+  agent:            # repeated for agent-low, agent-medium, agent-xhigh
+    DefaultRetries: 2
+    ...
+```
+
+Read these three facts before changing the block:
+
+- The four groups are independent and none inherits `agent`, so each needs its own six
+  keys. The zeros pin the exceptions `DefaultRetries` would otherwise reach; at this tag
+  `NotFoundError` has no field of its own, so without a policy a typo'd model id is
+  retried on `DefaultRetries`.
+- The policy is scoped to the Spark lanes. `coder` (Arc) and `chat` keep the plain
+  `num_retries` path.
+- These retries are instant and stay on the same box. A status-less exception means
+  `_deployment_ids_to_skip_on_retry` excludes nothing and `_time_to_sleep_before_retry`
+  returns 0 while any deployment is healthy, and the workspace-wide
+  `x-litellm-session-id` pin sends every subagent of a workspace to one box anyway. The
+  block makes a refusal less likely to surface. Relocation comes from the box and the
+  fan-out.
+
+The two levers that actually move load off a shedding box:
+
+1. The box-side reclaim switch. The recipe measured the same refusal going from
+   "2 of 5 streams refused" to "5 of 5 admitted" once patch 0029 is live with
+   `TF_FLASHNEXT_ADMIT_RECLAIM=1`. `//scripts:spark-configure --apply` owns the per-host
+   override file those settings belong in, and `//scripts:spark-verify` already fails a
+   box whose `streams.max` drifts from the fleet's `PARALLEL`. Asserting the
+   admit-reclaim setting itself is still open work: neither script names that key today.
+2. Keep in-flight fan-out at or under a box's `PARALLEL` (5) per workspace. The
+   orchestrator cap of 4 is inside that budget.
+
+Two knobs that look right and do nothing here: `retry_after` is only a `min_timeout` and
+is never consulted while the group has healthy deployments, and `fallbacks_by_model`
+does not exist in this tag (the proxy warns and ignores an unknown `router_settings`
+key, so a config that looks correct silently does nothing, which is why
+`//tests:bats_litellm_config_test` rejects it by name).
 
 ## The alias table
 

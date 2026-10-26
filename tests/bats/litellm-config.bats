@@ -15,6 +15,11 @@
 # group of three Spark deployments carrying that one effort, the same tool-calling
 # flags, and their own hop to coder. Qwen3.8-Flash-Next takes no other effort.
 #
+# And it pins the NoRoom retry contract: each of the four agent lanes declares the
+# six-field model_group_retry_policy whose DefaultRetries is the only field that
+# can catch TensorFold's status-less refusal at this LiteLLM tag, the policy names
+# the Spark lanes only, and no key the pinned tag lacks was pasted in.
+#
 # Usage: bazelisk test //tests:bats_litellm_config_test   (from any cwd)
 # Safety: reads litellm/config.yaml and the two template dirs; writes nothing.
 
@@ -155,4 +160,77 @@ entries_for() {
     [ "${status}" -eq 0 ] || { echo "main.tf does not pass workspace_affinity_key: ${tf}" >&2; return 1; }
   done
   [[ "${checked}" -gt 0 ]] || skip "no main.tf under ${REPO_ROOT}/templates"
+}
+
+# retry_policy_block — the model_group_retry_policy mapping, its own line plus
+# every deeper-indented line, stopping at its first sibling key. Slicing it out
+# is what makes the assertions below about the policy: a grep over the whole
+# file would also be satisfied by a same-named field in another block.
+retry_policy_block() {
+  awk '
+    BEGIN { depth = -1 }
+    /^[[:space:]]*model_group_retry_policy:/ {
+      depth = index($0, "model_group_retry_policy:") - 1
+      print
+      next
+    }
+    depth >= 0 {
+      if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) { next }
+      if (match($0, /[^[:space:]]/) - 1 <= depth) { depth = -1; next }
+      print
+    }
+  ' "${CONFIG}"
+}
+
+# policy_fields_for <group> — the field lines of one group inside the policy.
+# The group key must be followed by a colon and nothing else, so `agent` cannot
+# match the `agent-low` entry.
+policy_fields_for() {
+  retry_policy_block | awk -v want="$1" '
+    $0 ~ "^[[:space:]]*" want ":[[:space:]]*$" { keep = 1; next }
+    /^[[:space:]]+[A-Za-z][A-Za-z-]*:[[:space:]]*$/ { keep = 0 }
+    keep { print }
+  '
+}
+
+@test "retry: every agent lane carries the policy that reaches NoRoom" {
+  local group fields
+  for group in agent agent-low agent-medium agent-xhigh; do
+    fields="$(policy_fields_for "${group}")"
+    assert_match "DefaultRetries is set for ${group}" 'DefaultRetries: 2' "${fields}"
+    assert_match "500 is retried for ${group}" 'InternalServerErrorRetries: 2' "${fields}"
+    assert_match "503 is retried for ${group}" 'ServiceUnavailableErrorRetries: 2' "${fields}"
+    assert_match "400 is not retried for ${group}" 'BadRequestErrorRetries: 0' "${fields}"
+    assert_match "401 is not retried for ${group}" 'AuthenticationErrorRetries: 0' "${fields}"
+    assert_match "content policy is not retried for ${group}" \
+      'ContentPolicyViolationErrorRetries: 0' "${fields}"
+    # 2 matches num_retries: the policy adds a lane that can catch the
+    # status-less APIConnectionError shape, it does not lengthen the chain.
+    assert_eq "${group} declares exactly six fields" "6" "$(printf '%s\n' "${fields}" | grep -c ':')"
+  done
+}
+
+@test "retry: the policy stays scoped to the Spark lanes" {
+  local groups
+  groups="$(retry_policy_block | grep -E '^[[:space:]]+[A-Za-z][A-Za-z-]+:[[:space:]]*$' |
+    sed -e 's/[[:space:]]//g' -e 's/:$//' | sort | paste -sd, -)"
+  assert_eq "only the four agent groups are named" \
+    "agent,agent-low,agent-medium,agent-xhigh" "${groups}"
+  # coder (Arc) and chat keep today's plain num_retries path.
+  run retry_policy_block
+  assert_not_match "coder is untouched" '^[[:space:]]+coder:' "${output}"
+  assert_not_match "chat is untouched" '^[[:space:]]+chat:' "${output}"
+}
+
+@test "retry: no retry key from newer docs was pasted in" {
+  # Verified absent from the v1.102.1 tag: the proxy warns and ignores these,
+  # so a config that looks right would silently do nothing.
+  run grep -Eq 'fallbacks_by_model|NotFoundErrorRetries|retry_after' "${CONFIG}"
+  [ "${status}" -ne 0 ]
+}
+
+@test "retry: the chain-wide num_retries stays where it was" {
+  # The policy complements num_retries; replacing it would change every lane.
+  run grep -Eq '^[[:space:]]*num_retries: 2$' "${CONFIG}"
+  [ "${status}" -eq 0 ]
 }
