@@ -76,6 +76,10 @@ setup() {
   assert_contains_file "docs typecheck and unit" "${CI_YML}" '//docs-site:typecheck //docs-site:unit --test_tag_filters=manual'
   assert_contains_file "docs nav test" "${CI_YML}" '//docs-site:nav_test'
   assert_contains_file "docs nav check" "${CI_YML}" '//docs-site:npm -- run nav:check'
+  # The full gate has to run on GitHub too, not only in the pre-push hook, or a
+  # contributor who skipped the hook (git push --no-verify) lands an unverified
+  # tree on main.
+  assert_contains_file "full gate" "${CI_YML}" 'test //:test-all --config=ci'
   ci_refute_line "inline docker run" 'docker run'
   ci_refute_line "inline npm ci" 'npm ci --legacy-peer-deps'
   ci_refute_line "test-fast is not manual-filtered" 'test-fast.*test_tag_filters'

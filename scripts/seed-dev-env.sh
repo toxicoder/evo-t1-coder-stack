@@ -450,6 +450,55 @@ seed_setup_git_credential() {
   return 0
 }
 
+# @function seed_install_git_hooks
+# Point this checkout's git hooks at .githooks, so a contributor container gets
+# the commit and push gates without anyone remembering to install them. Scoped to
+# --devcontainer for the same reason gh auth setup-git is: a laptop or CI home is
+# not a place to change someone's git config unasked. Best-effort and idempotent;
+# a missing git, a bare (non-checkout) root, or a failing git config is a note and
+# the seed still succeeds.
+# Globals:
+#   None
+# Arguments:
+#   $1 - repository root to configure
+#   $2 - 1 when --devcontainer was set (default 0)
+#   $3 - 1 to report without calling git (default 0)
+# Outputs:
+#   One phase or note line; nothing on the no-op paths
+# Returns:
+#   0, always
+seed_install_git_hooks() {
+  local root="${1:-}" devcontainer="${2:-0}" preview="${3:-0}"
+  if [[ ${devcontainer} != "1" ]]; then
+    return 0
+  fi
+  if [[ -z ${root} || ! -d ${root}/.githooks ]]; then
+    return 0
+  fi
+  if [[ ! -d ${root}/.git ]]; then
+    note "${root} is not a git checkout - skipping the git hooks"
+    return 0
+  fi
+  if [[ ${preview} == "1" ]]; then
+    note "dry-run: not setting core.hooksPath"
+    return 0
+  fi
+  if ! has_tool git; then
+    note "git is not on PATH - skipping core.hooksPath"
+    return 0
+  fi
+  # git skips a hook it cannot execute, and a contents-API checkout carries the
+  # hooks as 100644, so the mode bit is set here as well as by //scripts:install-hooks.
+  if ! chmod 755 "${root}/.githooks/pre-commit" "${root}/.githooks/pre-push" 2>/dev/null; then
+    note "could not make .githooks executable - skipping core.hooksPath"
+    return 0
+  fi
+  if ! git -C "${root}" config core.hooksPath .githooks; then
+    note "git config core.hooksPath failed - continuing"
+  fi
+  return 0
+}
+
 # @function seed_dev_env
 # Seed one home tree: the shared reseed set, then the contributor extras
 # (helpers, notes library, editor symlinks, grok config, bashrc PATH).
@@ -576,6 +625,7 @@ main() {
 
   seed_dev_env "${home}" "${root}" "${preview}" "${force}" || exit 1
   seed_setup_git_credential "${home}" "${devcontainer}" "${preview}"
+  seed_install_git_hooks "${root}" "${devcontainer}" "${preview}"
   summary
   return 0
 }

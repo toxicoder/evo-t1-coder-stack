@@ -75,6 +75,7 @@ load_seed_api() {
     seed_write_grok_config \
     seed_write_bashrc_path \
     seed_setup_git_credential \
+    seed_install_git_hooks \
     seed_dev_env; do
     load_shell_function "${SCRIPT}" "${name}"
   done
@@ -556,4 +557,58 @@ assert_contributor_home() {
   run_seed "${notdir}"
   [ "${status}" -eq 1 ]
   assert_match "die names the path" 'not a directory' "${output}"
+}
+
+@test "seed-dev-env: git hooks are armed only for a devcontainer checkout" {
+  local root home
+  root="$(make_scratch)"
+  home="$(make_scratch)"
+  command -v git >/dev/null 2>&1 || skip "git is not installed"
+  # Loaded after the skip guard: common.sh defines its own skip.
+  load_seed_api
+  git init -q "${root}"
+  mkdir -p "${root}/.githooks"
+  printf '#!/usr/bin/env bash\n' >"${root}/.githooks/pre-commit"
+  printf '#!/usr/bin/env bash\n' >"${root}/.githooks/pre-push"
+  chmod 644 "${root}/.githooks/pre-commit" "${root}/.githooks/pre-push"
+
+  # Not a devcontainer seed: a laptop or CI home keeps its own git config.
+  seed_install_git_hooks "${root}" 0 0
+  assert_eq "no hooksPath without --devcontainer" "" \
+    "$(git -C "${root}" config --get core.hooksPath 2>/dev/null || true)"
+
+  # Dry run reports and changes nothing.
+  run seed_install_git_hooks "${root}" 1 1
+  [ "${status}" -eq 0 ]
+  assert_match "dry-run note" 'dry-run: not setting core.hooksPath' "${output}"
+  assert_eq "dry-run wrote nothing" "" \
+    "$(git -C "${root}" config --get core.hooksPath 2>/dev/null || true)"
+
+  # The real arm sets the path and makes the hooks executable, because git skips
+  # a hook it cannot run.
+  run seed_install_git_hooks "${root}" 1 0
+  [ "${status}" -eq 0 ]
+  assert_eq "hooksPath armed" ".githooks" \
+    "$(git -C "${root}" config --get core.hooksPath 2>/dev/null || true)"
+  [ -x "${root}/.githooks/pre-commit" ] || fail "pre-commit left non-executable"
+  [ -x "${root}/.githooks/pre-push" ] || fail "pre-push left non-executable"
+}
+
+@test "seed-dev-env: a root without .githooks or .git is a silent note, not a failure" {
+  load_seed_api
+  local root
+  root="$(make_scratch)"
+
+  # No .githooks at all: nothing to arm, and no noise.
+  run seed_install_git_hooks "${root}" 1 0
+  [ "${status}" -eq 0 ]
+  assert_not_match "no note for a repo without hooks" 'git hooks' "${output}"
+
+  # Hooks present but the root is not a checkout: say so, still succeed.
+  mkdir -p "${root}/.githooks"
+  : >"${root}/.githooks/pre-commit"
+  : >"${root}/.githooks/pre-push"
+  run seed_install_git_hooks "${root}" 1 0
+  [ "${status}" -eq 0 ]
+  assert_match "names the non-checkout" 'not a git checkout' "${output}"
 }

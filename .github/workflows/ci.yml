@@ -83,6 +83,16 @@ jobs:
           ./scripts/test-in-image.sh -- test //:lint --config=ci --test_tag_filters=manual
           VALIDATE_INNER=1 ./scripts/test-in-image.sh -- run //:validate
 
+      # The same gate the pre-push hook runs, so a PR is checked by exactly the
+      # set a contributor was already asked to clear: //:test-fast and //:lint
+      # again, plus //:test-all's npm-backed docs gates and the two measured
+      # coverage targets (//tests:shell_coverage, //tests:py_coverage,
+      # //docs-site:unit_coverage). The three invocations above stay the fast
+      # signal; this one is the full one.
+      - name: Full gate in the image
+        run: |
+          ./scripts/test-in-image.sh -- test //:test-all --config=ci
+
       - name: Compose and env sample
         run: |
           docker compose config -q
