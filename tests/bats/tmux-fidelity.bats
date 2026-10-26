@@ -11,6 +11,15 @@
 # against a throwaway HOME, and pins the editor terminal keys both
 # settings.json.tftpl twins must keep.
 #
+# Four of the seeded options are the fixes `grok doctor` offers: set-clipboard
+# and allow-passthrough for the copy routes, extended-keys, and the RGB
+# terminal-features entry; the extkeys entry is the one Doctor leaves to the
+# operator. tmux rewrites 24-bit color down to what the attached client
+# advertises, so a missing RGB entry washes a theme out in the browser while the
+# app inside still emits truecolor. tmux only warns about an unknown option name
+# and starts anyway, so when tmux is on PATH the suite also boots a scratch
+# server on a private socket and reads the options back.
+#
 # Usage: bazelisk test //tests:bats_tmux_fidelity_test   (from any cwd)
 # Safety: reads the four template payload files; writes only under the
 # per-test scratch tree.
@@ -82,6 +91,9 @@ runnable_tmux_seed() {
   grep -Fc 'set -g mouse on' "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'set -g set-clipboard on' "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'set -g allow-passthrough on' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc "set -g extended-keys on" "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc "set -as terminal-features ',*:RGB'" "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc "set -as terminal-features 'xterm*:extkeys'" "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'setw -g mode-keys vi' "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'history-limit 50000' "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'MouseDragEnd1Pane' "${COMMON_TMUX}" | grep -qx 1
@@ -110,6 +122,9 @@ runnable_tmux_seed() {
   assert_contains_file "mouse scroll/copy" "${home}/.tmux.conf" '^set -g mouse on$'
   assert_contains_file "OSC 52 clipboard" "${home}/.tmux.conf" '^set -g set-clipboard on$'
   assert_contains_file "passthrough" "${home}/.tmux.conf" '^set -g allow-passthrough on$'
+  assert_contains_file "extended keys" "${home}/.tmux.conf" '^set -g extended-keys on$'
+  assert_contains_file "truecolor survives the multiplexer" "${home}/.tmux.conf" "^set -as terminal-features '\\,\\*:RGB'\$"
+  assert_contains_file "extkeys for Shift+Enter" "${home}/.tmux.conf" "^set -as terminal-features 'xterm\\*:extkeys'\$"
   assert_contains_file "vi copy-mode" "${home}/.tmux.conf" '^setw -g mode-keys vi$'
   assert_contains_file "y copies to clipboard" "${home}/.tmux.conf" 'y send-keys -X copy-selection-and-cancel'
   assert_contains_file "drag-release copies" "${home}/.tmux.conf" 'MouseDragEnd1Pane send-keys -X copy-selection-and-cancel'
@@ -138,6 +153,49 @@ runnable_tmux_seed() {
   [ "${status}" -eq 0 ]
   assert_contains_file "reseeded" "${home}/.tmux.conf" '^set -g mouse on$'
   assert_not_match "stale line gone" 'set -g mouse off' "$(cat "${home}/.tmux.conf")"
+}
+
+# Scratch tmux server for the live read-back test below; the file teardown
+# reaps it when an assertion fails mid-test.
+SCRATCH_TMUX_SOCKET=""
+
+scratch_tmux_reap() {
+  [ -n "${SCRATCH_TMUX_SOCKET}" ] || return 0
+  tmux -L "${SCRATCH_TMUX_SOCKET}" kill-server >/dev/null 2>&1 || true
+  SCRATCH_TMUX_SOCKET=""
+}
+
+teardown() {
+  scratch_tmux_reap
+}
+
+@test "tmux seed: a live server holds the options grok doctor inspects" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  local conf="${BATS_TEST_TMPDIR}/tmux.conf"
+  cp "${COMMON_TMUX}" "${conf}"
+  SCRATCH_TMUX_SOCKET="bats-tmux-fid-$$-${BATS_TEST_NUMBER}"
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" -f "${conf}" new-session -d -s fid -x 80 -y 24 'sleep 30'
+  [ "${status}" -eq 0 ] || skip "cannot start a scratch tmux server: ${output}"
+  # tmux only warns about an unknown option name and starts anyway, so a typo
+  # is visible only in what the server ends up holding.
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -g mouse
+  [ "${output}" = "mouse on" ]
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -g set-clipboard
+  [ "${output}" = "set-clipboard on" ]
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -wg allow-passthrough
+  [ "${output}" = "allow-passthrough on" ]
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -wg extended-keys
+  [ "${output}" = "extended-keys on" ]
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -s terminal-features
+  [[ "${output}" == *"*:RGB"* ]] || {
+    echo "terminal-features carries no RGB entry: ${output}" >&2
+    return 1
+  }
+  [[ "${output}" == *"xterm*:extkeys"* ]] || {
+    echo "terminal-features carries no extkeys entry: ${output}" >&2
+    return 1
+  }
+  scratch_tmux_reap
 }
 
 @test "terminal keys: both settings twins carry the fidelity keys" {

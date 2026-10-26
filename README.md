@@ -725,10 +725,11 @@ The list format, the two clone paths, and what `--dry-run` prints:
 
 ### Terminals, Grok Build state and Coder Agents
 
-The `tmux` terminal profiles and the app-bar buttons, the one `~/.grok` volume shared per
-owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP servers
-and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the control-plane Coder
-Agents chat that needs nothing enabled:
+The `tmux` terminal profiles and the app-bar buttons, what `grok doctor` should report
+inside a workspace and which findings are expected there, the one `~/.grok` volume shared
+per owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP
+servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
+control-plane Coder Agents chat that needs nothing enabled:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
 
 ## Kasm

@@ -7,6 +7,7 @@ tags: [grok, agents, workspace, mcp]
 **What's on this page**
 
 - Terminal and editor defaults, and the profile the templates seed
+- What `grok doctor` reports inside a workspace, and which findings are expected
 - The Grok Build CLI in the golden image, and how it is pinned
 - The rendered `~/.grok/config.toml`: model aliases and role fallbacks
 - One shared profile volume per user, and what last-booted rewrites
@@ -77,6 +78,55 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   `workspace_apps.icon` is `varchar(256)` on Coder v2.36, so the SVG is a compact
   ribbon whose data URL fits that column; a larger file fails `templates push`
   with `pq: value too long for type character varying(256)`.
+
+### `grok doctor` findings in a workspace
+
+`grok doctor` checks terminal, clipboard and microphone support without starting a
+session, and `/doctor` inside a session adds the checks that need a live one. Each
+item in the **Findings** list carries its own fix, and `--json` prints the same
+report for a script. What the report should read here:
+
+- **tmux options.** `templates/common/tmux.conf` seeds the four options Doctor's
+  own fixes write, `set -g set-clipboard on`, `set -g allow-passthrough on`,
+  `set -g extended-keys on` and the `*:RGB` `terminal-features` entry, plus the
+  `xterm*:extkeys` entry Doctor leaves to the operator. Those last two decide
+  what survives the multiplexer: tmux rewrites 24-bit color down to the palette
+  an attached client advertises, which is what makes a theme look washed out in
+  the browser, and extkeys is what makes Shift+Enter and Ctrl+. arrive distinct
+  from Enter. A client picks up `terminal-features` when it attaches, so after a
+  reseed run `tmux source-file ~/.tmux.conf` and then detach and reattach
+  (a `refresh-client` keeps the client on its old features). Proof:
+  `tmux display -p '#{client_termfeatures}'` lists `RGB` and `extkeys`.
+  `tests/bats/tmux-fidelity.bats` boots a scratch server on the seed and reads
+  all of it back.
+- **`terminal.limited-color` during an agent turn.** A tool command launched by a
+  running Grok session inherits `NO_COLOR=1`, `FORCE_COLOR=0`, `CLICOLOR=0` and
+  `CARGO_TERM_COLOR=never` from that session, so a `grok doctor` run from inside
+  an agent turn reads color as off. The `grok` process itself and the tmux server
+  carry none of those variables, so run it from a plain terminal for the real
+  capability: the line reads `color truecolor` and `themes all`.
+- **`voice.no-input-device`.** Expected in a workspace. The container has no
+  capture device at all (`/dev/snd` and `/proc/asound` are absent) and no
+  recorder on PATH. The probe only looks for a recorder binary, so installing
+  `alsa-utils` moves the line to `available` while capture still has nowhere to
+  read from, and `features.voice_mode = false` leaves the finding in place.
+  Neither would be a fix, so the stack ships neither and the finding stands as an
+  accurate report of a headless container. Dictation belongs on a laptop-side
+  `grok`. To give a workspace dictation instead: run PulseAudio on the workstation
+  with its TCP module enabled, export `PULSE_SERVER=tcp=<workstation>:4713` into
+  the workspace, and install `pulseaudio-utils` there for `parec`.
+- **`terminal.ssh-wrap`** is a recommendation about the computer you type `ssh`
+  on, since the wrapper has to sit in front of that client: run
+  `grok doctor fix ssh-wrap` there, or `grok wrap ssh <host>` per connection. It
+  forwards copies to the local clipboard and restores terminal modes when the
+  link drops. `/settings` -> **Show contextual hints** -> **SSH wrap** silences
+  the tip.
+- **`unavailable` tmux and runtime probes.** `tmux.version`,
+  `tmux.client-features` and the `runtime.*` lines come back `unavailable`
+  whenever Doctor has no interactive client of its own, which covers a piped run
+  and a run from an agent tool call. Read them by hand (`tmux -V`,
+  `tmux display -p '#{client_termfeatures}'`) or from `/doctor` in a live
+  session.
 
 ## The Grok Build CLI in the golden image
 
