@@ -101,8 +101,15 @@ bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.gi
   CLIs without `--json` unset `JSON_MODE` after source. Keep prefixes `warning:` /
   `note:` / `error:`.
 - A script never runs another repo script by relative path, and never assumes the cwd is the
-  checkout: it resolves the repo root from `${REPO_ROOT:-}` / `${GITHUB_WORKSPACE:-}` and then
-  probes for it (see the harness doc), because a Bazel sandbox may only hold a copy.
+  checkout: it resolves the repo root with `resolve_checkout` in `scripts/lib/common.sh` and then
+  `cd`s there (see the harness doc), because a Bazel sandbox may only hold a copy. That helper tries
+  `${REPO_ROOT:-}` / `${BUILD_WORKSPACE_DIRECTORY:-}` / `${GITHUB_WORKSPACE:-}` / `${PWD}` /
+  `${SELF_DIR}/..` in order, and a candidate counts only when it holds the marker file
+  (`docker-compose.yml` unless the caller names another) and its `pwd -P` is not under a
+  `bazel-out/`, `bazel-bin/`, `execroot/`, or `*.runfiles` tree — an explicit `REPO_ROOT` is
+  the one candidate trusted as given, which is how the Bats runner names the copy under test.
+  Nothing proving out is one
+  `error: unresolvable repo root: ...` line on stderr and exit `5`, never a guessed cwd.
 - External tools are probed with `command -v` and reported as "not on PATH", not assumed.
   `require_tool` skips locally and fails under `CI=true`.
 - A probe-style CLI takes its target as a flag (`--url`) rather than a hard-coded host, and reports

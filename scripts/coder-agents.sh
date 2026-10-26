@@ -77,19 +77,26 @@
 #   CODER_AGENTS_USER=<username>     user to mint the token for
 #   CODER_AGENTS_TOKEN_MINUTES=10    lifetime of the minted token
 # The psql one-offs (psql_sql / psql_query) come from scripts/lib/coder_api.sh,
-# sourced right after the repo-root cd below. That file honours PROBE_TIMEOUT,
+# sourced right after the libs are loaded below. That file honours PROBE_TIMEOUT,
 # so the assignments further down still win over its defaults.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/common.sh disable=SC1091
-source "scripts/lib/common.sh"
+source "${SELF_DIR}/lib/common.sh"
 # No --json mode: an inherited JSON_MODE would send every line to stderr.
 unset JSON_MODE
 
 # shellcheck source=lib/coder_api.sh disable=SC1091
-source "scripts/lib/coder_api.sh"
+source "${SELF_DIR}/lib/coder_api.sh"
+
+# LITELLM_MASTER_KEY comes from the checkout's .env and the model aliases from
+# litellm/config.yaml, so the checkout is resolved before either is read. Under
+# `bazelisk run` this script runs from the runfiles tree, whose .env is missing
+# rather than empty: that would silently provision the compose placeholder key.
+ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
+cd "${ROOT_DIR}"
 
 MODE=apply
 WAIT_SECS=0

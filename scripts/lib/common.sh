@@ -7,7 +7,11 @@
 #     effects; it deliberately omits `set -euo pipefail` and inherits the
 #     caller's options, like every other file under scripts/lib/.
 #   - Every helper reads its inputs from arguments, never from an implicit cwd or
-#     a hardcoded `.env`; secrets stay data and never echo.
+#     a hardcoded `.env`; secrets stay data and never echo. The one exception is
+#     resolve_checkout, whose checkout-name candidates come from the environment
+#     (REPO_ROOT / BUILD_WORKSPACE_DIRECTORY / GITHUB_WORKSPACE / PWD) because a
+#     script cannot know them any other way; it still takes its own directory and
+#     the proof marker as arguments.
 #
 # Usage (from an entry script, after `set -euo pipefail` and the repo-root `cd`):
 #   # shellcheck source=lib/common.sh disable=SC1091
@@ -188,6 +192,75 @@ EOF
   if [ -n "${1:-}" ]; then
     log "next: $1"
   fi
+}
+
+# ── Repo root ────────────────────────────────────────────────────────────────
+
+# @function resolve_checkout
+# Print the checkout this run should work in. A script run through `bazelisk run`
+# executes the runfiles copy of itself, so neither its cwd nor its own directory
+# is the checkout: runfiles carries only what //:stack_data ships, and a working
+# file that lives only in the checkout (the untracked .env, sparks/ output) is
+# absent there. Candidates are tried in order and each has to prove itself.
+# Globals:
+#   REPO_ROOT (an explicit statement of the checkout, trusted as given),
+#   BUILD_WORKSPACE_DIRECTORY, GITHUB_WORKSPACE, PWD (derived candidates)
+# Arguments:
+#   $1 - the calling script's own directory (its SELF_DIR), the last candidate
+#   $2 - marker file a candidate must hold to count as a checkout; default
+#        docker-compose.yml
+# Outputs:
+#   The root on stdout, or one "error: ..." line on stderr naming every
+#   candidate it tried
+# Returns:
+#   0 with the root on stdout; 5 when the caller gave no directory or no
+#   candidate proved out
+resolve_checkout() {
+  local self_dir="${1:-}" marker="${2:-docker-compose.yml}"
+  local candidate physical explicit="" saw_runfiles=0
+  if [ -z "${self_dir}" ]; then
+    err "resolve_checkout needs the calling script's own directory"
+    return 5
+  fi
+  local -a candidates=()
+  if [ -n "${REPO_ROOT:-}" ]; then
+    candidates+=("${REPO_ROOT}")
+    explicit="${REPO_ROOT}"
+  fi
+  if [ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]; then
+    candidates+=("${BUILD_WORKSPACE_DIRECTORY}")
+  fi
+  if [ -n "${GITHUB_WORKSPACE:-}" ]; then
+    candidates+=("${GITHUB_WORKSPACE}")
+  fi
+  candidates+=("${PWD}" "${self_dir}/..")
+
+  for candidate in "${candidates[@]}"; do
+    [ -f "${candidate}/${marker}" ] || continue
+    physical="$(cd "${candidate}" 2>/dev/null && pwd -P)" || continue
+    if [ "${candidate}" != "${explicit}" ]; then
+      # A Bazel copy of the repo holds a real docker-compose.yml, so the marker
+      # alone cannot tell it apart from the checkout. Reading through it is
+      # harmless; writing through it (a rotated password, a sparks/<host>.env)
+      # would report success while the checkout kept the old bytes. REPO_ROOT is
+      # exempt: it is a human or harness statement about where to work, and the
+      # Bats runner points it at the copy of the repo under test on purpose.
+      case "${physical}" in
+        */bazel-out/* | */bazel-bin/* | */execroot/* | *.runfiles | *.runfiles/*)
+          saw_runfiles=1
+          continue
+          ;;
+      esac
+    fi
+    printf '%s\n' "${candidate}"
+    return 0
+  done
+  if [ "${saw_runfiles}" = 1 ]; then
+    err "unresolvable repo root: only a Bazel runfiles copy proved ${marker}; run this through bazelisk run (it names the checkout in BUILD_WORKSPACE_DIRECTORY) or set REPO_ROOT"
+    return 5
+  fi
+  err "unresolvable repo root: no proven checkout in ${candidates[*]} (need ${marker})"
+  return 5
 }
 
 # ── Key=value readers ──────────────────────────────────────────────────────────

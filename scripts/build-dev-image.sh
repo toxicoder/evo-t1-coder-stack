@@ -25,26 +25,34 @@
 #   DOCKER="sudo docker" bazelisk run //scripts:build-dev-image   # if docker needs root
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-
-IMAGE_DIR="images/dev"
-DOCKERFILE="${IMAGE_DIR}/Dockerfile"
-VERSIONS="${IMAGE_DIR}/tool-versions.env"
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/common.sh disable=SC1091
-source "scripts/lib/common.sh"
+source "${SELF_DIR}/lib/common.sh"
 # No --json mode: an inherited JSON_MODE would send every line to stderr.
 unset JSON_MODE
 
 # shellcheck source=lib/image.sh disable=SC1091
-source "scripts/lib/image.sh"
+source "${SELF_DIR}/lib/image.sh"
+
+# The build context is the checkout's images/dev, not the runfiles copy this
+# script runs from under `bazelisk run`: a runfiles tree only holds what
+# //:stack_data ships, so a file added to images/dev without listing it there
+# would be quietly absent from the build.
+ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
+cd "${ROOT_DIR}"
+
+IMAGE_DIR="${ROOT_DIR}/images/dev"
+DOCKERFILE="${IMAGE_DIR}/Dockerfile"
+VERSIONS="${IMAGE_DIR}/tool-versions.env"
 
 # Defaults so the script still works if .env is unreadable; the build then fails
 # loudly on the missing-ARG check below rather than building something unknown.
 DEV_IMAGE_TAG="${DEV_IMAGE_TAG:-evo-t1-dev:latest}"
 DOCKER="${DOCKER:-docker}"
 
-[ -f "${DOCKERFILE}" ] || die "${DOCKERFILE} not found (run this from the repo root)"
+[ -f "${DOCKERFILE}" ] ||
+  die "${DOCKERFILE} not found (resolved checkout is ${ROOT_DIR}; set REPO_ROOT to name the right one)"
 [ -f "${VERSIONS}" ] || die "${VERSIONS} not found — it is the single source of version pins"
 
 command -v "${DOCKER%% *}" >/dev/null 2>&1 ||

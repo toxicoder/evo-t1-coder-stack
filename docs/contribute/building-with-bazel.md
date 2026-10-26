@@ -107,7 +107,8 @@ long-running exception, and you stop it with Ctrl-C.
 - **Hermetic sandbox.** `test --spawn_strategy=local,sandboxed` and `build
   --spawn_strategy=sandboxed`: an action sees its declared inputs and its runfiles tree, not
   the whole checkout. That is why a suite declares its stubs and payload files as `data` and
-  why a script probes for its repo root instead of trusting the cwd.
+  why a script resolves its repo root with `resolve_checkout` (`scripts/lib/common.sh`) instead of
+  trusting the cwd.
 - **Action cache.** An action's outputs are keyed on its inputs and command line, so an
   unchanged suite replays its cached PASS instead of re-running Bats.
 - **Local disk and repository cache.** `.bazelrc` points `--disk_cache` at
@@ -135,10 +136,18 @@ Each CLI target also declares the repo files that script reads by path — `//:s
 samples, `LICENSE`) and
 `//scripts:doc_sources` (every `scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves
 too). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
-`bazelisk run` of a stack runner or of `push-template` prefers `BUILD_WORKSPACE_DIRECTORY` — the real checkout —
+`bazelisk run` of a stack runner, of `push-template`, or of the six CLIs that read a file the
+checkout alone holds (`dashboard-password`, `pull-models`, `coder-agents`, `spark-verify`,
+`spark-configure`, `build-dev-image`) prefers `BUILD_WORKSPACE_DIRECTORY` (the real checkout)
 over the runfiles copy as the compose project directory, the live `.env`, and the template tree (runfiles
 `templates/**` are symlinks that Coder cannot follow after unpack). Without the committed payloads a
 sandboxed run would read a partial copy of the repo and fail for the wrong reason. A new
 top-level payload directory has to be added to that `glob` by hand: `test-fast` and `lint`
 only see repo files that travel in runfiles, so an unlisted directory is invisible to the
 harness rather than checked loosely.
+
+A script that needs the checkout reaches it the same way: source its libs by absolute path from
+`SELF_DIR`, resolve the root with `resolve_checkout` (`scripts/lib/common.sh`), then `cd` into
+what it prints. Never `cd "$(dirname "$0")/.."` - under `bazelisk run` the launcher execs the
+runfiles copy of the script, so that is the runfiles tree, which holds only `//:stack_data` and is
+recreated on the next build.

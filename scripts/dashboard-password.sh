@@ -27,19 +27,30 @@
 #   bazelisk run //scripts:dashboard-password
 #   bazelisk run //scripts:dashboard-password -- --prompt
 #   bazelisk run //scripts:dashboard-password -- --no-apply
+#
+# Exit codes: 0 when the rotation landed; 1 for a usage or state error; 5 when no
+# checkout can be proven (see resolve_checkout in scripts/lib/common.sh).
+
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/common.sh disable=SC1091
-source "scripts/lib/common.sh"
+source "${SELF_DIR}/lib/common.sh"
 # No --json mode: an inherited JSON_MODE would send every line to stderr.
 unset JSON_MODE
 
 # shellcheck source=lib/coder_api.sh disable=SC1091
-source "scripts/lib/coder_api.sh"
+source "${SELF_DIR}/lib/coder_api.sh"
 
-ENV_FILE="${DASHBOARD_ENV_FILE:-.env}"
+# The checkout is resolved, never assumed: `bazelisk run` execs the runfiles copy
+# of this script, and .env is untracked, so it only ever exists in the checkout
+# that BUILD_WORKSPACE_DIRECTORY names. Writing it relative to the script would
+# rewrite a throwaway copy and still report success.
+ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
+cd "${ROOT_DIR}"
+
+ENV_FILE="${DASHBOARD_ENV_FILE:-$(pwd -P)/.env}"
 KEY="HOMEPAGE_AUTH_PASSWORD"
 MIN_LEN=12
 TMP_FILE=""

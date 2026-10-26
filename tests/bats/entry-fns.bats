@@ -305,3 +305,56 @@ load_fn() {
   export STUB_CURL_OUT=""
   [ "$(probe_http 5 "http://spark.example:8888/health")" = "" ]
 }
+
+# ── which checkout each CLI works in ─────────────────────────────────────────
+# scripts/spark-verify.sh, scripts/spark-configure.sh and scripts/build-dev-image.sh
+# read the checkout's .env, write sparks/ output, or use images/dev as a build
+# context. Under `bazelisk run` all three used to act on the runfiles copy, where
+# that state is missing or thrown away, so each has to resolve the checkout through
+# resolve_checkout and stop rather than act on a tree it cannot prove.
+
+orphan_copy() {
+  # Print a directory holding one entry script plus scripts/lib/, with no compose
+  # file: no candidate can call it a checkout, and nothing it does can reach the
+  # real tree this suite runs from.
+  local rel="$1" root="${BATS_TEST_TMPDIR?}/orphan"
+  mkdir -p "${root}/scripts/lib"
+  cp "${REPO_ROOT}/${rel}" "${root}/scripts/"
+  cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
+  printf '%s' "${root}"
+}
+
+run_orphan() {
+  # Run an orphaned script from a directory that holds no marker either, with
+  # every inherited checkout name cleared. Bazel's cwd is itself a copy of the
+  # repo, so the inherited names and PWD all have to go for the refusal to be
+  # the thing under test.
+  local rel="$1" root
+  root="$(orphan_copy "${rel}")"
+  run --separate-stderr env -C "$(mktemp -d "${BATS_TEST_TMPDIR?}/nowhere.XXXXXX")" \
+    REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= GITHUB_WORKSPACE= \
+    bash "${root}/scripts/$(basename "${rel}")"
+}
+
+@test "spark-verify: an unprovable checkout stops before any probe" {
+  run_orphan scripts/spark-verify.sh
+  [ "${status}" -eq 5 ] || fail "an unprovable root exited ${status}: ${stderr}"
+  assert_match "the refusal is printed" 'unresolvable repo root' "${stderr}"
+  [ "$(stub_log_count ssh)" -eq 0 ] || fail "a probe left the box: $(stub_log ssh)"
+  [ "$(stub_log_count curl)" -eq 0 ] || fail "a probe left the box: $(stub_log curl)"
+}
+
+@test "spark-configure: an unprovable checkout writes no sparks/ output" {
+  run_orphan scripts/spark-configure.sh
+  [ "${status}" -eq 5 ] || fail "an unprovable root exited ${status}: ${stderr}"
+  assert_match "the refusal is printed" 'unresolvable repo root' "${stderr}"
+  [ ! -e "${BATS_TEST_TMPDIR}/orphan/sparks" ] || fail "sparks/ was written outside a checkout"
+  [ "$(stub_log_count ssh)" -eq 0 ] || fail "a probe left the box: $(stub_log ssh)"
+}
+
+@test "build-dev-image: an unprovable checkout stops before docker is asked" {
+  run_orphan scripts/build-dev-image.sh
+  [ "${status}" -eq 5 ] || fail "an unprovable root exited ${status}: ${stderr}"
+  assert_match "the refusal is printed" 'unresolvable repo root' "${stderr}"
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
+}

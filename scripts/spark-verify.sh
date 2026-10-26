@@ -70,13 +70,21 @@
 
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/spark.sh disable=SC1091
-source "scripts/lib/spark.sh" # sources scripts/lib/common.sh
+source "${SELF_DIR}/lib/spark.sh" # sources scripts/lib/common.sh
 # A leftover JSON_MODE in the environment would hide the human output before
 # --json is ever parsed; --json below is the only thing that sets it.
 unset JSON_MODE
+
+# The SPARKn_OLLAMA_URL fleet keys come from the checkout's .env and the model id
+# from litellm/config.yaml, and the per-host facts land in sparks/<host>.jsonl, so
+# the checkout is resolved before any of that is read or written: `bazelisk run`
+# runs this from the runfiles tree, where .env is absent (the fleet would fall back
+# to the placeholder trio) and a sparks/ write would vanish with the tree.
+ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
+cd "${ROOT_DIR}"
 
 # The fleet's contract, as facts to CHECK. Nothing here is ever written anywhere: use
 # bazelisk run //scripts:spark-configure -- --apply to change what a box actually runs with.

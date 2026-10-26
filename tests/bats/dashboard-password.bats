@@ -259,3 +259,55 @@ homepage|home-old' "prod-stack|${SCRATCH}/compose.yml" "${SCRATCH}/x.env"
   assert_match "refuses to claim a rotate it cannot see" 'the homepage container has no HOMEPAGE_AUTH_PASSWORD entry; check: bazelisk run //scripts:prod-stack -- status' "${stderr}"
   assert_not_match "no false success claim" 'verified: the running container' "${output}"
 }
+
+# ── which checkout it works in ───────────────────────────────────────────────
+# `bazelisk run` execs the runfiles copy of this script (tools/exec_shell.bzl),
+# so a root taken from $0 is that copy, and the working .env - untracked, so
+# never in runfiles - is simply not there. The checkout has to be resolved, and
+# a tree that cannot prove itself has to stop the run rather than be written to.
+
+orphan_copy() {
+  # Print a directory holding the script and its libs but no compose file, so no
+  # candidate can call it a checkout: the shape of a runfiles copy as far as the
+  # resolver is concerned, and safe to run from a real checkout too.
+  local root="${BATS_TEST_TMPDIR?}/orphan"
+  mkdir -p "${root}/scripts/lib"
+  cp "${SCRIPT}" "${root}/scripts/"
+  cp "${REPO_ROOT}/scripts/lib/"*.sh "${root}/scripts/lib/"
+  printf '%s' "${root}"
+}
+
+@test "dashboard-password: it rewrites the .env of the checkout Bazel names" {
+  # The reported failure: on a host whose .env exists, the runfiles copy had none
+  # and the run died with ".env not found" before it could rotate anything.
+  local checkout decoy
+  checkout="$(mktemp -d "${BATS_TEST_TMPDIR?}/checkout.XXXXXX")"
+  decoy="$(mktemp -d "${BATS_TEST_TMPDIR?}/decoy.XXXXXX")"
+  : >"${checkout}/docker-compose.yml"
+  : >"${decoy}/docker-compose.yml"
+  printf '%s\n' 'HOMEPAGE_AUTH_PASSWORD=stale-in-checkout-1' 'STACK_LAN_HOST=box.example' >"${checkout}/.env"
+  printf '%s\n' 'HOMEPAGE_AUTH_PASSWORD=stale-in-decoy-1234' >"${decoy}/.env"
+  run --separate-stderr env -C "${decoy}" REPO_ROOT= GITHUB_WORKSPACE= \
+    BUILD_WORKSPACE_DIRECTORY="${checkout}" DASHBOARD_ENV_FILE= \
+    bash "${SCRIPT}" --no-apply
+  [ "${status}" -eq 0 ] || fail "the rotation did not run (${status}): ${stderr}"
+  assert_match "the new password is printed once" '^new dashboard password: ' "${output}"
+  assert_contains_file "the checkout file holds the new key" "${checkout}/.env" '^HOMEPAGE_AUTH_PASSWORD='
+  assert_not_match "the stale value is gone" 'stale-in-checkout-1' "$(cat "${checkout}/.env")"
+  assert_contains_file "the checkout keeps its other key" "${checkout}/.env" '^STACK_LAN_HOST=box.example'
+  # The cwd only had to hold a compose file to be a candidate; it is not the root,
+  # so its .env keeps the bytes this run never looked at.
+  assert_contains_file "the cwd copy is left alone" "${decoy}/.env" '^HOMEPAGE_AUTH_PASSWORD=stale-in-decoy-1234'
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
+}
+
+@test "dashboard-password: a root it cannot prove stops before anything is written" {
+  local root nowhere
+  root="$(orphan_copy)"
+  nowhere="$(mktemp -d "${BATS_TEST_TMPDIR?}/nowhere.XXXXXX")"
+  run --separate-stderr env -C "${nowhere}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= DASHBOARD_ENV_FILE= bash "${root}/scripts/dashboard-password.sh" --no-apply
+  [ "${status}" -eq 5 ] || fail "an unprovable root exited ${status}: ${stderr}"
+  assert_match "the refusal is printed" 'unresolvable repo root' "${stderr}"
+  [ "$(stub_log_count docker)" -eq 0 ] || fail "docker was called: $(stub_log docker)"
+}
