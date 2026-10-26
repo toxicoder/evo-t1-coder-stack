@@ -61,7 +61,8 @@ fi
 # <name>, but never <dir> itself: copy it into a throwaway staging dir, then
 # overwrite every file of the stack's common payload dir (GROK_BUILD_AGENTS.md,
 # vscode-alt.svg, notes-setup.sh, tmux.conf, grok-build-terminal.sh,
-# vscode-terminal-tmux.sh, grok-build-delegation.SKILL.md, coder-agents.md,
+# vscode-terminal-tmux.sh, grok-build-delegation.SKILL.md, learn.SKILL.md,
+# coder-agents.md,
 # mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above the
 # template dirs under common/) there with the common copies. Both templates'
 # main.tf reads those payloads - seed text, notes library, tmux, helpers,
@@ -120,6 +121,7 @@ template_push_one() {
     grok-build-terminal.sh \
     vscode-terminal-tmux.sh \
     grok-build-delegation.SKILL.md \
+    learn.SKILL.md \
     coder-agents.md \
     mcp-cache-proxy.json \
     gh-token-refresh.sh.tftpl; do
