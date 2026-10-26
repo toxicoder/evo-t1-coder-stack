@@ -144,13 +144,25 @@ report for a script. What the report should read here:
   rebuilding the image (`scripts/build-dev-image.sh`) and re-pushing the templates.
 - A self-installed CLI under `~/.grok/bin` stays first on the login-shell PATH, so it
   wins over the baked copy.
-- **`/learn` is a bundled skill of this CLI**, not something the terminal adds: 1.0.70
-  ships it in its bundled manifest (`public-2026-10-20-r1`) as a user-invocable skill,
-  and the pin this image carried before did not include it. Once the image is rebuilt
-  and the templates re-pushed it shows up in the Grok Build slash menu, in the
-  code-server web terminal profile named **Grok Build** included, because that
-  profile execs the same `/usr/local/bin/grok` binary. Nothing to install and nothing
-  to seed: an older CLI in `~/.grok/bin` is the one case that still hides it.
+- **The upstream `/learn` bundle never lands here**: the 1.0.70 binary contains zero
+  occurrences of the string `/learn`, so the bundled skill set is downloaded at runtime
+  through the CLI's proxy endpoints config (`cli-chat-proxy.grok.com`, gated by
+  `GROK_SKILLS_BASE_URL`) and needs an x.ai sign-in. This stack has no x.ai credential:
+  LiteLLM is the sole model transport, with `env_key = "LITELLM_API_KEY"` and
+  `base_url` `http://host.docker.internal:4000/v1`, so `~/.grok/bundled/` is never
+  created, `~/.grok/skills/` does not exist, and `grok inspect --json` lists only the
+  stack-seeded user skills. `/learn` is absent whichever CLI version is on PATH.
+- **The stack therefore seeds its own `/learn`**, so it is a stack payload like the
+  delegation skill, not something to install: `templates/common/learn.SKILL.md` is
+  written at workspace boot to `~/.coder/skills/learn/SKILL.md` and twin-copied to
+  `~/.agents/skills/learn/SKILL.md`, each only while that file is absent - delete or
+  edit either one to take it over. A seeded `SKILL.md` shows up in
+  `grok inspect --json` as `userInvocable: true` on both the 1.0.70 CLI and the 1.0.44
+  copy baked at `/usr/local/bin/grok`, so this needs no image rebuild, and it reaches
+  the **Grok Build** terminal profile because that profile execs the same binary. A
+  user-scope skill shadows a same-named bundled one: if a workspace ever does sign in
+  to x.ai, deleting `~/.agents/skills/learn/SKILL.md` and the `~/.coder` copy hands
+  the slash name back to the bundled skill.
 
 ## The rendered `~/.grok` config
 
@@ -229,7 +241,9 @@ in `shared` mode**.
 
 In `shared` mode: `config.toml`, `skills/`, `memory-v2/`, `sessions/`, `notes/` (the
 canonical copy of each repository's private scratch `notes.md`), and a CLI you
-installed yourself under `~/.grok/bin`.
+installed yourself under `~/.grok/bin`. The CLI's own skill directories, `skills/` and
+`bundled/`, are never created here without an x.ai sign-in; the stack's skill seeds
+live under `~/.coder/skills` and `~/.agents/skills`, outside this volume.
 
 `notes/<host>/<owner>/<repo>/notes.md` is keyed per git remote, so every clone a
 workspace holds — the primary and each additional repository — has its own file. What you
@@ -482,20 +496,27 @@ decisions stop at the top-level chat.
 
 ### What seeds the agent's context
 
-Four files seed into every new workspace, on first boot and only while the file is
+Six files seed into every new workspace, on first boot and only while the file is
 absent:
 
 1. `~/.coder/AGENTS.md`
 2. `~/.coder/skills/grok-build-delegation/SKILL.md`
 3. `~/.agents/INSTRUCTIONS.md`
 4. `~/.agents/skills/grok-build-delegation/SKILL.md`
+5. `~/.coder/skills/learn/SKILL.md`
+6. `~/.agents/skills/learn/SKILL.md`
 
 - 1 and 2 are the Coder agent's *default* discovery paths.
 - 3 and 4 are the same text under the Grok Build CLI's convention, and the CLI is
   what `execute`-lane delegation drives. The chat agent dedupes skills by name,
   first match wins, home scope before a working-dir path, so one agent never loads a
   skill twice: the twins exist for the CLI, not as a second source for chat.
-- The text is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
+- 5 and 6 are the `/learn` orientation skill, payload
+  `templates/common/learn.SKILL.md`, on the same absent-only contract. Upstream ships
+  that slash name only in a skills bundle behind an x.ai sign-in this stack does not
+  have, so the seed is what makes `/learn` exist; deleting both copies is how you hand
+  it back if a workspace ever does sign in. See the CLI section above.
+- The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
   probe-one-worker-first, verify-what-a-worker-actually-produced). It travels as
   `templates/common/GROK_BUILD_AGENTS.md`, staged beside the staged `main.tf` and
   read back with `file()` / `filebase64()`; `templates/common/` keeps one copy for

@@ -78,15 +78,19 @@ the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
 list those keys and write no answers. A `summary:` line closes the pass.
 
 `workspace` re-materialises the stack-owned config inside the targets you name.
-The reseed set is the seven home-relative targets the templates seed -
+The reseed set is the nine home-relative targets the templates seed -
 `~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
-`~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies and
-`~/.shared/vscode/settings.json` - and the same rule applies as in
-`refresh-configs`: a file is replaced only while it still carries its
+`~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the two
+`learn/SKILL.md` copies and `~/.shared/vscode/settings.json` - and the same rule
+applies as in `refresh-configs`: a file is replaced only while it still carries its
 `managed-by: evo-t1-coder-stack` marker (or, for the settings file, its
 `"__evoT1Stack": true` key), so a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
-so.
+so. The two `learn/SKILL.md` copies are `~/.coder/skills/learn/SKILL.md` and its
+`~/.agents` twin, the stack's `/learn` skill: the workspace boot writes them only
+while the file is absent, so delete a copy to take it over for good, and remember
+that an edited copy which keeps its marker is still rewritten back to
+`templates/common/learn.SKILL.md` by this tool.
 
 `all` runs `env` and then `workspace`.
 
@@ -149,7 +153,7 @@ you try a change on a scratch tree before pointing a live stack at it. See
   dollar-brace unfoldings are rewritten, and that workspace's own `cline.apiKey`
   and `roo.openaiApiKey` are carried forward.
 
-Inside a running container the same seven targets are `refresh-configs`'s job
+Inside a running container the same nine targets are `refresh-configs`'s job
 too: same reseed set, same marker rule, `--json` for a machine-readable
 answer, and `--litellm-url <url>` for a stack environment that publishes
 LiteLLM on a port other than 4000 (the reseeded `settings.json` then still

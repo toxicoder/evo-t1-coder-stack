@@ -62,6 +62,11 @@ missing one fails the push before the CLI runs.
   `$${folder}`) because `file()` contents are not re-interpolated.
 - `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
   skill and instruction seeds (chomped `file()`).
+- `learn.SKILL.md` is the `/learn` orientation skill beside that delegation skill
+  (chomped `file()`): the boot seeds it into `~/.coder/skills/learn/SKILL.md` and
+  twin-copies it to `~/.agents/skills/learn/SKILL.md`, each only while absent. The
+  CLI's own `/learn` bundle needs an x.ai sign-in this stack does not have, so this
+  payload is what makes the slash command exist.
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
   writes.
 - `gh-token-refresh.sh.tftpl` is the shared GitHub-token refresh `coder_script`,
