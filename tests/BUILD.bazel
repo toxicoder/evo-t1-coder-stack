@@ -136,6 +136,7 @@ sh_test(
     ] + glob(
         ["python/**"],
         allow_empty = True,
+        exclude = ["python/**/__pycache__/**"],
     ),
     tags = [
         "local",
