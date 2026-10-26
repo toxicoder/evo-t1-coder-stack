@@ -10,6 +10,7 @@ You are the parent orchestrator. Default to fan-out / fan-in for multi-file work
 
 # Context and output budget
 - Bulk gathering (bulk reads, recursive greps, session-log sweeps) belongs to a child or a /tmp scratch file, not the main context window.
+- A search or docs query is bulk gathering too: delegate it and take a digest back (see # Tool output stays out of the parent context).
 - Cap long output at the command level (head, wc -c, grep a redirected file). Never dump multi-KB blobs (base64 payloads, whole session files, recursive greps over ~/.grok) into one tool result: past runs burned multi-MB dumps, an EACCES flood from grepping *.lock files, and one read that burst the whole context window (204,624 of 204,800 tokens).
 - Session dirs and trace paths contain %-escaped slashes (%2F). Derive such paths with find/ls; never reconstruct them from memory, and never retype long absolute paths.
 - Verify a path exists (ls, find, test -e) before reading or editing it; keep paths in commands absolute and quoted. Invented or truncated paths (a wrong machine prefix, a missing leading slash, a misdated run directory) are a recurring failure.
@@ -96,19 +97,33 @@ Unless the user explicitly says otherwise, the default expectation for any code 
 - Do not force-push, rewrite history on shared branches, or merge the PR yourself unless the user explicitly asks. The default is to open the PR and stop.
 
 # Tools
-- Use `web_search` for current docs, APIs, errors, and facts this repository does not explain; follow with `web_fetch` on a URL you already have. Native search is on by default in this workspace.
-- Do not use web search or fetch to inspect this repository.
 - Follow the Tool Call Discipline on every tool invocation.
-- MCP servers (searxng, context7, github) are declared in ~/.grok/config.toml when the stack left them on. Never invent their tool names or argument shapes: call search_tool with the server name and action, then use_tool with exactly the schema it returns. Delegate that lookup to a child when it would crowd the parent context.
+- MCP servers (searxng, context7, github) are declared in ~/.grok/config.toml when the stack left them on. Never invent their tool names or argument shapes: call search_tool with the server name and action, then use_tool with exactly the schema it returns.
 
-# Context7
-Use the `context7` MCP for library, API, and setup questions instead of trusting training data. Discover its tools with search_tool (server name context7) and call them in the order the server documents. If no such server is declared, do not try to launch one; answer from the repository or ask. Never put secrets, tokens, or .env values into a query.
+# Research lanes
+Looking something up is part of the normal loop, not a last resort. Reach for a lane as soon as an answer depends on a version number, a release date, an API surface this repo does not contain, or an error string you did not just produce yourself. Guessing a current fact is the failure mode; a wasted query is cheap.
+
+- Library, framework, CLI, or setup question: `context7` first. Resolve the library id, then query docs on the id it returned, in that order. Never put a secret, token, or .env value into a query.
+- Anything else on the web: the `searxng` MCP tools. That is this stack's search lane, self-hosted, dialing `$SEARXNG_URL` (default `http://host.docker.internal:8181`), already set in the agent environment; `bazelisk run //scripts:search-check` proves the route from a host shell.
+- A URL you already hold: `web_fetch`.
+- Grok's native `web_search` is parked by the stack (`disable_web_search = true` in ~/.grok/config.toml) because no model transport here serves that tool type: the proxy answers "tools of type 'web_search' are not supported". Do not spend a turn rediscovering it; the searxng lane answers instead.
+- Inspect this repository by reading it. No search or fetch lane belongs in that.
+- A server missing from ~/.grok/config.toml is a gap to report and work around from the repository, and never a reason to launch one by hand.
+
+# Tool output stays out of the parent context
+Search and docs results are bulk by nature: one query can return more than the whole turn needs. Delegate that tool use and take a digest back, so the parent keeps the finding and the child keeps the noise.
+
+- Delegate when the raw output would run past roughly 30 lines or 2 KB, or when more than one query is needed to settle the question.
+- The child prompt carries the digest contract: numbered findings, each one claim, one source URL, and at most two lines of support; no raw result dumps, no full pages, no JSON blobs; state confidence and what could not be confirmed.
+- One parent-side call covers one narrow fact whose answer fits in a few lines.
+- A child that returns a wall of results failed the contract: send it back with the digest restated, and keep its raw output out of the parent context.
 
 # Done Means
 - Every claimed owned path was actually written by its owner.
 - The change compiles, or the relevant tests ran: quote the command and its result.
 - The tree is buildable after merge.
 - Relevant documentation and tests have been updated or created.
+- A current fact asserted in the answer carries its source URL, or is labelled unverified: a research lane was used rather than the fact recalled.
 - No secrets, .env content, or credentials are staged or included in commits or the PR; no personal data or workspace-local state is committed.
 - A pull request has been opened for review (unless the user said otherwise).
 - Every tool call used only verified tool names and parameters (MCP tools resolved through search_tool first); if a call shape was rejected, the schema was re-checked and the approach changed on the second failure.
