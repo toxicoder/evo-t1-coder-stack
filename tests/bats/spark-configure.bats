@@ -75,3 +75,40 @@ source_libs() {
   [[ "$(stub_log_last ssh)" == *"base64 -d | sh"* ]]
 }
 
+@test "spark-configure: --help prints the header block and probes nothing" {
+  # usage() prints its own file's header, so the CLI carries the text and the
+  # checkout only has to resolve before the flag is read.
+  local scratch
+  scratch="$(make_scratch)"
+  printf 'services: {}\n' >"${scratch}/docker-compose.yml"
+  run --separate-stderr env REPO_ROOT="${scratch}" \
+    bash "${REPO_ROOT}/scripts/spark-configure.sh" --help
+  [ "${status}" -eq 0 ]
+  assert_match "the header opens the help" '^# spark-configure\.sh' "${output}"
+  assert_match "the usage names the entry point" 'bazelisk run //scripts:spark-configure' "${output}"
+  assert_match "--apply is documented" '^#   bazelisk run //scripts:spark-configure -- --apply 192\.168\.64\.10' "${output}"
+  assert_match "--restart is documented" '-- --apply --restart <host>' "${output}"
+  [ "$(stub_log_count ssh)" -eq 0 ]
+  [ "$(stub_log_count curl)" -eq 0 ]
+}
+
+@test "spark-configure: first_line quotes one remote line and an all-blank block does not abort" {
+  # The `|| true` is the whole point: pipefail makes a grep that matched nothing
+  # exit 1, and every caller is an assignment under `set -e`.
+  set -o pipefail
+  load_shell_function "${REPO_ROOT}/scripts/spark-configure.sh" first_line
+  local block
+  block="$(printf '\n\t\nprepare.sh: unsupported option --context\n\ntraceback follows\n')"
+  run first_line "${block}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "prepare.sh: unsupported option --context" ]
+
+  run first_line "$(printf '\n \n\t\n')"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+
+  run first_line ""
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}
+

@@ -4,12 +4,14 @@
 #
 # The operator contract pinned here: the build refuses to start on an incomplete site
 # package and names the missing piece, an unknown option is refused before any npm runs,
-# and `build --alias NAME` is what decides the export's DOCS_ALIAS (with `latest` routed
-# to the script that bakes it in).
+# `build --alias NAME` is what decides the export's DOCS_ALIAS (with `latest` routed
+# to the script that bakes it in), and `serve` opens the browser at the port it binds
+# unless --no-browser says otherwise.
 #
 # Usage: bazelisk test //tests:bats_manage_docs_test   (from any cwd)
-# Safety: node and npm are per-test PATH stubs and the site package is a scratch copy,
-# so nothing is installed, built, or written inside the real checkout.
+# Safety: node, npm and python3 (the browser opener) are per-test PATH stubs and the
+# site package is a scratch copy, so nothing is installed, built, opened, or written
+# inside the real checkout.
 
 bats_require_minimum_version 1.5.0
 
@@ -21,6 +23,7 @@ SCRIPT=""
 REPO=""
 SITE=""
 NPM_LOG=""
+OPENER_LOG=""
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
@@ -33,6 +36,7 @@ setup() {
   chmod +x "${REPO}/docs/manage-docs.sh"
   cp "${REPO_ROOT}/scripts/lib/common.sh" "${REPO}/scripts/lib/common.sh"
   NPM_LOG="${BATS_TEST_TMPDIR}/npm.log"
+  OPENER_LOG="${BATS_TEST_TMPDIR}/opener.log"
 }
 
 # complete_site_package — the files check_content looks for, plus an installed next.
@@ -57,6 +61,19 @@ STUB
   chmod +x "${bin}/node" "${bin}/npm"
   export PATH="${bin}:${PATH}"
   export NPM_LOG
+}
+
+# stub_opener - the opener is `python3 -m webbrowser`, which would launch a real
+# browser here. The fake records the URL it was handed instead.
+stub_opener() {
+  local bin="${BATS_TEST_TMPDIR}/bin"
+  cat >"${bin}/python3" <<'STUB'
+#!/usr/bin/env bash
+printf 'python3 %s\n' "$*" >>"${OPENER_LOG}"
+exit "${OPENER_RC:-0}"
+STUB
+  chmod +x "${bin}/python3"
+  export OPENER_LOG
 }
 
 @test "manage-docs: check_content names the missing site package piece" {
@@ -119,4 +136,54 @@ STUB
   run --separate-stderr "${REPO}/docs/manage-docs.sh" serve --host 0.0.0.0
   [ "${status}" -eq 1 ]
   [[ ${stderr} == *"Unknown option for serve: --host"* ]]
+}
+
+@test "manage-docs: serve opens the browser at the port it is serving" {
+  complete_site_package
+  stub_toolchain
+  stub_opener
+  run --separate-stderr "${REPO}/docs/manage-docs.sh" serve
+  [ "${status}" -eq 0 ]
+  assert_eq "the opener got the loopback dev URL" \
+    "python3 -m webbrowser http://127.0.0.1:3005" "$(cat "${OPENER_LOG}")"
+  assert_match "the dev server still binds localhost" \
+    'npm run dev -- --port 3005 --hostname localhost$' "$(cat "${NPM_LOG}")"
+  assert_match "the stop is reported" '^ok: Fumadocs dev server on port 3005 stopped$' "${output}"
+  assert_match "and counted" '^summary: 1 ok, 0 warnings, 0 failed$' "${output}"
+}
+
+@test "manage-docs: serve --port puts that port in the URL the opener gets" {
+  complete_site_package
+  stub_toolchain
+  stub_opener
+  run --separate-stderr "${REPO}/docs/manage-docs.sh" serve --port 4123
+  [ "${status}" -eq 0 ]
+  assert_eq "one URL, on the requested port" \
+    "python3 -m webbrowser http://127.0.0.1:4123" "$(cat "${OPENER_LOG}")"
+  assert_match "the server was asked for the same port" \
+    'npm run dev -- --port 4123 --hostname localhost$' "$(cat "${NPM_LOG}")"
+}
+
+@test "manage-docs: serve --no-browser never launches the opener" {
+  complete_site_package
+  stub_toolchain
+  stub_opener
+  run --separate-stderr "${REPO}/docs/manage-docs.sh" serve --no-browser
+  [ "${status}" -eq 0 ]
+  assert_file_not_exists "no opener was launched" "${OPENER_LOG}"
+  assert_match "the server still started" \
+    'npm run dev -- --port 3005 --hostname localhost$' "$(cat "${NPM_LOG}")"
+}
+
+@test "manage-docs: an opener that fails does not fail serve" {
+  # Auto-open is a convenience; a box with no browser configured must still get
+  # its dev server.
+  complete_site_package
+  stub_toolchain
+  stub_opener
+  run --separate-stderr env OPENER_RC=1 "${REPO}/docs/manage-docs.sh" serve
+  [ "${status}" -eq 0 ]
+  assert_match "the opener was attempted" \
+    "python3 -m webbrowser http://127.0.0.1:3005" "$(cat "${OPENER_LOG}")"
+  assert_match "the server still reported its stop" '^ok: Fumadocs dev server on port 3005 stopped$' "${output}"
 }
