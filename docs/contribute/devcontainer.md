@@ -67,7 +67,7 @@ Command Palette → Dev Containers: Reopen in Container
 | `containerEnv` / `remoteEnv` | `EVO_T1_DEVCONTAINER=1` | The marker that says *contributor container*, not Coder workspace. Also carries `SEARXNG_URL`. |
 | `mounts` | `/var/run/docker.sock` | The container talks to the workstation's own daemon, which is how a `docker run` inside it is a real one. |
 | `runArgs` | `--add-host=host.docker.internal:host-gateway` | Reaches LiteLLM on `:4000` and SearXNG on `:8181` on the laptop. |
-| `postCreateCommand` | `bash scripts/seed-dev-env.sh --devcontainer` | Seeds the contributor home the way a workspace start seeds a workspace. |
+| `postCreateCommand` | `bash scripts/seed-dev-env.sh --devcontainer --context7-mcp` | Seeds the contributor home the way a workspace start seeds a workspace, docs lane included. |
 | `customizations.vscode.extensions` | Bazel, shellcheck, shell-format, Terraform, Docker, YAML | shellcheck and shfmt are the two `//:lint` runners, wired into the editor beside the Terraform, Docker and YAML helpers. |
 
 `updateRemoteUserUID` is on, so the container's `coder` uid matches the host user and the
@@ -83,13 +83,14 @@ Terraform and no docker:
 bazelisk run //scripts:seed-dev-env -- --dry-run --home /tmp/contributor-home
 bazelisk run //scripts:seed-dev-env -- --home "${HOME}"
 bazelisk run //scripts:seed-dev-env -- --litellm-url http://host.docker.internal:14000/v1
-bazelisk run //scripts:seed-dev-env -- --devcontainer
+bazelisk run //scripts:seed-dev-env -- --devcontainer --context7-mcp
 ```
 
 | Flag | Effect |
 | --- | --- |
 | `--home <dir>` | Home tree to shape (default `$HOME`; created when absent; an existing non-directory is an error). |
 | `--litellm-url <url>` | Model-transport address rendered into `settings.json` and `~/.grok/config.toml` (default `http://host.docker.internal:4000/v1`). |
+| `--context7-mcp` | Keep the `[mcp_servers.context7]` docs lane in the rendered `~/.grok/config.toml` even with no `CONTEXT7_API_KEY` in the environment. Without it a keyless home renders the context7-free file, which is how a contributor ends up with a lane their workspaces have. The key stays optional: the server starts and answers at the public rate limit without one. |
 | `--devcontainer` | After a successful write, run `gh auth setup-git` when `GH_TOKEN`/`GITHUB_TOKEN` is set and `gh` is on PATH. Best effort, and the token is never an argument. |
 | `--force` | Re-materialize files a user owns. |
 | `--dry-run` | Print the plan; write nothing, create no directory, call no `gh`. |

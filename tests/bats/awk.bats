@@ -362,8 +362,9 @@ setup() {
 
 # ── scripts/lib/tftpl_strip_gates.awk ───────────────────────────────────────
 
-@test "tftpl_strip_gates: a github_mcp block goes and a search_mcp body stays" {
-  local src="${BATS_TEST_TMPDIR}/config.toml.tftpl"
+# strip_gates_fixture <path> -- one gated block per lane, in the shipped gate
+# spelling, so the three keep/drop tests below read the same source.
+strip_gates_fixture() {
   printf '%s\n' \
     'top = true' \
     '%{if github_mcp~}' \
@@ -372,6 +373,7 @@ setup() {
     '%{endif~}' \
     '%{if context7_mcp~}' \
     '[mcp_servers.context7]' \
+    'command = "mcp-cache-proxy"' \
     '%{endif~}' \
     '%{if search_mcp~}' \
     '[mcp_servers.searxng]' \
@@ -380,13 +382,90 @@ setup() {
     'footer = 1' \
     '%{if grok_config_extra != ""~}' \
     '${grok_config_extra}' \
-    '%{endif~}' >"${src}"
+    '%{endif~}' >"$1"
+}
+
+@test "tftpl_strip_gates: with no keep_context7 the github and context7 blocks go and the search body stays" {
+  local src="${BATS_TEST_TMPDIR}/config.toml.tftpl"
+  strip_gates_fixture "${src}"
 
   run awk -f "${AWK_LIB}/tftpl_strip_gates.awk" "${src}"
   [ "${status}" -eq 0 ]
   [ "${output}" = $'top = true\n[mcp_servers.searxng]\ncommand = "searxng"\nfooter = 1' ]
   # Every directive is consumed, kept block or not.
   [[ "${output}" != *'%{'* ]]
+}
+
+@test "tftpl_strip_gates: keep_context7=1 keeps that body the way search_mcp is kept" {
+  local src="${BATS_TEST_TMPDIR}/keep7.tftpl"
+  printf '%s\n' \
+    'top = true' \
+    '%{if github_mcp~}' \
+    '[mcp_servers.github]' \
+    '%{endif~}' \
+    '%{if context7_mcp~}' \
+    '[mcp_servers.context7]' \
+    'command = "mcp-cache-proxy"' \
+    'env = { CONTEXT7_API_KEY = "$CONTEXT7_API_KEY" }' \
+    '%{endif~}' \
+    '%{if search_mcp~}' \
+    '[mcp_servers.searxng]' \
+    '%{endif~}' >"${src}"
+
+  run awk -v keep_context7=1 -f "${AWK_LIB}/tftpl_strip_gates.awk" "${src}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'top = true\n[mcp_servers.context7]\ncommand = "mcp-cache-proxy"\nenv = { CONTEXT7_API_KEY = "$CONTEXT7_API_KEY" }\n[mcp_servers.searxng]' ]
+  # Kept block, and still no directive anywhere.
+  [[ "${output}" != *'%{'* ]]
+  [[ "${output}" != *'mcp_servers.github'* ]]
+}
+
+@test "tftpl_strip_gates: keep_context7 only keeps the block for the literal 1" {
+  local src="${BATS_TEST_TMPDIR}/keep7off.tftpl"
+  printf '%s\n' \
+    'top = true' \
+    '%{if context7_mcp~}' \
+    '[mcp_servers.context7]' \
+    '%{endif~}' \
+    'footer = 1' >"${src}"
+
+  local value
+  for value in 0 yes true ''; do
+    run awk -v keep_context7="${value}" -f "${AWK_LIB}/tftpl_strip_gates.awk" "${src}"
+    [ "${status}" -eq 0 ]
+    [ "${output}" = $'top = true\nfooter = 1' ]
+  done
+}
+
+@test "tftpl_strip_gates: keep_context7=1 keeps the context7 body and drops only its directives" {
+  local src="${BATS_TEST_TMPDIR}/keep.tftpl"
+  strip_gates_fixture "${src}"
+
+  run awk -v keep_context7=1 -f "${AWK_LIB}/tftpl_strip_gates.awk" "${src}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'top = true\n[mcp_servers.context7]\ncommand = "mcp-cache-proxy"\n[mcp_servers.searxng]\ncommand = "searxng"\nfooter = 1' ]
+  # The kept block is handled exactly like search_mcp: gate lines gone, body
+  # verbatim, and github still dropped whole.
+  [[ "${output}" != *'%{'* ]]
+  [[ "${output}" != *'mcp_servers.github'* ]]
+  [[ "${output}" != *'grok_config_extra'* ]]
+}
+
+@test "tftpl_strip_gates: a keep_context7 that is not the literal 1 drops the block" {
+  local src="${BATS_TEST_TMPDIR}/keepfail.tftpl"
+  local value dropped
+  strip_gates_fixture "${src}"
+  dropped=$'top = true\n[mcp_servers.searxng]\ncommand = "searxng"\nfooter = 1'
+
+  # Only "1" keeps the lane, so a keyless home cannot keep it by accident.
+  for value in 0 00 1.0 1x yes true ''; do
+    run awk -v keep_context7="${value}" -f "${AWK_LIB}/tftpl_strip_gates.awk" "${src}"
+    [ "${status}" -eq 0 ]
+    if [ "${output}" != "${dropped}" ]; then
+      printf 'FAIL: keep_context7=%s kept something: [%s]\n' "${value}" "${output}" >&2
+      return 1
+    fi
+  done
 }
 
 @test "tftpl_strip_gates: a directive that is not the shipped spelling is content" {

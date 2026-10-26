@@ -31,7 +31,10 @@ setup() {
   if [ ! -f "${SCRIPT}" ]; then
     skip "scripts/seed-dev-env.sh is not in the tree"
   fi
-  unset GH_TOKEN GITHUB_TOKEN
+  # CONTEXT7_API_KEY is a render input, not just a secret: a non-empty value keeps
+  # the context7 lane in the rendered config. Clear it with the other pass-throughs
+  # so the default-path assertions below see the keyless home.
+  unset GH_TOKEN GITHUB_TOKEN CONTEXT7_API_KEY
   use_stubs gh
 }
 
@@ -111,8 +114,9 @@ assert_settings_link() {
   assert_eq "link target" "$2" "$(readlink "$1")"
 }
 
-# assert_grok_config <path> <litellm-url> — the contributor renderer contract.
-assert_grok_config() {
+# assert_grok_config_base <path> <litellm-url> -- what every rendered config
+# promises, whichever optional lanes it declares.
+assert_grok_config_base() {
   local file="$1" url="$2"
   assert_file_exists "config.toml" "${file}"
   assert_fixed "marker" "${file}" "managed-by: evo-t1-coder-stack"
@@ -124,10 +128,34 @@ assert_grok_config() {
   assert_not_fixed "no if directive" "${file}" '%{if'
   assert_not_fixed "no endif directive" "${file}" '%{endif'
   assert_not_fixed "no github mcp" "${file}" '[mcp_servers.github]'
-  assert_not_fixed "no context7 mcp" "${file}" '[mcp_servers.context7]'
   assert_not_fixed "no ghp token" "${file}" 'ghp_'
   assert_not_fixed "no sk token" "${file}" 'sk-'
   assert_eq "config mode" "600" "$(file_mode "${file}")"
+}
+
+# assert_grok_config <path> <litellm-url> -- the contributor renderer contract
+# for a home with no CONTEXT7_API_KEY: the docs lane stays dropped.
+assert_grok_config() {
+  local file="$1" url="$2"
+  assert_grok_config_base "${file}" "${url}"
+  assert_not_fixed "no context7 mcp" "${file}" '[mcp_servers.context7]'
+}
+
+# assert_grok_config_context7 <path> <home> -- the kept docs lane: declared, with
+# its gate consumed, the key named but never valued, and the cache-proxy config
+# path re-rooted under the seed home instead of the template's /home/coder.
+assert_grok_config_context7() {
+  local file="$1" home="$2"
+  assert_fixed "context7 mcp" "${file}" '[mcp_servers.context7]'
+  assert_fixed "context7 proxy binary" "${file}" \
+    'command = "/opt/npm-global/bin/mcp-cache-proxy"'
+  assert_fixed "context7 cache config" "${file}" \
+    "args = [\"--config\", \"${home}/.grok/mcp-cache-proxy/config.json\"]"
+  assert_fixed "context7 key unfolded" "${file}" \
+    'env = { CONTEXT7_API_KEY = "$CONTEXT7_API_KEY" }'
+  assert_not_fixed "no template home in the cache path" "${file}" \
+    'args = ["--config", "/home/coder/.grok/mcp-cache-proxy/config.json"]'
+  assert_not_fixed "doubled dollar not left behind" "${file}" '$${'
 }
 
 # assert_helpers <home> — both helpers exist, are executable, and unfolded.
@@ -340,6 +368,49 @@ assert_contributor_home() {
   assert_fixed "SEARXNG_URL env wins" "${out}" 'SEARXNG_URL = "http://host.docker.internal:18181"'
   assert_not_fixed "default search assignment dropped" "${out}" \
     'SEARXNG_URL = "http://host.docker.internal:8181"'
+}
+
+@test "seed-dev-env: the context7 lane is kept when a key or --context7-mcp says so" {
+  load_seed_api
+  local scratch home out tpl
+  scratch="$(make_scratch)"
+  home="${scratch}/home"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # No key and no verdict: the keyless home keeps the context7-free file it
+  # shipped with before the lane could be kept.
+  seed_render_grok_config "${tpl}" "${out}" "${home}" 0
+  assert_not_fixed "keyless home drops context7" "${out}" '[mcp_servers.context7]'
+
+  # A key in the environment keeps the lane on its own, and the key stays a
+  # reference the CLI expands from the agent environment.
+  CONTEXT7_API_KEY='ctx7sk-SECRETVALUE-not-rendered' \
+    seed_render_grok_config "${tpl}" "${out}" "${home}" 0
+  assert_fixed "a key keeps the lane" "${out}" '[mcp_servers.context7]'
+  assert_fixed "the proxy launches by absolute path" "${out}" \
+    'command = "/opt/npm-global/bin/mcp-cache-proxy"'
+  assert_fixed "the key stays a reference" "${out}" \
+    'env = { CONTEXT7_API_KEY = "${CONTEXT7_API_KEY}" }'
+  assert_fixed "the cache config is re-rooted at the seed home" "${out}" \
+    "args = [\"--config\", \"${home}/.grok/mcp-cache-proxy/config.json\"]"
+  assert_not_fixed "the key value never reaches the file" "${out}" 'SECRETVALUE'
+  assert_not_fixed "no doubled dollar left behind" "${out}" '$${'
+  assert_not_fixed "no if directive" "${out}" '%{if'
+  assert_not_fixed "no endif directive" "${out}" '%{endif'
+  assert_not_fixed "github stays dropped" "${out}" '[mcp_servers.github]'
+
+  # The explicit verdict keeps it for a home that will get its key later.
+  seed_render_grok_config "${tpl}" "${out}" "${home}" 1
+  assert_fixed "the verdict keeps the lane with no key" "${out}" '[mcp_servers.context7]'
+
+  # End to end through the CLI, the flag is what carries that verdict.
+  run_seed "${home}" --context7-mcp
+  [ "${status}" -eq 0 ]
+  assert_fixed "the flag reaches the render" "${home}/.grok/config.toml" \
+    '[mcp_servers.context7]'
+  assert_not_fixed "the flag alone still drops github" "${home}/.grok/config.toml" \
+    '[mcp_servers.github]'
 }
 
 @test "seed-dev-env: seed_write_helpers unfolds terraform dollars and dry-run writes nothing" {
@@ -611,4 +682,19 @@ assert_contributor_home() {
   run seed_install_git_hooks "${root}" 1 0
   [ "${status}" -eq 0 ]
   assert_match "names the non-checkout" 'not a git checkout' "${output}"
+}
+
+@test "seed-dev-env: the contributor postCreate asks for the same lanes a workspace gets" {
+  local dc="${REPO_ROOT}/.devcontainer/devcontainer.json"
+  [ -f "${dc}" ] || skip "no contributor devcontainer in this tree"
+
+  # The dev container is the laptop/CI twin of a workspace, and a workspace gets
+  # the context7 docs lane by default. Without the flag the home is seeded
+  # context7-free unless the environment happens to carry a key, which is how a
+  # contributor ends up with a lane their workspaces have.
+  run grep -o 'seed-dev-env\.sh[^"]*' "${dc}"
+  [ "${status}" -eq 0 ]
+  assert_match "postCreate seeds the home" 'seed-dev-env\.sh' "${output}"
+  assert_match "as a devcontainer" '\-\-devcontainer' "${output}"
+  assert_match "with the docs lane kept" '\-\-context7-mcp' "${output}"
 }

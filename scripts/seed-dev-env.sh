@@ -17,7 +17,7 @@
 #   - install the Grok CLI (the golden image already has /usr/local/bin/grok).
 #
 # Usage (Bazel is the entry point; every example is the whole command):
-#   bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--devcontainer] [--force] [--dry-run] [-h|--help]
+#   bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--context7-mcp] [--devcontainer] [--force] [--dry-run] [-h|--help]
 #
 # Options (accepted anywhere in argv):
 #   --home <dir>         host directory shaped like a HOME tree (default $HOME).
@@ -25,6 +25,11 @@
 #   --litellm-url <url>  model-transport address rendered into settings.json
 #                        and ~/.grok/config.toml (default
 #                        http://host.docker.internal:4000/v1)
+#   --context7-mcp       keep the [mcp_servers.context7] docs lane in
+#                        ~/.grok/config.toml even with no CONTEXT7_API_KEY set.
+#                        A non-empty CONTEXT7_API_KEY keeps that block on its
+#                        own; with neither, it is dropped (a keyless laptop
+#                        gets no lane that can only fail its handshake).
 #   --devcontainer       after a successful write, if GH_TOKEN or GITHUB_TOKEN
 #                        is set and gh is on PATH, run `gh auth setup-git`
 #                        (best effort). Does not write EVO_T1_DEVCONTAINER.
@@ -58,7 +63,7 @@ unset JSON_MODE
 #   0
 usage() {
   cat <<'USAGE'
-usage: bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--devcontainer] [--force] [--dry-run] [-h|--help]
+usage: bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--context7-mcp] [--devcontainer] [--force] [--dry-run] [-h|--help]
 
 Seeds a contributor HOME (laptop, CI, or a devcontainer postCreate) from the
 same templates Coder workspace startup uses: tmux, editor settings, Grok
@@ -69,6 +74,9 @@ notes-setup.sh are rewritten on every run, the way startup cats them.
 
 Options: --home <dir> (default $HOME; created when absent), --litellm-url
 <url> (model-transport address; default http://host.docker.internal:4000/v1),
+--context7-mcp (keep the [mcp_servers.context7] cached docs lane in
+~/.grok/config.toml; a non-empty CONTEXT7_API_KEY keeps it on its own, and
+with neither the lane is dropped, which is the keyless-laptop default),
 --devcontainer (best-effort `gh auth setup-git` when a token is in the
 environment and gh is on PATH; never writes the token), --force (overwrite
 user-owned files too), --dry-run (report only; do not call gh), -h/--help.
@@ -117,17 +125,27 @@ resolve_repo_root() {
 
 # @function seed_render_grok_config
 # Render grok-config.toml.tftpl for a contributor home. Contributor defaults
-# are fixed here (no Coder Terraform variables): github, context7, and
-# grok_config_extra blocks are dropped; the search block is kept; ${litellm_url}
-# becomes STACK_LITELLM_URL; the model default is agent; the affinity key is
-# contributor. Substitutions are sed, never eval. A doubled dollar unfolds
-# to one dollar before the template variables are replaced.
+# are fixed here (no Coder Terraform variables): the github and
+# grok_config_extra blocks are dropped; the search block is kept; the context7
+# block is kept only when the lane can answer, which means CONTEXT7_API_KEY is
+# non-empty or the caller passed the --context7-mcp verdict, so a keyless home
+# keeps the context7-free file. ${litellm_url} becomes STACK_LITELLM_URL; the
+# model default is agent; the affinity key is contributor; the cache-proxy
+# config path the template hardcodes is re-rooted under the seed home.
+# Substitutions are sed, never eval. A doubled dollar unfolds to one dollar
+# before the template variables are replaced.
 # Globals:
 #   STACK_LITELLM_URL, SEARXNG_URL (search URL default
-#   http://host.docker.internal:8181, written as a concrete TOML string)
+#   http://host.docker.internal:8181, written as a concrete TOML string),
+#   CONTEXT7_API_KEY (non-empty keeps the context7 block), HOME (the home
+#   default when $3 is not given)
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write
+#   $3 - seed home; its path replaces the cache-proxy config path the template
+#        hardcodes (default $HOME, then /home/coder, which is that literal)
+#   $4 - 1 to keep the context7 block even with no CONTEXT7_API_KEY set
+#        (default 0)
 # Outputs:
 #   The rendered file at $2; one note per refusal
 # Returns:
@@ -135,10 +153,17 @@ resolve_repo_root() {
 #   render failed
 seed_render_grok_config() {
   local src="${1:-}" dest="${2:-}" rendered="" lbrace="" dollar='$' search=""
+  local home="${3:-${HOME:-/home/coder}}" keep_ctx7="${4:-0}" keep7="0"
+  local proxy_lit="" proxy_path=""
   # Octal keeps a literal brace out of this file so extract_fn's brace scan
   # stays balanced. The sed below unfolds a doubled dollar into one.
   lbrace="$(printf '\173')"
   search="${SEARXNG_URL:-http://host.docker.internal:8181}"
+  if [[ -n ${CONTEXT7_API_KEY:-} || ${keep_ctx7} == "1" ]]; then
+    keep7="1"
+  fi
+  proxy_lit="/home/coder/.grok/mcp-cache-proxy/config.json"
+  proxy_path="${home}/.grok/mcp-cache-proxy/config.json"
   if [[ -z ${src} || -z ${dest} ]]; then
     note "seed_render_grok_config needs a source and a destination"
     return 1
@@ -151,16 +176,19 @@ seed_render_grok_config() {
     note "${src}: nowhere to stage the rendered grok config - skipped"
     return 1
   }
-  # Drop the gated blocks a contributor seed does not turn on. The search
-  # block's own if/endif lines go too, but its body stays. Every endif is
-  # consumed so a kept block does not leave a directive behind.
+  # Drop the gated blocks a contributor seed does not turn on. A kept block
+  # (always search, and context7 when keep7 is 1) loses its own if/endif lines
+  # but keeps its body. Every endif is consumed so a kept block does not leave
+  # a directive behind. The sed re-roots the cache-proxy config path and
+  # unfolds the doubled dollar the kept context7 env line carries.
   # SELF_DIR is the entry's scripts/ dir; extracted-function tests set it too.
-  if ! awk -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/tftpl_strip_gates.awk" "${src}" | sed \
+  if ! awk -v keep_context7="${keep7}" -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/tftpl_strip_gates.awk" "${src}" | sed \
     -e "s|\\\$\\\$${lbrace}|${dollar}${lbrace}|g" \
     -e "s|\${litellm_url}|${STACK_LITELLM_URL}|g" \
     -e 's|\${grok_default_model}|agent|g' \
     -e 's|\${workspace_affinity_key}|contributor|g' \
     -e "s|\${search_url}|${search}|g" \
+    -e "s|${proxy_lit}|${proxy_path}|g" \
     >"${rendered}"; then
     rm -f "${rendered}"
     note "${src}: rendering the grok config failed - skipped"
@@ -303,18 +331,22 @@ seed_link_vscode_settings() {
 # marker-free file is left alone unless --force is set. An existing [cli]
 # table is carried forward the way startup does. The written file is mode 600.
 # Globals:
-#   STACK_MARKER_TEXT, STACK_LITELLM_URL (via seed_render_grok_config)
+#   STACK_MARKER_TEXT, STACK_LITELLM_URL, CONTEXT7_API_KEY (all read through
+#   seed_render_grok_config)
 # Arguments:
 #   $1 - home directory
 #   $2 - repo root
 #   $3 - 1 to report without writing (default 0)
 #   $4 - 1 to overwrite a user-owned file (default 0)
+#   $5 - 1 to keep the context7 lane even with no CONTEXT7_API_KEY set
+#        (default 0)
 # Outputs:
 #   One decision line; one note when the render fails
 # Returns:
 #   0, always
 seed_write_grok_config() {
   local home="${1:-}" root="${2:-}" preview="${3:-0}" force="${4:-0}"
+  local context7="${5:-0}"
   local src="" dest="" state="absent" staged="" cli_block="" forced=""
   src="${root}/templates/workspace/grok-config.toml.tftpl"
   dest="${home}/.grok/config.toml"
@@ -338,7 +370,7 @@ seed_write_grok_config() {
   fi
   staged="$(mktemp "${TMPDIR:-/tmp}/evoT1Grok.XXXXXX")"
   cli_block="$(mktemp "${TMPDIR:-/tmp}/evoT1Cli.XXXXXX")"
-  if ! seed_render_grok_config "${src}" "${staged}"; then
+  if ! seed_render_grok_config "${src}" "${staged}" "${home}" "${context7}"; then
     rm -f "${staged}" "${cli_block}"
     return 0
   fi
@@ -503,18 +535,20 @@ seed_install_git_hooks() {
 # Seed one home tree: the shared reseed set, then the contributor extras
 # (helpers, notes library, editor symlinks, grok config, bashrc PATH).
 # Globals:
-#   None (callees read STACK_LITELLM_URL and the marker texts)
+#   None (callees read STACK_LITELLM_URL, CONTEXT7_API_KEY and the marker texts)
 # Arguments:
 #   $1 - home directory
 #   $2 - repo root
 #   $3 - 1 to report without writing (default 0)
 #   $4 - 1 to overwrite user-owned files (default 0)
+#   $5 - 1 to keep the context7 lane with no CONTEXT7_API_KEY set (default 0)
 # Outputs:
 #   The reseed report on stdout
 # Returns:
 #   0 when the home was seeded or reported; 1 when home or root is unusable
 seed_dev_env() {
   local home="${1:-}" root="${2:-}" preview="${3:-0}" force="${4:-0}"
+  local context7="${5:-0}"
   local stage=""
   if [[ -z ${home} || -z ${root} ]]; then
     err "seed_dev_env needs a home directory and a repo root"
@@ -539,7 +573,7 @@ seed_dev_env() {
   seed_write_notes_lib "${home}" "${root}" "${preview}"
   seed_link_vscode_settings "${home}" "${preview}"
   phase "rendering grok config"
-  seed_write_grok_config "${home}" "${root}" "${preview}" "${force}"
+  seed_write_grok_config "${home}" "${root}" "${preview}" "${force}" "${context7}"
   phase "writing bashrc PATH"
   seed_write_bashrc_path "${home}" "${preview}"
   rm -rf "${stage}"
@@ -568,6 +602,7 @@ main() {
   local devcontainer=0
   local preview=0
   local force=0
+  local context7=0
   local root=""
 
   while [[ $# -gt 0 ]]; do
@@ -575,6 +610,7 @@ main() {
       --dry-run) preview=1 ;;
       --force) force=1 ;;
       --devcontainer) devcontainer=1 ;;
+      --context7-mcp) context7=1 ;;
       --home)
         if [[ $# -lt 2 ]]; then
           err "--home needs a directory"
@@ -623,7 +659,7 @@ main() {
     die "--home ${home} exists and is not a directory"
   fi
 
-  seed_dev_env "${home}" "${root}" "${preview}" "${force}" || exit 1
+  seed_dev_env "${home}" "${root}" "${preview}" "${force}" "${context7}" || exit 1
   seed_setup_git_credential "${home}" "${devcontainer}" "${preview}"
   seed_install_git_hooks "${root}" "${devcontainer}" "${preview}"
   summary

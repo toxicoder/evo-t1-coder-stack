@@ -906,6 +906,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
+│   ├── mcp-check.sh         # prove the Grok Build MCP lanes: binaries, creds, handshake
 │   ├── new-workspace.sh     # git URL -> workspace: picks the template + parameters
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 │   ├── pre-commit.sh        # the gate the hooks run: hermetic, --all, --image

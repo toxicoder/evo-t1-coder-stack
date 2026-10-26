@@ -191,7 +191,7 @@ Nothing else about GitHub travels in a `--var`.
 | `GITHUB_MCP` | `--var github_mcp=false` | only when the value is `false` (the github MCP server is on by default; any other value pushes nothing and the template default stands) |
 | `CONTEXT7_MCP` | `--var context7_mcp=false` | only when the value is `false` (the cached context7 MCP server is on by default; any other value pushes nothing and the template default stands) |
 | `CONTEXT7_API_KEY` | `--var context7_api_key=...` | only when non-empty; the value is never logged |
-| `SEARCH_MCP` | `--var search_mcp=false` | only when the value is `false` (the SearXNG MCP fallback is on by default; any other value pushes nothing and the template default stands) |
+| `SEARCH_MCP` | `--var search_mcp=false` | only when the value is `false` (the SearXNG MCP server is on by default and is the stack's search lane; any other value pushes nothing and the template default stands) |
 | `STACK_SEARCH_PORT` | `--var searxng_url=http://host.docker.internal:<port>` | always; a blank or non-numeric value falls back to `8181` |
 
 - `GITHUB_MCP`, `CONTEXT7_MCP` and `SEARCH_MCP` share one polarity: all three MCP blocks
