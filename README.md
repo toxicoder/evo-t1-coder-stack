@@ -99,8 +99,8 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |                  code-server, the web terminal and the terminal profiles all
   |                  start on that clone
   |                * ~/.grok/config.toml rendered by the template: model aliases
-  |                  (default + role fallbacks); native web_search and the github,
-  |                  context7 and searxng MCP servers on by default
+  |                  (default + role fallbacks), native web_search parked, and the
+  |                  github, context7 and searxng MCP servers on by default
   |                * Cline / Kilo Code ---> host.docker.internal:4000
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
@@ -120,9 +120,10 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |               no key, no account, no request logging. A workspace reaches it
   |               through the host gateway, so the workspace networks stay untouched.
   |               Both templates render it into the workspace config.toml as the
-  |               MCP server `searxng` (gated on `search_mcp`, default on), the
-  |               fallback search lane. Grok's native web_search is the default
-  |               (`disable_web_search = false`). Measure the SearXNG lane with
+  |               MCP server `searxng` (gated on `search_mcp`, default on), which is
+  |               the search lane. Grok's native web_search is parked
+  |               (`disable_web_search = true`): no transport here serves that tool
+  |               type, so the proxy rejects it. Measure the SearXNG lane with
   |               `bazelisk run //scripts:search-check` (an empty answer is not
   |               an answered one).
   |
