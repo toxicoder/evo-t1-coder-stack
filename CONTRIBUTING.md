@@ -30,11 +30,12 @@ deployable to the stack host.
 
 GitHub is where that is enforced, and it is configured in two layers. Branch
 protection on `main` is what keeps those rules honest: it is set to require a pull
-request before a push, and to require the two Bazel status checks
-(`bazelisk test //:test-fast` and `bazelisk test //:lint --test_tag_filters=manual`)
-to pass before the merge button unlocks — the same two commands CI runs, with
-`--config=ci`, and `bazelisk run //:validate` is that gate one step earlier, on
-your machine.
+request before a push, and to require the Bazel status checks to pass before the
+merge button unlocks — `bazelisk test //:test-fast`,
+`bazelisk test //:lint --test_tag_filters=manual` and the full gate
+`bazelisk test //:test-all`, the same commands CI runs, with `--config=ci`, inside
+the golden image. `bazelisk run //scripts:pre-commit` is that gate one step earlier,
+on your machine, and `.githooks/pre-push` runs the full `//:test-all` for you.
 `development`, `staging` and `production` are GitHub *Environments*, not branches:
 each one is where a future protected secret and its protection rules would live,
 and `production` stays restricted to `main` (or to tags cut on it) with required
@@ -102,6 +103,34 @@ of *this* repo on the `workspace` template — do not copy it into another repos
   bazelisk run //:validate
   ```
 
+  Those three are the fast loop you run while working. Before you open a pull
+  request, run the whole set, which adds the npm-backed docs gates and the two
+  measured coverage targets to the three above:
+
+  ```sh
+  bazelisk test //:test-all
+  ```
+
+  and run it the way CI does when your host is not the contributor container:
+
+  ```sh
+  bazelisk run //scripts:test-in-image -- -- test //:test-all
+  ```
+
+  You should not have to remember any of it. Install the shipped hooks once and
+  the checks run themselves:
+
+  ```sh
+  bazelisk run //scripts:install-hooks     # sets core.hooksPath=.githooks
+  bazelisk run //scripts:install-hooks -- --check
+  ```
+
+  `.githooks/pre-commit` then runs the hermetic three on every commit, and
+  `.githooks/pre-push` runs `//:test-all` before anything reaches GitHub, where
+  CI runs the same set again. `//:test-all` is the gate a PR is reviewed against;
+  git's own `--no-verify` is the only way around it, and it skips the check on
+  your side only.
+
   `//:validate` runs the suite above and then:
 
   ```sh
@@ -113,6 +142,30 @@ of *this* repo on the `workspace` template — do not copy it into another repos
   ```
 
   `terraform validate` still needs a local init with the provider cache; run it when a template changes. Shell functions need a `# @function` block and a Bats test (`docs/project-conventions.md`).
+
+## Coverage
+
+Two targets measure coverage instead of assuming it, and both are members of
+`//:test-all`, so a pull request cannot land with either red:
+
+```sh
+bazelisk test //tests:shell_coverage   # every production shell function executed?
+bazelisk test //tests:py_coverage      # every Python statement and branch?
+bazelisk test //docs-site:unit_coverage # every docs-site function, and >=95% lines?
+```
+
+`//tests:shell_coverage` runs the whole Bats suite against an instrumented mirror
+of the production shell (`tests/coverage/instrument.py`) and lists every function
+whose body never ran. It exists because `//tests:shell_inventory` can only prove a
+function NAME appears somewhere under `tests/` — a name inside a stub, a fixture or
+a quoted grep pattern satisfies that gate while the function is never called. Write
+the test that actually calls it.
+
+`//tests:py_coverage` needs coverage.py, which is pinned in
+`images/dev/tool-versions.env` and baked into the golden image; on a machine
+without it the target says so and points at `//scripts:test-in-image`.
+`//docs-site:unit_coverage` needs `docs-site/node_modules`, which the npm runner
+installs on demand.
 
 ## Changing version pins
 

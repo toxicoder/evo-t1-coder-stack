@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# ## .githooks/pre-push — the full gate before anything leaves the machine
+#
+# Installed with: bazelisk run //scripts:install-hooks
+#
+# Runs scripts/pre-commit.sh --all, which adds //:test-all to the hermetic half:
+# the npm-backed docs-site gates and the measured coverage targets
+# (//tests:shell_coverage, //tests:py_coverage, //docs-site:unit_coverage).
+# That is the set a pull request has to be green on, so a push that a reviewer
+# would have to fix never happens.
+#
+# It is slower than pre-commit, and it may install docs-site/node_modules on a
+# first run. git push --no-verify is the deliberate way around it.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+exec bash "${root}/scripts/pre-commit.sh" --all

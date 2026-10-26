@@ -464,12 +464,29 @@ bazelisk run //:validate
 ```
 
 ```sh
+bazelisk test //:test-all
+```
+
+```sh
+bazelisk run //scripts:install-hooks
+```
+
+```sh
 bazelisk run //:fix
 ```
 
 - `//:test-fast` is hermetic Bats plus two gates: every function under `scripts/` is
   named by a test, and every function has a `# @function` docstring. It builds no
   image and starts no Compose stack.
+- `//:test-all` is the full gate a pull request is reviewed against: `//:test-fast`,
+  `//:lint`, the npm-backed docs-site gates, and the measured coverage targets
+  (`//tests:shell_coverage`, `//tests:py_coverage`, `//docs-site:unit_coverage`).
+  `//:test-fast` only proves a function is *named* by a test; `//tests:shell_coverage`
+  runs the suite against an instrumented mirror and proves it is *called*.
+- `//scripts:install-hooks` points this checkout's `core.hooksPath` at `.githooks`,
+  after which `.githooks/pre-commit` runs the hermetic gate on every commit and
+  `.githooks/pre-push` runs `//:test-all` before anything is pushed. CI runs the
+  same set again. `//scripts:pre-commit` is the same gate to invoke by hand.
 - `//:fix` reformats with shfmt; `//:lint` and `//:validate` also run shellcheck,
   buildifier, and the compose / YAML / terraform checks.
 - Conventions: [docs/project-conventions.md](docs/project-conventions.md). Bazel
@@ -887,10 +904,13 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
 │   ├── github-auth.sh       # GitHub credential doctor
 │   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
+│   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
 │   ├── new-workspace.sh     # git URL -> workspace: picks the template + parameters
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
+│   ├── pre-commit.sh        # the gate the hooks run: hermetic, --all, --image
 │   ├── prod-stack.sh        # up / down / status / logs / reset for the stable stack
+
 │   ├── push-template.sh     # pushes both templates from inside the coder container
 │   ├── refresh-configs.sh   # re-materialize the tracked config seeds in a workspace
 │   ├── search-check.sh      # probe the search lane, one GET per engine x query

@@ -58,6 +58,12 @@ Prefer Bazelisk. Make is a shim.
 - lint: `bazelisk test //:lint --test_tag_filters=manual`
 - fmt: `bazelisk run //:fix`
 - gate: `bazelisk run //:validate`
+- full gate (what pre-push and CI run): `bazelisk test //:test-all`
+- gate on demand: `bazelisk run //scripts:pre-commit -- [--all|--image]`
+- install the commit/push hooks once: `bazelisk run //scripts:install-hooks -- [--check|--uninstall]`
+- coverage: `bazelisk test //tests:shell_coverage` (every production shell function
+  executed), `//tests:py_coverage` (Python statements+branches),
+  `//docs-site:unit_coverage` (docs-site functions)
 - scripts: `bazelisk run //scripts:<stem> -- <args>` (keep dashes)
 - dev stack: `bazelisk run //scripts:dev-stack -- up|down|status|logs|reset`
 - prod (stable) stack: `bazelisk run //scripts:prod-stack -- up|down|status|logs|reset`

@@ -35,7 +35,7 @@ PROD_PROJECT ?= evo-t1-prod
 # positional). Leave empty for everything else.
 ARGS ?=
 
-.PHONY: help test bats lint fmt fix validate bootstrap stack-up stack-down stack-status \
+.PHONY: help test bats test-all lint fmt fix validate pre-commit hooks hooks-check bootstrap stack-up stack-down stack-status \
 stack-logs stack-reset prod-stack-up prod-stack-down prod-stack-status prod-stack-logs \
 prod-stack-reset new-workspace models spark-configure spark-verify
 
@@ -50,6 +50,9 @@ help:
 	@echo "  bazelisk run //scripts:prod-stack -- up|down|status|logs|reset"
 	@echo ""
 	@echo "  make test | make bats | make lint | make fix | make validate"
+	@echo "  make test-all   (the full gate: docs gates + measured coverage; what pre-push runs)"
+	@echo "  make pre-commit ARGS=\"--all\"  (the gate the hooks run; --all adds the full set)"
+	@echo "  make hooks | make hooks-check  (point core.hooksPath at .githooks)"
 	@echo "  make stack-up | stack-down | stack-status | stack-logs | stack-reset  (PROJECT=evo-t1-dev;"
 	@echo "    set PROJECT=evo-t1-coder-stack to address the stable stack instead)"
 	@echo "  make prod-stack-up | prod-stack-down | prod-stack-status | prod-stack-logs | prod-stack-reset"
@@ -78,6 +81,24 @@ fix:
 validate:
 	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
 	$(BAZEL) run //:validate
+
+# Everything a pull request is checked on, including the npm-backed docs gates
+# and the measured coverage targets. This is what .githooks/pre-push runs.
+test-all:
+	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
+	$(BAZEL) test //:test-all
+
+pre-commit:
+	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
+	$(BAZEL) run //scripts:pre-commit -- $(ARGS)
+
+hooks:
+	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
+	$(BAZEL) run //scripts:install-hooks
+
+hooks-check:
+	@if [ -z "$(BAZEL)" ]; then echo "bazelisk is required" >&2; exit 1; fi
+	$(BAZEL) run //scripts:install-hooks -- --check
 
 # ---- first-boot and the fleet/stack CLIs, still Bazel targets -------------
 

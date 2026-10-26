@@ -56,6 +56,7 @@ ARG NODE_VERSION_DEFAULT=24 \
     UV_VERSION=0.12.19 \
     RUFF_VERSION=0.16.9 \
     MYPY_VERSION=2.3.1 \
+    COVERAGE_VERSION=7.17.0 \
     MCP_NODE_SERVERS_VERSION=2026.8.31 \
     MCP_PY_SERVERS_VERSION=2026.8.18 \
     SEARXNG_MCP_SERVER_VERSION=0.5.1 \
@@ -359,6 +360,7 @@ RUN case "${TARGETARCH}" in \
     && ln -sf /usr/local/protoc/bin/protoc /usr/local/bin/protoc \
     && ln -sf /opt/uv-tools/bin/ruff /usr/local/bin/ruff \
     && ln -sf /opt/uv-tools/bin/mypy /usr/local/bin/mypy \
+    && ln -sf /opt/uv-tools/bin/coverage /usr/local/bin/coverage \
     && ln -sf /opt/npm-global/bin/prettier /usr/local/bin/prettier \
     && ln -sf /opt/npm-global/bin/mcp-server-filesystem /usr/local/bin/mcp-server-filesystem \
     && ln -sf /opt/npm-global/bin/mcp-server-memory /usr/local/bin/mcp-server-memory \
@@ -560,6 +562,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && uv --version \
     && uv tool install "ruff@${RUFF_VERSION}" --python "${PYTHON_DEFAULT_VERSION}" \
     && uv tool install "mypy@${MYPY_VERSION}" --python "${PYTHON_DEFAULT_VERSION}" \
+    && uv tool install "coverage@${COVERAGE_VERSION}" --python "${PYTHON_DEFAULT_VERSION}" \
     && uv tool install "mcp-server-git==${MCP_PY_SERVERS_VERSION}" --python "${PYTHON_DEFAULT_VERSION}" \
     && uv tool install "mcp-server-time==${MCP_PY_SERVERS_VERSION}" --python "${PYTHON_DEFAULT_VERSION}" \
     # No `uv cache clean`: /root/.cache/uv is a BuildKit cache mount, so its
@@ -569,6 +572,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     && chmod -R a+rX /opt/uv-tools \
     && ruff --version \
     && mypy --version \
+    && coverage --version \
+    && test -x /opt/uv-tools/bin/coverage \
     && test -x /opt/uv-tools/bin/mcp-server-git \
     && test -x /opt/uv-tools/bin/mcp-server-time
 

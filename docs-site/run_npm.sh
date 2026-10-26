@@ -47,6 +47,22 @@ ensure_deps() {
   fi
 }
 
+# Move into the checkout this runfiles copy was symlinked from.
+#
+# v8 coverage pairs each executed script with the file on disk by path. Under
+# `bazel test` the sources arrive as symlinks into the checkout, Node resolves
+# them to their real path, and the report then matches nothing: every file
+# reads 0% and the gate fails on a green tree. The coverage arm has to measure
+# the files where they actually live.
+run_in_real_checkout() {
+  local real dir
+  real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || true)"
+  [[ -n ${real} && ${real} != *".runfiles"* ]] || return 1
+  dir="$(dirname "${real}")"
+  [[ -f ${dir}/package.json ]] || return 1
+  cd "${dir}"
+}
+
 CMD="npm"
 
 case "$SUBCMD" in
@@ -77,6 +93,19 @@ case "$SUBCMD" in
   unit)
     ensure_deps
     exec $CMD run unit "$@"
+    ;;
+  unit_coverage)
+    # Same suites as `unit`, with the v8 coverage gate on. $0 is the target name,
+    # so //docs-site:unit_coverage lands here.
+    run_in_real_checkout || {
+      echo "error: the runfiles copy did not resolve to a checkout" >&2
+      echo "note: v8 reads 0% when it measures symlinked sources, so the gate" >&2
+      echo "      runs against the checkout; use 'bazelisk run" >&2
+      echo "      //docs-site:unit_coverage' from one" >&2
+      exit 1
+    }
+    ensure_deps
+    exec $CMD run unit:coverage "$@"
     ;;
   verify)
     ensure_deps

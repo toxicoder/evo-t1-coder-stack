@@ -94,6 +94,63 @@ bazelisk run //scripts:test-in-image --                        # from any host w
   defect and a green one is not the run that unlocks the merge button. CI and branch
   protection gate on the image result either way.
 
+## Measured coverage
+
+Three targets answer "is this code actually executed by a test" instead of
+assuming it. They are `manual` like the npm gates, so `//:test-fast` stays fast, and
+they are members of `//:test-all`, which pre-push and CI run:
+
+```bash
+bazelisk test //tests:shell_coverage      # every production shell function ran?
+bazelisk test //tests:py_coverage         # every Python statement and branch?
+bazelisk test //docs-site:unit_coverage   # every docs-site function, >=95% lines?
+```
+
+`//tests:shell_coverage` is the one to understand before you write a shell test.
+It builds a mirror of the checkout with `tests/coverage/instrument.py`: every
+production `.sh` is copied with one extra statement at the top of each function
+body that appends `<path>\t<function>` to `$EVO_COV_LEDGER`, and every other path
+stays a symlink into the real tree. `tests/bats_runner.sh` points `REPO_ROOT` at
+that mirror when `EVO_COV_MIRROR` is set, so the suites execute the instrumented
+copies through whichever access pattern they already use — run the CLI, source the
+lib, or `load_shell_function`. Then `tests/coverage/aggregate.py` names every
+function whose body never ran.
+
+Why a ledger and not `bash -x`: xtrace traces bats-core itself, wrote 3.4 GB of log
+for one suite, and leaked trace lines into the stderr bats captures per test, which
+turned output-asserting suites red. The ledger measures the narrower thing the gate
+asks and breaks nothing.
+
+The consequence for a test author: a function counts when something calls it. A
+name in a comment, a stub, a fixture or a quoted grep pattern satisfies
+`//tests:shell_inventory` and satisfies nothing here.
+
+`//tests:py_coverage` discovers `tests/python/test_*.py` and
+`docs-site/test_gen_nav.py` under coverage.py 7.17, pinned in
+`images/dev/tool-versions.env` and baked into the golden image; without it the
+target fails with a pointer to `//scripts:test-in-image` rather than passing while
+measuring nothing. `//docs-site:unit_coverage` is `npm run unit:coverage`
+(vitest v8 provider, thresholds in `docs-site/vitest.config.ts`).
+
+Two runfiles traps bit this gate, and both fail *silently*, so they are worth
+naming:
+
+- Under `bazelisk test` every source arrives as a **symlink**. A `find -type f`
+  over the tree then sees no regular file and reports an empty suite, which reads
+  as "nothing to test". `py_cov.sh` uses `find -L`.
+- coverage.py resolves the symlink and records the **checkout** path, while the
+  process cwd is the runfiles tree. A relative `--include=scripts/lib/*.py` is
+  matched against the cwd, matches nothing, prints `No data to report`, and exits
+  `0`. The gate therefore decides from `tests/coverage/py_report.py`, which lists
+  the `.py` files the tree ships and requires each one to appear in the machine-
+  readable report above the floor. A module nobody imported is a named failure.
+
+The same "empty looks like green" rule applies to the vitest gate: it must measure
+files no test imported. Vitest 4 made that the default and removed the `all` key
+from `CoverageOptions`. To prove the default still holds after a vitest bump, drop
+a `lib/__cov_probe.ts` exporting one uncalled function and confirm the run reports
+it at 0% and fails; then delete the file.
+
 ## The two paths a suite may use
 
 - `REPO_ROOT` — where the checkout is *for this run*. `tests/bats_runner.sh` exports it;

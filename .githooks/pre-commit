@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# ## .githooks/pre-commit — the hermetic gate on every commit
+#
+# Installed with: bazelisk run //scripts:install-hooks
+# (that sets core.hooksPath=.githooks for this checkout; nothing installs it
+# behind your back).
+#
+# Runs the fast, hermetic half of the gate through scripts/pre-commit.sh:
+# //:test-fast, //:lint, docker compose config, and the env-sample comparison.
+# No network, no node_modules. The full set, including the npm-backed docs gates
+# and the measured coverage targets, runs on pre-push and on GitHub.
+#
+# The deliberate escape hatch is git's own --no-verify.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+exec bash "${root}/scripts/pre-commit.sh"

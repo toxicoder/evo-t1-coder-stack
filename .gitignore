@@ -44,6 +44,8 @@ docs-site/.source/
 docs-site/node_modules/
 docs-site/next-env.d.ts
 docs-site/tsconfig.tsbuildinfo
+# v8 coverage report written by `npm run unit:coverage` / //docs-site:unit_coverage.
+docs-site/coverage/
 __pycache__/
 # Assembly directory a local replay of the deploy job leaves behind.
 /_site/
