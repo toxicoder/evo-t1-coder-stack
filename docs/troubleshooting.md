@@ -284,8 +284,13 @@ fault in half:
   answered, engines that were unresponsive, and an empty result page.
 - `grok mcp doctor searxng` inside the workspace probes the MCP hop. A healthy
   search-check plus a failed handshake points at the server, the URL or the port.
+- `bazelisk run //scripts:mcp-check` covers both hops plus the config side in one
+  pass: the declared lanes, whether each `command=` binary is there, whether
+  `~/.grok/config.toml` is still stack-managed, whether the lane's credential is
+  set, and each server's handshake. A missing binary prints the exact
+  `npm i -g --prefix /opt/npm-global` command that puts it back.
 
-There is no second lane behind this one, so run both probes before touching anything
+There is no second lane behind this one, so run these probes before touching anything
 else. A service that answers but a server that will not handshake is the MCP hop; a
 server that cannot launch at all usually means no
 `/opt/npm-global/bin/searxng-mcp-server`, and that binary is baked into the golden
@@ -300,13 +305,24 @@ tool, or the 400 comes straight back.
 
 The three MCP servers (`github`, `context7`, `searxng`) ship by default. Park one
 with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` / `SEARCH_MCP=false` in `.env` and
-a template re-push. `grok mcp doctor` inside the workspace lists the declared
-servers and their handshake.
+a template re-push. `bazelisk run //scripts:mcp-check` reports the declared lanes,
+their binaries, their credentials and their handshake in one pass; `grok mcp doctor`
+inside the workspace lists the declared servers and their handshake.
 
 - A missing `[mcp_servers.github]` or `[mcp_servers.context7]` in
   `~/.grok/config.toml` means the last push passed `--var …=false`, or the
   workspace started from an older template. Re-push and restart the workspace
   so the managed `config.toml` re-renders.
+- A declared server whose `command=` the box cannot find is image drift: the
+  templates declare a binary the running image never got, because it predates the
+  npm bake in `images/dev/Dockerfile`. Rebuild `evo-t1-dev` and recreate the
+  workspace, or install the pinned package into the running box (`npm i -g --prefix
+  /opt/npm-global searxng-mcp-server@<pin>`, the pins live in
+  `images/dev/tool-versions.env`).
+- A `~/.grok/config.toml` with no `managed-by: evo-t1-coder-stack` line is a file the
+  stack stopped managing, so neither the startup script nor the seed writes it again
+  and its default lanes never arrive. Delete the file and restart the workspace, or
+  re-materialize it with `bazelisk run //scripts:seed-dev-env -- --force`.
 - A declared github server that fails handshake: the owner has not connected
   GitHub External Auth, so `$GH_TOKEN` is empty. Use the **GitHub reauth** app,
   then start a new Grok session.

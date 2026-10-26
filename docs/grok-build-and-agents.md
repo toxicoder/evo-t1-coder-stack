@@ -339,6 +339,12 @@ clone is never asked to delete somebody else's committed file.
   TTL is answered locally. Two tools, in order -
   `resolve-library-id`, then `query-docs` on the id it returns. Prove it with
   `grok mcp doctor context7` inside a workspace.
+- Prove all three at once with `bazelisk run //scripts:mcp-check`: it reads the
+  rendered `~/.grok/config.toml`, reports whether each lane is declared, whether its
+  `command=` binary is present, whether the lane's credential and cache config are
+  there, and what each server's handshake says. A binary the box cannot find is image
+  drift (the running `evo-t1-dev` predates the npm bake), and the check prints the
+  pinned `npm i -g --prefix /opt/npm-global` command that restores it.
 - What the agent is told about all this lives in `~/.grok/AGENTS.md`, inlined from
   `templates/common/GROK_BUILD_AGENTS.md`. Two sections cover the lanes. **Research
   lanes** makes a lookup part of the normal loop rather than a last resort: `context7`

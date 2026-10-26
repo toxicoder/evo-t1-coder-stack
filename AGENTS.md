@@ -68,11 +68,16 @@ Prefer Bazelisk. Make is a shim.
 - dev stack: `bazelisk run //scripts:dev-stack -- up|down|status|logs|reset`
 - prod (stable) stack: `bazelisk run //scripts:prod-stack -- up|down|status|logs|reset`
 - new workspace: `bazelisk run //scripts:new-workspace -- --dry-run <git-url>`
+- MCP lanes: `bazelisk run //scripts:mcp-check` (declared lanes, `command=` binaries,
+  lane credentials, and each server's handshake; runs inside a workspace or on the host)
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that
   workspace's own DinD sidecar — run it in a host shell or name `--container`/`--home`)
 - contributor seed (laptop/CI home, devcontainer postCreate):
-  `bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--devcontainer] [--force] [--dry-run]`
+  `bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--context7-mcp] [--devcontainer] [--force] [--dry-run]`
+  (`--context7-mcp` keeps the `[mcp_servers.context7]` block even with no
+  `CONTEXT7_API_KEY` in the environment, which is what the contributor
+  devcontainer passes so a laptop home matches what a workspace gets)
 - gate inside the golden image, from a host that is not the contributor container:
   `bazelisk run //scripts:test-in-image --`
 
