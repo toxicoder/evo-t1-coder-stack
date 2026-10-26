@@ -407,6 +407,31 @@ bash -lc 'command -v grok; grok --version'
   so `/usr/local/bin/grok` wins.
 - Pin notes: [grok-build-and-agents.md](grok-build-and-agents.md).
 
+### `grok doctor` flags `voice.no-input-device` or `terminal.limited-color` -> a headless container, and where you ran the command
+
+Cause: both are properties of the environment. Neither points at a workspace that
+needs repair, and neither is fixable from inside the container.
+
+```sh
+ls /dev/snd /proc/asound 2>&1 | head       # both absent: no capture device exists
+echo "NO_COLOR=[${NO_COLOR-unset}]"         # set inside an agent tool command only
+```
+
+- `voice.no-input-device`: the container has no microphone and no recorder on
+  PATH. The probe checks for a recorder binary, so installing `alsa-utils` makes
+  Doctor answer `available` with nothing to record from; the image ships no
+  recorder and the finding stays. The PulseAudio route that would make capture
+  real: the voice bullet in [grok-build-and-agents.md](grok-build-and-agents.md).
+- `terminal.limited-color`: a tool command spawned by a running Grok session
+  inherits `NO_COLOR=1`. Rerun `grok doctor` from the terminal itself and the
+  report reads `color truecolor` with `themes all`.
+- A tmux finding that survives a reseed of `~/.tmux.conf` is a reload gap: a
+  client reads `terminal-features` when it attaches. Run `tmux source-file
+  ~/.tmux.conf`, detach, reattach, then `tmux display -p '#{client_termfeatures}'`
+  and expect `RGB` and `extkeys` in the list.
+- `terminal.ssh-wrap` asks to be run on the workstation you type `ssh` on:
+  `grok doctor fix ssh-wrap` there. Nothing a workspace installs satisfies it.
+
 ### `docker` -> `command not found` inside a workspace -> an older image, or the wrong preset
 
 - Cause: that container was built from an image predating the Docker client toolchain,
