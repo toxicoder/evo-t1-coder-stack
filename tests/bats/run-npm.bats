@@ -5,8 +5,9 @@
 # Bazel test actions drop HOME, and GitHub Actions runs the golden image as
 # the runner uid (not in /etc/passwd). npm then dies with
 # uv_os_homedir ENOENT before it reads package.json. This suite stubs npm
-# and checks the wrapper still hands it an existing directory, and that the
-# deps gate installs only when the site's own binaries are missing.
+# and checks the wrapper still hands it an existing directory, that the
+# deps gate installs only when the site's own binaries are missing, and that
+# the coverage arm measures a real checkout.
 #
 # Usage: bazelisk test //tests:bats_run_npm_test
 # Safety: copies run_npm.sh into a scratch tree; never calls a real npm.
@@ -143,4 +144,35 @@ install_site_bins() {
   [[ ${output} == *"docs-site: installing npm deps"* ]]
   assert_eq "the install came first" "npm ci --legacy-peer-deps" "$(grep '^npm ' "${NPM_LOG}" | head -n 1)"
   assert_eq "then the asked-for script" "npm run typecheck" "$(grep '^npm ' "${NPM_LOG}" | tail -n 1)"
+}
+
+@test "run_npm: unit_coverage runs the coverage script from the real checkout" {
+  local scratch
+  scratch="$(stub_npm_tree)"
+  install_site_bins "${scratch}" next vitest
+  # The coverage arm only trusts a directory that is a site: package.json is the
+  # proof it found a checkout and not a runfiles tree of symlinks.
+  printf '{"name":"evo-t1-docs-site"}\n' >"${scratch}/docs-site/package.json"
+  NPM_LOG="${scratch}/npm.log"
+  export NPM_LOG
+  run env -u BUILD_WORKSPACE_DIRECTORY -u TEST_TMPDIR HOME="${scratch}/home" \
+    PATH="${scratch}/bin:${PATH}" bash "${scratch}/docs-site/run_npm.sh" unit_coverage
+  [ "${status}" -eq 0 ]
+  assert_eq "the coverage script ran" "npm run unit:coverage" "$(grep '^npm ' "${NPM_LOG}" | tail -n 1)"
+}
+
+@test "run_npm: unit_coverage refuses a copy that is not a checkout" {
+  local scratch
+  # Same tree, no package.json: v8 would read every file at 0% through symlinked
+  # sources, so the arm has to say so and stop rather than report a red gate.
+  scratch="$(stub_npm_tree)"
+  install_site_bins "${scratch}" next vitest
+  NPM_LOG="${scratch}/npm.log"
+  export NPM_LOG
+  run --separate-stderr env -u BUILD_WORKSPACE_DIRECTORY -u TEST_TMPDIR HOME="${scratch}/home" \
+    PATH="${scratch}/bin:${PATH}" bash "${scratch}/docs-site/run_npm.sh" unit_coverage
+  [ "${status}" -eq 1 ]
+  assert_match "names the cause" 'did not resolve to a checkout' "${stderr}"
+  assert_match "points at the runnable form" 'bazelisk run' "${stderr}"
+  assert_eq "npm never ran" "" "$(grep '^npm ' "${NPM_LOG}" 2>/dev/null || true)"
 }

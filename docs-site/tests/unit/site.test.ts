@@ -10,7 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { basePath, docsAlias, gitRef, REPO } from "../../lib/site";
+import { basePath, docsAlias, gitRef, REPO, REPO_URL, repoFileUrl } from "../../lib/site";
 
 const ENV_KEYS = ["NEXT_BASE_PATH", "DOCS_ALIAS", "GITHUB_REF_NAME", "EVO_DOCS_GIT_REF"] as const;
 
@@ -119,5 +119,27 @@ describe("gitRef", () => {
 
   it("defaults to main when nothing says otherwise", () => {
     expect(gitRef()).toBe("main");
+  });
+});
+
+describe("repoFileUrl", () => {
+  it("points a source link at the repository blob for the active ref", () => {
+    expect(repoFileUrl("docs/operate/index.md")).toBe(`${REPO_URL}/blob/main/docs/operate/index.md`);
+  });
+
+  it("follows the branch a work alias was built from", () => {
+    process.env.DOCS_ALIAS = "feat-foo";
+    process.env.GITHUB_REF_NAME = "feat/foo";
+    expect(repoFileUrl("docs/index.mdx")).toBe(`${REPO_URL}/blob/feat/foo/docs/index.mdx`);
+  });
+
+  it("tolerates a path written with a leading slash", () => {
+    expect(repoFileUrl("/docs/includes/abbreviations.md")).toBe(
+      `${REPO_URL}/blob/main/docs/includes/abbreviations.md`
+    );
+  });
+
+  it("keeps a nested path intact", () => {
+    expect(repoFileUrl("scripts/lib/common.sh")).toContain("/scripts/lib/common.sh");
   });
 });
