@@ -7,7 +7,7 @@ tags: [public, tls, traefik, authelia, hermes, operate]
 **What's on this page**
 
 - The path a public request takes, from the browser to the container
-- The five names, and how to choose them at bootstrap time
+- The naming rule, and what `auto` composes from the parts you set
 - What `bootstrap.sh` changes when the names are set
 - The Traefik file-provider config the other box needs, pasted as-is
 - Checking the other machine (including the Hermes WebSocket), Authelia, and the two follow-ups left by hand
@@ -18,9 +18,9 @@ tags: [public, tls, traefik, authelia, hermes, operate]
 - Telling a router problem apart from an Authelia problem when a name fails
 - Putting the five routers on the Traefik box without guessing its timeouts
 
-The default shape is LAN-only. Setting `STACK_PUBLIC_HOSTS` additionally serves the same
-five services on public names over real TLS. It is purely additive: every LAN route
-keeps working.
+The default shape is LAN-only. `STACK_PUBLIC_HOSTS=auto` additionally serves the same
+five services on public names over real TLS, each name composed from the parts you set
+once. It is purely additive: every LAN route keeps working.
 
 ## The path a public request takes
 
@@ -34,7 +34,7 @@ Cloudflare (orange-cloud proxy; WebSockets on by default)
 Traefik (the other LAN server) -- TLS terminates here on *.overeazy.io; Authelia middleware
   | plain HTTP, original Host header preserved
   v
-nginx `router` sidecar (this box: proxy/router.conf, published on :8080)
+nginx `router` sidecar (this box: the conf STACK_ROUTER_CONF names, published on :8080)
   | picks one upstream from the Host header
   v
 the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000 / hermes:9119)
@@ -63,15 +63,27 @@ the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000 / h
   sets on an answered request: neither header means the request stopped at Traefik or
   Cloudflare, and `421` means the Host header matched no server block here.
 
-## The five names
+## The composed names
 
-| Name | `proxy/router.conf` upstream |
+These are what the shipped defaults compose. The operator sets the parts, not these
+strings: the grammar is `<service>-<environment>-<suffix>.<base>`, always ONE label
+under the zone.
+
+| Name | Router upstream |
 |---|---|
 | `gmktecbeast.overeazy.io` | `homepage:3000` |
 | `coder-gmktecbeast.overeazy.io` | `coder:3000` - plain listener |
+| `coder-dev-gmktecbeast.overeazy.io` | `coder:3000` - the dev stack's own name |
 | `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (`proxy_ssl_verify off`) |
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 | `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
+
+The dev row is what `bazelisk run //scripts:dev-stack -- up` composes for the
+`evo-t1-dev` project: that command applies `STACK_ENV_LABEL=dev` when neither the shell
+nor the env file already sets a label, and only for that project, so
+`--project-name evo-t1-review` gets none. A label goes on every name, so that stack's
+dashboard is `dev-gmktecbeast.overeazy.io` too, and all five need their own Traefik
+routers (see below). `bazelisk run //scripts:prod-stack -- up` never invents a label.
 
 Hermes is the same additive hop as the other four. Traefik forwards
 `http://<this-box-lan-ip>:8080` with the original Host, and the router sends that
@@ -81,14 +93,38 @@ See [hermes.md](hermes.md).
 
 ## Getting the naming right
 
-- Each name is **one label under the zone**, and each service prefix joins it with a
-  **hyphen**.
-- A wildcard certificate covers exactly one label, so the dotted two-label form
-  (`coder.gmktecbeast.`) has no certificate at the public edge: the browser aborts with
-  `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` and Traefik never sees the request. Measured on
-  this box - `coder-gmktecbeast.overeazy.io` completes the handshake with the zone's
-  `*.overeazy.io` cert, while the dotted form fails with a TLS alert 40 and presents
-  no certificate at all.
+`scripts/lib/domain.sh` owns the grammar and every part is normalized before it is
+joined, so a value copied out of a browser bar cannot leak into an origin or a
+`server_name`:
+
+- `STACK_DOMAIN_BASE` (default `overeazy.io`) is the zone the edge terminates TLS for;
+  `STACK_SUBDOMAIN_SUFFIX` (default `gmktecbeast`) is this box's label, shared by every
+  name.
+- `STACK_CODER_NAME` / `STACK_KASM_NAME` / `STACK_LITELLM_NAME` / `STACK_HERMES_NAME`
+  (defaults `coder` / `kasm` / `litellm` / `hermes`) are the service prefixes.
+  `STACK_DASHBOARD_NAME` is empty by default, which puts the dashboard on the zone apex.
+- `STACK_ENV_LABEL` is empty for the stable stack and sits **after** the service prefix.
+  Two reasons: the one-label rule below rules the dotted form out anyway, and
+  `classify_public_entry` in `scripts/lib/bootstrap.sh` routes an entry by its service
+  prefix, so `coder-dev-box.example.com` is Coder while `dev-coder-box.example.com`
+  falls through to the dashboard.
+- The shape is load-bearing: each name is **one label under the zone**, and each service
+  prefix joins it with a **hyphen**. A wildcard certificate covers exactly one label, so
+  the dotted two-label form (`coder.gmktecbeast.`) has no certificate at the public edge:
+  the browser aborts with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` and Traefik never sees the
+  request. Measured on this box - `coder-gmktecbeast.overeazy.io` completes the handshake
+  with the zone's `*.overeazy.io` cert, while the dotted form fails with a TLS alert 40
+  and presents no certificate at all.
+
+`STACK_PUBLIC_HOSTS` has three states, and only the middle one composes:
+
+- empty is LAN-only;
+- `auto` composes the five names from the parts above;
+- a comma-separated list is used verbatim, which is how you pin a name by hand (leave
+  `STACK_PUBLIC_HOSTS_MODE` empty, or that key keeps re-deriving).
+
+A part that cannot be a DNS label composes nothing: that service is left out of the list
+rather than sent as an empty entry, and a missing zone keeps the whole stack LAN-only.
 
 ## What `bootstrap` changes when the names are set
 
@@ -105,12 +141,22 @@ See [hermes.md](hermes.md).
   that exact-match list, so an unlisted name fails its host check;
 - a Coder certificate whose DNS SANs now carry the public names alongside the existing
   ones. The LAN cert keeps working; in public mode the browser never sees it, since
-  Traefik presents real ones.
+  Traefik presents real ones;
+- `STACK_PUBLIC_HOSTS_MODE=auto`, which records that the names are derived. Under `auto`
+  the parts are the source of truth and `STACK_PUBLIC_HOSTS` is output only, so a list
+  edited by hand there is ignored and bootstrap prints a `note:` naming the key to
+  clear. It clears itself on the LAN-only and explicit-list paths;
+- the router's vhost table: `proxy/router.conf.template` is rendered into
+  `proxy/router.gen.conf` (gitignored) and `STACK_ROUTER_CONF=router.gen.conf` is
+  written, because compose mounts `./proxy/${STACK_ROUTER_CONF:-router.conf}`. The
+  `warn_missing_router_hosts` check runs against that rendered file, so a name the
+  table does not answer is reported before the recreate rather than as a `421` after
+  it.
 
-Set the five names in `.env` (`STACK_PUBLIC_HOSTS`; `.env.sample` lists them, including
-`hermes-gmktecbeast.overeazy.io`), and in `dev-stack.env` too when a dev stack runs
-beside the stable one. Then re-run `bootstrap` and recreate the stack you switched. The
-commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
+Set the naming parts in `.env` and put `auto` in `STACK_PUBLIC_HOSTS` (`.env.sample`
+documents every part and shows the explicit-list shape beside it), and in
+`dev-stack.env` too when a dev stack runs beside the stable one. Then re-run `bootstrap`
+and recreate the stack you switched. The commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
 
 ## Traefik configuration
 
@@ -182,6 +228,16 @@ http:
 
 - `passHostHeader: true` is the line that makes this work at all. Without it Traefik
   sends the upstream URL's host, no `server_name` matches, and this box answers `421`.
+- **A published dev stack needs its own routers here.** The `dev-stack.env` behind
+  `bazelisk run //scripts:dev-stack` moves every published port by 10000 (the recipe is
+  in the
+  [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#give-the-dev-stack-its-own-ports)),
+  so that stack's `router` answers on `18080` (`STACK_PROXY_HTTP_PORT` default 8080) and
+  its names carry the environment label
+  (`coder-dev-gmktecbeast.overeazy.io`). A dev name is a different `Host` rule and a
+  different backend port: add a router per dev name to the file above aimed at
+  `http://<this-box-lan-ip>:18080`, and the DNS records for those names have to exist
+  too, or the browser fails before this box is ever asked.
 - `authelia@file` is a placeholder for the Authelia middleware that box already
   declares. Name it exactly as that box names it - a middleware created by labels is
   `authelia@docker`, and a name Traefik cannot resolve fails the router rather than

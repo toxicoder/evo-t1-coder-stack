@@ -447,7 +447,9 @@ proxy instead of resolving it, and `000` or a 5xx then describes the proxy.
   somewhere else.
 - `000` on the second probe means the private lane is down as well, so the public
   failure is not a cloud-side one. `421` means the Host header matched no
-  `server_name` here, which is what a rewritten Host looks like.
+  `server_name` here, which is what a rewritten Host looks like. `STACK_ROUTER_CONF`
+  in `.env` names the conf those `server_name` lines live in; the vhost side of it is
+  in [UI and logins](#ui-and-logins).
 - A `404` is what this stack answers for an unknown app slug or an agent that is not
   Connected; the agent is the text after the first `.` in `<ws>.<agent>`.
 - Signed into Authelia with the link still failing puts the fault behind Authelia: the
@@ -965,8 +967,12 @@ access / mounts / socket-risk notes: [hermes.md](hermes.md).
 ### Public `hermes-gmktecbeast` answers `421` -> no vhost, a rewritten Host, or Traefik aimed past the router
 
 Cause: this box's `router` answers `421` when the Host matches no `server_name`.
-The hermes vhost lives in `proxy/router.conf` (hardcoded, like the other public
-names). Traefik pointed at `:9119` never hits that file. A rewritten Host also
+The hermes vhost is not typed by hand: `STACK_ROUTER_CONF` in `.env` names the conf
+compose mounts (`proxy/router.gen.conf`, which bootstrap renders from
+`proxy/router.conf.template`, or the checked-in `proxy/router.conf` while that key is
+empty), and every `server_name` in it is composed from the naming parts. Under
+`STACK_PUBLIC_HOSTS=auto` a missing or mistyped part is what produces a name nothing
+answers. Traefik pointed at `:9119` never hits that file. A rewritten Host also
 misses every block.
 
 The public backend is the same hop as the other names. Replay it from a
@@ -978,15 +984,29 @@ curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: hermes-gmktecbeast.overeazy.i
   http://host.docker.internal:8080/
 ```
 
-- `421` means this box has no vhost for that Host. Recreate `router` so it
-  mounts the conf that lists `server_name hermes-gmktecbeast.overeazy.io`.
+- `421` means this box has no vhost for that Host. `STACK_ROUTER_CONF` in `.env` is
+  what tells you which conf compose actually mounted, so read that file's
+  `server_name` lines first, then recreate `router` so it picks up the one that
+  lists `server_name hermes-gmktecbeast.overeazy.io`.
 - Anything else means the router matched (Hermes basic auth is `401` until you
   send credentials). A `421` only on the public URL, with this probe succeeding,
   is a rewritten Host or a Traefik backend that is not `:8080`.
+- Under `auto` both sides come from the same parts, so a `421` on a name nobody
+  recognises is a part problem, not a router problem: an empty `STACK_DOMAIN_BASE`
+  composes nothing (the stack stays LAN-only) and a mistyped `STACK_SUBDOMAIN_SUFFIX`
+  or `STACK_ENV_LABEL` composes a name no vhost, no DNS and no certificate serves.
+  Read the composed list back from `STACK_PUBLIC_HOSTS` in `.env`, fix the part, and
+  re-run `bazelisk run //scripts:bootstrap`, then recreate. Editing the rendered
+  `proxy/router.gen.conf` instead only survives until the next bootstrap, which
+  re-renders it from the parts.
+- A part carrying an extra dot is the other failure this table cannot catch: the
+  composed name sits more than one label under the zone, the wildcard does not cover
+  it, and the browser aborts with `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` before Traefik
+  is ever reached, so no `421` is ever printed.
 - `STACK_PUBLIC_HOSTS` does not create the vhost. It is what bootstrap writes
   into `STACK_HERMES_URL` / `HERMES_DASHBOARD_PUBLIC_URL` for the Chat tab.
-  `bootstrap` now also warns when a name in that list is missing from
-  `proxy/router.conf`.
+  `bootstrap` now also warns when a name in that list is missing from the
+  conf it mounts.
 - The paste-ready Traefik file (one backend at `:8080`, `passHostHeader: true`,
   Authelia on the four interactive names, LiteLLM without Authelia) is in
   [public-access.md#traefik-configuration](public-access.md#traefik-configuration).

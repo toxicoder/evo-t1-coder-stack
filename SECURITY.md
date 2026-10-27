@@ -35,8 +35,8 @@ repo can verify.
   compose network only and is deliberately not published to the host.
   Never add a `11434:11434` port mapping.
 - **Hermes is root-equivalent, and a public name is supported.** The fifth name
-  (`hermes-*` in `STACK_PUBLIC_HOSTS`, for example
-  `hermes-gmktecbeast.overeazy.io`) follows the same Cloudflare → Traefik →
+  (`hermes-*`, which `STACK_PUBLIC_HOSTS=auto` composes as `hermes-<suffix>.<base>`, for
+  example `hermes-gmktecbeast.overeazy.io`) follows the same Cloudflare → Traefik →
   Authelia → `:8080` path as the dashboard and Coder, and the router sends it to
   `hermes:9119`. Leave Authelia on this name: it is an interactive session, not
   an API bypass. HTTP basic auth (`HERMES_DASHBOARD_USER` /

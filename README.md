@@ -596,28 +596,40 @@ strings.
 
 ## Public subdomains (optional)
 
-The default shape is LAN-only. One extra `.env` variable, `STACK_PUBLIC_HOSTS`
-(comma-separated), additionally serves the same five services on public names over real
-TLS. Full detail, including what `bootstrap` rewrites and how to check the Traefik
-side, is in [docs/public-access.md](docs/public-access.md).
+The default shape is LAN-only. Set the naming parts in `.env` (`STACK_DOMAIN_BASE`,
+`STACK_SUBDOMAIN_SUFFIX`, `STACK_ENV_LABEL`, the per-service `STACK_*_NAME` keys) and
+`STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the five
+public names from them and serves the same five services over real TLS. A
+comma-separated list in `STACK_PUBLIC_HOSTS` is still the way to pin a name by hand;
+empty stays LAN-only. Full detail, including what `bootstrap` rewrites and how to check
+the Traefik side, is in [docs/public-access.md](docs/public-access.md).
 
-### The five names
+### The composed names
+
+Under the shipped defaults (`overeazy.io` + `gmktecbeast`) `auto` composes:
 
 | Name | Upstream |
 |---|---|
 | `gmktecbeast.overeazy.io` | `homepage:3000` |
 | `coder-gmktecbeast.overeazy.io` | `coder:3000` - plain listener |
+| `coder-dev-gmktecbeast.overeazy.io` | `coder:3000` - the dev stack's own name |
 | `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (TLS verify off) |
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 | `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
 
+The dev row is what `bazelisk run //scripts:dev-stack -- up` composes: it applies
+`STACK_ENV_LABEL=dev` for the `evo-t1-dev` project only, and only when neither the shell
+nor the env file already sets a label. A label goes on every name, so that stack's
+dashboard is `dev-gmktecbeast.overeazy.io` as well. `bazelisk run
+//scripts:prod-stack -- up` never invents one.
+
 The rules that make those names work, and what to check when one of them misbehaves,
 are on
 [docs/public-access.md](docs/public-access.md): the one-label-under-the-zone shape a
-wildcard certificate allows, the `bootstrap` run that rewrites them, the recreate that
-applies it, the plain-HTTP hop to the `router` sidecar on `:8080` (every name,
-including Hermes - not `:9119`), and why the interactive names 302 to
-Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
+wildcard certificate allows, the `bootstrap` run that composes the names and rewrites
+the card URLs, the recreate that applies it, the plain-HTTP hop to the `router` sidecar
+on `:8080` (every name, including Hermes - not `:9119`), and why the interactive names
+302 to Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
 The other machine needs one file: the paste-ready Traefik config - five routers, TLS
 on all of them, `passHostHeader: true`, Authelia on the four interactive names and the
 long-lived timeouts - is
@@ -844,9 +856,10 @@ standing as Coder), so approvals stay `manual`.
 
 - **URL:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, basic auth
   (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`). The LAN
-  port stays. The public name `https://hermes-gmktecbeast.overeazy.io` is
-  opt-in through `STACK_PUBLIC_HOSTS`: Authelia in front, the same basic auth
-  behind it, Traefik pointed at `:8080`.
+  port stays. The public name (`hermes-<suffix>.<base>`, so
+  `https://hermes-gmktecbeast.overeazy.io` under the shipped defaults) is
+  opt-in with `STACK_PUBLIC_HOSTS=auto`: Authelia in front, the same basic
+  auth behind it, Traefik pointed at `:8080`.
 - **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the
   dangerous-command checker on. The docker socket stays root-equivalent.
 
@@ -912,7 +925,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 ```text
 .
 ├── docker-compose.yml
-├── .env.sample            # canonical env template (.env.example is a copy)
+├── .env.sample            # canonical env template: ports + the public naming parts
+│                          #   (.env.example is a copy)
 ├── .devcontainer/         # laptop/CI contributor env (probe sentinel keeps Coder on workspace)
 │   ├── contributor-env    # new-workspace treats this as a miss; do not copy to other repos
 │   └── devcontainer.json
@@ -924,10 +938,14 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   └── tool-versions.env  # every version pin, single source of truth
 ├── litellm/config.yaml    # model aliases
 ├── proxy/homepage.conf    # nginx TLS terminator for the dashboard
-├── proxy/router.conf      # nginx Host-header router for the public subdomains (no cert)
+├── proxy/router.conf      # nginx Host-header router for the public subdomains (no cert):
+│                          #   the render below, under the shipped defaults
+├── proxy/router.conf.template # the same five vhosts with __EVO_HOST_*__ tokens; bootstrap
+│                          #   renders them into proxy/router.gen.conf (gitignored), and
+│                          #   STACK_ROUTER_CONF tells compose which one to mount
 ├── searxng/settings.yml   # SearXNG metasearch config, mounted read-only
 ├── scripts/
-│   ├── bootstrap.sh          # .env + secrets + access URL + certs + checks
+│   ├── bootstrap.sh          # .env + secrets + access URL + certs + router conf + checks
 │   ├── build-dev-image.sh   # builds images/dev -> evo-t1-dev:latest
 │   ├── coder-agents.sh      # wires the control-plane chat agent (LiteLLM + thinking models)
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it

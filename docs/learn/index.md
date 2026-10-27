@@ -34,8 +34,9 @@ one thing the local model cannot do.
 ## The assistant on the host
 
 [Hermes](../hermes.md) is the interactive assistant with the checkout, the compose project and
-the docker socket in reach, gated by approval prompts. Its public name is opt-in through
-`STACK_PUBLIC_HOSTS`; with that list empty the dashboard stays on the LAN.
+the docker socket in reach, gated by approval prompts. Its public name is opt-in with
+`STACK_PUBLIC_HOSTS=auto`, which composes it from the naming parts; with that key empty
+the dashboard stays on the LAN.
 [public-access.md](../public-access.md) is the page that decides what the box exposes.
 
 ## The rules a change follows
