@@ -72,7 +72,10 @@ bash tests/bats/workspace.bats                    # same suite, straight from a 
 A suite is one cached action. Its `.bats` file, `test_helper.bash`, `test_helpers.sh`,
 `bats_runner.sh` and the `scripts/**.sh` plus stub/fixture files it declares as `data` are
 its inputs, so editing one script re-runs only the suites that read it, and an unchanged
-suite replays its cached PASS.
+suite replays its cached PASS. Beyond that common set each suite names only the payload
+groups it opens, in `_SUITE_PAYLOAD` in `tests/BUILD.bazel`; a suite whose target does not
+declare a payload it reads finds that payload missing under its own target, and
+`//tests:bats_bazel_deps_test` is the gate that keeps the map honest.
 
 ## Which runtime gates
 

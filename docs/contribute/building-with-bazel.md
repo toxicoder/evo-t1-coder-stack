@@ -130,21 +130,52 @@ launcher pattern at the repo root.
 `//tools:exec_shell.bzl` writes a generated launcher and runs the real `.sh` from runfiles
 with bash, so a checkout whose scripts are mode `100644` still builds.
 
-Each CLI target also declares the repo files that script reads by path — `//:stack_data`
-(`docker-compose.yml`, both `templates/**` payload trees, `images/dev/**`,
-`.devcontainer/**`, `litellm/**`, `searxng/**`, `homepage/**`, `proxy/**`, the two `.env`
-samples, `LICENSE`) and
+Each CLI target also declares the repo files that script reads by path: the libs it
+sources (`_SCRIPT_LIBS`) and the payload groups whose files it opens (`_SCRIPT_PAYLOAD`),
+both keyed by script stem in `scripts/BUILD.bazel`. Those payload groups live one per
+payload directory (`//litellm:config`, `//searxng:settings`, `//homepage:config`,
+`//homepage:icons`, `//hermes:seed`, `//hermes:skills`, `//proxy:confs`,
+`//images/dev:dockerfile`, `//images/dev:tool_versions`, and a `:payload` in each of
+`templates/common`, `templates/workspace`, `templates/devcontainer`), with the root
+BUILD.bazel holding the groups that have no directory of their own (`//:compose_file`,
+`//:env_sample`, `//:env_example`, `//:license`, `//:devcontainer`, `//:githooks`, and the
+`//:ci_*` groups). `//:stack_data` is the explicit aggregate of all of them, and
 `//scripts:doc_sources` (every `scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves
-too). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
+too) rides along on every CLI. `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
 `bazelisk run` of a stack runner, of `push-template`, or of the six CLIs that read a file the
 checkout alone holds (`dashboard-password`, `pull-models`, `coder-agents`, `spark-verify`,
 `spark-configure`, `build-dev-image`) prefers `BUILD_WORKSPACE_DIRECTORY` (the real checkout)
 over the runfiles copy as the compose project directory, the live `.env`, and the template tree (runfiles
 `templates/**` are symlinks that Coder cannot follow after unpack). Without the committed payloads a
 sandboxed run would read a partial copy of the repo and fail for the wrong reason. A new
-top-level payload directory has to be added to that `glob` by hand: `test-fast` and `lint`
-only see repo files that travel in runfiles, so an unlisted directory is invisible to the
-harness rather than checked loosely.
+top-level payload directory gets its own package with its own `filegroup` targets, joins
+`//:stack_data` by label, and is named in the map of every target that reads it: `test-fast`
+and `lint` only see repo files that travel in runfiles, so an unlisted directory is invisible
+to the harness rather than checked loosely.
+
+## The dependency maps and their gate
+
+The two maps in `scripts/BUILD.bazel` and the one in `tests/BUILD.bazel` are the
+machine-readable record of which repo file each target reads:
+
+| Map | Says |
+| --- | --- |
+| `_SCRIPT_LIBS` | the `scripts/lib` closure one CLI sources, executes, or ships to a remote host |
+| `_SCRIPT_PAYLOAD` | the payload groups whose files that CLI (or a lib it sources) opens |
+| `_SUITE_PAYLOAD` | the payload groups one Bats suite opens, beyond what every suite carries |
+| `*_PAYLOAD_ALLOW` | a pairing the source scan cannot see from either side; each entry states its reason |
+
+`tests/bazel_deps.py` re-derives all of them by scanning the shell and Bats sources and
+reports the drift both ways: a script that starts reading a payload its target does not
+declare, and a target that still ships a payload nothing opens. `//tests:bats_bazel_deps_test`
+runs it, so the BUILD files stay something an automated reader can trust, and a
+`bazelisk query` of any target names the files a change to which should be reviewed with it.
+
+The scan treats a comment, a here-doc body, a log message, and a scratch file a suite writes
+as prose rather than a dependency, so the maps record reads and not mentions. When the scan
+genuinely cannot see a pairing (a lib that builds a path and returns it as a string, a
+`case` glob over `git diff` output, help text), the entry goes in the `_ALLOW` map with the
+reason as a comment above the key; the Bats gate fails an `_ALLOW` key that has no reason.
 
 A script that needs the checkout reaches it the same way: source its libs by absolute path from
 `SELF_DIR`, resolve the root with `resolve_checkout` (`scripts/lib/common.sh`), then `cd` into
