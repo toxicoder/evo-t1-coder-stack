@@ -292,8 +292,20 @@ general_settings:
   # (store_prompts_in_spend_logs / turn_off_message_logging are not keys in
   # v1.102.1 — do not paste them from newer docs.)
   background_health_checks: true
-  health_check_interval: 30
-  health_check_concurrency: 5
+  # 300 s is LiteLLM's own default, and the concurrency is kept low on purpose. A probe
+  # is not a free HEAD: at this tag the proxy sends the deployment's whole litellm_params
+  # through ahealth_check into acompletion, so a baked reasoning_effort rides along, and
+  # it asks for health_check_max_tokens (default 16). A thinking reply cannot finish its
+  # reasoning in 16 tokens, so the probe comes back finish=length with empty content and
+  # the server logs a max_tokens warning for it, and the probe still takes a prompt-cache
+  # state on a box whose cache sits at 100 percent ("0 MiB spare of 6465 MiB"), evicting a
+  # warm conversation prefix that then re-prefills from zero. One log window held 60 such
+  # probe replies against real traffic, and the four probes queued behind a long turn were
+  # dropped by the proxy's own health-check timeout at ~81 s. Auto-recovery does not need
+  # 30 s: a box that is actually down is pulled by allowed_fails/cooldown_time under live
+  # traffic, and the re-probe is what brings it back.
+  health_check_interval: 300
+  health_check_concurrency: 2
   health_check_ignore_transient_errors: true
   # Inert while no request limiter is configured; guardrail if one ever
   # returns: a saturated-and-capped deployment will not collect cross-deployment
