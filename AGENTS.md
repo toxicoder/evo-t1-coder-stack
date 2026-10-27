@@ -71,6 +71,8 @@ Prefer Bazelisk. Make is a shim.
 - pull + deploy in one step (host shell; `--dry-run` to plan):
   `bazelisk run //scripts:update-stack`
 - new workspace: `bazelisk run //scripts:new-workspace -- --dry-run <git-url>`
+- new repository from the scaffold (host shell; `--dry-run` to render locally only):
+  `bazelisk run //scripts:new-repo -- --dry-run <name> [--lane <shell|python|typescript|go>]`
 - MCP lanes: `bazelisk run //scripts:mcp-check` (declared lanes, `command=` binaries,
   lane credentials, and each server's handshake; runs inside a workspace or on the host)
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
@@ -97,6 +99,13 @@ Stack changes must be verified on the dev stack first.
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
 - `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys: `proxy/router.conf.template` is the source, `proxy/router.conf` is its render under the shipped defaults, and `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`. Edit the naming parts, never a rendered conf. A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, and `hermes/config.yaml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
+- `project-template/` is the render source for `//scripts:new-repo`, not a deployed payload.
+  It is one `glob` group (`//project-template:payload`), so a new file there needs no BUILD edit; a
+  new language needs a `project-template/.evo-lanes/<lane>/` directory holding at least `LANE.md`
+  and `gitignore.fragment`, plus the lane id in `NEW_REPO_LANES` in `scripts/new-repo.sh` — the two
+  are pinned equal by `tests/bats/project-template.bats`. The seven `__PROJECT_*__` render tokens
+  are named once, in `NEW_REPO_TOKENS`; a token outside that set survives rendering into the
+  customer's repo and that same suite is what catches it.
 - Runtime is `docker compose`. Do not add Kubernetes.
 - LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env); never introduce a static token or PAT.
 

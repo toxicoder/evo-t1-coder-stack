@@ -61,6 +61,10 @@
         "path": "config-updates.md"
       },
       {
+        "title": "New projects from the template",
+        "path": "new-repo.md"
+      },
+      {
         "title": "Public access",
         "path": "public-access.md"
       },
