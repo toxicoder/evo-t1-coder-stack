@@ -1,10 +1,73 @@
-"""Package purpose: Hermetic Bats, shell-function inventory, and docstring coverage."""
+"""Package purpose: Hermetic Bats, shell-function inventory, docstring coverage, and the
+Bazel dependency gate.
+
+Every suite gets the same irreducible set (bats-core, the runner, the two helpers, the
+tool stubs, and the compose file that `bats_canonical_repo_root` probes for as the repo-root
+marker) and nothing else. Everything a suite reads beyond that is named per suite in
+`_SUITE_PAYLOAD`, which `//tests:bats_bazel_deps_test` re-derives from the suite sources, so
+the map cannot drift from what the suites actually open.
+"""
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools:exec_shell.bzl", "exec_shell")
 load(":bats.bzl", "bats_file_tests")
 
 package(default_visibility = ["//visibility:private"])
+
+# This package's own target declarations and the Bats macro, for the dependency gate in
+# this package to read under hermetic runfiles.
+filegroup(
+    name = "build_file",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "bats_bzl",
+    srcs = ["bats.bzl"],
+    visibility = ["//visibility:public"],
+)
+
+# The first-party shell this package owns. //lints walks it because its runners scan the
+# tests/ entry of scan_dirs, so this group and that scan list are kept equal.
+filegroup(
+    name = "shell_sources",
+    srcs = glob(
+        [
+            "coverage/*.sh",
+            "*.sh",
+        ],
+        allow_empty = True,
+    ),
+    visibility = [
+        "//lints:__pkg__",
+        "//visibility:public",
+    ],
+)
+
+# Every suite file, for the tools that walk the whole suite tree: //tests:shell_inventory
+# greps them for function names and //tests:shell_coverage drives them all.
+filegroup(
+    name = "all_bats",
+    srcs = glob(
+        [
+            "bats/*.bash",
+            "bats/*.bats",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# Scratch trees two suites build from a canned psql token.
+filegroup(
+    name = "fixtures",
+    srcs = glob(
+        ["bats/fixtures/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
 
 filegroup(
     name = "bats_tool",
@@ -24,26 +87,203 @@ filegroup(
     ],
 )
 
-# docker-compose.yml is both the marker the runner and bats_canonical_repo_root probe
-# for and the file several suites read by path; the template/image/litellm payload
-# beside it is read the same way, so it all travels with the suite.
+# The set every one of the 49 suites needs, verified by running them all: the runner and
+# bats-core, the two helpers every suite loads, the tool stubs stub_bin fails on, the
+# extract_fn.py that load_shell_function runs, and docker-compose.yml - which is the marker
+# bats_canonical_repo_root walks up to, so a suite without it skips entirely. The scripts
+# tree joins it because 40 of 49 suites run a CLI, source a lib, or copy the tree by path;
+# naming it 40 times would say less than naming it here.
 _BATS_COMMON = [
     "bats/test_helper.bash",
     "bats_runner.sh",
     "extract_fn.py",
+    "test_helpers.sh",
     ":bats_tool",
+    "//:compose_file",
     "//scripts:doc_sources",
-    "//docs:manage-docs.sh",
-    "//:stack_data",
-    "//:ci_workflows",
 ] + glob(
-    [
-        "bats/tool_stubs/**",
-        "bats/fixtures/**",
-        "test_helpers.sh",
-    ],
+    ["bats/tool_stubs/**"],
     allow_empty = True,
 )
+
+# ---------------------------------------------------------------------------
+# Per-suite payload map. Read by //tests:bats_bazel_deps_test, which re-derives it from the
+# suite sources (and from the entry script a suite execs, since that script's own reads are
+# the suite's reads). Literal strings and lists only - the gate parses these with
+# ast.literal_eval.
+#
+# An empty list means the suite reads nothing beyond the common set. //:stack_data appears
+# only where the suite is the completeness gate itself or drives a CLI that discovers
+# payload at runtime.
+# ---------------------------------------------------------------------------
+
+_SUITE_PAYLOAD = {
+    "awk.bats": [],
+    "bazel-deps.bats": [
+        "bazel_deps.py",
+        "//:bazel_files",
+        "//tests:all_bats",
+    ],
+    "bootstrap.bats": [
+        "//proxy:confs",
+    ],
+    "ci-lint-tools.bats": [
+        "//:ci_lint_installer",
+        "//:ci_setup_bazel_action",
+        "//images/dev:tool_versions",
+    ],
+    "ci-workflow.bats": [
+        "//:ci_pipelines",
+        "//:ci_setup_bazel_action",
+        "//images/dev:context",
+    ],
+    "coder-agents.bats": [
+        ":fixtures",
+    ],
+    "coder-apps.bats": [
+        "//:templates_payload",
+    ],
+    "common.bats": [],
+    "dashboard-password.bats": [],
+    "dev-stack.bats": [
+        "//homepage:payload",
+        "//proxy:confs",
+    ],
+    "devcontainer-template.bats": [
+        "//:templates_payload",
+    ],
+    "docs-alias.bats": [],
+    "domain.bats": [
+        "//proxy:confs",
+    ],
+    "entry-fns.bats": [
+        "//:templates_payload",
+        "//images/dev:context",
+    ],
+    "github-auth.bats": [],
+    "hermes-bootstrap.bats": [
+        "//hermes:seed",
+    ],
+    "hermes-config.bats": [
+        "//:env_sample",
+        "//hermes:payload",
+        "//proxy:confs",
+    ],
+    "host-state.bats": [
+        "//homepage:icons",
+    ],
+    "image.bats": [
+        "//images/dev:context",
+    ],
+    "install-hooks.bats": [
+        "//:githooks",
+    ],
+    "learn-skill.bats": [
+        "//:templates_payload",
+    ],
+    "litellm-config.bats": [
+        "//:templates_payload",
+        "//litellm:config",
+    ],
+    "manage-docs.bats": [
+        "//docs-site:sources",
+        "//docs:manage-docs.sh",
+    ],
+    "mcp_check.bats": [
+        "//images/dev:context",
+    ],
+    "pg-apply-password.bats": [],
+    "pre-commit.bats": [
+        "//:env_example",
+        "//:env_sample",
+    ],
+    "probes.bats": [],
+    "prod-stack.bats": [
+        "//homepage:payload",
+        "//proxy:confs",
+    ],
+    "publish-pages-tree.bats": [],
+    "pull-models.bats": [],
+    "push-template.bats": [
+        ":fixtures",
+        "//:templates_payload",
+    ],
+    "py_helpers.bats": [],
+    "refresh-configs.bats": [
+        "//:templates_payload",
+    ],
+    "run-npm.bats": [],
+    "search-check.bats": [],
+    "seed-dev-env.bats": [
+        "//:devcontainer",
+        "//:templates_payload",
+    ],
+    "setup-host.bats": [
+        "//images/dev:tool_versions",
+    ],
+    "spark-configure.bats": [],
+    "spark-verify.bats": [],
+    "stack-data.bats": [],
+    "storage-clean.bats": [
+        "//:templates_payload",
+    ],
+    "test-in-image.bats": [
+        "//images/dev:dockerfile",
+    ],
+    "tmux-fidelity.bats": [
+        "//:templates_payload",
+    ],
+    "tool-pins.bats": [
+        "//images/dev:tool_versions",
+    ],
+    "update-configs.bats": [
+        "//:env_example",
+        "//:env_sample",
+        "//:templates_payload",
+    ],
+    "update-stack.bats": [],
+    "validate.bats": [
+        "//:env_example",
+        "//:env_sample",
+        "//:templates_payload",
+        "//hermes:seed",
+        "//homepage:config",
+        "//litellm:config",
+    ],
+    "vscode-settings.bats": [
+        "//:templates_payload",
+    ],
+    "workspace-notes.bats": [
+        "//:templates_payload",
+    ],
+    "workspace.bats": [
+        "//:devcontainer",
+    ],
+}
+
+# Pairings the source scan cannot derive in either direction, each with its reason.
+_SUITE_PAYLOAD_ALLOW = {
+    # Each case writes its own ${dir}/Dockerfile and points dockerfile_args.awk at that
+    # scratch file; the repo's images/dev/Dockerfile is never opened here.
+    "awk.bats": [
+        "//images/dev:dockerfile",
+    ],
+    # It parses docker-compose.yml for its bind-mount sources and asserts each one exists
+    # beside it, so the files it checks come out of compose, not out of a literal.
+    "stack-data.bats": [
+        "//:stack_data",
+    ],
+    # It drives update-stack.sh, which case-globs the payload paths out of `git diff`
+    # output and reads whichever the diff names.
+    "update-stack.bats": [
+        "//:stack_data",
+    ],
+    # run_npm.sh prefers BUILD_WORKSPACE_DIRECTORY, so under a test this edge is the
+    # foreign-cwd fallback rather than the path the runner opens.
+    "run-npm.bats": [
+        "//docs-site:sources",
+    ],
+}
 
 exec_shell(
     name = "bats_runner_exec",
@@ -53,11 +293,8 @@ exec_shell(
 bats_file_tests(
     srcs = glob(["bats/*.bats"]),
     common_data = _BATS_COMMON,
-    # run-npm.bats reads docs-site/run_npm.sh, which sits outside the shared
-    # set; named here so the suite runs under its own target instead of skipping.
-    extra_data = {
-        "run-npm.bats": ["//docs-site:sources"],
-    },
+    payload = _SUITE_PAYLOAD,
+    payload_allow = _SUITE_PAYLOAD_ALLOW,
     runner = ":bats_runner_exec",
 )
 
@@ -67,14 +304,18 @@ exec_shell(
     data = ["repo_root.sh"],
 )
 
+# shell_inventory.sh greps scripts/**/*.sh for function definitions and tests/bats/*.bats,
+# tests/bats/*.bash and tests/*.sh for the names that reference them: those three groups and
+# nothing else.
 sh_test(
     name = "shell_inventory",
     size = "small",
     srcs = [":shell_inventory_exec"],
     data = [
-        "repo_root.sh",
-        "//scripts:doc_sources",
-    ] + glob(["bats/**"]),
+        ":all_bats",
+        ":shell_sources",
+        "//scripts:shell_sources",
+    ],
     tags = [
         "local",
         "no-sandbox",
@@ -82,8 +323,19 @@ sh_test(
     visibility = ["//visibility:public"],
 )
 
-# Measured coverage. Non-hermetic by construction: it drives the whole Bats suite
-# with bash xtrace on, so it is manual (//:test-fast stays fast) and runs local.
+# Measured shell coverage is non-hermetic by construction: it drives the whole Bats suite
+# with bash xtrace on, so it is manual (//:test-fast stays fast) and runs local. It is the
+# one target that has to carry every payload group, because it runs every suite.
+_COVERAGE_UNION = _BATS_COMMON + [
+    ":all_bats",
+    ":fixtures",
+    "bazel_deps.py",
+    "//:bazel_files",
+    "//:stack_data",
+    "//docs-site:sources",
+    "//docs:manage-docs.sh",
+]
+
 exec_shell(
     name = "shell_cov_exec",
     src = "coverage/shell_cov.sh",
@@ -98,11 +350,10 @@ sh_test(
     size = "medium",
     timeout = "long",
     srcs = [":shell_cov_exec"],
-    data = _BATS_COMMON + glob(["bats/*.bats"]) + [
+    data = _COVERAGE_UNION + [
         "coverage/aggregate.py",
         "coverage/instrument.py",
         "coverage/shell_cov.sh",
-        "//docs-site:sources",
     ],
     tags = [
         "local",
@@ -120,19 +371,21 @@ exec_shell(
     ],
 )
 
+# py_cov.sh discovers tests/python/test_*.py, scripts/lib/*.py and the docs-site nav
+# generator, and probes for docker-compose.yml as the repo-root marker. tests/bazel_deps.py
+# rides along because test_bazel_deps.py imports it by path; it stays out of py_report's
+# --expect list, which measures the shipped modules under scripts/lib and docs-site/scripts.
 sh_test(
     name = "py_coverage",
     size = "medium",
     srcs = [":py_cov_exec"],
-    # stack_data carries the docker-compose.yml marker py_cov_repo_root probes
-    # for; the suites themselves have to travel with the target or discover finds
-    # an empty directory and reports full coverage of nothing.
     data = [
+        "bazel_deps.py",
         "coverage/py_cov.sh",
         "coverage/py_report.py",
-        "//:stack_data",
-        "//docs-site:sources",
-        "//scripts:doc_sources",
+        "//:compose_file",
+        "//docs-site:python_sources",
+        "//scripts:py_programs",
     ] + glob(
         ["python/**"],
         allow_empty = True,
@@ -152,27 +405,18 @@ exec_shell(
     data = ["repo_root.sh"],
 )
 
+# doc_coverage.sh walks scripts/**/*.sh looking for the `# ##` header and `# @function`
+# blocks: the scripts shell tree and nothing else.
 sh_test(
     name = "doc_coverage",
     size = "small",
     srcs = [":doc_coverage_exec"],
     data = [
-        "repo_root.sh",
-        "//scripts:doc_sources",
+        "//scripts:shell_sources",
     ],
     tags = [
         "local",
         "no-sandbox",
-    ],
-    visibility = ["//visibility:public"],
-)
-
-exports_files(
-    [
-        "bats_runner.sh",
-        "doc_coverage.sh",
-        "repo_root.sh",
-        "shell_inventory.sh",
     ],
     visibility = ["//visibility:public"],
 )

@@ -1,0 +1,28 @@
+"""Package purpose: The golden contributor/CI image build inputs.
+
+`Dockerfile` builds `evo-t1-dev:latest`, the image that carries the toolchain every Bazel
+target here assumes; `tool-versions.env` pins the tools inside it and is read by
+`scripts/lib/tool_pins.sh`, `scripts/lib/image.sh`, and `scripts/mcp-check.sh`. `:context` is
+what `scripts/build-dev-image.sh` hands Docker as the build context.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "dockerfile",
+    srcs = ["Dockerfile"],
+)
+
+filegroup(
+    name = "tool_versions",
+    srcs = ["tool-versions.env"],
+)
+
+# Everything Docker reads for the build.
+filegroup(
+    name = "context",
+    srcs = [
+        ":dockerfile",
+        ":tool_versions",
+    ],
+)

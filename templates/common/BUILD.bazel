@@ -1,0 +1,22 @@
+"""Package purpose: Coder template payloads shared by both workspace templates.
+
+These are the files `templates/workspace/main.tf` and `templates/devcontainer/main.tf` both
+push beside themselves, so the two twins consume one copy instead of duplicating it: the
+Grok Build agent files, the two skill files, the notes setup, the tmux and terminal
+scripts, the MCP cache proxy config, and the icon the workspace apps inline as a data URL.
+`scripts/lib/config_seed.sh` seeds several of them into a workspace's `~/.grok`, and
+`//:stack_data` ships the tree for the template push.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "payload",
+    srcs = glob(
+        ["**"],
+        allow_empty = True,
+        # This package's own BUILD file is not payload: push-template.sh stages the tree
+        # beside each staged main.tf, and a stray BUILD.bazel would travel with it.
+        exclude = ["BUILD.bazel"],
+    ),
+)

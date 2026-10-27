@@ -1,0 +1,23 @@
+"""Package purpose: The `workspace` Coder template payload.
+
+`main.tf` and `coder.tf` are the Terraform the Coder template runs; the `.tftpl` files are the
+`coder_script` bodies rendered with `templatefile()`, and `grok-config.toml.tftpl` plus
+`settings.json.tftpl` are the seeded dotfiles. `scripts/push-template.sh` pushes this tree and
+globs `*.tf` inside it, so the tree is addressed as one group.
+
+Keep the twin in mind: `templates/devcontainer/` holds an independent copy of these payload
+files by design, and both twins are edited together (AGENTS.md).
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "payload",
+    srcs = [".terraform.lock.hcl"] + glob(
+        [
+            "*.tf",
+            "*.tftpl",
+        ],
+        allow_empty = True,
+    ),
+)

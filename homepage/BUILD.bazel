@@ -1,0 +1,37 @@
+"""Package purpose: Homepage dashboard payload, bind-mounted read-only into the dashboard.
+
+`config/` holds the five dashboard files compose mounts individually (`bookmarks.yaml`,
+`custom.css`, `services.yaml`, `settings.yaml`, `widgets.yaml`); `assets/icons/` is mounted
+whole at `/app/public/icons` and carries the SVGs the Coder workspace apps inline as data
+URLs. `scripts/lib/host_state.sh` walks both trees when it reports stale runfiles, and
+`scripts/validate.sh` globs `config/*.yaml` for its YAML parse, so the whole-directory
+`:payload` group exists beside the two specific ones.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "config",
+    srcs = glob(
+        ["config/**"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "icons",
+    srcs = glob(
+        ["assets/icons/**"],
+        allow_empty = True,
+    ),
+)
+
+# The directory-level union that `host_state.sh` and the compose project need when they
+# address homepage as one payload tree.
+filegroup(
+    name = "payload",
+    srcs = [
+        ":config",
+        ":icons",
+    ],
+)

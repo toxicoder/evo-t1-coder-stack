@@ -2,18 +2,26 @@
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
-def bats_file_tests(srcs, common_data, runner, extra_data = None):
+def bats_file_tests(srcs, common_data, runner, payload, payload_allow = None):
     """Declare bats_<stem>_test sh_test targets and a bats test_suite.
 
     Args:
         srcs: labels of bats/*.bats files.
-        common_data: shared runfiles (helper, bats-core, scripts).
+        common_data: runfiles every suite needs: bats-core, the runner, the shared helpers,
+            the tool stubs, and the repo-root marker.
         runner: exec_shell launcher label whose runfiles include bats_runner.sh.
-        extra_data: optional dict of suite basename -> extra runfiles labels. A
-            suite that reads a payload outside the shared set needs it named
-            here, or it skips under its own target and only runs inside
-            //tests:shell_coverage, which carries the whole tree.
+        payload: dict of suite basename -> payload group labels that suite reads by path.
+            Every suite must have a key: a missing key fails analysis rather than quietly
+            inheriting the payload tree, and //tests:bats_bazel_deps_test re-derives the
+            map from the suite sources. A suite that reads a payload its target does not
+            declare skips under its own target and only runs inside //tests:shell_coverage,
+            which carries the whole tree - which is exactly the silent gap the map closes.
+        payload_allow: optional dict of suite basename -> labels paired on purpose for a
+            reason the source scan cannot derive; each carries its reason in BUILD.
     """
+    if payload == None:
+        fail("bats_file_tests needs the payload map: every suite declares what it reads")
+
     tests = []
     for src in srcs:
         base = src.split("/")[-1]
@@ -25,7 +33,7 @@ def bats_file_tests(srcs, common_data, runner, extra_data = None):
             timeout = "moderate",
             srcs = [runner],
             args = [base],
-            data = common_data + [src] + (extra_data.get(base, []) if extra_data else []),
+            data = common_data + [src] + payload[base] + (payload_allow.get(base, []) if payload_allow else []),
             tags = [
                 "local",
                 "no-sandbox",

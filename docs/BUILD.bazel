@@ -20,6 +20,13 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:private"])
 
+# This package's own target declarations, for the dependency gate in //tests.
+filegroup(
+    name = "build_file",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
 # Everything the Next.js app reads out of this directory at build time. `includes/**` is
 # content input (the glossary definitions), not pages, and is excluded from the source.
 filegroup(
@@ -43,6 +50,12 @@ exports_files(
     ],
 )
 
+# Deliberately the whole docs-site tree, not the narrow :app/:components/... groups it now
+# exports. One list serves all nine subcommands, and between them they reach every one of
+# those groups: serve/build/preview/typecheck/verify drive npm through run_npm.sh and read
+# package.json, package-lock.json, source.config.ts and next.config.ts; nav writes
+# lib/nav.json from scripts/gen_nav.py; test runs Vitest over tests/. Narrowing would
+# undersupply whichever subcommand a target is not named for.
 _DOCS_COMMON_DATA = [
     ":content",
     "//docs-site:sources",
