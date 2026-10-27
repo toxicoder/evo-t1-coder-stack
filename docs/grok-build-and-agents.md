@@ -209,8 +209,16 @@ while the managed block is intact.
   fills `GH_TOKEN` above.
 - `grok_config_extra` appends whatever the create form's **Grok config extras** field
   holds, verbatim under its own comment header.
-- The managed block is guarded by a `managed-by: evo-t1-coder-stack` marker, so a
-  hand-edited config is left alone.
+- Stack ownership of the file rests on either marker spelling: the line-1
+  `managed-by: evo-t1-coder-stack` comment or the top-level `__evoT1Stack = true` key.
+  Both twins emit both, because the comment alone does not last - `grok mcp add`
+  persists its own settings by rewriting the file and deletes every comment line, so a
+  comment-only marker handed the config to the user with no human in the loop, and the
+  default lanes silently stopped arriving. A hand-edited config is left alone only
+  while it carries one of them, so takeover means deleting **both** lines; delete the
+  file and restart to hand it back. When the guard does re-render, the CLI-owned tables
+  `[cli]`, `[ui]` and `[marketplace]` are carried over rather than wiped, because the
+  stack owns no approval mode - `[ui] permission_mode` / yolo stays a per-user call.
 
 ## Grok Build state: one shared profile per user
 
@@ -532,11 +540,15 @@ absent:
   cloned folder under `/srv/coder-devcontainers/...`, where a dev container built on
   the sidecar carries its own home and no seeded path is visible from inside it
   anyway).
-- Each seeded file carries the `managed-by: evo-t1-coder-stack` marker - in
-  `SKILL.md` directly under the `---` frontmatter, since the agent's skill parser
-  requires frontmatter on line 1 and silently drops anything else. Delete a file to
-  take it over; edit it and the stack leaves it alone. Either way the marker never
-  reaches the model: the agent strips HTML comments from injected instruction text.
+- Each seeded file carries the stack marker - the `managed-by: evo-t1-coder-stack`
+  comment, or the `"__evoT1Stack": true` / `__evoT1Stack = true` key in a JSON or TOML
+  file - in `SKILL.md` directly under the `---` frontmatter, since the agent's skill
+  parser requires frontmatter on line 1 and silently drops anything else. Delete a file
+  to take it over; edit it and the stack leaves it alone. `~/.grok/config.toml` is the
+  one seed where deleting a file is not the way: it needs both marker lines gone, see
+  [The rendered `~/.grok` config](#the-rendered-grok-config). Either way the marker
+  never reaches the model: the agent strips HTML comments from injected instruction
+  text.
 - The seeds live per workspace, on that workspace's own home volume. They are *not*
   on the shared `~/.grok` profile volume above, and seeding does not care whether
   that mount exists.

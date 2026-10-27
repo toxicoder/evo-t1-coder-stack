@@ -32,8 +32,9 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   assistant, not a workspace agent).
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other
   workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
-  of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, or the
-  `"__evoT1Stack": true` key) is stack-owned: change the seed in this repo and
+  of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, the
+  `"__evoT1Stack": true` JSON key, or the `__evoT1Stack = true` TOML key in
+  `~/.grok/config.toml`) is stack-owned: change the seed in this repo and
   re-materialize it, never the copy that lives in a workspace. `~/.grok/notes-setup.sh`
   and `~/.grok/notes/` (the canonical per-repo scratch `notes.md`) are both stack-owned
   and rewritten on every start; that start also sets `core.excludesFile` to

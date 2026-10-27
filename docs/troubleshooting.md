@@ -365,19 +365,26 @@ their binaries, their credentials and their handshake in one pass; `grok mcp doc
 inside the workspace lists the declared servers and their handshake.
 
 - A missing `[mcp_servers.github]` or `[mcp_servers.context7]` in
-  `~/.grok/config.toml` means the last push passed `--var …=false`, or the
-  workspace started from an older template. Re-push and restart the workspace
-  so the managed `config.toml` re-renders.
+  `~/.grok/config.toml` means the last push passed `--var ...=false`, or the
+  workspace started from an older template, or the file carries no stack marker at all
+  (next bullet). Re-push and restart the workspace so the managed `config.toml`
+  re-renders.
 - A declared server whose `command=` the box cannot find is image drift: the
   templates declare a binary the running image never got, because it predates the
   npm bake in `images/dev/Dockerfile`. Rebuild `evo-t1-dev` and recreate the
   workspace, or install the pinned package into the running box (`npm i -g --prefix
   /opt/npm-global searxng-mcp-server@<pin>`, the pins live in
   `images/dev/tool-versions.env`).
-- A `~/.grok/config.toml` with no `managed-by: evo-t1-coder-stack` line is a file the
-  stack stopped managing, so neither the startup script nor the seed writes it again
-  and its default lanes never arrive. Delete the file and restart the workspace, or
-  re-materialize it with `bazelisk run //scripts:seed-dev-env -- --force`.
+- A `~/.grok/config.toml` carrying neither the `managed-by: evo-t1-coder-stack` line
+  nor the `__evoT1Stack = true` key is a file the stack stopped managing, so neither
+  the startup script nor the seed writes it again and its default lanes never arrive.
+  The usual cause is not a hand edit: `grok mcp add` persists its own settings by
+  rewriting that file and deletes every comment line, which used to revoke stack
+  ownership by itself. The TOML key is what survives that write, so a config rendered
+  by the current templates keeps its marker through `grok mcp add`. Take the file
+  over deliberately by removing both lines. To give it back: delete the file and
+  restart the workspace, or re-materialize it with
+  `bazelisk run //scripts:seed-dev-env -- --force`.
 - A declared github server that fails handshake: the owner has not connected
   GitHub External Auth, so `$GH_TOKEN` is empty. Use the **GitHub reauth** app,
   then start a new Grok session.
