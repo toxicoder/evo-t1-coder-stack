@@ -47,6 +47,17 @@ variable "repo_url" {
   default     = ""
 }
 
+# The canonical URL of this stack's own repository. It exists as a variable rather
+# than a literal in the preset so a fork that hosts the stack elsewhere gets a
+# "New project" preset that clones its own stack, not the upstream one. The
+# scaffold preset passes it as additional_repos, which is how scripts/new-repo.sh
+# and project-template/ end up inside a fresh workspace.
+variable "stack_repo_url" {
+  type        = string
+  description = "Git URL of this stack's repository, cloned as an additional repo by the New project preset so the scaffold CLI is available."
+  default     = "https://github.com/toxicoder/evo-t1-coder-stack"
+}
+
 # Was `variable "grok_profile_share"` (a bool) until the per-workspace mode needed
 # to say *which* layout a workspace gets, not just whether a shared volume exists.
 # It stays a plain string with exactly those two values because

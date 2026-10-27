@@ -4,6 +4,16 @@ variable "image" {
   default     = "evo-t1-dev:latest"
 }
 
+# The canonical URL of this stack's own repository, as a variable so a fork that
+# hosts the stack elsewhere gets a New project preset that clones its own stack.
+# The scaffold preset passes it as additional_repos, which is how
+# scripts/new-repo.sh and project-template/ reach a fresh workspace.
+variable "stack_repo_url" {
+  type        = string
+  description = "Git URL of this stack's repository, cloned as an additional repo by the New project preset so the scaffold CLI is available."
+  default     = "https://github.com/toxicoder/evo-t1-coder-stack"
+}
+
 variable "repo_url" {
   type        = string
   description = "Default for the create form's Git repository field — the clone source in either mode: built into a dev container when the dev-container toggle is on, opened directly by the editor when it is off. With the toggle on the repo must carry .devcontainer/devcontainer.json, otherwise that build fails and no editor appears; with it off any repo works. The clone runs as the workspace user and consults whatever HTTPS credential it finds (a credential helper, ~/.git-credentials, or the external-auth account connected in Coder — which must also GRANT the repo, or the fetch is refused; a `git@`/`ssh://` URL gets none of these)."

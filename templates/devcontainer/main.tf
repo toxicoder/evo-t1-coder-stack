@@ -232,6 +232,21 @@ data "coder_workspace_preset" "plain_clone" {
   }
 }
 
+# Sibling of plain_clone, for the case where the repository does not exist yet.
+# The scaffold itself lives in this stack, so the stack rides along as an
+# additional repo and scripts/new-repo.sh plus project-template/ are present the
+# moment the workspace starts; use_devcontainer stays true because a new project
+# is exactly when its own .devcontainer/ should be built, not skipped.
+data "coder_workspace_preset" "new_project" {
+  name        = "New project (scaffold ready)"
+  description = "Dev container plus this stack beside the project, so the scaffold CLI and template are already cloned."
+
+  parameters = {
+    (data.coder_parameter.additional_repos.name) = var.stack_repo_url
+    (data.coder_parameter.use_devcontainer.name) = "true"
+  }
+}
+
 # The create form's model dropdown needs one option per alias, and the provider
 # rejects a parameter whose default is not among its options. Same rule and same
 # trick as templates/workspace's image_options: a custom `--var grok_default_model=<key>`
