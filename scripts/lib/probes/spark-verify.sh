@@ -149,7 +149,14 @@ if [ "${clone_state}" = present ] && [ "${RUN_TESTS}" = yes ] && [ "${container_
   else
     say "toolcheck=absent (no scripts/toolcheck.py in the clone)"
   fi
-  if [ -f scripts/needle.py ]; then
+  if [ "${NEEDLE_WANTED}" != yes ]; then
+    # The 195k needle is the window proof, and it is the one probe that is not free to
+    # schedule: it prefills 195k tokens the server has never seen, so the server evicts
+    # warm prompt state to make room and the conversations that were riding on that
+    # prefix re-prefill in full. The caller skips it while the box has work in flight;
+    # --needle on the caller is what sets this back to yes.
+    say "needle=skipped (the box had requests running; the 195k window proof evicts the server's warm prompt state and holds a stream for minutes -- re-run on a quiet box, or pass --needle to force it)"
+  elif [ -f scripts/needle.py ]; then
     say "needle=$(run_test needle.py scripts/needle.py --length 195000)"
   else
     say "needle=absent (no scripts/needle.py in the clone)"

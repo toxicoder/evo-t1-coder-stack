@@ -656,7 +656,7 @@ log "  3. Open ${coder_reach_url} and register the first account (it becomes the
 log "  4. bazelisk run //scripts:push-template   # re-run after step 3 if the push above skipped (image=${dev_image})"
 log "  5. bazelisk run //scripts:pull-models   # pulls the OLLAMA_MODELS listed in .env"
 log "  6. bazelisk run //scripts:coder-agents -- --apply   # wires the control-plane chat agent (LiteLLM provider + thinking models + pins + system prompt). prod-stack/dev-stack up also start this with --wait after compose is up, so registering the first account is enough; re-run --apply if you skipped that."
-log '  7. bazelisk run //scripts:spark-verify -- --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep)'
+log '  7. bazelisk run //scripts:spark-verify -- --no-tests   # read-only Spark fleet check (checks the hosts named by the SPARK*_URL keys in .env; SPARK_HOSTS="host1 host2 ..." overrides that; drop --no-tests for the 195k/bench sweep, which holds the needle off a box that has requests running unless you pass --needle)'
 log "  8. Kasm first boot: http://<host>:3000 (wizard), then http://<host>:4443 (UI)"
 log "  9. Dashboard: ${dash_reach_url}/ (login password: the HOMEPAGE_AUTH_PASSWORD line in .env, never printed here — bazelisk run //scripts:dashboard-password rotates it)"
 log " 10. LiteLLM: ${litellm_reach_url}/health — the transport every agent routes through; bazelisk run //scripts:dev-stack -- status reports on the whole stack at once"

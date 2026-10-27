@@ -10,6 +10,11 @@
 # --json keeps stdout to one object per host, and a bad flag is refused before
 # any probe leaves the box.
 #
+# It also pins what travels to the far side in the assignment block the ssh
+# session carries: the recipe-probe flag has to arrive spelled the way the
+# remote gate reads it, and the 195k needle is scheduled only on a box whose
+# /health reports nothing running -- unless --needle says otherwise.
+#
 # Usage: bazelisk test //tests:bats_spark_verify_test   (from any cwd)
 # Safety: curl, ssh and timeout resolve through tests/bats/tool_stubs and the
 # CLI runs inside a scratch checkout, so no host is dialled, no ssh session is
@@ -103,4 +108,69 @@ scratch_checkout() {
   [ "$(stub_log_count curl)" -eq 0 ]
   [ "$(stub_log_count ssh)" -eq 0 ]
   [ ! -e "${scratch}/sparks" ]
+}
+
+# The body the curl stub answers /v1/models and /health with, shaped like the TensorFold
+# server's and parameterised on the one figure the needle gate reads.
+spark_body() {
+  printf '{"models":["qwen3.8-flash-next"],"streams": {"max": 5}, "requests_running": %s}' "$1"
+}
+
+# The assignment block the entry script prepends to the remote probe body, decoded out of
+# the base64 handed to the ssh stub. That block is the entire contract with the far side:
+# the remote gates read nothing else, so this is where a mistranslation shows up.
+transferred_assignments() {
+  local line payload
+  line="$(stub_log_last ssh)"
+  [ -n "${line}" ] || return 1
+  payload="$(printf '%s' "${line}" | sed -E "s/.*printf '%s' '([^']*)'.*/\1/")"
+  [ "${payload}" != "${line}" ] || return 1
+  printf '%s' "${payload}" | base64 -d | head -n 7
+}
+
+@test "spark-verify: the recipe probes are really asked for on the far side" {
+  # The remote half gates on the literal `yes`. Handing it the entry script's own 1 read
+  # as "not asked for", so toolcheck, the needle, visioncheck and bench were skipped on
+  # every invocation -- --tests included -- while the run still printed a clean verdict.
+  local scratch assignments
+  scratch="$(scratch_checkout)"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_CURL_OUT="$(spark_body 0)" \
+    bash "${SCRIPT}" 10.0.0.1
+  assignments="$(transferred_assignments)"
+  assert_match "the asked-for case arms the probe block" 'RUN_TESTS="yes"' "${assignments}"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_CURL_OUT="$(spark_body 0)" \
+    bash "${SCRIPT}" --no-tests 10.0.0.1
+  assignments="$(transferred_assignments)"
+  assert_match "the declined case disarms it" 'RUN_TESTS=""' "${assignments}"
+}
+
+@test "spark-verify: the 195k needle is scheduled only on a box with nothing running" {
+  # The needle prefills 195k tokens the server has never seen, which evicts the warm
+  # prompt state a live conversation is riding on. The gate reads requests_running off
+  # the same /health the dashboard reads.
+  local scratch assignments
+  scratch="$(scratch_checkout)"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_CURL_OUT="$(spark_body 3)" \
+    bash "${SCRIPT}" 10.0.0.1
+  assignments="$(transferred_assignments)"
+  assert_match "a busy box is not handed the needle" 'NEEDLE_WANTED=""' "${assignments}"
+  assert_match "the cheap probes still run there" 'RUN_TESTS="yes"' "${assignments}"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_CURL_OUT="$(spark_body 0)" \
+    bash "${SCRIPT}" 10.0.0.1
+  assignments="$(transferred_assignments)"
+  assert_match "a quiet box gets the window proof" 'NEEDLE_WANTED="yes"' "${assignments}"
+}
+
+@test "spark-verify: --needle schedules the window proof even on a busy box" {
+  local scratch assignments
+  scratch="$(scratch_checkout)"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_CURL_OUT="$(spark_body 3)" \
+    bash "${SCRIPT}" --needle 10.0.0.1
+  assignments="$(transferred_assignments)"
+  assert_not_match "the flag was not refused" 'unknown option' "${stderr}"
+  assert_match "the operator's word wins over the busy gate" 'NEEDLE_WANTED="yes"' "${assignments}"
 }

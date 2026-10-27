@@ -10,6 +10,7 @@
 #   bazelisk run //scripts:spark-verify -- spark-1.lan               # assert-only, one host
 #   bazelisk run //scripts:spark-verify -- --json                    # one JSON object per host
 #   bazelisk run //scripts:spark-verify -- --no-tests <host>         # skip the recipe's own probes
+#   bazelisk run //scripts:spark-verify -- --needle <host>            # also run the 195k needle on a busy box
 #   VISION=1 bazelisk run //scripts:spark-verify -- <host>            # also run visioncheck.py
 #   SPARK_HOSTS="host1 host2" bazelisk run //scripts:spark-verify    # process env; overrides the .env-derived fleet
 #
@@ -39,7 +40,15 @@
 #                                             server whose real max_model_len is the
 #                                             262144-token window the fleet expects, so
 #                                             this is what catches a box quietly rebuilt
-#                                             with a shorter window
+#                                             with a shorter window. Skipped while the
+#                                             box reports requests_running above zero:
+#                                             the needle prefills 195k unseen tokens, so
+#                                             it evicts every warm prompt state to make
+#                                             room and a live conversation pays for it in
+#                                             a full re-prefill. Pass --needle to run it
+#                                             anyway. The window is still read passively
+#                                             every run from the server's own startup
+#                                             lines (context_pairs, startup_estimate).
 #        scripts/visioncheck.py              only when VISION=1
 #        scripts/bench.py --suite --seed 1 --jsonl run.jsonl --clients 1,2,4,5
 #      --no-tests skips all four. bazelisk run //scripts:bootstrap passes --no-tests: a 195k
@@ -99,6 +108,7 @@ recipe_dir='${HOME}/Qwen3.8-Flash-Next-Single-DGX-Spark-TensorFold'
 drift_keys="model_id_seen served_name parallel streams_max context_length context_pairs container_image kv_dtype spark1_openai spark2_openai spark3_openai"
 
 tests=1
+needle_flag=""
 ssh_user="${SPARK_SSH_USER:-${LOGNAME:-}}"
 ssh_port=22
 server_port=8888
@@ -119,6 +129,12 @@ while [ "$#" -gt 0 ]; do
       ;;
     --tests)
       tests=1
+      shift
+      ;;
+    --needle)
+      # Run the 195k window proof even on a box that has requests running. It evicts
+      # the server's warm prompt state to fit 195k unseen tokens; see the header.
+      needle_flag=1
       shift
       ;;
     --user)
@@ -353,6 +369,30 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   models="$(probe_http "${http_cap}" "http://${host}:${server_port}/v1/models")"
   health="$(probe_http "${http_cap}" "http://${host}:${server_port}/health")"
 
+  # Taken here rather than with the other /health figures because the needle gate below
+  # needs it before the ssh session opens: the probe runs on the far side, so the
+  # decision has to travel with the script. Anchored with a leading .* so the whole
+  # prefix is eaten, the same reason the streams figure below is.
+  requests_running="$(printf '%s' "${health}" | sed -n 's|.*"requests_running": *\([0-9][0-9]*\).*|\1|p')"
+  [ -n "${requests_running}" ] || requests_running=unmeasured
+
+  # The 195k needle is the one probe that is not free to schedule: it prefills 195k
+  # tokens the server has never seen, which evicts every warm prompt state to make room
+  # and leaves the conversations that were riding on that prefix to re-prefill in full.
+  # Skip it while the box reports work in flight; an unmeasured count is no evidence of
+  # load, so that case keeps today's behaviour and runs it. --needle forces it either way.
+  needle_wanted=yes
+  if [ -z "${needle_flag}" ] && [ "${requests_running}" != "0" ] && [ "${requests_running}" != "unmeasured" ]; then
+    needle_wanted=""
+  fi
+
+  # The remote half gates on the literal `yes`, so the 1/empty pair that drives this
+  # script's own branches has to be translated before it travels. Handing it `1` read as
+  # "not asked for", which is why the four recipe probes silently never ran on any
+  # invocation, --tests included.
+  run_tests=""
+  [ -z "${tests}" ] || run_tests=yes
+
   # Then ssh, for what only the box itself can say: the image tag, the container's
   # environment, the recipe clone's config.sh, and the recipe's own probes.
   target="${host}"
@@ -370,7 +410,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     # Double quotes, not single: the default recipe dir holds a literal $HOME that has
     # to expand on the far side, and the rest of these are read as paths on the far side.
     {
-      printf '%s\n' "RECIPE_DIR=\"${recipe_dir}\"" "CONTAINER=\"${container}\"" "RUN_TESTS=\"${tests}\"" "VISION_WANTED=\"${vision}\"" "TEST_CAP=\"${test_cap}\"" "have_timeout=\"${has_timeout}\""
+      printf '%s\n' "RECIPE_DIR=\"${recipe_dir}\"" "CONTAINER=\"${container}\"" "RUN_TESTS=\"${run_tests}\"" "VISION_WANTED=\"${vision}\"" "NEEDLE_WANTED=\"${needle_wanted}\"" "TEST_CAP=\"${test_cap}\"" "have_timeout=\"${has_timeout}\""
       probe_script
     } >"${script_file}"
     payload="$(base64 <"${script_file}" | tr -d '\n')"
@@ -427,8 +467,7 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
   # the first `"calls":` and hands back the line up to the number as well.
   streams_max="$(printf '%s' "${health}" | sed -n 's|.*"streams": *{[^{}]*"max": *\([0-9][0-9]*\).*|\1|p')"
   context_length="$(printf '%s' "${health}" | sed -n 's|.*"context_length": *\([0-9][0-9]*\).*|\1|p')"
-  requests_running="$(printf '%s' "${health}" | sed -n 's|.*"requests_running": *\([0-9][0-9]*\).*|\1|p')"
-  [ -n "${requests_running}" ] || requests_running=unmeasured
+  # requests_running is already parsed above, ahead of the ssh session that needs it.
 
   # Everything the fleet refuses to run mixed, gathered per host so the peer
   # comparison after the loop has something to compare. A key that was never measured

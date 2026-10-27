@@ -67,6 +67,70 @@ last_line() {
   [ "$(last_line)" = "report_end" ]
 }
 
+# A recipe clone with the four probes present and runnable, so the only thing a case
+# varies is the gate. Each stub records its own name in ran.log, which is how a case
+# proves a probe was not merely reported as skipped but never started.
+make_recipe_clone() {
+  local dir="$1" probe
+  mkdir -p "${dir}/scripts"
+  for probe in toolcheck needle visioncheck bench; do
+    {
+      printf '#!/bin/sh\n'
+      printf 'printf "%%s\\n" "%s" >>"${RECIPE_DIR}/ran.log"\n' "${probe}"
+      printf 'echo "%s ran"\n' "${probe}"
+    } >"${dir}/scripts/${probe}.py"
+    chmod +x "${dir}/scripts/${probe}.py"
+  done
+}
+
+# Run the probe the way the caller runs it: container up, clone present, tests asked
+# for. The needle gate is the argument under test, so it is the one the case passes,
+# ahead of the fixed assignments because env wants its -u options first.
+run_spark_probe() {
+  local recipe="$1"
+  shift
+  run env "$@" STUB_COMPOSE_PS="tf-server running tensorfold/decode-native:0.6.1-cu130" \
+    CONTAINER=tf-server RECIPE_DIR="${recipe}" RUN_TESTS=yes have_timeout="" \
+    sh "${PROBES_DIR}/spark-verify.sh"
+}
+
+@test "probes/spark-verify: the 195k needle is held off a box that has work in flight" {
+  local recipe="${BATS_TEST_TMPDIR}/recipe"
+  make_recipe_clone "${recipe}"
+  run_spark_probe "${recipe}" NEEDLE_WANTED=""
+  [ "${status}" -eq 0 ]
+  [ "$(last_line)" = "report_end" ]
+  assert_match "the needle reports itself skipped" '^needle=skipped' "${output}"
+  assert_match "the skip says how to force it" 'needle=skipped.*--needle' "${output}"
+  if [ -e "${recipe}/ran.log" ]; then
+    ! grep -qx needle "${recipe}/ran.log" ||
+      fail "the 195k needle was started on a busy box; ran.log: $(tr '\n' ' ' <"${recipe}/ran.log")"
+  fi
+  # The other three are cheap and stay scheduled.
+  grep -qx toolcheck "${recipe}/ran.log" || fail "toolcheck should still run: $(tr '\n' ' ' <"${recipe}/ran.log")"
+}
+
+@test "probes/spark-verify: NEEDLE_WANTED=yes runs the window proof" {
+  local recipe="${BATS_TEST_TMPDIR}/recipe"
+  make_recipe_clone "${recipe}"
+  run_spark_probe "${recipe}" NEEDLE_WANTED=yes
+  [ "${status}" -eq 0 ]
+  assert_match "the needle ran" '^needle=needle\.py: ok' "${output}"
+  grep -qx needle "${recipe}/ran.log" || fail "the needle never started"
+}
+
+@test "probes/spark-verify: an unset needle gate does not run the window proof" {
+  # The destructive probe fails closed: a caller that forgot the assignment gets a skip.
+  local recipe="${BATS_TEST_TMPDIR}/recipe"
+  make_recipe_clone "${recipe}"
+  run_spark_probe "${recipe}" -u NEEDLE_WANTED
+  [ "${status}" -eq 0 ]
+  assert_match "the needle reports itself skipped" '^needle=skipped' "${output}"
+  if [ -e "${recipe}/ran.log" ] && grep -qx needle "${recipe}/ran.log"; then
+    fail "the needle ran without being asked for"
+  fi
+}
+
 # ── probes/seed-owner.sh ────────────────────────────────────────────────────
 
 @test "probes/seed-owner: a path that is not there answers absent" {
