@@ -222,6 +222,61 @@ docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
 - The `agent` -> `coder` fallback keeps chat answering while a Spark is down, which is
   exactly when tools disappear.
 
+### The TensorFold log is full of warnings, or `resumed at 0` -> read the line shapes first
+
+The server on each Spark box logs four shapes, and three of them are this stack's own
+traffic rather than anything wrong with the box. Read the shape before you reach for
+the box.
+
+- `[tensorfold] done chatcmpl-... prompt=58 ... effort=xhigh tokens=16 finish=length`
+  followed by `warning: a reply reached max_tokens while still thinking, so its content
+  is empty`: that is the LiteLLM proxy's health check, not a user. At the pinned tag the
+  proxy sends the deployment's whole `litellm_params` through a real `acompletion`, so
+  the lane's baked `reasoning_effort` rides along, and it asks for the default
+  `health_check_max_tokens` of 16. A thinking reply cannot finish its reasoning in 16
+  tokens, so it returns empty content and the server warns about it. The reply is a
+  healthy 200 and the deployment stays in the pool.
+
+- `info: prompt cache: 80693 tokens, resumed at 79747, kept 1; 12 states, 6289 MiB and
+  0 MiB spare of 6465 MiB (hits ..., evicted ...)`: the box is out of prompt-cache room.
+  `resumed at N` is how much of the prompt it did not have to recompute, so a healthy
+  conversation logs a number just under `tokens`. `resumed at 0` means it recomputed the
+  whole prompt: something evicted that conversation's state. Watch `evicted` and the
+  state count rather than any one line.
+
+- `[tensorfold] ended chatcmpl-... reason=client-left prompt=... after=Ns`: whoever asked
+  hung up. A tiny prompt abandoned at around 81 s was a health check queued behind
+  longer work; a huge prompt abandoned at around 400 s is a client with its own timeout,
+  and it re-prefills from zero if it retries.
+
+Two things on this stack cause the evictions, and both are tuned here rather than on the
+box:
+
+- Probe cadence. `health_check_interval` and `health_check_concurrency` in
+  `litellm/config.yaml` decide how often every Spark deployment gets a real generation.
+  They sit at LiteLLM's own default of 300 s and a concurrency of 2 on purpose: at 30 s
+  across five deployments a round was putting more probes on a box than user requests,
+  and each one took a prompt-cache state from a conversation. Auto-recovery does not
+  need 30 s -- a box that is actually down is pulled by `allowed_fails` and
+  `cooldown_time` under live traffic, and the re-probe is what brings it back. If the
+  warnings come back every few seconds, that is the first key to look at.
+
+- The 195k needle. `//scripts:spark-verify` runs the recipe's `needle.py --length 195000`
+  as the window proof, and a 195k prompt the server has never seen is the largest single
+  eviction on the box. It now skips itself while `/health` reports `requests_running`
+  above zero, so it does not land on a box that is serving:
+
+```sh
+bazelisk run //scripts:spark-verify -- 10.0.0.5            # needle waits for a quiet box
+bazelisk run //scripts:spark-verify -- --needle 10.0.0.5   # force it: the box goes quiet first
+```
+
+  The window is still read passively on every run without the needle, from the server's
+  own startup lines (`context_pairs` and `startup_estimate` in the report), so a box
+  quietly rebuilt with a shorter window is still visible; the needle is the active
+  confirmation of it. `--no-tests` skips all four recipe probes for a quick read-only
+  pass, and that is what `//scripts:bootstrap` runs.
+
 ### Coder Agents chat refuses every prompt, or its model dropdown is empty -> no model config
 
 Cause: that chat has no model config on this deployment, so there is nothing to route to.

@@ -20,6 +20,11 @@
 # can catch TensorFold's status-less refusal at this LiteLLM tag, the policy names
 # the Spark lanes only, and no key the pinned tag lacks was pasted in.
 #
+# And it pins the background health-check cadence: a probe is a real thinking generation
+# on a GPU box whose prompt cache runs full, so the interval has a floor and the round
+# has a concurrency ceiling, and the two keys stay under general_settings where the proxy
+# accepts them.
+#
 # Usage: bazelisk test //tests:bats_litellm_config_test   (from any cwd)
 # Safety: reads litellm/config.yaml and the two template dirs; writes nothing.
 
@@ -233,4 +238,54 @@ policy_fields_for() {
   # The policy complements num_retries; replacing it would change every lane.
   run grep -Eq '^[[:space:]]*num_retries: 2$' "${CONFIG}"
   [ "${status}" -eq 0 ]
+}
+
+# Print the general_settings block: everything after that top-level key up to the next
+# one, comments dropped so a key named in prose cannot satisfy an assertion. Scoped so a
+# health_check_interval elsewhere in the file cannot satisfy the pin.
+general_settings_block() {
+  awk '
+    /^general_settings:/ { keep = 1; next }
+    /^[^[:space:]#]/ { keep = 0 }
+    keep && $0 !~ /^[[:space:]]*#/ { print }
+  ' "${CONFIG}"
+}
+
+@test "health: the background probe loop is a loop and not a hammer" {
+  # A probe is a real generation on the box: at v1.102.1 the proxy forwards the whole
+  # litellm_params into acompletion, so the baked reasoning_effort rides along and the
+  # probe asks for the default 16 max_tokens. A thinking reply cannot finish reasoning in
+  # 16 tokens, so it returns empty content, logs a max_tokens warning, and still takes a
+  # prompt-cache state on a box whose cache is already full ("0 MiB spare of 6465 MiB"),
+  # evicting a warm prefix that then re-prefills from zero. Cadence is a load decision.
+  local block interval concurrency
+  block="$(general_settings_block)"
+
+  interval="$(printf '%s\n' "${block}" |
+    sed -n 's/^[[:space:]]*health_check_interval:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p')"
+  assert_eq "health_check_interval is exactly one integer" "1" "$(printf '%s\n' "${interval}" | grep -c .)"
+  [ "${interval}" -ge 120 ] ||
+    fail "health_check_interval is ${interval}s: every round puts a real thinking generation on each Spark box and evicts warm prompt state; the floor is 120 and LiteLLM's own default is 300"
+
+  concurrency="$(printf '%s\n' "${block}" |
+    sed -n 's/^[[:space:]]*health_check_concurrency:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p')"
+  assert_eq "health_check_concurrency is exactly one integer" "1" "$(printf '%s\n' "${concurrency}" | grep -c .)"
+  [ "${concurrency}" -le 2 ] ||
+    fail "health_check_concurrency is ${concurrency}: one round then takes that many streams off a box the fleet already routes five streams to"
+
+  # Auto-recovery must stay armed, or a dead box never comes back on its own.
+  assert_match "the loop itself stays on" '^[[:space:]]*background_health_checks: true$' "${block}"
+}
+
+@test "health: the two interval keys never drift out of general_settings" {
+  # The proxy raises ValueError at boot when it finds these under router_settings, so
+  # drift here stops the box rather than quietly retuning it.
+  local router_block
+  router_block="$(awk '
+    /^router_settings:/ { keep = 1; next }
+    /^[^[:space:]#]/ { keep = 0 }
+    keep && $0 !~ /^[[:space:]]*#/ { print }
+  ' "${CONFIG}")"
+  assert_not_match "router_settings carries no health_check_interval" 'health_check_interval' "${router_block}"
+  assert_not_match "router_settings carries no health_check_concurrency" 'health_check_concurrency' "${router_block}"
 }

@@ -61,10 +61,14 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 - `fallbacks:` carries the degrade path `agent: ["coder"]`, repeated for each thinking
   alias, because those groups go down with exactly the same boxes.
 - `allowed_fails: 40` and `cooldown_time: 5` decide when a box stops being a candidate.
-- `background_health_checks: true`, with `health_check_interval: 30` and
-  `health_check_concurrency: 5`, re-probe a box on their own, so recovery does not
+- `background_health_checks: true`, with `health_check_interval: 300` and
+  `health_check_concurrency: 2`, re-probe a box on their own, so recovery does not
   wait for user traffic to rediscover it. Those two keys have to sit in
   `general_settings:`; under `router_settings:` the proxy raises `ValueError` at boot.
+  The interval is LiteLLM's own default and the concurrency is deliberately small:
+  a probe is a real generation that carries the lane's baked `reasoning_effort`, and
+  on a box whose prompt cache sits full it evicts a warm conversation to fit itself.
+  See the TensorFold log section of [troubleshooting.md](troubleshooting.md).
 - `num_retries: 2` covers a transient blip; moving off a busy box is routing's job, not
   the retry chain's. `request_timeout: 1200` matches the CLI's own streaming idle
   allowance, so a slow call may take a full twenty minutes before either end gives up.
