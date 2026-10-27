@@ -388,3 +388,109 @@ ENV
   assert_match "unhealthy body" 'is unhealthy' "${output}"
   assert_not_match "no bounce" 'restart coder' "$(stub_log docker)"
 }
+
+# --- public name composition at deploy time ------------------------------------
+# `up` derives the public names only when the env file asks for it. The rule has
+# three states, and two of them must export NOTHING: an empty STACK_PUBLIC_HOSTS
+# keeps the stack LAN-only and a hand-written list is honoured verbatim, so a
+# deploy never silently gains public names. Only `auto` composes, and the dev
+# project is the only one that gets an environment label by default.
+#
+# Each case runs in its own subshell with the naming keys cleared, because the
+# library reads them from the environment and a leftover key would change every
+# expected name.
+
+composed_public_env() {
+  local content="$1" project="${2:-evo-t1-dev}" envf="${BATS_TEST_TMPDIR}/envfile"
+  printf '%s' "${content}" >"${envf}"
+  (
+    set -uo pipefail
+    # shellcheck source=/dev/null
+    source "${REPO_ROOT}/scripts/lib/common.sh"
+    unset JSON_MODE
+    # shellcheck source=/dev/null
+    source "${REPO_ROOT}/scripts/lib/domain.sh"
+    PROJECT="${project}"
+    DEV_PROJECT="evo-t1-dev"
+    ENV_FILE="${envf}"
+    COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+    unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
+    unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+    unset STACK_PUBLIC_HOSTS STACK_PUBLIC_HOSTS_MODE
+    unset STACK_DASHBOARD_URL STACK_CODER_URL STACK_KASM_URL STACK_LITELLM_URL STACK_HERMES_URL
+    load_shell_function "${REPO_ROOT}/scripts/dev-stack.sh" public_deploy_env
+    # The function only ever speaks on the failure path, so its stderr travels with
+    # the four printed facts and a test can assert on the warning it emits.
+    public_deploy_env "${envf}" 2>&1
+    printf 'hosts=%s\n' "${STACK_PUBLIC_HOSTS:-<unset>}"
+    printf 'coder=%s\n' "${STACK_CODER_URL:-<unset>}"
+    printf 'hermes=%s\n' "${STACK_HERMES_URL:-<unset>}"
+    printf 'label=%s\n' "${STACK_ENV_LABEL:-<unset>}"
+  )
+}
+
+@test "dev-stack: auto mode composes the dev-labelled names for the dev project" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+'
+  [ "${status}" -eq 0 ]
+  assert_match "label defaults to dev" '^label=dev$' "${output}"
+  assert_match "coder is dev-labelled" '^coder=https://coder-dev-gmktecbeast\.overeazy\.io$' "${output}"
+  assert_match "hermes is dev-labelled" '^hermes=https://hermes-dev-gmktecbeast\.overeazy\.io$' "${output}"
+  assert_match "the allow list carries it too" 'coder-dev-gmktecbeast\.overeazy\.io' "${output}"
+}
+
+@test "dev-stack: an empty STACK_PUBLIC_HOSTS exports nothing at all" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=
+'
+  [ "${status}" -eq 0 ]
+  assert_match "hosts stay unset" '^hosts=<unset>$' "${output}"
+  assert_match "no coder url" '^coder=<unset>$' "${output}"
+  assert_match "no invented label" '^label=<unset>$' "${output}"
+}
+
+@test "dev-stack: a hand-written list is passed through with nothing exported" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=coder-pin.example.com
+STACK_CODER_URL=https://stale.example.com
+'
+  [ "${status}" -eq 0 ]
+  assert_match "hosts stay unset" '^hosts=<unset>$' "${output}"
+  assert_match "the file keeps its value" '^coder=<unset>$' "${output}"
+  assert_not_match "no composed name leaks in" 'gmktecbeast' "${output}"
+}
+
+@test "dev-stack: a label pinned in the env file beats the automatic dev default" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+STACK_ENV_LABEL=staging
+'
+  [ "${status}" -eq 0 ]
+  assert_match "staging wins" '^label=staging$' "${output}"
+  assert_match "coder is staging-labelled" '^coder=https://coder-staging-gmktecbeast\.overeazy\.io$' "${output}"
+}
+
+@test "dev-stack: a run aimed at another project gets no automatic label" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+' evo-t1-review
+  [ "${status}" -eq 0 ]
+  assert_match "no label for a stack of its own" '^label=<unset>$' "${output}"
+  assert_match "names stay unlabelled" '^coder=https://coder-gmktecbeast\.overeazy\.io$' "${output}"
+}
+
+@test "dev-stack: MODE=auto re-derives from edited parts, not from the stale list" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io
+STACK_PUBLIC_HOSTS_MODE=auto
+STACK_SUBDOMAIN_SUFFIX=beastbox
+'
+  [ "${status}" -eq 0 ]
+  assert_match "the edited suffix is followed" '^coder=https://coder-dev-beastbox\.overeazy\.io$' "${output}"
+  assert_not_match "the stale name is gone" 'coder-gmktecbeast\.overeazy\.io' "${output}"
+}
+
+@test "dev-stack: parts that cannot compose keep the deploy LAN-only and say so" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+STACK_DOMAIN_BASE=not a domain!
+'
+  [ "${status}" -eq 0 ]
+  assert_match "it warns rather than failing" 'warning:' "${output}"
+  assert_match "and names the key to fix" 'STACK_DOMAIN_BASE' "${output}"
+  assert_match "no names are exported" '^coder=<unset>$' "${output}"
+}

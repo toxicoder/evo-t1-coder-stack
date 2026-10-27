@@ -345,3 +345,112 @@ ENV
   assert_match "unhealthy body" 'evo-t1-prod-db-1 is unhealthy' "${output}"
   assert_not_match "no bounce" 'restart coder' "$(stub_log docker)"
 }
+
+# --- public_deploy_env: composed public names for a stable deploy -------------
+#
+# The stable stack shares the composition library with dev-stack and differs from it
+# in exactly one rule: it never invents an environment label. A stable install is
+# the apex name, so `--project-name evo-t1-dev` must not quietly pull `-dev` into
+# the production origin, the certificate SAN list, or the nginx vhosts. These tests
+# call the function directly in a subshell: it only touches the environment, and the
+# naming keys are cleared first because domain.sh reads the process environment and
+# a leftover key would move every expected name.
+
+composed_public_env() {
+  local content="$1" project="${2:-evo-t1-prod}" process_label="${3:-}"
+  local envf="${BATS_TEST_TMPDIR}/envfile"
+  printf '%s' "${content}" >"${envf}"
+  (
+    set -uo pipefail
+    # shellcheck source=/dev/null
+    source "${REPO_ROOT}/scripts/lib/common.sh"
+    unset JSON_MODE
+    # shellcheck source=/dev/null
+    source "${REPO_ROOT}/scripts/lib/domain.sh"
+    PROJECT="${project}"
+    ENV_FILE="${envf}"
+    COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
+    unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
+    unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+    unset STACK_PUBLIC_HOSTS STACK_PUBLIC_HOSTS_MODE
+    unset STACK_DASHBOARD_URL STACK_CODER_URL STACK_KASM_URL STACK_LITELLM_URL STACK_HERMES_URL
+    if [ -n "${process_label}" ]; then
+      export STACK_ENV_LABEL="${process_label}"
+    fi
+    load_shell_function "${REPO_ROOT}/scripts/prod-stack.sh" public_deploy_env
+    # The function only ever speaks on the failure path, so its stderr travels with
+    # the four printed facts and a test can assert on the warning it emits.
+    public_deploy_env "${envf}" 2>&1
+    printf 'hosts=%s\n' "${STACK_PUBLIC_HOSTS:-<unset>}"
+    printf 'coder=%s\n' "${STACK_CODER_URL:-<unset>}"
+    printf 'hermes=%s\n' "${STACK_HERMES_URL:-<unset>}"
+    # Bracketed, and with a sentinel only for a genuinely unset variable, so an
+    # exported empty label (the stable shape) reads differently from no label at all.
+    printf 'label=[%s]\n' "${STACK_ENV_LABEL-<unset>}"
+  )
+}
+
+@test "prod-stack: auto mode composes the unlabelled names" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+'
+  [ "${status}" -eq 0 ]
+  assert_match "no label is invented" '^label=\[\]$' "${output}"
+  assert_match "coder sits on the apex name" '^coder=https://coder-gmktecbeast\.overeazy\.io$' "${output}"
+  assert_match "hermes sits on the apex name" '^hermes=https://hermes-gmktecbeast\.overeazy\.io$' "${output}"
+  assert_match "the allow list carries it too" 'coder-gmktecbeast\.overeazy\.io' "${output}"
+}
+
+@test "prod-stack: a dev project name never pulls a dev label into the stable stack" {
+  # The one rule that separates this from dev-stack, pinned: --project-name can
+  # legitimately name any project, and a stable deploy stays on the apex name.
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+' evo-t1-dev
+  [ "${status}" -eq 0 ]
+  assert_match "no dev label" '^label=\[\]$' "${output}"
+  assert_not_match "no dev-labelled name" 'coder-dev-' "${output}"
+}
+
+@test "prod-stack: a label from the env file is honoured, and a process label outranks it" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+STACK_ENV_LABEL=blue
+'
+  [ "${status}" -eq 0 ]
+  assert_match "the file label is honoured" '^label=\[blue\]$' "${output}"
+  assert_match "coder carries the label" '^coder=https://coder-blue-gmktecbeast\.overeazy\.io$' "${output}"
+
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+STACK_ENV_LABEL=blue
+' evo-t1-prod green
+  [ "${status}" -eq 0 ]
+  assert_match "what the caller already had wins" '^label=\[green\]$' "${output}"
+  assert_match "coder carries it" '^coder=https://coder-green-gmktecbeast\.overeazy\.io$' "${output}"
+}
+
+@test "prod-stack: an empty STACK_PUBLIC_HOSTS exports nothing at all" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=
+'
+  [ "${status}" -eq 0 ]
+  assert_match "hosts stay unset" '^hosts=<unset>$' "${output}"
+  assert_match "no coder url" '^coder=<unset>$' "${output}"
+  assert_match "no invented label" '^label=\[<unset>\]$' "${output}"
+}
+
+@test "prod-stack: a hand-written list is passed through with nothing exported" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=coder-pin.example.com
+STACK_CODER_URL=https://stale.example.com
+'
+  [ "${status}" -eq 0 ]
+  assert_match "hosts stay unset" '^hosts=<unset>$' "${output}"
+  assert_match "the file keeps its value" '^coder=<unset>$' "${output}"
+  assert_not_match "no composed name leaks in" 'gmktecbeast' "${output}"
+}
+
+@test "prod-stack: parts that cannot compose keep the deploy LAN-only and say so" {
+  run composed_public_env 'STACK_PUBLIC_HOSTS=auto
+STACK_DOMAIN_BASE=not a domain!
+'
+  [ "${status}" -eq 0 ]
+  assert_match "it warns rather than failing" 'warning:' "${output}"
+  assert_match "and names the key to fix" 'STACK_DOMAIN_BASE' "${output}"
+  assert_match "no names are exported" '^coder=<unset>$' "${output}"
+}

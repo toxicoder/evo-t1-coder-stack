@@ -52,6 +52,16 @@
 #    instead of failing when no daemon answers, which is the normal state
 #    inside the sandbox.
 #
+# Public names come from the env file, and `up` only derives them when that file
+# asks for it: `auto` in STACK_PUBLIC_HOSTS, or in the bootstrap bookkeeping key
+# STACK_PUBLIC_HOSTS_MODE, means compose gets the composed names exported into the
+# process environment, which keeps the stable stack on coder-<suffix>.<base> — this
+# script never invents an environment label, so STACK_ENV_LABEL comes from the
+# process environment or the file or stays empty. An empty STACK_PUBLIC_HOSTS
+# exports nothing — the stack stays LAN-only — and a hand-written list is passed
+# through verbatim, also with nothing exported: only `auto` composes, and this
+# script never rewrites a value in the file.
+#
 # Usage (Bazel is the entry point; every example below is the whole command):
 #   bazelisk run //scripts:prod-stack -- up
 #   bazelisk run //scripts:prod-stack -- status
@@ -65,7 +75,9 @@
 #   -p, --project-name <name>  compose project to address, default evo-t1-prod
 #   -f, --file <file>          compose file, default <root>/docker-compose.yml
 #   -e, --env-file <file>      env file to interpolate from, default none
-#                              (compose then reads the .env beside the compose file)
+#                              (compose then reads the .env beside the compose
+#                              file, which is where the public-mode keys
+#                              STACK_PUBLIC_HOSTS / STACK_PUBLIC_HOSTS_MODE live)
 #       --tail <n>             for logs: how many lines per service, default 100
 #       --follow               for logs: keep following instead of printing a slice
 #                              (`-f` is the compose file, never a second meaning)
@@ -89,6 +101,8 @@ source "${SELF_DIR}/lib/common.sh"
 source "${SELF_DIR}/lib/host_state.sh"
 # shellcheck source=lib/pg-apply-password.sh disable=SC1091
 source "${SELF_DIR}/lib/pg-apply-password.sh"
+# shellcheck source=lib/domain.sh disable=SC1091
+source "${SELF_DIR}/lib/domain.sh"
 
 PROJECT="evo-t1-prod"
 COMPOSE_FILE=""
@@ -115,7 +129,11 @@ usage: bazelisk run //scripts:prod-stack -- [--project-name <name>] [--file <fil
 
   up            docker compose up -d for the stable project, re-apply the
                 Postgres role password from .env, bounce coder if it was
-                failing auth, then the URL summary
+                failing auth, then the URL summary. When the env file asks for
+                public mode (auto in STACK_PUBLIC_HOSTS or in the bootstrap key
+                STACK_PUBLIC_HOSTS_MODE), the composed public names are exported
+                for that compose run; an empty value or a hand-written list
+                exports nothing, and no environment label is invented here.
   down          stop the stable project and keep its volumes
   status        read-only report: compose CLI, daemon, project, services
   logs          print compose logs (default: the last 100 lines per service;
@@ -124,7 +142,8 @@ usage: bazelisk run //scripts:prod-stack -- [--project-name <name>] [--file <fil
 
 Options: -p/--project-name (default evo-t1-prod; name the checkout folder to
 address a stack brought up by hand), -f/--file, -e/--env-file (default: the
-.env beside the compose file), --tail, --follow (logs only), --json, -y/--yes,
+.env beside the compose file, which is also where STACK_PUBLIC_HOSTS and
+STACK_ENV_LABEL live), --tail, --follow (logs only), --json, -y/--yes,
 -h/--help. A bare word is a subcommand: only `logs` takes trailing words, and
 they name services.
 
@@ -283,12 +302,101 @@ report_stack() {
   return 0
 }
 
+# @function public_deploy_env
+# Export the composed public names for a public "auto" deploy, so compose
+# interpolates coder-<suffix>.<base> instead of its LAN fallbacks. The three states
+# of STACK_PUBLIC_HOSTS are the whole rule: empty exports nothing (the stack stays
+# LAN-only), an explicit list exports nothing (the file is honoured verbatim), and
+# `auto` is the only state that derives — in that key or in the bootstrap bookkeeping
+# key STACK_PUBLIC_HOSTS_MODE, in the process environment or in the env file. The
+# stable stack carries no environment label unless the operator set one, so this
+# never invents one. Pure env work: nothing is written to a file, docker is never
+# called, and no value the operator set by hand is changed.
+# Globals:
+#   ENV_FILE, COMPOSE_FILE, STACK_PUBLIC_HOSTS, STACK_PUBLIC_HOSTS_MODE,
+#   STACK_ENV_LABEL, and the naming keys domain.sh reads (STACK_DOMAIN_BASE,
+#   STACK_SUBDOMAIN_SUFFIX, STACK_*_NAME); JSON_MODE via warn
+# Arguments:
+#   $1 - env file compose will read; empty resolves it the way report_urls does
+# Outputs:
+#   STACK_ENV_LABEL, STACK_PUBLIC_HOSTS, the five STACK_*_URL keys and any naming
+#   part the file carries, exported into the process environment; note:/warning:
+#   lines when no name composes
+# Returns:
+#   0 always
+public_deploy_env() {
+  local env_src="${1:-}" auto=0 want label key value hosts line
+  if [[ -z ${env_src} ]]; then
+    env_src="${ENV_FILE:-$(dirname "${COMPOSE_FILE:-/nonexistent}")/.env}"
+  fi
+
+  for want in "${STACK_PUBLIC_HOSTS:-}" "${STACK_PUBLIC_HOSTS_MODE:-}"; do
+    if [[ ${want} == auto ]]; then
+      auto=1
+    fi
+  done
+  if [[ -f ${env_src} ]]; then
+    for want in "$(env_get "${env_src}" STACK_PUBLIC_HOSTS)" \
+      "$(env_get "${env_src}" STACK_PUBLIC_HOSTS_MODE)"; do
+      if [[ ${want} == auto ]]; then
+        auto=1
+      fi
+    done
+  fi
+  if [[ ${auto} != 1 ]]; then
+    return 0
+  fi
+
+  # domain.sh reads the process environment and nothing else, so the naming parts the
+  # operator put in the file have to travel there first: composing from the baked
+  # defaults while the file names another zone would export names nobody owns.
+  for key in STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_DASHBOARD_NAME \
+    STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME; do
+    if [[ -z ${!key+set} ]]; then
+      value="$(env_get "${env_src}" "${key}")"
+      if [[ -n ${value} ]]; then
+        export "${key}=${value}"
+      fi
+    fi
+  done
+
+  # The label is the operator's, never this script's: the process environment first,
+  # then the file, then nothing, which is the unlabelled stable shape.
+  label="${STACK_ENV_LABEL:-}"
+  if [[ -z ${label} && -f ${env_src} ]]; then
+    label="$(env_get "${env_src}" STACK_ENV_LABEL)"
+  fi
+  export STACK_ENV_LABEL="${label}"
+
+  hosts="$(public_hosts_default)"
+  if [[ -z ${hosts} ]]; then
+    warn "public auto mode composed no name from ${env_src}: this deploy stays LAN-only"
+    note "set STACK_DOMAIN_BASE (with STACK_SUBDOMAIN_SUFFIX and STACK_ENV_LABEL) in that file, or list the names by hand in STACK_PUBLIC_HOSTS"
+    return 0
+  fi
+  export STACK_PUBLIC_HOSTS="${hosts}"
+  while IFS= read -r line; do
+    [[ -n ${line} ]] || continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "${key}" in
+      STACK_DASHBOARD_URL) export STACK_DASHBOARD_URL="${value}" ;;
+      STACK_CODER_URL) export STACK_CODER_URL="${value}" ;;
+      STACK_KASM_URL) export STACK_KASM_URL="${value}" ;;
+      STACK_LITELLM_URL) export STACK_LITELLM_URL="${value}" ;;
+      STACK_HERMES_URL) export STACK_HERMES_URL="${value}" ;;
+    esac
+  done < <(public_urls_default)
+  return 0
+}
+
 # @function report_urls
 # Print where the running stack can be opened (dashboard, Coder, LiteLLM, Kasm,
 # Hermes), then where the dashboard password lives and one command worth
 # running next.
 # Globals:
-#   ENV_FILE, COMPOSE_FILE
+#   ENV_FILE, COMPOSE_FILE, STACK_DASHBOARD_URL, STACK_CODER_URL, STACK_KASM_URL,
+#   STACK_LITELLM_URL, STACK_HERMES_URL (each preferred over the file when exported)
 # Arguments:
 #   None
 # Outputs:
@@ -296,11 +404,12 @@ report_stack() {
 # Returns:
 #   0
 report_urls() {
-  local host coder_port litellm_port kasm_port dash_port hermes_port coder_url litellm_url dash_url hermes_url env_src
+  local host coder_port litellm_port kasm_port dash_port hermes_port coder_url litellm_url dash_url hermes_url kasm_url env_src
   host=""
-  # The env file is the only place these keys live: compose interpolates them
-  # from --env-file when one is named and from the .env beside the compose
-  # file when it is not, so the same lookup works for both modes.
+  # The env file is where these keys live: compose interpolates them from --env-file
+  # when one is named and from the .env beside the compose file when it is not, so
+  # the same lookup works for both modes. An exported value wins over the file,
+  # because that is what an auto deploy gets composed for it.
   env_src="${ENV_FILE:-}"
   if [ -z "${env_src}" ]; then
     env_src="$(dirname "${COMPOSE_FILE:-/nonexistent}")/.env"
@@ -314,14 +423,15 @@ report_urls() {
   kasm_port="$(env_get "${env_src}" KASM_UI_PORT)"
   dash_port="$(env_get "${env_src}" HOMEPAGE_HTTPS_PORT)"
   hermes_port="$(env_get "${env_src}" HERMES_DASHBOARD_PORT)"
-  coder_url="$(env_get "${env_src}" STACK_CODER_URL)"
-  litellm_url="$(env_get "${env_src}" STACK_LITELLM_URL)"
-  dash_url="$(env_get "${env_src}" STACK_DASHBOARD_URL)"
-  hermes_url="$(env_get "${env_src}" STACK_HERMES_URL)"
+  coder_url="${STACK_CODER_URL:-$(env_get "${env_src}" STACK_CODER_URL)}"
+  litellm_url="${STACK_LITELLM_URL:-$(env_get "${env_src}" STACK_LITELLM_URL)}"
+  dash_url="${STACK_DASHBOARD_URL:-$(env_get "${env_src}" STACK_DASHBOARD_URL)}"
+  hermes_url="${STACK_HERMES_URL:-$(env_get "${env_src}" STACK_HERMES_URL)}"
+  kasm_url="${STACK_KASM_URL:-$(env_get "${env_src}" STACK_KASM_URL)}"
   printf 'dashboard: %s\n' "${dash_url:-https://${host}:${dash_port:-443}}"
   printf 'coder:     %s\n' "${coder_url:-https://${host}:${coder_port:-3001}}"
   printf 'litellm:   %s\n' "${litellm_url:-http://${host}:${litellm_port:-4000}}"
-  printf 'kasm:      https://%s:%s\n' "${host}" "${kasm_port:-4443}"
+  printf 'kasm:      %s\n' "${kasm_url:-https://${host}:${kasm_port:-4443}}"
   printf 'hermes:    %s\n' "${hermes_url:-http://${host}:${hermes_port:-9119}}"
   printf 'password:  the dashboard login password is HOMEPAGE_AUTH_PASSWORD in %s (rotate it with bazelisk run //scripts:dashboard-password)\n' \
     "${env_src}"
@@ -475,6 +585,11 @@ main() {
       section "Compose"
       phase "compose up"
       repair_stale_runfiles "${root}" 0 || true
+      # Only `up` interpolates: the exports have to be in place before the first
+      # compose call here, and status/logs must stay byte-identical on a host that
+      # is configured for public mode. No --env-file means the .env beside the
+      # compose file, which is what the function resolves for itself.
+      public_deploy_env "${ENV_FILE}"
       compose_up_or_diagnose_db
       restart_coder_if_pg_auth_failed
       start_coder_agents_wait "${root}"
