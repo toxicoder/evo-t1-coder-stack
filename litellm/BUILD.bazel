@@ -1,0 +1,14 @@
+"""Package purpose: LiteLLM model-routing payload.
+
+`config.yaml` is the sole model-transport routing file: LiteLLM bind-mounts it read-only at
+`/app/config.yaml`, `scripts/validate.sh` parses it as YAML, and the LiteLLM routing docs
+describe it. It is its own package so a consumer names the one file it reads instead of
+taking the whole payload tree from `//:stack_data`.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "config",
+    srcs = ["config.yaml"],
+)

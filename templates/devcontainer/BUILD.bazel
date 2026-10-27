@@ -1,0 +1,21 @@
+"""Package purpose: The `devcontainer` Coder template payload.
+
+Same shape as `templates/workspace/`, with the dev-container extras: `dind-bootstrap.sh.tftpl`
+brings up the workspace's own DinD sidecar and `code-server.sh.tftpl` serves the browser IDE.
+`scripts/push-template.sh` pushes this tree and globs `*.tf` inside it, so the tree is
+addressed as one group. The twin in `templates/workspace/` keeps an independent copy by
+design, and both twins are edited together (AGENTS.md).
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "payload",
+    srcs = [".terraform.lock.hcl"] + glob(
+        [
+            "*.tf",
+            "*.tftpl",
+        ],
+        allow_empty = True,
+    ),
+)

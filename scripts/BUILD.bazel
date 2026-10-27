@@ -1,15 +1,21 @@
 """Package purpose: Operational shell and the validate orchestrator.
 
-Every script under this package is a Bazel target: one generated runfiles
-launcher (//tools:exec_shell.bzl) plus one sh_binary wrapper per scripts/*.sh,
-so `bazelisk run //scripts:<stem> -- <args>` works from a foreign cwd and from
-a checkout whose scripts are mode 100644. Entry scripts cd to a repo root they
-resolve themselves and then read repo files by path, so the compose file, both
-template payload trees, the golden-image pins, litellm/config.yaml, homepage/**,
-proxy/*.conf, searxng/settings.yml and the two .env samples ride along in
-runfiles (//:stack_data), and every scripts/**.sh rides along too
-(:doc_sources) — a sourced lib must resolve inside the sandbox just like the
-entry script that sources it.
+Every script under this package is a Bazel target: one generated runfiles launcher
+(//tools:exec_shell.bzl) plus one sh_binary wrapper per scripts/*.sh, so
+`bazelisk run //scripts:<stem> -- <args>` works from a foreign cwd and from a checkout
+whose scripts are mode 100644. Entry scripts cd to a repo root they resolve themselves and
+then read repo files by path, so each target declares two things and nothing else:
+
+  - the exact `scripts/lib` files it sources, executes, or ships to a remote host
+    (`_SCRIPT_LIBS`), and
+  - the payload groups whose files it reads (`_SCRIPT_PAYLOAD`, plus
+    `_SCRIPT_PAYLOAD_ALLOW` for the pairings a source scan cannot derive).
+
+Both maps are the machine-readable dependency record for this package: //tests reads them
+and re-derives them from the sources, so a script that starts reading a new payload fails
+the gate until its target says so. The payload groups live in the root BUILD.bazel and the
+payload packages (//litellm:config, //homepage:payload, //proxy:confs, ...); see
+`//:stack_data` for the aggregate a target declares only when it addresses the repo whole.
 """
 
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
@@ -17,14 +23,23 @@ load("//tools:exec_shell.bzl", "exec_shell")
 
 package(default_visibility = ["//visibility:private"])
 
+# This package's own target declarations, for the dependency gate in //tests.
 filegroup(
-    name = "doc_sources",
+    name = "build_file",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# Source groups. :doc_sources is the union the lint and coverage drivers declare
+# so that any sourced lib, awk program, or Python helper resolves inside runfiles;
+# the three groups beside it let a consumer ask for shell only.
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "shell_sources",
     srcs = glob(
-        [
-            "**/*.awk",
-            "**/*.py",
-            "**/*.sh",
-        ],
+        ["**/*.sh"],
         allow_empty = True,
     ),
     visibility = [
@@ -34,31 +49,349 @@ filegroup(
     ],
 )
 
-exports_files(
-    glob(
-        [
-            "**/*.awk",
-            "**/*.py",
-            "**/*.sh",
-        ],
+filegroup(
+    name = "py_programs",
+    srcs = glob(
+        ["**/*.py"],
         allow_empty = True,
     ),
     visibility = [
         "//lints:__pkg__",
         "//tests:__pkg__",
+        "//visibility:public",
     ],
 )
 
-# Repo files a wrapped script may read by path, beside the shell it sources.
-_SCRIPT_DATA = [
-    ":doc_sources",
-    "//:stack_data",
-]
+filegroup(
+    name = "awk_programs",
+    srcs = glob(
+        ["**/*.awk"],
+        allow_empty = True,
+    ),
+    visibility = [
+        "//lints:__pkg__",
+        "//tests:__pkg__",
+        "//visibility:public",
+    ],
+)
 
-# One target pair per entry script, generated from the directory so a new
-# scripts/*.sh is a Bazel target without a second edit here. scripts/lib/*.sh
-# stays sourced-only: it reaches runfiles through :doc_sources instead of
-# gaining a runnable target of its own.
+filegroup(
+    name = "doc_sources",
+    srcs = [
+        ":awk_programs",
+        ":py_programs",
+        ":shell_sources",
+    ],
+    visibility = [
+        "//lints:__pkg__",
+        "//tests:__pkg__",
+        "//visibility:public",
+    ],
+)
+
+# The POSIX probes scripts/lib/config_seed.sh cats and ships into a workspace container.
+filegroup(
+    name = "seed_probes",
+    srcs = [
+        "lib/probes/seed-find-mtime.sh",
+        "lib/probes/seed-owner.sh",
+        "lib/probes/seed-rm-mtime.sh",
+        "lib/probes/seed-write.sh",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# validate.sh is the only file in this package another package addresses by label.
+exports_files(["validate.sh"])
+
+# ---------------------------------------------------------------------------
+# Per-script dependency maps. Both are read by //tests:bats_bazel_deps_test, which
+# re-derives them from the sources, so keep them literal: strings and lists only, no
+# concatenation, no comprehensions.
+#
+# _SCRIPT_LIBS is the transitive source closure: an entry script's own `source`,
+# `awk -f`, `python3` and probe `cat` lines plus whatever its libs source. A missing
+# entry here is a hard startup failure under `bazel run`, not a silent miss.
+#
+# _SCRIPT_PAYLOAD names the payload groups whose files the script (or a lib it
+# sources) reads by path. //:compose_file appears on every script that resolves a
+# repo root: it is the marker resolve_checkout in scripts/lib/common.sh probes for,
+# not just the compose project file.
+#
+# _SCRIPT_PAYLOAD_ALLOW carries a pairing the source scan cannot derive in either
+# direction - help text, a `case` glob over `git diff` output, a runtime discovery.
+# Every entry states which.
+# ---------------------------------------------------------------------------
+
+_SCRIPT_LIBS = {
+    "bootstrap": [
+        "lib/bootstrap.sh",
+        "lib/common.sh",
+        "lib/domain.sh",
+    ],
+    "build-dev-image": [
+        "lib/common.sh",
+        "lib/dockerfile_args.awk",
+        "lib/image.sh",
+    ],
+    "coder-agents": [
+        "lib/coder_api.sh",
+        "lib/common.sh",
+    ],
+    "dashboard-password": [
+        "lib/coder_api.sh",
+        "lib/common.sh",
+    ],
+    "dev-stack": [
+        "lib/common.sh",
+        "lib/domain.sh",
+        "lib/host_resolve.py",
+        "lib/host_state.sh",
+        "lib/pg-apply-password.sh",
+    ],
+    "github-auth": [
+        "lib/common.sh",
+        "lib/probes/github-auth.sh",
+    ],
+    "hermes-bootstrap": [
+        "lib/common.sh",
+    ],
+    "install-hooks": [
+        "lib/common.sh",
+    ],
+    "mcp-check": [
+        "lib/common.sh",
+        "lib/mcp_lane_report.py",
+    ],
+    "new-workspace": [
+        "lib/common.sh",
+        "lib/workspace.sh",
+    ],
+    "pre-commit": [
+        "lib/common.sh",
+    ],
+    "prod-stack": [
+        "lib/common.sh",
+        "lib/domain.sh",
+        "lib/host_resolve.py",
+        "lib/host_state.sh",
+        "lib/pg-apply-password.sh",
+    ],
+    "pull-models": [
+        "lib/coder_api.sh",
+        "lib/common.sh",
+    ],
+    "push-template": [
+        "lib/coder_api.sh",
+        "lib/common.sh",
+        "lib/preset_desc.awk",
+        "lib/template-push.sh",
+    ],
+    "refresh-configs": [
+        "lib/common.sh",
+        "lib/config_seed.sh",
+        "lib/json_copy_key.py",
+        ":seed_probes",
+    ],
+    "search-check": [
+        "lib/common.sh",
+    ],
+    "seed-dev-env": [
+        "lib/common.sh",
+        "lib/config_seed.sh",
+        "lib/json_copy_key.py",
+        "lib/tftpl_strip_gates.awk",
+        ":seed_probes",
+    ],
+    "setup-host": [
+        "lib/common.sh",
+        "lib/host_resolve.py",
+        "lib/host_state.sh",
+        "lib/tool_pins.sh",
+    ],
+    "spark-configure": [
+        "lib/common.sh",
+        "lib/probes/spark-configure.sh",
+        "lib/spark.sh",
+    ],
+    "spark-verify": [
+        "lib/common.sh",
+        "lib/probes/spark-verify.sh",
+        "lib/spark.sh",
+    ],
+    "storage-clean": [
+        "lib/common.sh",
+        "lib/config_seed.sh",
+        "lib/json_copy_key.py",
+        ":seed_probes",
+    ],
+    "test-in-image": [
+        "lib/common.sh",
+    ],
+    "update-configs": [
+        "lib/common.sh",
+        "lib/config_seed.sh",
+        "lib/env_set_key.awk",
+        "lib/host_resolve.py",
+        "lib/host_state.sh",
+        "lib/json_copy_key.py",
+        "lib/key_comment.awk",
+        ":seed_probes",
+    ],
+    "update-stack": [
+        "lib/common.sh",
+    ],
+    "validate": [
+        "lib/common.sh",
+        "lib/parse_yaml.py",
+    ],
+}
+
+_SCRIPT_PAYLOAD = {
+    "bootstrap": [
+        "//:compose_file",
+        "//:env_sample",
+        "//:templates_payload",
+        "//proxy:confs",
+    ],
+    "build-dev-image": [
+        "//:compose_file",
+        "//images/dev:context",
+    ],
+    "coder-agents": [
+        "//:compose_file",
+    ],
+    "dashboard-password": [
+        "//:compose_file",
+    ],
+    "dev-stack": [
+        "//:compose_file",
+        "//homepage:payload",
+        "//proxy:confs",
+    ],
+    "github-auth": [
+        "//:compose_file",
+    ],
+    "hermes-bootstrap": [
+        "//:compose_file",
+        "//hermes:seed",
+    ],
+    "install-hooks": [
+        "//:compose_file",
+        "//:githooks",
+    ],
+    "mcp-check": [
+        "//:compose_file",
+        "//images/dev:tool_versions",
+    ],
+    "new-workspace": [
+        "//:compose_file",
+    ],
+    "pre-commit": [
+        "//:compose_file",
+        "//:env_example",
+        "//:env_sample",
+    ],
+    "prod-stack": [
+        "//:compose_file",
+        "//homepage:payload",
+        "//proxy:confs",
+    ],
+    "pull-models": [
+        "//:compose_file",
+    ],
+    "push-template": [
+        "//:compose_file",
+        "//:templates_payload",
+    ],
+    "refresh-configs": [
+        "//:compose_file",
+        "//:templates_payload",
+    ],
+    "search-check": [
+        "//:compose_file",
+    ],
+    "seed-dev-env": [
+        "//:compose_file",
+        "//:githooks",
+        "//:templates_payload",
+    ],
+    "setup-host": [
+        "//homepage:payload",
+        "//proxy:confs",
+    ],
+    "spark-configure": [
+        "//:compose_file",
+    ],
+    "spark-verify": [
+        "//:compose_file",
+    ],
+    "storage-clean": [
+        "//:compose_file",
+        "//:templates_payload",
+    ],
+    "test-in-image": [
+        "//:compose_file",
+        "//images/dev:context",
+    ],
+    "update-configs": [
+        "//:compose_file",
+        "//:env_example",
+        "//:env_sample",
+        "//:templates_payload",
+        "//homepage:payload",
+        "//proxy:confs",
+    ],
+    "update-stack": [
+        "//:compose_file",
+    ],
+    "validate": [
+        "//:compose_file",
+        "//:env_example",
+        "//:env_sample",
+        "//:templates_payload",
+        "//hermes:seed",
+        "//homepage:config",
+        "//litellm:config",
+    ],
+}
+
+_SCRIPT_PAYLOAD_ALLOW = {
+    # HELP text only; lib/workspace.sh matches these paths against a remote
+    # `git ls-tree`, never against the checkout.
+    "new-workspace": [
+        "//:devcontainer",
+    ],
+    # `searxng` here is a regex over ~/.grok/config.toml, not the payload tree.
+    "mcp-check": [
+        "//searxng:settings",
+    ],
+    # These paths appear only inside `case` globs over `git diff --name-only`
+    # output, so the script never opens them.
+    "update-stack": [
+        "//hermes:seed",
+        "//homepage:payload",
+        "//litellm:config",
+        "//proxy:confs",
+        "//searxng:settings",
+    ],
+    # setup-host reads no compose file: it roots itself at SELF_DIR/.. and never
+    # calls resolve_checkout.
+    "setup-host": [
+        "//:compose_file",
+        # lib/tool_pins.sh builds the path `${root}/images/dev/tool-versions.env`
+        # and hands that string back; setup-host hashes the file through it, so no
+        # line in either source names the payload.
+        "//images/dev:context",
+    ],
+}
+
+# One target pair per entry script, generated from the directory so a new scripts/*.sh is a
+# Bazel target without a second edit here. scripts/lib/*.sh stays sourced-only: it reaches
+# runfiles through the per-script maps and :doc_sources instead of gaining a runnable target.
+#
+# A scripts/*.sh with no key in _SCRIPT_LIBS or _SCRIPT_PAYLOAD fails analysis rather than
+# quietly inheriting the world, which is what keeps the two maps complete.
 _ENTRY_SCRIPTS = glob(
     ["*.sh"],
     allow_empty = True,
@@ -68,7 +401,12 @@ _ENTRY_SCRIPTS = glob(
     exec_shell(
         name = src.replace(".sh", "") + "_exec",
         src = src,
-        data = _SCRIPT_DATA,
+        data = _SCRIPT_LIBS[src.replace(".sh", "")] +
+               _SCRIPT_PAYLOAD[src.replace(".sh", "")] +
+               _SCRIPT_PAYLOAD_ALLOW.get(
+                   src.replace(".sh", ""),
+                   [],
+               ),
     )
     for src in _ENTRY_SCRIPTS
 ]
@@ -77,7 +415,12 @@ _ENTRY_SCRIPTS = glob(
     sh_binary(
         name = src.replace(".sh", ""),
         srcs = [":" + src.replace(".sh", "") + "_exec"],
-        data = _SCRIPT_DATA,
+        data = _SCRIPT_LIBS[src.replace(".sh", "")] +
+               _SCRIPT_PAYLOAD[src.replace(".sh", "")] +
+               _SCRIPT_PAYLOAD_ALLOW.get(
+                   src.replace(".sh", ""),
+                   [],
+               ),
         visibility = ["//visibility:public"],
     )
     for src in _ENTRY_SCRIPTS

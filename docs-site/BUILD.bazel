@@ -26,43 +26,149 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
 package(default_visibility = ["//visibility:private"])
 
+# This package's own target declarations, for the dependency gate in //tests.
+filegroup(
+    name = "build_file",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
 _NPM_DATA = [
     ":sources",
     "//docs:content",
 ]
 
+# Named groups under :sources so a consumer asks for what it runs instead of the whole
+# tree. Every group is public: //docs and //tests pull these directly, and the runners
+# only ever receive their files through a data edge, so nothing here needs exports_files.
+#
+# Whether the data edge carries any weight depends on how the runner starts. Both
+# runners prefer BUILD_WORKSPACE_DIRECTORY and cd into the real docs-site/, so any
+# `bazel run`/`bazel test` invoked from inside the checkout ignores the data files
+# entirely; they are the fallback for a foreign cwd (SCRIPT_DIR), where runfiles is all
+# the runner has. Per target:
+#   install      only `npm ci` runs, which reads package.json + package-lock.json, so
+#                :npm_manifest + :runners is the whole fallback.
+#   nav_test     `unittest discover` runs the suite out of runfiles, so :python_sources
+#                and :runners are load-bearing there. The generator's REPO_ROOT comes
+#                from Path(__file__).resolve(), which follows the runfiles symlink back
+#                into the checkout, so the docs/ pages it validates and the nav.json it
+#                reads come from the checkout, not from :docs:content — that edge is
+#                declared for honesty about what the generator touches, not because the
+#                sandbox copy is ever opened.
+#   unit_coverage run_in_real_checkout() refuses to measure symlinked sources (v8 reads
+#                0%), so it demands the checkout and its data is never consulted; it
+#                keeps the full tree only so the target stays runnable the same way the
+#                other npm gates are.
+#   the rest     Next's build, Vitest, tsc and verify_site.mjs read pages, components,
+#                lib/, the configs and the sibling docs/ content, so :sources is honest.
+
 filegroup(
-    name = "sources",
+    name = "npm_manifest",
+    srcs = [
+        "package.json",
+        "package-lock.json",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "app",
     srcs = glob(
-        [
-            "app/**",
-            "components/**",
-            "lib/**",
-            "scripts/**",
-            "tests/**",
-            "next.config.ts",
-            "package.json",
-            "package-lock.json",
-            "pages-root-index.html",
-            "postcss.config.mjs",
-            "source.config.ts",
-            "tsconfig.json",
-            "vitest.config.ts",
-            "test_*.py",
-        ],
+        ["app/**"],
         allow_empty = True,
-    ) + [
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "components",
+    srcs = glob(
+        ["components/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "lib",
+    srcs = glob(
+        ["lib/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "site_scripts",
+    srcs = glob(
+        ["scripts/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "unit_tests",
+    srcs = glob(
+        ["tests/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "configs",
+    srcs = [
+        "next.config.ts",
+        "postcss.config.mjs",
+        "source.config.ts",
+        "tsconfig.json",
+        "vitest.config.ts",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "static",
+    srcs = ["pages-root-index.html"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "runners",
+    srcs = [
         "run_npm.sh",
         "run_python_test.sh",
     ],
     visibility = ["//visibility:public"],
 )
 
-exports_files(
-    [
-        "package.json",
-        "package-lock.json",
-        "run_npm.sh",
+# What //tests:py_coverage runs in this tree: tests/coverage/py_cov.sh discovers
+# docs-site:test_gen_nav.py, which imports scripts/gen_nav.py. Nothing else here is a
+# Python test entry point.
+filegroup(
+    name = "python_sources",
+    srcs = glob(
+        ["test_*.py"],
+        allow_empty = True,
+    ) + ["scripts/gen_nav.py"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "sources",
+    srcs = [
+        ":app",
+        ":components",
+        ":configs",
+        ":lib",
+        ":npm_manifest",
+        ":python_sources",
+        ":runners",
+        ":site_scripts",
+        ":static",
+        ":unit_tests",
     ],
     visibility = ["//visibility:public"],
 )
@@ -70,7 +176,10 @@ exports_files(
 sh_binary(
     name = "install",
     srcs = ["run_npm.sh"],
-    data = _NPM_DATA,
+    data = [
+        ":npm_manifest",
+        ":runners",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -168,7 +277,11 @@ sh_test(
     name = "nav_test",
     size = "small",
     srcs = ["run_python_test.sh"],
-    data = _NPM_DATA,
+    data = [
+        ":python_sources",
+        ":runners",
+        "//docs:content",
+    ],
     tags = ["no-sandbox"],
     visibility = ["//visibility:public"],
 )

@@ -1,0 +1,34 @@
+"""Package purpose: Hermes host-assistant payload.
+
+`config.yaml` and `SOUL.md` are the seed files `scripts/hermes-bootstrap.sh` copies into the
+Hermes named volume; `skills/` is mounted read-only at `/opt/stack-skills` by compose and is
+never read by a script, so it is separable from the seed.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "seed",
+    srcs = [
+        "SOUL.md",
+        "config.yaml",
+    ],
+)
+
+filegroup(
+    name = "skills",
+    srcs = glob(
+        ["skills/**"],
+        allow_empty = True,
+    ),
+)
+
+# The whole `/seed` tree compose mounts, for the runners and suites that address hermes as
+# one directory.
+filegroup(
+    name = "payload",
+    srcs = [
+        ":seed",
+        ":skills",
+    ],
+)

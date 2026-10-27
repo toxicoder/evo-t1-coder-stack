@@ -1,1 +1,9 @@
 """Package purpose: Shared Starlark rules."""
+
+# The rule file travels with any target that loads it, so the dependency gate can read
+# the launcher contract under hermetic runfiles.
+filegroup(
+    name = "exec_shell_bzl",
+    srcs = ["exec_shell.bzl"],
+    visibility = ["//visibility:public"],
+)

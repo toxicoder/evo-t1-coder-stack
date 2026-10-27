@@ -1,0 +1,13 @@
+"""Package purpose: SearXNG search-lane payload.
+
+`settings.yml` is bind-mounted read-only at `/etc/searxng/settings.yml`. No first-party
+script reads it by path, which is why it is a named group of its own: the compose bind
+mount and `//:stack_data` still carry it, and nothing else has to.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "settings",
+    srcs = ["settings.yml"],
+)

@@ -5,6 +5,44 @@ load("//tools:exec_shell.bzl", "exec_shell")
 
 package(default_visibility = ["//visibility:private"])
 
+# This package's own target declarations, for the dependency gate in //tests.
+filegroup(
+    name = "build_file",
+    srcs = ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
+# Every first-party shell file the two shell linters walk: one list, shared by :shell and
+# :shfmt, whose contents equal the scan set rather than a subset of it.
+#
+# It mirrors, entry for entry, the scan_dirs line in each runner —
+#   run_shellcheck.sh:16  scan_dirs=(scripts lints tests .github templates/common docs)
+#   run_shfmt.sh:15       scan_dirs=(scripts lints tests .github templates/common docs)
+# — plus the fix.sh each appends after the find (run_shellcheck.sh:22, run_shfmt.sh:21),
+# minus tests/bats/tool_stubs/, which both find calls exclude. Edit one side and edit the
+# other: a runner that gains a scan_dir without this list keeps linting files a sandboxed
+# run never shipped into the tree.
+#
+# The under-declaration stayed invisible because bazel_checkout_root in check_tool.sh
+# falls back to resolving the runfiles symlinks back into the real checkout, so the find
+# always saw the whole repo. This data is the honest declaration: a sandboxed run needs
+# exactly this set and nothing more.
+_LINT_SHELL_SOURCES = [
+    # lints/: the runners and the host-tool probe they all source.
+    "buildifier_check.sh",
+    "check_tool.sh",
+    "run_shellcheck.sh",
+    "run_shfmt.sh",
+    "//:ci_lint_installer",  # .github/: install-lint-tools.sh is the only shell there
+    "//:fix.sh",
+    "//docs:manage-docs.sh",  # docs/: the only shell there
+    "//scripts:doc_sources",  # scripts/: every CLI and every sourced lib
+    "//templates/common:payload",  # templates/common/: notes-setup.sh, the terminal scripts
+    # tests/: the shell its runners and coverage drivers are made of. tests/bats/ holds
+    # .bats, fixtures and tool_stubs, which the find either excludes or does not match.
+    "//tests:shell_sources",
+]
+
 exec_shell(
     name = "shell_exec",
     src = "run_shellcheck.sh",
@@ -14,13 +52,7 @@ exec_shell(
 sh_test(
     name = "shell",
     srcs = [":shell_exec"],
-    data = [
-        "check_tool.sh",
-        "//:fix.sh",
-        "//docs:manage-docs.sh",
-        "//scripts:doc_sources",
-        "//scripts:validate.sh",
-    ],
+    data = _LINT_SHELL_SOURCES,
     tags = [
         "lint",
         "local",
@@ -39,13 +71,7 @@ exec_shell(
 sh_test(
     name = "shfmt",
     srcs = [":shfmt_exec"],
-    data = [
-        "check_tool.sh",
-        "//:fix.sh",
-        "//docs:manage-docs.sh",
-        "//scripts:doc_sources",
-        "//scripts:validate.sh",
-    ],
+    data = _LINT_SHELL_SOURCES,
     tags = [
         "lint",
         "local",
@@ -55,6 +81,9 @@ sh_test(
     ],
 )
 
+# buildifier_check.sh walks every BUILD, BUILD.bazel, MODULE.bazel and *.bzl in the repo,
+# which is exactly what //:bazel_files enumerates, so that group and not the shell list is
+# the input here.
 exec_shell(
     name = "buildifier_exec",
     src = "buildifier_check.sh",
@@ -64,7 +93,10 @@ exec_shell(
 sh_test(
     name = "buildifier",
     srcs = [":buildifier_exec"],
-    data = ["check_tool.sh"],
+    data = [
+        "check_tool.sh",
+        "//:bazel_files",
+    ],
     tags = [
         "buildifier",
         "lint",

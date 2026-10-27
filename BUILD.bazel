@@ -6,6 +6,15 @@
   bazelisk run //:fix
   bazelisk run //scripts:<stem> -- <args>
 
+This package also owns the repo-level payload map. Each committed file a target can
+read by path sits in exactly one named filegroup, so a consumer names the group it
+reads instead of taking the whole tree, and an automated reader can ask which targets
+cover a file. Payload that is a directory of its own lives in its own package
+(`//litellm:config`, `//searxng:settings`, `//homepage:{config,icons,payload}`,
+`//hermes:{seed,skills,payload}`, `//proxy:confs`, `//templates/{common,workspace,devcontainer}:payload`,
+`//images/dev:{dockerfile,tool_versions,context}`); `//:stack_data` below is the explicit
+aggregate of every one of them.
+
 docs/contribute/building-with-bazel.md and docs/contribute/test-with-bazel.md
 explain the harness; docs/branching.md the branch rules that CI guards.
 """
@@ -15,60 +24,146 @@ load("//tools:exec_shell.bzl", "exec_shell")
 
 package(default_visibility = ["//visibility:private"])
 
-exports_files([
-    "fix.sh",
-    "CONTRIBUTING.md",
-    "README.md",
-    "Makefile",
-    "LICENSE",
-    "docker-compose.yml",
-])
+# fix.sh is the only root file another package addresses by label; the rest of these
+# travel as part of a filegroup below.
+exports_files(["fix.sh"])
 
-# Payload the operational scripts read by path after they resolve a repo root:
-# the compose file, both template payload trees, the golden-image pins, the
-# LiteLLM routing file, the SearXNG settings, the Homepage dashboard files,
-# the Hermes seed (config.yaml, SOUL.md, skills), the nginx proxy confs, the
-# contributor .devcontainer (laptop/CI env plus the probe sentinel), the
-# .githooks that gate a commit and a push, the
-# two .env samples, and the license that ships beside them. proxy/certs/ is .bazelignored (bootstrap issues those on the
-# host); compose bind-mounts for the certs therefore need the real checkout,
-# which bazel run names as BUILD_WORKSPACE_DIRECTORY. scripts/**.sh reaches
-# runfiles through //scripts:doc_sources, not here.
+# ---------------------------------------------------------------------------
+# Repo-level payload groups. One committed file, one group.
+#
+# A group is directory-level wherever a consumer discovers files at runtime:
+# validate.sh globs homepage/config/*.yaml, push-template.sh globs templates/*/*.tf,
+# update-configs.sh finds *.env.example, and host_state.sh walks the homepage and
+# proxy trees. Per-file groups would turn those reads into misses.
+#
+# //:stack_data is the aggregate a target declares when it addresses the repo as a
+# whole (the compose project, the template push, the coverage drivers). A new
+# top-level payload directory belongs in that aggregate by hand, otherwise
+# test-fast and lint never see its files in runfiles.
+# ---------------------------------------------------------------------------
+
+# Both the compose project file and the repo-root marker: resolve_checkout in
+# scripts/lib/common.sh and bats_canonical_repo_root in tests probe for it.
 filegroup(
-    name = "stack_data",
-    srcs = [
-        ".env.example",
-        ".env.sample",
-        "LICENSE",
-        "docker-compose.yml",
-    ] + glob(
-        [
-            ".devcontainer/**",
-            ".githooks/**",
-            "hermes/**",
-            "homepage/**",
-            "images/dev/**",
-            "litellm/**",
-            "proxy/**",
-            "searxng/**",
-            "templates/**",
-        ],
-        allow_empty = True,
-        # Rendered on the host by scripts/bootstrap.sh from
-        # proxy/router.conf.template, so it is a generated file inside a payload
-        # directory. .bazelignore only ignores directories, hence this exclude.
-        exclude = ["proxy/router.gen.conf"],
-    ),
+    name = "compose_file",
+    srcs = ["docker-compose.yml"],
+    visibility = ["//visibility:public"],
+)
+
+# The committed dotenv template bootstrap copies to .env; pre-commit and the config
+# suites diff it against .env.example.
+filegroup(
+    name = "env_sample",
+    srcs = [".env.sample"],
     visibility = ["//visibility:public"],
 )
 
 filegroup(
-    name = "ci_workflows",
+    name = "env_example",
+    srcs = [".env.example"],
+    visibility = ["//visibility:public"],
+)
+
+# Ships beside the payloads the templates push; no script reads it.
+filegroup(
+    name = "license",
+    srcs = ["LICENSE"],
+    visibility = ["//visibility:public"],
+)
+
+# The contributor dev container, including the contributor-env sentinel that makes
+# new-workspace's template probe a miss.
+filegroup(
+    name = "devcontainer",
+    srcs = glob(
+        [".devcontainer/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# The commit and push gates installed by scripts/install-hooks.sh.
+filegroup(
+    name = "githooks",
+    srcs = glob(
+        [".githooks/**"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# Both Coder template trees plus the payload they share. push-template.sh globs *.tf
+# inside each tree, so a consumer that pushes reads all three.
+filegroup(
+    name = "templates_payload",
     srcs = [
-        ".github/actions/setup-bazel/action.yml",
-        ".github/scripts/install-lint-tools.sh",
+        "//templates/common:payload",
+        "//templates/devcontainer:payload",
+        "//templates/workspace:payload",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# CI payload. Split so a suite names the workflow or the installer it asserts on.
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "ci_setup_bazel_action",
+    srcs = [".github/actions/setup-bazel/action.yml"],
+    visibility = ["//visibility:public"],
+)
+
+# The lint-tool installer the composite action calls; the only shell under .github/,
+# so this is also what the lint runners scan there.
+filegroup(
+    name = "ci_lint_installer",
+    srcs = [".github/scripts/install-lint-tools.sh"],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "ci_pipelines",
+    srcs = [
         ".github/workflows/ci.yml",
         ".github/workflows/deploy-docs.yml",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# The whole .github tree, for the suites that walk it.
+filegroup(
+    name = "ci_workflows",
+    srcs = [
+        ":ci_lint_installer",
+        ":ci_pipelines",
+        ":ci_setup_bazel_action",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# Everything the operational scripts read by path after they resolve a repo root: the
+# compose file, every payload tree, both dotenv templates, and the license that ships
+# beside them. proxy/certs/ is .bazelignored (bootstrap issues those on the host);
+# compose bind-mounts for the certs therefore need the real checkout, which `bazel run`
+# names as BUILD_WORKSPACE_DIRECTORY. scripts/**.sh reaches runfiles through
+# //scripts:doc_sources, not here.
+filegroup(
+    name = "stack_data",
+    srcs = [
+        ":compose_file",
+        ":devcontainer",
+        ":env_example",
+        ":env_sample",
+        ":githooks",
+        ":license",
+        ":templates_payload",
+        "//hermes:payload",
+        "//homepage:payload",
+        "//images/dev:context",
+        "//litellm:config",
+        "//proxy:confs",
+        "//searxng:settings",
     ],
     visibility = ["//visibility:public"],
 )
@@ -76,6 +171,25 @@ filegroup(
 alias(
     name = "bats",
     actual = "//tests:bats",
+    visibility = ["//visibility:public"],
+)
+
+# Every Starlark file that declares targets, so //tests:bats_bazel_deps_test can read the
+# dependency maps out of the BUILD files under hermetic runfiles instead of relying on a
+# symlink into the checkout. Each package owns its own `build_file` group.
+filegroup(
+    name = "bazel_files",
+    srcs = [
+        "BUILD.bazel",
+        "MODULE.bazel",
+        "//docs:build_file",
+        "//docs-site:build_file",
+        "//lints:build_file",
+        "//scripts:build_file",
+        "//tests:bats_bzl",
+        "//tests:build_file",
+        "//tools:exec_shell_bzl",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -100,11 +214,10 @@ test_suite(
 # contributor runs continuously; this adds the npm-backed docs gates and the two
 # measured coverage targets, so "all tests pass" has one answer.
 #
-# `manual` keeps it out of `bazelisk test //...` (which stays 47 targets and
-# stays fast); an explicitly named suite runs its manual members regardless, the
-# way //:lint already does. //docs-site:verify is deliberately absent: it reads
-# docs-site/out/, which a clean checkout does not have, and //docs-site:build
-# produces it.
+# `manual` keeps it out of `bazelisk test //...` (which stays fast); an explicitly
+# named suite runs its manual members regardless, the way //:lint already does.
+# //docs-site:verify is deliberately absent: it reads docs-site/out/, which a clean
+# checkout does not have, and //docs-site:build produces it.
 test_suite(
     name = "test-all",
     tags = ["manual"],

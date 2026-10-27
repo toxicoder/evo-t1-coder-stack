@@ -1,0 +1,23 @@
+"""Package purpose: nginx payload for the router and the dashboard.
+
+`homepage.conf` is compose's `/etc/nginx/conf.d/default.conf`, `router.conf` is the committed
+render of `router.conf.template` under the shipped defaults, and `router.conf.template` is the
+source `scripts/bootstrap.sh` renders. The router bind mounts
+`./proxy/${STACK_ROUTER_CONF:-router.conf}`, so all three travel together: a runner that reads
+one reads the naming they share. `proxy/certs/` is `.bazelignored` (bootstrap issues those on
+the host) and `proxy/router.gen.conf` is bootstrap's own output, so both stay out.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "confs",
+    srcs = glob(
+        [
+            "*.conf",
+            "*.template",
+        ],
+        allow_empty = True,
+        exclude = ["router.gen.conf"],
+    ),
+)
