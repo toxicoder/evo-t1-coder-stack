@@ -1,0 +1,69 @@
+"""Package purpose: the universal project scaffold that `scripts/new-repo.sh` renders.
+
+This is a *payload* directory, not a package of buildable code: nothing here is built
+by Bazel. It is a template tree that `scripts/new-repo.sh` copies, substitutes its
+`__PROJECT_*__` tokens in, overlays the selected `.evo-lanes/<lane>/` directory, and
+hands to `git init` as the first commit of a brand-new repository.
+
+Two things about this package are deliberate:
+
+* `glob` needs `allow_dot = True`. Most of what makes the scaffold useful is a dotfile
+  (`.editorconfig`, `.gitignore`, `.pre-commit-config.yaml`, `.github/**`), and a
+  Bazel glob that silently drops them would ship a template whose quality gate is
+  missing while `//:stack_data` still reports green.
+* `.evo-lanes/**` is a separate group. The lane trees are overlaid onto the core tree
+  by path, so a consumer that wants the neutral scaffold and a consumer that wants to
+  enumerate lanes ask for different things.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+# The language-neutral core: everything that is not a lane overlay. A lane file
+# replaces the core file at the same relative path, so the two sets stay separable
+# for anything that reasons about the core alone.
+filegroup(
+    name = "core",
+    srcs = glob(
+        ["**"],
+        allow_empty = True,
+        exclude = [".evo-lanes/**"],
+    ),
+)
+
+# Per-language lane overlays, each carried at `.evo-lanes/<lane>/` and copied over the
+# rendered tree root. `LANE.md` and `gitignore.fragment` are read by the renderer and
+# stripped from the output, so they travel with the payload rather than the project.
+filegroup(
+    name = "lanes",
+    srcs = glob(
+        [".evo-lanes/**"],
+        allow_empty = True,
+    ),
+)
+
+# Every first-party shell in the scaffold. The lint drivers list this beside their own
+# scan directories so template shell is held to the same shellcheck and shfmt bar as
+# the CLIs that render it; a template that ships shell its own repo would fail is the
+# exact silent-skip failure this scaffold exists to prevent.
+filegroup(
+    name = "shell_sources",
+    srcs = glob(
+        ["**/*.sh"],
+        allow_empty = True,
+    ),
+    visibility = [
+        "//lints:__pkg__",
+        "//tests:__pkg__",
+        "//visibility:public",
+    ],
+)
+
+# The whole template tree, which is what `//:stack_data` carries so the render gate can
+# open it under hermetic runfiles.
+filegroup(
+    name = "payload",
+    srcs = [
+        ":core",
+        ":lanes",
+    ],
+)

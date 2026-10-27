@@ -38,6 +38,10 @@ _LINT_SHELL_SOURCES = [
     "//docs:manage-docs.sh",  # docs/: the only shell there
     "//scripts:doc_sources",  # scripts/: every CLI and every sourced lib
     "//templates/common:payload",  # templates/common/: notes-setup.sh, the terminal scripts
+    # project-template/: the shell the scaffold ships (the shell lane's main.sh, its
+    # lint runner, and the neutral test dispatcher). Held to the same bar as the CLIs
+    # that render it, so a template cannot ship shell this repo would reject.
+    "//project-template:shell_sources",
     # tests/: the shell its runners and coverage drivers are made of. tests/bats/ holds
     # .bats, fixtures and tool_stubs, which the find either excludes or does not match.
     "//tests:shell_sources",
