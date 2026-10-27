@@ -54,6 +54,10 @@ filegroup(
             "templates/**",
         ],
         allow_empty = True,
+        # Rendered on the host by scripts/bootstrap.sh from
+        # proxy/router.conf.template, so it is a generated file inside a payload
+        # directory. .bazelignore only ignores directories, hence this exclude.
+        exclude = ["proxy/router.gen.conf"],
     ),
     visibility = ["//visibility:public"],
 )

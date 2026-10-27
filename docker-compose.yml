@@ -469,8 +469,10 @@ services:
 
   # Second nginx sidecar for the public subdomains. The main Traefik on another
   # machine terminates TLS for those names and forwards plain HTTP here; this
-  # container only routes by Host header (proxy/router.conf), so it publishes
-  # one plain-HTTP port and holds no certificate.
+  # container only routes by Host header (conf rendered by scripts/bootstrap.sh
+  # from proxy/router.conf.template into proxy/router.gen.conf, selected by
+  # STACK_ROUTER_CONF, defaulting to the checked-in proxy/router.conf), so it
+  # publishes one plain-HTTP port and holds no certificate.
   router:
     image: nginx:1.29-alpine
     restart: unless-stopped
@@ -482,7 +484,7 @@ services:
       # `map $http_upgrade` (the one in homepage.conf lives in the other
       # container and is invisible here). The image's welcome server keeps
       # container port 80, which nothing publishes.
-      - ./proxy/router.conf:/etc/nginx/conf.d/router.conf:ro
+      - ./proxy/${STACK_ROUTER_CONF:-router.conf}:/etc/nginx/conf.d/router.conf:ro
     depends_on:
       - homepage
       - coder

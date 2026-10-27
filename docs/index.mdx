@@ -63,7 +63,7 @@ what a `git pull` leaves behind.
 | LiteLLM | 4000 | The single OpenAI-compatible door in front of every model |
 | IPEX-LLM Ollama | — | The Arc 140T model runtime, never published to the host |
 | Kasm | 3000 → 4443 | Streamed desktops; the wizard only on first boot |
-| Hermes | 9119 | The host assistant. LAN `:9119` stays; the public name is opt-in via `STACK_PUBLIC_HOSTS` |
+| Hermes | 9119 | The host assistant. LAN `:9119` stays; the public name is opt-in via `STACK_PUBLIC_HOSTS=auto` |
 | SearXNG | 8181 | Keyless metasearch, the agent's search lane |
 
 Ollama is reachable only from inside the compose network: LiteLLM is the gateway, and it

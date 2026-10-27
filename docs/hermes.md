@@ -15,7 +15,7 @@ tags: [hermes, dashboard, operate, safety]
 **What this enables**
 
 - Running stack operations by conversation with a plan and an approval first
-- Reaching the assistant on the LAN, and on the public name when `STACK_PUBLIC_HOSTS` includes it
+- Reaching the assistant on the LAN, and on the public name `auto` composes from the parts
 
 Hermes is the Nous Research Hermes Agent running as the interactive assistant **on the
 stack host itself**: not inside a workspace, not in a streamed desktop, but with the
@@ -30,7 +30,7 @@ before the mutating command.
 
 Related: [dashboard.md](dashboard.md) (the card that links here),
 [litellm-routing.md](litellm-routing.md) (the aliases Hermes calls),
-[public-access.md](public-access.md) (the public name, when `STACK_PUBLIC_HOSTS` sets it),
+[public-access.md](public-access.md) (the public name, which `auto` composes),
 [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
 
 ## Access
@@ -40,9 +40,11 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
 - **LAN:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, exactly like LiteLLM on `:4000`.
   There is no self-signed cert for this port and no redirect to HTTPS. This URL stays
   when the public name is on. Tailscale reaches it the same way, on that port.
-- **Public name, opt-in:** `https://hermes-gmktecbeast.overeazy.io` when that name is
-  listed in `STACK_PUBLIC_HOSTS`. Bootstrap classifies `hermes-*` and `hermes.*` and
-  writes `STACK_HERMES_URL`. The path is the same as the other public names: Cloudflare
+- **Public name, opt-in:** `hermes-<suffix>.<base>`, so
+  `https://hermes-gmktecbeast.overeazy.io` under the shipped defaults, when
+  `STACK_PUBLIC_HOSTS=auto` composes it or an explicit list names it. Bootstrap
+  classifies `hermes-*` and `hermes.*` and writes `STACK_HERMES_URL`. The path is the
+  same as the other public names: Cloudflare
   (orange cloud, WebSockets on by default), Traefik on the other LAN server (TLS
   `*.overeazy.io`, Authelia), the `router` on this box `:8080`, then
   `http://hermes:9119`, with the original Host preserved. Traefik's backend is
@@ -184,10 +186,11 @@ recreate the container and the env applies.
 
 ## Security notes
 
-- The public name is opt-in (`hermes-*` in `STACK_PUBLIC_HOSTS`). It does not change
-  what the container can do: local terminal, host mounts and the docker socket still
-  mean this agent can affect the real host. Treat its approvals the way you treat a
-  root shell. That is the same standing as public Coder.
+- The public name is opt-in (`hermes-*`, which `auto` composes from the naming parts or
+  an explicit list pins). It does not change what the container can do: local terminal,
+  host mounts and the docker socket still mean this agent can affect the real host.
+  Treat its approvals the way you treat a root shell. That is the same standing as
+  public Coder.
 - HTTP basic auth stays, including on the public URL. Authelia is the gate in front of
   that name only. LAN `:9119` and a matching Host on `:8080` bypass Authelia, so the
   basic-auth provider is load-bearing. It is a provider, not a toggle.

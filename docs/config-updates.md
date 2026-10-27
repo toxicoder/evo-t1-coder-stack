@@ -266,16 +266,22 @@ reseeds `~/.grok/config.toml` for exactly that reason.
 
 ## Public hosts and the dashboard
 
-`STACK_PUBLIC_HOSTS` is the one switch. Empty keeps everything below LAN-only and
-every derived `STACK_*_URL` stays empty; otherwise set the comma-separated public
-DNS names in the hyphenated one-label form the rules below define; `.env.sample`
-shows a worked example.
+`STACK_PUBLIC_HOSTS` is the one switch, and it has three states. Empty keeps everything
+below LAN-only and every derived `STACK_*_URL` stays empty. `auto` composes the five
+names from the naming parts - `STACK_DOMAIN_BASE`, `STACK_SUBDOMAIN_SUFFIX`,
+`STACK_ENV_LABEL` and the per-service `STACK_*_NAME` prefixes, all documented in
+`.env.sample`. A comma-separated list is the hand-pin: those names are used verbatim.
 
 - Entries are DNS names, not URLs: no scheme, no port, no path. The entry with no
   prefix is the dashboard.
 - Each service name is **one label** under the zone and carries its prefix with a
   **HYPHEN**: a wildcard certificate covers exactly one label, so the dotted
   two-label form has no certificate at the public edge.
+- Under `auto` the parts are the source of truth and `STACK_PUBLIC_HOSTS` is output
+  only: bootstrap writes the resolved list back and records the intent in
+  `STACK_PUBLIC_HOSTS_MODE=auto`, so a later run re-composes and a list edited by hand
+  in `STACK_PUBLIC_HOSTS` is ignored. Bootstrap prints a `note:` naming the key to
+  clear when that happens.
 - `bootstrap.sh` derives `STACK_DASHBOARD_URL` / `STACK_CODER_URL` /
   `STACK_KASM_URL` / `STACK_LITELLM_URL` / `STACK_HERMES_URL` from the prefix on
   each entry (`coder-` / `kasm-` / `litellm-` / `hermes-`, dotted form still
@@ -287,16 +293,22 @@ shows a worked example.
   and into the Coder certificate's subjectAltName.
 - The Traefik on the other box owns TLS for those names and must forward plain
   HTTP to this box's router container **with the original Host header intact** -
-  `proxy/router.conf` picks the service from `$http_host` and listens on
-  `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host comes back as `421`.
+  `STACK_ROUTER_CONF` names the conf that container mounts (`proxy/router.gen.conf`,
+  rendered by bootstrap from `proxy/router.conf.template`, or the checked-in
+  `proxy/router.conf` while the key is empty), and it picks the service from
+  `$http_host` on `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host comes back
+  as `421`.
   That box needs one file, and the paste-ready version of it - one `loadBalancer`
   at `:8080`, a router per name, Authelia on the four interactive names, the
   long-lived timeouts - is
   [public-access.md#traefik-configuration](public-access.md#traefik-configuration).
 
-Set the names in `.env`, and in `dev-stack.env` too when a dev stack runs beside
+Set the parts in `.env`, and in `dev-stack.env` too when a dev stack runs beside
 the stable one, then re-run `bazelisk run //scripts:bootstrap` and recreate the
-stack you switched. A `hermes-*` or `hermes.*` entry is part of that list:
+stack you switched. That one command is the whole rename: it re-renders the router's
+vhost table and rewrites the derived URLs, so a hostname is no longer an edit split
+across `proxy/router.conf`, `scripts/bootstrap.sh` and `docker-compose.yml`. A
+`hermes-*` or `hermes.*` entry is part of that list:
 bootstrap writes `STACK_HERMES_URL`, and the LAN `:9119` listener stays either
 way. Leave the hermes name out and the Homepage card keeps the LAN URL.
 [public-access.md](public-access.md) owns the naming rule, the measured
