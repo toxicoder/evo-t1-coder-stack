@@ -115,11 +115,14 @@ assert_settings_link() {
 }
 
 # assert_grok_config_base <path> <litellm-url> -- what every rendered config
-# promises, whichever optional lanes it declares.
+# promises, whichever optional lanes it declares. Both ownership spellings are
+# pinned: the comment alone is not enough, because the CLI's settings writer
+# drops comments and only the plain key survives that round trip.
 assert_grok_config_base() {
   local file="$1" url="$2"
   assert_file_exists "config.toml" "${file}"
   assert_fixed "marker" "${file}" "managed-by: evo-t1-coder-stack"
+  assert_fixed "toml marker" "${file}" "__evoT1Stack = true"
   assert_fixed "searxng" "${file}" "[mcp_servers.searxng]"
   assert_fixed "search url" "${file}" "SEARXNG_URL = \"http://host.docker.internal:8181\""
   assert_fixed "agent base url" "${file}" "base_url = \"${url}\""
@@ -330,6 +333,7 @@ assert_contributor_home() {
   [ "${status}" -eq 0 ]
   assert_fixed "user config kept" "${home}/.grok/config.toml" 'user = true'
   assert_not_fixed "marker not added" "${home}/.grok/config.toml" 'managed-by: evo-t1-coder-stack'
+  assert_not_fixed "toml marker not added" "${home}/.grok/config.toml" '__evoT1Stack = true'
   assert_match "config skip names --force" 'config.toml: user-owned, left alone \(--force overrides\)' "${output}"
 
   run_seed "${home}" --force
@@ -337,6 +341,27 @@ assert_contributor_home() {
   assert_match "force names the overwrite" 'OVERWRITTEN under --force' "${output}"
   assert_grok_config "${home}/.grok/config.toml" "http://host.docker.internal:4000/v1"
   assert_not_fixed "user body replaced" "${home}/.grok/config.toml" 'user = true'
+}
+
+@test "seed-dev-env: a comment-stripped config that keeps only the TOML key is still reseeded" {
+  load_seed_api
+  local scratch home dest
+  scratch="$(make_scratch)"
+  home="${scratch}/home"
+  dest="${home}/.grok/config.toml"
+  mkdir -p "${home}/.grok"
+  # What `grok mcp add` leaves behind: that writer re-serializes the file and
+  # drops every comment line, so the plain key is all that still says the stack
+  # owns it. Such a file must not fall into the user-owned bucket.
+  printf '%s\n' '__evoT1Stack = true' 'default = "old"' '' '[cli]' 'installer = "kept"' >"${dest}"
+
+  run seed_write_grok_config "${home}" "${REPO_ROOT}" 0 0
+  [ "${status}" -eq 0 ]
+  assert_not_match "key-only config is not user-owned" 'user-owned, left alone' "${output}"
+  assert_match "key-only config is reseeded" 'config.toml: re-materialized' "${output}"
+  assert_fixed "cli carried" "${dest}" 'installer = "kept"'
+  assert_not_fixed "old default dropped" "${dest}" 'default = "old"'
+  assert_fixed "toml marker rewritten" "${dest}" '__evoT1Stack = true'
 }
 
 @test "seed-dev-env: a marker-free tmux.conf survives without --force" {

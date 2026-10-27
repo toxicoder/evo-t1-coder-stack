@@ -3,11 +3,14 @@
 # ~/.grok/config.toml for the EVO-T1 Coder workspace.
 #
 # This file is written by templates/devcontainer/grok-config.toml.tftpl in
-# the evo-t1-coder-stack repo and is refreshed on workspace start ONLY while the
-# marker line above is present (or the file is missing). To take permanent
-# ownership, delete the first line — the startup script will then leave this
-# file alone. To go back to stack-managed, delete the file and start the
-# workspace again.
+# evo-t1-coder-stack repo and is refreshed on workspace start ONLY while the
+# marker comment above or the __evoT1Stack key below is present (or the file
+# is missing). To take permanent ownership, delete BOTH of them: the
+# managed-by marker on the first line and the __evoT1Stack key further down.
+# The key is there because the CLI's own settings writer (for example
+# `grok mcp add`) deletes every comment line, so the marker comment can vanish
+# on its own while the key survives. To go back to stack-managed, delete the
+# file and start the workspace again.
 #
 # Inference goes through the LiteLLM proxy; the key is never stored here, it
 # arrives as the LITELLM_API_KEY environment variable set by coder_agent.env.
@@ -19,6 +22,13 @@
 # "private" two workspaces can legitimately disagree about either one — on a
 # "shared" profile this single file serves every workspace its owner owns, and the
 # one started last re-renders it for all of them.
+
+# Ownership marker: the stack owns this file while either this key or the
+# managed-by comment above is present. Unlike that comment, this top-level key
+# survives the CLI rewriting the file, so ownership cannot be revoked
+# silently. Delete it together with the marker comment to hand the file over.
+# Never put it inside a template gate.
+__evoT1Stack = true
 
 # Grok's native web_search is PARKED, and the gated [mcp_servers.searxng] stdio
 # server below is the search lane. Measured 2026-10-25: no model transport this
@@ -374,7 +384,9 @@ max_output_bytes = 40000
 
 # Conservative defaults on purpose: no always-approve / yolo here — that is a
 # per-user decision (`/settings`, or [ui] permission_mode). These denies only
-# keep secrets and destructive rm out of the easy path.
+# keep secrets and destructive rm out of the easy path. The startup render
+# carries the CLI-owned tables ([cli], [ui], [marketplace]) over from the file
+# it replaces, so an approval mode set in [ui] survives a re-render.
 [permission]
 deny = [
   "Bash(rm -rf *)",

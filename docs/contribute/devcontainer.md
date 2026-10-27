@@ -103,9 +103,12 @@ code-server and desktop VS Code User settings symlinked to it), `~/.grok/AGENTS.
 
 Two rules decide every write, and they are the same rules the workspace startup applies:
 
-- A file carrying the stack marker — `managed-by: evo-t1-coder-stack`, or the
-  `"__evoT1Stack": true` key — is stack-owned and is reseeded when the seed in this repo
-  drifted.
+- A file carrying the stack marker - the `managed-by: evo-t1-coder-stack` comment, the
+  `"__evoT1Stack": true` JSON key, or the `__evoT1Stack = true` TOML key - is
+  stack-owned and is reseeded when the seed in this repo drifted. Taking
+  `~/.grok/config.toml` over means deleting both its marker lines, since the Grok CLI
+  deletes comments when it rewrites that file:
+  [../grok-build-and-agents.md](../grok-build-and-agents.md#the-rendered-grok-config).
 - A marker-free file is user-owned and stays untouched unless `--force` says otherwise.
   The terminal helpers and `notes-setup.sh` are the exception: startup rewrites those on
   every boot, so this script does too.

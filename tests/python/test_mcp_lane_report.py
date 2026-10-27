@@ -148,6 +148,22 @@ class ReadDoctorTest(TempFileMixin, unittest.TestCase):
             self.assertIsNone(MODULE.read_doctor(path))
 
 
+class MissingLaneDetailTest(unittest.TestCase):
+    """missing_lane_detail() blames whoever owns the config."""
+
+    def test_a_managed_config_blames_the_render_or_the_gate(self):
+        detail = MODULE.missing_lane_detail("/home/coder/.grok/config.toml", False)
+        self.assertTrue(detail.startswith("not declared in /home/coder/.grok/config.toml"))
+        self.assertIn("the default render declares it", detail)
+        self.assertNotIn("no stack ownership marker", detail)
+
+    def test_an_unmanaged_config_blames_the_file_and_names_the_remedy(self):
+        detail = MODULE.missing_lane_detail("/home/coder/.grok/config.toml", True)
+        self.assertIn("no stack ownership marker", detail)
+        self.assertIn("bazelisk run //scripts:seed-dev-env -- --force", detail)
+        self.assertNotIn("a push passed its gate false", detail)
+
+
 class DeclaredServersTest(unittest.TestCase):
     """declared_servers() tolerates a config with no mcp_servers table."""
 
@@ -398,6 +414,28 @@ class MainTest(TempFileMixin, unittest.TestCase):
         self.assertIn("the default render declares it", found[0][3])
         # The declared-but-not-required server still gets its one honest line.
         self.assertEqual("declared, but not a lane this run requires", found[-1][3])
+
+    def test_a_missing_lane_blames_the_unmanaged_file_when_told_the_file_is_orphaned(self):
+        cfg = self.make_file("c.toml", '[mcp_servers.github]\nurl = "https://x/mcp"\n')
+        found = self.run_main(["--config", cfg, "--lanes", "searxng", "--unmanaged"])
+        self.assertEqual(
+            [("searxng", "declared", "error"), ("github", "extra", "note")],
+            [line[:3] for line in found])
+        self.assertIn("no stack ownership marker", found[0][3])
+        self.assertIn("bazelisk run //scripts:seed-dev-env -- --force", found[0][3])
+        # The gate blame is only true of a file the stack still renders, so the
+        # two blames are mutually exclusive.
+        self.assertNotIn("a push passed its gate false", found[0][3])
+
+    def test_an_orphaned_config_reports_every_lane_blame_once(self):
+        cfg = self.make_file("c.toml", "top = true\n")
+        found = self.run_main(["--config", cfg, "--lanes", "searxng,context7",
+                               "--unmanaged"])
+        self.assertEqual(
+            [("searxng", "declared", "error"), ("context7", "declared", "error")],
+            [line[:3] for line in found])
+        for line in found:
+            self.assertIn("no stack ownership marker", line[3])
 
     def test_a_healthy_stdio_run_reports_every_check(self):
         upstream = executable_path()

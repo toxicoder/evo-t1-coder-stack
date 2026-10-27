@@ -83,8 +83,9 @@ The reseed set is the nine home-relative targets the templates seed -
 `~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the two
 `learn/SKILL.md` copies and `~/.shared/vscode/settings.json` - and the same rule
 applies as in `refresh-configs`: a file is replaced only while it still carries its
-`managed-by: evo-t1-coder-stack` marker (or, for the settings file, its
-`"__evoT1Stack": true` key), so a config you hand-edit in a terminal is your
+stack marker - the `managed-by: evo-t1-coder-stack` comment, the
+`"__evoT1Stack": true` JSON key (settings files) or the `__evoT1Stack = true` TOML
+key (`~/.grok/config.toml`) - so a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
 so. The two `learn/SKILL.md` copies are `~/.coder/skills/learn/SKILL.md` and its
 `~/.agents` twin, the stack's `/learn` skill: the workspace boot writes them only
@@ -101,7 +102,7 @@ that an edited copy which keeps its marker is still rewritten back to
 | `--dry-run` | print the plan, write nothing |
 | `-i`, `--interactive` | stop and ask about every key that still needs a value (the default on a TTY) |
 | `--non-interactive` | never prompt; list what would be asked |
-| `--force` | reseed workspace files that carry no marker either |
+| `--force` | reseed workspace files that carry none of the three markers |
 | `--from <dir>` | read the payloads from that checkout instead of this one |
 | `--home <dir>` | treat that host directory as a workspace `HOME` |
 | `--container <name>` | address one container by name |

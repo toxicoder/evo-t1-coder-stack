@@ -139,6 +139,31 @@ run_spark_probe() {
   [ "${output}" = "absent" ]
 }
 
+@test "probes/seed-owner: the optional 4th marker reads a comment-free TOML config as managed" {
+  # The CLI-dropped-comment bug, at the probe level: `grok mcp add` rewrites
+  # ~/.grok/config.toml through a parse-and-write-back that deletes every
+  # comment line, so the one marker such a file still carries is the TOML key.
+  # A caller that hands the probe that 4th marker must get "managed".
+  local cfg="${BATS_TEST_TMPDIR}/config.toml"
+  printf 'model = "agent"\n[mcp_servers.searxng]\nenabled = true\n__evoT1Stack = true\n' >"${cfg}"
+  run sh "${PROBES_DIR}/seed-owner.sh" "${cfg}" 'managed-by: evo-t1-coder-stack' \
+    '"__evoT1Stack": true' '__evoT1Stack = true'
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "managed" ]
+
+  # Three args is still the old probe: the marker list comes from the caller,
+  # so the same file is user-owned when nobody asked about the TOML key.
+  run sh "${PROBES_DIR}/seed-owner.sh" "${cfg}" 'managed-by: evo-t1-coder-stack' '"__evoT1Stack": true'
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "user" ]
+
+  # And an empty 4th argument is no marker at all: grep -e "" matches every
+  # file, which would hand "managed" to everything.
+  run sh "${PROBES_DIR}/seed-owner.sh" "${cfg}" 'managed-by: evo-t1-coder-stack' '"__evoT1Stack": true' ''
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "user" ]
+}
+
 # ── probes/seed-find-mtime.sh and probes/seed-rm-mtime.sh ───────────────────
 
 @test "probes/seed-*-mtime: the sweep lists what it would delete, then deletes it" {

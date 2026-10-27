@@ -15,10 +15,13 @@
 #     and it sources common.sh (its helpers) when that has not been sourced
 #     yet. Nothing here builds a command out of text with eval.
 #   - Ownership contract, inherited from the two startup.sh.tftpl twins: a
-#     stack-owned config file either carries `managed-by:
-#     evo-t1-coder-stack` (comment marker) or the `"__evoT1Stack": true`
-#     JSON key, or it is user-owned. A file that lost its marker was edited
-#     by a human; reseeding leaves such a file alone unless --force is used.
+#     stack-owned config file carries one of the three marker spellings below
+#     (the `managed-by: evo-t1-coder-stack` comment, the `"__evoT1Stack": true`
+#     JSON key, or the `__evoT1Stack = true` TOML key), or it is user-owned. A
+#     marker-free file is no proof of a human edit: the Grok Build CLI persists
+#     its own settings by parsing config.toml and writing it back, and that
+#     round trip drops every comment line, so only a key outlives it. Reseeding
+#     still leaves a marker-free file alone unless --force is used.
 #   - Container traffic is one `docker exec -i <name> sh -c <script> sh
 #     <args...>` per probe or write. Probes close stdin (bazelisk run keeps
 #     a pipe open, and docker exec -i waits for EOF on it); writes pass
@@ -43,11 +46,18 @@ fi
 # resolve next to it under bazelisk runfiles and a checkout.
 _CONFIG_SEED_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# STACK_MARKER_TEXT / STACK_MARKER_JSON - the two spellings of the marker that
-# marks a file as stack-owned. The comment form has to survive being embedded
-# in a heredoc, and the JSON key carries the same promise inside settings.json.
+# STACK_MARKER_TEXT / STACK_MARKER_JSON / STACK_MARKER_TOML - the three
+# spellings of the marker that marks a file as stack-owned. The comment form
+# has to survive being embedded in a heredoc, the JSON key carries the same
+# promise inside settings.json, and the TOML key carries it inside
+# ~/.grok/config.toml. The TOML key exists because the comment alone does not
+# last: the Grok Build CLI persists its own settings by parsing that file and
+# writing it back, and that round trip drops every comment line, which would
+# hand a stack-managed config over to the user with no human involved. A plain
+# key survives the same write and the CLI parses it without complaint.
 STACK_MARKER_TEXT='managed-by: evo-t1-coder-stack'
 STACK_MARKER_JSON='"__evoT1Stack": true'
+STACK_MARKER_TOML='__evoT1Stack = true'
 
 # STACK_LITELLM_URL - the stack's one model-transport address as a workspace
 # sees it. A workspace reaches LiteLLM through the host's published port, so
@@ -130,7 +140,7 @@ seed_container_exec() {
 # Ask one container (or one host directory standing in for one) who owns a
 # config file right now.
 # Globals:
-#   STACK_MARKER_TEXT, STACK_MARKER_JSON
+#   STACK_MARKER_TEXT, STACK_MARKER_JSON, STACK_MARKER_TOML
 # Arguments:
 #   $1 - container name ("" for a host path)
 #   $2 - full path to the file
@@ -145,7 +155,8 @@ seed_target_owner() {
       printf 'absent\n'
     elif [[ ! -r ${path} ]]; then
       printf 'unreadable\n'
-    elif grep -qF -e "${STACK_MARKER_TEXT}" -e "${STACK_MARKER_JSON}" "${path}" 2>/dev/null; then
+    elif grep -qF -e "${STACK_MARKER_TEXT}" -e "${STACK_MARKER_JSON}" \
+      -e "${STACK_MARKER_TOML}" "${path}" 2>/dev/null; then
       printf 'managed\n'
     else
       printf 'user\n'
@@ -153,7 +164,7 @@ seed_target_owner() {
     return 0
   fi
   state="$(seed_container_exec "${target}" "$(cat "${_CONFIG_SEED_DIR}/probes/seed-owner.sh")" \
-    sh "${path}" "${STACK_MARKER_TEXT}" "${STACK_MARKER_JSON}")" || {
+    sh "${path}" "${STACK_MARKER_TEXT}" "${STACK_MARKER_JSON}" "${STACK_MARKER_TOML}")" || {
     return 1
   }
   case "${state}" in
