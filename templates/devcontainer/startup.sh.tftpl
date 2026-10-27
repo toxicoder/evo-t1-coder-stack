@@ -366,10 +366,14 @@ ln -sfn "$shared_settings" "$user_settings"
 # by default, the MCP stack - the gated searxng search entry (on by default as
 # the fallback, dialing the stack's own SearXNG) beside the gated github entry
 # (off by default) - and the subagent sizing,
-# with anything the create form put in "Grok config extras" appended at the end. Ownership is decided by the
-# marker comment below: while it is present the stack re-renders the file on
-# every start, and deleting that one line hands the file over to the user for
-# good. On a shared profile volume that file usually already exists — another of
+# with anything the create form put in "Grok config extras" appended at the end.
+# Ownership is decided by either marker: the managed-by marker comment or the
+# top-level __evoT1Stack key. While either is present the stack
+# re-renders the file on every start, and deleting both hands the file over to
+# the user for good. The key is what makes the rule hold: the CLI's own
+# settings writer (grok mcp add and friends) deletes every comment line, so a
+# comment-only marker can vanish with nobody touching the file. On a shared
+# profile volume that file usually already exists — another of
 # the owner's workspaces wrote it — so the marker, not first-boot, is what
 # decides, and it decides one file for every workspace that user owns: this
 # workspace's alias and extras overwrite whatever the last boot wrote, for all of
@@ -380,18 +384,21 @@ ln -sfn "$shared_settings" "$user_settings"
 # A fresh CLI install always takes the file back. The installer creates a
 # `[cli] installer = ...` stub before this stage runs, so without the first-boot
 # flag a brand-new workspace would be left with an unconfigured CLI: the stub has
-# no marker, the file exists, and the guard below would treat it as user-owned.
+# neither marker, the file exists, and the guard below would treat it as user-owned.
 mkdir -p "$HOME/.grok/memory" "$HOME/.grok/logs/mcp" 2>/dev/null
 
 if [ ! -f "$HOME/.grok/config.toml" ] \
    || [ "$GROK_FRESH_INSTALL" = "1" ] \
-   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/config.toml"; then
-  # Re-rendering also happens on every start while the marker is present, so the
-  # installer's (or the user's) [cli] table is carried over instead of wiped —
-  # `cli.installer` picks the CLI's update path and is not something the stack owns.
+   || grep -qFs -e 'managed-by: evo-t1-coder-stack' -e '__evoT1Stack = true' \
+     "$HOME/.grok/config.toml"; then
+  # Re-rendering also happens on every start while either marker is present, so
+  # the tables the CLI owns are carried over instead of wiped: [cli] holds
+  # cli.installer, which picks the CLI's update path; [ui] holds permission_mode,
+  # so re-adopting a file must never flip an operator back to prompting; and
+  # [marketplace] is CLI settings the stack never owns.
   cli_block="$(mktemp 2>/dev/null || printf '/tmp/grok-cli-block.%s.toml' "$$")"
   if [ -f "$HOME/.grok/config.toml" ]; then
-    awk '/^\[cli\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
+    awk '/^\[(cli|ui|marketplace)\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
       "$HOME/.grok/config.toml" >"$cli_block" 2>/dev/null || : >"$cli_block"
   else
     : >"$cli_block"
@@ -408,15 +415,16 @@ GROK_CONFIG_EOF
   rm -f "$cli_block"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
 else
-  # Same marker contract as ~/.tmux.conf above: no marker means the file is
+  # Same marker contract as ~/.tmux.conf above, plus the one key that survives a
+  # comment-stripping CLI rewrite: neither marker present means the file is
   # user-owned and this stage keeps its hands off it - which is also why the
   # loss was silent. Say what it costs, because the render above is the only
   # place this workspace's model catalog and MCP lanes are ever written.
-  echo "WARNING: $HOME/.grok/config.toml carries no stack marker - this" \
-    "workspace is running a config the stack does not manage, so the default" \
-    "MCP lanes and the model catalog never reach it. Delete the file and" \
-    "restart, or re-materialize it with" \
-    "'bazelisk run //scripts:seed-dev-env -- --force'." >&2
+  echo "WARNING: $HOME/.grok/config.toml carries neither stack marker (no" \
+    "managed-by comment, no __evoT1Stack key) - this workspace is" \
+    "running a config the stack does not manage, so the default MCP lanes and" \
+    "the model catalog never reach it. Delete the file and restart, or" \
+    "re-materialize it with 'bazelisk run //scripts:seed-dev-env -- --force'." >&2
 fi
 
 # --- MCP command reachability (advisory) --------------------------------------

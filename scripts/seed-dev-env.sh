@@ -327,11 +327,14 @@ seed_link_vscode_settings() {
 }
 
 # @function seed_write_grok_config
-# Write ~/.grok/config.toml when it is absent or still stack-owned. A
-# marker-free file is left alone unless --force is set. An existing [cli]
-# table is carried forward the way startup does. The written file is mode 600.
+# Write ~/.grok/config.toml when it is absent or still stack-owned: either
+# marker spelling counts, because the CLI's own settings writer drops comments
+# and only the plain TOML key survives that round trip. A file carrying
+# neither is left alone unless --force is set. An existing [cli] table is
+# carried forward the way startup does. The written file is mode 600.
 # Globals:
-#   STACK_MARKER_TEXT, STACK_LITELLM_URL, CONTEXT7_API_KEY (all read through
+#   STACK_MARKER_TEXT, STACK_MARKER_TOML (both from lib/config_seed.sh),
+#   STACK_LITELLM_URL, CONTEXT7_API_KEY (the last two read through
 #   seed_render_grok_config)
 # Arguments:
 #   $1 - home directory
@@ -354,7 +357,7 @@ seed_write_grok_config() {
     forced=" (forced)"
   fi
   if [[ -e ${dest} ]]; then
-    if grep -qF "${STACK_MARKER_TEXT}" "${dest}" 2>/dev/null; then
+    if grep -qF -e "${STACK_MARKER_TEXT}" -e "${STACK_MARKER_TOML}" "${dest}" 2>/dev/null; then
       state="managed"
     else
       state="user"

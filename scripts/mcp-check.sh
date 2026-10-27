@@ -124,7 +124,14 @@ source "${COMMON_LIB}"
 
 DEFAULT_LANES="searxng,context7"
 DEFAULT_SEARCH_URL="http://host.docker.internal:8181"
+# The two spellings of stack ownership, kept in step with STACK_MARKER_TEXT and
+# STACK_MARKER_TOML in scripts/lib/config_seed.sh. The comment form is what the
+# render writes; the plain key is what survives the CLI rewriting this file.
 STACK_MARKER="managed-by: evo-t1-coder-stack"
+STACK_MARKER_TOML="__evoT1Stack = true"
+# CONFIG_MANAGED - 1 once the config section found an ownership marker; it is
+# what tells the lane report who owns this file.
+CONFIG_MANAGED=0
 JSON_FINDINGS=""
 STRICT=0
 
@@ -359,9 +366,12 @@ emit_finding() {
 # @function report_lanes
 # Ask the parser once about every required lane, then print each lane's findings
 # under its own phase line. One parser call keeps the counters honest: a finding
-# is counted where it was measured, never once per lane.
+# is counted where it was measured, never once per lane. The parser is told when
+# the file carries no ownership marker, so a lane missing from a file nobody owns
+# blames that file rather than a push gate.
 # Globals:
-#   CONFIG, REPORT_PY, DOCTOR_FILE, DOCTOR_OK, LANE_LIST, SEARCH_URL
+#   CONFIG, REPORT_PY, DOCTOR_FILE, DOCTOR_OK, LANE_LIST, SEARCH_URL,
+#   CONFIG_MANAGED
 # Arguments:
 #   None
 # Outputs:
@@ -370,10 +380,11 @@ emit_finding() {
 #   0, always (the counters decide the exit code)
 report_lanes() {
   local findings="" line lane_name check status detail remedy="" lane
-  local -a doctor_arg=()
+  local -a doctor_arg=() unmanaged_arg=()
   [ "${DOCTOR_OK}" = "1" ] && doctor_arg=(--doctor "${DOCTOR_FILE}")
+  [ "${CONFIG_MANAGED}" = "1" ] || unmanaged_arg=(--unmanaged)
   findings="$(python3 "${REPORT_PY}" --config "${CONFIG}" --lanes "${LANE_LIST}" \
-    "${doctor_arg[@]}" 2>/dev/null)" || findings=""
+    "${doctor_arg[@]}" "${unmanaged_arg[@]}" 2>/dev/null)" || findings=""
 
   for lane in ${LANE_LIST//,/ }; do
     phase "checking ${lane}"
@@ -413,7 +424,8 @@ report_lanes() {
 # @function main
 # Parse argv, walk the sections, summarize, and answer with the exit code.
 # Globals:
-#   CONFIG, LANE_LIST, SEARCH_URL, DOCTOR_FILE, DOCTOR_OK, STRICT, JSON_MODE
+#   CONFIG, LANE_LIST, SEARCH_URL, DOCTOR_FILE, DOCTOR_OK, STRICT, JSON_MODE,
+#   CONFIG_MANAGED, STACK_MARKER, STACK_MARKER_TOML
 # Arguments:
 #   "$@" - the command line
 # Outputs:
@@ -483,10 +495,12 @@ main() {
     finish
   fi
   emit_finding ok "readable at ${CONFIG}"
-  if grep -qs "${STACK_MARKER}" "${CONFIG}"; then
+  if grep -qsF -e "${STACK_MARKER}" -e "${STACK_MARKER_TOML}" "${CONFIG}"; then
+    CONFIG_MANAGED=1
     emit_finding ok "stack-managed (the startup render still owns this file)"
   else
-    emit_finding warn "no ${STACK_MARKER} marker - the stack stopped managing this file, so its default lanes and model catalog never reach it; delete it and restart, or re-materialize with 'bazelisk run //scripts:seed-dev-env -- --force'"
+    CONFIG_MANAGED=0
+    emit_finding warn "no ${STACK_MARKER} marker and no ${STACK_MARKER_TOML} key - the stack stopped managing this file, so its default lanes and model catalog never reach it; delete it and restart, or re-materialize with 'bazelisk run //scripts:seed-dev-env -- --force'"
   fi
 
   section "handshake"

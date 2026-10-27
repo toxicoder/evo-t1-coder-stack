@@ -515,10 +515,11 @@ setup() {
 
 @test "mcp lanes: an unmanaged config says what it costs in both twins" {
   # The guard re-renders only while the file is absent, a fresh install, or
-  # stack-marked; the else path used to be silent. A config that lost the
-  # marker (or was hand-written) opts the workspace out of every default lane
+  # stack-marked; the else path used to be silent. A config that lost both
+  # markers (or was hand-written) opts the workspace out of every default lane
   # and the model catalog forever, and nothing ever said so. Semantics must not
-  # move: the same three conditions, plus one note naming the consequence and
+  # move: the same three conditions, with the marker condition now satisfied by
+  # either spelling, plus one note naming the consequence and
   # the two ways back.
   local st s e block
   for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
@@ -531,16 +532,52 @@ setup() {
       { echo "${st}: the render guard lost its absent-file condition" >&2; return 1; }
     [[ "${block}" == *'[ "$GROK_FRESH_INSTALL" = "1" ]'* ]] ||
       { echo "${st}: the render guard lost the fresh-install condition" >&2; return 1; }
-    [[ "${block}" == *"grep -qs 'managed-by: evo-t1-coder-stack'"* ]] ||
-      { echo "${st}: the render guard lost the marker condition" >&2; return 1; }
+    [[ "${block}" == *"grep -qFs -e 'managed-by: evo-t1-coder-stack' -e '__evoT1Stack = true'"* ]] ||
+      { echo "${st}: the render guard lost one of the two marker conditions" >&2; return 1; }
     [[ "${block}" == *$'\nelse'$'\n'* ]] ||
       { echo "${st}: the render guard has no else path" >&2; return 1; }
-    [[ "${block}" == *'WARNING: $HOME/.grok/config.toml carries no stack marker'* ]] ||
+    [[ "${block}" == *'WARNING: $HOME/.grok/config.toml carries neither stack marker'* ]] ||
       { echo "${st}: the unmanaged-config note is gone" >&2; return 1; }
     [[ "${block}" == *'running a config the stack does not manage'* ]] ||
       { echo "${st}: the note names no consequence" >&2; return 1; }
     [[ "${block}" == *'bazelisk run //scripts:seed-dev-env -- --force'* ]] ||
       { echo "${st}: the note names no remedy" >&2; return 1; }
+  done
+}
+
+@test "config marker: both twins emit the key that survives a CLI rewrite" {
+  # The comment marker alone does not last. The CLI persists its own settings by
+  # rewriting ~/.grok/config.toml, and that write deletes every comment line, so
+  # a stack-managed config used to fall into the user column with nobody touching
+  # it and its default lanes never arrived again. A top-level key survives the same
+  # write, so both config twins emit one; TOML needs top-level keys ahead of the
+  # first table. And because a re-render replaces the file, both startup twins
+  # carry the CLI-owned tables over: [ui] holds permission_mode, so adopting a
+  # file back must never flip an operator from always-approve back to prompting.
+  local tpl key_line models_line
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    key_line="$(grep -n -m1 -Fx '__evoT1Stack = true' "${tpl}" | cut -d: -f1)"
+    [[ -n "${key_line}" ]] || { echo "${tpl}: no top-level ownership key" >&2; return 1; }
+    models_line="$(grep -n -m1 -Fx '[models]' "${tpl}" | cut -d: -f1)"
+    [[ "${key_line}" -lt "${models_line}" ]] || {
+      echo "${tpl}: the ownership key sits at or after the first table" >&2
+      return 1
+    }
+    grep -qF 'managed-by: evo-t1-coder-stack' "${tpl}" || {
+      echo "${tpl}: the comment marker went away along with the key" >&2
+      return 1
+    }
+  done
+
+  local st
+  for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
+    [[ -f "${st}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
+    grep -qF '(cli|ui|marketplace)' "${st}" || {
+      echo "${st}: the re-render carries over fewer than [cli], [ui] and [marketplace]" >&2
+      return 1
+    }
   done
 }
 
@@ -551,8 +588,8 @@ setup() {
   local stage_ws stage_dc note_ws note_dc
   stage_ws="$(sed -n '/^# --- MCP command reachability/,/^check_mcp_commands || true$/p' "${WS_STARTUP}")"
   stage_dc="$(sed -n '/^# --- MCP command reachability/,/^check_mcp_commands || true$/p' "${DC_STARTUP}")"
-  note_ws="$(sed -n '/WARNING: \$HOME\/\.grok\/config\.toml carries no stack marker/,/>&2$/p' "${WS_STARTUP}")"
-  note_dc="$(sed -n '/WARNING: \$HOME\/\.grok\/config\.toml carries no stack marker/,/>&2$/p' "${DC_STARTUP}")"
+  note_ws="$(sed -n '/WARNING: \$HOME\/\.grok\/config\.toml carries neither stack marker/,/>&2$/p' "${WS_STARTUP}")"
+  note_dc="$(sed -n '/WARNING: \$HOME\/\.grok\/config\.toml carries neither stack marker/,/>&2$/p' "${DC_STARTUP}")"
   [[ -n "${stage_ws}" ]] || { echo "${WS_STARTUP}: no advisory stage to compare" >&2; return 1; }
   [[ -n "${note_ws}" ]] || { echo "${WS_STARTUP}: no note to compare" >&2; return 1; }
   if [ "${stage_ws}" != "${stage_dc}" ]; then

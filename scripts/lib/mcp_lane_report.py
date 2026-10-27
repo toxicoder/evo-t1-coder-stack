@@ -11,6 +11,11 @@ Line shape:  lane \t check \t status \t detail
 
 A missing or unparseable config is reported as a single error line rather than a
 traceback, so the caller always has something to print.
+
+Who owns the file is the caller's call, not this parser's: it is told with
+--unmanaged when no stack ownership marker survived in the config, which is what
+decides whether a lane missing from the render blames a push gate or an unmanaged
+file.
 """
 
 import argparse
@@ -68,6 +73,20 @@ def declared_servers(config):
     """Return the [mcp_servers.*] table, empty when the config declares none."""
     servers = config.get("mcp_servers")
     return servers if isinstance(servers, dict) else {}
+
+
+def missing_lane_detail(path, unmanaged):
+    """Say why a required lane is absent, blaming whoever owns the file.
+
+    The caller decides `unmanaged` by looking for the stack ownership marker:
+    only a file the stack renders can be blamed on a gate or an old template.
+    """
+    if unmanaged:
+        return ("not declared in %s - this file carries no stack ownership "
+                "marker, so nothing re-renders it; re-materialize it with "
+                "'bazelisk run //scripts:seed-dev-env -- --force'" % path)
+    return ("not declared in %s - the default render declares it, so a push "
+            "passed its gate false or the template is old" % path)
 
 
 def check_command(lane, command):
@@ -179,6 +198,8 @@ def main():
                         help="comma-separated lanes to require")
     parser.add_argument("--doctor", default="",
                         help="a `grok mcp doctor --json` capture to fold in")
+    parser.add_argument("--unmanaged", action="store_true",
+                        help="the caller found no stack ownership marker in --config")
     args = parser.parse_args()
 
     lanes = [lane.strip() for lane in args.lanes.split(",") if lane.strip()]
@@ -191,7 +212,8 @@ def main():
     for lane in lanes:
         server = servers.get(lane)
         if not isinstance(server, dict):
-            emit(lane, "declared", "error", "not declared in %s - the default render declares it, so a push passed its gate false or the template is old" % args.config)
+            emit(lane, "declared", "error",
+                 missing_lane_detail(args.config, args.unmanaged))
             continue
         emit(lane, "declared", "ok", "block present")
         if LANE_REQUIREMENTS.get(lane, {}).get("transport") == "stdio":

@@ -104,6 +104,83 @@ scratch_home() {
   [ "${state}" = "managed" ]
 }
 
+@test "config_seed: a config.toml whose comments the CLI deleted still reads as managed" {
+  # The regression this pins. `grok mcp add` persists its own settings by
+  # parsing ~/.grok/config.toml and writing it back, and that round trip
+  # deletes every comment line -- no human involved. When only the comment
+  # marker and the JSON key were known, the file silently became user-owned,
+  # refresh-configs stopped reseeding it, and mcp-check reported the stack had
+  # abandoned it. The plain TOML key survives the same write, so it alone has
+  # to read as managed.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  local scratch state
+  scratch="$(make_scratch)"
+  printf 'model = "agent"\n[mcp_servers.searxng]\nenabled = true\n__evoT1Stack = true\n' \
+    >"${scratch}/config.toml"
+  # No comment line left to match: this is the post-rewrite shape, not a
+  # hypothetical one.
+  [ "$(grep -c '#' "${scratch}/config.toml")" -eq 0 ]
+  state="$(seed_target_owner "" "${scratch}/config.toml")"
+  [ "${state}" = "managed" ]
+}
+
+@test "config_seed: the container probe call carries all three markers as argv words" {
+  # The container branch reaches the probe through
+  # `docker exec -i <name> sh -c <probe> ... <path> <markers...>`, and the
+  # marker texts are separate argv words rather than text folded into the
+  # script body. A marker the caller forgets to pass is a marker the workspace
+  # never honors, which is exactly how the CLI-dropped-comment bug returned
+  # "user" for a config.toml the stack still owned. The docker stub records the
+  # exact argv, so this pins what the far-end probe is handed.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  local scratch logged
+  scratch="$(make_scratch)"
+  printf 'model = "agent"\n__evoT1Stack = true\n' >"${scratch}/config.toml"
+  seed_target_owner "coder-demo-abc" "${scratch}/config.toml" >/dev/null
+  logged="$(stub_log docker)"
+  assert_match "the probe ran under docker exec" 'exec -i coder-demo-abc sh -c ' "${logged}"
+  assert_match "path then the three markers, each its own argv word" \
+    "${scratch}/config.toml managed-by: evo-t1-coder-stack \"__evoT1Stack\": true __evoT1Stack = true\$" \
+    "${logged}"
+}
+
+@test "markers: every file that spells a stack marker spells it as config_seed.sh does" {
+  # Ownership is decided by grep -F against these strings, in the lib and in
+  # both startup twins alike, so one drifted space in any payload turns a
+  # stack-owned file into a user-owned one nothing reseeds. The three canonical
+  # spellings are read out of the lib rather than restated here, so the lib
+  # stays the only place that spells them out.
+  local lib="${REPO_ROOT}/scripts/lib/config_seed.sh"
+  local text json toml f bad
+  text="$(sed -n "s/^STACK_MARKER_TEXT='\(.*\)'$/\1/p" "${lib}" | tail -n 1)"
+  json="$(sed -n "s/^STACK_MARKER_JSON='\(.*\)'$/\1/p" "${lib}" | tail -n 1)"
+  toml="$(sed -n "s/^STACK_MARKER_TOML='\(.*\)'$/\1/p" "${lib}" | tail -n 1)"
+  [ -n "${text}" ] && [ -n "${json}" ] && [ -n "${toml}" ] ||
+    fail "config_seed.sh no longer defines the three marker constants"
+
+  for f in scripts/lib/config_seed.sh scripts/mcp-check.sh \
+    templates/workspace/startup.sh.tftpl templates/devcontainer/startup.sh.tftpl \
+    templates/workspace/grok-config.toml.tftpl templates/devcontainer/grok-config.toml.tftpl; do
+    assert_file_exists "${f} is in the tree" "${REPO_ROOT}/${f}"
+    if ! grep -qF -- "${text}" "${REPO_ROOT}/${f}"; then
+      fail "${f}: spells no comment marker; expected '${text}'"
+    fi
+    # Each key form is matched loosely, then required to equal the constant:
+    # a missing space or a renamed key is a different string to grep -F.
+    bad="$(grep -oE '"__evoT1Stack"[[:space:]]*:[[:space:]]*[A-Za-z0-9_]*' "${REPO_ROOT}/${f}" |
+      grep -vxF -- "${json}" || true)"
+    [ -z "${bad}" ] || fail "${f}: spells the JSON marker '${bad}', not '${json}'"
+    bad="$(grep -oE '__evoT1Stack[[:space:]]*=[[:space:]]*[A-Za-z0-9_]*' "${REPO_ROOT}/${f}" |
+      grep -vxF -- "${toml}" || true)"
+    [ -z "${bad}" ] || fail "${f}: spells the TOML marker '${bad}', not '${toml}'"
+    bad="$(grep -oE 'managed-by:[[:space:]]*[A-Za-z0-9_-]+' "${REPO_ROOT}/${f}" |
+      grep -vxF -- "${text}" || true)"
+    [ -z "${bad}" ] || fail "${f}: spells the comment marker '${bad}', not '${text}'"
+  done
+}
+
 @test "config_seed: seed_key_value and seed_render_settings carry API keys" {
   # shellcheck source=/dev/null
   source "${LIB}"

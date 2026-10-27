@@ -59,12 +59,16 @@ stub_curl() {
 
 # write_config <path> [marker] - a three-lane config whose binaries exist, plus the
 # stack marker unless a caller asks for the unmanaged shape. github is declared
-# but never required, which is what makes it exercise the "extra" path.
+# but never required, which is what makes it exercise the "extra" path. marker
+# takes 1 (the comment the render writes), key (only the plain TOML key, which is
+# what survives the CLI rewriting this file) or 0 (no ownership marker at all).
 write_config() {
   local path="$1" marker="${2:-1}"
   {
     if [ "${marker}" = "1" ]; then
       printf '# managed-by: evo-t1-coder-stack\n'
+    elif [ "${marker}" = "key" ]; then
+      printf '__evoT1Stack = true\n'
     fi
     printf '[mcp_servers.searxng]\n'
     printf 'command = "/opt/npm-global/bin/searxng-mcp-server"\n'
@@ -179,8 +183,33 @@ run_check() {
   run_check "${cfg}"
   [ "${status}" -eq 0 ]
   assert_match "names the marker" 'managed-by: evo-t1-coder-stack marker' "${output}"
+  assert_match "names the key spelling too" '__evoT1Stack = true key' "${output}"
   assert_match "names the consequence" 'stopped managing this file' "${output}"
   assert_match "names the re-materialize path" 'seed-dev-env -- --force' "${output}"
+}
+
+@test "mcp-check: a config owned only by the TOML key is stack-managed" {
+  local cfg="${BATS_TEST_TMPDIR}/key-only.toml" bins
+  bins="$(stub_ok_binaries)"
+  write_config "${cfg}" key
+  sed -i "s|/opt/npm-global/bin/|${bins}/|g" "${cfg}"
+
+  run_check "${cfg}"
+  [ "${status}" -eq 0 ]
+  assert_match "the key alone counts as ownership" 'stack-managed' "${output}"
+  assert_not_match "no marker warning" 'stopped managing this file' "${output}"
+  assert_match "the lanes were still judged" 'searxng: declared block present' "${output}"
+}
+
+@test "mcp-check: a lane missing from an unmanaged config blames the file, not a gate" {
+  local cfg="${BATS_TEST_TMPDIR}/unmanaged.toml"
+  printf '[mcp_servers.searxng]\ncommand = "/bin/sh"\nenabled = true\n' >"${cfg}"
+  run_check "${cfg}"
+  [ "${status}" -eq 1 ]
+  assert_match "names the missing lane" 'context7: declared not declared' "${output}"
+  assert_match "blames the unowned file" 'no stack ownership marker' "${output}"
+  assert_match "names the re-materialize remedy" 'seed-dev-env -- --force' "${output}"
+  assert_not_match "no gate blame without a marker" 'a push passed its gate false' "${output}"
 }
 
 @test "mcp-check: context7 without a key or its cache config warns, never fails" {
@@ -525,6 +554,7 @@ load_common() {
   REPO_ROOT_RESOLVED="${REPO_ROOT}"
   REPORT_PY="${PARSER}" DOCTOR_OK=0 DOCTOR_FILE="${BATS_TEST_TMPDIR}/doctor.json"
   CONFIG="${cfg}" LANE_LIST="searxng,context7" SEARCH_URL="http://searx.test:8181"
+  CONFIG_MANAGED=1
   PATH="$(stub_curl 200):${PATH}"
 
   # Called in this shell, not a subshell, so the counters it writes are the ones
