@@ -6,8 +6,9 @@
 #   - create .env from .env.sample
 #   - generate local secrets (replaces change-me-* placeholders)
 #   - fill in CODER_ACCESS_URL with the LAN IP
-#   - in public mode (STACK_PUBLIC_HOSTS set) derive the public STACK_*_URL keys
-#     and carry those names in the Coder cert SANs
+#   - in public mode (STACK_PUBLIC_HOSTS=auto, or an explicit name list) derive the
+#     public STACK_*_URL keys from the naming parts, render proxy/router.gen.conf from
+#     proxy/router.conf.template, and carry those names in the Coder cert SANs
 #   - point the Homepage dashboard at that same host and issue its TLS cert
 #   - sanity-check Docker and the Arc 140T (/dev/dri)
 #   - build the golden workspace image if it is missing, then push the template
@@ -68,6 +69,8 @@ cd "${ROOT_DIR}"
 
 # shellcheck source=lib/bootstrap.sh disable=SC1091
 source "scripts/lib/bootstrap.sh"
+# shellcheck source=lib/domain.sh disable=SC1091
+source "scripts/lib/domain.sh"
 
 check_only=0
 
@@ -287,7 +290,18 @@ public_coder_url=""
 public_kasm_url=""
 public_litellm_url=""
 public_hermes_url=""
-raw_public_hosts="$(sed -n 's|^STACK_PUBLIC_HOSTS=||p' .env | tail -n 1)"
+# STACK_PUBLIC_HOSTS has three states: empty is LAN-only, a comma-separated list is
+# used verbatim, and `auto` composes the five names from the naming parts in .env
+# (STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL and the per-service
+# *_NAME keys). resolve_auto_public_hosts owns the auto path and the sentinel
+# bookkeeping: it lifts the parts out of the file, exports them for lib/domain.sh,
+# resolves the list, and leaves the other two states exactly as it found them. The four
+# variables it writes are declared here so this file reads as the owner of them.
+file_public_hosts=""
+raw_public_hosts=""
+public_hosts_mode=""
+public_hosts_are_auto=0
+resolve_auto_public_hosts .env
 
 while IFS= read -r entry; do
   [ -n "${entry}" ] || continue
@@ -333,18 +347,49 @@ for entry in ${public_entries[@]+"${public_entries[@]}"}; do
 done
 
 # compose interpolates the raw value into HOMEPAGE_ALLOWED_HOSTS, so store the
-# cleaned list back; a file that was already written cleanly never differs and
-# this branch stays silent.
-if [ -n "${raw_public_hosts}" ] && [ "${raw_public_hosts}" != "${public_hosts}" ]; then
+# accepted list back; a file that was already written cleanly never differs and
+# this branch stays silent. The comparison is against what the FILE held rather than
+# the working value, because under `auto` the file holds the sentinel and the resolved
+# list has to replace it.
+if [ -n "${raw_public_hosts}" ] && [ "${file_public_hosts}" != "${public_hosts}" ]; then
   upsert_env STACK_PUBLIC_HOSTS "${public_hosts}"
+elif [ "${public_hosts_are_auto}" != "1" ] &&
+  [ "$(printf '%s' "${file_public_hosts}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')" = "auto" ]; then
+  # `auto` was asked for and nothing composed. Leaving the sentinel would hand compose
+  # the literal word inside HOMEPAGE_ALLOWED_HOSTS, so clear it and let the LAN
+  # fallbacks apply; the warning above already names the part to fix.
+  upsert_env STACK_PUBLIC_HOSTS ""
 fi
+
+# Records the derivation, and clears itself on the explicit-list and LAN-only paths so
+# a stale `auto` cannot keep re-deriving names the operator has since pinned by hand.
+upsert_env STACK_PUBLIC_HOSTS_MODE "${public_hosts_mode}"
 
 # The names above go into HOMEPAGE_ALLOWED_HOSTS and the cert SANs no matter what
 # nginx holds, so a host that was renamed in .env but never added to the router's
 # vhost table would survive bootstrap and only show up as a 421 after the
-# recreate. One grep per accepted name, before any of the slow steps below.
+# recreate. That table is rendered here rather than hand-edited:
+# proxy/router.conf.template carries the five blocks with __EVO_HOST_*__ tokens and the
+# composed names fill them. The check then runs against the file compose will actually
+# mount, which STACK_ROUTER_CONF picks — an empty value leaves compose on the
+# checked-in proxy/router.conf.
+router_conf="proxy/router.conf"
+if [ "${public_hosts_are_auto}" = "1" ] && [ -n "${public_hosts}" ] &&
+  render_public_router_conf "proxy/router.conf.template" "proxy/router.gen.conf"; then
+  upsert_env STACK_ROUTER_CONF "router.gen.conf"
+  router_conf="proxy/router.gen.conf"
+  log "rendered proxy/router.gen.conf for the public names"
+else
+  # LAN-only, or names pinned by hand in STACK_PUBLIC_HOSTS: the composed names are not
+  # what this stack should serve, so compose stays on the checked-in conf and the check
+  # below reports any pinned name its vhosts do not cover.
+  upsert_env STACK_ROUTER_CONF ""
+  if [ "${public_hosts_are_auto}" = "1" ] && [ -n "${public_hosts}" ]; then
+    warn "the public router config was not rendered, so compose keeps mounting proxy/router.conf and its vhosts may not match STACK_PUBLIC_HOSTS"
+  fi
+fi
 if [ -n "${public_hosts}" ]; then
-  warn_missing_router_hosts "proxy/router.conf" ${public_entries[@]+"${public_entries[@]}"}
+  warn_missing_router_hosts "${router_conf}" ${public_entries[@]+"${public_entries[@]}"}
 fi
 
 # The self-signed pair below still serves the LAN origin, so public mode needs

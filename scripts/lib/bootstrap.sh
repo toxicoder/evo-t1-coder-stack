@@ -206,11 +206,11 @@ dind_image_ref() {
 }
 
 # @function warn_missing_router_hosts
-# Warn when a public DNS name is not a server_name in proxy/router.conf.
+# Warn when a public DNS name is not a server_name in the router conf.
 # Globals:
 #   None
 # Arguments:
-#   $1 - path to router.conf
+#   $1 - path to the router conf compose will mount (STACK_ROUTER_CONF decides which)
 #   remaining - DNS names
 # Outputs:
 #   One warning line per unmatched name on stdout
@@ -232,5 +232,80 @@ warn_missing_router_hosts() {
       echo "warning: ${name} is not a server_name in ${conf}: the router answers 421 for that Host, so add the server block or fix STACK_PUBLIC_HOSTS"
     fi
   done
+  return 0
+}
+
+# @function resolve_auto_public_hosts
+# Turn the STACK_PUBLIC_HOSTS sentinel into the names the naming parts compose.
+# `auto`, written in either STACK_PUBLIC_HOSTS or the bookkeeping key
+# STACK_PUBLIC_HOSTS_MODE, asks for derived names so an operator sets a zone and a
+# box label once instead of typing five long names into .env and again into the
+# router's vhost table. The sentinel stays out of STACK_PUBLIC_HOSTS itself, because
+# compose appends that raw value to HOMEPAGE_ALLOWED_HOSTS and a literal "auto" in an
+# allow list answers nothing; the intent lives in STACK_PUBLIC_HOSTS_MODE instead, so
+# a later run re-composes from the parts rather than trusting the resolved list.
+# Call this plainly and never inside $( ): the part lift below has to land in the
+# caller's environment, where lib/domain.sh reads it.
+# Globals:
+#   STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL and the per-service
+#   *_NAME keys, lifted out of the file and exported when the file carries them (a
+#   key the file leaves empty keeps whatever the shell already carried, which is how
+#   an operator tries a label for one run without editing .env);
+#   public_hosts_mode, public_hosts_are_auto, file_public_hosts, raw_public_hosts
+# Arguments:
+#   $1 - path to the env file to read; empty means .env
+# Outputs:
+#   warning: when auto composed no name, note: when the parts override a list that
+#   was written into STACK_PUBLIC_HOSTS by hand
+# Returns:
+#   0
+resolve_auto_public_hosts() {
+  local env_src="${1:-.env}"
+  local part_key part_value composed
+
+  file_public_hosts="$(sed -n 's|^STACK_PUBLIC_HOSTS=||p' "${env_src}" | tail -n 1)"
+  raw_public_hosts="${file_public_hosts}"
+  public_hosts_are_auto=0
+  public_hosts_mode="$(sed -n 's|^STACK_PUBLIC_HOSTS_MODE=||p' "${env_src}" |
+    tail -n 1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+  if [ "${public_hosts_mode}" != "auto" ] &&
+    [ "$(printf '%s' "${raw_public_hosts}" | tr -d '[:space:]' |
+      tr '[:upper:]' '[:lower:]')" = "auto" ]; then
+    public_hosts_mode="auto"
+  fi
+  if [ "${public_hosts_mode}" != "auto" ]; then
+    return 0
+  fi
+
+  # The parts live in the file like every other key, while lib/domain.sh reads them
+  # from the environment, so lift them out before composing.
+  for part_key in STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL \
+    STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME \
+    STACK_DASHBOARD_NAME; do
+    part_value="$(sed -n "s|^${part_key}=||p" "${env_src}" | tail -n 1)"
+    if [ -n "${part_value}" ]; then
+      # shellcheck disable=SC2163  # the key names are this fixed literal list
+      export "${part_key}=${part_value}"
+    fi
+  done
+
+  composed="$(public_hosts_default)"
+  if [ -z "${composed}" ]; then
+    warn "STACK_PUBLIC_HOSTS_MODE=auto composed no name — staying LAN-only. Check STACK_DOMAIN_BASE and STACK_SUBDOMAIN_SUFFIX in ${env_src}."
+    raw_public_hosts=""
+    public_hosts_mode=""
+    return 0
+  fi
+
+  # Under `auto` the parts are the source of truth and STACK_PUBLIC_HOSTS is output
+  # only, so a list edited by hand there is ignored. Say so, and name the key to clear
+  # to pin names by hand, rather than letting the edit look like it took effect.
+  if [ -n "${file_public_hosts}" ] && [ "${file_public_hosts}" != "auto" ] &&
+    [ "${file_public_hosts}" != "${composed}" ]; then
+    note "STACK_PUBLIC_HOSTS_MODE=auto so the names come from the naming parts, not from STACK_PUBLIC_HOSTS='${file_public_hosts}'. Clear STACK_PUBLIC_HOSTS_MODE in ${env_src} to pin names by hand."
+  fi
+  raw_public_hosts="${composed}"
+  # shellcheck disable=SC2034 # scripts/bootstrap.sh reads it to gate the router render
+  public_hosts_are_auto=1
   return 0
 }
