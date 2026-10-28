@@ -733,9 +733,9 @@ load_common() {
 }
 
 @test "new-repo: the canned scaffold exercises every token the CLI declares" {
-  # This is the guard the deleted project-template suite used to be: a token the
-  # scaffold never uses makes "no token survived the render" vacuous, and a token
-  # the scaffold uses that the CLI does not declare ships showing.
+  # A token the canned scaffold never uses would make "no token survived the
+  # render" vacuous, and a token the scaffold uses that the CLI does not declare
+  # ships showing in the new repository.
   local expected declared token missing=0 unexpected=0
   expected="$(printf '%s\n' __PROJECT_DESCRIPTION__ __PROJECT_LICENSE_HOLDER__ \
     __PROJECT_MODULE__ __PROJECT_NAME__ __PROJECT_OWNER__ __PROJECT_SLUG__ __PROJECT_YEAR__ |
