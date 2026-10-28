@@ -277,9 +277,6 @@ order by (u.rbac_roles && '{owner}'::text[]) desc, u.last_seen_at desc
 limit 1
 returning id;"
 wait_until=0
-if [ "${WAIT_SECS}" -gt 0 ]; then
-  wait_until=$(($(date +%s) + WAIT_SECS))
-fi
 waited_note=0
 while true; do
   insert_rc=0
@@ -287,12 +284,16 @@ while true; do
   case "${inserted}:${insert_rc}" in
     "${key_id}:0") break ;;
     ':0')
+      # The budget is the operator's registration window, so it starts the moment
+      # the db first answers "no owner": the buildinfo probe and this very query
+      # cannot spend it, and an operator who asked to wait always sees the note.
+      if [ "${WAIT_SECS}" -gt 0 ] && [ "${waited_note}" = "0" ]; then
+        wait_until=$(($(date +%s) + WAIT_SECS))
+        log "waiting up to ${WAIT_SECS}s for the first Coder owner — register at the access URL, then this seeder continues"
+        waited_note=1
+      fi
       now="$(date +%s)"
       if [ "${WAIT_SECS}" -gt 0 ] && [ "${now}" -lt "${wait_until}" ]; then
-        if [ "${waited_note}" = "0" ]; then
-          log "waiting up to ${WAIT_SECS}s for the first Coder owner — register at the access URL, then this seeder continues"
-          waited_note=1
-        fi
         sleep 2
         continue
       fi

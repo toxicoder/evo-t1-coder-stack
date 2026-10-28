@@ -11,6 +11,7 @@
 # error rather than silence.
 #
 # Usage (in a .bats file): use_stubs docker psql; STUB_PSQL_RC=1 run ...
+#   STUB_PSQL_DELAY=2 makes the answer arrive two seconds late.
 # Safety: stub only.
 set -u
 
@@ -29,6 +30,10 @@ fi
 if [ -n "${STUB_PSQL_OUT:-}" ]; then
   if [ -f "${STUB_PSQL_OUT}" ]; then cat "${STUB_PSQL_OUT}"; else printf '%s\n' "${STUB_PSQL_OUT}"; fi
 fi
+# STUB_PSQL_DELAY holds the caller for that many seconds before answering, so a
+# test can pin what a slow query does to a wall-clock budget (a real db that
+# answers late is the only other way to reach that shape).
+if [ -n "${STUB_PSQL_DELAY:-}" ]; then sleep "${STUB_PSQL_DELAY}"; fi
 if [ "${STUB_PSQL_RC:-0}" != "0" ]; then
   printf 'psql: error: stub failure\n' >&2
 fi
