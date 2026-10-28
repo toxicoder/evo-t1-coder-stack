@@ -51,7 +51,8 @@ variable "repo_url" {
 # than a literal in the preset so a fork that hosts the stack elsewhere gets a
 # "New project" preset that clones its own stack, not the upstream one. The
 # scaffold preset passes it as additional_repos, which is how scripts/new-repo.sh
-# and project-template/ end up inside a fresh workspace.
+# reaches a fresh workspace. The scaffold that CLI renders is cloned from its own
+# repository at run time, so no copy of it rides along in this repo.
 variable "stack_repo_url" {
   type        = string
   description = "Git URL of this stack's repository, cloned as an additional repo by the New project preset so the scaffold CLI is available."

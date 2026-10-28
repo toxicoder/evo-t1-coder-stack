@@ -717,12 +717,14 @@ Deep detail: [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md) and
 
 ### Create a new repository from the scaffold
 
-`project-template/` is the repository template this stack ships: governance files,
-pinned toolchain, three CI workflows, a test dispatcher, an agent contract, and
-per-language lane overlays. `bazelisk run //scripts:new-repo -- <name>` renders it
-(substituting `__PROJECT_*__` tokens in contents and paths), creates the GitHub
-repository, applies the settings the template asks for, and can queue a Coder task so a
-workspace exists the moment you open it.
+The repository template is a separate GitHub repository,
+`https://github.com/toxicoder/ezrepo`: governance files, a pinned toolchain, three CI
+workflows, a test dispatcher, an agent contract, and per-language lane overlays.
+`bazelisk run //scripts:new-repo -- <name>` clones it, substitutes the `__PROJECT_*__`
+tokens in contents and paths, overlays the lanes you asked for, creates the GitHub
+repository, applies the settings the template asks for, and can queue a Coder task so
+a workspace exists the moment you open it. `--template-ref <ref>` pins a branch or tag;
+`--template-dir <dir>` renders a local tree you already hold and fetches nothing.
 
 Plan without touching GitHub:
 
@@ -972,7 +974,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
 │   ├── mcp-check.sh         # prove the Grok Build MCP lanes: binaries, creds, handshake
-│   ├── new-repo.sh          # render project-template -> new GitHub repo + Coder task
+│   ├── new-repo.sh          # clone ezrepo -> render tokens/lanes -> GitHub repo + Coder task
 │   ├── new-workspace.sh     # git URL -> workspace: picks the template + parameters
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 │   ├── pre-commit.sh        # the gate the hooks run: hermetic, --all, --image

@@ -1,13 +1,14 @@
 ---
 title: New projects from the template
-description: What project-template/ ships, how scripts/new-repo.sh renders it into a new GitHub repository, and what the Coder side adds.
-tags: [template, new-repo, scaffold, coder-task, project-template]
+description: How scripts/new-repo.sh fetches the ezrepo scaffold from GitHub, renders it into a new repository, and what the Coder side adds.
+tags: [template, new-repo, scaffold, coder-task, ezrepo]
 ---
 
 **What's on this page**
 
 - Two different things called "template", and which one this page is about
-- What the scaffold ships, and the account-wide gaps it closes
+- What the scaffold repository ships, and the account-wide gaps it closes
+- Where the scaffold is fetched from, and how to pin or replace it
 - Rendering a repository with `new-repo`, its flags, and its lanes
 - Which GitHub steps need which App permission, and what the CLI does when one is refused
 - The `New project` workspace preset and the optional Coder Task
@@ -17,6 +18,7 @@ tags: [template, new-repo, scaffold, coder-task, project-template]
 
 - Starting a new repository with the quality gate already in place, in one command
 - Getting the same scaffold on a laptop, in CI, and from a workspace
+- Pinning a scaffold revision, or rendering a local tree with no network at all
 - Telling a refused GitHub permission apart from a broken render
 
 ## Two kinds of template
@@ -25,25 +27,33 @@ This repository already uses the word *template* for a **Coder template**: the T
 under `templates/workspace/` and `templates/devcontainer/` that `push-template.sh` registers with
 the Coder server.
 
-`project-template/` is a different thing. It is a **project scaffold**: a tree of files that
-`scripts/new-repo.sh` copies, substitutes, and hands to `git init` as the first commit of a brand
-new repository. Nothing in `project-template/` is built by Bazel or read by the stack at runtime.
-It is registered as a payload group (`//project-template:payload`) so the render gate can open it
-under hermetic runfiles and so its shell is held to this repo's own shellcheck and shfmt bar.
+The other *template* is a **project scaffold**: a tree of files that `scripts/new-repo.sh` copies,
+substitutes, and hands to `git init` as the first commit of a brand new repository. It is not
+vendored here. It lives in its own repository -- by default `https://github.com/toxicoder/ezrepo`
+-- and this repo's whole job is to fetch that tree and render it. The scaffold is a product with
+its own CI and its own release rhythm, and a vendored copy drifts from the day it is committed, so
+nothing here is kept in step with it.
+
+The coupling runs one way: this repo may name the scaffold repository; the scaffold repository
+never names this one. And the scaffold's quality gate is its own -- the `.self-check/` suite and
+the CI that runs it in that repository -- so a scaffold change is tested where it is made, and a
+lane or a file the scaffold adds needs no change here.
 
 ## What the scaffold ships
 
-The scaffold is language-neutral at the core, with optional per-language lanes. Everything below
-was chosen from what is measurably missing across the account, not from taste: across a sample of
-eleven ordinary projects, `SECURITY.md`, `CONTRIBUTING.md`, issue templates, a pull-request
-template, `dependabot.yml`, `CODEOWNERS` and `.editorconfig` were each present in none of them,
-and no repository in the surveyed set had a single release or tag.
+These files belong to the scaffold repository. This repo does not ship them, lint them, or keep a
+copy: it fetches them at run time and renders them. The scaffold is language-neutral at the core,
+with optional per-language lanes. Everything below was chosen from what is measurably missing
+across the account, not from taste: across a sample of eleven ordinary projects, `SECURITY.md`,
+`CONTRIBUTING.md`, issue templates, a pull-request template, `dependabot.yml`, `CODEOWNERS` and
+`.editorconfig` were each present in none of them, and no repository in the surveyed set had a
+single release or tag.
 
 | Area | What ships |
 |---|---|
 | Community | `SECURITY.md` with a supported-versions table and private-report route, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `CHANGELOG.md` |
 | GitHub | `.github/workflows/ci.yml`, `release.yml`, `security.yml`, `dependabot.yml`, `CODEOWNERS`, issue templates with blank issues disabled, a PR template with a Safety/ops-impact section |
-| Hygiene | `.editorconfig`, `.gitattributes`, `.gitignore`, `.env.example`, `.yamllint.yml`, `.shellcheckrc` |
+| Hygiene | `.editorconfig`, `.gitattributes`, `.gitignore`, `env.example` (the render writes it out as `.env.example`), `.yamllint.yml`, `.shellcheckrc` |
 | Gates | `.pre-commit-config.yaml` whose local hooks **fail** when a tool is missing, plus `tests/run.sh`, a dispatcher that errors rather than skipping when a runner is absent |
 | Pins | `tool-versions.env`, read by the dev container, `make doctor`, and CI, so the three cannot drift |
 | Agent contract | `AGENTS.md` with the cost-tiered "which check first" table and the path-to-test mapping |
@@ -52,9 +62,14 @@ and no repository in the surveyed set had a single release or tag.
 
 The rule that ties it together: **a check that silently skips is a bug**. Two existing
 repositories print `tool not found ... Skipping` and then exit zero, and a pre-commit config in
-another wraps every hook in `command -v ... || exit 0`. Nothing in the scaffold may do that.
+another wraps every hook in `command -v ... || exit 0`. Nothing in the scaffold may do that, and
+the scaffold's own `.self-check/` suite is what holds the line.
 
 ### Lanes
+
+Lane ids are not declared here. `scripts/new-repo.sh` discovers them from the fetched tree's
+`.template-lanes/` directory at run time, so a lane the scaffold repository adds needs no change
+in this repo. The four below are what it ships today:
 
 | Lane | Adds |
 |---|---|
@@ -63,10 +78,11 @@ another wraps every hook in `command -v ... || exit 0`. Nothing in the scaffold 
 | `typescript` | ESLint 9 flat config, Prettier, Vitest with 100% thresholds, `tsc --noEmit` |
 | `go` | `go.mod`, `.golangci.yml`, table-driven tests, `go vet`, `gosec`, a coverage floor |
 
-Each lane lives at `project-template/.evo-lanes/<lane>/`. A file there is copied over the rendered
+Each lane lives at `<scaffold>/.template-lanes/<lane>/`. A file there is copied over the rendered
 tree at the same path, so a lane may add files or replace a core one. `LANE.md` and
 `gitignore.fragment` are lane metadata: the renderer appends the fragment to `.gitignore` and drops
-both from the output.
+both from the output. Ask for a lane the fetched tree does not have and the run dies naming the
+lanes it does offer.
 
 ## Rendering a repository
 
@@ -75,7 +91,17 @@ bazelisk run //scripts:new-repo -- --dry-run demo-tool
 bazelisk run //scripts:new-repo -- demo-tool --description "Does the thing" --lane python
 bazelisk run //scripts:new-repo -- --private my-tool --lane go --lane shell
 bazelisk run //scripts:new-repo -- --no-push --out /tmp/try demo-tool
+bazelisk run //scripts:new-repo -- --template-ref v1 --lane python demo-tool
+bazelisk run //scripts:new-repo -- --template-dir /tmp/ezrepo demo-tool
 ```
+
+The scaffold is fetched before anything is rendered: a shallow (`--depth 1`), single-branch clone
+of `--template-ref` into a scratch directory an EXIT trap removes. `GIT_TERMINAL_PROMPT=0` and an
+empty credential helper keep a scaffold that turned private from hanging on a prompt nobody can
+answer inside a workspace. A fetched tree with no `template.yml` at its root is a hard failure --
+that manifest belongs to the scaffold repository, so pick a ref that has it. The new repository's
+first commit records what it was built from: `- Scaffold: <url>@<sha>.`, or
+`- Scaffold: local tree <dir>.` for a `--template-dir` render.
 
 | Flag | Effect |
 |---|---|
@@ -86,26 +112,41 @@ bazelisk run //scripts:new-repo -- --no-push --out /tmp/try demo-tool
 | `--private` | create the repository private |
 | `--as-template` | mark it as a template repository |
 | `--description`, `--owner`, `--holder`, `--year` | token values; the owner defaults to the authenticated account |
-| `--lane <id>` | add a lane; repeatable, default `shell`. `--lane none` clears the lanes named so far and renders the bare core, whose `make test` asks for a lane |
+| `--lane <id>` | add a lane; repeatable, default `shell`. Ids are discovered from the fetched scaffold, so a lane the scaffold adds needs no change here. `--lane none` clears the lanes named so far and renders the bare core, whose `make test` asks for a lane |
 | `--topic <t>` | extra topic; repeatable |
+| `--template-url <url>` | scaffold repository to clone (default: `$EZREPO_URL`, else `https://github.com/toxicoder/ezrepo.git`) |
+| `--template-ref <ref>` | branch or tag to fetch (default: `$EZREPO_REF`, else `main`). Pin a tag for a reproducible render |
+| `--template-dir <dir>` | render this local tree and fetch nothing (default: `$EZREPO_DIR`); `--template-ref` has no effect on it |
 | `--task`, `--task-template <n>` | also offer a Coder Task |
 | `--branch <name>` | default branch, `main` by default |
 
+The three scaffold flags exist so the source can be pointed elsewhere without editing anything:
+the env pair covers a mirror or a fork for a whole deployment, and `--template-dir` renders a tree
+you already hold, which is the offline route and the one the hermetic tests use.
+
+The run exits 0 when the render succeeded -- a refused GitHub step is a `warning:`, not a failure --
+and 1 on a render failure, a bad argument, or a scaffold that cannot be fetched.
+
 Placeholders are substituted in file contents *and* in file and directory names:
 `__PROJECT_NAME__`, `__PROJECT_SLUG__`, `__PROJECT_MODULE__`, `__PROJECT_DESCRIPTION__`,
-`__PROJECT_OWNER__`, `__PROJECT_LICENSE_HOLDER__`, `__PROJECT_YEAR__`. A token that survives is a
-hard failure, not a warning -- a repository that ships with its placeholders showing is worse than
-no template at all.
+`__PROJECT_OWNER__`, `__PROJECT_LICENSE_HOLDER__`, `__PROJECT_YEAR__`. Those seven are named once,
+in `NEW_REPO_TOKENS`, and they are the whole contract between this script and the scaffold -- a
+ceiling rather than an equality, so the template may use a subset of them. A token that survives is
+a hard failure, not a warning -- a repository that ships with its placeholders showing is worse
+than no template at all.
 
 Markdown carries a token in a second spelling. Prettier reads a bare `__PROJECT_NAME__` as strong
 emphasis and rewrites it to `**PROJECT_NAME**`, so a markdown formatter run over the template turns
-every prose placeholder into that form; the renderer substitutes both spellings, and
-`tests/bats/project-template.bats` rejects any token name outside the seven in either form.
+every prose placeholder into that form; the renderer substitutes both spellings. Which of the seven
+the scaffold actually uses, in either spelling, is the scaffold's own invariant and its own
+`.self-check/` suite checks it.
 
-Two kinds of file are removed on the way out: a lane's reserved metadata (`LANE.md`,
-`gitignore.fragment`, whose contents are consumed rather than copied) and the stack-only files in
-`NEW_REPO_TEMPLATE_META`. The latter is currently `project-template/BUILD.bazel`, which exists so
-`//:stack_data` can depend on the payload and has no meaning inside a customer's repository.
+Two kinds of path are removed on the way out: a lane's reserved metadata (`LANE.md`,
+`gitignore.fragment`, whose contents are consumed rather than copied) and the generator-owned paths
+in `NEW_REPO_TEMPLATE_META`, stripped from every render: `.template-lanes/` (the overlay source this
+script reads), `.self-check/` (the scaffold's conformance suite, which goes stale the moment a real
+project diverges from the template it was checked against), and `.git` (which would hand the new
+repository the template's history and origin remote).
 
 ## What each GitHub step needs
 
@@ -137,8 +178,9 @@ Two things, and neither replaces the CLI.
 
 The **`New project (scaffold ready)` preset** in both templates is a form shortcut. It pins the
 golden image, turns on the DinD sidecar in the workspace template, and passes this stack as
-`additional_repos`, which is what puts `scripts/new-repo.sh` and `project-template/` inside a fresh
-workspace beside the project. It is a preset, so it only sets parameter values.
+`additional_repos`, which is what puts `scripts/new-repo.sh` inside a fresh workspace beside the
+project being started. The scaffold does not ride along: the CLI fetches it from GitHub when it
+runs. It is a preset, so it only sets parameter values.
 
 **`--task`** calls `coder task create` once the repository exists. The Coder server here is v2.36.6
 and does ship `coder task`, but the Terraform provider is pinned to `~> 2.18`, so a task cannot be
@@ -152,18 +194,24 @@ The CLI never creates the workspace itself. It prints
 dev-container probe and the template choice, and a second copy of that decision would eventually
 disagree with the first.
 
+That preset/CLI pair is the whole hand-off. It is where this repo hands a new project over, and the
+only coupling between the two repositories: this repo names the scaffold it clones, the scaffold
+never names this one.
+
 ## Where this is enforced
 
-- `//tests:bats_new_repo_test` renders into a temp directory with `gh` and `git` stubbed and asserts
-  token substitution, lane overlay, `gitignore` fragments, and that `--dry-run` creates nothing.
-- `//tests:bats_project_template_test` asserts the scaffold ships its required files, carries no
-  unsubstituted token, contains no `|| exit 0` silent skip, and pins every tool rather than using
-  `@latest`. It also pins that every lane has a heading in `tool-versions.env`, which is what lets
-  `make doctor` skip a lane's tools when that lane was never rendered.
-- `//tests:bats_new_repo_test` renders each lane and asserts the rendered tree holds no symlink (a
-  lane copied out of Bazel runfiles with `cp -a` would ship files that point into a directory which
-  disappears with the build) and that `make doctor` does not demand another lane's toolchain.
-- `//project-template:shell_sources` is in the lint drivers' source lists, so scaffold shell is
-  checked by the same shellcheck and shfmt runs as the CLIs.
-- `//tests:bats_bazel_deps_test` keeps `_SCRIPT_PAYLOAD["new-repo"]`, the `TOKEN_GROUPS` entry and
-  the `//:stack_data` aggregate honest about what the CLI actually reads.
+The split follows the ownership: the scaffold's own invariants are checked in the scaffold
+repository, and this repo checks only the renderer.
+
+- The scaffold's `.self-check/` suite, in that repository and run by its own CI, owns the template's
+  internal invariants: every token the template uses is one this script declares, every lane ships
+  its `LANE.md` plus `gitignore.fragment` pair, every tool is pinned rather than `@latest`, the
+  workflows declare `permissions`, the docs links resolve, and the pins cover the lanes present.
+- `//tests:bats_new_repo_test` owns the renderer: token substitution in file contents and in file
+  and directory names, the markdown `**NAME**` alias, the lane overlay and its `gitignore`
+  fragments, the generator-owned paths stripped from every render, the argv of the scaffold clone,
+  the credential ladder that retries once with `GH_TOKEN`/`GITHUB_TOKEN` cleared, the GitHub ladder
+  staying advisory (a refused step warns and never fails the run), and the Coder Task being a
+  convenience that cannot fail a render.
+- `//tests:bats_bazel_deps_test` keeps `_SCRIPT_PAYLOAD["new-repo"]` honest about what the CLI
+  actually reads.

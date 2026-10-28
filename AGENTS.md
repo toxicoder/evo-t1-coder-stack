@@ -99,13 +99,17 @@ Stack changes must be verified on the dev stack first.
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
 - `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys: `proxy/router.conf.template` is the source, `proxy/router.conf` is its render under the shipped defaults, and `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`. Edit the naming parts, never a rendered conf. A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, and `hermes/config.yaml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
-- `project-template/` is the render source for `//scripts:new-repo`, not a deployed payload.
-  It is one `glob` group (`//project-template:payload`), so a new file there needs no BUILD edit; a
-  new language needs a `project-template/.evo-lanes/<lane>/` directory holding at least `LANE.md`
-  and `gitignore.fragment`, plus the lane id in `NEW_REPO_LANES` in `scripts/new-repo.sh` — the two
-  are pinned equal by `tests/bats/project-template.bats`. The seven `__PROJECT_*__` render tokens
-  are named once, in `NEW_REPO_TOKENS`; a token outside that set survives rendering into the
-  customer's repo and that same suite is what catches it.
+- The project scaffold `scripts/new-repo.sh` renders is its own repository (`toxicoder/ezrepo`
+  by default; `--template-url` / `$EZREPO_URL` point elsewhere) and is vendored nowhere here.
+  The CLI shallow-clones it into a scratch dir, overlays only the lanes the operator named, and
+  strips the scaffold's own paths (`.template-lanes/`, `.self-check/`, `.git`), so a new
+  language lane is a change to that repository alone: lane ids are discovered from the clone,
+  never listed here. The seven `__PROJECT_*__` tokens are named once, in `NEW_REPO_TOKENS`; the
+  scaffold may use any subset, and a token outside the set survives rendering into the new
+  repository. The scaffold's own invariants are pinned by its `.self-check/` suite; this repo's
+  `tests/bats/new-repo.bats` pins the renderer against the canned tree in
+  `tests/bats/fixtures/ezrepo-template/`. The `New project` preset in both template twins, plus
+  `--task`, is the hand-off that turns a render into a workspace.
 - Runtime is `docker compose`. Do not add Kubernetes.
 - LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env); never introduce a static token or PAT.
 
