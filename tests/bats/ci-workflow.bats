@@ -119,3 +119,22 @@ setup() {
   logins="$(grep -c 'docker/login-action' "${CI_YML}")"
   [ "${logins}" -eq 1 ]
 }
+
+@test "ci workflow: the publishing build names only the GHCR ref" {
+  # build-push-action pushes EVERY tag it is handed once push is true, so a bare
+  # evo-t1-dev:latest in the list makes buildx authorize against
+  # auth.docker.io for library/evo-t1-dev, fail with 401 on a job that carries no
+  # Docker Hub credential, and lose an already-built image. That is what kept
+  # every push to main red, and it only shows on main because a PR never pushes.
+  ci_refute_line "folded tags list" '^[[:space:]]+tags:[[:space:]]*\|[[:space:]]*$'
+  ci_refute_line "bare tag as a tags list entry" '^[[:space:]]+evo-t1-dev:latest[[:space:]]*$'
+  assert_contains_file "published ref is the ghcr tag" "${CI_YML}" \
+    'tags: ghcr\.io/\$\{\{ github\.repository \}\}/evo-t1-dev:latest'
+  # The bare golden tag still has to exist for the gates, scripts/test-in-image.sh
+  # and the rest of the repo, so the job names it itself after the load.
+  assert_contains_file "gate runner is handed the bare tag" "${CI_YML}" \
+    'docker tag "ghcr\.io/\$\{\{ github\.repository \}\}/evo-t1-dev:latest" evo-t1-dev:latest'
+  # The docs job loads only, so it may keep building under the bare tag.
+  assert_contains_file "docs job builds the bare tag locally" "${CI_YML}" \
+    '^[[:space:]]+tags: evo-t1-dev:latest$'
+}

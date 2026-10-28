@@ -67,15 +67,26 @@ jobs:
         with:
           context: images/dev
           file: images/dev/Dockerfile
-          tags: |
-            evo-t1-dev:latest
-            ghcr.io/${{ github.repository }}/evo-t1-dev:latest
+          # The one tag is the published ref. buildx pushes EVERY tag it is given
+          # once push is true, so the bare evo-t1-dev:latest the gates run cannot
+          # be listed here: with no Docker Hub credential in this job, buildx
+          # would resolve it to docker.io/library/evo-t1-dev, fail to authorize
+          # against auth.docker.io, and fail the step with the whole build
+          # already done. The next step gives the loaded image that bare name.
+          tags: ghcr.io/${{ github.repository }}/evo-t1-dev:latest
           # Load the build into the runner's daemon so the next step can run the
           # gates in it; push only where we are allowed to publish.
           load: true
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # The gates, scripts/test-in-image.sh and every other consumer in the repo
+      # reach the golden image by its bare local tag, so name the loaded build
+      # here rather than asking buildx to publish it too.
+      - name: Name the golden image for the gate runner
+        run: |
+          docker tag "ghcr.io/${{ github.repository }}/evo-t1-dev:latest" evo-t1-dev:latest
 
       - name: Bazel test-fast, lint and validate in the image
         run: |
