@@ -362,6 +362,25 @@ data "coder_workspace_preset" "dind_workspace" {
   }
 }
 
+# Not a variant of ai_workspace. This one is for the first minutes of a brand new
+# project, where there is no repository to point repo_url at yet: this stack rides
+# along as an additional repo, which is what puts scripts/new-repo.sh inside the
+# workspace beside the project being started. The scaffold itself is not vendored
+# here: that CLI clones it from its own repository at run time, so the preset carries
+# no copy of it and cannot go stale. DinD is
+# on because a project that ships a container should not need its workspace
+# rebuilt to build one, and dind is immutable after create.
+data "coder_workspace_preset" "new_project" {
+  name        = "New project (scaffold ready)"
+  description = "Golden image plus this stack, so the scaffold CLI can render a new repo from ezrepo."
+
+  parameters = {
+    (data.coder_parameter.workspace_image.name)  = "evo-t1-dev:latest"
+    (data.coder_parameter.dind.name)             = "true"
+    (data.coder_parameter.additional_repos.name) = var.stack_repo_url
+  }
+}
+
 resource "coder_agent" "main" {
   arch = data.coder_provisioner.me.arch
   os   = "linux"

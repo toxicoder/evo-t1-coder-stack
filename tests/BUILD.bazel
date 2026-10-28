@@ -192,6 +192,15 @@ _SUITE_PAYLOAD = {
     "mcp_check.bats": [
         "//images/dev:context",
     ],
+    # The CLI renders a canned scaffold tree (the fixture stands in for the external
+    # template repository) into a scratch directory and asserts on the result, so the
+    # fixture has to be in the suite's runfiles; :all_bats is the group the registry
+    # binds to a source that names a path under tests/bats/, which this suite does when
+    # it locates that fixture.
+    "new-repo.bats": [
+        "//tests:all_bats",
+        ":fixtures",
+    ],
     "pg-apply-password.bats": [],
     "pre-commit.bats": [
         "//:env_example",
@@ -283,6 +292,11 @@ _SUITE_PAYLOAD_ALLOW = {
     "run-npm.bats": [
         "//docs-site:sources",
     ],
+    # The dotted env twin appears only as the rename target the CLI mv's to inside the
+    # tree it just rendered, never as this repo's own .env.example.
+    "new-repo.bats": [
+        "//:env_example",
+    ],
 }
 
 exec_shell(
@@ -325,8 +339,13 @@ sh_test(
 
 # Measured shell coverage is non-hermetic by construction: it drives the whole Bats suite
 # with bash xtrace on, so it is manual (//:test-fast stays fast) and runs local. It is the
-# one target that has to carry every payload group, because it runs every suite.
-_COVERAGE_UNION = _BATS_COMMON + [
+# one target that has to carry every payload group, because it runs every suite. The suite
+# payloads come from _SUITE_PAYLOAD itself rather than a second hand-written list: a suite
+# that is green standalone and red here is almost always this data list missing a group.
+# Each label is folded to its repo-relative spelling first, because ":all_bats" and
+# "//tests:all_bats" are one label in two spellings and Bazel rejects the pair as a
+# duplicate in a single data attribute.
+_COVERAGE_EXTRA = [
     ":all_bats",
     ":fixtures",
     "bazel_deps.py",
@@ -335,6 +354,15 @@ _COVERAGE_UNION = _BATS_COMMON + [
     "//docs-site:sources",
     "//docs:manage-docs.sh",
 ]
+
+_COVERAGE_UNION = sorted({
+    (":" + label[len("//tests:"):] if label.startswith("//tests:") else label): True
+    for group in [
+        _BATS_COMMON,
+        _COVERAGE_EXTRA,
+    ] + _SUITE_PAYLOAD.values()
+    for label in group
+}.keys())
 
 exec_shell(
     name = "shell_cov_exec",

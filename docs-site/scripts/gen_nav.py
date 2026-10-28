@@ -54,6 +54,7 @@ NAV: list[tuple[str, list[tuple[str, str]]]] = [
             ("Operate overview", "operate/index.md"),
             ("Dashboard", "dashboard.md"),
             ("Config updates", "config-updates.md"),
+            ("New projects from the template", "new-repo.md"),
             ("Public access", "public-access.md"),
             ("Troubleshooting", "troubleshooting.md"),
         ],

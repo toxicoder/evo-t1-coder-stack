@@ -163,6 +163,9 @@ _SCRIPT_LIBS = {
         "lib/common.sh",
         "lib/mcp_lane_report.py",
     ],
+    "new-repo": [
+        "lib/common.sh",
+    ],
     "new-workspace": [
         "lib/common.sh",
         "lib/workspace.sh",
@@ -283,6 +286,14 @@ _SCRIPT_PAYLOAD = {
     "mcp-check": [
         "//:compose_file",
         "//images/dev:tool_versions",
+    ],
+    # The scaffold this CLI renders is cloned from its own repository at run time, so no
+    # payload of ours is needed. What remains is what the sourced libs name: the
+    # docker-compose.yml marker lib/common.sh resolves a checkout by, and the dotted env
+    # twin that rename_env_template mv's to inside the tree it just built.
+    "new-repo": [
+        "//:compose_file",
+        "//:env_example",
     ],
     "new-workspace": [
         "//:compose_file",

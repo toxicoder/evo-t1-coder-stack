@@ -1,0 +1,24 @@
+# template.yml -- the scaffold's own manifest. Its presence is what the renderer
+# accepts as "this tree is a scaffold", and its params are the contract a
+# scaffolding CLI reads.
+name: __PROJECT_NAME__
+description: "__PROJECT_DESCRIPTION__"
+
+params:
+  project_description:
+    name: One-line description
+    description: What this repo is, in one sentence.
+    type: text
+    required: true
+    values:
+      - Command-line tool that renames files from a manifest
+      - Service that puts one endpoint in front of several APIs
+
+  owner:
+    name: GitHub owner
+    description: The account that will own the repository.
+    type: text
+    required: true
+    values:
+      - your-github-handle
+      - your-org-name
