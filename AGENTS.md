@@ -72,7 +72,8 @@ Prefer Bazelisk. Make is a shim.
   `bazelisk run //scripts:update-stack`
 - new workspace: `bazelisk run //scripts:new-workspace -- --dry-run <git-url>`
 - new repository from the scaffold (host shell; `--dry-run` to render locally only):
-  `bazelisk run //scripts:new-repo -- --dry-run <name> [--lane <shell|python|typescript|go>]`
+  `bazelisk run //scripts:new-repo -- --dry-run <name> [--lane <lane>]` (the scaffold
+  offers the lane ids; the run prints what is available)
 - MCP lanes: `bazelisk run //scripts:mcp-check` (declared lanes, `command=` binaries,
   lane credentials, and each server's handshake; runs inside a workspace or on the host)
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
