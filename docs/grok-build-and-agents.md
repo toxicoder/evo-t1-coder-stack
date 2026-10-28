@@ -79,6 +79,55 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   ribbon whose data URL fits that column; a larger file fails `templates push`
   with `pq: value too long for type character varying(256)`.
 
+### Copy and paste between a tmux pane and the machine you type on
+
+Two buffers are involved: tmux's own buffer, and the clipboard of the computer
+you are typing on. Which one a copy reaches depends on what sits at the other
+end of the terminal. Each claim below was measured in a headless Chromium
+against the code-server this stack ships (4.143.1, VS Code base 1.143.1).
+
+- **A real terminal app honours OSC 52.** Over ssh from Ghostty, kitty, WezTerm
+  or iTerm2, `Prefix-[`, `v`, `y` puts the selection on the laptop clipboard.
+  `set -g set-clipboard on` and `set -g allow-passthrough on` in
+  `templates/common/tmux.conf` keep that route open for tmux's copy-mode and for
+  an app inside the pane (vim's `+` register).
+- **VS Code Web drops OSC 52.** Neither a copy-mode `y` nor a hand-written
+  `printf '\033]52;c;<base64>\a'` from the shell produces any clipboard call in
+  the page: the terminal swallows the escape. Upstream
+  [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254).
+  A tmux copy made in the browser stays in tmux's buffer, and `tmux show-buffer`
+  is where it is: a copy-mode `y` with nothing selected filled the buffer with the
+  line the cursor sat on, and the page's clipboard stayed untouched. `Prefix-]`
+  puts that buffer back into the pane, bracketed.
+- **No modifier hands a drag back to the browser while tmux holds the pointer.**
+  With `set -g mouse on`, drags with Alt, Option, Shift and Ctrl each still
+  arrived in tmux (its buffer changed; xterm painted no selection), so the
+  "hold a modifier to select like the terminal does" escape hatch the tmux FAQ
+  describes for desktop terminals is absent here.
+- **`Prefix m` is the switch,** and the browser's own selection is the route.
+  Releasing the mouse makes a drag a browser selection, and the settings seed's
+  `terminal.integrated.copyOnSelection` puts it on the system clipboard with no
+  chord (a released drag showed the selected text in `navigator.clipboard`). In
+  a browser tab: `Prefix m` to release the pointer, drag over the text, `Prefix
+  m` again to give the wheel back to tmux. Output that has scrolled away: `Prefix-[`,
+  then `k` (or `Ctrl-u`/`Ctrl-d`) walks up the pane's history until the line is
+  painted on the screen, which is what the browser can select; drag it, `q` to
+  leave copy-mode, `Prefix m` for the wheel. The switch lands during copy-mode as
+  well, so finding the line first and releasing the pointer after works too.
+- **Into the pane, nothing needs a switch.** `Ctrl+Shift+V`, a plain `Ctrl+V` or
+  `Cmd+V` (the browser's own paste event), and right-click each delivered the
+  system clipboard to the shell, with a three-line paste arriving whole and
+  without a warning dialog. tmux 3.4 already wraps its own buffer in bracketed
+  paste on `Prefix-]`.
+- **Two scroll-back stores.** `terminal.integrated.scrollback` in the settings
+  seed is the xterm.js buffer, which is what a plain `bash` profile scrolls
+  through; tmux's `history-limit` is what `Prefix-[` walks inside a pane. Both
+  are set to 50000 and 100000 lines respectively here. Measured on tmux 3.4 with
+  one pane pushed to its limit, 100000 lines of 120-column output holds the
+  tmux server at 381 MB RSS; the same 100000 lines of plain 80-column output
+  costs 60 MB. tmux reads `history-limit` when a pane is created, so an existing
+  pane keeps the number it was born with.
+
 ### `grok doctor` findings in a workspace
 
 `grok doctor` checks terminal, clipboard and microphone support without starting a
