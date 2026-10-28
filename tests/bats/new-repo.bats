@@ -94,25 +94,29 @@ teardown() {
 
 # write_gh_stub - a recording gh whose behaviour a test steers with env knobs:
 # STUB_GH_OWNER answers `api user`, STUB_GH_RC is the exit status, and
-# STUB_GH_FAIL_ONCE fails exactly the first call (the marker file is the memory).
-# Every call appends its argv to gh.log and its credential state to gh-env.log, so
-# "was gh called, and with which pair" is answerable after the fact.
+# STUB_GH_FAIL_ONCE fails exactly the first call (the marker file is the memory) and
+# answers it the way gh really does, with the error body on stdout. Every call appends
+# its argv to gh.log and its credential state to gh-env.log, so "was gh called, and with
+# which pair" is answerable after the fact.
 write_gh_stub() {
   cat >"${STUB_BIN}/gh" <<'NEW_REPO_GH_STUB'
 #!/usr/bin/env bash
 set -u
 printf 'gh %s\n' "$*" >>"${STUB_LOG:?}/gh.log"
 printf 'GH_TOKEN=%s|GITHUB_TOKEN=%s\n' "${GH_TOKEN-unset}" "${GITHUB_TOKEN-unset}" >>"${STUB_LOG}/gh-env.log"
+if [ -n "${STUB_GH_FAIL_ONCE:-}" ] && [ ! -e "${STUB_GH_FAIL_ONCE}" ]; then
+  : >"${STUB_GH_FAIL_ONCE}"
+  # Real gh answers a refused call with the API's error body ON STDOUT, so a caller
+  # that kept a refused attempt's stdout would use that body as its value.
+  printf '%s\n' '{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"}'
+  printf '%s\n' "gh: Bad credentials" >&2
+  exit 1
+fi
 case "$*" in
   api\ user*)
     if [ -n "${STUB_GH_OWNER:-}" ]; then printf '%s\n' "${STUB_GH_OWNER}"; fi
     ;;
 esac
-if [ -n "${STUB_GH_FAIL_ONCE:-}" ] && [ ! -e "${STUB_GH_FAIL_ONCE}" ]; then
-  : >"${STUB_GH_FAIL_ONCE}"
-  printf '%s\n' "gh: Bad credentials" >&2
-  exit 1
-fi
 exit "${STUB_GH_RC:-0}"
 NEW_REPO_GH_STUB
   chmod 755 "${STUB_BIN}/gh"
@@ -1118,6 +1122,48 @@ load_common() {
   assert_eq "the stub failed exactly once, so the retry did the work" "2" "$(stub_log_count gh)"
   assert_eq "and the same call was made both times" "2" \
     "$(grep -c 'gh api repos/testowner/demo-tool --jq .full_name' <<<"$(stub_log gh)")"
+}
+
+@test "new-repo: gh_api prints only the attempt whose status it returns" {
+  # gh answers a refused call with the error body on stdout. If a discarded attempt's
+  # stdout leaked to the caller, `OWNER="$(gh_api user --jq .login)"` would become two
+  # lines and every later repos/${OWNER}/... path would be nonsense.
+  load_common
+  load_shell_function "${SCRIPT}" gh_api
+  write_gh_stub
+  SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS=""
+  local rc=0
+  export GH_TOKEN="ghp_expired_from_a_stale_refresh" GITHUB_TOKEN="ghp_expired_too"
+  export STUB_GH_OWNER="testowner"
+  export STUB_GH_FAIL_ONCE="${BATS_TEST_TMPDIR}/body-on-stdout"
+  rc=0
+  gh_api user --jq .login >"${BATS_TEST_TMPDIR}/one.out" 2>"${BATS_TEST_TMPDIR}/one.err" || rc=$?
+  unset STUB_GH_FAIL_ONCE
+  assert_eq "the retry carries the call" "0" "${rc}"
+  assert_eq "stdout is the login and nothing else" "testowner" \
+    "$(cat "${BATS_TEST_TMPDIR}/one.out")"
+  assert_not_match "the refused attempt's body never reaches the caller" 'Bad credentials' \
+    "$(cat "${BATS_TEST_TMPDIR}/one.out")"
+  assert_not_match "and neither does its stderr" 'Bad credentials' \
+    "$(cat "${BATS_TEST_TMPDIR}/one.err")"
+}
+
+@test "new-repo: a refused env pair still yields one clean owner in the report" {
+  export STUB_GH_OWNER="octocat"
+  export STUB_GH_FAIL_ONCE="${BATS_TEST_TMPDIR}/pair-refused"
+  local parent
+  parent="$(make_scratch)"
+  run env -u BUILD_WORKSPACE_DIRECTORY -u EZREPO_URL -u EZREPO_REF -u EZREPO_DIR \
+    GH_TOKEN="ghp_expired_from_a_stale_refresh" GITHUB_TOKEN="ghp_expired_too" \
+    REPO_ROOT="${REPO_ROOT}" HOME="${BATS_TEST_TMPDIR}" PATH="${STUB_BIN}:${PATH}" \
+    bash "${SCRIPT}" --no-remote --out "${parent}" --template-dir "${TEMPLATE}" demo-tool
+  unset STUB_GH_FAIL_ONCE
+  [ "${status}" -eq 0 ] || fail "the run must succeed, got ${status}: ${output}"
+  assert_match "the owner line holds a login and nothing else" '^owner: octocat$' "${output}"
+  assert_match "the remote is built from a single login" \
+    'remote: https://github.com/octocat/demo-tool.git' "${output}"
+  assert_not_match "no error body was printed as the owner" 'Bad credentials' "${output}"
+  assert_not_match "no warning was captured into the value" 'credential refused' "${output}"
 }
 
 @test "new-repo: the owner comes from gh when --owner is absent" {

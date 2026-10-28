@@ -586,22 +586,34 @@ render_tree() {
 # Arguments:
 #   $@ - the gh api arguments, starting with the METHOD or the path
 # Outputs:
-#   The API response on stdout; gh's own error text on stderr
+#   The response of the ONE attempt whose status is returned, on stdout. A refused
+#   attempt keeps its stdout and stderr to itself: gh puts an error body on stdout,
+#   and `log` (so `warn`) writes to stdout, so a caller that captured both would find
+#   commentary and an error body where it asked for a value - an OWNER of two lines
+#   breaks every later repos/${OWNER}/... path. The ladder's own line therefore goes to
+#   stderr, the way `err` does. gh's error text for the returned attempt is stderr too.
 # Returns:
 #   gh's exit status
 gh_api() {
-  local status=0
-  gh api "$@" 2>/dev/null || status=$?
+  local status=0 response=""
+  response="$(gh api "$@" 2>/dev/null)" || status=$?
   if [ "${status}" -eq 0 ]; then
+    if [ -n "${response}" ]; then printf '%s\n' "${response}"; fi
     return 0
   fi
   if [ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]; then
-    warn "credential refused with the environment token pair; retrying with GH_TOKEN/GITHUB_TOKEN unset (the pair shadows the gh stored login)"
-    GH_TOKEN="" GITHUB_TOKEN="" gh api "$@"
-    return $?
+    warn "credential refused with the environment token pair; retrying with GH_TOKEN/GITHUB_TOKEN unset (the pair shadows the gh stored login)" >&2
+    status=0
+    response=""
+    response="$(GH_TOKEN="" GITHUB_TOKEN="" gh api "$@")" || status=$?
+    if [ -n "${response}" ]; then printf '%s\n' "${response}"; fi
+    return "${status}"
   fi
-  gh api "$@"
-  return $?
+  status=0
+  response=""
+  response="$(gh api "$@")" || status=$?
+  if [ -n "${response}" ]; then printf '%s\n' "${response}"; fi
+  return "${status}"
 }
 
 # @function permission_hint
