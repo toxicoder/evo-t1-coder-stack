@@ -495,8 +495,10 @@ Apply it (or re-run after a skip):
 bazelisk run //scripts:coder-agents -- --apply
 ```
 
-`--wait` (or `--wait=SECONDS`) polls for that first owner instead of skip-0.
-`SKIP_CODER_AGENTS=1` skips bootstrap and stack-up seeding. `CODER_AGENTS_WAIT_SECS`
+`--wait` (or `--wait=SECONDS`) polls for that first owner instead of skip-0. The
+window is counted from the database's first "no owner" answer, so a slow buildinfo
+probe or a slow first query cannot spend it. `SKIP_CODER_AGENTS=1` skips bootstrap
+and stack-up seeding. `CODER_AGENTS_WAIT_SECS`
 is what stack `up` forwards as `--wait=`.
 
 A chat turn needs an enabled chat model config - the chat's own pick, else the

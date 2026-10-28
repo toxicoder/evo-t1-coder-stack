@@ -181,6 +181,22 @@ logs_absent() {
   [ "${status}" -eq 0 ]
   [[ ${output} == *"waiting up to 1s for the first Coder owner"* ]]
   [[ ${output} == *"skipped: no active Coder account with the site owner role"* ]]
+  # The window is a poll, not a note: the db is asked again after the sleep. The
+  # budget starts when the db first answers "no owner", so a slow buildinfo probe
+  # or a slow first query cannot spend it before the first look.
+  [ "$(grep -c 'returning id' "${STUB_LOG}/psql.log")" -ge 2 ]
+}
+
+@test "coder-agents: a query slower than the budget cannot spend the --wait window" {
+  root="$(fake_root)"
+  running_stack
+  # The shape that made the run above flake: a db that answers later than the
+  # whole budget used to leave the seeder skipping with no note and no poll.
+  export STUB_PSQL_DELAY=2
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh" --apply --wait=1
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"waiting up to 1s for the first Coder owner"* ]]
+  [[ ${output} == *"skipped: no active Coder account with the site owner role"* ]]
 }
 
 @test "coder-agents: --wait with a non-numeric budget is a usage error" {
