@@ -4,11 +4,13 @@
 #
 # Inside a tmux pane, scrolling and copy/paste must feel like a native
 # terminal: `mouse on` hands the wheel and the drag to tmux, and
-# `set-clipboard on` carries a copy out to the client clipboard over OSC 52.
-# The seed stage in both startup.sh.tftpl twins honours the marker-line
-# ownership contract (a marker-free ~/.tmux.conf is user-owned: leave it
-# alone, print a warning). This suite extracts that seed block, runs it
-# against a throwaway HOME, and pins the editor terminal keys both
+# `set-clipboard on` carries a copy out to the client clipboard over OSC 52 --
+# which a real terminal honours and the browser build of VS Code does not
+# (microsoft/vscode#318254), so the payload also binds Prefix m to release the
+# mouse and let a browser drag select. The seed stage in both startup.sh.tftpl
+# twins honours the marker-line ownership contract (a marker-free ~/.tmux.conf
+# is user-owned: leave it alone, print a warning). This suite extracts that seed
+# block, runs it against a throwaway HOME, and pins the editor terminal keys both
 # settings.json.tftpl twins must keep.
 #
 # Four of the seeded options are the fixes `grok doctor` offers: set-clipboard
@@ -95,8 +97,11 @@ runnable_tmux_seed() {
   grep -Fc "set -as terminal-features ',*:RGB'" "${COMMON_TMUX}" | grep -qx 1
   grep -Fc "set -as terminal-features 'xterm*:extkeys'" "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'setw -g mode-keys vi' "${COMMON_TMUX}" | grep -qx 1
-  grep -Fc 'history-limit 50000' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc 'history-limit 100000' "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'MouseDragEnd1Pane' "${COMMON_TMUX}" | grep -qx 1
+  # The browser copy switch: one prefix key releases the mouse so a drag becomes
+  # the browser's selection (VS Code web drops OSC 52; see the payload comment).
+  grep -Fc 'bind-key m set -g mouse' "${COMMON_TMUX}" | grep -qx 1
 }
 
 @test "tmux seed: the common payload stays interpolation-clean and twins keep the guard" {
@@ -128,6 +133,8 @@ runnable_tmux_seed() {
   assert_contains_file "vi copy-mode" "${home}/.tmux.conf" '^setw -g mode-keys vi$'
   assert_contains_file "y copies to clipboard" "${home}/.tmux.conf" 'y send-keys -X copy-selection-and-cancel'
   assert_contains_file "drag-release copies" "${home}/.tmux.conf" 'MouseDragEnd1Pane send-keys -X copy-selection-and-cancel'
+  assert_contains_file "browser copy switch" "${home}/.tmux.conf" '^bind-key m set -g mouse'
+  assert_contains_file "deeper history" "${home}/.tmux.conf" '^set -g history-limit 100000$'
   assert_contains_file "marker line shipped" "${home}/.tmux.conf" 'managed-by: evo-t1-coder-stack'
 }
 
@@ -208,8 +215,85 @@ teardown() {
 @test "terminal keys: both settings twins carry the fidelity keys" {
   local f
   for f in "${WS_SETTINGS}" "${DC_SETTINGS}"; do
-    assert_contains_file "deep scrollback" "${f}" '"terminal.integrated.scrollback": 10000'
+    assert_contains_file "deep scrollback" "${f}" '"terminal.integrated.scrollback": 50000'
     assert_contains_file "copy on select" "${f}" '"terminal.integrated.copyOnSelection": true'
     assert_contains_file "right-click copies" "${f}" '"terminal.integrated.rightClickBehavior": "copyPaste"'
   done
+}
+
+# boot_scratch <socket> <session> - a scratch server on the shipped payload.
+boot_scratch() {
+  local sock="$1" sess="$2" conf
+  conf="${BATS_TEST_TMPDIR}/scratch-${sess}.conf"
+  cp "${COMMON_TMUX}" "${conf}"
+  SCRATCH_TMUX_TMPDIR="${BATS_TEST_TMPDIR}"
+  SCRATCH_TMUX_SOCKET="${sock}"
+  export TMUX_TMPDIR="${SCRATCH_TMUX_TMPDIR}"
+  run tmux -L "${sock}" -f "${conf}" new-session -d -s "${sess}" -x 80 -y 24 'sleep 30'
+  [ "${status}" -eq 0 ] || skip "cannot start a scratch tmux server: ${output}"
+}
+
+@test "tmux seed: a live server binds the copy keys and the browser switch" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  boot_scratch "bats-keys-$$-${BATS_TEST_NUMBER}" keys
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" list-keys -T copy-mode-vi
+  [[ "${output}" == *"begin-selection"* ]] || {
+    echo "vi copy-mode binds no begin-selection: ${output}" >&2; return 1; }
+  [[ "${output}" == *"copy-selection-and-cancel"* ]] || {
+    echo "vi copy-mode binds no copy-selection-and-cancel: ${output}" >&2; return 1; }
+  [[ "${output}" == *"MouseDragEnd1Pane"* ]] || {
+    echo "a drag release does not copy: ${output}" >&2; return 1; }
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" list-keys -T prefix
+  # list-keys echoes the bound command back with `set` folded to its long name,
+  # so match the option it flips rather than the spelling in the payload.
+  [[ "${output}" == *"set -g mouse"* || "${output}" == *"set-option -g mouse"* ]] || {
+    echo "Prefix m is not bound to the mouse switch: ${output}" >&2; return 1; }
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -g history-limit
+  [ "${output}" = "history-limit 100000" ] || {
+    echo "history-limit reads ${output}" >&2; return 1; }
+  scratch_tmux_reap
+}
+
+@test "tmux seed: a live server sources the payload with no complaint" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  boot_scratch "bats-parse-$$-${BATS_TEST_NUMBER}" parse
+  # tmux only warns and carries on when it rejects a line, and booting with -f
+  # hides even that. Sourcing the payload is what surfaces a bad option or flag,
+  # which is how a bind-key with a flag tmux 3.4 does not know once vanished.
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" source-file "${COMMON_TMUX}"
+  [ "${status}" -eq 0 ] || {
+    echo "tmux rejected the payload: ${output}" >&2; return 1; }
+  [[ "${output}" != *"unknown"* && "${output}" != *"invalid"* ]] || {
+    echo "tmux complained while sourcing: ${output}" >&2; return 1; }
+  scratch_tmux_reap
+}
+
+@test "tmux seed: the bound mouse switch really flips the option" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  boot_scratch "bats-switch-$$-${BATS_TEST_NUMBER}" switch
+  local sock="${SCRATCH_TMUX_SOCKET}" bound cmd
+  run tmux -L "${sock}" show-options -g mouse
+  [ "${output}" = "mouse on" ]
+  # Run the bound command verbatim rather than a copy of it: list-keys is what a
+  # pressed Prefix m hands to the command parser.
+  bound="$(tmux -L "${sock}" list-keys -T prefix | sed -n 's/^[[:space:]]*bind-key[[:space:]]*-T prefix[[:space:]]*m[[:space:]]\{1,\}//p' | head -1)"
+  [[ "${bound}" == *"set -g mouse"* || "${bound}" == *"set-option -g mouse"* ]] || {
+    echo "Prefix m is bound to: ${bound}" >&2; return 1; }
+  cmd="${BATS_TEST_TMPDIR}/bound-mouse.conf"
+  # list-keys quotes the sub-command separator for the command prompt, where a
+  # shell has already eaten one level of escaping; in a config file the escaped
+  # form is one argument to the first command. Undo it so the line the binding
+  # stores runs exactly as a pressed Prefix m runs it.
+  printf '%s\n' "${bound//\\;/;}" >"${cmd}"
+  run tmux -L "${sock}" source-file "${cmd}"
+  [ "${status}" -eq 0 ] || {
+    echo "the bound command failed to run: ${output}" >&2; return 1; }
+  run tmux -L "${sock}" show-options -g mouse
+  [ "${output}" = "mouse off" ] || {
+    echo "the bound command left the option at: ${output}" >&2; return 1; }
+  run tmux -L "${sock}" source-file "${cmd}"
+  run tmux -L "${sock}" show-options -g mouse
+  [ "${output}" = "mouse on" ] || {
+    echo "the second run left the option at: ${output}" >&2; return 1; }
+  scratch_tmux_reap
 }

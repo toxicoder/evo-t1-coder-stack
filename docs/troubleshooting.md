@@ -826,6 +826,32 @@ On `devcontainer`:
 bazelisk run //scripts:new-workspace -- <git-url>
 ```
 
+### A tmux copy in VS Code Web never reaches the laptop clipboard -> the browser build drops OSC 52
+
+Cause: tmux pushes a copy out with OSC 52 and code-server's terminal hands that
+escape to nobody, so the copy stays in tmux's own buffer. Holding Alt, Option,
+Shift or Ctrl while dragging does not help either: with `set -g mouse on` the
+drag still reaches tmux.
+
+```sh
+tmux show-buffer                  # the copy is here, inside tmux
+tmux show-options -g mouse        # on: tmux owns the pointer, so the browser cannot select
+```
+
+Fix: `Prefix m` releases the pointer, the drag becomes a browser selection, and
+`terminal.integrated.copyOnSelection` copies it. `Prefix m` again hands the wheel
+back. Paste needs no switch: `Ctrl+Shift+V`, `Ctrl+V`/`Cmd+V`, or right-click.
+Both directions, and why only a real terminal app gets OSC 52, are in
+[Copy and paste between a tmux pane and the machine you type on](grok-build-and-agents.md#copy-and-paste-between-a-tmux-pane-and-the-machine-you-type-on).
+
+- Output already scrolled off the screen: `Prefix-[`, walk up with `k` until the
+  line is painted, drag it, then `q` and `Prefix m`. The switch also lands while
+  copy-mode is showing history, so releasing the pointer after you find the line
+  works.
+- `history-limit` reads 100000 but a pane still forgets old output: tmux applies
+  the option when the pane is created, so that pane keeps the limit it was born
+  with. Open a new pane, or restart the server with `tmux kill-server`.
+
 ### GitHub token expired, or the workspace has no GitHub account -> GitHub reauth
 
 - On the workspace page, click **GitHub reauth**. Coder opens `/external-auth/<id>`

@@ -153,7 +153,7 @@ checksum_tree() {
   [ ! -e "${scratch}/home/.grok/logs/old.log" ]
   # ...the re-sync rewrote the managed settings.json and carried its key...
   assert_contains_file "key carried" "${scratch}/home/.shared/vscode/settings.json" 'SECRET-KEEP-ME'
-  assert_contains_file "fresh scrollback" "${scratch}/home/.shared/vscode/settings.json" '"terminal.integrated.scrollback": 10000'
+  assert_contains_file "fresh scrollback" "${scratch}/home/.shared/vscode/settings.json" '"terminal.integrated.scrollback": 50000'
   # ...and the marker-free tmux.conf is user-owned, so it stayed untouched.
   assert_contains_file "user file untouched" "${scratch}/home/.tmux.conf" 'set -g mouse off'
 }
