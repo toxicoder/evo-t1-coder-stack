@@ -2,18 +2,23 @@
 #
 # ## new-repo.bats - hermetic coverage for scripts/new-repo.sh
 #
-# The contract pinned here: the render is the only part that may fail hard (a
-# placeholder that survives, an existing destination, a bad name, a bad lane is an
-# exit 1), every GitHub step is advisory (refused means warning plus a permission
-# hint, never a failed run), the credential ladder retries once with the
-# environment pair cleared and says so, and the Coder Task is a convenience that
-# never fails the run. Nothing here touches the network: gh, git and coder are
-# per-test stubs on PATH that record their argv, so an absent call is as loud an
-# assertion as a present one.
+# The contract pinned here: the scaffold is fetched, never vendored (a clone that
+# fails is an exit 1 naming the URL and the ref, and it leaves no scratch directory
+# behind), the render is the only other part that may fail hard (a placeholder that
+# survives, an existing destination, a bad name, a lane the scaffold does not ship is
+# an exit 1), every GitHub step is advisory (refused means warning plus a permission
+# hint, never a failed run), the credential ladder retries once with the environment
+# pair cleared and says so, and the Coder Task is a convenience that never fails the
+# run. Nothing here touches the network: gh, git and coder are recording PATH stubs
+# that answer from environment knobs, so an absent call is as loud an assertion as a
+# present one, and every render is driven from the canned scaffold under
+# tests/bats/fixtures/ezrepo-template through --template-dir or from a seeded clone
+# the git stub builds out of that same tree.
 #
 # The render is driven end to end rather than unit by unit: render_tree is what every
 # green test above exercises, together with the helpers it calls in order -
-# overlay_lanes, append_ignore_fragments, rename_env_template, substitute_tokens and
+# fetch_template, discover_lanes, validate_lane, overlay_lanes,
+# append_ignore_fragments, rename_env_template, substitute_tokens and
 # assert_no_tokens. Each of those is also pinned on its own where its contract is
 # specific enough to break separately. Two of those contracts are pinned as a pair,
 # because they have to agree: substitute_tokens renames a path holding any declared
@@ -22,8 +27,10 @@
 # fill, which is what a value carrying an already-consumed token produces.
 #
 # Usage: bazelisk test //tests:bats_new_repo_test   (from any cwd)
-# Safety: reads scripts/new-repo.sh, scripts/lib/common.sh and the project-template
-# payload; writes only under the per-test scratch tree.
+# Safety: reads scripts/new-repo.sh, scripts/lib/common.sh and the canned scaffold
+# fixture; writes only under the per-test scratch tree. No test opens a socket: the
+# only fetches are git-stub clones built from that fixture, and the credential slots
+# are empty from the first line of setup.
 
 bats_require_minimum_version 1.5.0
 
@@ -36,12 +43,16 @@ TEMPLATE=""
 STUB_BIN=""
 SAVED_PATH=""
 
+# The scaffold the CLI would clone without --template-dir, spelled once so the
+# default-URL assertions name one source of truth.
+DEFAULT_TEMPLATE_URL="https://github.com/toxicoder/ezrepo.git"
+
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no marker)"
   SCRIPT="${REPO_ROOT}/scripts/new-repo.sh"
-  TEMPLATE="${REPO_ROOT}/project-template"
+  TEMPLATE="${REPO_ROOT}/tests/bats/fixtures/ezrepo-template"
   if [ ! -f "${SCRIPT}" ] || [ ! -f "${TEMPLATE}/template.yml" ]; then
-    skip "new-repo or its project template is not in the tree"
+    skip "new-repo or its canned scaffold fixture is not in the tree"
   fi
 
   SAVED_PATH="${PATH}"
@@ -50,13 +61,30 @@ setup() {
   STUB_LOG="${BATS_TEST_TMPDIR}/stub-logs"
   mkdir -p "${STUB_LOG}"
   export STUB_LOG
+  # The CLI puts the scratch scaffold clone under TMPDIR, so the "a failed fetch
+  # cleans up after itself" assertion has a directory it can count.
+  TMPDIR="${BATS_TEST_TMPDIR}/tmp"
+  mkdir -p "${TMPDIR}"
+  export TMPDIR
   PATH="${STUB_BIN}:${PATH}"
   export PATH
 
-  # No test may reach a real credential, a real Coder server, or a checkout other
-  # than the one the runner names.
+  # No test may reach a real credential, a real Coder server, a real scaffold
+  # repository, or a checkout other than the one the runner names. The EZREPO_*
+  # slots matter as much as the token pair: they outrank the built-in scaffold
+  # default this suite asserts on.
   unset GH_TOKEN GITHUB_TOKEN GH_HOST BUILD_WORKSPACE_DIRECTORY GITHUB_WORKSPACE
+  unset EZREPO_URL EZREPO_REF EZREPO_DIR
   export HOME="${BATS_TEST_TMPDIR}"
+
+  # Shadowed from the first line of the first test, not per test: a render that
+  # reached a real git or gh is a broken suite, not a slower one.
+  write_gh_stub
+  stub_bin git coder >/dev/null
+
+  # A function loaded on its own does not carry the script's readonly globals, so
+  # the direct-call tests need the lane directory the CLI would have read.
+  NEW_REPO_LANE_DIR="$(declared_lane_dir)"
 }
 
 teardown() {
@@ -91,9 +119,10 @@ NEW_REPO_GH_STUB
 }
 
 # run_cli <args...> - run the operator CLI the way a human does, with the credential
-# slots empty and the stub PATH in front.
+# and scaffold-source slots empty and the stub PATH in front.
 run_cli() {
   run env -u GH_TOKEN -u GITHUB_TOKEN -u BUILD_WORKSPACE_DIRECTORY \
+    -u EZREPO_URL -u EZREPO_REF -u EZREPO_DIR \
     REPO_ROOT="${REPO_ROOT}" HOME="${BATS_TEST_TMPDIR}" \
     bash "${SCRIPT}" "$@"
 }
@@ -113,10 +142,10 @@ declared_tokens() {
   sed -n '/^readonly NEW_REPO_TOKENS=(/,/^)/p' "${SCRIPT}" | grep -oE '__PROJECT_[A-Z_]+__'
 }
 
-# declared_lanes - the lane ids the CLI declares, same derivation.
-declared_lanes() {
-  sed -n '/^readonly NEW_REPO_LANES=/p' "${SCRIPT}" |
-    sed -E 's/^[^(]*\(//; s/\).*//' | tr ' \t' '\n\n' | grep -E '^[a-z]+$'
+# declared_lane_dir - the lane directory name the renderer reads, parsed out of the
+# CLI so a direct call to overlay_lanes asks the same question the CLI asks.
+declared_lane_dir() {
+  sed -n '/^readonly NEW_REPO_LANE_DIR=/p' "${SCRIPT}" | sed -E 's/^[^=]*="//; s/".*$//'
 }
 
 # declared_lane_meta - the reserved lane file names the renderer strips.
@@ -125,18 +154,38 @@ declared_lane_meta() {
     grep -oE '[A-Za-z0-9._-]+\.(md|fragment)'
 }
 
+# declared_template_meta - the generator-owned paths stripped from every render.
+declared_template_meta() {
+  sed -n '/^readonly NEW_REPO_TEMPLATE_META=/p' "${SCRIPT}" |
+    sed -E 's/^[^(]*\(//; s/\).*//' | tr ' \t' '\n\n' | grep -E '^\.'
+}
+
+# discovered_lanes - the lane ids the canned scaffold offers, derived from its tree
+# the same way the CLI derives them, so no lane list is duplicated here.
+discovered_lanes() {
+  local dir="${TEMPLATE}/.template-lanes" entry
+  [ -d "${dir}" ] || return 0
+  for entry in "${dir}"/*/; do
+    [ -d "${entry}" ] || continue
+    basename "${entry%/}"
+  done
+  return 0
+}
+
 # dotted_twin <dest> - print the rendered env twin by its dotted name, matched with a
 # bracket so this file never carries the dotted spelling itself.
 dotted_twin() {
   find "$1" -maxdepth 1 -name '.env.[e]xample' -print | head -n 1
 }
 
-# render_dry <parent> [args...] - a dry-run render into <parent> and nothing else.
+# render_dry <parent> [args...] - a dry-run render of the canned scaffold into
+# <parent> and nothing else. Every render in this suite names its scaffold source
+# explicitly: a render that fetched would be a suite that needed the network.
 render_dry() {
   local parent="$1"
   shift
-  run_cli --dry-run --out "${parent}" --owner testowner --holder "Test Holder" \
-    --year 2026 --lane shell "$@"
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --holder "Test Holder" --year 2026 --lane shell "$@"
 }
 
 # load_common - the house vocabulary the CLI reports through; common.sh is documented
@@ -161,7 +210,11 @@ load_common() {
     assert_match "the options heading" '^Options:' "${output}"
     assert_match "the lane option" '^ *--lane <id>' "${output}"
     assert_match "the dry-run option" '^ *--dry-run ' "${output}"
+    assert_match "the scaffold url option" '^ *--template-url <url>' "${output}"
+    assert_match "the scaffold ref option" '^ *--template-ref <ref>' "${output}"
+    assert_match "the local scaffold option" '^ *--template-dir <dir>' "${output}"
     assert_match "the exit code contract" '^Exit codes: 0 when the render succeeded' "${output}"
+    assert_not_match "the retired checkout code is unadvertised" 'exit code 5' "${output}"
   done
 }
 
@@ -175,7 +228,8 @@ load_common() {
 
 @test "new-repo: an option that lost its value is refused" {
   local flag
-  for flag in --out --description --owner --holder --year --lane --topic --task-template --branch; do
+  for flag in --out --description --owner --holder --year --lane --topic --task-template \
+    --branch --template-url --template-ref --template-dir; do
     run bash "${SCRIPT}" demo-tool "${flag}"
     [ "${status}" -ne 0 ] || fail "${flag} with no value must fail, got 0"
     assert_match "${flag} says what it needs" "error: ${flag} needs" "${output}"
@@ -200,7 +254,7 @@ load_common() {
   local parent bad
   parent="$(make_scratch)"
   for bad in "bad name" "org/repo" "no spaces/tabs	here"; do
-    run_cli --dry-run --out "${parent}" --owner testowner "${bad}"
+    run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" --owner testowner "${bad}"
     [ "${status}" -ne 0 ] || fail "name [${bad}] must be refused, got 0"
     assert_match "names the name" 'invalid repository name' "${output}"
     assert_match "states the alphabet" 'letters, digits, dot, dash, underscore' "${output}"
@@ -209,60 +263,274 @@ load_common() {
   # 101 characters is one over the GitHub limit the CLI pins.
   local long="a"
   while [ "${#long}" -lt 101 ]; do long="${long}a"; done
-  run_cli --dry-run --out "${parent}" --owner testowner "${long}"
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" --owner testowner "${long}"
   [ "${status}" -ne 0 ]
   assert_match "the over-long name is refused" 'invalid repository name' "${output}"
   assert_eq "nothing was rendered into --out" "0" \
     "$(find "${parent}" -mindepth 1 | wc -l | tr -d ' ')"
 }
 
-@test "new-repo: an unknown lane is refused and the valid lanes are named" {
-  run_cli --dry-run --out "$(make_scratch)" --owner testowner --lane rust demo-tool
-  [ "${status}" -ne 0 ]
-  assert_match "names the bad lane" 'unknown lane: rust' "${output}"
-  assert_match "offers the no-lane spelling" 'or none' "${output}"
-  local lane
-  for lane in $(declared_lanes); do
-    assert_match "names the valid lane ${lane}" "known: [^)]*${lane}" "${output}"
-  done
+# ---------------------------------------------------------------------------
+# Fetching the scaffold: the CLI owns the network, and only through git
+# ---------------------------------------------------------------------------
+
+@test "new-repo: with no local tree it shallow-clones the default scaffold and records it" {
+  local parent logged
+  parent="$(make_scratch)"
+  export STUB_GIT_CLONE=success
+  export STUB_GIT_CLONE_SEED="${TEMPLATE}"
+  export STUB_GIT_LS_OUT="deadbeef"
+  run_cli --no-remote --out "${parent}" --owner testowner --lane shell demo-tool
+  [ "${status}" -eq 0 ] || fail "a stubbed fetch must succeed, got ${status}: ${output}"
+  [ -d "${parent}/demo-tool" ] || fail "the render must land"
+
+  logged="$(stub_log git)"
+  assert_match "it cloned" ' clone ' "${logged}"
+  assert_match "from the default repository" "${DEFAULT_TEMPLATE_URL//./\\.}" "${logged}"
+  assert_match "shallowly" -- '--depth 1' "${logged}"
+  assert_match "one branch only" -- '--single-branch' "${logged}"
+  assert_match "at the default ref" -- '--branch main' "${logged}"
+
+  # The revision the render came from is written into the first commit, so a
+  # project can always say which scaffold it started from.
+  assert_match "the provenance names the url and the sha" \
+    'Scaffold: https://github.com/toxicoder/ezrepo\.git@deadbeef' "${logged}"
+  assert_match "the fetch is reported" '^ok: fetched scaffold deadbeef$' "${output}"
+  assert_eq "the stub cloned exactly once" "1" "$(printf '%s\n' "${logged}" | grep -c ' clone ')"
 }
 
-@test "new-repo: every declared lane and the none sentinel pass validation" {
-  local lanes=() lane
-  while IFS= read -r lane; do lanes+=("${lane}"); done < <(declared_lanes)
-  assert_eq "the CLI ships four lanes" "4" "${#lanes[@]}"
-  NEW_REPO_LANES=("${lanes[@]}")
+@test "new-repo: --template-url and --template-ref reach the clone argv" {
+  local parent logged
+  parent="$(make_scratch)"
+  export STUB_GIT_CLONE=success
+  export STUB_GIT_CLONE_SEED="${TEMPLATE}"
+  run_cli --no-remote --out "${parent}" --owner testowner --lane shell \
+    --template-url https://mirror.example.invalid/ezrepo.git --template-ref v9 demo-tool
+  [ "${status}" -eq 0 ] || fail "a mirrored fetch must succeed, got ${status}: ${output}"
+  logged="$(stub_log git)"
+  assert_match "the mirror is what got cloned" 'https://mirror\.example\.invalid/ezrepo\.git' "${logged}"
+  assert_match "the ref rides the clone" -- '--branch v9' "${logged}"
+  assert_not_match "the default repository was not touched" 'github\.com/toxicoder/ezrepo' "${logged}"
+  assert_match "the plan shows what was asked for" \
+    '^scaffold: https://mirror\.example\.invalid/ezrepo\.git@v9$' "${output}"
+}
 
-  load_shell_function "${SCRIPT}" validate_lane
-  for lane in "${lanes[@]}" none; do
-    validate_lane "${lane}" || fail "lane ${lane} is declared, so it must validate"
+@test "new-repo: --template-dir renders the local tree and clones nothing" {
+  local parent logged
+  parent="$(make_scratch)"
+  run_cli --no-remote --out "${parent}" --owner testowner --lane shell \
+    --template-dir "${TEMPLATE}" demo-tool
+  [ "${status}" -eq 0 ] || fail "a local render must succeed, got ${status}: ${output}"
+
+  # The render still needs git for init/add/commit, so the assertion is about the
+  # absence of a clone in a log that is not empty.
+  logged="$(stub_log git)"
+  assert_match "git was still used to commit" ' commit ' "${logged}"
+  assert_eq "and no clone line was ever recorded" "0" "$(printf '%s\n' "${logged}" | grep -c ' clone ')"
+  assert_match "the local tree is announced" '^-> using the local scaffold ' "${output}"
+  assert_match "and the ref is called out as inert" \
+    'a local tree is rendered as it stands: --template-ref has no effect' "${output}"
+  assert_eq "no scratch clone directory was made" "0" \
+    "$(find "${TMPDIR}" -maxdepth 1 -name 'new-repo-scaffold.*' | wc -l | tr -d ' ')"
+}
+
+@test "new-repo: a failed fetch fails the run, names the remedy, and cleans up" {
+  local parent
+  parent="$(make_scratch)"
+  # The git stub refuses clone with rc 128 unless a test says otherwise, which is
+  # exactly the unreachable-or-renamed repository this branch exists for.
+  run_cli --dry-run --out "${parent}" --owner testowner \
+    --template-url https://example.invalid/no-scaffold.git --template-ref v9 demo-tool
+  [ "${status}" -ne 0 ] || fail "an unfetchable scaffold must fail the run, got 0"
+  assert_match "it names the url and the ref" \
+    'error: cannot fetch the scaffold from https://example\.invalid/no-scaffold\.git at v9' "${output}"
+  assert_match "it says what to check" 'check the network and the ref' "${output}"
+  assert_match "and offers the offline route" \
+    'render a tree you already hold with --template-dir' "${output}"
+  assert_match "the run says it could not obtain the scaffold" \
+    'cannot obtain the scaffold' "${output}"
+  assert_eq "the scratch clone is gone, not left in TMPDIR" "0" \
+    "$(find "${TMPDIR}" -maxdepth 1 -name 'new-repo-scaffold.*' | wc -l | tr -d ' ')"
+  assert_eq "and nothing was rendered" "0" "$(find "${parent}" -mindepth 1 | wc -l | tr -d ' ')"
+}
+
+@test "new-repo: a tree without a scaffold manifest is refused by name" {
+  local parent missing empty
+  parent="$(make_scratch)"
+  missing="${parent}/not-a-scaffold"
+  mkdir -p "${missing}/src"
+  run_cli --dry-run --out "${parent}" --owner testowner --template-dir "${missing}" demo-tool
+  [ "${status}" -ne 0 ] || fail "a tree with no manifest must fail, got 0"
+  assert_match "it names the manifest it looked for" \
+    "no scaffold manifest at ${missing}/template\.yml" "${output}"
+  assert_match "and says who owns that file" \
+    'the scaffold repository owns template\.yml; pick a ref that has it' "${output}"
+
+  empty="${parent}/gone"
+  run_cli --dry-run --out "${parent}" --owner testowner --template-dir "${empty}" demo-tool
+  [ "${status}" -ne 0 ] || fail "a --template-dir that is not there must fail, got 0"
+  assert_match "a missing directory is named as such" \
+    "no scaffold at --template-dir: ${empty}" "${output}"
+  assert_eq "neither case rendered anything" "0" \
+    "$(find "${parent}" -mindepth 1 -name 'demo-tool' | wc -l | tr -d ' ')"
+}
+
+@test "new-repo: generator-owned paths from the clone never reach the render" {
+  local parent dest meta stripped=0
+  parent="$(make_scratch)"
+  export STUB_GIT_CLONE=success
+  export STUB_GIT_CLONE_SEED="${TEMPLATE}"
+  export STUB_GIT_CLONE_EXTRA=".self-check/run.sh:.self-check/self-check.bats"
+  run_cli --no-remote --out "${parent}" --owner testowner --lane shell demo-tool
+  [ "${status}" -eq 0 ] || fail "the render must succeed, got ${status}: ${output}"
+  dest="${parent}/demo-tool"
+
+  for meta in $(declared_template_meta); do
+    if [ -e "${dest}/${meta}" ]; then
+      printf 'generator-owned path shipped into the render: %s\n' "${meta}" >&2
+      stripped=$((stripped + 1))
+    fi
   done
-  if validate_lane "rust"; then fail "an undeclared lane must not validate"; fi
+  assert_eq "no .self-check, no .template-lanes, no .git in the render" "0" "${stripped}"
+  assert_match "the strip is reported with every name" \
+    'stripped scaffold-only paths: \.template-lanes \.self-check \.git' "${output}"
+  # Stripping is not the same as losing: the project's own files came along.
+  assert_file_exists "the core survived the strip" "${dest}/template.yml"
+  assert_file_exists "and the lane overlaid after it" "${dest}/src/main.sh"
+}
+
+@test "new-repo: fetch_template resolves a local tree and cleanup_template removes a clone" {
+  load_common
+  load_shell_function "${SCRIPT}" fetch_template
+  load_shell_function "${SCRIPT}" cleanup_template
+  SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS=""
+  local out="${BATS_TEST_TMPDIR}/fetch.out" rc=0
+
+  TEMPLATE_DIR="${TEMPLATE}"
+  TEMPLATE_URL="${DEFAULT_TEMPLATE_URL}"
+  TEMPLATE_REF="main"
+  TEMPLATE_TMP=""
+  TEMPLATE_SRC=""
+  TEMPLATE_PROVENANCE=""
+  rc=0
+  call_fn "${out}" fetch_template || rc=$?
+  assert_eq "a local tree is accepted" "0" "${rc}"
+  assert_eq "and it is the tree named" "${TEMPLATE}" "${TEMPLATE_SRC}"
+  assert_eq "the provenance says where it came from" "local tree ${TEMPLATE}" \
+    "${TEMPLATE_PROVENANCE}"
+  assert_contains_file "the phase names the tree" "${out}" "^-> using the local scaffold "
+
+  # A scratch clone is the trap's business, and the trap runs whether the render
+  # succeeded or not.
+  TEMPLATE_TMP="${BATS_TEST_TMPDIR}/scratch-clone"
+  mkdir -p "${TEMPLATE_TMP}/scaffold"
+  cleanup_template
+  assert_file_not_exists "the scratch clone is gone" "${TEMPLATE_TMP}"
+  TEMPLATE_TMP="${BATS_TEST_TMPDIR}/never-made"
+  rc=0
+  cleanup_template || rc=$?
+  assert_eq "cleaning a clone that was never made is not a failure" "0" "${rc}"
+
+  TEMPLATE_DIR="${BATS_TEST_TMPDIR}/no-such-tree"
+  rc=0
+  call_fn "${out}" fetch_template || rc=$?
+  assert_eq "a directory that is not there fails" "1" "${rc}"
+  assert_contains_file "and it names the path" "${out}" 'no scaffold at --template-dir: '
+}
+
+# ---------------------------------------------------------------------------
+# Lane discovery: the scaffold owns the lane list
+# ---------------------------------------------------------------------------
+
+@test "new-repo: discover_lanes lists what the scaffold ships and tolerates one that has none" {
+  load_shell_function "${SCRIPT}" discover_lanes
+  local -a found=() lane count=0
+  while IFS= read -r lane; do found+=("${lane}"); done < <(discover_lanes "${TEMPLATE}")
+  assert_eq "the canned scaffold ships two lanes" "2" "${#found[@]}"
+  for lane in shell python; do
+    printf '%s\n' "${found[@]}" | grep -qxF -- "${lane}" ||
+      fail "the scaffold ships ${lane}, so discovery must report it"
+  done
+
+  local bare="${BATS_TEST_TMPDIR}/bare-scaffold"
+  mkdir -p "${bare}"
+  assert_eq "a scaffold with no lane tree lists nothing" "" "$(discover_lanes "${bare}")"
+
+  local empty="${BATS_TEST_TMPDIR}/empty-lanes"
+  mkdir -p "${empty}/.template-lanes"
+  assert_eq "an empty lane directory lists nothing" "" "$(discover_lanes "${empty}")"
+  for lane in $(discovered_lanes); do count=$((count + 1)); done
+  assert_eq "the suite's own derivation agrees with the CLI's" "${#found[@]}" "${count}"
+}
+
+@test "new-repo: every lane the scaffold ships, and the none sentinel, validate" {
+  load_shell_function "${SCRIPT}" discover_lanes
+  load_shell_function "${SCRIPT}" validate_lane
+  local lanes=() lane
+  while IFS= read -r lane; do lanes+=("${lane}"); done < <(discover_lanes "${TEMPLATE}")
+  assert_eq "the fixture keeps the suite honest about its lane count" "2" "${#lanes[@]}"
+  KNOWN_LANES=("${lanes[@]}")
+  for lane in "${lanes[@]}" none; do
+    validate_lane "${lane}" || fail "lane ${lane} is offered, so it must validate"
+  done
+  if validate_lane "rust"; then fail "a lane the scaffold does not ship must not validate"; fi
   if validate_lane ""; then fail "an empty lane must not validate"; fi
 }
 
-@test "new-repo: the CLI declares exactly the seven render tokens it substitutes" {
-  local expected declared
-  expected="$(printf '%s\n' __PROJECT_DESCRIPTION__ __PROJECT_LICENSE_HOLDER__ \
-    __PROJECT_MODULE__ __PROJECT_NAME__ __PROJECT_OWNER__ __PROJECT_SLUG__ __PROJECT_YEAR__ |
-    sort)"
-  declared="$(declared_tokens | sort -u)"
-  assert_eq "the token contract is the seven names" "${expected}" "${declared}"
+@test "new-repo: discovery drives acceptance, and an unknown lane names what is offered" {
+  local parent dest lane
+  parent="$(make_scratch)"
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --year 2026 --lane python demo-tool
+  [ "${status}" -eq 0 ] || fail "the python lane must render, got ${status}: ${output}"
+  dest="${parent}/demo-tool"
+  assert_file_exists "the python package came along" "${dest}/src/demo_tool/__init__.py"
+  assert_file_exists "its module came along" "${dest}/src/demo_tool/cli.py"
+  assert_file_exists "and its pytest suite came along" "${dest}/tests/python/test_cli.py"
+  assert_not_match "the shell lane did not ride along" 'ok: lane shell' "${output}"
+  assert_match "the plan lists what the scaffold offers" \
+    '^scaffold lanes available: python shell$' "${output}"
 
-  # A token the template uses but the CLI never substitutes would ship showing. The
-  # markdown alias is folded back to the canonical name before the comparison, since
-  # that is the spelling a .md file actually stores.
-  local token missing=0
-  for token in $({
-    grep -rhoE '__PROJECT_[A-Z_]+__' "${TEMPLATE}"
-    grep -rhoE '\*\*PROJECT_[A-Z_]+\*\*' "${TEMPLATE}" | sed 's/^\*\*/__/; s/\*\*$/__/'
-  } | sort -u); do
-    if ! printf '%s\n' "${declared}" | grep -qxF -- "${token}"; then
-      printf 'undeclared token in the template: %s\n' "${token}" >&2
-      missing=$((missing + 1))
-    fi
+  parent="$(make_scratch)"
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane rust demo-tool
+  [ "${status}" -ne 0 ] || fail "a lane the scaffold lacks must be refused, got 0"
+  assert_match "names the bad lane" 'unknown lane: rust' "${output}"
+  assert_match "offers the no-lane spelling" 'or none' "${output}"
+  for lane in $(discovered_lanes); do
+    assert_match "names the offered lane ${lane}" "offers: [^)]*${lane}" "${output}"
   done
-  assert_eq "the template uses no token the CLI does not declare" "0" "${missing}"
+  assert_eq "and the refused lane rendered nothing" "0" \
+    "$(find "${parent}" -mindepth 1 | wc -l | tr -d ' ')"
+}
+
+@test "new-repo: a lane id that is not a plain slug is refused before it becomes a path" {
+  load_shell_function "${SCRIPT}" discover_lanes
+  load_shell_function "${SCRIPT}" validate_lane
+  local bad parent
+  KNOWN_LANES=()
+  local lane
+  while IFS= read -r lane; do KNOWN_LANES+=("${lane}"); done < <(discover_lanes "${TEMPLATE}")
+  for bad in '../etc' 'A B' 'Shell' '9lives' '' \
+    "$(printf 'a%.0s' {1..33})"; do
+    if validate_lane "${bad}"; then fail "lane id [${bad}] is not a plain slug and must be refused"; fi
+  done
+  validate_lane "${KNOWN_LANES[0]}" ||
+    fail "an offered, well-shaped id must validate on shape before the lookup"
+
+  parent="$(make_scratch)"
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane '../etc' demo-tool
+  [ "${status}" -ne 0 ] || fail "--lane ../etc must be refused, got 0"
+  assert_match "the refusal names the id" 'unknown lane: \.\./etc' "${output}"
+  assert_eq "nothing escaped the output directory" "0" \
+    "$(find "${parent}" -mindepth 1 | wc -l | tr -d ' ')"
+
+  parent="$(make_scratch)"
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane 'A B' demo-tool
+  [ "${status}" -ne 0 ] || fail "--lane 'A B' must be refused, got 0"
+  assert_match "a spaced id is refused too" 'unknown lane: A B' "${output}"
 }
 
 # ---------------------------------------------------------------------------
@@ -282,7 +550,7 @@ load_common() {
   names="$(find "${dest}" -name '*__PROJECT_*__' | wc -l | tr -d ' ')"
   assert_eq "no placeholder survives in a path" "0" "${names}"
 
-  # Each value has to show where the template asked for it, or a token could be
+  # Each value has to show where the scaffold asked for it, or a token could be
   # substituted with the wrong one and still leave no placeholder behind.
   lic="$(find "${dest}" -maxdepth 1 -name 'LICE[N]SE' -print | head -n 1)"
   assert_file_exists "the license is rendered" "${lic}"
@@ -292,7 +560,11 @@ load_common() {
   assert_contains_file "the name landed in the env twin" "${twin}" '^APP_NAME=Demo\.Tool$'
   assert_contains_file "the module id landed in the env twin" "${twin}" \
     '^DB_URL=sqlite:///./demo_tool\.db$'
-  assert_contains_file "the slug landed in the guide" "${dest}/CONTRIBUTING.md" \
+  assert_contains_file "the slug landed in the readme" "${dest}/README.md" \
+    'https://github\.com/testowner/demo-tool'
+  assert_contains_file "the owner landed in the readme link" "${dest}/README.md" \
+    '^Repository: \[testowner/demo-tool\]'
+  assert_contains_file "the alias slug landed in the guide" "${dest}/CONTRIBUTING.md" \
     'docker build -t demo-tool-dev'
   assert_contains_file "the module id landed in the guide" "${dest}/CONTRIBUTING.md" \
     'src/demo_tool/'
@@ -300,6 +572,8 @@ load_common() {
     'security@testowner\.example\.com'
   assert_contains_file "the description is one sed-safe line" "${dest}/template.yml" \
     '^description: "?Renders the [|] thing"?$'
+  assert_contains_file "the name landed in the decision record body" \
+    "${dest}/docs/adr/0001-Demo.Tool.md" '^The first decision of Demo\.Tool'
 
   # A dry run plans; it never dials.
   assert_eq "gh was never invoked" "0" "$(stub_log_count gh)"
@@ -318,9 +592,18 @@ load_common() {
   [ "${status}" -eq 0 ] || fail "a dry run must succeed, got ${status}: ${output}"
   assert_match "the plan section opens the run" '^== Plan ==$' "${output}"
   assert_match "the plan names the lanes" '^lanes: shell$' "${output}"
+  assert_match "the plan names the scaffold" "^scaffold: local ${TEMPLATE}\$" "${output}"
+  assert_match "the plan lists the offered lanes" '^scaffold lanes available: python shell$' \
+    "${output}"
   assert_match "the plan says public by default" '^visibility: public$' "${output}"
   assert_match "the copy step announces itself" '^-> copy ' "${output}"
   assert_match "the handoff section closes the run" '^== Next ==$' "${output}"
+
+  # No --description was passed, so the default is the CLI's own sentence, and it
+  # has to survive the YAML quoting in the rendered manifest.
+  assert_contains_file "the default description is the ezrepo sentence" \
+    "${parent}/Demo.Tool/template.yml" \
+    '^description: "?Demo.Tool: a new project built from the ezrepo scaffold\.\.?"?$'
 
   summary="$(printf '%s\n' "${output}" | grep '^summary: ')"
   assert_match "the summary has all three counters" \
@@ -352,13 +635,17 @@ load_common() {
 @test "new-repo: the chosen lane lands and its reserved metadata is stripped" {
   local parent dest src rel missing=0 meta probe
   parent="$(make_scratch)"
-  src="${TEMPLATE}/.evo-lanes/shell"
+  src="${TEMPLATE}/.template-lanes/shell"
   render_dry "${parent}" demo-tool
   [ "${status}" -eq 0 ] || fail "a lane render must succeed, got ${status}: ${output}"
   dest="${parent}/demo-tool"
 
-  local file skip_meta
+  local file skip_meta lane_files=0
+  # -L, not a bare find: under hermetic runfiles the lane tree is a forest of
+  # symlinks, and `find -type f` matches none of them, which would make this loop
+  # assert nothing at all.
   while IFS= read -r -d '' file; do
+    lane_files=$((lane_files + 1))
     rel="${file#"${src}/"}"
     # The reserved names are read and then stripped, so they never land.
     skip_meta=false
@@ -370,13 +657,14 @@ load_common() {
       printf 'lane file never landed: %s\n' "${rel}" >&2
       missing=$((missing + 1))
     fi
-  done < <(find "${src}" -type f -print0)
+  done < <(find -L "${src}" -type f -print0)
+  [ "${lane_files}" -gt 0 ] || fail "the shell lane tree ships no file to assert on"
   assert_eq "every shell lane file landed at the render root" "0" "${missing}"
 
   for meta in $(declared_lane_meta); do
     assert_file_not_exists "lane metadata ${meta} is stripped" "${dest}/${meta}"
   done
-  assert_file_not_exists "the lane tree itself is gone" "${dest}/.evo-lanes"
+  assert_file_not_exists "the lane tree itself is gone" "${dest}/.template-lanes"
   assert_match "the lane is reported" '^ok: lane shell$' "${output}"
   assert_match "the lane count is in the render line" '^ok: rendered 1 lane\(s\) into ' "${output}"
 
@@ -392,18 +680,28 @@ load_common() {
 @test "new-repo: no lane renders the neutral core and says so" {
   local parent dest meta
   parent="$(make_scratch)"
-  run_cli --dry-run --out "${parent}" --owner testowner --lane none demo-tool
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane none demo-tool
   [ "${status}" -eq 0 ] || fail "--lane none must succeed, got ${status}: ${output}"
   dest="${parent}/demo-tool"
   assert_match "the neutral core is announced" \
     'note: no lane selected: rendered the language-neutral core' "${output}"
+  assert_match "and the test-lane gap is called out" \
+    'the neutral core ships no test lane' "${output}"
   assert_match "the plan records no lanes" '^lanes: none$' "${output}"
   for meta in $(declared_lane_meta); do
     assert_file_not_exists "no ${meta} without a lane" "${dest}/${meta}"
   done
+  assert_file_not_exists "the lane dispatcher's shell lane did not ride along" \
+    "${dest}/src/main.sh"
   # Nothing was appended to the ignore file: it is still the core copy byte for byte.
   cmp -s "${dest}/.gitignore" "${TEMPLATE}/.gitignore" ||
     fail "the no-lane render changed .gitignore"
+  # The dispatcher's machine-readable answer for the neutral core is the empty
+  # string, and it is still an exit 0.
+  run bash "${dest}/tests/run.sh" --lanes
+  assert_eq "the dispatcher finds no lane in the neutral core" "0" "${status}"
+  assert_eq "and prints nothing" "" "${output}"
 }
 
 @test "new-repo: env.example is written out as the dotted twin" {
@@ -422,13 +720,60 @@ load_common() {
 @test "new-repo: tokens in directory and file names are renamed" {
   local parent dest
   parent="$(make_scratch)"
-  run_cli --dry-run --out "${parent}" --owner testowner --lane python demo-tool
+  run_cli --dry-run --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane python demo-tool
   [ "${status}" -eq 0 ] || fail "the python lane render must succeed, got ${status}"
   dest="${parent}/demo-tool"
   [ -d "${dest}/src/demo_tool" ] || fail "the package directory did not take the module id"
-  assert_file_exists "and its module came along" "${dest}/src/demo_tool/__init__.py"
+  assert_file_exists "and its package came along" "${dest}/src/demo_tool/__init__.py"
+  assert_file_exists "and its module came along" "${dest}/src/demo_tool/cli.py"
+  assert_file_exists "the decision record took the name" "${dest}/docs/adr/0001-demo-tool.md"
   assert_eq "no token-named path is left" "0" \
     "$(find "${dest}" -name '*__PROJECT_*__' | wc -l | tr -d ' ')"
+}
+
+@test "new-repo: the canned scaffold exercises every token the CLI declares" {
+  # This is the guard the deleted project-template suite used to be: a token the
+  # scaffold never uses makes "no token survived the render" vacuous, and a token
+  # the scaffold uses that the CLI does not declare ships showing.
+  local expected declared token missing=0 unexpected=0
+  expected="$(printf '%s\n' __PROJECT_DESCRIPTION__ __PROJECT_LICENSE_HOLDER__ \
+    __PROJECT_MODULE__ __PROJECT_NAME__ __PROJECT_OWNER__ __PROJECT_SLUG__ __PROJECT_YEAR__ |
+    sort)"
+  declared="$(declared_tokens | sort -u)"
+  assert_eq "the token contract is the seven names" "${expected}" "${declared}"
+
+  for token in ${declared}; do
+    grep -RlqF -- "${token}" "${TEMPLATE}" ||
+      find "${TEMPLATE}" -name "*${token}*" -print -quit | grep -q . || {
+      printf 'the fixture never uses the declared token: %s\n' "${token}" >&2
+      missing=$((missing + 1))
+    }
+  done
+  assert_eq "the fixture uses every token the CLI declares" "0" "${missing}"
+
+  # The markdown alias folds back to the canonical name before the comparison,
+  # since that is the spelling a .md file actually stores. -R, not -r: under
+  # hermetic runfiles the fixture tree is a forest of symlinks, and grep -r
+  # silently reads none of them.
+  for token in $({
+    grep -RoE '__PROJECT_[A-Z_]+__' "${TEMPLATE}" | sed 's/^[^:]*://'
+    grep -RoE '\*\*PROJECT_[A-Z_]+\*\*' "${TEMPLATE}" |
+      sed 's/^[^:]*://; s/^\*\*/__/; s/\*\*$/__/'
+  } | sort -u); do
+    if ! printf '%s\n' "${declared}" | grep -qxF -- "${token}"; then
+      printf 'undeclared token in the fixture: %s\n' "${token}" >&2
+      unexpected=$((unexpected + 1))
+    fi
+  done
+  assert_eq "the fixture uses no token the CLI does not declare" "0" "${unexpected}"
+
+  # And the alias spelling really is present, which is what gives the renderer's
+  # second sed expression something to do.
+  for token in PROJECT_NAME PROJECT_DESCRIPTION; do
+    grep -RlqE -- "\*\*${token}\*\*" "${TEMPLATE}" ||
+      fail "the fixture ships no markdown alias spelling of ${token}"
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -444,10 +789,13 @@ load_common() {
   done
   NEW_REPO_TOKENS=()
   NEW_REPO_LANE_META=()
+  NEW_REPO_TEMPLATE_META=()
   local token meta
   while IFS= read -r token; do NEW_REPO_TOKENS+=("${token}"); done < <(declared_tokens)
   while IFS= read -r meta; do NEW_REPO_LANE_META+=("${meta}"); done < <(declared_lane_meta)
-  NEW_REPO_LANES=(shell)
+  while IFS= read -r meta; do NEW_REPO_TEMPLATE_META+=("${meta}"); done < <(declared_template_meta)
+  assert_eq "the strip set is the three paths the renderer names" "3" \
+    "${#NEW_REPO_TEMPLATE_META[@]}"
   SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS=""
   REPO_NAME="demo-tool"
   DESCRIPTION="A tool for the thing"
@@ -461,12 +809,12 @@ load_common() {
   call_fn "${BATS_TEST_TMPDIR}/render.out" render_tree "${TEMPLATE}" "${dest}" || rc=$?
   assert_eq "the render succeeds" "0" "${rc}"
   assert_file_exists "the core came along" "${dest}/template.yml"
-  assert_file_not_exists "the lane tree is not shipped" "${dest}/.evo-lanes"
+  assert_file_not_exists "the lane tree is not shipped" "${dest}/.template-lanes"
 
-  lane_file="$(find -L "${TEMPLATE}/.evo-lanes/shell" -type f \
+  lane_file="$(find -L "${TEMPLATE}/.template-lanes/shell" -type f \
     ! -name 'LANE.md' ! -name 'gitignore.fragment' -print | head -n 1)"
   [ -n "${lane_file}" ] || fail "the shell lane ships no file to assert on"
-  rel="${lane_file#"${TEMPLATE}/.evo-lanes/shell/"}"
+  rel="${lane_file#"${TEMPLATE}/.template-lanes/shell/"}"
   assert_file_exists "the lane was overlaid at the root" "${dest}/${rel}"
 
   assert_contains_file "the copy step is announced" "${BATS_TEST_TMPDIR}/render.out" \
@@ -479,12 +827,28 @@ load_common() {
   assert_eq "the counters saw two ok items" "2" "${SUMMARY_OK}"
 }
 
+@test "new-repo: the first commit message records where the scaffold came from" {
+  local parent logged
+  parent="$(make_scratch)"
+  run_cli --no-remote --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --year 2026 --lane shell --lane python demo-tool
+  [ "${status}" -eq 0 ] || fail "the render and commit must succeed, got ${status}: ${output}"
+  logged="$(stub_log git)"
+  assert_match "the commit is the bootstrap commit" \
+    'chore: bootstrap demo-tool from the project template' "${logged}"
+  assert_match "the body names the local scaffold it came from" \
+    "- Scaffold: local tree ${TEMPLATE}." "${logged}"
+  assert_match "the body names both lanes" '- Lanes: shell python.' "${logged}"
+  assert_match "the body says why the gate ships early" \
+    'The initial commit carries the full quality gate' "${logged}"
+  assert_eq "the run committed once" "1" "$(printf '%s\n' "${logged}" | grep -c ' commit ')"
+}
+
 @test "new-repo: --no-remote renders and commits locally with no API call at all" {
   local parent
   parent="$(make_scratch)"
-  stub_bin git >/dev/null
-  write_gh_stub
-  run_cli --no-remote --out "${parent}" --owner testowner --lane shell demo-tool
+  run_cli --no-remote --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane shell demo-tool
   [ "${status}" -eq 0 ] || fail "--no-remote must succeed, got ${status}: ${output}"
   [ -d "${parent}/demo-tool" ] || fail "the render must land"
   assert_eq "no gh call of any kind" "0" "$(stub_log_count gh)"
@@ -500,9 +864,8 @@ load_common() {
 @test "new-repo: --no-push runs the GitHub steps but never pushes" {
   local parent
   parent="$(make_scratch)"
-  stub_bin git >/dev/null
-  write_gh_stub
-  run_cli --no-push --out "${parent}" --owner testowner --lane shell demo-tool
+  run_cli --no-push --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane shell demo-tool
   [ "${status}" -eq 0 ] || fail "--no-push must succeed, got ${status}: ${output}"
   assert_eq "nothing was pushed" "0" "$(stub_log git | grep -c 'push')"
   assert_match "the render was committed" '^ok: committed on main$' "${output}"
@@ -642,7 +1005,6 @@ load_common() {
 
 @test "new-repo: init_and_push commits on the chosen branch and pushes origin" {
   load_common
-  stub_bin git >/dev/null
   load_shell_function "${SCRIPT}" init_and_push
   load_shell_function "${SCRIPT}" permission_hint
   SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS=""
@@ -652,6 +1014,7 @@ load_common() {
   printf 'x\n' >"${dest}/README.md"
   REPO_NAME="demo-tool" OWNER="testowner" BRANCH="trunk" PRIVATE=false \
     DRY_RUN=false NO_REMOTE=false NO_PUSH=false LANES=(shell)
+  TEMPLATE_PROVENANCE="${DEFAULT_TEMPLATE_URL}@deadbeef"
   rc=0
   call_fn "${BATS_TEST_TMPDIR}/push.out" init_and_push "${dest}" || rc=$?
   assert_eq "a clean git run succeeds" "0" "${rc}"
@@ -664,6 +1027,8 @@ load_common() {
   assert_match "it stages everything" 'add -A' "${logged}"
   assert_match "it commits the bootstrap message" \
     'chore: bootstrap demo-tool from the project template' "${logged}"
+  assert_match "it records the scaffold revision in the body" \
+    '- Scaffold: https://github.com/toxicoder/ezrepo\.git@deadbeef.' "${logged}"
   assert_match "it adds the origin" \
     'remote add origin https://github.com/testowner/demo-tool.git' "${logged}"
   assert_match "it pushes upstream" 'push -q -u origin trunk' "${logged}"
@@ -672,7 +1037,6 @@ load_common() {
 
 @test "new-repo: a git that cannot init is a failure, not a silent success" {
   load_common
-  stub_bin git >/dev/null
   load_shell_function "${SCRIPT}" init_and_push
   load_shell_function "${SCRIPT}" permission_hint
   SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS=""
@@ -681,6 +1045,7 @@ load_common() {
   mkdir -p "${dest}"
   REPO_NAME="demo-tool" OWNER="testowner" BRANCH="main" PRIVATE=false \
     DRY_RUN=false NO_REMOTE=true NO_PUSH=false LANES=()
+  TEMPLATE_PROVENANCE="local tree ${TEMPLATE}"
   export STUB_GIT_RC=128
   rc=0
   call_fn "${BATS_TEST_TMPDIR}/gitfail.out" init_and_push "${dest}" || rc=$?
@@ -756,12 +1121,10 @@ load_common() {
 }
 
 @test "new-repo: the owner comes from gh when --owner is absent" {
-  write_gh_stub
-  stub_bin git >/dev/null
   export STUB_GH_OWNER="octocat"
   local parent
   parent="$(make_scratch)"
-  run_cli --no-remote --out "${parent}" demo-tool
+  run_cli --no-remote --out "${parent}" --template-dir "${TEMPLATE}" demo-tool
   [ "${status}" -eq 0 ] || fail "the run must succeed, got ${status}: ${output}"
   assert_match "the probed login is the owner" '^owner: octocat$' "${output}"
   assert_match "and the remote is built from it" \
@@ -770,10 +1133,9 @@ load_common() {
 }
 
 @test "new-repo: no gh login and no --owner stops the run with a remedy" {
-  write_gh_stub
   local parent
   parent="$(make_scratch)"
-  run_cli --no-remote --out "${parent}" demo-tool
+  run_cli --no-remote --out "${parent}" --template-dir "${TEMPLATE}" demo-tool
   [ "${status}" -ne 0 ]
   assert_match "it says it could not find an owner" 'cannot determine the GitHub owner' "${output}"
   assert_match "and names the flag to pass" 'pass --owner' "${output}"
@@ -785,22 +1147,22 @@ load_common() {
 # ---------------------------------------------------------------------------
 
 @test "new-repo: no --task means no coder call and no task section" {
-  stub_bin git coder >/dev/null
   write_gh_stub
   local parent
   parent="$(make_scratch)"
-  run_cli --no-remote --out "${parent}" --owner testowner demo-tool
+  run_cli --no-remote --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner demo-tool
   [ "${status}" -eq 0 ] || fail "the run must succeed, got ${status}: ${output}"
   assert_eq "the coder CLI was never run" "0" "$(stub_log_count coder)"
   assert_not_match "the section never opened" '^== Coder Task ==$' "${output}"
 }
 
 @test "new-repo: --task creates the bootstrap task against the chosen template" {
-  stub_bin git coder >/dev/null
   write_gh_stub
   local parent logged
   parent="$(make_scratch)"
-  run_cli --no-remote --out "${parent}" --owner testowner --task --task-template base demo-tool
+  run_cli --no-remote --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --task --task-template base demo-tool
   [ "${status}" -eq 0 ] || fail "the run must succeed, got ${status}: ${output}"
   assert_match "the task section ran" '^== Coder Task ==$' "${output}"
   assert_match "the task is reported" '^ok: created Coder task demo-tool-bootstrap$' "${output}"
@@ -813,7 +1175,6 @@ load_common() {
 }
 
 @test "new-repo: --task with a dry run only prints the coder command" {
-  stub_bin coder >/dev/null
   local parent
   parent="$(make_scratch)"
   render_dry "${parent}" --task demo-tool
@@ -940,15 +1301,12 @@ load_common() {
   # written into the description survives (the name pass ran before the description
   # inserted it) and reaches the check as a leak. The guard fails the render and names
   # the file rather than publishing the placeholder.
-  local root="${BATS_TEST_TMPDIR}/leaky"
-  mkdir -p "${root}/project-template" "${root}/scripts/lib"
-  cp "${SCRIPT}" "${root}/scripts/new-repo.sh"
-  cp "${REPO_ROOT}/scripts/lib/common.sh" "${root}/scripts/lib/common.sh"
-  cp "${REPO_ROOT}/docker-compose.yml" "${root}/docker-compose.yml"
+  local root="${BATS_TEST_TMPDIR}/leaky" parent
+  mkdir -p "${root}"
   printf 'name: __PROJECT_NAME__\ndescription: __PROJECT_DESCRIPTION__\n' \
-    >"${root}/project-template/template.yml"
-  run env REPO_ROOT="${root}" HOME="${BATS_TEST_TMPDIR}" \
-    bash "${root}/scripts/new-repo.sh" --dry-run --out "${root}/out" --owner testowner \
+    >"${root}/template.yml"
+  parent="$(make_scratch)"
+  run_cli --dry-run --out "${parent}" --template-dir "${root}" --owner testowner \
     --lane none --description 'ships __PROJECT_NAME__ today' demo
   [ "${status}" -eq 1 ] || fail "an unsubstituted token must fail the render, got ${status}"
   assert_match "the run names the leak" 'unsubstituted token in:' "${output}"
@@ -964,22 +1322,19 @@ load_common() {
   # (a token that does not sit at both ends of the name) used to be renamed by neither the
   # suffix-anchored find nor nothing else, so the render died on its own output. A lane
   # that ships such a path has to render, with the token filled in.
-  local root="${BATS_TEST_TMPDIR}/midname"
-  mkdir -p "${root}/project-template/docs" "${root}/scripts/lib"
-  cp "${SCRIPT}" "${root}/scripts/new-repo.sh"
-  cp "${REPO_ROOT}/scripts/lib/common.sh" "${root}/scripts/lib/common.sh"
-  cp "${REPO_ROOT}/docker-compose.yml" "${root}/docker-compose.yml"
-  printf 'name: __PROJECT_NAME__\n' >"${root}/project-template/template.yml"
-  printf '# __PROJECT_DESCRIPTION__\n' >"${root}/project-template/README.md"
-  printf 'owner\n' >"${root}/project-template/__PROJECT_OWNER__.md"
-  printf 'mod\n' >"${root}/project-template/docs/__PROJECT_MODULE__-config.md"
+  local root="${BATS_TEST_TMPDIR}/midname" parent
+  mkdir -p "${root}/docs"
+  printf 'name: __PROJECT_NAME__\n' >"${root}/template.yml"
+  printf '# __PROJECT_DESCRIPTION__\n' >"${root}/README.md"
+  printf 'owner\n' >"${root}/__PROJECT_OWNER__.md"
+  printf 'mod\n' >"${root}/docs/__PROJECT_MODULE__-config.md"
 
-  run env REPO_ROOT="${root}" HOME="${BATS_TEST_TMPDIR}" \
-    bash "${root}/scripts/new-repo.sh" --dry-run --no-remote --out "${root}/out" \
+  parent="$(make_scratch)"
+  run_cli --dry-run --no-remote --out "${parent}" --template-dir "${root}" \
     --owner testowner --lane none demo-tool
   [ "${status}" -eq 0 ] || fail "the render must succeed, got ${status}: ${output}"
 
-  local dest="${root}/out/demo-tool"
+  local dest="${parent}/demo-tool"
   [ -f "${dest}/testowner.md" ] || fail "the suffix-adjacent token path was not renamed"
   [ ! -e "${dest}/__PROJECT_OWNER__.md" ] || fail "the placeholder path survived"
   [ -f "${dest}/docs/demo_tool-config.md" ] || fail "a mid-name token path was not renamed"
@@ -991,49 +1346,37 @@ load_common() {
 @test "new-repo: a markdown token the formatter rewrote is still substituted" {
   load_common
   # A markdown formatter reads the canonical __NAME__ as strong emphasis and leaves
-  # **NAME** behind, which is the spelling the shipped template's markdown actually
+  # **NAME** behind, which is the spelling the canned scaffold's markdown actually
   # carries. A renderer that only knew the canonical form would publish the placeholder
   # into the new repository's README.
-  local root="${BATS_TEST_TMPDIR}/mdalias"
-  mkdir -p "${root}/project-template" "${root}/scripts/lib"
-  cp "${SCRIPT}" "${root}/scripts/new-repo.sh"
-  cp "${REPO_ROOT}/scripts/lib/common.sh" "${root}/scripts/lib/common.sh"
-  cp "${REPO_ROOT}/docker-compose.yml" "${root}/docker-compose.yml"
-  printf 'name: x\n' >"${root}/project-template/template.yml"
+  local root="${BATS_TEST_TMPDIR}/mdalias" parent
+  mkdir -p "${root}"
+  printf 'name: x\n' >"${root}/template.yml"
   printf '%s\n' '# **PROJECT_NAME**' '' \
     '**PROJECT_DESCRIPTION** by **PROJECT_OWNER**/**PROJECT_SLUG**, (c) **PROJECT_YEAR** **PROJECT_LICENSE_HOLDER**.' \
-    >"${root}/project-template/README.md"
+    >"${root}/README.md"
 
-  run env REPO_ROOT="${root}" HOME="${BATS_TEST_TMPDIR}" \
-    bash "${root}/scripts/new-repo.sh" --dry-run --no-remote --out "${root}/out" \
+  parent="$(make_scratch)"
+  run_cli --dry-run --no-remote --out "${parent}" --template-dir "${root}" \
     --owner testowner --holder 'Acme Corp' --year 2026 --lane none \
     --description 'does the thing' demo-tool
   [ "${status}" -eq 0 ] || fail "the render must succeed, got ${status}: ${output}"
 
   local body
-  body="$(cat "${root}/out/demo-tool/README.md")"
+  body="$(cat "${parent}/demo-tool/README.md")"
   assert_eq "the whole file is substituted" \
     '# demo-tool
 
 does the thing by testowner/demo-tool, (c) 2026 Acme Corp.' "${body}"
   assert_match "the summary is clean" '^summary: [0-9]+ ok, 0 warnings, 0 failed$' "${output}"
-}
 
-@test "new-repo: the stack's own package declaration never reaches the render" {
-  load_common
-  # project-template/BUILD.bazel is this payload's Bazel package declaration. The stack
-  # needs it to depend on the payload; a customer's repository would inherit a filegroup
-  # it cannot build, so the render strips it.
-  [ -f "${TEMPLATE}/BUILD.bazel" ] || fail "the template lost its own BUILD.bazel"
-
-  local root="${BATS_TEST_TMPDIR}/strip"
-  run env REPO_ROOT="${REPO_ROOT}" HOME="${BATS_TEST_TMPDIR}" \
-    bash "${SCRIPT}" --dry-run --no-remote --out "${root}" --owner testowner \
-    --lane none demo
-  [ "${status}" -eq 0 ] || fail "the render must succeed, got ${status}: ${output}"
-  [ ! -e "${root}/demo/BUILD.bazel" ] || fail "the stack's BUILD.bazel shipped into the new repo"
-  assert_match "the strip is reported" 'stripped stack-only files: BUILD\.bazel' "${output}"
-  [ -f "${root}/demo/Makefile" ] || fail "the strip took more than the stack-only file"
+  # And the same pass over the canned scaffold: its README ships the alias spelling,
+  # so a render of it must not leave one asterisk pair behind.
+  parent="$(make_scratch)"
+  render_dry "${parent}" --no-remote --holder 'Acme Corp' demo-tool
+  [ "${status}" -eq 0 ] || fail "the fixture render must succeed, got ${status}: ${output}"
+  assert_eq "no alias placeholder survives the fixture render" "0" \
+    "$(grep -rlE -- '\*\*PROJECT_[A-Z_]+\*\*' "${parent}/demo-tool" | wc -l | tr -d ' ')"
 }
 
 @test "new-repo: overlay_lanes copies the lane and errors when a lane has no directory" {
@@ -1046,10 +1389,10 @@ does the thing by testowner/demo-tool, (c) 2026 Acme Corp.' "${body}"
     "${#NEW_REPO_LANE_META[@]}"
 
   local src="${BATS_TEST_TMPDIR}/tpl" dest="${BATS_TEST_TMPDIR}/out" rc=0
-  mkdir -p "${src}/.evo-lanes/demo/scripts" "${dest}"
-  printf 'lane script\n' >"${src}/.evo-lanes/demo/scripts/run.sh"
-  printf 'lane readme\n' >"${src}/.evo-lanes/demo/LANE.md"
-  printf '*.tmp\n' >"${src}/.evo-lanes/demo/gitignore.fragment"
+  mkdir -p "${src}/.template-lanes/demo/scripts" "${dest}"
+  printf 'lane script\n' >"${src}/.template-lanes/demo/scripts/run.sh"
+  printf 'lane readme\n' >"${src}/.template-lanes/demo/LANE.md"
+  printf '*.tmp\n' >"${src}/.template-lanes/demo/gitignore.fragment"
   printf 'core\n' >"${dest}/core.txt"
 
   call_fn "${BATS_TEST_TMPDIR}/overlay.out" overlay_lanes "${src}" "${dest}" demo
@@ -1064,15 +1407,15 @@ does the thing by testowner/demo-tool, (c) 2026 Acme Corp.' "${body}"
   call_fn "${BATS_TEST_TMPDIR}/missing.out" overlay_lanes "${src}" "${dest}" nosuch || rc=$?
   assert_eq "a lane with no directory fails" "1" "${rc}"
   assert_contains_file "and says which lane and where" "${BATS_TEST_TMPDIR}/missing.out" \
-    'lane has no directory: nosuch \(.*\.evo-lanes/nosuch\)'
+    'lane has no directory: nosuch \(.*\.template-lanes/nosuch\)'
 }
 
 @test "new-repo: append_ignore_fragments appends one named block per lane" {
   load_common
   load_shell_function "${SCRIPT}" append_ignore_fragments
   local src="${BATS_TEST_TMPDIR}/tpl" dest="${BATS_TEST_TMPDIR}/out" text
-  mkdir -p "${src}/.evo-lanes/one" "${src}/.evo-lanes/two" "${dest}"
-  printf '*.one\n' >"${src}/.evo-lanes/one/gitignore.fragment"
+  mkdir -p "${src}/.template-lanes/one" "${src}/.template-lanes/two" "${dest}"
+  printf '*.one\n' >"${src}/.template-lanes/one/gitignore.fragment"
   printf 'core-ignore\n' >"${dest}/.gitignore"
 
   call_fn "${BATS_TEST_TMPDIR}/frag.out" append_ignore_fragments "${src}" "${dest}" one two
@@ -1129,85 +1472,36 @@ does the thing by testowner/demo-tool, (c) 2026 Acme Corp.' "${body}"
     'missing a permission for mystery'
 }
 
-# ---------------------------------------------------------------------------
-# Checkout resolution
-# ---------------------------------------------------------------------------
-
-@test "new-repo: an unresolvable checkout exits 5 with no render at all" {
-  local root="${BATS_TEST_TMPDIR}/nocheckout"
-  mkdir -p "${root}/scripts/lib" "${root}/work"
-  cp "${SCRIPT}" "${root}/scripts/new-repo.sh"
-  cp "${REPO_ROOT}/scripts/lib/common.sh" "${root}/scripts/lib/common.sh"
-  cd "${root}/work"
-  run env -u REPO_ROOT -u BUILD_WORKSPACE_DIRECTORY -u GITHUB_WORKSPACE \
-    bash "${root}/scripts/new-repo.sh" --dry-run --out "${root}/out" demo-tool
-  [ "${status}" -eq 5 ] || fail "an unresolvable checkout must exit 5, got ${status}"
-  assert_match "it says the root is unresolvable" 'unresolvable repo root' "${output}"
-  assert_eq "nothing was rendered" "0" "$(find "${root}/out" 2>/dev/null | wc -l | tr -d ' ')"
-}
-
-@test "new-repo: a checkout without the shipped template dies naming the marker" {
-  local root="${BATS_TEST_TMPDIR}/notemplate"
-  mkdir -p "${root}/scripts/lib" "${root}/project-template"
-  cp "${SCRIPT}" "${root}/scripts/new-repo.sh"
-  cp "${REPO_ROOT}/scripts/lib/common.sh" "${root}/scripts/lib/common.sh"
-  cp "${REPO_ROOT}/docker-compose.yml" "${root}/docker-compose.yml"
-  run env REPO_ROOT="${root}" HOME="${BATS_TEST_TMPDIR}" \
-    bash "${root}/scripts/new-repo.sh" --dry-run --out "${root}/out" demo-tool
-  [ "${status}" -eq 1 ] || fail "a missing template must exit 1, got ${status}"
-  assert_match "it names the missing payload" 'no project template at' "${output}"
-  assert_match "and the marker it looked for" 'expected template.yml' "${output}"
-}
-
-@test "new-repo: a shell-lane render is not held to another lane's toolchain" {
-  command -v make >/dev/null 2>&1 || skip "make is not installed here"
-  load_common
-  # The scaffold's own first command has to answer for what the render actually
-  # contains. A shell-only repository whose `make doctor` demands the Go toolchain is a
-  # template bug: the pin is real, the lane is not.
-  local root="${BATS_TEST_TMPDIR}/doctor"
-  run env REPO_ROOT="${REPO_ROOT}" HOME="${BATS_TEST_TMPDIR}" \
-    bash "${SCRIPT}" --no-remote --out "${root}" --owner testowner --lane shell demo
-  [ "${status}" -eq 0 ] || fail "the render must succeed, got ${status}: ${output}"
-
-  local dest="${root}/demo"
-  [ -f "${dest}/go.mod" ] && fail "the shell render carried the go lane's manifest"
-  run bash "${dest}/tests/run.sh" --lanes
-  assert_eq "the dispatcher sees one lane" "shell" "${output}"
-
-  run make -C "${dest}" doctor
-  assert_match "the go pins are skipped, not demanded" \
-    'GO_VERSION is a go-lane pin and no go lane is in this checkout; not required' "${output}"
-  assert_match "the typescript pins are skipped too" \
-    'VITEST_VERSION is a typescript-lane pin and no typescript lane is in this checkout' "${output}"
-  assert_match "the probe phase still runs" '^-> version probe' "${output}"
-  if printf '%s\n' "${output}" | grep -qE '^ok: bats reports'; then
-    : # the shell lane's own pin answered; nothing more to prove
-  else
-    # bats is on PATH in the gate image; if it is missing here the probe says so
-    assert_match "a missing core pin is still an error" 'is not on PATH' "${output}"
-  fi
-  ! printf '%s\n' "${output}" | grep -qE '^error: .*GO_VERSION' ||
-    fail "the doctor demanded the go toolchain for a shell-only project"
-}
-
 @test "new-repo: the render holds real files, never runfiles symlinks" {
   load_common
-  # A payload delivered through Bazel runfiles is a tree of symlinks. A copy that
+  # A scaffold delivered through Bazel runfiles is a tree of symlinks. A copy that
   # preserves them ships a repository whose lane files point into a directory that is
   # gone when the build ends, and discovery breaks first: tests/run.sh finds a lane with
   # `find -type f`, which never matches a symlink.
-  local root="${BATS_TEST_TMPDIR}/nolinks"
-  run env REPO_ROOT="${REPO_ROOT}" HOME="${BATS_TEST_TMPDIR}" \
-    bash "${SCRIPT}" --dry-run --no-remote --out "${root}" --owner testowner \
-    --lane shell --lane typescript demo
+  local parent dest links
+  parent="$(make_scratch)"
+  run_cli --dry-run --no-remote --out "${parent}" --template-dir "${TEMPLATE}" \
+    --owner testowner --lane shell --lane python demo
   [ "${status}" -eq 0 ] || fail "the render must succeed, got ${status}: ${output}"
 
-  local dest="${root}/demo" links
+  dest="${parent}/demo"
   links="$(find "${dest}" -type l | wc -l | tr -d ' ')"
   assert_eq "no symlink survives the render" "0" "${links}"
-  [ -f "${dest}/tests/ts/index.test.ts" ] || fail "the typescript lane did not land as a file"
-  [ -L "${dest}/tests/ts/index.test.ts" ] && fail "the lane file is a symlink"
+  [ -f "${dest}/tests/python/test_cli.py" ] || fail "the python lane did not land as a file"
+  [ -L "${dest}/tests/python/test_cli.py" ] && fail "the lane file is a symlink"
   run bash "${dest}/tests/run.sh" --lanes
-  assert_eq "both lanes are discoverable" "$(printf 'shell\ntypescript')" "${output}"
+  assert_eq "both lanes are discoverable" "$(printf 'shell\npython')" "${output}"
+}
+
+@test "new-repo: the rendered dispatcher reports exactly the lanes that were rendered" {
+  local parent dest
+  for lane in shell python; do
+    parent="$(make_scratch)"
+    run_cli --dry-run --no-remote --out "${parent}" --template-dir "${TEMPLATE}" \
+      --owner testowner --lane "${lane}" demo-tool
+    [ "${status}" -eq 0 ] || fail "the ${lane} render must succeed, got ${status}: ${output}"
+    dest="${parent}/demo-tool"
+    run bash "${dest}/tests/run.sh" --lanes
+    assert_eq "a ${lane}-only render reports one lane" "${lane}" "${output}"
+  done
 }

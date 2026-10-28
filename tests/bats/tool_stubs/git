@@ -7,6 +7,10 @@
 #   clone → default: "fatal: stub refused clone" on stderr, exit 128;
 #           STUB_GIT_CLONE=success prints a marker and exits 0 (the target
 #           dir must pre-exist — a real clone would create it).
+#           STUB_GIT_CLONE_SEED=<dir> additionally *creates* the target dir (the
+#           last argv token) and fills it from that seed tree, then drops a .git
+#           directory and the paths named in STUB_GIT_CLONE_EXTRA (colon
+#           separated) so a caller can prove it strips the clone's own metadata.
 #   ls-remote | rev-parse | symbolic-ref → print STUB_GIT_LS_OUT, exit STUB_GIT_RC (0).
 #   anything else → exit STUB_GIT_RC (0).
 # Records one argv line to $STUB_LOG/git.log when STUB_LOG is set.
@@ -21,6 +25,23 @@ case "$*" in
   *clone*)
     if [ "${STUB_GIT_CLONE:-}" = "success" ]; then
       printf '%s\n' "Cloning into stub repo (stub git, rc 0)"
+      if [ -n "${STUB_GIT_CLONE_SEED:-}" ]; then
+        # The destination is the final argument of a `git clone ... <url> <dest>`,
+        # which is how a real clone decides where the tree lands.
+        target="${*: -1}"
+        mkdir -p "${target}" || exit 128
+        cp -RL "${STUB_GIT_CLONE_SEED}/." "${target}/" || exit 128
+        mkdir -p "${target}/.git" || exit 128
+        printf '%s\n' "ref: refs/heads/main" >"${target}/.git/HEAD"
+        if [ -n "${STUB_GIT_CLONE_EXTRA:-}" ]; then
+          IFS=: read -r -a extras <<<"${STUB_GIT_CLONE_EXTRA}"
+          for extra in "${extras[@]}"; do
+            [ -n "${extra}" ] || continue
+            mkdir -p "${target}/${extra%/*}"
+            printf '%s\n' "stub artifact" >"${target}/${extra}" || exit 128
+          done
+        fi
+      fi
       exit 0
     fi
     printf '%s\n' "fatal: stub refused clone" >&2

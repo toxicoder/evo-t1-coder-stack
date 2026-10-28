@@ -192,10 +192,14 @@ _SUITE_PAYLOAD = {
     "mcp_check.bats": [
         "//images/dev:context",
     ],
-    # The CLI renders this payload into a scratch tree and asserts on the result, so the
-    # template has to be in the suite's runfiles.
+    # The CLI renders a canned scaffold tree (the fixture stands in for the external
+    # template repository) into a scratch directory and asserts on the result, so the
+    # fixture has to be in the suite's runfiles; :all_bats is the group the registry
+    # binds to a source that names a path under tests/bats/, which this suite does when
+    # it locates that fixture.
     "new-repo.bats": [
-        "//project-template:payload",
+        "//tests:all_bats",
+        ":fixtures",
     ],
     "pg-apply-password.bats": [],
     "pre-commit.bats": [
@@ -206,10 +210,6 @@ _SUITE_PAYLOAD = {
     "prod-stack.bats": [
         "//homepage:payload",
         "//proxy:confs",
-    ],
-    # The suite walks the scaffold payload itself: tokens, lane metadata, pins.
-    "project-template.bats": [
-        "//project-template:payload",
     ],
     "publish-pages-tree.bats": [],
     "pull-models.bats": [],
@@ -293,27 +293,9 @@ _SUITE_PAYLOAD_ALLOW = {
         "//docs-site:sources",
     ],
     # The dotted env twin appears only as the rename target the CLI mv's to inside the
-    # tree it just rendered, never as this repo's own .env.example. BUILD.bazel is named
-    # the same way: as the payload file the render strips and as the planted file a test
-    # asserts is absent from the output. Neither suite opens this repo's package
-    # declaration.
+    # tree it just rendered, never as this repo's own .env.example.
     "new-repo.bats": [
         "//:env_example",
-        "//:bazel_files",
-    ],
-    # Every token below names a file inside project-template/, which
-    # //project-template:payload delivers; the repo-root file the registry maps each
-    # token to is never opened here. BUILD.bazel is in that set because the suite reads
-    # the payload's own package declaration to prove it is never rendered.
-    "project-template.bats": [
-        "//:ci_pipelines",
-        "//:ci_workflows",
-        "//:env_example",
-        "//:license",
-        "//:bazel_files",
-        "//images/dev:context",
-        "//images/dev:dockerfile",
-        "//images/dev:tool_versions",
     ],
 }
 

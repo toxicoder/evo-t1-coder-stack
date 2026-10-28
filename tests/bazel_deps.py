@@ -89,15 +89,6 @@ TOKEN_GROUPS = {
     "litellm/": ["//litellm:config", "//:stack_data"],
     "manage-docs.sh": ["//docs:manage-docs.sh"],
     "proxy/": ["//proxy:confs", "//:stack_data"],
-    # The scaffold scripts/new-repo.sh renders. The core and the lane overlays are
-    # separate groups because the renderer reads them at different moments: it copies
-    # the core, then overlays only the lanes the operator asked for.
-    "project-template/": [
-        "//project-template:payload",
-        "//project-template:core",
-        "//project-template:lanes",
-        "//:stack_data",
-    ],
     "psql-token": [":fixtures"],
     "searxng/": ["//searxng:settings", "//:stack_data"],
     "templates/": [
@@ -132,7 +123,6 @@ STACK_DATA_GROUPS = [
     "//homepage:payload",
     "//images/dev:context",
     "//litellm:config",
-    "//project-template:payload",
     "//proxy:confs",
     "//searxng:settings",
 ]

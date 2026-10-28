@@ -287,9 +287,13 @@ _SCRIPT_PAYLOAD = {
         "//:compose_file",
         "//images/dev:tool_versions",
     ],
+    # The scaffold this CLI renders is cloned from its own repository at run time, so no
+    # payload of ours is needed. What remains is what the sourced libs name: the
+    # docker-compose.yml marker lib/common.sh resolves a checkout by, and the dotted env
+    # twin that rename_env_template mv's to inside the tree it just built.
     "new-repo": [
         "//:compose_file",
-        "//project-template:payload",
+        "//:env_example",
     ],
     "new-workspace": [
         "//:compose_file",
@@ -364,18 +368,6 @@ _SCRIPT_PAYLOAD = {
 }
 
 _SCRIPT_PAYLOAD_ALLOW = {
-    # The dotted name is only the destination of the render's rename inside the tree it
-    # just built; this repo carries the undotted twin under project-template/ and the
-    # agent policy here denies any edit matching **/.env.*.
-    #
-    # BUILD.bazel is named as the stack-only file the render strips from its own output
-    # (NEW_REPO_TEMPLATE_META). The script never opens this repo's package declaration;
-    # the token is the name of a file inside project-template/, which
-    # //project-template:payload delivers.
-    "new-repo": [
-        "//:env_example",
-        "//:bazel_files",
-    ],
     # HELP text only; lib/workspace.sh matches these paths against a remote
     # `git ls-tree`, never against the checkout.
     "new-workspace": [

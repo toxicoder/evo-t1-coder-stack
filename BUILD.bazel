@@ -162,7 +162,6 @@ filegroup(
         "//homepage:payload",
         "//images/dev:context",
         "//litellm:config",
-        "//project-template:payload",
         "//proxy:confs",
         "//searxng:settings",
     ],

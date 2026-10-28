@@ -1,0 +1,4 @@
+# Language-neutral ignores. A lane appends its own fragment below this line.
+*.log
+*.bak
+__pycache__/

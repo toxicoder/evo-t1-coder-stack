@@ -3,9 +3,17 @@
 #
 # ## new-repo.sh -- Create a new GitHub repository from the project template, in one command.
 #
-# Three things happen here, in this order.
+# Four things happen here, in this order.
 #
-# 1. Render. `project-template/` is copied into the output directory, the selected
+# 0. Fetch. The scaffold lives in its own repository, by default
+#    `https://github.com/toxicoder/ezrepo`, and a shallow single-branch clone of it
+#    becomes the render source for this run. The scaffold is deliberately not vendored
+#    here: the template is a product with its own CI and its own release rhythm, and a
+#    vendored copy drifts from the day it is committed. `--template-dir` skips the
+#    network and renders a tree you already hold, which is also how the hermetic tests
+#    drive this script. Nothing here pushes to the template repository.
+#
+# 1. Render. The fetched tree is copied into the output directory, the selected
 #    language lanes are overlaid on top of it (a lane file replaces the core file
 #    at the same path), each lane's `gitignore.fragment` is appended to
 #    `.gitignore`, and every `__PROJECT_*__` token is replaced in file contents and
@@ -41,8 +49,10 @@
 #   bazelisk run //scripts:new-repo -- demo-tool --description "Does the thing" --lane python
 #   bazelisk run //scripts:new-repo -- --private demo-tool --lane go --lane shell
 #   bazelisk run //scripts:new-repo -- --no-push --out /tmp/try demo-tool
-#   bazelisk run //scripts:new-repo -- --as-template project-template
+#   bazelisk run //scripts:new-repo -- --as-template demo-tool
 #   bazelisk run //scripts:new-repo -- --task demo-tool
+#   bazelisk run //scripts:new-repo -- --template-dir /tmp/ezrepo demo-tool
+#   bazelisk run //scripts:new-repo -- --template-ref v1 --lane python demo-tool
 #
 # Options:
 #   --dry-run             render, report, create nothing on GitHub
@@ -54,8 +64,14 @@
 #   --description <text>  one-line description (sanitized to a safe single line)
 #   --owner <login>       GitHub owner (default: the authenticated account)
 #   --holder <name>       copyright holder for LICENSE (default: the owner)
-#   --lane <id>           add a language lane; repeatable (default: shell)
+#   --lane <id>           add a language lane; repeatable (default: shell). The known
+#                         ids are discovered from the fetched scaffold, so a lane that
+#                         template repository adds needs no change here.
 #   --lane none           render the neutral core with no lane at all
+#   --template-url <url>  scaffold repository to clone
+#                         (default: $EZREPO_URL, else https://github.com/toxicoder/ezrepo.git)
+#   --template-ref <ref>  branch or tag to fetch (default: $EZREPO_REF, else main)
+#   --template-dir <dir>  render this local tree and fetch nothing ($EZREPO_DIR)
 #   --year <YYYY>         copyright year (default: this year)
 #   --topic <t>           extra topic; repeatable
 #   --task                also offer a Coder Task for the new repository
@@ -66,7 +82,7 @@
 # Positional: <name>  the repository name, and the directory it is rendered into.
 #
 # Exit codes: 0 when the render succeeded (a refused GitHub step is a warning),
-# 1 on a render failure or a bad argument, 5 when no checkout could be resolved.
+# 1 on a render failure, a bad argument, or a scaffold that cannot be fetched.
 
 set -euo pipefail
 
@@ -78,9 +94,10 @@ source "${SELF_DIR}/lib/common.sh"
 # lib/common.sh sets up stays off and stdout stays human output.
 unset JSON_MODE
 
-# The token set is the whole contract between this script and project-template/.
-# A token added here must be used by the template, and a token the template uses
-# must be listed here, or the render leaves it showing.
+# The token set is the whole contract between this script and the scaffold repository.
+# A token listed here may be used by the template; a token the template uses but this
+# list omits is left showing in the render and caught by the check below. The list is
+# a ceiling, not an equality, so the template is free to use a subset of it.
 readonly NEW_REPO_TOKENS=(
   __PROJECT_NAME__
   __PROJECT_SLUG__
@@ -91,17 +108,22 @@ readonly NEW_REPO_TOKENS=(
   __PROJECT_YEAR__
 )
 
-readonly NEW_REPO_LANES=(shell python typescript go)
+# Where the scaffold lives, and what of it belongs to the generator. The lane ids are
+# discovered from <template>/.template-lanes/ at run time, so the template repository
+# can ship a new lane without a change here; this list is what survives discovery when
+# the operator asks for a lane the fetched tree does not have.
+readonly NEW_REPO_LANE_DIR=".template-lanes"
 
 # Reserved lane metadata: these names at a lane root are read by this script and
 # stripped from the rendered tree, so a lane may never ship them as real files.
 readonly NEW_REPO_LANE_META=(LANE.md gitignore.fragment)
 
-# Stack-only files that ride in the payload directory and are stripped from every
-# render. BUILD.bazel is this directory's own Bazel package declaration: it exists so
-# //:stack_data can depend on the payload, and a customer's repository has no use for a
-# filegroup the stack owns.
-readonly NEW_REPO_TEMPLATE_META=(BUILD.bazel)
+# Generator-only paths that ride in the scaffold repository and are stripped from every
+# render. `.template-lanes` is the overlay source this script reads, and `.self-check`
+# is the scaffold's own conformance suite: it asserts things about the template, so a
+# copy of it in a real project goes stale the moment that project diverges. `.git`
+# would hand the new repository the template's history and origin remote.
+readonly NEW_REPO_TEMPLATE_META=(.template-lanes .self-check .git)
 
 REPO_NAME=""
 OUT_DIR="${PWD}"
@@ -117,6 +139,22 @@ DRY_RUN=false
 MAKE_TASK=false
 TASK_TEMPLATE=""
 BRANCH="main"
+# The scaffold source. An explicit --template-dir wins over the URL, and the URL and
+# ref fall back to the environment so a deployment can point at a mirror or a fork
+# without a flag. A URL is left unquoted here on purpose: a leading/trailing space in
+# an operator's env value is a broken config, not something to paper over.
+TEMPLATE_URL="${EZREPO_URL:-https://github.com/toxicoder/ezrepo.git}"
+TEMPLATE_REF="${EZREPO_REF:-main}"
+TEMPLATE_DIR="${EZREPO_DIR:-}"
+# Set when the scaffold was cloned for this run, so the trap knows what to clean up.
+TEMPLATE_TMP=""
+# The scaffold tree this run renders from, set by fetch_template.
+TEMPLATE_SRC=""
+# Where this render's scaffold came from, recorded in the new repository's first commit
+# so a project can always say which template revision it started from.
+TEMPLATE_PROVENANCE=""
+# Lane ids discovered from the fetched scaffold by discover_lanes.
+KNOWN_LANES=()
 LANES=(shell)
 # Tracks whether the operator named a lane. The default is shell because the core
 # tests/run.sh dispatcher dies on "no test lane found" when the render carries none, so
@@ -193,10 +231,32 @@ escape_replacement() {
   printf '%s' "${1:-}" | sed -E 's/[\\&|]/\\&/g'
 }
 
-# @function validate_lane
-# Decide whether a lane id is one of the lanes this template ships.
+# @function discover_lanes
+# List the lane ids the scaffold at a given path offers.
 # Globals:
-#   NEW_REPO_LANES
+#   NEW_REPO_LANE_DIR
+# Arguments:
+#   $1 - scaffold source directory
+# Outputs:
+#   One lane id per line on stdout
+# Returns:
+#   0, always: a scaffold with no lane directory is a valid neutral core
+discover_lanes() {
+  local dir="$1/${NEW_REPO_LANE_DIR}" entry
+  [ -d "${dir}" ] || return 0
+  for entry in "${dir}"/*/; do
+    # With nullglob off an empty directory leaves the pattern itself here, and the
+    # -d test is what keeps that phantom out of the list.
+    [ -d "${entry}" ] || continue
+    basename "${entry%/}"
+  done
+  return 0
+}
+
+# @function validate_lane
+# Decide whether a lane id is one the fetched scaffold actually ships.
+# Globals:
+#   KNOWN_LANES
 # Arguments:
 #   $1 - candidate lane id
 # Outputs:
@@ -206,10 +266,85 @@ escape_replacement() {
 validate_lane() {
   local candidate="${1:-}" lane
   [ "${candidate}" = "none" ] && return 0
-  for lane in "${NEW_REPO_LANES[@]}"; do
+  # Lane ids become path components, so an id that escapes its directory is refused
+  # on shape before it is looked up.
+  [[ ${candidate} =~ ^[a-z][a-z0-9_-]{0,31}$ ]] || return 1
+  for lane in "${KNOWN_LANES[@]+"${KNOWN_LANES[@]}"}"; do
     [ "${lane}" = "${candidate}" ] && return 0
   done
   return 1
+}
+
+# @function fetch_template
+# Put a usable scaffold tree on disk for this run.
+# Globals:
+#   TEMPLATE_DIR TEMPLATE_URL TEMPLATE_REF TEMPLATE_TMP TEMPLATE_SRC
+# Arguments:
+#   None
+# Outputs:
+#   phase:/ok:/note: lines, and TEMPLATE_SRC set to the tree to render from
+# Returns:
+#   0 when a scaffold with a manifest is on disk, 1 when the clone fails or the
+#   tree has no template.yml
+fetch_template() {
+  local src sha
+  if [ -n "${TEMPLATE_DIR}" ]; then
+    [ -d "${TEMPLATE_DIR}" ] || {
+      err "no scaffold at --template-dir: ${TEMPLATE_DIR}"
+      return 1
+    }
+    src="$(cd "${TEMPLATE_DIR}" && pwd)"
+    TEMPLATE_PROVENANCE="local tree ${src}"
+    phase "using the local scaffold ${src}"
+    note "a local tree is rendered as it stands: --template-ref has no effect"
+  else
+    phase "fetch ${TEMPLATE_URL} at ${TEMPLATE_REF}"
+    TEMPLATE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/new-repo-scaffold.XXXXXX")" || {
+      err "cannot make a scratch directory for the scaffold"
+      return 1
+    }
+    src="${TEMPLATE_TMP}/scaffold"
+    # depth 1 because only this ref's tree is rendered, and single-branch so a
+    # scaffold with a long history stays a one-second clone. GIT_TERMINAL_PROMPT=0
+    # keeps a scaffold that turned private from hanging on a credential prompt
+    # nobody can answer inside a workspace, and the empty credential helper stops
+    # git consulting a helper that would prompt anyway.
+    if ! GIT_TERMINAL_PROMPT=0 git -c credential.helper= clone --quiet --depth 1 \
+      --single-branch --branch "${TEMPLATE_REF}" -- "${TEMPLATE_URL}" "${src}" \
+      2>/dev/null; then
+      err "cannot fetch the scaffold from ${TEMPLATE_URL} at ${TEMPLATE_REF}"
+      note "check the network and the ref, or render a tree you already hold with --template-dir <dir>"
+      return 1
+    fi
+    sha="$(git -C "${src}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    TEMPLATE_PROVENANCE="${TEMPLATE_URL}@${sha}"
+    ok "fetched scaffold ${sha}"
+  fi
+
+  if [ ! -f "${src}/template.yml" ]; then
+    err "no scaffold manifest at ${src}/template.yml"
+    note "the scaffold repository owns template.yml; pick a ref that has it"
+    return 1
+  fi
+
+  TEMPLATE_SRC="${src}"
+  return 0
+}
+
+# @function cleanup_template
+# Remove the scratch clone this run made, if any.
+# Globals:
+#   TEMPLATE_TMP
+# Arguments:
+#   None
+# Outputs:
+#   Nothing
+# Returns:
+#   0, always
+cleanup_template() {
+  [ -n "${TEMPLATE_TMP}" ] && [ -d "${TEMPLATE_TMP}" ] &&
+    rm -r -- "${TEMPLATE_TMP}" 2>/dev/null
+  return 0
 }
 
 # @function substitute_tokens
@@ -277,7 +412,7 @@ append_ignore_fragments() {
   shift 2
   local lane fragment
   for lane in "$@"; do
-    fragment="${src}/.evo-lanes/${lane}/gitignore.fragment"
+    fragment="${src}/${NEW_REPO_LANE_DIR}/${lane}/gitignore.fragment"
     [ -f "${fragment}" ] || continue
     printf '\n# --- lane: %s ---\n' "${lane}" >>"${dest}/.gitignore"
     cat "${fragment}" >>"${dest}/.gitignore"
@@ -302,17 +437,17 @@ overlay_lanes() {
   shift 2
   local lane root meta
   for lane in "$@"; do
-    root="${src}/.evo-lanes/${lane}"
+    root="${src}/${NEW_REPO_LANE_DIR}/${lane}"
     if [ ! -d "${root}" ]; then
       fail_item "lane has no directory: ${lane} (expected ${root})"
       return 1
     fi
     phase "overlay lane ${lane}"
-    # -L for the same reason render_tree copies with -L: a lane delivered through Bazel
-    # runfiles is a tree of symlinks, and a preserved symlink would ship a rendered
-    # repository whose lane files point into a directory that disappears with the test
-    # run. It also breaks discovery, because tests/run.sh finds a lane with `find
-    # -type f`, which never matches a symlink.
+    # -L rather than -a: a source tree reached through Bazel runfiles is a forest of
+    # symlinks, and a preserved symlink makes the "copy" an alias of the source, so the
+    # token substitution would edit the fixture instead of the render. It also breaks
+    # discovery, because tests/run.sh finds a lane with `find -type f`, which never
+    # matches a symlink. Mode and timestamps still come along, which is what -a bought.
     cp -RL --preserve=mode,timestamps "${root}/." "${dest}/" || {
       fail_item "cannot copy lane ${lane} to ${dest}"
       return 1
@@ -361,11 +496,11 @@ assert_no_tokens() {
   local -a token_args=() name_args=()
   local token bare
   # Match the seven tokens the renderer actually substitutes, by exact string. Grepping
-  # the `__PROJECT_` prefix instead would reject this template's own prose, which
+  # the `__PROJECT_` prefix instead would reject the scaffold's own prose, which
   # spells the prefix to explain the mechanism. A typo'd token is a different bug and
-  # is caught by tests/bats/project-template.bats, where the template lives. The
-  # markdown alias is checked too: it is the spelling a formatter leaves behind, and a
-  # render that ships it publishes the placeholder into the new repository's README.
+  # is caught by the scaffold's own conformance suite (.self-check in that repository).
+  # The markdown alias is checked too: it is the spelling a formatter leaves behind, and
+  # a render that ships it publishes the placeholder into the new repository's README.
   for token in "${NEW_REPO_TOKENS[@]}"; do
     bare="${token#__}"
     bare="${bare%__}"
@@ -402,7 +537,7 @@ render_tree() {
 
   phase "copy ${src} -> ${dest}"
   mkdir -p "${dest%/*}" 2>/dev/null || true
-  # -L rather than -a: a payload delivered through Bazel runfiles is a tree of
+  # -L rather than -a: a scaffold reached through Bazel runfiles is a forest of
   # symlinks, and a preserved symlink makes this "copy" an alias of the template, so the
   # token substitution below would edit the template instead of the render. Mode and
   # timestamps still come along, which is what -a was buying.
@@ -410,18 +545,18 @@ render_tree() {
     fail_item "cannot copy ${src} to ${dest}"
     return 1
   }
-  rm -rf "${dest}/.evo-lanes"
 
-  # Stack scaffolding, stripped before anything else so a lane may still add a file of
-  # the same name if a project genuinely wants one.
+  # Paths the scaffold owns and a rendered project must not carry, stripped before
+  # anything else so a lane may still add a file of the same name if a project
+  # genuinely wants one.
   local meta stripped=""
   for meta in "${NEW_REPO_TEMPLATE_META[@]}"; do
     if [ -e "${dest}/${meta}" ]; then
-      rm -f -- "${dest}/${meta}"
+      rm -r -- "${dest:?}/${meta:?}"
       stripped="${stripped} ${meta}"
     fi
   done
-  [ -z "${stripped}" ] || note "stripped stack-only files:${stripped}"
+  [ -z "${stripped}" ] || note "stripped scaffold-only paths:${stripped}"
 
   if [ "${#LANES[@]}" -gt 0 ]; then
     overlay_lanes "${src}" "${dest}" "${LANES[@]}" || return 1
@@ -678,7 +813,7 @@ init_and_push() {
   }
   if ! git -C "${dest}" commit -q \
     -m "chore: bootstrap ${REPO_NAME} from the project template" \
-    -m "- Rendered by scripts/new-repo.sh from project-template/." \
+    -m "- Scaffold: ${TEMPLATE_PROVENANCE}." \
     -m "- Lanes: ${LANES[*]:-none}." \
     -m "- The initial commit carries the full quality gate so the first PR has something to run against."; then
     fail_item "git commit"
@@ -747,7 +882,7 @@ create_coder_task() {
 }
 
 # @function main
-# Parse arguments, resolve the template, render, publish, and close with a summary.
+# Fetch the scaffold, parse arguments, render, publish, and close with a summary.
 # Globals:
 #   every configuration variable in this file
 # Arguments:
@@ -755,9 +890,10 @@ create_coder_task() {
 # Outputs:
 #   The full section/phase/summary transcript
 # Returns:
-#   0 on success, 1 on a render or publish failure, 5 on an unresolvable checkout
+#   0 on success, 1 on a render or publish failure, a bad argument, or a bad ref
 main() {
-  local root template
+  local template dest
+  trap cleanup_template EXIT
   while [ $# -gt 0 ]; do
     case "$1" in
       --dry-run) DRY_RUN=true ;;
@@ -796,7 +932,9 @@ main() {
         ;;
       --lane)
         [ $# -ge 2 ] || die "--lane needs a lane id"
-        validate_lane "$2" || die "unknown lane: $2 (known: ${NEW_REPO_LANES[*]}, or none)"
+        # Not validated here: the lane set belongs to the scaffold, and the scaffold is
+        # only known a few lines after this loop. A typo is caught against the
+        # discovered set, which is the only list that cannot drift.
         if [ "${LANES_DEFAULTED}" = true ]; then
           LANES=()
           LANES_DEFAULTED=false
@@ -817,6 +955,24 @@ main() {
       --topic)
         [ $# -ge 2 ] || die "--topic needs a topic"
         EXTRA_TOPICS+=("$2")
+        shift
+        ;;
+      --template-url)
+        [ $# -ge 2 ] || die "--template-url needs a git URL"
+        [ -n "$2" ] || die "--template-url needs a git URL"
+        TEMPLATE_URL="$2"
+        shift
+        ;;
+      --template-ref)
+        [ $# -ge 2 ] || die "--template-ref needs a branch or tag"
+        [ -n "$2" ] || die "--template-ref needs a branch or tag"
+        TEMPLATE_REF="$2"
+        shift
+        ;;
+      --template-dir)
+        [ $# -ge 2 ] || die "--template-dir needs a directory"
+        [ -n "$2" ] || die "--template-dir needs a directory"
+        TEMPLATE_DIR="$2"
         shift
         ;;
       --task) MAKE_TASK=true ;;
@@ -852,13 +1008,18 @@ main() {
   [[ ${REPO_NAME} =~ ^[A-Za-z0-9._-]{1,100}$ ]] ||
     die "invalid repository name: ${REPO_NAME} (letters, digits, dot, dash, underscore)"
 
-  root="$(resolve_checkout "${SELF_DIR}")" || return 5
-  template="${root}/project-template"
-  if [ ! -f "${template}/template.yml" ]; then
-    # Under bazelisk run the checkout is the source of truth, so a missing
-    # template.yml here means the payload was never shipped, not that it is hidden.
-    die "no project template at ${template} (expected template.yml)"
-  fi
+  fetch_template || die "cannot obtain the scaffold"
+  template="${TEMPLATE_SRC}"
+
+  local requested
+  KNOWN_LANES=()
+  while IFS= read -r requested; do
+    [ -n "${requested}" ] && KNOWN_LANES+=("${requested}")
+  done < <(discover_lanes "${template}")
+  for requested in "${LANES[@]+"${LANES[@]}"}"; do
+    validate_lane "${requested}" ||
+      die "unknown lane: ${requested} (the scaffold offers: ${KNOWN_LANES[*]:-no lanes}, or none)"
+  done
 
   if [ -z "${OWNER}" ]; then
     OWNER="$(gh_api user --jq .login 2>/dev/null || true)"
@@ -866,14 +1027,16 @@ main() {
   fi
   [ -n "${HOLDER}" ] || HOLDER="${OWNER}"
   [ -n "${YEAR}" ] || YEAR="$(date +%Y)"
-  [ -n "${DESCRIPTION}" ] || DESCRIPTION="${REPO_NAME}: a project built from the evo-t1 project template."
+  [ -n "${DESCRIPTION}" ] || DESCRIPTION="${REPO_NAME}: a new project built from the ezrepo scaffold."
 
   section "Plan"
   log "name: ${REPO_NAME}"
   log "owner: ${OWNER}"
   log "lanes: ${LANES[*]:-none}"
+  log "scaffold lanes available: ${KNOWN_LANES[*]:-none}"
   log "visibility: $([ "${PRIVATE}" = true ] && echo private || echo public)"
-  log "template: ${template}"
+  log "scaffold: $([ -n "${TEMPLATE_DIR}" ] && echo "local ${TEMPLATE_DIR}" ||
+    echo "${TEMPLATE_URL}@${TEMPLATE_REF}")"
 
   local dest="${OUT_DIR%/}/${REPO_NAME}"
   if [ -e "${dest}" ]; then
