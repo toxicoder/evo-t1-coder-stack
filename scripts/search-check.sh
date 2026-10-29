@@ -38,6 +38,15 @@
 # parse; a body that is not an envelope at all counts as empty too, which is the
 # honest answer, because an agent handed that body was given nothing either.
 #
+# Engine blame: a reply that found nothing has usually already said which engine
+# refused it and why, in its "unresponsive_engines" key. The names were read as
+# a yes/no flag and then thrown away, which left the operator with "some engine
+# was blamed" instead of "google: access denied". scripts/lib/
+# suspended_engines.awk lifts them out of every 200 body, the sweep pools the
+# distinct pairs, and the report prints one line per engine. They are read from
+# replies that DID find results too, so an instance running on half its engines
+# is visible here before it starts answering empty.
+#
 # Usage (Bazel is the entry point; every example is the whole command):
 #   bazelisk run //scripts:search-check
 #   bazelisk run //scripts:search-check -- --json
@@ -158,6 +167,15 @@ COMMON_LIB="$(find_lib common.sh "${REPO_ROOT_RESOLVED}")" || {
 # shellcheck source=lib/common.sh disable=SC1091
 source "${COMMON_LIB}"
 
+# The reader that turns one reply body into the `engine<TAB>reason` list the
+# instance already wrote into it. Without it the sweep can only say "something
+# was blamed", which is the difference between an operator reading "google:
+# access denied" and reading "at least one reply blamed its own engines".
+SUSPEND_AWK="$(find_lib suspended_engines.awk "${REPO_ROOT_RESOLVED}")" || {
+  printf 'error: search-check cannot run without its engine-suspension reader: no scripts/lib/suspended_engines.awk above\n' >&2
+  exit 1
+}
+
 # @function usage
 # Print the flag list and the exit-code contract on stdout.
 # Globals:
@@ -181,6 +199,12 @@ report this script gives and "search is down" is not.
 The four per-pair outcomes: ok (200 with results), empty (200 with none),
 403 (search.formats lacks json, which is a config fault and not an engine
 fault), other (refused, 404, 5xx, or cut off by --timeout).
+
+Every reply that blames an engine is named, not just counted: the report lists
+each engine the instance parked and the reason it gave ("brave: too many
+requests"), because that is the difference between an engine being dead and
+being temporarily refused. A park expires after search.suspended_times seconds
+(searxng/settings.yml), so re-run before writing an engine off.
 
 Options: --url (default $SEARXNG_URL or http://127.0.0.1:8181), --engines,
 --queries, --timeout (default 20 seconds per request, spent twice: timeout(1)
@@ -409,6 +433,12 @@ probe_pair() {
     count="0"
   elif [ "${status}" = "200" ]; then
     count="$(result_count "${sink}.body")"
+    # Read the blame out of every 200, not only the empty ones: a query can
+    # answer twenty rows while running on half its engines, and that parked
+    # half is what turns the next search into the empty one. The names land in
+    # <sink>.susp for the sweep to pool; `refused` keeps its old meaning, which
+    # is "an empty answer that an engine caused".
+    suspended_from_body "${sink}.body" >"${sink}.susp"
     if [ "${count}" != "0" ]; then
       kind="ok"
     else
@@ -416,8 +446,7 @@ probe_pair() {
       # A 200 whose envelope blames its own engines ("access denied", "rate
       # limit", "too many requests") is the failure an agent sees as an empty
       # answer, so record it as the answer to the question this script asks.
-      if printf '%s' "$(cat "${sink}.body" 2>/dev/null)" |
-        grep -q '"unresponsive_engines"[[:space:]]*:[[:space:]]*[^]]' 2>/dev/null; then
+      if [ -s "${sink}.susp" ]; then
         refused="yes"
       fi
     fi
@@ -456,6 +485,26 @@ result_count() {
   printf '%s' "${count}"
 }
 
+# @function suspended_from_body
+# Print which engines one SearXNG reply says it has given up on, and why.
+# The instance writes that into the body itself; this only lifts it out, via
+# scripts/lib/suspended_engines.awk, so the sweep can name the engine instead of
+# reporting that some engine was blamed.
+# Globals:
+#   SUSPEND_AWK
+# Arguments:
+#   $1 - file holding the reply body, possibly empty
+# Outputs:
+#   One `engine<TAB>reason` line per parked engine; nothing when the body parks
+#   none or is not a results envelope at all
+# Returns:
+#   0, always: a reply that blames no engine is an ordinary answer, not a fault
+suspended_from_body() {
+  [ -s "${1:-}" ] || return 0
+  awk -f "${SUSPEND_AWK}" "${1}" 2>/dev/null || true
+  return 0
+}
+
 # @function record_pair
 # Probe one pair and append its record line to that engine's record file.
 # Globals:
@@ -471,8 +520,32 @@ record_pair() {
   local line
   line="$(probe_pair "$1" "$2" "$3" "${work}/${2}.pairs.tmp")"
   printf '%s\n' "${line}" >>"${work}/${2}.pairs"
+  # The engine names a pair blamed are pooled across the whole sweep, because
+  # the question the report answers is "which engines are parked and why", and
+  # any one pair only saw part of that. A pool, not a per-engine tally: the
+  # same parked engine shows up in every pair that asked it for something.
+  if [ -s "${work}/${2}.pairs.tmp.susp" ]; then
+    cat "${work}/${2}.pairs.tmp.susp" >>"${work}/suspended"
+    : >"${work}/${2}.pairs.tmp.susp"
+  fi
   [ -n "${JSON_MODE:-}" ] && printf '%s\n' "${line}" >&2
   return 0
+}
+
+# @function suspended_pool
+# Print the distinct engines the sweep's replies blamed, one `engine<TAB>reason`
+# per line, in a stable order.
+# Globals:
+#   work
+# Arguments:
+#   None
+# Outputs:
+#   The pooled lines on stdout, nothing when no reply blamed an engine
+# Returns:
+#   0
+suspended_pool() {
+  [ -s "${work}/suspended" ] || return 0
+  sort -u "${work}/suspended"
 }
 
 # @function pair_facts
@@ -601,7 +674,13 @@ render_json() {
   local -a totals=()
   local -a facts=()
   read -ra totals <<<"$(total_facts "$1")"
-  local body="\"pairs_total\":${totals[0]},\"pairs_ok\":${totals[1]},\"pairs_empty\":${totals[2]},\"pairs_403\":${totals[3]},\"pairs_other\":${totals[4]}"
+  # One number for the engine park, so a dashboard can trend it: how many
+  # distinct engines the instance said it had given up on this run. The names
+  # and reasons ride the stderr records, which is where the prose lives.
+  local parked_count
+  parked_count="$(suspended_pool | grep -c . 2>/dev/null || true)"
+  case "${parked_count}" in '' | *[!0-9]*) parked_count="0" ;; esac
+  local body="\"pairs_total\":${totals[0]},\"pairs_ok\":${totals[1]},\"pairs_empty\":${totals[2]},\"pairs_403\":${totals[3]},\"pairs_other\":${totals[4]},\"engines_parked\":${parked_count}"
 
   for engine in $1; do
     facts=()
@@ -668,6 +747,7 @@ cd "${REPO_ROOT_RESOLVED:-${work}}" || true
 for engine in "${engines[@]}"; do
   : >"${work}/${engine}.pairs"
 done
+: >"${work}/suspended"
 
 if [ -z "${JSON_MODE:-}" ]; then
   log "search-check: ${search_url} with ${#engines[@]} engine(s) x ${#queries[@]} query(ies) = $((${#engines[@]} * ${#queries[@]})) pair(s), ${cap}s per request"
@@ -721,7 +801,21 @@ print_notes() {
     note "the 403s are not an engine fault: searxng/settings.yml has to list json under search.formats, then the service needs a restart. Every engine answers 403 or none does."
   fi
   if [ "${refused}" != "0" ]; then
-    note "at least one reply blamed its own engines (SearXNG lists them under unresponsive_engines): the search box is up and the backends are refusing it. That is what an agent sees as an empty search."
+    note "an empty reply above came from an engine refusing this instance, not from the search box: that is what an agent sees as an empty search."
+  fi
+  # Named rather than counted. "brave: too many requests" is something the
+  # operator can act on; "at least one reply blamed its own engines" is not.
+  # Printed whenever any reply blamed an engine, including a sweep where every
+  # pair still found results - running on half its engines is the state that
+  # makes the next search come back empty, and it is invisible in the table.
+  local parked name reason
+  parked="$(suspended_pool)"
+  if [ -n "${parked}" ]; then
+    while IFS=$'\t' read -r name reason; do
+      [ -n "${name}" ] || continue
+      note "parked by its backend: ${name}: ${reason}"
+    done <<<"${parked}"
+    note "a park is temporary: SearXNG holds an engine out for search.suspended_times seconds after it refuses (searxng/settings.yml), so re-run this before writing an engine off."
   fi
   if [ "${other}" != "0" ] && [ "${other}" = "${pairs}" ]; then
     note "nothing answered anywhere: ${search_url} gave no HTTP reply on any pair. Check that the searxng service is up and publishing 127.0.0.1:8181 before blaming any engine."

@@ -780,3 +780,103 @@ preset_records() {
   [ "${status}" -eq 0 ]
   [ -z "${output}" ]
 }
+
+# ── scripts/lib/suspended_engines.awk ───────────────────────────────────────
+#
+# This reader is the only thing that turns a SearXNG reply's
+# "unresponsive_engines" key into the words an operator acts on, so the shapes
+# it has to survive are the shapes SearXNG has actually shipped. Silence is a
+# real answer here: it means "this reply blames no engine".
+
+# body_write <name> <content> - one reply body under the temp dir.
+body_write() {
+  printf '%s\n' "$2" >"${BATS_TEST_TMPDIR}/$1"
+  printf '%s' "${BATS_TEST_TMPDIR}/$1"
+}
+
+@test "suspended_engines: the list-of-lists shape gives one name and reason per line" {
+  local body
+  body="$(body_write lol.json '{"results":[],"unresponsive_engines":[["brave","too many requests"],["duckduckgo","CAPTCHA"]]}')"
+
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'brave\ttoo many requests\nduckduckgo\tcaptcha' ]
+}
+
+@test "suspended_engines: the map shape reads the same as the list shape" {
+  # SearXNG has shipped both encodings for this key. Pairing the raw split
+  # indices instead of the quoted strings is the bug this test exists for: it
+  # reads the commas and colons as reasons.
+  local body
+  body="$(body_write map.json '{"results":[],"unresponsive_engines":{"bing":"HTTP error 429"}}')"
+
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'bing\thttp error 429' ]
+}
+
+@test "suspended_engines: the Suspended prefix is dropped so the caller can dedupe" {
+  # "Suspended: too many requests" and "too many requests" are the same park,
+  # and the caller pools them with sort -u.
+  local body
+  body="$(body_write susp.json '{"results":[],"unresponsive_engines":[["brave","Suspended: too many requests"]]}')"
+
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'brave\ttoo many requests' ]
+}
+
+@test "suspended_engines: every entry of a long list is read, not just the first" {
+  # Cutting the value at the first "]" instead of "]]" drops everything after
+  # the first inner list, which would silently under-report the park.
+  local body
+  body="$(body_write three.json '{"results":[],"unresponsive_engines":[["a","x"],["b","y"],["c","z"]]}')"
+
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'a\tx\nb\ty\nc\tz' ]
+}
+
+@test "suspended_engines: an empty list or map answers nothing" {
+  local body
+  body="$(body_write emptyl.json '{"results":[{"url":"http://a"}],"unresponsive_engines":[]}')"
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+
+  body="$(body_write emptym.json '{"results":[],"unresponsive_engines":{}}')"
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}
+
+@test "suspended_engines: a body that is not an envelope answers nothing" {
+  # A proxy error page or a truncated body must read as "no engine blamed", not
+  # as a parse failure and not as a fabricated engine.
+  local body
+  body="$(body_write html.html '<html><body>Bad Gateway</body></html>')"
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+
+  body="$(body_write absent.json '{"results":[{"url":"http://a"}]}')"
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${body}"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+
+  run awk -f "${AWK_LIB}/suspended_engines.awk" /dev/null
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}
+
+@test "suspended_engines: a pretty-printed body across lines still reads" {
+  # curl writes the body verbatim and SearXNG may indent it, so the reader
+  # joins the input rather than matching line by line.
+  local dir="${BATS_TEST_TMPDIR}/pretty"
+  mkdir -p "${dir}"
+  printf '%s\n' '{"results": [],' '  "unresponsive_engines": [' '    ["mojeek", "Timed out"]' '  ]}' >"${dir}/pretty.json"
+
+  run awk -f "${AWK_LIB}/suspended_engines.awk" "${dir}/pretty.json"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'mojeek\ttimed out' ]
+}
