@@ -148,6 +148,33 @@ fix.
 
 ## Model lane: Spark, LiteLLM, the agent backends
 
+### `./.env: line 188: qwen2.5-coder:14b: command not found` from `bazelisk run //scripts:pull-models` -> the model list was being parsed as shell
+
+Cause: that target used to read `.env` with `. ./.env`, so the shell parsed the
+operator's file as code. An unquoted value that holds a space is a variable
+prefix followed by a COMMAND, and `set -e` ended the run on that line before a
+single pull:
+
+```sh
+OLLAMA_MODELS=qwen2.5-coder:32b qwen2.5-coder:14b
+```
+
+The word the shell says it cannot find is the second tag. The same read would
+also have executed anything written on a line of its own in that file, and it
+exported every other key there (`LITELLM_MASTER_KEY` included) into the
+environment of the `docker exec` calls.
+
+Fix: the target now reads the one key it needs through `env_get`
+(`scripts/lib/common.sh`), which takes the line as text. Quoted and unquoted
+values behave the same, and nothing else in `.env` reaches the pull. A value
+that is not a model tag - a stray `;`, a leftover quote, a trailing comment - is
+refused by name before the daemon is asked and before any of the ~35 GB
+download starts:
+
+```sh
+bazelisk run //scripts:pull-models
+```
+
 ### How do I know the IPEX-LLM server came up? -> look for `runners=[ipex_llm]`
 
 - The `ollama` service is IPEX-LLM on the Arc 140T, not Ollama from a registry.
