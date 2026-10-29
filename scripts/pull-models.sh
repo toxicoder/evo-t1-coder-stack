@@ -27,14 +27,28 @@ source "${SELF_DIR}/lib/coder_api.sh"
 ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
 cd "${ROOT_DIR}"
 
-if [ -f .env ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . ./.env
-  set +a
-fi
+# Read .env with the reader in scripts/lib/common.sh rather than sourcing it:
+# that file is operator-editable and a sourced `.` parses it as shell. An
+# unquoted OLLAMA_MODELS=qwen2.5-coder:32b qwen2.5-coder:14b is then a variable
+# prefix followed by a COMMAND, so the run died on `qwen2.5-coder:14b: command
+# not found` under set -e before the first pull, and any other stray line in the
+# file would have executed with this script's privileges. Only this one key is
+# read, so no other value in the file (a master key, say) is exported into the
+# docker execs below. The file beats the caller's environment, which beats the
+# shipped pair; an empty or absent line falls through rather than pulling nothing.
+env_models="$(env_get .env OLLAMA_MODELS)"
+OLLAMA_MODELS="${env_models:-${OLLAMA_MODELS:-qwen2.5-coder:32b qwen2.5-coder:14b}}"
 
-OLLAMA_MODELS="${OLLAMA_MODELS:-qwen2.5-coder:32b qwen2.5-coder:14b}"
+# Each tag is data, never shell: it is interpolated into the in-container command
+# line below, so anything outside an Ollama tag's own charset (registry
+# namespaces carry /, a tag may carry : and @) is refused here rather than handed
+# to bash on the other side of docker exec. The whole list is checked before the
+# first pull so a typo on the fourth tag does not surface after the first three
+# have downloaded tens of gigabytes.
+for model in ${OLLAMA_MODELS}; do
+  [[ ${model} =~ ^[A-Za-z0-9._:@/-]+$ ]] ||
+    die "$(printf 'not an Ollama model tag: %s (check OLLAMA_MODELS in .env)' "${model}")"
+done
 
 # The ollama container is found on the DAEMON, by container label, not through
 # a cwd-resolved compose project (scripts/lib/coder_api.sh: under `bazelisk

@@ -19,7 +19,11 @@
 #     capped by timeout(1);
 #   - which models, in what order: OLLAMA_MODELS from the .env beside the script
 #     beats one set in the caller's environment, and neither is looked for in
-#     the cwd.
+#     the cwd;
+#   - .env is read by sed and never sourced, so a line of that operator-editable
+#     file stays data even when it reads as a command, and a value that is not a
+#     model tag is refused before docker is asked rather than carried into the
+#     in-container shell.
 #
 # Hermetic by construction: docker and timeout resolve to the copies in
 # tests/bats/tool_stubs/ (use_stubs), and the script runs from a throwaway repo
@@ -58,8 +62,9 @@ setup() {
 # test, scripts/lib/ (which it sources after resolving its own repo root) and a
 # .env holding any lines given. The compose file is the marker resolve_checkout
 # proves a checkout with, so a root without one would exit 5 before it got to the
-# models. An empty .env still matters: the script sources it, so a test that wants
-# a caller-supplied OLLAMA_MODELS to win needs one to exist.
+# models. An empty .env is still written: that is a checkout whose operator never
+# touched the key, which the reader answers with nothing, exactly as it answers a
+# file that is not there at all.
 fake_root() {
   local root="${BATS_TEST_TMPDIR?}/root"
   mkdir -p "${root}/scripts/lib"
@@ -116,6 +121,55 @@ unproven_root() {
   [[ "${output}" != *"qwen2.5-coder"* ]]
   [ "$(stub_log_count docker)" -eq 4 ]
   [[ "$(stub_log docker)" != *decoy-model* ]]
+}
+
+@test "pull-models: an unquoted OLLAMA_MODELS in .env still names both models" {
+  # The reported failure: an operator who dropped the quotes off the sample line
+  # got `./.env: line 188: qwen2.5-coder:14b: command not found` back and pulled
+  # nothing. A sourced `.` reads that line as an assignment prefix followed by a
+  # COMMAND, and set -e ends the run before the first docker call. The reader this
+  # script now uses (scripts/lib/common.sh:env_get) takes the whole line as data.
+  root="$(fake_root 'OLLAMA_MODELS=phi-4-mini:4b tiny-stural:1b')"
+  scratch="$(make_scratch)"
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"pulling phi-4-mini:4b ..."* ]]
+  [[ "${output}" == *"pulling tiny-stural:1b ..."* ]]
+  [[ "${stderr}" != *"command not found"* ]]
+  # Probe, two pulls, the closing list.
+  [ "$(stub_log_count docker)" -eq 4 ]
+}
+
+@test "pull-models: .env is read as data, so a bare command line in it never runs" {
+  # The other half of the same bug: a sourced .env executes whatever sits on a
+  # line of its own, with this script's privileges and, until the fix, with every
+  # other value in the file exported into the environment as well.
+  root="$(fake_root 'OLLAMA_MODELS="phi-4-mini:4b"' "touch ${BATS_TEST_TMPDIR?}/pwned")"
+  scratch="$(make_scratch)"
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 0 ]
+  [ ! -e "${BATS_TEST_TMPDIR?}/pwned" ]
+  [[ "${stderr}" != *"command not found"* ]]
+  [[ "${output}" == *"pulling phi-4-mini:4b ..."* ]]
+}
+
+@test "pull-models: a tag outside the Ollama charset is refused before the daemon is asked" {
+  # Each tag is interpolated into the in-container `bash -lc` line, so a value
+  # that is not a model tag has to be refused rather than carried there inside
+  # quotes. It is refused for the whole list at once: a run that pulled the first
+  # tag and then refused the second would have spent the download to find out.
+  root="$(fake_root 'OLLAMA_MODELS="good:1 bad;tag"')"
+  scratch="$(make_scratch)"
+  run --separate-stderr env -C "${scratch}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= STUB_COMPOSE_PS='ollama|ipex-ollama-1' \
+    bash "${root}/scripts/pull-models.sh"
+  [ "${status}" -eq 1 ]
+  assert_match "the refusal names the tag" 'not an Ollama model tag: bad;tag' "${stderr}"
+  [ "$(stub_log_count docker)" -eq 0 ]
 }
 
 @test "pull-models: OLLAMA_MODELS in the environment replaces the default pair" {
