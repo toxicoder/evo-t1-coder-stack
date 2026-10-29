@@ -51,6 +51,16 @@ docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" logs --tail 100 code
 Services: `coder`, `db`, `litellm`, `ollama`, `searxng`, `kasm`, `homepage`,
 `homepage-proxy`, `router`, `hermes`, `hermes-init`.
 
+The stack's own health, from the host: `bazelisk run //scripts:hermes-shell -- check`
+reports this container's state, its seed, and the model lane.
+
+## Related skills
+
+`host-linux-ops` for the right Linux command and what each flag means,
+`host-diagnostics` when something is broken and nobody knows why, and
+`deploy-from-github` when the request is about a third-party repository — that
+one belongs in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}` and never in this checkout.
+
 ## Do not
 
 - Do not run `storage-clean`, `pull-models`, or any `reset` unless the operator
