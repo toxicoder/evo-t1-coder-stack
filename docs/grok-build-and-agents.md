@@ -258,6 +258,21 @@ while the managed block is intact.
   fills `GH_TOKEN` above.
 - `grok_config_extra` appends whatever the create form's **Grok config extras** field
   holds, verbatim under its own comment header.
+- `[permission]` holds the guardrails the stack owns; the approval mode itself stays
+  a per-user call (`[ui] permission_mode`). `Bash(rm -rf *)` blocks the destructive
+  form, and the dotenv family is split by what a file actually holds: the live
+  `.env` and the populated suffixed shapes (`.env.local`, `.env.*.local`,
+  `.env.production` / `.env.prod`, `.env.staging` / `.env.stage`,
+  `.env.development` / `.env.dev`, `.env.test` / `.env.testing`, `.env.ci`,
+  `.env.override`) are denied for `Read` and `Edit`, while the secret-free
+  templates a repo ships (`.env.example`, `.env.sample`, `.env.template`,
+  `.env.dist`, `.env.defaults`, plus the `.env.*.example` / `.env.*.sample`
+  spellings) are named in `allow`, so an agent maintains the env key list without a
+  prompt in any mode. Neither list is the old blanket `**/.env.*`: deny outranks
+  allow, so the blanket form blocked the templates along with the live files and
+  left the key list -- the file that keeps a real `.env` honest -- to drift.
+  `.gitignore` carries the matching half on the git side: the whole family is
+  ignored except the names `allow` lists.
 - Stack ownership of the file rests on either marker spelling: the line-1
   `managed-by: evo-t1-coder-stack` comment or the top-level `__evoT1Stack = true` key.
   Both twins emit both, because the comment alone does not last - `grok mcp add`

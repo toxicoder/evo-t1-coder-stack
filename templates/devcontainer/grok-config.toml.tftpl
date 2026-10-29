@@ -388,13 +388,18 @@ max_output_bytes = 40000
 # carries the CLI-owned tables ([cli], [ui], [marketplace]) over from the file
 # it replaces, so an approval mode set in [ui] survives a re-render.
 #
-# The live dotenv file is blanket-blocked. Suffixed dotenv files are named one by
-# one instead of blanket-blocked, because a deny rule cannot be overridden by an
-# allow rule and `**/.env.*` also covers the committed, secret-free templates a
-# repo ships (.env.sample, .env.example) -- blocking those stopped agents from
-# maintaining the env key list, which is the file that keeps .env honest. Add any
-# suffixed shape your projects carry secrets in; a name absent from this list is
-# readable and editable, so prefer the plain `.env` for anything secret.
+# The dotenv family is split by what the file holds. The live `.env` and the
+# suffixed shapes that carry real values are denied for Read and Edit; the
+# secret-free templates a repo ships are named in `allow`, so an agent keeps the
+# env key list -- the file that keeps .env honest -- in step with the code
+# without a prompt in any permission mode. Neither list is the blanket
+# `**/.env.*`: a deny rule cannot be overridden by an allow rule, so the blanket
+# form blocked `.env.example` and `.env.sample` along with the live files and
+# left the key list to drift. `Edit` is the name that covers the Write tool too.
+# Add a suffixed shape to `deny` when your projects put secrets in it; a name in
+# neither list stays readable and editable, so prefer the plain `.env` for
+# anything secret and keep every populated variant out of git (.gitignore
+# ignores the family and un-ignores only the names allowed below).
 [permission]
 deny = [
   "Bash(rm -rf *)",
@@ -410,8 +415,36 @@ deny = [
   "Edit(**/.env.prod)",
   "Read(**/.env.staging)",
   "Edit(**/.env.staging)",
+  "Read(**/.env.stage)",
+  "Edit(**/.env.stage)",
   "Read(**/.env.development)",
   "Edit(**/.env.development)",
+  "Read(**/.env.dev)",
+  "Edit(**/.env.dev)",
+  "Read(**/.env.test)",
+  "Edit(**/.env.test)",
+  "Read(**/.env.testing)",
+  "Edit(**/.env.testing)",
+  "Read(**/.env.ci)",
+  "Edit(**/.env.ci)",
+  "Read(**/.env.override)",
+  "Edit(**/.env.override)",
+]
+allow = [
+  "Read(**/.env.example)",
+  "Edit(**/.env.example)",
+  "Read(**/.env.sample)",
+  "Edit(**/.env.sample)",
+  "Read(**/.env.template)",
+  "Edit(**/.env.template)",
+  "Read(**/.env.dist)",
+  "Edit(**/.env.dist)",
+  "Read(**/.env.defaults)",
+  "Edit(**/.env.defaults)",
+  "Read(**/.env.*.example)",
+  "Edit(**/.env.*.example)",
+  "Read(**/.env.*.sample)",
+  "Edit(**/.env.*.sample)",
 ]
 
 %{if grok_config_extra != ""~}

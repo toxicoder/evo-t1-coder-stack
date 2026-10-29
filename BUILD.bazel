@@ -64,6 +64,15 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The repo's own ignore list. The dotenv suite asks git's matcher whether a
+# populated dotenv variant stays out of a commit, so it needs the real file in
+# its runfiles rather than a copy of its patterns.
+filegroup(
+    name = "gitignore",
+    srcs = [".gitignore"],
+    visibility = ["//visibility:public"],
+)
+
 # Ships beside the payloads the templates push; no script reads it.
 filegroup(
     name = "license",

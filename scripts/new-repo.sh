@@ -473,10 +473,11 @@ overlay_lanes() {
 rename_env_template() {
   local dest="$1"
   [ -f "${dest}/env.example" ] || return 0
-  # The template spells this file without the leading dot because this stack denies
-  # any agent edit to `**/.env.*`, a guardrail against committing real secrets that
-  # cannot tell a template twin apart from a populated env file. The dotted name is
-  # what a rendered project should carry, and this repository never holds it.
+  # The scaffold ships this file undotted, so its own tree never holds a dotted
+  # dotenv name. The Grok seed denies the populated dotenv shapes and names the
+  # secret-free template twins in its allow rules; the scaffold keeps out of that
+  # question by spelling the twin without the dot. The dotted name is what a
+  # rendered project should carry, and only this rename introduces it.
   mv -- "${dest}/env.example" "${dest}/.env.example"
   note "wrote env.example as .env.example"
 }
