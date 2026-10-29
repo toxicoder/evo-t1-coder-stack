@@ -1017,6 +1017,17 @@ named volume was not seeded: run
 `bazelisk run //scripts:hermes-bootstrap -- --help` and recreate. Full
 access / mounts / socket-risk notes: [hermes.md](hermes.md).
 
+The assistant also opens in your own terminal with
+`bazelisk run //scripts:hermes-shell`. When you cannot tell whether the agent,
+its volume, or the model lane is the broken part, start with the readiness
+report — it launches nothing and names each blocker (daemon, container state,
+seeded volume, model key set or still a placeholder, LiteLLM
+`/health/liveliness`):
+
+```sh
+bazelisk run //scripts:hermes-shell -- check
+```
+
 ### Public `hermes-gmktecbeast` answers `421` -> no vhost, a rewritten Host, or Traefik aimed past the router
 
 Cause: this box's `router` answers `421` when the Host matches no `server_name`.

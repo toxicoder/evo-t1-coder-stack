@@ -559,6 +559,14 @@ services:
     volumes:
       - hermes-data:/opt/data
       - ${STACK_HOST_PATH:-.}:${STACK_HOST_PATH:-/opt/stack}
+      # The deploy workspace: where the assistant clones a repository, builds it, and
+      # keeps the compose project it runs. Mounted at the identical path (same trick as
+      # STACK_HOST_PATH) so a bind source inside a project the assistant writes resolves
+      # on the host daemon. A dedicated path, deliberately outside /home: the assistant
+      # sees this directory, not the operator's dotfiles, SSH keys or shell history.
+      # Absent (CI `compose config`) and empty both fall back to /opt/stack-deploy.
+      # Additive: an existing hermes container needs a recreate to gain it.
+      - ${STACK_DEPLOY_PATH:-/opt/stack-deploy}:${STACK_DEPLOY_PATH:-/opt/stack-deploy}
       - ./hermes/skills:/opt/stack-skills:ro
       - /var/run/docker.sock:/var/run/docker.sock
     group_add:

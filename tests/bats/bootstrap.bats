@@ -88,6 +88,33 @@ assert_no_router_vhost() {
   grep -qx 'OTHER=v' .env
 }
 
+@test "bootstrap: STACK_DEPLOY_PATH is filled once and never rewritten" {
+  # The pair scripts/bootstrap.sh runs for the assistant's deploy workspace. A path the
+  # operator moved is operator state, so a value that is already set survives; a blank
+  # or absent key takes the same default compose interpolates to.
+  printf 'STACK_DEPLOY_PATH=\n' > .env
+  deploy_path="$(env_get .env STACK_DEPLOY_PATH)"
+  upsert_env STACK_DEPLOY_PATH "${deploy_path:-/opt/stack-deploy}" >/dev/null
+  grep -qx 'STACK_DEPLOY_PATH=/opt/stack-deploy' .env
+
+  printf 'STACK_DEPLOY_PATH=/srv/assistant-deploy\n' > .env
+  deploy_path="$(env_get .env STACK_DEPLOY_PATH)"
+  upsert_env STACK_DEPLOY_PATH "${deploy_path:-/opt/stack-deploy}" >/dev/null
+  grep -qx 'STACK_DEPLOY_PATH=/srv/assistant-deploy' .env
+
+  : > .env
+  deploy_path="$(env_get .env STACK_DEPLOY_PATH)"
+  upsert_env STACK_DEPLOY_PATH "${deploy_path:-/opt/stack-deploy}" >/dev/null
+  grep -qx 'STACK_DEPLOY_PATH=/opt/stack-deploy' .env
+
+  # The entry script runs exactly this pair, so the rule above is the rule it follows.
+  # A rewrite that always refreshed would quietly move an operator's deploy directory.
+  assert_contains_file "entry script reads before it writes" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" '^deploy_path="\$\(env_get \.env STACK_DEPLOY_PATH\)"'
+  assert_contains_file "entry script keeps a path that is set" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'upsert_env STACK_DEPLOY_PATH .*deploy_path:-/opt/stack-deploy'
+}
+
 @test "bootstrap: probe_agent_endpoint warns on an empty URL and on silence" {
   run probe_agent_endpoint SPARK1_OPENAI_URL ""
   [ "${status}" -eq 0 ]

@@ -170,6 +170,11 @@ _SUITE_PAYLOAD = {
         "//hermes:payload",
         "//proxy:confs",
     ],
+    # The suite execs scripts/hermes-shell.sh, whose readiness report reads the seeded
+    # pair out of the data volume, so that read is this suite's read.
+    "hermes-shell.bats": [
+        "//hermes:seed",
+    ],
     "host-state.bats": [
         "//homepage:icons",
     ],

@@ -5,8 +5,9 @@
 #
 # Pins the seams the host-assistant feature rests on: approvals stay manual,
 # the terminal backend stays local (so dangerous-command checks stay on),
-# models go through LiteLLM's `agent` alias, the three git-tracked skills
-# exist beside the seed, compose interpolation defaults for dashboard
+# models go through LiteLLM's `agent` alias, the six git-tracked skills exist
+# beside the seed with matching frontmatter, SOUL.md teaches both doors,
+# compose interpolation defaults for dashboard
 # basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider),
 # HERMES_DASHBOARD_PUBLIC_URL comes from STACK_HERMES_URL, the seed trusts
 # the router subnet, and proxy/router.conf vhosts the public hermes name.
@@ -64,10 +65,25 @@ setup() {
   assert_contains_file "SOUL marker" "${SOUL}" 'managed-by: evo-t1-coder-stack'
 }
 
-@test "hermes skills: three tracked skills exist" {
-  assert_file_exists "evo-stack-ops" "${REPO_ROOT}/hermes/skills/evo-stack-ops/SKILL.md"
-  assert_file_exists "coder-workspace" "${REPO_ROOT}/hermes/skills/coder-workspace/SKILL.md"
-  assert_file_exists "model-routing" "${REPO_ROOT}/hermes/skills/model-routing/SKILL.md"
+@test "hermes skills: every tracked skill exists with a matching name" {
+  # The three stack skills plus the three host-operations skills that make the
+  # assistant useful from a terminal: the mentor voice, the triage playbooks,
+  # and the GitHub-to-running path.
+  local skill path
+  for skill in evo-stack-ops coder-workspace model-routing \
+    host-linux-ops host-diagnostics deploy-from-github; do
+    path="${REPO_ROOT}/hermes/skills/${skill}/SKILL.md"
+    assert_file_exists "${skill}" "${path}"
+    assert_contains_file "${skill} frontmatter name" "${path}" "^name: ${skill}\$"
+  done
+}
+
+@test "hermes SOUL: names both doors, the deploy workspace, and the manual gate" {
+  assert_contains_file "terminal door" "${SOUL}" 'scripts:hermes-shell'
+  assert_contains_file "dashboard door" "${SOUL}" '9119'
+  assert_contains_file "deploy workspace" "${SOUL}" 'STACK_DEPLOY_PATH'
+  assert_contains_file "manual approvals stay" "${SOUL}" 'approvals\.mode. is .manual'
+  assert_contains_file "one writer on /opt/data" "${SOUL}" 'second container'
 }
 
 @test "hermes compose: dashboard basic-auth interpolation defaults stay non-empty" {

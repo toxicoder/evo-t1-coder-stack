@@ -868,10 +868,11 @@ Full detail (mounts, `custom.css`, widget URLs, the wallpaper trick):
 ## Hermes host assistant
 
 [Hermes Agent](https://github.com/nousresearch/hermes-agent) is the on-device assistant
-for this host: the official Web Dashboard on `:9119` (dev `:19119`), Chat tab with
-approval prompts, models through the existing LiteLLM `agent` alias. It mounts the
-stack checkout at `STACK_HOST_PATH` and the docker socket (root-equivalent, same
-standing as Coder), so approvals stay `manual`.
+for this host, and it has two doors: the official Web Dashboard on `:9119` (dev
+`:19119`), Chat tab with approval prompts, and this machine's own terminal. Both doors
+reach one agent, one memory store, and one approval gate, with models going through the
+existing LiteLLM `agent` alias. It mounts the stack checkout at `STACK_HOST_PATH` and
+the docker socket (root-equivalent, same standing as Coder), so approvals stay `manual`.
 
 - **URL:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, basic auth
   (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`). The LAN
@@ -879,6 +880,15 @@ standing as Coder), so approvals stay `manual`.
   `https://hermes-gmktecbeast.overeazy.io` under the shipped defaults) is
   opt-in with `STACK_PUBLIC_HOSTS=auto`: Authelia in front, the same basic
   auth behind it, Traefik pointed at `:8080`.
+- **Terminal door:** `bazelisk run //scripts:hermes-shell` opens the same agent in the
+  terminal you are already in - `exec` into the running container, so both doors are one
+  agent on one memory store, with inline `[o]nce | [s]ession | [a]lways | [d]eny`
+  approvals. `-- check` reports readiness without launching, and `ask`, `shell`,
+  `commands`, `--model` and `--writable` cover the rest.
+- **Skills:** six tracked under `hermes/skills/` - stack ops, Coder workspaces, model
+  routing, plus the host-ops trio: `host-linux-ops` (the right command, and what each
+  flag does), `host-diagnostics` (read-only triage playbooks) and
+  `deploy-from-github` (a repository to running, in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`).
 - **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the
   dangerous-command checker on. The docker socket stays root-equivalent.
 
@@ -971,6 +981,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
 │   ├── github-auth.sh       # GitHub credential doctor
 │   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
+│   ├── hermes-shell.sh      # open the Hermes assistant in the terminal you are in
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
 │   ├── mcp-check.sh         # prove the Grok Build MCP lanes: binaries, creds, handshake
