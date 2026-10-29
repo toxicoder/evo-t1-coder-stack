@@ -1,12 +1,13 @@
 ---
 title: Hermes host assistant
-description: "The on-host assistant with the Web Dashboard on :9119: how to reach it on the LAN and on its public name, what it may touch, and how approvals gate a mutating command."
-tags: [hermes, dashboard, operate, safety]
+description: "The on-host assistant with two doors - the Web Dashboard on :9119 and the host terminal via hermes-shell: how to reach it, what it may touch, and how approvals gate a mutating command from either."
+tags: [hermes, dashboard, terminal, operate, safety]
 ---
 
 **What's on this page**
 
 - How to reach the dashboard, on the LAN and on the public name
+- Opening the same assistant in your own terminal with `hermes-shell`
 - Sign-in: HTTP basic auth, with Authelia in front of the public name
 - The models it calls through LiteLLM
 - What the container mounts, and what "be the host" costs
@@ -16,6 +17,9 @@ tags: [hermes, dashboard, operate, safety]
 
 - Running stack operations by conversation with a plan and an approval first
 - Reaching the assistant on the LAN, and on the public name `auto` composes from the parts
+- Asking from a terminal you already have - the right Linux command, a triage, a
+  GitHub project deployed into the deploy workspace - with the same skills, memory
+  and approval gate behind the answer
 
 Hermes is the Nous Research Hermes Agent running as the interactive assistant **on the
 stack host itself**: not inside a workspace, not in a streamed desktop, but with the
@@ -73,6 +77,62 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
   `http://hermes:9119/api/status`, which resolves over compose DNS, so the card stays
   correct whatever the browser link is. See [dashboard.md](dashboard.md).
 
+## From the host terminal
+
+The Chat tab is the door for someone at a browser. The terminal door is for someone
+already on the box, and it opens the **same** assistant - same `SOUL.md`, same seeded
+`config.yaml`, same git-tracked skills, same LiteLLM lane, same memory, same manual
+approval gate:
+
+```sh
+bazelisk run //scripts:hermes-shell                 # the agent, in this terminal
+bazelisk run //scripts:hermes-shell -- check        # readiness report, launches nothing
+bazelisk run //scripts:hermes-shell -- ask "why is coder offline"
+bazelisk run //scripts:hermes-shell -- commands     # the CLI this image version spells
+bazelisk run //scripts:hermes-shell -- shell        # a shell in its container
+bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command, run nothing
+```
+
+- **Subcommands:** `chat` (the default), `ask TEXT` for one question and exit, `shell`
+  for a shell with the container's mounts and socket, `check` for the readiness report,
+  `commands` for the assistant's own help. Every word after the subcommand is handed to
+  the assistant verbatim, so a flag this script has never heard of still works.
+- **Options** (before the subcommand): `-p/--project-name` (`evo-t1-prod`; the dev
+  sandbox is `evo-t1-dev`), `-f/--file`, `-e/--env-file`, `-m/--model <alias>` for one
+  session, `-w/--writable <dir>`, `--one-shot`, `--dry-run`, `-h/--help`.
+- **It enters the running container rather than starting a second one.** Hermes keeps
+  its sessions and memory in a SQLite store under `/opt/data`, and two containers on one
+  data directory is the documented way to corrupt it - the WAL sidecars and the lock
+  only mean something inside one container. So while the gateway is up this is
+  `docker compose exec`, and the terminal agent and the dashboard agent are literally
+  the same process on the same store. Only when nothing is running does it
+  `docker compose run --rm --no-deps` a lone container. `--one-shot` forces the second
+  container anyway and says out loud what it risks.
+- **`check` is the first thing to run when an answer looks impossible.** It reports the
+  daemon, the compose CLI, the project, the container state, whether the service
+  resolves, the image, whether the data volume is seeded, whether the model key is set
+  or still a shipped placeholder, whether LiteLLM answers `/health/liveliness`, and the
+  work directory. It prints key names and never a value, and it launches nothing.
+- **Approvals are the same gate, inline.** A dangerous command stops in your tty with
+  `[o]nce | [s]ession | [a]lways | [d]eny`, deny by default. There is no browser card
+  here and nothing to approve elsewhere; the terminal door does not loosen
+  `approvals.mode: manual`, and `--yolo` / `HERMES_YOLO_MODE` have no place in this
+  stack. See [Approvals](#approvals).
+- **An interactive session needs a real tty** (the TUI draws on a pty compose allocates
+  from your terminal), so `chat` and `shell` refuse from a pipe or a cron line - that is
+  what `ask` is for.
+- **What it can see:** the checkout at `$STACK_HOST_PATH`, the deploy workspace at
+  `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`, `/opt/stack-skills`, the data volume, and
+  the docker socket. **What it cannot:** `/home` is not mounted, so no dotfiles, SSH
+  keys or shell history - by design. The image carries git and the Docker CLI but not
+  bazelisk, so inside the container the same operations go through
+  `docker compose -p evo-t1-prod -f "$STACK_HOST_PATH/docker-compose.yml"`.
+- **`--writable` matters more than it looks.** The official image sets
+  `HERMES_WRITE_SAFE_ROOT=/opt/data`, so a file-tool write anywhere else is refused
+  outright and no approval card even appears. To have the assistant edit files on the
+  host, name the directory: `--writable "${STACK_DEPLOY_PATH:-/opt/stack-deploy}"` or
+  the checkout path.
+
 ## Auth
 
 - Hermes since the June 2026 hardening refuses a non-loopback bind without a
@@ -119,6 +179,7 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
 |---|---|---|
 | `hermes-data` (named volume) | `/opt/data` | config, sessions, memory, SQLite |
 | `${STACK_HOST_PATH:-.}` | `${STACK_HOST_PATH:-/opt/stack}` | identical-path checkout |
+| `${STACK_DEPLOY_PATH:-/opt/stack-deploy}` | the same absolute path | the deploy workspace |
 | `./hermes/skills` | `/opt/stack-skills` (ro) | git-tracked skills |
 | `/var/run/docker.sock` | `/var/run/docker.sock` | compose and container control |
 
@@ -132,6 +193,14 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
   `${STACK_HOST_PATH}`, expanded from the same env.
 - `hermes/skills/` is tracked in git. Add a skill by editing the repo, never by editing
   the volume; the volume copy is not the record.
+- `STACK_DEPLOY_PATH` (default `/opt/stack-deploy`) is the **deploy workspace**: the one
+  directory meant for clones, builds, and the compose project of a third-party project
+  the assistant brings up. It is mounted at its own absolute path for the same reason
+  `STACK_HOST_PATH` is - a bind source inside a project file the assistant writes has to
+  resolve on the host daemon - and bootstrap fills it in without overwriting a path you
+  set yourself. It is deliberately outside `/home`, so giving the assistant somewhere to
+  work did not mean giving it your dotfiles. An existing container gains the mount on
+  recreate, since `restart` keeps the old mounts.
 - `group_add: ${DOCKER_GID}` plus the socket is the same credential the `coder` service
   already holds: root-equivalent on the host. Nothing new is exposed here that the Coder
   container does not already have - which is precisely why approvals, below, are the
@@ -154,6 +223,11 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
 - Working agreement with the assistant: it explains the plan in chat, then waits for the
   approval card in the Chat tab before running anything mutating. If a run looks like it
   is acting without one, stop it and re-read the mode.
+- From the terminal door the same gate is inline in your tty: a dangerous command stops
+  with `[o]nce | [s]ession | [a]lways | [d]eny` and does not proceed until you answer,
+  with deny the default. An approval is scoped to the session you answer in, so a yes
+  given over there does not cover a fresh session opened at this door.
+  `--yolo` and `HERMES_YOLO_MODE` bypass the gate entirely; they have no place here.
 
 ## Bootstrap and skills
 
@@ -177,9 +251,19 @@ recreate the container and the env applies.
 - A skill is one directory: `hermes/skills/<name>/SKILL.md`, with
   [agentskills.io](https://agentskills.io) frontmatter for the name and description.
   Commit it, and the next `up` has it.
+- What ships, and which question each one answers: `evo-stack-ops` (pull, status,
+  restart, logs for this stack), `coder-workspace` (workspaces and their GitHub auth),
+  `model-routing` (which LiteLLM alias, and how to switch it), `host-linux-ops` (the
+  right Linux command, what each flag does, and the blast radius before it runs),
+  `host-diagnostics` (read-only triage for a slow, hot, full or failing box), and
+  `deploy-from-github` (a named repository to running, with the read-first, pin-the-ref,
+  isolate, preflight, health-check, keep-a-rollback order). The last three are what make
+  the terminal door worth opening: they carry the mentoring stance - inspect, explain,
+  propose, then act on the yes.
 - A bind-mounted skill needs no recreate when the agent reloads skills from disk; start a
-  **new Chat session** and the new skill is offered. Recreate only if it still does not
-  show up, since `restart` keeps the old mounts.
+  **new session** - a fresh Chat tab, or a new `hermes-shell` run - and the new skill is
+  offered. Recreate only if it still does not show up, since `restart` keeps the old
+  mounts.
 - `SOUL.md` is the identity - voice and stance, a short persona. It is not a fork of
   [AGENTS.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/AGENTS.md): the repo's shell conventions stay in that file, where the
   writers and the linters read them.
@@ -204,8 +288,25 @@ recreate the container and the env applies.
 - No GitHub PAT in Hermes. GitHub auth in this stack is Coder External Auth only, and a
   token here would sit on a container that can both write to the checkout and drive the
   host daemon. See [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
+- The terminal door adds a way in for someone who already has a shell on this host, and
+  opens no new listener, no new port and no new credential. `hermes-shell` authenticates
+  nothing of its own: `docker` on that host is the credential, and it was always
+  root-equivalent here. Its one guard is that the assistant's approvals stay `manual` on
+  both doors.
+- The deploy workspace is writable by the assistant's file tools only when you say so
+  with `--writable`, and the file tools refuse anything outside the image's
+  `HERMES_WRITE_SAFE_ROOT` (the official default is `/opt/data`) with no prompt at all.
+  Name the narrowest directory that finishes the job.
 
 ## Commands
+
+Open the assistant in your own terminal (subcommands `chat`, `ask`, `shell`, `check`,
+`commands`; `--help` for the flags):
+
+```sh
+bazelisk run //scripts:hermes-shell -- check
+bazelisk run //scripts:hermes-shell
+```
 
 Stable stack - `hermes` comes up with the rest:
 
