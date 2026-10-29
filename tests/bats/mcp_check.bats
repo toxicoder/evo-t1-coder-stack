@@ -47,12 +47,22 @@ make_stub() {
   printf '%s' "${dir}"
 }
 
-# stub_curl [code] - answer every service probe with a fixed status, so no test
-# ever depends on a resolvable host. Prints the bin directory.
+# stub_curl [code] [body] - answer every service probe with a fixed status, so no test
+# ever depends on a resolvable host. Prints the bin directory. A caller that
+# asks for a status template (-w, which is how probe_search reads) gets the
+# code; a caller that asks for the document gets the body, which is how
+# probe_search_depth sees its result set. Defaulting the body to the code keeps
+# every caller that passes only a status behaving as it did before.
 stub_curl() {
-  local code="${1:-200}" dir="${BATS_TEST_TMPDIR}/bin"
+  local code="${1:-200}" dir="${BATS_TEST_TMPDIR}/bin" body="${2:-${1:-200}}"
   mkdir -p "${dir}"
-  printf '#!/usr/bin/env bash\nprintf %s\n' "'${code}'" >"${dir}/curl"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'want=0\n'
+    printf 'for a in "$@"; do [ "$a" = "-w" ] && want=1; done\n'
+    printf 'if [ "$want" = 1 ]; then printf %%s %s; else printf %%s %s; fi\n' \
+      "'${code}'" "'${body}'"
+  } >"${dir}/curl"
   chmod 755 "${dir}/curl"
   printf '%s' "${dir}"
 }
@@ -475,6 +485,66 @@ load_common() {
   assert_eq "no curl at all is its own answer" "no-curl" "${code}"
 }
 
+@test "mcp-check: probe_search_depth counts the results a reply actually carries" {
+  # The status line cannot tell a working lane from one whose engines are all
+  # parked, so this counts rows the way scripts/search-check.sh counts them.
+  local dir empty depth
+  load_shell_function "${SCRIPT}" probe_search_depth
+  empty="${BATS_TEST_TMPDIR}/empty-path-d"
+  mkdir -p "${empty}"
+
+  dir="$(stub_curl 200 '{"results":[{"url":"http://a"},{"url":"http://b"},{"url":"http://c"}]}')"
+  PATH="${dir}:${PATH}"
+  depth="$(probe_search_depth http://searx.test:8181)"
+  assert_eq "three results count as three" "3" "${depth}"
+
+  dir="$(stub_curl 200 '{"results":[],"unresponsive_engines":[["brave","too many requests"]]}')"
+  PATH="${dir}:${PATH}"
+  depth="$(probe_search_depth http://searx.test:8181)"
+  assert_eq "a 200 that carries nothing counts as zero" "0" "${depth}"
+
+  dir="$(make_stub curl 'exit 7')"
+  PATH="${dir}:${PATH}"
+  depth="$(probe_search_depth http://searx.test:8181)"
+  assert_eq "a request that never completed is no-answer" "no-answer" "${depth}"
+
+  depth="$(PATH="${empty}" probe_search_depth http://searx.test:8181)"
+  assert_eq "no curl at all is its own answer" "no-curl" "${depth}"
+}
+
+@test "mcp-check: a 200 that returns no results is a warning, not a healthy lane" {
+  # The state this CLI used to call healthy: the service answers 200, every
+  # engine is parked, and every agent search comes back empty. The hop line has
+  # to say so and point at the tool that names the engines.
+  local cfg="${BATS_TEST_TMPDIR}/empty-report.toml" bins out="${BATS_TEST_TMPDIR}/empty-report.out" text
+  bins="$(stub_ok_binaries)"
+  write_config "${cfg}"
+  sed -i "s|/opt/npm-global/bin/|${bins}/|g" "${cfg}"
+  load_common
+  load_shell_function "${SCRIPT}" tool_pin
+  load_shell_function "${SCRIPT}" lane_remedy
+  load_shell_function "${SCRIPT}" emit_finding
+  load_shell_function "${SCRIPT}" probe_search
+  load_shell_function "${SCRIPT}" probe_search_depth
+  load_shell_function "${SCRIPT}" report_lanes
+  SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS="" JSON_MODE="" JSON_FINDINGS=""
+  REPO_ROOT_RESOLVED="${REPO_ROOT}"
+  REPORT_PY="${PARSER}" DOCTOR_OK=0 DOCTOR_FILE="${BATS_TEST_TMPDIR}/doctor.json"
+  CONFIG="${cfg}" LANE_LIST="searxng" SEARCH_URL="http://searx.test:8181"
+  CONFIG_MANAGED=1
+  PATH="$(stub_curl 200 '{"results":[],"unresponsive_engines":[["brave","too many requests"]]}'):${PATH}"
+
+  report_lanes >"${out}" 2>&1
+  text="$(cat "${out}")"
+  assert_contains_file "the empty lane is a warning" "${out}" \
+    "warning: searxng: service http://searx.test:8181 answered HTTP 200 with zero results"
+  assert_contains_file "and it names the tool that identifies the engines" "${out}" \
+    "search-check"
+  assert_not_match "the hop is not also reported as healthy" 'ok: searxng: service ' "${text}"
+  assert_eq "one warning, nothing failed" "1" "${SUMMARY_WARN}"
+  assert_eq "the service itself is up, so nothing failed" "0" "${SUMMARY_FAIL}"
+}
+
 @test "mcp-check: take_doctor keeps a report doctor exits non-zero on" {
   local bin rc msg
   load_common
@@ -549,13 +619,17 @@ load_common() {
   load_shell_function "${SCRIPT}" lane_remedy
   load_shell_function "${SCRIPT}" probe_search
   load_shell_function "${SCRIPT}" emit_finding
+  load_shell_function "${SCRIPT}" probe_search_depth
   load_shell_function "${SCRIPT}" report_lanes
   SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS="" JSON_MODE="" JSON_FINDINGS=""
   REPO_ROOT_RESOLVED="${REPO_ROOT}"
   REPORT_PY="${PARSER}" DOCTOR_OK=0 DOCTOR_FILE="${BATS_TEST_TMPDIR}/doctor.json"
   CONFIG="${cfg}" LANE_LIST="searxng,context7" SEARCH_URL="http://searx.test:8181"
   CONFIG_MANAGED=1
-  PATH="$(stub_curl 200):${PATH}"
+  # A body that carries results: a bare 200 with nothing in it is now a warning,
+  # and this test is about the healthy lane, so the stub has to answer like a
+  # search that worked.
+  PATH="$(stub_curl 200 '{"results":[{"url":"http://a"},{"url":"http://b"},{"url":"http://c"}]}'):${PATH}"
 
   # Called in this shell, not a subshell, so the counters it writes are the ones
   # the assertions read.
