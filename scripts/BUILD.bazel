@@ -156,6 +156,9 @@ _SCRIPT_LIBS = {
     "hermes-bootstrap": [
         "lib/common.sh",
     ],
+    "hermes-shell": [
+        "lib/common.sh",
+    ],
     "install-hooks": [
         "lib/common.sh",
     ],
@@ -276,6 +279,12 @@ _SCRIPT_PAYLOAD = {
         "//:compose_file",
     ],
     "hermes-bootstrap": [
+        "//:compose_file",
+        "//hermes:seed",
+    ],
+    # The readiness report reads the compose file it addresses and checks the data
+    # volume for the two seeded files, so it names both payloads by path.
+    "hermes-shell": [
         "//:compose_file",
         "//hermes:seed",
     ],
