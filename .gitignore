@@ -1,5 +1,17 @@
 # Secrets / local state — never commit
 .env
+# The rest of the dotenv family is local state too. Only the committed,
+# secret-free templates listed below stay visible, so a populated variant
+# cannot be staged by habit. These are the names the Grok seed lists in its
+# [permission] allow rules.
+.env.*
+!.env.sample
+!.env.example
+!.env.*.sample
+!.env.*.example
+!.env.template
+!.env.dist
+!.env.defaults
 # Per-repo scratch notes the workspace startup materializes at this clone's root
 # (anchored: a notes.md under docs/ or anywhere else stays visible)
 /notes.md
