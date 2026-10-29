@@ -308,6 +308,51 @@ probe_search() {
   fi
 }
 
+# @function probe_search_depth
+# Print how many results the service actually returns for one lookup, or the
+# literal no-answer when the request itself did not complete.
+#
+# The status code cannot answer the question this CLI is asked. An instance
+# whose engines are all parked answers 200 with an empty result set, and an
+# agent holding that reply is no better off than with the service down: its
+# search tool returns nothing. Measured on this stack, that is a reachable
+# state - google refuses "access denied" and duckduckgo a CAPTCHA, and SearXNG
+# parks each for a while (search.suspended_times) - so a check that stopped at
+# the status line called the lane healthy while every agent search came back
+# empty.
+#
+# The query is a plain factual lookup rather than the "mcp-check" string the
+# reachability probe sends, because a nonsense string can legitimately find
+# nothing and that would read as a broken lane. Counting "url" keys is how
+# scripts/search-check.sh counts results, so the two cannot disagree.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the base URL to probe
+# Outputs:
+#   A result count, `no-answer`, or `no-curl`, on stdout
+# Returns:
+#   0, always
+probe_search_depth() {
+  local url="${1:-}" body="" count=""
+  command -v curl >/dev/null 2>&1 || {
+    printf 'no-curl'
+    return 0
+  }
+  body="$(curl -sS --noproxy '*' --max-time 15 -G "${url}/search" \
+    --data-urlencode "format=json" \
+    --data-urlencode "q=what language was the linux kernel written in" \
+    2>/dev/null)" || body=""
+  if [ -z "${body}" ]; then
+    printf 'no-answer'
+    return 0
+  fi
+  count="$(printf '%s' "${body}" | grep -o '"url"[[:space:]]*:' 2>/dev/null |
+    wc -l | tr -d '[:space:]')"
+  case "${count}" in '' | *[!0-9]*) count="0" ;; esac
+  printf '%s' "${count}"
+}
+
 # @function take_doctor
 # Capture `grok mcp doctor --json` into a file for the parser to read.
 # Globals:
@@ -399,10 +444,30 @@ report_lanes() {
       emit_finding "${status}" "${lane}: ${check} ${detail}${remedy}"
     done <<<"${findings}"
     if [ "${lane}" = "searxng" ]; then
-      local code
+      local code depth
       code="$(probe_search "${SEARCH_URL}")"
       case "${code}" in
-        2*) emit_finding ok "searxng: service ${SEARCH_URL} answered HTTP ${code}" ;;
+        2*)
+          # A 2xx proves something is listening; the lane is only useful when it
+          # returns rows. Reporting the hop as healthy on the status alone is
+          # what let an instance with every engine parked pass this check while
+          # every agent search came back empty.
+          depth="$(probe_search_depth "${SEARCH_URL}")"
+          case "${depth}" in
+            no-curl)
+              emit_finding ok "searxng: service ${SEARCH_URL} answered HTTP ${code}"
+              ;;
+            no-answer)
+              emit_finding warn "searxng: service ${SEARCH_URL} answered HTTP ${code}, but the results request brought nothing back at all"
+              ;;
+            0)
+              emit_finding warn "searxng: service ${SEARCH_URL} answered HTTP ${code} with zero results for a plain lookup, so an agent's searches come back empty - the engines are most likely parked by their backends; run 'bazelisk run //scripts:search-check' to name them"
+              ;;
+            *)
+              emit_finding ok "searxng: service ${SEARCH_URL} answered HTTP ${code} with ${depth} result(s)"
+              ;;
+          esac
+          ;;
         no-curl) emit_finding warn "searxng: curl is not installed here, so the service hop went unprobed" ;;
         no-answer) emit_finding fail "searxng: ${SEARCH_URL} gave no HTTP answer - the SearXNG service is down or the URL is wrong" ;;
         *) emit_finding warn "searxng: ${SEARCH_URL} answered HTTP ${code}, which is not 2xx" ;;

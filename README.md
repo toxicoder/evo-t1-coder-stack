@@ -125,7 +125,8 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |               (`disable_web_search = true`): no transport here serves that tool
   |               type, so the proxy rejects it. Measure the SearXNG lane with
   |               `bazelisk run //scripts:search-check` (an empty answer is not
-  |               an answered one).
+  |               an answered one, and the probe names each engine the instance
+  |               parked along with the reason its backend gave).
   |
   +-- :3000 ----> Kasm install wizard (first boot only)
   +-- :4443 ----> Kasm Workspaces UI (privileged DinD desktop streaming)

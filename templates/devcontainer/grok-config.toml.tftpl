@@ -362,20 +362,59 @@ env = { CONTEXT7_API_KEY = "$${CONTEXT7_API_KEY}" }
 command = "/opt/npm-global/bin/searxng-mcp-server"
 enabled = true
 
-# The one key this server reads. Its compiled-in default (http://localhost:8888)
-# names nothing on this box, so the URL is always rendered: 8181 is the host
-# port both compose stacks publish (docker-compose.yml maps STACK_SEARCH_PORT,
-# default 8181, to the container's 8181), and push-template.sh derives this
-# value from STACK_SEARCH_PORT, so a dev stack that remapped the port pushes a
-# config that dials the port it actually has.
+# This server takes its whole tuning surface from the environment, and the stack
+# sets all of it here rather than leaning on compiled-in defaults: two of these
+# keys ship in a state that is wrong for this box, one of them
+# (SEARXNG_CACHE_TTL_MS, default 0) leaving the search lane with no cache at all.
+# Proof for each number is in the note above it, measured against this lane.
 #
 # Prove the route with `bazelisk run //scripts:search-check` (it reads the same
-# SEARXNG_URL, which main.tf also puts in coder_agent's env) and the server's
-# handshake with `grok mcp doctor searxng`. This is the search lane: native
-# web_search is parked at the top of this file, so an agent that needs the web
-# reaches these tools. Park this lane too with search_mcp off, and a session is
-# left with no search tool at all.
-env = { SEARXNG_URL = "${search_url}" }
+# SEARXNG_URL, which main.tf also puts in coder_agent's env) and the handshake
+# with `grok mcp doctor searxng`. This is the search lane: native web_search is
+# parked at the top of this file, so an agent that needs the web reaches these
+# tools. Park this lane too with search_mcp off, and a session is left with no
+# search tool at all.
+
+[mcp_servers.searxng.env]
+# The address. The compiled-in default (http://localhost:8888) names nothing on
+# this box, so the URL is always rendered: 8181 is the host port both compose
+# stacks publish (docker-compose.yml maps STACK_SEARCH_PORT, default 8181, to
+# the container's 8181), and push-template.sh derives this value from
+# STACK_SEARCH_PORT, so a dev stack that remapped the port pushes a config that
+# dials the port it actually has.
+SEARXNG_URL = "${search_url}"
+# This client's budget for one SearXNG request; 10s compiled in. The instance
+# answers on the slowest engine it has not parked, bounded by
+# outgoing.max_request_timeout (10s) in searxng/settings.yml, so a 10s client
+# budget can hang up while the instance is still legitimately working and hand
+# the agent a timeout it cannot act on. 20s sits above that chain and equals the
+# --timeout default of scripts/search-check.sh, so the probe and the lane give
+# an engine the same patience.
+SEARXNG_TIMEOUT_MS = "20000"
+# Turns on the server's in-process response cache, which ships off (0). With it
+# off, every repeat of an identical query - the same lookup issued twice in a
+# session, or by two subagents on one question - re-dials the upstream engines,
+# and re-dialling a backend that already refused this instance is how a "too
+# many requests" suspension is earned. The cache is a bounded LRU of 128 entries
+# keyed on method plus normalized URL, so this costs a fixed ceiling of memory
+# and cannot grow with the session. Fifteen minutes is short enough for a
+# news-shaped answer.
+SEARXNG_CACHE_TTL_MS = "900000"
+# A ceiling on the max_results argument, not a default: a larger request is
+# clamped to it with one warning on stderr. The server's own default of ten
+# stays the normal answer, so this only bounds the worst case, keeping one
+# search from overrunning `[mcp] max_output_bytes = 40000` below. Measured on
+# this lane, ten formatted results is about 4.6 KB, so twenty-five lands well
+# inside the cap.
+SEARXNG_MAX_RESULTS = "25"
+# Mirrors search.safe_search in searxng/settings.yml (0 = off) so the lane and
+# the instance agree without the agent passing the argument, and one file cannot
+# quietly loosen the other.
+SEARXNG_DEFAULT_SAFESEARCH = "0"
+# Pins the instance default of `all`, which means no geo-bias. Left unset the
+# value comes from the image, so an image bump could silently start
+# geo-filtering every agent search; a per-call `language` argument still wins.
+SEARXNG_DEFAULT_LANGUAGE = "all"
 
 %{endif~}
 

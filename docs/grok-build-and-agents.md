@@ -379,7 +379,13 @@ clone is never asked to delete somebody else's committed file.
   ```
 
   An empty result page and "no answer" are different answers, which is why the probe
-  reports which one it got. It checks the service hop; `grok mcp doctor searxng`
+  reports which one it got. It also names every engine the instance has parked and
+  the reason its backend gave (`parked by its backend: google: access denied`),
+  read out of the reply body whether or not that reply found results - an instance
+  running on half its engines is visible there before it starts answering empty. A
+  park is temporary: SearXNG holds an engine out for `search.suspended_times`
+  seconds after it refuses, so re-run before writing one off. `--json` adds
+  `engines_parked`. It checks the service hop; `grok mcp doctor searxng`
   inside the workspace checks the MCP hop. The binary it launches
   (`/opt/npm-global/bin/searxng-mcp-server`) is baked into the golden image, so a
   probe that answers with results plus a failed handshake is a server, URL or port
@@ -399,6 +405,16 @@ clone is never asked to delete somebody else's committed file.
   The `searxng` block names the pre-installed `searxng-mcp-server` binary (pinned in
   `images/dev/tool-versions.env` and baked into the golden image), is gated on
   `search_mcp` (default true) and dials the service above through `SEARXNG_URL`.
+  That URL is one of six keys the render sets in `[mcp_servers.searxng.env]`; the
+  others pin the bridge's own tuning rather than taking its compiled-in defaults:
+  `SEARXNG_TIMEOUT_MS` (20s, above the instance's per-engine budget and equal to the
+  probe's `--timeout`), `SEARXNG_CACHE_TTL_MS` (15 minutes, which switches on the
+  bounded 128-entry response cache that ships disabled, so a repeated query stops
+  re-dialling backends that already refused this instance), `SEARXNG_MAX_RESULTS`
+  (a ceiling that keeps one search inside `[mcp] max_output_bytes`),
+  `SEARXNG_DEFAULT_SAFESEARCH` (mirrors `search.safe_search` in
+  `searxng/settings.yml`) and `SEARXNG_DEFAULT_LANGUAGE` (`all`, so an image bump
+  cannot quietly start geo-filtering every agent search).
   The five offline stdio servers (`filesystem`, `memory`, `sequential-thinking`,
   `git` and `time`) stay pre-installed in the image (`npm -g` for the first
   three, `uv tool` for the Python two), but the rendered `config.toml` names

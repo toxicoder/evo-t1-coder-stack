@@ -303,13 +303,55 @@ PROBE_CURL
   assert_not_match "no engine blamed for a dead service" 'not an engine fault' "${output}"
 }
 
-@test "search-check: a reply that blames its engines is counted and said out loud" {
-  printf '%s\n' '{"results":[],"unresponsive_engines":{"brave":"error"}}' >"${SCRATCH}/blame.json"
+@test "search-check: a reply that blames its engines names each one and why" {
+  printf '%s\n' '{"results":[],"unresponsive_engines":[["brave","Suspended: too many requests"]]}' >"${SCRATCH}/blame.json"
   write_probe_curl "${BIN}" "${SCRATCH}/blame.json" 200 0.42 0 ""
   run --separate-stderr bash "${SCRIPT}" --url http://127.0.0.1:8181 --engines brave --queries 'alpha beta gamma' --timeout 2
   [ "${status}" -eq 1 ]
   assert_match "blame counted as an empty answer" 'brave +1 +0 +1' "${output}"
-  assert_match "blame named" 'blamed its own engines' "${output}"
+  # The engine and its reason, not just the fact that something was blamed:
+  # "brave: too many requests" is actionable and "some engine was blamed" is not.
+  assert_match "the blamed engine is named with its reason" 'parked by its backend: brave: too many requests' "${output}"
+  assert_match "the park is explained as temporary" 'a park is temporary' "${output}"
+}
+
+@test "search-check: engines parked on a reply that still found results are reported" {
+  # The state an operator cannot see in the table: every pair answered, so every
+  # row reads clean, while half the engines sit parked. This is the condition
+  # that turns the next search into an empty one, and before this it was
+  # invisible because the blame was only read out of replies with no results.
+  printf '%s\n' '{"results":[{"url":"http://a"},{"url":"http://b"}],"unresponsive_engines":[["google","access denied"],["duckduckgo","CAPTCHA"]]}' >"${SCRATCH}/partial.json"
+  write_probe_curl "${BIN}" "${SCRATCH}/partial.json" 200 0.42 0 ""
+  run --separate-stderr bash "${SCRIPT}" --url http://127.0.0.1:8181 --engines brave --queries 'alpha beta gamma' --timeout 2
+  [ "${status}" -eq 0 ]
+  assert_match "the pair still counts as answered" 'brave +1 +1 +0' "${output}"
+  assert_match "a parked engine named anyway, first one" 'parked by its backend: google: access denied' "${output}"
+  assert_match "a parked engine named anyway, second one" 'parked by its backend: duckduckgo: captcha' "${output}"
+}
+
+@test "search-check: suspended_from_body lifts the blame out of one reply body" {
+  # The unit behind the report line: a body that blames engines yields one
+  # `engine<TAB>reason` per line, and a body that blames none yields nothing
+  # rather than an error - an empty answer is an ordinary answer here.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  SUSPEND_AWK="${REPO_ROOT}/scripts/lib/suspended_engines.awk"
+  load_shell_function "${SCRIPT}" suspended_from_body
+
+  printf '%s\n' '{"results":[],"unresponsive_engines":[["brave","Suspended: too many requests"],["google","access denied"]]}' \
+    >"${SCRATCH}/blames.json"
+  run suspended_from_body "${SCRATCH}/blames.json"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'brave\ttoo many requests\ngoogle\taccess denied' ]
+
+  printf '%s\n' '{"results":[{"url":"http://a"}]}' >"${SCRATCH}/clean.json"
+  run suspended_from_body "${SCRATCH}/clean.json"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+
+  run suspended_from_body "${SCRATCH}/no-such-file"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
 }
 
 @test "search-check: --json and the table are one measurement, printed twice" {
@@ -318,7 +360,7 @@ PROBE_CURL
 
   run --separate-stderr bash "${SCRIPT}" --json --url http://127.0.0.1:8181 --engines wikipedia,brave --queries 'alpha beta gamma' --timeout 2
   [ "${status}" -eq 0 ]
-  assert_match "one flat object on stdout" '^\{"pairs_total":2,"pairs_ok":2,"pairs_empty":0,"pairs_403":0,"pairs_other":0,"wikipedia_pairs":1,"wikipedia_misses":0,"brave_pairs":1,"brave_misses":0\}$' "${output}"
+  assert_match "one flat object on stdout" '^\{"pairs_total":2,"pairs_ok":2,"pairs_empty":0,"pairs_403":0,"pairs_other":0,"engines_parked":0,"wikipedia_pairs":1,"wikipedia_misses":0,"brave_pairs":1,"brave_misses":0\}$' "${output}"
   assert_not_match "table kept off stdout" 'engine +pairs' "${output}"
   assert_match "records kept off stdout" 'wikipedia\|ok\|200\|3\|0\.42\|no' "${stderr}"
 
@@ -425,6 +467,8 @@ duckduckgo" "$(split_list ' brave , duckduckgo ')"
   # shellcheck source=/dev/null
   load_shell_function "${SCRIPT}" print_notes
   # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" suspended_pool
+  # shellcheck source=/dev/null
   load_shell_function "${SCRIPT}" render_table
   # shellcheck source=/dev/null
   load_shell_function "${SCRIPT}" render_json
@@ -445,12 +489,20 @@ duckduckgo" "$(split_list ' brave , duckduckgo ')"
   : >"${work}/empty.pairs"
   assert_eq "no records is seven zeroes" "0 0 0 0 0 0 0" "$(pair_facts empty)"
 
+  # The pooled blame the sweep accumulates: one `engine<TAB>reason` per line,
+  # deduplicated across every pair that saw the same parked engine.
+  printf '%s\t%s\n%s\t%s\n%s\t%s\n' 'google' 'access denied' 'brave' 'too many requests' \
+    'google' 'access denied' >"${work}/suspended"
+  assert_eq "the pool dedupes what the replies repeated" \
+    "$(printf 'brave\ttoo many requests\ngoogle\taccess denied')" "$(suspended_pool)"
+
   # The same seven fields summed, and the prose that reads them.
   assert_eq "totals from the same fields" "4 1 1 1 1 2.500000 1" "$(total_facts "wikipedia brave empty")"
   local notes
   notes="$(print_notes "wikipedia brave empty")"
   assert_match "totals prose agrees with the blob" 'pairs attempted: 4, answered with results: 1, answered empty: 1, HTTP 403: 1, no answer: 1' "${notes}"
-  assert_match "blame note fired from the count" 'blamed its own engines' "${notes}"
+  assert_match "blame note fired from the count" 'an empty reply above came from an engine refusing' "${notes}"
+  assert_match "each parked engine is named from the pool" 'parked by its backend: google: access denied' "${notes}"
   assert_eq "an engine with two kinds of miss names both" "1 empty, 1 without an answer" "$(engine_verdict wikipedia)"
 
   # Table and --json print the same fields per engine, from the same blob.
@@ -458,7 +510,7 @@ duckduckgo" "$(split_list ' brave , duckduckgo ')"
   table="$(render_table "wikipedia brave empty")"
   assert_match "table reads the fields" 'brave +2 +1 +0 +1 +0 +1[.]000000' "${table}"
   json="$(render_json "wikipedia brave empty")"
-  assert_eq "json totals are the sum" '{"pairs_total":4,"pairs_ok":1,"pairs_empty":1,"pairs_403":1,"pairs_other":1,"wikipedia_pairs":2,"wikipedia_misses":2,"brave_pairs":2,"brave_misses":1,"empty_pairs":0,"empty_misses":0}' "${json}"
+  assert_eq "json totals are the sum" '{"pairs_total":4,"pairs_ok":1,"pairs_empty":1,"pairs_403":1,"pairs_other":1,"engines_parked":2,"wikipedia_pairs":2,"wikipedia_misses":2,"brave_pairs":2,"brave_misses":1,"empty_pairs":0,"empty_misses":0}' "${json}"
 }
 
 @test "search-check: one record line, written where it can be read back" {

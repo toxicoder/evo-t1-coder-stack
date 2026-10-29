@@ -241,8 +241,20 @@ setup() {
     run grep -A 4 -F '[mcp_servers.searxng]' "${tpl}"
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"enabled = true"* ]]
-    run grep -F 'env = { SEARXNG_URL = "${search_url}" }' "${tpl}"
+    run grep -F '[mcp_servers.searxng.env]' "${tpl}"
     [ "${status}" -eq 0 ]
+    run grep -F 'SEARXNG_URL = "${search_url}"' "${tpl}"
+    [ "${status}" -eq 0 ]
+    # The tuning surface the stack sets rather than trusting the server's
+    # compiled-in defaults. Each of these is a key the bridge reads and the
+    # stack pins, so a twin that lost one would silently ship the vendor
+    # default - which for the cache is "no caching at all".
+    local knob
+    for knob in SEARXNG_TIMEOUT_MS SEARXNG_CACHE_TTL_MS SEARXNG_MAX_RESULTS \
+      SEARXNG_DEFAULT_SAFESEARCH SEARXNG_DEFAULT_LANGUAGE; do
+      run grep -F "${knob} = " "${tpl}"
+      [ "${status}" -eq 0 ] || return 1
+    done
     # -x anchors the key at column 0, so a comment that merely mentions the key
     # (the [models] note does) cannot satisfy the position rule on its own.
     dw="$(grep -n -m1 -Fx 'disable_web_search = true' "${tpl}" | cut -d: -f1)"

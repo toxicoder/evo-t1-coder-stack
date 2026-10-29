@@ -37,7 +37,7 @@ setup() {
 scratch_checkout() {
   local scratch
   scratch="$(make_scratch)"
-  mkdir -p "${scratch}/scripts/lib" "${scratch}/homepage/config" "${scratch}/litellm" "${scratch}/hermes"
+  mkdir -p "${scratch}/scripts/lib" "${scratch}/homepage/config" "${scratch}/litellm" "${scratch}/hermes" "${scratch}/searxng"
   printf 'services: {}\n' >"${scratch}/docker-compose.yml"
   cp "${REPO_ROOT}/scripts/lib/common.sh" "${scratch}/scripts/lib/common.sh"
   cp "${REPO_ROOT}/scripts/lib/parse_yaml.py" "${scratch}/scripts/lib/parse_yaml.py"
@@ -46,6 +46,7 @@ scratch_checkout() {
   cp "${REPO_ROOT}"/homepage/config/*.yaml "${scratch}/homepage/config/"
   cp "${REPO_ROOT}/litellm/config.yaml" "${scratch}/litellm/config.yaml"
   cp "${REPO_ROOT}/hermes/config.yaml" "${scratch}/hermes/config.yaml"
+  cp "${REPO_ROOT}/searxng/settings.yml" "${scratch}/searxng/settings.yml"
   printf '%s' "${scratch}"
 }
 
@@ -111,8 +112,41 @@ minimal_path() {
   assert_eq "compose was the only docker call" "docker compose config -q" "$(stub_log_last docker)"
   assert_match "both template trees are formatted" 'terraform -chdir=templates/workspace fmt -check' "$(stub_log terraform)"
   assert_match "the devcontainer twin too" 'terraform -chdir=templates/devcontainer fmt -check' "$(stub_log terraform)"
-  assert_match "the parse argv names the payloads" 'parse_yaml\.py homepage/config/.*litellm/config\.yaml hermes/config\.yaml' "$(stub_log python3)"
+  assert_match "the parse argv names the payloads" 'parse_yaml\.py homepage/config/.*litellm/config\.yaml hermes/config\.yaml searxng/settings\.yml' "$(stub_log python3)"
   [ "$(stub_log_count bazelisk)" -eq 0 ]
+}
+
+@test "validate: the searxng payload keeps the two settings the search lane depends on" {
+  # Pinned here because nothing else guards them, and both fail silently and
+  # far from the file. An empty search.autocomplete makes the MCP bridge's
+  # autocomplete tool answer "No suggestions." on every query while still
+  # returning HTTP 200, so it looks like a dead lane rather than a config
+  # choice. The Cloudflare-family suspend times ship at 15 and 7 days for a
+  # public instance; on this private box one challenge takes an engine out for
+  # a fortnight with nothing self-healing it.
+  local settings="${REPO_ROOT}/searxng/settings.yml"
+  [ -f "${settings}" ] || skip "no searxng/settings.yml reachable from ${REPO_ROOT}"
+
+  run grep -Eq '^[[:space:]]*autocomplete:[[:space:]]*"[^"]+"' "${settings}"
+  [ "${status}" -eq 0 ]
+  run grep -Eq '^[[:space:]]*autocomplete:[[:space:]]*""[[:space:]]*$' "${settings}"
+  [ "${status}" -ne 0 ]
+
+  # Both answer formats, or the JSON API answers 403 for every engine at once.
+  run grep -Eq '^[[:space:]]*-[[:space:]]*json[[:space:]]*$' "${settings}"
+  [ "${status}" -eq 0 ]
+
+  # A park must expire on the order of minutes, not weeks.
+  run grep -Eq '^[[:space:]]*cf_SearxEngineCaptcha:[[:space:]]*[0-9]+[[:space:]]*$' "${settings}"
+  [ "${status}" -eq 0 ]
+  local cap
+  cap="$(sed -n 's/^[[:space:]]*cf_SearxEngineCaptcha:[[:space:]]*\([0-9]\+\)[[:space:]]*$/\1/p' "${settings}")"
+  [ "${cap}" -le 3600 ]
+
+  run grep -Eq '^[[:space:]]*recaptcha_SearxEngineCaptcha:[[:space:]]*[0-9]+[[:space:]]*$' "${settings}"
+  [ "${status}" -eq 0 ]
+  cap="$(sed -n 's/^[[:space:]]*recaptcha_SearxEngineCaptcha:[[:space:]]*\([0-9]\+\)[[:space:]]*$/\1/p' "${settings}")"
+  [ "${cap}" -le 3600 ]
 }
 
 @test "validate: without VALIDATE_INNER the nested bazel tests run first, guarded" {

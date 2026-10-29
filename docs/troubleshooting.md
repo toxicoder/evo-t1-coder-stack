@@ -363,13 +363,23 @@ fault in half:
   can reach the host gateway) dials the service directly. It reads `$SEARXNG_URL`
   before its `http://127.0.0.1:8181` default, and every workspace's agent env carries
   that key, so a workspace-side probe needs no `--url`. It separates engines that
-  answered, engines that were unresponsive, and an empty result page.
+  answered, engines that were unresponsive, and an empty result page, and it names
+  each engine the instance has parked together with the reason the backend gave
+  (`parked by its backend: google: access denied`). A park expires after
+  `search.suspended_times` in `searxng/settings.yml`, so re-run before writing an
+  engine off. `--json` adds `engines_parked` for a dashboard to trend.
+- An agent whose searches come back empty while the service answers 200 is nearly
+  always parked engines rather than a broken deployment: the general-purpose engines
+  are the ones the public backends bot-wall first. The same query without an
+  `engines` pin usually still returns results, which is why the guidance in
+  `~/.grok/AGENTS.md` tells an agent to leave the engine choice to the instance.
 - `grok mcp doctor searxng` inside the workspace probes the MCP hop. A healthy
   search-check plus a failed handshake points at the server, the URL or the port.
 - `bazelisk run //scripts:mcp-check` covers both hops plus the config side in one
   pass: the declared lanes, whether each `command=` binary is there, whether
   `~/.grok/config.toml` is still stack-managed, whether the lane's credential is
-  set, and each server's handshake. A missing binary prints the exact
+  set, whether the search lane returns results for a plain lookup rather than just
+  an HTTP 200, and each server's handshake. A missing binary prints the exact
   `npm i -g --prefix /opt/npm-global` command that puts it back.
 
 There is no second lane behind this one, so run these probes before touching anything

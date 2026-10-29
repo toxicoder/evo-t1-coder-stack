@@ -9,7 +9,11 @@
 #
 # Kept deliberately short: this file was the only way to switch the JSON
 # answer format on (search.formats below) and to make the listener reachable
-# from a workspace container (server.bind_address below).
+# from a workspace container (server.bind_address below). The three other
+# blocks below (search.autocomplete, search.suspended_times, outgoing) are
+# here because the shipped default is wrong for a private, single-operator
+# instance, and each one was measured against a live container rather than
+# guessed at.
 
 use_default_settings: true
 
@@ -24,7 +28,26 @@ general:
 
 search:
   safe_search: 0
-  autocomplete: ""
+  # The MCP bridge (searxng-mcp-server) exposes an `autocomplete` tool, and that
+  # tool dials /autocompleter, which this one key switches on. The key names a
+  # BACKEND from searx/autocomplete.py, not an engine, and an unknown or empty
+  # value is a silent empty answer rather than an error - so the "" this file
+  # used to ship made the tool answer "No suggestions." on every query while
+  # still replying HTTP 200, which is indistinguishable from a dead lane to the
+  # agent holding it. Measured against a live container, backends `bing` (11
+  # suggestions), `google` (9) and `duckduckgo` (7) answer from this box and
+  # `wikipedia`/`startpage` answer nothing; bing is picked because it is also
+  # the general-purpose search engine that stays unsuspended here. An
+  # autocomplete backend is reached at a different endpoint than the matching
+  # search engine, so a bot-walled google search does not wall google
+  # autocomplete. Only one backend is consulted per request.
+  autocomplete: "bing"
+  # The threshold the web UI waits for before it starts asking the autocompleter.
+  # Named here because it is the knob an operator reaches for when the browser
+  # dropdown looks dead: measured against this instance the /autocompleter
+  # endpoint itself answers any length, including a two-character prefix, so a
+  # short query returning suggestions is not this key misfiring.
+  autocomplete_min: 4
   formats:
     - html
     # Without "json" every /search?format=json request answers 403 before the
@@ -32,6 +55,48 @@ search:
     # (bazelisk run //scripts:search-check) would both be answered by a
     # permission error and look like an engine outage instead.
     - json
+  # Engine suspension budget. SearXNG parks an engine that offends a backend
+  # for as long as the matching class below says, and the shipped defaults for
+  # the CAPTCHA families are calibrated for a public instance that must protect
+  # its egress IP: cf_SearxEngineCaptcha 1296000 (15 days),
+  # cf_SearxEngineAccessDenied 86400 (1 day), recaptcha_SearxEngineCaptcha
+  # 604800 (7 days). On this box that is the wrong trade: one Cloudflare
+  # challenge on a Tuesday takes an engine out for a fortnight, an operator
+  # sees an empty answer, and nothing self-heals. Capped to half an hour,
+  # which is long enough to stop hammering a backend that just refused us and
+  # short enough that the next search session gets the engine back. The three
+  # short classes are spelled out too, so editing one cannot silently widen
+  # the others back to the shipped values by deleting a line.
+  ban_time_on_fail: 5
+  max_ban_time_on_fail: 120
+  suspended_times:
+    SearxEngineAccessDenied: 180
+    SearxEngineCaptcha: 900
+    SearxEngineTooManyRequests: 180
+    cf_SearxEngineCaptcha: 1800
+    cf_SearxEngineAccessDenied: 900
+    recaptcha_SearxEngineCaptcha: 1800
+
+# Egress budget for the engine requests SearXNG makes on our behalf.
+outgoing:
+  # Per-engine deadline, 3.0s in the shipped default. A slow engine is not
+  # merely late here: searx/search/processors/online.py catches Timeout and
+  # calls handle_exception(..., suspend=True), so cutting an engine at 3s
+  # suspends it, and a suspended engine is what leaves an agent with an empty
+  # answer several hours later. Raised to 5.0s so a backend that is merely
+  # leisurely is not punished. Measured here, a plain general-category query
+  # answers in 1.4s to 2.0s, so the extra headroom is spent only on a query
+  # where an engine really is slow. The client-side budget in the MCP bridge
+  # (SEARXNG_TIMEOUT_MS in the config twins) sits above this, so the agent
+  # never hangs up before the instance has finished answering.
+  request_timeout: 5.0
+  # Ceiling on any single engine's own `timeout:` value: the effective deadline
+  # is min(request_timeout-or-engine-timeout, max_request_timeout). The shipped
+  # default is None, which leaves no cap, and several shipped engines ask for
+  # 20s, so one slow backend could hold a whole fan-out for that long. At 10s
+  # the tail stays bounded and no engine that answers inside the budget above
+  # is affected.
+  max_request_timeout: 10.0
 
 server:
   port: 8181

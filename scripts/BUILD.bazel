@@ -201,6 +201,7 @@ _SCRIPT_LIBS = {
     ],
     "search-check": [
         "lib/common.sh",
+        "lib/suspended_engines.awk",
     ],
     "seed-dev-env": [
         "lib/common.sh",
@@ -373,6 +374,7 @@ _SCRIPT_PAYLOAD = {
         "//hermes:seed",
         "//homepage:config",
         "//litellm:config",
+        "//searxng:settings",
     ],
 }
 

@@ -88,7 +88,13 @@ lose its tools.
 
 **Search returns nothing.** `bazelisk run //scripts:search-check` (it probes per
 engine and distinguishes "engine refused" from "json format disabled" from
-"network dead").
+"network dead", and prints each parked engine with the reason its backend gave).
+A 200 that carries no results while the service is up is normally the engines
+being bot-walled, not a broken deployment: check what the probe names as parked
+before touching the container, and remember a park expires on its own after
+`search.suspended_times`. An agent that pinned one engine in its call can get
+zero rows from a lane that answers twenty unpinned - that is an agent-usage
+fault, not a host fault.
 
 **A workspace misbehaves.** `bazelisk run //scripts:github-auth -- check` for the
 credential chain, `docker logs --tail 100 coder-<owner>-<ws>` for the agent
