@@ -150,6 +150,7 @@ _SUITE_PAYLOAD = {
         "//proxy:confs",
     ],
     "devcontainer-template.bats": [
+        "//:gitignore",
         "//:templates_payload",
     ],
     "docs-alias.bats": [],
@@ -277,6 +278,11 @@ _SUITE_PAYLOAD_ALLOW = {
     "awk.bats": [
         "//images/dev:dockerfile",
     ],
+    # It reads back the .gitignore publish-pages-tree.sh commits onto gh-pages, out of
+    # the scratch origin it builds, not out of this checkout.
+    "publish-pages-tree.bats": [
+        "//:gitignore",
+    ],
     # It parses docker-compose.yml for its bind-mount sources and asserts each one exists
     # beside it, so the files it checks come out of compose, not out of a literal.
     "stack-data.bats": [
@@ -293,9 +299,11 @@ _SUITE_PAYLOAD_ALLOW = {
         "//docs-site:sources",
     ],
     # The dotted env twin appears only as the rename target the CLI mv's to inside the
-    # tree it just rendered, never as this repo's own .env.example.
+    # tree it just rendered, never as this repo's own .env.example. The .gitignore it
+    # appends lane blocks to is that rendered tree's file, not this repo's.
     "new-repo.bats": [
         "//:env_example",
+        "//:gitignore",
     ],
 }
 

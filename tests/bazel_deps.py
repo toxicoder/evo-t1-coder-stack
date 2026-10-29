@@ -49,6 +49,7 @@ TOKEN_GROUPS = {
     ".env.example": ["//:env_example", "//:stack_data"],
     ".env.sample": ["//:env_sample", "//:stack_data"],
     ".githooks": ["//:githooks", "//:stack_data"],
+    ".gitignore": ["//:gitignore"],
     ".github/actions": ["//:ci_setup_bazel_action", "//:ci_workflows"],
     ".github/scripts": ["//:ci_lint_installer", "//:ci_workflows"],
     ".github/workflows": ["//:ci_pipelines", "//:ci_workflows"],

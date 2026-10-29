@@ -40,11 +40,17 @@
 # and can never abort the boot, and the else-path note that tells a workspace
 # left with an unmanaged config what it lost and how to get it back. Both twins
 # have to carry both as identical text.
+# It also pins the dotenv half of the [permission] tables in both config twins:
+# every populated shape denied for Read and Edit, every secret-free template name
+# allowed, the two tables byte-identical between the twins, and the .gitignore
+# side that keeps a populated variant out of a commit while the key list a repo
+# ships stays addable.
 #
 # Usage: bazelisk test //tests:bats_devcontainer_template_test   (from any cwd)
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
 # twins, the two grok-config.toml.tftpl twins, the two main.tf twins, the two
-# coder.tf twins and templates/common/GROK_BUILD_AGENTS.md; writes nothing.
+# coder.tf twins, .gitignore and templates/common/GROK_BUILD_AGENTS.md; writes
+# only inside its own scratch directory.
 
 bats_require_minimum_version 1.5.0
 
@@ -55,13 +61,15 @@ REPO_ROOT=""
 DC_TF=""
 DC_STARTUP=""
 WS_STARTUP=""
+GITIGNORE=""
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   DC_TF="${REPO_ROOT}/templates/devcontainer/main.tf"
   DC_STARTUP="${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"
   WS_STARTUP="${REPO_ROOT}/templates/workspace/startup.sh.tftpl"
-  [[ -f "${DC_TF}" && -f "${DC_STARTUP}" && -f "${WS_STARTUP}" ]] ||
+  GITIGNORE="${REPO_ROOT}/.gitignore"
+  [[ -f "${DC_TF}" && -f "${DC_STARTUP}" && -f "${WS_STARTUP}" && -f "${GITIGNORE}" ]] ||
     skip "template payload is not reachable from ${REPO_ROOT}"
 }
 
@@ -619,5 +627,114 @@ setup() {
     assert_eq "${tf} applies container_dns twice (dind + workspace)" "2" "${n}"
     run grep -F 'dns = ["100.100.100.100"' "${tf}"
     [ "${status}" -ne 0 ]
+  done
+}
+
+# permission_section <tftpl> — print the [permission] tables, deny and allow.
+permission_section() {
+  awk '/^\[permission\]$/{f=1} f{print; if ($0 == "]" && ++closes == 2) exit}' "$1"
+}
+
+@test "dotenv permissions: populated shapes denied, committed templates allowed" {
+  # A deny rule cannot be overridden by an allow rule, so the blanket
+  # Read/Edit(**/.env.*) the seed used to ship locked the agent out of
+  # .env.example and .env.sample as well: the secret-free key list a repo ships,
+  # and the file that keeps a real .env honest. The seed now names the populated
+  # shapes in deny and the template names in allow. Both halves are pinned because
+  # they fail in opposite directions: a template name that drifts back into deny
+  # quietly stops an agent maintaining the key list, and a populated shape that
+  # drifts into allow hands a secret to the easy path.
+  local tpl section allow_block shape
+  local -a secrets=(
+    .env .env.local '.env.*.local' .env.production .env.prod .env.staging
+    .env.stage .env.development .env.dev .env.test .env.testing .env.ci
+    .env.override
+  )
+  local -a templates=(
+    .env.example .env.sample .env.template .env.dist .env.defaults
+    '.env.*.example' '.env.*.sample'
+  )
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    section="$(permission_section "${tpl}")"
+    [[ -n "${section}" ]] || { echo "${tpl}: no [permission] tables" >&2; return 1; }
+    if ! grep -qF 'Bash(rm -rf *)' <<<"${section}"; then
+      echo "${tpl}: the destructive-rm guard is gone" >&2
+      return 1
+    fi
+    if grep -qF 'Read(**/.env.*)' <<<"${section}"; then
+      echo "${tpl}: deny went back to the blanket dotenv glob" >&2
+      return 1
+    fi
+    for shape in "${secrets[@]}"; do
+      if ! grep -qF "Read(**/${shape})" <<<"${section}"; then
+        echo "${tpl}: ${shape} is not denied for read" >&2
+        return 1
+      fi
+      if ! grep -qF "Edit(**/${shape})" <<<"${section}"; then
+        echo "${tpl}: ${shape} is not denied for edit" >&2
+        return 1
+      fi
+    done
+    allow_block="$(awk '/^allow = \[$/{f=1} f{print; if ($0 == "]") exit}' "${tpl}")"
+    [[ -n "${allow_block}" ]] || { echo "${tpl}: no allow table" >&2; return 1; }
+    for shape in "${templates[@]}"; do
+      if ! grep -qF "Read(**/${shape})" <<<"${allow_block}"; then
+        echo "${tpl}: ${shape} is not allowed for read" >&2
+        return 1
+      fi
+      if ! grep -qF "Edit(**/${shape})" <<<"${allow_block}"; then
+        echo "${tpl}: ${shape} is not allowed for edit" >&2
+        return 1
+      fi
+    done
+    for shape in "${secrets[@]}"; do
+      if grep -qF "(**/${shape})" <<<"${allow_block}"; then
+        echo "${tpl}: allow claims ${shape}, which deny already holds" >&2
+        return 1
+      fi
+    done
+  done
+
+  # The twins are independent payload copies (repo rule: change both), so the
+  # whole table pair is pinned byte for byte rather than by a key one twin could
+  # satisfy with drifted wording.
+  local ws dc
+  ws="$(permission_section "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl")"
+  dc="$(permission_section "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl")"
+  [[ -n "${ws}" ]] || { echo "no [permission] tables to compare" >&2; return 1; }
+  if [ "${ws}" != "${dc}" ]; then
+    printf 'drift: the [permission] tables differ between the twins\n%s\n' \
+      "$(diff <(printf '%s\n' "${ws}") <(printf '%s\n' "${dc}"))" >&2
+    return 1
+  fi
+}
+
+@test "dotenv hygiene: populated variants stay git-ignored, templates stay visible" {
+  # The permission change opens the committed templates to the agent, so git
+  # carries the other half of the guardrail: a live .env or a populated suffixed
+  # variant never reaches a commit, while the key list a repo ships stays
+  # addable. Asked of git's own matcher rather than grepped out of .gitignore, so
+  # a pattern that stops matching fails here.
+  local scratch name
+  scratch="$(make_scratch)"
+  cp "${GITIGNORE}" "${scratch}/.gitignore"
+  run git -C "${scratch}" init -q
+  [ "${status}" -eq 0 ]
+  for name in .env .env.local .env.production .env.test .env.override; do
+    : >"${scratch}/${name}"
+    if ! git -C "${scratch}" check-ignore -q "${name}"; then
+      echo "${name} is not ignored: a populated dotenv can be committed" >&2
+      return 1
+    fi
+  done
+  for name in .env.example .env.sample .env.template .env.dist .env.defaults \
+    .env.local.example .env.dev.sample; do
+    : >"${scratch}/${name}"
+    if git -C "${scratch}" check-ignore -q "${name}"; then
+      echo "${name} is ignored: an agent cannot ship an updated key list" >&2
+      return 1
+    fi
   done
 }
