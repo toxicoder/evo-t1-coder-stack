@@ -536,6 +536,12 @@ fi
 # refresh: a moved clone would otherwise keep a stale path.
 upsert_env STACK_HOST_PATH "$(stack_host_path)"
 
+# The assistant's deploy workspace, bind-mounted at the same path so a compose project
+# the assistant writes resolves its bind sources on the daemon. An operator who moved
+# it keeps their path: this fills the key when it is blank and never rewrites one.
+deploy_path="$(env_get .env STACK_DEPLOY_PATH)"
+upsert_env STACK_DEPLOY_PATH "${deploy_path:-/opt/stack-deploy}"
+
 # hermes-init chowns /opt/data to this pair so the gateway can reopen the
 # seed after s6 drops privileges. Refresh on every run, matching DOCKER_GID.
 ids="$(host_user_ids)"
