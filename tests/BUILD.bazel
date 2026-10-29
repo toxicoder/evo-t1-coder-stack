@@ -264,6 +264,7 @@ _SUITE_PAYLOAD = {
         "//hermes:seed",
         "//homepage:config",
         "//litellm:config",
+        "//searxng:settings",
     ],
     "vscode-settings.bats": [
         "//:templates_payload",

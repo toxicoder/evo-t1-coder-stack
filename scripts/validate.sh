@@ -54,8 +54,12 @@ main() {
     phase "terraform not on PATH, skipping fmt -check"
   fi
   if python3 -c 'import yaml' >/dev/null 2>&1; then
+    # searxng/settings.yml belongs in this list: it is bind-mounted read-only
+    # into the container, where a YAML error is a service that will not start,
+    # and nothing else here parsed it. The three that were already listed fail
+    # loudly in the same way.
     phase "yaml parse"
-    python3 scripts/lib/parse_yaml.py homepage/config/*.yaml litellm/config.yaml hermes/config.yaml
+    python3 scripts/lib/parse_yaml.py homepage/config/*.yaml litellm/config.yaml hermes/config.yaml searxng/settings.yml
   else
     phase "PyYAML not installed, skipping yaml parse"
   fi
