@@ -700,7 +700,9 @@ as a tar on stdin:
 - `templates/common/` exists once and both templates consume it:
   `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline),
   `vscode-alt.svg` (the editor icon) and `notes-setup.sh` (the library behind each
-  clone's private `notes.md`), staged beside each staged `main.tf` and read
+  clone's private `notes.md`, which also leaves one background watcher per container
+  copying those files to the owner's profile volume between boots), staged beside
+  each staged `main.tf` and read
   there with `file()` / `filebase64()`. The SVG stays small enough that the
   inlined data URL fits Coder v2.36's 256-character `workspace_apps.icon` column.
   A push missing any payload, or an SVG that would overflow that column, fails
@@ -1007,7 +1009,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 └── templates/
     ├── common/                   # single-copy payloads, staged beside each main.tf
     │   ├── GROK_BUILD_AGENTS.md  # the seed text the startup scripts inline
-    │   ├── notes-setup.sh        # the library that seeds each clone's private notes.md
+    │   ├── notes-setup.sh        # seeds each clone's notes.md and syncs it to the profile volume
     │   └── vscode-alt.svg        # the code-server editor icon
     ├── workspace                 # plain dev container (base template, pushed first)
     │   ├── main.tf

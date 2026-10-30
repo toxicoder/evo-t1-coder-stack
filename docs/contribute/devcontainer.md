@@ -101,6 +101,14 @@ code-server and desktop VS Code User settings symlinked to it), `~/.grok/AGENTS.
 `~/.grok/bin`, `~/.grok/notes-setup.sh` plus this clone's `notes.md`, and the
 `~/.grok/bin` line in `~/.bashrc`.
 
+That `notes.md` is `notes_materialize` from the same library: it restores the canonical copy
+under `~/.grok/notes/<host>/<owner>/<repo>/` over a live file that is empty or still the
+seeded stub, and copies a real live file back there, so a stub never walks over written
+notes. Here that runs once, at seed time - the background watcher that repeats the back-copy
+about every 30 seconds is a workspace-startup thing (`NOTES_SYNC_INTERVAL`; see
+[../grok-build-and-agents.md](../grok-build-and-agents.md#what-is-shared)) - so re-run the
+seeder to push a fresh edit to the canonical copy in this container.
+
 Two rules decide every write, and they are the same rules the workspace startup applies:
 
 - A file carrying the stack marker - the `managed-by: evo-t1-coder-stack` comment, the
