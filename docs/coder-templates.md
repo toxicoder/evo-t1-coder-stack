@@ -57,6 +57,13 @@ missing one fails the push before the CLI runs.
   `~/.grok/`, sources it, and calls `notes_materialize` per clone. That call also
   seeds the ignore entries that keep the file uncommitted; see "What is shared" in
   `docs/grok-build-and-agents.md` for what it writes into git config.
+  Once every clone has been through it the same script calls `run_notes_watch`, which
+  reaches `notes_sync_start` on the home owner's uid and leaves the container with one
+  background watcher (`NOTES_SYNC_INTERVAL` seconds, 30 by default; one instance per
+  container behind a `flock` on `$HOME/.notes-sync.lock`) copying each clone's notes back
+  to the owner's profile volume between boots. The workspace twin watches
+  `$HOME/workspace`; the devcontainer twin passes its `$dc_dir`, because those clones sit
+  on the `/srv/coder-devcontainers` bind.
 - `tmux.conf`, `grok-build-terminal.sh`, and `vscode-terminal-tmux.sh` are the
   terminal payloads the startup script writes. Helpers use `$folder` (not
   `$${folder}`) because `file()` contents are not re-interpolated.

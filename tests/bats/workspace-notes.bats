@@ -13,13 +13,20 @@
 # the developer owns is only ever appended to, expanded and absolute or not —
 # and the wiring both templates need: main.tf's file() feed, the atomic and
 # clone-user-readable write that publishes the library into ~/.grok, and running
-# the stage as the clone owner whenever the clone stage does the same.
+# the stage as the clone owner whenever the clone stage does the same. It also
+# pins the hardening around that copy: the stub line that marks a clone nobody
+# wrote in, the guards notes_back_sync puts on every live-to-canonical copy, the
+# archives notes_backup_canon keeps before a replace, the two-second stability
+# window notes_sync_once leaves a half-saved file in, and the one flock holder
+# notes_sync_start leaves the container with.
 #
 # Usage: bazelisk test //tests:bats_workspace_notes_test   (from any cwd)
 #
 # Safety: real git, but only ever on throwaway repos under BATS_TEST_TMPDIR, so
 # no network and no daemon. HOME is redirected per test — it is the profile
-# volume this library writes into, and the file `git config --global` edits.
+# volume this library writes into, and the file `git config --global` edits. The
+# watcher notes_sync_start detaches is killed in teardown by its own scratch paths
+# and nothing else, so no test leaves a loop running on the host.
 
 bats_require_minimum_version 1.5.0
 
@@ -29,6 +36,10 @@ load 'test_helper'
 REPO_ROOT=""
 NOTES_LIB=""
 PROFILE_HOME=""
+# The workspace root a test told notes_sync_start to watch, empty unless it did.
+# teardown() keys the watcher kill on it, so only a test that started a loop
+# ever kills one.
+WATCH_ROOT=""
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
@@ -44,6 +55,26 @@ setup() {
   export HOME="${PROFILE_HOME}"
 }
 
+# The watcher notes_sync_start leaves behind is detached on purpose (setsid plus
+# nohup), so it outlives the test that started it. Both command lines carry a
+# path from this test's own scratch tree, so the kill can be anchored on those and
+# cannot reach a watcher belonging to anything else on the host. The wait is for
+# the same reason BATS removes the scratch tree right after: a loop still alive
+# would keep writing into a directory that has just been deleted.
+teardown() {
+  local tries=0
+  if [ -n "${WATCH_ROOT}" ]; then
+    pkill -f -- "${PROFILE_HOME}/[.]notes-sync[.]lock" 2>/dev/null || true
+    pkill -f -- "${WATCH_ROOT} " 2>/dev/null || true
+    while [ "${tries}" -lt 10 ]; do
+      pgrep -f -- "${WATCH_ROOT} " >/dev/null 2>&1 || break
+      sleep 0.1
+      tries=$((tries + 1))
+    done
+  fi
+  WATCH_ROOT=""
+}
+
 # make_clone <url> [leaf] — a throwaway local repo whose origin is <url>.
 make_clone() {
   local url="${1:-}" dir
@@ -57,6 +88,32 @@ make_clone() {
 # canon_of <key> — the profile-volume path a key's notes live at.
 canon_of() {
   printf '%s/.grok/notes/%s/notes.md' "${HOME}" "${1}"
+}
+
+# The one line notes_materialize seeds into a clone that has no notes yet. Spelled
+# out here instead of lifted out of the library: notes_is_stub matches on these two
+# fixed ends, so the wording is part of what this suite pins.
+STUB_PREFIX="Private scratch notes for this repository. Not committed. Canonical copy on this owner's shared Grok profile volume: "
+STUB_SUFFIX=" (survives workspace recreate)."
+
+# write_stub <file> <path-in-the-line> — seed a file the way the library seeds one.
+write_stub() {
+  printf '%s\n' "${STUB_PREFIX}${2}${STUB_SUFFIX}" >"${1}"
+}
+
+# make_clone_under <root> <url> [leaf] — make_clone moved in as a direct child of
+# <root>, which is the only shape notes_sync_once walks.
+make_clone_under() {
+  local root="${1}" leaf="${3:-repo}" dir
+  dir="$(make_clone "${2}" "${leaf}")"
+  mv "${dir}" "${root}/${leaf}"
+  printf '%s' "${root}/${leaf}"
+}
+
+# age_live <file> — push mtime back past the stability window notes_sync_once
+# reserves for a file that may still be mid-save.
+age_live() {
+  touch -d '1 minute ago' "${1}"
 }
 
 @test "notes_repo_key: every accepted remote spelling lands on one key" {
@@ -157,7 +214,6 @@ canon_of() {
   clone="$(make_clone "https://github.com/acme/stub.git")"
   notes_materialize "${clone}"
   [ -f "${clone}/notes.md" ]
-  [ -f "$(canon_of "github.com/acme/stub")" ]
   # What the stub has to get right is where the copy that survives a recreate
   # lives, and it has to be spelled as a real path: the workspace container's
   # ~/.grok is not a directory a nested dev container can open, so a ~-prefixed
@@ -166,6 +222,13 @@ canon_of() {
   run cat "${clone}/notes.md"
   [[ ${lines[0]} == *"${want}"* ]]
   [[ ${lines[0]} != "~/.grok/"* ]]
+  # A seed is not notes, so it earns no copy on the volume: the key's directory
+  # is there, the file is not, until somebody writes something real.
+  [ -d "$(dirname "${want}")" ]
+  [ ! -e "${want}" ]
+  printf '%s\n' 'the first real line' >"${clone}/notes.md"
+  notes_materialize "${clone}"
+  [ "$(cat "${want}")" = "the first real line" ]
 }
 
 @test "notes_materialize: a tracked notes.md is left alone and the scratch name is used" {
@@ -176,23 +239,30 @@ canon_of() {
   notes_materialize "${clone}"
   [ "$(cat "${clone}/notes.md")" = "committed project notes" ]
   [ -f "${clone}/.scratch-notes.md" ]
-  [ -f "$(canon_of "github.com/acme/tracked2")" ]
+  # What the scratch name holds at this point is the seed, and a seed is nothing
+  # to file under the key.
+  [ ! -e "$(canon_of "github.com/acme/tracked2")" ]
+  printf '%s\n' 'scratch notes for the tracked repo' >"${clone}/.scratch-notes.md"
+  notes_materialize "${clone}"
+  [ "$(cat "$(canon_of "github.com/acme/tracked2")")" = "scratch notes for the tracked repo" ]
 }
 
 @test "notes_materialize: the remote wins, and the fallback URL only fills a gap" {
   local with_origin no_origin
   with_origin="$(make_clone "https://github.com/acme/real.git")"
+  printf '%s\n' 'keyed on the origin' >"${with_origin}/notes.md"
   # An origin is the key even when the caller passes a different fallback.
   notes_materialize "${with_origin}" "https://github.com/acme/wrong.git"
-  [ -f "$(canon_of "github.com/acme/real")" ]
+  [ "$(cat "$(canon_of "github.com/acme/real")")" = "keyed on the origin" ]
   if [ -e "$(canon_of "github.com/acme/wrong")" ]; then
     printf 'FAIL: the fallback URL produced a second canonical file\n' >&2
     return 1
   fi
   no_origin="$(make_scratch)/plain-dir"
   mkdir -p "${no_origin}"
+  printf '%s\n' 'keyed on the fallback' >"${no_origin}/notes.md"
   notes_materialize "${no_origin}" "https://github.com/acme/fallback.git"
-  [ -f "$(canon_of "github.com/acme/fallback")" ]
+  [ "$(cat "$(canon_of "github.com/acme/fallback")")" = "keyed on the fallback" ]
 }
 
 @test "notes_materialize: two remotes in one workspace get two files" {
@@ -213,6 +283,255 @@ canon_of() {
   notes_materialize ""
   notes_materialize "$(make_scratch)/never-created"
   [ ! -e "${HOME}/.grok/notes" ]
+}
+
+@test "notes_is_stub: only the exact one-line seed reads as a stub" {
+  local file="${BATS_TEST_TMPDIR}/live.md" path="${HOME}/.grok/notes/github.com/a/b/notes.md"
+  write_stub "${file}" "${path}"
+  run notes_is_stub "${file}"
+  [ "${status}" -eq 0 ]
+  # A file that was never written, and one written but never filled in, both say
+  # "nothing here", which is a different claim from "this is the seeded stub".
+  run notes_is_stub "${BATS_TEST_TMPDIR}/never-written"
+  [ "${status}" -eq 1 ]
+  run notes_is_stub ""
+  [ "${status}" -eq 1 ]
+  : >"${file}"
+  run notes_is_stub "${file}"
+  [ "${status}" -eq 1 ]
+  # A second line is a developer writing something, and the one line that does
+  # match has to match at both ends: the tail is what says the copy is still only
+  # the seed.
+  printf '%s\n%s\n' "${STUB_PREFIX}${path}${STUB_SUFFIX}" 'and a thought of my own' >"${file}"
+  run notes_is_stub "${file}"
+  [ "${status}" -eq 1 ]
+  printf '%s\n' "${STUB_PREFIX}${path}${STUB_SUFFIX} (edited)" >"${file}"
+  run notes_is_stub "${file}"
+  [ "${status}" -eq 1 ]
+  printf '%s\n' "Notes for this project." >"${file}"
+  run notes_is_stub "${file}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "notes_is_stub: a blank line under the seed must not hide the notes below it" {
+  # A developer who presses Enter under the seed and then writes notes there
+  # must not have the file read as a stub: notes_back_sync would refuse to copy
+  # it, and notes_materialize's restore branch would cp -f the canonical copy
+  # straight over it. The guard counts lines through mapfile, so the trailing
+  # blank line that $(...) would strip still counts.
+  local file="${BATS_TEST_TMPDIR}/live.md" path="${HOME}/.grok/notes/github.com/a/b/notes.md"
+  printf '%s\n\n%s\n' "${STUB_PREFIX}${path}${STUB_SUFFIX}" 'the notes a human added' >"${file}"
+  run notes_is_stub "${file}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "notes_back_sync: neither a stub nor an empty live file touches a canonical copy that holds notes" {
+  local live canon
+  live="$(make_scratch)/notes.md"
+  canon="$(canon_of "github.com/acme/guarded")"
+  mkdir -p "$(dirname "${canon}")"
+  printf '%s\n' 'what the last workspace wrote' >"${canon}"
+  # This is the erasure the guards exist against: a recreated clone arrives
+  # holding only the seed, and an unguarded copy back would bury the real notes.
+  write_stub "${live}" "${canon}"
+  notes_back_sync "${live}" "${canon}"
+  [ "$(cat "${canon}")" = "what the last workspace wrote" ]
+  : >"${live}"
+  notes_back_sync "${live}" "${canon}"
+  [ "$(cat "${canon}")" = "what the last workspace wrote" ]
+  rm -f "${live}"
+  notes_back_sync "${live}" "${canon}"
+  [ "$(cat "${canon}")" = "what the last workspace wrote" ]
+  # A refused copy has no previous content to keep, so it archives nothing.
+  [ ! -e "$(dirname "${canon}")/backups" ]
+}
+
+@test "notes_back_sync: an identical live file copies nothing, a real change archives the previous copy" {
+  local live canon fresh
+  live="$(make_scratch)/notes.md"
+  canon="$(canon_of "github.com/acme/archived")"
+  mkdir -p "$(dirname "${canon}")"
+  printf '%s\n' 'v1 on the volume' >"${canon}"
+  cp "${canon}" "${live}"
+  notes_back_sync "${live}" "${canon}"
+  # Equal content is not a change: no copy, and no archive to show for it.
+  [ ! -e "$(dirname "${canon}")/backups" ]
+  printf '%s\n' 'v2 from this session' >"${live}"
+  notes_back_sync "${live}" "${canon}"
+  [ "$(cat "${canon}")" = "v2 from this session" ]
+  # The copy that replaced real notes archives what was there first, under the
+  # repo's own notes directory, where the owner can find it.
+  [ -d "$(dirname "${canon}")/backups" ]
+  [ "$(ls -1 "$(dirname "${canon}")/backups" | wc -l | tr -d ' ')" -eq 1 ]
+  [ "$(cat "$(dirname "${canon}")/backups"/notes-*.md)" = "v1 on the volume" ]
+  # A canonical copy that does not exist yet is only created: there is nothing to
+  # archive, so a first sync must not leave a backups directory behind either.
+  fresh="$(canon_of "github.com/acme/brandnew")"
+  printf '%s\n' 'the first write' >"${live}"
+  notes_back_sync "${live}" "${fresh}"
+  [ "$(cat "${fresh}")" = "the first write" ]
+  [ ! -e "$(dirname "${fresh}")/backups" ]
+}
+
+@test "notes_backup_canon: a stub or an empty canonical copy archives nothing" {
+  local canon backups
+  canon="$(canon_of "github.com/acme/keptempty")"
+  backups="$(dirname "${canon}")/backups"
+  mkdir -p "${backups}"
+  write_stub "${canon}" "${canon}"
+  notes_backup_canon "${canon}"
+  [ -z "$(ls -A "${backups}")" ]
+  : >"${canon}"
+  notes_backup_canon "${canon}"
+  [ -z "$(ls -A "${backups}")" ]
+  # An empty argument is the same "nothing to keep" answer, and it invents no
+  # archive next to the notes directory.
+  notes_backup_canon ""
+  [ -z "$(ls -A "${backups}")" ]
+  [ ! -e "${HOME}/.grok/notes/backups" ]
+}
+
+@test "notes_backup_canon: NOTES_BACKUP_KEEP trims to the newest archives only" {
+  local canon backups i ts kept=()
+  canon="$(canon_of "github.com/acme/trimmed")"
+  backups="$(dirname "${canon}")/backups"
+  mkdir -p "${backups}"
+  printf '%s\n' 'the content being archived now' >"${canon}"
+  # Four archives already on the clock, older than anything this call can name,
+  # so a keep of two must leave the newest of these plus the new one.
+  for i in 1 2 3 4; do
+    ts="$(printf '20260101-00000%s' "${i}")"
+    printf '%s\n' "archived ${ts}" >"${backups}/notes-${ts}.md"
+    touch -d "2026-01-01 00:00:0${i}" "${backups}/notes-${ts}.md"
+  done
+  NOTES_BACKUP_KEEP=2 notes_backup_canon "${canon}"
+  mapfile -t kept < <(ls -1 "${backups}")
+  [ "${#kept[@]}" -eq 2 ] ||
+    { printf 'FAIL: kept %s of 5: %s\n' "${#kept[@]}" "${kept[*]}" >&2; return 1; }
+  [ "${kept[0]}" = "notes-20260101-000004.md" ]
+  [ "$(cat "${backups}/notes-20260101-000004.md")" = "archived 20260101-000004" ]
+  [[ ${kept[1]} == notes-* ]]
+  [ "${kept[1]}" != "notes-20260101-000004.md" ]
+  [ "$(cat "${backups}/${kept[1]}")" = "the content being archived now" ]
+}
+
+@test "notes_materialize: a stale stub in the clone is replaced by the canonical copy" {
+  local clone canon
+  clone="$(make_clone "https://github.com/acme/stalestub.git")"
+  canon="$(canon_of "github.com/acme/stalestub")"
+  mkdir -p "$(dirname "${canon}")"
+  printf '%s\n' 'what the last workspace wrote' >"${canon}"
+  # The recreate case the restore branch was added for: the clone booted with its
+  # seed, the volume holds the real notes, and an owner opening notes.md must not
+  # sit on the stub forever just because the back-sync rightly refuses to let a
+  # stub touch the canonical copy.
+  write_stub "${clone}/notes.md" "${canon}"
+  notes_materialize "${clone}"
+  [ "$(cat "${clone}/notes.md")" = "what the last workspace wrote" ]
+  [ "$(cat "${canon}")" = "what the last workspace wrote" ]
+  # Restoring and then syncing an identical file is not a change, so the previous
+  # canonical content is not archived either.
+  [ ! -e "$(dirname "${canon}")/backups" ]
+}
+
+@test "notes_materialize: a stub live file never replaces the canonical copy" {
+  local clone canon
+  clone="$(make_clone "https://github.com/acme/stubkeep.git")"
+  canon="$(canon_of "github.com/acme/stubkeep")"
+  mkdir -p "$(dirname "${canon}")"
+  # Both copies are stubs, and they name different paths, so nothing here may be
+  # treated as the owner's work: the canonical line has to survive byte for byte.
+  printf '%s\n' "${STUB_PREFIX}/somewhere/else/notes.md${STUB_SUFFIX}" >"${canon}"
+  write_stub "${clone}/notes.md" "/another/place/notes.md"
+  notes_materialize "${clone}"
+  [ "$(cat "${canon}")" = "${STUB_PREFIX}/somewhere/else/notes.md${STUB_SUFFIX}" ]
+  [ "$(cat "${clone}/notes.md")" = "${STUB_PREFIX}/another/place/notes.md${STUB_SUFFIX}" ]
+  [ ! -e "$(dirname "${canon}")/backups" ]
+}
+
+@test "notes_sync_once: a past-dated live file is copied back and a just-written one waits" {
+  local root clone canon
+  root="$(make_scratch)/workspace"
+  mkdir -p "${root}"
+  clone="$(make_clone_under "${root}" "https://github.com/acme/ticked.git" "ticked")"
+  canon="$(canon_of "github.com/acme/ticked")"
+  printf '%s\n' 'written long after the start' >"${clone}/notes.md"
+  # Written this very instant: the pass must leave it alone rather than archive or
+  # copy a file the editor may still be saving.
+  notes_sync_once "${root}"
+  [ ! -e "${canon}" ]
+  age_live "${clone}/notes.md"
+  notes_sync_once "${root}"
+  [ "$(cat "${canon}")" = "written long after the start" ]
+}
+
+@test "notes_sync_once: a plain directory, a keyless clone and a stub live file are all skipped" {
+  local root plain keyless stubbed emptylive
+  root="$(make_scratch)/workspace"
+  mkdir -p "${root}"
+  plain="${root}/plain-dir"
+  mkdir -p "${plain}"
+  printf '%s\n' 'notes with no repository behind them' >"${plain}/notes.md"
+  keyless="${root}/no-origin"
+  mkdir -p "${keyless}"
+  git -C "${keyless}" init -q
+  printf '%s\n' 'a clone with no remote to key on' >"${keyless}/notes.md"
+  stubbed="$(make_clone_under "${root}" "https://github.com/acme/stubtick.git" "stubtick")"
+  write_stub "${stubbed}/notes.md" "$(canon_of "github.com/acme/stubtick")"
+  emptylive="$(make_clone_under "${root}" "https://github.com/acme/nolive.git" "nolive")"
+  : >"${emptylive}/notes.md"
+  # Every one of these is past the stability window, so what skips them is the
+  # shape of the entry, not the clock.
+  age_live "${plain}/notes.md"
+  age_live "${keyless}/notes.md"
+  age_live "${stubbed}/notes.md"
+  age_live "${emptylive}/notes.md"
+  notes_sync_once "${root}"
+  # Nothing was copied, and nothing was filed under it either: the pass creates no
+  # canonical tree at all when no clone has real notes.
+  [ ! -e "${HOME}/.grok/notes" ]
+}
+
+@test "notes_sync_start: the detached watcher copies notes to the profile volume on its own" {
+  command -v flock >/dev/null 2>&1 || skip "no flock on this host"
+  local root clone canon waited=0
+  root="$(make_scratch)/workspace"
+  mkdir -p "${root}"
+  clone="$(make_clone_under "${root}" "https://github.com/acme/watched.git" "watched")"
+  canon="$(canon_of "github.com/acme/watched")"
+  printf '%s\n' 'written after the workspace started' >"${clone}/notes.md"
+  age_live "${clone}/notes.md"
+  notes_sync_start 1 "${root}"
+  WATCH_ROOT="${root}"
+  while [ ! -e "${canon}" ] && [ "${waited}" -lt 30 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ -e "${canon}" ] ||
+    { printf 'FAIL: the watcher left %s unsynced after 3s\n' "${clone}/notes.md" >&2; return 1; }
+  [ "$(cat "${canon}")" = "written after the workspace started" ]
+}
+
+@test "notes_sync_start: a second start leaves the container one flock holder" {
+  command -v flock >/dev/null 2>&1 || skip "no flock on this host"
+  command -v pgrep >/dev/null 2>&1 || skip "no pgrep on this host"
+  local root holders="" waited=0
+  root="$(make_scratch)/workspace"
+  mkdir -p "${root}"
+  notes_sync_start 1 "${root}"
+  notes_sync_start 1 "${root}"
+  WATCH_ROOT="${root}"
+  # The second flock -n cannot take the lock and exits at once, so the count is
+  # only settled once it is gone; the bracket keeps this pattern from matching
+  # pgrep's own command line.
+  while [ "${waited}" -lt 30 ]; do
+    holders="$(pgrep -f -- "${PROFILE_HOME}/[.]notes-sync[.]lock" 2>/dev/null | wc -l | tr -d ' ' || true)"
+    [ "${holders}" = "1" ] && break
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  [ "${holders}" = "1" ] ||
+    { printf 'FAIL: %s processes hold %s/.notes-sync.lock\n' "${holders}" "${PROFILE_HOME}" >&2; return 1; }
 }
 
 @test "notes_ensure_excludes: the profile exclude, the global one, and the clone's own" {

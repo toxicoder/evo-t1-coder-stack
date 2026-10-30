@@ -26,7 +26,8 @@
 #      and says so out loud when the clone carries no devcontainer configuration
 #      for the CLI to build
 #   8b. puts a private notes.md in every clone folder on that bind, restoring it
-#       from the shared profile volume and keeping that volume up to date
+#       from the shared profile volume and keeping that volume up to date — by
+#       the start, and by a flock-guarded watcher left running afterwards
 #
 # ~/.grok is not necessarily this workspace's own directory. In "shared" mode
 # (main.tf's grok_profile_mode, and the default) the container mounts the
@@ -734,6 +735,23 @@ for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n'
       "repository, or no route to its host." >&2
   fi
 done
+
+# Notes have to survive a recreate that lands between edits, not just one that
+# lands after a start: run_notes synced the clones only once, so work written
+# later lived solely inside this container — which is how a whole workspace's
+# notes went missing when it was recreated. The watcher closes that gap, on the
+# same identity rule run_notes follows. Those clones sit on the bind at $dc_dir,
+# so the watch root is named instead of left at the library's home default.
+run_notes_watch() {
+  if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
+    $clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c \
+      '. "$NOTES_SETUP_LIB" 2>/dev/null || exit 0
+       notes_sync_start "" "$2"' _ "" "$dc_dir"
+  else
+    notes_sync_start "" "$dc_dir"
+  fi
+}
+run_notes_watch || true
 
 # --- Dev-container preflight (best effort) ------------------------------------
 # Only worth running after the clone, because it is about what the clone holds.

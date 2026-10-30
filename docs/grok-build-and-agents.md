@@ -376,10 +376,29 @@ live under `~/.coder/skills` and `~/.agents/skills`, outside this volume.
 workspace holds — the primary and each additional repository — has its own file. What you
 edit is the regular file at the clone root: that is what the editor, the terminal and a
 nested dev container all see, since the inner container mounts the clone bind and has
-its own `~/.grok`. The startup script copies that file here on every start and restores
-it when a recreate leaves the clone without one. `grok_profile_mode=private` mounts no
-shared volume, so those notes die with that workspace; `shared` is the default. Like
-`config.toml`, the last workspace started for a given user and repository wins.
+its own `~/.grok`. The copy runs both ways, and not only at boot. Startup copies the live
+file here and restores it when a recreate leaves the clone with nothing or with only the
+seeded stub line, and then leaves **one background watcher per container** that repeats
+the back-copy about every 30 seconds (`NOTES_SYNC_INTERVAL`, in seconds) over every clone
+under `$HOME/workspace`; the devcontainer template watches its `/srv/coder-devcontainers`
+bind root instead, since those clones sit there rather than under the workspace home. The
+watcher is single-instance behind a non-blocking `flock` on `$HOME/.notes-sync.lock`, in
+the container's own home rather than the shared volume, because each of the owner's
+workspaces needs its own.
+
+That is what makes "survives workspace recreate" true rather than a hope: an edit is on the
+volume within roughly one interval, so a recreate no longer waits on someone restarting the
+workspace to pick up what was typed since the last boot. What is not promised is the tail
+- a file written in the last two seconds is left for the next tick, because copying it
+whole could archive a half-saved file. Going the other way, two guards stop a recreate from
+erasing notes: a live file that is empty or still holds only the seeded stub never replaces
+a canonical copy carrying real notes, and a real canonical copy restores over such a stub
+in a clone. Before any substantive canonical copy is replaced it is archived as
+`notes/<host>/<owner>/<repo>/backups/notes-YYYYmmdd-HHMMSS.md`, keeping the newest
+`NOTES_BACKUP_KEEP` (10 by default), and that directory is where an operator recovers notes
+after an accident. `grok_profile_mode=private` mounts no shared volume, so those notes die
+with that workspace; `shared` is the default. Like `config.toml`, the last workspace
+started for a given user and repository wins.
 
 Two things about that start are worth knowing before you go looking for a vanished
 setting. Boot **writes `git config --global core.excludesFile`** — but only when you
@@ -400,6 +419,10 @@ clone is never asked to delete somebody else's committed file.
 - The memory and index files are SQLite, opened live by every workspace holding the
   mount, so two workspaces writing memory at once can race. *Roughly in sync* is the
   bar, not transactional sharing.
+- Two workspaces of one owner that both hold a clone of the *same* repository each run a
+  notes watcher over the same canonical path, so there too the last write wins, tick by
+  tick. The stub and empty guards and the `backups/` archive are what bound the damage a
+  losing tick can do; they do not merge two diverging files.
 - One shared profile is one `config.toml` for every workspace that owner owns, and
   the last boot to re-render it wins - for the default model, the affinity key and
   the config extras alike.

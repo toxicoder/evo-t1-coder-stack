@@ -477,8 +477,16 @@ assert_contributor_home() {
   git -C "${root}" remote add origin "https://github.com/acme/notes-demo.git"
   seed_write_notes_lib "${home}" "${root}" 0
   assert_file_exists "clone notes" "${root}/notes.md"
-  assert_file_exists "canonical notes" "${home}/.grok/notes/github.com/acme/notes-demo/notes.md"
   assert_fixed "stub landed" "${root}/notes.md" 'Private scratch notes'
+  # The hardened contract: a clone nobody has written into earns no canonical
+  # copy at all, so a stub can never replace real notes on the volume.
+  [ ! -e "${home}/.grok/notes/github.com/acme/notes-demo/notes.md" ]
+
+  # Real content back-syncs on the next pass.
+  printf 'real seed-time notes\n' >"${root}/notes.md"
+  seed_write_notes_lib "${home}" "${root}" 0
+  assert_fixed "canonical notes" \
+    "${home}/.grok/notes/github.com/acme/notes-demo/notes.md" 'real seed-time notes'
 }
 
 @test "seed-dev-env: seed_link_vscode_settings moves a regular file aside and links both editors" {

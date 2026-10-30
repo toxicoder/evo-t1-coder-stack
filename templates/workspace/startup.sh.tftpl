@@ -26,7 +26,8 @@
 #      terminal and the Grok Build session all open on, so it has to land
 #      before any of them is used
 #   8b. puts a private notes.md in every clone folder, restoring it from the
-#      shared profile volume and keeping that volume up to date
+#      shared profile volume and keeping that volume up to date — by the
+#      start, and by a flock-guarded watcher left running afterwards
 #
 # ~/.grok is not necessarily this workspace's own directory. With main.tf's
 # grok_profile_mode at "shared" (the default) the container mounts the workspace
@@ -685,4 +686,20 @@ EXTRA_REPOS_EOF
         "cover this repository, or no route to its host." >&2
     fi
   done
+
+  # Notes have to survive a recreate that lands between edits, not just one
+  # that lands after a start: run_notes synced the clones only once, so work
+  # written later lived solely inside this container — which is how a whole
+  # workspace's notes went missing when it was recreated. The watcher closes
+  # that gap, on the same identity rule run_notes follows.
+  run_notes_watch() {
+    if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
+      $clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c \
+        '. "$NOTES_SETUP_LIB" 2>/dev/null || exit 0
+         notes_sync_start' _
+    else
+      notes_sync_start
+    fi
+  }
+  run_notes_watch || true
 fi
