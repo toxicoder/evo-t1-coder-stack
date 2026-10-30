@@ -143,7 +143,7 @@ checksum_tree() {
   seed_cache "${scratch}/home" old.log '2000-01-01'
   printf 'set -g mouse off\n' >"${scratch}/home/.tmux.conf"
   mkdir -p "${scratch}/home/.shared/vscode"
-  printf '{\n  "__evoT1Stack": true,\n  "cline.apiKey": "SECRET-KEEP-ME",\n  "terminal.integrated.scrollback": 2000\n}\n' \
+  printf '{\n  "__evoT1Stack": true,\n  "cline.apiKey": "SECRET-KEEP-ME",\n  "terminal.integrated.scrollback": 40000\n}\n' \
     >"${scratch}/home/.shared/vscode/settings.json"
 
   run bash "${CLEAN}" --yes --older-than 14 --home "${scratch}/home"
@@ -153,7 +153,7 @@ checksum_tree() {
   [ ! -e "${scratch}/home/.grok/logs/old.log" ]
   # ...the re-sync rewrote the managed settings.json and carried its key...
   assert_contains_file "key carried" "${scratch}/home/.shared/vscode/settings.json" 'SECRET-KEEP-ME'
-  assert_contains_file "fresh scrollback" "${scratch}/home/.shared/vscode/settings.json" '"terminal.integrated.scrollback": 50000'
+  assert_contains_file "fresh scrollback" "${scratch}/home/.shared/vscode/settings.json" '"terminal.integrated.scrollback": 2000'
   # ...and the marker-free tmux.conf is user-owned, so it stayed untouched.
   assert_contains_file "user file untouched" "${scratch}/home/.tmux.conf" 'set -g mouse off'
 }

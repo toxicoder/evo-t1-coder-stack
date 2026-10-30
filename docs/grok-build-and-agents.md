@@ -33,16 +33,58 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 - `terminal.integrated.defaultProfile.linux` is `tmux`; the automation profile stays
   `/bin/bash`, so build and task commands never wait on tmux. Plain `bash` and **Grok
   Build** stay available as extra profiles.
-- The `tmux` profile re-joins (or starts) one session per folder, named
-  `vscode-<folder>-<hash>`. A second terminal window, a browser reload, or
-  `ssh` + `tmux attach -t <session>` lands in that same session, and a long job
-  survives closing the tab. `tmux ls` lists the names.
+- The `tmux` profile gives each terminal of a folder its own pane. The base session
+  name is unchanged: `vscode-<folder>-<hash>`. A new terminal walks into one of
+  that folder's sessions only while no client is attached to it, oldest first -
+  that is the closed-tab rejoin, so a tab you closed or reloaded leaves its
+  session unattached and the next terminal finds it with its history intact, and
+  `ssh` + `tmux attach -t <session>` lands there too. A terminal opened when
+  every session of the folder already has a client takes the next numbered
+  sibling instead: `vscode-<folder>-<hash>-2`, `-3`, ... Sessions persist
+  unattached until the container restarts, so a reattached terminal still
+  reaches the output a closed tab produced. `tmux ls` lists the names and
+  `tmux list-clients` says who is looking at each. Every target the helper
+  gives tmux carries the `=` exact-match prefix (a bare name is answered by any
+  session starting with it, so a closed `foo` could be answered by a live
+  `foo-2` and re-create the mirror), and a reopen whose session vanished
+  mid-attach raises a fresh session rather than exiting along with the tab.
+  Two tmux behaviors shape that path: a session raised by a tab's own
+  foreground `new-session` has its first pane closed when that client exits
+  ([superuser#575909](https://superuser.com/questions/575909/optionally-run-several-commands-when-starting-tmux)),
+  which is why the helper creates detached and attaches separately; and with
+  the default `exit-empty` the server itself leaves when its last session does
+  ([tmux#2081](https://github.com/tmux/tmux/issues/2081)), which is why a
+  reopen probes the server before raising anything - a tab whose server is gone
+  has ended normally, and re-raising there would boot a server for a terminal
+  nobody is looking at (tmux has no server probe: `has-session` answers the same
+  for a missing session and a missing server, which is why upstream declined to
+  add `check-server`, [tmux#2523](https://github.com/tmux/tmux/issues/2523)).
+  No upstream issue accounts for the session loss: `destroy-unattached` is off,
+  so a detached session is meant to survive, and tmux gives a session no grace
+  period after it loses its last client
+  ([tmux#5821](https://github.com/tmux/tmux/issues/5821) is an open request for
+  one).
+- One pane per visible terminal is what that rule buys. Clients attached to one
+  tmux session share that session's current window, so a design that always
+  reattaches makes every extra browser tab a mirror of the same pane: another
+  full xterm.js in the Chrome tab re-parsing the same stream (each with a
+  scrollback buffer preallocated from `terminal.integrated.scrollback`), another
+  per-client encode in the tmux server, and a re-wrap repaint for every client
+  each time any client activates or resizes. Measured on this workspace: 14
+  attached clients against 2 real panes. Two terminals opening in the same
+  instant can still land on one session - that same mirror, and rarer than a
+  keystroke.
 - **Grok Build** keeps its own session, keyed off the repository: the helper walks up
   from the terminal's folder with `git rev-parse --show-toplevel` (or uses the
   terminal's `$PWD` outside a clone), names the session `grok-build-<folder>-<hash>`
   after that root, and runs `grok --cwd <repo root>` inside it. A terminal opened
   anywhere inside the clone rejoins the one session the repository shares, and starts
-  Grok Build at the repository root.
+  Grok Build at the repository root. That profile is deliberately the old
+  always-reattach shape: watching the same agent run from several tabs is the
+  feature, and the mirrors pay what mirrors pay. What the seed gives them is
+  `focus-events on`, so a TUI in the pane can idle its animations while its tab
+  is blurred, and `escape-time 10`, which keeps typing responsive on each of
+  them.
 - With no tmux (offline first boot) the helper execs a plain login shell, so the
   default terminal still opens.
 - `display_apps.web_terminal` stays **off**: it would open a shell on the agent's
@@ -119,11 +161,24 @@ against the code-server this stack ships (4.143.1, VS Code base 1.143.1).
   system clipboard to the shell, with a three-line paste arriving whole and
   without a warning dialog. tmux 3.4 already wraps its own buffer in bracketed
   paste on `Prefix-]`.
-- **Two scroll-back stores.** `terminal.integrated.scrollback` in the settings
-  seed is the xterm.js buffer, which is what a plain `bash` profile scrolls
-  through; tmux's `history-limit` is what `Prefix-[` walks inside a pane. Both
-  are set to 50000 and 100000 lines respectively here. Measured on tmux 3.4 with
-  one pane pushed to its limit, 100000 lines of 120-column output holds the
+- **Two scroll-back stores, two different budgets.** `terminal.integrated.scrollback`
+  in the settings seed is the xterm.js buffer, which is what a plain `bash`
+  profile scrolls through; tmux's `history-limit` is what `Prefix-[` walks
+  inside a pane. They read 2000 and 100000 lines here, and the two numbers
+  differ on purpose because the two stores are billed differently. VS Code
+  preallocates the xterm.js buffer from the setting's value - its own
+  description warns that "as the value increases, so will the amount of
+  memory", against a VS Code default of 1000
+  ([terminalConfiguration.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts)) -
+  and xterm.js keeps 3 `Uint32` words per column per line
+  ([BufferLine.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/BufferLine.ts)),
+  so that cost is paid per terminal in the tab, and again per view of a pane. tmux
+  holds its history once per pane, in the server, and every client of that pane
+  shares the one buffer. Hence the split: the deep store is tmux's and the
+  browser keeps a short viewport. Inside a tmux pane the wheel is copy-mode
+  anyway (`set -g mouse on`), so the 100000 lines live behind `Prefix-[` and
+  nothing pays for them in the tab. Measured on tmux 3.4 with one pane pushed to
+  its limit, 100000 lines of 120-column output holds the
   tmux server at 381 MB RSS; the same 100000 lines of plain 80-column output
   costs 60 MB. tmux reads `history-limit` when a pane is created, so an existing
   pane keeps the number it was born with.

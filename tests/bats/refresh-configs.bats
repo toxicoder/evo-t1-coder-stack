@@ -46,7 +46,7 @@ scratch_home() {
   mkdir -p "${1}/.shared/vscode" "${1}/.coder/skills/grok-build-delegation" \
     "${1}/.coder/skills/learn"
   printf 'set -g mouse off\n' >"${1}/.tmux.conf"
-  printf '{\n  "__evoT1Stack": true,\n  "cline.apiKey": "SECRET-KEEP-ME",\n  "terminal.integrated.scrollback": 2000\n}\n' \
+  printf '{\n  "__evoT1Stack": true,\n  "cline.apiKey": "SECRET-KEEP-ME",\n  "terminal.integrated.scrollback": 40000\n}\n' \
     >"${1}/.shared/vscode/settings.json"
 }
 
@@ -227,7 +227,7 @@ scratch_home() {
   # and stays byte-identical.
   assert_match "user tmux.conf untouched" 'mouse off' "$(cat "${scratch}/home/.tmux.conf")"
   # The managed settings.json was re-rendered from the repo template...
-  assert_contains_file "fresh scrollback" "${scratch}/home/.shared/vscode/settings.json" '"terminal.integrated.scrollback": 50000'
+  assert_contains_file "fresh scrollback" "${scratch}/home/.shared/vscode/settings.json" '"terminal.integrated.scrollback": 2000'
   # ...and it kept the key the workspace was handed on its first boot.
   assert_contains_file "key carried" "${scratch}/home/.shared/vscode/settings.json" 'SECRET-KEEP-ME'
   # Absent targets get seeded, twins included.
