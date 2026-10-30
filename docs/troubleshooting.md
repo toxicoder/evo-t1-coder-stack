@@ -889,6 +889,82 @@ Both directions, and why only a real terminal app gets OSC 52, are in
   the option when the pane is created, so that pane keeps the limit it was born
   with. Open a new pane, or restart the server with `tmux kill-server`.
 
+### VS Code Web tab in Chrome creeps to gigabytes, or freezes now and then -> every tab was another mirror of one pane
+
+Cause: each client attached to a tmux session is a full xterm.js in its own
+Chrome tab re-parsing the same stream, each with a scrollback buffer
+preallocated from `terminal.integrated.scrollback` (VS Code preallocates the
+buffer from the value, and xterm.js keeps 3 `Uint32` words per column per
+line), plus a per-client encode in the tmux server and a re-wrap repaint for
+every client each time any of them activates or resizes. Count the clients
+against the panes:
+
+```sh
+tmux list-clients
+tmux list-sessions -F '#{session_name} attached=#{session_attached}'
+```
+
+More clients than you have visible terminals means the tabs are mirrors.
+
+Fix: the seed keeps one pane per visible terminal. `vscode-terminal-tmux`
+reattaches a folder's session only while nothing is attached to it, and opens a
+numbered sibling (`vscode-<folder>-<hash>-2`, `-3`, ...) beside live ones, so an
+extra tab is a new pane rather than a mirror. Every session target in that
+helper carries tmux's `=` exact-match prefix, because a bare name is also
+answered by any session starting with it - once `foo` is closed, `foo-2` would
+otherwise answer for it and put a second client on a live pane. And when tmux
+3.4 does take a session down under a tab that is reopening it, the helper raises
+a fresh one rather than letting the tab exit with it. The settings seed drops
+`terminal.integrated.scrollback` to 2000 - the browser keeps a short viewport
+and tmux's `history-limit 100000` behind `Prefix-[` holds the deep history - and
+turns `cursorBlinking` off, and `templates/common/tmux.conf` sets
+`set -s escape-time 10` and `set -g focus-events on`. The first is the freeze:
+3.4 holds back any Escape it reads for 500 ms to decide whether a sequence
+follows, so Alt and the arrow keys feel like dropped input and a focus-in can
+wait that long - twice, with `set-timing` - before tmux repaints. Upstream cut
+the default to 10 ms in 3.5, and 0 - the value vim guides suggest - is the one
+to avoid: measured on this build, a throttled tab that delivers Esc and the next
+character more than 10 ms apart loses its Alt chords, and 0 makes that far
+likelier. `focus-events` is what gives tmux a focused client to work with at
+all. `aggressive-resize` stays at its default on purpose: its own entry in
+`options-table.c` scopes it to the `smallest` and `manual` `window-size` modes,
+the shipped default is `latest`, and tmux(1) calls it "poor for interactive
+programs such as shells". Both files reseed on the next start only while they
+still carry the stack marker, so delete either one you edited by hand. Before
+debugging a setting that will not take: tmux reads `~/.tmux.conf` and then
+`$XDG_CONFIG_HOME/tmux/tmux.conf` and `~/.config/tmux/tmux.conf`, last file read
+wins, so either of those quietly outranks everything the seed writes.
+`focus-events` is read when a client attaches, so the tabs need to be gone for
+it to land: close them all after the restart and reopen one per pane.
+
+```sh
+bazelisk run //scripts:push-template
+coder restart <workspace>
+```
+
+- If a tab keeps dying on you and you want to know whether the pane's shell
+  exited or tmux took the session down under the tab, run `tmux set -w
+  remain-on-exit on` in it first: the pane then stays on screen with its exit
+  status in `#{pane_dead_status}` instead of vanishing, which is what the
+  [tmux FAQ](https://github.com/tmux/tmux/wiki/FAQ) recommends for exactly this
+  question. Turn it back off afterwards - a dead pane is not yours to keep.
+
+- Residual: a tab you hide rather than close keeps its xterm instance alive and
+  still buffers whatever the pane prints, and nothing in the stack caps that.
+  Neither does tmux: 3.4 has no per-client output limit, and an ordinary
+  attached client that stops draining its pty is never dropped (measured here:
+  one stayed attached past 15 minutes while the server kept serving commands).
+  The only "too far behind" disconnect is in control mode, behind a hardcoded
+  300 s age in `control.c`, which a VS Code tab never uses.
+  [microsoft/vscode#327437](https://github.com/microsoft/vscode/issues/327437)
+  is open (a heap snapshot showed ~38 live terminals holding ~80 MB of a 484 MB
+  renderer heap) and
+  [coder/code-server#6413](https://github.com/coder/code-server/discussions/6413)
+  reports browser-tab RAM reaching several GB with a continuous-output terminal
+  left running after the tab is closed; neither has a maintainer mitigation.
+  Closing the tab is the mitigation, and the numbered sessions are what make the
+  live set match the tabs you can see.
+
 ### GitHub token expired, or the workspace has no GitHub account -> GitHub reauth
 
 - On the workspace page, click **GitHub reauth**. Coder opens `/external-auth/<id>`

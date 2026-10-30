@@ -619,7 +619,9 @@ at `~/.grok` in shared mode) are chowned to the home owner at the start of
    `https://x.ai/cli/install.sh` download runs only where `grok` is missing from PATH -
    the `ubuntu:24.04` image option, or a home volume that never received the CLI.
 3. Puts `~/.grok/bin` on PATH (login shells and that process).
-4. Writes the two terminal-profile tmux helpers (see below).
+4. Writes the two terminal-profile tmux helpers (see below). The default one gives each
+   visible terminal its own pane: it re-joins a folder's session only while nothing is
+   attached to it, and otherwise opens a numbered sibling.
 5. Seeds the shared code-server User settings and the Coder Agents context files, only
    for files that are absent.
 6. Renders `~/.grok/config.toml` (the three gated MCP servers ship by default; the five
@@ -752,11 +754,16 @@ Template-side facts only; the long prose lives in
   Build** stay available as extra profiles.
 - Two helpers are seeded into `~/.grok/bin` on every start, both `chmod +x`:
   `vscode-terminal-tmux` (the default profile) and `grok-build-terminal`.
-- `vscode-terminal-tmux` re-joins or starts one shared session per folder, named
-  `vscode-<folder>-<hash>`; with no `tmux` on PATH it falls back to a plain login shell.
+- `vscode-terminal-tmux` keeps `vscode-<folder>-<hash>` as its base session name. It
+  re-joins one of that folder's sessions while no client is attached to it, oldest
+  first (the closed-tab rejoin: an unattached session is reused even while sibling
+  terminals are live); it takes the next numbered sibling, `vscode-<folder>-<hash>-2`,
+  `-3`, ... only when every session of the folder already has a client. With no
+  `tmux` on PATH it falls back to a plain login shell.
 - `grok-build-terminal` keeps its own session, `grok-build-<folder>-<hash>`, keyed off
   the repository root found with `git rev-parse --show-toplevel` (or the terminal's own
-  `$PWD` outside a clone) and runs `grok --cwd <that root>` inside it.
+  `$PWD` outside a clone) and runs `grok --cwd <that root>` inside it. It is the
+  always-reattach case on purpose: every tab of the clone watches the one agent run.
 - The seed also pins `terminal.integrated.cwd` and `terminal.integrated.splitCwd` to the
   opened folder, adds a `terminal.integrated.env.linux` block, and carries a
   `commandsToSkipShell` list - all described in the sibling doc.
