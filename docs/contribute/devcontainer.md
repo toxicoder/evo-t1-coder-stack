@@ -90,10 +90,27 @@ bazelisk run //scripts:seed-dev-env -- --devcontainer --context7-mcp
 | --- | --- |
 | `--home <dir>` | Home tree to shape (default `$HOME`; created when absent; an existing non-directory is an error). |
 | `--litellm-url <url>` | Model-transport address rendered into `settings.json` and `~/.grok/config.toml` (default `http://host.docker.internal:4000/v1`). |
-| `--context7-mcp` | Keep the `[mcp_servers.context7]` docs lane in the rendered `~/.grok/config.toml` even with no `CONTEXT7_API_KEY` in the environment. Without it a keyless home renders the context7-free file, which is how a contributor ends up with a lane their workspaces have. The key stays optional: the server starts and answers at the public rate limit without one. |
+| `--context7-mcp` | Keep the `[mcp_servers.context7]` docs lane in the rendered `~/.grok/config.toml` even with no `CONTEXT7_API_KEY` in the environment. Without it a keyless home renders the context7-free file, so the contributor has no docs lane while their workspaces do. The key is optional: with no value the server sends no `Authorization` header, still handshakes, and answers at the public rate limit (private libraries are the only thing out of reach), so a missing block is the defect this flag prevents, not a key problem. |
 | `--devcontainer` | After a successful write, run `gh auth setup-git` when `GH_TOKEN`/`GITHUB_TOKEN` is set and `gh` is on PATH. Best effort, and the token is never an argument. |
 | `--force` | Re-materialize files a user owns. |
 | `--dry-run` | Print the plan; write nothing, create no directory, call no `gh`. |
+
+The two research lanes that config can render are split by question type: a library,
+framework, CLI or setup question goes to `context7` (resolve the library id first, then
+query docs on that id), anything else on the web goes to the `searxng` `search` tool,
+and a URL already in hand goes to `searxng`'s `fetch_content` - Grok's native
+`web_search` is parked here and native `web_fetch` needs an egress proxy endpoint this
+stack does not run, so neither is a lane. Prove what this home declares with:
+
+```sh
+bazelisk run //scripts:mcp-check -- --lanes context7 --config /tmp/contributor-home/.grok/config.toml
+```
+
+A missing `[mcp_servers.context7]` block in that file means the seed ran keyless and
+without `--context7-mcp`: re-run the seeder with the flag, adding `--force` when the
+existing file carries no stack marker and the seeder left it alone. On a Coder
+workspace the same repair runs from the stack host:
+`bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>`.
 
 What it writes: `~/.tmux.conf`, the shared `~/.shared/vscode/settings.json` (with the
 code-server and desktop VS Code User settings symlinked to it), `~/.grok/AGENTS.md`,
