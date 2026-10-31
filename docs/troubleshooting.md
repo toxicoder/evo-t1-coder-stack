@@ -565,14 +565,18 @@ docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retr
 - Permanent fix: rebuild the image and the workspace, which then starts from the
   image's own copy. See the next two entries for the command.
 
-### `/learn` missing from Grok Build on code-server web -> the CLI's skills bundle needs an x.ai sign-in this stack does not have
+### `/learn` missing from Grok Build on code-server web -> the stack's own seed is what provides it
 
-Cause: upstream `/learn` is a bundled user-invocable skill, but the bundle is not in
-the binary - the 1.0.70 executable contains no `/learn` string at all - so the CLI
-fetches it at runtime through its proxy endpoints config (`cli-chat-proxy.grok.com`,
-gated by `GROK_SKILLS_BASE_URL`), which needs an x.ai sign-in. LiteLLM is the sole
-model transport here, there is no x.ai credential, and the fetch never runs. The stack
-seeds its own `learn` skill instead, at workspace boot, into
+Cause: there is no upstream `/learn` to miss. The 1.0.70 executable contains no
+`/learn` string, xAI's skills and slash-command docs name no bundled `learn`, and the
+public `xai-org/plugin-marketplace` catalog carries no such plugin, so there is no
+published copy to vendor in. The CLI does download its built-in bundles at runtime
+(`GROK_SKILLS_BASE_URL`, `cli-chat-proxy.grok.com`) and that route needs an x.ai
+sign-in: from a workspace `api.x.ai` answers 404 and `cli-chat-proxy.grok.com`
+answers 401 anonymously, and a session started with `--sandbox off` still leaves
+`~/.grok/bundled/` uncreated. LiteLLM is the sole model transport here, there is no
+x.ai credential, and the fetch never runs. The stack seeds its own `learn` skill, at
+workspace boot, into
 `~/.coder/skills/learn/SKILL.md` with a twin copy at
 `~/.agents/skills/learn/SKILL.md`, so a missing `/learn` means that seed is missing,
 not that the image is stale.
@@ -593,20 +597,29 @@ ls ~/.agents/skills/learn/SKILL.md ~/.coder/skills/learn/SKILL.md
   `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>`.
 - Both `ls` paths present but no `learn` entry: the loader dropped the file. Frontmatter
   must start on line 1, so anything above the opening `---` silently kills the skill.
-- A file you deleted or edited on purpose is not a fault: the boot reseeds each copy
-  only while it is absent. Copy the payload back from
-  `templates/common/learn.SKILL.md` to hand it to the stack again.
+- A file you deleted or edited on purpose is not a fault. To keep your own version,
+  edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free
+  file is user-owned, and the seeder leaves it alone unless you pass `--force`. A
+  deletion is undone - the workspace boot writes the file again whenever it is absent,
+  and `refresh-configs` re-seeds an absent target, so the next boot restores the
+  stack's copy. Copy the payload back from `templates/common/learn.SKILL.md` to give
+  the file back to the stack.
 - `ls ~/.grok/bundled/skills` printing nothing is the expected answer, not a symptom:
   without the sign-in there is no bundled cache at all, on any version. A user-scope
-  skill shadows a same-named bundled one, so if this workspace ever does sign in to
-  x.ai, deleting both seeded copies is what hands `/learn` back to the bundle.
+  skill shadows a same-named bundled one, so a bundled copy, if one ever lands, still
+  loses to the user-scope copy while that file exists - and deleting both seeded copies
+  does not hand `/learn` back to the bundle, because the boot and the reseed write them
+  again. What works: keep a marker-free local copy only if you also stop the stack from
+  seeding it, or disable the lane with `disabled = ["learn"]` under `[skills]` in
+  `~/.grok/config.toml`.
 - `~/.grok/bin/grok` first on PATH is a leftover installer copy: move it aside so
   `/usr/local/bin/grok` wins. That is the only PATH case, and it does not gate `/learn`.
-- The version line is still worth reading on its own terms: `/usr/local/bin/grok` in the
-  current golden image is 1.0.44 while `images/dev/tool-versions.env` pins
-  `GROK_VERSION=1.0.70`, so the image has not been rebuilt since the pin bump. Rebuilding
-  `images/dev` (`scripts/build-dev-image.sh`) remains the CLI upgrade path - but the
-  seeded `/learn` works on both CLIs, so do not rebuild the image to chase this symptom.
+- The version line is still worth reading on its own terms: compare what
+  `/usr/local/bin/grok --version` prints with `GROK_VERSION` in
+  `images/dev/tool-versions.env` (1.0.70 at the time of writing). A workspace whose
+  golden image predates the pin bump reports an older CLI, and rebuilding `images/dev`
+  (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded `/learn`
+  works on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
 
 ### `grok doctor` flags `voice.no-input-device` or `terminal.limited-color` -> a headless container, and where you ran the command

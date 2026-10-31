@@ -88,10 +88,14 @@ stack marker - the `managed-by: evo-t1-coder-stack` comment, the
 key (`~/.grok/config.toml`) - so a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
 so. The two `learn/SKILL.md` copies are `~/.coder/skills/learn/SKILL.md` and its
-`~/.agents` twin, the stack's `/learn` skill: the workspace boot writes them only
-while the file is absent, so delete a copy to take it over for good, and remember
-that an edited copy which keeps its marker is still rewritten back to
-`templates/common/learn.SKILL.md` by this tool.
+`~/.agents` twin, the stack's `/learn` skill. To take a seeded copy over, edit it and
+delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free file is
+user-owned, and the seeder leaves it alone unless you pass `--force`. A deletion is
+undone - the workspace boot writes the file again whenever it is absent, and
+`refresh-configs` re-seeds an absent target, so the next boot restores the stack's
+copy. To hide the slash command, set `disabled = ["learn"]` under `[skills]` in
+`~/.grok/config.toml`. An edited copy which keeps its marker is still rewritten back
+to `templates/common/learn.SKILL.md` by this tool.
 
 `all` runs `env` and then `workspace`.
 

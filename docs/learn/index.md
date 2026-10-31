@@ -8,11 +8,17 @@ tags: [learn, concepts, overview]
 
 - Which page explains which part of the stack
 - The order that makes the pieces click, if you are reading them all
+- How this tab differs from the `/learn` slash command in Grok Build
 
 **What this enables**
 
 - Understanding a behaviour before trying to change it
 - Knowing which page owns a concept when two of them seem to
+
+> **Not the same as `/learn`.** This tab is the concepts index for people reading the
+> docs. `/learn` typed at the Grok Build prompt runs the stack-seeded orientation skill
+> inside a workspace; `grok inspect` lists it once the seed has landed. A missing
+> `/learn` is the `/learn` entry in [troubleshooting.md](../troubleshooting.md).
 
 ## How the pieces fit
 

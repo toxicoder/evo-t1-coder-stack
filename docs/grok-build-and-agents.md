@@ -259,14 +259,19 @@ report for a script. What the report should read here:
 - **The stack therefore seeds its own `/learn`**, so it is a stack payload like the
   delegation skill, not something to install: `templates/common/learn.SKILL.md` is
   written at workspace boot to `~/.coder/skills/learn/SKILL.md` and twin-copied to
-  `~/.agents/skills/learn/SKILL.md`, each only while that file is absent - delete or
-  edit either one to take it over. A seeded `SKILL.md` shows up in
-  `grok inspect --json` as `userInvocable: true` on both the 1.0.70 CLI and the 1.0.44
-  copy baked at `/usr/local/bin/grok`, so this needs no image rebuild, and it reaches
-  the **Grok Build** terminal profile because that profile execs the same binary. A
-  user-scope skill shadows a same-named bundled one: if a workspace ever does sign in
-  to x.ai, deleting `~/.agents/skills/learn/SKILL.md` and the `~/.coder` copy hands
-  the slash name back to the bundled skill.
+  `~/.agents/skills/learn/SKILL.md`, each only while that file is absent. To take a
+  copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a
+  marker-free file is user-owned, and the seeder leaves it alone unless you pass
+  `--force`. A deletion is undone - the boot writes the file again whenever it is
+  absent, and `refresh-configs` re-seeds an absent target, so the next boot restores
+  the stack's copy. To hide the slash command, set `disabled = ["learn"]` under
+  `[skills]` in `~/.grok/config.toml`. A seeded `SKILL.md` shows up in
+  `grok inspect --json` as `userInvocable: true`, and a live session advertises it in
+  both `slash_commands` and `skills`, so it works on whichever CLI the image baked at
+  `/usr/local/bin/grok` and this needs no image rebuild; the **Grok Build** terminal
+  profile gets it because that profile execs the same binary. A user-scope skill
+  shadows a same-named bundled one, so while either seeded copy exists the bundled
+  `/learn` stays shadowed even on a workspace that signs in to x.ai.
 
 ## The rendered `~/.grok` config
 

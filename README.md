@@ -811,7 +811,9 @@ inside a workspace and which findings are expected there, the one `~/.grok` volu
 per owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP
 servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
 control-plane Coder Agents chat that needs nothing enabled:
-[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). `/learn` at the Grok
+Build prompt runs the stack-seeded orientation skill; the payload to edit is
+`templates/common/learn.SKILL.md`.
 
 ## Kasm
 
