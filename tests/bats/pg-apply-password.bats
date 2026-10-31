@@ -28,6 +28,10 @@ setup() {
   fi
   export STUB_LOG="${BATS_TEST_TMPDIR}/stub-logs"
   mkdir -p "${STUB_LOG}"
+  # Pin the seeder log into this test's tree: left alone it defaults to
+  # ${TMPDIR:-/tmp}, and a suite that writes to a host-wide path can collide with
+  # a parallel run and with a real stack's log on the stack host.
+  export CODER_AGENTS_SEED_LOG="${BATS_TEST_TMPDIR}/coder-agents-seeder.log"
   use_stubs psql
   # shellcheck source=/dev/null
   source "${LIB}"
