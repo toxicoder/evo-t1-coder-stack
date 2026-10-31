@@ -28,6 +28,10 @@ setup() {
   fi
   export STUB_LOG="${BATS_TEST_TMPDIR}/stub-logs"
   mkdir -p "${STUB_LOG}"
+  # Pin the seeder log into this test's tree: left alone it defaults to
+  # ${TMPDIR:-/tmp}, and a suite that writes to a host-wide path can collide with
+  # a parallel run and with a real stack's log on the stack host.
+  export CODER_AGENTS_SEED_LOG="${BATS_TEST_TMPDIR}/coder-agents-seeder.log"
   use_stubs psql
   # shellcheck source=/dev/null
   source "${LIB}"
@@ -184,6 +188,45 @@ EOF
   done
   [ -f "${args}" ]
   [[ $(cat "${args}") == *"--apply --wait=12"* ]]
+}
+
+@test "pg-apply-password: the seeder keeps its output in a log the operator can read" {
+  local root="${BATS_TEST_TMPDIR}/seed-log-root" logf="${BATS_TEST_TMPDIR}/seeder.log"
+  local i=0
+  mkdir -p "${root}/scripts"
+  # `skip` exits 0 and prints one line, so a discarded stdout is what let a
+  # stack come up with a dead Agents chat and look healthy.
+  printf '#!/bin/sh\nprintf "skipped: the coder service is not running yet\\n"\n' \
+    >"${root}/scripts/coder-agents.sh"
+  chmod 755 "${root}/scripts/coder-agents.sh"
+  CODER_AGENTS_SEED_LOG="${logf}" run --separate-stderr start_coder_agents_wait "${root}"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"log: ${logf}"* ]]
+  while [ "${i}" -lt 40 ] && ! grep -q 'skipped: the coder service' "${logf}" 2>/dev/null; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  grep -q 'skipped: the coder service' "${logf}"
+  grep -q '== coder-agents seeder ==' "${logf}"
+  grep -q 'started: ' "${logf}"
+}
+
+@test "pg-apply-password: an unwritable seeder log warns and still starts the seeder" {
+  local root="${BATS_TEST_TMPDIR}/seed-nowrite-root" args="${BATS_TEST_TMPDIR}/seeder-nowrite.args"
+  mkdir -p "${root}/scripts"
+  printf '#!/bin/sh\nprintf "%%s\\n" "$*" > "%s"\n' "${args}" >"${root}/scripts/coder-agents.sh"
+  chmod 755 "${root}/scripts/coder-agents.sh"
+  CODER_AGENTS_SEED_LOG='/proc/no-such-dir/coder-agents-seeder.log' \
+    run --separate-stderr start_coder_agents_wait "${root}"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"warning: the Coder Agents seeder log"* ]]
+  local i=0
+  while [ ! -f "${args}" ] && [ "${i}" -lt 40 ]; do
+    sleep 0.05
+    i=$((i + 1))
+  done
+  [ -f "${args}" ]
+  [[ $(cat "${args}") == *"--apply"* ]]
 }
 
 @test "pg-apply-password: pg_apply_password_entrypoint applies POSTGRES_PASSWORD once postgres is ready" {

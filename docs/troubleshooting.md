@@ -318,6 +318,12 @@ bazelisk run //scripts:coder-agents -- --dry-run
 bazelisk run //scripts:coder-agents -- --apply
 ```
 
+- After a `stack up`, the seeder that runs it in the background keeps its output in
+  `${TMPDIR:-/tmp}/coder-agents-seeder.log` (the `note:` line names the path). A chat
+  that never got wired usually means that file holds a `skipped:` line: no coder
+  container yet, no db container, or nobody had registered when the stack came up.
+  Re-run the command above once the stack is up and somebody has signed in.
+
 - It skips while the coder or db container is down, or nobody has registered yet, and
   re-running it repairs a provider that drifted and moves a model pin whose alias has
   since gone unhealthy.

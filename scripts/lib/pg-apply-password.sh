@@ -167,17 +167,22 @@ restart_coder_if_pg_auth_failed() {
 # Background scripts/coder-agents.sh --apply --wait so first-user-later still
 # gets the LiteLLM provider and model configs. Missing seeder (scratch tests
 # that copy only docker-compose.yml) is a no-op. SKIP_CODER_AGENTS skips it.
+# The seeder's own output goes to a file, not to /dev/null: its most common
+# outcome is `skip`, which exits 0 and prints one line, so a stack that came up
+# with a dead Agents chat and a seeder log that was thrown away looked exactly
+# like a stack whose chat was fine.
 # Globals:
-#   SKIP_CODER_AGENTS, CODER_AGENTS_WAIT_SECS
+#   SKIP_CODER_AGENTS, CODER_AGENTS_WAIT_SECS, CODER_AGENTS_SEED_LOG, TMPDIR
 # Arguments:
 #   $1 - repo root that holds scripts/coder-agents.sh
 # Outputs:
-#   One note line when the seeder starts or is skipped by SKIP_CODER_AGENTS
+#   One note line naming the seeder log, one note when SKIP_CODER_AGENTS is set,
+#   and one warning when the log path is not writable
 # Returns:
 #   0
 start_coder_agents_wait() {
   local seeder="$1/scripts/coder-agents.sh"
-  local wait_secs
+  local wait_secs seed_log
   if [ -n "${SKIP_CODER_AGENTS:-}" ]; then
     printf 'note: Coder Agents wiring skipped (SKIP_CODER_AGENTS is set)\n'
     return 0
@@ -186,8 +191,26 @@ start_coder_agents_wait() {
     return 0
   fi
   wait_secs="${CODER_AGENTS_WAIT_SECS:-1800}"
-  printf 'note: Coder Agents seeder starting in the background (waits up to %ss for the first owner)\n' "${wait_secs}"
-  bash "${seeder}" --apply --wait="${wait_secs}" >/dev/null 2>&1 &
+  seed_log="${CODER_AGENTS_SEED_LOG:-${TMPDIR:-/tmp}/coder-agents-seeder.log}"
+  if ! : >>"${seed_log}" 2>/dev/null; then
+    printf 'warning: the Coder Agents seeder log %s is not writable, so its output is discarded (point CODER_AGENTS_SEED_LOG at a writable path)\n' "${seed_log}"
+    seed_log=""
+  fi
+  if [ -n "${seed_log}" ]; then
+    printf 'note: Coder Agents seeder starting in the background (waits up to %ss for the first owner; log: %s)\n' "${wait_secs}" "${seed_log}"
+  else
+    printf 'note: Coder Agents seeder starting in the background (waits up to %ss for the first owner)\n' "${wait_secs}"
+  fi
+  if [ -n "${seed_log}" ]; then
+    {
+      printf '== coder-agents seeder ==\n'
+      printf 'started: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf 'unknown')"
+      printf 'seeder: %s --apply --wait=%s\n' "${seeder}" "${wait_secs}"
+    } >>"${seed_log}" 2>&1
+    bash "${seeder}" --apply --wait="${wait_secs}" >>"${seed_log}" 2>&1 &
+  else
+    bash "${seeder}" --apply --wait="${wait_secs}" >/dev/null 2>&1 &
+  fi
   return 0
 }
 

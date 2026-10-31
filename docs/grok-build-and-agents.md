@@ -610,6 +610,14 @@ probe or a slow first query cannot spend it. `SKIP_CODER_AGENTS=1` skips bootstr
 and stack-up seeding. `CODER_AGENTS_WAIT_SECS`
 is what stack `up` forwards as `--wait=`.
 
+Stack `up` starts that seeder in the background and keeps its output in
+`${TMPDIR:-/tmp}/coder-agents-seeder.log` (`CODER_AGENTS_SEED_LOG` moves it, and the
+`note:` line stack `up` prints names the path it chose). Read that file first when
+the Agents chat is dead after a boot: the seeder's most common outcome is a `skipped:`
+line that exits 0 - no coder container yet, no db container, nobody registered - and
+an unwritable log path degrades to the old discard with a `warning:` instead of
+failing the boot.
+
 A chat turn needs an enabled chat model config - the chat's own pick, else the
 deployment default, else it errors before the first tool call - and that wiring is
 what the script writes. It mints a short-lived admin API token from the stack's own
