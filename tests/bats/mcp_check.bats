@@ -159,6 +159,55 @@ run_check() {
   assert_match "says why that is suspicious" 'the default render declares it' "${output}"
 }
 
+@test "mcp-check: a missing block with its binaries baked names the re-materialize route" {
+  # The context7 block is absent from a stack-managed render while the image
+  # carries all three lane binaries: a lost block, not drift. The error must
+  # name the re-materialize route and the deliberate-park gate, and stay
+  # distinct from the missing-binary remedy (the pinned npm install).
+  local cfg="${BATS_TEST_TMPDIR}/no-ctx.toml" bins curl_dir empty
+  bins="${BATS_TEST_TMPDIR}/npmglobal"
+  mkdir -p "${bins}/bin"
+  : >"${bins}/bin/searxng-mcp-server"
+  : >"${bins}/bin/mcp-cache-proxy"
+  : >"${bins}/bin/context7-mcp"
+  chmod 755 "${bins}/bin/searxng-mcp-server" "${bins}/bin/mcp-cache-proxy" \
+    "${bins}/bin/context7-mcp"
+  curl_dir="$(stub_curl 200)"
+  {
+    printf '# managed-by: evo-t1-coder-stack\n'
+    printf '[mcp_servers.searxng]\n'
+    printf 'command = "%s/bin/searxng-mcp-server"\n' "${bins}"
+    printf 'enabled = true\n'
+    printf 'env = { SEARXNG_URL = "http://searx.test:8181" }\n'
+  } >"${cfg}"
+
+  run env HOME="${BATS_TEST_TMPDIR}" NPM_GLOBAL_PREFIX="${bins}" \
+    PATH="${curl_dir}:${PATH}" \
+    bash "${SCRIPT}" --config "${cfg}" --no-handshake --url http://searx.test:8181
+  [ "${status}" -eq 1 ]
+  assert_match "the missing block stays a failure" 'context7: declared not declared' "${output}"
+  assert_match "says the declared block is what is missing" 'the declared block is missing' "${output}"
+  assert_match "names the container re-materialize route" \
+    'bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>' "${output}"
+  assert_match "names the host-home re-materialize route" \
+    'bazelisk run //scripts:seed-dev-env -- --home <dir>' "${output}"
+  assert_match "names the gate that parks this lane on purpose" \
+    'CONTEXT7_MCP=false in .env' "${output}"
+  assert_match "names the push that relays the gate" 'push-template.sh' "${output}"
+  assert_not_match "no install advice on this path" 'npm i -g --prefix' "${output}"
+
+  # Same config on a box without the baked binaries: that is image drift, so
+  # the re-materialize advice must not print.
+  empty="${BATS_TEST_TMPDIR}/no-bins"
+  mkdir -p "${empty}/bin"
+  run env HOME="${BATS_TEST_TMPDIR}" NPM_GLOBAL_PREFIX="${empty}" \
+    PATH="${curl_dir}:${PATH}" \
+    bash "${SCRIPT}" --config "${cfg}" --no-handshake --url http://searx.test:8181
+  [ "${status}" -eq 1 ]
+  assert_not_match "no re-materialize advice when the binaries are absent" \
+    'the declared block is missing' "${output}"
+}
+
 @test "mcp-check: --lanes narrows what has to be there" {
   local cfg="${BATS_TEST_TMPDIR}/one.toml"
   printf '# managed-by: evo-t1-coder-stack\n[mcp_servers.searxng]\ncommand = "/bin/sh"\nenabled = true\n' >"${cfg}"
@@ -231,6 +280,7 @@ run_check() {
   run_check "${cfg}"
   [ "${status}" -eq 0 ]
   assert_match "the missing key is a warning" 'CONTEXT7_API_KEY is empty' "${output}"
+  assert_match "and it says the lane still answers without the key" 'public rate limits' "${output}"
   assert_match "the missing cache config is a warning" 'args_config missing' "${output}"
   assert_match "nothing failed" '0 failed' "${output}"
 }

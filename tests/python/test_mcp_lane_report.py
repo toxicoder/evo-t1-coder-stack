@@ -326,7 +326,10 @@ class CheckEnvironmentTest(unittest.TestCase):
         text = capture(MODULE.check_environment, "context7", server, {})
         self.assertEqual(
             [("context7", "api_key", "warn",
-              "CONTEXT7_API_KEY is empty; this lane cannot reach its backend")],
+              "CONTEXT7_API_KEY is empty; the key is optional and only decorates the outbound "
+              "calls to the Context7 API, so the lane still handshakes and "
+              "answers at the public rate limits, with private libraries out of "
+              "reach")],
             lines(text))
 
     def test_a_credential_only_the_process_carries_counts(self):
