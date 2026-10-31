@@ -70,6 +70,7 @@ load_fn() {
 
 @test "coder-agents: model_config_id reads the uuid next to the model alias" {
   load_fn scripts/coder-agents.sh api_read
+  load_fn scripts/coder-agents.sh model_config_chunk
   load_fn scripts/coder-agents.sh model_config_id
   session_token=t
   API_TIMEOUT=5
@@ -87,16 +88,27 @@ load_fn() {
   load_fn scripts/lib/common.sh log
   load_fn scripts/lib/common.sh err
   load_fn scripts/lib/common.sh die
+  load_fn scripts/lib/common.sh warn
+  load_fn scripts/lib/common.sh note
   load_fn scripts/coder-agents.sh json_escape
   load_fn scripts/coder-agents.sh api_read
   load_fn scripts/coder-agents.sh api_write
   load_fn scripts/coder-agents.sh create_model_config
+  load_fn scripts/coder-agents.sh alias_is_live
+  load_fn scripts/coder-agents.sh stack_config_ids
+  load_fn scripts/coder-agents.sh dead_config_ids
   load_fn scripts/coder-agents.sh pin_lane
   session_token=t
   API_TIMEOUT=5
   CODER_SERVICE=coder
   CONTAINER_API_URL="http://127.0.0.1:3000"
   provider_id="prov-1"
+  ALIASES_PROBED=0
+  agent_id=""
+  agent_low_id=""
+  agent_medium_id=""
+  agent_xhigh_id=""
+  chat_id=""
   export STUB_CURL_OUT='{"model_config_id":""}'
   run create_model_config agent 'Coder "Agents"' 262144 true
   [ "${status}" -eq 0 ]
@@ -106,6 +118,196 @@ load_fn() {
   run pin_lane general agent ""
   [ "${status}" -eq 0 ]
   assert_match "no target" 'skipped' "${output}"
+}
+
+@test "coder-agents: pin_lane re-pins a lane aimed at an alias the proxy calls dead" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/lib/common.sh warn
+  load_fn scripts/lib/common.sh note
+  load_fn scripts/coder-agents.sh api_read
+  load_fn scripts/coder-agents.sh api_write
+  load_fn scripts/coder-agents.sh alias_is_live
+  load_fn scripts/coder-agents.sh stack_config_ids
+  load_fn scripts/coder-agents.sh dead_config_ids
+  load_fn scripts/coder-agents.sh pin_lane
+  session_token=t
+  API_TIMEOUT=5
+  CODER_SERVICE=coder
+  CONTAINER_API_URL="http://127.0.0.1:3000"
+  ALIASES_PROBED=1
+  LIVE_ALIASES=$'agent\nagent-low'
+  agent_id="11111111-1111-4111-8111-111111111111"
+  agent_low_id=""
+  agent_medium_id=""
+  agent_xhigh_id=""
+  chat_id="22222222-2222-4222-8222-222222222222"
+  # The lane currently points at the Arc `chat` config, whose alias the proxy
+  # holds unhealthy. Before the health gate this was "the admin's choice" and
+  # was kept forever; compaction then had no model that could answer.
+  export STUB_CURL_OUT="{\"model_config_id\":\"${chat_id}\"}"
+  run pin_lane compaction "agent (tool-capable primary)" "${agent_id}"
+  [ "${status}" -eq 0 ]
+  assert_match "re-pin reason" 'reports unhealthy' "${output}"
+  assert_match "re-pin lands" 'lane compaction: pinned to model config agent' "${output}"
+  # The body travels on stdin (api_write --data-binary @-), so argv proves only
+  # which lane was written.
+  assert_match "PUT targets the lane" 'model-override/compaction' "$(stub_log_last curl)"
+  [[ ${output} != *"leaving the admin's choice"* ]]
+}
+
+@test "coder-agents: pin_lane keeps an admin pin it did not write" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/lib/common.sh warn
+  load_fn scripts/lib/common.sh note
+  load_fn scripts/coder-agents.sh api_read
+  load_fn scripts/coder-agents.sh api_write
+  load_fn scripts/coder-agents.sh alias_is_live
+  load_fn scripts/coder-agents.sh stack_config_ids
+  load_fn scripts/coder-agents.sh dead_config_ids
+  load_fn scripts/coder-agents.sh pin_lane
+  session_token=t
+  API_TIMEOUT=5
+  CODER_SERVICE=coder
+  CONTAINER_API_URL="http://127.0.0.1:3000"
+  ALIASES_PROBED=0
+  agent_id="11111111-1111-4111-8111-111111111111"
+  agent_low_id=""
+  agent_medium_id=""
+  agent_xhigh_id=""
+  chat_id=""
+  export STUB_CURL_OUT='{"model_config_id":"99999999-9999-4999-8999-999999999999"}'
+  run pin_lane general "agent (tool-capable primary)" "${agent_id}"
+  [ "${status}" -eq 0 ]
+  assert_match "admin config" 'did not create' "${output}"
+  [ "$(stub_log_count curl)" -eq 1 ]
+}
+
+@test "coder-agents: litellm_live_aliases drops only aliases with no healthy deployment" {
+  load_fn scripts/coder-agents.sh litellm_live_aliases
+  info='{"data":[{"model_name":"coder","litellm_params":{},"model_info":{"id":"aaa"}},{"model_name":"chat","litellm_params":{},"model_info":{"id":"bbb"}},{"model_name":"agent","litellm_params":{},"model_info":{"id":"agent-spark-1"}},{"model_name":"agent","litellm_params":{},"model_info":{"id":"agent-spark-2"}}]}'
+  health='{"healthy_count":2,"healthy_endpoints":[{"model_id":"agent-spark-1"},{"model_id":"agent-spark-2"}],"unhealthy_count":2,"unhealthy_endpoints":[{"model_id":"aaa","error":"404"},{"model_id":"bbb","error":"404"}]}'
+  run litellm_live_aliases "${info}" "${health}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "agent" ]
+  # An alias the health body says nothing about is not a dead one: a proxy that
+  # has not probed yet must not blank the dropdown, so the gate fails open.
+  run litellm_live_aliases "${info}" '{"healthy_count":0,"unhealthy_count":0}'
+  [ "${status}" -eq 0 ]
+  [ "${#lines[@]}" -eq 3 ]
+  # One deployment healthy is enough: three Spark boxes, one dark, is a lane
+  # that still serves.
+  run litellm_live_aliases "${info}" '{"unhealthy_endpoints":[{"model_id":"agent-spark-2"}]}'
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *agent* ]]
+  # No usable /v1/model/info means no answer at all, and the caller falls back
+  # to registering every alias.
+  run litellm_live_aliases '' "${health}"
+  [ "${status}" -eq 1 ]
+}
+
+@test "coder-agents: ensure_model_config refuses to register an alias the proxy calls dead" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh warn
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/coder-agents.sh json_escape
+  load_fn scripts/coder-agents.sh api_read
+  load_fn scripts/coder-agents.sh api_write
+  load_fn scripts/coder-agents.sh model_config_chunk
+  load_fn scripts/coder-agents.sh model_config_id
+  load_fn scripts/coder-agents.sh check_model_config_drift
+  load_fn scripts/coder-agents.sh create_model_config
+  load_fn scripts/coder-agents.sh alias_is_live
+  load_fn scripts/coder-agents.sh ensure_model_config
+  session_token=t
+  API_TIMEOUT=5
+  CODER_SERVICE=coder
+  CONTAINER_API_URL="http://127.0.0.1:3000"
+  UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  provider_id="prov-1"
+  ALIASES_PROBED=1
+  LIVE_ALIASES=$'agent\nagent-low'
+  export STUB_CURL_OUT='{"configs":[{"id":"d162f0a4-1111-4444-8888-121212121212","model":"agent","enabled":true,"is_default":true,"context_limit":262144}]}'
+  # Called directly with output redirected, never through run or $(): both make a
+  # subshell, and MODEL_CONFIG_ID is the contract this function returns through.
+  local ensure_out="${BATS_TEST_TMPDIR}/ensure.log"
+  ensure_model_config chat 'Coder Agents Arc' 32768 false >"${ensure_out}"
+  [ "${MODEL_CONFIG_ID}" = "" ]
+  assert_match "skipped dead alias" 'model config chat: skipped' "$(cat "${ensure_out}")"
+  [ "$(stub_log_count curl)" -eq 1 ]
+  # The live alias still registers, and the row that is already there is left alone.
+  ensure_model_config agent 'Coder Agents Spark' 262144 true >"${ensure_out}"
+  [ "${MODEL_CONFIG_ID}" = "d162f0a4-1111-4444-8888-121212121212" ]
+  assert_match "pre-existing row" 'already present' "$(cat "${ensure_out}")"
+}
+
+@test "coder-agents: check_model_config_drift names what the create check would have missed" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh warn
+  load_fn scripts/coder-agents.sh api_read
+  load_fn scripts/coder-agents.sh model_config_chunk
+  load_fn scripts/coder-agents.sh check_model_config_drift
+  session_token=t
+  API_TIMEOUT=5
+  CODER_SERVICE=coder
+  CONTAINER_API_URL="http://127.0.0.1:3000"
+  export STUB_CURL_OUT='{"configs":[{"id":"d162f0a4-1111-4444-8888-121212121212","model":"agent","enabled":false,"is_default":false,"context_limit":8192}]}'
+  run check_model_config_drift agent 262144 true
+  [ "${status}" -eq 0 ]
+  assert_match "disabled" 'present but disabled' "${output}"
+  assert_match "not default" 'not the deployment default' "${output}"
+  assert_match "wrong window" 'context_limit is 8192' "${output}"
+  # A row that matches raises nothing, so a healthy deployment stays quiet.
+  export STUB_CURL_OUT='{"configs":[{"id":"d162f0a4-1111-4444-8888-121212121212","model":"agent","enabled":true,"is_default":true,"context_limit":262144}]}'
+  run check_model_config_drift agent 262144 true
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "" ]
+}
+
+@test "coder-agents: pick_live_config walks the preference list past a dead alias" {
+  load_fn scripts/coder-agents.sh alias_is_live
+  load_fn scripts/coder-agents.sh pick_live_config
+  ALIASES_PROBED=1
+  LIVE_ALIASES=$'agent'
+  agent_id="11111111-1111-4111-8111-111111111111"
+  agent_low_id=""
+  agent_medium_id=""
+  agent_xhigh_id=""
+  chat_id="22222222-2222-4222-8222-222222222222"
+  # compaction prefers chat, but chat is unhealthy, so agent wins and the caller
+  # learns which alias it is labelling.
+  run pick_live_config "chat agent"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "agent ${agent_id}" ]
+  run pick_live_config "agent chat"
+  [ "${output}" = "agent ${agent_id}" ]
+  export LIVE_ALIASES=$'chat'
+  run pick_live_config "chat agent"
+  [ "${output}" = "chat ${chat_id}" ]
+  # Nothing in the list qualifies: the caller stops rather than pin to nothing.
+  export LIVE_ALIASES=$'agent-low'
+  run pick_live_config "chat agent"
+  [ "${output}" = "" ]
+}
+
+@test "coder-agents: litellm_get keeps the master key out of every argv" {  load_fn scripts/lib/common.sh log
+  load_fn scripts/coder-agents.sh litellm_get
+  API_TIMEOUT=5
+  CODER_SERVICE=coder
+  CODER_CONTAINER=stack-coder-1
+  LITELLM_BASE_URL="http://litellm:4000"
+  litellm_key="sk-health-probe-secret-0123456789"
+  export STUB_CURL_OUT='{"data":[]}'
+  run litellm_get "/v1/model/info"
+  [ "${status}" -eq 0 ]
+  assert_match "config from stdin" -- '--config' "$(stub_log_last curl)"
+  assert_match "asks the health-backed list" '/v1/model/info' "$(stub_log_last curl)"
+  if grep -q 'sk-health-probe-secret-0123456789' "${STUB_LOG}"/*.log; then
+    fail "the master key reached a stub argv log"
+  fi
 }
 
 @test "coder-agents: cleanup_token deletes the minted api_keys row" {
