@@ -8,7 +8,8 @@
   "updateRemoteUserUID": true,
   "containerEnv": {
     "EVO_T1_DEVCONTAINER": "1",
-    "SEARXNG_URL": "http://host.docker.internal:8181"
+    "SEARXNG_URL": "http://host.docker.internal:8181",
+    "GROK_MAX_MCP_OUTPUT_BYTES": "40000"
   },
   "remoteEnv": {
     "EVO_T1_DEVCONTAINER": "1"
