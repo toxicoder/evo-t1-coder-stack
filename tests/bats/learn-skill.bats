@@ -18,8 +18,10 @@
 # carry the absent-only seed guard, the quoted LEARN_SKILL_MD_EOF heredoc and
 # the twin copy; both main.tf twins feed learn_skill into that render; the one
 # common payload parses as a skill (frontmatter first, managed-by marker below
-# it, plain ASCII); and scripts/lib/config_seed.sh names both targets against
-# that same payload so a reseed can re-materialize them.
+# it, plain ASCII), carries only keys Grok Build documents and names the tool
+# that runs its commands, and tells the truth in that marker comment about how
+# to take a seeded copy over; and scripts/lib/config_seed.sh names both targets
+# against that same payload so a reseed can re-materialize them.
 #
 # Usage: bazelisk test //tests:bats_learn_skill_test   (from any cwd)
 # Safety: reads the two startup.sh.tftpl twins, the two main.tf twins,
@@ -44,7 +46,9 @@ setup() {
 
 @test "learn seed: both startup twins seed the coder copy only while it is absent" {
   # The absent-only guard is what lets an operator keep their own /learn: the
-  # boot never overwrites the file, so deleting or editing it takes over.
+  # boot never overwrites a file that exists, so an edited copy that dropped
+  # the stack marker stays theirs. Deleting the file does not take over - the
+  # guard simply writes the stack's copy back at the next boot.
   local tpl_dir
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
     run grep -F 'if [ ! -f "$HOME/.coder/skills/learn/SKILL.md" ]; then' "${tpl_dir}/startup.sh.tftpl"
@@ -157,6 +161,78 @@ setup() {
   fi
   run grep -c $'\r' "${PAYLOAD}"
   [ "${status}" -ne 0 ]
+}
+
+@test "learn payload: the frontmatter parses and stays inside the documented keys" {
+  # This is what actually registers /learn: Grok Build's own /create-skill writes
+  # name and description and nothing else, and the keys it documents are the
+  # whole set a skill may carry. A key outside that set is drift the CLI ignores,
+  # and user-invocable: false would unregister the slash name this payload exists
+  # to ship. PyYAML is optional the way py_helpers.bats treats it: skip, never
+  # hard-fail, when the interpreter has no yaml module.
+  python3 -c 'import yaml' >/dev/null 2>&1 || skip "PyYAML is not installed"
+  python3 -c '
+import sys, yaml
+lines = sys.stdin.read().splitlines()
+if not lines or lines[0].strip() != "---":
+    sys.exit("FAIL: the frontmatter does not open with --- on line 1")
+close = 0
+for i in range(1, len(lines)):
+    if lines[i].strip() == "---":
+        close = i
+        break
+if close == 0:
+    sys.exit("FAIL: no closing frontmatter fence")
+try:
+    data = yaml.safe_load("\n".join(lines[1:close]))
+except yaml.YAMLError as exc:
+    sys.exit("FAIL: the frontmatter is not valid YAML: %s" % exc)
+if not isinstance(data, dict):
+    sys.exit("FAIL: the frontmatter is not a mapping: %r" % (data,))
+documented = set(("name", "description", "when-to-use", "allowed-tools",
+                  "argument-hint", "user-invocable", "disable-model-invocation",
+                  "model", "effort", "license", "compatibility", "metadata"))
+unknown = sorted(set(data) - documented)
+if unknown:
+    sys.exit("FAIL: keys outside the documented set: %s" % ", ".join(unknown))
+if data.get("name") != "learn":
+    sys.exit("FAIL: name must be exactly learn, got %r" % (data.get("name"),))
+desc = data.get("description")
+if not isinstance(desc, str) or not desc.strip():
+    sys.exit("FAIL: description must be a non-empty string, got %r" % (desc,))
+if "user-invocable" in data and data["user-invocable"] is not True:
+    sys.exit("FAIL: user-invocable must be the boolean true, got %r"
+             % (data["user-invocable"],))
+' <"${PAYLOAD}"
+}
+
+@test "learn payload: the marker comment tells the truth about taking it over" {
+  # Deleting the seeded file gets it back: startup.sh.tftpl writes it whenever it
+  # is absent and config_seed.sh counts an absent target as seeded, so the only
+  # takeover is an edit that drops the marker line (the seeder's ownership probe
+  # leaves a marker-free file alone short of --force). Pinning the wording is the
+  # only thing that keeps that fact from drifting back into the payload.
+  run grep -Ei -- 'delete[[:space:]]+this[[:space:]]+file' "${PAYLOAD}"
+  [ "${status}" -ne 0 ]
+
+  # Still provenance for the seeder probe, and it says how ownership moves.
+  assert_contains_file "the seeder marker string survives" "${PAYLOAD}" \
+    'managed-by: evo-t1-coder-stack'
+  run grep -Ei -- 'delete[^.]*marker' "${PAYLOAD}"
+  [ "${status}" -eq 0 ]
+  # And how to hide the slash command without deleting anything.
+  assert_contains_file "hiding names the skills table" "${PAYLOAD}" '\[skills\]'
+  run grep -Ei -- 'disabled[[:space:]]*=[[:space:]]*\[' "${PAYLOAD}"
+  [ "${status}" -eq 0 ]
+}
+
+@test "learn payload: it names the tool that runs the commands it shows" {
+  # Grok Build's skills guide: reference tools by name, and a command written
+  # inline in a skill body runs nothing until the body says who runs it. The
+  # payload shows several indented command blocks, so its intro has to name
+  # run_terminal_command or the model may narrate them instead of running them.
+  assert_contains_file "the intro names the terminal tool" "${PAYLOAD}" \
+    'run_terminal_command'
 }
 
 @test "learn seams: config_seed names both targets against the one payload" {
