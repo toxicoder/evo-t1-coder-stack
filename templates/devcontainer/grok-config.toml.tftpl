@@ -291,9 +291,10 @@ plan = "agent"
 # Each gate ships unless a push passes --var <name>=false. Park one by setting
 # its .env key (SEARCH_MCP, CONTEXT7_MCP, GITHUB_MCP) to false and re-pushing:
 # push-template.sh relays it to both template pushes. context7 is the lane with
-# the outside dependency: it wants a usable CONTEXT7_API_KEY in the agent
-# environment plus outbound network on the first fetch, and later identical
-# lookups inside the TTL come from its local SQLite cache instead.
+# the outside dependency: it wants outbound network on the first fetch (its
+# CONTEXT7_API_KEY is optional and only buys higher rate limits and access to
+# private libraries), and later identical lookups inside the TTL come from its
+# local SQLite cache instead.
 #
 # What is left out is simply not defined here, so there is nothing to disable;
 # if you add one later and want it parked rather than deleted, list its name
@@ -329,9 +330,11 @@ headers = { Authorization = "Bearer $${GH_TOKEN}" }
 # Rendered only when context7_mcp is on, and that template variable defaults to
 # true, so this block ships unless a push passes --var context7_mcp=false (or
 # sets CONTEXT7_MCP=false in .env, which push-template.sh relays). The key is
-# optional: an empty CONTEXT7_API_KEY still renders the block, and that server
-# then fails its handshake once per session. A real key needs outbound network
-# on first fetch; later identical lookups within the TTL are served from the
+# optional: it only decorates the outbound calls to the Context7 API, so with
+# an empty CONTEXT7_API_KEY the block still renders, the server still
+# handshakes, and the lane still answers at the public rate limits - private
+# libraries are the only thing out of reach. Outbound network is needed on
+# first fetch; later identical lookups within the TTL are served from the
 # local SQLite cache under ~/.grok/mcp-cache-proxy/. The file only ever names
 # the key; the CLI expands $${CONTEXT7_API_KEY} from the environment.
 # Binaries are baked into the golden image; launching by absolute path keeps
@@ -403,9 +406,9 @@ SEARXNG_CACHE_TTL_MS = "900000"
 # A ceiling on the max_results argument, not a default: a larger request is
 # clamped to it with one warning on stderr. The server's own default of ten
 # stays the normal answer, so this only bounds the worst case, keeping one
-# search from overrunning `[mcp] max_output_bytes = 40000` below. Measured on
-# this lane, ten formatted results is about 4.6 KB, so twenty-five lands well
-# inside the cap.
+# search inside the GROK_MAX_MCP_OUTPUT_BYTES = 40000 cap that rides the agent
+# environment. Measured on this lane, ten formatted results is about 4.6 KB,
+# so twenty-five lands well inside the cap.
 SEARXNG_MAX_RESULTS = "25"
 # Mirrors search.safe_search in searxng/settings.yml (0 = off) so the lane and
 # the instance agree without the agent passing the argument, and one file cannot
@@ -418,8 +421,12 @@ SEARXNG_DEFAULT_LANGUAGE = "all"
 
 %{endif~}
 
-[mcp]
-max_output_bytes = 40000
+# No [mcp] table here: the pinned CLI reports the documented
+# [mcp] max_output_bytes key as an unrecognized config key and applies
+# nothing, so a table at this spot would only warn on every session. The MCP
+# tool-result cap rides GROK_MAX_MCP_OUTPUT_BYTES = 40000 in the agent
+# environment instead (the coder_agent env in main.tf), the route this CLI
+# honours today; the documented default it replaces is 20000 bytes.
 
 # Conservative defaults on purpose: no always-approve / yolo here — that is a
 # per-user decision (`/settings`, or [ui] permission_mode). These denies only
@@ -484,6 +491,17 @@ allow = [
   "Edit(**/.env.*.example)",
   "Read(**/.env.*.sample)",
   "Edit(**/.env.*.sample)",
+  # The two read-only research lanes, pre-allowed. A declared MCP server still
+  # needs a grant per tool call, and an unattended run (`grok -p`, which is how
+  # the delegation skill launches its children) has nobody to ask, so without
+  # these the agent gets "headless run cannot ask for approval" and loses the
+  # web and the docs lanes outright. Search and fetch dial this stack's own
+  # SearXNG and context7 reads the public Context7 docs API, so neither can
+  # mutate anything. The github server stays out on purpose: its tools write
+  # with the owner's minted token, so those keep prompting. A lane parked by its
+  # gate leaves its rule matching nothing, which is harmless.
+  "MCPTool(searxng__*)",
+  "MCPTool(context7__*)",
 ]
 
 %{if grok_config_extra != ""~}

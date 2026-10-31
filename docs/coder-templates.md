@@ -209,6 +209,13 @@ Nothing else about GitHub travels in a `--var`.
 - `GITHUB_MCP`, `CONTEXT7_MCP` and `SEARCH_MCP` share one polarity: all three MCP blocks
   ship from the template default (`true`), so the only value worth setting is `false`,
   and `true`/unset/empty pushes nothing at all.
+- The two research lanes split by question type: a library, framework, CLI or setup
+  question goes to `context7` (resolve the library id first, then query docs on that
+  id), anything else on the web goes to the `searxng` `search` tool, and a URL already
+  in hand goes to `searxng`'s `fetch_content`. Grok's native `web_search` is parked
+  here, and native `web_fetch` is unavailable because that tool needs an egress proxy
+  endpoint this stack does not run, so `SEARCH_MCP=false` leaves a session with library
+  docs and no way to reach the web.
 - A dev stack that moved the search port needs its own template push: `searxng_url`
   is derived from `STACK_SEARCH_PORT` as read from `.env`, so a push made while
   `dev-stack.env` carries `18181` still names `8181` unless the key is set in `.env`
@@ -357,11 +364,18 @@ Notes on the two dropdowns that take a custom value:
 - The provider requires a parameter default to be one of its options, which is why a
   custom `--var` value is injected as its own option instead of being dropped.
 - A `github_mcp` of `true` with no GitHub account connected gives that workspace a server
-  that fails its handshake once per session. A `context7_mcp` of `true` with an empty
-  `context7_api_key` is the same shape: the block renders, and the server fails its
-  handshake once per session. Both are the pushed default now, so that shape is what a
-  fresh deploy gets — `CONTEXT7_API_KEY` is optional and nothing in git carries a key.
-  Park either one with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` in `.env` and re-push.
+  that fails its handshake once per session, because `$GH_TOKEN` is empty. A
+  `context7_mcp` of `true` with an empty `context7_api_key` is *not* the same shape:
+  the key is optional, the block renders either way, and the server handshakes and
+  answers without one - no `Authorization` header goes out, so the lane runs at the
+  public rate limit and private libraries are the only thing out of reach. That keyless
+  block is the pushed default and what a fresh deploy gets, since nothing in git
+  carries a key, and `bazelisk run //scripts:mcp-check` only warns about it. Park a
+  lane deliberately with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` in `.env` (relayed
+  by `push-template.sh`) or `--var github_mcp=false` / `--var context7_mcp=false` on
+  the push; a block missing from a render that got neither of those is a defect, not a
+  park. Fill the context7 key with `CONTEXT7_API_KEY` in `.env` plus a re-push when a
+  session needs private libraries or a higher rate limit.
 
 ## Autostop and TTLs
 
