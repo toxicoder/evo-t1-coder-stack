@@ -118,13 +118,14 @@ logs_absent() {
   running_stack
   run --separate-stderr bash "${root}/scripts/coder-agents.sh" --dry-run
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 10 ]
+  [ "${#lines[@]}" -eq 11 ]
   [[ ${lines[0]} == *"probing the Coder API"* ]]
   [ "${lines[1]}" = "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):" ]
   [[ ${output} == *"ensure chat model config agent-low"* ]]
   [[ ${output} == *"ensure chat model config agent-medium"* ]]
   [[ ${output} == *"ensure chat model config agent-xhigh"* ]]
   [[ ${output} == *"pin model overrides general+explore -> agent"* ]]
+  [[ ${output} == *"treat only the aliases with a healthy deployment as registerable"* ]]
   # The probes may read; nothing may be written: no token minted, no API call.
   [ "$(stub_log_count psql)" -eq 0 ]
   [ "$(stub_log_count coder)" -eq 0 ]
@@ -263,8 +264,80 @@ logs_absent() {
   logs_absent 'CODER_SESSION_TOKEN=|[0-9a-f]{10}-[0-9a-f]{22}' "${STUB_LOG}/docker.log"
 }
 
-@test "coder-agents: a real master key never reaches argv or the output" {
-  root="$(fake_root 'LITELLM_MASTER_KEY=sk-test-secret-0123456789abcdef')"
+# write_map FILE needle body [needle body...] — build a STUB_CURL_OUT_MAP so one
+# run can be answered endpoint by endpoint. Order matters: the first needle that
+# appears in the argv wins, so a longer path must be listed before its prefix.
+write_map() {
+  local map="$1"
+  shift
+  : >"${map}"
+  while [ "$#" -gt 1 ]; do
+    printf '%s\t%s\n' "$1" "$2" >>"${map}"
+    shift 2
+  done
+}
+
+@test "coder-agents: an unhealthy alias is not registered and never takes a pin" {
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  local agent_uuid="11111111-1111-4111-8111-111111111111"
+  printf '%s' '{"name":"litellm","name":"litellm","base_url":"http://litellm:4000/v1","masked":"ch...lm","id":"11111111-2222-4333-8444-555555555555"}' \
+    >"${BATS_TEST_TMPDIR}/providers.json"
+  printf '%s' '{"configs":[{"id":"'"${agent_uuid}"'","model":"agent","enabled":true,"is_default":true,"context_limit":262144}]}' \
+    >"${BATS_TEST_TMPDIR}/configs.json"
+  write_map "${BATS_TEST_TMPDIR}/map" \
+    '/api/v2/ai/providers' "${BATS_TEST_TMPDIR}/providers.json" \
+    '/api/experimental/chats/model-configs' "${BATS_TEST_TMPDIR}/configs.json" \
+    'model-override/' '{"model_config_id":""}' \
+    'system-prompt' '{"system_prompt":"grok-build-delegation skill, then review its diff"}'
+  export STUB_CURL_OUT_MAP="${BATS_TEST_TMPDIR}/map"
+  # The Spark lane answers and the Arc chat alias does not — the state this box
+  # is actually in when qwen2.5:7b has never been pulled.
+  export CODER_AGENTS_LIVE_ALIASES='agent agent-low agent-medium agent-xhigh'
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"healthy aliases: agent agent-low agent-medium agent-xhigh"* ]]
+  [[ ${output} == *"model config agent: already present (left untouched)"* ]]
+  [[ ${output} == *"model config chat: skipped"* ]]
+  [[ ${output} == *"compaction and title_generation go to agent"* ]]
+  [[ ${output} == *"lane compaction: pinned to model config agent"* ]]
+  [[ ${output} == *"lane title_generation: pinned to model config agent"* ]]
+  [[ ${output} == *"system prompt: already carries the stack addendum"* ]]
+  # The dead alias may never be POSTed, and the run may not report a clean pass.
+  logs_absent '"model":"chat"' "${STUB_LOG}/curl.log"
+  [[ ${output} == *"summary: "* ]]
+  [[ ${output} != *"0 warnings"* ]]
+}
+
+@test "coder-agents: a dead pin on a helper lane is moved on the next run" {
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  local agent_uuid="11111111-1111-4111-8111-111111111111"
+  local chat_uuid="22222222-2222-4222-8222-222222222222"
+  printf '%s' '{"name":"litellm","name":"litellm","base_url":"http://litellm:4000/v1","masked":"ch...lm","id":"11111111-2222-4333-8444-555555555555"}' \
+    >"${BATS_TEST_TMPDIR}/providers.json"
+  printf '%s' '{"configs":[{"id":"'"${agent_uuid}"'","model":"agent","enabled":true,"is_default":true,"context_limit":262144},{"id":"'"${chat_uuid}"'","model":"chat","enabled":true,"is_default":false,"context_limit":32768}]}' \
+    >"${BATS_TEST_TMPDIR}/configs.json"
+  write_map "${BATS_TEST_TMPDIR}/map" \
+    '/api/v2/ai/providers' "${BATS_TEST_TMPDIR}/providers.json" \
+    '/api/experimental/chats/model-configs' "${BATS_TEST_TMPDIR}/configs.json" \
+    'model-override/compaction' "{\"model_config_id\":\"${chat_uuid}\"}" \
+    'model-override/' '{"model_config_id":""}' \
+    'system-prompt' '{"system_prompt":"grok-build-delegation skill, then review its diff"}'
+  export STUB_CURL_OUT_MAP="${BATS_TEST_TMPDIR}/map"
+  export CODER_AGENTS_LIVE_ALIASES='agent agent-low agent-medium agent-xhigh'
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  [ "${status}" -eq 0 ]
+  # compaction was left pinned to the Arc chat config by an earlier run; that
+  # config is now unhealthy, and the old check called it "the admin's choice".
+  [[ ${output} == *"lane compaction: was pinned to a model config whose alias LiteLLM reports unhealthy"* ]]
+  [[ ${output} == *"lane compaction: pinned to model config agent"* ]]
+  [[ ${output} == *"lane general: unset, pinning"* ]]
+}
+
+@test "coder-agents: a real master key never reaches argv or the output" {  root="$(fake_root 'LITELLM_MASTER_KEY=sk-test-secret-0123456789abcdef')"
   running_stack
   psql_token_variant
   run --separate-stderr bash "${root}/scripts/coder-agents.sh"

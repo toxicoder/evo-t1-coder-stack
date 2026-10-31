@@ -325,9 +325,33 @@ bazelisk run //scripts:coder-agents -- --apply
   Re-run the command above once the stack is up and somebody has signed in.
 
 - It skips while the coder or db container is down, or nobody has registered yet, and
-  re-running it repairs a provider that drifted.
+  re-running it repairs a provider that drifted and moves a model pin whose alias has
+  since gone unhealthy.
 
 A chat that starts but narrates instead of calling tools is the no-Spark case above.
+
+### Coder Agents offers a model that errors, or a chat never gets a title -> an alias with no healthy deployment
+
+Cause: the LiteLLM alias behind that model has no deployment the router will use. The
+Arc aliases (`chat`, `coder`, `coder-fast`) go unhealthy the moment their weights are
+not in the IPEX-LLM container, which answers `model "..." not found, try pulling it
+first`, and the Spark `agent` aliases go unhealthy when no box answers.
+
+```sh
+bazelisk run //scripts:prod-stack -- logs --tail 200 litellm
+```
+
+```sh
+bazelisk run //scripts:pull-models
+```
+
+- `//scripts:coder-agents` reads that same health view before it registers anything, so
+  once the weights are back, re-running it registers the alias and takes the
+  `compaction` / `title_generation` pins off it. A `warning:` line names the alias it
+  refused to register, and the closing `summary:` counts the warnings, so a run that
+  quietly wired half the model list is visible.
+- Titles that never appear and a long chat that dies at its context budget are the
+  helper lanes pointing at a dead alias. Re-running the script moves them.
 
 ### Workspace cannot reach LiteLLM -> `CODER_ACCESS_URL`, or `host.docker.internal`
 

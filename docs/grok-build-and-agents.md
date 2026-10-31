@@ -642,10 +642,28 @@ drives the server's experimental chat API:
   registering them would only add a silently broken model to the pickers.
   `context_limit` is the agent's own compaction budget (a 70 per cent default
   compaction threshold applies), which is why it is pinned per alias.
+  Before that sweep the script asks the proxy `GET /v1/model/info` and `GET /health`
+  and joins them on `model_id`, so it knows which aliases still have a healthy
+  deployment. An alias with none is not registered: `chat` goes unhealthy the moment
+  `qwen2.5:7b` is not pulled on the Arc, and a dead entry in the model picker is a
+  chat that errors on the first send. `/health` is read without
+  `?check_deployments=true` because that form fires a live completion per deployment
+  and evicts the Spark prompt caches the health-check notes in `litellm/config.yaml`
+  warn about. The gate fails open: a proxy that will not answer leaves every alias
+  registerable, and `CODER_AGENTS_LIVE_ALIASES="agent chat"` overrides it outright.
 - pins for the four auxiliary lanes - `general` and `explore` (the two subagent
-  types) take `agent`, `compaction` and `title_generation` (the helper calls) take
-  `chat` - written only for lanes that carry no pin yet, so an admin's own pins stay
-  in place.
+  types) prefer `agent`, `compaction` and `title_generation` (the helper calls)
+  prefer `chat` - chosen only from the aliases the health gate left standing, and
+  written when a lane carries no pin or is pinned to one of these configs whose alias
+  has since gone unhealthy. A pin aimed at a config the script did not create is the
+  admin's and is left alone. Both helper lanes landing on a dead `chat` is what made
+  conversations lose their titles and die at the compaction threshold, which is why a
+  stale pin now moves instead of being kept forever.
+- a read-only drift check on the stored configs: a config that is disabled, is not
+  the deployment default, or carries a `context_limit` that does not match the alias's
+  serving window is reported with a `warning:` and the screen to fix it on. The
+  experimental chat API has no PATCH for model configs, so these are named rather than
+  written.
 - a three-line system-prompt addendum, appended after Coder's default prompt text
   (`include_default_system_prompt: true`), that keeps the delegation and
   secret-hygiene rules which must hold even when a chat has no workspace attached.
