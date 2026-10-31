@@ -169,9 +169,16 @@ def check_environment(lane, server, environ):
         value = environ.get(key, "")
     if value:
         emit(lane, "api_key" if key == "CONTEXT7_API_KEY" else "url_env", "ok", key)
+    elif key == "CONTEXT7_API_KEY":
+        # The Context7 key is optional: it only decorates the outbound calls,
+        # so an empty one is a warning about rate limits, not reachability.
+        emit(lane, "api_key", "warn",
+             "%s is empty; the key is optional and only decorates the outbound "
+             "calls to the Context7 API, so the lane still handshakes and "
+             "answers at the public rate limits, with private libraries out of "
+             "reach" % key)
     else:
-        emit(lane, "api_key" if key == "CONTEXT7_API_KEY" else "url_env", "warn",
-             "%s is empty; this lane cannot reach its backend" % key)
+        emit(lane, "url_env", "warn", "%s is empty; this lane cannot reach its backend" % key)
 
 
 def check_doctor(lane, report):

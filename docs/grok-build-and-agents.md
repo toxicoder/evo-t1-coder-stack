@@ -455,7 +455,11 @@ clone is never asked to delete somebody else's committed file.
   rather than a fallback: both templates render that block gated on `search_mcp`,
   which defaults to true. It dials `$SEARXNG_URL` (default
   `http://host.docker.internal:8181`), the same key `main.tf` puts in the agent
-  environment. Measure the self-hosted lane with:
+  environment. It carries nine tools - `search`, `image_search`, `news_search`,
+  `video_search`, `music_search`, `paper_search`, `fetch_content`, `autocomplete`,
+  `list_engines` - and an agent's two workhorses are the first and the seventh:
+  `search` for anything that is not a library question, `fetch_content` for a URL
+  already in hand. Measure the self-hosted lane with:
 
   ```sh
   bazelisk run //scripts:search-check
@@ -494,7 +498,9 @@ clone is never asked to delete somebody else's committed file.
   probe's `--timeout`), `SEARXNG_CACHE_TTL_MS` (15 minutes, which switches on the
   bounded 128-entry response cache that ships disabled, so a repeated query stops
   re-dialling backends that already refused this instance), `SEARXNG_MAX_RESULTS`
-  (a ceiling that keeps one search inside `[mcp] max_output_bytes`),
+  (a ceiling that keeps one search inside the MCP output cap - on the pinned 1.0.70
+  CLI that cap rides `GROK_MAX_MCP_OUTPUT_BYTES`, because the CLI reports
+  `[mcp] max_output_bytes` as an unrecognized config key and never applies it),
   `SEARXNG_DEFAULT_SAFESEARCH` (mirrors `search.safe_search` in
   `searxng/settings.yml`) and `SEARXNG_DEFAULT_LANGUAGE` (`all`, so an image bump
   cannot quietly start geo-filtering every agent search).
@@ -519,24 +525,54 @@ clone is never asked to delete somebody else's committed file.
   themselves takes an image rebuild. The proxy keeps its SQLite cache under
   `~/.grok/mcp-cache-proxy/`, which rides the owner's shared
   profile volume in `shared` mode, and the cache TTL is 12 h: the first lookup of a
-  library reaches the Context7 API and needs both network and `CONTEXT7_API_KEY`
-  (optional - empty means the public rate limit), while an identical lookup inside the
-  TTL is answered locally. Two tools, in order -
-  `resolve-library-id`, then `query-docs` on the id it returns. Prove it with
-  `grok mcp doctor context7` inside a workspace.
+  library reaches the Context7 API and needs network, while an identical lookup inside
+  the TTL is answered locally. `CONTEXT7_API_KEY` is optional and the lane does not
+  depend on it: an empty value sends no `Authorization` header at all, so the server
+  handshakes and answers at the public rate limit, with private libraries the only
+  thing out of reach. A key in `.env` plus a re-push fills the env. What *parks* the
+  lane on purpose is `CONTEXT7_MCP=false` in `.env` (relayed by `push-template.sh`) or
+  `--var context7_mcp=false` on a template push; a `[mcp_servers.context7]` block
+  missing from a render that got neither of those is a defect, not a park. The lookup
+  order is fixed - `resolve-library-id` first, then `query-docs` on the id it returns
+  - and `search_tool` lists the live tool names rather than a hardcoded list. Prove it
+  with `grok mcp doctor context7` inside a workspace.
 - Prove all three at once with `bazelisk run //scripts:mcp-check`: it reads the
   rendered `~/.grok/config.toml`, reports whether each lane is declared, whether its
   `command=` binary is present, whether the lane's credential and cache config are
   there, and what each server's handshake says. A binary the box cannot find is image
   drift (the running `evo-t1-dev` predates the npm bake), and the check prints the
   pinned `npm i -g --prefix /opt/npm-global` command that restores it.
+- A lane an agent needs fails in exactly three shapes, and that check tells them
+  apart, so run it before editing anything:
+  - **The block is missing from the rendered config.** That is a failure, not a
+    warning: the default render declares the lane, so something took it away - a push
+    passed its gate `false`, the workspace runs an older template, or the file lost
+    its stack marker and nothing re-renders it. Remedy: clear the gate and re-push,
+    then re-materialize the file with
+    `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>` from
+    the stack host, or `bazelisk run //scripts:seed-dev-env -- --home <dir>` for a
+    host home.
+  - **The binary is missing from the golden image.** A warning: the running
+    `evo-t1-dev` predates the npm bake. Remedy: rebuild the image and recreate the
+    workspace, or run the `npm i -g --prefix /opt/npm-global` command the check prints
+    to install the pinned package into the running box (pins in
+    `images/dev/tool-versions.env`).
+  - **The credential is missing.** Also a warning, and per lane it means something
+    different. `github` with `$GH_TOKEN` empty is a real gap: connect GitHub External
+    Auth (the **GitHub reauth** app) and start a new session. An empty
+    `CONTEXT7_API_KEY` is not a gap - see the key's paragraph above, the lane answers
+    keyless at the public rate limit.
 - What the agent is told about all this lives in `~/.grok/AGENTS.md`, inlined from
   `templates/common/GROK_BUILD_AGENTS.md`. Two sections cover the lanes. **Research
-  lanes** makes a lookup part of the normal loop rather than a last resort: `context7`
-  first for a library, framework, CLI or setup question (that two-tool order), the
-  `searxng` tools for anything else on the web, `web_fetch` for a URL already in hand,
-  and it states that native `web_search` is parked so nobody spends a turn
-  rediscovering the 400. **Tool output stays out of the parent context** makes that
+  lanes** makes a lookup part of the normal loop rather than a last resort, with the
+  routing fixed by question type: a library, framework, CLI or setup question goes to
+  `context7` (resolve the library id first, then query docs on that id); anything else
+  on the web goes to the `searxng` `search` tool; a URL already in hand goes to
+  `searxng`'s `fetch_content`, because Grok's native `web_fetch` is unavailable here
+  too - `features.web_fetch` is on, but on a non-xAI endpoint that tool only runs
+  through `toolset.web_fetch.proxy_endpoint`, and this stack sets none. It also states
+  that native `web_search` is parked so nobody spends a turn rediscovering the 400.
+  **Tool output stays out of the parent context** makes that
   tool use delegated work: the child returns a digest - numbered findings, each one
   claim, one source URL and at most two lines of support, no raw result dumps,
   confidence stated - and keeps the raw pages to itself.

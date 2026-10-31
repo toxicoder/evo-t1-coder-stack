@@ -534,6 +534,12 @@ resource "coder_agent" "main" {
     # gated [mcp_servers.searxng] block dials; one variable feeds both, so the
     # probe and the lane can never disagree about the address.
     SEARXNG_URL = var.searxng_url
+    # The MCP tool-result cap. The CLI documents [mcp] max_output_bytes in
+    # config.toml but the pinned build reports that table as an unrecognized
+    # config key and applies nothing, so the cap rides the env var the CLI does
+    # honour. 40000 keeps one full 25-result searxng answer off the 20000-byte
+    # default that governs otherwise.
+    GROK_MAX_MCP_OUTPUT_BYTES = "40000"
     # No CODER_AGENT_EXP_* overrides on purpose (verified against the v2.36.6
     # binary + its agentcontextconfig source): these keys REPLACE the agent's
     # discovery defaults rather than appending to them, and the defaults are

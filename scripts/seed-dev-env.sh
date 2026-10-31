@@ -28,8 +28,10 @@
 #   --context7-mcp       keep the [mcp_servers.context7] docs lane in
 #                        ~/.grok/config.toml even with no CONTEXT7_API_KEY set.
 #                        A non-empty CONTEXT7_API_KEY keeps that block on its
-#                        own; with neither, it is dropped (a keyless laptop
-#                        gets no lane that can only fail its handshake).
+#                        own; with neither, it is dropped as the keyless default
+#                        (the lane handshakes and answers keyless at the public
+#                        rate limits, so this is a policy choice, not a broken
+#                        lane -- that is what --context7-mcp is for).
 #   --devcontainer       after a successful write, if GH_TOKEN or GITHUB_TOKEN
 #                        is set and gh is on PATH, run `gh auth setup-git`
 #                        (best effort). Does not write EVO_T1_DEVCONTAINER.
@@ -127,8 +129,10 @@ resolve_repo_root() {
 # Render grok-config.toml.tftpl for a contributor home. Contributor defaults
 # are fixed here (no Coder Terraform variables): the github and
 # grok_config_extra blocks are dropped; the search block is kept; the context7
-# block is kept only when the lane can answer, which means CONTEXT7_API_KEY is
-# non-empty or the caller passed the --context7-mcp verdict, so a keyless home
+# block is kept only when CONTEXT7_API_KEY is non-empty or the caller passed
+# the --context7-mcp verdict (the lane itself handshakes and answers keyless at
+# the public rate limits, so a keyless home dropping it is a default, not a
+# failure), so a keyless home
 # keeps the context7-free file. ${litellm_url} becomes STACK_LITELLM_URL; the
 # model default is agent; the affinity key is contributor; the cache-proxy
 # config path the template hardcodes is re-rooted under the seed home.

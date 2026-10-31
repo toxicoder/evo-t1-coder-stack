@@ -425,17 +425,27 @@ tool, or the 400 comes straight back.
 
 ### Context7 or GitHub tools missing in Grok Build -> parked MCP block, or a handshake with nothing to authenticate
 
-The three MCP servers (`github`, `context7`, `searxng`) ship by default. Park one
-with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` / `SEARCH_MCP=false` in `.env` and
-a template re-push. `bazelisk run //scripts:mcp-check` reports the declared lanes,
-their binaries, their credentials and their handshake in one pass; `grok mcp doctor`
-inside the workspace lists the declared servers and their handshake.
+The three MCP servers (`github`, `context7`, `searxng`) ship by default, so a lane
+missing from a session has one of three shapes: the block absent from the rendered
+config, the `command=` binary absent from the golden image, or the credential absent.
+Run `bazelisk run //scripts:mcp-check` first - it reports the declared lanes, their
+binaries, their credentials and their handshake in one pass, and it names which shape
+you are in (an undeclared lane is a failure, a missing binary a warning).
+`grok mcp doctor` inside the workspace lists the declared servers and their handshake.
+A *park* is deliberate and looks like this: `GITHUB_MCP=false` / `CONTEXT7_MCP=false` /
+`SEARCH_MCP=false` in `.env` (relayed by `push-template.sh`) or
+`--var github_mcp=false` / `--var context7_mcp=false` / `--var search_mcp=false` on a
+template push. With none of those set, a missing block is a defect, not a park.
 
 - A missing `[mcp_servers.github]` or `[mcp_servers.context7]` in
   `~/.grok/config.toml` means the last push passed `--var ...=false`, or the
   workspace started from an older template, or the file carries no stack marker at all
-  (next bullet). Re-push and restart the workspace so the managed `config.toml`
-  re-renders.
+  (next bullet). Clear the gate and re-push, then re-materialize the file and restart
+  the workspace so the managed `config.toml` re-renders. Two routes re-materialize it:
+  `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>` from the
+  stack host, for a running workspace container, and
+  `bazelisk run //scripts:seed-dev-env -- --home <dir>` for a host home (a laptop, CI,
+  or the contributor container).
 - A declared server whose `command=` the box cannot find is image drift: the
   templates declare a binary the running image never got, because it predates the
   npm bake in `images/dev/Dockerfile`. Rebuild `evo-t1-dev` and recreate the
@@ -455,9 +465,19 @@ inside the workspace lists the declared servers and their handshake.
 - A declared github server that fails handshake: the owner has not connected
   GitHub External Auth, so `$GH_TOKEN` is empty. Use the **GitHub reauth** app,
   then start a new Grok session.
-- A declared context7 server that fails handshake: empty `CONTEXT7_API_KEY` is
-  the supported public-rate-limit shape. A key in `.env` plus a re-push fills
-  the env; the block still renders with no key.
+- A declared context7 server: an empty `CONTEXT7_API_KEY` is the shipped default and
+  does *not* fail the handshake. With no value the server sends no `Authorization`
+  header, so it handshakes and answers at the public rate limit, and only private
+  libraries are out of reach. A key in `.env` plus a re-push fills the env. When a
+  context7 handshake really fails the key is not the cause: run
+  `bazelisk run //scripts:mcp-check` and it says which of the block, the binary, the
+  cache config or the handshake is not OK.
+- No `web_fetch` either, and that is not a misconfiguration: `features.web_fetch` is
+  on, but on a non-xAI model endpoint that tool runs only through
+  `toolset.web_fetch.proxy_endpoint` and this stack sets none. Route a URL already in
+  hand to `searxng`'s `fetch_content`, anything else on the web to the `searxng`
+  `search` tool, and a library, framework, CLI or setup question to `context7`
+  (`resolve-library-id` first, then `query-docs` on that id).
 - Discover live tool names with `search_tool`, then call `use_tool` with that
   schema. Do not hardcode MCP tool names from memory.
 

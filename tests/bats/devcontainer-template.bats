@@ -44,7 +44,9 @@
 # every populated shape denied for Read and Edit, every secret-free template name
 # allowed, the two tables byte-identical between the twins, and the .gitignore
 # side that keeps a populated variant out of a commit while the key list a repo
-# ships stays addable.
+# ships stays addable. It also pins the research half of the same tables: both
+# twins pre-allow the two read-only lane tools, byte-identically, inside the
+# [permission] table, with the write-capable github server left out.
 #
 # Usage: bazelisk test //tests:bats_devcontainer_template_test   (from any cwd)
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
@@ -377,6 +379,44 @@ setup() {
     run grep -F '${mcp_cache_proxy}' "${st}"
     [ "${status}" -eq 0 ]
   done
+}
+
+@test "research lanes: both config twins pre-allow the read-only lane tools" {
+  # A declared MCP server still needs a grant per tool call, and a headless run
+  # (`grok -p`, which is how the delegation skill launches its children) has
+  # nobody to ask: the call comes back "headless run cannot ask for approval"
+  # and the session loses the web and the docs lane outright. Both twins
+  # therefore ship one identical allow list for the two read-only lanes. The
+  # github server is deliberately absent: its tools write with the owner's
+  # minted token, so those keep prompting for a human.
+  local tpl allow_block="" seen=""
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    run sed -n '/^allow = \[/,/^\]/p' "${tpl}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *'"MCPTool(searxng__*)"'* ]]
+    [[ "${output}" == *'"MCPTool(context7__*)"'* ]]
+    if [[ -z "${seen}" ]]; then
+      seen="1"
+      allow_block="${output}"
+    else
+      [ "${output}" = "${allow_block}" ]
+    fi
+    # The grant has to sit inside the [permission] table to load at all, and that
+    # table can carry one allow key only: a second `allow = [` is a duplicate TOML
+    # key, and the CLI keeps the last one, which would drop the dotenv list.
+    run awk '/^\[permission\]/{inblock=1; next} /^\[/{inblock=0} inblock' "${tpl}"
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *'"MCPTool(searxng__*)"'* ]]
+    [[ "${output}" == *'"MCPTool(context7__*)"'* ]]
+    [ "$(printf '%s\n' "${output}" | grep -c '^allow = \[')" -eq 1 ]
+  done
+  # A write-capable server pre-allowed would be a quiet privilege grant.
+  run grep -F 'MCPTool(github__*)' "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+  [ "${status}" -ne 0 ]
+  run grep -F 'MCPTool(github__*)' "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"
+  [ "${status}" -ne 0 ]
 }
 
 @test "context7 lane: both main.tf twins feed the gate and both coder.tf twins declare the variables" {

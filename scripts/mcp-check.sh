@@ -231,25 +231,52 @@ tool_pin() {
 }
 
 # @function lane_remedy
-# Print the install command that restores a stdio lane's binaries, built from the
-# pins in images/dev/tool-versions.env so the advice matches this checkout.
+# Print the operator remedy for one lane, from one lane map: the install
+# command that restores a stdio lane's binaries (kind command, the default),
+# built from the pins in images/dev/tool-versions.env so the advice matches
+# this checkout, or the re-materialize route for a lane whose declared block
+# is absent while its binaries are baked (kind declared). The declared remedy
+# stays distinct from the install text, and prints nothing when a binary is
+# absent: that combination is image drift, not a config to re-render.
 # Globals:
-#   REPO_ROOT_RESOLVED (via tool_pin)
+#   REPO_ROOT_RESOLVED (via tool_pin), NPM_GLOBAL_PREFIX (default
+#   /opt/npm-global, where the golden image bakes the lane binaries; tests
+#   point it at a scratch dir)
 # Arguments:
 #   $1 - lane name (searxng or context7)
+#   $2 - command (default) | declared
 # Outputs:
-#   The remedy text on stdout, empty for a lane with no npm package
+#   The remedy text on stdout, empty for a lane with no map entry or a
+#   declared query whose binaries are not on this box
 # Returns:
 #   0, always
 lane_remedy() {
-  local lane="${1:-}" packages=""
+  local lane="${1:-}" kind="${2:-command}" packages="" gate="" bins=""
+  local prefix="${NPM_GLOBAL_PREFIX:-/opt/npm-global}"
   case "${lane}" in
-    searxng) packages="searxng-mcp-server:SEARXNG_MCP_SERVER_VERSION" ;;
-    context7) packages="mcp-cache-proxy:MCP_CACHE_PROXY_VERSION @upstash/context7-mcp:CONTEXT7_MCP_VERSION" ;;
+    searxng)
+      packages="searxng-mcp-server:SEARXNG_MCP_SERVER_VERSION"
+      gate="SEARCH_MCP"
+      bins="searxng-mcp-server"
+      ;;
+    context7)
+      packages="mcp-cache-proxy:MCP_CACHE_PROXY_VERSION @upstash/context7-mcp:CONTEXT7_MCP_VERSION"
+      gate="CONTEXT7_MCP"
+      bins="mcp-cache-proxy context7-mcp"
+      ;;
     *) return 0 ;;
   esac
+  if [ "${kind}" = "declared" ]; then
+    local bin
+    for bin in ${bins}; do
+      [ -x "${prefix}/bin/${bin}" ] || return 0
+    done
+    printf "the declared block is missing while the golden image carries its binaries - re-materialize the config with 'bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>' from the stack host, or 'bazelisk run //scripts:seed-dev-env -- --home <dir>' for a host home; a lane parked on purpose is parked by %s=false in .env, which push-template.sh relays to both template pushes" \
+      "${gate}"
+    return 0
+  fi
   local pair name key version
-  printf 'npm i -g --prefix /opt/npm-global'
+  printf 'npm i -g --prefix %s' "${prefix}"
   for pair in ${packages}; do
     name="${pair%%:*}"
     key="${pair##*:}"
@@ -424,7 +451,7 @@ emit_finding() {
 # Returns:
 #   0, always (the counters decide the exit code)
 report_lanes() {
-  local findings="" line lane_name check status detail remedy="" lane
+  local findings="" line lane_name check status detail remedy="" declared="" lane
   local -a doctor_arg=() unmanaged_arg=()
   [ "${DOCTOR_OK}" = "1" ] && doctor_arg=(--doctor "${DOCTOR_FILE}")
   [ "${CONFIG_MANAGED}" = "1" ] || unmanaged_arg=(--unmanaged)
@@ -440,6 +467,13 @@ report_lanes() {
       remedy=""
       if [ "${status}" = "warn" ] && [ "${check}" = "command" ]; then
         remedy=" - $(lane_remedy "${lane}")"
+      elif [ "${status}" = "error" ] && [ "${check}" = "declared" ] &&
+        [ "${CONFIG_MANAGED}" = "1" ]; then
+        # A required lane missing from a stack-managed render whose binaries
+        # are baked is a lost block, not drift: name the re-materialize route.
+        # lane_remedy prints nothing when the binaries are absent.
+        declared="$(lane_remedy "${lane}" declared)"
+        [ -n "${declared}" ] && remedy=" - ${declared}"
       fi
       emit_finding "${status}" "${lane}: ${check} ${detail}${remedy}"
     done <<<"${findings}"
