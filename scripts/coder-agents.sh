@@ -52,6 +52,17 @@
 #      when a chat has no workspace attached and never reads a template's
 #      instruction files.
 #
+# Before any of that, a health gate asks the LiteLLM proxy which aliases have
+# at least one deployment the router is not holding unhealthy. An alias
+# reported dead is neither registered nor pinned. That gate exists because the
+# Arc deployments go unhealthy the moment their weights are not pulled (Ollama
+# answers 404 "model ... not found, try pulling it first"), and a dead `chat`
+# used to be registered as a dropdown entry and still take the compaction and
+# title_generation pins — every Agents chat lost its titles and died at the
+# compaction threshold while this script printed "ok: model pins". The gate
+# fails open in every direction: a proxy that will not answer registers
+# everything exactly as it did before the gate existed.
+#
 # Like push-template.sh, everything Coder-facing runs INSIDE the coder
 # container against the server's own loopback listener, with a short-lived
 # admin token minted in the stack's Postgres (token_name 'stack-coder-agents',
@@ -76,6 +87,10 @@
 #                                    coder container (default http://litellm:4000/v1)
 #   CODER_AGENTS_USER=<username>     user to mint the token for
 #   CODER_AGENTS_TOKEN_MINUTES=10    lifetime of the minted token
+#   CODER_AGENTS_LIVE_ALIASES="…"    space-separated alias list that replaces
+#                                    the LiteLLM health probe outright (for a
+#                                    proxy whose health data is stale, or to
+#                                    drive the run from a test)
 # The psql one-offs (psql_sql / psql_query) come from scripts/lib/coder_api.sh,
 # sourced right after the libs are loaded below. That file honours PROBE_TIMEOUT,
 # so the assignments further down still win over its defaults.
@@ -203,12 +218,13 @@ MODEL_CHAT_DISPLAY="Coder Agents — tool-calling (Arc IPEX-LLM qwen2.5:7b)"
 if [ "${MODE}" = "dry-run" ]; then
   log "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):"
   log "  ensure AI provider ${PROVIDER_NAME} (type openai-compat, enabled, base_url ${PROVIDER_URL}, api_keys: [LITELLM_MASTER_KEY from .env, or the compose placeholder — hidden])"
+  log "  read LiteLLM /health and /v1/model/info, and treat only the aliases with a healthy deployment as registerable (fail open when the proxy will not answer)"
   log "  ensure chat model config agent (context_limit 262144, is_default true)"
   log "  ensure chat model config agent-low (context_limit 262144)"
   log "  ensure chat model config agent-medium (context_limit 262144)"
   log "  ensure chat model config agent-xhigh (context_limit 262144)"
   log "  ensure chat model config chat (context_limit 32768)"
-  log "  pin model overrides general+explore -> agent (or chat if only chat exists); compaction+title_generation -> chat (or agent)"
+  log "  pin model overrides general+explore -> agent, compaction+title_generation -> chat, each only among the aliases the health gate left standing"
   log "  ensure deployment system prompt (custom text appended to Coder's default)"
   exit 0
 fi
@@ -492,6 +508,143 @@ else
 fi
 ok "AI provider ${PROVIDER_NAME}"
 
+# ── Health gate: which aliases can actually serve ───────────────────────────
+# An alias the proxy still lists is not an alias that can answer. GET /health
+# is the cached view the router itself routes on, kept warm by
+# background_health_checks (litellm/config.yaml) — measured 4 ms against this
+# stack's proxy. It is asked WITHOUT ?check_deployments=true on purpose: that
+# form fires one live completion per deployment, which is the prompt-cache
+# eviction the health-check notes in litellm/config.yaml spend a paragraph
+# warning about.
+#
+# /health names deployments by model_id and never says which alias they serve,
+# so /v1/model/info supplies the alias -> model_id map and the two are joined
+# below. Every failure mode here fails OPEN (see litellm_live_aliases), because
+# a proxy that will not answer must never blank a dropdown that a healthy
+# stack already filled.
+LITELLM_BASE_URL="${PROVIDER_URL%/}"
+LITELLM_BASE_URL="${LITELLM_BASE_URL%/v1}"
+ALIASES_PROBED=0
+LIVE_ALIASES=""
+
+# @function litellm_get
+# GET one LiteLLM path from inside the coder container (same compose network as
+# the proxy). The master key travels on stdin as a curl --config file: an
+# -H "Authorization: Bearer $KEY" argument would be expanded by the in-container
+# shell and land in that container's process list and in this script's own argv,
+# which is the leak the api_write body already avoids by riding on stdin.
+# Globals:
+#   LITELLM_BASE_URL, litellm_key, API_TIMEOUT, CODER_CONTAINER
+# Arguments:
+#   $1 - LiteLLM path beginning with /
+# Outputs:
+#   The response body
+# Returns:
+#   0 on a 2xx body; curl's status otherwise
+litellm_get() {
+  printf 'header = "Authorization: Bearer %s"\n' "${litellm_key}" |
+    stack_timeout "${API_TIMEOUT}" docker exec -i "${CODER_CONTAINER}" \
+      sh -c 'curl -fsS -m 15 --config - "$1"' sh "${LITELLM_BASE_URL}${1}"
+}
+
+# @function litellm_live_aliases
+# Join one /v1/model/info body with one /health body and print the aliases that
+# still have at least one deployment the proxy does not report unhealthy.
+# Aliases the health body says nothing about count as live: an unprobed
+# deployment is not a dead one.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the /v1/model/info body
+#   $2 - the /health body
+# Outputs:
+#   One alias per line, sorted
+# Returns:
+#   0 when the info body yielded at least one alias -> model_id pair, so the
+#   answer is real data; 1 when it yielded none, which means the proxy did not
+#   answer usefully and the caller must fall back to registering everything
+litellm_live_aliases() {
+  local info="$1" health="$2" dead pairs
+  # Only the ids under "unhealthy_endpoints" are held dead; the healthy half of
+  # the body is never consulted, so a stale healthy list cannot resurrect a
+  # deployment the router has already pulled.
+  dead="$(printf '%s' "${health}" |
+    awk '{ i = index($0, "\"unhealthy_endpoints\""); if (i > 0) { print substr($0, i); exit } }' |
+    grep -o '"model_id":"[^"]*"' |
+    sed -e 's/^"model_id":"//' -e 's/"$//' | sort -u || true)"
+  # One entry is {"model_name":<alias>,"litellm_params":{...},"model_info":{"id":…}},
+  # so the first "id" after a "model_name" is that deployment's model_id.
+  pairs="$(printf '%s' "${info}" | awk '
+    {
+      s = $0
+      while (match(s, /"model_name":"[^"]*"/)) {
+        name = substr(s, RSTART + 14, RLENGTH - 15)
+        s = substr(s, RSTART + RLENGTH)
+        if (match(s, /"id":"[^"]*"/)) {
+          print name " " substr(s, RSTART + 6, RLENGTH - 7)
+          s = substr(s, RSTART + RLENGTH)
+        }
+      }
+    }')"
+  if [ -z "${pairs}" ]; then
+    return 1
+  fi
+  printf '%s\n' "${pairs}" |
+    awk -v dead="${dead}" '
+      BEGIN { n = split(dead, d, "\n"); for (i = 1; i <= n; i++) if (d[i] != "") bad[d[i]] = 1 }
+      NF == 2 && !($2 in bad) { live[$1] = 1 }
+      END { for (a in live) print a }' |
+    sort
+}
+
+# @function alias_is_live
+# Say whether one LiteLLM alias may be registered and pinned.
+# Globals:
+#   ALIASES_PROBED, LIVE_ALIASES
+# Arguments:
+#   $1 - alias name
+# Outputs:
+#   Nothing
+# Returns:
+#   0 when the alias is live or the health gate has no answer (fail open);
+#   1 when the proxy reported every one of its deployments unhealthy
+alias_is_live() {
+  [ "${ALIASES_PROBED}" = "1" ] || return 0
+  printf '%s\n' "${LIVE_ALIASES}" | grep -qxF -- "$1"
+}
+
+section "Model health"
+phase "ask LiteLLM which aliases have a healthy deployment"
+if [ -n "${CODER_AGENTS_LIVE_ALIASES:-}" ]; then
+  LIVE_ALIASES="$(
+    for want_alias in ${CODER_AGENTS_LIVE_ALIASES}; do
+      printf '%s\n' "${want_alias}"
+    done | sort -u
+  )"
+  ALIASES_PROBED=1
+  note "model health taken from CODER_AGENTS_LIVE_ALIASES (the LiteLLM probe was skipped)"
+else
+  model_info_body="$(litellm_get "/v1/model/info" 2>/dev/null)" || model_info_body=""
+  health_body="$(litellm_get "/health" 2>/dev/null)" || health_body=""
+  if live_alias_body="$(litellm_live_aliases "${model_info_body}" "${health_body}")" &&
+    [ -n "${live_alias_body}" ]; then
+    LIVE_ALIASES="${live_alias_body}"
+    ALIASES_PROBED=1
+  else
+    LIVE_ALIASES=""
+    ALIASES_PROBED=0
+    warn "LiteLLM at ${LITELLM_BASE_URL} did not answer /v1/model/info, so no alias could be ruled out — every alias is registered as if healthy (check: bazelisk run //scripts:prod-stack -- logs --tail 100 litellm)"
+  fi
+fi
+if [ "${ALIASES_PROBED}" = "1" ]; then
+  if [ -n "${LIVE_ALIASES}" ]; then
+    log "healthy aliases: $(printf '%s' "${LIVE_ALIASES}" | tr '\n' ' ')"
+  else
+    warn "LiteLLM reports no healthy deployment for any alias — the Agents chat will have no model it can actually reach (pull the Arc weights with: bazelisk run //scripts:pull-models)"
+  fi
+fi
+ok "model health"
+
 # ── 2. Chat model configs ───────────────────────────────────────────────────
 # Both reads and writes below go through /api/experimental; on v2.36.6 the
 # chat-model surface lives ONLY there (no guarantee of API stability, by
@@ -503,17 +656,20 @@ ok "AI provider ${PROVIDER_NAME}"
 # row (a stale pre-create list would leave step 3 without pin targets).
 # First uuid inside the object for a given model = that config's id (id is
 # the first field serialized; the object is isolated by splitting on braces).
-# @function model_config_id
-# Print the chat model-config uuid for one model alias, or nothing.
+# @function model_config_chunk
+# Print the fields of one chat model config (the text between its braces), or
+# nothing when the list cannot be read or has no row for that alias. A fresh
+# api_read per call: after a create, the reread must see the new row (a stale
+# pre-create list would leave step 3 without pin targets).
 # Globals:
-#   UUID_RE, api_read
+#   api_read
 # Arguments:
 #   $1 - model alias (agent, agent-low, agent-medium, agent-xhigh, or chat)
 # Outputs:
-#   The uuid, or nothing when the list cannot be read or has no row
+#   The config's fields, or nothing when there is no such config
 # Returns:
 #   0
-model_config_id() {
+model_config_chunk() {
   local body
   if ! body="$(api_read "/api/experimental/chats/model-configs")"; then
     return 0
@@ -521,16 +677,56 @@ model_config_id() {
   printf '%s' "${body}" |
     tr '{}' '\n\n' |
     grep -F "\"model\":\"${1}\"" |
-    head -1 |
-    grep -oE "${UUID_RE}" |
     head -1 || true
 }
 
-agent_id="$(model_config_id agent)"
-agent_low_id="$(model_config_id agent-low)"
-agent_medium_id="$(model_config_id agent-medium)"
-agent_xhigh_id="$(model_config_id agent-xhigh)"
-chat_id="$(model_config_id chat)"
+# @function model_config_id
+# Print the chat model-config uuid for one model alias, or nothing.
+# Globals:
+#   UUID_RE, model_config_chunk
+# Arguments:
+#   $1 - model alias (agent, agent-low, agent-medium, agent-xhigh, or chat)
+# Outputs:
+#   The uuid, or nothing when the list cannot be read or has no row
+# Returns:
+#   0
+model_config_id() {
+  model_config_chunk "$1" | grep -oE "${UUID_RE}" | head -1 || true
+}
+
+# @function check_model_config_drift
+# Report a stored chat model config that the old "a row exists for that alias"
+# check called configured while the chat stayed broken: disabled, not the
+# deployment default, or compacting against the wrong window. Read-only on
+# purpose — the experimental surface this script uses has no PATCH for model
+# configs, so the repair is named for the operator rather than guessed at.
+# Globals:
+#   model_config_chunk, warn
+# Arguments:
+#   $1 - model alias; $2 - expected context_limit; $3 - expected default (true|false)
+# Outputs:
+#   One warning line per drift it can prove from the stored row
+# Returns:
+#   0
+check_model_config_drift() {
+  local alias_name="$1" want_ctx="$2" want_default="$3" chunk have_ctx
+  chunk="$(model_config_chunk "${alias_name}")"
+  if [ -z "${chunk}" ]; then
+    return 0
+  fi
+  if printf '%s' "${chunk}" | grep -qF '"enabled":false'; then
+    warn "model config ${alias_name}: present but disabled, so it is missing from the picker and cannot route a turn (enable it in Admin -> Experiments -> Agent Chat)"
+  fi
+  if [ "${want_default}" = "true" ] &&
+    printf '%s' "${chunk}" | grep -qF '"is_default":false'; then
+    warn "model config ${alias_name}: not the deployment default, so a chat opened without an explicit model pick has nothing to resolve to (make it the default in Admin -> Experiments -> Agent Chat)"
+  fi
+  have_ctx="$(printf '%s' "${chunk}" |
+    grep -o '"context_limit":[0-9]*' | head -1 | sed 's/^"context_limit"://')"
+  if [ -n "${have_ctx}" ] && [ "${have_ctx}" != "${want_ctx}" ]; then
+    warn "model config ${alias_name}: context_limit is ${have_ctx} while this stack serves ${want_ctx} on that alias, so the agent compacts against the smaller number (correct it in Admin -> Experiments -> Agent Chat)"
+  fi
+}
 
 # @function create_model_config
 # POST one chat model config. The display name is JSON-escaped.
@@ -551,6 +747,44 @@ create_model_config() {
   fi
 }
 
+# @function ensure_model_config
+# Register one chat model config, or leave the row that is already there, or
+# refuse to register one whose alias LiteLLM reports dead. On return the config
+# uuid (created or pre-existing, empty when neither) is in MODEL_CONFIG_ID.
+# Globals:
+#   MODEL_CONFIG_ID, model_config_id, alias_is_live, create_model_config,
+#   check_model_config_drift, log, warn
+# Arguments:
+#   $1 - model; $2 - display name; $3 - context_limit; $4 - is_default (true|false)
+# Outputs:
+#   One log line for what it did, and any drift warnings
+# Returns:
+#   0 when the config exists or was skipped as unhealthy; 1 when the POST failed
+ensure_model_config() {
+  local alias_name="$1" display="$2" want_ctx="$3" want_default="$4" suffix=""
+  MODEL_CONFIG_ID="$(model_config_id "${alias_name}")"
+  if [ -n "${MODEL_CONFIG_ID}" ]; then
+    log "model config ${alias_name}: already present (left untouched)"
+    check_model_config_drift "${alias_name}" "${want_ctx}" "${want_default}"
+    return 0
+  fi
+  if ! alias_is_live "${alias_name}"; then
+    warn "model config ${alias_name}: skipped — LiteLLM reports every deployment behind that alias unhealthy, so registering it would only add a picker entry that errors on the first send (re-run this script once the lane answers; the Arc weights come back with: bazelisk run //scripts:pull-models)"
+    return 0
+  fi
+  if [ "${want_default}" = "true" ]; then
+    suffix=", default"
+  fi
+  log "creating model config ${alias_name} (context_limit ${want_ctx}${suffix})"
+  if ! create_model_config "${alias_name}" "${display}" "${want_ctx}" "${want_default}"; then
+    return 1
+  fi
+  # A created config is only proof for the NEXT step if it reads back; the uuid
+  # is reread rather than trusted from the POST body (same shape, one extra
+  # call, no assumption about partial success).
+  MODEL_CONFIG_ID="$(model_config_id "${alias_name}")"
+}
+
 # The provider uuid is needed for the model-config body.
 provider_get="$(api_read "/api/v2/ai/providers/${PROVIDER_NAME}")" ||
   die "could not read back provider ${PROVIDER_NAME} (its name may differ in case or the create failed)"
@@ -560,62 +794,135 @@ if [ -z "${provider_id}" ]; then
 fi
 
 section "Chat model configs"
-if [ -n "${agent_id}" ]; then
-  log "model config agent: already present (left untouched)"
-else
-  log "creating model config agent (context_limit 262144, default)"
-  create_model_config "agent" "${MODEL_AGENT_DISPLAY}" 262144 true ||
-    die "the agent model config could not be created — Agents chats will error until one exists"
-  # A created config is only proof for the NEXT step if it reads back; the
-  # uuid is reread rather than trusted from the POST body (same shape, one
-  # extra call, no assumption about partial success).
-  agent_id="$(model_config_id agent)"
-fi
+MODEL_CONFIG_ID=""
+ensure_model_config "agent" "${MODEL_AGENT_DISPLAY}" 262144 true ||
+  die "the agent model config could not be created — Agents chats will error until one exists"
+agent_id="${MODEL_CONFIG_ID}"
 
-if [ -n "${agent_low_id}" ]; then
-  log "model config agent-low: already present (left untouched)"
-else
-  log "creating model config agent-low (context_limit 262144)"
-  create_model_config "agent-low" "${MODEL_AGENT_LOW_DISPLAY}" 262144 false ||
-    die "the agent-low model config could not be created — re-run after the server is healthy"
-  agent_low_id="$(model_config_id agent-low)"
-fi
+ensure_model_config "agent-low" "${MODEL_AGENT_LOW_DISPLAY}" 262144 false ||
+  die "the agent-low model config could not be created — re-run after the server is healthy"
+agent_low_id="${MODEL_CONFIG_ID}"
 
-if [ -n "${agent_medium_id}" ]; then
-  log "model config agent-medium: already present (left untouched)"
-else
-  log "creating model config agent-medium (context_limit 262144)"
-  create_model_config "agent-medium" "${MODEL_AGENT_MEDIUM_DISPLAY}" 262144 false ||
-    die "the agent-medium model config could not be created — re-run after the server is healthy"
-  agent_medium_id="$(model_config_id agent-medium)"
-fi
+ensure_model_config "agent-medium" "${MODEL_AGENT_MEDIUM_DISPLAY}" 262144 false ||
+  die "the agent-medium model config could not be created — re-run after the server is healthy"
+agent_medium_id="${MODEL_CONFIG_ID}"
 
-if [ -n "${agent_xhigh_id}" ]; then
-  log "model config agent-xhigh: already present (left untouched)"
-else
-  log "creating model config agent-xhigh (context_limit 262144)"
-  create_model_config "agent-xhigh" "${MODEL_AGENT_XHIGH_DISPLAY}" 262144 false ||
-    die "the agent-xhigh model config could not be created — re-run after the server is healthy"
-  agent_xhigh_id="$(model_config_id agent-xhigh)"
-fi
+ensure_model_config "agent-xhigh" "${MODEL_AGENT_XHIGH_DISPLAY}" 262144 false ||
+  die "the agent-xhigh model config could not be created — re-run after the server is healthy"
+agent_xhigh_id="${MODEL_CONFIG_ID}"
 
-if [ -n "${chat_id}" ]; then
-  log "model config chat: already present (left untouched)"
-else
-  log "creating model config chat (context_limit 32768)"
-  create_model_config "chat" "${MODEL_CHAT_DISPLAY}" 32768 false ||
-    die "the chat model config could not be created — re-run after the server is healthy"
-  chat_id="$(model_config_id chat)"
+ensure_model_config "chat" "${MODEL_CHAT_DISPLAY}" 32768 false ||
+  die "the chat model config could not be created — re-run after the server is healthy"
+chat_id="${MODEL_CONFIG_ID}"
+
+# A chat with no enabled model config to fall back to errors on its very first
+# send, and is_default is only ever written by the create path above. Warn when
+# the stored rows prove the field exists and none of them carries it, so the
+# operator is told where to click instead of being left with a dead chat that
+# this script just called ok. The "field exists" test is what keeps a response
+# shape that omits is_default for non-defaults from raising this on every run.
+configs_body="$(api_read "/api/experimental/chats/model-configs" 2>/dev/null)" || configs_body=""
+if [ -n "${configs_body}" ] &&
+  printf '%s' "${configs_body}" | grep -qF '"is_default":false' &&
+  ! printf '%s' "${configs_body}" | grep -qF '"is_default":true'; then
+  warn "no chat model config is the deployment default, so a chat opened without an explicit model pick has nothing to resolve to (pick a default in Admin -> Experiments -> Agent Chat)"
 fi
 ok "chat model configs"
 
 # ── 3. Model pins for the four auxiliary lanes ──────────────────────────────
 # general/explore name the subagent types; compaction/title_generation name
-# the helper calls. Unset lanes get pinned; any existing pin is respected.
-# @function pin_lane
-# PUT a model-config pin on one auxiliary lane when that lane is unset.
+# the helper calls. A pin may only aim at a config whose alias the health gate
+# let through: the pre-gate rule was "agent if it exists, else chat", and that
+# is how a dark Arc lane ended up owning compaction and title_generation, which
+# costs every conversation its titles and kills the run at the compaction
+# threshold. A lane the admin pinned to one of the stack's healthy configs is
+# left alone, and so is a pin aimed at a config this script never created.
+
+# @function pick_live_config
+# Walk an alias preference list and print "<alias> <uuid>" for the first alias
+# that has both a registered config and a live alias behind it, so the caller
+# can label the pin with the alias that actually won.
 # Globals:
-#   api_read, api_write, log, die
+#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, chat_id,
+#   alias_is_live
+# Arguments:
+#   $1 - space-separated aliases, most preferred first
+# Outputs:
+#   "<alias> <uuid>", or nothing when no alias in the list qualifies
+# Returns:
+#   0
+pick_live_config() {
+  local try_alias try_id
+  for try_alias in $1; do
+    try_id=""
+    case "${try_alias}" in
+      agent) try_id="${agent_id}" ;;
+      agent-low) try_id="${agent_low_id}" ;;
+      agent-medium) try_id="${agent_medium_id}" ;;
+      agent-xhigh) try_id="${agent_xhigh_id}" ;;
+      chat) try_id="${chat_id}" ;;
+    esac
+    if [ -n "${try_id}" ] && alias_is_live "${try_alias}"; then
+      printf '%s %s' "${try_alias}" "${try_id}"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# @function stack_config_ids
+# Print every model-config uuid this script knows about, one per line.
+# Globals:
+#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, chat_id
+# Arguments:
+#   None
+# Outputs:
+#   Zero or more uuids
+# Returns:
+#   0
+stack_config_ids() {
+  local candidate
+  for candidate in "${agent_id}" "${agent_low_id}" "${agent_medium_id}" \
+    "${agent_xhigh_id}" "${chat_id}"; do
+    if [ -n "${candidate}" ]; then
+      printf '%s\n' "${candidate}"
+    fi
+  done
+}
+
+# @function dead_config_ids
+# Print the model-config uuids whose alias the health gate ruled out, so
+# pin_lane can notice a lane aimed at one and move it. Without this a bad pin
+# was permanent: the old check kept any pin it could see, so a re-run after the
+# Arc weights came back still left compaction on a model that could not answer.
+# Globals:
+#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, chat_id,
+#   alias_is_live
+# Arguments:
+#   None
+# Outputs:
+#   Zero or more uuids
+# Returns:
+#   0
+dead_config_ids() {
+  local pair alias id
+  for pair in "agent:${agent_id}" "agent-low:${agent_low_id}" \
+    "agent-medium:${agent_medium_id}" "agent-xhigh:${agent_xhigh_id}" \
+    "chat:${chat_id}"; do
+    alias="${pair%%:*}"
+    id="${pair#*:}"
+    if [ -n "${id}" ] && ! alias_is_live "${alias}"; then
+      printf '%s\n' "${id}"
+    fi
+  done
+}
+
+# @function pin_lane
+# PUT a model-config pin on one auxiliary lane when that lane is unset, or when
+# it is pinned to one of this script's configs whose alias has since gone
+# unhealthy.
+# Globals:
+#   api_read, api_write, log, warn, note, die, stack_config_ids, dead_config_ids
 # Arguments:
 #   $1 - lane; $2 - label for the log; $3 - model-config uuid
 # Outputs:
@@ -624,18 +931,35 @@ ok "chat model configs"
 #   0 when pinned, skipped, or left alone; exits 1 when the PUT fails
 pin_lane() {
   # $1 = lane, $2 = model label (for the log line), $3 = model-config uuid.
-  local lane="$1" label="$2" target="$3" current
+  local lane="$1" label="$2" target="$3" current pinned_id dead ours
   if [ -z "${target}" ]; then
-    log "lane ${lane}: skipped — no model config available to pin"
+    log "lane ${lane}: skipped — no live model config available to pin"
     return 0
   fi
   if ! current="$(api_read "/api/experimental/chats/config/model-override/${lane}")"; then
-    log "lane ${lane}: could not read the current pin, leaving it alone"
+    warn "lane ${lane}: the current pin could not be read, so it was left alone rather than overwritten — confirm it in Admin -> Experiments -> Agent Chat"
     return 0
   fi
-  if ! printf '%s' "${current}" | grep -qF '"model_config_id":""'; then
-    log "lane ${lane}: already pinned, leaving the admin's choice in place"
-    return 0
+  # The old test was grep for the literal "model_config_id":"" — an unset lane
+  # answered any other way (field absent, null) read as pinned and was never
+  # written. Extract the value and treat empty as unset.
+  pinned_id="$(printf '%s' "${current}" |
+    grep -o '"model_config_id":"[^"]*"' | head -1 |
+    sed -e 's/^"model_config_id":"//' -e 's/"$//')"
+  if [ -z "${pinned_id}" ]; then
+    log "lane ${lane}: unset, pinning"
+  else
+    dead="$(dead_config_ids)"
+    ours="$(stack_config_ids)"
+    if [ -n "${dead}" ] && printf '%s\n' "${dead}" | grep -qxF -- "${pinned_id}"; then
+      warn "lane ${lane}: was pinned to a model config whose alias LiteLLM reports unhealthy — re-pinning it to ${label}"
+    elif [ -n "${ours}" ] && printf '%s\n' "${ours}" | grep -qxF -- "${pinned_id}"; then
+      log "lane ${lane}: already pinned to a healthy stack model config, leaving the admin's choice in place"
+      return 0
+    else
+      note "lane ${lane}: already pinned to a model config this script did not create, leaving the admin's choice in place"
+      return 0
+    fi
   fi
   if api_write PUT "/api/experimental/chats/config/model-override/${lane}" \
     "{\"model_config_id\":\"${target}\"}" >/dev/null; then
@@ -645,20 +969,27 @@ pin_lane() {
   fi
 }
 
-primary="${agent_id:-${chat_id}}"
-secondary="${chat_id:-${agent_id}}"
+primary_pick="$(pick_live_config "agent chat")"
+primary="${primary_pick## }"
+secondary_pick="$(pick_live_config "chat agent")"
+secondary="${secondary_pick## }"
 if [ -z "${primary}" ]; then
   # Neither a pre-existing config nor a fresh create survived the reread
-  # (e.g. a server that restarted mid-run). Stop loudly instead of leaving
-  # the model pins without a target.
+  # (e.g. a server that restarted mid-run), or every candidate alias was
+  # unhealthy. Stop loudly instead of leaving the model pins without a target.
   die "no chat model config could be registered or found; Agents chat needs one — check the LiteLLM aliases against ${PROVIDER_URL}/v1/models"
+fi
+primary_label="${primary_pick%% *} (live tool-capable alias)"
+secondary_label="${secondary_pick%% *} (live alias for the helper calls)"
+if [ "${ALIASES_PROBED}" = "1" ] && [ "${secondary_pick%% *}" != "chat" ]; then
+  note "compaction and title_generation go to ${secondary_label}: LiteLLM reports no healthy deployment behind the Arc chat alias"
 fi
 section "Model pins"
 phase "pin the four auxiliary lanes"
-pin_lane general "agent (tool-capable primary)" "${primary}"
-pin_lane explore "agent (tool-capable primary)" "${primary}"
-pin_lane compaction "chat (32k tool-capable fallback)" "${secondary}"
-pin_lane title_generation "chat (32k tool-capable fallback)" "${secondary}"
+pin_lane general "${primary_label}" "${primary}"
+pin_lane explore "${primary_label}" "${primary}"
+pin_lane compaction "${secondary_label}" "${secondary}"
+pin_lane title_generation "${secondary_label}" "${secondary}"
 ok "model pins"
 
 # ── 4. Deployment system prompt ─────────────────────────────────────────────

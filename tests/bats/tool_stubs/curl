@@ -11,6 +11,8 @@
 #   -o <file>           write the body to <file> (it is not echoed to stdout)
 #   --data-binary @-    drain stdin so piped bodies never block the caller
 # STUB_CURL_OUT is a file holding the body, or the literal body itself.
+# STUB_CURL_OUT_MAP is a file of "<url-substring>\t<body>" lines that answers
+# per call instead of one body for every call (see the map block below).
 # STUB_CURL_RC (default 0 when OUT or STATUS is set, else 22) overrides the
 # exit code. STUB_CURL_STATUS is the canned HTTP status for probes that read
 # the -w '%{http_code}' write-out: with -o it prints the status on stdout
@@ -41,6 +43,28 @@ done
 body=""
 rc="${STUB_CURL_RC:-}"
 status="${STUB_CURL_STATUS:-}"
+# STUB_CURL_OUT_MAP answers one call per line, "<url-substring>\t<body>", where
+# <body> is a literal or a file. The first line whose substring appears anywhere
+# in the argv wins; with the variable unset the answer stays the single
+# STUB_CURL_OUT, byte for byte. It exists because a script that reads three
+# different endpoints cannot be driven end to end when every GET gets the same
+# canned body (scripts/coder-agents.sh reads the provider list, the model
+# configs, and the per-lane model override).
+if [ -n "${STUB_CURL_OUT_MAP:-}" ] && [ -f "${STUB_CURL_OUT_MAP}" ]; then
+  joined_args="$*"
+  while IFS=$'\t' read -r map_needle map_body; do
+    [ -n "${map_needle}" ] || continue
+    case "${joined_args}" in
+      *"${map_needle}"*)
+        if [ -f "${map_body}" ]; then
+          map_body="$(cat "${map_body}")"
+        fi
+        STUB_CURL_OUT="${map_body}"
+        break
+        ;;
+    esac
+  done <"${STUB_CURL_OUT_MAP}"
+fi
 if [ -n "${STUB_CURL_OUT:-}" ]; then
   if [ -f "${STUB_CURL_OUT}" ]; then body="$(cat "${STUB_CURL_OUT}")"; else body="${STUB_CURL_OUT}"; fi
   rc="${rc:-0}"
