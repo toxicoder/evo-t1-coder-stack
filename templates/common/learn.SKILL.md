@@ -3,13 +3,22 @@ name: learn
 description: "Orient to this workspace and this stack: probe what is actually running, report the lanes and gates you measured, then teach the user the one command that matters next. Use when asked to learn, explain, or get oriented in the environment."
 ---
 
-<!-- managed-by: evo-t1-coder-stack -- stack-seeded. Delete this file to take the
-     skill over: the workspace boot reseeds it only while the file is absent. -->
+<!-- managed-by: evo-t1-coder-stack -- stack-seeded.
+     To take a seeded copy over, edit it and
+     delete the `managed-by: evo-t1-coder-stack` marker line: a
+     marker-free file is user-owned, and the seeder leaves it alone
+     unless you pass `--force`. A deletion is undone - the workspace
+     boot writes the file again whenever it is absent, and
+     `refresh-configs` re-seeds an absent target, so the next boot
+     restores the stack's copy. To hide the slash command, set
+     `disabled = ["learn"]` under `[skills]` in `~/.grok/config.toml`. -->
 
 # Learn the workspace
 
 When the user invokes this skill, orient them to where they actually are. Measure
 before you speak: report what a probe answered, and say what you could not check.
+Run the commands shown below with the `run_terminal_command` tool: a command
+block in this body is an instruction to run, and nothing executes on its own.
 
 ## Step 1 -- establish where you are
 

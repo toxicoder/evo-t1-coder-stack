@@ -1,5 +1,7 @@
-<!-- managed-by: evo-t1-coder-stack — stack-seeded. Delete this file to take the
-     instructions over: the workspace boot reseeds it only while it is absent. -->
+<!-- managed-by: evo-t1-coder-stack -- stack-seeded. To take this copy over, edit it
+     and delete this marker line: a marker-free file is user-owned, and the seeder
+     leaves it alone unless you pass --force. Deleting the file is undone - the
+     workspace boot writes it again whenever it is absent. -->
 
 # Deployment-wide agent instructions
 
