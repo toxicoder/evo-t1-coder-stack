@@ -632,12 +632,17 @@ ls ~/.agents/skills/learn/SKILL.md ~/.coder/skills/learn/SKILL.md
   again. What works: keep a marker-free local copy only if you also stop the stack from
   seeding it, or disable the lane with `disabled = ["learn"]` under `[skills]` in
   `~/.grok/config.toml`.
-- `~/.grok/bin/grok` first on PATH is a leftover installer copy: move it aside so
-  `/usr/local/bin/grok` wins. That is the only PATH case, and it does not gate `/learn`.
-- The version line is still worth reading on its own terms: compare what
-  `/usr/local/bin/grok --version` prints with `GROK_VERSION` in
-  `images/dev/tool-versions.env` (1.0.70 at the time of writing). A workspace whose
-  golden image predates the pin bump reports an older CLI, and rebuilding `images/dev`
+- `command -v grok` answering `~/.grok/bin/grok` is the normal answer, not a leftover
+  installer copy: the workspace `PATH` lists `~/.grok/bin` before `/usr/local/bin`, and
+  that entry is a symlink into `~/.grok/downloads/`, which holds one file per downloaded
+  release and is where `grok update` installs - so moving it aside does not outlast the
+  next self-update. Compare `command -v grok` and both `--version` outputs
+  (`~/.grok/bin/grok --version`, `/usr/local/bin/grok --version`) against `GROK_VERSION`
+  in `images/dev/tool-versions.env`: the profile copy follows `grok update`, the image
+  copy follows the pin. Neither copy gates `/learn`, and the two disagreeing is never on
+  its own a reason to rebuild the image.
+- A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
+  `GROK_VERSION` (1.0.70 at the time of writing), and rebuilding `images/dev`
   (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded `/learn`
   works on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
