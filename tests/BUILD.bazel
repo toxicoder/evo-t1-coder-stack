@@ -152,6 +152,10 @@ _SUITE_PAYLOAD = {
     "devcontainer-template.bats": [
         "//:gitignore",
         "//:templates_payload",
+        "//:env_example",
+        "//:env_sample",
+        "//images/dev:context",
+        "//proxy:confs",
     ],
     "docs-alias.bats": [],
     "domain.bats": [
