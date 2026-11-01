@@ -738,7 +738,9 @@ resource "coder_app" "web_terminal" {
 # templates declare. Stays on the main agent so a failed clone still
 # leaves the button on the same bar as the terminal. After reconnecting,
 # restart the workspace (or wait for gh_token_refresh) so GH_TOKEN and the
-# gh auth store match the new grant; GIT_ASKPASS remints live without that.
+# gh auth store match the new grant. GIT_ASKPASS can mint live without that
+# where the helper answers prompts; docs/troubleshooting.md covers the case
+# where it stays silent and git ships an empty credential.
 # Device-flow login is not the App install: an already-authenticated visit
 # to this URL with zero installations prints Coder's empty-installations
 # warning. Install GitHub App (order 8) is the clickable path for that.

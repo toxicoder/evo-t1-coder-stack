@@ -25,7 +25,11 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   `self:` line per credential. `--source=<slot>` (chain, env, gh, mint) narrows it to
   one slot, and any answer about a slot the env pair outranks is labelled `shadowed`,
   because git and gh consult `GH_TOKEN`/`GITHUB_TOKEN` first. Pass only the repo URL
-  there; a named container is refused with a pointer to the host shell.
+  there; a named container is refused with a pointer to the host shell. A `REJECTED`
+  env-pair line is normally an expired mint, not a missing grant: a fresh
+  `coder external-auth access-token github` answers `api.github.com` while the stale pair
+  is refused, and `git` needs that mint as Basic auth (the git endpoint refuses the bearer
+  scheme `gh` accepts) - the push-denied entry in `docs/troubleshooting.md` has the recipe.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
   `:3002` the Coder agent tunnel, `:8181` SearXNG, `:9119` Hermes dashboard
   (LAN listener; the public name rides the router on `:8080`; the host
