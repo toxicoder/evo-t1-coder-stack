@@ -377,6 +377,27 @@ setup() {
   }
 }
 
+@test "probe: the write probe sends the credential the way the git endpoint reads it" {
+  # Measured against github.com: the receive-pack advertisement answers 200 for Basic
+  # auth with any non-empty username, and 401 for the Authorization: Bearer scheme that
+  # api.github.com and gh accept. A probe "modernized" onto a bearer header would print
+  # every push-capable credential as REJECTED and send the operator chasing a grant that
+  # is fine, so the transport is pinned here rather than left to the reader.
+  local probe="${REPO_ROOT}/scripts/lib/probes/github-auth.sh"
+  grep -Fq -- 'user = "x-access-token:' "${probe}" || {
+    echo "the write probe no longer sends the token as Basic auth" >&2
+    return 1
+  }
+  grep -Fq -- '--config -' "${probe}" || {
+    echo "the write probe no longer hands curl the credential on stdin, where ps cannot see it" >&2
+    return 1
+  }
+  if grep -Eq 'Authorization:[[:space:]]*Bearer' "${probe}"; then
+    echo "the write probe must not carry a bearer header: the git endpoint refuses that scheme" >&2
+    return 1
+  fi
+}
+
 @test "auth: an empty piped token is refused without touching docker" {
   STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=0 \
     run bash -c "printf '\n' | bash '${SCRIPT}' auth coder-alice-ws1 -"
