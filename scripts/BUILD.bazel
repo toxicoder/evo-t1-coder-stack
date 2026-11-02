@@ -191,6 +191,7 @@ _SCRIPT_LIBS = {
         "lib/coder_api.sh",
         "lib/common.sh",
         "lib/preset_desc.awk",
+        "lib/startup_size.awk",
         "lib/template-push.sh",
     ],
     "refresh-configs": [

@@ -141,6 +141,66 @@ Presets collapse the create form to one click.
   `N of M template(s) did not reach an active version` line and makes the run exit
   non-zero, while every other template still gets its push attempt.
 
+### The one-argument ceiling
+
+The agent runs `coder_agent.startup_script`, and every `coder_script.script`, as
+`bash -c <body>`. The whole body therefore travels as **one** argument to `execve(2)`,
+and Linux caps a single argument at `MAX_ARG_STRLEN`, 32 pages = 131072 bytes. Measured
+on this host: an argument of 131071 bytes execs and one of 131072 fails with `E2BIG`.
+Past the wall the agent logs `fork/exec /bin/bash: argument list too long` with
+`exit_code=255` a few milliseconds in, the home directory never seeds, and the workspace
+banner reads "A startup script has failed". Coder puts no limit there and the plan
+reports no error, so the wall only announces itself on a live recreate.
+
+The size that matters is not `startup.sh.tftpl`. `main.tf` composes the body from that
+template plus every `templates/common/` payload it inlines, so any edit to the rulebook,
+the skills, the tmux config, the notes seeder, or the Grok config moves the number. That
+is how six commits crept from 104 KB to 130 KB and one documentation commit crossed the
+wall at 135 KB.
+
+Two things follow from the mechanism:
+
+- **Each body is its own `execve`, so each gets its own ceiling.** Splitting a body into
+  two `coder_script` resources relocates the wall; it does not raise it. On this server
+  (v2.36) the start scripts fan out concurrently in an errgroup and `ready` is set only
+  after all of them return, so splitting does not reduce a peak either.
+  `coder_script_order` needs Coder `>= v2.39`.
+- **A `#!` line does not help.** The body still becomes
+  `execve(env, [env, bash, -c, body])`; the interpreter line is content inside the
+  argument.
+
+`startup_size_guard` in `scripts/push-template.sh` enforces this before the CLI runs,
+beside the icon and preset-description guards. It sums each body's composed bytes and
+refuses the push past `STARTUP_SIZE_BOUND` (122880, which leaves 8 KiB, about two
+documentation-sized commits, under the kernel's own limit). Its reader is
+`scripts/lib/startup_size.awk`; `//tests:bats_startup_script_size_test` re-derives the
+same totals with an independent parser and pins the two together, so a guard that starts
+measuring something else goes red in review.
+
+When a body really does need to grow past the budget, the options are:
+
+- **Move the prose out.** Rationale belongs in this file, not in `startup.sh.tftpl`.
+  Comments in the template are bytes in everybody's argument; here they cost nothing.
+- **Stage the payload as a file, not an argument.** The obvious resource does not
+  exist: the OSS provider's `ResourcesMap` (`provider/provider.go`) registers
+  `coder_agent`, `coder_agent_instance`, `coder_ai_task`, `coder_app`,
+  `coder_metadata`, `coder_script`, `coder_env`, `coder_devcontainer` and
+  `coder_external_agent`, and nothing else. `coder_file` was requested in
+  `coder/coder#3055` and closed `not_planned` on 2022-09-23; a maintainer was still
+  asking for it in 2025. Do not plan around it.
+- **`coder_env` is the only provably-earlier file write.** The agent's
+  `writeSecretFiles` (`agent.go`) runs before any start script, `MkdirAll 0700` then
+  `WriteFile 0600`. It takes a string value, so it can carry a payload, and it writes
+  into the agent's secret directory rather than anywhere you name.
+- **`CODER_SCRIPT_DATA_DIR` is the per-script scratch the agent already hands you.**
+  `agent/agentscripts/agentscripts.go` appends `CODER_SCRIPT_DATA_DIR` and
+  `CODER_SCRIPT_BIN_DIR` to every script's environment, which is a writable place to
+  assemble something across scripts.
+- What is deliberately not done: bind-mounting `templates/` into the workspace so the
+  script can `cat` a payload off the host, and fetching one over HTTP at boot. The first
+  couples boot to a host path that a template push rewrites, and the second puts a
+  network dependency on the path that creates the home directory.
+
 ### Argument handling
 
 - No arguments pushes every template in `TEMPLATES_DEFAULT` order.

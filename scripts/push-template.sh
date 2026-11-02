@@ -673,6 +673,103 @@ preset_desc_guard() {
   done
 }
 
+# The Coder agent runs coder_agent.startup_script, and every coder_script.script, as
+# `bash -c <body>`, so each of those bodies travels as one argument to execve(2).
+# Linux caps a single argument at MAX_ARG_STRLEN, 32 pages = 131072 bytes, and past it
+# the fork fails outright: the agent logs `fork/exec /bin/bash: argument list too long`
+# with exit_code=255 within milliseconds, the home directory never seeds, and the
+# workspace banner reads "A startup script has failed". Nothing in Coder bounds it and
+# the plan reports no error, so the only place to learn it was a broken recreate.
+#
+# Each body is composed by main.tf from one .tftpl plus the payloads it inlines, so the
+# number that decides whether a workspace boots is a composed total, and it moves with
+# any edit to the rulebook, the skills, the tmux config, the notes seeder, or the Grok
+# config. Every coder_script body is its own execve, so each gets its own ceiling:
+# splitting a body across two scripts relocates the wall, it does not remove it.
+#
+# The bound sits 8 KiB under the kernel's own limit, which is about two
+# documentation-sized commits of room, so this gate goes red in review instead of on
+# someone's workspace. tests/bats/startup-script-size.bats measures the ceiling, pins
+# this bound to its own, and re-derives these totals with an independent parser.
+# @function startup_size_guard
+# Refuse to push a template whose exec'd bodies compose past the single-argument budget.
+# Globals:
+#   REPO_ROOT, SELF_DIR, log, die
+# Arguments:
+#   $1 - template directory holding main.tf
+#   STARTUP_SIZE_BOUND / STARTUP_ARG_LIMIT - override the budget, for tests only
+# Outputs:
+#   A note per body this cannot measure; an error via die when a body is too big
+# Returns:
+#   0 when every measured body fits; does not return when one does not
+startup_size_guard() {
+  # $1 = template directory. Silence means every body the parser could measure fits.
+  local dir="$1"
+  local bound="${STARTUP_SIZE_BOUND:-122880}"
+  local arg_limit="${STARTUP_ARG_LIMIT:-131072}"
+  local main="${dir}/main.tf"
+  [ -f "${main}" ] || return 0
+
+  # Parallel arrays indexed 0..n-1: bodies stay few (one startup script plus a handful
+  # of coder_script bodies), and counting them here keeps the summation in the same
+  # place as the path resolution that decides each file's byte count.
+  local -a bodies=() totals=() notes=()
+  local n=0 nn=0 i body name file bytes found
+
+  while IFS=$'\t' read -r body name; do
+    [ -n "${body}" ] || continue
+    case "${name}" in
+      CLASH)
+        die "${main}: two exec'd bodies render a template named ${body}, so their bytes cannot be told apart and neither can be bounded. Rename one .tftpl so each argument has its own name."
+        ;;
+      HEREDOC)
+        notes[nn]="the ${body} body is a heredoc, so its length is unchecked here"
+        nn=$((nn + 1))
+        continue
+        ;;
+      OTHER)
+        notes[nn]="the ${body} body is not a templatefile(), so its length is unchecked here"
+        nn=$((nn + 1))
+        continue
+        ;;
+    esac
+    # A payload the twin keeps beside its main.tf wins over the canonical copy, which
+    # is how a twin that ships its own version is measured on the bytes it pushes.
+    if [ -f "${dir}/${name}" ]; then
+      file="${dir}/${name}"
+    elif [ -f "${REPO_ROOT}/templates/common/${name}" ]; then
+      file="${REPO_ROOT}/templates/common/${name}"
+    else
+      die "${main}: ${body} inlines ${name}, which exists in neither ${dir} nor templates/common/"
+    fi
+    bytes="$(wc -c <"${file}")"
+    bytes="${bytes//[!0-9]/}"
+    found=0
+    for ((i = 0; i < n; i++)); do
+      if [ "${bodies[i]}" = "${body}" ]; then
+        totals[i]=$((totals[i] + bytes))
+        found=1
+        break
+      fi
+    done
+    if [ "${found}" -eq 0 ]; then
+      bodies[n]="${body}"
+      totals[n]="${bytes}"
+      n=$((n + 1))
+    fi
+  done < <(awk -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/startup_size.awk" "${main}")
+
+  for ((i = 0; i < nn; i++)); do
+    log "note: ${main}: ${notes[i]}"
+  done
+
+  for ((i = 0; i < n; i++)); do
+    if [ "${totals[i]}" -gt "${bound}" ]; then
+      die "${main}: the ${bodies[i]} body composes to ${totals[i]} bytes and the agent execs it as one argument (bash -c <body>). Linux caps one argument at ${arg_limit} bytes, so past that the fork dies with E2BIG, the home directory never seeds, and the workspace reports \"A startup script has failed\". The budget is ${bound}: move the rationale prose to docs/coder-templates.md, or move a payload out of the argument (see that file)."
+    fi
+  done
+}
+
 # Per-template plumbing (scripts/lib/template-push.sh, sourced above):
 # template_push_one streams the directory as a tar on stdin — .terraform/ excluded,
 # because it is gitignored provider cache and pushing it would put the plan's
@@ -735,6 +832,7 @@ for entry in "${selected[@]}"; do
   fi
   preset_desc_guard "${dir}"
   icon_data_url_guard "$(dirname "${dir}")/common/vscode-alt.svg"
+  startup_size_guard "${dir}"
 
   phase "push ${name} from ${dir}"
   log "pushing ${dir} as template ${name} (image ${dev_image}) to ${CONTAINER_API_URL} in ${CODER_SERVICE} ..."

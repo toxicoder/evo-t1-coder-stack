@@ -880,3 +880,305 @@ body_write() {
   [ "${status}" -eq 0 ]
   [ "${output}" = $'mojeek\ttimed out' ]
 }
+
+# ── scripts/lib/startup_size.awk ────────────────────────────────────────────
+#
+# This reader is the count startup_size_guard in scripts/push-template.sh sums,
+# and every body it reports short is a workspace that dies at its own banner
+# with "A startup script has failed" once the composed argument passes the
+# kernel's per-argument cap. The fixtures are synthetic, one behaviour each: the
+# shipped main.tf files are long enough that a regression measured over them
+# would not say which rule broke.
+
+# startup_size_records <main.tf> - split the program's tab-separated records the
+# way startup_size_guard splits them and print one body:name per line, so the
+# record shape is part of what the tests below assert.
+startup_size_records() {
+  local body name extra
+  while IFS=$'\t' read -r body name extra; do
+    # The guard reads each record into exactly two variables, so an empty field
+    # or a third one is a record it would charge to the wrong body in silence.
+    if [ -z "${body}" ] || [ -z "${name}" ] || [ -n "${extra}" ]; then
+      fail "unexpected record shape: [${body}] [${name}] [${extra}]"
+    fi
+    printf '%s:%s\n' "${body}" "${name}"
+  done < <(awk -f "${AWK_LIB}/startup_size.awk" "$1")
+}
+
+@test "startup_size: a templatefile body reports itself, then each payload it inlines" {
+  local dir="${BATS_TEST_TMPDIR}/self"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_agent" "dev" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    rationale = file("${path.module}/rationale.md")' \
+    '    helper    = "${path.module}/helper.sh"' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # The template leads its own list on purpose: the bytes of startup.sh.tftpl sit
+  # in the execve argument beside every payload it renders, so the budget has to
+  # pay for them as well. A map entry with no path (the agent_label lines the
+  # real files carry) contributes nothing, which is why none is listed here.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'startup.sh.tftpl:startup.sh.tftpl\nstartup.sh.tftpl:rationale.md\nstartup.sh.tftpl:helper.sh' ]
+}
+
+@test "startup_size: two coder_script bodies each get their own records" {
+  local dir="${BATS_TEST_TMPDIR}/bodies"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "alpha" {' \
+    '  script = templatefile("${path.module}/alpha.sh.tftpl", {' \
+    '    one = file("${path.module}/one.md")' \
+    '  })' \
+    '}' \
+    'resource "coder_script" "beta" {' \
+    '  script = templatefile("${path.module}/beta.sh.tftpl", {' \
+    '    two = file("${path.module}/two.md")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # This per-body split is the reason the program exists at all: the agent execs
+  # each body as its own bash -c argument, so each has its own ceiling. One fat
+  # body must not soak up the budget of the thin one listed after it, and no
+  # payload may be credited to the neighbour instead.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'alpha.sh.tftpl:alpha.sh.tftpl\nalpha.sh.tftpl:one.md\nbeta.sh.tftpl:beta.sh.tftpl\nbeta.sh.tftpl:two.md' ]
+}
+
+@test "startup_size: a nested templatefile closing at four spaces does not end the outer body" {
+  local dir="${BATS_TEST_TMPDIR}/nested"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_agent" "dev" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    agent_label = "dev"' \
+    '    grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {' \
+    '      model = "gpt"' \
+    '    })' \
+    '    late_payload = file("${path.module}/late.md")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # The map's own two-space closer is the only thing allowed to end the block. A
+  # nested templatefile() inside the startup map closes at four spaces, so that
+  # line is just another entry of the outer map. Were it honoured, the payload
+  # listed after it would leave the argument uncounted, and an under-count is the
+  # failure that ships a workspace too big to boot.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'startup.sh.tftpl:startup.sh.tftpl\nstartup.sh.tftpl:grok-config.toml.tftpl\nstartup.sh.tftpl:late.md' ]
+}
+
+@test "startup_size: a payload inlined by two variables is reported twice" {
+  local dir="${BATS_TEST_TMPDIR}/twice"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_agent" "dev" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    agents_md   = file("${path.module}/GROK_BUILD_AGENTS.md")' \
+    '    agents_copy = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # Deduplicating here would understate the argument: the same bytes are rendered
+  # into two map entries, so they cross execve(2) twice and the guard sums what it
+  # is handed, once per record.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'startup.sh.tftpl:startup.sh.tftpl\nstartup.sh.tftpl:GROK_BUILD_AGENTS.md\nstartup.sh.tftpl:GROK_BUILD_AGENTS.md' ]
+}
+
+@test "startup_size: a heredoc body reports HEREDOC under its resource label" {
+  local dir="${BATS_TEST_TMPDIR}/heredoc"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "seed" {' \
+    '  script = <<EOF' \
+    'echo seeded' \
+    'EOF' \
+    '}' >"${dir}/main.tf"
+
+  # A heredoc has no length any line reader can know, so it is named rather than
+  # measured and the guard turns it into a note instead of a verdict. The body
+  # lines are deliberately not scanned: one that looked like an assignment must
+  # not invent a second record for a body that already reported itself.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "seed:HEREDOC" ]
+}
+
+@test "startup_size: a body that is neither templatefile nor heredoc reports OTHER" {
+  local dir="${BATS_TEST_TMPDIR}/other"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "plain" {' \
+    '  script = local.body_from_var' \
+    '}' \
+    'resource "coder_script" "lit" {' \
+    '  script = "echo hi"' \
+    '}' >"${dir}/main.tf"
+
+  # A local or a literal is a string this reader cannot resolve to bytes; calling
+  # it OTHER keeps it a note rather than a silent zero-length body.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'plain:OTHER\nlit:OTHER' ]
+
+  # With no coder_script line above it there is no label to name the body by, so
+  # the record says "?" instead of dropping the body and its note with it.
+  printf '%s\n' '  startup_script = "bare"' >"${dir}/labelless.tf"
+  run startup_size_records "${dir}/labelless.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "?:OTHER" ]
+}
+
+@test "startup_size: a local.NAME entry credits the one file that local reads" {
+  local dir="${BATS_TEST_TMPDIR}/locals"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_agent" "dev" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    vscode_settings = local.vscode_settings' \
+    '    noise           = local.no_path_local' \
+    '  })' \
+    '}' \
+    'locals {' \
+    '  vscode_settings = templatefile("${path.module}/settings.json.tftpl", {' \
+    '    theme = "dark"' \
+    '  })' \
+    '  no_path_local = "just a string"' \
+    '}' >"${dir}/main.tf"
+
+  # The map entry says the body carries whatever that local holds, so the file the
+  # local reads is charged to the body even though the map names no path itself.
+  # The search stops at the first assignment and does not recurse into the local's
+  # own block: the independent parser in tests/bats/startup-script-size.bats stops
+  # there too, and the two have to agree. The second local names no
+  # ${path.module} path, so it contributes nothing.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'startup.sh.tftpl:startup.sh.tftpl\nstartup.sh.tftpl:settings.json.tftpl' ]
+}
+
+@test "startup_size: a templatefile with no path.module path reports nothing" {
+  local dir="${BATS_TEST_TMPDIR}/nopath"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "baremod" {' \
+    '  script = templatefile("${path.module}", {' \
+    '    payload = file("${path.module}/inside.md")' \
+    '  })' \
+    '}' \
+    'resource "coder_script" "fromvar" {' \
+    '  script = templatefile(var.body_path, {' \
+    '    payload = file("${path.module}/inside2.md")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # A body whose template cannot be named cannot be measured, so the whole block is
+  # skipped rather than guessed at: "${path.module}" alone has no basename, and a
+  # templatefile() driven by a variable names no file at all. Emitting the entries
+  # under a fabricated body would charge those bytes to a file the guard then goes
+  # looking for and dies on.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+}
+
+@test "startup_size: a block with no two-space closer runs to EOF and over-reports" {
+  local dir="${BATS_TEST_TMPDIR}/runaway"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "broken" {' \
+    '  script = templatefile("${path.module}/broken.sh.tftpl", {' \
+    '    a = file("${path.module}/a.md")' \
+    '    })' \
+    '}' \
+    'resource "coder_script" "neighbour" {' \
+    '  script = templatefile("${path.module}/neighbour.sh.tftpl", {' \
+    '    b = file("${path.module}/b.md")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # Pin the two-space boundary from the other side: this first block mis-indents its
+  # closer to four spaces, so nothing ends it until the neighbour's own two-space
+  # `})`, and the neighbour's template and payload land on the broken body. That is
+  # the direction the reader is meant to fail in. A malformed block that stopped
+  # early would drop those bytes and the guard would wave the template through;
+  # over-reporting charges them to a body, keeps the total honest, and the note
+  # lands somewhere a reviewer will look.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'broken.sh.tftpl:broken.sh.tftpl\nbroken.sh.tftpl:a.md\nbroken.sh.tftpl:neighbour.sh.tftpl\nbroken.sh.tftpl:b.md' ]
+}
+
+@test "startup_size: two bodies rendered from same-named templates report CLASH" {
+  local dir="${BATS_TEST_TMPDIR}/clash"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "one" {' \
+    '  script = templatefile("${path.module}/same.sh.tftpl", {' \
+    '    a = file("${path.module}/a.md")' \
+    '  })' \
+    '}' \
+    'resource "coder_script" "two" {' \
+    '  script = templatefile("${path.module}/same.sh.tftpl", {' \
+    '    b = file("${path.module}/b.md")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # The body key is the template basename, so both bodies key on same.sh.tftpl and the
+  # guard would sum two separate execve arguments into one total. That over-counts, but
+  # it measures neither body honestly, so the reader names the collision and the caller
+  # refuses the push rather than reporting a number nobody can act on.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "$(printf '%s\n' "${output}" | grep -c '^same\.sh\.tftpl:CLASH$')" -eq 1 ] || {
+    printf 'FAIL: no CLASH record for the colliding body, got:\n%s\n' "${output}" >&2
+    return 1
+  }
+}
+
+@test "startup_size: a heredoc body is stepped over rather than re-scanned" {
+  local dir="${BATS_TEST_TMPDIR}/heredoc-scan"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "h" {' \
+    '  script = <<EOF' \
+    'echo one' \
+    '  script = templatefile("${path.module}/ghost.tftpl", {})' \
+    'EOF' \
+    '}' >"${dir}/main.tf"
+
+  # The line inside the heredoc only looks like a body assignment. Stepping to the
+  # delimiter is what keeps it out of the top-level scan: charging ghost.tftpl to a body
+  # that never carried it would inflate a total and refuse a template that boots.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "h:HEREDOC" ]
+}
+
+@test "startup_size: an unmeasurable body takes its label from any resource type" {
+  local dir="${BATS_TEST_TMPDIR}/label-any-resource"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "seed" {' \
+    '  script = templatefile("${path.module}/seed.sh.tftpl", {})' \
+    '  })' \
+    '}' \
+    'resource "coder_agent" "dev" {' \
+    '  startup_script = "echo hi"' \
+    '}' >"${dir}/main.tf"
+
+  # Tracking only coder_script headers would stamp this coder_agent body with "seed",
+  # the last coder_script read, and a note about it would point a reviewer at the wrong
+  # resource. Any resource header updates the label, so the body is named by where it
+  # actually sits.
+  run startup_size_records "${dir}/main.tf"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'seed.sh.tftpl:seed.sh.tftpl\ndev:OTHER' ]
+}
