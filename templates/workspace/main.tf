@@ -447,6 +447,16 @@ resource "coder_agent" "main" {
     }
   }
 
+  # The agent execs this body as `bash -c <body>`, so the rendered text travels as one
+  # execve argument, and Linux refuses a single argument past MAX_ARG_STRLEN (32 pages,
+  # 131072 bytes). Past that the fork dies with "argument list too long" (E2BIG), exit
+  # 255, milliseconds in: the agent is up, the home directory is never seeded, and the
+  # banner reads "A startup script has failed". Everything inlined below counts against
+  # that one argument - the rulebook, the two skills, tmux.conf, the notes seeder, the
+  # rendered Grok config and the editor settings - which is why startup.sh.tftpl keeps
+  # short comments and docs/coder-templates.md carries the rationale.
+  # //tests:bats_startup_script_size_test fails past 122880 bytes; when it goes red, move
+  # prose to the docs rather than raising the bound.
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
     # resolve, so all eight are declared together. github_mcp, search_mcp and
