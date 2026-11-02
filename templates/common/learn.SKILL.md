@@ -34,15 +34,22 @@ block in this body is an instruction to run, and nothing executes on its own.
 ## Step 2 -- report the lanes, from the environment
 
     env | grep -E '^(LITELLM_BASE_URL|SEARXNG_URL|CONTEXT7_API_KEY)=' | sed 's/=.*/=set/'
+    grep -nE '^\[mcp_servers\.' ~/.grok/config.toml || echo "no MCP blocks declared"
 
-- LiteLLM is the only model transport. The seven aliases (`agent`, `agent-low`,
+- LiteLLM is the only model transport. Seven aliases (`agent`, `agent-low`,
   `agent-medium`, `agent-xhigh`, `coder`, `coder-fast`, `chat`) resolve through it;
-  `agent` is the tool-call-capable default. The key rides in `LITELLM_API_KEY`, so
-  name it, never print it.
+  `agent` is the tool-call-capable default. Two more (`spark-coder`, `spark-chat`)
+  reach the optional NVIDIA Spark Ollama boxes and answer only while those are up.
+  The key rides in `LITELLM_API_KEY`, so name it, never print it, and read the
+  current list from `litellm/config.yaml` rather than trusting this count.
 - Native `web_search` is parked by the stack (`disable_web_search = true`): no
   transport here serves that tool type. The `searxng` MCP server is the search lane.
 - `bazelisk run //scripts:mcp-check` names the cause of a dead lane; a server missing
   from `~/.grok/config.toml` is a gap to report, and never a reason to launch one by hand.
+- Report the difference between what the templates declare and what this file holds.
+  A lane whose block the template renders by default can still be absent here, because
+  the last-booted workspace re-renders the shared `config.toml` for every owner, so
+  name each missing lane rather than assuming it is parked.
 
 ## Step 3 -- the host, from a workspace
 
@@ -63,13 +70,19 @@ Short-lived branch off `main`, one logical change each, PR into `main`. Done mea
 Prefer Bazelisk; Make is a shim. Each `scripts/<stem>.sh` is a Bazel target:
 `bazelisk run //scripts:<stem> -- <args>`.
 
+Read the summary line before re-running anything: `Executed 0 out of N tests: N tests
+pass.` is a cached PASS over unchanged inputs, not a skipped or hollow run. Spend one
+uncached pass (`bazelisk test //:test-fast --nocache_test_results`) before you open a
+PR, and run long gates in the background rather than blocking a turn on them.
+
 ## Step 5 -- the two conventions worth knowing on day one
 
 - Terminals join one tmux session per folder, so a closed tab kills nothing. The
   **Grok Build** profile runs `grok-build-terminal`, which walks up to the repo root
   and resumes one `grok` session per repo.
-- `~/.grok/notes/notes.md` is the canonical per-repo scratch file and is git-ignored
-  through `core.excludesFile`. Put working notes there, not in a new root markdown.
+- `~/.grok/notes/<key>/notes.md` is the canonical per-repo scratch file (the key is
+  the clone's `host/owner/repo`), and it is git-ignored through `core.excludesFile`.
+  Put working notes there, not in a new root markdown.
 
 ## Then point at the next thing
 
@@ -77,6 +90,27 @@ Prefer Bazelisk; Make is a shim. Each `scripts/<stem>.sh` is a Bazel target:
   its lanes, `project-conventions.md` for shell style, `branching.md` for git).
 - Anything in this repo: read it. A search lane answers the outside world only.
 - To make a convention stick for every future session, propose a rule for the repo's
-  `AGENTS.md`; to teach a procedure, add a skill under `.grok/skills/`. Files under
-  `~/.grok` that carry the stack marker are stack-owned: change the seed in this repo
-  and re-materialize it, never the copy that lives in a workspace.
+  `AGENTS.md`; to teach a procedure, add a skill at
+  `~/.agents/skills/<name>/SKILL.md` (the Grok Build CLI reads that path, and the
+  Coder Agents chat agent reads the `~/.coder/skills/<name>/SKILL.md` twin, so ship
+  both). Files under `~/.grok` that carry the stack marker are stack-owned: change
+  the seed in this repo and re-materialize it, never the copy that lives in a
+  workspace.
+
+## Go deeper, only when the user asks for it
+
+Asked to learn deeply, or to fix what keeps going wrong, mine the session logs before
+proposing anything:
+
+- They live under `~/.grok/sessions/`, one directory per escaped cwd, each holding
+  small `summary.json` files beside large `chat_history.jsonl` and `events.jsonl`.
+  Index the summaries first (`session_summary`, `num_chat_messages`, `head_branch`),
+  then read only the sessions that rank.
+- A `jsonl` file is many megabytes: count and select with `jq` or `grep -c` into a
+  scratch file under `/tmp`, and never paste a transcript into the reply.
+- Sort what you find into what the guidance already covers, what it contradicts, and
+  what it never says. Only the last two are work; a rule the agent ignored is not
+  evidence the rule is wrong.
+- Every correction lands in the seed that produces the file, with a test that fails
+  when the claim drifts again. The payloads under `templates/common/` and
+  `hermes/skills/` are the sources; the copies in a home directory are output.

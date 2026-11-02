@@ -152,6 +152,10 @@ _SUITE_PAYLOAD = {
     "devcontainer-template.bats": [
         "//:gitignore",
         "//:templates_payload",
+        "//:env_example",
+        "//:env_sample",
+        "//images/dev:context",
+        "//proxy:confs",
     ],
     "docs-alias.bats": [],
     "domain.bats": [
@@ -170,6 +174,15 @@ _SUITE_PAYLOAD = {
         "//hermes:payload",
         "//proxy:confs",
     ],
+    # The suite pins what the six host-assistant skills claim about the payloads they
+    # describe: compose services and mounts, the stack CLIs' own parsers, the LiteLLM
+    # alias table, and the SearXNG settings its probe dials. docker-compose.yml and
+    # scripts/*.sh already ride _BATS_COMMON.
+    "hermes-skills.bats": [
+        "//hermes:payload",
+        "//litellm:config",
+        "//searxng:settings",
+    ],
     # The suite execs scripts/hermes-shell.sh, whose readiness report reads the seeded
     # pair out of the data volume, so that read is this suite's read.
     "hermes-shell.bats": [
@@ -186,6 +199,8 @@ _SUITE_PAYLOAD = {
     ],
     "learn-skill.bats": [
         "//:templates_payload",
+        "//:bazel_files",
+        "//litellm:config",
     ],
     "litellm-config.bats": [
         "//:templates_payload",
@@ -279,6 +294,13 @@ _SUITE_PAYLOAD = {
 
 # Pairings the source scan cannot derive in either direction, each with its reason.
 _SUITE_PAYLOAD_ALLOW = {
+    # The /learn suite checks the citations in the skill's closing bullets, and opens
+    # them with a plain file test. Neither `README.md` nor `docs/` is a TOKEN_GROUPS key,
+    # so the scan can credit the read in neither direction and the pair is stated here.
+    "learn-skill.bats": [
+        "//docs:content",
+        "//:entry_docs",
+    ],
     # Each case writes its own ${dir}/Dockerfile and points dockerfile_args.awk at that
     # scratch file; the repo's images/dev/Dockerfile is never opened here.
     "awk.bats": [

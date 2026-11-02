@@ -23,9 +23,18 @@
 # to take a seeded copy over; and scripts/lib/config_seed.sh names both targets
 # against that same payload so a reseed can re-materialize them.
 #
+# The rest of the suite pins the payload's own claims against the tree it
+# describes, so an edit that makes the skill lie fails the gate rather than
+# sending an operator to a target, a doc, an alias or a path that is not there:
+# every bazel label it cites resolves, every doc path it points at exists, its
+# alias list stays inside what litellm/config.yaml defines, and its notes and
+# skills paths match what the seeder and the two skill readers actually use.
+#
 # Usage: bazelisk test //tests:bats_learn_skill_test   (from any cwd)
 # Safety: reads the two startup.sh.tftpl twins, the two main.tf twins,
-# templates/common/learn.SKILL.md and scripts/lib/config_seed.sh; writes nothing.
+# templates/common/learn.SKILL.md, templates/common/notes-setup.sh,
+# scripts/lib/config_seed.sh, litellm/config.yaml, the root BUILD file, the
+# scripts/ tree and the repo docs; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -247,4 +256,224 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   # template whose Terraform apply dies on the missing file().
   assert_contains_file "push guard lists the payload" \
     "${REPO_ROOT}/scripts/lib/template-push.sh" 'learn\.SKILL\.md'
+}
+
+@test "learn targets: every bazel label the payload cites still resolves" {
+  # Step 4 tells the reader to run what the payload prints, so a label the tree
+  # stopped declaring is a dead end in the first minute of orienting. The root
+  # BUILD file carries the //:labels and scripts/<stem>.sh carries the CLI
+  # targets, which are the two places a target can come from here.
+  [[ -f "${REPO_ROOT}/BUILD.bazel" ]] ||
+    skip "the root BUILD file is not in this suite's runfiles (//:bazel_files)"
+
+  local tokens resolvable token stem label bad missing required
+  # The guard rejects a // preceded by a colon or a word char, so the
+  # tcp://dind:2375 endpoint in Step 1 is not mistaken for a label, and the
+  # label class carries <> so the payload's generic spelling survives capture.
+  tokens="$(grep -oE '(^|[^:/A-Za-z])//([A-Za-z0-9_.-]*):([A-Za-z0-9_.<>-]+)' "${PAYLOAD}" |
+    grep -oE '//[A-Za-z0-9_.-]*:[A-Za-z0-9_.<>-]+' | sort -u)"
+  if [ -z "${tokens}" ]; then
+    printf 'FAIL: %s cites no bazel target at all\n' "${PAYLOAD}" >&2
+    return 1
+  fi
+
+  # The five gates the skill points an operator at: the loop below would pass
+  # vacuously on a payload that had quietly dropped every one of them.
+  required="$(printf '%s\n' //:test-fast //:lint //:fix //:validate //scripts:mcp-check | sort -u)"
+  missing="$(comm -23 <(printf '%s\n' "${required}") <(printf '%s\n' "${tokens}"))"
+  if [ -n "${missing}" ]; then
+    printf 'FAIL: %s no longer cites: %s\n' "${PAYLOAD}" "$(printf '%s ' "${missing}")" >&2
+    return 1
+  fi
+
+  # //scripts:<stem> is the payload's generic spelling for a CLI target, so it
+  # is pinned as a citation, not resolved as a label. The token class above
+  # carries no shell metacharacter, so the loop can word-split the list.
+  resolvable="$(printf '%s\n' "${tokens}" | grep -v '<' || true)"
+  bad=""
+  for token in ${resolvable}; do
+    case "${token}" in
+      //scripts:*)
+        stem="${token#//scripts:}"
+        [[ -f "${REPO_ROOT}/scripts/${stem}.sh" ]] ||
+          bad="${bad}${token} (no scripts/${stem}.sh in the tree)"$'\n'
+        ;;
+      //:*)
+        label="${token#//}"
+        label="${label#:}"
+        # The closing quote is part of the needle: name = "fix" must not be
+        # satisfied by the fix_exec target beside it.
+        grep -qF -- "name = \"${label}\"" "${REPO_ROOT}/BUILD.bazel" ||
+          bad="${bad}${token} (no name = \"${label}\" in the root BUILD file)"$'\n'
+        ;;
+      *)
+        bad="${bad}${token} (neither a root label nor a //scripts CLI)"$'\n'
+        ;;
+    esac
+  done
+  if [ -n "${bad}" ]; then
+    printf 'FAIL: %s cites a target that does not resolve:\n%s' "${PAYLOAD}" "${bad}" >&2
+    return 1
+  fi
+
+  # A script target has to travel in the runnable form, not as any mention.
+  assert_contains_file "it shows the generic script-target form" "${PAYLOAD}" \
+    'bazelisk run //scripts:<stem>'
+}
+
+@test "learn docs: every doc the payload points at is still in the checkout" {
+  # The closing bullets are the reader's map to the docs tree; a name that
+  # leads nowhere costs them the answer they came for. The payload spells the
+  # docs files bare under its docs/ bullet, so a citation resolves at the repo
+  # root or under docs/, and only these two places.
+  [[ -f "${REPO_ROOT}/README.md" ]] ||
+    skip "the root README is not in this suite's runfiles (no label ships README.md or docs/)"
+
+  local cited want missing name path unresolved
+  # Two segments at most, so the SKILL.md and notes.md paths the payload prints
+  # are not mistaken for doc citations.
+  cited="$(grep -oE '[A-Za-z0-9._/-]+\.md' "${PAYLOAD}" |
+    grep -E '^([A-Za-z0-9._-]+|docs/[A-Za-z0-9._-]+)\.md$' |
+    sed 's|^docs/||' | sort -u)"
+
+  want="$(printf '%s\n' README.md grok-build-and-agents.md project-conventions.md branching.md | sort -u)"
+  missing="$(comm -23 <(printf '%s\n' "${want}") <(printf '%s\n' "${cited}"))"
+  if [ -n "${missing}" ]; then
+    printf 'FAIL: %s no longer points at: %s\n' "${PAYLOAD}" "$(printf '%s ' "${missing}")" >&2
+    return 1
+  fi
+  assert_contains_file "it names the docs tree" "${PAYLOAD}" 'docs/'
+
+  unresolved=""
+  for name in ${cited}; do
+    path="${REPO_ROOT}/${name}"
+    [[ -f "${path}" ]] || path="${REPO_ROOT}/docs/${name}"
+    [[ -f "${path}" ]] || unresolved="${unresolved}${name}"$'\n'
+  done
+  if [ -n "${unresolved}" ]; then
+    printf 'FAIL: %s cites a doc that is in neither the root nor docs/:\n%s' \
+      "${PAYLOAD}" "${unresolved}" >&2
+    return 1
+  fi
+}
+
+@test "learn aliases: every alias the payload lists is one the transport serves" {
+  # The payload is the reader's shortcut for what LiteLLM answers: a name it
+  # prints that model_config never defines sends them at an alias that cannot
+  # resolve. The comparison is one-way on purpose - the payload tells the
+  # reader to read the live list from the config rather than trust its count,
+  # so the config may grow and the payload may not.
+  local cfg="${REPO_ROOT}/litellm/config.yaml"
+  [[ -f "${cfg}" ]] || skip "litellm/config.yaml is not in this suite's runfiles"
+
+  local listed core served absent extra
+  listed="$(tr '\n' ' ' <"${PAYLOAD}" |
+    grep -oE 'aliases \([^)]*\)|more \([^)]*\)' |
+    grep -oE '`[A-Za-z][A-Za-z0-9._-]*`' | tr -d '`' | sort -u)"
+  if [ -z "${listed}" ]; then
+    printf 'FAIL: %s no longer lists its aliases in parenthesized form\n' "${PAYLOAD}" >&2
+    return 1
+  fi
+
+  core="$(printf '%s\n' agent agent-low agent-medium agent-xhigh coder coder-fast chat | sort -u)"
+  assert_eq "the payload lists exactly the seven core aliases" "${core}" \
+    "$(printf '%s\n' "${listed}" | grep -vE '^spark-(coder|chat)$' || true)"
+
+  absent="$(comm -23 <(printf '%s\n' spark-coder spark-chat | sort -u) <(printf '%s\n' "${listed}"))"
+  if [ -n "${absent}" ]; then
+    printf 'FAIL: %s lost the optional Spark aliases: %s\n' "${PAYLOAD}" "${absent}" >&2
+    return 1
+  fi
+
+  # Comment lines carry a bare `model_name:` with no value, so drop the empties
+  # rather than comparing them against a name.
+  served="$(grep -o 'model_name: *[A-Za-z0-9._-]*' "${cfg}" |
+    sed 's/^model_name: *//' | grep -v '^[[:space:]]*$' | sort -u)"
+  extra="$(comm -23 <(printf '%s\n' "${listed}") <(printf '%s\n' "${served}"))"
+  if [ -n "${extra}" ]; then
+    printf 'FAIL: %s names aliases litellm/config.yaml does not define: %s\n' \
+      "${PAYLOAD}" "$(printf '%s ' "${extra}")" >&2
+    return 1
+  fi
+
+  # The count in the prose is part of the claim it makes about the list.
+  assert_match "the prose count matches the core list" '[Ss]even aliases \(' \
+    "$(tr '\n' ' ' <"${PAYLOAD}")"
+  assert_contains_file "it sends the reader to the live list" "${PAYLOAD}" \
+    'litellm/config\.yaml'
+}
+
+@test "learn notes: the scratch path is the one notes-setup.sh builds" {
+  # notes-setup.sh builds the per-repo scratch path and points
+  # core.excludesFile at that tree, so the payload has to spell the same shape
+  # or it teaches a reader to keep notes somewhere nothing else finds, and the
+  # per-repo key is what keeps two clones from sharing one file.
+  local builder="${REPO_ROOT}/templates/common/notes-setup.sh"
+  [[ -f "${builder}" ]] || skip "notes-setup.sh is not reachable under ${builder}"
+
+  local want built
+  want="$(grep -oE '~/\.grok/notes/<[A-Za-z-]+>/notes\.md' "${PAYLOAD}" | head -n 1)"
+  if [ -z "${want}" ]; then
+    printf 'FAIL: %s lost the ~/.grok/notes/<key>/notes.md shape\n' "${PAYLOAD}" >&2
+    return 1
+  fi
+  built="$(grep -oE '\$\{home\}/\.grok/notes/\$\{[A-Za-z_]+\}/notes\.md' "${builder}" | head -n 1)"
+  if [ -z "${built}" ]; then
+    printf 'FAIL: %s no longer prints a per-key notes path\n' "${builder}" >&2
+    return 1
+  fi
+
+  # Same shape from both ends: the tilde stands for ${home}, one segment for
+  # the key, and notes.md closes it.
+  want="$(printf '%s' "${want}" | sed -E 's|^~|HOME|; s|<[^>]*>|KEY|')"
+  built="$(printf '%s' "${built}" | sed -E 's|^\$\{home\}|HOME|; s|\$\{[A-Za-z_]+\}|KEY|')"
+  assert_eq "the payload's notes path is the path the seeder builds" "${built}" "${want}"
+
+  # The flat form is the pre-per-repo layout: every clone in the stack would
+  # share one scratch file.
+  run grep -F -- '~/.grok/notes/notes.md' "${PAYLOAD}"
+  [ "${status}" -ne 0 ]
+}
+
+@test "learn skills: new skills go to the two paths that are actually read" {
+  # ~/.grok/skills/ is not a thing this CLI loads from (docs say it never
+  # exists): the Grok Build CLI reads ~/.agents/skills/ and the Coder Agents
+  # chat agent reads the ~/.coder/skills/ twin, so naming the third path is a
+  # payload that files a skill nobody will ever invoke.
+  assert_contains_file "the CLI-side skills path" "${PAYLOAD}" \
+    '~/\.agents/skills/<[A-Za-z0-9_-]+>/SKILL\.md'
+  assert_contains_file "the chat-side skills twin" "${PAYLOAD}" \
+    '~/\.coder/skills/<[A-Za-z0-9_-]+>/SKILL\.md'
+  run grep -F -- '.grok/skills' "${PAYLOAD}"
+  [ "${status}" -ne 0 ]
+}
+
+@test "learn gates: the cached-pass guidance keeps the two strings it depends on" {
+  # The advice is only worth following while Bazel prints that summary for a
+  # cached pass and that flag is what forces a fresh one: drop either and Step
+  # 4 has the reader trust a line the runner no longer prints, or open a PR
+  # without the one uncached pass the gate needs.
+  assert_contains_file "the cached summary line is quoted" "${PAYLOAD}" \
+    'Executed 0 out of N'
+  assert_contains_file "the uncached flag is named" "${PAYLOAD}" \
+    '--nocache_test_results'
+  # And named as something to run, attached to a test invocation, so the flag
+  # cannot survive as a word on its own.
+  assert_contains_file "the flag rides a bazelisk test command" "${PAYLOAD}" \
+    'bazelisk test [^`]*--nocache_test_results'
+}
+
+@test "learn deeper: the opt-in log sweep keeps its guardrails" {
+  # The deep pass is the one place /learn reaches into ~/.grok/sessions, and those
+  # transcripts are megabytes each: an agent that forgets the two guardrails either
+  # quotes a whole session into the reply or proposes edits from a single anecdote.
+  # The section is opt-in, so it also has to stay clearly gated behind a request.
+  assert_contains_file "the sweep is opt-in" "${PAYLOAD}" \
+    'only when the user asks'
+  assert_contains_file "it names the session store" "${PAYLOAD}" \
+    '~/.grok/sessions/'
+  assert_contains_file "it redirects the bulk instead of printing it" "${PAYLOAD}" \
+    '/tmp'
+  assert_contains_file "it sends the fix to the seed, not the materialized copy" "${PAYLOAD}" \
+    'templates/common/'
 }

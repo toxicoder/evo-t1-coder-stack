@@ -59,7 +59,12 @@ request as the only way back into `main`.
 
 ## CI and protection
 
-- CI runs only for `push` to `main` and for `pull_request` targeting `main`.
+- The `ci` workflow (`.github/workflows/ci.yml`) runs for `push` to `main` and for
+  `pull_request` targeting `main`. The other shipped workflow, `deploy-docs`, also runs
+  on a `push` to any branch (`branches: ["**"]`) whose diff touches its `paths:` list -
+  `docs/**`, `docs-site/**`, the two `scripts/ci/` helpers it publishes through
+  (`publish-pages-tree.sh`, `docs-alias.sh`), and its own workflow file - and by
+  `workflow_dispatch`.
 - Branch protection on `main` should require a pull request before pushing, and the two
   Bazel checks before merging — `//:test-fast` and `//:lint`, run inside the golden image
   the workflow builds, so a green check means the suite passed on the Linux toolchain the

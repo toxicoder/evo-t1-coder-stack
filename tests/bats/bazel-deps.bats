@@ -75,6 +75,19 @@ for name in ("_SCRIPT_PAYLOAD_ALLOW", "_SUITE_PAYLOAD_ALLOW"):
 PY
 }
 
+# kept_code_lines <checker> <source> - the lines the scanner still treats as evidence.
+kept_code_lines() {
+  python3 - "${1}" "${2}" <<'PY'
+import importlib.util
+import sys
+
+spec = importlib.util.spec_from_file_location("bazel_deps", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+print(module.code_lines(open(sys.argv[2], encoding="utf-8").read()))
+PY
+}
+
 @test "bazel_deps: every map matches the sources that use it" {
   run python3 "${CHECKER}" --root "${REPO_ROOT}"
   [ "${status}" -eq 0 ] || {
@@ -112,4 +125,40 @@ PY
       return 1
     fi
   done
+}
+
+@test "bazel_deps: a quoted here-doc marker in a needle keeps the reads below it" {
+  # A here-doc body is dropped so a usage example cannot read as a payload read. A suite
+  # that greps for the quoted closer of a seed heredoc matches that same shape, and when
+  # the scanner took the needle for an opener every read below it vanished from the
+  # evidence - the suite then looked like it declared a payload it never opened. Only an
+  # opener sitting outside quotes opens anything.
+  local fixture="${BATS_TEST_TMPDIR}/needle.sh" kept
+  cat >"${fixture}" <<'FIXTURE_EOF'
+f="${REPO_ROOT}/templates/common/tmux.conf"
+run grep -F -- "<<'LEARN_SKILL_MD_EOF'" "${f}"
+[[ -f "${REPO_ROOT}/tests/bazel_deps.py" ]]
+FIXTURE_EOF
+  kept="$(kept_code_lines "${CHECKER}" "${fixture}")"
+  assert_match "the read under the quoted marker survives" \
+    'bazel_deps\.py' "${kept}"
+}
+
+@test "bazel_deps: a real here-doc body still stays out of the evidence" {
+  # The companion half of the same rule: with the opener outside quotes the body is
+  # still the text a command emits, so a path named inside it is not a read.
+  local fixture="${BATS_TEST_TMPDIR}/body.sh" kept
+  cat >"${fixture}" <<'FIXTURE_EOF'
+cat >"${dir}/print.sh" <<'BODY'
+  echo "see bazel_deps.py for the details"
+BODY
+[[ -f "${REPO_ROOT}/tests/bazel_deps.py" ]]
+FIXTURE_EOF
+  kept="$(kept_code_lines "${CHECKER}" "${fixture}")"
+  if [[ "${kept}" == *"for the details"* ]]; then
+    printf 'FAIL: the here-doc body leaked into the evidence:\n%s\n' "${kept}" >&2
+    return 1
+  fi
+  assert_match "the read after the closed body survives" \
+    'bazel_deps\.py' "${kept}"
 }

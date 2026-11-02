@@ -25,18 +25,27 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   `self:` line per credential. `--source=<slot>` (chain, env, gh, mint) narrows it to
   one slot, and any answer about a slot the env pair outranks is labelled `shadowed`,
   because git and gh consult `GH_TOKEN`/`GITHUB_TOKEN` first. Pass only the repo URL
-  there; a named container is refused with a pointer to the host shell.
+  there; a named container is refused with a pointer to the host shell. A `REJECTED`
+  env-pair line is normally an expired mint, not a missing grant: a fresh
+  `coder external-auth access-token github` answers `api.github.com` while the stale pair
+  is refused, and `git` needs that mint as Basic auth (the git endpoint refuses the bearer
+  scheme `gh` accepts) - the push-denied entry in `docs/troubleshooting.md` has the recipe.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
   `:3002` the Coder agent tunnel, `:8181` SearXNG, `:9119` Hermes dashboard
   (LAN listener; the public name rides the router on `:8080`; the host
   assistant, not a workspace agent).
+- The host's dotenv file is unreadable from a workspace (`**/.env` and `**/.env.*`
+  are denied to the agent, and the deny has no exception for a benign read). Ask the
+  CLI that owns the value instead — `dev-stack -- status`, `bootstrap -- --check`,
+  `update-configs`, `refresh-configs` — or read `.env.example` for the key's shape.
 - The `~/.grok` you see here is one volume per owner, shared with that owner's other
   workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
   of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, the
   `"__evoT1Stack": true` JSON key, or the `__evoT1Stack = true` TOML key in
   `~/.grok/config.toml`) is stack-owned: change the seed in this repo and
   re-materialize it, never the copy that lives in a workspace. `~/.grok/notes-setup.sh`
-  and `~/.grok/notes/` (the canonical per-repo scratch `notes.md`) are both stack-owned
+  and `~/.grok/notes/` (the canonical scratch file is `~/.grok/notes/<host/owner/repo>/notes.md`,
+  one directory per clone) are both stack-owned
   and rewritten on every start; that start also sets `core.excludesFile` to
   `~/.grok/notes/exclude` when you never set it, which is why `notes.md` and
   `.scratch-notes.md` are ignored in every repo here.
@@ -91,6 +100,10 @@ Prefer Bazelisk. Make is a shim.
 
 Done means `//:test-fast` + lint green — inside the contributor container or
 `evo-t1-dev:latest` (`//scripts:test-in-image`); a native Darwin run is convenience only.
+A Bazel summary reading `Executed 0 out of N tests: N tests pass.` is a cached pass over
+unchanged inputs, which is a real pass: take one uncached pass
+(`bazelisk test //:test-fast --nocache_test_results`) before you open a PR rather than
+re-running the gate on a hunch.
 Stack changes must be verified on the dev stack first.
 
 ## Structure
@@ -98,7 +111,7 @@ Stack changes must be verified on the dev stack first.
 - Operator CLIs source `scripts/lib/common.sh` and print `== section ==`, `-> phase`, `ok:`, `warning:`, `note:`, `error:`, and a closing `summary: N ok, W warnings, F failed`. CLIs without `--json` unset `JSON_MODE` after source.
 - `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `coder_script` bodies are sibling `.tftpl` files rendered with `templatefile()`. `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md`, `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`, `vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `learn.SKILL.md`, `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`. The push stages all of them beside each staged `main.tf`; pushing without any one of them fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
-- `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys: `proxy/router.conf.template` is the source, `proxy/router.conf` is its render under the shipped defaults, and `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`. Edit the naming parts, never a rendered conf. A new top-level payload directory (or an unlisted `scripts/*.sh`) is invisible to `test-fast` and `lint` until it is added to `//:stack_data` / `//scripts:doc_sources`, and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, `hermes/config.yaml`, and `searxng/settings.yml`.
+- `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys: `proxy/router.conf.template` is the source, `proxy/router.conf` is its render under the shipped defaults, and `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`. Edit the naming parts, never a rendered conf. A new top-level payload directory is invisible to `test-fast` and `lint` until it is added to `//:stack_data` (a new `scripts/*.sh` needs no filegroup edit — the `shell_sources` glob picks it up, and it instead needs a key in `_SCRIPT_LIBS` or `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than quietly inheriting the world; `//scripts:doc_sources` is the union of those sources), and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, `hermes/config.yaml`, and `searxng/settings.yml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
 - The project scaffold `scripts/new-repo.sh` renders is its own repository (`toxicoder/ezrepo`
   by default; `--template-url` / `$EZREPO_URL` point elsewhere) and is vendored nowhere here.

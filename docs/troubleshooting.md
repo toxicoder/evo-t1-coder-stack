@@ -632,12 +632,17 @@ ls ~/.agents/skills/learn/SKILL.md ~/.coder/skills/learn/SKILL.md
   again. What works: keep a marker-free local copy only if you also stop the stack from
   seeding it, or disable the lane with `disabled = ["learn"]` under `[skills]` in
   `~/.grok/config.toml`.
-- `~/.grok/bin/grok` first on PATH is a leftover installer copy: move it aside so
-  `/usr/local/bin/grok` wins. That is the only PATH case, and it does not gate `/learn`.
-- The version line is still worth reading on its own terms: compare what
-  `/usr/local/bin/grok --version` prints with `GROK_VERSION` in
-  `images/dev/tool-versions.env` (1.0.70 at the time of writing). A workspace whose
-  golden image predates the pin bump reports an older CLI, and rebuilding `images/dev`
+- `command -v grok` answering `~/.grok/bin/grok` is the normal answer, not a leftover
+  installer copy: the workspace `PATH` lists `~/.grok/bin` before `/usr/local/bin`, and
+  that entry is a symlink into `~/.grok/downloads/`, which holds one file per downloaded
+  release and is where `grok update` installs - so moving it aside does not outlast the
+  next self-update. Compare `command -v grok` and both `--version` outputs
+  (`~/.grok/bin/grok --version`, `/usr/local/bin/grok --version`) against `GROK_VERSION`
+  in `images/dev/tool-versions.env`: the profile copy follows `grok update`, the image
+  copy follows the pin. Neither copy gates `/learn`, and the two disagreeing is never on
+  its own a reason to rebuild the image.
+- A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
+  `GROK_VERSION` (1.0.70 at the time of writing), and rebuilding `images/dev`
   (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded `/learn`
   works on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
@@ -1040,7 +1045,8 @@ coder restart <workspace>
   grant the private repos, then restart. Coder's injected provider omits
   `AppInstallURL`, so the warning on `/external-auth/github` is unlinked plaintext.
 - Restart the workspace afterwards so `GH_TOKEN` and the gh auth store match the new
-  grant. `git` via `GIT_ASKPASS` remints without that restart.
+  grant. `git` can mint live through `GIT_ASKPASS` without that restart, but only while
+  that helper answers prompts - see the push-denied section for the case where it does not.
 - Existing workspaces pick up the buttons after `bazelisk run //scripts:push-template`
   and a workspace update to the new template version.
 
@@ -1076,6 +1082,46 @@ coder restart <workspace>
 - Then check the URL scheme. That credential covers `https://github.com/...` remotes
   only, so a `git@github.com:` or `ssh://` URL gets neither helper nor askpass token
   and needs an SSH key you placed yourself, which this stack provisions nowhere.
+- Then check **how** the credential is sent, because the two GitHub endpoints disagree
+  about the scheme. `api.github.com` and `gh` accept `Authorization: Bearer <token>`. The
+  git data endpoint refuses it: one token answered `/user` with `200` and
+  `<repo>.git/info/refs?service=git-receive-pack` with `401` plus
+  `remote: invalid credentials` while the token rode a bearer header. git has to send it
+  as **Basic** auth with the token as the password. The username text is not checked
+  (measured on Coder v2.36.6: `toxicoder`, `x-access-token`, `somebody-else` and `octocat`
+  each returned `200`), but an empty username or an empty password is refused, and the
+  empty password is what produces the misleading `Invalid username or token. Password
+  authentication is not supported for Git operations.`
+- Then check what the injected helper actually answers, before you blame the grant. The
+  agent env exports `GIT_ASKPASS` pointing at the `coder` binary the agent staged under
+  `/tmp/coder.<rand>/`, and in a measured workspace that binary answered every prompt, and
+  `coder gitaskpass` itself, with `unrecognized subcommand` and no output, so git shipped
+  an empty credential and got the message above. The env pair goes stale the same way: the
+  `ghu_` token in `GH_TOKEN` was refused by `api.github.com` (`401`) while a fresh
+  `coder external-auth access-token github` mint was accepted (`200`), so a rejected push
+  proves nothing about the grant until both have been compared. Clearing
+  `GH_TOKEN`/`GITHUB_TOKEN` helps only while the helper answers; with a silent helper it
+  changes nothing. The push path that works hands git a fresh mint itself:
+
+```sh
+tok="$(coder external-auth access-token github)"
+cat > /tmp/askpass.sh <<'EOS'
+#!/bin/sh
+case "$1" in
+  [Uu]sername*) printf 'git\n' ;;
+  *) printf '%s\n' "${EVO_PUSH_TOKEN:-}" ;;
+esac
+EOS
+chmod +x /tmp/askpass.sh
+EVO_PUSH_TOKEN="$tok" GIT_ASKPASS=/tmp/askpass.sh GIT_TERMINAL_PROMPT=0 \
+  git -c credential.helper= push -u origin <branch>
+rm -f /tmp/askpass.sh
+```
+
+  Mint in the same shell that runs the push. A helper reads its own environment, so a
+  token exported by an earlier, separate shell is empty at the moment git asks, and the
+  answer comes back as the password-auth message again. Keep the token out of argv, which
+  `ps` can read, and out of the remote URL.
 - The doctor, from a host shell or from inside a workspace, names the credentials a
   workspace's git and gh could present and answers "can this credential WRITE to the repo you
   pass?". It probes the endpoint `git push` negotiates through: one GET of

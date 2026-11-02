@@ -228,6 +228,23 @@ _STRONG_READ_RE = re.compile(
 _HEREDOC_RE = re.compile(r"<<(?!<)-?\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?")
 
 
+def heredoc_delimiter(line):
+    """The delimiter of the first here-doc opener on a line, or "" when there is none.
+
+    A quoted `<<'NAME'` can be an argument rather than an opener: a Bats needle like
+    `grep -F -- "<<'LEARN_SKILL_MD_EOF'"` quotes the closer of a heredoc the suite is
+    pinning. Treating that as an opener swallows every line below it, and the payload a
+    suite reads further down then looks undeclared, so only an opener sitting outside
+    quotes counts.
+    """
+    for match in _HEREDOC_RE.finditer(line):
+        before = line[:match.start()]
+        if before.count('"') % 2 or before.count("'") % 2:
+            continue
+        return match.group(1)
+    return ""
+
+
 def is_write(line):
     """True when a line builds a file and opens nothing beyond the bytes it forwards.
 
@@ -262,14 +279,10 @@ def code_lines(text):
         if not line.strip():
             continue
         if _OUTPUT_RE.match(line) or is_write(line):
-            opener = _HEREDOC_RE.search(line)
-            if opener:
-                delimiter = opener.group(1)
+            delimiter = heredoc_delimiter(line)
             continue
         kept.append(line)
-        opener = _HEREDOC_RE.search(line)
-        if opener:
-            delimiter = opener.group(1)
+        delimiter = heredoc_delimiter(line)
     return "\n".join(kept)
 
 

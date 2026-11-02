@@ -859,9 +859,12 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
   prints its one note (pointing at **GitHub reauth**, and at **Install GitHub App**
   when the injected App is in use) and exits 0, and mints nothing.
   After a reconnect, restart the workspace (or wait for the next `gh_token_refresh`)
-  so `GH_TOKEN` and the gh auth store match the new grant; `GIT_ASKPASS` remints live
-  without that. The refresh script unsets `GH_TOKEN`/`GITHUB_TOKEN` before
-  `gh auth login --with-token`, because gh refuses stdin while those names are set.
+  so `GH_TOKEN` and the gh auth store match the new grant. `git` can mint live through
+  `GIT_ASKPASS` without that restart, where that helper answers prompts at all; the
+  push-denied entry in `docs/troubleshooting.md` covers the case where it stays silent.
+  `GH_TOKEN` itself only refreshes with the workspace or the refresh script. The refresh
+  script unsets `GH_TOKEN`/`GITHUB_TOKEN` before `gh auth login --with-token`, because gh
+  refuses stdin while those names are set.
 - A token that authenticates but was never GRANTED the repository still fails clone and
   push, and reads prove nothing about write: a private repository hidden from the
   credential answers 403 or 404 on both lanes, and a public one answers a read probe
