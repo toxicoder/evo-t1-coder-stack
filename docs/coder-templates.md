@@ -75,7 +75,10 @@ missing one fails the push before the CLI runs.
   CLI's own `/learn` bundle needs an x.ai sign-in this stack does not have, so this
   payload is what makes the slash command exist.
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
-  writes.
+  writes, into `~/.grok/mcp-cache-proxy/config.json` and only while that file is absent
+  (so a shared profile volume reuses one SQLite cache across that owner's workspaces). It
+  names no secret: the empty `CONTEXT7_API_KEY` value is what tells `mcp-cache-proxy` to
+  inherit `process.env`.
 - `gh-token-refresh.sh.tftpl` is the shared GitHub-token refresh `coder_script`,
   rendered with `templatefile()` so `${github_auth_id}` and
   `${coder_github_app_install_url}` interpolate.
@@ -643,7 +646,7 @@ at `~/.grok` in shared mode) are chowned to the home owner at the start of
 4. Writes the two terminal-profile tmux helpers (see below). The default one gives each
    visible terminal its own pane: it re-joins a folder's session only while nothing is
    attached to it, and otherwise opens a numbered sibling.
-5. Seeds the shared code-server User settings and the Coder Agents context files, only
+5. Seeds the Coder Agents context files, then the shared code-server User settings, only
    for files that are absent.
 6. Renders `~/.grok/config.toml` (the three gated MCP servers ship by default; the five
    offline stdio ones are not declared).
@@ -659,6 +662,224 @@ split on `/`, drop empty segments, take the last, drop a trailing `.git`, map ev
 character outside `[A-Za-z0-9._-]` to `-`, and fall back to `repo` when that leaves no
 leading alphanumeric. Both derivations must agree, or the editor and the terminal
 helpers point at a folder that was never cloned.
+
+### Why the stages sit where they do
+
+The order above is not incidental; each line is a constraint the script has to keep.
+
+- `~/.tmux.conf` is seeded *before* the two terminal helpers. `tmux` reads that file once
+  at server start and every terminal (plus an SSH client that reattaches) shares that one
+  server, so seeding after the first `tmux new-session -A` could run would leave that
+  session unconfigured for the whole boot. `mouse on` hands the wheel and the drag to
+  tmux; `set-clipboard on` is what carries a tmux copy out to the client clipboard over
+  OSC 52, and a client that blocks OSC 52 (iTerm2 by default) keeps the copy inside
+  tmux's own buffer instead.
+- The clone folder is created before git runs, and before the `coder_script.code_server`
+  script's own `mkdir`: the editor starts in parallel with the startup script, and an
+  empty tree is a folder VS Code can open while the clone is still writing. An empty
+  directory is also what `git clone` accepts, so pre-creating it does not change what gets
+  cloned - the emptiness guard still refuses a folder holding anything.
+- `notes_materialize` runs *before* the recursive chown of a fresh clone: the notes file
+  and the `.git/info/exclude` write are the stack's to make, and the chown afterwards
+  settles their ownership.
+- The chown of `~/.grok` and `~/.shared` runs a second time at the end of the script,
+  because the CLI installer and the seeds above may have created files as root when the
+  agent ran as root.
+- `run_notes` and `run_notes_watch` follow the clone's identity rule rather than the
+  agent's uid, because that stage writes into the workspace home and runs
+  `git config --global`: run as root it would rename a root-owned `~/.gitconfig` over the
+  workspace user's and leave `notes.md` unreadable on an already-cloned folder.
+- The watcher left at the end is what makes notes survive a recreate that lands *between*
+  edits. The boot-time sync runs once, so anything written later lived solely inside that
+  container, which is how a whole workspace's notes went missing on a recreate.
+- Every stage from the Coder Agents seeds onward is best-effort: an offline first boot has
+  to leave a working terminal, and a repository that will not clone has to leave a
+  workspace someone can fix, so nothing there may abort the script. In `devcontainer` a
+  missing or half-cloned folder is not silent either: `coder_devcontainer` fails on its own
+  with a visible error naming the folder it looked in, and the clone stage warns first when
+  a clone arrives with no devcontainer configuration in it.
+
+### The Grok Build CLI probe, the download, and the installer stub
+
+- The install check is `command -v grok`, not `[ -x ~/.grok/bin/grok ]`: the golden image
+  bakes the CLI into `/usr/local/bin`, so on a golden-image boot the probe answers yes and
+  nothing downloads. The download exists for the **Minimal shell** (`ubuntu:24.04`) preset
+  and for a home volume that never received a CLI.
+- It is bounded and retried on purpose: one unbounded attempt burned a whole start on a
+  single stalled connection to x.ai (`curl: (28) SSL connection timeout`) and still booted
+  the workspace without a CLI.
+- `GROK_FRESH_INSTALL` records that an install *completed* this boot - the second
+  `command -v` probe inside the install branch is what sets it, so a failed download leaves
+  the flag at `0`. The installer writes its own `~/.grok/config.toml` (a
+  `[cli] installer = ...` stub) that is indistinguishable from a user's config, so the
+  config stage may treat that stub as stack-owned only on a completed install: a download
+  that failed must never wipe a user-owned config in its place. Without that flag a
+  brand-new workspace would be left with an unconfigured CLI, because the stub carries
+  neither stack marker and the file already exists.
+
+### Marker ownership of the seeded files
+
+Most seeded files are written only while absent, so a hand-edited copy is user-owned and
+the stage re-runs harmlessly. Three of them are re-written on every start, and ownership is
+decided by a marker - never by mtime and never by first boot:
+
+- `~/.tmux.conf` and `~/.grok/AGENTS.md` are rewritten while the
+  `managed-by: evo-t1-coder-stack` line is present; editing the file away from the marker
+  hands it to the user for good, and each prints one warning line when it is marker-free.
+- `~/.grok/config.toml` is re-rendered when it is absent, when
+  `GROK_FRESH_INSTALL` is set, or while *either* marker is present: the `managed-by`
+  comment or the top-level `__evoT1Stack = true` key.
+- The key is what makes the rule hold. The CLI's own settings writer (`grok mcp add` and
+  friends) deletes every comment line, so a comment-only marker can vanish with nobody
+  touching the file.
+- On a shared profile volume the config file usually already exists, because another of the
+  owner's workspaces wrote it, so the marker rather than first boot is what decides.
+- Re-rendering carries over the tables the CLI owns instead of wiping them: `[cli]` holds
+  `cli.installer`, which picks the CLI's update path; `[ui]` holds `permission_mode`, so
+  re-adopting a file must never flip an operator back to prompting; and `[marketplace]` is
+  CLI settings the stack never owns.
+- The unmanaged case is announced rather than silent, because the render is the only place
+  a workspace's model catalog and MCP lanes are ever written.
+- `~/.grok/notes-setup.sh` is the exception to the absent-only rule: it is stack-owned code
+  and the copy on the shared profile volume has to be the one this template shipped, so it
+  is rewritten every start. It is written beside its target and `mv`'d in - and `chmod
+  0644`'d first, because `mktemp` makes 0600 and `mv` keeps that mode - so the rename is the
+  first moment the file exists for anyone to source, and a sibling workspace booting at the
+  same time against the one shared volume never sources a half-written library.
+
+### The shared grok profile volume
+
+`~/.grok` is not necessarily a workspace's own directory, and that decides several of the
+rules above.
+
+- In `shared` mode (the default `grok_profile_mode`) the container mounts the owner's
+  shared per-user Docker volume read-write at `/home/coder/.grok`, nested inside that
+  workspace's own `/home/coder` volume. The terminal helpers, `config.toml`,
+  `notes-setup.sh` and the `memory-v2/` tree the CLI keeps there are then the same files
+  every other workspace this owner has reads and writes, and they survive a rebuild.
+- That is also why `config.toml` cannot be per-workspace in that mode: it is one file, and
+  the last workspace to boot re-renders it for all of them, so this workspace's default
+  model (or, in `devcontainer`, its model alias) and config extras overwrite whatever the
+  previous boot wrote - for every sibling.
+- `private` mounts nothing extra: the tree then lives on this workspace's own home volume,
+  so its `config.toml`, defaults and extras included, is its own and dies with it.
+- In `devcontainer` the mount is on the workspace container only. A dev container the repo
+  builds on the sidecar keeps its own home and its own `~/.grok`, which is why the live
+  `notes-setup.sh` there is a regular file reached through the clone bind rather than a
+  link into `~/.grok`, and why a built dev container sees neither the settings volume nor
+  the editor symlink.
+- The Coder Agents seeds under `~/.coder` and `~/.agents` are not on that mount: they live
+  on the workspace's own home volume, and that stage neither needs nor disturbs it.
+
+### The Coder Agents seeds and their agents-tree twins
+
+- The chat agent discovers its context through its *default* paths (verified against the
+  v2.36.6 agent binary and its `agentcontextconfig` source): the instruction file
+  `AGENTS.md` under `~/.coder`, skills under `~/.coder/skills`, and a working-dir-relative
+  `.agents/skills`, which here resolves to `/home/coder/.agents/skills` - the same folder
+  the Grok Build CLI looks in.
+- Neither `main.tf` sets `CODER_AGENT_EXP_SKILLS_DIRS` or the
+  `CODER_AGENT_EXP_INSTRUCTIONS_*` keys: those *replace* the default lists rather than
+  appending, and the seeded copies already sit where the unmodified defaults point. Chat
+  itself is on by default in 2.36.6 - no experiment name and no entitlement gates it.
+- Each file also gets a twin in the `~/.agents` tree, because the `execute`-lane delegation
+  this stack teaches starts `grok -p` inside the workspace and that CLI reads the
+  `~/.agents` convention. The chat agent would only ever take the `~/.coder` copies - skill
+  dedupe is first-match-wins, home scope before working-dir paths - so one agent never
+  loads a skill twice; the twins exist for the CLI, not as a second source for chat.
+- A twin is copied only while absent, and only from the managed `~/.coder` copy, so a
+  hand-placed file in `~/.agents` is never overwritten and the dedupe keeps exactly one
+  live source. The CLI-side spelling of the instruction file keeps the `INSTRUCTIONS.md`
+  name because that is the name the `~/.agents` convention was seeded under.
+- In `devcontainer`, working-dir resolution has a second case: with the dev-container
+  toggle off the agent's working dir is `/home/coder`, exactly as in `workspace`; with it
+  on, the dev container's own working dir is the cloned folder under
+  `/srv/coder-devcontainers/...`, and that folder ships no skill tree, so the `~/.coder`
+  copies remain the live source either way.
+- In a `SKILL.md` the marker sits *after* the `---` frontmatter: the skill parser needs
+  `---` on line 1 and silently drops a skill whose first line is anything else. In an
+  injected instruction file the marker is pure provenance, because injected content has its
+  HTML comments stripped anyway. The stage is best-effort: a read-only or missing `$HOME`
+  changes nothing observable.
+- `/learn` is seeded on the same absent-only contract because upstream `/learn` is a
+  *bundled* skill and the bundle download runs through the CLI's proxy endpoints, which need
+  an x.ai sign-in this stack deliberately does not have: LiteLLM is the only transport, so
+  `~/.grok/bundled/` is never created and the slash name would simply be missing. Writing
+  the file is what makes `/learn` exist, and deleting or editing either copy keeps your own.
+
+### Startup script templatefile rules
+
+- `startup.sh.tftpl` is rendered by `templatefile()`, so every braced shell expansion has
+  to be written `$${name}`; the one-dollar braced form is swallowed as an interpolation.
+  The unbraced form (`$name`) needs no escape.
+- Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
+  thirteen: `grok_build_agents`, `grok_config`, `repo_url`, `additional_repos`,
+  `vscode_settings`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
+  `vscode_terminal_tmux`, `grok_build_delegation_skill`, `learn_skill`, `coder_agents`,
+  `mcp_cache_proxy`. The `devcontainer` twin adds `dc_dir` and `build_devcontainer`.
+- That is why the `.git` suffix is stripped with `sed` rather than the shorter
+  `${leaf%.git}`: a braced expansion would add an interpolation `main.tf` does not pass.
+- The repository URLs arrive as rendered literals and are read through a *quoted* heredoc,
+  so no shell quoting has to survive and the value is only ever expanded as data. An empty
+  Git repository field means a home-directory workspace, so the whole clone stage is
+  skipped rather than attempted with an empty URL.
+- `~/.grok/config.toml` is emitted from a quoted heredoc for the same reason: a
+  `Bearer $${GH_TOKEN}` line the config template emits travels through as literal text
+  instead of being expanded there, and the CLI expands it from the agent environment. The
+  same holds for the `CONTEXT7_API_KEY` reference.
+- `grok_config` arrives already rendered from `grok-config.toml.tftpl`. Its boolean keys
+  `github_mcp`, `search_mcp` and `context7_mcp` only decide whether their
+  `[mcp_servers.*]` block appears, and no credential byte is part of that decision;
+  `search_url` supplies the URL the searxng block dials, and the workspace affinity key is
+  a per-workspace routing hint (a workspace UUID, not a secret).
+
+### Cloning as the workspace user
+
+- `clone_owner` is whichever user the workspace really belongs to: the owner of `$HOME`
+  when the agent runs as root, otherwise whoever is running the script. It decides both the
+  chown target and whose git credentials the clone consults.
+- The parent folder (`/home/coder/workspace`, or the `/srv/coder-devcontainers/<wsid>` bind
+  in `devcontainer`) is chowned before git runs, and *non-recursively*: other clones live
+  alongside this one and are not ours to take over. The clone folder itself is chowned too,
+  or a root agent leaves it root-owned and the clone dies writing `.git` inside it.
+- git never runs as root, so the credentials it consults - a helper, `~/.git-credentials`,
+  ssh keys - are the workspace user's. `HOME` is passed explicitly through `env` because
+  `runuser` keeps the invoker's environment; a root agent would otherwise hand git `/root`
+  and miss those files entirely. An empty prefix means "run git directly", which is correct
+  for a non-root agent and for a root agent with no derivable workspace user.
+- A folder that already holds a `.git` is left alone: re-fetching is the user's call,
+  because a pull there could conflict mid-edit or fail on a dirty tree, and either way the
+  workspace would start on code nobody chose.
+- A failed clone is loud and non-fatal. The workspace still boots, an empty editor folder
+  is fixable from a terminal, git removes its own partial clone on failure, and nothing in
+  the script deletes a folder that may hold someone's work.
+
+### MCP command reachability advisory
+
+- Every `[mcp_servers.*]` block the render writes names its binary by the absolute path the
+  golden image bakes (`/opt/npm-global/bin/...`), so the config and the image are two
+  artifacts that have to agree - and they do not always. A workspace running an image built
+  before that binary was added boots with a lane that can never start, and the CLI only
+  says so in its own MCP log.
+- The stage reads the *rendered* file, pulls every `command = "..."` value out of it, and
+  names the ones that are not executable files, in the same startup log that wrote the
+  config. `sed` keeps only a double-quoted value and a TOML path carries no spaces, so an
+  empty entry there is an odd line rather than a missing binary.
+- It is advisory only: one warning line per missing path, never a failed start, so the call
+  swallows whatever status the function returns.
+
+### Dev-container preflight
+
+- It runs after the clone because it is about what the clone holds, and it also runs on a
+  re-start that cloned nothing, because the devcontainer build re-runs then too.
+- The six paths it probes are the ones `@devcontainers/cli` looks in: `devcontainer.json`
+  and `devcontainer.yml` at the root, under `.devcontainer/`, and under
+  `.github/devcontainers/`.
+- Nothing here changes what the build does. With the toggle on, a clone carrying no
+  devcontainer configuration fails the build either way, and the editor hangs off the dev
+  container, so no dev container also means no editor and no in-container terminal; the
+  warning is only early notice in the same log the clone warnings use. With the toggle off
+  the same miss is expected and the editor opens the clone directly.
 
 ### Editor, terminal, and the metadata tiles
 
@@ -762,6 +983,17 @@ helpers point at a folder that was never cloned.
   from the template.
 - A built dev container sees neither the volume nor that symlink, so it is the one place
   the seed is merged instead of linked.
+- The code-server module is deliberately given no settings map in plain mode: its merge
+  runs on every start and `mv`s over that symlink, which would fork a private copy and
+  discard the sharing. (`devcontainer` passes the seed to the module only in the mode where
+  the merge is wanted, and bakes it as `settings_b64` for the built container.)
+- The seed in git carries no API key. Cline and Roo read their key out of `settings.json`
+  and have no `env_key` field, so when `LITELLM_API_KEY` is set the startup script injects
+  it into the seed once (`jq`, falling back to `python3`) and nowhere else.
+- A *regular* file at the User settings path is the old per-workspace copy: the startup
+  script keeps it beside the link once, as `<path>.pre-shared`, then points the editor at
+  the shared file on every start so a workspace cannot drift off it. GNU `ln -sfn` replaces
+  a symlink and does not follow it.
 - `subdomain = false` everywhere: there is no `CODER_WILDCARD_ACCESS_URL` on this box, so
   the editor is proxied on the path-based access URL.
 
@@ -883,7 +1115,10 @@ GitHub credentials arrive by one path only: opt-in, and HTTPS-only.
   `credential.https://github.com.helper = !gh auth git-credential` entry (scoped to
   `github.com`) lets `git push`, `gh pr create` and `gh api` authenticate from the minted
   token rather than from a token stored in a file. It is skipped when your `gitconfig`
-  already names a helper, because git takes the **last** value it finds.
+  already names a helper, because git takes the **last** value it finds for that host - a
+  hand-written `[credential "https://github.com"]` section would otherwise be overridden by
+  the appended line. It is scoped to `github.com` on purpose: `gist.github.com` is not what
+  these workspaces push, and a gist credential would be a second scope to audit.
 - The one copy on disk is the per-workspace gh auth store (0600) that `gh_token_refresh`
   maintains.
 

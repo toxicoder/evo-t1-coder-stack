@@ -1,68 +1,12 @@
 #!/bin/bash
-# Coder workspace startup — EVO-T1 stack.
+# Coder workspace startup - EVO-T1 stack.
 #
-# Idempotent: safe to re-run on every workspace start.
-#   1. installs tmux (if missing)
-#   1b. seeds ~/.tmux.conf (only while this stack owns the file), so the
-#       workspace's tmux terminals scroll and copy like a native terminal
-#   2. installs the Grok Build CLI (if missing)
-#   3. puts ~/.grok/bin on PATH (login shells + this process)
-#   4. writes the two terminal-profile helpers (the "Grok Build" one and the
-#      plain tmux reattach wrapper the default profile uses), so a closed tab
-#      rejoins its session instead of losing the processes running in it
-#   5. seeds the Coder Agents context (AGENTS.md + skill under ~/.coder, with
-#      ~/.agents twins for the Grok CLI), only for files that are absent
-#   5b. seeds the shared code-server User settings if that file is absent, then
-#       links the editor at it (one file per owner, not re-merged each start)
-#   6. writes ~/.grok/config.toml (only while this stack owns the file) — the
-#      LiteLLM catalog plus this workspace's create-form choices: the default
-#      model and any appended config extras
-#   7. seeds the gh/git credential helper, but only when a GitHub token was
-#      supplied — this stage never writes the token itself into a git-tracked
-#      file or printed output; gh's own 0600 auth store (main.tf's
-#      gh_token_refresh) is the only disk copy it makes
-#   8. clones the repository the create form named into
-#      /home/coder/workspace/<repo-name> — the folder code-server, the web
-#      terminal and the Grok Build session all open on, so it has to land
-#      before any of them is used
-#   8b. puts a private notes.md in every clone folder, restoring it from the
-#      shared profile volume and keeping that volume up to date — by the
-#      start, and by a flock-guarded watcher left running afterwards
+# Idempotent: safe to re-run on every workspace start. The stage list, and why each
+# stage sits where it does: docs/coder-templates.md#what-the-startup-script-does-in-order
 #
-# ~/.grok is not necessarily this workspace's own directory. With main.tf's
-# grok_profile_mode at "shared" (the default) the container mounts the workspace
-# owner's shared per-user Docker volume read-write at /home/coder/.grok, nested
-# inside that workspace's own /home/coder volume, so the terminal helpers,
-# config.toml and memory-v2/ written below are the same files
-# every other workspace this user owns reads and writes, and they survive a
-# rebuild. That is also why config.toml cannot be per-workspace in that mode: it is
-# one file, and the last workspace to boot re-renders it for all of them.
-# "private" mounts nothing extra — the tree then lives on this workspace's own home
-# volume, so its config.toml (default model and extras included) is its own and
-# dies with it.
-#
-# What neither mode changes is ownership of config.toml: the managed-by:
-# evo-t1-coder-stack marker still decides it, and the file is still re-rendered
-# on every start while that marker line is present.
-#
-# Every stage 5 onward is best-effort: an offline first boot must still leave
-# a working terminal, and a repository that will not clone must still leave a
-# workspace someone can fix, so nothing here may abort the script.
-#
-# Note: this file is rendered by Terraform templatefile(); shell variables
-# are written with a doubled dollar sign so the rendered script keeps them
-# ($name or $${name}; the braced form is only safe when escaped this way). The
-# only interpolations Terraform has to resolve are the thirteen variables main.tf
-# passes: grok_build_agents, grok_config, repo_url, additional_repos,
-# vscode_settings, notes_setup, tmux_conf, grok_build_terminal,
-# vscode_terminal_tmux, grok_build_delegation_skill, learn_skill, coder_agents and
-# mcp_cache_proxy. grok_config arrives already rendered from
-# grok-config.toml.tftpl, whose boolean gate keys are github_mcp, search_mcp
-# and context7_mcp - each only decides whether its [mcp_servers.*] block
-# appears - and no credential byte is part of that decision: the GH_TOKEN and
-# CONTEXT7_API_KEY references that config template does emit are dollar-escaped,
-# so they stay literal text inside the quoted heredoc below, for the CLI to
-# expand from the agent environment.
+# Rendered by Terraform templatefile(): a braced shell expansion must be written
+# $${name}, or the render swallows it as an interpolation. Only the variables main.tf
+# passes interpolate; docs/coder-templates.md#startup-script-templatefile-rules.
 
 set -u
 
@@ -71,11 +15,6 @@ if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
   SUDO="sudo"
 fi
 
-# Extra named volumes Docker creates empty (vscode-settings-<owner-id>, and
-# grok-profile-<owner-id> in shared mode) are root:root 755. The agent runs as
-# coder, so a first-boot write into them is Permission denied unless they
-# belong to whoever owns $HOME first. $SUDO is empty when this script is
-# already root, and sudo on the golden image (NOPASSWD).
 home_owner="$(stat -Lc '%u:%g' "$HOME" 2>/dev/null || true)"
 [ "$home_owner" = "0:0" ] && home_owner=""
 if [ -z "$home_owner" ] && id coder >/dev/null 2>&1; then
@@ -93,17 +32,9 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 # --- tmux configuration -----------------------------------------------------
-# Seeded before the terminal-profile helpers, so it is in place before any
-# `tmux new-session -A` can run: tmux reads this file once at server start and
-# every terminal (plus an SSH client that reattaches) shares that one server.
-# `mouse on` hands the wheel and the drag to tmux; `set-clipboard on` is what
-# carries a tmux copy out to the client's clipboard over OSC 52, which a client
-# that blocks OSC 52 (iTerm2 by default) keeps inside tmux's own buffer.
-#
-# The marker line is the ownership flag, on the same contract as
-# ~/.grok/config.toml: while it is present this stage rewrites the file on
-# every start, and editing the file away from the marker hands it to the user
-# for good.
+# Seeded before the terminal helpers: tmux reads this file once at server start, so
+# every terminal and every reattaching SSH client shares one server. The marker line
+# is the ownership flag: docs/coder-templates.md#marker-ownership-of-the-seeded-files.
 if [ ! -f "$HOME/.tmux.conf" ] \
    || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.tmux.conf"; then
   cat >"$HOME/.tmux.conf" <<'TMUX_CONF_EOF'
@@ -115,19 +46,10 @@ else
 fi
 
 # --- Grok Build CLI ----------------------------------------------------------
-# A PATH probe (`command -v`), not `[ -x ~/.grok/bin/grok ]`: the golden image
-# bakes the CLI into /usr/local/bin, so on a golden-image boot this probe
-# answers YES and nothing downloads. The download is the fallback for the
-# `ubuntu:24.04` image option and for a home volume that never received a CLI,
-# and it is bounded + retried on purpose: one unbounded attempt burned a whole
-# start on a single stalled connection to x.ai ("curl: (28) SSL connection
-# timeout") and booted the workspace without a CLI anyway.
-#
-# GROK_FRESH_INSTALL records that an install COMPLETED this boot. The
-# installer writes its own ~/.grok/config.toml (a `[cli] installer = ...`
-# stub), indistinguishable from a user's config; the managed-config guard
-# below may only treat that stub as stack-owned on a completed install — a
-# download that failed must never wipe a user-owned config in its place.
+# A PATH probe, not [ -x ~/.grok/bin/grok ]: the golden image bakes the CLI, so the
+# download is the ubuntu:24.04 / never-seeded-home fallback, bounded + retried, and
+# the fresh-install flag only records a COMPLETED install:
+# docs/coder-templates.md#the-grok-build-cli-probe-the-download-and-the-installer-stub.
 GROK_FRESH_INSTALL=0
 if ! command -v grok >/dev/null 2>&1; then
   grok_installer="$(mktemp 2>/dev/null || true)"
@@ -135,13 +57,8 @@ if ! command -v grok >/dev/null 2>&1; then
      && curl -fsSL --http1.1 --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 180 \
           -o "$grok_installer" https://x.ai/cli/install.sh \
      && bash "$grok_installer" >/dev/null; then
-    # `command -v` again, not `[ -x ... ]`: the probe must see the CLI
-    # wherever the installer put it, and a failed download must leave the
-    # flag at 0.
     command -v grok >/dev/null 2>&1 && GROK_FRESH_INSTALL=1
   fi
-  # $${...} (doubled dollar) keeps this a shell expansion, not a Terraform
-  # interpolation — see the note at the top of this file.
   rm -f "$${grok_installer:-}"
 fi
 if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
@@ -150,54 +67,23 @@ fi
 export PATH="$HOME/.grok/bin:$PATH"
 
 # --- terminal-profile helpers -------------------------------------------------
-# Both profiles below launch through a per-folder tmux session, so a closed tab
-# never kills what was running in it.
-#
-# VS Code shows the profile under the settings key "Grok Build"; this helper
-# walks up to the repository root first, so a terminal opened anywhere inside a
-# clone rejoins one session, and runs `grok --cwd <that root>` inside it.
+# Both profiles launch through a per-folder tmux session, so a closed tab never kills
+# what was running in it: docs/coder-templates.md#terminal-and-editor-defaults.
 mkdir -p "$HOME/.grok/bin"
 cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
 ${grok_build_terminal}
 GROK_BUILD_HELPER
 chmod +x "$HOME/.grok/bin/grok-build-terminal"
 
-# The default terminal (and the Grok Build profile) join one tmux session per
-# folder instead of starting a throwaway one, so a closed tab or reloaded page
-# never kills running processes and another terminal (or an SSH client) can
-# rejoin the same session. No tmux (offline first boot): plain login shell.
 cat >"$HOME/.grok/bin/vscode-terminal-tmux" <<'TMUX_ATTACH_HELPER'
 ${vscode_terminal_tmux}
 TMUX_ATTACH_HELPER
 chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
 
 # --- Coder Agents context (skill + instructions) ------------------------------
-# Seeds the two files the Coder Agents chat agent discovers through its
-# DEFAULT paths (verified against the v2.36.6 agent binary + its
-# agentcontextconfig source): the instruction file AGENTS.md under ~/.coder
-# and skills under ~/.coder/skills, plus a working-dir-relative
-# .agents/skills — which here resolves to /home/coder/.agents/skills, the
-# same folder the Grok Build CLI looks in. main.tf therefore sets NO
-# CODER_AGENT_EXP_SKILLS_DIRS / CODER_AGENT_EXP_INSTRUCTIONS_* keys: those
-# REPLACE the default lists rather than appending, and the seeded copies now
-# sit exactly where the (unmodified) defaults point. Chat itself is on by
-# default in 2.36.6 — no experiment name and no entitlement gates it.
-# Each file also gets a twin in the ~/.agents tree, because the `execute`-
-# lane delegation this stack teaches starts `grok -p` inside the workspace,
-# and that CLI reads the ~/.agents convention — the chat agent itself would
-# only ever take the ~/.coder/skills copy (skill dedupe is first-match-wins,
-# home scope before working-dir paths), so one agent never loads a skill
-# twice; the twins exist for the CLI, not as a second source for chat.
-# Written or copied only if ABSENT — a hand-edited copy is user-owned and
-# this stage re-runs harmlessly. The managed-by: evo-t1-coder-stack marker
-# marks every stack-seeded file (in SKILL.md it sits after the `---`
-# frontmatter because the skill parser needs `---` on line 1 and silently
-# drops a skill whose first line is anything else; injected instruction
-# content gets HTML comments stripped anyway, so there the marker is pure
-# provenance). Best-effort like the stages below it: a read-only or missing
-# $HOME changes nothing observable. The files live on the workspace's own
-# /home/coder home volume — this stage neither needs nor disturbs the ~/.grok
-# profile mount.
+# Seeds the files the Coder Agents chat agent discovers through its DEFAULT paths, plus
+# the ~/.agents twins the `grok -p` delegation lane reads, each only if ABSENT so a
+# hand-edited copy is user-owned: docs/coder-templates.md#the-coder-agents-seeds-and-their-agents-tree-twins.
 if [ ! -f "$HOME/.coder/skills/grok-build-delegation/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/grok-build-delegation" 2>/dev/null
   cat >"$HOME/.coder/skills/grok-build-delegation/SKILL.md" <<'AGENT_SKILL_MD_EOF'
@@ -205,21 +91,15 @@ ${grok_build_delegation_skill}
 AGENT_SKILL_MD_EOF
 fi
 
-# The ~/.agents twin: copied only while absent, and only from the managed
-# ~/.coder copy, so a hand-placed skill there is never overwritten (and the
-# chat agent's first-match-wins skill dedupe keeps exactly one live source).
 if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
   mkdir -p "$HOME/.agents/skills/grok-build-delegation" 2>/dev/null
   cp "$HOME/.coder/skills/grok-build-delegation/SKILL.md" \
     "$HOME/.agents/skills/grok-build-delegation/SKILL.md" 2>/dev/null
 fi
 
-# The /learn orientation skill, seeded on the same contract. Upstream /learn is a
-# BUNDLED skill, and the bundle download runs through the CLI's proxy endpoints,
-# which need an x.ai sign-in this stack deliberately does not have: LiteLLM is the
-# only transport, so ~/.grok/bundled/ is never created and the slash name would
-# simply be missing. Writing the file is what makes /learn exist. Same
-# absent-only rule on both copies: delete the file (or edit it) to keep your own.
+# The /learn orientation skill, same absent-only contract. Upstream /learn is a BUNDLED
+# skill and its download needs an x.ai sign-in this stack does not have, so writing this
+# file is what makes the slash name exist.
 if [ ! -f "$HOME/.coder/skills/learn/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/learn" 2>/dev/null
   cat >"$HOME/.coder/skills/learn/SKILL.md" <<'LEARN_SKILL_MD_EOF'
@@ -239,25 +119,13 @@ ${coder_agents}
 AGENT_INSTR_MD_EOF
 fi
 
-# The ~/.agents twin, same rule as the skill twin above (copied only while
-# absent; the CLI-side spelling of this file keeps its INSTRUCTIONS.md name
-# because that is the name the ~/.agents convention was seeded under).
+# The ~/.agents twin, same rule as above; INSTRUCTIONS.md is the name the ~/.agents
+# convention was seeded under.
 if [ ! -f "$HOME/.agents/INSTRUCTIONS.md" ]; then
   cp "$HOME/.coder/AGENTS.md" "$HOME/.agents/INSTRUCTIONS.md" 2>/dev/null
 fi
 
 # --- Grok Build orchestration protocol ----------------------------------------
-# Seeds the parent-orchestrator / conflict-gate protocol into ~/.grok/AGENTS.md
-# so every Grok Build session in the workspace follows it. The text arrives
-# interpolated: main.tf reads GROK_BUILD_AGENTS.md (the stack keeps one copy
-# in templates/common/, and the push stages it into this template's pushed
-# copy) and hands its text to the heredoc below, which copies it in, renamed.
-#
-# The marker line in the payload is the ownership flag, on the same contract as
-# ~/.grok/config.toml: while it is present this stage rewrites the file on every
-# start, so every Grok Build session follows the protocol this template shipped.
-# Deleting the marker (or the file's marker line) hands the file to the user for
-# good, and a hand-edited, marker-free copy is never touched again.
 if [ ! -f "$HOME/.grok/AGENTS.md" ] \
    || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/AGENTS.md"; then
   mkdir -p "$HOME/.grok" 2>/dev/null
@@ -267,15 +135,9 @@ GROK_AGENTS_EOF
 fi
 
 # --- Private per-repo notes ---------------------------------------------------
-# The library behind each clone's notes.md. Unlike the seed above it is rewritten
-# on every start: it is stack-owned code, and the copy on the shared ~/.grok
-# volume must be the one this template shipped. main.tf reads
-# templates/common/notes-setup.sh and hands the text to the heredoc below; the
-# clone stage further down calls notes_materialize with it.
-#
-# Written beside its target and moved in: two of this owner's workspaces can boot
-# at once against the one shared volume, and a sibling must never source a
-# half-written library.
+# The library behind each clone's notes.md. Unlike the seeds above it is REWRITTEN on
+# every start (stack-owned code), and it is written beside its target and moved in so a
+# sibling booting against the same volume never sources a half-written file.
 mkdir -p "$HOME/.grok" 2>/dev/null || true
 notes_lib="$HOME/.grok/notes-setup.sh"
 notes_lib_tmp="$(mktemp "$notes_lib.XXXXXX" 2>/dev/null)" || notes_lib_tmp="$notes_lib.$$"
@@ -283,8 +145,6 @@ if cat >"$notes_lib_tmp" <<'NOTES_SETUP_EOF'
 ${notes_setup}
 NOTES_SETUP_EOF
 then
-  # mktemp makes 0600 and mv keeps that mode, so the temp is opened up first:
-  # the rename is the first moment $notes_lib exists for anyone to source.
   chmod 0644 "$notes_lib_tmp" 2>/dev/null || true
   mv -f "$notes_lib_tmp" "$notes_lib" 2>/dev/null || true
 fi
@@ -293,19 +153,9 @@ rm -f "$notes_lib_tmp" 2>/dev/null || true
 . "$notes_lib" 2>/dev/null || true
 
 # --- Editor settings ----------------------------------------------------------
-# One settings.json per owner, on the vscode-settings-<owner-id> volume main.tf
-# mounts at ~/.shared/vscode. The first boot that finds the file missing copies
-# the rendered seed in; every later boot leaves it alone, so an edit survives
-# and every workspace this owner has opens the same file. code-server reads
-# ~/.local/share/code-server/User/settings.json, which is a symlink to that
-# shared file. Nothing reads ~/.config/Code. The code-server module is not
-# given a settings map: its merge runs on every start and `mv`s over this
-# symlink, which would fork a private copy and discard the sharing.
-#
-# The seed in git has no API key. Cline and Roo read their key from
-# settings.json and have no env_key field, so when LITELLM_API_KEY is set it
-# is written into the seed once here and nowhere else. Delete
-# ~/.shared/vscode/settings.json to reseed on the next start.
+# One settings.json per owner, on the vscode-settings-<owner-id> volume main.tf mounts
+# at ~/.shared/vscode, symlinked to from the editor's User path. The seed in git has no
+# API key - Cline and Roo have no env_key field, so a set LITELLM_API_KEY goes in once.
 mkdir -p "$HOME/.shared/vscode" "$HOME/.local/share/code-server/User"
 shared_settings="$HOME/.shared/vscode/settings.json"
 user_settings="$HOME/.local/share/code-server/User/settings.json"
@@ -332,48 +182,28 @@ VSCODE_SETTINGS_EOF
     echo "WARNING: could not write $shared_settings — the vscode-settings volume is not writable. Editor settings were not seeded." >&2
   fi
 fi
-# A regular file here is the old per-workspace copy. Keep it beside the link
-# once, then point the editor at the shared file on every start so a workspace
-# cannot drift off it. GNU ln -sfn replaces a symlink; it does not follow it.
+# A regular file here is the old per-workspace copy: keep it beside the link once,
+# then point the editor at the shared file on every start. ln -sfn replaces a symlink.
 if [ -e "$user_settings" ] && [ ! -L "$user_settings" ]; then
   mv "$user_settings" "$${user_settings}.pre-shared"
 fi
 ln -sfn "$shared_settings" "$user_settings"
 
 # --- Grok Build config --------------------------------------------------------
-# Rendered from grok-config.toml.tftpl: the LiteLLM model catalog, Grok's native
-# web_search on by default, the gated searxng search entry (on by default as the
-# fallback lane), the subagent sizing, and the two per-workspace knobs -
-# the default model
-# picked in the create form and anything typed into the config-extras field. Both
-# of those only differ per workspace while the profile is private (or this file is
-# unmanaged): on a shared profile volume this is ONE file for every workspace the
-# owner owns, and the last one to boot re-renders it for all of them.
-#
-# Ownership is decided by either marker: the managed-by marker comment or the
-# top-level __evoT1Stack key. While either is present the stack re-renders the
-# file on every start, and deleting both hands the file over to the user for
-# good. The key is what makes the rule hold: the CLI's own settings writer
-# (grok mcp add and friends) deletes every comment line, so a comment-only
-# marker can vanish with nobody touching the file. On a shared
-# profile volume that file usually already exists — another of the owner's
-# workspaces wrote it — so the marker, not first-boot, is what decides.
-#
-# A fresh CLI install always takes the file back. The installer creates a
-# `[cli] installer = ...` stub before this stage runs, so without the first-boot
-# flag a brand-new workspace would be left with an unconfigured CLI: the stub has
-# neither marker, the file exists, and the guard below would treat it as user-owned.
+# Rendered from grok-config.toml.tftpl: the LiteLLM catalog plus this workspace's
+# create-form choices. Either marker (the managed-by comment, or the __evoT1Stack key
+# that survives a comment-stripping CLI rewrite) keeps the stack re-rendering it, and
+# on a shared profile volume this one last-boot-wins file covers every workspace the
+# owner owns. The heredoc is quoted, so a `Bearer $${GH_TOKEN}` line stays literal text
+# here for the CLI to expand: docs/coder-templates.md#marker-ownership-of-the-seeded-files.
 mkdir -p "$HOME/.grok/memory" "$HOME/.grok/logs/mcp" 2>/dev/null
 
 if [ ! -f "$HOME/.grok/config.toml" ] \
    || [ "$GROK_FRESH_INSTALL" = "1" ] \
    || grep -qFs -e 'managed-by: evo-t1-coder-stack' -e '__evoT1Stack = true' \
      "$HOME/.grok/config.toml"; then
-  # Re-rendering also happens on every start while either marker is present, so
-  # the tables the CLI owns are carried over instead of wiped: [cli] holds
-  # cli.installer, which picks the CLI's update path; [ui] holds permission_mode,
-  # so re-adopting a file must never flip an operator back to prompting; and
-  # [marketplace] is CLI settings the stack never owns.
+  # Carried over instead of wiped: the tables the CLI owns are [cli] (cli.installer),
+  # [ui] (permission_mode) and [marketplace].
   cli_block="$(mktemp 2>/dev/null || printf '/tmp/grok-cli-block.%s.toml' "$$")"
   if [ -f "$HOME/.grok/config.toml" ]; then
     awk '/^\[(cli|ui|marketplace)\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
@@ -393,11 +223,8 @@ GROK_CONFIG_EOF
   rm -f "$cli_block"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
 else
-  # Same marker contract as ~/.tmux.conf above, plus the one key that survives a
-  # comment-stripping CLI rewrite: neither marker present means the file is
-  # user-owned and this stage keeps its hands off it - which is also why the
-  # loss was silent. Say what it costs, because the render above is the only
-  # place this workspace's model catalog and MCP lanes are ever written.
+  # Same marker contract as ~/.tmux.conf above. Say what the loss costs: the render
+  # above is the only place this workspace's model catalog and MCP lanes are written.
   echo "WARNING: $HOME/.grok/config.toml carries neither stack marker (no" \
     "managed-by comment, no __evoT1Stack key) - this workspace is" \
     "running a config the stack does not manage, so the default MCP lanes and" \
@@ -406,22 +233,14 @@ else
 fi
 
 # --- MCP command reachability (advisory) --------------------------------------
-# Every [mcp_servers.*] block the render above writes names its binary by the
-# absolute path the golden image bakes (/opt/npm-global/bin/...), so the config
-# and the image are two artifacts that have to agree - and they do not always.
-# A workspace running an image built before that binary was added boots with a
-# lane that can never start, and the CLI only says so in its own MCP log. This
-# stage reads the RENDERED file, pulls every command = "..." value out of it and
-# names the ones that are not executable files, in the same startup log that
-# wrote the config. Advisory only: one warning line per missing path, never a
-# failed start, so the call below swallows whatever status it returns.
+# The render names every MCP binary by the absolute path the golden image bakes, so
+# config and image are two artifacts that have to agree. Advisory only: one warning
+# line per missing path, never a failed start, so the call swallows the status.
 check_mcp_commands() {
   local mcp_cfg mcp_cmd
   mcp_cfg="$HOME/.grok/config.toml"
   [ -f "$mcp_cfg" ] || return 0
   while IFS= read -r mcp_cmd; do
-    # sed keeps only a double-quoted value, and a TOML path carries no spaces,
-    # so an empty entry here is an odd line, not a missing binary.
     [ -n "$mcp_cmd" ] || continue
     [ -x "$mcp_cmd" ] && continue
     echo "WARNING: $mcp_cfg declares an MCP command that is not executable:" \
@@ -435,10 +254,8 @@ check_mcp_commands() {
 check_mcp_commands || true
 
 # --- Context7 cache-proxy config ---------------------------------------------
-# Seeded only while absent, so a hand-edited copy survives restarts. Lives
-# under ~/.grok so a shared grok-profile volume reuses the SQLite cache across
-# that owner's workspaces. The JSON names no secret: empty CONTEXT7_API_KEY
-# tells mcp-cache-proxy to inherit process.env.
+# Seeded only while absent, so a hand-edited copy survives. Under ~/.grok so a shared
+# grok-profile volume reuses the SQLite cache. The JSON names no secret.
 mkdir -p "$HOME/.grok/mcp-cache-proxy" 2>/dev/null || true
 if [ ! -f "$HOME/.grok/mcp-cache-proxy/config.json" ]; then
   cat >"$HOME/.grok/mcp-cache-proxy/config.json" <<'MCP_CACHE_PROXY_EOF'
@@ -447,33 +264,15 @@ MCP_CACHE_PROXY_EOF
   chmod 600 "$HOME/.grok/mcp-cache-proxy/config.json" 2>/dev/null || true
 fi
 
-# Second pass: grok's installer and the seed above may have created files as
-# root when the agent ran as root; hand them back to whoever owns $HOME.
 if [ -n "$home_owner" ]; then
   $SUDO chown -R "$home_owner" "$HOME/.grok" "$HOME/.shared" 2>/dev/null || true
 fi
 
 # --- GitHub credential plumbing (best effort) ----------------------------------
-# Only ever runs when a token exists. main.tf puts GH_TOKEN and GITHUB_TOKEN in
-# the agent environment when the owner has connected the External Auth
-# provider named by CODER_GITHUB_AUTH_ID (environment only: never a template variable, never a
-# git-tracked file, never printed), gh prefers either one from the environment,
-# and `gh auth git-credential` is the helper that lets plain git use that same
-# env token — so `git push` and `gh pr create` work with the token living no
-# wider than the workspace itself. The one copy on disk is the gh auth store
-# main.tf's gh_token_refresh script maintains under the home volume (0600,
-# written by `gh auth login --with-token`) so shells launched outside the agent
-# environment resolve it too. With neither variable set, or with gh or git
-# missing, this stage does nothing at all: the default workspace gets no .gitconfig
-# change, which is the point of keeping the token optional.
-#
-# The grep is what makes it idempotent — one helper line per home volume, not one
-# per start — and it skips the append when the file already names either the
-# helper or a github.com credential section of its own: git resolves a credential
-# helper by host and takes the LAST value it finds, so a hand-managed gitconfig
-# keeps whatever helper its owner chose instead of being overridden by ours.
-# Scoped to github.com on purpose: gist.github.com is not what these workspaces
-# push, and a gist credential would be a second scope to audit.
+# Only runs with a token: main.tf puts GH_TOKEN and GITHUB_TOKEN in the agent
+# environment when the owner connected the External Auth provider named by
+# CODER_GITHUB_AUTH_ID, and `gh auth git-credential` lets plain git use it; nothing here
+# stores the token. docs/coder-templates.md#github-credentials-for-a-workspace.
 if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1 \
    && [ -n "$${GH_TOKEN:-}$${GITHUB_TOKEN:-}" ]; then
   if ! grep -qs -e 'helper = !gh auth git-credential' \
@@ -484,24 +283,12 @@ if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1 \
 fi
 
 # --- Repository clone (best effort) --------------------------------------------
-# Nothing else puts code in /home/coder/workspace. That folder is what main.tf's
-# code_server `folder` and the web-terminal app point at, and it is what the
-# Grok Build helper above resolves `git rev-parse` and `grok --cwd` against, so
-# a repository that is not there by now leaves the editor and every terminal
-# working from the home directory instead.
-#
-# The folder name is re-derived here rather than handed in, because this is the
-# side that runs git; main.tf derives it the same way for those two `folder`
-# arguments and the two derivations must agree (split on "/", drop empty
-# segments so a trailing slash is harmless, take the last, drop a trailing
-# ".git", map every character outside [A-Za-z0-9._-] to "-", and fall back to
-# "repo" when that leaves no leading alphanumeric — which also keeps "../" out
-# of a path the editor, the terminal and the Grok agent all open on).
-#
-# The URL arrives as a rendered literal, so it is read through a quoted heredoc:
-# that way no shell quoting has to survive, and the value is only ever expanded
-# as data. An empty field means a home-directory workspace, so the whole stage
-# is skipped rather than attempted with an empty URL.
+# Nothing else puts code in /home/coder/workspace, and that folder is what the
+# code_server `folder`, the web-terminal app and the Grok Build helper all point
+# at, so a repository missing by now leaves the editor and every terminal in
+# $HOME. The leaf is re-derived here the way main.tf derives it - the two must
+# agree. An empty field skips the stage entirely:
+# docs/coder-templates.md#cloning-as-the-workspace-user.
 repo_url_raw="$(cat <<'REPO_URL_EOF'
 ${repo_url}
 REPO_URL_EOF
@@ -509,26 +296,18 @@ REPO_URL_EOF
 
 if [ -n "$repo_url_raw" ]; then
   repo_leaf="$(printf '%s' "$repo_url_raw" | tr '/' '\n' | grep -v '^$' | tail -n 1)"
-  # The "$${leaf%.git}" suffix form would be the shorter way to drop the
-  # extension; it is spelled with sed here because a braced shell expansion is a
-  # templatefile interpolation, and the bare form would add a key main.tf does
-  # not pass (it passes exactly grok_config, repo_url, additional_repos and
-  # vscode_settings).
+  # sed, not the shorter "$${leaf%.git}": a braced shell expansion is a templatefile
+  # interpolation and would name a key main.tf does not pass.
   repo_folder="$(printf '%s' "$repo_leaf" | sed 's/\.git$//')"
   repo_folder="$(printf '%s' "$repo_folder" | sed 's/[^A-Za-z0-9._-]/-/g')"
   printf '%s' "$repo_folder" | grep -qE '^[A-Za-z0-9]' || repo_folder="repo"
   target="/home/coder/workspace/$repo_folder"
-  # Made before git runs, and before the code-server script's own mkdir: the
-  # editor starts in parallel with this stage, and an empty tree here is a
-  # folder VS Code can open while the clone is still writing. An empty
-  # directory is also what git clone accepts, so this does not change what
-  # gets cloned — the guard below still refuses anything that is not empty.
+  # Made before git runs, and before the code-server script's own mkdir: the editor
+  # opens an empty tree while the clone is still writing, and git clone accepts empty.
   mkdir -p -- "$target" 2>/dev/null || true
 
-  # Whichever user the workspace really belongs to: the owner of $HOME when the
-  # agent runs as root (same rule as the ~/.grok chown above), otherwise whoever
-  # is running this script. It decides both the chown target and whose git
-  # credentials the clone consults.
+  # Whichever user the workspace really belongs to: the owner of $HOME when the agent runs
+  # as root, otherwise this script's user. Decides the chown target and the git creds.
   clone_owner="$(id -un)"
   if [ "$(id -u)" = "0" ]; then
     clone_owner="$(stat -Lc '%U' "$HOME" 2>/dev/null || true)"
@@ -540,25 +319,17 @@ if [ -n "$repo_url_raw" ]; then
   clone_home=""
   [ -n "$clone_owner" ] && clone_home="$(getent passwd "$clone_owner" 2>/dev/null | cut -d: -f6)"
 
-  # A fresh home volume is root-owned and 755, so the parent folder goes to the
-  # workspace user before git runs or the clone dies on a permission error.
-  # Not recursive: workspace/ may hold other clones, and they are not ours to
-  # take over.
+  # Non-recursive: workspace/ may hold other clones, and they are not ours to take
+  # over.
   mkdir -p -- /home/coder/workspace 2>/dev/null || true
   if [ -n "$clone_owner" ]; then
     chown "$clone_owner" /home/coder/workspace 2>/dev/null || true
-    # Same rule for the folder created above: a root agent would otherwise
-    # leave it root-owned and the clone, which runs as the workspace user,
-    # would die writing .git inside it.
     chown "$clone_owner" "$target" 2>/dev/null || true
   fi
 
   # Clone as the workspace user, never as root, so their credentials (a helper,
-  # ~/.git-credentials, ssh keys) are the ones git consults. An empty prefix
-  # means "run git directly", which is correct for a non-root agent and for a
-  # root agent with no derivable workspace user. HOME is passed explicitly
-  # because runuser keeps the invoker's environment — a root agent would
-  # otherwise hand git /root and miss the workspace user's credentials entirely.
+  # ~/.git-credentials, ssh keys) are what git consults; HOME is passed because runuser
+  # keeps the invoker's environment.
   clone_runner=""
   if [ "$(id -u)" = "0" ] && [ -n "$clone_owner" ]; then
     if command -v runuser >/dev/null 2>&1; then
@@ -578,10 +349,7 @@ if [ -n "$repo_url_raw" ]; then
     fi
   }
 
-  # The notes stage writes files into the workspace home and runs git config
-  # --global, so it follows run_clone's identity rule rather than the agent's
-  # uid: run as root it would rename a root-owned ~/.gitconfig over the
-  # workspace user's and leave notes.md unreadable on an already-cloned folder.
+  # Follows run_clone's identity rule, not the agent's uid: it runs git config --global.
   run_notes() {
     if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
       $clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c \
@@ -593,16 +361,12 @@ if [ -n "$repo_url_raw" ]; then
   }
 
   if [ -d "$target/.git" ]; then
-    # Re-fetching is the user's call: a pull here could conflict mid-edit or
-    # fail on a dirty tree, and either way the workspace would start on code
-    # nobody chose.
+    # No pull here: re-fetching is the user's call, and one could conflict mid-edit.
     echo "$repo_folder: already cloned, skipping"
     run_notes "$target" "$repo_url_raw" || true
   elif [ -e "$target" ] && [ -n "$(ls -A -- "$target" 2>/dev/null)" ]; then
-    # Emptiness is tested, not just existence: the mkdir above and the one in
-    # coder_script.code_server both leave an empty folder on a first boot, and
-    # git clone into an empty folder is exactly what is wanted. A folder with
-    # anything in it is still not ours to touch.
+    # Emptiness is tested, not just existence: this mkdir and the one in
+    # coder_script.code_server both leave an empty folder on a first boot, and that clones.
     echo "WARNING: $target exists but is not a git repository — leaving it" \
       "alone and skipping the clone. Remove it if it should not be there." >&2
   elif ! command -v git >/dev/null 2>&1; then
@@ -613,16 +377,13 @@ if [ -n "$repo_url_raw" ]; then
     # -- before the URL: the value is user input and must never parse as an option.
     if run_clone clone -- "$repo_url_raw" "$target"; then
       echo "cloned $repo_url_raw into $target"
-      # Before the chown: the notes file and the .git/info/exclude write are
-      # ours to make, and the recursive chown below settles their ownership.
       run_notes "$target" "$repo_url_raw" || true
       if [ -n "$clone_owner" ]; then
         chown -R "$clone_owner" "$target" 2>/dev/null || true
       fi
     else
-      # Loud and non-fatal on purpose: the workspace still boots, and an empty
-      # editor folder is fixable from a terminal. git deletes its own partial
-      # clone on failure; nothing here deletes a folder that may hold work.
+      # Loud and non-fatal on purpose: the workspace still boots, and an empty editor
+      # folder is fixable from a terminal. git deletes its own partial clone.
       echo "==============================================================" >&2
       echo "WARNING: the repository clone failed — the editor and the terminals" \
         "open on $target, which is empty: this script creates the folder" \
@@ -642,15 +403,10 @@ if [ -n "$repo_url_raw" ]; then
   fi
 
   # --- Additional repositories (best effort) ----------------------------------
-  # The list --additional-repos on the new-workspace CLI writes, arriving here as
-  # one comma- or newline-separated string (textarea on the create form). Every
-  # entry lands in a sibling folder of the primary clone, so nothing about the
-  # editor, the web terminal or Grok Build's starting folder moves: those three
-  # keep pointing at $target. The same three rules apply per entry — folder name
-  # re-derived the same way, never clobber a non-git folder, one loud warning per
-  # failed clone — and an empty primary URL means there is no clone tree to be
-  # beside, which is why the extras ride along with the primary instead of
-  # replacing it.
+  # The list --additional-repos on the new-workspace CLI writes, arriving here as one
+  # comma- or newline-separated string. Every entry lands in a sibling folder of the
+  # primary clone, so nothing about the editor, the web terminal or Grok Build's
+  # starting folder moves. The same three rules apply per entry.
   extra_repos_raw="$(cat <<'EXTRA_REPOS_EOF'
 ${additional_repos}
 EXTRA_REPOS_EOF
@@ -687,11 +443,9 @@ EXTRA_REPOS_EOF
     fi
   done
 
-  # Notes have to survive a recreate that lands between edits, not just one
-  # that lands after a start: run_notes synced the clones only once, so work
-  # written later lived solely inside this container — which is how a whole
-  # workspace's notes went missing when it was recreated. The watcher closes
-  # that gap, on the same identity rule run_notes follows.
+  # Notes have to survive a recreate that lands between edits, not just one after a start:
+  # run_notes synced once, so later work lived only in this container, and the watcher
+  # closes that gap on run_notes' identity rule.
   run_notes_watch() {
     if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
       $clone_runner env HOME="$clone_home" NOTES_SETUP_LIB="$notes_lib" bash -c \

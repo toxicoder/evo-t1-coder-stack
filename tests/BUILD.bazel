@@ -254,6 +254,11 @@ _SUITE_PAYLOAD = {
     "spark-configure.bats": [],
     "spark-verify.bats": [],
     "stack-data.bats": [],
+    # The suite reads both twins and every payload main.tf inlines into them, which
+    # is exactly what has to be summed to know how big the exec'd argument gets.
+    "startup-script-size.bats": [
+        "//:templates_payload",
+    ],
     "storage-clean.bats": [
         "//:templates_payload",
     ],
