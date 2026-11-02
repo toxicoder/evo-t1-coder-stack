@@ -17,8 +17,13 @@
 # stopped covering a script or a suite would let the first case pass vacuously, and
 # an _ALLOW entry without its reason line is the escape hatch quietly widening.
 #
+# The two behind it pin the vocabulary the first case scans: a suite that names a docs
+# page or the root README owes the group that ships it, which is what stops a path from
+# hiding from the gate in both directions at once.
+#
 # Usage: bazelisk test //tests:bats_bazel_deps_test   (from any cwd)
-# Safety: reads the BUILD files, the scripts tree and the suite tree; writes nothing.
+# Safety: reads the BUILD files, the scripts tree and the suite tree; writes only the
+# scratch fixtures it feeds the scanner under its own tmpdir.
 
 bats_require_minimum_version 1.5.0
 
@@ -88,6 +93,20 @@ print(module.code_lines(open(sys.argv[2], encoding="utf-8").read()))
 PY
 }
 
+# suite_map <root> [label ...] - the suites map for a scratch root: one suite and exactly
+# the payload labels the caller names.
+suite_map() {
+  local root="$1" label
+  shift
+  {
+    printf '_SUITE_PAYLOAD = {\n    "gate-token.bats": [\n'
+    for label in "$@"; do
+      printf '        "%s",\n' "${label}"
+    done
+    printf '    ],\n}\n'
+  } >"${root}/tests/BUILD.bazel"
+}
+
 @test "bazel_deps: every map matches the sources that use it" {
   run python3 "${CHECKER}" --root "${REPO_ROOT}"
   [ "${status}" -eq 0 ] || {
@@ -95,6 +114,65 @@ PY
     return 1
   }
   assert_match "the whole gate ran" 'summary: 3 ok, 0 warnings, 0 failed' "${output}"
+}
+
+@test "bazel_deps: a suite that names a docs page owes the group that ships it" {
+  # The gate only charges a suite for a path it can name, so a path missing from
+  # TOKEN_GROUPS is invisible in both directions: no missing declaration, no unused
+  # label, and the pairing has to be hand-written into _ALLOW. docs/ is a key now, so
+  # this fixture proves the read is enforced rather than excused. The expected message
+  # spells its separator as a class: written literally, this file would be naming the
+  # payload it is only quoting, and the gate would bill this suite for it.
+  local root="${BATS_TEST_TMPDIR}/docs-token"
+  mkdir -p "${root}/tests/bats"
+  cat >"${root}/tests/bats/gate-token.bats" <<'FIXTURE_EOF'
+[[ -f "${REPO_ROOT}/docs/project-conventions.md" ]]
+FIXTURE_EOF
+
+  suite_map "${root}"
+  run python3 "${CHECKER}" --root "${root}" --target suites
+  [ "${status}" -eq 1 ] || {
+    printf 'FAIL: the gate let an undeclared docs read through:\n%s\n' "${output}" >&2
+    return 1
+  }
+  assert_match "the suite is billed for the docs tree" \
+    'bats_gate_token_test reads docs[./] with no group declared' "${output}"
+
+  suite_map "${root}" "//docs:content"
+  run python3 "${CHECKER}" --root "${root}" --target suites
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: declaring the docs group did not satisfy the gate:\n%s\n' "${output}" >&2
+    return 1
+  }
+  assert_match "the declaration clears it" 'summary: 1 ok, 0 warnings, 0 failed' "${output}"
+}
+
+@test "bazel_deps: a suite that names the root README owes the group that ships it" {
+  # The same enforcement on the other entry document: //:entry_docs is the only group
+  # that carries README.md, and it sits outside //:stack_data, so a suite cannot cover
+  # the read by declaring the payload tree whole.
+  local root="${BATS_TEST_TMPDIR}/readme-token"
+  mkdir -p "${root}/tests/bats"
+  cat >"${root}/tests/bats/gate-token.bats" <<'FIXTURE_EOF'
+[[ -f "${REPO_ROOT}/README.md" ]]
+FIXTURE_EOF
+
+  suite_map "${root}"
+  run python3 "${CHECKER}" --root "${root}" --target suites
+  [ "${status}" -eq 1 ] || {
+    printf 'FAIL: the gate let an undeclared README read through:\n%s\n' "${output}" >&2
+    return 1
+  }
+  assert_match "the suite is billed for the root document" \
+    'bats_gate_token_test reads README[.]md with no group declared' "${output}"
+
+  suite_map "${root}" "//:entry_docs"
+  run python3 "${CHECKER}" --root "${root}" --target suites
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: declaring the entry docs did not satisfy the gate:\n%s\n' "${output}" >&2
+    return 1
+  }
+  assert_match "the declaration clears it" 'summary: 1 ok, 0 warnings, 0 failed' "${output}"
 }
 
 @test "bazel_deps: the scripts map keys every CLI in the package" {

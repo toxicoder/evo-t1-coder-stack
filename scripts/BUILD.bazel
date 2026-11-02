@@ -381,9 +381,17 @@ _SCRIPT_PAYLOAD = {
 
 _SCRIPT_PAYLOAD_ALLOW = {
     # HELP text only; lib/workspace.sh matches these paths against a remote
-    # `git ls-tree`, never against the checkout.
+    # `git ls-tree`, never against the checkout. The `docs/` is the tail of the
+    # coder.com/docs/install URL inside the no-CLI hint, not this repo's docs tree.
     "new-workspace": [
         "//:devcontainer",
+        "//docs:content",
+    ],
+    # The only `docs/` is inside the bootstrap prompt the CLI hands the new project's
+    # agent: the `docs/adr/` record that agent has to write belongs to the repository
+    # the CLI just rendered, not to this one.
+    "new-repo": [
+        "//docs:content",
     ],
     # `searxng` here is a regex over ~/.grok/config.toml, not the payload tree.
     "mcp-check": [

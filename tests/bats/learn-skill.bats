@@ -326,8 +326,13 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   # leads nowhere costs them the answer they came for. The payload spells the
   # docs files bare under its docs/ bullet, so a citation resolves at the repo
   # root or under docs/, and only these two places.
-  [[ -f "${REPO_ROOT}/README.md" ]] ||
-    skip "the root README is not in this suite's runfiles (no label ships README.md or docs/)"
+  # README.md and the docs pages travel with this suite through //:entry_docs and
+  # //docs:content, so a root that resolved above always carries them; a missing
+  # one is the citation breaking, not the runfiles being thin.
+  [[ -f "${REPO_ROOT}/README.md" ]] || {
+    printf 'FAIL: README.md is not reachable from %s - the runfiles lost //:entry_docs\n' \
+      "${REPO_ROOT}" >&2
+    return 1; }
 
   local cited want missing name path unresolved
   # Two segments at most, so the SKILL.md and notes.md paths the payload prints
