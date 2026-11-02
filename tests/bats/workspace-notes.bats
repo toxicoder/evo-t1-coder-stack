@@ -726,7 +726,7 @@ age_live() {
   for tf in "${REPO_ROOT}/templates/workspace/main.tf" \
     "${REPO_ROOT}/templates/devcontainer/main.tf"; do
     [[ -f "${tf}" ]] || skip "template main.tf not reachable from ${REPO_ROOT}"
-    run grep -F 'notes_setup = file("${path.module}/notes-setup.sh")' "${tf}"
+    run grep -F 'notes_setup = chomp(file("${path.module}/notes-setup.sh"))' "${tf}"
     [ "${status}" -eq 0 ] || { printf 'FAIL: %s has no notes_setup feed\n' "${tf}" >&2; return 1; }
   done
 }
