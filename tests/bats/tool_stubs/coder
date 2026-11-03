@@ -14,6 +14,15 @@ set -u
 
 if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "coder $*" >> "${STUB_LOG}/coder.log"; fi
 
+# `templates push --directory -` takes the staged tree as a tar on stdin, which the
+# real CLI reads to the end. A stub that never reads leaves tar writing into a full
+# pipe: past the 64 KiB pipe buffer the producer dies on SIGPIPE and the push reports
+# exit 141, which reads like a product failure rather than a fixture limit. Drain the
+# stream when the caller offers one. A tty means this is not the pipeline.
+case " $* " in
+  *' --directory - '*) [ -t 0 ] || cat >/dev/null ;;
+esac
+
 if [ -n "${STUB_CODER_OUT:-}" ]; then
   if [ -f "${STUB_CODER_OUT}" ]; then cat "${STUB_CODER_OUT}"; else printf '%s\n' "${STUB_CODER_OUT}"; fi
 fi

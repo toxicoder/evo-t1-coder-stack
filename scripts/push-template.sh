@@ -642,7 +642,7 @@ icon_data_url_guard() {
 # @function preset_desc_guard
 # Reject a coder_workspace_preset description longer than 128 bytes.
 # Globals:
-#   log, die
+#   SELF_DIR, log, die
 # Arguments:
 #   $1 - template directory
 # Outputs:
@@ -652,8 +652,12 @@ icon_data_url_guard() {
 preset_desc_guard() {
   # $1 = template directory. Silence means every preset description it found fits.
   local f kind label name value len
+  local awk_prog="${SELF_DIR:-}/lib/preset_desc.awk"
   for f in "${1}"/*.tf; do
     [ -e "${f}" ] || continue
+    # An awk it cannot find reads no records, which would read as "every preset fits".
+    [ -f "${awk_prog}" ] ||
+      die "${f}: cannot measure anything: ${awk_prog} is missing (SELF_DIR='${SELF_DIR:-}' is this script's own tree, which is where the parser is staged)"
     # awk reports one tab-separated record per preset block: DESC with the quoted
     # description, or SKIP for a heredoc, which cannot be measured from one line and
     # is therefore reported unchecked. The length is counted here, in bytes, because
@@ -669,7 +673,7 @@ preset_desc_guard() {
           fi
           ;;
       esac
-    done < <(awk -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/preset_desc.awk" "${f}")
+    done < <(awk -f "${awk_prog}" "${f}")
   done
 }
 
@@ -694,7 +698,7 @@ preset_desc_guard() {
 # @function startup_size_guard
 # Refuse to push a template whose exec'd bodies compose past the single-argument budget.
 # Globals:
-#   REPO_ROOT, SELF_DIR, log, die
+#   root, SELF_DIR, log, die
 # Arguments:
 #   $1 - template directory holding main.tf
 #   STARTUP_SIZE_BOUND / STARTUP_ARG_LIMIT - override the budget, for tests only
@@ -708,7 +712,16 @@ startup_size_guard() {
   local bound="${STARTUP_SIZE_BOUND:-122880}"
   local arg_limit="${STARTUP_ARG_LIMIT:-131072}"
   local main="${dir}/main.tf"
+  local awk_prog="${SELF_DIR:-}/lib/startup_size.awk"
+  # The canonical seed payloads sit under the checkout this run resolved, which the
+  # script body put in `root` before cd'ing into it. Nothing in scripts/ ever sets an
+  # ambient REPO_ROOT, so reading one here aborted the whole push under `set -u`. A
+  # suite that evals this function alone has no `root` and arranges its own cwd.
+  local common_dir="${root:-${PWD}}/templates/common"
   [ -f "${main}" ] || return 0
+  # An awk it cannot find reads no records, which would read as "every body fits".
+  [ -f "${awk_prog}" ] ||
+    die "${main}: cannot measure anything: ${awk_prog} is missing (SELF_DIR='${SELF_DIR:-}' is this script's own tree, which is where the parser is staged)"
 
   # Parallel arrays indexed 0..n-1: bodies stay few (one startup script plus a handful
   # of coder_script bodies), and counting them here keeps the summation in the same
@@ -737,10 +750,10 @@ startup_size_guard() {
     # is how a twin that ships its own version is measured on the bytes it pushes.
     if [ -f "${dir}/${name}" ]; then
       file="${dir}/${name}"
-    elif [ -f "${REPO_ROOT}/templates/common/${name}" ]; then
-      file="${REPO_ROOT}/templates/common/${name}"
+    elif [ -f "${common_dir}/${name}" ]; then
+      file="${common_dir}/${name}"
     else
-      die "${main}: ${body} inlines ${name}, which exists in neither ${dir} nor templates/common/"
+      die "${main}: ${body} inlines ${name}, which exists in neither ${dir} nor ${common_dir}/"
     fi
     bytes="$(wc -c <"${file}")"
     bytes="${bytes//[!0-9]/}"
@@ -757,7 +770,7 @@ startup_size_guard() {
       totals[n]="${bytes}"
       n=$((n + 1))
     fi
-  done < <(awk -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/startup_size.awk" "${main}")
+  done < <(awk -f "${awk_prog}" "${main}")
 
   for ((i = 0; i < nn; i++)); do
     log "note: ${main}: ${notes[i]}"

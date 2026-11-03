@@ -311,6 +311,30 @@ logs_absent() {
   logs_absent 'docker compose' "${STUB_LOG}/docker.log"
 }
 
+@test "push-template: the guards measure the real twin with no ambient REPO_ROOT" {
+  root="$(fake_root push-template.sh)"
+  # The throwaway main.tf above has no templatefile() bodies, which is how the size
+  # guard's templates/common branch went unexercised here while a real
+  # `bazelisk run //scripts:push-template` aborted under the script's own
+  # `set -euo pipefail` on a variable nothing in scripts/ ever sets - after Preflight
+  # and Variables had already printed, so the failure looked like a template problem.
+  # Copy in the twin production actually measures.
+  cp "${REPO_ROOT}/templates/workspace/main.tf" "${root}/templates/workspace/"
+  cp "${REPO_ROOT}"/templates/workspace/*.tftpl "${root}/templates/workspace/"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh" workspace
+  # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
+  [[ ${stderr} != *"unbound variable"* ]] ||
+    fail "a guard aborted on a variable the script never sets: ${stderr}"
+  # Reaching the push line means all three guards, size guard included, said nothing.
+  [[ ${output} == *"pushing templates/workspace as template workspace"* ]] ||
+    fail "never reached the push phase: ${stderr}"
+  [ "${status}" -eq 0 ] || fail "the run failed: ${stderr}"
+  [[ ${output} == *"template workspace pushed; active version ${ACTIVE_ID}"* ]]
+}
+
 @test "push-template: coder.env CODER_EXTERNAL_AUTH_0_ID is forwarded as github_auth_id" {
   root="$(fake_root push-template.sh)"
   printf '%s\n' 'CODER_EXTERNAL_AUTH_0_ID=primary-github' 'CODER_EXTERNAL_AUTH_0_CLIENT_SECRET=s3cret' >"${root}/coder.env"
