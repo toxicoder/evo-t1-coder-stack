@@ -1073,6 +1073,8 @@ Template-side facts only; the long prose lives in
   terminals are live); it takes the next numbered sibling, `vscode-<folder>-<hash>-2`,
   `-3`, ... only when every session of the folder already has a client. With no
   `tmux` on PATH it falls back to a plain login shell.
+  Because the profile runs inside a session rather than in the tab's own process,
+  closing a tab detaches the client and leaves whatever was running alive.
 - `grok-build-terminal` keeps its own session, `grok-build-<folder>-<hash>`, keyed off
   the repository root found with `git rev-parse --show-toplevel` (or the terminal's own
   `$PWD` outside a clone) and runs `grok --cwd <that root>` inside it. It is the
