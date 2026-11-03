@@ -821,6 +821,26 @@ bazelisk run //scripts:push-template
 bazelisk run //scripts:push-template
 ```
 
+### `REPO_ROOT: unbound variable` from `push-template` -> the size guard read an ambient root
+
+- Symptom: `bazelisk run //scripts:push-template` prints `== Preflight ==` and
+  `== Variables ==`, then aborts inside `== Templates ==` with
+  `push-template.sh: line 740: REPO_ROOT: unbound variable` and never prints a
+  `summary:` line. Nothing was pushed.
+- Cause: `startup_size_guard` looks up a payload the twin does not keep beside its
+  own `main.tf` under `templates/common/`, and it did that by reading an ambient
+  `REPO_ROOT`. Nothing in `scripts/` ever sets that variable: the checkout is the
+  `root` the script resolved and `cd`'d into at startup. Under the script's own
+  `set -u` the read aborts the run. It only fires for a template that inlines a
+  canonical payload, which is why a twin carrying its own copy never showed it.
+- Fix: the guard measures against the resolved `root`, and a parser it cannot open
+  is now a hard stop rather than a silent "everything fits". Pull this commit onto
+  the stack host and re-run:
+
+```sh
+bazelisk run //scripts:push-template
+```
+
 ### `.terraform.lock.hcl is missing` -> a note, not a failure
 
 - `bazelisk run //scripts:push-template` prints it because no lockfile is committed
