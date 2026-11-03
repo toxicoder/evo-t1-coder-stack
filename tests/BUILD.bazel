@@ -124,6 +124,16 @@ _SUITE_PAYLOAD = {
         "//:bazel_files",
         "//tests:all_bats",
     ],
+    # The suite answers every query from canned graph output, and that output names the
+    # trees the CLI's own expressions name: the two template trees plus common for
+    # `twins`, a subdir filegroup src under hermes for `unlisted`, and the BUILD/MODULE
+    # files `unlisted` skips. Nothing is opened from them; they are the paths the CLI
+    # and this suite both speak in.
+    "bazel-map.bats": [
+        "//:bazel_files",
+        "//:templates_payload",
+        "//hermes:skills",
+    ],
     "bootstrap.bats": [
         "//proxy:confs",
     ],

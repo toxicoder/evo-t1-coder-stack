@@ -124,6 +124,11 @@ exports_files(["validate.sh"])
 # ---------------------------------------------------------------------------
 
 _SCRIPT_LIBS = {
+    # Every verb is one bazelisk query over the graph; the only first-party helper it
+    # needs is the report vocabulary and resolve_checkout.
+    "bazel-map": [
+        "lib/common.sh",
+    ],
     "bootstrap": [
         "lib/bootstrap.sh",
         "lib/common.sh",
@@ -256,6 +261,11 @@ _SCRIPT_LIBS = {
 }
 
 _SCRIPT_PAYLOAD = {
+    # The graph reader roots itself with resolve_checkout, which probes for the compose
+    # file; it opens no payload of its own.
+    "bazel-map": [
+        "//:compose_file",
+    ],
     "bootstrap": [
         "//:compose_file",
         "//:env_sample",
@@ -380,6 +390,14 @@ _SCRIPT_PAYLOAD = {
 }
 
 _SCRIPT_PAYLOAD_ALLOW = {
+    # Neither path is opened. The `templates/` hits are the three group labels
+    # cmd_twins puts in its pool expression, and the `BUILD.bazel` hits are the
+    # `case` globs cmd_unlisted skips so a package's own declaration file is
+    # never reported as an omission.
+    "bazel-map": [
+        "//:bazel_files",
+        "//:templates_payload",
+    ],
     # HELP text only; lib/workspace.sh matches these paths against a remote
     # `git ls-tree`, never against the checkout. The `docs/` is the tail of the
     # coder.com/docs/install URL inside the no-CLI hint, not this repo's docs tree.
