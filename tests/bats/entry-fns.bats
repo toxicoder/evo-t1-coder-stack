@@ -39,6 +39,7 @@ load_fn() {
 load_guard() {
   load_fn scripts/lib/common.sh log
   load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh warn
   load_fn scripts/lib/common.sh die
   SELF_DIR="${REPO_ROOT}/scripts"
   load_fn scripts/push-template.sh "$1"
@@ -657,6 +658,41 @@ size_template() {
   [ "${status}" -eq 1 ] || fail "a guard with no parser reported success: ${output}"
   assert_match "names the parser it could not open" 'startup_size\.awk' "${output}"
   assert_match "says what is missing" 'cannot measure anything' "${output}"
+}
+
+@test "push-template: startup_size_guard warns while a body is still inside the budget" {
+  load_guard startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-near-bound"
+  mkdir -p "${dir}"
+  size_payload "${dir}" 200 big.sh
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    big = file("${path.module}/big.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # The distance to the bound is the number that decides whether the next commit boots,
+  # and a hard failure only ever reports the crossing. 200 bytes against a 210-byte
+  # budget is one comment away from a workspace that cannot fork its startup script.
+  export STARTUP_SIZE_BOUND=210 STARTUP_SIZE_WARN=4096
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ] || fail "a body inside the budget was refused: ${output}"
+  assert_match "warns with the bytes left" \
+    'warning:.*leaving 10 of the single-argument budget' "${output}"
+  assert_match "names the way out" 'docs/coder-templates\.md' "${output}"
+
+  # Comfortable room says nothing, and neither does a floor turned off.
+  export STARTUP_SIZE_BOUND=100000
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" != *"warning:"* ]]
+
+  export STARTUP_SIZE_BOUND=210 STARTUP_SIZE_WARN=0
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" != *"warning:"* ]]
 }
 
 @test "push-template: startup_size_guard refuses two bodies it cannot tell apart" {

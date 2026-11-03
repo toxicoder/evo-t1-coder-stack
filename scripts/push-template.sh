@@ -698,12 +698,14 @@ preset_desc_guard() {
 # @function startup_size_guard
 # Refuse to push a template whose exec'd bodies compose past the single-argument budget.
 # Globals:
-#   root, SELF_DIR, log, die
+#   root, SELF_DIR, log, warn, die
 # Arguments:
 #   $1 - template directory holding main.tf
-#   STARTUP_SIZE_BOUND / STARTUP_ARG_LIMIT - override the budget, for tests only
+#   STARTUP_SIZE_BOUND / STARTUP_ARG_LIMIT / STARTUP_SIZE_WARN - override the budget,
+#   the kernel cap it quotes, and the headroom that trips the warning, for tests only
 # Outputs:
-#   A note per body this cannot measure; an error via die when a body is too big
+#   A note per body this cannot measure; a warning when a body is within
+#   STARTUP_SIZE_WARN of the bound; an error via die when a body is too big
 # Returns:
 #   0 when every measured body fits; does not return when one does not
 startup_size_guard() {
@@ -711,6 +713,7 @@ startup_size_guard() {
   local dir="$1"
   local bound="${STARTUP_SIZE_BOUND:-122880}"
   local arg_limit="${STARTUP_ARG_LIMIT:-131072}"
+  local warn_floor="${STARTUP_SIZE_WARN:-4096}"
   local main="${dir}/main.tf"
   local awk_prog="${SELF_DIR:-}/lib/startup_size.awk"
   # The canonical seed payloads sit under the checkout this run resolved, which the
@@ -779,6 +782,11 @@ startup_size_guard() {
   for ((i = 0; i < n; i++)); do
     if [ "${totals[i]}" -gt "${bound}" ]; then
       die "${main}: the ${bodies[i]} body composes to ${totals[i]} bytes and the agent execs it as one argument (bash -c <body>). Linux caps one argument at ${arg_limit} bytes, so past that the fork dies with E2BIG, the home directory never seeds, and the workspace reports \"A startup script has failed\". The budget is ${bound}: move the rationale prose to docs/coder-templates.md, or move a payload out of the argument (see that file)."
+    elif [ "$((bound - totals[i]))" -lt "${warn_floor}" ]; then
+      # The bound is the number nobody looks at until a push dies on it, and the number
+      # that matters is the distance to it. Say it while it is still a warning: this is
+      # the room the next documentation-sized commit spends.
+      warn "${main}: the ${bodies[i]} body composes to ${totals[i]} of ${bound} bytes, leaving $((bound - totals[i])) of the single-argument budget. Move rationale comments out of the template into docs/coder-templates.md, or move a payload out of the argument, before the next edit crosses it."
     fi
   done
 }
