@@ -18,7 +18,8 @@
 # documentation-sized PR of slack below the ceiling the kernel enforces.
 #
 # Usage: bazelisk test //tests:bats_startup_script_size_test   (from any cwd)
-# Safety: reads the two template twins and their staged payloads; writes nothing.
+# Safety: reads the two template twins, their staged payloads, the push guard and its
+# awk reader; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -170,3 +171,91 @@ composed_bytes() {
     return 1
   }
 }
+
+# --- the push-time guard, checked against the parser above ----------------------
+#
+# scripts/push-template.sh refuses a template whose exec'd bodies compose past the
+# budget, before it ever talks to Coder. That guard parses main.tf a second time, in
+# scripts/lib/startup_size.awk, so the two parsers have to be held together or one of
+# them rots quietly: the suite would stay green while the gate that protects an operator
+# measures something else entirely.
+
+load_production_guard() {
+  load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" log
+  load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" err
+  load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" die
+  load_shell_function "${REPO_ROOT}/scripts/push-template.sh" startup_size_guard
+}
+
+@test "startup budget: the push guard counts the bytes this suite counts" {
+  load_production_guard
+  local dir total
+  for dir in workspace devcontainer; do
+    composed_bytes "${dir}"
+    total="$(cat "${BATS_TEST_TMPDIR}/total-${dir}")"
+    [ -n "${total}" ] || return 1
+    # Two probes bracket the guard's own number exactly: a budget equal to this suite's
+    # total has to pass, and one byte lower has to fail. Together they say both parsers
+    # counted the same bytes, without the guard needing a mode that prints its total.
+    export STARTUP_SIZE_BOUND="${total}"
+    run startup_size_guard "${REPO_ROOT}/templates/${dir}"
+    [ "${status}" -eq 0 ] || {
+      echo "${dir}: the guard refused what this suite measured at ${total} bytes" >&2
+      printf '%s\n' "${output}" >&2
+      return 1
+    }
+    export STARTUP_SIZE_BOUND=$((total - 1))
+    run startup_size_guard "${REPO_ROOT}/templates/${dir}"
+    unset STARTUP_SIZE_BOUND
+    [ "${status}" -eq 1 ] || {
+      echo "${dir}: the guard accepted ${total} bytes under a budget of $((total - 1))," >&2
+      echo "so its parser counts fewer bytes than this suite's" >&2
+      return 1
+    }
+  done
+}
+
+@test "startup budget: every body the agent execs fits, coder_script bodies included" {
+  load_production_guard
+  local dir bodies
+  for dir in workspace devcontainer; do
+    # The startup script is not the whole story: each coder_script body is its own
+    # execve and gets its own ceiling. At the shipped budget every body has to pass.
+    export STARTUP_SIZE_BOUND="${BOUND}"
+    run startup_size_guard "${REPO_ROOT}/templates/${dir}"
+    unset STARTUP_SIZE_BOUND
+    [ "${status}" -eq 0 ] || {
+      echo "${dir}: a body crossed the ${BOUND}-byte budget" >&2
+      printf '%s\n' "${output}" >&2
+      return 1
+    }
+    # And the pass has to mean more than one body, or this test would still pass if the
+    # guard had silently stopped looking at anything but the startup script.
+    bodies="$(awk -f "${REPO_ROOT}/scripts/lib/startup_size.awk" \
+      "${REPO_ROOT}/templates/${dir}/main.tf" | cut -f1 | sort -u | grep -cv '^startup\.sh\.tftpl$')"
+    [ "${bodies}" -gt 0 ] || {
+      echo "${dir}: no coder_script body was measured, so the pass proved nothing" >&2
+      return 1
+    }
+  done
+}
+
+@test "startup budget: the guard carries this suite's numbers and runs on every push" {
+  local src="${REPO_ROOT}/scripts/push-template.sh"
+  # The two constants live in the guard and in this file. Pinned by text so drift is a
+  # red test here rather than a gate that quietly stops matching the kernel.
+  grep -Fq "STARTUP_SIZE_BOUND:-${BOUND}}" "${src}" || {
+    echo "the push guard's budget is no longer ${BOUND}" >&2
+    return 1
+  }
+  grep -Fq "STARTUP_ARG_LIMIT:-${ARG_LIMIT}}" "${src}" || {
+    echo "the push guard no longer names the ${ARG_LIMIT}-byte ceiling" >&2
+    return 1
+  }
+  # A guard nobody calls protects nothing, and the per-template loop is the only caller.
+  grep -Fq 'startup_size_guard "${dir}"' "${src}" || {
+    echo "startup_size_guard is defined but never called from the push loop" >&2
+    return 1
+  }
+}
+

@@ -55,6 +55,10 @@ TOKEN_GROUPS = {
     ".github/workflows": ["//:ci_pipelines", "//:ci_workflows"],
     "BUILD.bazel": ["//:bazel_files"],
     "Dockerfile": ["//images/dev:dockerfile", "//images/dev:context", "//:stack_data"],    "LICENSE": ["//:license", "//:stack_data"],
+    # The operator front door the seeded /learn skill cites by name. :entry_docs is the
+    # only group that ships it, and it sits outside the compose aggregate, so a consumer
+    # cannot cover this read by declaring //:stack_data whole.
+    "README.md": ["//:entry_docs"],
     "SOUL.md": ["//hermes:seed", "//hermes:payload", "//:stack_data"],
     "action.yml": ["//:ci_setup_bazel_action", "//:ci_workflows"],
     # The gate's own program, which the gate suite runs out of its runfiles.
@@ -62,6 +66,9 @@ TOKEN_GROUPS = {
     "deploy-docs": ["//:ci_pipelines", "//:ci_workflows"],
     "docker-compose.yml": ["//:compose_file", "//:stack_data"],
     "docs-site/": ["//docs-site:sources", "//docs-site:python_sources"],
+    # The content tree the site renders. :manage-docs.sh rides beside it because a suite
+    # runs that one file by path and owes nobody the pages beside it.
+    "docs/": ["//docs:content", "//docs:manage-docs.sh"],
     "fixtures/": [":fixtures"],
     "hermes/": [
         "//hermes:seed",

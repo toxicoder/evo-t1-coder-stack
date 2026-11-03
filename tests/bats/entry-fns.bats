@@ -386,6 +386,232 @@ load_fn() {
   [ "${status}" -eq 0 ]
 }
 
+# size_payload <dir> <bytes> <name> - a payload of exactly <bytes> bytes. The guard
+# only ever asks main.tf which files a body inlines and then weighs them, so a
+# payload's contents never matter and its size is the only thing worth pinning.
+size_payload() {
+  head -c "${2}" /dev/zero | tr '\0' 'x' >"${1}/${3}"
+}
+
+# size_template <dir> <name> - the .tftpl a body renders from, empty so it adds no
+# bytes. main.tf names it in its own templatefile() call and the guard weighs it like
+# any other inlined file, so a fixture has to provide it.
+size_template() {
+  : >"${1}/${2}"
+}
+
+@test "push-template: startup_size_guard rejects a body that composes past the budget" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-over"
+  mkdir -p "${dir}"
+  size_payload "${dir}" 200 big.sh
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    big = file("${path.module}/big.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # 200 bytes of payload over a 100-byte budget: the number that has to appear is the
+  # composed total, because that is what the agent hands to a single execve.
+  export STARTUP_SIZE_BOUND=100
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 1 ] || fail "an over-budget body was accepted: ${output}"
+  assert_match "names the composed total" '2[0-9][0-9] bytes' "${output}"
+  assert_match "names the body" 'startup\.sh\.tftpl' "${output}"
+  assert_match "says what breaks" 'one argument' "${output}"
+
+  export STARTUP_SIZE_BOUND=100000
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ] || fail "a body inside the budget was refused: ${output}"
+}
+
+@test "push-template: startup_size_guard weighs each coder_script body on its own" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-per-body"
+  mkdir -p "${dir}"
+  size_payload "${dir}" 90 a.sh
+  size_payload "${dir}" 90 b.sh
+  size_template "${dir}" one.sh.tftpl
+  size_template "${dir}" two.sh.tftpl
+  # Two bodies of 90 bytes each. A guard that summed them together would see 180 and
+  # refuse a template that boots fine: every coder_script body is its own execve, so
+  # each gets its own ceiling and a 100-byte budget must pass both.
+  printf '%s\n' \
+    'resource "coder_script" "one" {' \
+    '  script = templatefile("${path.module}/one.sh.tftpl", {' \
+    '    a = file("${path.module}/a.sh")' \
+    '  })' \
+    '}' \
+    'resource "coder_script" "two" {' \
+    '  script = templatefile("${path.module}/two.sh.tftpl", {' \
+    '    b = file("${path.module}/b.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  export STARTUP_SIZE_BOUND=100
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ] || fail "two bodies under the budget were refused together: ${output}"
+
+  # One body crosses on its own, and the failure names that body alone.
+  size_payload "${dir}" 300 b.sh
+  export STARTUP_SIZE_BOUND=100
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 1 ] || fail "an over-budget body was accepted: ${output}"
+  assert_match "names the offending body" 'two\.sh\.tftpl' "${output}"
+  assert_not_match "leaves the fitting body alone" 'one\.sh\.tftpl composes' "${output}"
+}
+
+@test "push-template: startup_size_guard charges a payload once per inlining" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-twice"
+  mkdir -p "${dir}"
+  size_payload "${dir}" 60 shared.sh
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    first = file("${path.module}/shared.sh")' \
+    '    second = file("${path.module}/shared.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # 60 bytes inlined twice is 120 bytes of argument. A parser that deduped by name
+  # would measure 60 and wave through a body the kernel refuses.
+  export STARTUP_SIZE_BOUND=100
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 1 ] || fail "a payload inlined twice was counted once: ${output}"
+  assert_match "counts both copies" '1[0-9][0-9] bytes' "${output}"
+}
+
+@test "push-template: startup_size_guard refuses a payload it cannot find" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-missing"
+  mkdir -p "${dir}"
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    gone = file("${path.module}/absent-payload.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # Silence here would push a template whose plan fails on a missing file, which is the
+  # same slow lesson the size bound exists to avoid.
+  export STARTUP_SIZE_BOUND=100000
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 1 ] || fail "a missing payload went unreported: ${output}"
+  assert_match "says where it looked" 'exists in neither' "${output}"
+  assert_match "names the payload" 'absent-payload\.sh' "${output}"
+}
+
+@test "push-template: startup_size_guard notes a body it cannot measure and lets it through" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-heredoc"
+  mkdir -p "${dir}"
+  printf '%s\n' \
+    'resource "coder_script" "inline" {' \
+    '  script = <<EOS' \
+    'echo hello' \
+    'EOS' \
+    '}' \
+    'resource "coder_script" "fromlocal" {' \
+    '  script = local.some_script' \
+    '}' >"${dir}/main.tf"
+
+  # A heredoc body cannot be weighed from the assignment line, and guessing would be
+  # worse than saying so: preset_desc_guard takes the same stance for the same reason.
+  export STARTUP_SIZE_BOUND=10
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ] || fail "an unmeasurable body was refused: ${output}"
+  assert_match "notes the heredoc body" 'note:.*heredoc' "${output}"
+  assert_match "notes the non-template body" 'note:.*not a templatefile' "${output}"
+}
+
+@test "push-template: startup_size_guard measures the twin's own copy of a payload" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-twin-copy"
+  mkdir -p "${dir}"
+  # templates/common/tmux.conf is thousands of bytes; a 90-byte twin copy beside main.tf
+  # is what gets pushed, so a 100-byte budget only passes if the guard weighed that copy
+  # rather than the canonical one.
+  [ "$(wc -c <"${REPO_ROOT}/templates/common/tmux.conf")" -gt 100 ] ||
+    skip "templates/common/tmux.conf is no longer larger than the probe budget"
+  size_payload "${dir}" 90 tmux.conf
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    tmux_conf = chomp(file("${path.module}/tmux.conf"))' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  export STARTUP_SIZE_BOUND=100
+  run startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ] || fail "the canonical copy was weighed instead of the twin's: ${output}"
+}
+
+@test "push-template: startup_size_guard refuses two bodies it cannot tell apart" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-clash"
+  mkdir -p "${dir}"
+  size_template "${dir}" same.sh.tftpl
+  size_payload "${dir}" 10 a.sh
+  size_payload "${dir}" 10 b.sh
+  printf '%s\n' \
+    'resource "coder_script" "one" {' \
+    '  script = templatefile("${path.module}/same.sh.tftpl", {' \
+    '    a = file("${path.module}/a.sh")' \
+    '  })' \
+    '}' \
+    'resource "coder_script" "two" {' \
+    '  script = templatefile("${path.module}/same.sh.tftpl", {' \
+    '    b = file("${path.module}/b.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # Both bodies key on the same basename, so the reader would hand the guard one sum
+  # covering two separate execve arguments. A generous budget must not buy silence
+  # here: the number it would report describes neither body.
+  export STARTUP_SIZE_BOUND=100000
+  run startup_size_guard "${dir}"
+  unset STARTUP_SIZE_BOUND
+  [ "${status}" -eq 1 ] || fail "two same-named bodies were summed as one: ${output}"
+  assert_match "names the colliding template" 'same\.sh\.tftpl' "${output}"
+  assert_match "says what to do" 'Rename one' "${output}"
+}
+
+@test "push-template: startup_size_guard stays silent without a main.tf" {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh die
+  load_fn scripts/push-template.sh startup_size_guard
+  run startup_size_guard "${BATS_TEST_TMPDIR}/no-such-template-dir"
+  [ "${status}" -eq 0 ]
+}
+
 @test "push-template: cleanup_token deletes the push token" {
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/coder_api.sh"

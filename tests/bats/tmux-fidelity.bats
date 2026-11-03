@@ -11,7 +11,10 @@
 # twins honours the marker-line ownership contract (a marker-free ~/.tmux.conf
 # is user-owned: leave it alone, print a warning). This suite extracts that seed
 # block, runs it against a throwaway HOME, and pins the editor terminal keys both
-# settings.json.tftpl twins must keep.
+# settings.json.tftpl twins must keep. It also pins the byte parity of every
+# payload both main.tf twins feed into a quoted here-doc in the startup script:
+# config_seed.sh seeds the same paths from the repo bytes, so a feed that
+# chomps differently gives the same file two writers with different bytes.
 #
 # Four of the seeded options are the fixes `grok doctor` offers: set-clipboard
 # and allow-passthrough for the copy routes, extended-keys, and the RGB
@@ -23,8 +26,8 @@
 # server on a private socket and reads the options back.
 #
 # Usage: bazelisk test //tests:bats_tmux_fidelity_test   (from any cwd)
-# Safety: reads the four template payload files; writes only under the
-# per-test scratch tree.
+# Safety: reads the template payloads, both startup twins and both main.tf
+# twins; writes only under the per-test scratch tree.
 
 bats_require_minimum_version 1.5.0
 
@@ -36,6 +39,8 @@ WS_STARTUP=""
 DC_STARTUP=""
 WS_SETTINGS=""
 DC_SETTINGS=""
+WS_MAIN=""
+DC_MAIN=""
 COMMON_TMUX=""
 
 setup() {
@@ -44,9 +49,11 @@ setup() {
   DC_STARTUP="${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl"
   WS_SETTINGS="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
   DC_SETTINGS="${REPO_ROOT}/templates/devcontainer/settings.json.tftpl"
+  WS_MAIN="${REPO_ROOT}/templates/workspace/main.tf"
+  DC_MAIN="${REPO_ROOT}/templates/devcontainer/main.tf"
   COMMON_TMUX="${REPO_ROOT}/templates/common/tmux.conf"
   local f
-  for f in "${WS_STARTUP}" "${DC_STARTUP}" "${WS_SETTINGS}" "${DC_SETTINGS}" "${COMMON_TMUX}"; do
+  for f in "${WS_STARTUP}" "${DC_STARTUP}" "${WS_SETTINGS}" "${DC_SETTINGS}" "${WS_MAIN}" "${DC_MAIN}" "${COMMON_TMUX}"; do
     [ -f "${f}" ] || skip "template payload missing: ${f}"
   done
 }
@@ -124,6 +131,170 @@ runnable_tmux_seed() {
     grep -Fq '${tmux_conf}' "${f}"
     assert_contains_file "warning branch" "${f}" 'carries no evo-t1-coder-stack marker'
   done
+}
+
+# --- payload feed byte parity -------------------------------------------------
+#
+# Both main.tf twins hand the seeded payloads to startup.sh.tftpl, where a
+# quoted here-doc writes each one into $HOME, and scripts/lib/config_seed.sh
+# seeds some of the same paths straight from the repo bytes. Two writers, one
+# file: the here-doc has to land those bytes exactly, so every feed chomps() and
+# the template's own line break supplies the written file's single trailing
+# newline.
+
+# feed_specs - one line per payload that reaches $HOME through a quoted
+# here-doc: <main.tf variable> <payload basename> <here-doc tag>.
+feed_specs() {
+  printf '%s\n' \
+    'tmux_conf tmux.conf TMUX_CONF_EOF' \
+    'notes_setup notes-setup.sh NOTES_SETUP_EOF' \
+    'grok_build_terminal grok-build-terminal.sh GROK_BUILD_HELPER' \
+    'vscode_terminal_tmux vscode-terminal-tmux.sh TMUX_ATTACH_HELPER' \
+    'mcp_cache_proxy mcp-cache-proxy.json MCP_CACHE_PROXY_EOF'
+}
+
+# render_feed <tftpl> <var> <value-file> <out> - the twin as templatefile()
+# renders it for one feed: the ${var} line becomes the value's bytes followed by
+# the template's own line break, so a value that still carries its trailing
+# newline puts a blank line at the end of the here-doc body.
+render_feed() {
+  local src="$1" var="$2" value="$3" out="$4" ln
+  ln=$(grep -nFx -- '${'"${var}"'}' "${src}" | head -1 | cut -d: -f1)
+  [ -n "${ln}" ] || {
+    echo "no \${${var}} interpolation in ${src}" >&2
+    return 1
+  }
+  {
+    head -n $((ln - 1)) "${src}"
+    cat "${value}"
+    printf '\n'
+    tail -n +"$((ln + 1))" "${src}"
+  } >"${out}"
+}
+
+# feed_rhs <main.tf> <var> - the right-hand side of one feed's assignment.
+feed_rhs() {
+  awk -v k="$2" '$1 == k {
+    sub(/^[[:space:]]*[^=]*=[[:space:]]*/, "")
+    print
+    exit
+  }' "$1"
+}
+
+# feed_value <main.tf> <var> <name> <out> - the bytes that twin actually passes
+# for the feed, so the parity below follows main.tf: drop the chomp() there and
+# the here-doc body it renders stops matching the repo copy.
+feed_value() {
+  local tf="$1" var="$2" name="$3" out="$4" rhs
+  rhs="$(feed_rhs "${tf}" "${var}")"
+  [ -n "${rhs}" ] || {
+    echo "${tf}: no ${var} assignment" >&2
+    return 1
+  }
+  if [ "${rhs}" = 'chomp(file("${path.module}/'"${name}"'"))' ]; then
+    head -c -1 "${REPO_ROOT}/templates/common/${name}" >"${out}"
+  else
+    cat "${REPO_ROOT}/templates/common/${name}" >"${out}"
+  fi
+}
+
+# heredoc_body <script> <tag> <out> - the bytes `cat >f <<'TAG' ... TAG` writes,
+# carved the way extract_tmux_guard carves its region out of a twin.
+heredoc_body() {
+  local open="<<'$2'"
+  awk -v open="${open}" -v tag="$2" '
+    !seen && index($0, open) { seen = 1; next }
+    seen && $0 == tag { exit }
+    seen { print }
+  ' "$1" >"$3"
+  [ -s "$3" ] || {
+    echo "no here-doc closed by ${2} in $1" >&2
+    return 1
+  }
+}
+
+# twin_name <path> - which twin a template came from, for scratch names and
+# failure messages (both twins' startup files share a basename).
+twin_name() {
+  basename "$(dirname "$1")"
+}
+
+@test "payload feeds: both main.tf twins chomp every here-doc payload" {
+  local tf var name tag rhs want
+  while read -r var name tag; do
+    want='chomp(file("${path.module}/'"${name}"'"))'
+    for tf in "${WS_MAIN}" "${DC_MAIN}"; do
+      # Exact match on the right-hand side: a feed that lost chomp(), grew a
+      # second one, or reads a path nobody stages all fail here.
+      rhs="$(feed_rhs "${tf}" "${var}")"
+      [ "${rhs}" = "${want}" ] || {
+        echo "${tf}: ${var} = ${rhs}, want ${want}" >&2
+        return 1; }
+    done
+  done < <(feed_specs)
+}
+
+@test "payload feeds: the here-doc writes the repo bytes with one trailing newline" {
+  local mains=("${WS_MAIN}" "${DC_MAIN}")
+  local starts=("${WS_STARTUP}" "${DC_STARTUP}")
+  local i twin var name tag payload value rendered body
+  while read -r var name tag; do
+    payload="${REPO_ROOT}/templates/common/${name}"
+    [ -f "${payload}" ] || { echo "payload missing: ${payload}" >&2; return 1; }
+    # The parity claim is chomped payload plus the template's line break, and it
+    # only lands the repo bytes while the repo copy ends on exactly one newline.
+    [ "$(tail -c 1 "${payload}" | od -An -c | tr -d ' ')" = '\n' ] || {
+      echo "${payload} does not end on a newline" >&2
+      return 1; }
+    [ "$(tail -c 2 "${payload}" | od -An -c | tr -d ' ')" != '\n\n' ] || {
+      echo "${payload} ends on a blank line" >&2
+      return 1; }
+    # Each twin's script is rendered by its own main.tf: a twin that feeds
+    # differently from its sibling seeds a different terminal for one hosting
+    # mode, and one that stopped chomping lands the blank line here.
+    for i in 0 1; do
+      twin="$(twin_name "${starts[$i]}")"
+      value="${BATS_TEST_TMPDIR}/${twin}-${var}.value"
+      rendered="${BATS_TEST_TMPDIR}/${twin}-${var}.sh"
+      body="${BATS_TEST_TMPDIR}/${twin}-${var}.body"
+      feed_value "${mains[$i]}" "${var}" "${name}" "${value}"
+      render_feed "${starts[$i]}" "${var}" "${value}" "${rendered}"
+      heredoc_body "${rendered}" "${tag}" "${body}"
+      cmp -s "${body}" "${payload}" || {
+        {
+          echo "${twin} writes bytes that stray from ${payload}"
+          echo "-- written tail --"
+          tail -c 24 "${body}" | od -An -c
+          echo "-- payload tail --"
+          tail -c 24 "${payload}" | od -An -c
+        } >&2
+        return 1; }
+    done
+  done < <(feed_specs)
+}
+
+@test "payload feeds: an un-chomped feed would leave a blank line at EOF" {
+  local f twin var name tag payload rendered body
+  while read -r var name tag; do
+    payload="${REPO_ROOT}/templates/common/${name}"
+    [ -f "${payload}" ] || { echo "payload missing: ${payload}" >&2; return 1; }
+    for f in "${WS_STARTUP}" "${DC_STARTUP}"; do
+      twin="$(twin_name "${f}")"
+      rendered="${BATS_TEST_TMPDIR}/${twin}-${var}-raw.sh"
+      body="${BATS_TEST_TMPDIR}/${twin}-${var}-raw.body"
+      render_feed "${f}" "${var}" "${payload}" "${rendered}"
+      heredoc_body "${rendered}" "${tag}" "${body}"
+      # The shape the twins shipped with before every feed chomped: the payload's
+      # own newline plus the template's line break. Pinning it is what lets the
+      # parity test above actually fail.
+      [ "$(tail -c 2 "${body}" | od -An -c | tr -d ' ')" = '\n\n' ] || {
+        echo "${twin} ${var}: an un-chomped body does not end on a blank line" >&2
+        return 1; }
+      ! cmp -s "${body}" "${payload}" || {
+        echo "${twin} ${var}: an un-chomped feed still matches the repo bytes" >&2
+        return 1; }
+    done
+  done < <(feed_specs)
 }
 
 @test "tmux seed: a fresh HOME receives the fidelity config verbatim" {

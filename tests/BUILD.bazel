@@ -197,10 +197,15 @@ _SUITE_PAYLOAD = {
     "install-hooks.bats": [
         "//:githooks",
     ],
+    # The suite pins what the seeded /learn skill cites: the root README and the docs
+    # pages its closing bullets name, each opened with a plain file test. Both paths are
+    # TOKEN_GROUPS keys now, so the pair is a declaration here rather than an exemption.
     "learn-skill.bats": [
         "//:templates_payload",
         "//:bazel_files",
         "//litellm:config",
+        "//docs:content",
+        "//:entry_docs",
     ],
     "litellm-config.bats": [
         "//:templates_payload",
@@ -299,22 +304,17 @@ _SUITE_PAYLOAD = {
 
 # Pairings the source scan cannot derive in either direction, each with its reason.
 _SUITE_PAYLOAD_ALLOW = {
-    # The /learn suite checks the citations in the skill's closing bullets, and opens
-    # them with a plain file test. Neither `README.md` nor `docs/` is a TOKEN_GROUPS key,
-    # so the scan can credit the read in neither direction and the pair is stated here.
-    "learn-skill.bats": [
-        "//docs:content",
-        "//:entry_docs",
-    ],
     # Each case writes its own ${dir}/Dockerfile and points dockerfile_args.awk at that
     # scratch file; the repo's images/dev/Dockerfile is never opened here.
     "awk.bats": [
         "//images/dev:dockerfile",
     ],
     # It reads back the .gitignore publish-pages-tree.sh commits onto gh-pages, out of
-    # the scratch origin it builds, not out of this checkout.
+    # the scratch origin it builds, not out of this checkout. The README.md it stages is
+    # the one the same case just wrote into that clone with printf.
     "publish-pages-tree.bats": [
         "//:gitignore",
+        "//:entry_docs",
     ],
     # It parses docker-compose.yml for its bind-mount sources and asserts each one exists
     # beside it, so the files it checks come out of compose, not out of a literal.
@@ -322,9 +322,13 @@ _SUITE_PAYLOAD_ALLOW = {
         "//:stack_data",
     ],
     # It drives update-stack.sh, which case-globs the payload paths out of `git diff`
-    # output and reads whichever the diff names.
+    # output and reads whichever the diff names. The README.md and docs/* it names are
+    # the stubbed diff itself (STUB_DIFF_OUT, changed_paths_match), the changed-path
+    # strings the CLI parses, never files this suite opens.
     "update-stack.bats": [
         "//:stack_data",
+        "//:entry_docs",
+        "//docs:content",
     ],
     # run_npm.sh prefers BUILD_WORKSPACE_DIRECTORY, so under a test this edge is the
     # foreign-cwd fallback rather than the path the runner opens.
@@ -333,10 +337,25 @@ _SUITE_PAYLOAD_ALLOW = {
     ],
     # The dotted env twin appears only as the rename target the CLI mv's to inside the
     # tree it just rendered, never as this repo's own .env.example. The .gitignore it
-    # appends lane blocks to is that rendered tree's file, not this repo's.
+    # appends lane blocks to, and the README.md and docs/adr/ paths it asserts got
+    # renamed, are that rendered tree's files as well, not this checkout's.
     "new-repo.bats": [
         "//:env_example",
         "//:gitignore",
+        "//:entry_docs",
+        "//docs:content",
+    ],
+    # The README.md is the tail of a github.com tree URL the case hands the CLI as the
+    # path below a repository it must refuse to probe. github.com serves no ref
+    # advertisement there, so nothing local of that name is opened.
+    "github-auth.bats": [
+        "//:entry_docs",
+    ],
+    # Every README.md is one line of STUB_GIT_TREE_OUT: the canned `git ls-tree` the
+    # stub answers with about the foreign workspace repo, which lib/workspace.sh
+    # matches against, never this checkout's own root document.
+    "workspace.bats": [
+        "//:entry_docs",
     ],
 }
 

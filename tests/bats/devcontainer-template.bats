@@ -214,7 +214,7 @@ setup() {
     # Same single-copy rule for the per-repo notes library: a twin that lost
     # this feed fails the push outright, because templatefile() rejects the
     # now-undefined ${notes_setup} interpolation while rendering the script.
-    run grep -F 'notes_setup = file("${path.module}/notes-setup.sh")' "${tpl_dir}/main.tf"
+    run grep -F 'notes_setup = chomp(file("${path.module}/notes-setup.sh"))' "${tpl_dir}/main.tf"
     [ "${status}" -eq 0 ]
   done
 }
