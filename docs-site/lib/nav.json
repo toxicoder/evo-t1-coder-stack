@@ -88,6 +88,10 @@
       {
         "title": "Testing with Bazel",
         "path": "contribute/test-with-bazel.md"
+      },
+      {
+        "title": "Navigating the codebase with Bazel",
+        "path": "contribute/navigate-with-bazel.md"
       }
     ]
   }

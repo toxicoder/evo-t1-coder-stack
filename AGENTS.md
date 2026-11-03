@@ -106,6 +106,32 @@ unchanged inputs, which is a real pass: take one uncached pass
 re-running the gate on a hunch.
 Stack changes must be verified on the dev stack first.
 
+## Read the graph before you grep
+
+The BUILD files are the machine-readable record of who reads what, and
+`//tests:bats_bazel_deps_test` fails when that record drifts from the sources. So a
+structural question here already has a ground truth, and `bazelisk query` answers it in
+under a second. Derive it instead of re-deriving it with a recursive grep or a pile of
+BUILD reads:
+
+- which tests to run for what you touched:
+  `bazelisk run //scripts:bazel-map -- scope --untracked` (or `-- tests-for <path>...`)
+- is this new payload file visible to the gates at all:
+  `bazelisk run //scripts:bazel-map -- owners <path>`, and `-- unlisted <dir>` for a
+  directory that may never have joined `//:stack_data`
+- what a target actually reads (its declared runfiles):
+  `bazelisk run //scripts:bazel-map -- files <target>`
+- the twin that has to move with a template payload file:
+  `bazelisk run //scripts:bazel-map -- twins <path>`
+- a target name you are not sure of: `bazelisk run //scripts:bazel-map -- targets <spec>`.
+  A guessed label costs a wasted `ERROR: no such target` turn; the query costs none.
+
+`--json` routes the prose to stderr, so stdout is a bare label list you can hand to
+`bazelisk test`. Scoping the run is the point: keep the full `//:test-fast` for the one
+uncached pass before the PR, and iterate on the derived list. For anything the verbs do
+not cover (predicates, `somepath`, `intersect`, the caveat that an empty query is not
+proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.md`.
+
 ## Structure
 - `scripts/*.sh` — operator CLIs; `scripts/lib/*.sh` — sourced helpers (do not copy log/die helpers). Python programs live in `scripts/lib/*.py`, awk programs in `scripts/lib/*.awk`, and POSIX remote probes in `scripts/lib/probes/`. Import them (`source`, `python3 file.py`, `awk -f`, `cat` + `sh -c` / `ssh`); do not embed a second language in the caller.
 - Operator CLIs source `scripts/lib/common.sh` and print `== section ==`, `-> phase`, `ok:`, `warning:`, `note:`, `error:`, and a closing `summary: N ok, W warnings, F failed`. CLIs without `--json` unset `JSON_MODE` after source.

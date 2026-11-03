@@ -118,7 +118,7 @@ describe("buildPageTree", () => {
 describe("NAVIGATED_PATHS", () => {
   it("lists every declared page in tab order", () => {
     expect(NAVIGATED_PATHS.slice(0, 3)).toEqual(["index.mdx", "getting-started.mdx", "learn/index.md"]);
-    expect(NAVIGATED_PATHS.at(-1)).toBe("contribute/test-with-bazel.md");
+    expect(NAVIGATED_PATHS.at(-1)).toBe("contribute/navigate-with-bazel.md");
   });
 
   it("names pages by their file, extension included", () => {
@@ -150,7 +150,7 @@ describe("neighborsOf", () => {
 
   it("ends the run at either edge of the reading order", () => {
     expect(neighborsOf(completeSource(), "index.mdx").previous).toBeUndefined();
-    expect(neighborsOf(completeSource(), "contribute/test-with-bazel.md").next).toBeUndefined();
+    expect(neighborsOf(completeSource(), "contribute/navigate-with-bazel.md").next).toBeUndefined();
   });
 
   it("finds a page given without its extension", () => {

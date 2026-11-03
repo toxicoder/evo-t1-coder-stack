@@ -65,6 +65,7 @@ NAV: list[tuple[str, list[tuple[str, str]]]] = [
             ("Contributor environment", "contribute/devcontainer.md"),
             ("Building with Bazel", "contribute/building-with-bazel.md"),
             ("Testing with Bazel", "contribute/test-with-bazel.md"),
+            ("Navigating the codebase with Bazel", "contribute/navigate-with-bazel.md"),
         ],
     ),
 ]
