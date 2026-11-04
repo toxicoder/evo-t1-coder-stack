@@ -954,9 +954,9 @@ rules above.
   Cursor / Windsurf plus the `coder.coder-remote` extension), port forwarding, and the
   SSH helper.
 - A separate in-browser **code-server** editor is Coder's VS Code fork (no local VS
-  Code), labelled **VS Code Web** with `order = 5` so it sorts before GitHub reauth (7),
-  Install GitHub App (8), LiteLLM (10) and Coder UI (11) and reads apart from the
-  **VS Code Desktop** helper.
+  Code), labelled **VS Code Web** with `order = 5` so it sorts before GitHub reauth (7)
+  and Install GitHub App (8) and reads apart from the **VS Code Desktop** helper. It is
+  the only app in the bar the agent still proxies.
 - A custom **Web Terminal** command-app at `order = 6` takes the terminal slot. Custom
   apps are ordered among themselves; static helper buttons have no `order` or `icon` knob
   in this Coder release and are not reorderable.
@@ -977,8 +977,10 @@ rules above.
   metadata tiles sampled every 30s - four `coder stat` calls (`cpu --host`,
   `mem --host`, `disk --path /home/coder`, `cpu --host`) and two awk one-liners for swap
   and load average.
-- A **LiteLLM** tile (`/health/liveliness`, `share = "owner"`) that health-checks the
-  proxy and is visible only to the workspace owner, plus a **Coder** external app.
+- Those four are the whole bar. The proxy address reaches the operator as the `litellm`
+  item on the `workspace_info` tile below (`value = var.litellm_url`), a read-out
+  rather than a proxied app, so health-checking the proxy is
+  `curl http://host.docker.internal:4000/health/liveliness` on the stack host.
 - `coder_metadata.workspace_info` shows the image, the cloned repository (in `workspace`,
   or `none` when the Git repository field is empty), the LiteLLM URL, the default Grok
   model, whether DinD is `on (tcp://dind:2375)` or `off`, and - redacted - which key is

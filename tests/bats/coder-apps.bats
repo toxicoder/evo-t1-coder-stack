@@ -10,10 +10,12 @@
 # URL has to stay at or under 256 characters: Coder v2.36 stores
 # workspace_apps.icon as varchar(256), and a longer value fails templates
 # push with pq: value too long for type character varying(256). The proxied
-# apps ride the path form (/@<owner>/<ws>.<agent>/apps/<slug>) on the coder
+# editor app rides the path form (/@<owner>/<ws>.<agent>/apps/<slug>) on the coder
 # hostname: subdomain stays false because nothing on this box publishes a
 # wildcard origin, and share stays owner, so a working <service>-name subdomain
-# never proves a failing app link worked.
+# never proves a failing app link worked. The bar otherwise carries only the
+# terminal and the two GitHub buttons; the guard below keeps deleted host-service
+# buttons from creeping back.
 #
 # Usage: bazelisk test //tests:bats_coder_apps_test   (from any cwd)
 # Safety: reads templates/workspace/main.tf, templates/devcontainer/main.tf,
@@ -99,9 +101,11 @@ hcl_code_server_script() {
 @test "app lane: the proxied apps stay on the path form" {
   # subdomain=true needs a wildcard origin, and this stack sets none, so
   # flipping it moves the app off the coder name instead of onto a subdomain.
+  # code_server is the only app the agent still proxies: the host services that
+  # used to sit here are gone (see the deletion guard below).
   local tpl app block
   for tpl in "${TEMPLATE_TWINS[@]}"; do
-    for app in code_server litellm; do
+    for app in code_server; do
       block="$(app_block "${tpl}" "${app}")"
       [ -n "${block}" ]
       printf '%s\n' "${block}" | grep -qE 'subdomain[[:space:]]*=[[:space:]]*false'
@@ -219,18 +223,34 @@ hcl_code_server_script() {
   done
 }
 
-@test "app lane: LiteLLM keeps dialling the host gateway from inside" {
-  # The app link reaches the proxy through the workspace, never through
-  # litellm-gmktecbeast. A literal published port would name one machine's
-  # mapping instead of the private lane every supported shape shares.
-  local tpl block
+@test "app lane: neither twin offers a LiteLLM or Coder button" {
+  # The agent bar carries only what a workspace needs from inside it: the
+  # editor, the terminal, and the two GitHub paths. The LiteLLM proxy is a host
+  # service the workspace reaches directly through var.litellm_url, and the
+  # Coder UI is the page the bar is already on, so both buttons were dead
+  # weight. The LiteLLM address stays visible as the coder_metadata litellm
+  # tile, which is what an operator actually reads. Deleting the resources has
+  # to stay a deletion: a re-added block, or one of the two slugs reused,
+  # fails here.
+  local tpl app
   for tpl in "${TEMPLATE_TWINS[@]}"; do
-    block="$(app_block "${tpl}" litellm)"
-    [ -n "${block}" ]
-    printf '%s\n' "${block}" | grep -qF 'url          = "http://host.docker.internal:4000"'
-    if printf '%s\n' "${block}" | grep -qE '8181|litellm-gmktecbeast'; then
+    for app in litellm coder_ui; do
+      if [ -n "$(app_block "${tpl}" "${app}")" ]; then
+        echo "${tpl} declares coder_app.${app} again" >&2
+        return 1
+      fi
+    done
+    if grep -Eq 'slug[[:space:]]*=[[:space:]]*"(litellm|coder)"' "${tpl}"; then
+      echo "${tpl} reuses the litellm or coder app slug" >&2
       return 1
     fi
+    if grep -Fq 'host.docker.internal:4000' "${tpl}"; then
+      echo "${tpl} dials the LiteLLM proxy from a coder_app again" >&2
+      return 1
+    fi
+    # The address still has to reach the operator, as a metadata tile.
+    sed -n '/^resource "coder_metadata" "workspace_info" {/,/^}/p' "${tpl}" |
+      grep -Fq 'value = var.litellm_url'
   done
 }
 
@@ -241,7 +261,7 @@ hcl_code_server_script() {
   # is stopped. Scripts, metadata and the container stay gated.
   local tpl app block
   for tpl in "${TEMPLATE_TWINS[@]}"; do
-    for app in code_server web_terminal github_reauth github_app_install litellm coder_ui; do
+    for app in code_server web_terminal github_reauth github_app_install; do
       block="$(app_block "${tpl}" "${app}")"
       [ -n "${block}" ]
       if printf '%s\n' "${block}" | grep -q start_count; then
