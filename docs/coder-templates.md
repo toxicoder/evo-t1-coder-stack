@@ -177,6 +177,13 @@ documentation-sized commits, under the kernel's own limit). Its reader is
 same totals with an independent parser and pins the two together, so a guard that starts
 measuring something else goes red in review.
 
+The guard also says the number while it is still a warning: a body within
+`STARTUP_SIZE_WARN` (4096) of the bound prints its composed total and the bytes left,
+because the distance to the budget is what a reviewer needs and a hard failure only
+ever reports the crossing. Measured on 2026-11-03, after the stage comments were
+collapsed to a pointer here, the widest body is the devcontainer startup script at
+about 118.5 KB, roughly 4.4 KB clear of the bound; the workspace twin sits near 116.3 KB.
+
 When a body really does need to grow past the budget, the options are:
 
 - **Move the prose out.** Rationale belongs in this file, not in `startup.sh.tftpl`.
@@ -1073,6 +1080,8 @@ Template-side facts only; the long prose lives in
   terminals are live); it takes the next numbered sibling, `vscode-<folder>-<hash>-2`,
   `-3`, ... only when every session of the folder already has a client. With no
   `tmux` on PATH it falls back to a plain login shell.
+  Because the profile runs inside a session rather than in the tab's own process,
+  closing a tab detaches the client and leaves whatever was running alive.
 - `grok-build-terminal` keeps its own session, `grok-build-<folder>-<hash>`, keyed off
   the repository root found with `git rev-parse --show-toplevel` (or the terminal's own
   `$PWD` outside a clone) and runs `grok --cwd <that root>` inside it. It is the

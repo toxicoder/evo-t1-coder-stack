@@ -184,6 +184,12 @@ load_production_guard() {
   load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" log
   load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" err
   load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" die
+  # The guard reads its awk parser from SELF_DIR and the canonical seed tree from the
+  # root the script resolved, because that is all the production script has: nothing in
+  # scripts/ sets REPO_ROOT. Hand it both explicitly so this suite measures the same
+  # checkout it points `dir` at, and never a cwd it happens to be sitting in.
+  SELF_DIR="${REPO_ROOT}/scripts"
+  root="${REPO_ROOT}"
   load_shell_function "${REPO_ROOT}/scripts/push-template.sh" startup_size_guard
 }
 

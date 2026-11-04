@@ -31,6 +31,29 @@ load_fn() {
   load_shell_function "${REPO_ROOT}/$1" "$2"
 }
 
+# load_guard <function> - load one of push-template's measurement guards with the
+# environment the script itself always has: the common.sh helpers it calls, and
+# SELF_DIR pointing at this checkout's scripts/, which is where the awk parser it
+# reads lives (the script sets SELF_DIR from its own BASH_SOURCE, so a function
+# eval'd on its own has to be handed one).
+load_guard() {
+  load_fn scripts/lib/common.sh log
+  load_fn scripts/lib/common.sh err
+  load_fn scripts/lib/common.sh warn
+  load_fn scripts/lib/common.sh die
+  SELF_DIR="${REPO_ROOT}/scripts"
+  load_fn scripts/push-template.sh "$1"
+}
+
+# run_strict <function> [args...] - call a loaded function with `set -u` active, the
+# way the production script runs it. Every CLI here opens with `set -euo pipefail`,
+# so a guard that reads a variable no one sets aborts the real push outright; without
+# nounset here that same read would just expand to nothing and the test would pass.
+run_strict() {
+  set -u
+  "$@"
+}
+
 @test "coder-agents: mask_secret follows the length bands" {
   load_fn scripts/coder-agents.sh mask_secret
   [ "$(mask_secret "abcdefghijklmnopqrst")" = "abcd...qrst" ]
@@ -330,10 +353,7 @@ load_fn() {
 }
 
 @test "push-template: preset_desc_guard rejects a description over 128 bytes" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh preset_desc_guard
+  load_guard preset_desc_guard
   dir="${BATS_TEST_TMPDIR}/tpl"
   mkdir -p "${dir}"
   long="$(printf 'x%.0s' {1..129})"
@@ -401,10 +421,7 @@ size_template() {
 }
 
 @test "push-template: startup_size_guard rejects a body that composes past the budget" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   local dir="${BATS_TEST_TMPDIR}/size-over"
   mkdir -p "${dir}"
   size_payload "${dir}" 200 big.sh
@@ -431,10 +448,7 @@ size_template() {
 }
 
 @test "push-template: startup_size_guard weighs each coder_script body on its own" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   local dir="${BATS_TEST_TMPDIR}/size-per-body"
   mkdir -p "${dir}"
   size_payload "${dir}" 90 a.sh
@@ -470,10 +484,7 @@ size_template() {
 }
 
 @test "push-template: startup_size_guard charges a payload once per inlining" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   local dir="${BATS_TEST_TMPDIR}/size-twice"
   mkdir -p "${dir}"
   size_payload "${dir}" 60 shared.sh
@@ -495,10 +506,7 @@ size_template() {
 }
 
 @test "push-template: startup_size_guard refuses a payload it cannot find" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   local dir="${BATS_TEST_TMPDIR}/size-missing"
   mkdir -p "${dir}"
   size_template "${dir}" startup.sh.tftpl
@@ -519,10 +527,7 @@ size_template() {
 }
 
 @test "push-template: startup_size_guard notes a body it cannot measure and lets it through" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   local dir="${BATS_TEST_TMPDIR}/size-heredoc"
   mkdir -p "${dir}"
   printf '%s\n' \
@@ -545,10 +550,7 @@ size_template() {
 }
 
 @test "push-template: startup_size_guard measures the twin's own copy of a payload" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   local dir="${BATS_TEST_TMPDIR}/size-twin-copy"
   mkdir -p "${dir}"
   # templates/common/tmux.conf is thousands of bytes; a 90-byte twin copy beside main.tf
@@ -570,11 +572,131 @@ size_template() {
   [ "${status}" -eq 0 ] || fail "the canonical copy was weighed instead of the twin's: ${output}"
 }
 
+@test "push-template: startup_size_guard weighs a payload that only exists in templates/common" {
+  load_guard startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-common-copy"
+  mkdir -p "${dir}"
+  local bytes
+  bytes="$(wc -c <"${REPO_ROOT}/templates/common/tmux.conf")"
+  bytes="${bytes//[!0-9]/}"
+  [ "${bytes}" -gt 100 ] ||
+    skip "templates/common/tmux.conf is no longer larger than the probe budget"
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    tmux_conf = chomp(file("${path.module}/tmux.conf"))' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # The state that aborted a real `bazelisk run //scripts:push-template` before the
+  # guard said a word: nounset on, REPO_ROOT nowhere in the environment (nothing in
+  # scripts/ ever sets one - the checkout is the `root` the script resolved and cd'd
+  # into), and a payload only the canonical tree has. The twin-copy test above covers
+  # the other branch, and this suite injecting REPO_ROOT is what kept the gap green.
+  root="${REPO_ROOT}"
+  unset REPO_ROOT
+  export STARTUP_SIZE_BOUND=100
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 1 ] ||
+    fail "a body composed from templates/common/ went unweighed: ${output}"
+  assert_match "reports the bytes it read from templates/common" "${bytes} bytes" "${output}"
+
+  export STARTUP_SIZE_BOUND=1000000
+  run --separate-stderr run_strict startup_size_guard "${dir}"
+  # shellcheck disable=SC2154 # $stderr is set by `run --separate-stderr`
+  [[ ${stderr} != *"unbound variable"* ]]
+  [ "${status}" -eq 0 ] || fail "a body inside the budget was refused: ${output}"
+}
+
+@test "push-template: startup_size_guard reads templates/common beside the cwd with no resolved root" {
+  load_guard startup_size_guard
+  local work="${BATS_TEST_TMPDIR}/size-cwd-root"
+  local from="${PWD}"
+  mkdir -p "${work}/templates/common" "${work}/twin"
+  size_payload "${work}/templates/common" 200 tmux.conf
+  size_template "${work}/twin" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    tmux_conf = chomp(file("${path.module}/tmux.conf"))' \
+    '  })' \
+    '}' >"${work}/twin/main.tf"
+
+  # A guard loaded on its own has no resolved root to lean on, so it measures against
+  # the directory it was called from. Pinning the fallback keeps the whole-script path
+  # (which always has `root`) from being the only case anyone ever proved.
+  cd "${work}"
+  unset root
+  export STARTUP_SIZE_BOUND=100
+  run run_strict startup_size_guard "${work}/twin"
+  cd "${from}"
+  [ "${status}" -eq 1 ] || fail "the cwd copy of templates/common went unweighed: ${output}"
+  assert_match "weighed the payload under the cwd" '200 bytes' "${output}"
+}
+
+@test "push-template: startup_size_guard stops when its parser is missing" {
+  load_guard startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-no-parser"
+  mkdir -p "${dir}"
+  size_payload "${dir}" 10 a.sh
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    a = file("${path.module}/a.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # An awk the shell cannot open reads no records, and no records reads back as
+  # "every body fits" - the silent pass this gate exists to make impossible. A guard
+  # that cannot parse has to stop the push the way a missing payload does.
+  SELF_DIR="${BATS_TEST_TMPDIR}/no-lib"
+  mkdir -p "${SELF_DIR}"
+  export STARTUP_SIZE_BOUND=10
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 1 ] || fail "a guard with no parser reported success: ${output}"
+  assert_match "names the parser it could not open" 'startup_size\.awk' "${output}"
+  assert_match "says what is missing" 'cannot measure anything' "${output}"
+}
+
+@test "push-template: startup_size_guard warns while a body is still inside the budget" {
+  load_guard startup_size_guard
+  local dir="${BATS_TEST_TMPDIR}/size-near-bound"
+  mkdir -p "${dir}"
+  size_payload "${dir}" 200 big.sh
+  size_template "${dir}" startup.sh.tftpl
+  printf '%s\n' \
+    'resource "coder_agent" "main" {' \
+    '  startup_script = templatefile("${path.module}/startup.sh.tftpl", {' \
+    '    big = file("${path.module}/big.sh")' \
+    '  })' \
+    '}' >"${dir}/main.tf"
+
+  # The distance to the bound is the number that decides whether the next commit boots,
+  # and a hard failure only ever reports the crossing. 200 bytes against a 210-byte
+  # budget is one comment away from a workspace that cannot fork its startup script.
+  export STARTUP_SIZE_BOUND=210 STARTUP_SIZE_WARN=4096
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ] || fail "a body inside the budget was refused: ${output}"
+  assert_match "warns with the bytes left" \
+    'warning:.*leaving 10 of the single-argument budget' "${output}"
+  assert_match "names the way out" 'docs/coder-templates\.md' "${output}"
+
+  # Comfortable room says nothing, and neither does a floor turned off.
+  export STARTUP_SIZE_BOUND=100000
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" != *"warning:"* ]]
+
+  export STARTUP_SIZE_BOUND=210 STARTUP_SIZE_WARN=0
+  run run_strict startup_size_guard "${dir}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" != *"warning:"* ]]
+}
+
 @test "push-template: startup_size_guard refuses two bodies it cannot tell apart" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   local dir="${BATS_TEST_TMPDIR}/size-clash"
   mkdir -p "${dir}"
   size_template "${dir}" same.sh.tftpl
@@ -604,10 +726,7 @@ size_template() {
 }
 
 @test "push-template: startup_size_guard stays silent without a main.tf" {
-  load_fn scripts/lib/common.sh log
-  load_fn scripts/lib/common.sh err
-  load_fn scripts/lib/common.sh die
-  load_fn scripts/push-template.sh startup_size_guard
+  load_guard startup_size_guard
   run startup_size_guard "${BATS_TEST_TMPDIR}/no-such-template-dir"
   [ "${status}" -eq 0 ]
 }
