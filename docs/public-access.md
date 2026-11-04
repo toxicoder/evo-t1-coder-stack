@@ -53,11 +53,12 @@ the service container (homepage:3000 / coder:3000 / kasm:4443 / litellm:4000 / h
 - Nothing in this path replaces the LAN routes: `https://<lan-ip>/` still serves the
   dashboard on the self-signed cert, `https://<lan-ip>:3001` still serves Coder's
   own TLS listener, and `http://<STACK_LAN_HOST>:9119` still serves Hermes.
-- A workspace **app** link (the **LiteLLM** and **Open VS Code Web** buttons) rides the
-  coder row of that table. Both `coder_app` blocks set `subdomain = false`, so their
-  URL keeps the `/@<owner>/<ws>.<agent>/apps/<slug>` path form and goes to `coder:3000`
-  on its way to `host.docker.internal:4000`. A 502 on that link is an app-lane failure
-  and `litellm-gmktecbeast.` took no part in it.
+- A workspace **app** link (the **VS Code Web** button is the only app this stack still
+  proxies) rides the coder row of that table. `coder_app.code_server` sets
+  `subdomain = false`, so its URL keeps the `/@<owner>/<ws>.<agent>/apps/<slug>` path
+  form and goes to `coder:3000` on its way to the editor on `localhost:13337` inside the
+  workspace. A 502 on that link is an app-lane failure and `litellm-gmktecbeast.` took
+  no part in it.
 - Every `location` adds `X-Evo-Proxy` with the upstream name, and `always` is what
   makes it survive a 502. Read it beside `X-Coder-Request-Id`, which Coder's own proxy
   sets on an answered request: neither header means the request stopped at Traefik or

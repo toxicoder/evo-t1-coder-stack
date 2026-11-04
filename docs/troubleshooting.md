@@ -355,20 +355,23 @@ bazelisk run //scripts:pull-models
 
 ### Workspace cannot reach LiteLLM -> `CODER_ACCESS_URL`, or `host.docker.internal`
 
-Two lanes reach that port and they share nothing but the destination, so a probe on one
-answers nothing about the other.
+One lane reaches that port: a process inside the workspace. The two reads that matter
+are the probe from inside the workspace and the liveliness probe from the stack host,
+and those share nothing but the destination.
 
 - The **model lane**: a process inside the workspace dials
   `http://host.docker.internal:4000/v1` directly. `host.docker.internal` is the docker
   bridge gateway (`172.17.0.1`), compose publishes the proxy's container port 4000 on
   host port 4000, and nothing between the two authenticates. `LITELLM_BASE_URL` and the
   coding CLIs use this lane.
-- The **app lane**: the **LiteLLM** button in the Coder dashboard, at
-  `https://<coder name>/@<owner>/<ws>.<agent>/apps/litellm`. `coder_app.litellm` sets
-  `subdomain = false`, so that path rides the *coder* name and `coder:3000`, and
-  `litellm-gmktecbeast.` is never consulted. See the next heading.
+- The **agent bar** keeps `:4000` off its own path: the workspace page's `litellm` tile
+  is `coder_metadata` text (`value = var.litellm_url`), a read-out rather than a
+  `coder_app`, so `litellm-gmktecbeast.` is never consulted here. Health-check the
+  proxy with `curl http://host.docker.internal:4000/health/liveliness` on the stack
+  host. The app lane under `A workspace app link answers Bad Gateway` below is the
+  **VS Code Web** editor link and stays on 13337 inside the workspace.
 
-The checks that apply to either lane:
+The checks that apply:
 
 - `CODER_ACCESS_URL` must be an `https://` URL: a LAN IP, or the public coder name in
   public mode. Never `localhost` and never `127.0.0.1`.
@@ -483,10 +486,10 @@ template push. With none of those set, a missing block is a defect, not a park.
 
 ### A workspace app link answers `Bad Gateway` -> find who answered
 
-The **LiteLLM** and **Open VS Code Web** buttons are Coder *apps*: their URL is
-`/@<owner>/<ws>.<agent>/apps/<slug>` on the coder hostname, because both `coder_app`
-blocks set `subdomain = false`. So a failing app link is an app-lane failure, and a 200
-from `litellm-gmktecbeast.` is not evidence about it.
+The **VS Code Web** button is the one app this stack still proxies: its URL is
+`/@<owner>/<ws>.<agent>/apps/code-server` on the coder hostname, because
+`coder_app.code_server` sets `subdomain = false`. So a failing app link is an app-lane
+failure, and a 200 from `litellm-gmktecbeast.` is not evidence about it.
 
 Two hops can answer 502 on that path: this box's nginx, when `coder:3000` will not
 resolve or connect, and Coder's own Go proxy, whose `ReverseProxy` ErrorHandler
@@ -523,7 +526,7 @@ curl -sS --noproxy '*' -o /dev/null -w 'litellm %{http_code} %{content_type}\n' 
 
 ```sh
 curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: coder-gmktecbeast.overeazy.io' \
-  http://host.docker.internal:8080/@<owner>/<ws>.main/apps/litellm
+  http://host.docker.internal:8080/@<owner>/<ws>.main/apps/code-server
 ```
 
 `--noproxy '*'` matters: with a proxy set in the environment curl hands the name to the
@@ -877,11 +880,13 @@ correct and is coder accessible from your browser?`
 
 ## Editor, credentials, the clone
 
-### `Unexpanded count argument on block "coder_app.coder_ui"` -> apps were gated on start_count
+### `Unexpanded count argument on block "coder_app.github_app_install"` -> apps were gated on start_count
 
 Cause: `coder/preview` warns when a `coder_app` `count` is not expanded at
 workspace-create preview. `start_count` is that value. The default is then
-assumed to be 1.
+assumed to be 1. The only `coder_app` carrying a `count` today is
+`coder_app.github_app_install`, and it counts on `github_auth_id`, which the
+preview does expand.
 
 Fix: `coder_app` resources are not gated on `start_count` (scripts, metadata
 and the container still are). Push the templates; new creates stop showing the
