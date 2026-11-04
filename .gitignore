@@ -57,6 +57,8 @@ docs-site/out/
 docs-site/.next/
 docs-site/.source/
 docs-site/node_modules/
+# Held by run_npm.sh while it installs the shared node_modules (see ensure_deps).
+docs-site/.npm-ci.lock
 docs-site/next-env.d.ts
 docs-site/tsconfig.tsbuildinfo
 # v8 coverage report written by `npm run unit:coverage` / //docs-site:unit_coverage.

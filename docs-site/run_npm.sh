@@ -14,6 +14,10 @@ set -euo pipefail
 # the real checkout. The Next build reads its pages from the sibling docs/ directory, which
 # does not resolve reliably through the runfiles sandbox, and node_modules plus the export
 # land where a developer can see and commit them.
+#
+# `bazel test` gets no BUILD_WORKSPACE_DIRECTORY, so the arms resolve their own
+# runfiles copy back into that same checkout: one node_modules then serves every
+# npm-backed gate, and the cold install behind it is held under .npm-ci.lock.
 if [[ -n ${BUILD_WORKSPACE_DIRECTORY:-} && -d "${BUILD_WORKSPACE_DIRECTORY}/docs-site" ]]; then
   cd "${BUILD_WORKSPACE_DIRECTORY}/docs-site"
 else
@@ -40,11 +44,51 @@ if [[ $SUBCMD == "run_npm.sh" || $SUBCMD == "npm" ]] && [[ $# -gt 0 ]]; then
   shift
 fi
 
+# How long to wait for another npm run to finish installing before giving up on
+# it. A cold `npm ci` measured 25s here, so the default is many times that, and
+# a waiter that outlasts it fails loudly rather than riding out the test timeout.
+NPM_CI_LOCK_WAIT="${NPM_CI_LOCK_WAIT:-900}"
+
+# Is the site's own toolchain already in place? Both binaries are checked: a
+# tree with next alone is a site that has never run the unit suite.
+deps_present() {
+  [[ -x node_modules/.bin/next && -x node_modules/.bin/vitest ]]
+}
+
+# Install the site's deps if they are missing, one installer at a time.
+#
+# Every docs-site npm gate runs out of the same tree (see prefer_real_checkout),
+# which turns the first install from a first-run delay into a concurrency
+# problem: `npm ci` deletes node_modules before it repopulates it, and
+# //:test-all starts typecheck, unit, unit_coverage and verify as parallel Bazel
+# test actions against a checkout that has never had one. Unlocked they install
+# side by side into that one tree, and a peer that starts reading it while
+# another is mid-way through writing loads esbuild's native binary short and
+# dies on SIGBUS ("Bus error") inside vitest. The lock makes the check and the
+# install one step, and the waiter re-reads the gate inside it, so a cold
+# checkout installs once and everyone else reads a finished tree.
 ensure_deps() {
-  if [[ ! -x "node_modules/.bin/next" || ! -x "node_modules/.bin/vitest" ]]; then
+  if deps_present; then
+    return 0
+  fi
+  if ! command -v flock >/dev/null 2>&1; then
+    # A laptop without util-linux runs one gate at a time, so there is no peer
+    # to race. Install unlocked rather than refusing to build.
     echo "→ docs-site: installing npm deps (node_modules missing)"
     npm ci --legacy-peer-deps
+    return 0
   fi
+  (
+    if ! flock -w "${NPM_CI_LOCK_WAIT}" 9; then
+      echo "error: another npm run has held docs-site/.npm-ci.lock for ${NPM_CI_LOCK_WAIT}s" >&2
+      exit 1
+    fi
+    if deps_present; then
+      exit 0
+    fi
+    echo "→ docs-site: installing npm deps (node_modules missing)"
+    npm ci --legacy-peer-deps
+  ) 9>.npm-ci.lock
 }
 
 # Move into the checkout this runfiles copy was symlinked from.
@@ -63,10 +107,35 @@ run_in_real_checkout() {
   cd "${dir}"
 }
 
+# Soft form of run_in_real_checkout, for the arms that can run from either tree:
+# move into the checkout when this copy resolves to one, stay put when it does
+# not. unit_coverage keeps the hard form, because measuring symlinked sources
+# reports 0% and has to stop rather than pass on nothing.
+prefer_real_checkout() {
+  run_in_real_checkout || return 0
+}
+
+# Run out of the checkout when there is one to find.
+#
+# Under `bazel test` the runner starts in its own runfiles tree, where
+# node_modules is absent (it is gitignored, so no data edge ships it) and each
+# npm-backed gate would therefore run its own cold install. Resolving this copy
+# back into the checkout is what //docs-site:unit_coverage already has to do to
+# measure anything; doing it for every arm makes one install serve the whole
+# family, and it matches what `bazel run //docs-site:<arm>` does through
+# BUILD_WORKSPACE_DIRECTORY. A foreign cwd with no checkout to resolve keeps the
+# runfiles tree and installs into it, as before.
+if [[ -z ${BUILD_WORKSPACE_DIRECTORY:-} ]]; then
+  prefer_real_checkout
+fi
+
 CMD="npm"
 
 case "$SUBCMD" in
   install)
+    # Runs unguarded on purpose: this arm means "reinstall now", and it is
+    # something an operator types by hand. The arms that Bazel starts side by
+    # side are the ones ensure_deps serialises.
     exec $CMD ci --legacy-peer-deps "$@"
     ;;
   dev)

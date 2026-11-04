@@ -97,6 +97,14 @@ bazelisk run //scripts:test-in-image --                        # from any host w
   defect and a green one is not the run that unlocks the merge button. CI and branch
   protection gate on the image result either way.
 
+The npm-backed gates (`//docs-site:typecheck`, `:unit`, `:unit_coverage`, `:verify`) are
+`manual` for the same reason, and they all run out of `docs-site/node_modules` in the
+checkout: `run_npm.sh` resolves its own runfiles copy back into it, so a cold checkout
+installs once for the whole family, under `docs-site/.npm-ci.lock`. Without that lock
+every test action ran its own `npm ci`, and a gate that started while another was still
+writing the tree died on a SIGBUS reading a short esbuild binary. A box with no `flock`
+(a macOS laptop) installs unlocked, since nothing else is running there.
+
 ## Measured coverage
 
 Three targets answer "is this code actually executed by a test" instead of
