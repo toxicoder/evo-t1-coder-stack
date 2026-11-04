@@ -841,9 +841,9 @@ resource "coder_app" "code_server" {
 
   # The agent bar shows this as "VS Code Web" (display_name; the static
   # "VS Code Desktop" helper from display_apps keeps its own label, so the two
-  # editor buttons read differently now) and sorts it before GitHub reauth (7),
-  # Install GitHub App (8), LiteLLM (10) and Coder UI (11) (lowest order first;
-  # static helper buttons are not reorderable per Coder's resource-ordering docs).
+  # editor buttons read differently now) and sorts it before GitHub reauth (7)
+  # and Install GitHub App (8) (lowest order first; static helper buttons are
+  # not reorderable per Coder's resource-ordering docs).
   order   = 5
   open_in = "tab"
 
@@ -916,39 +916,6 @@ resource "coder_app" "github_app_install" {
   open_in      = "tab"
   url          = local.coder_github_app_install_url
   order        = 8
-}
-
-# The LiteLLM proxy is reachable from the workspace through the host gateway,
-# so the agent can proxy it as an app. share = "owner" keeps it off the rest of
-# the LAN; healthcheck needs all three of url, interval and threshold.
-resource "coder_app" "litellm" {
-  agent_id     = coder_agent.main.id
-  slug         = "litellm"
-  display_name = "LiteLLM"
-  url          = "http://host.docker.internal:4000"
-  share        = "owner"
-  subdomain    = false
-  open_in      = "tab"
-  order        = 10
-
-  healthcheck {
-    url       = "http://host.docker.internal:4000/health/liveliness"
-    interval  = 10
-    threshold = 12
-  }
-}
-
-# Surfaced rather than proxied: these are host services the agent cannot proxy
-# on the workspace's loopback, so they open on the client machine.
-resource "coder_app" "coder_ui" {
-  agent_id     = coder_agent.main.id
-  slug         = "coder"
-  display_name = "Coder"
-  # external apps open on the client machine, so there is nothing to share;
-  # the attribute is mutually exclusive with share in the provider schema.
-  external = true
-  url      = data.coder_workspace.me.access_url
-  order    = 11
 }
 
 resource "coder_metadata" "workspace_info" {
