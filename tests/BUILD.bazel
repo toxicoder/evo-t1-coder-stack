@@ -45,6 +45,20 @@ filegroup(
     ],
 )
 
+# The coverage harness itself. A suite that pins how the harness hands it a tree reads
+# these by path, so they have to be in its runfiles beside the suites they drive.
+filegroup(
+    name = "coverage_tools",
+    srcs = glob(
+        [
+            "coverage/*.py",
+            "coverage/*.sh",
+        ],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
 # Every suite file, for the tools that walk the whole suite tree: //tests:shell_inventory
 # greps them for function names and //tests:shell_coverage drives them all.
 filegroup(
@@ -273,6 +287,7 @@ _SUITE_PAYLOAD = {
     # is exactly what has to be summed to know how big the exec'd argument gets.
     "startup-script-size.bats": [
         "//:templates_payload",
+        "//tests:coverage_tools",
     ],
     "storage-clean.bats": [
         "//:templates_payload",

@@ -98,6 +98,14 @@ Unless the user explicitly says otherwise, the default expectation for any code 
 - Every change includes updates to relevant documentation and tests (created where they do not exist); tests cover the new or modified behavior and pass before the PR is opened.
 - Do not force-push, rewrite history on shared branches, or merge the PR yourself unless the user explicitly asks. The default is to open the PR and stop.
 
+# GitHub auth
+- `GH_TOKEN`/`GITHUB_TOKEN` here are the copy Coder injected when this workspace started. That token expires about an hour later and nothing can rewrite another process's environment, so the pair is usually dead while the gh auth store beside it is healthy. git sends whatever its credential helper answers, and the stack's helper reads the store through a form that clears the stale pair, so a push can fail with `remote: Invalid username or token. Password authentication is not supported for Git operations.` even though a credential is present.
+- On any push or `gh` auth error, run ONE command before anything else: `bazelisk run //scripts:github-auth -- check <repo-url>`. Its last line is the verdict. `push would FAIL` means run `bazelisk run //scripts:github-auth -- fix <repo-url>` once, then retry the push once. Budget about five tool calls on auth total.
+- A line beginning `HANDOFF` means a human owes it three clicks in the Coder UI (GitHub reauth, Install GitHub App for private repos, restart). Say so, name those three, and stop.
+- For `gh` commands use `env -u GH_TOKEN -u GITHUB_TOKEN gh ...`; gh reads the pair directly and no command can fix another process's environment. `git` needs no prefix once `fix` has run.
+- Never hand-roll a `GIT_ASKPASS` script, never write a `credential.helper` line by hand, never run `gh auth login` interactively, never switch the remote to a `git@github.com:` ssh URL (this stack provisions no ssh key), and never read `.env`. A successful read proves nothing: a public repo answers reads for any authenticated caller, so only the write verdict counts.
+- A pasted PAT is a stack-host action (`bazelisk run //scripts:github-auth -- auth <container> -`) and is legitimate only after `check` answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`. Never put a token in argv, a remote URL, or a committed file.
+
 # Tools
 - Follow the Tool Call Discipline on every tool invocation.
 - MCP servers (searxng, context7, github) are declared in ~/.grok/config.toml when the stack left them on. Never invent their tool names or argument shapes: call search_tool with the server name and action, then use_tool with exactly the schema it returns.

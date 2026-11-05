@@ -159,9 +159,18 @@ bazelisk run //scripts:github-auth -- check https://github.com/toxicoder/evo-t1-
   the workstation daemon mounted in, never the stack host's workspace fleet.
 - Pass only the repository URL. A named container argument is refused with a pointer to the
   host shell, because that container lives on a daemon this environment cannot enumerate.
-- Credentials still arrive by the one supported path: Coder External Auth mints
-  `GH_TOKEN`/`GITHUB_TOKEN`, and `--devcontainer` hands them to git through
-  `gh auth setup-git`. There is no static token and no PAT in this repo's tooling.
+- Credentials still arrive by the one supported path: Coder External Auth mints them, and
+  the gh auth store is what git actually reads. That store is the target because
+  `GH_TOKEN`/`GITHUB_TOKEN` are the copy injected when the container started and expire
+  about an hour later, and the plain `!gh auth git-credential` helper echoes that pair, so
+  git would keep sending a dead token. The helper this stack installs clears the pair first,
+  which is why `gh auth setup-git` alone is not enough. There is no static token and no PAT
+  in this repo's tooling.
+- `push would FAIL` from the check above means one command:
+  `bazelisk run //scripts:github-auth -- fix https://github.com/toxicoder/evo-t1-coder-stack.git`.
+  It mints a live token, writes the store, installs that helper, and re-proves the verdict.
+  For `gh` itself, prefix `env -u GH_TOKEN -u GITHUB_TOKEN`: no process can rewrite another
+  process's environment.
 
 ## Running the gate here
 

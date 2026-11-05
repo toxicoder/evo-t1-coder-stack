@@ -219,10 +219,17 @@ The grant must include the repos you clone, or a connected credential authentica
 and is still 403.
 
 **How the token reaches a workspace.** It arrives as `GH_TOKEN` and `GITHUB_TOKEN`
-in the agent environment, and the template's `gh_token_refresh` coder_script
-re-mints that pair on start and every 6 hours (`0 0 */6 * * *`) because a minted
-token expires first. Check it with `gh auth status` inside the workspace, or
-`bazelisk run //scripts:github-auth -- check` for one line per credential slot.
+in the agent environment, and that pair is a snapshot: Coder mints it when the
+workspace starts and never refreshes it, so it expires about an hour later while
+the workspace keeps running. The template's `gh_token_refresh` coder_script
+re-mints on start and every 20 minutes (`0 */20 * * * *`) into the **gh auth store**,
+which is the copy that stays live. git asks its credential helper, and the
+stack's helper reads the store through a form that clears the stale pair first,
+so push follows the store and not the frozen environment. Check it with
+`bazelisk run //scripts:github-auth -- check <repo-url>` - pass the repository,
+because without it the doctor lists credentials and never asks the write
+question. `bazelisk run //scripts:github-auth -- fix <repo-url>` repairs a
+workspace that cannot push.
 [coder-templates.md](coder-templates.md#github-credentials-for-a-workspace) owns
 the template-side detail.
 
@@ -231,8 +238,9 @@ line holding a long-lived fine-grained PAT, which `push-template.sh` forwarded t
 both templates as a template variable, into every workspace's environment. That
 path is gone: there is no such template variable and no such key in the twin. A
 workspace's GitHub credential comes from the External Auth provider alone, so an
-owner who connected nothing has no GitHub credential anywhere - unless they install
-one per workspace:
+owner who connected nothing has no GitHub credential anywhere - and the only way
+to add one by hand is per workspace, after `check` has answered `REFUSED-GRANT`,
+`NOT VISIBLE` or `REJECTED` (a passing read is not that answer):
 
 ```sh
 bazelisk run //scripts:github-auth -- auth <container> - < PAT

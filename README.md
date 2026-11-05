@@ -984,7 +984,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── coder-agents.sh      # wires the control-plane chat agent (LiteLLM + thinking models)
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
-│   ├── github-auth.sh       # GitHub credential doctor
+│   ├── github-auth.sh       # GitHub credential doctor and one-command fix
 │   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
 │   ├── hermes-shell.sh      # open the Hermes assistant in the terminal you are in
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
@@ -1035,10 +1035,18 @@ operator hits most:
   `bazelisk run //scripts:spark-verify -- --no-tests`.
 - **Workspace stuck in *starting*** - startup is blocking by design, so the reason is in
   the workspace startup log (`coder logs <workspace>`).
+- **Any `git push` or `gh` failure inside a workspace** - start with
+  `bazelisk run //scripts:github-auth -- check <repo-url>`, once, and read its last line.
+  `push would FAIL` means one command: `bazelisk run //scripts:github-auth -- fix <repo-url>`,
+  which mints a live token, writes the gh auth store, and points git's credential helper at
+  the store so the stale `GH_TOKEN` Coder injected at workspace start can no longer shadow a
+  healthy credential. A line beginning `HANDOFF` is the three clicks a human owes it in the
+  Coder UI. The doctor answers "can the credential git would really send WRITE to that
+  repo?"; on the stack host it takes a container slot (`check [container] [repo-url]`) and
+  enumerates the fleet with none.
 - **Private-repo clone or push denied while a credential is present** - the grant is the
-  problem, not the credential format. The doctor answers "can this credential WRITE to
-  that repo?": `bazelisk run //scripts:github-auth -- check [container] [repo-url]` from
-  a host shell, or the same command without the container slot from inside a workspace.
+  problem, not the credential format, once `check` has ruled out the stale pair. A
+  `REFUSED-GRANT` or `NOT VISIBLE` verdict names the GitHub App grant to fix.
 - **`Cannot connect to the Docker daemon at tcp://dind:2375`** - the sidecar is
   unhealthy, its image was never pulled, or the workspace was created with DinD off;
   read the *docker-in-docker* tile rather than the variable.

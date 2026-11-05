@@ -1060,6 +1060,38 @@ coder restart <workspace>
 
 ### GitHub token expired, or the workspace has no GitHub account -> GitHub reauth
 
+- What you see: `git push` answers `remote: Invalid username or token. Password
+  authentication is not supported for Git operations.`, or `gh auth status` calls the
+  token invalid. An expired token and a never-connected account read the same from that
+  message, so ask which one you have before you touch either.
+
+```sh
+bazelisk run //scripts:github-auth -- check [repo-url]
+```
+
+- What its answers mean here: `REJECTED` beside `env token (GITHUB_TOKEN/GH_TOKEN)` is an
+  expired mint (401 refuses the credential itself, which is what an hour-old injected
+  copy is); `NO GitHub credential in the chain slot` means nothing is connected and
+  nothing can be minted; `PUSH-READY` means the credential is fine and you want
+  [the push-denied entry](#private-repo-clone-or-push-denied-while-a-credential-is-present---the-grant-not-the-format)
+  instead.
+- The one command, whichever of the two it was:
+
+```sh
+bazelisk run //scripts:github-auth -- fix [repo-url]
+```
+
+  Inside a workspace it repairs that workspace; on the stack host `fix <container>
+  [repo-url]` names the one workspace it repairs, and a host run with no container is
+  refused for exactly that reason. It mints a live token through Coder external-auth (the
+  injected pair is never trusted, because it is the frozen copy that expired), writes the
+  gh auth store, points git's `github.com` and `gist.github.com` credential helper at that
+  store through a form that clears the env pair first, then re-runs the write probe and
+  prints the verdict again, so it proves itself. It is idempotent and it never prints a
+  token.
+- When nothing can be minted AND the store is empty its line begins `HANDOFF` and names
+  the three clicks below. That line is the boundary: no command run in that workspace can
+  do them.
 - On the workspace page, click **GitHub reauth**. Coder opens `/external-auth/<id>`
   (device flow for the injected App, OAuth for a custom app in `coder.env`). If the
   page says you are already authenticated, click **Reauthenticate**.
@@ -1070,43 +1102,141 @@ coder restart <workspace>
   grant the private repos, then restart. Coder's injected provider omits
   `AppInstallURL`, so the warning on `/external-auth/github` is unlinked plaintext.
 - Restart the workspace afterwards so `GH_TOKEN` and the gh auth store match the new
-  grant. `git` can mint live through `GIT_ASKPASS` without that restart, but only while
-  that helper answers prompts - see the push-denied section for the case where it does not.
+  grant. `fix` makes git push work without the restart; the injected pair itself only
+  changes when the workspace restarts or `gh_token_refresh` next runs.
 - Existing workspaces pick up the buttons after `bazelisk run //scripts:push-template`
   and a workspace update to the new template version.
+- How the credential is assembled, and what every slot in that report is, is one page:
+  [GitHub credentials for a workspace](coder-templates.md#github-credentials-for-a-workspace).
 
 ### gh_token_refresh says gh would not store the minted token
 
-- The refresh script inherits `GH_TOKEN`/`GITHUB_TOKEN` from the agent. `gh auth
-  login --with-token` refuses stdin while those names are set. Current templates
+- What you see, in that `coder_script`'s log, is its own two lines:
+
+```text
+gh would not store the minted GitHub token.
+next: inside the workspace run: GH_TOKEN= GITHUB_TOKEN= gh auth status
+```
+
+- Cause: the refresh script inherits `GH_TOKEN`/`GITHUB_TOKEN` from the agent, and
+  `gh auth login --with-token` refuses stdin while those names are set (`The value of the
+  GH_TOKEN environment variable is being used for authentication`). Current templates
   unset the pair, log out, then log in with `--git-protocol https`, and print gh's
-  stderr (token redacted) if that still fails.
-- Inside the workspace, run `GH_TOKEN= GITHUB_TOKEN= gh auth status`. Then click
-  **GitHub reauth**, finish device-code login, install the Coder GitHub App if the
-  reauth page says to, and restart.
+  stderr (token redacted) if that still fails - which is the line above.
+- The one command does the same three steps and then proves them:
+
+```sh
+bazelisk run //scripts:github-auth -- fix [repo-url]
+```
+
+- Then read the store with the pair cleared, because `gh auth status` on its own reports
+  the env pair rather than what is stored:
+
+```sh
+env -u GH_TOKEN -u GITHUB_TOKEN gh auth status
+```
+
+- What each answer means: a store that now holds a token means git is repaired and the
+  refresh script keeps it fresh (start, then every 20 minutes); `gh refused the token, so the
+  store is unchanged` means the credential is revoked or the account disconnected, so run
+  `check` to see what github.com says about it, then take the clicks from
+  [the reauth entry](#github-token-expired-or-the-workspace-has-no-github-account---github-reauth);
+  `cannot install the credential helper - gh is not installed` is
+  [the gh-not-installed entry](#gh-command-not-found-inside-a-workspace---the-helper-needs-gh).
+- `HANDOFF` means there is no credential anywhere in reach: click **GitHub reauth**,
+  finish device-code login, install the Coder GitHub App if the reauth page says to, and
+  restart. Those clicks are in
+  [the reauth entry](#github-token-expired-or-the-workspace-has-no-github-account---github-reauth),
+  and the script's own note on a workspace with no connected account points at the same
+  two buttons.
 
 ### Private-repo clone or push denied while a credential is present -> the grant, not the format
 
-- The denial is about the **grant**, not the credential format. A
-  connected-but-unscoped credential authenticates and is still refused: 403, or 404
-  where GitHub hides a private repo's existence (a repo hidden from the credential
-  answers 404, or 403, on the read lane and the write lane alike). And reads prove
-  nothing about push: a public repo answers read probes for any authenticated
-  caller, so a credential that READS a repo can still be refused every WRITE to it.
-- Check the GitHub side first. The grant behind the credential - the GitHub App
-  installation that the External Auth provider (id `github` by default) minted its token from -
-  has to include the repository the workspace clones or pushes. An empty
-  [github.com/settings/apps](https://github.com/settings/apps) page is the usual surprise
-  here: it means no App is installed under your account, so there is no **Configure** link
-  to click and nothing to grant, while the provider itself stays configured and keeps
-  minting tokens that authenticate. Install Coder's App from the workspace **Install
-  GitHub App** button, or at
+- What you see is one of: `remote: Invalid username or token. Password authentication is
+  not supported for Git operations.`, `remote: Repository not found.`, `fatal:
+  Authentication failed for 'https://github.com/...'`, or `fatal: could not read Username
+  for 'https://github.com'`. None of them names the token or its age, and the first is
+  what a refused token plus a silent askpass looks like, not anything to do with
+  passwords.
+- The one command, run where the push was attempted, naming the repository:
+
+```sh
+bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>]
+```
+
+  It does not ask "is there a credential" and it does not trust the environment: it runs
+  git's own configured helper the way git runs it, takes the password that would go on the
+  wire, and probes THAT credential against the endpoint `git push` negotiates through -
+  one GET of `<repo>.git/info/refs?service=git-receive-pack`. A read-only credential
+  prints REFUSED-GRANT, never a pass; a healthy-but-shadowed one prints `push would FAIL`,
+  never `ok`. Inside a workspace (or the contributor devcontainer) it runs SELF mode with
+  no docker and prints one `self:` line per credential; on the stack host it enumerates
+  the labeled workspace containers, or probes a named container alone. Flags may go before
+  or after the positionals, and a path below `owner/repo` is refused rather than probed.
+- The repair is also one command, and every `push would FAIL` line names it:
+
+```sh
+bazelisk run //scripts:github-auth -- fix [container] [repo-url]
+```
+
+- Read the report by its last line, then by these. `git would send this credential
+  (source: <slots>)` is the credential a real push uses, in git's consult order; the same
+  token held by several slots is named once, as one credential with several names. A plain
+  `credential present (source: <slots>)` is a credential that exists and that git never
+  reaches.
+- `[shadowed: the credential above outranks this slot, ...]` is the most misread line in
+  the report: the credential under it is healthy and git will not use it while the env
+  pair stands. `env -u GH_TOKEN -u GITHUB_TOKEN <command>` makes git or gh use that slot
+  for one command; `fix` makes it permanent for git. See
+  [the Bad credentials entry](#gh-answers-bad-credentials---the-stale-env-pair-not-the-store).
+- `NO GitHub credential in the <slot> slot (git will prompt and be refused)` means there
+  is nothing to send, so the account comes first:
+  [the reauth entry](#github-token-expired-or-the-workspace-has-no-github-account---github-reauth).
+- The note line, `note: GIT_ASKPASS is set but answers no credential, which is what turns
+  a refused token into "Password authentication is not supported for Git operations."; a
+  working credential helper makes it moot`, is the second half of the story. The agent env
+  exports `GIT_ASKPASS` pointing at the `coder` binary the agent staged under
+  `/tmp/coder.<rand>/`, and in a measured workspace that binary answered every prompt, and
+  `coder gitaskpass` itself, with `unrecognized subcommand` and no output, so git got no
+  answer at all and fell through to prompting. Clearing `GH_TOKEN`/`GITHUB_TOKEN` helps
+  only while the helper answers; with a silent helper it changes nothing.
+- `push would WORK (the credential git consults writes <repo>)` and `push would FAIL` are
+  the lines to gate on, keyed to the credential git would really send; `check` exits
+  non-zero on FAIL so a script or an agent can refuse to push on it.
+- The verdicts, and what each one costs you:
+- `PUSH-READY` (200 advertising refs): a push would negotiate. If the push still fails,
+  the credential is not the failing thing.
+- `REFUSED-GRANT` (403): that credential authenticates and every write to the repo is
+  denied, which is the push 403.
+- `NOT VISIBLE` (404): a private repo hidden from it answers 404, and so does an absent
+  one; clone and push would both fail.
+- `REJECTED` (401): github.com refused the credential itself, as it refuses an expired or
+  revoked token - the fate of the injected pair about an hour after start. `fix` re-mints.
+- `no useful answer`: github.com gave nothing useful (offline? probe again). A 200 that
+  does not advertise refs is this verdict too: a push is not proven.
+- `--source=chain` (the default) probes every credential that could answer for that
+  repository; `--source=env`, `--source=gh` or `--source=mint` answers one slot and says
+  beside the answer that git and gh consult the env pair first.
+- Reads prove nothing about push, so nothing here asks a read question: a public repo
+  answers a read for any authenticated caller, so a credential that READS a repo can still
+  be refused every WRITE to it. Go to the GitHub side only after the report says
+  REFUSED-GRANT or NOT VISIBLE.
+- The grant behind the credential - the GitHub App installation that the External Auth
+  provider (id `github` by default) minted its token from - has to include the repository
+  the workspace clones or pushes: GitHub -> Settings -> Applications -> `<app>` ->
+  **Configure** -> Repository access.
+- An empty [github.com/settings/apps](https://github.com/settings/apps) page is the usual
+  surprise here: it means no App is installed under your account, so there is no
+  **Configure** link to click and nothing to grant, while the provider itself stays
+  configured and keeps minting tokens that authenticate. Install Coder's App from the
+  workspace **Install GitHub App** button, or at
   [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new),
   grant the repo, then restart. A private repository is never visible to a credential
   that was never granted it.
-- Then check the URL scheme. That credential covers `https://github.com/...` remotes
-  only, so a `git@github.com:` or `ssh://` URL gets neither helper nor askpass token
-  and needs an SSH key you placed yourself, which this stack provisions nowhere.
+- Then check the URL scheme, which no probe can fix: that credential covers
+  `https://github.com/...` remotes only, so a `git@github.com:` or `ssh://` URL gets
+  neither helper nor askpass token and needs an SSH key you placed yourself, which this
+  stack provisions nowhere.
 - Then check **how** the credential is sent, because the two GitHub endpoints disagree
   about the scheme. `api.github.com` and `gh` accept `Authorization: Bearer <token>`. The
   git data endpoint refuses it: one token answered `/user` with `200` and
@@ -1117,86 +1247,96 @@ coder restart <workspace>
   each returned `200`), but an empty username or an empty password is refused, and the
   empty password is what produces the misleading `Invalid username or token. Password
   authentication is not supported for Git operations.`
-- Then check what the injected helper actually answers, before you blame the grant. The
-  agent env exports `GIT_ASKPASS` pointing at the `coder` binary the agent staged under
-  `/tmp/coder.<rand>/`, and in a measured workspace that binary answered every prompt, and
-  `coder gitaskpass` itself, with `unrecognized subcommand` and no output, so git shipped
-  an empty credential and got the message above. The env pair goes stale the same way: the
-  `ghu_` token in `GH_TOKEN` was refused by `api.github.com` (`401`) while a fresh
-  `coder external-auth access-token github` mint was accepted (`200`), so a rejected push
-  proves nothing about the grant until both have been compared. Clearing
-  `GH_TOKEN`/`GITHUB_TOKEN` helps only while the helper answers; with a silent helper it
-  changes nothing. The push path that works hands git a fresh mint itself:
-
-```sh
-tok="$(coder external-auth access-token github)"
-cat > /tmp/askpass.sh <<'EOS'
-#!/bin/sh
-case "$1" in
-  [Uu]sername*) printf 'git\n' ;;
-  *) printf '%s\n' "${EVO_PUSH_TOKEN:-}" ;;
-esac
-EOS
-chmod +x /tmp/askpass.sh
-EVO_PUSH_TOKEN="$tok" GIT_ASKPASS=/tmp/askpass.sh GIT_TERMINAL_PROMPT=0 \
-  git -c credential.helper= push -u origin <branch>
-rm -f /tmp/askpass.sh
-```
-
-  Mint in the same shell that runs the push. A helper reads its own environment, so a
-  token exported by an earlier, separate shell is empty at the moment git asks, and the
-  answer comes back as the password-auth message again. Keep the token out of argv, which
-  `ps` can read, and out of the remote URL.
-- The doctor, from a host shell or from inside a workspace, names the credentials a
-  workspace's git and gh could present and answers "can this credential WRITE to the repo you
-  pass?". It probes the endpoint `git push` negotiates through: one GET of
-  `<repo>.git/info/refs?service=git-receive-pack`. A REFUSED-GRANT answer means the
-  credential authenticates while every write to that repo is denied; NOT VISIBLE
-  means the repo is hidden from the credential (or absent); REJECTED means github.com
-  refuses the credential outright, as it does an expired mint:
-
-```sh
-bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>]
-```
-
-  On the host it enumerates the labeled workspace containers with docker and probes
-  each (a named container checks just that one). Inside a workspace the docker CLI
-  reaches only that workspace's DinD sidecar, so the same command runs SELF mode
-  with no docker: one probe of this environment's own credential chain, printed as
-  one `self:` line per credential. Pass only the repo URL there; a named container is
-  refused and pointed at the host shell. The repo URL may be the clone URL or the
-  browser URL, with or without a trailing slash and `.git`; a path below `owner/repo`
-  is refused rather than probed, because it names no repository. Full usage:
-  `bazelisk run //scripts:github-auth -- --help`.
-- `--source=chain` (the default) probes every credential that could answer for that
-  repository; `--source=env`, `--source=gh` or `--source=mint` answers one slot and
-  labels the answer **shadowed** when the env pair outranks it. That label matters:
-  while `GH_TOKEN`/`GITHUB_TOKEN` carry a token, git and gh consult that token and
-  never reach the gh auth store, so a PAT you pasted into the store is not the
-  credential a push would use. To check or use the stored credential anyway, clear
-  the pair for that one command:
-
-```sh
-GH_TOKEN= GITHUB_TOKEN= git push -u origin <branch>
-```
-
-- Or install a write-capable PAT into one workspace's gh auth store, on stdin:
+- Do not hand-roll a credential helper. Measured across 222 past sessions in this
+  workspace: 29 hit a GitHub auth error (`Bad credentials` 19, `Password authentication is
+  not supported` 11, `could not read Username` 5, `unrecognized subcommand` 4), and agents
+  hand-rolled their own askpass scripts in 5 sessions and hand-edited `credential.helper`
+  in 4. Both were wrong the same way: they fought the credential-helper precedence that
+  `fix` repairs, and they put a live token where `ps` could read it, while the line that
+  names the real cause was one `check` away. `fix` is idempotent, keeps every token off
+  argv and out of any file it creates, and repairs the helper plus the store it reads.
+- Your own credential stays gated on the report: install one only after `check` has
+  answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`. No verdict short of those
+  justifies a pasted token, and the repo rule is that a workspace's GitHub credential
+  comes from the External Auth provider alone. From the stack host (it drives `docker
+  exec`, so it has no SELF path), on stdin:
 
 ```sh
 bazelisk run //scripts:github-auth -- auth <container> - < PAT
 ```
 
-  A manual PAT is legitimate in two cases: the workspace owner connected no Coder
-  account, so nothing can be minted, or the minted/App credential is missing the
-  repository - revoked or expired counts the same way, because the answer that proves
-  either is NOT VISIBLE or REJECTED, not a passing read. It REPLACES the per-start
-  minted credential for that workspace, so treat it as a stand-in and rotate or remove
-  it in GitHub -> Applications when the work ends.
-- A PAT is never typed as an argument any more: argv is readable through `ps` and the
+  It installs that credential into that one workspace's gh auth store and then
+  re-installs the env-proof helper that `gh auth setup-git` would otherwise leave behind,
+  since that helper goes straight back to echoing a stale env pair over the token just
+  pasted. A PAT is never typed as an argument: argv is readable through `ps` and the
   token lands in shell history. Pipe it in (`echo "$TOKEN" | bazelisk run
   //scripts:github-auth -- auth <container> -`) or run `auth <container>` alone and
   answer the hidden prompt. In the line above, `-` is the only argument after the
-  container and `< PAT` is a shell redirect, not an argument.
+  container and `< PAT` is a shell redirect, not an argument. It REPLACES the per-start
+  minted credential for that workspace, and while the account stays connected the next
+  `gh_token_refresh` run rewrites the store, so treat a pasted PAT as a stand-in and
+  rotate or remove it in GitHub -> Applications when the work ends.
+- Full usage, verdict kinds and both argument orders:
+  `bazelisk run //scripts:github-auth -- -h`.
+
+### `gh` answers `Bad credentials` -> the stale env pair, not the store
+
+- What you see, inside a workspace: `gh api /user`, `gh pr create` or `gh repo view`
+  answers `Bad credentials` (HTTP 401) while the same command on the stack host works, and
+  `gh auth status` still insists you are logged in. This is the most frequent GitHub
+  failure here: 19 of 222 past sessions in this workspace hit `Bad credentials`.
+- Cause: Coder injects `GH_TOKEN`/`GITHUB_TOKEN` into the agent environment when the
+  workspace starts. That GitHub App user-to-server token expires about an hour later and
+  the injected copy is never refreshed for the life of the workspace. `gh` consults that
+  pair before it reads its own auth store, so it sends the dead token while the store
+  beside it, re-minted by the `gh_token_refresh` coder_script, is healthy and unreachable.
+- The answer for every `gh` call, for as long as that workspace lives:
+
+```sh
+env -u GH_TOKEN -u GITHUB_TOKEN gh <args>
+```
+
+  No process can rewrite another process's environment, so the stale pair stays in the
+  environment until the workspace restarts; the prefix is the permanent form, not a
+  workaround you graduate from.
+- `git` needs no prefix once `fix` has run, because the helper it installs clears the pair
+  itself:
+
+```sh
+bazelisk run //scripts:github-auth -- fix [repo-url]
+```
+
+- You read the right line when `check` marks the healthy stored credential
+  `[shadowed: ...]`: that label is this entry. If the credential `check` says `git would
+  send` is the env token and it answers `REJECTED`, `fix` is the repair; if it answers
+  `REFUSED-GRANT`, it is a grant and the clicks are in
+  [the push-denied entry](#private-repo-clone-or-push-denied-while-a-credential-is-present---the-grant-not-the-format).
+
+### `gh: command not found` inside a workspace -> the helper needs gh
+
+- What you see is `gh: command not found`, or `fix` refusing with `cannot install the
+  credential helper - gh is not installed in this environment; install gh (apt install gh,
+  or the pinned copy the golden image ships) and run this again`. `check` reports the same
+  hole honestly: with no gh there is no `gh stored login` slot to read, and a chain with
+  nothing else in it prints `NO GitHub credential`.
+- Why it blocks the repair rather than just the CLI: the helper `fix` installs is
+  `gh auth git-credential` wrapped in `env -u GH_TOKEN -u GITHUB_TOKEN ...`, and the
+  credential it points git at is the gh auth store. With no `gh` binary there is no
+  env-proof helper to install and no store to write, so `fix` refuses and says so instead
+  of leaving a half-repaired `~/.gitconfig` behind.
+- Install gh, then run `fix` again. The golden image ships a pinned copy (`gh 2.101.0`,
+  from the release tarball, at `/usr/local/bin/gh`); apt's `gh` is 2.45 and predates
+  subcommands the agent experience uses, so the durable fix is the image, not the distro
+  package. Rebuild the image, then rebuild the workspace: the image is fixed at create
+  time.
+
+```sh
+bazelisk run //scripts:build-dev-image
+```
+
+- Whether you are looking at a missing tool or a missing credential, `check` is what tells
+  them apart: a missing binary shows up as a slot that cannot answer, a missing grant
+  shows up as `REFUSED-GRANT`.
 
 ## UI and logins
 

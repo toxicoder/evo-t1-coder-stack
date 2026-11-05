@@ -23,6 +23,25 @@ if command -v gh >/dev/null 2>&1; then
   gh auth logout --hostname github.com >/dev/null 2>&1 || true
   if gh_err="$(printf '%s' "$token" | gh auth login --hostname github.com --git-protocol https --with-token 2>&1)"; then
     gh auth setup-git >/dev/null 2>&1 || true
+    # setup-git writes the plain `!gh auth git-credential`, and that helper
+    # echoes GH_TOKEN/GITHUB_TOKEN - which is exactly the shadow this refresh
+    # exists to work around, because the injected pair is a frozen copy that
+    # expires about an hour after the workspace starts. Rewrite the helper to
+    # read the store this script just refreshed, so the store stays the
+    # credential git actually sends and a workspace that booted before this
+    # existed self-heals on its next refresh. The empty helper line is git's
+    # reset marker; it drops any helper inherited from a lower-precedence file, and
+    # writing the pair replaces whatever this file held for that host - the same
+    # overwrite setup-git just performed, so this stays compatible with gh rather
+    # than stacking a second helper under it.
+    if command -v git >/dev/null 2>&1; then
+      evo_gh_bin="$(command -v gh)"
+      evo_gh_helper="!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN $${evo_gh_bin} auth git-credential"
+      for evo_host in github.com gist.github.com; do
+        git config --file "$HOME/.gitconfig" --replace-all "credential.https://$${evo_host}.helper" '' 2>/dev/null || true
+        git config --file "$HOME/.gitconfig" --add "credential.https://$${evo_host}.helper" "$${evo_gh_helper}" 2>/dev/null || true
+      done
+    fi
   else
     safe_err="$${gh_err//"$token"/<token>}"
     echo "gh would not store the minted GitHub token." >&2

@@ -81,6 +81,11 @@ main() {
     --root "${root}" --out "${EVO_COV_DIR}/mirror"
 
   export EVO_COV_MIRROR="${EVO_COV_DIR}/mirror"
+  # The mirror's production .sh copies carry the ledger statement in every function
+  # body, so their byte size describes the harness. A suite that measures the size of
+  # a shipped payload (tests/bats/startup-script-size.bats holds the execve budget) has
+  # to count the bytes the stack actually ships, and reads this root for that.
+  export EVO_COV_SOURCE_ROOT="${root}"
   export EVO_COV_LEDGER="${ledger}"
 
   echo "-> running bats against the mirror"

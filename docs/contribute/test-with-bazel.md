@@ -143,7 +143,7 @@ target fails with a pointer to `//scripts:test-in-image` rather than passing whi
 measuring nothing. `//docs-site:unit_coverage` is `npm run unit:coverage`
 (vitest v8 provider, thresholds in `docs-site/vitest.config.ts`).
 
-Two runfiles traps bit this gate, and both fail *silently*, so they are worth
+Three runfiles traps bit this gate, and all fail *silently*, so they are worth
 naming:
 
 - Under `bazelisk test` every source arrives as a **symlink**. A `find -type f`
@@ -155,6 +155,13 @@ naming:
   `0`. The gate therefore decides from `tests/coverage/py_report.py`, which lists
   the `.py` files the tree ships and requires each one to appear in the machine-
   readable report above the floor. A module nobody imported is a named failure.
+- The mirror pads every `.sh` it instruments, so a suite that measures a payload's
+  **byte size** through `REPO_ROOT` prices the harness instead of the product. This is
+  how `//tests:shell_coverage` failed an execve budget the checkout had already passed:
+  `templates/common/notes-setup.sh` weighed 1182 bytes more in the mirror than it
+  ships. A size gate resolves its tree through `bats_source_repo_root`, and
+  `startup-script-size.bats` builds a real instrumented mirror to prove it still
+  measures what ships.
 
 The same "empty looks like green" rule applies to the vitest gate: it must measure
 files no test imported. Vitest 4 made that the default and removed the `all` key
@@ -162,13 +169,18 @@ from `CoverageOptions`. To prove the default still holds after a vitest bump, dr
 a `lib/__cov_probe.ts` exporting one uncalled function and confirm the run reports
 it at 0% and fails; then delete the file.
 
-## The two paths a suite may use
+## The three paths a suite may use
 
 - `REPO_ROOT` — where the checkout is *for this run*. `tests/bats_runner.sh` exports it;
   outside Bazel it is whatever `bats_canonical_repo_root` resolves. Derive it, never
   hardcode a machine path, and treat "cannot resolve" as a `skip`, not a failure.
 - `BATS_TEST_TMPDIR` — per-test scratch, removed after each test. `make_scratch` prints a
   fresh directory under it; `fake_root`-style helpers build a throwaway checkout there.
+- `bats_source_repo_root` — the checkout whose **bytes** are what the stack ships, which
+  under the coverage mirror is the one the mirror was built from (`EVO_COV_SOURCE_ROOT`)
+  while `REPO_ROOT` is the mirror. A gate that counts the size of a shipped payload reads
+  it there; the production functions it loads still come from `REPO_ROOT`, so measuring
+  the shipping tree costs no coverage mark.
 
 ## The stub-PATH recipe
 

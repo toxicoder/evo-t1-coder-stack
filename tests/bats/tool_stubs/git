@@ -12,10 +12,20 @@
 #           directory and the paths named in STUB_GIT_CLONE_EXTRA (colon
 #           separated) so a caller can prove it strips the clone's own metadata.
 #   ls-remote | rev-parse | symbolic-ref → print STUB_GIT_LS_OUT, exit STUB_GIT_RC (0).
+#   config ... --get | --get-all (no --file) -> print STUB_GIT_HELPER, one value
+#                                          per line, when set and nothing
+#                                          otherwise: this is how the
+#                                          credential probe asks which helper
+#                                          git would run for github.com
+#   config ... --file <f> ... -> exit STUB_GIT_RC (0), silent, and writes
+#                                          nothing: a stub that wrote a config
+#                                          file would let a suite pass without
+#                                          git's own key semantics
 #   anything else → exit STUB_GIT_RC (0).
 # Records one argv line to $STUB_LOG/git.log when STUB_LOG is set.
 #
 # Usage (in a .bats file): use_stubs git; STUB_GIT_CLONE=success run ...
+#   STUB_GIT_HELPER='!'"${bin}/my-helper" run ...   # the helper git would run
 # Safety: stub only — no remotes, no credentials, no history.
 set -u
 
@@ -49,6 +59,20 @@ case "$*" in
     ;;
   *ls-remote* | *rev-parse* | *symbolic-ref*)
     if [ -n "${STUB_GIT_LS_OUT:-}" ]; then printf '%s\n' "${STUB_GIT_LS_OUT}"; fi
+    exit "${STUB_GIT_RC:-0}"
+    ;;
+esac
+
+case "$*" in
+  *config*--file*)
+    # The credential-helper writer path: answer success and touch nothing, so a
+    # suite that wants the keys really in a file runs the real git binary.
+    exit "${STUB_GIT_RC:-0}"
+    ;;
+  *config*)
+    # A value read (git config --get-all <key>) is the helper list git would
+    # walk. Unset means no helper is configured, which is a finding, not an error.
+    if [ -n "${STUB_GIT_HELPER:-}" ]; then printf '%s\n' "${STUB_GIT_HELPER}"; fi
     exit "${STUB_GIT_RC:-0}"
     ;;
 esac

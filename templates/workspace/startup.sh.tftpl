@@ -251,12 +251,21 @@ fi
 
 # --- GitHub credential plumbing (best effort) ----------------------------------
 # docs/coder-templates.md#github-credentials-for-a-workspace
-if command -v gh >/dev/null 2>&1 && command -v git >/dev/null 2>&1 \
-   && [ -n "$${GH_TOKEN:-}$${GITHUB_TOKEN:-}" ]; then
-  if ! grep -qs -e 'helper = !gh auth git-credential' \
-                -e '\[credential "https://github.com"\]' "$HOME/.gitconfig"; then
-    printf '\n[credential "https://github.com"]\n    helper = !gh auth git-credential\n' \
-      >>"$HOME/.gitconfig" 2>/dev/null || true
+# The helper runs with the agent env pair cleared, and that is the part that is
+# easy to get wrong: gh auth git-credential echoes GH_TOKEN/GITHUB_TOKEN, and the
+# pair Coder injects at start is a frozen copy that dies about an hour later.
+# Clearing it makes git read the gh auth store, which gh_token_refresh keeps live.
+# The blank first value is git's reset marker, and the write replaces whatever this
+# file held for that host, the way gh auth setup-git already does.
+if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1; then
+  evo_gh_bin="$(command -v gh)"
+  evo_gh_helper="!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN $${evo_gh_bin} auth git-credential"
+  for evo_host in github.com gist.github.com; do
+    git config --file "$HOME/.gitconfig" --replace-all "credential.https://$${evo_host}.helper" '' 2>/dev/null || true
+    git config --file "$HOME/.gitconfig" --add "credential.https://$${evo_host}.helper" "$${evo_gh_helper}" 2>/dev/null || true
+  done
+  if [ -n "$home_owner" ]; then
+    $SUDO chown "$home_owner" "$HOME/.gitconfig" 2>/dev/null || true
   fi
 fi
 

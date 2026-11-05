@@ -109,6 +109,9 @@ TOKEN_GROUPS = {
     # The suite tree a whole-repo gate walks. Only the gate itself opens it; a suite names
     # its own file, which the target carries already.
     "tests/bats/": ["//tests:all_bats"],
+    # The coverage harness, which the byte-budget suite pins by path so the mirror
+    # handoff cannot lose a leg unnoticed.
+    "tests/coverage/": ["//tests:coverage_tools"],
     "tool-versions.env": [
         "//images/dev:dockerfile",
         "//images/dev:tool_versions",
