@@ -145,6 +145,26 @@ STUB
   chmod 755 "${path}"
 }
 
+# make_sudo_stub <dir> <uid> — pin which privilege branch luks_unlock_run takes.
+# It asks id -u and shells through sudo for a non-root caller, so a case that
+# leaves that to the runtime passes on a developer laptop and dies in the CI
+# image, whose uid has no passwd entry and whose sudo answers "you do not exist
+# in the passwd database". The sudo stub records its argv in $SUDO_LOG and then
+# execs the command, so the case sees both the routing and the effect.
+make_sudo_stub() {
+  local dir="$1" uid="$2"
+  cat >"${dir}/id" <<STUB
+#!/bin/sh
+printf '%s\n' ${uid}
+STUB
+  cat >"${dir}/sudo" <<'STUB'
+#!/bin/sh
+printf 'sudo %s\n' "$*" >>"${SUDO_LOG:?}"
+exec "$@"
+STUB
+  chmod 755 "${dir}/id" "${dir}/sudo"
+}
+
 # run_cli <sysroot> <args...> — the CLI as an operator runs it, stub bin first
 # and no CI, so a missing tool is a report rather than a failure. The dry-run
 # gate setup() exports stays in force: an install verb here prints its intent.
@@ -637,13 +657,24 @@ STUB
   load_lib
   load_entry luks_unlock_run
   DRY_RUN=1
-  local out
+  local out bin
   out="$(luks_unlock_run touch "${BATS_TEST_TMPDIR}/never-created")"
   assert_match "the command is quoted" 'would: touch' "${out}"
   assert_file_not_exists "and nothing was created" "${BATS_TEST_TMPDIR}/never-created"
   DRY_RUN=0
-  out="$(luks_unlock_run printf 'ran\n')"
-  assert_eq "outside dry-run it executes" "ran" "${out}"
+  bin="${BATS_TEST_TMPDIR}/priv/bin"
+  mkdir -p "${bin}"
+  make_sudo_stub "${bin}" 0
+  out="$(PATH="${bin}:${PATH}" luks_unlock_run printf 'ran\n')"
+  assert_eq "as root it runs the command itself" "ran" "${out}"
+  assert_file_not_exists "and sudo was never consulted" "${BATS_TEST_TMPDIR}/sudo-log"
+  make_sudo_stub "${bin}" 1000
+  export SUDO_LOG="${BATS_TEST_TMPDIR}/sudo-log"
+  out="$(PATH="${bin}:${PATH}" luks_unlock_run printf 'ran\n')"
+  assert_eq "as a normal user the command still runs" "ran" "${out}"
+  PATH="${bin}:${PATH}" luks_unlock_run touch "${BATS_TEST_TMPDIR}/via-sudo"
+  assert_file_exists "and it went through sudo" "${BATS_TEST_TMPDIR}/via-sudo"
+  assert_contains_file "with sudo carrying the command" "${SUDO_LOG}" '^sudo touch '
 }
 
 @test "luks_unlock_write: prints the assignment under --dry-run, writes outside it" {
