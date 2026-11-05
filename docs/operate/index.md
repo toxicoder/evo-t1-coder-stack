@@ -41,6 +41,7 @@ files that go stale are not tracked — see
 | A model answered from the wrong backend | [litellm-routing.md](../litellm-routing.md) |
 | A workspace is stuck, or its editor will not start | [coder-templates.md](../coder-templates.md) |
 | A public name does not resolve or redirects wrong | [public-access.md](../public-access.md) |
+| The box will not finish booting and nobody is at the console | [luks-unlock.md](../luks-unlock.md) |
 | The assistant will not sign in | [hermes.md](../hermes.md) |
 
 ## Before you reach for a hammer

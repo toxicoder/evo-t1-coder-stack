@@ -52,6 +52,7 @@ and kept in `docs/` beside this file:
 [hermes.md](docs/hermes.md),
 [grok-build-and-agents.md](docs/grok-build-and-agents.md),
 [litellm-routing.md](docs/litellm-routing.md),
+[luks-unlock.md](docs/luks-unlock.md),
 [public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
 [troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
 what reading it lets you do.
@@ -989,6 +990,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── hermes-shell.sh      # open the Hermes assistant in the terminal you are in
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
+│   ├── luks-unlock.sh       # make an encrypted root unlockable over SSH after a reboot
 │   ├── mcp-check.sh         # prove the Grok Build MCP lanes: binaries, creds, handshake
 │   ├── new-repo.sh          # clone ezrepo -> render tokens/lanes -> GitHub repo + Coder task
 │   ├── new-workspace.sh     # git URL -> workspace: picks the template + parameters

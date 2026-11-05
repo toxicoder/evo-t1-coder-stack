@@ -56,6 +56,7 @@ NAV: list[tuple[str, list[tuple[str, str]]]] = [
             ("Config updates", "config-updates.md"),
             ("New projects from the template", "new-repo.md"),
             ("Public access", "public-access.md"),
+            ("Unlock an encrypted host remotely", "luks-unlock.md"),
             ("Troubleshooting", "troubleshooting.md"),
         ],
     ),

@@ -69,6 +69,10 @@
         "path": "public-access.md"
       },
       {
+        "title": "Unlock an encrypted host remotely",
+        "path": "luks-unlock.md"
+      },
+      {
         "title": "Troubleshooting",
         "path": "troubleshooting.md"
       }
