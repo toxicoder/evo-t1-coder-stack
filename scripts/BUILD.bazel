@@ -157,6 +157,7 @@ _SCRIPT_LIBS = {
     "github-auth": [
         "lib/common.sh",
         "lib/probes/github-auth.sh",
+        "lib/probes/github-auth-fix.sh",
     ],
     "hermes-bootstrap": [
         "lib/common.sh",
