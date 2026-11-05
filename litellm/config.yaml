@@ -421,12 +421,13 @@ router_settings:
   # Grok CLI's 300 s compaction wall-clock budget is evaluated only after the
   # response returns (a 500-token-per-second summary of a 200k-token history
   # streams for ~1090 s and still succeeded), and inference_idle_timeout_secs
-  # does not fire on the compaction path at all -- measured 0 in every failing
-  # session, and a held-open upstream kept the client waiting past 3000 s. So
-  # the only bound on a hang was this proxy's request_timeout, multiplied by
-  # every attempt. Sessions showed the 1200 s deadline once, twice and three
-  # times over: 1366 s, ~2400 s and 3465 s. One attempt now costs 1200 s and
-  # the caller sees the real error.
+  # does not fire on the compaction path at all -- signals.json reports
+  # inferenceIdleTimeouts at 0 or 1 across the failing sessions and no hung
+  # call was ever cut off at 1200 s, and a held-open upstream kept the client
+  # waiting past 3000 s. The only bound on a hang was therefore this proxy's
+  # request_timeout, multiplied by every attempt. Sessions showed the 1200 s
+  # deadline once, twice and three times over: 1366 s, ~2400 s and 3465 s. One
+  # attempt now costs 1200 s and the caller sees the real error.
   #
   # The cost: a genuine 503 from a Spark box reaches the caller instead of
   # being retried here. The per-model max_retries = 1 in the Grok templates
