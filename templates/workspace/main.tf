@@ -616,13 +616,17 @@ resource "coder_script" "gh_token_refresh" {
   display_name = "Refresh GitHub token for gh"
   icon         = "/icon/github.svg"
   run_on_start = true
-  # The minted token lives about an hour, so between refreshes the gh auth
-  # store can hold an expired credential; `scripts/github-auth.sh check`
-  # reports that as REJECTED and `coder external-auth access-token` re-mints
-  # on demand. Coder uses 6-field cron (seconds minutes hours day month dow);
-  # the Unix 5-field form `0 */6 * * *` warns at plan time. logout + login +
-  # setup-git plus GitHub's token validate can exceed a 30s cap.
-  cron    = "0 0 */6 * * *"
+  # The minted token lives about an hour, and git now reads the gh auth store
+  # (the credential helper clears the injected pair, which goes stale the hour
+  # the workspace starts), so the store has to stay inside that lifetime. A
+  # store past it makes every push die on `Password authentication is not
+  # supported for Git operations.` for the rest of the window, which is what a
+  # 6-hour cron left in place for most of the day. 20 minutes keeps a margin
+  # under the hour; the script does nothing when no account is connected.
+  # Coder uses 6-field cron (seconds minutes hours day month dow); the Unix
+  # 5-field form `0 */20 * * *` warns at plan time. logout + login + setup-git
+  # plus GitHub's token validate can exceed a 30s cap.
+  cron    = "0 */20 * * * *"
   timeout = 60
 
   script = templatefile("${path.module}/gh-token-refresh.sh.tftpl", {

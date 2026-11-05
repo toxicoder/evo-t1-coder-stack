@@ -123,7 +123,12 @@ hcl_code_server_script() {
   [ -f "${refresh}" ]
   for tpl in "${TEMPLATE_TWINS[@]}"; do
     grep -Fq 'id       = var.github_auth_id' "${tpl}"
-    grep -Fq 'cron    = "0 0 */6 * * *"' "${tpl}"
+    # The cadence is pinned because git reads the gh auth store (the credential
+    # helper clears the injected pair, which goes stale about an hour after the
+    # workspace starts). The minted token lives about an hour, so a refresh
+    # slower than that leaves every push dying on the password-auth message for
+    # the rest of the window; the 6-hour cadence that shipped did exactly that.
+    grep -Fq 'cron    = "0 */20 * * * *"' "${tpl}"
     grep -Fq 'CODER_GITHUB_AUTH_ID = var.github_auth_id' "${tpl}"
     grep -Fq 'gh-token-refresh.sh.tftpl' "${tpl}"
   done

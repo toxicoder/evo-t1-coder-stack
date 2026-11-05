@@ -251,12 +251,29 @@ fi
 
 # --- GitHub credential plumbing (best effort) ---------------------------------
 # docs/coder-templates.md#github-credentials-for-a-workspace
-if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1 \
-   && [ -n "$${GH_TOKEN:-}$${GITHUB_TOKEN:-}" ]; then
-  if ! grep -qs -e 'helper = !gh auth git-credential' \
-                -e '\[credential "https://github.com"\]' "$HOME/.gitconfig"; then
-    printf '\n[credential "https://github.com"]\n\thelper = !gh auth git-credential\n' \
-      >>"$HOME/.gitconfig" 2>/dev/null
+# The helper has to ignore the agent env pair, and this is the part that is easy
+# to get wrong. git does not read GH_TOKEN itself: it asks its credential helpers
+# and sends the first answer, and `gh auth git-credential` echoes
+# GH_TOKEN/GITHUB_TOKEN whenever either is set. The pair Coder injects at
+# workspace start is a frozen copy that expires about an hour later, so a plain
+# helper has git send a dead token for the rest of the workspace's life while the
+# gh auth store beside it stays healthy and is never asked. Clearing the pair for
+# the helper makes git read the store, which gh_token_refresh keeps live, so
+# push stops depending on an environment variable nobody can rewrite from inside
+# a running workspace. The empty helper line is git's reset marker: it drops any
+# helper inherited from a lower-precedence config file, and writing the pair
+# replaces whatever this file held for that host - the same overwrite
+# `gh auth setup-git` already performs, so this stays compatible with gh
+# rather than additive on top of it.
+if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1; then
+  evo_gh_bin="$(command -v gh)"
+  evo_gh_helper="!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN $${evo_gh_bin} auth git-credential"
+  for evo_host in github.com gist.github.com; do
+    git config --file "$HOME/.gitconfig" --replace-all "credential.https://$${evo_host}.helper" '' 2>/dev/null || true
+    git config --file "$HOME/.gitconfig" --add "credential.https://$${evo_host}.helper" "$${evo_gh_helper}" 2>/dev/null || true
+  done
+  if [ -n "$home_owner" ]; then
+    $SUDO chown "$home_owner" "$HOME/.gitconfig" 2>/dev/null || true
   fi
 fi
 
