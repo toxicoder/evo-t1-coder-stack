@@ -99,6 +99,41 @@ setup() {
   assert_contains_file "docs alias script" "${deploy}" 'scripts/ci/docs-alias\.sh'
 }
 
+@test "ci workflow: both jobs carry a Bazel repository cache between runs" {
+  # The gate container is throwaway, so without this every job re-downloads every
+  # external archive from GitHub's release endpoint. That endpoint answers 504 for a
+  # slice of requests, and one 504 aborts Bazel's analysis, which makes a red run luck.
+  assert_contains_file "cache restore" "${CI_YML}" 'uses: actions/cache/restore@v'
+  assert_contains_file "cache save" "${CI_YML}" 'uses: actions/cache/save@v'
+  assert_contains_file "the runner is told where the cache is" "${CI_YML}" 'EVO_T1_BAZEL_CACHE:'
+  assert_contains_file "the key follows the module files" "${CI_YML}" \
+    'hashFiles..MODULE\.bazel., .MODULE\.bazel\.lock., ..bazelrc.'
+  assert_contains_file "a new key still starts warm" "${CI_YML}" 'restore-keys'
+  # Both jobs, not just the first: the docs job is the one whose //docs-site targets
+  # pull rules_python, the archive whose 504 was deciding that job on its own.
+  [ "$(grep -c 'uses: actions/cache/restore@v' "${CI_YML}")" -eq 2 ] || {
+    echo "only one job restores the repository cache" >&2
+    return 1
+  }
+  [ "$(grep -c 'uses: actions/cache/save@v' "${CI_YML}")" -eq 2 ] || {
+    echo "only one job saves the repository cache" >&2
+    return 1
+  }
+  # A red gate still fetched archives the next run would otherwise pay for again.
+  [ "$(grep -B1 'uses: actions/cache/save@v' "${CI_YML}" | grep -c 'if: always()')" -eq 2 ] || {
+    echo "a repository cache save is missing if: always()" >&2
+    return 1
+  }
+
+  local image_script="${REPO_ROOT}/scripts/test-in-image.sh"
+  [[ -f ${image_script} ]] || skip "scripts/test-in-image.sh is not in the tree"
+  assert_contains_file "the cache is mounted" "${image_script}" 'cache_mount=\(-v '
+  # The path is pinned by an option, not left to .bazelrc's ~, which the server expands
+  # from its own user.home for a uid the image passwd file does not list.
+  assert_contains_file "the same path is given to Bazel" "${image_script}" \
+    '--repository_cache=\$\{repo_cache_path\}'
+}
+
 @test "ci workflow: no Actions container key and no runner toolchain installers" {
   ci_refute_line "jobs container key" '^[[:space:]]+container:'
   ci_refute_line "setup-bazel composite" 'uses: \./\.github/actions/setup-bazel'

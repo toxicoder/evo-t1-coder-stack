@@ -113,11 +113,25 @@ long-running exception, and you stop it with Ctrl-C.
   unchanged suite replays its cached PASS instead of re-running Bats.
 - **Local disk and repository cache.** `.bazelrc` points `--disk_cache` at
   `~/.cache/bazel-disk` and `--repository_cache` at `~/.cache/bazel-repo`. A contributor
-  container and a Coder workspace reuse those directories across runs. CI docker-runs the
-  gate with `HOME=/tmp` and `USER=$(id -un)`, so those Bazel caches are per-job and Bazel
-  can name a uid the image passwd file does not list; the cache that survives there is
-  the image's buildx GHA cache. No remote cache is configured — the same two flags
-  would take a `--remote_cache=<uri>` endpoint later.
+  container and a Coder workspace reuse those directories across runs. In CI the gate
+  container is `--rm` and runs with `HOME=/tmp` and `USER=$(id -un)`, so a plain run keeps
+  neither cache between jobs, and Bazel can name a uid the image passwd file does not
+  list; the cache that survives there is the image's buildx GHA cache. No remote cache is
+  configured — the same two flags would take a `--remote_cache=<uri>` endpoint later.
+
+The repository cache is the one worth persisting in CI, and `EVO_T1_BAZEL_CACHE=<host dir>`
+is the seam: `//scripts:test-in-image` bind-mounts that directory into the gate container and
+points `--repository_cache` at it, so each external archive downloads once per key. Both CI
+jobs wrap their gate step in an `actions/cache` pair keyed on `MODULE.bazel`,
+`MODULE.bazel.lock` and `.bazelrc`, with the save under `if: always()` — the archives fetched
+before a red gate are exactly what the next run would otherwise pay for again. That endpoint
+matters: `github.com/.../releases/download/...` answers 504 for a slice of requests, one such
+504 aborts Bazel's analysis, and a refetch-on-every-job job decides its colour by luck. The
+in-container path is passed as an explicit option because the `~` in `.bazelrc` expands from
+the Bazel server's own `user.home`, which this container's uid does not appear in: a mount
+placed from that `~` could sit where Bazel never writes and look like a working cache for
+exactly one run. With the variable unset the script mounts nothing, which is what a
+contributor laptop gets.
 
 ## Script targets and runfiles
 
