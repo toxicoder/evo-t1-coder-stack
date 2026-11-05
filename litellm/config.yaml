@@ -403,32 +403,61 @@ router_settings:
   # asserted by //scripts:spark-configure) and in keeping in-flight fan-out at or
   # under a box's PARALLEL, since every subagent of a workspace shares one
   # x-litellm-session-id.
+  #
+  # ServiceUnavailableErrorRetries is 0, not 2, and it is the field that decides
+  # whether a hung stream is re-dispatched. At this tag a stream that dies
+  # before its first chunk raises MidStreamFallbackError, which subclasses
+  # ServiceUnavailableError (exceptions.py:1114), and
+  # get_num_retries_from_retry_policy walks the exception MRO most-specific
+  # first, so that class lands on THIS field and never reaches DefaultRetries
+  # (types/router.py:96-111, router_utils/get_retry_from_policy.py). NoRoom does
+  # not: it arrives as APIConnectionError, which is absent from
+  # _RETRIES_BY_EXCEPTION_TYPE, so the walk falls through to DefaultRetries.
+  # Zeroing this field therefore stops the hung-stream re-dispatch while the
+  # NoRoom contract above stays at two attempts.
+  #
+  # Why the re-dispatch is worth zeroing: a request that produced no chunk is
+  # not a transient blip, and neither the CLI nor this proxy abandons it. The
+  # Grok CLI's 300 s compaction wall-clock budget is evaluated only after the
+  # response returns (a 500-token-per-second summary of a 200k-token history
+  # streams for ~1090 s and still succeeded), and inference_idle_timeout_secs
+  # does not fire on the compaction path at all -- measured 0 in every failing
+  # session, and a held-open upstream kept the client waiting past 3000 s. So
+  # the only bound on a hang was this proxy's request_timeout, multiplied by
+  # every attempt. Sessions showed the 1200 s deadline once, twice and three
+  # times over: 1366 s, ~2400 s and 3465 s. One attempt now costs 1200 s and
+  # the caller sees the real error.
+  #
+  # The cost: a genuine 503 from a Spark box reaches the caller instead of
+  # being retried here. The per-model max_retries = 1 in the Grok templates
+  # still fires once client-side, and a retry onto the same session-pinned box
+  # bought no relocation anyway -- relocation lives on the box, as above.
   model_group_retry_policy:
     agent:
       DefaultRetries: 2
       InternalServerErrorRetries: 2
-      ServiceUnavailableErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
       ContentPolicyViolationErrorRetries: 0
     agent-low:
       DefaultRetries: 2
       InternalServerErrorRetries: 2
-      ServiceUnavailableErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
       ContentPolicyViolationErrorRetries: 0
     agent-medium:
       DefaultRetries: 2
       InternalServerErrorRetries: 2
-      ServiceUnavailableErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
       ContentPolicyViolationErrorRetries: 0
     agent-xhigh:
       DefaultRetries: 2
       InternalServerErrorRetries: 2
-      ServiceUnavailableErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
       ContentPolicyViolationErrorRetries: 0
