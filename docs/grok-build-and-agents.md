@@ -96,12 +96,18 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   settings.
 - Neither template installs code-server through the Registry. Each `main.tf` carries
   an inlined fork (`coder_script.code_server` + `coder_app.code_server`), because the
-  upstream module hardcodes `/icon/code.svg` and has no icon input. `workspace`
-  installs code-server only when it is missing from `/home/coder/.local/share/code-server`
-  and starts it with `--auth none --port 13337 --app-name "VS Code Web"
-  --ignore-last-opened <folder>`, passing no settings payload. `devcontainer` has no
-  persistent prefix to reuse, so it installs fresh under `/tmp/code-server` on every
-  start.
+  upstream module hardcodes `/icon/code.svg` and has no icon input. Both twins pin the
+  release in one `code_server_version` local and pass it to the upstream installer as
+  `--version`: without that flag `https://code-server.dev/install.sh` follows `latest`,
+  and the editor would move under every workspace with no commit in this repo.
+  `workspace` installs code-server only while that pinned release is missing from
+  `/home/coder/.local/share/code-server` (the guard names
+  `lib/code-server-<version>/bin/code-server`, the directory the installer unpacks, not
+  the `bin/code-server` symlink, which points at the last release installed and would
+  hold a warm volume on its first one) and starts it with `--auth none --port 13337
+  --app-name "VS Code Web" --ignore-last-opened <folder>`, passing no settings payload.
+  `devcontainer` has no persistent prefix to reuse, so it installs the pinned release
+  fresh under `/tmp/code-server` on every start.
 - The editor opens on `http://localhost:13337/?folder=<urlencoded>`: the
   `coder_app` resource in `coder/coder` `~> 2.18` has no `folder` argument, so the
   folder rides in the URL and as a positional argument to the code-server binary
@@ -126,7 +132,13 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 Two buffers are involved: tmux's own buffer, and the clipboard of the computer
 you are typing on. Which one a copy reaches depends on what sits at the other
 end of the terminal. Each claim below was measured in a headless Chromium
-against the code-server this stack ships (4.143.1, VS Code base 1.143.1).
+against the code-server this stack shipped then (4.143.1, VS Code base 1.143.1).
+The pin has since moved to 4.145.0 (VS Code base 1.145.0), and upstream's notes
+for the two releases in between cover the built-in proxy's cookies, the web
+socket origin check and the VS Code base bump, with no terminal or clipboard
+entry, so these claims stand as measured and none was re-run
+([v4.144.0](https://github.com/coder/code-server/releases/tag/v4.144.0),
+[v4.145.0](https://github.com/coder/code-server/releases/tag/v4.145.0)).
 
 - **A real terminal app honours OSC 52.** Over ssh from Ghostty, kitty, WezTerm
   or iTerm2, `Prefix-[`, `v`, `y` puts the selection on the laptop clipboard.
