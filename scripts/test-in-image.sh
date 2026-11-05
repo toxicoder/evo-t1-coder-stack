@@ -273,7 +273,11 @@ test_in_image_run() {
   # as a uid the image passwd file does not list, so the mount could land somewhere
   # Bazel never writes and look like a working cache for exactly one run. Unset keeps
   # today's behaviour: nothing mounted, nothing left behind on a contributor machine.
-  local repo_cache_path=/tmp/.cache/bazel-repo
+  # The container path stays clear of $HOME/.cache on purpose: the container runs with
+  # HOME=/tmp, bazelisk keeps its own download cache at $HOME/.cache/bazelisk, and a
+  # mount point that makes docker create $HOME/.cache first leaves that directory owned
+  # by root, so the very next run cannot create a sibling in it.
+  local repo_cache_path=/tmp/evo-t1-bazel-repo-cache
   local -a cache_mount=()
   if [ -n "${EVO_T1_BAZEL_CACHE:-}" ]; then
     case "${1:-}" in

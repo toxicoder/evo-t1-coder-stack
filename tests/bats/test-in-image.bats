@@ -238,13 +238,22 @@ script_default_tag() {
     return 1
   }
   line="$(stub_log_last docker)"
-  assert_match "host cache bind-mounted" "-v ${cachedir}:/tmp/.cache/bazel-repo" "${line}"
+  assert_match "host cache bind-mounted" "-v ${cachedir}:/tmp/evo-t1-bazel-repo-cache" "${line}"
   # The mount and the option have to name one path: .bazelrc's ~/.cache/bazel-repo is
   # expanded from the server's user.home, which an unmapped uid need not resolve to
   # HOME=/tmp, and a mount Bazel never writes looks fine until the next cold run.
-  assert_match "the option names the mounted path" '--repository_cache=/tmp/.cache/bazel-repo' "${line}"
+  assert_match "the option names the mounted path" '--repository_cache=/tmp/evo-t1-bazel-repo-cache' "${line}"
   assert_match "the option follows the command word" \
-    'bazelisk test --repository_cache=/tmp/.cache/bazel-repo //:test-fast' "${line}"
+    'bazelisk test --repository_cache=/tmp/evo-t1-bazel-repo-cache //:test-fast' "${line}"
+  # The container runs with HOME=/tmp and bazelisk writes its own cache to
+  # $HOME/.cache/bazelisk. A mount point under $HOME/.cache makes docker own the parent
+  # it creates, and the next bazelisk start then dies on permission denied.
+  assert_contains_file "the mount stays clear of the container HOME cache" "${SCRIPT}" \
+    'local repo_cache_path=/tmp/evo-t1-bazel-repo-cache'
+  if grep -Eq 'repo_cache_path=/tmp/\.cache' "${SCRIPT}"; then
+    echo "the repository cache mount sits under the container HOME cache" >&2
+    return 1
+  fi
   # The container writes here as this uid, so the directory has to exist already.
   [ -d "${cachedir}" ] || {
     echo "the host cache dir was never created; the container could not write to it" >&2
@@ -267,7 +276,7 @@ script_default_tag() {
     return 1
   }
   assert_match "the mount is absolute" \
-    "-v ${base}/rel/repo-cache:/tmp/.cache/bazel-repo" "$(stub_log_last docker)"
+    "-v ${base}/rel/repo-cache:/tmp/evo-t1-bazel-repo-cache" "$(stub_log_last docker)"
   [ -d "${base}/rel/repo-cache" ]
 }
 
