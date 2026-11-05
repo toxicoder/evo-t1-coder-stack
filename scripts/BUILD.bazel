@@ -95,6 +95,7 @@ filegroup(
     srcs = [
         "lib/probes/seed-find-mtime.sh",
         "lib/probes/seed-owner.sh",
+        "lib/probes/seed-rm-managed.sh",
         "lib/probes/seed-rm-mtime.sh",
         "lib/probes/seed-write.sh",
     ],

@@ -214,7 +214,7 @@ FIXTURE_EOF
   local fixture="${BATS_TEST_TMPDIR}/needle.sh" kept
   cat >"${fixture}" <<'FIXTURE_EOF'
 f="${REPO_ROOT}/templates/common/tmux.conf"
-run grep -F -- "<<'LEARN_SKILL_MD_EOF'" "${f}"
+run grep -F -- "<<'EZ_LEARN_SKILL_MD_EOF'" "${f}"
 [[ -f "${REPO_ROOT}/tests/bazel_deps.py" ]]
 FIXTURE_EOF
   kept="$(kept_code_lines "${CHECKER}" "${fixture}")"

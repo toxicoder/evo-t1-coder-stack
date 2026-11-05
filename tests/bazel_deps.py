@@ -35,6 +35,7 @@ GROUP_FILES = {
     ":seed_probes": [
         "lib/probes/seed-find-mtime.sh",
         "lib/probes/seed-owner.sh",
+        "lib/probes/seed-rm-managed.sh",
         "lib/probes/seed-rm-mtime.sh",
         "lib/probes/seed-write.sh",
     ],
@@ -55,7 +56,7 @@ TOKEN_GROUPS = {
     ".github/workflows": ["//:ci_pipelines", "//:ci_workflows"],
     "BUILD.bazel": ["//:bazel_files"],
     "Dockerfile": ["//images/dev:dockerfile", "//images/dev:context", "//:stack_data"],    "LICENSE": ["//:license", "//:stack_data"],
-    # The operator front door the seeded /learn skill cites by name. :entry_docs is the
+    # The operator front door the seeded /ez-learn skill cites by name. :entry_docs is the
     # only group that ships it, and it sits outside the compose aggregate, so a consumer
     # cannot cover this read by declaring //:stack_data whole.
     "README.md": ["//:entry_docs"],
@@ -242,7 +243,7 @@ def heredoc_delimiter(line):
     """The delimiter of the first here-doc opener on a line, or "" when there is none.
 
     A quoted `<<'NAME'` can be an argument rather than an opener: a Bats needle like
-    `grep -F -- "<<'LEARN_SKILL_MD_EOF'"` quotes the closer of a heredoc the suite is
+    `grep -F -- "<<'EZ_LEARN_SKILL_MD_EOF'"` quotes the closer of a heredoc the suite is
     pinning. Treating that as an opener swallows every line below it, and the payload a
     suite reads further down then looks undeclared, so only an opener sitting outside
     quotes counts.

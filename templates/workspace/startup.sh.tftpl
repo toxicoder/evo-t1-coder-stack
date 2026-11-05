@@ -89,21 +89,27 @@ if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
     "$HOME/.agents/skills/grok-build-delegation/SKILL.md" 2>/dev/null
 fi
 
-# The /learn orientation skill, same absent-only contract. Upstream /learn is a BUNDLED
-# skill and its download needs an x.ai sign-in this stack does not have, so writing this
-# file is what makes the slash name exist.
-if [ ! -f "$HOME/.coder/skills/learn/SKILL.md" ]; then
-  mkdir -p "$HOME/.coder/skills/learn" 2>/dev/null
-  cat >"$HOME/.coder/skills/learn/SKILL.md" <<'LEARN_SKILL_MD_EOF'
-${learn_skill}
-LEARN_SKILL_MD_EOF
+# The /ez-learn orientation skill, same absent-only contract. Upstream /learn is a BUNDLED
+# skill needing an x.ai sign-in this stack lacks; docs/grok-build-and-agents.md.
+if [ ! -f "$HOME/.coder/skills/ez-learn/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-learn" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-learn/SKILL.md" <<'EZ_LEARN_SKILL_MD_EOF'
+${ez_learn_skill}
+EZ_LEARN_SKILL_MD_EOF
 fi
 
-if [ ! -f "$HOME/.agents/skills/learn/SKILL.md" ]; then
-  mkdir -p "$HOME/.agents/skills/learn" 2>/dev/null
-  cp "$HOME/.coder/skills/learn/SKILL.md" \
-    "$HOME/.agents/skills/learn/SKILL.md" 2>/dev/null
+if [ ! -f "$HOME/.agents/skills/ez-learn/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-learn" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-learn/SKILL.md" \
+    "$HOME/.agents/skills/ez-learn/SKILL.md" 2>/dev/null
 fi
+
+# Hand /learn back: the stack seeded this skill under that name until it moved, and a
+# leftover marker-carrying copy still shadows the bundled one. Marker-free stays.
+for _d in "$HOME/.coder/skills/learn" "$HOME/.agents/skills/learn"; do
+  grep -qF 'managed-by: evo-t1-coder-stack' "$_d/SKILL.md" 2>/dev/null &&
+    { rm -f "$_d/SKILL.md"; rmdir "$_d"; } 2>/dev/null
+done
 
 if [ ! -f "$HOME/.coder/AGENTS.md" ]; then
   cat >"$HOME/.coder/AGENTS.md" <<'AGENT_INSTR_MD_EOF'
@@ -251,12 +257,6 @@ fi
 
 # --- GitHub credential plumbing (best effort) ----------------------------------
 # docs/coder-templates.md#github-credentials-for-a-workspace
-# The helper runs with the agent env pair cleared, and that is the part that is
-# easy to get wrong: gh auth git-credential echoes GH_TOKEN/GITHUB_TOKEN, and the
-# pair Coder injects at start is a frozen copy that dies about an hour later.
-# Clearing it makes git read the gh auth store, which gh_token_refresh keeps live.
-# The blank first value is git's reset marker, and the write replaces whatever this
-# file held for that host, the way gh auth setup-git already does.
 if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1; then
   evo_gh_bin="$(command -v gh)"
   evo_gh_helper="!env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN $${evo_gh_bin} auth git-credential"

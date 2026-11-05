@@ -81,21 +81,24 @@ list those keys and write no answers. A `summary:` line closes the pass.
 The reseed set is the nine home-relative targets the templates seed -
 `~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
 `~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the two
-`learn/SKILL.md` copies and `~/.shared/vscode/settings.json` - and the same rule
+`ez-learn/SKILL.md` copies and `~/.shared/vscode/settings.json` - and the same rule
 applies as in `refresh-configs`: a file is replaced only while it still carries its
 stack marker - the `managed-by: evo-t1-coder-stack` comment, the
 `"__evoT1Stack": true` JSON key (settings files) or the `__evoT1Stack = true` TOML
 key (`~/.grok/config.toml`) - so a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
-so. The two `learn/SKILL.md` copies are `~/.coder/skills/learn/SKILL.md` and its
-`~/.agents` twin, the stack's `/learn` skill. To take a seeded copy over, edit it and
+so. The two `ez-learn/SKILL.md` copies are `~/.coder/skills/ez-learn/SKILL.md` and its
+`~/.agents` twin, the stack's `/ez-learn` skill. To take a seeded copy over, edit it and
 delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free file is
 user-owned, and the seeder leaves it alone unless you pass `--force`. A deletion is
 undone - the workspace boot writes the file again whenever it is absent, and
 `refresh-configs` re-seeds an absent target, so the next boot restores the stack's
-copy. To hide the slash command, set `disabled = ["learn"]` under `[skills]` in
+copy. To hide the slash command, set `disabled = ["ez-learn"]` under `[skills]` in
 `~/.grok/config.toml`. An edited copy which keeps its marker is still rewritten back
-to `templates/common/learn.SKILL.md` by this tool.
+to `templates/common/ez-learn.SKILL.md` by this tool. The pass also retires the two
+`skills/learn/SKILL.md` paths this skill occupied before the rename, and only while
+each still carries the stack marker, so a leftover copy cannot keep shadowing the CLI's
+bundled `/learn` and a file someone took over stays.
 
 `all` runs `env` and then `workspace`.
 

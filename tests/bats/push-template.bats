@@ -52,7 +52,7 @@ COMMON_PAYLOADS=(
   grok-build-terminal.sh
   vscode-terminal-tmux.sh
   grok-build-delegation.SKILL.md
-  learn.SKILL.md
+  ez-learn.SKILL.md
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
@@ -70,7 +70,7 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/bash' >"${dest}/grok-build-terminal.sh"
   printf '%s\n' '#!/bin/bash' >"${dest}/vscode-terminal-tmux.sh"
   printf '%s\n' '# skill' >"${dest}/grok-build-delegation.SKILL.md"
-  printf '%s\n' '# skill' >"${dest}/learn.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/ez-learn.SKILL.md"
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
@@ -236,19 +236,19 @@ logs_absent() {
   logs_absent 'templates push' "${STUB_LOG}/docker.log"
 }
 
-@test "push-template: a tree without the learn skill payload pushes nothing" {
-  # Same never-a-silent-skip rule for the /learn payload: main.tf reads it with
-  # learn_skill = chomp(file(...)), so a tree that lost
-  # templates/common/learn.SKILL.md has to fail locally by name rather than
+@test "push-template: a tree without the ez-learn skill payload pushes nothing" {
+  # Same never-a-silent-skip rule for the /ez-learn payload: main.tf reads it with
+  # ez_learn_skill = chomp(file(...)), so a tree that lost
+  # templates/common/ez-learn.SKILL.md has to fail locally by name rather than
   # ship a copy whose apply dies on the missing file().
   root="$(fake_root push-template.sh)"
   running_stack
   psql_token_variant
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
-  rm -f "${root}/templates/common/learn.SKILL.md"
+  rm -f "${root}/templates/common/ez-learn.SKILL.md"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 1 ]
-  [[ ${stderr} == *"learn.SKILL.md is missing"* ]]
+  [[ ${stderr} == *"ez-learn.SKILL.md is missing"* ]]
   [[ ${stderr} == *"2 of 2 template(s) did not reach an active version"* ]]
   logs_absent 'templates push' "${STUB_LOG}/docker.log"
 }

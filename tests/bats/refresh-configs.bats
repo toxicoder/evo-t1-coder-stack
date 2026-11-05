@@ -44,7 +44,14 @@ setup() {
 # host --home run has real targets to reason about.
 scratch_home() {
   mkdir -p "${1}/.shared/vscode" "${1}/.coder/skills/grok-build-delegation" \
-    "${1}/.coder/skills/learn"
+    "${1}/.coder/skills/ez-learn" "${1}/.coder/skills/learn" "${1}/.agents/skills/learn"
+  # What the stack left under /learn when the skill moved: the marker-carrying
+  # copy is the stack's own and a reseed retires it, the marker-free one is
+  # someone else's and survives every reseed.
+  printf -- '---\nname: learn\n---\nmanaged-by: evo-t1-coder-stack\n' \
+    >"${1}/.coder/skills/learn/SKILL.md"
+  printf -- '---\nname: learn\n---\nwritten by hand\n' \
+    >"${1}/.agents/skills/learn/SKILL.md"
   printf 'set -g mouse off\n' >"${1}/.tmux.conf"
   printf '{\n  "__evoT1Stack": true,\n  "cline.apiKey": "SECRET-KEEP-ME",\n  "terminal.integrated.scrollback": 40000\n}\n' \
     >"${1}/.shared/vscode/settings.json"
@@ -76,13 +83,14 @@ scratch_home() {
   # Payloads are repo files (file:) or rendered tftpl (render:). Heredoc
   # extraction (block:) is gone; tmux and the agent skill live under common/.
   assert_match "tmux from common" $'file:templates/common/tmux.conf' "${lines}"
-  # Both learn skill copies reseed from the one common payload: the chat agent
+  # Both ez-learn skill copies reseed from the one common payload: the chat agent
   # reads ~/.coder/skills/ and the Grok Build CLI reads ~/.agents/skills/, and
   # skill dedupe is first-match-wins, so the twins exist for the two consumers.
-  assert_match "learn skill from common (coder)" \
-    $'~/.coder/skills/learn/SKILL.md\tfile:templates/common/learn.SKILL.md' "${lines}"
-  assert_match "learn skill from common (agents)" \
-    $'~/.agents/skills/learn/SKILL.md\tfile:templates/common/learn.SKILL.md' "${lines}"
+  # The name is the stack's own, so /learn stays free for the CLI's bundled skill.
+  assert_match "ez-learn skill from common (coder)" \
+    $'~/.coder/skills/ez-learn/SKILL.md\tfile:templates/common/ez-learn.SKILL.md' "${lines}"
+  assert_match "ez-learn skill from common (agents)" \
+    $'~/.agents/skills/ez-learn/SKILL.md\tfile:templates/common/ez-learn.SKILL.md' "${lines}"
   assert_not_match "no block kind" $'\tblock:' "${lines}"
 }
 
@@ -233,8 +241,15 @@ scratch_home() {
   # Absent targets get seeded, twins included.
   assert_file_exists "agents twin" "${scratch}/home/.agents/INSTRUCTIONS.md"
   assert_file_exists "coder skill" "${scratch}/home/.coder/skills/grok-build-delegation/SKILL.md"
-  assert_file_exists "coder skill" "${scratch}/home/.coder/skills/learn/SKILL.md"
-  assert_file_exists "agents skill" "${scratch}/home/.agents/skills/learn/SKILL.md"
+  assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-learn/SKILL.md"
+  assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-learn/SKILL.md"
+  # The copy the stack seeded under /learn before the rename goes, because it
+  # still carries the marker and would shadow the CLI's own skill; the
+  # marker-free one is whoever's it is, and it stays.
+  assert_file_not_exists "retired managed copy" \
+    "${scratch}/home/.coder/skills/learn/SKILL.md"
+  assert_file_exists "retired user copy spared" \
+    "${scratch}/home/.agents/skills/learn/SKILL.md"
   # Every docker call that ran was an exec through the stub or none at all:
   # this tool must never spawn a helper container.
   run grep -E 'docker (run|cp)' <<<"$(stub_log docker)"
@@ -273,7 +288,17 @@ coder-ws2-dind-sidecar'
   [ "${status}" -eq 0 ]
   # The one-line JSON object sits on stdout; prose went to stderr.
   grep -m1 '^{' <<<"${output}" >"${scratch}/out.json"
-  python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["dry_run"] is False and d["force"] is False and len(d["entries"]) == 9' <"${scratch}/out.json"
+  python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["dry_run"] is False and d["force"] is False, d
+# The nine reseed targets, plus the /learn copy the reseed retired from the home.
+assert len(d["entries"]) == 10, d["entries"]
+retired = [e for e in d["entries"] if e["target"] == "~/.coder/skills/learn/SKILL.md"]
+assert len(retired) == 1 and retired[0]["action"].startswith("retired"), retired
+# The marker-free copy is user-owned, so it earns no entry at all.
+assert not [e for e in d["entries"] if e["target"] == "~/.agents/skills/learn/SKILL.md"], d
+' <"${scratch}/out.json"
 }
 
 @test "refresh-configs: against a named container every call is an exec, never a run" {

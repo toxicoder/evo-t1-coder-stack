@@ -125,7 +125,7 @@ only `settings.json.tftpl` is byte-identical across the two directories, so edit
 copies of that payload. `templates/common/` exists once above the twins instead and
 holds the single-copy payloads both templates consume: `GROK_BUILD_AGENTS.md`,
 `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`,
-`vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `learn.SKILL.md`,
+`vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`,
 `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`. Markdown
 and JSON are read with `file()` (chomp the markdown); shell helpers that Terraform must
 not re-interpolate are also `file()` (so `$folder` stays `$folder`); `gh-token-refresh.sh.tftpl`

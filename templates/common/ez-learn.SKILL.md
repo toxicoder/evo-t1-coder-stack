@@ -1,5 +1,5 @@
 ---
-name: learn
+name: ez-learn
 description: "Orient to this workspace and this stack: probe what is actually running, report the lanes and gates you measured, then teach the user the one command that matters next. Use when asked to learn, explain, or get oriented in the environment."
 ---
 
@@ -11,9 +11,11 @@ description: "Orient to this workspace and this stack: probe what is actually ru
      boot writes the file again whenever it is absent, and
      `refresh-configs` re-seeds an absent target, so the next boot
      restores the stack's copy. To hide the slash command, set
-     `disabled = ["learn"]` under `[skills]` in `~/.grok/config.toml`. -->
+     `disabled = ["ez-learn"]` under `[skills]` in `~/.grok/config.toml`. -->
 
 # Learn the workspace
+
+This is the stack's own orientation command; `/learn` stays free for the CLI's bundle.
 
 When the user invokes this skill, orient them to where they actually are. Measure
 before you speak: report what a probe answered, and say what you could not check.
