@@ -43,6 +43,28 @@ bats_canonical_repo_root() {
   return 1
 }
 
+# bats_source_repo_root - print the repo root whose FILE BYTES are what the stack
+# ships. Under tests/coverage/shell_cov.sh the suites run against an instrumented
+# mirror (bats_runner.sh points REPO_ROOT at it) so production .sh bodies record
+# coverage, which makes every instrumented copy larger than the file that ships. A
+# gate that measures a payload's size has to count the shipping bytes, so it asks
+# here instead. Non-zero when EVO_COV_SOURCE_ROOT is set at something that is not a
+# repo root: a byte gate that quietly fell back to the mirror would measure the
+# harness, so the handoff is checked rather than trusted.
+bats_source_repo_root() {
+  local dir
+  if [ -n "${EVO_COV_SOURCE_ROOT:-}" ]; then
+    dir="${EVO_COV_SOURCE_ROOT}"
+    if [ ! -f "${dir}/docker-compose.yml" ] || [ ! -d "${dir}/tests/bats" ]; then
+      printf 'FAIL: bats_source_repo_root: EVO_COV_SOURCE_ROOT=%s holds no docker-compose.yml or tests/bats\n' "${dir}" >&2
+      return 1
+    fi
+    printf '%s' "${dir}"
+    return 0
+  fi
+  bats_canonical_repo_root
+}
+
 # make_scratch — print a fresh per-test scratch directory (BATS removes the
 # BATS_TEST_TMPDIR tree after each test).
 make_scratch() {
