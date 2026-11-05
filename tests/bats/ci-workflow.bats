@@ -105,7 +105,10 @@ setup() {
   # slice of requests, and one 504 aborts Bazel's analysis, which makes a red run luck.
   assert_contains_file "cache restore" "${CI_YML}" 'uses: actions/cache/restore@v'
   assert_contains_file "cache save" "${CI_YML}" 'uses: actions/cache/save@v'
-  assert_contains_file "the runner is told where the cache is" "${CI_YML}" 'EVO_T1_BAZEL_CACHE:'
+  assert_contains_file "the gate is told where the cache is" "${CI_YML}" \
+    'export EVO_T1_BAZEL_CACHE="\$\{RUNNER_TEMP\}/bazel-repo-cache"'
+  assert_contains_file "the cache steps name the runner temp dir" "${CI_YML}" \
+    'path: \$\{\{ runner\.temp \}\}/bazel-repo-cache'
   assert_contains_file "the key follows the module files" "${CI_YML}" \
     'hashFiles..MODULE\.bazel., .MODULE\.bazel\.lock., ..bazelrc.'
   assert_contains_file "a new key still starts warm" "${CI_YML}" 'restore-keys'
@@ -122,6 +125,29 @@ setup() {
   # A red gate still fetched archives the next run would otherwise pay for again.
   [ "$(grep -B1 'uses: actions/cache/save@v' "${CI_YML}" | grep -c 'if: always()')" -eq 2 ] || {
     echo "a repository cache save is missing if: always()" >&2
+    return 1
+  }
+
+  # Every step that runs the gate has to export the variable in its own run block: a
+  # gate step that forgets it runs uncached, which is the silent failure this whole
+  # change exists to prevent. RUNNER_TEMP and runner.temp name the same directory.
+  local uncached
+  uncached="$(
+    awk '
+      function flush() { if (gate && !exported) print name; gate = 0; exported = 0 }
+      /^ *#/ { next }
+      /^      - / { flush(); name = $0; sub(/^ +[-] /, "", name); next }
+      /test-in-image\.sh/ { gate = 1 }
+      /export EVO_T1_BAZEL_CACHE=/ { exported = 1 }
+      END { flush() }
+    ' "${CI_YML}"
+  )"
+  [ -z "${uncached}" ] || {
+    printf 'gate steps with no cache export: %s\n' "${uncached}" >&2
+    return 1
+  }
+  [ "$(grep -c 'export EVO_T1_BAZEL_CACHE=' "${CI_YML}")" -eq 3 ] || {
+    echo "each of the three gate steps should export the cache dir" >&2
     return 1
   }
 

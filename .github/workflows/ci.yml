@@ -50,10 +50,9 @@ jobs:
     # The gate container is throwaway, so Bazel's repository cache would die with it and
     # every job would re-download every external archive from GitHub's release endpoint -
     # which answers 504 for a slice of requests, and one 504 aborts the whole analysis.
-    # The two cache steps below keep that directory between runs and hand it to the gate
-    # runner, which mounts it and points --repository_cache at it.
-    env:
-      EVO_T1_BAZEL_CACHE: ${{ runner.temp }}/bazel-repo-cache
+    # The two cache steps below keep that directory between runs, and each gate step
+    # exports EVO_T1_BAZEL_CACHE so the runner mounts it and points --repository_cache
+    # at it. RUNNER_TEMP is what both halves agree on: the cache steps' runner.temp.
     steps:
       - uses: actions/checkout@v5
 
@@ -108,6 +107,7 @@ jobs:
 
       - name: Bazel test-fast, lint and validate in the image
         run: |
+          export EVO_T1_BAZEL_CACHE="${RUNNER_TEMP}/bazel-repo-cache"
           ./scripts/test-in-image.sh -- test //:test-fast --config=ci
           ./scripts/test-in-image.sh -- test //:lint --config=ci --test_tag_filters=manual
           VALIDATE_INNER=1 ./scripts/test-in-image.sh -- run //:validate
@@ -120,6 +120,7 @@ jobs:
       # signal; this one is the full one.
       - name: Full gate in the image
         run: |
+          export EVO_T1_BAZEL_CACHE="${RUNNER_TEMP}/bazel-repo-cache"
           ./scripts/test-in-image.sh -- test //:test-all --config=ci
 
       - name: Compose and env sample
@@ -146,8 +147,6 @@ jobs:
     runs-on: ubuntu-latest
     # Same repository cache as the bazel job: this job's //docs-site targets are the ones
     # that pull rules_python, the archive whose 504 has been deciding this job by luck.
-    env:
-      EVO_T1_BAZEL_CACHE: ${{ runner.temp }}/bazel-repo-cache
     steps:
       - uses: actions/checkout@v5
 
@@ -177,6 +176,7 @@ jobs:
       - name: Docs site in the image
         run: |
           export NEXT_TELEMETRY_DISABLED=1
+          export EVO_T1_BAZEL_CACHE="${RUNNER_TEMP}/bazel-repo-cache"
           ./scripts/test-in-image.sh -- test //docs-site:typecheck //docs-site:unit --test_tag_filters=manual
           ./scripts/test-in-image.sh -- test //docs-site:nav_test
           ./scripts/test-in-image.sh -- run //docs-site:npm -- run nav:check

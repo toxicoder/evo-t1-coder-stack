@@ -121,9 +121,10 @@ long-running exception, and you stop it with Ctrl-C.
 
 The repository cache is the one worth persisting in CI, and `EVO_T1_BAZEL_CACHE=<host dir>`
 is the seam: `//scripts:test-in-image` bind-mounts that directory into the gate container and
-points `--repository_cache` at it, so each external archive downloads once per key. Both CI
-jobs wrap their gate step in an `actions/cache` pair keyed on `MODULE.bazel`,
-`MODULE.bazel.lock` and `.bazelrc`, with the save under `if: always()` — the archives fetched
+points `--repository_cache` at it, so each external archive downloads once per key. Each CI
+gate step exports it as `${RUNNER_TEMP}/bazel-repo-cache` and is wrapped in an `actions/cache`
+pair keyed on `MODULE.bazel`, `MODULE.bazel.lock` and `.bazelrc`, with the save under
+`if: always()` — the archives fetched
 before a red gate are exactly what the next run would otherwise pay for again. That endpoint
 matters: `github.com/.../releases/download/...` answers 504 for a slice of requests, one such
 504 aborts Bazel's analysis, and a refetch-on-every-job job decides its colour by luck. The
