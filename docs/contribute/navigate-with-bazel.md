@@ -105,8 +105,8 @@ bazelisk run //scripts:bazel-map -- tests-for litellm/config.yaml
 ```
 
 ```text
+//tests:bats_ez_learn_skill_test
 //tests:bats_hermes_skills_test
-//tests:bats_learn_skill_test
 //tests:bats_litellm_config_test
 //tests:bats_stack_data_test
 //tests:bats_update_stack_test
@@ -206,7 +206,7 @@ bazelisk run //scripts:bazel-map -- scope --untracked
 # -> 2 changed path(s)
 # -> //lints:buildifier
 # -> //tests:bats_bazel_deps_test
-# -> //tests:bats_learn_skill_test
+# -> //tests:bats_ez_learn_skill_test
 # -> //tests:bats_docs_alias_test
 # -> ...
 # -> note: run them with: bazelisk test <labels>; keep one uncached //:test-fast pass before the PR

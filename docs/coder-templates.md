@@ -69,11 +69,12 @@ missing one fails the push before the CLI runs.
   `$${folder}`) because `file()` contents are not re-interpolated.
 - `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
   skill and instruction seeds (chomped `file()`).
-- `learn.SKILL.md` is the `/learn` orientation skill beside that delegation skill
-  (chomped `file()`): the boot seeds it into `~/.coder/skills/learn/SKILL.md` and
-  twin-copies it to `~/.agents/skills/learn/SKILL.md`, each only while absent. The
+- `ez-learn.SKILL.md` is the `/ez-learn` orientation skill beside that delegation skill
+  (chomped `file()`): the boot seeds it into `~/.coder/skills/ez-learn/SKILL.md` and
+  twin-copies it to `~/.agents/skills/ez-learn/SKILL.md`, each only while absent. The
   CLI's own `/learn` bundle needs an x.ai sign-in this stack does not have, so this
-  payload is what makes the slash command exist.
+  payload is what makes the slash command exist, and it keeps its own name so it cannot
+  shadow that bundled one.
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
   writes, into `~/.grok/mcp-cache-proxy/config.json` and only while that file is absent
   (so a shared profile volume reuses one SQLite cache across that owner's workspaces). It
@@ -868,11 +869,16 @@ rules above.
   injected instruction file the marker is pure provenance, because injected content has its
   HTML comments stripped anyway. The stage is best-effort: a read-only or missing `$HOME`
   changes nothing observable.
-- `/learn` is seeded on the same absent-only contract because upstream `/learn` is a
+- `/ez-learn` is seeded on the same absent-only contract because upstream `/learn` is a
   *bundled* skill and the bundle download runs through the CLI's proxy endpoints, which need
   an x.ai sign-in this stack deliberately does not have: LiteLLM is the only transport, so
   `~/.grok/bundled/` is never created and the slash name would simply be missing. Writing
-  the file is what makes `/learn` exist, and deleting or editing either copy keeps your own.
+  the file is what makes the command exist, and it is seeded under `ez-learn` because a
+  user-scope skill shadows a same-named bundled one, so a seed named `learn` would hide the
+  CLI's own command. The same stage deletes a leftover `skills/learn/SKILL.md` from before
+  the rename, but only while it still carries the stack marker; a marker-free one is
+  user-owned and stays. Deleting a seeded copy never keeps your own - the boot writes it
+  back - so only dropping that marker does.
 
 ### Startup script templatefile rules
 
@@ -882,7 +888,7 @@ rules above.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
   thirteen: `grok_build_agents`, `grok_config`, `repo_url`, `additional_repos`,
   `vscode_settings`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
-  `vscode_terminal_tmux`, `grok_build_delegation_skill`, `learn_skill`, `coder_agents`,
+  `vscode_terminal_tmux`, `grok_build_delegation_skill`, `ez_learn_skill`, `coder_agents`,
   `mcp_cache_proxy`. The `devcontainer` twin adds `dc_dir` and `build_devcontainer`.
 - That is why the `.git` suffix is stripped with `sed` rather than the shorter
   `${leaf%.git}`: a braced expansion would add an interpolation `main.tf` does not pass.

@@ -255,23 +255,33 @@ report for a script. What the report should read here:
   LiteLLM is the sole model transport, with `env_key = "LITELLM_API_KEY"` and
   `base_url` `http://host.docker.internal:4000/v1`, so `~/.grok/bundled/` is never
   created, `~/.grok/skills/` does not exist, and `grok inspect --json` lists only the
-  stack-seeded user skills. `/learn` is absent whichever CLI version is on PATH.
-- **The stack therefore seeds its own `/learn`**, so it is a stack payload like the
-  delegation skill, not something to install: `templates/common/learn.SKILL.md` is
-  written at workspace boot to `~/.coder/skills/learn/SKILL.md` and twin-copied to
-  `~/.agents/skills/learn/SKILL.md`, each only while that file is absent. To take a
+  stack-seeded user skills. `/learn` is therefore a command that exists only on a CLI
+  that actually has that bundle; here it is absent whichever CLI version is on PATH.
+- **The stack ships its own orientation skill as `/ez-learn`**, so it is a stack payload
+  like the delegation skill, not something to install, and the `/learn` name stays free
+  for the CLI's bundled command: a user-scope skill shadows a same-named bundled one,
+  so seeding this skill under `learn` would have hidden it.
+  `templates/common/ez-learn.SKILL.md` is written at workspace boot to
+  `~/.coder/skills/ez-learn/SKILL.md` and twin-copied to
+  `~/.agents/skills/ez-learn/SKILL.md`, each only while that file is absent. To take a
   copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a
   marker-free file is user-owned, and the seeder leaves it alone unless you pass
   `--force`. A deletion is undone - the boot writes the file again whenever it is
   absent, and `refresh-configs` re-seeds an absent target, so the next boot restores
-  the stack's copy. To hide the slash command, set `disabled = ["learn"]` under
+  the stack's copy. To hide the slash command, set `disabled = ["ez-learn"]` under
   `[skills]` in `~/.grok/config.toml`. A seeded `SKILL.md` shows up in
   `grok inspect --json` as `userInvocable: true`, and a live session advertises it in
   both `slash_commands` and `skills`, so it works on whichever CLI the image baked at
   `/usr/local/bin/grok` and this needs no image rebuild; the **Grok Build** terminal
-  profile gets it because that profile execs the same binary. A user-scope skill
-  shadows a same-named bundled one, so while either seeded copy exists the bundled
-  `/learn` stays shadowed even on a workspace that signs in to x.ai.
+  profile gets it because that profile execs the same binary.
+- **A leftover `/learn` seed retires itself.** This skill was seeded under the name
+  `learn` until it moved, and a copy left standing keeps shadowing the bundled command
+  even on a workspace that signs in to x.ai. Both startup scripts delete
+  `~/.coder/skills/learn/SKILL.md` and `~/.agents/skills/learn/SKILL.md` and prune the
+  directory each leaves, but only while the file still carries the
+  `managed-by: evo-t1-coder-stack` marker; a marker-free `learn/SKILL.md` is user-owned
+  and stays. `refresh-configs`, `storage-clean` and `seed-dev-env` retire the same two
+  paths on reseed. That removal is what hands `/learn` back to the CLI.
 
 ## The rendered `~/.grok` config
 
@@ -765,19 +775,22 @@ absent:
 2. `~/.coder/skills/grok-build-delegation/SKILL.md`
 3. `~/.agents/INSTRUCTIONS.md`
 4. `~/.agents/skills/grok-build-delegation/SKILL.md`
-5. `~/.coder/skills/learn/SKILL.md`
-6. `~/.agents/skills/learn/SKILL.md`
+5. `~/.coder/skills/ez-learn/SKILL.md`
+6. `~/.agents/skills/ez-learn/SKILL.md`
 
 - 1 and 2 are the Coder agent's *default* discovery paths.
 - 3 and 4 are the same text under the Grok Build CLI's convention, and the CLI is
   what `execute`-lane delegation drives. The chat agent dedupes skills by name,
   first match wins, home scope before a working-dir path, so one agent never loads a
   skill twice: the twins exist for the CLI, not as a second source for chat.
-- 5 and 6 are the `/learn` orientation skill, payload
-  `templates/common/learn.SKILL.md`, on the same absent-only contract. Upstream ships
-  that slash name only in a skills bundle behind an x.ai sign-in this stack does not
-  have, so the seed is what makes `/learn` exist; deleting both copies is how you hand
-  it back if a workspace ever does sign in. See the CLI section above.
+- 5 and 6 are the `/ez-learn` orientation skill, payload
+  `templates/common/ez-learn.SKILL.md`, on the same absent-only contract. Upstream ships
+  `/learn` only in a skills bundle behind an x.ai sign-in this stack does not have, so
+  the seed is what makes the orientation command exist; it ships under its own name
+  because a user-scope skill shadows a same-named bundled one, and a seed named `learn`
+  would hide the bundled command on a workspace that ever does sign in. The boot and the
+  reseed delete a leftover marker-carrying `skills/learn/SKILL.md` from before the
+  rename. See the CLI section above.
 - The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
   probe-one-worker-first, verify-what-a-worker-actually-produced). It travels as
   `templates/common/GROK_BUILD_AGENTS.md`, staged beside the staged `main.tf` and
