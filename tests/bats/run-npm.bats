@@ -7,7 +7,10 @@
 # uv_os_homedir ENOENT before it reads package.json. This suite stubs npm
 # and checks the wrapper still hands it an existing directory, that the
 # deps gate installs only when the site's own binaries are missing, and that
-# the coverage arm measures a real checkout.
+# the coverage arm measures a real checkout. Every npm-backed gate reads one
+# node_modules in that checkout, so the suite also starts two cold gates side by
+# side: the install has to run once for both, a box without flock has to install
+# anyway, and a lock someone else never releases has to fail with a cause.
 #
 # Usage: bazelisk test //tests:bats_run_npm_test
 # Safety: copies run_npm.sh into a scratch tree; never calls a real npm.
@@ -39,6 +42,18 @@ printf 'npm %s\n' "$*" >>"${NPM_LOG}"
 if [[ -z ${HOME:-} || ! -d ${HOME} ]]; then
   printf 'missing HOME\n' >>"${NPM_LOG}"
   exit 1
+fi
+# Hold an install open long enough that a second gate has to meet the lock,
+# then leave the site's binaries behind the way a real `npm ci` does: the
+# waiter inside the lock decides whether to install by looking for them.
+if [[ ${1:-} == ci ]]; then
+  if [[ -n ${NPM_SLEEP:-} ]]; then
+    sleep "${NPM_SLEEP}"
+  fi
+  mkdir -p node_modules/.bin
+  : >node_modules/.bin/next
+  : >node_modules/.bin/vitest
+  chmod 755 node_modules/.bin/next node_modules/.bin/vitest
 fi
 exit 0
 NPM
@@ -175,4 +190,98 @@ install_site_bins() {
   assert_match "names the cause" 'did not resolve to a checkout' "${stderr}"
   assert_match "points at the runnable form" 'bazelisk run' "${stderr}"
   assert_eq "npm never ran" "" "$(grep '^npm ' "${NPM_LOG}" 2>/dev/null || true)"
+}
+
+# core_path <scratch> — a directory holding just the external commands
+# run_npm.sh shells out to, for a PATH that has no flock in it.
+core_path() {
+  local scratch="$1" dir="${scratch}/core" tool
+  mkdir -p "${dir}"
+  for tool in bash basename dirname mkdir readlink; do
+    ln -s "$(command -v "${tool}")" "${dir}/${tool}"
+  done
+  printf '%s' "${dir}"
+}
+
+@test "run_npm: two cold gates install the shared tree once" {
+  # The regression this pins: //:test-all starts typecheck, unit, unit_coverage
+  # and verify as parallel Bazel actions against a checkout with no
+  # node_modules yet. Unlocked, each ran its own `npm ci` into the tree the
+  # others read, and a gate that started while another was mid-install took a
+  # SIGBUS on a short esbuild binary. One install, and both gates still run.
+  local scratch rc1 rc2 installs
+  scratch="$(stub_npm_tree)"
+  NPM_LOG="${scratch}/npm.log"
+  export NPM_LOG NPM_SLEEP=2
+  env -u BUILD_WORKSPACE_DIRECTORY HOME="${scratch}/home" \
+    PATH="${scratch}/bin:${PATH}" bash "${scratch}/docs-site/run_npm.sh" build \
+    >"${scratch}/a.out" 2>&1 &
+  local p1=$!
+  env -u BUILD_WORKSPACE_DIRECTORY HOME="${scratch}/home" \
+    PATH="${scratch}/bin:${PATH}" bash "${scratch}/docs-site/run_npm.sh" typecheck \
+    >"${scratch}/b.out" 2>&1 &
+  local p2=$!
+  wait "${p1}" && rc1=0 || rc1=$?
+  wait "${p2}" && rc2=0 || rc2=$?
+  assert_eq "the first gate finished" "0" "${rc1}"
+  assert_eq "the gate that waited finished" "0" "${rc2}"
+  installs="$(grep -c '^npm ci --legacy-peer-deps$' "${NPM_LOG}" || true)"
+  assert_eq "the install ran exactly once" "1" "${installs}"
+  assert_match "and both gates still ran their own script" 'npm run build$' "$(cat "${NPM_LOG}")"
+  assert_match "including the one that waited for the lock" 'npm run typecheck$' "$(cat "${NPM_LOG}")"
+}
+
+@test "run_npm: a gate still installs where flock is missing" {
+  # A macOS laptop has no util-linux flock. The arm has to install unlocked,
+  # because refusing to install would leave a contributor with no site.
+  local scratch core
+  scratch="$(stub_npm_tree)"
+  core="$(core_path "${scratch}")"
+  NPM_LOG="${scratch}/npm.log"
+  export NPM_LOG
+  [[ -e ${core}/basename ]]
+  if ! PATH="${scratch}/bin:${core}" command -v flock >/dev/null 2>&1; then
+    : # the shape the arm is meant to take
+  else
+    skip "flock is reachable on a restricted PATH here"
+  fi
+  run env -u BUILD_WORKSPACE_DIRECTORY HOME="${scratch}/home" \
+    PATH="${scratch}/bin:${core}" bash "${scratch}/docs-site/run_npm.sh" build
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"docs-site: installing npm deps"* ]]
+  assert_eq "the install ran" "npm ci --legacy-peer-deps" "$(grep '^npm ' "${NPM_LOG}" | head -n 1)"
+  assert_eq "then the asked-for script" "npm run build" "$(grep '^npm ' "${NPM_LOG}" | tail -n 1)"
+}
+
+@test "run_npm: a lock held past the wait fails with a named cause" {
+  # A wedged installer must surface as this gate's own error, not as the Bazel
+  # test timeout, so the wait is bounded and its cause is printed.
+  command -v flock >/dev/null 2>&1 || skip "no flock on this box"
+  local scratch lock holder waited
+  scratch="$(stub_npm_tree)"
+  NPM_LOG="${scratch}/npm.log"
+  export NPM_LOG
+  lock="${scratch}/docs-site/.npm-ci.lock"
+  : >"${lock}"
+  flock -x "${lock}" sleep 10 &
+  holder=$!
+  # Only start the gate once the lock is observably held, so this pins the
+  # timeout rather than whichever installer happens to win.
+  waited=0
+  while flock -n -x "${lock}" true 2>/dev/null; do
+    sleep 0.1
+    waited=$((waited + 1))
+    if [ "${waited}" -gt 100 ]; then
+      kill "${holder}" 2>/dev/null || true
+      skip "the test holder never took the lock"
+    fi
+  done
+  run --separate-stderr env -u BUILD_WORKSPACE_DIRECTORY HOME="${scratch}/home" \
+    PATH="${scratch}/bin:${PATH}" NPM_CI_LOCK_WAIT=1 \
+    bash "${scratch}/docs-site/run_npm.sh" build
+  kill "${holder}" 2>/dev/null || true
+  wait "${holder}" 2>/dev/null || true
+  [ "${status}" -eq 1 ]
+  assert_match "names the lock it could not take" 'npm-ci.lock' "${stderr}"
+  assert_eq "npm ci never ran" "" "$(grep '^npm ci' "${NPM_LOG}" 2>/dev/null || true)"
 }
