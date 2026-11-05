@@ -116,7 +116,7 @@ repo can verify.
   pipes a PAT into one container's gh
   credential store, where it stands in for a workspace whose owner connected no
   account — with a connected account, the next `gh_token_refresh` run (start,
-  then every 6 hours) rewrites that store with a minted pair. `gh auth logout`
+  then every 20 minutes) rewrites that store with a minted pair. `gh auth logout`
   inside the container — or a rebuild — removes it either way.
 - **Spark endpoints.** `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` point off-box at
   vLLM servers. vLLM accepts any non-empty bearer token unless it was started with

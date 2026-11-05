@@ -18,18 +18,12 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   `http://127.0.0.1:8181` by default and reads `$SEARXNG_URL` first; the agent env inside a
   workspace carries `SEARXNG_URL` (default `http://host.docker.internal:8181`), so a
   workspace-side probe needs no `--url`.
-- `github-auth check` (also `bazelisk run //scripts:github-auth -- check`) works from
-  either place: on the host it enumerates the labeled workspace containers via docker,
-  or probes a named container; inside a workspace it runs SELF mode with no docker and
-  no `DOCKER_HOST`, probing this environment's own credential chain and printing one
-  `self:` line per credential. `--source=<slot>` (chain, env, gh, mint) narrows it to
-  one slot, and any answer about a slot the env pair outranks is labelled `shadowed`,
-  because git and gh consult `GH_TOKEN`/`GITHUB_TOKEN` first. Pass only the repo URL
-  there; a named container is refused with a pointer to the host shell. A `REJECTED`
-  env-pair line is normally an expired mint, not a missing grant: a fresh
-  `coder external-auth access-token github` answers `api.github.com` while the stale pair
-  is refused, and `git` needs that mint as Basic auth (the git endpoint refuses the bearer
-  scheme `gh` accepts) - the push-denied entry in `docs/troubleshooting.md` has the recipe.
+- GitHub auth has one entry point and one bounded procedure; see **GitHub auth** below.
+  `github-auth check` works from either place: on the host it enumerates the labeled
+  workspace containers via docker, or probes a named container; inside a workspace it
+  runs SELF mode with no docker and no `DOCKER_HOST`, probing this environment's own
+  credential chain and printing one `self:` line per credential. Pass only the repo URL
+  there; a named container is refused with a pointer to the host shell.
 - `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
   `:3002` the Coder agent tunnel, `:8181` SearXNG, `:9119` Hermes dashboard
   (LAN listener; the public name rides the router on `:8080`; the host
@@ -59,6 +53,52 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   template — `.devcontainer/contributor-env` makes `new-workspace`'s probe a miss, so never
   copy that sentinel into another repo. `scripts/setup-host.sh` remains the stack-host
   bootstrap only.
+
+## GitHub auth
+
+Read this before you touch a credential. Across 222 past sessions in this workspace 29 hit
+a GitHub auth error and the worst burned about 30 turns rediscovering one cause. It is
+almost never the grant.
+
+`GH_TOKEN`/`GITHUB_TOKEN` are the copy Coder injected when this workspace **started**. A
+GitHub App user-to-server token expires about an hour later, and no process can rewrite
+another process's environment, so the pair goes stale and stays stale for the life of the
+workspace. git never reads the pair itself: it asks its credential helpers and sends the
+first answer, and the stack's helper `!gh auth git-credential` echoes the pair. So git
+keeps sending a dead token while the gh auth store beside it, re-minted every 20 minutes by
+`gh_token_refresh`, is healthy and never asked. GitHub answers `remote: Invalid username
+or token. Password authentication is not supported for Git operations.`, which names
+neither the token nor its age, which is why it gets misread as a missing grant.
+
+The procedure, in this order, with a hard budget of about five tool calls:
+
+1. `bazelisk run //scripts:github-auth -- check <repo-url>` - once, before you read any
+   credential file or try any workaround. The **last line** is the answer.
+2. `push would WORK`: auth is not your problem. Stop reading credentials and go re-read
+   the git or gh error you actually got.
+3. `push would FAIL`: run `bazelisk run //scripts:github-auth -- fix <repo-url>`, once. It
+   mints a live token through Coder external-auth, writes the gh auth store, points git's
+   helper at that store so a stale pair cannot shadow it, and re-proves the verdict.
+4. Retry the push once. Still failing: stop, and report the verdict lines you got.
+5. A line beginning `HANDOFF`: a human owes it three clicks in the Coder UI (GitHub
+   reauth, Install GitHub App for private repos, restart the workspace). Pass that on and
+   stop.
+
+For `gh` commands use `env -u GH_TOKEN -u GITHUB_TOKEN gh ...`: gh consults the pair
+directly and `fix` cannot repair an environment you do not own. `git` needs no prefix once
+`fix` has run.
+
+Never do these. Each was tried in a past session here, and each cost turns without fixing
+the auth: hand-rolling a `GIT_ASKPASS` script; writing a `credential.helper` line by hand;
+running `gh auth login` interactively; switching the remote to a `git@github.com:` ssh URL
+(this stack provisions no ssh key); reading `.env`, which the deny does not except. A
+successful read proves nothing either - a public repo answers `api.github.com /repos` with
+200 for any authenticated caller, which is why `check` asks the write question instead.
+
+`auth <container> -` installs a pasted PAT, from the stack host only, and only once `check`
+has answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`; everything else is a `fix` away.
+Full usage: `bazelisk run //scripts:github-auth -- -h`. The measured background and the
+per-verdict remedies live in `docs/troubleshooting.md`.
 
 ## Commands
 Prefer Bazelisk. Make is a shim.
@@ -151,13 +191,15 @@ proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.m
   `tests/bats/fixtures/ezrepo-template/`. The `New project` preset in both template twins, plus
   `--task`, is the hand-off that turns a render into a workspace.
 - Runtime is `docker compose`. Do not add Kubernetes.
-- LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env); never introduce a static token or PAT.
+- LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env): no static token or PAT in a template, an env file, a remote URL, or a commit. The one sanctioned credential is a pasted PAT in a single workspace's gh store, installed by `github-auth auth` from the stack host, and only after `check` has answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`.
 
 ## Working rules
 - Short-lived branch from tip of `main` (`feat/`, `fix/`, `refactor/`, …), one change per branch, PR into `main`.
 - Prefer small focused changes. Default one repository per workspace.
 - Prefer Bazel targets over direct script execution.
-- Never introduce a static GitHub token anywhere.
+- Never introduce a static GitHub token into the stack. The single exception is the
+  per-workspace PAT that `github-auth auth` installs into one workspace's gh store, on
+  stdin, after `check` proved the minted credential cannot write; see **GitHub auth**.
 
 ## Tests
 Ship tests with the shell they cover. New function needs a `# @function` block and an asserting Bats test. `//tests:shell_inventory` and `//tests:doc_coverage` enforce this. No `eval`. Prefer `"${var}"`, `[[ ]]`, `$(...)`.
