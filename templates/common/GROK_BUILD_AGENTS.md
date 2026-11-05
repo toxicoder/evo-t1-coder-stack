@@ -95,6 +95,7 @@ Unless the user explicitly says otherwise, the default expectation for any code 
   ```
 
 - After the change is complete, verified, and documented, open a pull request for review. The PR title follows the same one-line rule. Structure the body as `## Problem` (one sentence), `## What changed` (file-level bullets), `## How tested` (bullets quoting the exact command and its result), `## Risks` (bullets; `None.` if none). Keep secrets, credentials, .env values, tokens, private keys, and other sensitive information out of the repository, commit messages, PR text, and code.
+- When the work becomes more than one PR, stack them: a dependent PR branches from its parent's branch and names that branch as its base, so the stack reviews and merges bottom-up and each diff carries only its own commit. Record the chain in the PR body (parent PR number and base branch), and when a parent merges, retarget its children at main and rebase them. Stack only what genuinely depends on another PR: an independent change stays based on main, because a base it does not need makes it wait on a review it does not share.
 - Every change includes updates to relevant documentation and tests (created where they do not exist); tests cover the new or modified behavior and pass before the PR is opened.
 - Do not force-push, rewrite history on shared branches, or merge the PR yourself unless the user explicitly asks. The default is to open the PR and stop.
 

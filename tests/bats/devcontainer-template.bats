@@ -202,6 +202,13 @@ setup() {
   [ "${status}" -ne 0 ]
   run grep -F 'search_tool' "${common_md}"
   [ "${status}" -eq 0 ]
+  # The PR-stacking rule travels with the seed: follow-on changes opened against
+  # main become a row of sibling PRs that each re-review the same base, and a
+  # dependent PR based on main carries its parent's diff in its own review.
+  run grep -F 'stack them' "${common_md}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'names that branch as its base' "${common_md}"
+  [ "${status}" -eq 0 ]
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
     run grep -F '${grok_build_agents}' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
