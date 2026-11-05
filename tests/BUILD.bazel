@@ -235,6 +235,7 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//litellm:config",
     ],
+    "luks-unlock.bats": [],
     "manage-docs.bats": [
         "//docs-site:sources",
         "//docs:manage-docs.sh",
