@@ -137,8 +137,8 @@ The pin has since moved to 4.145.0 (VS Code base 1.145.0), and upstream's notes
 for the two releases in between cover the built-in proxy's cookies, the web
 socket origin check and the VS Code base bump, with no terminal or clipboard
 entry, so these claims stand as measured and none was re-run
-(<https://github.com/coder/code-server/releases/tag/v4.144.0>,
-<https://github.com/coder/code-server/releases/tag/v4.145.0>).
+([v4.144.0](https://github.com/coder/code-server/releases/tag/v4.144.0),
+[v4.145.0](https://github.com/coder/code-server/releases/tag/v4.145.0)).
 
 - **A real terminal app honours OSC 52.** Over ssh from Ghostty, kitty, WezTerm
   or iTerm2, `Prefix-[`, `v`, `y` puts the selection on the laptop clipboard.
