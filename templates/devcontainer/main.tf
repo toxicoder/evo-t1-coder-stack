@@ -536,7 +536,7 @@ resource "coder_agent" "main" {
     grok_build_terminal         = chomp(file("${path.module}/grok-build-terminal.sh"))
     vscode_terminal_tmux        = chomp(file("${path.module}/vscode-terminal-tmux.sh"))
     grok_build_delegation_skill = chomp(file("${path.module}/grok-build-delegation.SKILL.md"))
-    learn_skill                 = chomp(file("${path.module}/learn.SKILL.md"))
+    ez_learn_skill              = chomp(file("${path.module}/ez-learn.SKILL.md"))
     coder_agents                = chomp(file("${path.module}/coder-agents.md"))
     mcp_cache_proxy             = chomp(file("${path.module}/mcp-cache-proxy.json"))
     # Injected verbatim into the script, which is safe enough: this is the

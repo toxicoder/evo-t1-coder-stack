@@ -64,7 +64,7 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# The two root documents the seeded /learn skill points its reader at by name: the
+# The two root documents the seeded /ez-learn skill points its reader at by name: the
 # operator front door and the always-loaded rulebook. A suite that checks those
 # citations has to be able to open the files it cites.
 filegroup(

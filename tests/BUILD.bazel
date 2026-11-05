@@ -221,10 +221,10 @@ _SUITE_PAYLOAD = {
     "install-hooks.bats": [
         "//:githooks",
     ],
-    # The suite pins what the seeded /learn skill cites: the root README and the docs
+    # The suite pins what the seeded /ez-learn skill cites: the root README and the docs
     # pages its closing bullets name, each opened with a plain file test. Both paths are
     # TOKEN_GROUPS keys now, so the pair is a declaration here rather than an exemption.
-    "learn-skill.bats": [
+    "ez-learn-skill.bats": [
         "//:templates_payload",
         "//:bazel_files",
         "//litellm:config",

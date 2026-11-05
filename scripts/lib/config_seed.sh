@@ -96,8 +96,30 @@ seed_seed_targets() {
     '~/.agents/INSTRUCTIONS.md	file:templates/common/coder-agents.md' \
     '~/.coder/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md' \
     '~/.agents/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md' \
-    '~/.coder/skills/learn/SKILL.md	file:templates/common/learn.SKILL.md' \
-    '~/.agents/skills/learn/SKILL.md	file:templates/common/learn.SKILL.md'
+    '~/.coder/skills/ez-learn/SKILL.md	file:templates/common/ez-learn.SKILL.md' \
+    '~/.agents/skills/ez-learn/SKILL.md	file:templates/common/ez-learn.SKILL.md'
+}
+
+# @function seed_retired_targets
+# Print the targets a rename left behind, one home-relative path per line. A
+# renamed skill does not uninstall itself: the boot contract only ever writes
+# an absent file, so the copy the stack seeded under the old name survives and
+# keeps shadowing whatever the CLI ships under it (a user-scope skill wins over
+# a same-named bundled one). The reseed removes those leftovers; the boot
+# scripts do the same for a workspace that never runs a reseed.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   One home-relative path per retired target
+# Returns:
+#   0
+seed_retired_targets() {
+  # shellcheck disable=SC2088
+  printf '%s\n' \
+    '~/.coder/skills/learn/SKILL.md' \
+    '~/.agents/skills/learn/SKILL.md'
 }
 
 # @function seed_container_exec
@@ -334,6 +356,55 @@ seed_sweep_stale() {
   esac
 }
 
+# @function seed_retire_renamed
+# Remove every retired target from one target tree, plus the directory it left
+# once that is empty. The marker contract decides who goes: a retired file that
+# still carries a stack marker is the stack's own leftover from before the
+# rename, and a marker-free one belongs to whoever took it over, so it stays.
+# Globals:
+#   STACK_MARKER_TEXT, STACK_MARKER_JSON, STACK_MARKER_TOML
+# Arguments:
+#   $1 - container name ("" for a home directory tree standing in for one)
+#   $2 - home root (where the home-relative retired targets live)
+#   $3 - 1 to report without deleting anything (default 0)
+# Outputs:
+#   One line per retired target, one note per target that could not be touched
+# Returns:
+#   0 when every retired target was handled; 1 when a probe or a delete the
+#   docker CLI refused left one in place
+seed_retire_renamed() {
+  local target="${1:-}" home="${2:-}" preview="${3:-0}" name path state rc=0
+  [[ -n ${home} ]] || return 0
+  while IFS= read -r name; do
+    [[ -n ${name} ]] || continue
+    path="${home}/${name#\~/}"
+    if [[ -z ${target} ]]; then
+      state="$(seed_target_owner "" "${path}")"
+    elif ! state="$(seed_target_owner "${target}" "${path}")"; then
+      note "${target}:${name}: the probe could not run - left alone"
+      rc=1
+      continue
+    fi
+    [[ ${state} == "managed" ]] || continue
+    if [[ ${preview} == "1" ]]; then
+      printf '  %s: would retire (this checkout no longer seeds this path)\n' "${name}"
+      continue
+    fi
+    if [[ -z ${target} ]]; then
+      rm -f "${path}"
+      rmdir "$(dirname "${path}")" 2>/dev/null
+    elif ! seed_container_exec "${target}" \
+      "$(cat "${_CONFIG_SEED_DIR}/probes/seed-rm-managed.sh")" \
+      sh "${path}" "${STACK_MARKER_TEXT}" "${STACK_MARKER_JSON}" "${STACK_MARKER_TOML}"; then
+      note "${target}:${name}: could not be removed - left alone"
+      rc=1
+      continue
+    fi
+    printf '  %s: retired (this checkout no longer seeds this path)\n' "${name}"
+  done <<<"$(seed_retired_targets)"
+  return "${rc}"
+}
+
 # @function seed_container_seed
 # Re-materialize the whole reseed set into one target (a container name, a
 # container's home-relative paths under a host directory standing in for one,
@@ -350,7 +421,8 @@ seed_sweep_stale() {
 #   $5 - 1 to report without writing anything (default 0)
 #   $6 - 1 to overwrite user-owned files too (default 0)
 # Outputs:
-#   One line per reseed decision, one note per skipped payload
+#   One line per reseed decision, one note per skipped payload, and the
+#   retire lines seed_retire_renamed prints for the targets a rename left behind
 # Returns:
 #   0, always
 seed_container_seed() {
@@ -441,6 +513,12 @@ seed_container_seed() {
     fi
     printf '  %s: %s\n' "${name}" "${verb}"
   done <<<"$(seed_seed_targets)"
+
+  # A rename in the set above leaves its old target behind, and the absent-only
+  # contract means nothing else ever removes it, so retire it from the same
+  # place: every caller (both workspace CLIs and the contributor seed) then
+  # unshadows the name the CLI bundles.
+  seed_retire_renamed "${target}" "${home}" "${preview}" || true
 
   return 0
 }

@@ -1,22 +1,27 @@
 #!/usr/bin/env bats
 # shellcheck shell=bash
 #
-# ## learn-skill.bats - guardrails for the stack-shipped /learn skill.
+# ## ez-learn-skill.bats - guardrails for the stack-shipped /ez-learn skill.
 #
 # Upstream /learn is a BUNDLED Grok Build skill: its download goes through the
 # CLI's proxy endpoints and needs an x.ai sign-in. This stack has no x.ai
 # credential (LiteLLM is the sole model transport), so ~/.grok/bundled/ is
 # never created and the slash name is simply missing. The stack therefore ships
-# its own templates/common/learn.SKILL.md and seeds it on the same contract as
-# the grok-build-delegation skill: the boot writes ~/.coder/skills/learn/SKILL.md
+# its own templates/common/ez-learn.SKILL.md and seeds it on the same contract as
+# the grok-build-delegation skill: the boot writes ~/.coder/skills/ez-learn/SKILL.md
 # (what the Coder Agents chat agent reads) while the file is absent, then
-# twin-copies it to ~/.agents/skills/learn/SKILL.md (what the Grok Build CLI
+# twin-copies it to ~/.agents/skills/ez-learn/SKILL.md (what the Grok Build CLI
 # reads). Skill dedupe is first-match-wins, so both spellings have to exist for
 # the two consumers.
 #
+# The seed carries its own name because a user-scope skill shadows a same-named
+# bundled one: seeded as learn it would hide the CLI's own /learn for good. The
+# copy the stack left under that name before the move is retired by both the
+# boot and the reseed, and only while it still carries the stack marker.
+#
 # This suite pins the whole seam from both ends: the two startup.sh.tftpl twins
-# carry the absent-only seed guard, the quoted LEARN_SKILL_MD_EOF heredoc and
-# the twin copy; both main.tf twins feed learn_skill into that render; the one
+# carry the absent-only seed guard, the quoted EZ_LEARN_SKILL_MD_EOF heredoc and
+# the twin copy; both main.tf twins feed ez_learn_skill into that render; the one
 # common payload parses as a skill (frontmatter first, managed-by marker below
 # it, plain ASCII), carries only keys Grok Build documents and names the tool
 # that runs its commands, and tells the truth in that marker comment about how
@@ -30,11 +35,12 @@
 # alias list stays inside what litellm/config.yaml defines, and its notes and
 # skills paths match what the seeder and the two skill readers actually use.
 #
-# Usage: bazelisk test //tests:bats_learn_skill_test   (from any cwd)
+# Usage: bazelisk test //tests:bats_ez_learn_skill_test   (from any cwd)
 # Safety: reads the two startup.sh.tftpl twins, the two main.tf twins,
-# templates/common/learn.SKILL.md, templates/common/notes-setup.sh,
-# scripts/lib/config_seed.sh, litellm/config.yaml, the root BUILD file, the
-# scripts/ tree and the repo docs; writes nothing.
+# templates/common/ez-learn.SKILL.md, templates/common/notes-setup.sh,
+# scripts/lib/config_seed.sh, scripts/lib/probes/seed-rm-managed.sh,
+# litellm/config.yaml, the root BUILD file, the scripts/ tree and the repo docs;
+# the retire tests write only into a per-test scratch home under BATS_TEST_TMPDIR.
 
 bats_require_minimum_version 1.5.0
 
@@ -46,86 +52,86 @@ PAYLOAD=""
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
-  PAYLOAD="${REPO_ROOT}/templates/common/learn.SKILL.md"
+  PAYLOAD="${REPO_ROOT}/templates/common/ez-learn.SKILL.md"
   [[ -f "${PAYLOAD}" &&
     -f "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" &&
     -f "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl" ]] ||
     skip "the learn payload or a template twin is not reachable from ${REPO_ROOT}"
 }
 
-@test "learn seed: both startup twins seed the coder copy only while it is absent" {
+@test "ez-learn seed: both startup twins seed the coder copy only while it is absent" {
   # The absent-only guard is what lets an operator keep their own /learn: the
   # boot never overwrites a file that exists, so an edited copy that dropped
   # the stack marker stays theirs. Deleting the file does not take over - the
   # guard simply writes the stack's copy back at the next boot.
   local tpl_dir
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
-    run grep -F 'if [ ! -f "$HOME/.coder/skills/learn/SKILL.md" ]; then' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F 'if [ ! -f "$HOME/.coder/skills/ez-learn/SKILL.md" ]; then' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
-    run grep -F 'mkdir -p "$HOME/.coder/skills/learn" 2>/dev/null' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F 'mkdir -p "$HOME/.coder/skills/ez-learn" 2>/dev/null' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
-    run grep -F 'cat >"$HOME/.coder/skills/learn/SKILL.md"' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F 'cat >"$HOME/.coder/skills/ez-learn/SKILL.md"' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
   done
 }
 
-@test "learn seed: both startup twins write the body through a quoted heredoc" {
+@test "ez-learn seed: both startup twins write the body through a quoted heredoc" {
   # A quoted delimiter is load-bearing: the payload is markdown full of $-text,
   # and an unquoted heredoc would expand it while the boot ran. The closing
   # delimiter has to sit alone on its own line, exactly as the opener spells it.
   local tpl_dir
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
-    run grep -F -- "<<'LEARN_SKILL_MD_EOF'" "${tpl_dir}/startup.sh.tftpl"
+    run grep -F -- "<<'EZ_LEARN_SKILL_MD_EOF'" "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
-    run grep -Fx 'LEARN_SKILL_MD_EOF' "${tpl_dir}/startup.sh.tftpl"
+    run grep -Fx 'EZ_LEARN_SKILL_MD_EOF' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
     # The body is the main.tf-supplied payload, never an inline copy of it.
-    run grep -F '${learn_skill}' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F '${ez_learn_skill}' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
   done
 }
 
-@test "learn seed: both startup twins twin-copy into .agents from the managed copy" {
+@test "ez-learn seed: both startup twins twin-copy into .agents from the managed copy" {
   # ~/.agents/skills/ is the CLI-side spelling. Copying only while absent, and
   # only from the ~/.coder copy, keeps one live source under the stack's
   # first-match-wins dedupe and leaves a hand-placed CLI-side skill alone.
   local tpl_dir n
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
-    run grep -F 'if [ ! -f "$HOME/.agents/skills/learn/SKILL.md" ]; then' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F 'if [ ! -f "$HOME/.agents/skills/ez-learn/SKILL.md" ]; then' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
-    run grep -F 'mkdir -p "$HOME/.agents/skills/learn" 2>/dev/null' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F 'mkdir -p "$HOME/.agents/skills/ez-learn" 2>/dev/null' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
-    run grep -F 'cp "$HOME/.coder/skills/learn/SKILL.md"' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F 'cp "$HOME/.coder/skills/ez-learn/SKILL.md"' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
-    run grep -F '"$HOME/.agents/skills/learn/SKILL.md" 2>/dev/null' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F '"$HOME/.agents/skills/ez-learn/SKILL.md" 2>/dev/null' "${tpl_dir}/startup.sh.tftpl"
     [ "${status}" -eq 0 ]
     # The twin is a copy of the managed file, never a second heredoc body: two
     # inline copies is exactly the drift this payload exists to avoid, so the
     # closer may appear exactly once per twin.
-    n="$(grep -cFx 'LEARN_SKILL_MD_EOF' "${tpl_dir}/startup.sh.tftpl")"
+    n="$(grep -cFx 'EZ_LEARN_SKILL_MD_EOF' "${tpl_dir}/startup.sh.tftpl")"
     assert_eq "${tpl_dir} closes the learn heredoc exactly once" "1" "${n}"
   done
 }
 
-@test "learn feed: both main.tf twins read the payload from their staged copy" {
+@test "ez-learn feed: both main.tf twins read the payload from their staged copy" {
   # Each template travels as its own tarball and the server reads the payload
   # with file() from inside the pushed copy, so a twin that lost this feed
   # fails the push outright (template_push_one's guard) or fails the render
-  # (templatefile() rejects the undefined ${learn_skill}).
+  # (templatefile() rejects the undefined ${ez_learn_skill}).
   local tpl_dir
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
-    run grep -E 'learn_skill[[:space:]]+=[[:space:]]+chomp\(file\("\$\{path\.module\}/learn\.SKILL\.md"\)\)' \
+    run grep -E 'ez_learn_skill[[:space:]]+=[[:space:]]+chomp\(file\("\$\{path\.module\}/ez-learn\.SKILL\.md"\)\)' \
       "${tpl_dir}/main.tf"
     [ "${status}" -eq 0 ]
     # chomp, like the delegation skill beside it: the heredoc closes on its own
     # line, so a trailing newline in the payload would add a blank line to the
     # written file on every seed.
-    run grep -E 'learn_skill[[:space:]]+=[[:space:]]+file\(' "${tpl_dir}/main.tf"
+    run grep -E 'ez_learn_skill[[:space:]]+=[[:space:]]+file\(' "${tpl_dir}/main.tf"
     [ "${status}" -ne 0 ]
   done
 }
 
-@test "learn payload: the parser sees frontmatter first and the marker below it" {
+@test "ez-learn payload: the parser sees frontmatter first and the marker below it" {
   # The skill parser drops a file whose first line is not exactly ---, so the
   # stack-owned marker that GROK_BUILD_AGENTS.md carries on line 2 must never
   # be promoted to line 1 here: an HTML comment on line 1 silently unregisters
@@ -144,7 +150,7 @@ setup() {
 
   local frontmatter
   frontmatter="$(sed -n "2,$((close - 1))p" "${PAYLOAD}")"
-  assert_match "name key registers the slash name" '^name:[[:space:]]*learn[[:space:]]*$' "${frontmatter}"
+  assert_match "name key registers the slash name" '^name:[[:space:]]*ez-learn[[:space:]]*$' "${frontmatter}"
   assert_match "description key is present" '^description:[[:space:]]*[^[:space:]]' "${frontmatter}"
 
   # The marker has to be provenance, not structure: below the closing fence.
@@ -157,7 +163,7 @@ setup() {
   [ "${marker}" -gt "${close}" ]
 }
 
-@test "learn payload: it stays plain ASCII" {
+@test "ez-learn payload: it stays plain ASCII" {
   # Every consumer of this file reads it as text a shell or a parser parses: a
   # curly quote or an en dash survives into the seeded skill and reads as
   # mojibake in the terminal, and byte-wise comparisons treat it as different.
@@ -172,7 +178,7 @@ setup() {
   [ "${status}" -ne 0 ]
 }
 
-@test "learn payload: the frontmatter parses and stays inside the documented keys" {
+@test "ez-learn payload: the frontmatter parses and stays inside the documented keys" {
   # This is what actually registers /learn: Grok Build's own /create-skill writes
   # name and description and nothing else, and the keys it documents are the
   # whole set a skill may carry. A key outside that set is drift the CLI ignores,
@@ -204,8 +210,8 @@ documented = set(("name", "description", "when-to-use", "allowed-tools",
 unknown = sorted(set(data) - documented)
 if unknown:
     sys.exit("FAIL: keys outside the documented set: %s" % ", ".join(unknown))
-if data.get("name") != "learn":
-    sys.exit("FAIL: name must be exactly learn, got %r" % (data.get("name"),))
+if data.get("name") != "ez-learn":
+    sys.exit("FAIL: name must be exactly ez-learn, got %r" % (data.get("name"),))
 desc = data.get("description")
 if not isinstance(desc, str) or not desc.strip():
     sys.exit("FAIL: description must be a non-empty string, got %r" % (desc,))
@@ -215,7 +221,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
 ' <"${PAYLOAD}"
 }
 
-@test "learn payload: the marker comment tells the truth about taking it over" {
+@test "ez-learn payload: the marker comment tells the truth about taking it over" {
   # Deleting the seeded file gets it back: startup.sh.tftpl writes it whenever it
   # is absent and config_seed.sh counts an absent target as seeded, so the only
   # takeover is an edit that drops the marker line (the seeder's ownership probe
@@ -235,7 +241,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   [ "${status}" -eq 0 ]
 }
 
-@test "learn payload: it names the tool that runs the commands it shows" {
+@test "ez-learn payload: it names the tool that runs the commands it shows" {
   # Grok Build's skills guide: reference tools by name, and a command written
   # inline in a skill body runs nothing until the body says who runs it. The
   # payload shows several indented command blocks, so its intro has to name
@@ -244,21 +250,108 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     'run_terminal_command'
 }
 
-@test "learn seams: config_seed names both targets against the one payload" {
+@test "ez-learn seams: config_seed names both targets against the one payload" {
   # refresh-configs reseeds from this list; a target missing here means a
   # workspace keeps a stale or absent /learn after a stack update.
   local lib="${REPO_ROOT}/scripts/lib/config_seed.sh"
   [ -f "${lib}" ] || skip "no config_seed lib under ${REPO_ROOT}/scripts/lib"
-  assert_contains_file "coder learn target" "${lib}" '~/.coder/skills/learn/SKILL\.md'
-  assert_contains_file "agents learn target" "${lib}" '~/.agents/skills/learn/SKILL\.md'
-  assert_contains_file "learn payload source" "${lib}" 'file:templates/common/learn\.SKILL\.md'
+  assert_contains_file "coder ez-learn target" "${lib}" '~/.coder/skills/ez-learn/SKILL\.md'
+  assert_contains_file "agents ez-learn target" "${lib}" '~/.agents/skills/ez-learn/SKILL\.md'
+  assert_contains_file "ez-learn payload source" "${lib}" 'file:templates/common/ez-learn\.SKILL\.md'
   # The push guard has to name the payload too, or a tree that lost it ships a
   # template whose Terraform apply dies on the missing file().
   assert_contains_file "push guard lists the payload" \
-    "${REPO_ROOT}/scripts/lib/template-push.sh" 'learn\.SKILL\.md'
+    "${REPO_ROOT}/scripts/lib/template-push.sh" 'ez-learn\.SKILL\.md'
 }
 
-@test "learn targets: every bazel label the payload cites still resolves" {
+@test "ez-learn retire: both startup twins hand /learn back to the CLI" {
+  # The seed moved off the /learn name, and the absent-only contract never
+  # deletes, so the boot has to retire the copy the stack left there. Left in
+  # place it keeps shadowing the CLI's bundled skill for the life of the volume.
+  local tpl_dir
+  for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
+    run grep -F 'for _d in "$HOME/.coder/skills/learn" "$HOME/.agents/skills/learn"; do' \
+      "${tpl_dir}/startup.sh.tftpl"
+    assert_eq "${tpl_dir} walks both retired dirs" "0" "${status}"
+    run grep -F "grep -qF 'managed-by: evo-t1-coder-stack' \"\$_d/SKILL.md\"" \
+      "${tpl_dir}/startup.sh.tftpl"
+    assert_eq "${tpl_dir} asks the marker before it deletes" "0" "${status}"
+    run grep -F 'rm -f "$_d/SKILL.md"' "${tpl_dir}/startup.sh.tftpl"
+    assert_eq "${tpl_dir} removes the retired copy" "0" "${status}"
+    run grep -F 'rmdir "$_d"' "${tpl_dir}/startup.sh.tftpl"
+    assert_eq "${tpl_dir} prunes the dir it empties" "0" "${status}"
+  done
+}
+
+@test "ez-learn retire: config_seed names the retired paths and guards the delete with the marker" {
+  local lib="${REPO_ROOT}/scripts/lib/config_seed.sh"
+  local probe="${REPO_ROOT}/scripts/lib/probes/seed-rm-managed.sh"
+  [ -f "${lib}" ] || skip "no config_seed lib under ${REPO_ROOT}/scripts/lib"
+  [ -f "${probe}" ] || skip "the retire probe is not in the tree"
+  # shellcheck source=/dev/null
+  source "${lib}"
+  local retired
+  retired="$(seed_retired_targets)"
+  assert_eq "one retired target per skill consumer" "2" \
+    "$(printf '%s\n' "${retired}" | grep -c .)"
+  assert_match "the coder copy is retired" '^~/\.coder/skills/learn/SKILL\.md$' "${retired}"
+  assert_match "the agents copy is retired" '^~/\.agents/skills/learn/SKILL\.md$' "${retired}"
+  # A rename reaches into a home on the strength of the marker, never the path
+  # alone: the container delete goes through the probe that re-checks it there.
+  assert_contains_file "the reseed calls the probe" "${lib}" 'probes/seed-rm-managed\.sh'
+}
+
+@test "ez-learn retire: only a copy the stack still owns comes away" {
+  local lib="${REPO_ROOT}/scripts/lib/config_seed.sh"
+  local probe="${REPO_ROOT}/scripts/lib/probes/seed-rm-managed.sh"
+  [ -f "${lib}" ] || skip "no config_seed lib under ${REPO_ROOT}/scripts/lib"
+  [ -f "${probe}" ] || skip "the retire probe is not in the tree"
+  local home marker status=0 out=""
+  home="$(make_scratch)"
+  marker='managed-by: evo-t1-coder-stack'
+  mkdir -p "${home}/.coder/skills/learn" "${home}/.agents/skills/learn"
+  printf -- '---\nname: learn\n---\n%s\n' "${marker}" >"${home}/.coder/skills/learn/SKILL.md"
+  printf -- '---\nname: learn\n---\nwritten by hand\n' >"${home}/.agents/skills/learn/SKILL.md"
+  # shellcheck source=/dev/null
+  source "${lib}"
+
+  # A preview names what it would take and touches nothing.
+  out="$(seed_retire_renamed "" "${home}" 1 2>&1)" || status=$?
+  assert_eq "a preview succeeds" "0" "${status}"
+  assert_match "the preview says would-retire" 'would retire' "${out}"
+  assert_file_exists "and leaves the managed copy standing" "${home}/.coder/skills/learn/SKILL.md"
+
+  out="$(seed_retire_renamed "" "${home}" 0 2>&1)" || status=$?
+  assert_eq "the reseed retires cleanly" "0" "${status}"
+  assert_file_not_exists "the stack's own old copy is gone" "${home}/.coder/skills/learn/SKILL.md"
+  assert_file_not_exists "its emptied dir went with it" "${home}/.coder/skills/learn"
+  assert_file_exists "a marker-free copy is user-owned and stays" \
+    "${home}/.agents/skills/learn/SKILL.md"
+  # Re-running has to be silent: the contract is a no-op on an already-clean tree.
+  out="$(seed_retire_renamed "" "${home}" 0 2>&1)" || status=$?
+  assert_eq "a second pass still succeeds" "0" "${status}"
+  assert_eq "and reports nothing to do" "" "${out}"
+
+  # The container path runs the same marker rule inside the container, from the
+  # probe the reseed cats in.
+  mkdir -p "${home}/probe/managed" "${home}/probe/user"
+  printf '%s\n' "${marker}" >"${home}/probe/managed/SKILL.md"
+  printf 'mine\n' >"${home}/probe/user/SKILL.md"
+  run sh "${probe}" "${home}/probe/managed/SKILL.md" "${marker}" '"__evoT1Stack": true' \
+    '__evoT1Stack = true'
+  assert_eq "the probe deletes a managed file" "0" "${status}"
+  assert_file_not_exists "and prunes the dir it leaves" "${home}/probe/managed"
+  run sh "${probe}" "${home}/probe/user/SKILL.md" "${marker}"
+  assert_eq "a user file is a no-op, not an error" "0" "${status}"
+  assert_file_exists "the user file stands" "${home}/probe/user/SKILL.md"
+  run sh "${probe}" "${home}/probe/absent/SKILL.md" "${marker}"
+  assert_eq "an absent path is a no-op too" "0" "${status}"
+  run sh "${probe}" "${home}/probe/user/SKILL.md"
+  assert_eq "and no markers proves nothing, so nothing goes" "0" "${status}"
+  assert_file_exists "the user file still stands" "${home}/probe/user/SKILL.md"
+}
+
+@test "ez-learn targets: every bazel label the payload cites still resolves" {
   # Step 4 tells the reader to run what the payload prints, so a label the tree
   # stopped declaring is a dead end in the first minute of orienting. The root
   # BUILD file carries the //:labels and scripts/<stem>.sh carries the CLI
@@ -321,7 +414,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     'bazelisk run //scripts:<stem>'
 }
 
-@test "learn docs: every doc the payload points at is still in the checkout" {
+@test "ez-learn docs: every doc the payload points at is still in the checkout" {
   # The closing bullets are the reader's map to the docs tree; a name that
   # leads nowhere costs them the answer they came for. The payload spells the
   # docs files bare under its docs/ bullet, so a citation resolves at the repo
@@ -362,7 +455,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   fi
 }
 
-@test "learn aliases: every alias the payload lists is one the transport serves" {
+@test "ez-learn aliases: every alias the payload lists is one the transport serves" {
   # The payload is the reader's shortcut for what LiteLLM answers: a name it
   # prints that model_config never defines sends them at an alias that cannot
   # resolve. The comparison is one-way on purpose - the payload tells the
@@ -408,7 +501,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     'litellm/config\.yaml'
 }
 
-@test "learn notes: the scratch path is the one notes-setup.sh builds" {
+@test "ez-learn notes: the scratch path is the one notes-setup.sh builds" {
   # notes-setup.sh builds the per-repo scratch path and points
   # core.excludesFile at that tree, so the payload has to spell the same shape
   # or it teaches a reader to keep notes somewhere nothing else finds, and the
@@ -440,7 +533,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   [ "${status}" -ne 0 ]
 }
 
-@test "learn skills: new skills go to the two paths that are actually read" {
+@test "ez-learn skills: new skills go to the two paths that are actually read" {
   # ~/.grok/skills/ is not a thing this CLI loads from (docs say it never
   # exists): the Grok Build CLI reads ~/.agents/skills/ and the Coder Agents
   # chat agent reads the ~/.coder/skills/ twin, so naming the third path is a
@@ -453,7 +546,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   [ "${status}" -ne 0 ]
 }
 
-@test "learn gates: the cached-pass guidance keeps the two strings it depends on" {
+@test "ez-learn gates: the cached-pass guidance keeps the two strings it depends on" {
   # The advice is only worth following while Bazel prints that summary for a
   # cached pass and that flag is what forces a fresh one: drop either and Step
   # 4 has the reader trust a line the runner no longer prints, or open a PR
@@ -468,7 +561,7 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     'bazelisk test [^`]*--nocache_test_results'
 }
 
-@test "learn deeper: the opt-in log sweep keeps its guardrails" {
+@test "ez-learn deeper: the opt-in log sweep keeps its guardrails" {
   # The deep pass is the one place /learn reaches into ~/.grok/sessions, and those
   # transcripts are megabytes each: an agent that forgets the two guardrails either
   # quotes a whole session into the reply or proposes edits from a single anecdote.
