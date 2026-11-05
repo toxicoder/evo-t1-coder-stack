@@ -226,6 +226,79 @@ script_default_tag() {
   [ "${status}" -ne 0 ]
 }
 
+@test "test-in-image: EVO_T1_BAZEL_CACHE mounts the cache and pins Bazel to it" {
+  source_common
+  load_shell_function "${SCRIPT}" test_in_image_run
+  local cachedir line
+  cachedir="$(make_scratch)/repo-cache"
+  export EVO_T1_BAZEL_CACHE="${cachedir}"
+  run test_in_image_run evo-t1-dev:latest "${REPO_ROOT}" coder test //:test-fast
+  [ "${status}" -eq 0 ] || {
+    printf '%s\n' "${output}" >&2
+    return 1
+  }
+  line="$(stub_log_last docker)"
+  assert_match "host cache bind-mounted" "-v ${cachedir}:/tmp/.cache/bazel-repo" "${line}"
+  # The mount and the option have to name one path: .bazelrc's ~/.cache/bazel-repo is
+  # expanded from the server's user.home, which an unmapped uid need not resolve to
+  # HOME=/tmp, and a mount Bazel never writes looks fine until the next cold run.
+  assert_match "the option names the mounted path" '--repository_cache=/tmp/.cache/bazel-repo' "${line}"
+  assert_match "the option follows the command word" \
+    'bazelisk test --repository_cache=/tmp/.cache/bazel-repo //:test-fast' "${line}"
+  # The container writes here as this uid, so the directory has to exist already.
+  [ -d "${cachedir}" ] || {
+    echo "the host cache dir was never created; the container could not write to it" >&2
+    return 1
+  }
+}
+
+@test "test-in-image: a relative EVO_T1_BAZEL_CACHE reaches docker as an absolute path" {
+  source_common
+  load_shell_function "${SCRIPT}" test_in_image_run
+  local base
+  base="$(make_scratch)"
+  # docker refuses a relative -v source, so whatever a human typed has to be resolved
+  # before it goes on the command line.
+  cd "${base}" || return 1
+  export EVO_T1_BAZEL_CACHE=rel/repo-cache
+  run test_in_image_run evo-t1-dev:latest "${REPO_ROOT}" coder test //:test-fast
+  [ "${status}" -eq 0 ] || {
+    printf '%s\n' "${output}" >&2
+    return 1
+  }
+  assert_match "the mount is absolute" \
+    "-v ${base}/rel/repo-cache:/tmp/.cache/bazel-repo" "$(stub_log_last docker)"
+  [ -d "${base}/rel/repo-cache" ]
+}
+
+@test "test-in-image: no EVO_T1_BAZEL_CACHE leaves the run as it was" {
+  source_common
+  load_shell_function "${SCRIPT}" test_in_image_run
+  unset EVO_T1_BAZEL_CACHE
+  run test_in_image_run evo-t1-dev:latest "${REPO_ROOT}" coder test //:test-fast
+  [ "${status}" -eq 0 ]
+  local line
+  line="$(stub_log_last docker)"
+  assert_not_match "no cache mount" 'bazel-repo' "${line}"
+  assert_match "the argv is untouched" 'bazelisk test //:test-fast$' "${line}"
+}
+
+@test "test-in-image: argv with no leading command warns and runs uncached" {
+  source_common
+  load_shell_function "${SCRIPT}" test_in_image_run
+  export EVO_T1_BAZEL_CACHE="$(make_scratch)/repo-cache"
+  # An option before the command word is a startup option, and a build option inserted
+  # there would be rejected. Saying so beats mounting a cache nobody reads.
+  run test_in_image_run evo-t1-dev:latest "${REPO_ROOT}" coder --version
+  [ "${status}" -eq 0 ] || {
+    printf '%s\n' "${output}" >&2
+    return 1
+  }
+  # warn() goes to stdout through log(), so the warning is in the merged capture.
+  assert_match "the gap is named" 'running without the cache mount' "${output}"
+  assert_not_match "nothing mounted" 'bazel-repo' "$(stub_log_last docker)"
+}
+
 @test "test-in-image: a missing tag is built first, then the gates run inside the image" {
   # Default stub inspect: evo-t1-dev:latest is not in the local store.
   run --separate-stderr bash "${SCRIPT}"

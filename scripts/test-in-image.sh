@@ -240,6 +240,7 @@ test_in_image_build() {
 #   VALIDATE_INNER (passed through when the caller exported it)
 #   NEXT_TELEMETRY_DISABLED (passed through when the caller exported it)
 #   USER (passed through when set, else this process's login name)
+#   EVO_T1_BAZEL_CACHE (host directory bind-mounted as Bazel's repository cache)
 # Arguments:
 #   $1 - image tag
 #   $2 - proven repo root (the source of the /work bind mount)
@@ -263,6 +264,39 @@ test_in_image_run() {
   if [ -z "${user}" ]; then
     user="$(id -u):$(id -g)"
   fi
+  # .bazelrc points --repository_cache at ~/.cache/bazel-repo, and a throwaway container
+  # throws that cache away with itself, so every run re-downloads every external archive.
+  # GitHub's release endpoint answers 504 for a slice of requests, which is enough to
+  # abort a job's analysis. Naming a host directory makes the archives a one-time
+  # download. The in-container path is set by an explicit option rather than by the rc
+  # file: `~` there is expanded from the server's own user.home, and this container runs
+  # as a uid the image passwd file does not list, so the mount could land somewhere
+  # Bazel never writes and look like a working cache for exactly one run. Unset keeps
+  # today's behaviour: nothing mounted, nothing left behind on a contributor machine.
+  local repo_cache_path=/tmp/.cache/bazel-repo
+  local -a cache_mount=()
+  if [ -n "${EVO_T1_BAZEL_CACHE:-}" ]; then
+    case "${1:-}" in
+      test | build | run | coverage | fetch | query | mod | sync)
+        mkdir -p "${EVO_T1_BAZEL_CACHE}" || {
+          err "test_in_image_run: cannot create the repository cache dir ${EVO_T1_BAZEL_CACHE}"
+          return 1
+        }
+        # docker -v refuses a relative source, so hand it the absolute form of whatever
+        # the caller named. pwd keeps symlinks as typed, which keeps a /tmp path /tmp.
+        local cache_dir
+        cache_dir="$(cd "${EVO_T1_BAZEL_CACHE}" && pwd)" || {
+          err "test_in_image_run: cannot resolve the repository cache dir ${EVO_T1_BAZEL_CACHE}"
+          return 1
+        }
+        cache_mount=(-v "${cache_dir}:${repo_cache_path}")
+        set -- "${1}" "--repository_cache=${repo_cache_path}" "${@:2}"
+        ;;
+      *)
+        warn "EVO_T1_BAZEL_CACHE is set but '$*' opens with no bazelisk command; running without the cache mount"
+        ;;
+    esac
+  fi
   log "running bazelisk $* in ${tag} as ${user} against ${root}"
   docker run --rm \
     --user "${user}" \
@@ -273,6 +307,7 @@ test_in_image_run() {
     -e NEXT_TELEMETRY_DISABLED \
     -e HOME=/tmp \
     -e "USER=${USER:-$(id -un)}" \
+    ${cache_mount[@]+"${cache_mount[@]}"} \
     --add-host=host.docker.internal:host-gateway \
     "${tag}" \
     bazelisk "$@"
