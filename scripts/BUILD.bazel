@@ -169,6 +169,12 @@ _SCRIPT_LIBS = {
     "install-hooks": [
         "lib/common.sh",
     ],
+    # The host recipe reads only host files (/etc/crypttab and friends), so its
+    # runfiles need just the two shell files it sources.
+    "luks-unlock": [
+        "lib/common.sh",
+        "lib/luks-unlock.sh",
+    ],
     "mcp-check": [
         "lib/common.sh",
         "lib/mcp_lane_report.py",
@@ -305,6 +311,13 @@ _SCRIPT_PAYLOAD = {
     "install-hooks": [
         "//:compose_file",
         "//:githooks",
+    ],
+    # The remote-unlock CLI addresses the machine it runs on: it reads
+    # /etc/crypttab, /etc/initramfs-tools and /etc/dropbear, and opens no
+    # payload of its own. //:compose_file is lib/common.sh's, which names the
+    # marker resolve_checkout probes for whether or not a caller calls it.
+    "luks-unlock": [
+        "//:compose_file",
     ],
     "mcp-check": [
         "//:compose_file",
