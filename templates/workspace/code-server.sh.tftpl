@@ -1,13 +1,26 @@
 #!/usr/bin/env bash
 # tftpl: coder_script body; $${shell} stays a shell var; $${terraform_var} is passed from main.tf.
 # Fork of the module's run.sh, trimmed to this stack: reuse the copy the
-# first install left under the prefix, otherwise install standalone there,
+# pinned release left under the prefix, otherwise install standalone there,
 # then start code-server on port 13337.
 set -eu
 PREFIX="/home/coder/.local/share/code-server"
+# The release to run, from the code_server_version local in main.tf. The
+# upstream installer takes the bare number and builds both the v<version> tag
+# and the code-server-<version>-linux-<arch>.tar.gz asset name from it, so
+# bumping the editor is one edit in main.tf and a download on the next start.
+# Without this flag the installer follows upstream latest, which lets a
+# release nobody reviewed into every new workspace with no commit here.
+CS_VERSION="${code_server_version}"
 CS_BIN="$${PREFIX}/bin/code-server"
-if [ ! -x "$${CS_BIN}" ]; then
-  curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}"
+# Version-aware, and that is the whole point of CS_BIN staying out of this
+# test: bin/code-server is a symlink to whatever release was installed LAST,
+# so testing it would keep an older copy and freeze this workspace on whatever
+# the home volume first saw. The installer unpacks each release under
+# lib/code-server-<version>/ and repoints the symlink, so this path is the one
+# that means "the pinned release is already here, skip the download".
+if [ ! -x "$${PREFIX}/lib/code-server-$${CS_VERSION}/bin/code-server" ]; then
+  curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}" --version="$${CS_VERSION}"
 fi
 if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
   ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"

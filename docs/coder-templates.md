@@ -1000,13 +1000,31 @@ rules above.
   inlined fork (`coder_script.code_server` + `coder_app.code_server`) because that
   upstream module hardcodes `/icon/code.svg` and has no icon input. The script body
   lives in a sibling `code-server.sh.tftpl` and is rendered with `templatefile()`
-  (workspace: `{ editor_folder = local.editor_folder }`; devcontainer: that plus
+  (workspace: `{ editor_folder, code_server_version }`; devcontainer: that plus
   `settings_b64`). Do not wrap that `templatefile()` in `chomp()`.
-- The `workspace` fork installs code-server **only when it is missing** from
-  `/home/coder/.local/share/code-server`, and starts it with
+- Both twins pin the editor release in one `code_server_version` local in their own
+  `main.tf`, and the script hands that value to the upstream installer as
+  `--version`. Without the flag `https://code-server.dev/install.sh` follows
+  `latest`, so a release nobody reviewed would reach every new workspace with no
+  commit in this repo - the same reason the Registry module was forked out. The two
+  locals carry the same value and `//tests:bats_coder_apps_test` fails a drift. To
+  bump: read `https://github.com/coder/code-server/releases`, edit both locals,
+  `bazelisk test //tests:bats_coder_apps_test`, `bazelisk run //scripts:push-template`,
+  then restart the workspaces. The pin is a template value and deliberately stays out
+  of `images/dev/tool-versions.env`, where every key has to be an `images/dev/Dockerfile`
+  `ARG` and this tool ships in no image at all.
+- The `workspace` fork installs code-server **only when the pinned release is
+  missing** from `/home/coder/.local/share/code-server`, and starts it with
   `--auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened <folder>`,
-  passing no settings payload. Before that launch it `mkdir -p`s the folder and, when
-  the folder is not `/home/coder`, waits up to 60 s for `<folder>/.git` so a first-start
+  passing no settings payload. The guard tests
+  `/home/coder/.local/share/code-server/lib/code-server-<version>/bin/code-server`,
+  the directory the installer unpacks, because `bin/code-server` beside it is a
+  symlink to whatever release was installed last: a guard on that symlink would keep
+  a warm volume running its first release after a bump. A bump therefore re-downloads
+  on the next start and leaves the previous release under `lib/`; removing that old
+  directory by hand is what reclaims the space. Before that launch it `mkdir -p`s the
+  folder and, when the folder is not `/home/coder`, waits up to 60 s for
+  `<folder>/.git` so a first-start
   clone and the editor no longer race. That wait loop increments with
   `waited=$((waited + 1))` (one dollar) inside the tftpl: `templatefile()` interpolates
   `${…}` and leaves `$((` alone. `$$((` would expand `$$` to the PID. `coder_agent.dir` stays unset: the agent would
@@ -1014,8 +1032,8 @@ rules above.
   editor's settings live on the per-owner `vscode-settings-<owner-id>` volume seed, not
   in a per-start merge.
 - The `devcontainer` fork has no persistent prefix to reuse - both toggle modes rebuild
-  the container that hosts the editor - so it installs fresh under `/tmp/code-server` on
-  every start, and bakes the settings seed as base64 into `settings_b64` (empty when the
+  the container that hosts the editor - so it installs the pinned release fresh under
+  `/tmp/code-server` on every start, and bakes the settings seed as base64 into `settings_b64` (empty when the
   toggle is off, so the shell skips the merge). The DinD wait lives in
   `templates/devcontainer/dind-bootstrap.sh.tftpl`.
 - Both twins' `coder_app` opens on `http://localhost:13337/?folder=<urlencoded>`. The

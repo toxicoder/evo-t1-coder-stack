@@ -7,8 +7,18 @@
 # handed one in, then start code-server on port 13337.
 set -eu
 PREFIX="/tmp/code-server"
+# The release to run, from the code_server_version local in main.tf, and the
+# twin of the same pin in templates/workspace/code-server.sh.tftpl (both twins
+# move together; //tests:bats_coder_apps_test fails if they drift). The
+# upstream installer takes the bare number and builds the v<version> tag and
+# the asset name from it. Without the flag it follows upstream latest, which
+# lets a release nobody reviewed into every workspace with no commit here.
+# This copy needs no cache test: both toggle modes rebuild the container that
+# hosts the editor, so /tmp is empty on every start and this always downloads
+# the pinned release.
+CS_VERSION="${code_server_version}"
 CS_BIN="$${PREFIX}/bin/code-server"
-curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}"
+curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}" --version="$${CS_VERSION}"
 if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
   ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
 fi

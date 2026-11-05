@@ -687,6 +687,17 @@ locals {
   # bundled set, where no vscode-alt.svg exists. Keep the SVG compact: the
   # resulting data URL has to fit workspace_apps.icon (varchar(256)).
   vscode_alt_icon = "data:image/svg+xml;base64,${filebase64("${path.module}/vscode-alt.svg")}"
+
+  # The code-server release this workspace runs, pinned because the upstream
+  # installer otherwise follows `latest` and a release nobody reviewed would
+  # reach every new workspace with no commit in this repo. Upstream tags carry
+  # a v prefix the installer adds itself, so this is the bare number. Bump it
+  # here and in the devcontainer twin (both twins move together; the coder-apps
+  # suite fails a drift), then restart the workspaces: the install guard in
+  # code-server.sh.tftpl is versioned, so an older copy already on the home
+  # volume does not hold the pin. Each bump leaves its predecessor under
+  # ~/.local/share/code-server/lib/code-server-<version>/ on that volume.
+  code_server_version = "4.145.0"
 }
 
 resource "coder_script" "code_server" {
@@ -696,7 +707,8 @@ resource "coder_script" "code_server" {
   icon         = local.vscode_alt_icon
 
   script = templatefile("${path.module}/code-server.sh.tftpl", {
-    editor_folder = local.editor_folder
+    editor_folder       = local.editor_folder
+    code_server_version = local.code_server_version
   })
 
   run_on_start = true

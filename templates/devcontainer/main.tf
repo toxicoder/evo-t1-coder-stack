@@ -822,6 +822,15 @@ locals {
   # of the splat never indexes [0] of an empty tuple, which is what the
   # use_dc ? repo[0].subagent_id ternary did during the stop plan.
   code_server_agent_id = concat(coder_devcontainer.repo[*].subagent_id, [coder_agent.main.id])[0]
+
+  # The code-server release this workspace runs, pinned because the upstream
+  # installer otherwise follows `latest` and a release nobody reviewed would
+  # reach every new workspace with no commit in this repo. Upstream tags carry
+  # a v prefix the installer adds itself, so this is the bare number. Same
+  # value as the workspace twin (both twins move together; the coder-apps
+  # suite fails a drift). Nothing to clean up on a bump: this copy installs
+  # into /tmp of a container that is rebuilt on every start.
+  code_server_version = "4.145.0"
 }
 
 resource "coder_script" "code_server" {
@@ -837,8 +846,9 @@ resource "coder_script" "code_server" {
   # (editor_folder).
 
   script = templatefile("${path.module}/code-server.sh.tftpl", {
-    editor_folder = local.editor_folder
-    settings_b64  = local.use_dc ? base64encode(jsonencode(local.vscode_module_settings)) : ""
+    editor_folder       = local.editor_folder
+    settings_b64        = local.use_dc ? base64encode(jsonencode(local.vscode_module_settings)) : ""
+    code_server_version = local.code_server_version
   })
 
   run_on_start = true

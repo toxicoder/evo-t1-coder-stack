@@ -54,14 +54,23 @@ app_block() {
 }
 
 # Print code-server.sh.tftpl the way templatefile + Coder's agent parse it:
-# templatefile interpolates ${editor_folder} / ${settings_b64} and the only
-# string escape is $${ → ${. Coder then runs that body as bash -c, so a
-# two-dollar $$((waited + 1)) expands $$ to the PID.
+# templatefile interpolates ${editor_folder} / ${settings_b64} /
+# ${code_server_version} and the only string escape is $${ → ${. Coder then
+# runs that body as bash -c, so a two-dollar $$((waited + 1)) expands $$ to
+# the PID.
 hcl_code_server_script() {
   sed -e 's/\${editor_folder}/\/home\/coder\/workspace\/demo/g' \
     -e 's/\${settings_b64}//g' \
+    -e 's/\${code_server_version}/9.9.9/g' \
     -e 's/\$\${/${/g' \
     "$1"
+}
+
+# Print the code_server_version local of one main.tf twin, bare (4.145.0), or
+# nothing when the twin stopped pinning the editor.
+code_server_pin() {
+  grep -oE 'code_server_version[[:space:]]*=[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+"' "$1" |
+    head -n 1 | sed -E 's/.*"([0-9.]+)".*/\1/'
 }
 
 @test "icon: both twins build the editor icon from the common SVG copy" {
@@ -292,6 +301,84 @@ hcl_code_server_script() {
   done
   ws="${REPO_ROOT}/templates/workspace/main.tf"
   grep -Fq -- 'editor_folder = local.repo_set ? "/home/coder/workspace/${local.repo_folder}" : "/home/coder"' "${ws}"
+}
+
+@test "editor: both twins pin the code-server release the installer fetches" {
+  # code-server.dev/install.sh follows upstream `latest` unless it gets
+  # --version, so an unreviewed release used to reach every new workspace with
+  # no commit in this repo. One code_server_version local per twin names the
+  # release, the twin's templatefile call hands it down, and the two twins have
+  # to agree: they are the same editor, so a bump that lands in one twin only
+  # ships workspaces two different versions depending on the template.
+  local tf cs pin first=""
+  for tf in "${TEMPLATE_TWINS[@]}"; do
+    pin="$(code_server_pin "${tf}")"
+    [ -n "${pin}" ] || { echo "${tf}: no code_server_version local, so the editor floats to latest" >&2; return 1; }
+    if [ -z "${first}" ]; then
+      first="${pin}"
+    elif [ "${pin}" != "${first}" ]; then
+      echo "${tf}: code_server_version ${pin} drifts from the other twin (${first})" >&2
+      return 1
+    fi
+    grep -Fq 'code_server_version = local.code_server_version' "${tf}" || {
+      echo "${tf}: the code-server script never receives local.code_server_version" >&2
+      return 1
+    }
+  done
+  for cs in "${CS_TFTPL_TWINS[@]}"; do
+    grep -Fq 'CS_VERSION="${code_server_version}"' "${cs}" || {
+      echo "${cs}: CS_VERSION is not the code_server_version templatefile variable" >&2
+      return 1
+    }
+    grep -Fq -- '--version="$${CS_VERSION}"' "${cs}" || {
+      echo "${cs}: the installer runs without --version, so the pin is decorative" >&2
+      return 1
+    }
+  done
+}
+
+@test "editor: no twin calls the code-server installer unpinned" {
+  # The line, not just the flag somewhere in the file: a second installer call
+  # that lost its --version would fetch latest and overwrite the pinned copy.
+  local cs line
+  for cs in "${CS_TFTPL_TWINS[@]}"; do
+    line="$(grep -n 'code-server\.dev/install\.sh' "${cs}" || true)"
+    [ -n "${line}" ] || { echo "${cs}: the installer call is gone" >&2; return 1; }
+    if printf '%s\n' "${line}" | grep -vq -- '--version='; then
+      echo "${cs}: an installer call carries no --version:" >&2
+      printf '%s\n' "${line}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "editor: the workspace reuse test names the pinned version, so a bump lands" {
+  # The workspace twin keeps the editor on the home volume and skipped the
+  # install whenever bin/code-server existed. That path is a symlink to the
+  # LAST release installed, so a volume that once held an older copy kept
+  # serving it after a pin bump: the pin moved and the editor did not. The
+  # guard has to name the versioned directory the installer unpacks, and the
+  # dev-container twin keeps its unconditional fetch because both toggle modes
+  # rebuild the container that hosts the editor.
+  local ws dc
+  ws="${REPO_ROOT}/templates/workspace/code-server.sh.tftpl"
+  dc="${REPO_ROOT}/templates/devcontainer/code-server.sh.tftpl"
+  grep -Fq 'if [ ! -x "$${PREFIX}/lib/code-server-$${CS_VERSION}/bin/code-server" ]; then' "${ws}" || {
+    echo "${ws}: the reuse test does not name the pinned release" >&2
+    return 1
+  }
+  if grep -Fq 'if [ ! -x "$${CS_BIN}" ]; then' "${ws}"; then
+    echo "${ws}: the reuse test is back on the bin/code-server symlink" >&2
+    return 1
+  fi
+  grep -Fq 'lib/code-server-$${CS_VERSION}' "${ws}" || {
+    echo "${ws}: no versioned install path" >&2
+    return 1
+  }
+  if grep -Fq 'if [ ! -x' "${dc}"; then
+    echo "${dc}: this twin rebuilds its container, so it must always install the pin" >&2
+    return 1
+  fi
 }
 
 @test "editor: both twins create the folder and wait out the clone before launching" {
