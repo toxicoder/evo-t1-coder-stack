@@ -20,6 +20,14 @@
 # can catch TensorFold's status-less refusal at this LiteLLM tag, the policy names
 # the Spark lanes only, and no key the pinned tag lacks was pasted in.
 #
+# And it pins the split that fixes a hung compaction: DefaultRetries keeps its two
+# attempts for the NoRoom refusal while ServiceUnavailableErrorRetries stays 0,
+# because a stream that dies before its first chunk raises a ServiceUnavailableError
+# subclass and is the one re-dispatched onto the same session-pinned box. It also
+# pins that both main.tf twins raise the CLI's 300 s compaction wall-clock budget to
+# the chain's 1200 s through GROK_COMPACTION_WALL_CLOCK_SECS, and that the budget
+# never gets pasted into the TOML twins, where no table reads it.
+#
 # And it pins the background health-check cadence: a probe is a real thinking generation
 # on a GPU box whose prompt cache runs full, so the interval has a floor and the round
 # has a concurrency ceiling, and the two keys stay under general_settings where the proxy
@@ -167,6 +175,33 @@ entries_for() {
   [[ "${checked}" -gt 0 ]] || skip "no main.tf under ${REPO_ROOT}/templates"
 }
 
+@test "compaction: every main.tf twin raises the CLI's 300 s budget to the chain's 1200 s" {
+  # The budget is applied after the response returns, so at 300 s it discarded a
+  # summary that had already streamed in and made the session regenerate it.
+  # 1200 matches inference_idle_timeout_secs and request_timeout above.
+  checked=0
+  for tf in "${REPO_ROOT}"/templates/*/main.tf; do
+    checked=$((checked + 1))
+    run grep -Eq '^[[:space:]]*GROK_COMPACTION_WALL_CLOCK_SECS = "1200"$' "${tf}"
+    [ "${status}" -eq 0 ] || { echo "main.tf does not raise the compaction budget: ${tf}" >&2; return 1; }
+  done
+  [[ "${checked}" -gt 0 ]] || skip "no main.tf under ${REPO_ROOT}/templates"
+}
+
+@test "compaction: the budget stays out of the TOML twins" {
+  # The CLI has a remote-settings key of this name and no TOML table that reads
+  # it, so a config that looks right is silently ignored -- the same trap the
+  # stack already documented for [mcp] max_output_bytes. It rides the env only.
+  checked=0
+  for tpl in "${REPO_ROOT}"/templates/*/grok-config.toml.tftpl; do
+    [[ -f "${tpl}" ]] || continue
+    checked=$((checked + 1))
+    run grep -Eq 'compaction_wall_clock_budget_secs|GROK_COMPACTION_WALL_CLOCK_SECS[[:space:]]*=' "${tpl}"
+    [ "${status}" -ne 0 ] || { echo "the budget was pasted into TOML, where nothing reads it: ${tpl}" >&2; return 1; }
+  done
+  [[ "${checked}" -gt 0 ]] || skip "no grok-config.toml.tftpl under ${REPO_ROOT}/templates"
+}
+
 # retry_policy_block — the model_group_retry_policy mapping, its own line plus
 # every deeper-indented line, stopping at its first sibling key. Slicing it out
 # is what makes the assertions below about the policy: a grep over the whole
@@ -204,7 +239,11 @@ policy_fields_for() {
     fields="$(policy_fields_for "${group}")"
     assert_match "DefaultRetries is set for ${group}" 'DefaultRetries: 2' "${fields}"
     assert_match "500 is retried for ${group}" 'InternalServerErrorRetries: 2' "${fields}"
-    assert_match "503 is retried for ${group}" 'ServiceUnavailableErrorRetries: 2' "${fields}"
+    # Not 2: this is the field a stream that died before its first chunk lands
+    # on, and re-dispatching that to the same session-pinned box is the hang.
+    # See the companion test below.
+    assert_match "a dead stream is not re-dispatched for ${group}" \
+      'ServiceUnavailableErrorRetries: 0' "${fields}"
     assert_match "400 is not retried for ${group}" 'BadRequestErrorRetries: 0' "${fields}"
     assert_match "401 is not retried for ${group}" 'AuthenticationErrorRetries: 0' "${fields}"
     assert_match "content policy is not retried for ${group}" \
@@ -213,6 +252,27 @@ policy_fields_for() {
     # status-less APIConnectionError shape, it does not lengthen the chain.
     assert_eq "${group} declares exactly six fields" "6" "$(printf '%s\n' "${fields}" | grep -c ':')"
   done
+}
+
+@test "retry: the NoRoom retry and the dead-stream retry stay on separate fields" {
+  # The whole fix rests on these two classes reaching two different fields, so
+  # pin both halves. At v1.102.1 a TensorFold NoRoom refusal arrives as
+  # APIConnectionError, which is absent from _RETRIES_BY_EXCEPTION_TYPE, so the
+  # MRO walk in get_retry_from_policy.py falls through to DefaultRetries. A
+  # stream that dies before its first chunk raises MidStreamFallbackError, which
+  # subclasses ServiceUnavailableError, so the walk stops on
+  # ServiceUnavailableErrorRetries and never reaches DefaultRetries. Zeroing the
+  # second therefore cannot undo the first: 1200 s once, not three times.
+  local group fields
+  for group in agent agent-low agent-medium agent-xhigh; do
+    fields="$(policy_fields_for "${group}")"
+    assert_match "NoRoom still gets its two attempts on ${group}" 'DefaultRetries: 2' "${fields}"
+    assert_match "a dead stream gets none on ${group}" 'ServiceUnavailableErrorRetries: 0' "${fields}"
+  done
+  # And TimeoutErrorRetries is the wrong answer to this problem: the hang never
+  # becomes a litellm.Timeout, so a policy that zeroes only it changes nothing.
+  run grep -Eq 'TimeoutErrorRetries' "${CONFIG}"
+  [ "${status}" -ne 0 ]
 }
 
 @test "retry: the policy stays scoped to the Spark lanes" {

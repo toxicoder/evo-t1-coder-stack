@@ -712,6 +712,33 @@ drives the server's experimental chat API:
 Coder's optional AI Gateway proxy stays off - LiteLLM remains the model transport,
 which is why no AI-Gateway keys exist in `docker-compose.yml`.
 
+### Whose compaction is whose
+
+The `compaction` pin above belongs to Coder's chat agent and to nothing else. It is one
+of the four auxiliary lanes the seeder writes into Coder's own model-config store, so it
+decides which alias serves *that* agent's summariser and title call. It never reaches a
+Grok Build CLI: the CLI reads no Coder table, and its compaction summary is an
+**in-session call on the session model** - the `[models] default` alias, `agent` here -
+which is why the summary inherits that lane's output ceiling (measured on the wire at
+`max_tokens: 32768`) instead of a cheap helper lane's. `[models] session_summary` is not
+that call either; the key serves titles and the session recap.
+
+So the two compactions fail for unrelated reasons, and the fix for one is not the fix
+for the other:
+
+- Coder's chat dies at its context budget when `compaction` and `title_generation` both
+  sit on a dead `chat` alias. `bazelisk run //scripts:coder-agents -- --apply` moves the
+  stale pin, as above.
+- A Grok Build session logging `compact failed: exceeded wall-clock budget 300s
+  (runaway generation)` is the session-model summary hanging before its first token on
+  the lane that also serves the whole agent loop. Its only live bounds are
+  `GROK_COMPACTION_WALL_CLOCK_SECS`, rendered into the agent `env` because no TOML table
+  takes it, and the proxy's `request_timeout`; [troubleshooting.md](troubleshooting.md)
+  owns the measurement and the retry split that stops one hang being bought three times.
+- The thresholds are separate as well. `context_limit` above is Coder's own compaction
+  budget with its 70 per cent default, while the CLI fires at
+  `[session] auto_compact_threshold_percent` (75) of its 262144-token window.
+
 ### The delegation sketch
 
 Chat on the Agents page -> if the ask needs more tooling than chat has, Coder Agents

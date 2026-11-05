@@ -553,6 +553,24 @@ resource "coder_agent" "main" {
     # honour. 40000 keeps one full 25-result searxng answer off the 20000-byte
     # default that governs otherwise.
     GROK_MAX_MCP_OUTPUT_BYTES = "40000"
+    # The compaction summary's wall-clock budget. The CLI ships it at 300 s and
+    # exposes it only as this env var plus a remote-settings key
+    # (compaction_wall_clock_budget_secs, read in
+    # crates/codegen/xai-grok-shell/src/util/config/resolve/compaction.rs, which
+    # also names GROK_COMPACTION_WALL_CLOCK_SECS); no TOML table takes it, so it
+    # rides the env like the MCP cap above. Verified honoured on 1.0.70: setting
+    # it to 1 makes /compact fail with "exceeded wall-clock budget 1s".
+    #
+    # 1200 aligns it with every other deadline in this chain
+    # (inference_idle_timeout_secs per model and globally, and the proxy's
+    # request_timeout). 300 s does not fit the work the CLI asks for: the
+    # summary call inherits the session lane's max_completion_tokens, measured
+    # on the wire at max_tokens=32768, and a full-length summary of a 200k-token
+    # history streams for roughly 1090 s on a Spark. The budget is applied only
+    # after the response returns -- it never aborts a call in flight -- so at 300
+    # s the only thing it did was discard a summary that had already arrived and
+    # make the session generate it again from zero.
+    GROK_COMPACTION_WALL_CLOCK_SECS = "1200"
     # No CODER_AGENT_EXP_* overrides on purpose (verified against the v2.36.6
     # binary + its agentcontextconfig source): these keys REPLACE the agent's
     # discovery defaults rather than appending to them, and the defaults are

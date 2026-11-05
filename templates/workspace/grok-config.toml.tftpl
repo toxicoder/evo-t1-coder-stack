@@ -66,12 +66,23 @@ web_search = "agent"
 default_reasoning_effort = "xhigh"
 
 # Global streaming-idle deadline for every model that does not pin its own
-# value below: the compaction summary, the web_search digest and the image
-# description all ride this lane, and on a busy Spark a large compaction
-# summary can run far past the CLI's 600 s default. 1200 s matches the
-# per-model values below and the proxy's request_timeout, so one 20-minute
-# deadline covers the whole client-to-backend chain and long compactions are
-# not cut off in the middle.
+# value below. 1200 s matches the per-model values below and the proxy's
+# request_timeout, so one 20-minute deadline covers the whole client-to-backend
+# chain for the turns this key really governs: the main agent loop, the
+# web_search digest and the image description.
+#
+# What it does NOT govern is the compaction summary, whatever this comment used
+# to claim. Measured on 1.0.70 against an upstream held open without sending a
+# byte: the client waited past 3000 s and the CLI reported
+# inferenceIdleTimeouts = 0 in every session whose compaction hung, so neither
+# this key nor the per-model copies below reach that call. The compaction
+# summary inherits the session lane's max_completion_tokens (measured on the
+# wire at max_tokens=32768) and its only live bound is the proxy's
+# request_timeout, which is why litellm/config.yaml declares one attempt for a
+# stream that died before its first chunk. The compaction wall-clock budget that
+# does exist is a separate 300 s default, is set from the environment by
+# GROK_COMPACTION_WALL_CLOCK_SECS (rendered by main.tf, not here, since no TOML
+# table accepts it), and is evaluated only once the response returns.
 inference_idle_timeout_secs = 1200
 
 # How this workspace announces itself to the LiteLLM proxy: one key per
