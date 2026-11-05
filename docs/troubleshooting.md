@@ -304,6 +304,115 @@ bazelisk run //scripts:spark-verify -- --needle 10.0.0.5   # force it: the box g
   confirmation of it. `--no-tests` skips all four recipe probes for a quick read-only
   pass, and that is what `//scripts:bootstrap` runs.
 
+### Sessions log `compact failed: exceeded wall-clock budget 300s (runaway generation)` -> a compaction stream that never sent a token, bought three times
+
+Cause: the auto-compaction summary hung before its first token and nothing abandoned it.
+The CLI's 300 s wall-clock budget does not abort a call in flight - it is evaluated only
+after the response returns - so at 300 s its entire effect was to reject a summary that
+had already streamed in and make the session generate it again. Meanwhile the proxy
+re-dispatched every hung attempt to the same session-pinned Spark box, so one hang cost
+up to three `request_timeout` periods. Both halves are fixed here.
+
+- Prove recurrence before you touch anything. The events are in each session's
+  `updates.jsonl`, so one pass over the store counts attempts against outcomes. The
+  store is the shared profile volume, so run it where the sessions are (inside a
+  workspace), and leave the `~/.grok/sessions` path %-escaped as the CLI wrote it:
+
+```sh
+grep -rho --include=updates.jsonl \
+  '"sessionUpdate":[[:space:]]*"auto_compact_[a-z]*"' ~/.grok/sessions |
+  sort | uniq -c
+```
+
+  Read `auto_compact_failed` against `auto_compact_started`. Over the 11-day window this
+  was investigated, the store held 82 failures across 15 sessions in 3 workspaces,
+  escalating from a 39 per cent failure rate to 85 per cent (45 attempts in one day, 19
+  of them in the worst single session), and 3 of the 15 sessions ended on a dangling
+  `auto_compact_started` and were abandoned.
+
+- Which sessions, worst first, with the same `head` cap so a busy store stays readable:
+
+```sh
+grep -rc --include=updates.jsonl \
+  '"sessionUpdate":[[:space:]]*"auto_compact_failed"' ~/.grok/sessions |
+  awk -F: '$NF+0 > 0 {print $NF, $0}' | sort -rn | head -5
+```
+
+Each link in the chain, measured:
+
+- Auto-compaction always fires at about 75 per cent of the 262144-token window: all 124
+  `auto_compact_started` events carried `tokens_used` between 196,636 and 214,585.
+- The summary call rides the **session model**, the `agent*` thinking family, and
+  inherits its output ceiling: captured on the wire as `max_tokens: 32768`, alongside 25
+  tool schemas and the workspace's `x-litellm-session-id` affinity header.
+  `[models] session_summary` is **not** that lane - it serves titles and the session
+  recap.
+- In every one of the 79 wall-clock failures no first token ever arrived. Successful
+  compactions do stream: their `elapsed_ms` spans 107 s to 1915 s, and 18 of the 36 ran
+  past 300 s, which is the summary the budget was discarding.
+- Nothing on the client aborts the hang. `signals.json` reports `inferenceIdleTimeouts`
+  at 0 or 1 across the failing sessions, and no hung call was ever cut off at 1200 s, so
+  the 1200 s `inference_idle_timeout_secs` is not on this path. Reproduced directly: with
+  an upstream held open and no byte sent, the CLI was still waiting at 3000 s.
+- The only live bound was the proxy's `request_timeout: 1200`, multiplied by every
+  attempt. Observed failure durations were 1366 s, about 2400 s and 3465 s - the deadline
+  honoured once, twice and three times.
+- Those re-dispatches came from this repo's own config. At the pinned tag
+  `ghcr.io/berriai/litellm:v1.102.1` a stream that dies before its first chunk raises
+  `MidStreamFallbackError`, which subclasses `ServiceUnavailableError`
+  (`litellm/exceptions.py:1114`), and `get_num_retries_from_retry_policy` walks the
+  exception MRO most-specific first, so it lands on `ServiceUnavailableErrorRetries` and
+  never reaches `DefaultRetries`. A hung request never cools the box either: cooldown
+  hard-excludes any exception whose string contains `APIConnectionError`, and
+  `_deployment_ids_to_skip_on_retry` only skips deployments that answered a non-retryable
+  int status code. Under the workspace-wide `x-litellm-session-id` pin every attempt
+  therefore returned to the same saturated box.
+
+What the fix changed, and how to land it:
+
+```sh
+grep -n 'ServiceUnavailableErrorRetries\|DefaultRetries' litellm/config.yaml
+```
+
+- `ServiceUnavailableErrorRetries` is 0, not 2, on each of the four Spark lanes (`agent`,
+  `agent-low`, `agent-medium`, `agent-xhigh`): one attempt for a dead stream, so a hung
+  request is bounded at 1200 s instead of up to 3465 s. `DefaultRetries: 2` is untouched
+  on purpose - TensorFold's `NoRoom` refusal arrives as `APIConnectionError`, which is
+  absent from `_RETRIES_BY_EXCEPTION_TYPE`, so that walk falls through to
+  `DefaultRetries` and keeps its two attempts. The proxy reads the file at boot:
+
+```sh
+docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
+```
+
+- Both `templates/*/main.tf` twins carry `GROK_COMPACTION_WALL_CLOCK_SECS = "1200"` in
+  the agent `env` merge, next to `GROK_MAX_MCP_OUTPUT_BYTES`. The CLI reads that budget
+  from the environment only (resolver
+  `crates/codegen/xai-grok-shell/src/util/config/resolve/compaction.rs`, remote-settings
+  key `compaction_wall_clock_budget_secs`); no TOML table accepts it, so a line pasted
+  into `grok-config.toml` is silently ignored, the same trap `[mcp] max_output_bytes`
+  already documents. It is honoured: setting it to `1` makes `/compact` fail with
+  `exceeded wall-clock budget 1s`. Push, then stop and start the workspace so the new
+  agent env lands:
+
+```sh
+bazelisk run //scripts:push-template
+```
+
+What it deliberately does not do:
+
+- It does not stop the upstream from hanging. It stops the hang being bought three times,
+  and stops a finished summary being thrown away.
+- `TimeoutErrorRetries: 0` would not help: the hang never becomes a `litellm.Timeout`.
+- `ServiceUnavailableErrorRetries` is the only one of the two that can be zeroed; zeroing
+  `DefaultRetries` breaks the `NoRoom` contract above.
+- The lever left, not pulled: `[session] auto_compact_threshold_percent` (75 in both
+  template twins) decides where auto-compaction fires, so lowering it shrinks the
+  ~200k-token summary input. The store shows no size threshold separating failure from
+  success - the successes reach the same 197k-214k range - so this is a load reduction to
+  try if hangs persist, not a proven cure. Re-run the first command above to measure
+  whether the ratio moved.
+
 ### Coder Agents chat refuses every prompt, or its model dropdown is empty -> no model config
 
 Cause: that chat has no model config on this deployment, so there is nothing to route to.
