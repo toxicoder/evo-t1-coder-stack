@@ -47,6 +47,12 @@ concurrency:
 jobs:
   bazel:
     runs-on: ubuntu-latest
+    # The gate container is throwaway, so Bazel's repository cache would die with it and
+    # every job would re-download every external archive from GitHub's release endpoint -
+    # which answers 504 for a slice of requests, and one 504 aborts the whole analysis.
+    # The two cache steps below keep that directory between runs, and each gate step
+    # exports EVO_T1_BAZEL_CACHE so the runner mounts it and points --repository_cache
+    # at it. RUNNER_TEMP is what both halves agree on: the cache steps' runner.temp.
     steps:
       - uses: actions/checkout@v5
 
@@ -88,8 +94,20 @@ jobs:
         run: |
           docker tag "ghcr.io/${{ github.repository }}/evo-t1-dev:latest" evo-t1-dev:latest
 
+      # Keyed on the module files: a dependency bump changes the key and the new
+      # archives are fetched fresh, while a normal commit reuses what is already there.
+      # restore-keys lets a new key start from the previous cache instead of nothing.
+      - name: Restore the Bazel repository cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/bazel-repo-cache
+          key: bazel-repo-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc') }}
+          restore-keys: |
+            bazel-repo-
+
       - name: Bazel test-fast, lint and validate in the image
         run: |
+          export EVO_T1_BAZEL_CACHE="${RUNNER_TEMP}/bazel-repo-cache"
           ./scripts/test-in-image.sh -- test //:test-fast --config=ci
           ./scripts/test-in-image.sh -- test //:lint --config=ci --test_tag_filters=manual
           VALIDATE_INNER=1 ./scripts/test-in-image.sh -- run //:validate
@@ -102,12 +120,23 @@ jobs:
       # signal; this one is the full one.
       - name: Full gate in the image
         run: |
+          export EVO_T1_BAZEL_CACHE="${RUNNER_TEMP}/bazel-repo-cache"
           ./scripts/test-in-image.sh -- test //:test-all --config=ci
 
       - name: Compose and env sample
         run: |
           docker compose config -q
           cmp .env.sample .env.example
+
+      # always(): the archives fetched before a red gate are exactly what the next run
+      # would otherwise re-download, so a failure is worth saving them on too. A fork PR
+      # has no cache write and this step only warns.
+      - name: Save the Bazel repository cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/bazel-repo-cache
+          key: bazel-repo-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc') }}
 
   # The exported site is deploy-docs.yml's job; this proves the pages compile, the
   # page contract holds, and nav.json still matches the files on disk. Same image
@@ -116,6 +145,8 @@ jobs:
   # actions/setup-node happens to install.
   docs:
     runs-on: ubuntu-latest
+    # Same repository cache as the bazel job: this job's //docs-site targets are the ones
+    # that pull rules_python, the archive whose 504 has been deciding this job by luck.
     steps:
       - uses: actions/checkout@v5
 
@@ -134,9 +165,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Restore the Bazel repository cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/bazel-repo-cache
+          key: bazel-repo-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc') }}
+          restore-keys: |
+            bazel-repo-
+
       - name: Docs site in the image
         run: |
           export NEXT_TELEMETRY_DISABLED=1
+          export EVO_T1_BAZEL_CACHE="${RUNNER_TEMP}/bazel-repo-cache"
           ./scripts/test-in-image.sh -- test //docs-site:typecheck //docs-site:unit --test_tag_filters=manual
           ./scripts/test-in-image.sh -- test //docs-site:nav_test
           ./scripts/test-in-image.sh -- run //docs-site:npm -- run nav:check
+
+      - name: Save the Bazel repository cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/bazel-repo-cache
+          key: bazel-repo-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock', '.bazelrc') }}
