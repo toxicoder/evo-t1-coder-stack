@@ -53,7 +53,9 @@ export function resolveHrefWith(
   find: (segments: string[]) => HrefTarget | undefined
 ): { href: string | undefined; external?: boolean } {
   if (!href) return { href };
-  const [target, hash] = href.split("#", 2);
+  // A destructure of `string[]` yields `string | undefined` once index access is checked;
+  // both fields have a defined empty-string value, so the tests below stay total.
+  const [target = "", hash = ""] = href.split("#", 2);
   if (target.length === 0) return { href };
   if (/^[a-z][\w+.-]*:/iu.test(target) || target.startsWith("//")) return { href, external: true };
 

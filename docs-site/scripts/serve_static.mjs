@@ -1,3 +1,4 @@
+// @ts-check
 /*
  * Static file server for the exported docs site (verification helper).
  *
@@ -12,6 +13,7 @@ import { extname, join, normalize, resolve, sep } from "node:path";
 const port = Number(process.argv[2] ?? 3131);
 const root = resolve(process.argv[3] ?? "out");
 
+/** @type {Readonly<Record<string, string>>} */
 const TYPES = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript",
@@ -26,42 +28,56 @@ const TYPES = {
   ".map": "application/json",
 };
 
-const server = createServer(async (req, res) => {
-  try {
-    const url = new URL(req.url ?? "/", "http://127.0.0.1");
-    let pathname = decodeURIComponent(url.pathname);
-    const candidates = [
-      join(root, pathname),
-      join(root, pathname, "index.html"),
-    ];
-    let file;
-    let body;
-    for (const candidate of candidates) {
-      // A plain prefix test would let a sibling `out-secret/` through.
-      const inside = normalize(candidate);
-      if (inside !== root && !inside.startsWith(root + sep)) continue;
-      try {
-        body = await readFile(inside);
-        file = inside;
-        break;
-      } catch {
-        /* try the next candidate */
+const server = createServer(
+  /**
+   * Serve one request out of the exported tree.
+   *
+   * @param {import("node:http").IncomingMessage} req Incoming request.
+   * @param {import("node:http").ServerResponse} res Response to write.
+   * @returns {Promise<void>} Resolves once the response has been written.
+   */
+  async (req, res) => {
+    try {
+      const url = new URL(req.url ?? "/", "http://127.0.0.1");
+      let pathname = decodeURIComponent(url.pathname);
+      const candidates = [
+        join(root, pathname),
+        join(root, pathname, "index.html"),
+      ];
+      /** @type {string | undefined} */
+      let file;
+      /** @type {Buffer | undefined} */
+      let body;
+      for (const candidate of candidates) {
+        // A plain prefix test would let a sibling `out-secret/` through.
+        const inside = normalize(candidate);
+        if (inside !== root && !inside.startsWith(root + sep)) continue;
+        try {
+          body = await readFile(inside);
+          file = inside;
+          break;
+        } catch {
+          /* try the next candidate */
+        }
       }
+      // `file` is only ever set alongside `body`, so testing both costs nothing and keeps
+      // the compiler able to see that the response below has a path to name.
+      if (!body || file === undefined) {
+        const notFound = await readFile(join(root, "404.html")).catch(() => undefined);
+        res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+        res.end(notFound ?? Buffer.from("not found"));
+        return;
+      }
+      // The table is a Record, so an extension it does not list is a lookup miss.
+      const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
+      res.writeHead(200, { "Content-Type": type, "Content-Length": body.byteLength });
+      res.end(body);
+    } catch (error) {
+      res.writeHead(500);
+      res.end(String(error));
     }
-    if (!body) {
-      const notFound = await readFile(join(root, "404.html")).catch(() => undefined);
-      res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(notFound ?? Buffer.from("not found"));
-      return;
-    }
-    const type = TYPES[extname(file).toLowerCase()] ?? "application/octet-stream";
-    res.writeHead(200, { "Content-Type": type, "Content-Length": body.byteLength });
-    res.end(body);
-  } catch (error) {
-    res.writeHead(500);
-    res.end(String(error));
   }
-});
+);
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`serving ${root} on http://127.0.0.1:${port}\n`);

@@ -40,12 +40,17 @@ function parse(path: string): Page {
   const raw = readFileSync(join(docsRoot, path), "utf8");
   const match = /^---\n([\s\S]*?)\n---\n/u.exec(raw);
   if (!match) return { path, body: raw, frontmatter: {} };
+  // A RegExpExecArray is indexed, so each group arrives `string | undefined` even though
+  // this pattern always lets both groups participate.
+  const [wholeMatch = "", frontmatterBlock = ""] = match;
   const frontmatter: Record<string, string | undefined> = {};
-  for (const line of match[1].split("\n")) {
+  for (const line of frontmatterBlock.split("\n")) {
     const pair = /^(title|description|tags):[ \t]*(.*)$/u.exec(line);
-    if (pair) frontmatter[pair[1]] = pair[2].trim();
+    const [, key, value = ""] = pair ?? [];
+    if (key === undefined) continue;
+    frontmatter[key] = value.trim();
   }
-  return { path, body: raw.slice(match[0].length), frontmatter };
+  return { path, body: raw.slice(wholeMatch.length), frontmatter };
 }
 
 /** The page body with fenced code blocks removed, so fences cannot satisfy a body check. */
@@ -83,9 +88,13 @@ function fenceLanguages(body: string): string[] {
 
 /** Links into the corpus, which are written file-relative the way href.ts resolves them. */
 function contentLinks(body: string): string[] {
-  return [...withoutFences(body).matchAll(/\]\(([^)\s]+)\)/gmu)]
-    .map((match) => match[1])
-    .filter((target) => !target.includes(":") && !target.startsWith("#"));
+  const targets: string[] = [];
+  // Destructuring the match keeps `target` a string; group 1 always participates here.
+  for (const [, target = ""] of withoutFences(body).matchAll(/\]\(([^)\s]+)\)/gmu)) {
+    if (target.includes(":") || target.startsWith("#")) continue;
+    targets.push(target);
+  }
+  return targets;
 }
 
 const pages = contentPages(docsRoot).map(parse);
@@ -110,7 +119,10 @@ describe("docs page contract", () => {
       });
 
       it("starts its headings at level 2", () => {
-        const levels = [...withoutFences(page.body).matchAll(/^(#{1,6})[ \t]/gmu)].map((m) => m[1].length);
+        const levels: number[] = [];
+        for (const [, hashes = ""] of withoutFences(page.body).matchAll(/^(#{1,6})[ \t]/gmu)) {
+          levels.push(hashes.length);
+        }
         for (const level of levels) expect(level).toBeGreaterThanOrEqual(2);
       });
 
@@ -128,7 +140,7 @@ describe("docs page contract", () => {
 
       it("links the corpus by file-relative paths that resolve", () => {
         for (const target of contentLinks(page.body)) {
-          const file = target.split("#")[0];
+          const [file = ""] = target.split("#");
           expect(/\.(?:md|mdx)$/u.test(file), `link target ${target} is not a docs page`).toBe(true);
           const abs = resolve(docsRoot, dirname(page.path), file);
           expect(existsSync(abs), `dead link ${target} in ${page.path}`).toBe(true);
