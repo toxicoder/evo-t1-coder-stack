@@ -697,7 +697,11 @@ docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retr
 - Permanent fix: rebuild the image and the workspace, which then starts from the
   image's own copy. See the next two entries for the command.
 
-### `/ez-learn` missing from Grok Build on code-server web -> the stack's own seed is what provides it
+### A stack skill command missing from Grok Build on code-server web -> the stack's own seed is what provides it
+
+Covers all three stack-shipped skill commands: `/ez-learn`, `/ez-skillify` and
+`/ez-create-skill`. The diagnosis and the commands below are identical for each one; only
+the name changes, so read `<name>` as whichever of the three you are chasing.
 
 Cause: there is no upstream `/learn` to miss. The 1.0.70 executable contains no
 `/learn` string, xAI's skills and slash-command docs name no bundled `learn`, and the
@@ -707,30 +711,36 @@ published copy to vendor in. The CLI does download its built-in bundles at runti
 sign-in: from a workspace `api.x.ai` answers 404 and `cli-chat-proxy.grok.com`
 answers 401 anonymously, and a session started with `--sandbox off` still leaves
 `~/.grok/bundled/` uncreated. LiteLLM is the sole model transport here, there is no
-x.ai credential, and the fetch never runs. So the slash command this stack ships is its
-own seed, `/ez-learn`, written at workspace boot into
-`~/.coder/skills/ez-learn/SKILL.md` with a twin copy at
-`~/.agents/skills/ez-learn/SKILL.md`, and a missing `/ez-learn` means that seed is
-missing, not that the image is stale. It carries its own name because a user-scope skill
+x.ai credential, and the fetch never runs. So each slash command this stack ships is its
+own seed, written at workspace start by `coder_script.stack_skills` into
+`~/.coder/skills/<name>/SKILL.md` with a twin copy at
+`~/.agents/skills/<name>/SKILL.md`, and a missing command means that seed is
+missing, not that the image is stale. Each carries its own name because a user-scope skill
 shadows a same-named bundled one: seeded as `learn` it would hide the CLI's bundled
 `/learn` on any CLI that does have the bundle.
 
 ```sh
 bash -lc 'command -v grok; grok --version'
-grok inspect --json | grep -n 'ez-learn'
+grok inspect --json | grep -n '<name>'
 ls ~/.grok/bundled/skills 2>/dev/null
-ls ~/.agents/skills/ez-learn/SKILL.md ~/.coder/skills/ez-learn/SKILL.md
+ls ~/.agents/skills/<name>/SKILL.md ~/.coder/skills/<name>/SKILL.md
 ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
 ```
 
-- An `ez-learn` entry with `userInvocable: true` in the `grok inspect --json` output is
+- An entry for `<name>` with `userInvocable: true` in the `grok inspect --json` output is
   the pass condition: the slash command exists on that CLI, and the **Grok Build**
   terminal profile shows it because that profile execs the same binary.
-- No `ez-learn` entry and both `ls` paths missing: the seed never landed, which means the
+- No `<name>` entry and both `ls` paths missing: the seed never landed, which means the
   workspace booted from templates pushed before the seed existed. Re-push the templates
   and restart the workspace, or reseed into the running container from the stack host:
   `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>`.
-- Both `ls` paths present but no `ez-learn` entry: the loader dropped the file. Frontmatter
+- One of the three missing from both homes while the other two landed points at
+  `coder_script.stack_skills`, not at the startup script: that script's own log is where
+  its seed body ran or failed, and the body is silent on a healthy workspace, so an empty
+  log with a missing file means the body did not run at all (restart the workspace and
+  read that script's log). The trio moved out of `startup.sh.tftpl` into that one body, so
+  a startup-script log that says nothing no longer covers it.
+- Both `ls` paths present but no `<name>` entry: the loader dropped the file. Frontmatter
   must start on line 1, so anything above the opening `---` silently kills the skill.
 - A `learn` directory still listed by the last `ls` is a copy someone took over: the boot
   and the reseed delete that path only while it still carries the stack marker, and a
@@ -741,7 +751,7 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   file is user-owned, and the seeder leaves it alone unless you pass `--force`. A
   deletion is undone - the workspace boot writes the file again whenever it is absent,
   and `refresh-configs` re-seeds an absent target, so the next boot restores the
-  stack's copy. Copy the payload back from `templates/common/ez-learn.SKILL.md` to give
+  stack's copy. Copy the payload back from `templates/common/<name>.SKILL.md` to give
   the file back to the stack.
 - `ls ~/.grok/bundled/skills` printing nothing is the expected answer, not a symptom:
   without the sign-in there is no bundled cache at all, on any version. Because a
@@ -750,7 +760,7 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   `skills/learn/SKILL.md` that predates the rename rather than relying on you to delete
   it, since deleting a seeded copy would not free the name anyway - the boot and the
   reseed write it again. What works: keep a marker-free local copy only if you also stop
-  the stack from seeding it, or disable the lane with `disabled = ["ez-learn"]` under
+  the stack from seeding it, or disable the lane with `disabled = ["<name>"]` under
   `[skills]` in `~/.grok/config.toml`.
 - `command -v grok` answering `~/.grok/bin/grok` is the normal answer, not a leftover
   installer copy: the workspace `PATH` lists `~/.grok/bin` before `/usr/local/bin`, and
@@ -759,11 +769,12 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   next self-update. Compare `command -v grok` and both `--version` outputs
   (`~/.grok/bin/grok --version`, `/usr/local/bin/grok --version`) against `GROK_VERSION`
   in `images/dev/tool-versions.env`: the profile copy follows `grok update`, the image
-  copy follows the pin. Neither copy gates `/ez-learn`, and the two disagreeing is never on
+  copy follows the pin. Neither copy gates the three seeded commands, and the two
+  disagreeing is never on
   its own a reason to rebuild the image.
 - A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
   `GROK_VERSION` (1.0.70 at the time of writing), and rebuilding `images/dev`
-  (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded `/ez-learn`
+  (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded skill trio
   works on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
 

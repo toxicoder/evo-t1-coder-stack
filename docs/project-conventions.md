@@ -125,13 +125,17 @@ only `settings.json.tftpl` is byte-identical across the two directories, so edit
 copies of that payload. `templates/common/` exists once above the twins instead and
 holds the single-copy payloads both templates consume: `GROK_BUILD_AGENTS.md`,
 `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`,
-`vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`,
+`vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`,
+`ez-create-skill.SKILL.md`, `stack-skills.sh.tftpl`,
 `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`. Markdown
 and JSON are read with `file()` (chomp the markdown); shell helpers that Terraform must
 not re-interpolate are also `file()` (so `$folder` stays `$folder`); `gh-token-refresh.sh.tftpl`
 is `templatefile()` because it interpolates `${github_auth_id}`. `coder_script`
 bodies are sibling `.tftpl` files next to each `main.tf` (`code-server.sh.tftpl`,
-and on `devcontainer` also `dind-bootstrap.sh.tftpl`) rendered with `templatefile()`.
+and on `devcontainer` also `dind-bootstrap.sh.tftpl`) rendered with `templatefile()`;
+`gh-token-refresh.sh.tftpl` and `stack-skills.sh.tftpl` (the body that seeds the
+`ez-learn` / `ez-skillify` / `ez-create-skill` trio) are the two that live in
+`templates/common/` instead, so both twins share one copy of them.
 The SVG stays small enough that the resulting data URL fits Coder v2.36's 256-character
 `workspace_apps.icon` column. The push
 (`scripts/push-template.sh` through `template_push_one` in `scripts/lib/template-push.sh`)

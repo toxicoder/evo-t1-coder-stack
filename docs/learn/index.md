@@ -15,10 +15,12 @@ tags: [learn, concepts, overview]
 - Understanding a behaviour before trying to change it
 - Knowing which page owns a concept when two of them seem to
 
-> **Not the same as `/ez-learn`.** This tab is the concepts index for people reading the
-> docs. `/ez-learn` typed at the Grok Build prompt runs the stack-seeded orientation skill
-> inside a workspace; `grok inspect` lists it once the seed has landed. A missing
-> `/ez-learn` is the `/ez-learn` entry in [troubleshooting.md](../troubleshooting.md).
+> **Not the same as the `/ez-learn` command.** This tab is the concepts index for people
+> reading the docs. `/ez-learn` typed at the Grok Build prompt mines your past agent chats
+> and sessions and proposes what should become a skill; its siblings `/ez-skillify`
+> captures the session that just worked and `/ez-create-skill` scaffolds one from a
+> description. `grok inspect` lists the three once their seed has landed. A missing one is
+> the skill-seed entry in [troubleshooting.md](../troubleshooting.md).
 
 ## How the pieces fit
 
