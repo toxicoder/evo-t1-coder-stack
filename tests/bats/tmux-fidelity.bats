@@ -5,9 +5,12 @@
 # Inside a tmux pane, scrolling and copy/paste must feel like a native
 # terminal: `mouse on` hands the wheel and the drag to tmux, and
 # `set-clipboard on` carries a copy out to the client clipboard over OSC 52 --
-# which a real terminal honours and the browser build of VS Code does not
-# (microsoft/vscode#318254), so the payload also binds Prefix m to release the
-# mouse and let a browser drag select. The seed stage in both startup.sh.tftpl
+# which a real terminal honours and the browser build of VS Code drops
+# (microsoft/vscode#318254). In a browser tab the copy out is a Shift+drag,
+# which xterm.js hands to the browser even while tmux holds the pointer, and
+# Prefix m is the fallback that releases the pointer. That contract lives in the
+# payload's own comments, so this suite pins those words as well as the options.
+# The seed stage in both startup.sh.tftpl
 # twins honours the marker-line ownership contract (a marker-free ~/.tmux.conf
 # is user-owned: leave it alone, print a warning). This suite extracts that seed
 # block, runs it against a throwaway HOME, and pins the editor terminal keys both
@@ -417,6 +420,27 @@ teardown() {
     assert_contains_file "copy on select" "${f}" '"terminal.integrated.copyOnSelection": true'
     assert_contains_file "right-click copies" "${f}" '"terminal.integrated.rightClickBehavior": "copyPaste"'
   done
+}
+
+@test "tmux seed: the payload tells the operator the browser copy route" {
+  # Measured on the shipped code-server 4.145.0 in a headless Chromium, with this
+  # payload as the tmux config and the rendered settings twin as User
+  # settings.json: Shift+drag calls navigator.clipboard.writeText and leaves
+  # tmux's buffer empty, a plain drag is the mirror image (tmux buffer, no
+  # browser selection), Alt and Ctrl drags reach neither side, and a copy-mode y
+  # produces zero clipboard calls because the browser build drops OSC 52 before
+  # the API. The text this replaces claimed no modifier hands a drag back, which
+  # routed every browser copy through Prefix m.
+  assert_contains_file "Shift+drag is the copy out" "${COMMON_TMUX}" 'Shift and drag'
+  assert_contains_file "the drag fires the clipboard API" "${COMMON_TMUX}" 'navigator\.clipboard\.writeText'
+  assert_contains_file "OSC 52 is the real-terminal route" "${COMMON_TMUX}" 'OSC 52 is a real terminal'
+  assert_contains_file "the browser drop is named" "${COMMON_TMUX}" 'vscode#318254'
+  assert_contains_file "the paste chord is named" "${COMMON_TMUX}" 'Ctrl\+Shift\+V'
+  assert_contains_file "paste needs a secure context" "${COMMON_TMUX}" 'secure'
+  # And the measured-false claim stays out of the file an operator reads.
+  if grep -Eq -- 'Alt, Option, Shift and Ctrl' "${COMMON_TMUX}"; then
+    fail "the payload again claims every modifier drag fails, which measures false"
+  fi
 }
 
 # boot_scratch <socket> <session> - a scratch server on the shipped payload.

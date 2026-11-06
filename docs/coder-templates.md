@@ -756,8 +756,10 @@ The order above is not incidental; each line is a constraint the script has to k
   server, so seeding after the first `tmux new-session -A` could run would leave that
   session unconfigured for the whole boot. `mouse on` hands the wheel and the drag to
   tmux; `set-clipboard on` is what carries a tmux copy out to the client clipboard over
-  OSC 52, and a client that blocks OSC 52 (iTerm2 by default) keeps the copy inside
-  tmux's own buffer instead.
+  OSC 52 for a real terminal app, and a client that blocks OSC 52 (iTerm2 by default)
+  keeps the copy inside tmux's own buffer instead. The browser build of VS Code drops
+  that escape, so a copy out of a browser tab is a Shift+drag, which xterm.js gives to
+  the browser even with `mouse on`.
 - The clone folder is created before git runs, and before the `coder_script.code_server`
   script's own `mkdir`: the editor starts in parallel with the startup script, and an
   empty tree is a folder VS Code can open while the clone is still writing. An empty
