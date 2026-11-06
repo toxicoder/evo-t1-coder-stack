@@ -131,48 +131,59 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 
 Two buffers are involved: tmux's own buffer, and the clipboard of the computer
 you are typing on. Which one a copy reaches depends on what sits at the other
-end of the terminal. Each claim below was measured in a headless Chromium
-against the code-server this stack shipped then (4.143.1, VS Code base 1.143.1).
-The pin has since moved to 4.145.0 (VS Code base 1.145.0), and upstream's notes
-for the two releases in between cover the built-in proxy's cookies, the web
-socket origin check and the VS Code base bump, with no terminal or clipboard
-entry, so these claims stand as measured and none was re-run
-([v4.144.0](https://github.com/coder/code-server/releases/tag/v4.144.0),
-[v4.145.0](https://github.com/coder/code-server/releases/tag/v4.145.0)).
+end of the terminal. Each claim below was re-measured in a headless Chromium
+against the code-server this stack ships (4.145.0, VS Code base 1.145.0) with
+the real payloads loaded: the workbench ran on the rendered `settings.json`
+twin, byte-identical to `templates/workspace/settings.json.tftpl`, and the pane
+ran on `templates/common/tmux.conf`. An earlier round of these notes measured
+4.143.1 and concluded that no modifier hands a drag back to the browser; that
+conclusion was wrong and the Shift row below is what the same harness reads on
+the shipped pin.
 
-- **A real terminal app honours OSC 52.** Over ssh from Ghostty, kitty, WezTerm
-  or iTerm2, `Prefix-[`, `v`, `y` puts the selection on the laptop clipboard.
-  `set -g set-clipboard on` and `set -g allow-passthrough on` in
-  `templates/common/tmux.conf` keep that route open for tmux's copy-mode and for
-  an app inside the pane (vim's `+` register).
-- **VS Code Web drops OSC 52.** Neither a copy-mode `y` nor a hand-written
-  `printf '\033]52;c;<base64>\a'` from the shell produces any clipboard call in
-  the page: the terminal swallows the escape. Upstream
-  [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254).
-  A tmux copy made in the browser stays in tmux's buffer, and `tmux show-buffer`
-  is where it is: a copy-mode `y` with nothing selected filled the buffer with the
-  line the cursor sat on, and the page's clipboard stayed untouched. `Prefix-]`
-  puts that buffer back into the pane, bracketed.
-- **No modifier hands a drag back to the browser while tmux holds the pointer.**
-  With `set -g mouse on`, drags with Alt, Option, Shift and Ctrl each still
-  arrived in tmux (its buffer changed; xterm painted no selection), so the
-  "hold a modifier to select like the terminal does" escape hatch the tmux FAQ
-  describes for desktop terminals is absent here.
-- **`Prefix m` is the switch,** and the browser's own selection is the route.
-  Releasing the mouse makes a drag a browser selection, and the settings seed's
+- **Out of a browser tab, hold Shift and drag.** xterm.js gives a Shift+drag to
+  the browser as a native selection even with `set -g mouse on`, and the seed's
   `terminal.integrated.copyOnSelection` puts it on the system clipboard with no
-  chord (a released drag showed the selected text in `navigator.clipboard`). In
-  a browser tab: `Prefix m` to release the pointer, drag over the text, `Prefix
-  m` again to give the wheel back to tmux. Output that has scrolled away: `Prefix-[`,
-  then `k` (or `Ctrl-u`/`Ctrl-d`) walks up the pane's history until the line is
-  painted on the screen, which is what the browser can select; drag it, `q` to
-  leave copy-mode, `Prefix m` for the wheel. The switch lands during copy-mode as
-  well, so finding the line first and releasing the pointer after works too.
-- **Into the pane, nothing needs a switch.** `Ctrl+Shift+V`, a plain `Ctrl+V` or
-  `Cmd+V` (the browser's own paste event), and right-click each delivered the
-  system clipboard to the shell, with a three-line paste arriving whole and
-  without a warning dialog. tmux 3.4 already wraps its own buffer in bracketed
-  paste on `Prefix-]`.
+  chord: the harness saw `navigator.clipboard.writeText` called with the selected
+  text while `tmux list-buffers` stayed empty and `pane_in_mode` read 0. A plain
+  drag is the mirror image - tmux takes it into its own buffer and xterm paints
+  no selection. Alt and Ctrl drags reach neither side. Clear a leftover
+  selection with one click first: Shift extends a selection that already exists
+  rather than starting a new one.
+- **A real terminal app honours OSC 52; the browser build does not.** Over ssh
+  from Ghostty, kitty, WezTerm or iTerm2, `Prefix-[`, `v`, `y` puts the selection
+  on the laptop clipboard, and `set -g set-clipboard on` with
+  `set -g allow-passthrough on` in `templates/common/tmux.conf` keep that route
+  open for tmux's copy-mode and for an app inside the pane (vim's `+` register).
+  code-server's browser build drops the escape before any clipboard call: under
+  this payload a copy-mode `y` filled tmux's buffer (`tmux show-buffer` is where
+  the copy sits) and produced zero `writeText`, and a hand-written
+  `printf '\033]52;c;<base64>\a'` was just as silent with `set-clipboard off` as
+  with it on, which puts the drop in the browser and not in tmux. Upstream
+  [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254)
+  is open with two unmerged fixes, and the shipped 4.145.0 registers no OSC 52
+  setting at all, so there is nothing here to turn on. `Prefix-]` puts tmux's
+  buffer back into the pane, bracketed.
+- **`Prefix m` is the fallback, not the route.** Releasing the pointer makes an
+  ordinary drag a browser selection, which is what to reach for when Shift+drag
+  will not cooperate, and the switch lands during copy-mode as well. Output that
+  has scrolled away: `Prefix-[`, then `k` (or `Ctrl-u`/`Ctrl-d`) walks up the
+  pane's history until the line is painted on the screen, which is what the
+  browser can select; drag it, then `q` to leave copy-mode.
+- **Into the pane: `Ctrl+Shift+V` or right-click, on a secure context.** Both
+  arrive bracketed (`ESC[200~ ... ESC[201~`) in a bash terminal and in a tmux
+  pane alike, and a three-line paste arrives whole without a warning dialog. Both
+  chords ask the browser's clipboard API, which the browser only exposes to a
+  secure context, so the URL the tab was opened on decides it. On the TLS public
+  name they work; on `http://<LAN-address>` `navigator.clipboard` is absent,
+  right-click stops with VS Code's own toast ("This browser doesn't support the
+  clipboard.readText API needed to trigger a paste, try Ctrl+V instead."), and
+  the browser's native paste event is what still delivers. A Clipboard site
+  permission that was once denied breaks both API chords the same way, with
+  `NotAllowedError: Read permission denied`.
+- **`Ctrl+V` on a secure origin is not a paste.** VS Code binds terminal paste to
+  `Ctrl+Shift+V` on Linux and `Cmd+V` on macOS, so `Ctrl+V` reaches the pane as
+  the `\x16` byte (readline's quoted-insert, vim's visual-block). The seed
+  re-binds nothing there on purpose: a TUI in the pane owns that chord.
 - **Two scroll-back stores, two different budgets.** `terminal.integrated.scrollback`
   in the settings seed is the xterm.js buffer, which is what a plain `bash`
   profile scrolls through; tmux's `history-limit` is what `Prefix-[` walks
@@ -248,7 +259,7 @@ report for a script. What the report should read here:
 
 - Baked in at `/usr/local/bin/grok`, with an `agent` link beside it, **outside** the
   `/home/coder` home volume, so a rebuilt volume cannot lose it.
-- Pinned as `GROK_VERSION` in `images/dev/tool-versions.env` (1.0.70 at the time of
+- Pinned as `GROK_VERSION` in `images/dev/tool-versions.env` (1.0.77 at the time of
   writing, mirrored as the Dockerfile `ARG` default). The image build unpacks that
   pinned `.zst` and runs `grok --version` in two PATH contexts as a build-time smoke
   check.
@@ -260,7 +271,7 @@ report for a script. What the report should read here:
   rebuilding the image (`scripts/build-dev-image.sh`) and re-pushing the templates.
 - A self-installed CLI under `~/.grok/bin` stays first on the login-shell PATH, so it
   wins over the baked copy.
-- **The upstream `/learn` bundle never lands here**: the 1.0.70 binary contains zero
+- **The upstream `/learn` bundle never lands here**: the 1.0.77 binary contains zero
   occurrences of the string `/learn`, so the bundled skill set is downloaded at runtime
   through the CLI's proxy endpoints config (`cli-chat-proxy.grok.com`, gated by
   `GROK_SKILLS_BASE_URL`) and needs an x.ai sign-in. This stack has no x.ai credential:
@@ -530,9 +541,9 @@ clone is never asked to delete somebody else's committed file.
   probe's `--timeout`), `SEARXNG_CACHE_TTL_MS` (15 minutes, which switches on the
   bounded 128-entry response cache that ships disabled, so a repeated query stops
   re-dialling backends that already refused this instance), `SEARXNG_MAX_RESULTS`
-  (a ceiling that keeps one search inside the MCP output cap - on the pinned 1.0.70
-  CLI that cap rides `GROK_MAX_MCP_OUTPUT_BYTES`, because the CLI reports
-  `[mcp] max_output_bytes` as an unrecognized config key and never applies it),
+  (a ceiling that keeps one search inside the MCP output cap - on the pinned 1.0.77
+  CLI that cap rides `GROK_MAX_MCP_OUTPUT_BYTES`, because `grok inspect` still answers
+  `[mcp] — unrecognized config key` and never applies it),
   `SEARXNG_DEFAULT_SAFESEARCH` (mirrors `search.safe_search` in
   `searxng/settings.yml`) and `SEARXNG_DEFAULT_LANGUAGE` (`all`, so an image bump
   cannot quietly start geo-filtering every agent search).

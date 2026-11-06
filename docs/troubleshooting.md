@@ -703,7 +703,7 @@ Covers all three stack-shipped skill commands: `/ez-learn`, `/ez-skillify` and
 `/ez-create-skill`. The diagnosis and the commands below are identical for each one; only
 the name changes, so read `<name>` as whichever of the three you are chasing.
 
-Cause: there is no upstream `/learn` to miss. The 1.0.70 executable contains no
+Cause: there is no upstream `/learn` to miss. The 1.0.77 executable contains no
 `/learn` string, xAI's skills and slash-command docs name no bundled `learn`, and the
 public `xai-org/plugin-marketplace` catalog carries no such plugin, so there is no
 published copy to vendor in. The CLI does download its built-in bundles at runtime
@@ -773,7 +773,7 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   disagreeing is never on
   its own a reason to rebuild the image.
 - A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
-  `GROK_VERSION` (1.0.70 at the time of writing), and rebuilding `images/dev`
+  `GROK_VERSION` (1.0.77 at the time of writing), and rebuilding `images/dev`
   (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded skill trio
   works on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
@@ -1086,29 +1086,68 @@ bazelisk run //scripts:new-workspace -- <git-url>
 
 ### A tmux copy in VS Code Web never reaches the laptop clipboard -> the browser build drops OSC 52
 
-Cause: tmux pushes a copy out with OSC 52 and code-server's terminal hands that
-escape to nobody, so the copy stays in tmux's own buffer. Holding Alt, Option,
-Shift or Ctrl while dragging does not help either: with `set -g mouse on` the
-drag still reaches tmux.
+Cause: tmux pushes a copy-mode copy out with OSC 52 and code-server's terminal
+hands that escape to nobody, so `y` leaves the text in tmux's own buffer. There
+is no setting for it: the shipped 4.145.0 registers no OSC 52 key, and upstream
+[microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
+open with two unmerged fixes.
 
 ```sh
 tmux show-buffer                  # the copy is here, inside tmux
-tmux show-options -g mouse        # on: tmux owns the pointer, so the browser cannot select
+tmux show-options -g mouse        # on: tmux owns the pointer, so a plain drag is tmux's
 ```
 
-Fix: `Prefix m` releases the pointer, the drag becomes a browser selection, and
-`terminal.integrated.copyOnSelection` copies it. `Prefix m` again hands the wheel
-back. Paste needs no switch: `Ctrl+Shift+V`, `Ctrl+V`/`Cmd+V`, or right-click.
-Both directions, and why only a real terminal app gets OSC 52, are in
+Fix: hold **Shift** and drag. xterm.js gives a Shift+drag to the browser as a
+native selection even with `set -g mouse on`, and the settings seed's
+`terminal.integrated.copyOnSelection` copies it with no chord - measured on
+4.145.0 with this payload, the drag called
+`navigator.clipboard.writeText` and `tmux list-buffers` stayed empty. Clear a
+leftover selection with one click first, since Shift extends a selection that
+already exists. Alt and Ctrl drags do nothing on either side.
+
+`Prefix m` is the fallback: it releases the pointer so an ordinary drag becomes
+a browser selection, and `Prefix m` again hands the wheel back. Paste is
+`Ctrl+Shift+V` or right-click in a bash terminal and a tmux pane alike, and
+`Prefix-]` pastes tmux's own buffer; `Ctrl+V` is not a paste on a secure origin
+(the pane gets the `\x16` byte). Both directions, and why only a real terminal
+app gets OSC 52, are in
 [Copy and paste between a tmux pane and the machine you type on](grok-build-and-agents.md#copy-and-paste-between-a-tmux-pane-and-the-machine-you-type-on).
 
 - Output already scrolled off the screen: `Prefix-[`, walk up with `k` until the
-  line is painted, drag it, then `q` and `Prefix m`. The switch also lands while
-  copy-mode is showing history, so releasing the pointer after you find the line
-  works.
+  line is painted, Shift+drag it, then `q`. `Prefix m` works there too, and the
+  switch lands while copy-mode is showing history.
+- Copy and paste both dead, in both directions: read the next entry. This one is
+  a tmux-only symptom, and a broken origin breaks the editor's own chords too.
 - `history-limit` reads 100000 but a pane still forgets old output: tmux applies
   the option when the pane is created, so that pane keeps the limit it was born
   with. Open a new pane, or restart the server with `tmux kill-server`.
+
+### Copy and paste both do nothing in VS Code Web -> the page is not a secure context
+
+Cause: the browser exposes `navigator.clipboard` to a secure context only, and
+Coder's LAN door is plain HTTP by default (`CODER_ACCESS_URL` is the LAN
+address). Opened that way the editor has no clipboard API to call, so
+right-click paste stops with VS Code's own toast - "This browser doesn't support
+the clipboard.readText API needed to trigger a paste, try Ctrl+V instead." - and
+`Ctrl+Shift+V` only works at all through the browser's native paste event. A
+Clipboard site permission that was once denied does the same damage on an https
+origin, and there VS Code answers `NotAllowedError: Read permission denied`.
+
+```js
+// In the editor tab's own devtools console:
+window.isSecureContext            // false: the browser withheld the clipboard API
+typeof navigator.clipboard        // "undefined" on http, "object" on https
+```
+
+Fix: open the editor on the TLS public name (the `coder-<host>.<domain>` door
+Traefik holds a real certificate for) rather than `http://<LAN-address>`, and
+give the site Clipboard permission - Chrome: the lock icon in the address bar,
+Site settings, Clipboard, Allow. The templates are not the variable here: both
+doors serve the same payload, so a workspace that pastes on one URL and does not
+on the other is an origin problem. What still works on plain HTTP: copy with
+Shift+drag, whose `document.execCommand('copy')` fallback really lands, and paste
+with `Ctrl+V`, the browser's own paste event - which is exactly what VS Code's
+toast tells you to do.
 
 ### VS Code Web tab in Chrome creeps to gigabytes, or freezes now and then -> every tab was another mirror of one pane
 
