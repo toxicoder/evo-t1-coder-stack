@@ -195,6 +195,19 @@ alias(
     visibility = ["//visibility:public"],
 )
 
+# The mypy profile //lints:mypy runs with. It is a root file for the same reason
+# MODULE.bazel is: it configures a toolchain-wide gate rather than belonging to one
+# package's sources, and lints/run_mypy.sh asks for it by `--config-file mypy.ini`
+# relative to the checkout root it resolves itself.
+filegroup(
+    name = "mypy_config",
+    srcs = ["mypy.ini"],
+    visibility = [
+        "//lints:__pkg__",
+        "//visibility:public",
+    ],
+)
+
 # Every Starlark file that declares targets, so //tests:bats_bazel_deps_test can read the
 # dependency maps out of the BUILD files under hermetic runfiles instead of relying on a
 # symlink into the checkout. Each package owns its own `build_file` group.

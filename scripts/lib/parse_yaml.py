@@ -16,7 +16,8 @@ except ImportError:
     sys.exit(1)
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
+    # sys.argv verbatim: slot 0 is the script name, the files start at 1.
     if len(argv) < 2:
         sys.stderr.write("usage: parse_yaml.py FILE [FILE...]\n")
         return 1

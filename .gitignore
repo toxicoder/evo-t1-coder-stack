@@ -64,5 +64,8 @@ docs-site/tsconfig.tsbuildinfo
 # v8 coverage report written by `npm run unit:coverage` / //docs-site:unit_coverage.
 docs-site/coverage/
 __pycache__/
+# mypy's incremental cache. //lints:mypy points it outside the checkout with
+# --cache-dir, so this only catches a bare `mypy` run from a developer shell.
+.mypy_cache/
 # Assembly directory a local replay of the deploy job leaves behind.
 /_site/

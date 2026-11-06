@@ -1,3 +1,4 @@
+// @ts-check
 /*
  * Static-export verifier for the Fumadocs documentation site.
  *
@@ -26,15 +27,29 @@ const siteRoot = resolve(packageRoot, "..");
 const exportRoot = resolve(siteRoot, process.argv[2] ?? "out");
 const basePath = publishedBasePath();
 
+/** One entry of `lib/nav.json`, as far as this verifier reads it. */
+/** @typedef {{ pages: { path: string }[] }} NavTab */
+
+/** @type {string[]} */
 const problems = [];
 
-/** Report one assertion; the detail is a failure diagnostic, so it prints only on failure. */
+/** Report one assertion; the detail is a failure diagnostic, so it prints only on failure.
+ *
+ * @param {string} name What was checked.
+ * @param {boolean} ok Whether it passed.
+ * @param {string} [detail] Diagnostic printed with a failure.
+ * @returns {void}
+ */
 function check(name, ok, detail) {
   console.log(`${ok ? "ok  " : "FAIL"}  ${name}${ok || !detail ? "" : `  ::  ${detail}`}`);
   if (!ok) problems.push(name);
 }
 
-/** Address a page publishes at: no extension, no trailing `index`, trailing slash. */
+/** Address a page publishes at: no extension, no trailing `index`, trailing slash.
+ *
+ * @param {string} path Page path as `lib/nav.json` names it.
+ * @returns {string} The URL the page is published at.
+ */
 function urlFor(path) {
   const segments = withoutExtension(path)
     .split("/")
@@ -42,7 +57,11 @@ function urlFor(path) {
   return segments.length > 0 ? `/${segments.join("/")}/` : "/";
 }
 
-/** Read a file, reporting rather than throwing so one bad page does not stop the run. */
+/** Read a file, reporting rather than throwing so one bad page does not stop the run.
+ *
+ * @param {string} file File to read.
+ * @returns {string | undefined} Its contents, or nothing when it cannot be read.
+ */
 function readHtml(file) {
   try {
     return readFileSync(file, "utf8");
@@ -56,6 +75,8 @@ if (!existsSync(exportRoot)) {
   process.exit(1);
 }
 
+// JSON.parse has no static type, so the file is pinned to the shape this verifier reads.
+/** @type {NavTab[]} */
 const nav = JSON.parse(readFileSync(join(siteRoot, "lib", "nav.json"), "utf8"));
 const pages = nav.flatMap((tab) => tab.pages);
 
@@ -82,7 +103,8 @@ for (const page of pages) {
     // Every Next-emitted asset must sit under the alias, or Pages serves it from the root.
     const bare = [...html.matchAll(/(?:href|src)="(\/_next\/[^"]*)"/giu)].map((match) => match[1]);
     if (bare.length > 0) {
-      check(`page ${page.path} prefixes its assets with ${basePath}`, false, bare[0]);
+      const [firstBare = ""] = bare;
+      check(`page ${page.path} prefixes its assets with ${basePath}`, false, firstBare);
     }
   }
 }

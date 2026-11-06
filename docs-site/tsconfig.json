@@ -6,10 +6,30 @@
       "dom.iterable",
       "es2022"
     ],
-    "allowJs": false,
+    // Brings scripts/*.mjs into the program so the operator CLIs are type-checked too.
+    "allowJs": true,
+    // The .mjs scripts carry // @ts-check and JSDoc; their bugs are runtime bugs.
+    "checkJs": true,
     "skipLibCheck": true,
     "strict": true,
+    // Catches undefined[] / s[0] read as a string: every index access, array
+    // index and Record lookup is possibly undefined.
+    "noUncheckedIndexedAccess": true,
+    // Catches a subclass member that silently fails to override the base member
+    // it thinks it replaces.
+    "noImplicitOverride": true,
+    // Catches a branch that ends without a value and silently returns undefined.
+    "noImplicitReturns": true,
+    // Catches a case that falls into the next one because its break was forgotten.
+    "noFallthroughCasesInSwitch": true,
+    // Catches a local that was written but never read, i.e. dead or unfinished code.
+    "noUnusedLocals": true,
+    // Catches a parameter that is accepted but ignored; name it _ to keep it.
+    "noUnusedParameters": true,
     "noEmit": true,
+    // scripts/verify_site.mjs imports lib/*.ts by extension, which is what Node needs to
+    // run it directly. Legal because this program never emits.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
@@ -32,7 +52,6 @@
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    "**/*.js",
     "**/*.mjs",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",

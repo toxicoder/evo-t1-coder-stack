@@ -54,13 +54,22 @@ function labelOf(node: Node | undefined, pattern: RegExp): string | undefined {
   return pattern.test(text) ? text : undefined;
 }
 
+/** A node that is a markdown bullet list, i.e. one the panel may render as a column. */
+interface ListLike extends Node {
+  type: "list";
+}
+
 /**
  * Whether a node is a markdown list.
+ *
+ * Narrows rather than merely answers, because the caller reads these nodes out of a
+ * children array (so they arrive `Node | undefined`) and then hands them to `panel`,
+ * which wants a defined `Node`.
  *
  * @param node Candidate node.
  * @returns True when the node is a list.
  */
-function isList(node: Node | undefined): boolean {
+function isList(node: Node | undefined): node is ListLike {
   return node?.type === "list";
 }
 

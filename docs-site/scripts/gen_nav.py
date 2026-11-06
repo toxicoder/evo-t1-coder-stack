@@ -22,10 +22,31 @@ import argparse
 import json
 import pathlib
 import sys
+from typing import TypedDict
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 OUT_JSON = REPO_ROOT / "docs-site" / "lib" / "nav.json"
 DOCS_DIR = REPO_ROOT / "docs"
+
+
+class NavPage(TypedDict):
+    """One sidebar leaf as the site imports it: the label and the docs-relative file."""
+
+    title: str
+    path: str
+
+
+class NavTab(TypedDict):
+    """One top-level tab as the site imports it: its label and its ordered leaves.
+
+    The committed ``nav.json`` is a list of these, so the two names are also the
+    on-disk schema, which is what lets :func:`validate` walk the tree without a
+    cast at every subscript.
+    """
+
+    title: str
+    pages: list[NavPage]
+
 
 #: ``(tab title, [(page title, path relative to docs/), ...])`` in sidebar order.
 NAV: list[tuple[str, list[tuple[str, str]]]] = [
@@ -66,13 +87,16 @@ NAV: list[tuple[str, list[tuple[str, str]]]] = [
             ("Contributor environment", "contribute/devcontainer.md"),
             ("Building with Bazel", "contribute/building-with-bazel.md"),
             ("Testing with Bazel", "contribute/test-with-bazel.md"),
+            # Strong types sits with the other contributor-facing code conventions,
+            # ahead of the graph-navigation reference that closes the tab.
+            ("Strong types", "contribute/strong-types.md"),
             ("Navigating the codebase with Bazel", "contribute/navigate-with-bazel.md"),
         ],
     ),
 ]
 
 
-def to_tree(declared: list[tuple[str, list[tuple[str, str]]]]) -> list[dict[str, object]]:
+def to_tree(declared: list[tuple[str, list[tuple[str, str]]]]) -> list[NavTab]:
     """Convert :data:`NAV` into the tab/page layout the site imports.
 
     Args:
@@ -88,7 +112,7 @@ def to_tree(declared: list[tuple[str, list[tuple[str, str]]]]) -> list[dict[str,
     ]
 
 
-def serialize(tabs: list[dict[str, object]]) -> str:
+def serialize(tabs: list[NavTab]) -> str:
     """Render the tree as the exact text written to ``nav.json``.
 
     Args:
@@ -100,7 +124,7 @@ def serialize(tabs: list[dict[str, object]]) -> str:
     return json.dumps(tabs, indent=2, ensure_ascii=False) + "\n"
 
 
-def validate(tabs: list[dict[str, object]]) -> list[str]:
+def validate(tabs: list[NavTab]) -> list[str]:
     """Check the tree against the files on disk.
 
     Args:
@@ -112,8 +136,8 @@ def validate(tabs: list[dict[str, object]]) -> list[str]:
     problems: list[str] = []
     seen: set[str] = set()
     for tab in tabs:
-        for page in tab["pages"]:  # type: ignore[index]
-            path = str(page["path"])  # type: ignore[index]
+        for page in tab["pages"]:
+            path = str(page["path"])
             declared = DOCS_DIR / path
             if not declared.is_file() and not declared.with_suffix(".mdx").is_file():
                 problems.append(f"nav page missing on disk: docs/{path}")

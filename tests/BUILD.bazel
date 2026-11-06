@@ -59,6 +59,31 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The first-party Python this package owns: the Bazel data-map checker, the function
+# extractor, the three coverage drivers, and the unittest suites. It is the tests/ half
+# of what //lints:mypy type-checks, and equals the Python entries of :py_coverage's data
+# edge minus the groups this package does not own (//scripts:py_programs and
+# //docs-site:python_sources, which that target pulls directly). Keep the two in step:
+# a new .py here joins this list, and a new .py under scripts/lib or docs-site/scripts
+# joins the list in lints/run_mypy.sh instead.
+filegroup(
+    name = "python_sources",
+    srcs = [
+        "bazel_deps.py",
+        "extract_fn.py",
+    ] + glob(
+        [
+            "coverage/*.py",
+            "python/*.py",
+        ],
+        allow_empty = True,
+    ),
+    visibility = [
+        "//lints:__pkg__",
+        "//visibility:public",
+    ],
+)
+
 # Every suite file, for the tools that walk the whole suite tree: //tests:shell_inventory
 # greps them for function names and //tests:shell_coverage drives them all.
 filegroup(
@@ -150,6 +175,11 @@ _SUITE_PAYLOAD = {
     ],
     "bootstrap.bats": [
         "//proxy:confs",
+    ],
+    # The suite sources the shipped probe and drives both of its functions, so it
+    # owes the group that carries the lint runners and their shared host-tool probe.
+    "check-tool.bats": [
+        "//lints:runners",
     ],
     "ci-lint-tools.bats": [
         "//:ci_lint_installer",
@@ -243,6 +273,21 @@ _SUITE_PAYLOAD = {
     "mcp_check.bats": [
         "//images/dev:context",
     ],
+    # The suite pins the Python type gate from its artefacts: the profile, the
+    # runner, and the lints package's own declarations. :mypy_config and
+    # //:bazel_files are the two it reads by path; the two Python groups are the
+    # ones it greps for a stray `Any`, and :all_bats is the group the registry
+    # binds to the tests/bats/ exclusion it names when it enumerates .py files.
+    "mypy-lint.bats": [
+        "bazel_deps.py",
+        "//:bazel_files",
+        "//:mypy_config",
+        "//docs-site:python_sources",
+        "//lints:runners",
+        "//tests:all_bats",
+        "//tests:coverage_tools",
+        "//tests:python_sources",
+    ],
     # The CLI renders a canned scaffold tree (the fixture stands in for the external
     # template repository) into a scratch directory and asserts on the result, so the
     # fixture has to be in the suite's runfiles; :all_bats is the group the registry
@@ -295,6 +340,12 @@ _SUITE_PAYLOAD = {
     ],
     "test-in-image.bats": [
         "//images/dev:dockerfile",
+    ],
+    # The suite runs the shipped awk program (carried by _BATS_COMMON through
+    # //scripts:doc_sources) over both template twins, so it owes the group that
+    # ships those four .tf files.
+    "tf-types.bats": [
+        "//:templates_payload",
     ],
     "tmux-fidelity.bats": [
         "//:templates_payload",
@@ -370,6 +421,9 @@ _SUITE_PAYLOAD_ALLOW = {
         "//:gitignore",
         "//:entry_docs",
         "//docs:content",
+        # tests/python/test_cli.py is the lane file the scaffold lands inside the
+        # repository it just rendered, which is not this checkout's unittest tree.
+        "//tests:python_sources",
     ],
     # The README.md is the tail of a github.com tree URL the case hands the CLI as the
     # path below a repository it must refuse to probe. github.com serves no ref

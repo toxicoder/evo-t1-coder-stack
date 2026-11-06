@@ -4,7 +4,10 @@
 #
 # Git-unaware local gate: Bazel test-fast, lint, then the compose and template
 # checks from CONTRIBUTING. Nested Bazel is skipped when VALIDATE_INNER=1 so a
-# `bazelisk run //:validate` does not recurse.
+# `bazelisk run //:validate` does not recurse. The template checks include the
+# Terraform variable-type gate (scripts/lib/tf_types.awk), which holds both
+# twins to a declared `type` on every `variable` block and refuses the broad
+# `any` — see docs/contribute/strong-types.md.
 #
 # Usage:
 #   bazelisk run //:validate
@@ -52,6 +55,22 @@ main() {
     terraform -chdir=templates/devcontainer fmt -check
   else
     phase "terraform not on PATH, skipping fmt -check"
+  fi
+  # The variable-type gate runs whether or not terraform is installed: it reads
+  # HCL text, and a template that lost a `type` constraint is a plan-time bug
+  # waiting for someone to pass the wrong -var, which is exactly what fmt cannot
+  # see. scripts/lib/tf_types.awk prints one finding per line and nothing when
+  # both twins conform, so an empty result is the pass condition.
+  phase "terraform variable types"
+  local tf_findings
+  tf_findings="$(awk -f "${root}/scripts/lib/tf_types.awk" \
+    templates/workspace/main.tf templates/workspace/coder.tf \
+    templates/devcontainer/main.tf templates/devcontainer/coder.tf)"
+  if [[ -n ${tf_findings} ]]; then
+    while IFS=$'\t' read -r tf_file tf_line tf_rule tf_detail; do
+      err "${tf_file}:${tf_line}: ${tf_rule}: ${tf_detail}"
+    done <<<"${tf_findings}"
+    return 1
   fi
   if python3 -c 'import yaml' >/dev/null 2>&1; then
     # searxng/settings.yml belongs in this list: it is bind-mounted read-only
