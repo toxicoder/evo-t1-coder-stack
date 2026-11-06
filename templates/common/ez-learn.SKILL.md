@@ -1,143 +1,335 @@
 ---
 name: ez-learn
-description: "Mine past agent chats and sessions for the instructions, conventions, and workflows the user keeps re-explaining; propose new skills, updates to existing ones, and retirements of stale skills, plugins, MCP servers, and rules. Use when asked to learn this workspace, what should become a skill, tidy up repeated guidance, or find stale skills."
-when-to-use: "learn this workspace, what should become a skill, tidy up repeated guidance, find stale skills"
-argument-hint: "[report|apply]"
+description: "Learn what a session taught and make it durable: extract facts from this conversation into a session log, fold the session logs into organized memory, save one note, or browse and clear what was stored. This is this stack's copy of the upstream Grok Build memory commands /flush, /dream, /remember, and /memory. Use when asked to learn this workspace, remember what was learned, flush or consolidate memory, or tidy up stored notes."
+when-to-use: "learn this workspace, remember what we learned, flush memory, consolidate memory, tidy up stored notes"
+argument-hint: "[flush|dream|remember <note>|browse|clear]"
 ---
 
-<!-- managed-by: evo-t1-coder-stack -- stack-seeded. Edit it and delete the marker line to
-     take this copy over; a deletion is undone by the workspace boot. To hide it, set
+<!-- managed-by: evo-t1-coder-stack -- stack-seeded.
+     To take a seeded copy over, edit it and delete the stack-owned marker line:
+     a marker-free file is user-owned and the seeder leaves it alone
+     unless you pass `--force`. A
+     deletion is undone - the workspace boot writes the file again whenever it
+     is absent, and `refresh-configs` re-seeds an absent target, so the next
+     boot restores the stack's copy. To hide the slash command, set
      `disabled = ["ez-learn"]` under `[skills]` in `~/.grok/config.toml`. -->
 
-# Learn the workspace
+# Learn: turn a session into durable memory
 
-`/ez-learn` mines past agent chats and sessions, not just this one, and turns what repeats
-into skill proposals. It is workflow curation, never memory: `/remember`, `/memory`, and
-`/dream` store durable facts. Upstream `/learn` is a bundled skill whose download needs an
-x.ai sign-in this stack lacks (LiteLLM is the sole model transport), so
-`~/.grok/bundled/` is never created and the stack ships this one.
+`/ez-learn` reproduces the four upstream Grok Build commands that persist what a
+session learned: `/flush`, `/dream`, `/remember`, and `/memory`. Upstream ships
+those as built-ins, not as files on disk: `/flush`, `/dream`, and `/memory` are
+entries in the shell's built-in command table and `/remember` is a pager command.
+The first three are gated behind cross-session memory, which is **off by default**
+and needs a configured memory store before `/flush` and `/dream` even advertise;
+`/remember` is the least gated of the four. This skill runs the same two passes from
+its own body and lands the same files, so the behaviour is there without turning the
+gated feature on: the stack seeds this file instead, and the `ez-` prefix keeps it
+clear of the built-in names.
 
-A skill is a folder holding its `<name>/SKILL.md` plus optional `scripts/` and
-`references/` siblings. Where it lands:
+Skill authoring is a different pair. `/ez-create-skill` stands in for `create-skill`,
+one of the platform skills upstream serves through the skills bundle and extracts
+under `~/.grok/bundled/skills/`. `/ez-skillify` captures the same artifact out of a
+session that already worked, and no published source names that command upstream.
+That bundle sync wants an x.ai sign-in this stack does not have.
+LiteLLM is the sole model transport here, so `~/.grok/bundled/` is never created and
+the stack seeds those two files instead.
 
-- Both homes. The Grok Build CLI reads `~/.agents/skills/<name>/SKILL.md`; the Coder Agents
-  chat agent reads `~/.coder/skills/<name>/SKILL.md` only, and dedupe is first-match-wins,
-  so a skill for both consumers ships in both.
-- Skill versus rule. `AGENTS.md` is always loaded and holds the convention every session
-  must follow; a skill loads when its `description` matches and holds a procedure.
+Run every block below with `run_terminal_command` (Grok Build CLI) or `execute`
+(Coder Agents chat agent); a command written inline in this body runs nothing on
+its own.
 
-Run the blocks below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder Agents
-chat agent); a command inline in a body runs nothing on its own.
+`/ez-learn` stores durable facts. It is not skill authoring: to turn a repeated
+procedure into a skill use `/ez-skillify`, and `/ez-create-skill` to scaffold one
+from a description. Those two write skill files; this one writes memory files.
 
-## Step 1 -- establish where you are
+## Default: report-only, then apply on request
 
-    echo "CODER_WORKSPACE_ID=[${CODER_WORKSPACE_ID-unset}] EVO_T1_DEVCONTAINER=[${EVO_T1_DEVCONTAINER-unset}]"
-    pwd; git rev-parse --show-toplevel 2>/dev/null; command -v grok; grok --version
-    env | grep -E '^(LITELLM_BASE_URL|SEARXNG_URL|CONTEXT7_API_KEY)=' | sed 's/=.*/=set/'
-    grep -nE '^\[mcp_servers\.' ~/.grok/config.toml || echo "no MCP blocks declared"
+`/ez-learn` with no argument reports and writes nothing: it prints the resolved
+root, the workspace directory name, the session-log files it would fold, and the
+exact markdown it proposes to write. Nothing touches disk until you ask for the
+subcommand, and a write names the path it touched. Pass `--force` only to
+overwrite a memory file whose contents you have already read.
 
-- `CODER_WORKSPACE_ID` set: a Coder workspace container; `docker` addresses that workspace's
-  DinD sidecar (`DOCKER_HOST=tcp://dind:2375`), never the stack host's daemon, so an empty
-  `docker ps` is normal.
-- `EVO_T1_DEVCONTAINER=1`: the contributor dev container. Neither: a plain shell; no
-  whole-stack commands from here.
-- The corpus differs by place, and a `~/.grok/config.toml` left stale by whichever workspace
-  booted last is itself a curation finding.
-- LiteLLM is the only model transport. Seven aliases (`agent`, `agent-low`,
-  `agent-medium`, `agent-xhigh`, `coder`, `coder-fast`, `chat`) resolve through it, `agent`
-  the tool-call-capable default. Two more (`spark-coder`, `spark-chat`) reach the optional
-  NVIDIA Spark Ollama boxes. Name `LITELLM_API_KEY`, never print it; the live list is
-  `litellm/config.yaml`.
-- `bazelisk run //scripts:mcp-check` names a dead lane; a server absent from
-  `~/.grok/config.toml` is a gap to report, never a reason to launch it by hand.
+## Step 0 -- resolve the root, the scope, and the gate
 
-## Step 2 -- inventory what is already declared
+    grok_home="${GROK_HOME:-$HOME/.grok}"
+    grep -nE '^\[memory(_v2)?\]|^\[compaction\.memory_flush\]' "$grok_home/config.toml" 2>/dev/null || echo "no memory tables set"
+    echo "GROK_MEMORY=[${GROK_MEMORY-unset}]"
 
-    ls -d "$HOME"/.agents/skills/*/ "$HOME"/.coder/skills/*/ 2>/dev/null
-    find "$PWD" -maxdepth 3 -type d -name skills 2>/dev/null
-    head -n 12 "$HOME"/.agents/skills/*/SKILL.md 2>/dev/null
-    awk '/^\[skills\]/{f=1;next} /^\[/{f=0} f' ~/.grok/config.toml
-    ls AGENTS.md */AGENTS.md 2>/dev/null; grok plugin list 2>/dev/null || echo "no plugins"
+Memory is **off by default**, and each command's gate is fail-closed. Precedence
+is env `GROK_MEMORY` -> CLI flag -> `[memory] enabled` -> remote setting ->
+default `false`.
 
-List the dirs and read each frontmatter (`name`, `description`, `when-to-use`); never guess a
-skill's job from its folder name. That `find` covers the CLI's repo and `~/.grok` tiers,
-which the chat agent never reads; `[skills]`, when present, holds `paths`, `ignore`,
-`disabled`. A finding the guidance or `AGENTS.md` already covers is not work.
+- `GROK_MEMORY=0` or `--no-memory` turns memory off for the whole process and
+  nothing can turn it back on inside the session. Report
+  `Memory is turned off for this session.`
+  and stop; the fix is a new session without the flag.
+- `[memory] enabled = true` or `GROK_MEMORY=1` selects the legacy layout.
+- `[memory_v2] enabled = true` selects v2 and rescues a `[memory] enabled = false`.
+- `/remember` is the least gated; `/flush` and `/dream` need memory enabled,
+  because they only make sense if a later session can read back what they wrote.
 
-## Step 3 -- mine the session corpus
+Root and scope follow the mode:
 
-    find ~/.grok/sessions -name summary.json 2>/dev/null | head -60 > /tmp/ez-learn-index.txt
-    xargs -r jq -r '[.updated_at, .num_chat_messages, .head_branch, .session_summary] | @tsv' < /tmp/ez-learn-index.txt | sort -r | head -25
+| Mode | Global scope | Workspace scope |
+|---|---|---|
+| legacy | `~/.grok/memory/` | `~/.grok/memory/<slug>-<hash8>/` |
+| v2 | `~/.grok/memory-v2/global/` | `~/.grok/memory-v2/workspaces/<slug>-<hash8>/` |
 
-- `~/.grok/sessions/` is one dir per %-escaped cwd: small `summary.json` files beside
-  multi-megabyte `chat_history.jsonl` and `events.jsonl`. Derive those names with `find` or
-  `ls`, never reconstruct them from memory.
-- Index the summaries first (`session_summary`, `num_chat_messages`, `head_branch`), rank,
-  read only what ranks. Cap the sweep: the deep pass is spent only when the user asks for a
-  full-transcript sweep.
-- Count and select with `jq` or `grep -c` into a scratch file under `/tmp`; never paste a
-  transcript into the reply.
-- Hunt for instructions repeated across sessions, corrections the user made to the agent,
-  commands run in the same shape more than once, and guidance that contradicts `AGENTS.md`
-  or is absent from it. Keep the digest in `~/.grok/notes/<key>/notes.md`.
+v2 keeps `topics/`, `observations/_inbox/`, `archive/`, `memory_state.sqlite`,
+`index.sqlite`, and a generated `MEMORY.md` per scope, and never reads or writes
+the legacy tree. Only immediate children of `topics/` and `observations/_inbox/`
+ending in `.md` count; a deeper nesting is invisible to the index and to dream.
 
-## Step 4 -- sort findings into three buckets
+A workspace under an ephemeral path (a `tmp*` directory) is skipped silently: the
+upstream log lines are `MEMORY_EPHEMERAL_SKIP: daily log write skipped`,
+`... workspace long-term write skipped`, and `... workspace append skipped`. If
+you detect that, say so instead of writing.
 
-Already covered, contradicts the guidance, never said. Only the last two are work; a rule the
-agent ignored is not evidence the rule is wrong.
+## Step 1 -- name the workspace directory
 
-## Step 5 -- propose each finding in one shape
+The directory is `<slug>-<hash8>`: `slug` is the lowercase repo or directory name
+and `hash8` is the first 8 hex chars of a blake3 digest. The hash input is the
+normalized `org/repo` from the `origin` remote with any `.git` and trailing slash
+stripped; with no git remote it is the canonical absolute cwd. Slug rules:
+lowercase, every run of non-`[a-z0-9]` becomes a single `-`, truncated to 40
+chars, edge dashes stripped, and empty becomes `workspace`.
 
-One block per finding: `kind` (new skill | update | retire | config cleanup); suggested
-`name` (lowercase letters, digits, hyphens); suggested scope (both homes, or the repo tier
-when team-relevant); `description` and `when-to-use` with the trigger phrases; the numbered
-steps; the evidence -- which sessions, how many times. A `retire` proposal names the stale
-thing and the evidence it is stale, never deleting on its own.
+    git -C "$PWD" remote get-url origin 2>/dev/null || echo "no origin: hash the canonical cwd"
+    ls -1d "$grok_home"/memory*/ 2>/dev/null
 
-## Step 6 -- run it in one of two modes
+Never invent the digest. **Reuse the directory that already exists**: match an
+existing `<slug>-*` under the workspace root and use it, so a note you write lands
+where the CLI's own writes land. Only when nothing matches do you create one, and
+then compute the digest rather than guess it.
 
-Report-only, the default: print the counts and the Step 5 blocks, write nothing.
-Step-through apply: one proposal at a time, with its evidence, offered as accept / edit /
-reject; wait for the answer, then move on.
+## Step 2 -- flush this conversation into a session log
 
-## Step 7 -- where an accepted change is written
+Feed the conversation to this extraction instruction, which is the upstream
+`FLUSH_SYSTEM_PROMPT` with its wording kept:
 
-- Stack work goes to the seed that produces the file: the payloads under `templates/common/`
-  and `hermes/skills/`, and the config templates. Never edit the copy in a home -- a file
-  carrying the stack marker is stack-owned, and the boot or `refresh-configs` restores it.
-- A skill for the user's own use goes into BOTH `~/.agents/skills/<name>/SKILL.md` and
-  `~/.coder/skills/<name>/SKILL.md`, or the chat agent never sees it.
-- `/ez-skillify` captures the session that just worked, `/ez-create-skill` scaffolds from a
-  description: `/ez-learn` proposes, those two write.
+    You are a memory assistant. Extract ALL useful information from this conversation
+    that would help you be more effective in future sessions with this user. Write a
+    concise markdown summary with ## headers covering:
 
-## Step 8 -- verify discovery, retire without deleting
+    - **Decisions & rationale** - what was chosen and why
+    - **Technical context** - architecture, APIs, patterns, tools, file paths discussed
+    - **Debugging techniques & tools** - external APIs, CLI commands, query patterns,
+      investigation workflows, or services discovered or used during debugging
+    - **Problems & solutions** - bugs found, how they were fixed, workarounds
 
-    grok inspect
-    grok inspect --json
+    Prioritize reusable mechanisms, rules, and root causes over a narration of the
+    task. When project structure matters, name the concrete directories and stable
+    repo-relative paths; include an absolute workspace root only when it is
+    operationally necessary and appears in the conversation. Copy exact identifiers
+    and numerical values only when they appear verbatim in the supplied conversation.
+    Never infer a missing value; omit the detail instead.
 
-Confirm the name is listed, its `source` is the path you wrote, `userInvocable` is true; a
-contested bare name is tagged `collides with /x -> scope:x`. To retire without deleting:
-`disabled = ["name"]` under `[skills]` keeps a skill listed and inactive,
-`ignore = ["path"]` hides it entirely, and a plugin goes in `[plugins].disabled`.
-`/skills` is the interactive form of the same switch: it lists every discovered skill
-with its source and toggles one out of the slash menu without touching the file.
+    Omit any section where there is nothing substantive to report. Do NOT include
+    user preferences like OS, shell, or editor - these belong in global memory. Do
+    NOT include an ephemeral progress section - transient status is not useful for
+    future sessions.
 
-A seed change runs the repo gates:
+    Respond with NO_REPLY if nothing genuinely useful was learned - a routine task
+    that followed standard patterns, brief Q&A, or sessions with no novel decisions
+    or discoveries are not worth persisting. Only write content that a future session
+    would concretely benefit from.
 
-    bazelisk test //:test-fast
-    bazelisk test //:lint --test_tag_filters=manual
-    bazelisk run //:fix
-    bazelisk run //:validate
+A second and later flush in the same session uses the delta form: same sections,
+but "Extract ONLY information that is NEW since the previous flush", and the
+previous flush output is appended under a `--- Previous flush content ---` rule.
 
-Each `scripts/<stem>.sh` is a target: `bazelisk run //scripts:<stem> -- <args>`. Read the
-summary line first: `Executed 0 out of N tests: N tests pass.` is a cached PASS over
-unchanged inputs; spend one uncached pass
-(`bazelisk test //:test-fast --nocache_test_results`) before the PR.
+Then apply the acceptance rules, in this order, before anything is written:
 
-## Then point at the next thing
+1. Empty, or a reply that reduces to `noreply` once lowercased with non-alphanumerics
+   stripped (`NO_REPLY`, `no reply`, `No-Reply` all match; `no reply needed` does
+   not), means `NothingToStore`. Say so and write nothing.
+2. Cap the body at 8000 characters, the `max_flush_write_chars` default.
+3. A body with no `## ` and no `# ` is `Rejected`: "flush response lacks markdown
+   structure (no ## headers)". Do not write a body that fails this.
 
-- Operator docs: `README.md`, then `docs/` (`grok-build-and-agents.md` for the CLI and its
-  lanes, `project-conventions.md` for shell style, `branching.md` for git).
-- Anything in this repo: read it. A search lane answers the outside world only.
-- Run it periodically. A convention every session must follow belongs in `AGENTS.md`; a
-  procedure belongs in a skill, shipped in both homes.
+Dedup before writing: compare the candidate against the chunks already stored and
+skip a near-verbatim rephrasing. Upstream embeds and asks sqlite-vec for 3 nearest
+neighbours and calls it a duplicate above cosine similarity 0.92 (`[compaction.
+memory_flush] semantic_dedup_threshold`, 0.92 when unset). Without an embedding
+provider upstream skips dedup entirely, so do the honest equivalent: diff against
+the existing sections and drop what is already said.
+
+Write to the workspace session log, created on first flush and appended after:
+
+    ~/.grok/memory/<slug>-<hash8>/sessions/YYYY-MM-DD-<slug>-<sid8>.md
+
+`YYYY-MM-DD` is the UTC date, `sid8` is the first 8 chars of the session id, and
+`slug` is short and derived from the first user message. A repeat flush appends
+`\n\n---\n\n` then `<!-- flush HH:MM:SS UTC -->` then the body, which is what the
+dream pass later splits entries on.
+
+## Step 3 -- dream: fold the session logs into organized memory
+
+Dream is the reflective pass, and it is the step that actually learns.
+
+Read every `sessions/*.md` in the workspace directory **except** the current
+session's, sorted by name, plus the existing workspace `MEMORY.md`. Skip scaffold
+files: shorter than 500 chars and containing `Auto-populated by dream consolidation`,
+`Add project-specific knowledge here`, or `Add any cross-project preferences here`.
+Stop adding files once the assembled input reaches 32000 chars, and leave the unread
+tail alone so a later pass can reach it.
+
+Apply the upstream `DREAM_SYSTEM_PROMPT`, wording kept:
+
+    You are performing a dream - a reflective pass over memory files. Synthesize
+    recent session logs into durable, well-organized memories so future sessions
+    orient quickly.
+
+    You will receive the contents of recent session logs. You may also receive an
+    existing memory document - merge it with new sessions rather than discarding
+    prior knowledge. Your job:
+
+    1. **Merge** related information into coherent topic summaries
+    2. **Resolve** contradictions - if a recent session disproves an older fact, keep
+       only the current truth
+    3. **Convert** relative dates ("yesterday", "last week") to absolute dates
+    4. **Discard** ephemeral details:
+       - Greetings, meta-commentary, tool output noise
+       - Message counts and tool-usage statistics
+       - 'Current state' and 'Next steps' sections
+       - User preferences already in global memory (OS, shell, editor)
+       - Session metadata (dates, message counts)
+    5. **Preserve** decisions, rationale, architecture, preferences, and
+       problem/solution pairs
+    6. **Generalize** task narratives into reusable mechanisms, rules, and root causes
+    7. **Ground details** - use stable repo-relative paths for project structure;
+       include an absolute workspace root only when operationally necessary and
+       present in the session logs. Copy exact identifiers and numerical values only
+       when they appear verbatim in the input; omit unsupported details
+
+    Respond with a single markdown document. Use ## headers to separate topics. Each
+    topic should be self-contained and useful to a future session that knows nothing
+    about the current conversation.
+
+    If the session logs contain nothing worth persisting, respond with NO_REPLY.
+
+Assemble the prompt as `--- Existing Memory (merge with new sessions) ---`, the
+existing document capped at 16000 chars, then one
+`--- Session: <stem> ---` block per log in sorted order. Cap the finished document
+at 16000 chars. No `## ` headers means no write.
+
+Then, in this order:
+
+1. Overwrite `~/.grok/memory/<slug>-<hash8>/MEMORY.md` with the document **as-is**.
+   Dream output is not normalized, so its heading structure survives. In v2, patch
+   or create `topics/<lowercase-slug>.md` instead - each starting with `# Title`, a
+   one-line description under 160 bytes, then `## ` sections - and archive the
+   consumed observations rather than deleting them.
+2. Delete the session logs you actually consumed, keeping any file modified in the
+   last 300 seconds, since a concurrent session may still be appending to it. Never
+   delete a log you did not read.
+3. Regenerate the v2 `MEMORY.md` index only by full regeneration; it opens with
+   `> Generated by Grok. Do not edit this file directly.` and hand-editing it is
+   lost on the next pass.
+
+Take a lock before the model pass and skip with `lock held by another process,
+skipping` if it is held; the automatic pass also waits for `min_hours` 24 and
+`min_sessions` 5, and an explicit dream bypasses those two gates only.
+
+## Step 4 -- one note, the browser, and the purge
+
+`/ez-learn remember <note>` mirrors `/remember`, the one member with a confirmation
+step: show the note and get an explicit yes before saving. Normalize it first -
+keep the structure if it already starts with `#`; if it is one line the line
+becomes the heading; if the first line is at most 80 chars it becomes `## <line>`
+over the rest; otherwise it goes under `## Note`. User preferences belong in
+**global** memory: legacy appends to `~/.grok/memory/MEMORY.md`, v2 publishes an
+observation into the global `observations/_inbox/`. v2 rejects a note over 64 KiB.
+Images do not travel with a note.
+
+`/ez-learn browse` mirrors `/memory`: list the files with source, size, and mtime,
+and print `No memory files have been recorded yet.` for a genuinely empty store.
+An empty list can also mean a listing error, so report the error rather than
+presenting a broken store as a fresh one. `/memory` takes no arguments.
+
+`/ez-learn clear` mirrors `grok memory clear`, which is the only destructive
+member and defaults to the **workspace** scope. `--workspace`, `--global`, and
+`--all` are mutually exclusive. Name what is about to go and confirm:
+
+    The following will be deleted:
+      <label>: <path>
+
+    Are you sure? [y/N]
+
+Anything but `y` or `yes` prints `Cancelled.` Expect `Nothing to clear: no memory
+files found.`, `  Cleared: <label>`, `Memory cleared.`, and `Memory partially
+cleared. Errors:` as separate outcomes.
+
+## Step 5 -- go deeper into past sessions only when asked
+
+The dream pass folds the memory session logs it already owns. Reaching past those
+into the raw transcripts is extra depth, and it happens **only when the user asks**
+for it, never as a default.
+
+Session transcripts live under `~/.grok/sessions/`, one directory per escaped
+working directory, each holding small `summary.json` files beside large
+`chat_history.jsonl` and `events.jsonl`. Index the summaries first
+(`session_summary`, `num_chat_messages`, `head_branch`) and read only the sessions
+that rank. A `jsonl` file is many megabytes: count and select with `jq` or `grep -c`
+into a scratch file under `/tmp`, and never paste a transcript into the reply.
+Clean the scratch files up when you are done.
+
+What you mine must survive the acceptance rules in Step 2 before it becomes memory.
+A fact that only describes the course of a session is not memory; a mechanism, a
+rule, or a root cause is.
+
+## Step 6 -- report the same lines upstream reports
+
+Say what happened in the upstream wording, so a user who knows the real commands
+recognizes the result.
+
+Flush reports one of:
+
+    Memory flushed through turn N.
+    Memory flushed.
+    Memory flush did not finish; capture will retry in the background.
+    Memory flush failed.
+    Memory flush timed out; capture continues in the background.
+    Memory is turned off for this session.
+    Another memory flush is already running.
+
+Dream reports one of:
+
+    Dream merged N observations into M topics.
+    Dream completed.
+    Nothing to consolidate.
+    Dream is already running; try again when it finishes.
+    Dream did not finish; it will retry automatically.
+    Dream failed.
+    Dream ran in shadow mode; nothing was written.
+    Dream cancelled.
+    Dream is turned off for this session.
+
+Singularize the merge line (`1 observation`, `3 topics`). A skipped run reports
+`skipped: <reason>`.
+
+## Where a correction belongs
+
+Every claim above comes from the upstream Rust source at
+`crates/codegen/xai-grok-memory/` and `crates/codegen/xai-grok-shell/src/session/`.
+When a claim drifts, fix the seed at `templates/common/ez-learn.SKILL.md` and let
+`refresh-configs` re-materialize it; **never edit the copy in a home** - a deletion
+is undone by the next boot, so only the seed survives. This command is itself a
+seeded skill: the Grok Build CLI reads `~/.agents/skills/<name>/SKILL.md` and the
+Coder Agents chat agent reads only `~/.coder/skills/<name>/SKILL.md`, which is why a
+skill that serves both consumers ships in both homes. Re-seed with
+`bazelisk run //scripts:refresh-configs -- workspace`, prove the change with
+`bazelisk test //:test-fast`, and add a Bats assertion in
+`tests/bats/ez-learn-skill.bats` that fails when the claim drifts again.
+
+Prove the command is actually wired up with `grok inspect` (or `grok inspect --json`
+to read `userInvocable` and the `source` path, which is the file you edited). If a
+name collides with a bundled or plugin command, the qualified form `/local:ez-learn`
+disambiguates it.
+
+The rest of the repo's conventions live in `README.md` and `docs/`, with
+`docs/grok-build-and-agents.md` covering the CLI and its lanes and
+`docs/project-conventions.md` covering shell style. Anything in this repository is
+answered by reading it; the search lanes answer the outside world only.

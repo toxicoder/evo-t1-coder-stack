@@ -1,13 +1,14 @@
 #!/usr/bin/env bats
 # shellcheck shell=bash
 #
-# ## ez-learn-skill.bats - guardrails for the stack-shipped /ez-learn skill.
+# ## ez-learn-skill.bats - guardrails for the stack-shipped /ez-learn command.
 #
-# Upstream /learn is a BUNDLED Grok Build skill: its download goes through the
-# CLI's proxy endpoints and needs an x.ai sign-in. This stack has no x.ai
-# credential (LiteLLM is the sole model transport), so ~/.grok/bundled/ is
-# never created and the slash name is simply missing. The stack therefore ships
-# its own templates/common/ez-learn.SKILL.md and seeds it on the same contract as
+# Upstream ships its memory family - /flush, /dream, /remember, /memory - as
+# BUILT-IN Grok Build commands: three entries in the shell's built-in command
+# table plus one pager command. Three of them sit behind the cross-session
+# memory gate, which is off by default and needs a configured memory store, so
+# on this stack the names stay hidden. The stack therefore ships its own
+# templates/common/ez-learn.SKILL.md and seeds it on the same contract as
 # the grok-build-delegation skill: the file is written into
 # ~/.coder/skills/ez-learn/SKILL.md (what the Coder Agents chat agent reads)
 # while it is absent, then twin-copied to ~/.agents/skills/ez-learn/SKILL.md
@@ -40,22 +41,24 @@
 # against that same payload so a reseed can re-materialize them.
 #
 # The rest of the suite pins the payload's own claims against the tree it
-# describes, so an edit that makes the skill lie fails the gate rather than
-# sending an operator to a target, a doc, an alias or a path that is not there:
-# what its mining contract promises (report-only by default, one proposal shape,
-# a retire that never deletes, the seed as the only write target, grok inspect
-# as the proof) is what the payload actually says, every bazel label it cites
-# resolves, every doc path it points at exists, its alias list stays inside what
-# litellm/config.yaml defines, and its notes and skills paths match what the
-# seeder and the two skill readers actually use.
+# describes, so an edit that makes the command lie fails the gate rather than
+# sending an operator to a doc, a label or a path that is not there: what the
+# memory contract promises (the four upstream commands it reproduces and why the
+# bundle is missing, report-only by default, the fail-closed memory gate, both
+# storage layouts, the flush and dream instructions with their headings, caps and
+# thresholds kept, the upstream report lines quoted, one destructive member that
+# confirms first, the deep session pass kept opt-in, the seed as the only write
+# target, grok inspect as the proof) is what the payload actually says, every
+# bazel label it cites resolves, and every doc path it points at exists. Skill
+# authoring is not pinned here: the sibling skills carry it, in
+# tests/bats/ez-skill-authoring.bats.
 #
 # Usage: bazelisk test //tests:bats_ez_learn_skill_test   (from any cwd)
 # Safety: reads the stack-skills seed body, the two startup.sh.tftpl twins, the
 # two main.tf twins, templates/common/ez-learn.SKILL.md,
-# templates/common/notes-setup.sh, scripts/lib/config_seed.sh,
-# scripts/lib/probes/seed-rm-managed.sh, litellm/config.yaml, the root BUILD
-# file, the scripts/ tree and the repo docs; the retire tests write only into a
-# per-test scratch home under BATS_TEST_TMPDIR.
+# scripts/lib/config_seed.sh, scripts/lib/probes/seed-rm-managed.sh, the root
+# BUILD file, the scripts/ tree and the repo docs; the retire tests write only
+# into a per-test scratch home under BATS_TEST_TMPDIR.
 
 bats_require_minimum_version 1.5.0
 
@@ -74,6 +77,14 @@ setup() {
     -f "${REPO_ROOT}/templates/workspace/startup.sh.tftpl" &&
     -f "${REPO_ROOT}/templates/devcontainer/startup.sh.tftpl" ]] ||
     skip "the learn payload, the seed body or a template twin is not reachable from ${REPO_ROOT}"
+}
+
+# payload_section <heading fragment> - the body of one "## " section, its heading
+# line left out. The prompt-transcription tests read their claims off the section
+# they belong to, so a heading, a cap or a report line cannot survive as
+# decoration somewhere else in the file.
+payload_section() {
+  awk -v want="$1" '$0 ~ "^## .*" want {f=1; next} /^## /{f=0} f' "${PAYLOAD}"
 }
 
 @test "ez-learn seed: the stack-skills body seeds the coder copy only while it is absent" {
@@ -151,7 +162,8 @@ setup() {
     run grep -F 'cp "$HOME/.coder/skills/grok-build-delegation/SKILL.md"' \
       "${tpl_dir}/startup.sh.tftpl"
     assert_eq "${tpl_dir} still twins the delegation skill" "0" "${status}"
-    # And the loop that hands /learn back, which the trio never replaces.
+    # And the loop that retires the pre-rename /learn copy, which the trio never
+    # replaces.
     run grep -F 'for _d in "$HOME/.coder/skills/learn" "$HOME/.agents/skills/learn"; do' \
       "${tpl_dir}/startup.sh.tftpl"
     assert_eq "${tpl_dir} still retires the old /learn copy" "0" "${status}"
@@ -319,107 +331,301 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     '`execute`'
 }
 
-@test "ez-learn scope: it is workflow curation and says so against the memory system" {
-  # The stack keeps these apart: /remember, /memory and /dream are the memory
-  # store, this command curates workflows. A payload that drops the sentence is
-  # read as a memory tool by the model and files workflow fixes as durable
-  # facts, which nothing here can undo.
-  assert_contains_file "it calls itself workflow curation" "${PAYLOAD}" \
-    'workflow curation'
-  assert_contains_file "it points durable facts at the memory system" "${PAYLOAD}" \
-    '`/remember`'
+@test "ez-learn memory: it names the four upstream commands it reproduces" {
+  # Upstream ships /flush, /dream, /remember and /memory as built-ins: three
+  # entries in the shell's built-in command table behind the cross-session memory
+  # gate, plus one pager command. Three of the four surface only when that gate is
+  # open, so the payload has to say what it stands in for and how upstream ships
+  # it, or a reader cannot tell a reproduction from an unrelated tool.
+  local cmd desc
+  for cmd in flush dream remember memory; do
+    assert_contains_file "it names the upstream /${cmd} command" "${PAYLOAD}" \
+      "\`/${cmd}\`"
+  done
+
+  # The frontmatter is what the model reads when it chooses the command, so the
+  # four names belong there too, not only in the body.
+  desc="$(grep -m1 '^description:' "${PAYLOAD}")"
+  for cmd in flush dream remember memory; do
+    assert_match "the model-facing description names /${cmd}" "/${cmd}" "${desc}"
+  done
+  assert_contains_file "it says this is the stack's own copy" "${PAYLOAD}" \
+    "This is this stack's copy of the upstream Grok Build memory commands"
+
+  # How upstream ships them, in its own words: built-ins over files on disk, the
+  # command table, the pager, the gate, and why the ez- prefix stays clear.
+  assert_contains_file "it says upstream ships them as built-ins" "${PAYLOAD}" \
+    'those as built-ins, not as files on disk'
+  assert_contains_file "it names the built-in command table" "${PAYLOAD}" \
+    "entries in the shell's built-in command table"
+  assert_contains_file "it says /remember is a pager command" "${PAYLOAD}" \
+    'is a pager command'
+  assert_contains_file "and that this file is what the stack seeds" "${PAYLOAD}" \
+    'the stack seeds this file instead'
+  assert_contains_file "and why the ez- prefix stays clear of the built-ins" "${PAYLOAD}" \
+    'clear of the built-in names'
 }
 
-@test "ez-learn modes: report-only is the default and apply steps through one at a time" {
-  # The default is the safety property: a mining pass that writes accepted-
-  # looking edits into homes and seeds without being asked is the one way this
-  # command can do damage. Step-through apply is the counterpart, and accept /
-  # edit / reject per proposal is what keeps an unreviewed proposal from landing.
-  assert_contains_file "report-only is named as the default" "${PAYLOAD}" \
-    'Report-only, the default'
-  assert_contains_file "the default writes nothing" "${PAYLOAD}" 'write nothing'
-  assert_contains_file "apply is offered as a second mode" "${PAYLOAD}" \
-    'Step-through apply'
-  assert_contains_file "each proposal is offered per item" "${PAYLOAD}" \
-    'one proposal at a time'
-  # The prose wraps between the second and third choice, so the answer is read
-  # off the joined file rather than one line.
-  assert_match "and answered accept, edit or reject" 'accept / edit /[[:space:]]*reject' \
-    "$(tr '\n' ' ' <"${PAYLOAD}")"
+@test "ez-learn memory: skill authoring is handed to the two writing siblings" {
+  # The trio divides the work: this command writes memory files, /ez-skillify
+  # captures the procedure from a session that just worked, /ez-create-skill
+  # scaffolds one from a description. Drop the hand-off and a reader who decides
+  # a fact should have been a skill has no sanctioned route and edits a SKILL.md
+  # by hand. How those two write is pinned in ez-skill-authoring.bats.
+  assert_contains_file "it says this command is not authoring" "${PAYLOAD}" \
+    'It is not skill authoring'
+  assert_contains_file "it names the session-capture sibling" "${PAYLOAD}" '/ez-skillify'
+  assert_contains_file "it names the scaffolding sibling" "${PAYLOAD}" '/ez-create-skill'
+  assert_contains_file "it gives the writing to those two" "${PAYLOAD}" \
+    'Those two write skill files'
+  assert_contains_file "and keeps the memory writes as its own" "${PAYLOAD}" \
+    'this one writes memory files'
+
+  # The two siblings stand in for commands that ride in the runtime skills bundle,
+  # and that is the half the stack genuinely cannot sync: the download wants an
+  # x.ai sign-in, LiteLLM is the only transport here, so the bundle dir never
+  # appears and the stack seeds those two files by hand instead.
+  assert_contains_file "it names the bundled skill dir" "${PAYLOAD}" '~/\.grok/bundled/'
+  assert_contains_file "it names the sign-in the bundle needs" "${PAYLOAD}" \
+    'x\.ai sign-in'
+  assert_contains_file "and the transport that replaces x.ai" "${PAYLOAD}" \
+    'LiteLLM is the sole model transport'
+  assert_contains_file "it says the bundled dir is never created" "${PAYLOAD}" \
+    'is never created'
+  assert_contains_file "and that those two are stack-seeded too" "${PAYLOAD}" \
+    'the stack seeds those two files instead'
 }
 
-@test "ez-learn proposals: every finding is proposed in one shape" {
-  # The proposal block is the contract between the mining steps and the apply
-  # step, and the reader's review surface: without the evidence field a single
-  # anecdote reads as a convention, and without kind / name / scope nobody
-  # knows what is being created, renamed or retired, or into which home. The
-  # assertion is scoped to the Step 5 section so the words cannot survive as
-  # decoration elsewhere in the file.
-  local step5
-  step5="$(awk '/^## Step 5 /{f=1;next} /^## /{f=0} f' "${PAYLOAD}")"
-  [ -n "${step5}" ] || {
-    printf 'FAIL: %s lost its Step 5 proposal-shape section\n' "${PAYLOAD}" >&2
+@test "ez-learn memory: report-only is the default and nothing is written until asked" {
+  # The default is the safety property: this command overwrites memory files and
+  # deletes session logs, so a bare /ez-learn has to print what it would do and
+  # stop. Naming the target on the apply side is the counterpart - a write whose
+  # path the reader never sees cannot be reviewed before it lands.
+  local section
+  section="$(payload_section 'Default:')"
+  [ -n "${section}" ] || {
+    printf 'FAIL: %s lost its report-only default section\n' "${PAYLOAD}" >&2
     return 1
   }
-  local field
-  for field in '`kind`' '`name`' 'scope' '`description`' '`when-to-use`' 'steps' 'evidence'; do
-    assert_match "the proposal shape carries ${field}" "${field}" "${step5}"
+
+  assert_contains_file "the section is named for the report-only default" "${PAYLOAD}" \
+    '^## Default: report-only, then apply on request'
+  assert_match "no argument writes nothing" 'with no argument reports and writes nothing' \
+    "${section}"
+  assert_match "it prints what it resolved" \
+    'prints the resolved root, the workspace directory name' \
+    "$(tr '\n' ' ' <"${PAYLOAD}")"
+  assert_match "it prints the logs it would fold" \
+    'the session-log files it would fold' "${section}"
+  assert_match "it prints the markdown it proposes" 'proposes to write' "${section}"
+  assert_match "nothing reaches disk until asked" \
+    'Nothing touches disk until you ask for the' "${section}"
+  assert_match "and a write names the path it touched" 'a write names the path it touched' \
+    "${section}"
+  assert_match "--force is the only overwrite" 'Pass `--force` only to' "${section}"
+}
+
+@test "ez-learn gate: memory is off by default and every gate is named" {
+  # Every member here is fail-closed on a switch an operator has to flip, so a
+  # payload that drops the gate teaches a reader to write memory files that
+  # nothing will ever read back. The precedence chain, both tables, the flag and
+  # the line the user sees are all part of that contract.
+  local section
+  section="$(payload_section 'Step 0')"
+  [ -n "${section}" ] || {
+    printf 'FAIL: %s lost its Step 0 gate section\n' "${PAYLOAD}" >&2
+    return 1
+  }
+
+  assert_match "memory is off by default" 'Memory is \*\*off by default\*\*' "${section}"
+  assert_match "and each gate is fail-closed" 'fail-closed' "${section}"
+  assert_match "the env knob is named" 'GROK_MEMORY' "${section}"
+  assert_match "the CLI kill switch is named" '`--no-memory`' "${section}"
+  assert_match "the legacy table is named" '\[memory\] enabled' "${section}"
+  assert_match "the v2 table is named" '\[memory_v2\] enabled' "${section}"
+  assert_match "the last resort is spelled false" 'default `false`' "${section}"
+  assert_match "the user-visible line is quoted" \
+    'Memory is turned off for this session\.' "${section}"
+  assert_match "and /remember is the least gated member" 'least gated' "${section}"
+}
+
+@test "ez-learn paths: both layouts, the workspace dir, and the log dirs are spelled out" {
+  # Writing next to the CLI's own writes is the whole trick: a note filed under a
+  # guessed root, a guessed workspace dir name, or a nested topics/ path is
+  # invisible to the index and to the dream pass, so it is memory that never
+  # comes back. Both layouts and the digest rule are pinned, never paraphrased.
+  assert_contains_file "the legacy root is named" "${PAYLOAD}" '~/\.grok/memory/'
+  assert_contains_file "the v2 root is named" "${PAYLOAD}" '~/\.grok/memory-v2/'
+  assert_contains_file "the workspace dir is slug plus hash8" "${PAYLOAD}" '<slug>-<hash8>'
+  assert_contains_file "hash8 is a digest, never invented" "${PAYLOAD}" \
+    'first 8 hex chars of a blake3 digest'
+  assert_contains_file "the session log path is spelled out" "${PAYLOAD}" \
+    'sessions/YYYY-MM-DD-<slug>-<sid8>\.md'
+  assert_contains_file "the v2 topics dir is named" "${PAYLOAD}" '`topics/`'
+  assert_contains_file "the v2 observation inbox is named" "${PAYLOAD}" \
+    '`observations/_inbox/`'
+  assert_contains_file "and only one level deep counts" "${PAYLOAD}" \
+    'Only immediate children of'
+}
+
+@test "ez-learn flush: the extraction instruction keeps its four sections and its caps" {
+  # Step 2 transcribes the upstream FLUSH_SYSTEM_PROMPT. The four section
+  # headings are what the acceptance rules and the dream pass read, NO_REPLY is
+  # how a worthless flush is refused, and the cap and the dedup threshold are the
+  # two numbers upstream answers with; reworded, the payload is a different
+  # prompt writing files nothing downstream parses the same way.
+  local section heading
+  section="$(payload_section 'Step 2')"
+  [ -n "${section}" ] || {
+    printf 'FAIL: %s lost its Step 2 flush section\n' "${PAYLOAD}" >&2
+    return 1
+  }
+
+  assert_match "it is named as the upstream prompt" 'FLUSH_SYSTEM_PROMPT' "${section}"
+  for heading in 'Decisions & rationale' 'Technical context' 'Debugging techniques' \
+    'Problems & solutions'; do
+    assert_match "the prompt keeps the ${heading} heading" "\*\*${heading}" "${section}"
   done
+  assert_match "a worthless flush answers NO_REPLY" 'Respond with NO_REPLY' "${section}"
+  assert_match "and noreply is matched loosely" 'reduces to `noreply`' "${section}"
+  assert_match "the body is capped at 8000 chars" 'Cap the body at 8000 characters' \
+    "${section}"
+  assert_match "and the cap is named after the setting" 'max_flush_write_chars' "${section}"
+  assert_match "a near-verbatim repeat is dropped at 0.92" 'cosine similarity 0\.92' \
+    "${section}"
+  assert_match "a body without headers is rejected" 'flush response lacks markdown' \
+    "${section}"
 }
 
-@test "ez-learn proposals: a retire proposal never deletes on its own" {
-  # The command proposes retiring skills, plugins, MCP servers and rules. Run
-  # without the guard it is a tool that uninstalls things on a guess, so the
-  # retire branch has to carry its own no-delete rule next to the
-  # retire-without-deleting levers the Step 8 section offers.
-  assert_contains_file "a retire proposal only names the stale thing" "${PAYLOAD}" \
-    'never deleting on its own'
-  assert_contains_file "retiring keeps a skill listed and inactive" "${PAYLOAD}" \
-    'keeps a skill listed and inactive'
-  assert_contains_file "and the hide-either lever is named" "${PAYLOAD}" \
-    'ignore = \["path"\]'
+@test "ez-learn flush: a repeat flush appends behind the delimiter dream splits on" {
+  # The delimiter is the contract between two members: dream splits entries on
+  # it, so an append that drops or rewords it fuses two flushes into one entry,
+  # and the next dream pass merges them with no way back.
+  assert_contains_file "the append delimiter is quoted exactly" "${PAYLOAD}" \
+    '<!-- flush HH:MM:SS UTC -->'
+  assert_contains_file "and dream is told it splits entries on it" "${PAYLOAD}" \
+    'dream pass later splits entries on'
+  assert_contains_file "the rule that separates flushes is named" "${PAYLOAD}" \
+    'A repeat flush appends'
 }
 
-@test "ez-learn writes: an accepted stack change goes to the seed, never a materialized copy" {
-  # The stack-owned files under a home are regenerated by the boot and by
-  # refresh-configs, so an "accepted" edit written straight into
-  # ~/.coder/skills or ~/.grok/skills is undone at the next start and the
-  # operator loses the fix they approved. The payload has to send stack work to
-  # the seed that produces the file.
-  assert_contains_file "stack work goes to the seed" "${PAYLOAD}" \
-    'goes to the seed that produces the file'
+@test "ez-learn dream: the seven verbs, the caps, and the recency guard survive" {
+  # Dream is the step that actually learns, and Step 3 transcribes the upstream
+  # DREAM_SYSTEM_PROMPT. The seven verbs are what keeps the pass from quietly
+  # becoming a copy: drop Resolve or Discard and it starts keeping contradictions
+  # and session noise. The caps bound what the model sees and writes, the 300
+  # second guard is what stops it eating a log another session is still
+  # appending to, and the scaffold marker is how it refuses a stub file.
+  local section verb n=1
+  section="$(payload_section 'Step 3')"
+  [ -n "${section}" ] || {
+    printf 'FAIL: %s lost its Step 3 dream section\n' "${PAYLOAD}" >&2
+    return 1
+  }
+
+  assert_match "it is named as the upstream prompt" 'DREAM_SYSTEM_PROMPT' "${section}"
+  for verb in Merge Resolve Convert Discard Preserve Generalize Ground; do
+    assert_match "verb ${n} is ${verb}" "${n}\. \*\*${verb}" "${section}"
+    n=$((n + 1))
+  done
+  assert_match "the input stops at 32000 chars" 'reaches 32000 chars' "${section}"
+  assert_match "the finished document is capped" 'Cap the finished document' "${section}"
+  assert_match "and that cap is 16000 chars" 'at 16000 chars' "${section}"
+  assert_match "a log touched in the last 300 seconds stays" 'last 300 seconds' "${section}"
+  assert_match "a scaffold file is skipped by its marker" \
+    'Auto-populated by dream consolidation' "${section}"
+  assert_match "a held lock is a skip, not a queue" 'lock held by another process' \
+    "${section}"
+  assert_match "the generated index is never hand-edited" \
+    'Do not edit this file directly' "${section}"
+}
+
+@test "ez-learn report: the summary lines are quoted in the upstream wording" {
+  # A user who knows the real commands reads these lines as the result, and a
+  # paraphrase is what makes the two tools stop looking like one family. The four
+  # that carry an outcome (how far the flush got, what the dream folded, an empty
+  # store, a concurrent run) are quoted exactly.
+  assert_contains_file "flush names the turn it reached" "${PAYLOAD}" \
+    'Memory flushed through turn'
+  assert_contains_file "dream reports what it folded in" "${PAYLOAD}" \
+    'Dream merged N observations into M topics\.'
+  assert_contains_file "and the merge line is singularized" "${PAYLOAD}" \
+    '[Ss]ingularize the merge line'
+  assert_contains_file "an empty dream says so" "${PAYLOAD}" 'Nothing to consolidate\.'
+  assert_contains_file "a concurrent dream says so too" "${PAYLOAD}" \
+    'Dream is already running'
+  assert_contains_file "and a skipped run carries its reason" "${PAYLOAD}" \
+    'skipped: <reason>'
+}
+
+@test "ez-learn clear: the one destructive member confirms before it deletes" {
+  # Everything else writes a file; clear removes a tree, and it defaults to the
+  # workspace scope. The confirmation block is the only thing between a
+  # mistyped subcommand and lost memory, so its prompts are pinned as printed
+  # rather than described.
+  assert_contains_file "clear is named the only destructive member" "${PAYLOAD}" \
+    'is the only destructive'
+  assert_contains_file "and it defaults to the workspace scope" "${PAYLOAD}" \
+    'defaults to the \*\*workspace\*\* scope'
+  assert_contains_file "the three scope flags cannot combine" "${PAYLOAD}" \
+    'mutually exclusive'
+  assert_contains_file "the confirmation names what is about to go" "${PAYLOAD}" \
+    'The following will be deleted:'
+  assert_contains_file "and asks the yes/no question" "${PAYLOAD}" \
+    'Are you sure\? \[y/N\]'
+  assert_contains_file "anything but yes cancels" "${PAYLOAD}" 'prints `Cancelled\.`'
+  assert_contains_file "an empty store is its own outcome" "${PAYLOAD}" 'Nothing to clear'
+  assert_contains_file "and an empty browser says so honestly" "${PAYLOAD}" \
+    'No memory files have been recorded yet\.'
+}
+
+@test "ez-learn deeper: the session sweep keeps its guardrails" {
+  # Reaching into ~/.grok/sessions is the one place this command reads raw
+  # transcripts, and those dirs hold multi-megabyte jsonl beside their small
+  # summaries: an agent that forgets the guardrails either quotes a whole session
+  # into the reply or mines a "fact" out of one anecdote. So the deep pass stays
+  # behind an explicit request, counts before it reads, and keeps the bulk on
+  # disk.
+  assert_contains_file "the deep pass is opt-in" "${PAYLOAD}" 'only when the user asks'
+  assert_contains_file "and never runs as a default" "${PAYLOAD}" 'never as a default'
+  assert_contains_file "it names the session store" "${PAYLOAD}" '~/\.grok/sessions/'
+  assert_contains_file "it counts before it reads" "${PAYLOAD}" \
+    'count and select with `jq`'
+  assert_contains_file "it redirects the bulk instead of printing it" "${PAYLOAD}" \
+    'scratch file under `/tmp`'
+  assert_contains_file "and keeps a transcript out of the reply" "${PAYLOAD}" \
+    'never paste a transcript into the reply'
+}
+
+@test "ez-learn writes: a correction goes to the seed, never the copy in a home" {
+  # The copies under a home are rewritten by the boot and re-seeded by
+  # refresh-configs, so an edit written straight into ~/.coder/skills or
+  # ~/.agents/skills is undone at the next start and the reader loses the fix
+  # they just made. The payload has to send the correction to the seed.
   assert_contains_file "the seed is templates/common/" "${PAYLOAD}" 'templates/common/'
-  assert_contains_file "and the materialized copy is off limits" "${PAYLOAD}" \
-    'Never edit the copy in a home'
+  assert_contains_file "and names the CLI that re-materializes it" "${PAYLOAD}" \
+    'refresh-configs'
+  run grep -Ei -- 'never edit the copy in a home' "${PAYLOAD}"
+  [ "${status}" -eq 0 ]
+  assert_contains_file "because only the seed survives a boot" "${PAYLOAD}" \
+    'only the seed survives'
+  assert_contains_file "and names the suite that has to move with the claim" "${PAYLOAD}" \
+    'ez-learn-skill\.bats'
 }
 
-@test "ez-learn verify: grok inspect proves discovery and the source path" {
-  # The command ends by proving the skill loaded. grok inspect is the only
-  # reader-side truth here, and the name alone is not enough: first-match-wins
-  # dedupe means a same-named skill elsewhere can shadow the one just written,
-  # which is what the source path and the collision tag catch.
+@test "ez-learn verify: grok inspect proves the wiring and /local: settles a collision" {
+  # grok inspect is the only reader-side truth here: the payload claims a slash
+  # command exists and this stack seeds it as a plain file, so it has to say how
+  # to prove the command registered, which field shows it, and what to do when a
+  # bundled or plugin command of the same name shadows it.
   assert_contains_file "it runs grok inspect" "${PAYLOAD}" 'grok inspect'
   assert_contains_file "and the json form that prints the source" "${PAYLOAD}" \
     'grok inspect --json'
-  assert_contains_file "it checks the source is the path written" "${PAYLOAD}" \
-    '`source` is the path you wrote'
-  assert_contains_file "it checks the slash name is invocable" "${PAYLOAD}" \
-    'userInvocable'
-  assert_contains_file "and the shadowing case is named" "${PAYLOAD}" \
-    'collides with /x -> scope:x'
-}
-
-@test "ez-learn siblings: it names the two commands it hands off to" {
-  # The trio divides the work: this one mines and proposes, /ez-skillify
-  # captures the session that just worked, /ez-create-skill scaffolds from a
-  # description. Drop the hand-off and a reader who is told to write an
-  # accepted skill has no sanctioned route and edits the seed by hand.
-  assert_contains_file "it names the session-capture sibling" "${PAYLOAD}" '/ez-skillify'
-  assert_contains_file "it names the scaffolding sibling" "${PAYLOAD}" '/ez-create-skill'
-  assert_contains_file "it keeps proposing as its own half" "${PAYLOAD}" \
-    '/ez-learn` proposes'
-  assert_contains_file "and gives the writing to those two" "${PAYLOAD}" \
-    'those two write'
+  assert_contains_file "it reads the invocable flag" "${PAYLOAD}" 'userInvocable'
+  assert_contains_file "and the source is the file it edited" "${PAYLOAD}" \
+    'the `source` path'
+  assert_contains_file "and the qualified form disambiguates a collision" "${PAYLOAD}" \
+    '/local:ez-learn'
 }
 
 @test "ez-learn seams: config_seed names both targets against the one payload" {
@@ -440,10 +646,10 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     "${REPO_ROOT}/scripts/lib/template-push.sh" 'stack-skills\.sh\.tftpl'
 }
 
-@test "ez-learn retire: both startup twins hand /learn back to the CLI" {
+@test "ez-learn retire: both startup twins retire the pre-rename /learn copy" {
   # The seed moved off the /learn name, and the absent-only contract never
   # deletes, so the boot has to retire the copy the stack left there. Left in
-  # place it keeps shadowing the CLI's bundled skill for the life of the volume.
+  # place it keeps offering that old name for the life of the volume.
   local tpl_dir
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
     run grep -F 'for _d in "$HOME/.coder/skills/learn" "$HOME/.agents/skills/learn"; do' \
@@ -528,36 +734,25 @@ if "user-invocable" in data and data["user-invocable"] is not True:
 }
 
 @test "ez-learn targets: every bazel label the payload cites still resolves" {
-  # Step 8 tells the reader to run what the payload prints, so a label the tree
-  # stopped declaring is a dead end in the first minute of orienting. The root
-  # BUILD file carries the //:labels and scripts/<stem>.sh carries the CLI
-  # targets, which are the two places a target can come from here.
+  # The memory command prints grok, git and grep invocations, so today the
+  # payload cites no Bazel target at all. This is the guard for the day someone
+  # adds one: a label the tree stopped declaring is a dead end in the first
+  # minute of orienting, and nothing else in the gate notices a citation going
+  # stale. The root BUILD file carries the //:labels and scripts/<stem>.sh
+  # carries the CLI targets, which are the two places a target can come from.
   [[ -f "${REPO_ROOT}/BUILD.bazel" ]] ||
     skip "the root BUILD file is not in this suite's runfiles (//:bazel_files)"
 
-  local tokens resolvable token stem label bad missing required
-  # The guard rejects a // preceded by a colon or a word char, so the
-  # tcp://dind:2375 endpoint in Step 1 is not mistaken for a label, and the
-  # label class carries <> so the payload's generic spelling survives capture.
+  local tokens resolvable token stem label bad
+  # The guard rejects a // preceded by a colon or a word char, so a URL endpoint
+  # is not mistaken for a label, and the label class carries <> so the payload's
+  # generic spelling survives capture.
   tokens="$(grep -oE '(^|[^:/A-Za-z])//([A-Za-z0-9_.-]*):([A-Za-z0-9_.<>-]+)' "${PAYLOAD}" |
     grep -oE '//[A-Za-z0-9_.-]*:[A-Za-z0-9_.<>-]+' | sort -u)"
-  if [ -z "${tokens}" ]; then
-    printf 'FAIL: %s cites no bazel target at all\n' "${PAYLOAD}" >&2
-    return 1
-  fi
 
-  # The five gates the skill points an operator at: the loop below would pass
-  # vacuously on a payload that had quietly dropped every one of them.
-  required="$(printf '%s\n' //:test-fast //:lint //:fix //:validate //scripts:mcp-check | sort -u)"
-  missing="$(comm -23 <(printf '%s\n' "${required}") <(printf '%s\n' "${tokens}"))"
-  if [ -n "${missing}" ]; then
-    printf 'FAIL: %s no longer cites: %s\n' "${PAYLOAD}" "$(printf '%s ' "${missing}")" >&2
-    return 1
-  fi
-
-  # //scripts:<stem> is the payload's generic spelling for a CLI target, so it
-  # is pinned as a citation, not resolved as a label. The token class above
-  # carries no shell metacharacter, so the loop can word-split the list.
+  # //scripts:<stem> is the generic spelling for a CLI target, so it is pinned as
+  # a citation, not resolved as a label. The token class above carries no shell
+  # metacharacter, so the loop can word-split the list.
   resolvable="$(printf '%s\n' "${tokens}" | grep -v '<' || true)"
   bad=""
   for token in ${resolvable}; do
@@ -584,17 +779,16 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     printf 'FAIL: %s cites a target that does not resolve:\n%s' "${PAYLOAD}" "${bad}" >&2
     return 1
   fi
-
-  # A script target has to travel in the runnable form, not as any mention.
-  assert_contains_file "it shows the generic script-target form" "${PAYLOAD}" \
-    'bazelisk run //scripts:<stem>'
 }
 
 @test "ez-learn docs: every doc the payload points at is still in the checkout" {
-  # The closing bullets are the reader's map to the docs tree; a name that
-  # leads nowhere costs them the answer they came for. The payload spells the
-  # docs files bare under its docs/ bullet, so a citation resolves at the repo
-  # root or under docs/, and only these two places.
+  # The closing paragraph is the reader's map: the seed, this suite, the README
+  # and the two docs pages the CLI and the shell style live on. A name that leads
+  # nowhere costs them the answer they came for. Two families are deliberately not
+  # resolved here: the upstream Rust paths it cites as the source of its claims
+  # (crates/codegen/... is Grok Build's own tree, so they are pinned as named and
+  # never as files), and MEMORY.md, which is the memory store's generated index
+  # rather than a document anyone reads off a path.
   # README.md and the docs pages travel with this suite through //:entry_docs and
   # //docs:content, so a root that resolved above always carries them; a missing
   # one is the citation breaking, not the runfiles being thin.
@@ -604,19 +798,28 @@ if "user-invocable" in data and data["user-invocable"] is not True:
     return 1; }
 
   local cited want missing name path unresolved
-  # Two segments at most, so the SKILL.md and notes.md paths the payload prints
-  # are not mistaken for doc citations.
-  cited="$(grep -oE '[A-Za-z0-9._/-]+\.md' "${PAYLOAD}" |
-    grep -E '^([A-Za-z0-9._-]+|docs/[A-Za-z0-9._-]+)\.md$' |
-    sed 's|^docs/||' | sort -u)"
+  # A citation is a path made of repo segments, or a bare file at the root; a
+  # path that starts with / or a ~ is one the payload prints as its own target,
+  # not one it sends the reader to.
+  cited="$(grep -oE '[A-Za-z0-9._/-]+\.(md|bats)' "${PAYLOAD}" |
+    grep -E '^([A-Za-z0-9._-]+|(docs|templates|tests|scripts)/[A-Za-z0-9._/-]+)\.(md|bats)$' |
+    grep -vx 'MEMORY\.md' | sort -u)"
+  if [ -z "${cited}" ]; then
+    printf 'FAIL: %s cites no document at all\n' "${PAYLOAD}" >&2
+    return 1
+  fi
 
-  want="$(printf '%s\n' README.md grok-build-and-agents.md project-conventions.md branching.md | sort -u)"
+  # What the map has to keep carrying. The suite file is named by the paragraph
+  # that tells the reader where a drifting claim gets pinned; it is resolved
+  # below like any other citation, so it is not spelled out here.
+  want="$(printf '%s\n' README.md docs/grok-build-and-agents.md \
+    docs/project-conventions.md templates/common/ez-learn.SKILL.md | sort -u)"
   missing="$(comm -23 <(printf '%s\n' "${want}") <(printf '%s\n' "${cited}"))"
   if [ -n "${missing}" ]; then
     printf 'FAIL: %s no longer points at: %s\n' "${PAYLOAD}" "$(printf '%s ' "${missing}")" >&2
     return 1
   fi
-  assert_contains_file "it names the docs tree" "${PAYLOAD}" 'docs/'
+  assert_contains_file "it names the suite that pins it" "${PAYLOAD}" 'ez-learn-skill\.bats'
 
   unresolved=""
   for name in ${cited}; do
@@ -629,148 +832,11 @@ if "user-invocable" in data and data["user-invocable"] is not True:
       "${PAYLOAD}" "${unresolved}" >&2
     return 1
   fi
-}
 
-@test "ez-learn aliases: every alias the payload lists is one the transport serves" {
-  # The payload is the reader's shortcut for what LiteLLM answers: a name it
-  # prints that model_config never defines sends them at an alias that cannot
-  # resolve. The comparison is one-way on purpose - the payload tells the
-  # reader to read the live list from the config rather than trust its count,
-  # so the config may grow and the payload may not.
-  local cfg="${REPO_ROOT}/litellm/config.yaml"
-  [[ -f "${cfg}" ]] || skip "litellm/config.yaml is not in this suite's runfiles"
-
-  local listed core served absent extra
-  listed="$(tr '\n' ' ' <"${PAYLOAD}" |
-    grep -oE 'aliases \([^)]*\)|more \([^)]*\)' |
-    grep -oE '`[A-Za-z][A-Za-z0-9._-]*`' | tr -d '`' | sort -u)"
-  if [ -z "${listed}" ]; then
-    printf 'FAIL: %s no longer lists its aliases in parenthesized form\n' "${PAYLOAD}" >&2
-    return 1
-  fi
-
-  core="$(printf '%s\n' agent agent-low agent-medium agent-xhigh coder coder-fast chat | sort -u)"
-  assert_eq "the payload lists exactly the seven core aliases" "${core}" \
-    "$(printf '%s\n' "${listed}" | grep -vE '^spark-(coder|chat)$' || true)"
-
-  absent="$(comm -23 <(printf '%s\n' spark-coder spark-chat | sort -u) <(printf '%s\n' "${listed}"))"
-  if [ -n "${absent}" ]; then
-    printf 'FAIL: %s lost the optional Spark aliases: %s\n' "${PAYLOAD}" "${absent}" >&2
-    return 1
-  fi
-
-  # Comment lines carry a bare `model_name:` with no value, so drop the empties
-  # rather than comparing them against a name.
-  served="$(grep -o 'model_name: *[A-Za-z0-9._-]*' "${cfg}" |
-    sed 's/^model_name: *//' | grep -v '^[[:space:]]*$' | sort -u)"
-  extra="$(comm -23 <(printf '%s\n' "${listed}") <(printf '%s\n' "${served}"))"
-  if [ -n "${extra}" ]; then
-    printf 'FAIL: %s names aliases litellm/config.yaml does not define: %s\n' \
-      "${PAYLOAD}" "$(printf '%s ' "${extra}")" >&2
-    return 1
-  fi
-
-  # The count in the prose is part of the claim it makes about the list.
-  assert_match "the prose count matches the core list" '[Ss]even aliases \(' \
-    "$(tr '\n' ' ' <"${PAYLOAD}")"
-  assert_contains_file "it sends the reader to the live list" "${PAYLOAD}" \
-    'litellm/config\.yaml'
-}
-
-@test "ez-learn notes: the scratch path is the one notes-setup.sh builds" {
-  # notes-setup.sh builds the per-repo scratch path and points
-  # core.excludesFile at that tree, so the payload has to spell the same shape
-  # or it teaches a reader to keep notes somewhere nothing else finds, and the
-  # per-repo key is what keeps two clones from sharing one file. The digest of
-  # a mining pass lands there, so a wrong path loses it too.
-  local builder="${REPO_ROOT}/templates/common/notes-setup.sh"
-  [[ -f "${builder}" ]] || skip "notes-setup.sh is not reachable under ${builder}"
-
-  local want built
-  want="$(grep -oE '~/\.grok/notes/<[A-Za-z-]+>/notes\.md' "${PAYLOAD}" | head -n 1)"
-  if [ -z "${want}" ]; then
-    printf 'FAIL: %s lost the ~/.grok/notes/<key>/notes.md shape\n' "${PAYLOAD}" >&2
-    return 1
-  fi
-  built="$(grep -oE '\$\{home\}/\.grok/notes/\$\{[A-Za-z_]+\}/notes\.md' "${builder}" | head -n 1)"
-  if [ -z "${built}" ]; then
-    printf 'FAIL: %s no longer prints a per-key notes path\n' "${builder}" >&2
-    return 1
-  fi
-
-  # Same shape from both ends: the tilde stands for ${home}, one segment for
-  # the key, and notes.md closes it.
-  want="$(printf '%s' "${want}" | sed -E 's|^~|HOME|; s|<[^>]*>|KEY|')"
-  built="$(printf '%s' "${built}" | sed -E 's|^\$\{home\}|HOME|; s|\$\{[A-Za-z_]+\}|KEY|')"
-  assert_eq "the payload's notes path is the path the seeder builds" "${built}" "${want}"
-
-  # The flat form is the pre-per-repo layout: every clone in the stack would
-  # share one scratch file.
-  run grep -F -- '~/.grok/notes/notes.md' "${PAYLOAD}"
-  [ "${status}" -ne 0 ]
-}
-
-@test "ez-learn skills: the two homes that reach both consumers are the pair it names" {
-  # Measured with grok inspect --json: this CLI does discover skills under
-  # ~/.grok/skills/ (source type user) and <repo_root>/.grok/skills/ (source
-  # type project), so those paths are real. What they do not reach is the Coder
-  # Agents chat agent, which reads ~/.coder/skills/ only - so the pair that
-  # lands a skill in front of both consumers is ~/.agents/skills plus
-  # ~/.coder/skills, and that is the pair the payload has to send a user skill
-  # to. A .grok/skills path may be mentioned as the CLI-side extra, but never
-  # as a home on its own: each mention has to say in its own line that the chat
-  # agent does not read it, or a reader files a skill nothing in the chat will
-  # ever invoke.
-  assert_contains_file "the CLI-side skills path" "${PAYLOAD}" \
-    '~/\.agents/skills/<[A-Za-z0-9_-]+>/SKILL\.md'
-  assert_contains_file "the chat-side skills twin" "${PAYLOAD}" \
-    '~/\.coder/skills/<[A-Za-z0-9_-]+>/SKILL\.md'
-  assert_contains_file "it says the chat agent reads the coder home only" "${PAYLOAD}" \
-    'chat agent reads `~/\.coder/skills/[^`]*` only'
-  assert_contains_file "and sends a user skill to both homes" "${PAYLOAD}" \
-    'goes into BOTH `~/\.agents/skills/[^`]*/SKILL\.md` and'
-
-  local mention bad=""
-  while IFS= read -r mention; do
-    printf '%s\n' "${mention}" | grep -Eq 'chat' || bad="${bad}${mention}"$'\n'
-    printf '%s\n' "${mention}" | grep -Eqi 'never|does not read|not read|only' ||
-      bad="${bad}${mention}"$'\n'
-  done < <(grep -F -- '.grok/skills' "${PAYLOAD}")
-  if [ -n "${bad}" ]; then
-    printf 'FAIL: %s names a .grok/skills path without the caveat that the chat agent does not read it:\n%s' \
-      "${PAYLOAD}" "${bad}" >&2
-    return 1
-  fi
-}
-
-@test "ez-learn gates: the cached-pass guidance keeps the two strings it depends on" {
-  # The advice is only worth following while Bazel prints that summary for a
-  # cached pass and that flag is what forces a fresh one: drop either and Step 8
-  # has the reader trust a line the runner no longer prints, or open a PR
-  # without the one uncached pass the gate needs.
-  assert_contains_file "the cached summary line is quoted" "${PAYLOAD}" \
-    'Executed 0 out of N'
-  assert_contains_file "the uncached flag is named" "${PAYLOAD}" \
-    '--nocache_test_results'
-  # And named as something to run, attached to a test invocation, so the flag
-  # cannot survive as a word on its own.
-  assert_contains_file "the flag rides a bazelisk test command" "${PAYLOAD}" \
-    'bazelisk test [^`]*--nocache_test_results'
-}
-
-@test "ez-learn deeper: the session sweep keeps its guardrails" {
-  # The mining pass is the one place this command reads ~/.grok/sessions, and
-  # those dirs hold multi-megabyte transcripts beside their small summaries: an
-  # agent that forgets the guardrails either quotes a whole session into the
-  # reply or proposes an edit from a single anecdote. Indexing summaries first is
-  # what keeps the sweep bounded, and the full-transcript deep pass stays gated
-  # behind an explicit request.
-  assert_contains_file "the deep pass is opt-in" "${PAYLOAD}" \
-    'only when the user asks'
-  assert_contains_file "it names the session store" "${PAYLOAD}" \
-    '~/.grok/sessions/'
-  assert_contains_file "it redirects the bulk instead of printing it" "${PAYLOAD}" \
-    '/tmp'
-  assert_contains_file "it sends the fix to the seed, not the materialized copy" "${PAYLOAD}" \
-    'templates/common/'
+  # The provenance claim: every number and report line above comes from these two
+  # upstream paths, so they stay named even though this checkout cannot answer them.
+  assert_contains_file "it names the upstream memory crate" "${PAYLOAD}" \
+    'crates/codegen/xai-grok-memory/'
+  assert_contains_file "and the upstream session module" "${PAYLOAD}" \
+    'crates/codegen/xai-grok-shell/src/session/'
 }

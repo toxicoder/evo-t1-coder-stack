@@ -271,27 +271,43 @@ report for a script. What the report should read here:
   rebuilding the image (`scripts/build-dev-image.sh`) and re-pushing the templates.
 - A self-installed CLI under `~/.grok/bin` stays first on the login-shell PATH, so it
   wins over the baked copy.
-- **The upstream `/learn` bundle never lands here**: the 1.0.77 binary contains zero
-  occurrences of the string `/learn`, so the bundled skill set is downloaded at runtime
-  through the CLI's proxy endpoints config (`cli-chat-proxy.grok.com`, gated by
-  `GROK_SKILLS_BASE_URL`) and needs an x.ai sign-in. This stack has no x.ai credential:
+- **No published source names an upstream `/learn`, and the bundled skill set never
+  lands here**: the `xai-org/grok-build` built-in command table, all 240 pages of
+  docs.x.ai, every first-party changelog under `x.ai/cli/changelogs/`, and the public
+  `xai-org/plugin-marketplace` catalog carry zero occurrences of it. The bundled
+  platform skills are a separate set, enumerated by
+  `FORMER_PLATFORM_SKILL_HASHES` in `crates/codegen/xai-grok-shell/src/builtin.rs`
+  (help, imagine, create-skill, check-work, check, xlsx, pptx, docx, code-review,
+  best-of-n, create-workflow), and neither `learn` nor `skillify` is among them. That
+  set is downloaded at runtime through the CLI's proxy endpoints config
+  (`cli-chat-proxy.grok.com`, gated by `GROK_SKILLS_BASE_URL`) and needs an x.ai
+  sign-in: the upstream `product_skills*` fetch in
+  `crates/codegen/xai-grok-shell/src/session/slash_commands.rs` is gated on
+  `xai_grok_login::GrokAuth`. This stack has no x.ai credential:
   LiteLLM is the sole model transport, with `env_key = "LITELLM_API_KEY"` and
   `base_url` `http://host.docker.internal:4000/v1`, so `~/.grok/bundled/` is never
-  created and `grok inspect --json` lists only the stack-seeded user skills. `/learn` is
-  therefore a command that exists only on a CLI that actually has that bundle; here it is
-  absent whichever CLI version is on PATH. Nothing writes `~/.grok/skills/` either, but
-  that is a stack choice, not a CLI limit: measured with `grok inspect --json` on the
-  1.0.77 CLI this workspace runs from `~/.grok/bin/grok`, a probe placed in
-  `~/.grok/skills/` and one placed in `<repo_root>/.grok/skills/` are both discovered,
-  reported with `source` type `user` and `project` - a project-tier folder has to be
-  trusted first, or its skill is withheld.
+  created and there is no bundled copy for `grok inspect` to label. The one surface
+  nobody can read anonymously is the authenticated skills feed (`x.ai/skills/*` answers
+  403), so the honest claim is that no published source names `/learn`, not that it
+  cannot exist behind that feed. Nothing writes `~/.grok/skills/` either, but
+  that is a stack choice, not a CLI limit: the upstream user guide
+  (`crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md`) documents both tiers -
+  `~/.grok/skills/` is the User scope and `<repo_root>/.grok/skills/` the Repo one, and
+  `grok inspect` labels each definition by its actual source (`user`, `project`,
+  `bundled`) - and startup discovery skips project skills and commands in untrusted
+  folders, so a project-tier folder has to be trusted first or its skill is withheld.
   What separates the two consumers is that the **Coder Agents** chat agent reads
   `~/.coder/skills/` only, so reaching both means shipping both homes.
-- **The stack ships its own skill-authoring trio as `/ez-learn`, `/ez-skillify` and
+- **The stack ships its own three skill commands as `/ez-learn`, `/ez-skillify` and
   `/ez-create-skill`**, so they are stack payloads like the delegation skill, not something
-  to install, and the `/learn`, `/skillify` and `/create-skill` names stay free for the
-  CLI's bundled commands: a user-scope skill shadows a same-named bundled one, so seeding
-  these under the bundled names would have hidden them.
+  to install, and the `ez-` prefix keeps them clear of the upstream names they sit
+  beside: `/create-skill` is one of the CLI's bundled platform skills and
+  `/flush`, `/dream`, `/remember`, `/memory` are its built-in memory commands, while no
+  published source names a `/learn` or a `/skillify` at all. A user-scope skill overrides
+  a same-named bundled one, so a seed named `create-skill` would have hidden the bundled
+  copy.
+  `/ez-learn` writes memory files - it reproduces the upstream `/flush`, `/dream`,
+  `/remember` and `/memory`; the other two write skill files.
   The three payloads - `templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
   `ez-create-skill.SKILL.md` - are seeded at workspace start by
   `coder_script.stack_skills`: each is written into `~/.coder/skills/<name>/SKILL.md` and
@@ -308,13 +324,15 @@ report for a script. What the report should read here:
   `/usr/local/bin/grok` and this needs no image rebuild; the **Grok Build** terminal
   profile gets it because that profile execs the same binary.
 - **A leftover `/learn` seed retires itself.** This skill was seeded under the name
-  `learn` until it moved, and a copy left standing keeps shadowing the bundled command
-  even on a workspace that signs in to x.ai. Both startup scripts delete
+  `learn` until it moved, and a copy left standing keeps offering that old name beside
+  `/ez-learn` for the life of the volume; there is no bundled `learn` for it to hide,
+  because no published source names one. Both startup scripts delete
   `~/.coder/skills/learn/SKILL.md` and `~/.agents/skills/learn/SKILL.md` and prune the
   directory each leaves, but only while the file still carries the
   `managed-by: evo-t1-coder-stack` marker; a marker-free `learn/SKILL.md` is user-owned
   and stays. `refresh-configs`, `storage-clean` and `seed-dev-env` retire the same two
-  paths on reseed. That removal is what hands `/learn` back to the CLI.
+  paths on reseed. That removal only finishes the rename: there is no upstream `/learn`
+  waiting on the name, because no published source names one.
 
 ## The rendered `~/.grok` config
 
@@ -820,28 +838,36 @@ absent:
   what `execute`-lane delegation drives. The chat agent dedupes skills by name,
   first match wins, home scope before a working-dir path, so one agent never loads a
   skill twice: the twins exist for the CLI, not as a second source for chat.
-- 1-4 are written by `startup.sh.tftpl`. 5-10 are the skill-authoring trio and are
+- 1-4 are written by `startup.sh.tftpl`. 5-10 are the stack's three skill commands and are
   written by `coder_script.stack_skills`, whose own `execve` carries the three payloads;
   they ride their own script body rather than the startup argument because that argument
   has a single-argument ceiling of its own
   ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Each `.agents`
   copy is a `cp` of the managed `.coder` copy, never a second inline body, so the pair
   cannot drift.
-- 5 and 6 are `/ez-learn`: it mines past agent chats and sessions under
-  `~/.grok/sessions/` for the instructions, conventions and workflows the operator keeps
-  re-explaining, and proposes new skills, updates, and retirements of stale skills,
-  plugins, MCP servers and rules. It proposes; it does not write on its own, and its
-  default mode is report-only. 7 and 8 are `/ez-skillify`, which turns the session that
-  just worked into a skill from its own transcript, and 9 and 10 are `/ez-create-skill`,
-  which scaffolds one from what the operator describes. The three payloads are
+- 5 and 6 are `/ez-learn`: this stack's copy of the upstream memory commands `/flush`,
+  `/dream`, `/remember` and `/memory`. It turns the current session into durable facts -
+  flush the conversation into a session log under the workspace's `~/.grok/memory/`
+  directory, dream those logs into an organized `MEMORY.md`, save one note, or browse and
+  clear what was stored. Reaching past those logs into the raw transcripts under
+  `~/.grok/sessions/` is opt-in depth, done only when the operator asks for it. Its
+  default mode is report-only, and it writes memory files, never a skill. 7 and 8 are
+  `/ez-skillify`, which turns the session that just worked into a skill from its own
+  transcript, and 9 and 10 are `/ez-create-skill`, which scaffolds one from what the
+  operator describes. The three payloads are
   `templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
-  `ez-create-skill.SKILL.md`, on the same absent-only contract. Upstream ships
-  `/learn`, `/skillify` and `/create-skill` only in a skills bundle behind an x.ai
-  sign-in this stack does not have, so the seed is what makes the three commands exist;
-  each ships under its own name because a user-scope skill shadows a same-named bundled
-  one, and a seed named `learn` would hide the bundled command on a workspace that ever
-  does sign in. The boot and the reseed delete a leftover marker-carrying
-  `skills/learn/SKILL.md` from before the rename. See the CLI section above.
+  `ez-create-skill.SKILL.md`, on the same absent-only contract. `/ez-create-skill` stands
+  in for the bundled platform skill `create-skill`, which arrives only in the skills
+  bundle behind an x.ai sign-in this stack does not have; `/ez-skillify` has no published
+  upstream counterpart at all; and the memory family `/ez-learn` copies is upstream
+  *built-ins*: `/flush`, `/dream` and `/memory` are gated behind cross-session memory,
+  which is off by default, while `/remember` is a pager command with no such gate. Either
+  way the seed is what makes the three commands exist. Each ships under its own `ez-`
+  name to stay clear of those upstream names, since a user-scope skill overrides a
+  same-named bundled one and a seed named `create-skill` would hide the bundled copy on a
+  workspace that ever does sign in. The boot and the reseed delete a leftover
+  marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
+  above.
 - The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
   probe-one-worker-first, verify-what-a-worker-actually-produced). It travels as
   `templates/common/GROK_BUILD_AGENTS.md`, staged beside the staged `main.tf` and
@@ -871,12 +897,13 @@ absent:
   on the shared `~/.grok` profile volume above, and seeding does not care whether
   that mount exists.
 
-### The skill-authoring trio
+### The three stack-seeded skill commands
 
-One line each: `/ez-skillify` captures the session that just worked, working from its own
-transcript; `/ez-create-skill` builds a skill from what the operator describes; `/ez-learn`
-mines many sessions and proposes. The first two write, the third proposes and leaves the
-writing to them or to you.
+One line each: `/ez-learn` turns a session into durable memory - flush it into a session
+log, dream the logs into organized memory, remember one note, or browse and clear the
+store; `/ez-skillify` captures the session that just worked, working from its own
+transcript; `/ez-create-skill` builds a skill from what the operator describes. The last
+two write skill files; `/ez-learn` writes memory files.
 
 Three things about skills matter in practice here:
 
@@ -890,9 +917,10 @@ Three things about skills matter in practice here:
   without deleting the file. Discovery reloads from disk, so an edit lands next turn
   with no restart.
 
-This is workflow curation, separate from the memory system (`/remember`, `/memory`,
-`/dream`), which stores durable facts, and from `AGENTS.md`, which is the always-loaded
-rules file. A skill loads when its `description` matches, and holds a procedure.
+This is workflow curation, separate from the memory system, which stores durable facts
+(upstream `/remember`, `/memory`, `/dream`, shipped here as `/ez-learn`), and from
+`AGENTS.md`, which is the always-loaded rules file. A skill loads when its `description`
+matches, and holds a procedure.
 
 ### What this is not
 

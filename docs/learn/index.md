@@ -16,11 +16,13 @@ tags: [learn, concepts, overview]
 - Knowing which page owns a concept when two of them seem to
 
 > **Not the same as the `/ez-learn` command.** This tab is the concepts index for people
-> reading the docs. `/ez-learn` typed at the Grok Build prompt mines your past agent chats
-> and sessions and proposes what should become a skill; its siblings `/ez-skillify`
-> captures the session that just worked and `/ez-create-skill` scaffolds one from a
-> description. `grok inspect` lists the three once their seed has landed. A missing one is
-> the skill-seed entry in [troubleshooting.md](../troubleshooting.md).
+> reading the docs. `/ez-learn` typed at the Grok Build prompt turns the session you are in
+> into durable memory - flush it into a session log, dream those logs into organized memory,
+> remember one note, or browse and clear the store; it is this stack's copy of the upstream
+> `/flush`, `/dream`, `/remember` and `/memory`. Skill authoring is its siblings:
+> `/ez-skillify` captures the session that just worked and `/ez-create-skill` scaffolds one
+> from a description. `grok inspect` lists the three once their seed has landed. A missing
+> one is the skill-seed entry in [troubleshooting.md](../troubleshooting.md).
 
 ## How the pieces fit
 

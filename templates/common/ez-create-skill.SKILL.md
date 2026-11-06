@@ -22,8 +22,8 @@ prompt matches `description` or `when-to-use`. It is not `AGENTS.md` (always-loa
 rules) and not the memory system (`/remember`, `/memory`, `/dream`), which stores facts; a
 skill stores a procedure. Upstream `/create-skill` is bundled and unfetchable here: that
 download needs an x.ai sign-in this stack lacks (LiteLLM is the sole model transport), so
-`~/.grok/bundled/` never exists. Hence the `ez-` prefix, which also clears the built-in
-slash name.
+`~/.grok/bundled/` never exists. Hence the `ez-` prefix, which also clears that
+skill's own slash name.
 
 Run each block with `run_terminal_command` (Grok Build CLI) or `execute` (Coder Agents chat
 agent). A command written inline in a skill body runs nothing -- which is why the skill you
@@ -167,4 +167,4 @@ with `bazelisk run //scripts:refresh-configs`, never write a home by hand. See
 - Never put a secret, token, or `.env` value in a skill body: name the key
   (`LITELLM_API_KEY`), never its value.
 - The trio splits by evidence: `/ez-skillify` captures the session that just worked,
-  `/ez-learn` mines many sessions and proposes, this command builds from a description.
+  `/ez-learn` turns a session into durable memory, this command builds from a description.

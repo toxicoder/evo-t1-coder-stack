@@ -257,7 +257,6 @@ _SUITE_PAYLOAD = {
     "ez-learn-skill.bats": [
         "//:templates_payload",
         "//:bazel_files",
-        "//litellm:config",
         "//docs:content",
         "//:entry_docs",
     ],

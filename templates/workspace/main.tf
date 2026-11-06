@@ -652,7 +652,7 @@ resource "coder_script" "gh_token_refresh" {
   })
 }
 
-# The stack's skill-authoring trio, seeded by its own body rather than by the startup
+# The stack's three skill commands, seeded by their own body rather than by the startup
 # script: every coder_script.script is a separate execve with its own single-argument
 # ceiling, which is what keeps the payloads above inside the budget. The body writes
 # each absent skill into ~/.coder/skills (the Coder Agents chat) and copies the twin

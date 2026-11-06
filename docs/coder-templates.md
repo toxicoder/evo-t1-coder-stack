@@ -70,15 +70,21 @@ missing one fails the push before the CLI runs.
 - `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
   skill and instruction seeds (chomped `file()`).
 - `ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and `ez-create-skill.SKILL.md` are the
-  stack's skill-authoring trio: `/ez-learn` mines past agent chats and sessions and proposes
-  skills, updates and retirements; `/ez-skillify` captures the session that just worked into
-  a skill; `/ez-create-skill` scaffolds one from what the operator describes. They ride
-  `coder_script.stack_skills` rather than the startup argument (see "The one-argument
-  ceiling"), which writes each absent skill into `~/.coder/skills/<name>/SKILL.md` and
-  twin-copies it to `~/.agents/skills/<name>/SKILL.md`, each only while absent. The CLI's own
-  `/learn`, `/skillify` and `/create-skill` live in a bundle that needs an x.ai sign-in this
-  stack does not have, so these payloads are what make the three commands exist, and they keep
-  their own names so they cannot shadow the bundled ones.
+  stack's three skill commands: `/ez-learn` writes memory files, reproducing the upstream
+  memory family `/flush`, `/dream`, `/remember` and `/memory`; `/ez-skillify` captures the
+  session that just worked into a skill; `/ez-create-skill` scaffolds one from what the
+  operator describes. Skill authoring is those last two - `/ez-learn` stores facts, not
+  procedures. They ride `coder_script.stack_skills` rather than the startup argument (see
+  "The one-argument ceiling"), which writes each absent skill into
+  `~/.coder/skills/<name>/SKILL.md` and twin-copies it to `~/.agents/skills/<name>/SKILL.md`,
+  each only while absent. Upstream there is no `/learn` and no `/skillify` to shadow: no
+  published source names either one. `/create-skill` is real, but only as a *bundled*
+  platform skill whose catalog is fetched per identity/team behind an x.ai sign-in this
+  stack does not have; and the memory family `/ez-learn` copies is no skill at all but the
+  CLI's own `/flush`, `/dream` and `/memory` registry entries plus the pager's `/remember`,
+  with the registry three gated on a memory store, which is off by default and never
+  configured here. So these payloads are what make the three commands exist, and the `ez-`
+  prefix is what keeps them clear of those upstream names.
 - `stack-skills.sh.tftpl` is the `coder_script "stack_skills"` body that seeds that trio,
   rendered with `templatefile()` from the three `chomp(file())` entries `main.tf` passes it.
   It is absent-only and silent on a healthy workspace, because its log is what an operator
@@ -194,12 +200,12 @@ The guard also says the number while it is still a warning: a body within
 `STARTUP_SIZE_WARN` (4096) of the bound prints its composed total and the bytes left,
 because the distance to the budget is what a reviewer needs and a hard failure only
 ever reports the crossing. Measured on 2026-11-06 with the byte algorithm in
-`tests/bats/startup-script-size.bats`, before the skill trio moved out: the widest body
-was the devcontainer startup script at 122389 bytes, 491 clear of the bound, with the
-workspace twin at 120189. Taking `ez-learn.SKILL.md` and its heredoc out of that argument
-frees 7325 bytes in each twin, to 115064 (`devcontainer`) and 112864 (`workspace`), and
-the three payloads now travel in their own body, `coder_script.stack_skills`, which
-composes to 26254 bytes.
+`tests/bats/startup-script-size.bats`: the widest body is now the devcontainer startup
+script at 115967 bytes, 6913 clear of the bound, with the workspace twin at 113767 and
+9113 clear. Before the trio moved out that same devcontainer body measured 122389 with
+only 491 clear, and `ez-learn.SKILL.md` plus its heredoc accounted for roughly 7 KB of
+it. The three payloads now travel in their own body, `coder_script.stack_skills`, which
+composes to 36847 bytes.
 
 When a body really does need to grow past the budget, the options are:
 
@@ -887,14 +893,17 @@ rules above.
   injected instruction file the marker is pure provenance, because injected content has its
   HTML comments stripped anyway. The stage is best-effort: a read-only or missing `$HOME`
   changes nothing observable.
-- `/ez-learn` is seeded on the same absent-only contract because upstream `/learn` is a
-  *bundled* skill and the bundle download runs through the CLI's proxy endpoints, which need
-  an x.ai sign-in this stack deliberately does not have: LiteLLM is the only transport, so
-  `~/.grok/bundled/` is never created and the slash name would simply be missing. Writing
-  the file is what makes the command exist, and it is seeded under `ez-learn` because a
-  user-scope skill shadows a same-named bundled one, so a seed named `learn` would hide the
-  CLI's own command. The same stage deletes a leftover `skills/learn/SKILL.md` from before
-  the rename, but only while it still carries the stack marker; a marker-free one is
+- `/ez-learn` is seeded on the same absent-only contract because nothing here supplies the
+  command: no published source ships an upstream `/learn` at all, and the built-in memory
+  family it copies is gated behind a memory store that is off by default, so those names
+  stay hidden. The bundle is a separate thing, and a real one: the CLI extracts
+  platform skills such as `create-skill` into `~/.grok/bundled/`, read back with
+  `SkillScope::Bundled`, and that catalog is fetched per identity/team behind an x.ai
+  sign-in this stack deliberately does not have - LiteLLM is the only transport - so the
+  directory is never created and none of those skills ever lands. Writing the file is what
+  makes each command exist, and it is seeded under the `ez-` name, which exists to stay
+  clear of the upstream ones. The same stage deletes a leftover `skills/learn/SKILL.md` from
+  before the rename, but only while it still carries the stack marker; a marker-free one is
   user-owned and stays. Deleting a seeded copy never keeps your own - the boot writes it
   back - so only dropping that marker does.
 

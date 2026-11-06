@@ -88,7 +88,8 @@ scratch_home() {
   # Both ez-learn skill copies reseed from the one common payload: the chat agent
   # reads ~/.coder/skills/ and the Grok Build CLI reads ~/.agents/skills/, and
   # skill dedupe is first-match-wins, so the twins exist for the two consumers.
-  # The name is the stack's own, so /learn stays free for the CLI's bundled skill.
+  # The ez- prefix keeps the name clear of the upstream built-in memory commands
+  # and of the bundled platform skills the CLI would otherwise fetch.
   assert_match "ez-learn skill from common (coder)" \
     $'~/.coder/skills/ez-learn/SKILL.md\tfile:templates/common/ez-learn.SKILL.md' "${lines}"
   assert_match "ez-learn skill from common (agents)" \
@@ -263,8 +264,8 @@ scratch_home() {
   assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-create-skill/SKILL.md"
   assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-create-skill/SKILL.md"
   # The copy the stack seeded under /learn before the rename goes, because it
-  # still carries the marker and would shadow the CLI's own skill; the
-  # marker-free one is whoever's it is, and it stays.
+  # still carries the marker; the marker-free one is whoever's it is, and it
+  # stays.
   assert_file_not_exists "retired managed copy" \
     "${scratch}/home/.coder/skills/learn/SKILL.md"
   assert_file_exists "retired user copy spared" \
