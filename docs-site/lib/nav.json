@@ -94,6 +94,10 @@
         "path": "contribute/test-with-bazel.md"
       },
       {
+        "title": "Strong types",
+        "path": "contribute/strong-types.md"
+      },
+      {
         "title": "Navigating the codebase with Bazel",
         "path": "contribute/navigate-with-bazel.md"
       }
