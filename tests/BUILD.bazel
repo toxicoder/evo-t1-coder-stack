@@ -336,6 +336,12 @@ _SUITE_PAYLOAD = {
     "test-in-image.bats": [
         "//images/dev:dockerfile",
     ],
+    # The suite runs the shipped awk program (carried by _BATS_COMMON through
+    # //scripts:doc_sources) over both template twins, so it owes the group that
+    # ships those four .tf files.
+    "tf-types.bats": [
+        "//:templates_payload",
+    ],
     "tmux-fidelity.bats": [
         "//:templates_payload",
     ],

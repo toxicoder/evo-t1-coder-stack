@@ -6,9 +6,10 @@
 # it prints and what it refuses to do twice: the report is the operator's
 # `== Validate ==` / `-> phase` / `summary: N ok, W warnings, F failed` shape;
 # VALIDATE_INNER=1 is what stops a `bazelisk run //:validate` from recursing into
-# Bazel; a missing bazelisk is a refusal rather than a quietly partial gate; and
-# an optional tool that is absent (terraform, PyYAML) is announced as skipped
-# instead of passing silently.
+# Bazel; a missing bazelisk is a refusal rather than a quietly partial gate; an
+# optional tool that is absent (terraform, PyYAML) is announced as skipped
+# instead of passing silently; and the Terraform variable-type gate fails the run
+# on a finding rather than printing it and continuing.
 #
 # Usage: bazelisk test //tests:bats_validate_test   (from any cwd)
 # Safety: docker and terraform are the tests/bats/tool_stubs copies, and bazelisk
@@ -37,10 +38,19 @@ setup() {
 scratch_checkout() {
   local scratch
   scratch="$(make_scratch)"
-  mkdir -p "${scratch}/scripts/lib" "${scratch}/homepage/config" "${scratch}/litellm" "${scratch}/hermes" "${scratch}/searxng"
+  mkdir -p "${scratch}/scripts/lib" "${scratch}/homepage/config" "${scratch}/litellm" "${scratch}/hermes" "${scratch}/searxng" \
+    "${scratch}/templates/workspace" "${scratch}/templates/devcontainer"
   printf 'services: {}\n' >"${scratch}/docker-compose.yml"
   cp "${REPO_ROOT}/scripts/lib/common.sh" "${scratch}/scripts/lib/common.sh"
   cp "${REPO_ROOT}/scripts/lib/parse_yaml.py" "${scratch}/scripts/lib/parse_yaml.py"
+  # The variable-type gate reads this program and then the four template files by
+  # path, so the scratch checkout owes all five. The real templates are copied
+  # The one test below that needs a violation overwrites one of these copies.
+  cp "${REPO_ROOT}/scripts/lib/tf_types.awk" "${scratch}/scripts/lib/tf_types.awk"
+  cp "${REPO_ROOT}/templates/workspace/main.tf" "${scratch}/templates/workspace/main.tf"
+  cp "${REPO_ROOT}/templates/workspace/coder.tf" "${scratch}/templates/workspace/coder.tf"
+  cp "${REPO_ROOT}/templates/devcontainer/main.tf" "${scratch}/templates/devcontainer/main.tf"
+  cp "${REPO_ROOT}/templates/devcontainer/coder.tf" "${scratch}/templates/devcontainer/coder.tf"
   cp "${REPO_ROOT}/.env.sample" "${scratch}/.env.sample"
   cp "${REPO_ROOT}/.env.example" "${scratch}/.env.example"
   cp "${REPO_ROOT}"/homepage/config/*.yaml "${scratch}/homepage/config/"
@@ -91,6 +101,11 @@ minimal_path() {
   # interpreter on this PATH as well.
   ln -sf "$(command -v bash)" "${dir}/bash"
   ln -sf "$(command -v cmp)" "${dir}/cmp"
+  # awk is not an optional tool here the way terraform and PyYAML are: the
+  # variable-type gate runs scripts/lib/tf_types.awk unconditionally, the same way
+  # half the CLIs in this repo run their own .awk programs. Linking it keeps this
+  # helper about the tools a test chooses to withhold.
+  ln -sf "$(command -v awk)" "${dir}/awk"
   for tool in "$@"; do
     ln -sf "${BATS_TEST_TMPDIR?}/bin/${tool}" "${dir}/${tool}"
   done
@@ -106,6 +121,7 @@ minimal_path() {
   assert_match "the compose check" '^-> docker compose config -q$' "${output}"
   assert_match "the env twins are compared" '^-> cmp \.env\.sample \.env\.example$' "${output}"
   assert_match "terraform is checked" '^-> terraform fmt -check$' "${output}"
+  assert_match "the variable-type gate ran" '^-> terraform variable types$' "${output}"
   assert_match "the yaml parse runs" '^-> yaml parse$' "${output}"
   assert_match "the closing ok line" '^ok: validate$' "${output}"
   assert_match "the summary counts one ok" '^summary: 1 ok, 0 warnings, 0 failed$' "${output}"
@@ -206,6 +222,41 @@ minimal_path() {
   assert_match "the skip is a phase line" '^-> PyYAML not installed, skipping yaml parse$' "${output}"
   assert_match "the gate still ends in a verdict" '^ok: validate$' "${output}"
   [ "$(stub_log_count python3)" -eq 1 ]
+}
+
+@test "validate: a template that lost its type constraint fails the gate" {
+  # The whole point of the phase: findings are printed and the run stops, rather
+  # than the finding being a note beside a green verdict. The scratch checkout got
+  # the real (conforming) templates, so this one rewrites a single variable block.
+  fake_python3
+  printf '%s\n' \
+    'variable "search_mcp" {' \
+    '  description = "whether the search lane is declared"' \
+    '  default     = "true"' \
+    '}' >"${ROOT}/templates/devcontainer/coder.tf"
+
+  run --separate-stderr env VALIDATE_INNER=1 BUILD_WORKSPACE_DIRECTORY="${ROOT}" \
+    bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  assert_match "the finding names the rule" 'missing-type' "${stderr}"
+  assert_match "the finding names the variable" 'variable "search_mcp" declares no type constraint' "${stderr}"
+  assert_match "the finding names the file and line" 'templates/devcontainer/coder\.tf:1:' "${stderr}"
+  assert_not_match "a gate that found a violation prints no verdict" 'summary:' "${output}"
+}
+
+@test "validate: a template that reached for the broad type fails the gate too" {
+  fake_python3
+  printf '%s\n' \
+    'variable "anything" {' \
+    '  description = "no constraint at all"' \
+    '  type        = any' \
+    '}' >"${ROOT}/templates/workspace/main.tf"
+
+  run --separate-stderr env VALIDATE_INNER=1 BUILD_WORKSPACE_DIRECTORY="${ROOT}" \
+    bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  assert_match "the broad type is the named rule" 'broad-any' "${stderr}"
+  assert_match "the finding quotes the constraint" 'type = any' "${stderr}"
 }
 
 @test "validate: a compose check that fails fails the gate before the verdict" {

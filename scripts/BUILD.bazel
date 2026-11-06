@@ -265,6 +265,7 @@ _SCRIPT_LIBS = {
     "validate": [
         "lib/common.sh",
         "lib/parse_yaml.py",
+        "lib/tf_types.awk",
     ],
 }
 
