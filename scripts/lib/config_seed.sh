@@ -97,7 +97,11 @@ seed_seed_targets() {
     '~/.coder/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md' \
     '~/.agents/skills/grok-build-delegation/SKILL.md	file:templates/common/grok-build-delegation.SKILL.md' \
     '~/.coder/skills/ez-learn/SKILL.md	file:templates/common/ez-learn.SKILL.md' \
-    '~/.agents/skills/ez-learn/SKILL.md	file:templates/common/ez-learn.SKILL.md'
+    '~/.agents/skills/ez-learn/SKILL.md	file:templates/common/ez-learn.SKILL.md' \
+    '~/.coder/skills/ez-skillify/SKILL.md	file:templates/common/ez-skillify.SKILL.md' \
+    '~/.agents/skills/ez-skillify/SKILL.md	file:templates/common/ez-skillify.SKILL.md' \
+    '~/.coder/skills/ez-create-skill/SKILL.md	file:templates/common/ez-create-skill.SKILL.md' \
+    '~/.agents/skills/ez-create-skill/SKILL.md	file:templates/common/ez-create-skill.SKILL.md'
 }
 
 # @function seed_retired_targets

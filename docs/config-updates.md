@@ -78,24 +78,30 @@ the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
 list those keys and write no answers. A `summary:` line closes the pass.
 
 `workspace` re-materialises the stack-owned config inside the targets you name.
-The reseed set is the nine home-relative targets the templates seed -
+The reseed set is the thirteen home-relative targets the templates seed -
 `~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
-`~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the two
-`ez-learn/SKILL.md` copies and `~/.shared/vscode/settings.json` - and the same rule
+`~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the six
+`ez-learn`, `ez-skillify` and `ez-create-skill` `SKILL.md` copies (two homes each) and
+`~/.shared/vscode/settings.json` - and the same rule
 applies as in `refresh-configs`: a file is replaced only while it still carries its
 stack marker - the `managed-by: evo-t1-coder-stack` comment, the
 `"__evoT1Stack": true` JSON key (settings files) or the `__evoT1Stack = true` TOML
 key (`~/.grok/config.toml`) - so a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
-so. The two `ez-learn/SKILL.md` copies are `~/.coder/skills/ez-learn/SKILL.md` and its
-`~/.agents` twin, the stack's `/ez-learn` skill. To take a seeded copy over, edit it and
+so. The six skill copies are the stack's three skill commands, each seeded at
+`~/.coder/skills/<name>/SKILL.md` and twin-copied to its `~/.agents` twin:
+`/ez-learn`, which mines past agent chats and sessions and proposes skills, updates
+and retirements; `/ez-skillify`, which captures the session that just worked; and
+`/ez-create-skill`, which scaffolds one from a description. To take a seeded copy
+over, edit it and
 delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free file is
 user-owned, and the seeder leaves it alone unless you pass `--force`. A deletion is
 undone - the workspace boot writes the file again whenever it is absent, and
 `refresh-configs` re-seeds an absent target, so the next boot restores the stack's
-copy. To hide the slash command, set `disabled = ["ez-learn"]` under `[skills]` in
-`~/.grok/config.toml`. An edited copy which keeps its marker is still rewritten back
-to `templates/common/ez-learn.SKILL.md` by this tool. The pass also retires the two
+copy. To hide one of the slash commands, set `disabled = ["ez-learn"]` (or
+`ez-skillify`, or `ez-create-skill`) under `[skills]` in
+`~/.grok/config.toml`. An edited copy which keeps its marker is still rewritten
+back to its `templates/common/ez-<name>.SKILL.md` by this tool. The pass also retires the two
 `skills/learn/SKILL.md` paths this skill occupied before the rename, and only while
 each still carries the stack marker, so a leftover copy cannot keep shadowing the CLI's
 bundled `/learn` and a file someone took over stays.
@@ -161,7 +167,7 @@ you try a change on a scratch tree before pointing a live stack at it. See
   dollar-brace unfoldings are rewritten, and that workspace's own `cline.apiKey`
   and `roo.openaiApiKey` are carried forward.
 
-Inside a running container the same nine targets are `refresh-configs`'s job
+Inside a running container the same thirteen targets are `refresh-configs`'s job
 too: same reseed set, same marker rule, `--json` for a machine-readable
 answer, and `--litellm-url <url>` for a stack environment that publishes
 LiteLLM on a port other than 4000 (the reseeded `settings.json` then still

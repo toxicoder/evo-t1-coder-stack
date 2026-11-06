@@ -69,12 +69,20 @@ missing one fails the push before the CLI runs.
   `$${folder}`) because `file()` contents are not re-interpolated.
 - `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
   skill and instruction seeds (chomped `file()`).
-- `ez-learn.SKILL.md` is the `/ez-learn` orientation skill beside that delegation skill
-  (chomped `file()`): the boot seeds it into `~/.coder/skills/ez-learn/SKILL.md` and
-  twin-copies it to `~/.agents/skills/ez-learn/SKILL.md`, each only while absent. The
-  CLI's own `/learn` bundle needs an x.ai sign-in this stack does not have, so this
-  payload is what makes the slash command exist, and it keeps its own name so it cannot
-  shadow that bundled one.
+- `ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and `ez-create-skill.SKILL.md` are the
+  stack's skill-authoring trio: `/ez-learn` mines past agent chats and sessions and proposes
+  skills, updates and retirements; `/ez-skillify` captures the session that just worked into
+  a skill; `/ez-create-skill` scaffolds one from what the operator describes. They ride
+  `coder_script.stack_skills` rather than the startup argument (see "The one-argument
+  ceiling"), which writes each absent skill into `~/.coder/skills/<name>/SKILL.md` and
+  twin-copies it to `~/.agents/skills/<name>/SKILL.md`, each only while absent. The CLI's own
+  `/learn`, `/skillify` and `/create-skill` live in a bundle that needs an x.ai sign-in this
+  stack does not have, so these payloads are what make the three commands exist, and they keep
+  their own names so they cannot shadow the bundled ones.
+- `stack-skills.sh.tftpl` is the `coder_script "stack_skills"` body that seeds that trio,
+  rendered with `templatefile()` from the three `chomp(file())` entries `main.tf` passes it.
+  It is absent-only and silent on a healthy workspace, because its log is what an operator
+  reads when a skill is missing.
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
   writes, into `~/.grok/mcp-cache-proxy/config.json` and only while that file is absent
   (so a shared profile volume reuses one SQLite cache across that owner's workspaces). It
@@ -165,7 +173,11 @@ Two things follow from the mechanism:
   two `coder_script` resources relocates the wall; it does not raise it. On this server
   (v2.36) the start scripts fan out concurrently in an errgroup and `ready` is set only
   after all of them return, so splitting does not reduce a peak either.
-  `coder_script_order` needs Coder `>= v2.39`.
+  `coder_script_order` needs Coder `>= v2.39`. This is the escape the stack now uses: the
+  three skill payloads ride `coder_script.stack_skills` rather than the startup argument,
+  because the devcontainer twin had 491 bytes of headroom left and three more inlined
+  payloads could not fit there. `grok-build-delegation.SKILL.md` still rides the startup
+  argument - it predates the split, it fits, and its own tests pin it there.
 - **A `#!` line does not help.** The body still becomes
   `execve(env, [env, bash, -c, body])`; the interpreter line is content inside the
   argument.
@@ -181,9 +193,13 @@ measuring something else goes red in review.
 The guard also says the number while it is still a warning: a body within
 `STARTUP_SIZE_WARN` (4096) of the bound prints its composed total and the bytes left,
 because the distance to the budget is what a reviewer needs and a hard failure only
-ever reports the crossing. Measured on 2026-11-03, after the stage comments were
-collapsed to a pointer here, the widest body is the devcontainer startup script at
-about 118.5 KB, roughly 4.4 KB clear of the bound; the workspace twin sits near 116.3 KB.
+ever reports the crossing. Measured on 2026-11-06 with the byte algorithm in
+`tests/bats/startup-script-size.bats`, before the skill trio moved out: the widest body
+was the devcontainer startup script at 122389 bytes, 491 clear of the bound, with the
+workspace twin at 120189. Taking `ez-learn.SKILL.md` and its heredoc out of that argument
+frees 7325 bytes in each twin, to 115064 (`devcontainer`) and 112864 (`workspace`), and
+the three payloads now travel in their own body, `coder_script.stack_skills`, which
+composes to 26254 bytes.
 
 When a body really does need to grow past the budget, the options are:
 
@@ -886,10 +902,14 @@ rules above.
   to be written `$${name}`; the one-dollar braced form is swallowed as an interpolation.
   The unbraced form (`$name`) needs no escape.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
-  thirteen: `grok_build_agents`, `grok_config`, `repo_url`, `additional_repos`,
-  `vscode_settings`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
-  `vscode_terminal_tmux`, `grok_build_delegation_skill`, `ez_learn_skill`, `coder_agents`,
-  `mcp_cache_proxy`. The `devcontainer` twin adds `dc_dir` and `build_devcontainer`.
+  twelve: `grok_config`, `grok_build_agents`, `notes_setup`, `tmux_conf`,
+  `grok_build_terminal`, `vscode_terminal_tmux`, `grok_build_delegation_skill`,
+  `coder_agents`, `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`.
+  The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The three skill payloads
+  are not among them: `ez_learn_skill`, `ez_skillify_skill` and `ez_create_skill_skill`
+  belong to the `coder_script.stack_skills` map, and their `chomp(file())` calls sit inside
+  that block rather than behind a `local.`, because both size readers credit a body by the
+  `path.module}` names in its own block.
 - That is why the `.git` suffix is stripped with `sed` rather than the shorter
   `${leaf%.git}`: a braced expansion would add an interpolation `main.tf` does not pass.
 - The repository URLs arrive as rendered literals and are read through a *quoted* heredoc,

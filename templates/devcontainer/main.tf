@@ -481,7 +481,7 @@ resource "coder_agent" "main" {
   # 131072 bytes). Past that the fork dies with "argument list too long" (E2BIG), exit
   # 255, milliseconds in: the agent is up, the home directory is never seeded, and the
   # banner reads "A startup script has failed". Everything inlined below counts against
-  # that one argument - the rulebook, the two skills, tmux.conf, the notes seeder, the
+  # that one argument - the rulebook, the delegation skill, tmux.conf, the notes seeder, the
   # rendered Grok config and the editor settings - which is why startup.sh.tftpl keeps
   # short comments and docs/coder-templates.md carries the rationale. This twin carries
   # more stage prose than templates/workspace and crossed the ceiling first.
@@ -536,7 +536,6 @@ resource "coder_agent" "main" {
     grok_build_terminal         = chomp(file("${path.module}/grok-build-terminal.sh"))
     vscode_terminal_tmux        = chomp(file("${path.module}/vscode-terminal-tmux.sh"))
     grok_build_delegation_skill = chomp(file("${path.module}/grok-build-delegation.SKILL.md"))
-    ez_learn_skill              = chomp(file("${path.module}/ez-learn.SKILL.md"))
     coder_agents                = chomp(file("${path.module}/coder-agents.md"))
     mcp_cache_proxy             = chomp(file("${path.module}/mcp-cache-proxy.json"))
     # Injected verbatim into the script, which is safe enough: this is the
@@ -701,6 +700,27 @@ resource "coder_script" "gh_token_refresh" {
   script = templatefile("${path.module}/gh-token-refresh.sh.tftpl", {
     github_auth_id               = var.github_auth_id
     coder_github_app_install_url = local.coder_github_app_install_url
+  })
+}
+
+# The stack's skill-authoring trio, seeded by its own body rather than by the startup
+# script: every coder_script.script is a separate execve with its own single-argument
+# ceiling, which is what keeps the payloads above inside the budget. The body writes
+# each absent skill into ~/.coder/skills (the Coder Agents chat) and copies the twin
+# into ~/.agents/skills (the Grok Build CLI). docs/coder-templates.md#the-one-argument-ceiling.
+resource "coder_script" "stack_skills" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the stack skill commands"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/stack-skills.sh.tftpl", {
+    ez_learn_skill        = chomp(file("${path.module}/ez-learn.SKILL.md"))
+    ez_skillify_skill     = chomp(file("${path.module}/ez-skillify.SKILL.md"))
+    ez_create_skill_skill = chomp(file("${path.module}/ez-create-skill.SKILL.md"))
   })
 }
 

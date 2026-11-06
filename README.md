@@ -812,9 +812,12 @@ inside a workspace and which findings are expected there, the one `~/.grok` volu
 per owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP
 servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
 control-plane Coder Agents chat that needs nothing enabled:
-[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). `/ez-learn` at the Grok
-Build prompt runs the stack-seeded orientation skill; the payload to edit is
-`templates/common/ez-learn.SKILL.md`.
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). The three stack-seeded skill commands at the
+Grok Build prompt are `/ez-learn` (mine past agent chats and sessions for what should
+become a skill), `/ez-skillify` (capture the session that just worked) and `/ez-create-skill`
+(scaffold one from a description); the payloads to edit are `templates/common/ez-learn.SKILL.md`,
+`templates/common/ez-skillify.SKILL.md` and `templates/common/ez-create-skill.SKILL.md`,
+seeded into both skill homes by `coder_script "stack_skills"`.
 
 ## Kasm
 
