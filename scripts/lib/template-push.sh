@@ -19,6 +19,8 @@
 #   - What ships is a staging copy, never the template dir itself: the stack's
 #     seed payloads (GROK_BUILD_AGENTS.md, vscode-alt.svg, notes-setup.sh,
 #     tmux.conf, the two terminal helpers, the Coder Agents skill/instructions,
+#     the ez- skill trio (ez-learn.SKILL.md, ez-skillify.SKILL.md,
+#     ez-create-skill.SKILL.md) and its stack-skills.sh.tftpl seed body,
 #     mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above
 #     the template dirs under common/) ride along in every
 #     staged copy, because that is where the server-side Terraform reads them
@@ -62,6 +64,7 @@ fi
 # overwrite every file of the stack's common payload dir (GROK_BUILD_AGENTS.md,
 # vscode-alt.svg, notes-setup.sh, tmux.conf, grok-build-terminal.sh,
 # vscode-terminal-tmux.sh, grok-build-delegation.SKILL.md, ez-learn.SKILL.md,
+# ez-skillify.SKILL.md, ez-create-skill.SKILL.md, stack-skills.sh.tftpl,
 # coder-agents.md,
 # mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above the
 # template dirs under common/) there with the common copies. Both templates'
@@ -122,9 +125,12 @@ template_push_one() {
     vscode-terminal-tmux.sh \
     grok-build-delegation.SKILL.md \
     ez-learn.SKILL.md \
+    ez-skillify.SKILL.md \
+    ez-create-skill.SKILL.md \
     coder-agents.md \
     mcp-cache-proxy.json \
-    gh-token-refresh.sh.tftpl; do
+    gh-token-refresh.sh.tftpl \
+    stack-skills.sh.tftpl; do
     if [ ! -f "${common}/${payload}" ]; then
       printf 'error: %s: %s/%s is missing - main.tf reads it from the pushed copy, so no push works without it\n' \
         "${name}" "${common}" "${payload}" >&2

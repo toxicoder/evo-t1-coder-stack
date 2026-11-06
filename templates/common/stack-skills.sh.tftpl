@@ -1,0 +1,54 @@
+#!/bin/sh
+# tftpl: coder_script body; the three skill payloads are interpolated from the map
+# main.tf passes, each into a quoted here-doc so no shell text inside one is expanded.
+# Why these seeds ride their own script instead of startup.sh.tftpl: the agent execs
+# every body as one argument; docs/coder-templates.md#the-one-argument-ceiling.
+set -u
+
+# Absent-only contract: a file that already exists belongs to the user, so a healthy
+# workspace writes nothing and prints nothing (this body's log is what an operator
+# reads). The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents copy
+# what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder copy,
+# never a second inline body. Upstream /learn, /skillify and /create-skill are bundled
+# skills needing an x.ai sign-in this stack lacks; docs/grok-build-and-agents.md.
+
+if [ ! -f "$HOME/.coder/skills/ez-learn/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-learn" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-learn/SKILL.md" <<'EZ_LEARN_SKILL_MD_EOF'
+${ez_learn_skill}
+EZ_LEARN_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-learn/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-learn" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-learn/SKILL.md" \
+    "$HOME/.agents/skills/ez-learn/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-skillify/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-skillify" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-skillify/SKILL.md" <<'EZ_SKILLIFY_SKILL_MD_EOF'
+${ez_skillify_skill}
+EZ_SKILLIFY_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-skillify/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-skillify" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-skillify/SKILL.md" \
+    "$HOME/.agents/skills/ez-skillify/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-create-skill/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-create-skill" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-create-skill/SKILL.md" <<'EZ_CREATE_SKILL_SKILL_MD_EOF'
+${ez_create_skill_skill}
+EZ_CREATE_SKILL_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-create-skill/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-create-skill" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-create-skill/SKILL.md" \
+    "$HOME/.agents/skills/ez-create-skill/SKILL.md" 2>/dev/null
+fi
+
+exit 0

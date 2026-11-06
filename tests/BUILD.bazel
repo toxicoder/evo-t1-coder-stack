@@ -261,6 +261,16 @@ _SUITE_PAYLOAD = {
         "//docs:content",
         "//:entry_docs",
     ],
+    # The authoring trio's shared seam: the three SKILL.md payloads and the
+    # stack-skills.sh.tftpl seed body ride in with the template payload, the
+    # root BUILD file answers every //label the skills cite, and the docs tree
+    # plus :entry_docs answer the doc citations.
+    "ez-skill-authoring.bats": [
+        "//:templates_payload",
+        "//:bazel_files",
+        "//docs:content",
+        "//:entry_docs",
+    ],
     "litellm-config.bats": [
         "//:templates_payload",
         "//litellm:config",

@@ -44,7 +44,9 @@ setup() {
 # host --home run has real targets to reason about.
 scratch_home() {
   mkdir -p "${1}/.shared/vscode" "${1}/.coder/skills/grok-build-delegation" \
-    "${1}/.coder/skills/ez-learn" "${1}/.coder/skills/learn" "${1}/.agents/skills/learn"
+    "${1}/.coder/skills/ez-learn" "${1}/.coder/skills/learn" "${1}/.agents/skills/learn" \
+    "${1}/.coder/skills/ez-skillify" "${1}/.agents/skills/ez-skillify" \
+    "${1}/.coder/skills/ez-create-skill" "${1}/.agents/skills/ez-create-skill"
   # What the stack left under /learn when the skill moved: the marker-carrying
   # copy is the stack's own and a reseed retires it, the marker-free one is
   # someone else's and survives every reseed.
@@ -74,7 +76,7 @@ scratch_home() {
   source "${LIB}"
   local lines target
   lines="$(seed_seed_targets)"
-  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 9 ]
+  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 13 ]
   # Home-relative targets keep dev-only paths (scripts/, tests/) out of any
   # workspace volume: an absolute target would put this script's trust
   # boundary in the wrong place.
@@ -91,6 +93,17 @@ scratch_home() {
     $'~/.coder/skills/ez-learn/SKILL.md\tfile:templates/common/ez-learn.SKILL.md' "${lines}"
   assert_match "ez-learn skill from common (agents)" \
     $'~/.agents/skills/ez-learn/SKILL.md\tfile:templates/common/ez-learn.SKILL.md' "${lines}"
+  # The two authoring skills ride the same twins-for-two-consumers contract:
+  # /ez-skillify and /ez-create-skill are user-invocable in both the chat agent
+  # and the CLI, so each needs its own SKILL.md in each home.
+  assert_match "ez-skillify skill from common (coder)" \
+    $'~/.coder/skills/ez-skillify/SKILL.md\tfile:templates/common/ez-skillify.SKILL.md' "${lines}"
+  assert_match "ez-skillify skill from common (agents)" \
+    $'~/.agents/skills/ez-skillify/SKILL.md\tfile:templates/common/ez-skillify.SKILL.md' "${lines}"
+  assert_match "ez-create-skill skill from common (coder)" \
+    $'~/.coder/skills/ez-create-skill/SKILL.md\tfile:templates/common/ez-create-skill.SKILL.md' "${lines}"
+  assert_match "ez-create-skill skill from common (agents)" \
+    $'~/.agents/skills/ez-create-skill/SKILL.md\tfile:templates/common/ez-create-skill.SKILL.md' "${lines}"
   assert_not_match "no block kind" $'\tblock:' "${lines}"
 }
 
@@ -243,6 +256,12 @@ scratch_home() {
   assert_file_exists "coder skill" "${scratch}/home/.coder/skills/grok-build-delegation/SKILL.md"
   assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-learn/SKILL.md"
   assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-learn/SKILL.md"
+  # Each new skill seeds in both homes: an absent twin means that consumer's
+  # slash-command silently never exists, so name every target, not one per skill.
+  assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-skillify/SKILL.md"
+  assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-skillify/SKILL.md"
+  assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-create-skill/SKILL.md"
+  assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-create-skill/SKILL.md"
   # The copy the stack seeded under /learn before the rename goes, because it
   # still carries the marker and would shadow the CLI's own skill; the
   # marker-free one is whoever's it is, and it stays.
@@ -292,8 +311,9 @@ coder-ws2-dind-sidecar'
 import json, sys
 d = json.load(sys.stdin)
 assert d["dry_run"] is False and d["force"] is False, d
-# The nine reseed targets, plus the /learn copy the reseed retired from the home.
-assert len(d["entries"]) == 10, d["entries"]
+# The thirteen reseed targets, plus the one /learn copy the reseed retired from
+# this home (its ~/.agents twin is user-owned, so it earns no entry below).
+assert len(d["entries"]) == 14, d["entries"]
 retired = [e for e in d["entries"] if e["target"] == "~/.coder/skills/learn/SKILL.md"]
 assert len(retired) == 1 and retired[0]["action"].startswith("retired"), retired
 # The marker-free copy is user-owned, so it earns no entry at all.

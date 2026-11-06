@@ -89,21 +89,6 @@ if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
     "$HOME/.agents/skills/grok-build-delegation/SKILL.md" 2>/dev/null
 fi
 
-# The /ez-learn orientation skill, same absent-only contract. Upstream /learn is a BUNDLED
-# skill needing an x.ai sign-in this stack lacks; docs/grok-build-and-agents.md.
-if [ ! -f "$HOME/.coder/skills/ez-learn/SKILL.md" ]; then
-  mkdir -p "$HOME/.coder/skills/ez-learn" 2>/dev/null
-  cat >"$HOME/.coder/skills/ez-learn/SKILL.md" <<'EZ_LEARN_SKILL_MD_EOF'
-${ez_learn_skill}
-EZ_LEARN_SKILL_MD_EOF
-fi
-
-if [ ! -f "$HOME/.agents/skills/ez-learn/SKILL.md" ]; then
-  mkdir -p "$HOME/.agents/skills/ez-learn" 2>/dev/null
-  cp "$HOME/.coder/skills/ez-learn/SKILL.md" \
-    "$HOME/.agents/skills/ez-learn/SKILL.md" 2>/dev/null
-fi
-
 # Hand /learn back: the stack seeded this skill under that name until it moved, and a
 # leftover marker-carrying copy still shadows the bundled one. Marker-free stays.
 for _d in "$HOME/.coder/skills/learn" "$HOME/.agents/skills/learn"; do

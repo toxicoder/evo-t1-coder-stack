@@ -53,9 +53,12 @@ COMMON_PAYLOADS=(
   vscode-terminal-tmux.sh
   grok-build-delegation.SKILL.md
   ez-learn.SKILL.md
+  ez-skillify.SKILL.md
+  ez-create-skill.SKILL.md
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
+  stack-skills.sh.tftpl
 )
 
 # write_common_payloads <dir> — stub each required common/ file so a throwaway
@@ -71,9 +74,12 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/bash' >"${dest}/vscode-terminal-tmux.sh"
   printf '%s\n' '# skill' >"${dest}/grok-build-delegation.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/ez-learn.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/ez-skillify.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/ez-create-skill.SKILL.md"
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
 }
 
 # fake_root <script> [env-line...] — print a throwaway repo root holding the
@@ -808,7 +814,13 @@ source_libs() {
     return 1
   fi
   tar -tvf "${STUB_LOG}/push.tar" >"${BATS_TEST_TMPDIR}/listing.txt"
-  if grep -E 'main\.tf|startup\.sh\.tftpl|GROK_BUILD_AGENTS\.md|vscode-alt\.svg|notes-setup\.sh|tmux\.conf|grok-build-terminal\.sh|vscode-terminal-tmux\.sh|coder-agents\.md|mcp-cache-proxy\.json|gh-token-refresh\.sh\.tftpl' "${BATS_TEST_TMPDIR}/listing.txt" | grep -q ' -> '; then
+  # One alternation over every staged name, built from the same array the guard
+  # test counts, so a payload added there cannot pass this check unnamed.
+  local symlink_re='main\.tf|startup\.sh\.tftpl'
+  for payload in "${payloads[@]}"; do
+    symlink_re+='|'"${payload//./\\.}"
+  done
+  if grep -E "${symlink_re}" "${BATS_TEST_TMPDIR}/listing.txt" | grep -q ' -> '; then
     printf 'FAIL: archive stored a symlink instead of file contents:\n%s\n' "$(cat "${BATS_TEST_TMPDIR}/listing.txt")" >&2
     return 1
   fi
@@ -822,6 +834,9 @@ source_libs() {
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/vscode-alt.svg")" = '<svg/>' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/notes-setup.sh")" = 'notes_materialize() { :; }' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/tmux.conf")" = 'set -g mouse on' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/ez-skillify.SKILL.md")" = '# skill' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/ez-create-skill.SKILL.md")" = '# skill' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/stack-skills.sh.tftpl")" = '#!/bin/bash' ]
 }
 
 @test "template-push: a tree without the seed payload is refused before the CLI runs" {
