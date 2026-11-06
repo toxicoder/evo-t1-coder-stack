@@ -176,6 +176,11 @@ _SUITE_PAYLOAD = {
     "bootstrap.bats": [
         "//proxy:confs",
     ],
+    # The suite sources the shipped probe and drives both of its functions, so it
+    # owes the group that carries the lint runners and their shared host-tool probe.
+    "check-tool.bats": [
+        "//lints:runners",
+    ],
     "ci-lint-tools.bats": [
         "//:ci_lint_installer",
         "//:ci_setup_bazel_action",

@@ -108,6 +108,9 @@ TOKEN_GROUPS: Final[LabelMap] = {
     "action.yml": ["//:ci_setup_bazel_action", "//:ci_workflows"],
     # The gate's own program, which the gate suite runs out of its runfiles.
     "bazel_deps.py": ["bazel_deps.py"],
+    # The host-tool probe every lint runner starts with. The suite that drives it reads
+    # the file by path, and :runners is the group that ships it beside the runners.
+    "check_tool.sh": ["//lints:runners"],
     "deploy-docs": ["//:ci_pipelines", "//:ci_workflows"],
     "docker-compose.yml": ["//:compose_file", "//:stack_data"],
     "docs-site/": ["//docs-site:sources", "//docs-site:python_sources"],
