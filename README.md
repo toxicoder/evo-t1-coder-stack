@@ -813,9 +813,11 @@ per owner (and what `shared` vs `private` costs on a rebuild), the pre-installed
 servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
 control-plane Coder Agents chat that needs nothing enabled:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). The three stack-seeded skill commands at the
-Grok Build prompt are `/ez-learn` (mine past agent chats and sessions for what should
-become a skill), `/ez-skillify` (capture the session that just worked) and `/ez-create-skill`
-(scaffold one from a description); the payloads to edit are `templates/common/ez-learn.SKILL.md`,
+Grok Build prompt are `/ez-learn` (flush this session into a memory log, dream those logs
+into organized memory, remember one note, or browse and clear the store - this stack's copy
+of the upstream `/flush`, `/dream`, `/remember` and `/memory`), `/ez-skillify` (capture the
+session that just worked) and `/ez-create-skill` (scaffold one from a description); the
+payloads to edit are `templates/common/ez-learn.SKILL.md`,
 `templates/common/ez-skillify.SKILL.md` and `templates/common/ez-create-skill.SKILL.md`,
 seeded into both skill homes by `coder_script "stack_skills"`.
 

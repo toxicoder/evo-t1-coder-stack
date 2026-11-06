@@ -703,21 +703,28 @@ Covers all three stack-shipped skill commands: `/ez-learn`, `/ez-skillify` and
 `/ez-create-skill`. The diagnosis and the commands below are identical for each one; only
 the name changes, so read `<name>` as whichever of the three you are chasing.
 
-Cause: there is no upstream `/learn` to miss. The 1.0.77 executable contains no
-`/learn` string, xAI's skills and slash-command docs name no bundled `learn`, and the
-public `xai-org/plugin-marketplace` catalog carries no such plugin, so there is no
-published copy to vendor in. The CLI does download its built-in bundles at runtime
-(`GROK_SKILLS_BASE_URL`, `cli-chat-proxy.grok.com`) and that route needs an x.ai
-sign-in: from a workspace `api.x.ai` answers 404 and `cli-chat-proxy.grok.com`
+Cause: no published source names an upstream `/learn`, so there is none to miss. The
+`xai-org/grok-build` built-in command table, all 240 pages of docs.x.ai, every
+first-party changelog under `x.ai/cli/changelogs/`, and the public
+`xai-org/plugin-marketplace` catalog all carry zero occurrences of it, so there is no
+published copy to vendor in. The memory family
+`/ez-learn` copies (`/flush`, `/dream`, `/remember`, `/memory`) is a different case:
+those are upstream commands the CLI ships itself - `/flush`, `/dream` and `/memory` are
+*built-in* registry entries gated behind cross-session memory, which is off by default
+here, and `/remember` is a pager command with no such gate. The CLI does download its
+bundled platform skills at runtime (`GROK_SKILLS_BASE_URL`, `cli-chat-proxy.grok.com`)
+and that route needs an x.ai sign-in: from a workspace `api.x.ai` answers 404 and
+`cli-chat-proxy.grok.com`
 answers 401 anonymously, and a session started with `--sandbox off` still leaves
 `~/.grok/bundled/` uncreated. LiteLLM is the sole model transport here, there is no
 x.ai credential, and the fetch never runs. So each slash command this stack ships is its
 own seed, written at workspace start by `coder_script.stack_skills` into
 `~/.coder/skills/<name>/SKILL.md` with a twin copy at
 `~/.agents/skills/<name>/SKILL.md`, and a missing command means that seed is
-missing, not that the image is stale. Each carries its own name because a user-scope skill
-shadows a same-named bundled one: seeded as `learn` it would hide the CLI's bundled
-`/learn` on any CLI that does have the bundle.
+missing, not that the image is stale. Each carries its own `ez-` name to stay clear of
+the upstream names: a user-scope skill overrides a same-named bundled one, so a seed
+named `create-skill` would hide the CLI's bundled platform skill of that name on any
+CLI that does sign in.
 
 ```sh
 bash -lc 'command -v grok; grok --version'
@@ -745,7 +752,8 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
 - A `learn` directory still listed by the last `ls` is a copy someone took over: the boot
   and the reseed delete that path only while it still carries the stack marker, and a
   marker-free file is user-owned, so it stays. A marker-carrying leftover is retired on
-  the next boot or reseed, and that removal is what hands `/learn` back to the CLI.
+  the next boot or reseed, and that removal only finishes the rename: no published source
+  names an upstream `/learn` for the name to free.
 - A file you deleted or edited on purpose is not a fault. To keep your own version,
   edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free
   file is user-owned, and the seeder leaves it alone unless you pass `--force`. A
@@ -755,13 +763,13 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   the file back to the stack.
 - `ls ~/.grok/bundled/skills` printing nothing is the expected answer, not a symptom:
   without the sign-in there is no bundled cache at all, on any version. Because a
-  user-scope skill shadows a same-named bundled one, this stack's seed deliberately does
-  not use the name `learn`; the boot and the reseed retire a marker-carrying
-  `skills/learn/SKILL.md` that predates the rename rather than relying on you to delete
-  it, since deleting a seeded copy would not free the name anyway - the boot and the
-  reseed write it again. What works: keep a marker-free local copy only if you also stop
-  the stack from seeding it, or disable the lane with `disabled = ["<name>"]` under
-  `[skills]` in `~/.grok/config.toml`.
+  user-scope skill overrides a same-named bundled one, and the built-in memory names are
+  the CLI's, this stack's seeds deliberately carry `ez-` names; the boot and the reseed
+  retire a marker-carrying `skills/learn/SKILL.md` that predates the rename rather
+  than relying on you to delete it, since deleting a seeded copy would not retire the
+  old command name anyway - the boot and the reseed write it again. What works: keep a
+  marker-free local copy only if you also stop the stack from seeding it, or disable
+  the lane with `disabled = ["<name>"]` under `[skills]` in `~/.grok/config.toml`.
 - `command -v grok` answering `~/.grok/bin/grok` is the normal answer, not a leftover
   installer copy: the workspace `PATH` lists `~/.grok/bin` before `/usr/local/bin`, and
   that entry is a symlink into `~/.grok/downloads/`, which holds one file per downloaded

@@ -90,8 +90,12 @@ key (`~/.grok/config.toml`) - so a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
 so. The six skill copies are the stack's three skill commands, each seeded at
 `~/.coder/skills/<name>/SKILL.md` and twin-copied to its `~/.agents` twin:
-`/ez-learn`, which mines past agent chats and sessions and proposes skills, updates
-and retirements; `/ez-skillify`, which captures the session that just worked; and
+`/ez-learn`, which turns a session into durable memory (this stack's copy of the
+upstream `/flush`, `/dream`, `/remember` and `/memory` - the CLI's own commands, not
+skills: flush the conversation into a session log, dream those logs into organized
+memory, save one note, browse or manage the store. Three of the four are gated on a
+memory store that is off by default, so they stay hidden until one is configured);
+`/ez-skillify`, which captures the session that just worked; and
 `/ez-create-skill`, which scaffolds one from a description. To take a seeded copy
 over, edit it and
 delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free file is
@@ -103,8 +107,8 @@ copy. To hide one of the slash commands, set `disabled = ["ez-learn"]` (or
 `~/.grok/config.toml`. An edited copy which keeps its marker is still rewritten
 back to its `templates/common/ez-<name>.SKILL.md` by this tool. The pass also retires the two
 `skills/learn/SKILL.md` paths this skill occupied before the rename, and only while
-each still carries the stack marker, so a leftover copy cannot keep shadowing the CLI's
-bundled `/learn` and a file someone took over stays.
+each still carries the stack marker, so a leftover copy cannot keep offering a `/learn` the
+stack no longer maintains, and a file someone took over stays.
 
 `all` runs `env` and then `workspace`.
 
