@@ -350,7 +350,7 @@ main_block() {
   # The move cut a block out of startup.sh.tftpl, and the two blocks that share
   # its front matter were never in scope. Losing the delegation seed unregisters
   # the orchestrator skill; losing the retirement loop leaves the old /learn copy
-  # shadowing the CLI's own bundled skill for the life of the volume.
+  # on the volume beside /ez-learn for the life of it.
   local twin
   for twin in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
     assert_contains_file "the delegation seed guard survives" "${twin}/startup.sh.tftpl" \
@@ -587,10 +587,11 @@ main_block() {
   for i in "${!SKILLS[@]}"; do
     f="$(payload_path "${SKILLS[i]}")"
     # Two segments at most, so a config path or a notes path is not mistaken for
-    # a doc citation; SKILL.md is the artifact every skill writes, not a doc.
+    # a doc citation; SKILL.md is the artifact every skill writes and MEMORY.md is
+    # the memory file /ez-learn maintains upstream, so neither is a doc here.
     cited="$(grep -oE '[A-Za-z0-9._/-]+\.md' "${f}" |
       grep -E '^([A-Za-z0-9._-]+|docs/[A-Za-z0-9._-]+)\.md$' |
-      grep -vx 'SKILL\.md' | sed 's|^docs/||' | sort -u)"
+      grep -vxE 'SKILL\.md|MEMORY\.md' | sed 's|^docs/||' | sort -u)"
     count="$(printf '%s\n' "${cited}" | grep -c . || true)"
     total=$((total + ${count:-0}))
 
@@ -873,7 +874,7 @@ main_block() {
   # Three slash commands that overlap in the menu are three ways to do the wrong
   # one. What separates them is the evidence each starts from, and only the
   # payloads can say so: /ez-skillify captures the run that worked, /ez-learn
-  # mines many sessions, this builds from a description.
+  # turns a session into durable memory, this builds from a description.
   local f prose
   f="$(payload_path ez-create-skill)"
   prose="$(payload_prose "${f}")"

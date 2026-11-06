@@ -9,8 +9,10 @@ set -u
 # workspace writes nothing and prints nothing (this body's log is what an operator
 # reads). The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents copy
 # what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder copy,
-# never a second inline body. Upstream /learn, /skillify and /create-skill are bundled
-# skills needing an x.ai sign-in this stack lacks; docs/grok-build-and-agents.md.
+# never a second inline body. The ez- names stay clear of the upstream ones they sit
+# beside: create-skill is a bundled platform skill needing an x.ai sign-in this stack
+# lacks, and /flush, /dream, /remember and /memory are built-in memory commands gated
+# on a memory store that is off by default; docs/grok-build-and-agents.md.
 
 if [ ! -f "$HOME/.coder/skills/ez-learn/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/ez-learn" 2>/dev/null

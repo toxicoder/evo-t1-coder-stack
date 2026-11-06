@@ -89,8 +89,8 @@ if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
     "$HOME/.agents/skills/grok-build-delegation/SKILL.md" 2>/dev/null
 fi
 
-# Hand /learn back: the stack seeded this skill under that name until it moved, and a
-# leftover marker-carrying copy still shadows the bundled one. Marker-free stays.
+# Retire the pre-rename name: the stack seeded this skill under /learn until it moved,
+# and a leftover marker-carrying copy keeps offering that old name. Marker-free stays.
 for _d in "$HOME/.coder/skills/learn" "$HOME/.agents/skills/learn"; do
   grep -qF 'managed-by: evo-t1-coder-stack' "$_d/SKILL.md" 2>/dev/null &&
     { rm -f "$_d/SKILL.md"; rmdir "$_d"; } 2>/dev/null
