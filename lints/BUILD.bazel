@@ -1,4 +1,4 @@
-"""Package purpose: ShellCheck, shfmt, and buildifier. Host tools, tagged manual."""
+"""Package purpose: ShellCheck, shfmt, mypy, and buildifier. Host tools, tagged manual."""
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools:exec_shell.bzl", "exec_shell")
@@ -9,6 +9,22 @@ package(default_visibility = ["//visibility:private"])
 filegroup(
     name = "build_file",
     srcs = ["BUILD.bazel"],
+    visibility = ["//visibility:public"],
+)
+
+# The lint runners themselves, as a group a suite can declare. //tests:bats_mypy_lint_test
+# reads run_mypy.sh by path to pin its target list against the data edge below, and a
+# runner is not payload any other package owns. check_tool.sh rides along because every
+# runner sources it, and a suite that reads one runner reads the probe with it.
+filegroup(
+    name = "runners",
+    srcs = [
+        "buildifier_check.sh",
+        "check_tool.sh",
+        "run_mypy.sh",
+        "run_shellcheck.sh",
+        "run_shfmt.sh",
+    ],
     visibility = ["//visibility:public"],
 )
 
@@ -31,6 +47,7 @@ _LINT_SHELL_SOURCES = [
     # lints/: the runners and the host-tool probe they all source.
     "buildifier_check.sh",
     "check_tool.sh",
+    "run_mypy.sh",
     "run_shellcheck.sh",
     "run_shfmt.sh",
     "//:ci_lint_installer",  # .github/: install-lint-tools.sh is the only shell there
@@ -81,6 +98,37 @@ sh_test(
     ],
 )
 
+# run_mypy.sh is the Python half of this package and the only runner here whose input is
+# not shell. Its scan list is the `targets` array in the runner, and this data edge is the
+# honest declaration of exactly that list: the three Python groups plus //:mypy_config,
+# which the runner names with `--config-file mypy.ini`. //tests:py_coverage carries the
+# same Python through a different set of groups, and the runner's header comment says
+# which side to edit when a new package starts shipping .py files.
+exec_shell(
+    name = "mypy_exec",
+    src = "run_mypy.sh",
+    data = ["check_tool.sh"],
+)
+
+sh_test(
+    name = "mypy",
+    size = "medium",
+    srcs = [":mypy_exec"],
+    data = [
+        "//:mypy_config",
+        "//docs-site:python_sources",
+        "//scripts:py_programs",
+        "//tests:python_sources",
+    ],
+    tags = [
+        "lint",
+        "local",
+        "manual",
+        "mypy",
+        "no-sandbox",
+    ],
+)
+
 # buildifier_check.sh walks every BUILD, BUILD.bazel, MODULE.bazel and *.bzl in the repo,
 # which is exactly what //:bazel_files enumerates, so that group and not the shell list is
 # the input here.
@@ -111,6 +159,7 @@ test_suite(
     tags = ["lint"],
     tests = [
         ":buildifier",
+        ":mypy",
         ":shell",
         ":shfmt",
     ],
