@@ -248,7 +248,7 @@ report for a script. What the report should read here:
 
 - Baked in at `/usr/local/bin/grok`, with an `agent` link beside it, **outside** the
   `/home/coder` home volume, so a rebuilt volume cannot lose it.
-- Pinned as `GROK_VERSION` in `images/dev/tool-versions.env` (1.0.70 at the time of
+- Pinned as `GROK_VERSION` in `images/dev/tool-versions.env` (1.0.77 at the time of
   writing, mirrored as the Dockerfile `ARG` default). The image build unpacks that
   pinned `.zst` and runs `grok --version` in two PATH contexts as a build-time smoke
   check.
@@ -260,7 +260,7 @@ report for a script. What the report should read here:
   rebuilding the image (`scripts/build-dev-image.sh`) and re-pushing the templates.
 - A self-installed CLI under `~/.grok/bin` stays first on the login-shell PATH, so it
   wins over the baked copy.
-- **The upstream `/learn` bundle never lands here**: the 1.0.70 binary contains zero
+- **The upstream `/learn` bundle never lands here**: the 1.0.77 binary contains zero
   occurrences of the string `/learn`, so the bundled skill set is downloaded at runtime
   through the CLI's proxy endpoints config (`cli-chat-proxy.grok.com`, gated by
   `GROK_SKILLS_BASE_URL`) and needs an x.ai sign-in. This stack has no x.ai credential:
@@ -530,9 +530,9 @@ clone is never asked to delete somebody else's committed file.
   probe's `--timeout`), `SEARXNG_CACHE_TTL_MS` (15 minutes, which switches on the
   bounded 128-entry response cache that ships disabled, so a repeated query stops
   re-dialling backends that already refused this instance), `SEARXNG_MAX_RESULTS`
-  (a ceiling that keeps one search inside the MCP output cap - on the pinned 1.0.70
-  CLI that cap rides `GROK_MAX_MCP_OUTPUT_BYTES`, because the CLI reports
-  `[mcp] max_output_bytes` as an unrecognized config key and never applies it),
+  (a ceiling that keeps one search inside the MCP output cap - on the pinned 1.0.77
+  CLI that cap rides `GROK_MAX_MCP_OUTPUT_BYTES`, because `grok inspect` still answers
+  `[mcp] — unrecognized config key` and never applies it),
   `SEARXNG_DEFAULT_SAFESEARCH` (mirrors `search.safe_search` in
   `searxng/settings.yml`) and `SEARXNG_DEFAULT_LANGUAGE` (`all`, so an image bump
   cannot quietly start geo-filtering every agent search).

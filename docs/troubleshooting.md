@@ -703,7 +703,7 @@ Covers all three stack-shipped skill commands: `/ez-learn`, `/ez-skillify` and
 `/ez-create-skill`. The diagnosis and the commands below are identical for each one; only
 the name changes, so read `<name>` as whichever of the three you are chasing.
 
-Cause: there is no upstream `/learn` to miss. The 1.0.70 executable contains no
+Cause: there is no upstream `/learn` to miss. The 1.0.77 executable contains no
 `/learn` string, xAI's skills and slash-command docs name no bundled `learn`, and the
 public `xai-org/plugin-marketplace` catalog carries no such plugin, so there is no
 published copy to vendor in. The CLI does download its built-in bundles at runtime
@@ -773,7 +773,7 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   disagreeing is never on
   its own a reason to rebuild the image.
 - A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
-  `GROK_VERSION` (1.0.70 at the time of writing), and rebuilding `images/dev`
+  `GROK_VERSION` (1.0.77 at the time of writing), and rebuilding `images/dev`
   (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded skill trio
   works on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
