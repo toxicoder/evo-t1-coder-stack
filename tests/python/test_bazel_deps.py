@@ -23,6 +23,7 @@ import pathlib
 import runpy
 import sys
 import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -50,15 +51,24 @@ STACK_DATA_LABELS = [
 ]
 
 
-def load_checker() -> object:
+def load_checker() -> types.ModuleType:
     """Import tests/bazel_deps.py by path under a throwaway name.
 
     tests/ is not a package and the Bats gate runs the file as a script, so the test
     loads it the way the interpreter would rather than import a package that is not
-    there.
+    there. The declared return is the module type rather than `object`: every test
+    reaches a scanner through `bd.<name>`, and ModuleType is the one stdlib type that
+    leaves attribute access open, so a test names each function once instead of
+    spelling it out a second time for the checker's benefit.
     """
     name = f"bazel_deps_under_test_{next(_module_ids)}"
     spec = importlib.util.spec_from_file_location(name, CHECKER_PATH)
+    # A missing file or a package directory would hand back no spec (or no loader) and
+    # fail here with the path named, rather than three statements later inside the
+    # loader. The CHECKER_PATH the gate ships always resolves, so this is the shape
+    # importlib's signature demands, not a branch the suite exercises.
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot import {CHECKER_PATH}: no module spec or loader")
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
@@ -136,14 +146,16 @@ def make_tmp(label: str) -> pathlib.Path:
     return pathlib.Path(directory.name)
 
 
-_tmp_roots: list[tempfile.TemporaryDirectory] = []
+_tmp_roots: list[tempfile.TemporaryDirectory[str]] = []
 
 
 def run_checker(root: pathlib.Path, *args: str) -> tuple[int, str]:
     """Invoke main(argv) with the output captured, the way the CLI runs."""
     buffer = io.StringIO()
     with contextlib.redirect_stdout(buffer):
-        status = bd.main(["--root", str(root), *args])
+        # main(argv) returns the exit status the CLI hands sys.exit; the annotation pins
+        # it to int so the tuple below is typed rather than whatever the module gives back.
+        status: int = bd.main(["--root", str(root), *args])
     return status, buffer.getvalue()
 
 

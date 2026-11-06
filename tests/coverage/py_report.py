@@ -25,9 +25,43 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 # Test files are Python too, and their own lines are nobody's product surface.
 TEST_FILE_PREFIXES = ("test_", "conftest.py")
+
+
+class FileSummary(TypedDict, total=False):
+    """The one record of a file's report that sets the floor.
+
+    Named ``total=False`` because coverage omits a counter it has nothing to
+    say about (a file with no branches reports no branch counters at all), and
+    every read below already answers with its own default.
+    """
+
+    num_statements: int
+    num_branches: int
+    num_partial_branches: int
+    percent_covered: float
+
+
+class FileRecord(TypedDict, total=False):
+    """One entry of the report's ``files`` map: the summary plus the misses."""
+
+    summary: FileSummary
+    missing_lines: list[int]
+    missing_branches: list[list[int]]
+
+
+class CoverageReport(TypedDict, total=False):
+    """The slice of ``coverage report --json`` this gate reads.
+
+    The real document carries far more (meta, totals, per-file index); naming
+    only what is read keeps the two subscripts below honest without pretending
+    to model coverage.py's whole schema.
+    """
+
+    files: dict[str, FileRecord]
 
 
 def expected_modules(root: Path, expect_dirs: list[str]) -> list[str]:
@@ -51,7 +85,7 @@ def expected_modules(root: Path, expect_dirs: list[str]) -> list[str]:
     return found
 
 
-def match_recorded(files: dict, wanted: str) -> dict | None:
+def match_recorded(files: dict[str, FileRecord], wanted: str) -> FileRecord | None:
     """Return the report entry for repo-relative path *wanted*, or None.
 
     The report keys are absolute and may sit under either the checkout or the
@@ -78,7 +112,7 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
-    report = json.loads(Path(args.json).read_text(encoding="utf-8"))
+    report: CoverageReport = json.loads(Path(args.json).read_text(encoding="utf-8"))
     files = report.get("files", {})
 
     wanted = expected_modules(root, args.expect)

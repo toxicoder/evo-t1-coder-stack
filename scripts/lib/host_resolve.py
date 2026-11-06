@@ -11,7 +11,8 @@ import socket
 import sys
 
 
-def main(argv):
+def main(argv: list[str]) -> int:
+    # sys.argv verbatim: slot 0 is the script name, so argv[1] is the host.
     if len(argv) != 2 or not argv[1]:
         sys.stderr.write("usage: host_resolve.py HOSTNAME\n")
         return 1

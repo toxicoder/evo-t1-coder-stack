@@ -28,6 +28,7 @@ import tempfile
 import types
 import unittest
 from collections.abc import Iterator
+from typing import Protocol
 from unittest import mock
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -46,6 +47,17 @@ class StubYamlError(Exception):
     """Stands in for yaml.YAMLError, the type parse_yaml.py catches."""
 
 
+class TextStream(Protocol):
+    """The slice of a file object the stub reads: one call that hands back text.
+
+    `io.StringIO` satisfies it, which is what the tests pass, and the real
+    PyYAML accepts anything with a `read()`; naming just that method keeps the
+    stub's signature honest without pretending to be `io.IOBase`.
+    """
+
+    def read(self) -> str: ...
+
+
 class StubYaml(types.ModuleType):
     """Minimal PyYAML surface: safe_load plus the YAMLError the helper catches."""
 
@@ -54,9 +66,9 @@ class StubYaml(types.ModuleType):
     def __init__(self) -> None:
         super().__init__("yaml")
 
-    def safe_load(self, fh: object) -> dict[str, bool]:
+    def safe_load(self, fh: TextStream) -> dict[str, bool]:
         """Load one document, rejecting an unterminated flow collection."""
-        text = fh.read()  # type: ignore[attr-defined]
+        text = fh.read()
         unbalanced = text.count("[") - text.count("]") + text.count("{") - text.count("}")
         if unbalanced:
             raise StubYamlError("expected ',' or ']'")
@@ -338,17 +350,26 @@ class ParseYamlTests(unittest.TestCase):
     """parse_yaml.py exits 1 on the first file yaml.safe_load cannot read."""
 
     def setUp(self) -> None:
-        self.saved_yaml = sys.modules.get("yaml", _MISSING)
+        # Whatever sat in the "yaml" slot before this test ran, or the sentinel
+        # when nothing did. `object` rather than ModuleType because the slot also
+        # holds the None the missing-PyYAML test installs.
+        self.saved_yaml: object = sys.modules.get("yaml", _MISSING)
         self.dir = self.enterContext(temp_dir())
 
     def tearDown(self) -> None:
         if self.saved_yaml is _MISSING:
             sys.modules.pop("yaml", None)
         else:
-            sys.modules["yaml"] = self.saved_yaml
+            # sys.modules is typed dict[str, ModuleType], but this suite writes a
+            # non-module into the "yaml" slot on purpose (see _load), so the value
+            # it hands back is not provably a module.
+            sys.modules["yaml"] = self.saved_yaml  # type: ignore[assignment]
 
     def _load(self, module: object | None) -> types.ModuleType:
         """Load parse_yaml.py with `module` installed as the yaml package."""
+        # None here is the documented way to make `import yaml` raise, and a stub
+        # ModuleType stands in for the package; neither is the ModuleType
+        # sys.modules is typed to hold.
         sys.modules["yaml"] = module  # type: ignore[assignment]
         mod = load_helper("parse_yaml")
         self.addCleanup(sys.modules.pop, mod.__name__, None)
