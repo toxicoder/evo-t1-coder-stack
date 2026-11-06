@@ -874,8 +874,10 @@ Three things about skills matter in practice here:
 - Set `disable-model-invocation: true` when only an explicit `/name` should run it.
   Anything that deploys, pushes or resets belongs behind that key.
 - After creating or editing anything, check discovery and provenance with `grok inspect`,
-  and `grok inspect --json` for each skill's `source` path and `userInvocable`. Discovery
-  reloads from disk, so an edit lands next turn with no restart.
+  and `grok inspect --json` for each skill's `source` path and `userInvocable`. `/skills`
+  opens the same set as a menu, where a toggle takes a skill out of the slash menu
+  without deleting the file. Discovery reloads from disk, so an edit lands next turn
+  with no restart.
 
 This is workflow curation, separate from the memory system (`/remember`, `/memory`,
 `/dream`), which stores durable facts, and from `AGENTS.md`, which is the always-loaded

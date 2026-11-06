@@ -120,6 +120,8 @@ Read both files back: discovery sees the file, not what you composed. Then:
 - Discovery reloads from disk, so an edit lands next turn with no restart.
 - To hide it without deleting: `disabled = ["<name>"]` (listed, inactive) or
   `ignore = ["<path>"]` (hidden entirely) under `[skills]` in `~/.grok/config.toml`.
+- `/skills` shows the same set as a menu: each discovered skill with its source, and a
+  toggle that takes it out of the slash menu without deleting anything.
 
 ## What makes the captured skill good
 

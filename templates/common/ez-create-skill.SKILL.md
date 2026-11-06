@@ -136,7 +136,8 @@ Then report what the CLI resolved -- the `source` path and `userInvocable`:
 Tell the user to invoke `/name` in a new turn, arguments typed after the name; it lands in
 the slash menu within seconds because skills reload from disk. If it is missing, `[skills]`
 in `~/.grok/config.toml` explains: `paths` scans an extra directory, `ignore` hides a skill
-entirely, `disabled` keeps it listed but inactive.
+entirely, `disabled` keeps it listed but inactive. `/skills` opens the same set as a menu,
+where each skill shows with its source and a toggle takes it out of the slash menu.
 
 ## Where it goes in this stack
 

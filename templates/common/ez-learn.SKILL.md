@@ -119,6 +119,8 @@ Confirm the name is listed, its `source` is the path you wrote, `userInvocable` 
 contested bare name is tagged `collides with /x -> scope:x`. To retire without deleting:
 `disabled = ["name"]` under `[skills]` keeps a skill listed and inactive,
 `ignore = ["path"]` hides it entirely, and a plugin goes in `[plugins].disabled`.
+`/skills` is the interactive form of the same switch: it lists every discovered skill
+with its source and toggles one out of the slash menu without touching the file.
 
 A seed change runs the repo gates:
 
