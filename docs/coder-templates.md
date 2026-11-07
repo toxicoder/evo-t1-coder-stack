@@ -762,12 +762,24 @@ The order above is not incidental; each line is a constraint the script has to k
 - `~/.tmux.conf` is seeded *before* the two terminal helpers. `tmux` reads that file once
   at server start and every terminal (plus an SSH client that reattaches) shares that one
   server, so seeding after the first `tmux new-session -A` could run would leave that
-  session unconfigured for the whole boot. `mouse on` hands the wheel and the drag to
-  tmux; `set-clipboard on` is what carries a tmux copy out to the client clipboard over
-  OSC 52 for a real terminal app, and a client that blocks OSC 52 (iTerm2 by default)
-  keeps the copy inside tmux's own buffer instead. The browser build of VS Code drops
-  that escape, so a copy out of a browser tab is a Shift+drag, which xterm.js gives to
-  the browser even with `mouse on`.
+  session unconfigured for the whole boot. `mouse off` is what keeps every click with
+  the terminal client: tmux requests no mouse reporting, so a drag is the client's own
+  highlight, the settings seed's `copyOnSelection` puts it on the machine clipboard,
+  and right-click and middle-click paste it back. Measured on the shipped tmux 3.4, an
+  attach with `mouse on` writes `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the
+  client and an attach with it off writes none of them. tmux keeps no clipboard of its
+  own next to that: the copy-mode copies, the prefix paste `]`, the buffer picker `=`
+  and the root-table middle-click paste are unbound, and `Prefix m` is only the switch
+  that hands the wheel to tmux for a long scroll and hands it back.
+  `set-clipboard on` and `allow-passthrough on` stay for the one copy route that is
+  not tmux's own - an app inside a pane (vim's `+` register, anything that emits
+  OSC 52) drives the machine clipboard through them, which is what a native terminal
+  hands that app - and a client that blocks OSC 52 (iTerm2 by default) gets nothing at
+  all, because there is no tmux buffer left to fall back to. The browser build of VS
+  Code drops that escape as well
+  ([microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254)), so a
+  pane app's OSC 52 copy is silent in the tab and lands over ssh from a real terminal
+  app, while the operator's own copy in the tab is the plain drag.
 - The clone folder is created before git runs, and before the `coder_script.code_server`
   script's own `mkdir`: the editor starts in parallel with the startup script, and an
   empty tree is a folder VS Code can open while the clone is still writing. An empty

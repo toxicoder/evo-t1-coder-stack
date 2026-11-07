@@ -131,46 +131,74 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 
 ### Copy and paste between a tmux pane and the machine you type on
 
-Two buffers are involved: tmux's own buffer, and the clipboard of the computer
-you are typing on. Which one a copy reaches depends on what sits at the other
-end of the terminal. Each claim below was re-measured in a headless Chromium
-against the code-server this stack ships (4.145.0, VS Code base 1.145.0) with
-the real payloads loaded: the workbench ran on the rendered `settings.json`
-twin, byte-identical to `templates/workspace/settings.json.tftpl`, and the pane
-ran on `templates/common/tmux.conf`. An earlier round of these notes measured
-4.143.1 and concluded that no modifier hands a drag back to the browser; that
-conclusion was wrong and the Shift row below is what the same harness reads on
-the shipped pin.
+One clipboard is in play: the one on the computer you are typing on. The seed runs
+`set -g mouse off` and unbinds every key and every click that could move text into
+or out of tmux's own buffer, so the terminal client keeps each button and does the
+copying itself, the way it does in a native terminal on that machine. OSC 52 is the
+one route that still depends on what sits at the other end of the terminal, and it
+belongs to an app inside the pane rather than to the operator. Where each claim
+below comes from: the tmux ones were read off the shipped tmux 3.4 on this box (what
+an attach writes to the client, and what `list-keys` still holds once the payload is
+sourced), and the setting names, values and defaults were read out of the shipped
+code-server 4.145.0's own config registry (VS Code base 1.145.0). The two
+Clipboard-API observations -- that a client selection fires
+`navigator.clipboard.writeText`, and that `document.execCommand('copy')` is the
+fallback that still lands on an insecure origin -- come from the earlier
+headless-Chromium pass over that build with the rendered `settings.json` twin and the
+tmux payload loaded, when `mouse` was still on and the copy out was a Shift+drag.
+That path is the client's own selection, which is what a plain drag drives now; the
+plain drag is due the same pass before it is restated as measured under `mouse off`.
 
-- **Out of a browser tab, hold Shift and drag.** xterm.js gives a Shift+drag to
-  the browser as a native selection even with `set -g mouse on`, and the seed's
-  `terminal.integrated.copyOnSelection` puts it on the system clipboard with no
-  chord: the harness saw `navigator.clipboard.writeText` called with the selected
-  text while `tmux list-buffers` stayed empty and `pane_in_mode` read 0. A plain
-  drag is the mirror image - tmux takes it into its own buffer and xterm paints
-  no selection. Alt and Ctrl drags reach neither side. Clear a leftover
-  selection with one click first: Shift extends a selection that already exists
-  rather than starting a new one.
-- **A real terminal app honours OSC 52; the browser build does not.** Over ssh
-  from Ghostty, kitty, WezTerm or iTerm2, `Prefix-[`, `v`, `y` puts the selection
-  on the laptop clipboard, and `set -g set-clipboard on` with
-  `set -g allow-passthrough on` in `templates/common/tmux.conf` keep that route
-  open for tmux's copy-mode and for an app inside the pane (vim's `+` register).
-  code-server's browser build drops the escape before any clipboard call: under
-  this payload a copy-mode `y` filled tmux's buffer (`tmux show-buffer` is where
-  the copy sits) and produced zero `writeText`, and a hand-written
-  `printf '\033]52;c;<base64>\a'` was just as silent with `set-clipboard off` as
-  with it on, which puts the drop in the browser and not in tmux. Upstream
-  [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254)
-  is open with two unmerged fixes, and the shipped 4.145.0 registers no OSC 52
-  setting at all, so there is nothing here to turn on. `Prefix-]` puts tmux's
-  buffer back into the pane, bracketed.
-- **`Prefix m` is the fallback, not the route.** Releasing the pointer makes an
-  ordinary drag a browser selection, which is what to reach for when Shift+drag
-  will not cooperate, and the switch lands during copy-mode as well. Output that
-  has scrolled away: `Prefix-[`, then `k` (or `Ctrl-u`/`Ctrl-d`) walks up the
-  pane's history until the line is painted on the screen, which is what the
-  browser can select; drag it, then `q` to leave copy-mode.
+- **Out of a pane: drag, and it is already on the clipboard.** tmux asks the outer
+  terminal for mouse reporting only while `mouse` is on: measured on tmux 3.4, an
+  attach with `mouse on` writes `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the
+  client, and an attach with it off writes none of them. With the seed's
+  `mouse off` tmux never sees a button, so a plain drag is the client's own
+  highlight and the seed's `terminal.integrated.copyOnSelection: true` puts that
+  highlight on the machine clipboard with no chord (the harness recorded
+  `navigator.clipboard.writeText` firing on a client selection, before this switch).
+- **Right-click and middle-click paste that clipboard.** The seed sets
+  `terminal.integrated.rightClickBehavior: "copyPaste"` - copy while there is a
+  selection, paste when there is none - and pins
+  `terminal.integrated.middleClickBehavior: "paste"`, because the config registry in
+  the shipped 4.145.0 gives that setting the default `"default"`, which pastes only
+  on the Linux build. tmux has no middle-click paste of its own to answer first:
+  `MouseDown2Pane` is unbound in the root table.
+- **tmux keeps no buffer, so there is nothing to paste out of one.** `Prefix-[`
+  still enters vi copy-mode and it is a viewer: the cursor keys, `PPage`/`NPage`,
+  `Ctrl-u`/`Ctrl-d` and `k`/`j` walk history, `q` leaves, and `Escape` clears a
+  selection. Every copy that used to end a selection is unbound - Enter, `C-j`, `D`,
+  `A`, the word and line copies a double- or triple-click fires, the copy a drag
+  release ran, and the `y` the earlier seed bound itself - along with the prefix
+  paste `]` and the buffer picker `=`. Selecting inside copy-mode with `Space`, `V`
+  or the cursor keys stays bound and is inert, with no copy command left for it to
+  end on. Proof: sourcing the payload on a scratch server leaves `list-keys` with no
+  copy command in `copy-mode-vi`, no `paste-buffer` or `choose-buffer` in `prefix`,
+  and no `MouseDown2Pane` in `root`. The pointer's other jobs keep their prefix
+  keys: `Prefix-o` or `Prefix-q` to select a pane, and `Prefix-Alt-arrow` to resize
+  (plain `Prefix-arrow` selects a pane in the shipped 3.4's own default table).
+- **`Prefix m` is the wheel, not a copy route.** One press hands the pointer to
+  tmux so the wheel walks pane history, the next hands it back. It is the escape
+  hatch for a long scroll, because tmux paints in the alternate screen - it sends
+  `ESC[?1049h` either way - so the client holds no scrollback of its own and a wheel
+  over a pane has nothing to walk. Output that has scrolled away is copied by
+  bringing it on screen first: `Prefix-[`, scroll it into view, select it with a
+  client drag, `q`. A drag while `Prefix m` has the pointer on selects nothing,
+  since the copy bindings stay unbound either way.
+- **An app inside the pane drives the machine clipboard over OSC 52; the browser
+  build drops it.** `set -g set-clipboard on` with `set -g allow-passthrough on`
+  stay in the seed for that one route: vim's `+` register, and anything else that
+  emits the escape, reach the machine clipboard the way a native terminal hands them
+  to it. Over ssh from Ghostty, kitty, WezTerm or iTerm2 that copy lands.
+  code-server's browser build drops the escape before any clipboard call: a
+  hand-written `printf '\033]52;c;<base64>\a'` was just as silent with
+  `set-clipboard off` as with it on, which puts the drop in the browser and not in
+  tmux. Upstream
+  [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
+  open with two unmerged fixes, and the shipped 4.145.0 registers no OSC 52 setting
+  at all, so there is nothing here to turn on. Nothing on the tmux side can spoil
+  that clipboard either: tmux has no copy left to send, so an accidental selection
+  in the pane cannot overwrite what the client just put there.
 - **Into the pane: `Ctrl+Shift+V` or right-click, on a secure context.** Both
   arrive bracketed (`ESC[200~ ... ESC[201~`) in a bash terminal and in a tmux
   pane alike, and a three-line paste arrives whole without a warning dialog. Both
@@ -181,7 +209,9 @@ the shipped pin.
   clipboard.readText API needed to trigger a paste, try Ctrl+V instead."), and
   the browser's native paste event is what still delivers. A Clipboard site
   permission that was once denied breaks both API chords the same way, with
-  `NotAllowedError: Read permission denied`.
+  `NotAllowedError: Read permission denied`. Neither is a tmux route: the prefix
+  paste `]` and the buffer picker `=` are unbound, so the client's own clipboard is
+  what arrives in the pane.
 - **`Ctrl+V` on a secure origin is not a paste.** VS Code binds terminal paste to
   `Ctrl+Shift+V` on Linux and `Cmd+V` on macOS, so `Ctrl+V` reaches the pane as
   the `\x16` byte (readline's quoted-insert, vim's visual-block). The seed
@@ -200,13 +230,13 @@ the shipped pin.
   so that cost is paid per terminal in the tab, and again per view of a pane. tmux
   holds its history once per pane, in the server, and every client of that pane
   shares the one buffer. Hence the split: the deep store is tmux's and the
-  browser keeps a short viewport. Inside a tmux pane the wheel is copy-mode
-  anyway (`set -g mouse on`), so the 100000 lines live behind `Prefix-[` and
-  nothing pays for them in the tab. Measured on tmux 3.4 with one pane pushed to
-  its limit, 100000 lines of 120-column output holds the
-  tmux server at 381 MB RSS; the same 100000 lines of plain 80-column output
-  costs 60 MB. tmux reads `history-limit` when a pane is created, so an existing
-  pane keeps the number it was born with.
+  browser keeps a short viewport. Inside a tmux pane the client's wheel has nothing
+  to walk - tmux paints in the alternate screen, so that buffer holds no pane
+  history - and the 100000 lines live behind `Prefix-[`, paid for in the server and
+  not in the tab. Measured on tmux 3.4 with one pane pushed to its limit, 100000
+  lines of 120-column output holds the tmux server at 381 MB RSS; the same 100000
+  lines of plain 80-column output costs 60 MB. tmux reads `history-limit` when a
+  pane is created, so an existing pane keeps the number it was born with.
 
 ### `grok doctor` findings in a workspace
 

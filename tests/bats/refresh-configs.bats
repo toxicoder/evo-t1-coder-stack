@@ -54,7 +54,9 @@ scratch_home() {
     >"${1}/.coder/skills/learn/SKILL.md"
   printf -- '---\nname: learn\n---\nwritten by hand\n' \
     >"${1}/.agents/skills/learn/SKILL.md"
-  printf 'set -g mouse off\n' >"${1}/.tmux.conf"
+  # The user's own tmux.conf: marker-free, and carrying a value the stack never
+  # writes, so a reseed that clobbered it is visible below.
+  printf 'set -g mouse on\n' >"${1}/.tmux.conf"
   printf '{\n  "__evoT1Stack": true,\n  "cline.apiKey": "SECRET-KEEP-ME",\n  "terminal.integrated.scrollback": 40000\n}\n' \
     >"${1}/.shared/vscode/settings.json"
 }
@@ -115,7 +117,8 @@ scratch_home() {
   scratch="$(make_scratch)"
   state="$(seed_target_owner "" "${scratch}/absent.conf")"
   [ "${state}" = "absent" ]
-  printf 'set -g mouse off\n' >"${scratch}/user.conf"
+  # Same bytes as the managed copy below: the marker alone decides the owner.
+  printf 'set -g mouse on\n' >"${scratch}/user.conf"
   state="$(seed_target_owner "" "${scratch}/user.conf")"
   [ "${state}" = "user" ]
   printf '# managed-by: evo-t1-coder-stack\nset -g mouse on\n' >"${scratch}/managed.conf"
@@ -245,9 +248,9 @@ scratch_home() {
   scratch_home "${scratch}/home"
   run bash "${REFRESH}" --home "${scratch}/home"
   [ "${status}" -eq 0 ]
-  # The marker-free tmux.conf predates the stack default: it is user-owned
-  # and stays byte-identical.
-  assert_match "user tmux.conf untouched" 'mouse off' "$(cat "${scratch}/home/.tmux.conf")"
+  # The marker-free tmux.conf is user-owned and stays byte-identical: its own
+  # mouse on survives, where the stack default the reseed would write is off.
+  assert_match "user tmux.conf untouched" 'mouse on' "$(cat "${scratch}/home/.tmux.conf")"
   # The managed settings.json was re-rendered from the repo template...
   assert_contains_file "fresh scrollback" "${scratch}/home/.shared/vscode/settings.json" '"terminal.integrated.scrollback": 2000'
   # ...and it kept the key the workspace was handed on its first boot.
@@ -283,7 +286,7 @@ scratch_home() {
   run bash "${REFRESH}" --force --home "${scratch}/home"
   [ "${status}" -eq 0 ]
   assert_match "user file replaced under force" 'OVERWRITTEN under --force' "${output}"
-  assert_contains_file "tmux.conf reseeded" "${scratch}/home/.tmux.conf" 'set -g mouse on'
+  assert_contains_file "tmux.conf reseeded" "${scratch}/home/.tmux.conf" 'set -g mouse off'
 }
 
 @test "refresh-configs: discovery names coder- containers and skips the sidecar" {
@@ -330,7 +333,7 @@ assert not [e for e in d["entries"] if e["target"] == "~/.agents/skills/learn/SK
   local scratch
   scratch="$(make_scratch)"
   mkdir -p "${scratch}/root/.shared/vscode"
-  printf 'set -g mouse off\n' >"${scratch}/root/.tmux.conf"
+  printf 'set -g mouse on\n' >"${scratch}/root/.tmux.conf"
   run bash "${REFRESH}" --container coder-demo-abc --container-root "${scratch}/root"
   [ "${status}" -eq 0 ]
   assert_match "execs were issued" 'exec -i coder-demo-abc' "$(stub_log docker)"
