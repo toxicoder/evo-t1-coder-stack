@@ -686,7 +686,9 @@ scratch_root() {
 @test "update-configs: workspace --home reseeds a host tree shaped like a workspace HOME" {
   local home="${BATS_TEST_TMPDIR}/home"
   mkdir -p "${home}/.shared/vscode" "${home}/.grok"
-  printf 'set -g mouse off\n' >"${home}/.tmux.conf"
+  # Marker-free and carrying the value the stack never writes, so a clobber is
+  # visible against the mouse off the reseed puts there.
+  printf 'set -g mouse on\n' >"${home}/.tmux.conf"
   printf '{\n  "__evoT1Stack": true,\n  "cline.apiKey": "KEEP-ME",\n  "roo.openaiApiKey": "KEEP-ME"\n}\n' \
     >"${home}/.shared/vscode/settings.json"
   printf 'the operator wrote this by hand\n' >"${home}/.grok/AGENTS.md"

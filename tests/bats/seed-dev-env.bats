@@ -178,7 +178,7 @@ assert_helpers() {
 # assert_contributor_home <home> <litellm-url> — the first-seed file set.
 assert_contributor_home() {
   local home="$1" url="$2"
-  assert_contains_file "tmux mouse" "${home}/.tmux.conf" 'set -g mouse on'
+  assert_contains_file "tmux mouse" "${home}/.tmux.conf" 'set -g mouse off'
   assert_contains_file "tmux marker" "${home}/.tmux.conf" 'managed-by: evo-t1-coder-stack'
   assert_contains_file "settings marker" "${home}/.shared/vscode/settings.json" '__evoT1Stack'
   assert_fixed "settings url" "${home}/.shared/vscode/settings.json" "${url}"
@@ -369,11 +369,12 @@ assert_contributor_home() {
   scratch="$(make_scratch)"
   home="${scratch}/home"
   mkdir -p "${home}"
-  printf 'set -g mouse off\n' >"${home}/.tmux.conf"
+  # A value the stack never writes, so the pair below cannot pass off a reseed.
+  printf 'set -g mouse on\n' >"${home}/.tmux.conf"
 
   run_seed "${home}"
   [ "${status}" -eq 0 ]
-  assert_fixed "user tmux kept" "${home}/.tmux.conf" 'set -g mouse off'
+  assert_fixed "user tmux kept" "${home}/.tmux.conf" 'set -g mouse on'
   assert_not_fixed "stack tmux not written" "${home}/.tmux.conf" 'managed-by: evo-t1-coder-stack'
   assert_match "tmux skip names --force" 'user-owned, left alone \(--force overrides\)' "${output}"
 }

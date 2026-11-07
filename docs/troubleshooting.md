@@ -1099,40 +1099,48 @@ On `devcontainer`:
 bazelisk run //scripts:new-workspace -- <git-url>
 ```
 
-### A tmux copy in VS Code Web never reaches the laptop clipboard -> the browser build drops OSC 52
+### A copy from an app inside a tmux pane never reaches the laptop clipboard in VS Code Web -> the browser build drops OSC 52
 
-Cause: tmux pushes a copy-mode copy out with OSC 52 and code-server's terminal
-hands that escape to nobody, so `y` leaves the text in tmux's own buffer. There
-is no setting for it: the shipped 4.145.0 registers no OSC 52 key, and upstream
+Cause: an app inside the pane - vim's `+` register, anything that emits OSC 52 -
+pushes its copy out through the pane, `set-clipboard on` with
+`allow-passthrough on` forwards it, and code-server's terminal hands the escape to
+nobody. There is no setting for it: the shipped 4.145.0 registers no OSC 52 key,
+and upstream
 [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
-open with two unmerged fixes.
+open with two unmerged fixes. Over ssh from Ghostty, kitty, WezTerm or iTerm2 the
+same copy lands, which puts the drop in the browser and not in tmux.
 
 ```sh
-tmux show-buffer                  # the copy is here, inside tmux
-tmux show-options -g mouse        # on: tmux owns the pointer, so a plain drag is tmux's
+tmux show-options -g mouse           # off: the client keeps the click, so a drag is yours
+tmux show-options -g set-clipboard   # on: the tmux end of the pane app's OSC 52 route
 ```
 
-Fix: hold **Shift** and drag. xterm.js gives a Shift+drag to the browser as a
-native selection even with `set -g mouse on`, and the settings seed's
-`terminal.integrated.copyOnSelection` copies it with no chord - measured on
-4.145.0 with this payload, the drag called
-`navigator.clipboard.writeText` and `tmux list-buffers` stayed empty. Clear a
-leftover selection with one click first, since Shift extends a selection that
-already exists. Alt and Ctrl drags do nothing on either side.
-
-`Prefix m` is the fallback: it releases the pointer so an ordinary drag becomes
-a browser selection, and `Prefix m` again hands the wheel back. Paste is
-`Ctrl+Shift+V` or right-click in a bash terminal and a tmux pane alike, and
-`Prefix-]` pastes tmux's own buffer; `Ctrl+V` is not a paste on a secure origin
-(the pane gets the `\x16` byte). Both directions, and why only a real terminal
-app gets OSC 52, are in
+Fix: there is nothing to turn on in tmux. Copy the text the way the rest of the tab
+does - a plain drag is the client's own highlight, because tmux asks for no mouse
+reporting (measured on the shipped tmux 3.4: an attach with `mouse on` writes
+`ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the client, one with it off writes
+none), and the settings seed's `terminal.integrated.copyOnSelection: true` puts
+that highlight on the machine clipboard with no chord (the headless harness on
+4.145.0 recorded `navigator.clipboard.writeText` firing on a client selection,
+before this switch). Right-click pastes
+it back (`terminal.integrated.rightClickBehavior: "copyPaste"` pastes when nothing
+is selected) and middle-click pastes it too (`middleClickBehavior` pinned to
+`"paste"`). tmux keeps no buffer of its own, so `Prefix-]` is unbound and there is
+no `tmux show-buffer` to read: the machine clipboard is the only clipboard here.
+`Prefix m` is the wheel switch, not a copy route: one press hands the wheel to tmux
+for a long scroll, the next hands it back. Paste is `Ctrl+Shift+V` or right-click in
+a bash terminal and a tmux pane alike, and `Ctrl+V` is not a paste on a secure
+origin (the pane gets the `\x16` byte). Both directions, and what a pane app may
+still do over ssh, are in
 [Copy and paste between a tmux pane and the machine you type on](grok-build-and-agents.md#copy-and-paste-between-a-tmux-pane-and-the-machine-you-type-on).
 
-- Output already scrolled off the screen: `Prefix-[`, walk up with `k` until the
-  line is painted, Shift+drag it, then `q`. `Prefix m` works there too, and the
-  switch lands while copy-mode is showing history.
-- Copy and paste both dead, in both directions: read the next entry. This one is
-  a tmux-only symptom, and a broken origin breaks the editor's own chords too.
+- Output already scrolled off the screen: `Prefix-[` is a viewer, not a copier -
+  walk up with `k`, `PPage` or `Ctrl-u` until the line is painted on the screen,
+  select it with a client drag, then `q`. A selection made *inside* copy-mode is
+  inert: every copy binding in `copy-mode-vi` is unbound, so nothing ends it.
+- Copy and paste both dead, in both directions, a drag included: read the next
+  entry. This one is a pane-app-only symptom, and a broken origin breaks the
+  editor's own chords too.
 - `history-limit` reads 100000 but a pane still forgets old output: tmux applies
   the option when the pane is created, so that pane keeps the limit it was born
   with. Open a new pane, or restart the server with `tmux kill-server`.
@@ -1159,9 +1167,10 @@ Traefik holds a real certificate for) rather than `http://<LAN-address>`, and
 give the site Clipboard permission - Chrome: the lock icon in the address bar,
 Site settings, Clipboard, Allow. The templates are not the variable here: both
 doors serve the same payload, so a workspace that pastes on one URL and does not
-on the other is an origin problem. What still works on plain HTTP: copy with
-Shift+drag, whose `document.execCommand('copy')` fallback really lands, and paste
-with `Ctrl+V`, the browser's own paste event - which is exactly what VS Code's
+on the other is an origin problem. What still works on plain HTTP: copy with a
+drag - the selection is the client's own, since tmux asks for no mouse reporting,
+and `copyOnSelection`'s `document.execCommand('copy')` fallback really lands - and
+paste with `Ctrl+V`, the browser's own paste event - which is exactly what VS Code's
 toast tells you to do.
 
 ### VS Code Web tab in Chrome creeps to gigabytes, or freezes now and then -> every tab was another mirror of one pane
