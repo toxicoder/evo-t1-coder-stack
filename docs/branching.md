@@ -59,8 +59,14 @@ request as the only way back into `main`.
 
 ## CI and protection
 
-- The `ci` workflow (`.github/workflows/ci.yml`) runs for `push` to `main` and for
-  `pull_request` targeting `main`. The other shipped workflow, `deploy-docs`, also runs
+- The `ci` workflow (`.github/workflows/ci.yml`) runs for `push` to `main` and for a
+  `pull_request` whose **base** is `main` or one of the sanctioned work-branch prefixes
+  (`feat/**`, `fix/**`, `refactor/**`, `docs/**`, `test/**`, `chore/**`, `ci/**`).
+  `pull_request.branches` filters on the base rather than the head, so naming only
+  `main` left a stacked pull request - a dependent branch that names its parent as its
+  base, which is how a stack is meant to be opened - with no gate at all: it collected
+  just the docs deploy its branch push earned from `deploy-docs`. Gate a stack the same
+  way as any other pull request. The other shipped workflow, `deploy-docs`, also runs
   on a `push` to any branch (`branches: ["**"]`) whose diff touches its `paths:` list -
   `docs/**`, `docs-site/**`, the two `scripts/ci/` helpers it publishes through
   (`publish-pages-tree.sh`, `docs-alias.sh`), and its own workflow file - and by
