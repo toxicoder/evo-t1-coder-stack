@@ -801,10 +801,11 @@ permission_section() {
 @test "permission: the operator docs name a cleanup the deny does not block" {
   # Bash(rm -rf *) is a prefix glob, so the benign per-path cleanup an agent reaches
   # for first is denied alongside the destruction it is there to stop. Measured over
-  # 271 workspace sessions: 86 recorded at least one denied tool call, and 56 of those
-  # had attempted an rm -rf. The seeded agent prompt carried the way out from the
-  # start; no operator page did, so the person reading the docs met the guard and
-  # never the alternative. The pair has to stay together.
+  # 271 workspace sessions: 86 recorded at least one denied tool call and 56 attempted
+  # an rm -rf, with 55 sessions in both sets. The two counts are independent, since no
+  # event field carries command text, so an attempt is not a denial. The seeded agent
+  # prompt carried the way out from the start; no operator page did, so the person
+  # reading the docs met the guard and never the alternative. The pair stays together.
   local doc="${REPO_ROOT}/docs/grok-build-and-agents.md"
   [[ -f "${doc}" ]] || skip "the CLI doc is not reachable from ${REPO_ROOT}"
 
