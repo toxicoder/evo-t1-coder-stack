@@ -778,7 +778,10 @@ main() {
         return 1
         ;;
       *)
-        targets+=("$1")
+        # A bare word names a container, the same reading refresh-configs.sh
+        # gives it. The dispatch below only understands a c:/h: prefix, so an
+        # unprefixed name would fall through it unnoticed.
+        targets+=("c:$1")
         ;;
     esac
     shift
@@ -917,6 +920,13 @@ main() {
           seed_container_seed "" "${home}" "${root}" "${stage}" \
             "${DRY_RUN:-0}" "${FORCE:-0}"
           ws_targets=$((ws_targets + 1))
+          ;;
+        *)
+          # Nothing may leave this loop unheard: an address the dispatch cannot
+          # read is counted as skipped and named, so the summary line below
+          # still says how many targets the operator asked for.
+          warn "unrecognized workspace target '${target}' - expected a c: or h: prefix - skipped"
+          ws_skipped=$((ws_skipped + 1))
           ;;
       esac
     done
