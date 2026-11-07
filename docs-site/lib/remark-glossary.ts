@@ -1,9 +1,9 @@
 /**
- * Wrap known abbreviations in a hover tooltip.
+ * Wrap known abbreviations in a glossary trigger.
  *
  * Terms and definitions live in `docs/includes/abbreviations.md` as `*[TERM]: definition`
- * lines, so a page stays plain markdown: each known term becomes a `<GlossaryTerm>`
- * (rendered as `<abbr>`) at build time instead of carrying tooltip markup by hand.
+ * lines, so a page stays plain markdown: each known term becomes an `<EzTerm>` at build time
+ * instead of carrying tooltip markup by hand.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -87,13 +87,13 @@ function buildMatcher(terms: string[]): RegExp | undefined {
 const SKIPPED_PARENTS = new Set(["link", "heading", "inlineCode"]);
 
 /** JSX names that already carry a glossary tooltip. */
-const SKIPPED_JSX_NAMES = new Set(["abbr", "GlossaryTerm"]);
+const SKIPPED_JSX_NAMES = new Set(["abbr", "EzTerm"]);
 
 /**
  * Whether a text node's parent is already a glossary tooltip or another skipped container.
  *
- * An injected tooltip is an `mdxJsxTextElement` named `GlossaryTerm`, so the name check is
- * what stops `visit` from walking into the new element's text child and wrapping it again.
+ * An injected tooltip is an `mdxJsxTextElement` named `EzTerm`, so the name check is what
+ * stops `visit` from walking into the new element's text child and wrapping it again.
  *
  * @param parent The unist parent of a text node.
  * @returns True when the text must be left alone.
@@ -111,7 +111,7 @@ function shouldSkipGlossaryParent(parent: { type: string; name?: string }): bool
 }
 
 /**
- * Wrap every occurrence of a known term with an `<abbr>` element, except inside links,
+ * Wrap every occurrence of a known term with an `<EzTerm>` element, except inside links,
  * headings and inline code.
  *
  * @returns A remark transformer.
@@ -143,9 +143,12 @@ export function remarkGlossaryTooltips() {
         children.push({
           type: "mdxJsxTextElement",
           // PascalCase so MDX looks the name up in `props.components`. A lowercase
-          // `abbr` compiles to the intrinsic HTML tag and never mounts GlossaryTerm.
-          name: "GlossaryTerm",
-          attributes: [{ type: "mdxJsxAttribute", name: "title", value: definition }],
+          // `abbr` compiles to the intrinsic HTML tag and never mounts EzTerm.
+          name: "EzTerm",
+          attributes: [
+            { type: "mdxJsxAttribute", name: "term", value: term ?? found },
+            { type: "mdxJsxAttribute", name: "definition", value: definition }
+          ],
           children: [{ type: "text", value: found }],
           data: { _mdxExplicitJsx: true }
         });

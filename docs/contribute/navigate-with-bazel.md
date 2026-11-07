@@ -4,6 +4,8 @@ description: "Answer what-depends-on-this with one bazelisk query instead of a g
 tags: [bazel, contributing, tooling, graph]
 ---
 
+# Navigating the repo with the Bazel graph
+
 **What's on this page**
 
 - Why a structural question is a query here, not a grep sweep

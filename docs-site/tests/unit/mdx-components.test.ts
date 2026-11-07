@@ -17,9 +17,10 @@ import type { Page } from "fumadocs-core/source";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mdxComponentsFor } from "../../components/mdx-components";
-import { GlossaryTerm } from "../../components/glossary-term";
+import { DocsH1, DocsH2, DocsH3, DocsH4, DocsH5, DocsH6 } from "../../components/docs-heading";
+import { EzTerm } from "../../components/ez-term";
 import { Mermaid } from "../../components/mermaid";
-import { PageOverview, PageOverviewColumn } from "../../components/page-overview";
+import { PageBrief } from "../../components/page-brief";
 import {
   defaultMdxComponentsStub,
   hrefLookups,
@@ -47,8 +48,20 @@ vi.mock("@/lib/source", async () => {
 
 // The widget modules are imported through the `@/` alias, which has no Vitest resolver entry;
 // registering each alias with the real module is what lets the map load.
-vi.mock("@/components/glossary-term", async () => {
-  const actual = await vi.importActual<Record<string, unknown>>("../../components/glossary-term");
+vi.mock("@/components/docs-heading", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>("../../components/docs-heading");
+  return { ...actual };
+});
+
+// docs-heading reaches for the bug-link builder through the same alias; without this the
+// module graph cannot resolve `@/lib/docs-bug` and the map never loads.
+vi.mock("@/lib/docs-bug", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>("../../lib/docs-bug");
+  return { ...actual };
+});
+
+vi.mock("@/components/ez-term", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>("../../components/ez-term");
   return { ...actual };
 });
 
@@ -57,8 +70,8 @@ vi.mock("@/components/mermaid", async () => {
   return { ...actual };
 });
 
-vi.mock("@/components/page-overview", async () => {
-  const actual = await vi.importActual<Record<string, unknown>>("../../components/page-overview");
+vi.mock("@/components/page-brief", async () => {
+  const actual = await vi.importActual<Record<string, unknown>>("../../components/page-brief");
   return { ...actual };
 });
 
@@ -89,16 +102,39 @@ describe("mdxComponentsFor", () => {
 
   it("routes the markup the remark plugins emit to the site widgets", () => {
     const map = mdxComponentsFor(page);
-    expect(map.abbr).toBe(GlossaryTerm);
-    expect(map.GlossaryTerm).toBe(GlossaryTerm);
     expect(map.Mermaid).toBe(Mermaid);
-    expect(map.PageOverview).toBe(PageOverview);
-    expect(map.PageOverviewColumn).toBe(PageOverviewColumn);
+    expect(map.EzTerm).toBe(EzTerm);
+    expect(map.PageBrief).toBe(PageBrief);
+  });
+
+  it("hands every heading level to the chrome that owns the title and the anchors", () => {
+    const map = mdxComponentsFor(page);
+    // h1 is the page title: the layout prints none of its own, so a heading missing here
+    // would leave the page with no title and no lead paragraph at all.
+    expect(map.h1).toBe(DocsH1);
+    expect(map.h2).toBe(DocsH2);
+    expect(map.h3).toBe(DocsH3);
+    expect(map.h4).toBe(DocsH4);
+    expect(map.h5).toBe(DocsH5);
+    expect(map.h6).toBe(DocsH6);
   });
 
   it("replaces the plain anchor with its own component", () => {
     expect(Object.keys(mdxComponentsFor(page)).sort()).toEqual(
-      ["a", "abbr", "Callout", "Card", "GlossaryTerm", "Mermaid", "PageOverview", "PageOverviewColumn"].sort()
+      [
+        "a",
+        "Callout",
+        "Card",
+        "EzTerm",
+        "Mermaid",
+        "PageBrief",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6"
+      ].sort()
     );
   });
 });

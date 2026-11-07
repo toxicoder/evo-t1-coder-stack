@@ -15,7 +15,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SearchDialog } from "../../components/search-dialog";
-import { callsFor, docsSearchState, resetStubs, searchClientArgs } from "./helpers/fumadocs-stub";
+import { SearchFromContext } from "../../components/search-from";
+import { callsFor, docsSearchState, localeState, resetStubs, searchClientArgs } from "./helpers/fumadocs-stub";
 
 vi.mock("fumadocs-ui/components/dialog/search", async () => {
   const { wrapperStub: stub } = await import("./helpers/fumadocs-stub");
@@ -119,9 +120,26 @@ describe("SearchDialog", () => {
     expect(docsSearchState.search).toBe("bazel");
   });
 
-  it("builds the static client for the active locale", () => {
+  it("builds the static client for the active locale at the exported index", () => {
     renderToStaticMarkup(createElement(SearchDialog, dialogProps()));
-    expect(searchClientArgs[0]).toEqual({ locale: "en" });
+    expect(searchClientArgs[0]).toEqual({ locale: "en", from: "/api/search" });
     expect(searchClientArgs[1]).toEqual({ client: { kind: "static-client" } });
+  });
+
+  it("asks for the index under the base path the build was published at", () => {
+    renderToStaticMarkup(
+      createElement(
+        SearchFromContext.Provider,
+        { value: "/evo-t1-coder-stack/latest/api/search" },
+        createElement(SearchDialog, dialogProps())
+      )
+    );
+    expect(searchClientArgs[0]).toEqual({ locale: "en", from: "/evo-t1-coder-stack/latest/api/search" });
+  });
+
+  it("drops the locale from the client options when the site has none", () => {
+    localeState.locale = undefined;
+    renderToStaticMarkup(createElement(SearchDialog, dialogProps()));
+    expect(searchClientArgs[0]).toEqual({ from: "/api/search" });
   });
 });

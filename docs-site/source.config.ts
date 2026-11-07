@@ -3,8 +3,8 @@
  *
  * `mdxOptions` here is merged into Fumadocs' built-in remark/rehype chain (the preset
  * appends these `remarkPlugins` after GFM, heading, image and code-tab handling), so the
- * glossary tooltips and the page-overview panel below are added without dropping anything
- * the theme relies on — notably `rehypeToc`, which produces the table of contents that
+ * glossary tooltips and the page-brief card below are added without dropping anything the
+ * theme relies on - notably `rehypeToc`, which produces the table of contents that
  * `DocsPage` renders.
  */
 
@@ -12,10 +12,10 @@ import { defineConfig } from "fumadocs-mdx/config";
 import { remarkMdxMermaid } from "fumadocs-core/mdx-plugins";
 
 import { remarkGlossaryTooltips } from "./lib/remark-glossary";
-import { remarkPageOverview } from "./lib/remark-page-overview";
+import { remarkPageBrief } from "./lib/remark-page-brief";
 
 export default defineConfig({
   mdxOptions: {
-    remarkPlugins: [remarkMdxMermaid, remarkGlossaryTooltips, remarkPageOverview]
+    remarkPlugins: [remarkMdxMermaid, remarkGlossaryTooltips, remarkPageBrief]
   }
 });

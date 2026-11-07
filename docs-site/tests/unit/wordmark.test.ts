@@ -2,9 +2,10 @@
  * Tests for the header wordmark.
  *
  * The header title is a component rather than a string so the brand and the repository name
- * can stack; both are also the only thing that names the site for a screen reader, and the
- * GitHub icon is the only route to the repository from the header. Both render without a DOM
- * through `renderToStaticMarkup`, which is what the exported build ships.
+ * can stack; both are also the only thing that names the site for a screen reader. The route
+ * to the repository is not the wordmark's job: `DocsLayout` renders it from its `githubUrl`.
+ * Both render without a DOM through `renderToStaticMarkup`, which is what the exported build
+ * ships.
  */
 
 import { createElement } from "react";
@@ -12,7 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { RepoIcon, Wordmark } from "../../components/wordmark";
+import { Wordmark } from "../../components/wordmark";
 import { BRAND, SITE_NAME } from "../../lib/site";
 
 // The wordmark imports the brand through the `@/` alias, which has no Vitest resolver entry;
@@ -45,18 +46,5 @@ describe("Wordmark", () => {
 
   it("renders with no class at all", () => {
     expect(renderToStaticMarkup(createElement(Wordmark))).toContain('class="flex flex-col leading-none "');
-  });
-});
-
-describe("RepoIcon", () => {
-  it("draws the GitHub mark with an accessible name", () => {
-    const html = renderToStaticMarkup(createElement(RepoIcon));
-    expect(html).toContain('role="img"');
-    expect(html).toContain("<title>GitHub</title>");
-    expect(html).toContain("<path");
-  });
-
-  it("stays out of the accessibility tree besides its title", () => {
-    expect(renderToStaticMarkup(createElement(RepoIcon))).toContain("aria-hidden");
   });
 });

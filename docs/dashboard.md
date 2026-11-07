@@ -4,6 +4,8 @@ description: "The Homepage dashboard and Kasm Workspaces: what each card reads, 
 tags: [homepage, kasm, dashboard, operate]
 ---
 
+# Dashboard and desktops
+
 **What's on this page**
 
 - What each dashboard card shows and which API it reads

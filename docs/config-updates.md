@@ -4,6 +4,8 @@ description: What goes stale after a `git pull`, what `update-configs` refreshes
 tags: [env, config, update-configs, maintenance]
 ---
 
+# Keeping a checkout's config current
+
 **What's on this page**
 
 - Which files go stale and why `git pull` cannot fix them

@@ -4,6 +4,8 @@ description: Bazelisk as the ingress for tests, lint and the operator CLIs, and 
 tags: [bazel, build, contributing]
 ---
 
+# Building with Bazel
+
 **What's on this page**
 
 - Stack-host bootstrap: the one script run straight from a shell

@@ -49,12 +49,14 @@ describe("remarkGlossaryTooltips", () => {
     expect(children.filter((child) => child.type === "mdxJsxTextElement").length).toBeGreaterThan(0);
   });
 
-  it("wraps a known term with its tooltip text", () => {
+  it("wraps a known term in the glossary trigger with its definition", () => {
     const children = childrenOf(applyTo("DinD gives each workspace its own daemon."));
-    const term = children.find((child) => child.name === "GlossaryTerm");
+    const term = children.find((child) => child.name === "EzTerm");
     expect(term?.type).toBe("mdxJsxTextElement");
-    expect(term?.attributes?.[0]?.name).toBe("title");
-    expect(term?.attributes?.[0]?.value).toMatch(/Docker-in-Docker/u);
+    expect(term?.attributes?.[0]).toEqual({ type: "mdxJsxAttribute", name: "term", value: "DinD" });
+    expect(term?.attributes?.[1]?.name).toBe("definition");
+    expect(term?.attributes?.[1]?.value).toMatch(/Docker-in-Docker/u);
+    expect(term?.children).toEqual([{ type: "text", value: "DinD" }]);
   });
 
   it("leaves unknown terms untouched", () => {
@@ -68,31 +70,36 @@ describe("remarkGlossaryTooltips", () => {
   });
 
   it("wraps a known term only once", () => {
-    const terms = collectNamed(applyTo("The LiteLLM proxy answers for every model."), "GlossaryTerm");
+    const terms = collectNamed(applyTo("The LiteLLM proxy answers for every model."), "EzTerm");
     expect(terms).toHaveLength(1);
     expect(terms[0]?.children?.every((child) => child.type === "text")).toBe(true);
   });
 
-  it("does not wrap text already inside an abbr element", () => {
-    const tree: Node = {
-      type: "root",
-      children: [
-        {
-          type: "paragraph",
-          children: [
-            {
-              type: "mdxJsxTextElement",
-              name: "abbr",
-              attributes: [{ type: "mdxJsxAttribute", name: "title", value: "already defined" }],
-              children: [{ type: "text", value: "LiteLLM" }]
-            }
-          ]
-        }
-      ]
-    };
-    (remarkGlossaryTooltips() as (tree: unknown) => void)(tree);
-    const abbrs = collectNamed(tree, "abbr");
-    expect(abbrs).toHaveLength(1);
-    expect(abbrs[0]?.attributes?.[0]?.value).toBe("already defined");
-  });
+  for (const name of ["abbr", "EzTerm"]) {
+    it(`leaves text already inside a ${name} element alone`, () => {
+      const tree: Node = {
+        type: "root",
+        children: [
+          {
+            type: "paragraph",
+            children: [
+              {
+                type: "mdxJsxTextElement",
+                name,
+                attributes: [{ type: "mdxJsxAttribute", name: "definition", value: "already defined" }],
+                children: [{ type: "text", value: "LiteLLM" }]
+              }
+            ]
+          }
+        ]
+      };
+      (remarkGlossaryTooltips() as (tree: unknown) => void)(tree);
+      const paragraph = tree.children?.[0];
+      expect(paragraph?.children).toHaveLength(1);
+      const wrapped = paragraph?.children?.[0];
+      expect(wrapped?.name).toBe(name);
+      expect(wrapped?.attributes?.[0]?.value).toBe("already defined");
+      expect(wrapped?.children?.[0]?.value).toBe("LiteLLM");
+    });
+  }
 });

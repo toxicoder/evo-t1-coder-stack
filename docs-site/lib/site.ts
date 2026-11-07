@@ -18,12 +18,27 @@ export const REPO_URL = "https://github.com/toxicoder/evo-t1-coder-stack";
 /** Owner/repository, parsed from {@link REPO_URL} for building source links. */
 export const REPO = { user: "toxicoder", repo: "evo-t1-coder-stack" } as const;
 
+/** Operator-facing description, used as the root layout's metadata fallback. */
+export const SITE_DESCRIPTION = `Operator documentation for the ${SITE_NAME} compose stack.`;
+
 /**
  * Alias this build publishes under, as set by the publisher (`latest`, or a sanitized
  * branch name). Empty for the unprefixed local export.
  */
 export function docsAlias(): string {
   return (process.env.DOCS_ALIAS ?? "").trim();
+}
+
+/**
+ * Whether this build is a branch preview rather than the released docs.
+ *
+ * `main` publishes `latest` and any other docs-touching branch publishes its own sanitized
+ * name, so anything set and not `latest` is work that has not landed. The page banner keys
+ * off this so a reader never mistakes a preview for released guidance.
+ */
+export function isDevelopmentAlias(): boolean {
+  const alias = docsAlias();
+  return alias.length > 0 && alias !== "latest";
 }
 
 /**
@@ -59,7 +74,22 @@ export function basePath(): string {
   return "";
 }
 
+/**
+ * URL path of the static search index for a published base path.
+ *
+ * The Orama client otherwise fetches `/api/search` from the host root. On GitHub project
+ * Pages that 404s, because the export lives under `/<repo>/<alias>/`; the file is written
+ * there, so the browser has to ask for it there.
+ *
+ * @param prefix Site base path (`""` locally). Defaults to {@link basePath}.
+ * @returns Root-relative path the browser should fetch.
+ */
+export function searchIndexPath(prefix?: string): string {
+  const base = (prefix ?? basePath()).trim().replace(/\/+$/u, "");
+  return `${base}/api/search`;
+}
+
 /** URL of a file in the repository at the active ref. */
 export function repoFileUrl(path: string): string {
-  return `${REPO_URL}/blob/${gitRef()}/${path.replace(/^\/+/, "")}`;
+  return `${REPO_URL}/blob/${gitRef()}/${path.replace(/^\/+/u, "")}`;
 }

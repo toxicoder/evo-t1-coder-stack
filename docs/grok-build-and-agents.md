@@ -4,6 +4,8 @@ description: "What runs inside a workspace and in the Coder control plane: termi
 tags: [grok, agents, workspace, mcp]
 ---
 
+# Grok Build, Coder Agents, and the workspace terminal
+
 **What's on this page**
 
 - Terminal and editor defaults, and the profile the templates seed

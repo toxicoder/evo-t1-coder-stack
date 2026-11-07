@@ -86,6 +86,7 @@ export function resetStubs(): void {
     query: { data: [] as unknown[], isLoading: false }
   });
   Object.assign(themeState, { resolvedTheme: "light" });
+  Object.assign(localeState, { locale: "en" });
   mermaidDouble.initialize.mockReset();
   mermaidDouble.render.mockReset();
 }
@@ -320,9 +321,12 @@ export const mermaidDouble = {
   render: vi.fn<(id: string, chart: string) => Promise<{ svg: string }>>()
 };
 
+/** The locale the stubbed `useI18n` reports; a suite sets it to `undefined` for an English-only build. */
+export const localeState: { locale: string | undefined } = { locale: "en" };
+
 /** Stub for `useI18n` from `fumadocs-ui/contexts/i18n`. */
-export function useI18nStub(): { locale: string } {
-  return { locale: "en" };
+export function useI18nStub(): { locale: string | undefined } {
+  return { locale: localeState.locale };
 }
 
 /** Arguments the stubbed static client and search hook were called with. */

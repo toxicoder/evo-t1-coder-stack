@@ -4,6 +4,8 @@ description: "The typing rule for every language in this repo: Python under mypy
 tags: [types, mypy, typescript, terraform, contributing]
 ---
 
+# Strong types
+
 **What's on this page**
 
 - The rule in one sentence, and the two gates that hold it

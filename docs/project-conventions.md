@@ -4,6 +4,8 @@ description: The shell, function, script, template and naming rules this repo ho
 tags: [conventions, shell, style, contributing]
 ---
 
+# Project conventions
+
 **What's on this page**
 
 - The file header and the function docstring block both gates require

@@ -4,6 +4,8 @@ description: "Trunk-based branch rules: main is the only long-lived branch, work
 tags: [git, branching, ci]
 ---
 
+# Branching
+
 **What's on this page**
 
 - What `main` is allowed to be, and what may not be committed to it

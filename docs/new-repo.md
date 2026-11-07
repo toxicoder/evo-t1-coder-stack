@@ -4,6 +4,8 @@ description: How scripts/new-repo.sh fetches the ezrepo scaffold from GitHub, re
 tags: [template, new-repo, scaffold, coder-task, ezrepo]
 ---
 
+# New projects from the template
+
 **What's on this page**
 
 - Two different things called "template", and which one this page is about
