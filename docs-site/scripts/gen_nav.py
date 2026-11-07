@@ -28,7 +28,7 @@ import argparse
 import json
 import pathlib
 import sys
-from typing import Sequence, TypedDict, TypeGuard, Union
+from typing import Sequence, TypedDict, TypeGuard, Union, cast
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 OUT_JSON = REPO_ROOT / "docs-site" / "lib" / "nav.json"
@@ -273,16 +273,19 @@ def validate(tabs: list[NavTab]) -> list[str]:
             problems.append(f"nav folder has no pages: {where}")
             return
         for node in nodes:
-            if is_page(node):
-                path = str(node["path"])
-                declared = DOCS_DIR / path
-                if not declared.is_file() and not declared.with_suffix(".mdx").is_file():
-                    problems.append(f"nav page missing on disk: docs/{path}")
-                if path in seen:
-                    problems.append(f"nav page listed twice: docs/{path}")
-                seen.add(path)
-            elif is_group(node):
+            if is_group(node):
                 walk(node["pages"], f"{where} / {node['title']}")
+                continue
+            # A declared node is a page or a folder, so whatever the folder test rejected is
+            # a page. A TypeGuard narrows only its positive side, hence the cast.
+            page = cast("NavPage", node)
+            path = str(page["path"])
+            declared = DOCS_DIR / path
+            if not declared.is_file() and not declared.with_suffix(".mdx").is_file():
+                problems.append(f"nav page missing on disk: docs/{path}")
+            if path in seen:
+                problems.append(f"nav page listed twice: docs/{path}")
+            seen.add(path)
 
     for tab in tabs:
         walk(tab["pages"], tab["title"])
