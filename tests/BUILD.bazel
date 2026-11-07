@@ -210,6 +210,10 @@ _SUITE_PAYLOAD = {
         "//:env_sample",
         "//images/dev:context",
         "//proxy:confs",
+        # The permission suite opens the CLI page, which documents the guard the
+        # templates carry: the page has to be in runfiles for that pair to be
+        # checked rather than skipped.
+        "//docs:content",
     ],
     "docs-alias.bats": [],
     "domain.bats": [
