@@ -10,7 +10,16 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { basePath, docsAlias, gitRef, REPO, REPO_URL, repoFileUrl } from "../../lib/site";
+import {
+  basePath,
+  docsAlias,
+  gitRef,
+  isDevelopmentAlias,
+  REPO,
+  REPO_URL,
+  repoFileUrl,
+  searchIndexPath
+} from "../../lib/site";
 
 const ENV_KEYS = ["NEXT_BASE_PATH", "DOCS_ALIAS", "GITHUB_REF_NAME", "EVO_DOCS_GIT_REF"] as const;
 
@@ -141,5 +150,46 @@ describe("repoFileUrl", () => {
 
   it("keeps a nested path intact", () => {
     expect(repoFileUrl("scripts/lib/common.sh")).toContain("/scripts/lib/common.sh");
+  });
+});
+
+describe("isDevelopmentAlias", () => {
+  it("is false for the released tree", () => {
+    process.env.DOCS_ALIAS = "latest";
+    expect(isDevelopmentAlias()).toBe(false);
+  });
+
+  it("is false for a local build that published no alias at all", () => {
+    expect(docsAlias()).toBe("");
+    expect(isDevelopmentAlias()).toBe(false);
+  });
+
+  it("is true for a branch preview", () => {
+    process.env.DOCS_ALIAS = "refactor-docs-ui";
+    expect(isDevelopmentAlias()).toBe(true);
+  });
+
+  it("trims the value the publisher passes", () => {
+    process.env.DOCS_ALIAS = "  latest  ";
+    expect(isDevelopmentAlias()).toBe(false);
+  });
+});
+
+describe("searchIndexPath", () => {
+  it("is the bare route for a local build", () => {
+    expect(searchIndexPath()).toBe("/api/search");
+  });
+
+  it("carries the published alias, which is where the export writes the index", () => {
+    process.env.DOCS_ALIAS = "feat-foo";
+    expect(searchIndexPath()).toBe(`/${REPO.repo}/feat-foo/api/search`);
+  });
+
+  it("takes an explicit prefix and drops its trailing slash", () => {
+    expect(searchIndexPath("/evo-t1-coder-stack/latest/")).toBe("/evo-t1-coder-stack/latest/api/search");
+  });
+
+  it("treats a root prefix as no prefix", () => {
+    expect(searchIndexPath("/")).toBe("/api/search");
   });
 });

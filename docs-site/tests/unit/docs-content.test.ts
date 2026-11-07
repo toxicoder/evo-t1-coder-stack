@@ -58,6 +58,20 @@ function withoutFences(body: string): string {
   return body.replace(/^[ \t]*```[\s\S]*?^[ \t]*```[ \t]*$/gmu, "");
 }
 
+interface Heading {
+  level: number;
+  text: string;
+}
+
+/** Headings outside fenced blocks, in document order, so a fence comment is not a heading. */
+function headings(body: string): Heading[] {
+  const found: Heading[] = [];
+  for (const [, hashes = "", text = ""] of withoutFences(body).matchAll(/^(#{1,6})[ \t]+(.*)$/gmu)) {
+    found.push({ level: hashes.length, text: text.trim() });
+  }
+  return found;
+}
+
 /** Opening pairs are a label paragraph followed by its list, blank line allowed. */
 function hasOpeningPair(body: string, label: string): boolean {
   const pattern = new RegExp(
@@ -114,16 +128,21 @@ describe("docs page contract", () => {
         expect(page.frontmatter.tags, "tags").toBeTruthy();
       });
 
-      it("has no level-1 heading, because the title comes from frontmatter", () => {
-        expect(withoutFences(page.body)).not.toMatch(/^# /mu);
+      it("carries exactly one level-1 heading, the authored page title", () => {
+        // The header prints no title, so this heading is the only thing naming the page.
+        const titles = headings(page.body).filter((heading) => heading.level === 1);
+        expect(titles.length, "level-1 heading count").toBe(1);
       });
 
-      it("starts its headings at level 2", () => {
-        const levels: number[] = [];
-        for (const [, hashes = ""] of withoutFences(page.body).matchAll(/^(#{1,6})[ \t]/gmu)) {
-          levels.push(hashes.length);
-        }
-        for (const level of levels) expect(level).toBeGreaterThanOrEqual(2);
+      it("titles itself with the frontmatter title, character for character", () => {
+        const [title] = headings(page.body).filter((heading) => heading.level === 1);
+        expect(title?.text, "H1 text").toBe(page.frontmatter.title);
+      });
+
+      it("puts the H1 before every other heading", () => {
+        // H1 first, then the two opening lists, then the level-2 sections.
+        const found = headings(page.body);
+        expect(found.findIndex((heading) => heading.level === 1), "H1 position").toBe(0);
       });
 
       it("labels every fenced code block with a language", () => {

@@ -4,6 +4,8 @@ description: Configure the stack host so a reboot with an encrypted root can be 
 tags: [operate, luks, disk-encryption, boot, headless, ssh]
 ---
 
+# Unlock an encrypted host remotely
+
 **What's on this page**
 
 - Why a reboot is the dangerous moment on an encrypted headless box

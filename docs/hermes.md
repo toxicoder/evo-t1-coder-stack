@@ -4,6 +4,8 @@ description: "The on-host assistant with two doors - the Web Dashboard on :9119 
 tags: [hermes, dashboard, terminal, operate, safety]
 ---
 
+# Hermes host assistant
+
 **What's on this page**
 
 - How to reach the dashboard, on the LAN and on the public name

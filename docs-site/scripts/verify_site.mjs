@@ -27,8 +27,30 @@ const siteRoot = resolve(packageRoot, "..");
 const exportRoot = resolve(siteRoot, process.argv[2] ?? "out");
 const basePath = publishedBasePath();
 
+/** One leaf of `lib/nav.json`, as far as this verifier reads it. */
+/** @typedef {{ title: string, path: string }} NavPage */
+/** A collapsible folder: it carries `pages` and no `path`. */
+/** @typedef {{ title: string, pages: NavNode[] }} NavGroup */
+/** @typedef {NavPage | NavGroup} NavNode */
 /** One entry of `lib/nav.json`, as far as this verifier reads it. */
-/** @typedef {{ pages: { path: string }[] }} NavTab */
+/** @typedef {{ title: string, pages: NavNode[] }} NavTab */
+
+/**
+ * Collect the leaves of a declared menu level, folders traversed in place.
+ *
+ * @param {NavNode[]} nodes Nodes at this level.
+ * @returns {NavPage[]} Every leaf below them, in menu order.
+ */
+function navLeaves(nodes) {
+  /** @type {NavPage[]} */
+  const out = [];
+  for (const node of nodes) {
+    const children = /** @type {NavNode[] | undefined} */ ("pages" in node ? node.pages : undefined);
+    if (children) out.push(...navLeaves(children));
+    else out.push(/** @type {NavPage} */ (node));
+  }
+  return out;
+}
 
 /** @type {string[]} */
 const problems = [];
@@ -78,7 +100,9 @@ if (!existsSync(exportRoot)) {
 // JSON.parse has no static type, so the file is pinned to the shape this verifier reads.
 /** @type {NavTab[]} */
 const nav = JSON.parse(readFileSync(join(siteRoot, "lib", "nav.json"), "utf8"));
-const pages = nav.flatMap((tab) => tab.pages);
+// A collapsible folder carries `pages` and no `path`, so a section is a mix of both and only
+// a walk reaches the pages a reader gets after unfolding it.
+const pages = nav.flatMap((tab) => navLeaves(tab.pages));
 
 check("export has a root index.html", existsSync(join(exportRoot, "index.html")));
 

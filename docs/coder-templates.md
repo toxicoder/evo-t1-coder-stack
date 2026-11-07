@@ -4,6 +4,8 @@ description: "Deep reference for `templates/workspace/` and `templates/devcontai
 tags: [coder, templates, workspaces, terraform]
 ---
 
+# Coder workspace templates
+
 **What's on this page**
 
 - What the two templates make, and when the `devcontainer` toggle matters

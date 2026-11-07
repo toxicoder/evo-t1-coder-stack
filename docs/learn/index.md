@@ -4,6 +4,8 @@ description: The concepts behind the box — what the templates build, how a mod
 tags: [learn, concepts, overview]
 ---
 
+# Learn the stack
+
 **What's on this page**
 
 - Which page explains which part of the stack

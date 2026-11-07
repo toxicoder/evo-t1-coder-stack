@@ -4,6 +4,8 @@ description: "The model lane: the aliases in `litellm/config.yaml`, how a reques
 tags: [litellm, models, routing, spark]
 ---
 
+# LiteLLM model routing
+
 **What's on this page**
 
 - The one front door every client dials, and why nothing else is published

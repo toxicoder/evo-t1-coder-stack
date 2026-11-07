@@ -4,6 +4,8 @@ description: "The one Linux golden image behind laptop work, the Coder workspace
 tags: [contributing, devcontainer, bazel, ci, docker]
 ---
 
+# Contributor environment
+
 **What's on this page**
 
 - The single golden image, and the file that pins it

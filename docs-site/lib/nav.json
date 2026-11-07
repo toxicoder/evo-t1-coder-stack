@@ -20,28 +20,43 @@
         "path": "learn/index.md"
       },
       {
-        "title": "Coder workspace templates",
-        "path": "coder-templates.md"
+        "title": "How the stack works",
+        "pages": [
+          {
+            "title": "Coder workspace templates",
+            "path": "coder-templates.md"
+          },
+          {
+            "title": "LiteLLM routing",
+            "path": "litellm-routing.md"
+          }
+        ]
       },
       {
-        "title": "LiteLLM routing",
-        "path": "litellm-routing.md"
+        "title": "The agent and the host",
+        "pages": [
+          {
+            "title": "Grok Build and the agents file",
+            "path": "grok-build-and-agents.md"
+          },
+          {
+            "title": "Hermes host assistant",
+            "path": "hermes.md"
+          }
+        ]
       },
       {
-        "title": "Grok Build and the agents file",
-        "path": "grok-build-and-agents.md"
-      },
-      {
-        "title": "Hermes host assistant",
-        "path": "hermes.md"
-      },
-      {
-        "title": "Project conventions",
-        "path": "project-conventions.md"
-      },
-      {
-        "title": "Branching",
-        "path": "branching.md"
+        "title": "Conventions",
+        "pages": [
+          {
+            "title": "Project conventions",
+            "path": "project-conventions.md"
+          },
+          {
+            "title": "Branching",
+            "path": "branching.md"
+          }
+        ]
       }
     ]
   },
@@ -53,28 +68,38 @@
         "path": "operate/index.md"
       },
       {
-        "title": "Dashboard",
-        "path": "dashboard.md"
+        "title": "Everyday loop",
+        "pages": [
+          {
+            "title": "Dashboard",
+            "path": "dashboard.md"
+          },
+          {
+            "title": "Config updates",
+            "path": "config-updates.md"
+          },
+          {
+            "title": "New projects from the template",
+            "path": "new-repo.md"
+          }
+        ]
       },
       {
-        "title": "Config updates",
-        "path": "config-updates.md"
-      },
-      {
-        "title": "New projects from the template",
-        "path": "new-repo.md"
-      },
-      {
-        "title": "Public access",
-        "path": "public-access.md"
-      },
-      {
-        "title": "Unlock an encrypted host remotely",
-        "path": "luks-unlock.md"
-      },
-      {
-        "title": "Troubleshooting",
-        "path": "troubleshooting.md"
+        "title": "Access and recovery",
+        "pages": [
+          {
+            "title": "Public access",
+            "path": "public-access.md"
+          },
+          {
+            "title": "Unlock an encrypted host remotely",
+            "path": "luks-unlock.md"
+          },
+          {
+            "title": "Troubleshooting",
+            "path": "troubleshooting.md"
+          }
+        ]
       }
     ]
   },
@@ -82,24 +107,38 @@
     "title": "Contribute",
     "pages": [
       {
-        "title": "Contributor environment",
-        "path": "contribute/devcontainer.md"
+        "title": "Set up and conventions",
+        "pages": [
+          {
+            "title": "Contributor environment",
+            "path": "contribute/devcontainer.md"
+          },
+          {
+            "title": "Strong types",
+            "path": "contribute/strong-types.md"
+          },
+          {
+            "title": "Writing documentation",
+            "path": "contribute/docs-style.md"
+          }
+        ]
       },
       {
-        "title": "Building with Bazel",
-        "path": "contribute/building-with-bazel.md"
-      },
-      {
-        "title": "Testing with Bazel",
-        "path": "contribute/test-with-bazel.md"
-      },
-      {
-        "title": "Strong types",
-        "path": "contribute/strong-types.md"
-      },
-      {
-        "title": "Navigating the codebase with Bazel",
-        "path": "contribute/navigate-with-bazel.md"
+        "title": "Bazel",
+        "pages": [
+          {
+            "title": "Building with Bazel",
+            "path": "contribute/building-with-bazel.md"
+          },
+          {
+            "title": "Testing with Bazel",
+            "path": "contribute/test-with-bazel.md"
+          },
+          {
+            "title": "Navigating the codebase with Bazel",
+            "path": "contribute/navigate-with-bazel.md"
+          }
+        ]
       }
     ]
   }

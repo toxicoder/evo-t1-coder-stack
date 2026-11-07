@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vitest/config";
 
 /**
@@ -37,6 +39,13 @@ const EXCLUDED_FROM_COVERAGE = [
 ];
 
 export default defineConfig({
+  // Next and tsc resolve the `@/` alias from tsconfig's `paths`; Vitest reads neither, so
+  // without this an import written as `@/lib/x` inside a component under test fails with
+  // `Cannot find package '@/lib/x'` before any mock can be reached. Mirroring the mapping
+  // here keeps the runner and the checker in agreement about what an import means.
+  resolve: {
+    alias: { "@": fileURLToPath(new URL("./", import.meta.url)) }
+  },
   test: {
     include: ["tests/unit/**/*.test.{ts,tsx,mjs}"],
     environment: "node",

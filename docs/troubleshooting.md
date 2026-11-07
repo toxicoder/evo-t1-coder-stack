@@ -4,6 +4,8 @@ description: "Symptom-first list of what breaks on this box: the error string, t
 tags: [troubleshooting, operate, errors]
 ---
 
+# Troubleshooting
+
 **What's on this page**
 
 - Stack bring-up: bootstrap, ports, containers that refuse to start

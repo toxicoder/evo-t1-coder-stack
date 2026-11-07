@@ -4,6 +4,8 @@ description: Day-to-day operation — the dashboard and desktops, what to refres
 tags: [operate, dashboard, maintain, overview]
 ---
 
+# Operate the box
+
 **What's on this page**
 
 - Which page answers which operational question

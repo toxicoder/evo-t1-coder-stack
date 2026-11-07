@@ -4,20 +4,18 @@ import type { ReactNode } from "react";
 import type { TOCItemType } from "fumadocs-core/toc";
 
 import { DocsLayout } from "fumadocs-ui/layouts/docs";
-import {
-  DocsBody,
-  DocsDescription,
-  DocsPage,
-  DocsTitle,
-  EditOnGitHub,
-  PageBreadcrumb,
-  PageFooter
-} from "fumadocs-ui/layouts/docs/page";
+import { DocsBody, DocsPage, EditOnGitHub } from "fumadocs-ui/layouts/docs/page";
+import { Banner } from "fumadocs-ui/components/banner";
 
+import { DocsPageProvider } from "@/components/docs-heading";
+import { DocsTrail } from "@/components/docs-trail";
 import { mdxComponentsFor } from "@/components/mdx-components";
-import { RepoIcon, Wordmark } from "@/components/wordmark";
-import { buildPageTree, neighborsOf } from "@/lib/nav";
-import { REPO_URL, repoFileUrl } from "@/lib/site";
+import { PublishedChip } from "@/components/published-chip";
+import { TableChrome } from "@/components/table-chrome";
+import { Wordmark } from "@/components/wordmark";
+import { buildPageTree, neighborsOf, trailFor } from "@/lib/nav";
+import { formatPublishedLabel, publishedAt } from "@/lib/published";
+import { docsAlias, gitRef, isDevelopmentAlias, REPO_URL, repoFileUrl } from "@/lib/site";
 import { source } from "@/lib/source";
 
 /**
@@ -31,6 +29,11 @@ export function generateStaticParams() {
 }
 
 const tree = buildPageTree(source);
+
+/** "Edit this page" target, honouring the branch-aware ref the alias was built from. */
+function editUrl(path: string): string {
+  return repoFileUrl(`docs/${path}`);
+}
 
 interface PageProps {
   params: Promise<{ slug?: string[] }>;
@@ -58,35 +61,65 @@ export default async function DocsRoute({ params }: PageProps) {
 
   const Body = data.body;
   const title = data.title ?? page.path;
+  const stamp = publishedAt();
+  const trail = trailFor(page.path);
 
   return (
-    <DocsLayout
-      tree={tree}
-      githubUrl={REPO_URL}
-      nav={{ title: Wordmark }}
-      links={[
-        {
-          type: "icon",
-          label: "Repository",
-          icon: <RepoIcon />,
-          text: "GitHub",
-          url: REPO_URL
+    <DocsLayout tree={tree} githubUrl={REPO_URL} nav={{ title: Wordmark }}>
+      {isDevelopmentAlias() && (
+        <Banner id="branch-preview" variant="normal" changeLayout={false}>
+          <span className="font-medium">
+            Preview docs - these pages track the <code>{docsAlias()}</code> branch and may
+            describe work that is not released yet. Prefer{" "}
+            <a href="../latest/">latest</a> for production-ready guidance.
+          </span>
+        </Banner>
+      )}
+      <DocsPage
+        toc={data.toc}
+        full={data.full}
+        // The trail is the reader's cue for which section and which sidebar folder they are
+        // in, since the left menu keeps every other section folded beside their own.
+        // fumadocs' own breadcrumb prints page titles, so it names neither the section nor
+        // the menu's wording for the leaf; `component` replaces the slot with a trail that
+        // does both.
+        breadcrumb={
+          trail
+            ? {
+                component: <DocsTrail trail={trail} page={trail.label || title} url={page.url} />
+              }
+            : { includePage: true }
         }
-      ]}
-    >
-      <DocsPage toc={data.toc} full={data.full}>
-        <DocsBody>
-          <DocsTitle>{title}</DocsTitle>
-          {data.description && <DocsDescription>{data.description}</DocsDescription>}
-          <Body components={mdxComponentsFor(page)} />
-          <PageFooter items={neighborsOf(source, page.path)}>
+        footer={{
+          items: neighborsOf(source, page.path),
+          children: (
             <div className="flex flex-wrap items-center gap-4 pt-6">
-              <PageBreadcrumb />
-              <EditOnGitHub href={repoFileUrl(`docs/${page.path}`)} className="ms-auto">
+              <EditOnGitHub href={editUrl(page.path)} className="ms-auto">
                 Edit this page
               </EditOnGitHub>
             </div>
-          </PageFooter>
+          )
+        }}
+      >
+        <DocsBody>
+          {stamp ? (
+            <PublishedChip iso={stamp.toISOString()} label={formatPublishedLabel(stamp)} />
+          ) : null}
+          {/* Title and lead paragraph come from the page's own H1 (see DocsH1), so the header
+              prints neither and the page opens with exactly one title. */}
+          <DocsPageProvider
+            facts={{
+              title,
+              description: data.description ?? "",
+              sourcePath: `docs/${page.path}`,
+              sourceUrl: editUrl(page.path),
+              gitRef: gitRef(),
+              docsAlias: docsAlias()
+            }}
+          >
+            <TableChrome />
+            <Body components={mdxComponentsFor(page)} />
+          </DocsPageProvider>
         </DocsBody>
       </DocsPage>
     </DocsLayout>

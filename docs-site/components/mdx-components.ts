@@ -14,9 +14,10 @@ import { createElement } from "react";
 import Link from "fumadocs-core/link";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 
-import { GlossaryTerm } from "@/components/glossary-term";
+import { DocsH1, DocsH2, DocsH3, DocsH4, DocsH5, DocsH6 } from "@/components/docs-heading";
+import { EzTerm } from "@/components/ez-term";
 import { Mermaid } from "@/components/mermaid";
-import { PageOverview, PageOverviewColumn } from "@/components/page-overview";
+import { PageBrief } from "@/components/page-brief";
 import { resolveDocHref } from "@/lib/source";
 import type { Page } from "fumadocs-core/source";
 
@@ -45,11 +46,20 @@ export function mdxComponentsFor(page: Page) {
 
   return {
     ...defaultMdxComponents,
+    // The headings carry the anchor-copy and file-a-bug controls, and `DocsH1` is the page
+    // title: the layout prints no title of its own, so the authored `# H1` is the one title
+    // and the frontmatter description becomes its lead paragraph.
+    h1: DocsH1,
+    h2: DocsH2,
+    h3: DocsH3,
+    h4: DocsH4,
+    h5: DocsH5,
+    h6: DocsH6,
     a: ContentLink,
-    abbr: GlossaryTerm,
-    GlossaryTerm,
+    // Callout, Banner, Tabs and the rest of the authoring primitives already come from the
+    // fumadocs defaults spread above; these three are the site's own.
     Mermaid,
-    PageOverview,
-    PageOverviewColumn
+    EzTerm,
+    PageBrief
   };
 }

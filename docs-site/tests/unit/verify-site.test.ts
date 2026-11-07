@@ -23,17 +23,33 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 
 import { basePath as publishedBasePath } from "../../lib/site";
 
-/** One tab of `lib/nav.json`, as the verifier reads it. */
-interface NavTab {
-  pages: { path: string }[];
+/** One leaf of `lib/nav.json`, as the verifier reads it. */
+interface NavPage {
+  title: string;
+  path: string;
 }
+
+/** A collapsible folder: it carries `pages` and no `path`. */
+interface NavGroup {
+  title: string;
+  pages: (NavPage | NavGroup)[];
+}
+
+/** @typedef {NavPage | NavGroup} NavNode */
 
 const siteRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/** Collect the leaves of a declared level, folders traversed in place. */
+function navLeaves(nodes: (NavPage | NavGroup)[]): NavPage[] {
+  return nodes.flatMap((node) => ("pages" in node ? navLeaves(node.pages) : [node]));
+}
+
 /** The declared corpus: the verifier fails any one of these that the export omitted. */
-const navPages = (
-  JSON.parse(readFileSync(join(siteRoot, "lib", "nav.json"), "utf8")) as NavTab[]
-).flatMap((tab) => tab.pages);
+const navPages = navLeaves(
+  (JSON.parse(readFileSync(join(siteRoot, "lib", "nav.json"), "utf8")) as { pages: (NavPage | NavGroup)[] }[]).flatMap(
+    (tab) => tab.pages
+  )
+);
 
 /** Stands in for the CLI's own `process.exit`, which would take the test worker with it. */
 class VerifierExit extends Error {}

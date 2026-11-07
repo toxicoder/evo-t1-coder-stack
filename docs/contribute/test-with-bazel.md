@@ -4,6 +4,8 @@ description: "Hermetic Bats: how a suite is discovered, what the stub PATH gives
 tags: [bats, tests, bazel, contributing]
 ---
 
+# Testing with Bazel (the Bats harness)
+
 **What's on this page**
 
 - The layout: suites, helpers, stubs and fixtures

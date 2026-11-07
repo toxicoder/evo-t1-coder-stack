@@ -24,13 +24,39 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent / "scripts"))
 import gen_nav  # noqa: E402
 
 
+def page(node: gen_nav.NavNode) -> gen_nav.NavPage:
+    """Narrow a tree node to a leaf, failing the test when it is a folder.
+
+    Args:
+        node: One node the generator produced.
+
+    Returns:
+        The same node, typed as a leaf.
+    """
+    assert gen_nav.is_page(node)
+    return node
+
+
+def folder(node: gen_nav.NavNode) -> gen_nav.NavGroup:
+    """Narrow a tree node to a folder, failing the test when it is a leaf.
+
+    Args:
+        node: One node the generator produced.
+
+    Returns:
+        The same node, typed as a folder.
+    """
+    assert gen_nav.is_group(node)
+    return node
+
+
 class ToTreeTests(unittest.TestCase):
     """The declaration converts into the tab/page layout the site imports."""
 
     def test_tabs_and_pages_keep_declaration_order(self) -> None:
         tabs = gen_nav.to_tree([("Start", [("Overview", "index.mdx")]), ("Operate", [("Dash", "dashboard.md")])])
         self.assertEqual(["Start", "Operate"], [tab["title"] for tab in tabs])
-        self.assertEqual(["index.mdx"], [p["path"] for p in tabs[0]["pages"]])
+        self.assertEqual(["index.mdx"], [page(p)["path"] for p in tabs[0]["pages"]])
         self.assertEqual("Dash", tabs[1]["pages"][0]["title"])
 
     def test_serialize_is_stable_and_trailing_newline(self) -> None:
@@ -49,6 +75,33 @@ class ToTreeTests(unittest.TestCase):
         text = gen_nav.serialize(gen_nav.to_tree([("Start", [("Caf\u00e9 setup", "index.mdx")])]))
         self.assertIn("Caf\u00e9 setup", text)
         self.assertNotIn("\\u00e9", text)
+
+    def test_a_nested_entry_becomes_a_folder(self) -> None:
+        tabs = gen_nav.to_tree(
+            [("Operate", [("Overview", "operate/index.md"), ("Loop", [("Dash", "dashboard.md")])])]
+        )
+        overview, loop = tabs[0]["pages"]
+        self.assertEqual({"title": "Overview", "path": "operate/index.md"}, overview)
+        self.assertEqual("Loop", loop["title"])
+        self.assertEqual([{"title": "Dash", "path": "dashboard.md"}], folder(loop)["pages"])
+
+    def test_folders_nest_to_any_depth(self) -> None:
+        tabs = gen_nav.to_tree([("Contribute", [("A", [("B", [("C", "x.md")])])])])
+        deep = folder(folder(folder(tabs[0]["pages"][0]))["pages"][0])["pages"][0]
+        self.assertEqual("x.md", page(deep)["path"])
+
+    def test_a_leaf_and_a_folder_are_told_apart_by_their_second_element(self) -> None:
+        self.assertFalse(gen_nav.is_declared_group(("Dash", "dashboard.md")))
+        self.assertTrue(gen_nav.is_declared_group(("Loop", [("Dash", "dashboard.md")])))
+
+    def test_count_pages_counts_leaves_and_not_folders(self) -> None:
+        tabs = gen_nav.to_tree(
+            [
+                ("Start", [("Overview", "index.mdx")]),
+                ("Operate", [("Overview", "operate/index.md"), ("Loop", [("A", "a.md"), ("B", "b.md")])]),
+            ]
+        )
+        self.assertEqual(4, gen_nav.count_pages(tabs))
 
 
 class ValidateTests(unittest.TestCase):
@@ -69,6 +122,23 @@ class ValidateTests(unittest.TestCase):
             gen_nav.to_tree([("Start", [("A", "index.mdx")]), ("Again", [("A", "index.mdx")])])
         )
         self.assertEqual(["nav page listed twice: docs/index.mdx"], problems)
+
+    def test_a_page_inside_a_folder_is_checked_too(self) -> None:
+        problems = gen_nav.validate(
+            gen_nav.to_tree([("Operate", [("Loop", [("Nope", "nope.md"), ("Home", "index.md")])])])
+        )
+        self.assertEqual(["nav page missing on disk: docs/nope.md"], problems)
+
+    def test_a_page_listed_in_two_folders_is_reported_once_each(self) -> None:
+        problems = gen_nav.validate(
+            gen_nav.to_tree([("Operate", [("Loop", [("A", "index.md")]), ("Other", [("A", "index.md")])])])
+        )
+        self.assertEqual(["nav page listed twice: docs/index.md"], problems)
+
+    def test_an_empty_folder_is_reported(self) -> None:
+        # A folder with no children renders as a sidebar control that opens onto nothing.
+        problems = gen_nav.validate(gen_nav.to_tree([("Operate", [("Loop", [])])]))
+        self.assertEqual(["nav folder has no pages: Operate / Loop"], problems)
 
 
 class MainTests(unittest.TestCase):
@@ -132,7 +202,7 @@ class WriteTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(self._payload(), gen_nav.OUT_JSON.read_text(encoding="utf-8"))
         tabs = len(gen_nav.NAV)
-        pages = sum(len(pages_of_tab) for _, pages_of_tab in gen_nav.NAV)
+        pages = gen_nav.count_pages(gen_nav.to_tree(gen_nav.NAV))
         self.assertEqual(f"wrote docs-site/lib/nav.json ({tabs} tabs, {pages} pages)\n", stdout)
 
     def test_a_write_replaces_whatever_was_there(self) -> None:
