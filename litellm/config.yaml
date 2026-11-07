@@ -423,8 +423,10 @@ router_settings:
   # streams for ~1090 s and still succeeded), and inference_idle_timeout_secs
   # does not fire on the compaction path at all -- signals.json reports
   # inferenceIdleTimeouts at 0 or 1 across the failing sessions and no hung
-  # call was ever cut off at 1200 s, and a held-open upstream kept the client
-  # waiting past 3000 s. The only bound on a hang was therefore this proxy's
+  # call was ever cut off at the then-current 1200 s idle deadline (the TOML
+  # twins ship 1800 s today, and it is still off this path), and a held-open
+  # upstream kept the client waiting past 3000 s. The only bound on a hang was
+  # therefore this proxy's
   # request_timeout, multiplied by every attempt. Sessions showed the 1200 s
   # deadline once, twice and three times over: 1366 s, ~2400 s and 3465 s. One
   # attempt now costs 1200 s and the caller sees the real error.
