@@ -35,11 +35,12 @@ on:
     branches: [main]
   # The base, not the head, is what `pull_request.branches` filters on. Naming
   # only `main` here left a stacked pull request - one whose base is its parent
-  # branch, which docs/branching.md tells you to open - with no gate at all: it
-  # shows the docs deploy that its branch push earns and nothing else. The
-  # convention prefixes are the branch names branching.md sanctions, so a stack
-  # is gated exactly like a main-based pull request while anything outside the
-  # convention still costs nothing.
+  # branch, the shape the seeded agent guidance in
+  # templates/common/GROK_BUILD_AGENTS.md tells you to open - with no gate at
+  # all: it shows the docs deploy that its branch push earns and nothing else.
+  # The convention prefixes are the branch names branching.md sanctions, so a
+  # stack is gated exactly like a main-based pull request while anything outside
+  # the convention still costs nothing.
   pull_request:
     branches:
       - main
