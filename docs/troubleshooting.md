@@ -342,8 +342,11 @@ grep -rc --include=updates.jsonl \
 
 Each link in the chain, measured:
 
-- Auto-compaction always fires at about 75 per cent of the 262144-token window: all 124
-  `auto_compact_started` events carried `tokens_used` between 196,636 and 214,585.
+- Auto-compaction always fired at about 75 per cent of the 262144-token window, the
+  setting in force when this was measured: all 124 `auto_compact_started` events carried
+  `tokens_used` between 196,636 and 214,585. Both template twins now ship
+  `[session] auto_compact_threshold_percent` at 70, so a future sweep measures the
+  events firing at a lower point than this.
 - The summary call rides the **session model**, the `agent*` thinking family, and
   inherits its output ceiling: captured on the wire as `max_tokens: 32768`, alongside 25
   tool schemas and the workspace's `x-litellm-session-id` affinity header.
@@ -353,9 +356,11 @@ Each link in the chain, measured:
   compactions do stream: their `elapsed_ms` spans 107 s to 1915 s, and 18 of the 36 ran
   past 300 s, which is the summary the budget was discarding.
 - Nothing on the client aborts the hang. `signals.json` reports `inferenceIdleTimeouts`
-  at 0 or 1 across the failing sessions, and no hung call was ever cut off at 1200 s, so
-  the 1200 s `inference_idle_timeout_secs` is not on this path. Reproduced directly: with
-  an upstream held open and no byte sent, the CLI was still waiting at 3000 s.
+  at 0 or 1 across the failing sessions, and no hung call was ever cut off at the idle
+  deadline, so `inference_idle_timeout_secs` (then 1200 s) is not on this path. The key
+  now ships at 1800 s in both template twins, which does not put it on this path either:
+  the CLI still does not apply it to compaction. Reproduced directly: with an upstream
+  held open and no byte sent, the CLI was still waiting at 3000 s.
 - The only live bound was the proxy's `request_timeout: 1200`, multiplied by every
   attempt. Observed failure durations were 1366 s, about 2400 s and 3465 s - the deadline
   honoured once, twice and three times.
@@ -408,12 +413,12 @@ What it deliberately does not do:
 - `TimeoutErrorRetries: 0` would not help: the hang never becomes a `litellm.Timeout`.
 - `ServiceUnavailableErrorRetries` is the only one of the two that can be zeroed; zeroing
   `DefaultRetries` breaks the `NoRoom` contract above.
-- The lever left, not pulled: `[session] auto_compact_threshold_percent` (75 in both
-  template twins) decides where auto-compaction fires, so lowering it shrinks the
-  ~200k-token summary input. The store shows no size threshold separating failure from
-  success - the successes reach the same 197k-214k range - so this is a load reduction to
-  try if hangs persist, not a proven cure. Re-run the first command above to measure
-  whether the ratio moved.
+- The lever, now pulled: `[session] auto_compact_threshold_percent` ships at 70 in both
+  template twins, so auto-compaction fires near 183,500 tokens rather than the 197k-214k
+  these events measured, and the ~200k-token summary input shrinks with it. The store
+  shows no size threshold separating failure from success - the successes reach the same
+  197k-214k range - so this is a load reduction, not a proven cure. Re-run the first
+  command above to measure whether the ratio moved.
 
 ### Coder Agents chat refuses every prompt, or its model dropdown is empty -> no model config
 

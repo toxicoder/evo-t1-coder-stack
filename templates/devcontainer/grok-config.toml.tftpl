@@ -68,10 +68,14 @@ web_search = "agent"
 default_reasoning_effort = "xhigh"
 
 # Global streaming-idle deadline for every model that does not pin its own
-# value below. 1200 s matches the per-model values below and the proxy's
-# request_timeout, so one 20-minute deadline covers the whole client-to-backend
-# chain for the turns this key really governs: the main agent loop, the
-# web_search digest and the image description.
+# value below. The per-model copies below carry the same 1800 s, so one
+# 30-minute client deadline covers the turns this key really governs: the main
+# agent loop, the web_search digest and the image description. It deliberately
+# sits ABOVE the proxy's request_timeout (1200 s in litellm/config.yaml), which
+# stays the tightest bound on the chain: a stream that produces nothing ends at
+# the proxy. What this key has to do is stop the client abandoning a
+# slow-but-flowing stream the proxy still allows, and clearing 1200 s is what
+# buys that. No proxy deadline moved with it.
 #
 # What it does NOT govern is the compaction summary, whatever this comment used
 # to claim. Measured on 1.0.70 against an upstream held open without sending a
@@ -85,7 +89,7 @@ default_reasoning_effort = "xhigh"
 # does exist is a separate 300 s default, is set from the environment by
 # GROK_COMPACTION_WALL_CLOCK_SECS (rendered by main.tf, not here, since no TOML
 # table accepts it), and is evaluated only once the response returns.
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 # How this workspace announces itself to the LiteLLM proxy: one key per
 # workspace pins every session and subagent call to one healthy Spark box
@@ -113,7 +117,7 @@ top_p = 0.95
 supports_backend_search = false
 stream_tool_calls = true
 max_retries = 1
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 # The three levels this runtime actually answers. `high` is deliberately
 # absent: Qwen3.8-Flash-Next does not support it, and advertising it puts a
@@ -160,7 +164,7 @@ supports_backend_search = false
 supports_reasoning_effort = false
 stream_tool_calls = true
 max_retries = 1
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 [model."agent-medium"]
 model = "agent-medium"
@@ -177,7 +181,7 @@ supports_backend_search = false
 supports_reasoning_effort = false
 stream_tool_calls = true
 max_retries = 1
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 [model."agent-xhigh"]
 model = "agent-xhigh"
@@ -194,7 +198,7 @@ supports_backend_search = false
 supports_reasoning_effort = false
 stream_tool_calls = true
 max_retries = 1
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 # --- Arc 140T (IPEX-LLM Ollama): completion-style fallbacks -----------------
 # Measured against the running stack: these endpoints answer tool requests as
@@ -217,7 +221,7 @@ supports_backend_search = false
 supports_reasoning_effort = false
 stream_tool_calls = true
 max_retries = 1
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 [model."coder-fast"]
 model = "coder-fast"
@@ -234,7 +238,7 @@ supports_backend_search = false
 supports_reasoning_effort = false
 stream_tool_calls = true
 max_retries = 1
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 [model."chat"]
 model = "chat"
@@ -251,7 +255,7 @@ supports_backend_search = false
 supports_reasoning_effort = false
 stream_tool_calls = true
 max_retries = 1
-inference_idle_timeout_secs = 1200
+inference_idle_timeout_secs = 1800
 
 [features]
 telemetry = false
@@ -264,7 +268,13 @@ web_fetch = true
 allow_local = false
 
 [session]
-auto_compact_threshold_percent = 75
+# Auto-compaction fires at this percentage of the CLI's 262144-token window, so
+# at 70 it starts near 183,500 tokens. This is a load lever, not a correctness
+# one: the summary is a full generation whose cost grows with the history it
+# reads, so firing earlier buys a smaller summary. Measured history and the
+# caveat that no size threshold separated the failures from the successes are in
+# the compaction section of docs/troubleshooting.md.
+auto_compact_threshold_percent = 70
 
 # Three Spark boxes behind one model lane, and LiteLLM's "least-busy" routing
 # spreads the fan-out across them, so keep the fan-out modest and let

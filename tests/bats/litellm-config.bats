@@ -25,8 +25,15 @@
 # because a stream that dies before its first chunk raises a ServiceUnavailableError
 # subclass and is the one re-dispatched onto the same session-pinned box. It also
 # pins that both main.tf twins raise the CLI's 300 s compaction wall-clock budget to
-# the chain's 1200 s through GROK_COMPACTION_WALL_CLOCK_SECS, and that the budget
+# the proxy's 1200 s through GROK_COMPACTION_WALL_CLOCK_SECS, and that the budget
 # never gets pasted into the TOML twins, where no table reads it.
+#
+# And it pins the two client-side deadlines in the TOML twins: every
+# inference_idle_timeout_secs copy (the global key and each model lane) carries
+# 1800 s, sitting above the proxy's request_timeout of 1200 s so the proxy stays
+# the end that abandons a hung stream, and [session] auto_compact_threshold_percent
+# is 70, the load lever that fires compaction near 183,500 of the CLI's
+# 262144-token window.
 #
 # And it pins the background health-check cadence: a probe is a real thinking generation
 # on a GPU box whose prompt cache runs full, so the interval has a floor and the round
@@ -175,10 +182,12 @@ entries_for() {
   [[ "${checked}" -gt 0 ]] || skip "no main.tf under ${REPO_ROOT}/templates"
 }
 
-@test "compaction: every main.tf twin raises the CLI's 300 s budget to the chain's 1200 s" {
+@test "compaction: every main.tf twin raises the CLI's 300 s budget to the proxy's 1200 s" {
   # The budget is applied after the response returns, so at 300 s it discarded a
   # summary that had already streamed in and made the session regenerate it.
-  # 1200 matches inference_idle_timeout_secs and request_timeout above.
+  # 1200 matches request_timeout above, the only live bound on this path:
+  # inference_idle_timeout_secs does not reach the summary call, so its 1800 s
+  # (pinned below) gates nothing here.
   checked=0
   for tf in "${REPO_ROOT}"/templates/*/main.tf; do
     checked=$((checked + 1))
@@ -200,6 +209,40 @@ entries_for() {
     [ "${status}" -ne 0 ] || { echo "the budget was pasted into TOML, where nothing reads it: ${tpl}" >&2; return 1; }
   done
   [[ "${checked}" -gt 0 ]] || skip "no grok-config.toml.tftpl under ${REPO_ROOT}/templates"
+}
+
+@test "timeouts: every grok-config twin ships the 1800 s idle deadline and the 70 per cent threshold" {
+  # Both keys are client-side, and the twins are independent payload copies, so
+  # one side drifting would hand a dev container a different deadline than a
+  # Coder workspace gets. The idle deadline deliberately sits ABOVE the proxy's
+  # request_timeout: the proxy stays the end that abandons a stream producing no
+  # bytes, and this key only has to stop the client abandoning a slow-but-flowing
+  # one. The threshold is the load lever for the compaction path -- at 70 the
+  # summary is generated from about 183,500 of the CLI's 262144-token window.
+  checked=0
+  for tpl in "${REPO_ROOT}"/templates/*/grok-config.toml.tftpl; do
+    [[ -f "${tpl}" ]] || continue
+    checked=$((checked + 1))
+    # Every model lane pins its own copy and the file's contract is that each
+    # equals the global one, so any other value is a lane on a shorter fuse.
+    local strays
+    strays="$(grep -E '^[[:space:]]*inference_idle_timeout_secs = [0-9]+$' "${tpl}" |
+      grep -cvE ' = 1800$' || true)"
+    [ "${strays}" -eq 0 ] || { echo "${strays} idle deadline(s) other than 1800 in ${tpl}" >&2; return 1; }
+    run grep -E '^[[:space:]]*inference_idle_timeout_secs = 1800$' "${tpl}"
+    [ "${status}" -eq 0 ] || { echo "no 1800 s idle deadline in ${tpl}" >&2; return 1; }
+    # Global key plus per-model copies: a file that kept only one would pass the
+    # check above while the lanes silently fell back to the CLI default.
+    local pinned
+    pinned="$(grep -cE '^[[:space:]]*inference_idle_timeout_secs = 1800$' "${tpl}" || true)"
+    [ "${pinned}" -ge 2 ] || { echo "only ${pinned} copy of the 1800 s deadline in ${tpl}" >&2; return 1; }
+    run grep -Eq '^[[:space:]]*auto_compact_threshold_percent = 70$' "${tpl}"
+    [ "${status}" -eq 0 ] || { echo "auto-compaction threshold is not 70 in ${tpl}" >&2; return 1; }
+  done
+  [[ "${checked}" -gt 0 ]] || skip "no grok-config.toml.tftpl under ${REPO_ROOT}/templates"
+  # The asymmetry is the point: raising the client must not have raised the proxy.
+  run grep -Eq '^[[:space:]]*request_timeout: 1200$' "${CONFIG}"
+  [ "${status}" -eq 0 ] || { echo "request_timeout no longer bounds the chain at 1200 s" >&2; return 1; }
 }
 
 # retry_policy_block — the model_group_retry_policy mapping, its own line plus

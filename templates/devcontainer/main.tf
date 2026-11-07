@@ -597,9 +597,10 @@ resource "coder_agent" "main" {
     # rides the env like the MCP cap above. Verified honoured on 1.0.70: setting
     # it to 1 makes /compact fail with "exceeded wall-clock budget 1s".
     #
-    # 1200 aligns it with every other deadline in this chain
-    # (inference_idle_timeout_secs per model and globally, and the proxy's
-    # request_timeout). 300 s does not fit the work the CLI asks for: the
+    # 1200 matches the proxy's request_timeout, the only live bound on this
+    # path. inference_idle_timeout_secs (1800 s in both grok-config twins) does
+    # not reach the summary call, as the comment above that key records, so it
+    # gates nothing here. 300 s does not fit the work the CLI asks for: the
     # summary call inherits the session lane's max_completion_tokens, measured
     # on the wire at max_tokens=32768, and a full-length summary of a 200k-token
     # history streams for roughly 1090 s on a Spark. The budget is applied only

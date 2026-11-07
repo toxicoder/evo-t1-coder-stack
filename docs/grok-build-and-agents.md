@@ -808,7 +808,7 @@ for the other:
   owns the measurement and the retry split that stops one hang being bought three times.
 - The thresholds are separate as well. `context_limit` above is Coder's own compaction
   budget with its 70 per cent default, while the CLI fires at
-  `[session] auto_compact_threshold_percent` (75) of its 262144-token window.
+  `[session] auto_compact_threshold_percent` (70) of its 262144-token window.
 
 ### The delegation sketch
 

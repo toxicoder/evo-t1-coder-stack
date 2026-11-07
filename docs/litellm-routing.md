@@ -72,8 +72,9 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
   on a box whose prompt cache sits full it evicts a warm conversation to fit itself.
   See the TensorFold log section of [troubleshooting.md](troubleshooting.md).
 - `num_retries: 2` covers a transient blip; moving off a busy box is routing's job, not
-  the retry chain's. `request_timeout: 1200` matches the CLI's own streaming idle
-  allowance, so a slow call may take a full twenty minutes before either end gives up.
+  the retry chain's. `request_timeout: 1200` is now the tightest deadline on the chain -
+  the CLI's streaming idle allowance (`inference_idle_timeout_secs`) sits at 1800 s - so
+  the proxy is the end that gives up first, at a full twenty minutes per attempt.
 - `model_group_retry_policy:` gives the four agent lanes their own `RetryPolicy`. The
   reason it exists is narrow enough to be worth its own section below.
 
