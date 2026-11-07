@@ -394,6 +394,14 @@ while the managed block is intact.
   left the key list -- the file that keeps a real `.env` honest -- to drift.
   `.gitignore` carries the matching half on the git side: the whole family is
   ignored except the names `allow` lists.
+- `Bash(rm -rf *)` is a prefix glob, so it catches a benign per-path scratch cleanup
+  along with the destruction it is there to prevent. Agents run into that constantly:
+  across 271 workspace sessions, 86 recorded at least one denied tool call and 56
+  attempted an `rm -rf`, and 55 sessions did both. The shapes that are never denied
+  are per-path deletions - `find <dir> -type f -delete`, or `rm -f` naming each path -
+  so clean scratch that way. An `allow` entry cannot rescue `rm -rf`, because deny
+  outranks allow. Narrowing the pattern is an operator call and a deliberate one: it
+  is the only thing between an agent and a recursive delete on a path it got wrong.
 - Stack ownership of the file rests on either marker spelling: the line-1
   `managed-by: evo-t1-coder-stack` comment or the top-level `__evoT1Stack = true` key.
   Both twins emit both, because the comment alone does not last - `grok mcp add`

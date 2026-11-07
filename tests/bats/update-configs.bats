@@ -746,3 +746,45 @@ scratch_root() {
   assert_match "the env pass closes with a summary" 'summary: env:' "${output}"
   assert_match "the workspace pass closes with a summary" 'summary: workspace:' "${output}"
 }
+
+@test "update-configs: workspace addresses a bare positional container by name" {
+  local root="${BATS_TEST_TMPDIR}/root"
+  mkdir -p "${root}"
+  printf 'x\n' >"${root}/docker-compose.yml"
+
+  # A bare word after the mode names a container, which is the reading
+  # refresh-configs.sh gives the same argument. It used to arrive at the
+  # dispatch unprefixed, where only c: and h: were understood, so the target
+  # was dropped with no log line and the summary counted one fewer target than
+  # the operator asked for.
+  run --separate-stderr env STUB_COMPOSE_PS="coder-bare-coder" \
+    HOME="${BATS_TEST_TMPDIR}/h" \
+    bash "${SCRIPT}" workspace coder-bare-coder --from "${root}"
+  [ "${status}" -eq 0 ]
+  assert_match "the bare name was addressed" 'coder-bare-coder' "${output}"
+  assert_match "the summary counted the target asked for" '1 target\(s\) addressed' \
+    "${output}"
+  assert_not_match "nothing was reported as unrecognized" 'unrecognized workspace target' \
+    "${output}"
+  assert_match "the reseed went through the docker stub" 'docker exec' "$(stub_log docker)"
+}
+
+@test "update-configs: a target the dispatch cannot read is named and counted" {
+  local root="${BATS_TEST_TMPDIR}/root"
+  mkdir -p "${root}"
+  printf 'x\n' >"${root}/docker-compose.yml"
+
+  # Every target source prefixes itself, so the catch-all below the c:/h: cases
+  # has no CLI input that reaches it. The source still has to carry it: without
+  # a default the next target source that forgets its prefix reproduces the
+  # silent drop this suite was written against.
+  assert_contains_file "the dispatch keeps a catch-all branch" "${SCRIPT}" \
+    'unrecognized workspace target'
+  assert_contains_file "the catch-all names the target it is dropping" "${SCRIPT}" \
+    "expected a c: or h: prefix - skipped\""
+
+  # And the parse side keeps the parity the catch-all assumes: a bare word is a
+  # container, named exactly as refresh-configs.sh names it.
+  assert_contains_file "a bare positional is prefixed as a container" "${SCRIPT}" \
+    'targets\+=\("c:\$1"\)'
+}

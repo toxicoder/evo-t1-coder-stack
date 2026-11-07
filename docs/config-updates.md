@@ -127,6 +127,18 @@ stack no longer maintains, and a file someone took over stays.
 Every flag goes **after** the subcommand, so `update-configs --dry-run env` is a
 usage error and prints the usage rather than guessing.
 
+A target named without a flag is a container, the same reading `refresh-configs`
+gives a bare word, so these two lines address the same container:
+
+```bash
+bazelisk run //scripts:update-configs -- workspace coder-alx-main
+bazelisk run //scripts:update-configs -- workspace --container coder-alx-main
+```
+
+Anything that carries a prefix other than `c:` (container) or `h:` (host
+directory) is reported as unrecognized and counted in the closing summary's
+skipped tally. A target never leaves the pass unheard.
+
 On a TTY the env pass asks by default (`-i`/`--interactive` is then a no-op;
 `--non-interactive` turns it off). For every key that is new this pull or still
 `change-me…`/`NOTSET`/`YOUR_LAN_IP` it prints the explanation the twin carries
