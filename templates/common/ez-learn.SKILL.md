@@ -280,6 +280,34 @@ What you mine must survive the acceptance rules in Step 2 before it becomes memo
 A fact that only describes the course of a session is not memory; a mechanism, a
 rule, or a root cause is.
 
+Two things decide whether a number taken from those transcripts means anything.
+
+The first is where the text actually is. `chat_history.jsonl` keeps assistant
+entries with an empty `content` array: the reasoning is in `updates.jsonl`, under
+`.params.update.sessionUpdate == "agent_message_chunk"`, at
+`.params.update.content.text`. A sweep that opens only `chat_history.jsonl` recovers
+the questions and none of the answers.
+
+The second is that counting an error string across transcripts also counts the
+stack's own guidance, which quotes the very string it warns about, because that
+guidance is re-injected into every conversation. Measured over 271 sessions for
+`Unknown Task.model slug`: 106 hits in 83 sessions as raw `grep -c` over
+`chat_history.jsonl`, and 30 hits in 8 sessions once the lines carrying the quoted
+guidance are dropped - one session alone contributed 18 of the 106. So a count
+becomes a claim only after:
+
+1. The session you are in is excluded, and so is every child session you spawned.
+   Their prompts carry the literal patterns you are counting.
+2. Lines carrying the guidance prose are dropped. Counting inside tool results only
+   is the honest form.
+3. The method is written beside the number. A count with no method is a guess with
+   three digits, and the next reader cannot tell which it is.
+
+A defect a transcript reports described the tree as it was then. Read the current
+file before proposing the fix: over that same 271-session sweep, two of the three
+candidate fixes were already in the tree, one of them with a comment at the exact
+line explaining the bug it prevented.
+
 ## Step 6 -- report the same lines upstream reports
 
 Say what happened in the upstream wording, so a user who knows the real commands
