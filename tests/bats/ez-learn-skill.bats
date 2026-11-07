@@ -840,3 +840,34 @@ if "user-invocable" in data and data["user-invocable"] is not True:
   assert_contains_file "and the upstream session module" "${PAYLOAD}" \
     'crates/codegen/xai-grok-shell/src/session/'
 }
+
+@test "ez-learn mine: Step 5 states where the transcript text is and how to count it" {
+  # Step 5 is the only member that reaches past the memory store into the raw
+  # transcripts, and it is the one a reader cannot sanity-check from their own
+  # tooling. Two shapes burned a real sweep before this was written: opening only
+  # chat_history.jsonl (whose assistant entries carry an empty content array, so
+  # the reasoning is invisible), and counting an error string that the stack's own
+  # guidance quotes back into every conversation. The measured spread was 106
+  # hits in 83 sessions raw against 30 in 8 once the quoted guidance is dropped,
+  # with one session alone contributing 18. A payload that lost these lines would
+  # send the next reader to publish a number inflated by the guidance itself.
+  local body
+  # Prose is reflowed whenever the seed is edited, so a phrase must not be pinned
+  # to the line it happens to start on: fold the newlines away before matching.
+  body="$(tr '\n' ' ' <"${PAYLOAD}" | tr -s ' ')"
+
+  assert_match "it names updates.jsonl as where assistant prose lives" \
+    'updates\.jsonl' "${body}"
+  assert_match "it names the agent_message_chunk selector" \
+    'agent_message_chunk' "${body}"
+  assert_match "it excludes the reader's own session from a count" \
+    'The session you are in is excluded' "${body}"
+  assert_match "it excludes the children the reader spawned" \
+    'every child session you spawned' "${body}"
+  assert_match "it counts inside tool results, not whole files" \
+    'Counting inside tool results only' "${body}"
+  assert_match "it demands the method travel with the number" \
+    'The method is written beside the number' "${body}"
+  assert_match "it checks the tree before proposing a transcript's fix" \
+    'Read the current file before proposing the fix' "${body}"
+}
