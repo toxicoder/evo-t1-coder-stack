@@ -10,6 +10,8 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -18,6 +20,14 @@ import { formatPublishedLabel, publishedAt } from "../../lib/published";
 vi.mock("node:child_process", () => ({
   execFileSync: vi.fn()
 }));
+
+/**
+ * The checkout `lib/published.ts` walks up to: two levels above the `lib` directory that
+ * holds it, which is the same tree this test sits in. Derived from this file's own URL so
+ * the assertion still names the right directory where the checkout is not named after the
+ * repository, which is how `//scripts:test-in-image` runs it (the tree mounts at `/work`).
+ */
+const checkoutRoot = resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
 const gitRun = vi.mocked(execFileSync);
 
@@ -96,7 +106,7 @@ describe("publishedAt", () => {
     const [command, args] = gitRun.mock.calls[0] ?? [];
     expect(command).toBe("git");
     expect(args?.[0]).toBe("-C");
-    expect(String(args?.[1]).endsWith("evo-t1-coder-stack")).toBe(true);
+    expect(args?.[1]).toBe(checkoutRoot);
     expect(args?.slice(2)).toEqual(["log", "-1", "--format=%cI"]);
   });
 
