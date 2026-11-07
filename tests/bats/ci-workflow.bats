@@ -199,3 +199,28 @@ setup() {
   assert_contains_file "docs job builds the bare tag locally" "${CI_YML}" \
     '^[[:space:]]+tags: evo-t1-dev:latest$'
 }
+
+@test "ci workflow: a pull request based on a stack branch still gets the gate" {
+  # `pull_request.branches` filters on the BASE, not the head. With only `main`
+  # listed there, the stacked pull request docs/branching.md tells you to open -
+  # one whose base is its parent branch - ran no gate whatsoever. Measured on a
+  # real stack of three: the two main-based pulls each collected bazel and docs,
+  # and the stacked one collected only the docs deploy its branch push earned
+  # from deploy-docs.yml, for twenty minutes and more. The prefixes below are the
+  # branch names branching.md sanctions, so every sanctioned base is gated while
+  # anything outside the convention still costs no runner time.
+  local block prefix
+  block="$(awk '/^  pull_request:/{f=1;next} f&&/^  [A-Za-z]/{f=0} f' "${CI_YML}")"
+  [[ -n "${block}" ]] || { echo "${CI_YML}: no pull_request trigger block" >&2; return 1; }
+
+  if ! grep -Eq '^[[:space:]]+-[[:space:]]+main[[:space:]]*$' <<<"${block}"; then
+    echo "the pull_request trigger no longer names main" >&2
+    return 1
+  fi
+  for prefix in feat fix refactor docs test chore ci; do
+    if ! grep -Eq "^[[:space:]]+-[[:space:]]+\"${prefix}/\*\*\"[[:space:]]*$" <<<"${block}"; then
+      echo "the pull_request trigger no longer gates ${prefix}/** bases" >&2
+      return 1
+    fi
+  done
+}
