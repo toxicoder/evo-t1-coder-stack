@@ -188,10 +188,14 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
 - `/opt/data` is a **named volume on purpose**. Hermes keeps a SQLite database there in
   WAL mode, and WAL on a virtiofs bind mount is not safe. Bind-mounting that path is how
   you corrupt the assistant's own memory.
-- `STACK_HOST_PATH` is the checkout's `pwd -P`. Compose bind-mounts that host path at
+- `STACK_HOST_PATH` is the checkout's `pwd -P`, or, from a subdirectory or a linked
+  worktree, its git top-level. Compose bind-mounts that host path at
   the same path inside the container, so `docker compose -f $STACK_HOST_PATH/docker-compose.yml`
   talking through the socket names bind sources the daemon can find. Empty (CI
-  `compose config`) falls back to `.:/opt/stack`.
+  `compose config`) falls back to `.:/opt/stack`. `bootstrap` refreshes the key only
+  after checking the path holds this `docker-compose.yml`: compose mounts whatever the
+  key names, so a stale value leaves the assistant working an empty directory while
+  every container-level check still reads healthy.
 - The working directory the agent runs in is `terminal.cwd`, and it has to be a literal
   path. Hermes validates it in `agent/runtime_cwd.py` with `expanduser()` alone, so a
   `${VAR}` left in the file is reported as `does not exist` and the agent works somewhere
