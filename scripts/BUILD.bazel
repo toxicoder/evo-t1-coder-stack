@@ -163,6 +163,9 @@ _SCRIPT_LIBS = {
     "hermes-bootstrap": [
         "lib/common.sh",
     ],
+    "hermes-doctor": [
+        "lib/common.sh",
+    ],
     "hermes-shell": [
         "lib/common.sh",
     ],
@@ -306,6 +309,14 @@ _SCRIPT_PAYLOAD = {
     # The readiness report reads the compose file it addresses and checks the data
     # volume for the two seeded files, so it names both payloads by path.
     "hermes-shell": [
+        "//:compose_file",
+        "//hermes:seed",
+    ],
+    # The audit reads the seed pair beside the checkout (to pin what should be
+    # true and to diff the volume copy against), the compose file for the image
+    # pin and the dotenv default, and the container's own created environment
+    # through the daemon. Nothing here is written.
+    "hermes-doctor": [
         "//:compose_file",
         "//hermes:seed",
     ],

@@ -136,6 +136,50 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
   host, name the directory: `--writable "${STACK_DEPLOY_PATH:-/opt/stack-deploy}"` or
   the checkout path.
 
+## Audit and drift
+
+`hermes-shell -- check` answers "can I open the assistant". It cannot answer "is this
+still the assistant this repo describes", and the two come apart on a long-lived box:
+an operator edits the config inside the volume, a recreate reads a stale `.env`, a
+merge changes the seed and a seed-only-when-absent copy never takes it. `hermes-doctor`
+answers the second question. It is read-only and prints key names with no value.
+
+```sh
+bazelisk run //scripts:hermes-doctor              # every check
+bazelisk run //scripts:hermes-doctor -- posture   # security and privacy only
+bazelisk run //scripts:hermes-doctor -- web       # the search lane and its guards
+bazelisk run //scripts:hermes-doctor -- diff      # the volume copy against the seed
+bazelisk run //scripts:hermes-doctor -- --check approvals --check web-lane
+bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, inspect nothing
+```
+
+- **What it reads:** the config the container actually loads, the environment it was
+  created with, the mounts it was given, and the two seed files beside the checkout.
+  The created environment is the fact and the `.env` beside the compose file is the
+  intention: compose interpolated the former at create time, so a key can be right in
+  the file and stale in the container until the next recreate. Every container-level
+  fact comes from `docker inspect` or `docker compose ps`; nothing writes, restarts,
+  recreates, or execs.
+- **The twelve checks:** `approvals` (manual, with cron and unattended both deny),
+  `terminal-cwd`, `write-root`, `web-lane`, `keyless-egress`, `mcp-servers`,
+  `seed-drift`, `mount-identity`, `image-pin`, `model-key`, `dashboard`, `memories`.
+- **It reports, it does not gate.** Exit 0 on a clean bill (warnings allowed), 1 when a
+  check failed, 2 on a bad invocation, 5 when it cannot find a checkout.
+  `hermes-shell -- check` stays the thing that decides whether to launch a session.
+- **Three findings it exists to catch**, each one measured on a live box:
+  `terminal.cwd` still carrying the `${STACK_HOST_PATH}` token (Hermes validates that
+  value with `expanduser()` alone, so the token reads as a missing directory while
+  `hermes config get` prints it looking healthy), `STACK_HOST_PATH` naming a directory
+  with no checkout (compose mounts an empty directory over the repo and every
+  container-level check still reads healthy), and a `web` block that stopped pinning
+  `searxng` or flipped a keyless switch back on, which routes a search to a vendor's
+  free tier while the config still looks local.
+- **`--data DIR`** points the two volume checks at a directory instead of asking the
+  daemon where the volume is mounted, so the audit can be run against a copy of one.
+- **Run it before a `--force` re-seed and after a merge.** The drift check names the
+  file that differs and prints the `hermes-bootstrap --data <mount> --force` line that
+  would overwrite it, which is the pair an operator wants side by side.
+
 ## Auth
 
 - Hermes since the June 2026 hardening refuses a non-loopback bind without a
@@ -369,6 +413,13 @@ Open the assistant in your own terminal (subcommands `chat`, `ask`, `shell`, `ch
 ```sh
 bazelisk run //scripts:hermes-shell -- check
 bazelisk run //scripts:hermes-shell
+```
+
+Read-only audit of what the assistant was created with, and how far it has drifted from
+this checkout (`report`, `posture`, `web`, `diff`; `--check` narrows to one):
+
+```sh
+bazelisk run //scripts:hermes-doctor -- posture
 ```
 
 Stable stack - `hermes` comes up with the rest:
