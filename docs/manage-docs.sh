@@ -78,7 +78,7 @@ check_content() {
     die "docs-site/source.config.ts not found - the docs app is incomplete."
   fi
   if [[ ! -f "$SITE_DIR/lib/nav.json" ]]; then
-    die "docs-site/lib/nav.json is missing - run: npm run nav:generate in docs-site/"
+    die "docs-site/lib/nav.json is missing - run: bazelisk run //docs-site:npm -- run nav:generate"
   fi
 }
 
@@ -201,12 +201,12 @@ case "${1:-help}" in
   status)
     section "Documentation status"
     log "Content root:          $([[ -d $REPO_ROOT/docs ]] && echo 'docs/' || echo 'MISSING')"
-    log "Navigation tree:       $([[ -f $SITE_DIR/lib/nav.json ]] && echo 'docs-site/lib/nav.json' || echo 'MISSING (npm run nav:generate)')"
+    log "Navigation tree:       $([[ -f $SITE_DIR/lib/nav.json ]] && echo 'docs-site/lib/nav.json' || echo "MISSING (bazelisk run //docs-site:npm -- run nav:generate)")"
     log "source.config.ts:      $([[ -f $SITE_DIR/source.config.ts ]] && echo 'present' || echo 'MISSING')"
     if [[ -x "$SITE_DIR/node_modules/.bin/next" ]]; then
       log "Dependencies:          installed ($(node -p "require('$SITE_DIR/node_modules/next/package.json').version" 2>/dev/null || echo '?'))"
     else
-      log "Dependencies:          not installed (cd docs-site && npm ci --legacy-peer-deps)"
+      log "Dependencies:          not installed (bazelisk run //docs-site:install)"
     fi
     if command -v node >/dev/null 2>&1; then
       log "Node:                  $(node --version 2>/dev/null || echo 'not in PATH')"

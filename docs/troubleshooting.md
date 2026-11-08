@@ -800,7 +800,7 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   its own a reason to rebuild the image.
 - A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
   `GROK_VERSION` (1.0.77 at the time of writing), and rebuilding `images/dev`
-  (`scripts/build-dev-image.sh`) is the CLI upgrade path - but the seeded skill trio
+  (`bazelisk run //scripts:build-dev-image`) is the CLI upgrade path - but the seeded skill trio
   works on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
 
