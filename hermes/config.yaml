@@ -37,7 +37,9 @@ terminal:
   # agent starts outside the checkout it is meant to operate. The config loader
   # does expand ${VAR} - which is why api_key below works, and why
   # `hermes config get terminal.cwd` reports a resolved path while the runtime
-  # does not. Only the runtime path decides where commands run.
+  # does not. Only the runtime path decides where commands run, and this key
+  # owns it: apply_terminal_config_to_env copies it over TERMINAL_CWD, so the
+  # compose variable is a backstop for a config that names no cwd here.
   cwd: ${STACK_HOST_PATH}
   timeout: 180
 

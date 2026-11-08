@@ -554,15 +554,19 @@ services:
       HERMES_GID: ${HERMES_GID:-1000}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
       STACK_HOST_PATH: ${STACK_HOST_PATH:-/opt/stack}
-      # Where the agent runs its commands. Hermes reads this variable at
-      # runtime and validates it with expanduser() only (agent/runtime_cwd.py),
-      # so it has to arrive already resolved - interpolation is exactly what
-      # does that here, from the same key the identical-path mount below uses.
-      # The seeded config.yaml carries the same literal, rendered into it by
-      # hermes-bootstrap at seed time; the two agree because both descend from
-      # STACK_HOST_PATH. Setting it in the environment alone is not enough,
-      # because the gateway seeds it from terminal.cwd, and it is not enough to
-      # leave a ${VAR} there, because nothing expands it on this path.
+      # Where the agent runs its commands, as the backstop for a config.yaml
+      # that names no terminal.cwd. Hermes validates the value with
+      # expanduser() only (agent/runtime_cwd.py), so it has to arrive already
+      # resolved, and compose interpolation is what resolves it here - from the
+      # same key the identical-path mount below uses.
+      #
+      # This is a backstop and not the fix: hermes_cli/config.py
+      # (apply_terminal_config_to_env) lets an explicit terminal.cwd in the
+      # seeded file own this variable, so on a box whose volume was seeded
+      # before the render existed the file's value wins here. The literal that
+      # hermes-bootstrap renders into config.yaml is what repairs such a box,
+      # via --data <mount> --force. The two agree because both descend from
+      # STACK_HOST_PATH.
       TERMINAL_CWD: ${STACK_HOST_PATH:-/opt/stack}
     ports:
       - "${HERMES_DASHBOARD_PORT:-9119}:9119"

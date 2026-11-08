@@ -201,11 +201,13 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
   `${VAR}` left in the file is reported as `does not exist` and the agent works somewhere
   else, while `hermes config get terminal.cwd` still prints the token because the config
   *loader* does expand `${VAR}` - the two paths disagree, and only the runtime one runs
-  commands. Two things carry the literal, both from `STACK_HOST_PATH`: `hermes-bootstrap`
-  renders the placeholder in the seeded `config.yaml` at seed time (`--cwd DIR` overrides
-  what it renders), and compose sets `TERMINAL_CWD` for the running container. The
-  seeded file is what an already-created container reads, so the render is the part that
-  fixes a long-lived box; the env var covers a fresh one.
+  commands. `hermes-bootstrap` renders the placeholder in the seeded `config.yaml` at
+  seed time (`--cwd DIR` overrides what it renders), which is the part that fixes a
+  long-lived box. compose also sets `TERMINAL_CWD` from the same key, as the backstop for
+  a config that names no `terminal.cwd`: `apply_terminal_config_to_env` lets an explicit
+  `terminal.cwd` in the file own that variable, so the file decides wherever it carries
+  one. Re-seed a volume that predates the render with
+  `hermes-bootstrap --data <mount> --force`.
 - `hermes/skills/` is tracked in git. Add a skill by editing the repo, never by editing
   the volume; the volume copy is not the record.
 - `STACK_DEPLOY_PATH` (default `/opt/stack-deploy`) is the **deploy workspace**: the one

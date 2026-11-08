@@ -113,6 +113,21 @@ setup() {
     'HERMES_DASHBOARD_PUBLIC_URL: \$\{STACK_HERMES_URL:-\}'
 }
 
+@test "hermes compose: the working directory arrives resolved" {
+  # Hermes validates terminal.cwd with expanduser() alone, so neither copy of
+  # the path may still be a token by the time the gateway reads it. Compose
+  # interpolation is what resolves this one, from the same key the
+  # identical-path mount uses; the seeded config.yaml carries the literal
+  # hermes-bootstrap renders. A leftover ${VAR} here is the bug that made the
+  # assistant work outside the checkout while every check read healthy.
+  local compose="${REPO_ROOT}/docker-compose.yml"
+  assert_file_exists "compose file" "${compose}"
+  assert_contains_file "terminal cwd from the checkout key" "${compose}" \
+    'TERMINAL_CWD: \$\{STACK_HOST_PATH:-/opt/stack\}'
+  run grep -E '^[[:space:]]*TERMINAL_CWD:[[:space:]]*\$\{[A-Z_]+\}$' "${compose}"
+  [ "${status}" -ne 0 ]
+}
+
 @test "hermes config: dashboard trusts the router subnet" {
   assert_contains_file "trusted proxies" "${CONFIG}" \
     'trusted_proxies: \["172\.16\.0\.0/12"\]'
