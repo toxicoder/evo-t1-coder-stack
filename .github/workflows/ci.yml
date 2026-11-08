@@ -121,11 +121,15 @@ jobs:
           restore-keys: |
             bazel-repo-
 
-      - name: Bazel test-fast, lint and validate in the image
+      - name: Bazel test-fast, lint, ownership audit and validate in the image
         run: |
           export EVO_T1_BAZEL_CACHE="${RUNNER_TEMP}/bazel-repo-cache"
           ./scripts/test-in-image.sh -- test //:test-fast --config=ci
           ./scripts/test-in-image.sh -- test //:lint --config=ci --test_tag_filters=manual
+          # A tracked file no target can open is invisible to every gate above, so the
+          # graph is asked directly here. It is a `run` and not a member of //:test-fast
+          # because a test action holds the Bazel server its own query needs.
+          ./scripts/test-in-image.sh -- run //tests:owned_files_audit
           VALIDATE_INNER=1 ./scripts/test-in-image.sh -- run //:validate
 
       # The same gate the pre-push hook runs, so a PR is checked by exactly the
