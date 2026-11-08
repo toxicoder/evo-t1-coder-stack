@@ -11,8 +11,10 @@ argument-hint: "[repo-path] [--dry-run]"
 
 Collapse a repository onto one long-lived branch, move every environment out of git and
 into config, put unfinished work behind a flag that defaults off, then deal with the
-branches that are left. The full prose with worked examples is
-`docs/workflows/trunk-feature-flags-refactor.md`; this body is the procedure.
+branches that are left. The contributor-facing prose, with the worked examples this body
+leaves out, is `docs/workflows/trunk-feature-flags-refactor.md` in the repository that ships
+this skill. It is a convenience: this body is self-contained, so a session pointed at some
+other repository needs nothing beside it but its own shell.
 
 Run every command with your shell tool (`run_terminal_command`) and read files with
 `read_file`. A command written in this body runs nothing until you run it.
@@ -269,10 +271,10 @@ local clones need `git fetch --all --prune` afterwards.
 
 ## Stack adaptation notes
 
-Read the matching subsection of `docs/workflows/trunk-feature-flags-refactor.md` before you
-touch a stack you do not already know. Short version, measured against the remotes on 2026-11-08
-- re-run Phase 0, because these numbers move and a skill note is a hint while the checkout is the
-fact:
+These are orientation, measured against the remotes on 2026-11-08. Re-run Phase 0 before you
+trust them: these repositories move, and a note in a skill is a hint while the checkout is the
+fact. Where the prose page is reachable, its per-repository table carries the same notes with
+the commands spelled out.
 
 - **`toxicoder/evo-t1-coder-stack`** (trunk `main`): Bazelisk is the ingress and the gate
   (`bazelisk test //:test-fast`, `//:lint`, `//:validate`). Environments are already dev versus
