@@ -366,6 +366,17 @@ _SUITE_PAYLOAD = {
     "tool-pins.bats": [
         "//images/dev:tool_versions",
     ],
+    # The trunk-refactor set is this suite's whole subject: the canonical body, the
+    # repo-tier link and the rules that load it, the flags sample that no other gate
+    # parses, the docs twin plus the nav file that makes it reachable, and the rulebook
+    # that cites all of them.
+    "trunk-refactor-skill.bats": [
+        "//:agent_rules",
+        "//:flags_example",
+        "//:skill_sources",
+        "//docs-site:sources",
+        "//docs:content",
+    ],
     "update-configs.bats": [
         "//:env_example",
         "//:env_sample",
