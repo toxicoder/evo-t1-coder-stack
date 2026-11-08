@@ -485,6 +485,14 @@ bazelisk run //:fix
   (`//tests:shell_coverage`, `//tests:py_coverage`, `//docs-site:unit_coverage`).
   `//:test-fast` only proves a function is *named* by a test; `//tests:shell_coverage`
   runs the suite against an instrumented mirror and proves it is *called*.
+- `//tests:owned_files_audit` asks the graph who owns every file `git ls-files`
+  reports: each one is a target's source or data, Bazel's own control plane, or listed
+  in `unowned-files.txt` with a reason. A committed file no target can open is invisible
+  to `//:test-fast` and `//:lint` and fails nothing else, which is why pre-push and CI
+  run this too. It is a `bazel run` rather than a member of `//:test-fast` because it
+  asks `bazelisk query`, and a test action holds the server that query needs. The
+  deliberate exceptions live in `unowned-files.txt`; a file a target could own belongs
+  in a filegroup instead.
 - `//scripts:install-hooks` points this checkout's `core.hooksPath` at `.githooks`,
   after which `.githooks/pre-commit` runs the hermetic gate on every commit and
   `.githooks/pre-push` runs `//:test-all` before anything is pushed. CI runs the

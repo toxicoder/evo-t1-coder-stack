@@ -39,6 +39,7 @@ targets=(
   scripts/lib
   tests/bazel_deps.py
   tests/extract_fn.py
+  tests/owned_files_check.py
   tests/coverage
   tests/python
   docs-site/scripts/gen_nav.py

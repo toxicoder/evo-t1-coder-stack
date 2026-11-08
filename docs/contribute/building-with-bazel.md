@@ -76,6 +76,7 @@ bazelisk test //tests:bats_common_test
 bazelisk test //:lint --test_tag_filters=manual
 bazelisk run //:fix
 bazelisk run //:validate
+bazelisk run //tests:owned_files_audit                # who owns every tracked file (CI and pre-push run it)
 bazelisk run //scripts:test-in-image --               # the same gate, inside evo-t1-dev:latest
 bazelisk run //scripts:dev-stack -- status            # dev stack (the default project)
 bazelisk run //scripts:prod-stack -- status           # stable stack (default project evo-t1-prod)
