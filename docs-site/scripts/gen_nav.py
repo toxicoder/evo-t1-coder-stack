@@ -126,6 +126,7 @@ NAV: list[tuple[str, list[DeclaredNode]]] = [
                 [
                     ("Project conventions", "project-conventions.md"),
                     ("Branching", "branching.md"),
+                    ("Trunk-based + flags refactor", "workflows/trunk-feature-flags-refactor.md"),
                 ],
             ),
         ],

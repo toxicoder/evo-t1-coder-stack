@@ -55,6 +55,10 @@
           {
             "title": "Branching",
             "path": "branching.md"
+          },
+          {
+            "title": "Trunk-based + flags refactor",
+            "path": "workflows/trunk-feature-flags-refactor.md"
           }
         ]
       }
