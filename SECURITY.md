@@ -48,8 +48,11 @@ repo can verify.
   a command it runs can affect the real host. The seeded config keeps
   `approvals.mode: manual`, `cron_mode: deny`, `unattended_mode: deny`, and
   `terminal.backend: local` (the `docker` backend skips dangerous-command
-  checks). Never set the mode to `off`. Secrets stay in `.env` and the
-  `hermes-data` volume; there is no GitHub PAT in Hermes. See
+  checks). Never set the mode to `off`. Its web lane is local too:
+  `web.search_backend: searxng` dials the stack's own SearXNG over the compose
+  network, and `web.keyless_fallback` / `web.keyless_rescue` stay false so a
+  search cannot fall through to a vendor's anonymous free tier. Secrets stay in
+  `.env` and the `hermes-data` volume; there is no GitHub PAT in Hermes. See
   [docs/hermes.md](docs/hermes.md).
 - **Dashboard.** The Homepage container publishes no port; `homepage-proxy`
   owns :80 / :443 with a self-signed cert that `bootstrap.sh` issues, so the

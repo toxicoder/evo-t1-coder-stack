@@ -902,6 +902,10 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
   `deploy-from-github` (a repository to running, in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`).
 - **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the
   dangerous-command checker on. The docker socket stays root-equivalent.
+- **Web research:** `web_search` dials the stack's own SearXNG on the compose network
+  (`SEARXNG_URL`, default `http://searxng:8181`), and both keyless switches stay off, so
+  a query reaches your instance or fails on the box - it never falls through to a
+  vendor's anonymous free tier. `web_extract` stays unconfigured for the same reason.
 
 Full detail (mounts, skills, bootstrap, security): [docs/hermes.md](docs/hermes.md).
 

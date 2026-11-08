@@ -43,6 +43,26 @@ terminal:
   cwd: ${STACK_HOST_PATH}
   timeout: 180
 
+web:
+  # The assistant reaches the public web through the stack's own SearXNG, and
+  # nowhere else. Both keyless switches stay false on purpose: with no web
+  # backend configured at all, agent/web_search_registry.py finishes its
+  # resolution walk at the anonymous free-tier ring (exa, parallel, firecrawl,
+  # keenable) and a "local-only" box quietly sends the query to a third party.
+  # keyless_rescue is the second half of that: one retry on the same ring when
+  # the chosen backend fails a call.
+  #
+  # Only the search capability is pinned. searxng is the one bundled provider
+  # that needs no API key - it reads SEARXNG_URL, which docker-compose.yml
+  # points at http://searxng:8181 on the compose network - and it is
+  # search-only, so web.backend and web.extract_backend stay unset and
+  # web_extract fails closed with "no extract provider configured" rather than
+  # dialing a third-party extractor. An operator who wants page fetches sets
+  # web.extract_backend deliberately; nothing here reaches one by default.
+  search_backend: searxng
+  keyless_fallback: false
+  keyless_rescue: false
+
 approvals:
   # manual: every flagged command waits for the operator. `smart` is not used for
   # v1 and `off` must never be set — the docker socket is mounted in this container.

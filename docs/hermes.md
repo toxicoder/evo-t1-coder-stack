@@ -12,6 +12,7 @@ tags: [hermes, dashboard, terminal, operate, safety]
 - Opening the same assistant in your own terminal with `hermes-shell`
 - Sign-in: HTTP basic auth, with Authelia in front of the public name
 - The models it calls through LiteLLM
+- Web research through the stack's own SearXNG, with the third-party fallback off
 - What the container mounts, and what "be the host" costs
 - Approval prompts, bootstrap seeding, and the skills directory
 
@@ -174,6 +175,42 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
   `agent-medium` for a thinking level), which edits the live config under `/opt/data`.
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
+
+## Web research
+
+The assistant can look things up, and the query leaves through your own SearXNG.
+
+- `web_search` goes to the stack's SearXNG container: the seeded config sets
+  `web.search_backend: searxng`, and compose gives the container
+  `SEARXNG_URL=${STACK_HERMES_SEARCH_URL:-http://searxng:8181}`. The variable's
+  presence is what registers the provider (`plugins/web/searxng` reads
+  `SEARXNG_URL` as its key env), and it is the only bundled web provider that
+  needs no API key. The name resolves on the compose network, so this adds no
+  published port.
+- **Both keyless switches stay off, and that is the part that keeps the promise.**
+  `agent/web_search_registry.py` resolves a backend in five steps, and its last
+  one is an anonymous free-tier ring - `exa`, `parallel`, `firecrawl`,
+  `keenable` - reached with no key at all. A seed that named no backend and left
+  `web.keyless_fallback` and `web.keyless_rescue` at their shipped `true` would
+  answer a search from a vendor's public endpoint while looking local. With both
+  false, a query either goes to your instance or fails on the box.
+- `web_extract` is deliberately unconfigured. SearXNG aggregates engine results
+  and does not fetch pages, so the seed leaves `web.backend` and
+  `web.extract_backend` empty and page extraction fails with "no extract provider
+  configured". Set `web.extract_backend` yourself when you decide a fetch is
+  worth a third-party extractor; nothing reaches one by default.
+- Query the lane the same way the agent does:
+  `bazelisk run //scripts:search-check` from a host shell counts results per
+  engine, which is how an empty answer stays distinguishable from no answer.
+  Inside the container,
+  `curl -s -H 'Accept: application/json' "$SEARXNG_URL/search?q=hermes&format=json"`
+  is the exact request the provider makes. The instance only answers JSON
+  because `searxng/settings.yml` adds `json` to `search.formats`; without it the
+  request is refused with 403 before the query is parsed.
+- Re-point the lane with `STACK_HERMES_SEARCH_URL` in `.env` (a sibling box, say)
+  and recreate. An operator who wants a keyed provider sets
+  `web.search_backend` plus that vendor's key env in the container themselves -
+  the seed carries neither, and adding one is a decision with a privacy cost.
 
 ## Mounts and "be the host"
 

@@ -10,7 +10,8 @@
 # compose interpolation defaults for dashboard
 # basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider),
 # HERMES_DASHBOARD_PUBLIC_URL comes from STACK_HERMES_URL, the seed trusts
-# the router subnet, and proxy/router.conf vhosts the public hermes name.
+# the router subnet, the web lane stays on the stack's own SearXNG with both
+# keyless switches off, and proxy/router.conf vhosts the public hermes name.
 # The live volume copy is out of scope; this suite reads the checkout
 # payload, docker-compose.yml, and proxy/router.conf only.
 #
@@ -126,6 +127,51 @@ setup() {
     'TERMINAL_CWD: \$\{STACK_HOST_PATH:-/opt/stack\}'
   run grep -E '^[[:space:]]*TERMINAL_CWD:[[:space:]]*\$\{[A-Z_]+\}$' "${compose}"
   [ "${status}" -ne 0 ]
+}
+
+@test "hermes config: web search stays on the box" {
+  # The whole point of the lane: agent/web_search_registry.py ends its
+  # resolution walk at an anonymous free-tier ring (exa, parallel, firecrawl,
+  # keenable), so a seed that names no backend and leaves the keyless switches
+  # at their shipped defaults sends "local-only" searches to a third party.
+  # searxng is the one bundled provider that needs no key, and the only one
+  # whose endpoint is this stack's own container.
+  assert_contains_file "search pinned to the local instance" "${CONFIG}" \
+    'search_backend: searxng'
+  assert_contains_file "keyless ring off" "${CONFIG}" 'keyless_fallback: false'
+  assert_contains_file "keyless rescue off" "${CONFIG}" 'keyless_rescue: false'
+
+  # No third-party backend may be configured, by any of the three keys the
+  # registry reads.
+  run grep -E '^[[:space:]]*(backend|search_backend|extract_backend):[[:space:]]*(tavily|firecrawl|brave-free|exa|parallel|perplexity|keenable|ddgs|openai-native|xai)' "${CONFIG}"
+  [ "${status}" -ne 0 ]
+  # And no vendor credential: the assistant holds one key, LITELLM_MASTER_KEY.
+  run grep -E 'TAVILY_API_KEY|FIRECRAWL_API_KEY|BRAVE_SEARCH_API_KEY|EXA_API_KEY|PARALLEL_API_KEY|KEENABLE_API_KEY|PERPLEXITY_API_KEY' "${CONFIG}"
+  [ "${status}" -ne 0 ]
+}
+
+@test "hermes config: page extraction fails closed on the box" {
+  # searxng is search-only. Naming it for extract would be a lie the dispatcher
+  # surfaces as an unavailable-provider error, and naming nothing leaves
+  # web_extract failing with "no extract provider configured" - which is the
+  # shape this seed wants: an operator who wants page fetches sets the key
+  # deliberately, and nothing reaches a third-party extractor by default.
+  run grep -E '^[[:space:]]*extract_backend:' "${CONFIG}"
+  [ "${status}" -ne 0 ]
+  run grep -E '^[[:space:]]*backend:[[:space:]]*searxng' "${CONFIG}"
+  [ "${status}" -ne 0 ]
+}
+
+@test "hermes compose: the search lane dials the stack's own SearXNG" {
+  # The variable's presence is what registers the bundled provider, so the
+  # default has to name the compose service. An internal URL means no new
+  # published port: the container reaches searxng by service name.
+  local compose="${REPO_ROOT}/docker-compose.yml"
+  local sample="${REPO_ROOT}/.env.sample"
+  assert_contains_file "search url" "${compose}" \
+    'SEARXNG_URL: \$\{STACK_HERMES_SEARCH_URL:-http://searxng:8181\}'
+  assert_contains_file "the key the operator can set" "${sample}" \
+    '^STACK_HERMES_SEARCH_URL=$'
 }
 
 @test "hermes config: dashboard trusts the router subnet" {

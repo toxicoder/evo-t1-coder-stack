@@ -568,6 +568,14 @@ services:
       # via --data <mount> --force. The two agree because both descend from
       # STACK_HOST_PATH.
       TERMINAL_CWD: ${STACK_HOST_PATH:-/opt/stack}
+      # Where web_search sends its queries. The presence of this variable is
+      # what registers the bundled searxng provider (plugins/web/searxng reads
+      # SEARXNG_URL as its key env), and the seeded config pins
+      # web.search_backend to it, so the assistant's searches stay inside the
+      # compose network. The service name resolves without a published port:
+      # nothing here is exposed by this line. Empty STACK_HERMES_SEARCH_URL
+      # keeps the default; a remapped instance is named by that key.
+      SEARXNG_URL: ${STACK_HERMES_SEARCH_URL:-http://searxng:8181}
     ports:
       - "${HERMES_DASHBOARD_PORT:-9119}:9119"
     volumes:
