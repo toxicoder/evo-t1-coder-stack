@@ -12,6 +12,7 @@ tags: [hermes, dashboard, terminal, operate, safety]
 - Opening the same assistant in your own terminal with `hermes-shell`
 - Sign-in: HTTP basic auth, with Authelia in front of the public name
 - The models it calls through LiteLLM
+- Web research through the stack's own SearXNG, with the third-party fallback off
 - What the container mounts, and what "be the host" costs
 - Approval prompts, bootstrap seeding, and the skills directory
 
@@ -135,6 +136,50 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
   host, name the directory: `--writable "${STACK_DEPLOY_PATH:-/opt/stack-deploy}"` or
   the checkout path.
 
+## Audit and drift
+
+`hermes-shell -- check` answers "can I open the assistant". It cannot answer "is this
+still the assistant this repo describes", and the two come apart on a long-lived box:
+an operator edits the config inside the volume, a recreate reads a stale `.env`, a
+merge changes the seed and a seed-only-when-absent copy never takes it. `hermes-doctor`
+answers the second question. It is read-only and prints key names with no value.
+
+```sh
+bazelisk run //scripts:hermes-doctor              # every check
+bazelisk run //scripts:hermes-doctor -- posture   # security and privacy only
+bazelisk run //scripts:hermes-doctor -- web       # the search lane and its guards
+bazelisk run //scripts:hermes-doctor -- diff      # the volume copy against the seed
+bazelisk run //scripts:hermes-doctor -- --check approvals --check web-lane
+bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, inspect nothing
+```
+
+- **What it reads:** the config the container actually loads, the environment it was
+  created with, the mounts it was given, and the two seed files beside the checkout.
+  The created environment is the fact and the `.env` beside the compose file is the
+  intention: compose interpolated the former at create time, so a key can be right in
+  the file and stale in the container until the next recreate. Every container-level
+  fact comes from `docker inspect` or `docker compose ps`; nothing writes, restarts,
+  recreates, or execs.
+- **The twelve checks:** `approvals` (manual, with cron and unattended both deny),
+  `terminal-cwd`, `write-root`, `web-lane`, `keyless-egress`, `mcp-servers`,
+  `seed-drift`, `mount-identity`, `image-pin`, `model-key`, `dashboard`, `memories`.
+- **It reports, it does not gate.** Exit 0 on a clean bill (warnings allowed), 1 when a
+  check failed, 2 on a bad invocation, 5 when it cannot find a checkout.
+  `hermes-shell -- check` stays the thing that decides whether to launch a session.
+- **Three findings it exists to catch**, each one measured on a live box:
+  `terminal.cwd` still carrying the `${STACK_HOST_PATH}` token (Hermes validates that
+  value with `expanduser()` alone, so the token reads as a missing directory while
+  `hermes config get` prints it looking healthy), `STACK_HOST_PATH` naming a directory
+  with no checkout (compose mounts an empty directory over the repo and every
+  container-level check still reads healthy), and a `web` block that stopped pinning
+  `searxng` or flipped a keyless switch back on, which routes a search to a vendor's
+  free tier while the config still looks local.
+- **`--data DIR`** points the two volume checks at a directory instead of asking the
+  daemon where the volume is mounted, so the audit can be run against a copy of one.
+- **Run it before a `--force` re-seed and after a merge.** The drift check names the
+  file that differs and prints the `hermes-bootstrap --data <mount> --force` line that
+  would overwrite it, which is the pair an operator wants side by side.
+
 ## Auth
 
 - Hermes since the June 2026 hardening refuses a non-loopback bind without a
@@ -175,6 +220,42 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
 
+## Web research
+
+The assistant can look things up, and the query leaves through your own SearXNG.
+
+- `web_search` goes to the stack's SearXNG container: the seeded config sets
+  `web.search_backend: searxng`, and compose gives the container
+  `SEARXNG_URL=${STACK_HERMES_SEARCH_URL:-http://searxng:8181}`. The variable's
+  presence is what registers the provider (`plugins/web/searxng` reads
+  `SEARXNG_URL` as its key env), and it is the only bundled web provider that
+  needs no API key. The name resolves on the compose network, so this adds no
+  published port.
+- **Both keyless switches stay off, and that is the part that keeps the promise.**
+  `agent/web_search_registry.py` resolves a backend in five steps, and its last
+  one is an anonymous free-tier ring - `exa`, `parallel`, `firecrawl`,
+  `keenable` - reached with no key at all. A seed that named no backend and left
+  `web.keyless_fallback` and `web.keyless_rescue` at their shipped `true` would
+  answer a search from a vendor's public endpoint while looking local. With both
+  false, a query either goes to your instance or fails on the box.
+- `web_extract` is deliberately unconfigured. SearXNG aggregates engine results
+  and does not fetch pages, so the seed leaves `web.backend` and
+  `web.extract_backend` empty and page extraction fails with "no extract provider
+  configured". Set `web.extract_backend` yourself when you decide a fetch is
+  worth a third-party extractor; nothing reaches one by default.
+- Query the lane the same way the agent does:
+  `bazelisk run //scripts:search-check` from a host shell counts results per
+  engine, which is how an empty answer stays distinguishable from no answer.
+  Inside the container,
+  `curl -s -H 'Accept: application/json' "$SEARXNG_URL/search?q=hermes&format=json"`
+  is the exact request the provider makes. The instance only answers JSON
+  because `searxng/settings.yml` adds `json` to `search.formats`; without it the
+  request is refused with 403 before the query is parsed.
+- Re-point the lane with `STACK_HERMES_SEARCH_URL` in `.env` (a sibling box, say)
+  and recreate. An operator who wants a keyed provider sets
+  `web.search_backend` plus that vendor's key env in the container themselves -
+  the seed carries neither, and adding one is a decision with a privacy cost.
+
 ## Mounts and "be the host"
 
 | Mount | Inside | Why |
@@ -188,11 +269,26 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
 - `/opt/data` is a **named volume on purpose**. Hermes keeps a SQLite database there in
   WAL mode, and WAL on a virtiofs bind mount is not safe. Bind-mounting that path is how
   you corrupt the assistant's own memory.
-- `STACK_HOST_PATH` is the checkout's `pwd -P`. Compose bind-mounts that host path at
+- `STACK_HOST_PATH` is the checkout's `pwd -P`, or, from a subdirectory or a linked
+  worktree, its git top-level. Compose bind-mounts that host path at
   the same path inside the container, so `docker compose -f $STACK_HOST_PATH/docker-compose.yml`
   talking through the socket names bind sources the daemon can find. Empty (CI
-  `compose config`) falls back to `.:/opt/stack`. Seeded `terminal.cwd` is
-  `${STACK_HOST_PATH}`, expanded from the same env.
+  `compose config`) falls back to `.:/opt/stack`. `bootstrap` refreshes the key only
+  after checking the path holds this `docker-compose.yml`: compose mounts whatever the
+  key names, so a stale value leaves the assistant working an empty directory while
+  every container-level check still reads healthy.
+- The working directory the agent runs in is `terminal.cwd`, and it has to be a literal
+  path. Hermes validates it in `agent/runtime_cwd.py` with `expanduser()` alone, so a
+  `${VAR}` left in the file is reported as `does not exist` and the agent works somewhere
+  else, while `hermes config get terminal.cwd` still prints the token because the config
+  *loader* does expand `${VAR}` - the two paths disagree, and only the runtime one runs
+  commands. `hermes-bootstrap` renders the placeholder in the seeded `config.yaml` at
+  seed time (`--cwd DIR` overrides what it renders), which is the part that fixes a
+  long-lived box. compose also sets `TERMINAL_CWD` from the same key, as the backstop for
+  a config that names no `terminal.cwd`: `apply_terminal_config_to_env` lets an explicit
+  `terminal.cwd` in the file own that variable, so the file decides wherever it carries
+  one. Re-seed a volume that predates the render with
+  `hermes-bootstrap --data <mount> --force`.
 - `hermes/skills/` is tracked in git. Add a skill by editing the repo, never by editing
   the volume; the volume copy is not the record.
 - `STACK_DEPLOY_PATH` (default `/opt/stack-deploy`) is the **deploy workspace**: the one
@@ -238,6 +334,11 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
   `scripts/hermes-bootstrap.sh --in-container` and copies `hermes/config.yaml` and
   `hermes/SOUL.md` into `/opt/data` **only when those files are missing**. Editing the
   copy in the volume is how an operator ends up with a config no one can reproduce.
+- The seed is a template for one key: `${STACK_HOST_PATH}` in `terminal.cwd` is rendered
+  to a literal path on the way into the volume, from `--cwd`, then `STACK_HOST_PATH`,
+  then `/opt/stack` (announced when it falls back). `${LITELLM_MASTER_KEY}` stays a token
+  on purpose - Hermes expands it at boot, and a byte of the key in a volume copy is what
+  [Mounts and "be the host"](#mounts-and-be-the-host) argues against.
 - To reseed deliberately:
 
 ```sh
@@ -246,7 +347,9 @@ bazelisk run //scripts:hermes-bootstrap -- --data <mount> --force
 
 `<mount>` is the host directory of the Hermes data volume (what compose mounts at
 `/opt/data`). `--force` is how an existing volume picks up the seeded
-`dashboard.trusted_proxies`. Setting that key with `hermes config set` is the
+`dashboard.trusted_proxies`, and `--cwd /absolute/path/to/checkout` is how a host re-seed
+names the working directory when the shell running it carries no `STACK_HOST_PATH`.
+Setting that key with `hermes config set` is the
 in-container alternative. `HERMES_DASHBOARD_PUBLIC_URL` is not in the volume;
 recreate the container and the env applies.
 
@@ -257,9 +360,11 @@ recreate the container and the env applies.
   restart, logs for this stack), `coder-workspace` (workspaces and their GitHub auth),
   `model-routing` (which LiteLLM alias, and how to switch it), `host-linux-ops` (the
   right Linux command, what each flag does, and the blast radius before it runs),
-  `host-diagnostics` (read-only triage for a slow, hot, full or failing box), and
+  `host-diagnostics` (read-only triage for a slow, hot, full or failing box),
+  `web-research` (what is worth looking up, how to read an empty answer from the
+  lane above, and what that lane refuses to do), and
   `deploy-from-github` (a named repository to running, with the read-first, pin-the-ref,
-  isolate, preflight, health-check, keep-a-rollback order). The last three are what make
+  isolate, preflight, health-check, keep-a-rollback order). The last four are what make
   the terminal door worth opening: they carry the mentoring stance - inspect, explain,
   propose, then act on the yes.
 - A bind-mounted skill needs no recreate when the agent reloads skills from disk; start a
@@ -308,6 +413,13 @@ Open the assistant in your own terminal (subcommands `chat`, `ask`, `shell`, `ch
 ```sh
 bazelisk run //scripts:hermes-shell -- check
 bazelisk run //scripts:hermes-shell
+```
+
+Read-only audit of what the assistant was created with, and how far it has drifted from
+this checkout (`report`, `posture`, `web`, `diff`; `--check` narrows to one):
+
+```sh
+bazelisk run //scripts:hermes-doctor -- posture
 ```
 
 Stable stack - `hermes` comes up with the rest:

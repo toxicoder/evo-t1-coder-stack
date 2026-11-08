@@ -155,7 +155,11 @@ classify_public_entry() {
 # @function stack_host_path
 # Print the physical path of the stack checkout. Prefer
 # BUILD_WORKSPACE_DIRECTORY (bazelisk run names the real checkout) so a
-# runfiles cwd cannot become the hermes bind source.
+# runfiles cwd cannot become the hermes bind source, then git, which knows the
+# root when the caller stands in a subdirectory or a linked worktree. The
+# answer is the directory compose bind-mounts at the same path inside the
+# assistant's container, so it has to be the checkout itself and not wherever
+# the operator happened to invoke the CLI.
 # Globals:
 #   BUILD_WORKSPACE_DIRECTORY
 # Arguments:
@@ -167,6 +171,12 @@ classify_public_entry() {
 stack_host_path() {
   if [ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ] && [ -f "${BUILD_WORKSPACE_DIRECTORY}/docker-compose.yml" ]; then
     (cd "${BUILD_WORKSPACE_DIRECTORY}" && pwd -P)
+    return 0
+  fi
+  local top=""
+  top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [ -n "${top}" ] && [ -f "${top}/docker-compose.yml" ]; then
+    (cd "${top}" && pwd -P)
     return 0
   fi
   pwd -P

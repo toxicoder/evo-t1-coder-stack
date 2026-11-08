@@ -89,6 +89,7 @@ make_fake_root() {
   assert_match "usage documents --force" '--force' "${output}"
   assert_match "usage documents --seed" '--seed DIR' "${output}"
   assert_match "usage documents --data" '--data DIR' "${output}"
+  assert_match "usage documents --cwd" '--cwd DIR' "${output}"
   assert_match "usage states the exit codes" 'Exit codes: 0' "${output}"
   assert_file_not_exists "no data directory appeared" "${SCRATCH}/data"
 }
@@ -101,7 +102,7 @@ make_fake_root() {
 
   run usage
   [ "${status}" -eq 0 ]
-  for flag in --in-container --force --seed --data --help; do
+  for flag in --in-container --force --seed --data --cwd --help; do
     assert_match "usage lists ${flag}" "${flag}" "${output}"
   done
   # The three per-file answers are the contract an operator reads back.
@@ -129,6 +130,10 @@ make_fake_root() {
   source "${LIB}"
   # shellcheck source=/dev/null
   load_shell_function "${SCRIPT}" seed_one_file
+  # seed_one_file renders config.yaml through seed_render_config, so the
+  # renderer has to be loaded with it or the copy path dies on a missing name.
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_render_config
 
   local seed="${SCRATCH}/seed" data="${SCRATCH}/data"
   mkdir -p "${seed}"
@@ -197,6 +202,8 @@ SOUL.md" "$(hermes_seed_files)"
   load_shell_function "${SCRIPT}" hermes_seed_files
   # shellcheck source=/dev/null
   load_shell_function "${SCRIPT}" seed_one_file
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_render_config
   # shellcheck source=/dev/null
   load_shell_function "${SCRIPT}" seed_hermes_data
 
@@ -340,7 +347,7 @@ SOUL.md" "$(hermes_seed_files)"
 }
 
 @test "hermes-bootstrap: a flag with no value dies instead of eating argv" {
-  # Each of the two path flags has to fail on its own, before any seeding,
+  # Each of the three path flags has to fail on its own, before any seeding,
   # so a truncated command line is never read as "seed the default".
   run --separate-stderr env REPO_ROOT="${REPO_ROOT}" GITHUB_WORKSPACE="" \
     bash "${SCRIPT}" --seed
@@ -351,6 +358,39 @@ SOUL.md" "$(hermes_seed_files)"
     bash "${SCRIPT}" --data
   [ "${status}" -eq 1 ]
   assert_match "--data demands a value" '--data needs a directory' "${stderr}"
+
+  run --separate-stderr env REPO_ROOT="${REPO_ROOT}" GITHUB_WORKSPACE="" \
+    bash "${SCRIPT}" --cwd
+  [ "${status}" -eq 1 ]
+  assert_match "--cwd demands a value" '--cwd needs a directory' "${stderr}"
+}
+
+@test "hermes-bootstrap: a relative --cwd dies instead of seeding a relative cwd" {
+  # Hermes validates terminal.cwd as a real directory, so a relative path here
+  # would be resolved against wherever the gateway happened to start - the same
+  # class of bug as the unresolved placeholder, and quieter. Refusing at the flag
+  # keeps the fallback to /opt/stack reserved for "no path was named".
+  local seed data
+  seed="$(make_seed "${SCRATCH}/seed")"
+  data="${SCRATCH}/data"
+
+  run --separate-stderr env REPO_ROOT="${REPO_ROOT}" GITHUB_WORKSPACE="" \
+    bash "${SCRIPT}" --seed "${seed}" --data "${data}" --cwd ./checkout
+  [ "${status}" -eq 1 ]
+  assert_match "names the flag" '--cwd needs an absolute directory' "${stderr}"
+  assert_file_not_exists "nothing was seeded" "${data}/config.yaml"
+
+  # A pipe is the substitution delimiter and cannot appear in a POSIX path, so
+  # an environment that names one falls back rather than writing a mangled file.
+  local pseed="${SCRATCH}/pipe-seed"
+  mkdir -p "${pseed}"
+  printf 'terminal:\n  cwd: ${STACK_HOST_PATH}\n' >"${pseed}/config.yaml"
+  printf 'soul\n' >"${pseed}/SOUL.md"
+  run --separate-stderr env REPO_ROOT="${REPO_ROOT}" GITHUB_WORKSPACE="" \
+    STACK_HOST_PATH='/opt/|stack' bash "${SCRIPT}" --seed "${pseed}" --data "${data}"
+  [ "${status}" -eq 0 ]
+  assert_match "the pipe is announced" 'working directory holds a pipe character' "${output}"
+  assert_contains_file "the fallback was written" "${data}/config.yaml" 'cwd: /opt/stack'
 }
 
 @test "hermes-bootstrap: a missing source file dies and names it" {
@@ -437,4 +477,109 @@ SOUL.md" "$(hermes_seed_files)"
   run --separate-stderr find_common_lib common.sh "${SCRATCH}/no-such-root"
   [ "${status}" -eq 1 ]
   assert_match "a lib with no home is reported, not guessed" 'common.sh is not reachable' "${stderr}"
+}
+
+@test "hermes-bootstrap: the seeded config carries a literal working directory" {
+  # Why this test exists: agent/runtime_cwd.py validates terminal.cwd with
+  # expanduser() alone, so a ${STACK_HOST_PATH} left in the volume is logged as
+  # `TERMINAL_CWD does not exist: ${STACK_HOST_PATH}` on every session and the
+  # agent runs its commands outside the checkout it is meant to operate. The
+  # config loader does expand ${VAR}, so `hermes config get` looks healthy
+  # while the runtime is not - only what lands here is what actually runs.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_one_file
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_render_config
+
+  local seed="${SCRATCH}/seed" data="${SCRATCH}/data"
+  mkdir -p "${seed}"
+  printf 'terminal:\n  cwd: ${STACK_HOST_PATH}\nmodel:\n  api_key: ${LITELLM_MASTER_KEY}\n' >"${seed}/config.yaml"
+
+  HERMES_SEED_CWD=""
+  export STACK_HOST_PATH="/srv/stack"
+  run seed_one_file "${seed}" "${data}" config.yaml 0
+  [ "${status}" -eq 0 ]
+  assert_eq "the placeholder became a real path" \
+    'terminal:
+  cwd: /srv/stack
+model:
+  api_key: ${LITELLM_MASTER_KEY}' "$(cat "${data}/config.yaml")"
+
+  # The model key stays a token: the secret is Hermes's to expand at boot, and
+  # a volume copy holding a byte of it is what docs/hermes.md forbids.
+  run grep -F '${LITELLM_MASTER_KEY}' "${data}/config.yaml"
+  [ "${status}" -eq 0 ]
+}
+
+@test "hermes-bootstrap: --cwd beats the environment for the rendered path" {
+  # A host re-seed (--data <mount> --force) runs in the operator's shell, which
+  # has no STACK_HOST_PATH; --cwd is how that run names the right directory
+  # instead of taking the /opt/stack fallback.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_one_file
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_render_config
+
+  local seed="${SCRATCH}/seed" data="${SCRATCH}/data"
+  mkdir -p "${seed}"
+  printf 'terminal:\n  cwd: ${STACK_HOST_PATH}\n' >"${seed}/config.yaml"
+
+  HERMES_SEED_CWD="/home/alx/code/toxicoder/evo-t1-coder-stack"
+  export STACK_HOST_PATH="/opt/stack"
+  run seed_one_file "${seed}" "${data}" config.yaml 0
+  [ "${status}" -eq 0 ]
+  assert_eq "the flag won" \
+    'terminal:
+  cwd: /home/alx/code/toxicoder/evo-t1-coder-stack' "$(cat "${data}/config.yaml")"
+}
+
+@test "hermes-bootstrap: no known path falls back to /opt/stack and says so" {
+  # The compose default for the mount target, so a silent fallback still lands
+  # where a LAN-only box keeps the checkout. Saying it out loud is what stops
+  # the fallback becoming invisible on a host whose checkout lives elsewhere.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_one_file
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_render_config
+
+  local seed="${SCRATCH}/seed" data="${SCRATCH}/data"
+  mkdir -p "${seed}"
+  printf 'terminal:\n  cwd: ${STACK_HOST_PATH}\n' >"${seed}/config.yaml"
+
+  HERMES_SEED_CWD=""
+  unset STACK_HOST_PATH
+  run seed_one_file "${seed}" "${data}" config.yaml 0
+  [ "${status}" -eq 0 ]
+  assert_match "the fallback is announced" 'seeding cwd as /opt/stack' "${output}"
+  assert_eq "and written" '  cwd: /opt/stack' "$(sed -n '2p' "${data}/config.yaml")"
+}
+
+@test "hermes-bootstrap: a config with no placeholder is copied untouched and silently" {
+  # The seed tree is a payload, not a template: a config that never names the
+  # placeholder must not gain a note line, or every seed log fills with a
+  # substitution that did not happen.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_one_file
+  # shellcheck source=/dev/null
+  load_shell_function "${SCRIPT}" seed_render_config
+
+  local seed="${SCRATCH}/seed" data="${SCRATCH}/data"
+  mkdir -p "${seed}"
+  printf 'terminal:\n  cwd: .\n' >"${seed}/config.yaml"
+
+  HERMES_SEED_CWD=""
+  unset STACK_HOST_PATH
+  run seed_one_file "${seed}" "${data}" config.yaml 0
+  [ "${status}" -eq 0 ]
+  assert_eq "one line, the seed line" "seeded config.yaml" "${output}"
+  assert_eq "byte-identical" 'terminal:
+  cwd: .' "$(cat "${data}/config.yaml")"
 }

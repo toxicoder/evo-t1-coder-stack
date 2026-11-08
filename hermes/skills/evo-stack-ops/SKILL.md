@@ -57,7 +57,8 @@ reports this container's state, its seed, and the model lane.
 ## Related skills
 
 `host-linux-ops` for the right Linux command and what each flag means,
-`host-diagnostics` when something is broken and nobody knows why, and
+`host-diagnostics` when something is broken and nobody knows why, `web-research`
+when the answer is off this box, and
 `deploy-from-github` when the request is about a third-party repository — that
 one belongs in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}` and never in this checkout.
 

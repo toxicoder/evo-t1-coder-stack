@@ -896,12 +896,22 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
   agent on one memory store, with inline `[o]nce | [s]ession | [a]lways | [d]eny`
   approvals. `-- check` reports readiness without launching, and `ask`, `shell`,
   `commands`, `--model` and `--writable` cover the rest.
-- **Skills:** six tracked under `hermes/skills/` - stack ops, Coder workspaces, model
-  routing, plus the host-ops trio: `host-linux-ops` (the right command, and what each
+- **Audit:** `bazelisk run //scripts:hermes-doctor` reads what readiness does not - the
+  config the container actually loads, the environment it was created with, its mounts,
+  and the seed beside the checkout - and reports whether approvals, the working
+  directory, the web lane, the write fence, the image pin and the dashboard door are
+  still what this repo ships. Read-only, and it prints key names with no value.
+- **Skills:** seven tracked under `hermes/skills/` - stack ops, Coder workspaces, model
+  routing, the web lane (`web-research`: what to look up and what the lane refuses),
+  plus the host-ops trio: `host-linux-ops` (the right command, and what each
   flag does), `host-diagnostics` (read-only triage playbooks) and
   `deploy-from-github` (a repository to running, in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`).
 - **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the
   dangerous-command checker on. The docker socket stays root-equivalent.
+- **Web research:** `web_search` dials the stack's own SearXNG on the compose network
+  (`SEARXNG_URL`, default `http://searxng:8181`), and both keyless switches stay off, so
+  a query reaches your instance or fails on the box - it never falls through to a
+  vendor's anonymous free tier. `web_extract` stays unconfigured for the same reason.
 
 Full detail (mounts, skills, bootstrap, security): [docs/hermes.md](docs/hermes.md).
 
@@ -992,6 +1002,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
 │   ├── github-auth.sh       # GitHub credential doctor and one-command fix
 │   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
+│   ├── hermes-doctor.sh     # audit the Hermes assistant's posture and its seed drift
 │   ├── hermes-shell.sh      # open the Hermes assistant in the terminal you are in
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)

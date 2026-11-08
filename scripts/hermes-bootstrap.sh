@@ -52,6 +52,12 @@
 #   --data DIR      write into DIR. Required on the host, because a host run
 #                   has no way to know which volume backs the service;
 #                   in-container default: /opt/data
+#   --cwd DIR       absolute directory to render into the seeded
+#                   config.yaml's terminal.cwd, replacing ${STACK_HOST_PATH}.
+#                   Defaults to STACK_HOST_PATH, then to /opt/stack (the
+#                   compose mountpoint), because Hermes validates that value
+#                   with expanduser() alone and a leftover token reads as a
+#                   missing directory. See seed_render_config.
 #   -h, --help      print this usage and exit 0
 #
 # Exit codes: 0 when both files were seeded or left alone; 1 on any error - an
@@ -61,6 +67,11 @@
 set -euo pipefail
 
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# The path rendered into the seeded config.yaml's terminal.cwd. --cwd wins here;
+# without it seed_render_config falls back to STACK_HOST_PATH and then to
+# /opt/stack. Global because seed_one_file reaches it through seed_render_config.
+HERMES_SEED_CWD="${HERMES_SEED_CWD:-}"
 
 # @function hermes_seed_files
 # Print the file names this script seeds, one per line: the two files Hermes
@@ -180,7 +191,7 @@ unset JSON_MODE
 usage() {
   cat <<'USAGE'
 usage: bazelisk run //scripts:hermes-bootstrap -- [--in-container] [--force]
-                    [--seed DIR] [--data DIR] [-h|--help]
+                    [--seed DIR] [--data DIR] [--cwd DIR] [-h|--help]
 
 Seeds the Hermes data directory with the two files Hermes reads on every
 boot: config.yaml and SOUL.md. A file that is already there is left alone, so
@@ -193,8 +204,9 @@ One line per file: "seeded <name>", "left <name> (already present)", or
 
 Options: --in-container (the compose hermes-init shape: --seed defaults to
 /seed, --data to /opt/data, and no repo-root probe runs), --force, --seed DIR
-(host default <repo root>/hermes), --data DIR (required on the host),
--h/--help.
+(host default <repo root>/hermes), --data DIR (required on the host), --cwd DIR
+(the path rendered into terminal.cwd; defaults to $STACK_HOST_PATH, then
+/opt/stack), -h/--help.
 
 Exit codes: 0 = both files seeded or left alone; 1 = unknown flag, a flag
 with no value, a missing seed file, an unusable data path, or a host run with
@@ -245,7 +257,62 @@ seed_one_file() {
 
   mkdir -p "${dest_dir}" || die "could not create the data directory ${dest_dir}"
   cp "${src}" "${dest}" || die "could not copy ${src} to ${dest}"
+  if [ "${name}" = "config.yaml" ]; then
+    seed_render_config "${dest}"
+  fi
   log "${action} ${name}"
+}
+
+# @function seed_render_config
+# Substitute the one placeholder the seeded config carries, so the file the
+# gateway reads holds a literal working directory. Hermes cannot do this itself:
+# agent/runtime_cwd.py validates terminal.cwd with expanduser() alone, so an
+# unresolved "${STACK_HOST_PATH}" there is logged as `TERMINAL_CWD does not
+# exist: ${STACK_HOST_PATH}` on every session and the agent runs outside the
+# checkout it is meant to operate. The config loader does expand ${VAR}, which is
+# why `hermes config get terminal.cwd` looks healthy while the runtime is not.
+#
+# Only that token is touched. ${LITELLM_MASTER_KEY} stays a token on purpose -
+# the key is Hermes's to expand at boot, and a volume copy carrying a byte of it
+# is exactly what docs/hermes.md forbids.
+# Globals:
+#   HERMES_SEED_CWD (--cwd, wins when set), STACK_HOST_PATH (what compose gives
+#   the init container)
+# Arguments:
+#   $1 - the destination file just copied
+# Outputs:
+#   A note: line when the path came from the fallback rather than the caller
+# Returns:
+#   0; a file without the token is left byte-identical
+seed_render_config() {
+  local dest="$1" value
+  # No token means nothing to do, and that stays silent: the seed tree a Bats
+  # suite or an operator hands this script may carry a config with no
+  # placeholder at all, and a note about a substitution it never needed is
+  # noise in the seed log.
+  # shellcheck disable=SC2016
+  grep -q '\${STACK_HOST_PATH}' "${dest}" 2>/dev/null || return 0
+
+  value="${HERMES_SEED_CWD:-${STACK_HOST_PATH:-}}"
+  case "${value}" in
+    /*) ;;
+    *)
+      value="/opt/stack"
+      note "no absolute working directory in this environment: seeding cwd as ${value}"
+      ;;
+  esac
+  case "${value}" in
+    *'|'*)
+      # | is the substitution delimiter and cannot appear in a POSIX path, so an
+      # environment that names one is treated as no path at all.
+      value="/opt/stack"
+      note "working directory holds a pipe character: seeding cwd as ${value}"
+      ;;
+  esac
+
+  # shellcheck disable=SC2016
+  sed -i "s|\${STACK_HOST_PATH}|${value}|g" "${dest}" ||
+    die "could not render the working directory into ${dest}"
 }
 
 # @function seed_hermes_data
@@ -309,6 +376,21 @@ main() {
       --data)
         [ "$#" -ge 2 ] || die "--data needs a directory"
         data_dir="$2"
+        shift 2
+        ;;
+      --cwd)
+        [ "$#" -ge 2 ] || die "--cwd needs a directory"
+        case "$2" in
+          /*) ;;
+          *) die "--cwd needs an absolute directory: $2 is not one (Hermes validates terminal.cwd as a real path)" ;;
+        esac
+        # The renderer substitutes with | as its delimiter, and | cannot appear
+        # in a POSIX path, so refusing it here is a clear error rather than a
+        # mangled config.
+        case "$2" in
+          *'|'*) die "--cwd cannot contain a pipe: $2" ;;
+        esac
+        HERMES_SEED_CWD="$2"
         shift 2
         ;;
       -h | --help)

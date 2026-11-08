@@ -232,6 +232,12 @@ _SUITE_PAYLOAD = {
         "//hermes:payload",
         "//proxy:confs",
     ],
+    # The suite execs scripts/hermes-doctor.sh, whose seed-drift check opens both
+    # seeded files beside the checkout and their volume copies, so those reads are
+    # the suite's own. Everything else it reads is a scratch fixture it builds.
+    "hermes-doctor.bats": [
+        "//hermes:seed",
+    ],
     # The suite pins what the six host-assistant skills claim about the payloads they
     # describe: compose services and mounts, the stack CLIs' own parsers, the LiteLLM
     # alias table, and the SearXNG settings its probe dials. docker-compose.yml and
@@ -405,6 +411,12 @@ _SUITE_PAYLOAD = {
 
 # Pairings the source scan cannot derive in either direction, each with its reason.
 _SUITE_PAYLOAD_ALLOW = {
+    # It dials nothing: `searxng:8181` appears only as a value written into a
+    # scratch container-environment fixture, which the web-lane check reads back
+    # out of a stubbed `docker inspect`. The suite never opens searxng/settings.yml.
+    "hermes-doctor.bats": [
+        "//searxng:settings",
+    ],
     # Each case writes its own ${dir}/Dockerfile and points dockerfile_args.awk at that
     # scratch file; the repo's images/dev/Dockerfile is never opened here.
     "awk.bats": [

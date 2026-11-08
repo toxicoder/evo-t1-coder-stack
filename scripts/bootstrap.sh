@@ -532,9 +532,19 @@ else
 fi
 
 # Hermes bind-mounts this checkout at the same host path so `docker compose`
-# through the mounted socket resolves bind sources on the daemon. Always
-# refresh: a moved clone would otherwise keep a stale path.
-upsert_env STACK_HOST_PATH "$(stack_host_path)"
+# through the mounted socket resolves bind sources on the daemon. Refresh on a
+# moved clone, but never write a path that does not hold this compose file.
+# Compose mounts whatever the key names, so a value that points at no checkout
+# leaves the assistant operating an empty directory while every container-level
+# check still reads healthy: measured on a live box the key said /opt/stack
+# while the running container had been created from the compose fallback, so
+# the next recreate would have mounted an empty /opt/stack over the checkout.
+host_path="$(stack_host_path)"
+if [ ! -f "${host_path}/docker-compose.yml" ]; then
+  warn "STACK_HOST_PATH left as it was: ${host_path} holds no docker-compose.yml. Run this from the stack checkout, or set the key by hand to its absolute path."
+else
+  upsert_env STACK_HOST_PATH "${host_path}"
+fi
 
 # The assistant's deploy workspace, bind-mounted at the same path so a compose project
 # the assistant writes resolves its bind sources on the daemon. An operator who moved

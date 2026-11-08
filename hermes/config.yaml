@@ -27,10 +27,41 @@ terminal:
   # container and skips the dangerous-command approvals this file depends on.
   backend: local
   # Identical-path checkout: compose bind-mounts STACK_HOST_PATH at the same
-  # path inside the container (empty-var CI fallback is /opt/stack). Hermes
-  # expands this from the environment the way it expands api_key.
+  # path inside the container (empty-var CI fallback is /opt/stack).
+  #
+  # scripts/hermes-bootstrap.sh substitutes this placeholder when it copies the
+  # seed into the volume, so the file the gateway reads carries a literal path.
+  # Hermes cannot do that itself: agent/runtime_cwd.py validates terminal.cwd
+  # with expanduser() alone, so an unresolved "${STACK_HOST_PATH}" is logged as
+  # `TERMINAL_CWD does not exist: ${STACK_HOST_PATH}` on every session and the
+  # agent starts outside the checkout it is meant to operate. The config loader
+  # does expand ${VAR} - which is why api_key below works, and why
+  # `hermes config get terminal.cwd` reports a resolved path while the runtime
+  # does not. Only the runtime path decides where commands run, and this key
+  # owns it: apply_terminal_config_to_env copies it over TERMINAL_CWD, so the
+  # compose variable is a backstop for a config that names no cwd here.
   cwd: ${STACK_HOST_PATH}
   timeout: 180
+
+web:
+  # The assistant reaches the public web through the stack's own SearXNG, and
+  # nowhere else. Both keyless switches stay false on purpose: with no web
+  # backend configured at all, agent/web_search_registry.py finishes its
+  # resolution walk at the anonymous free-tier ring (exa, parallel, firecrawl,
+  # keenable) and a "local-only" box quietly sends the query to a third party.
+  # keyless_rescue is the second half of that: one retry on the same ring when
+  # the chosen backend fails a call.
+  #
+  # Only the search capability is pinned. searxng is the one bundled provider
+  # that needs no API key - it reads SEARXNG_URL, which docker-compose.yml
+  # points at http://searxng:8181 on the compose network - and it is
+  # search-only, so web.backend and web.extract_backend stay unset and
+  # web_extract fails closed with "no extract provider configured" rather than
+  # dialing a third-party extractor. An operator who wants page fetches sets
+  # web.extract_backend deliberately; nothing here reaches one by default.
+  search_backend: searxng
+  keyless_fallback: false
+  keyless_rescue: false
 
 approvals:
   # manual: every flagged command waits for the operator. `smart` is not used for

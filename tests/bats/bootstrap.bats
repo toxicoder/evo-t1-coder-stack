@@ -156,6 +156,37 @@ assert_no_router_vhost() {
   [ "$(stack_host_path)" = "$(pwd -P)" ]
 }
 
+@test "bootstrap: stack_host_path uses git for a checkout named from a subdirectory" {
+  # What the assistant's bind mount is named from when nobody runs under
+  # bazelisk: a moved clone asked from scripts/ or a linked worktree still has
+  # to answer with the checkout, or STACK_HOST_PATH records a subdirectory and
+  # compose mounts that subdirectory at /opt/stack.
+  unset BUILD_WORKSPACE_DIRECTORY || true
+  local top="${BATS_TEST_TMPDIR}/clone"
+  mkdir -p "${top}/scripts"
+  : >"${top}/docker-compose.yml"
+  ( cd "${top}" && git init -q . && git add -A )
+  cd "${top}/scripts"
+  [ "$(stack_host_path)" = "$(cd "${top}" && pwd -P)" ]
+}
+
+@test "bootstrap: stack_host_path ignores a git root that holds no compose file" {
+  # A repo that is not the stack (a scratch clone, the operator's home under a
+  # dotfiles repo) must not become the bind source: git answers, the marker
+  # refuses it, and the caller keeps the physical cwd so bootstrap's own guard
+  # can warn instead of mounting a directory with no compose project in it.
+  # Standing in a subdirectory is what makes the answer observable: the cwd is
+  # then a different path from the git root the function must decline.
+  unset BUILD_WORKSPACE_DIRECTORY || true
+  local top="${BATS_TEST_TMPDIR}/notstack"
+  mkdir -p "${top}/sub"
+  ( cd "${top}" && git init -q . )
+  cd "${top}/sub"
+  [ "$(stack_host_path)" = "$(cd "${top}/sub" && pwd -P)" ]
+  run git rev-parse --show-toplevel
+  [ "${status}" -eq 0 ]
+}
+
 @test "bootstrap: host_user_ids prints uid:gid" {
   [ "$(host_user_ids)" = "$(id -u):$(id -g)" ]
 }
