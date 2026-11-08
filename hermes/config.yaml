@@ -27,8 +27,17 @@ terminal:
   # container and skips the dangerous-command approvals this file depends on.
   backend: local
   # Identical-path checkout: compose bind-mounts STACK_HOST_PATH at the same
-  # path inside the container (empty-var CI fallback is /opt/stack). Hermes
-  # expands this from the environment the way it expands api_key.
+  # path inside the container (empty-var CI fallback is /opt/stack).
+  #
+  # scripts/hermes-bootstrap.sh substitutes this placeholder when it copies the
+  # seed into the volume, so the file the gateway reads carries a literal path.
+  # Hermes cannot do that itself: agent/runtime_cwd.py validates terminal.cwd
+  # with expanduser() alone, so an unresolved "${STACK_HOST_PATH}" is logged as
+  # `TERMINAL_CWD does not exist: ${STACK_HOST_PATH}` on every session and the
+  # agent starts outside the checkout it is meant to operate. The config loader
+  # does expand ${VAR} - which is why api_key below works, and why
+  # `hermes config get terminal.cwd` reports a resolved path while the runtime
+  # does not. Only the runtime path decides where commands run.
   cwd: ${STACK_HOST_PATH}
   timeout: 180
 

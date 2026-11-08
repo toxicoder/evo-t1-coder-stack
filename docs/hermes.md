@@ -191,8 +191,17 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
 - `STACK_HOST_PATH` is the checkout's `pwd -P`. Compose bind-mounts that host path at
   the same path inside the container, so `docker compose -f $STACK_HOST_PATH/docker-compose.yml`
   talking through the socket names bind sources the daemon can find. Empty (CI
-  `compose config`) falls back to `.:/opt/stack`. Seeded `terminal.cwd` is
-  `${STACK_HOST_PATH}`, expanded from the same env.
+  `compose config`) falls back to `.:/opt/stack`.
+- The working directory the agent runs in is `terminal.cwd`, and it has to be a literal
+  path. Hermes validates it in `agent/runtime_cwd.py` with `expanduser()` alone, so a
+  `${VAR}` left in the file is reported as `does not exist` and the agent works somewhere
+  else, while `hermes config get terminal.cwd` still prints the token because the config
+  *loader* does expand `${VAR}` - the two paths disagree, and only the runtime one runs
+  commands. Two things carry the literal, both from `STACK_HOST_PATH`: `hermes-bootstrap`
+  renders the placeholder in the seeded `config.yaml` at seed time (`--cwd DIR` overrides
+  what it renders), and compose sets `TERMINAL_CWD` for the running container. The
+  seeded file is what an already-created container reads, so the render is the part that
+  fixes a long-lived box; the env var covers a fresh one.
 - `hermes/skills/` is tracked in git. Add a skill by editing the repo, never by editing
   the volume; the volume copy is not the record.
 - `STACK_DEPLOY_PATH` (default `/opt/stack-deploy`) is the **deploy workspace**: the one
@@ -238,6 +247,11 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
   `scripts/hermes-bootstrap.sh --in-container` and copies `hermes/config.yaml` and
   `hermes/SOUL.md` into `/opt/data` **only when those files are missing**. Editing the
   copy in the volume is how an operator ends up with a config no one can reproduce.
+- The seed is a template for one key: `${STACK_HOST_PATH}` in `terminal.cwd` is rendered
+  to a literal path on the way into the volume, from `--cwd`, then `STACK_HOST_PATH`,
+  then `/opt/stack` (announced when it falls back). `${LITELLM_MASTER_KEY}` stays a token
+  on purpose - Hermes expands it at boot, and a byte of the key in a volume copy is what
+  [Mounts and "be the host"](#mounts-and-be-the-host) argues against.
 - To reseed deliberately:
 
 ```sh
@@ -246,7 +260,9 @@ bazelisk run //scripts:hermes-bootstrap -- --data <mount> --force
 
 `<mount>` is the host directory of the Hermes data volume (what compose mounts at
 `/opt/data`). `--force` is how an existing volume picks up the seeded
-`dashboard.trusted_proxies`. Setting that key with `hermes config set` is the
+`dashboard.trusted_proxies`, and `--cwd /absolute/path/to/checkout` is how a host re-seed
+names the working directory when the shell running it carries no `STACK_HOST_PATH`.
+Setting that key with `hermes config set` is the
 in-container alternative. `HERMES_DASHBOARD_PUBLIC_URL` is not in the volume;
 recreate the container and the env applies.
 
