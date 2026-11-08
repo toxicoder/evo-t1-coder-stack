@@ -379,6 +379,164 @@ write_map() {
   [[ "$(stub_log psql)" == *"and username = 'someone'"* ]]
 }
 
+# ── What the write path actually sends ──────────────────────────────────────
+# The cases above assert on the log lines the script prints, which is how the
+# model-override PUT shipped for weeks with the alias glued onto the front of
+# its model_config_id ("agent 11111111-…"): the log line names the label, the
+# server saw an unparsable uuid, and every stub answered 0 regardless of the
+# body. These three drive STUB_CURL_LOG_BODY=1 and read what was sent.
+
+# provider_json <file> — a provider list whose id is NOT the first uuid in the
+# reply. created_by sits ahead of it on purpose: the extraction used to take
+# whichever uuid came first, so this body is the regression fixture for reading
+# the provider's own uuid out of a response that carries several.
+provider_json() {
+  printf '%s' '{"name":"litellm","name":"litellm","created_by":"99999999-9999-4999-8999-999999999999","base_url":"http://litellm:4000/v1","masked":"ch...lm","id":"11111111-2222-4333-8444-555555555555"}' \
+    >"${1}"
+}
+
+@test "coder-agents: -h prints the usage block and touches nothing" {
+  root="$(fake_root)"
+  running_stack
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh" -h
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply]"* ]]
+  # The overrides belong here, not only in the header comment an operator has
+  # to already know to go and read.
+  [[ ${output} == *"CODER_AGENTS_LIVE_ALIASES"* ]]
+  [[ ${output} == *"SKIP_CODER_AGENTS"* ]]
+  [[ ${output} == *"compaction"* ]]
+  [ "$(stub_log_count docker)" -eq 0 ]
+  [ "$(stub_log_count psql)" -eq 0 ]
+  [ "$(stub_log_count curl)" -eq 0 ]
+
+  root="$(fake_root)"
+  running_stack
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh" --help
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"usage: bazelisk run //scripts:coder-agents"* ]]
+}
+
+@test "coder-agents: every model-override PUT body is a bare uuid" {
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  local agent_uuid="11111111-1111-4111-8111-111111111111"
+  provider_json "${BATS_TEST_TMPDIR}/providers.json"
+  printf '%s' '{"configs":[{"id":"'"${agent_uuid}"'","model":"agent","enabled":true,"is_default":true,"context_limit":262144}]}' \
+    >"${BATS_TEST_TMPDIR}/configs.json"
+  write_map "${BATS_TEST_TMPDIR}/map" \
+    '/api/v2/ai/providers' "${BATS_TEST_TMPDIR}/providers.json" \
+    '/api/experimental/chats/model-configs' "${BATS_TEST_TMPDIR}/configs.json" \
+    'model-override/' '{"model_config_id":""}' \
+    'system-prompt' '{"system_prompt":"grok-build-delegation skill, then review its diff"}'
+  export STUB_CURL_OUT_MAP="${BATS_TEST_TMPDIR}/map"
+  export STUB_CURL_LOG_BODY=1
+  export CODER_AGENTS_LIVE_ALIASES='agent agent-low agent-medium agent-xhigh'
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  [ "${status}" -eq 0 ]
+  [ -f "${STUB_LOG}/curl-in.log" ]
+  # Exact equality is the point: an alias glued on the front, a trailing space,
+  # or a provider uuid in place of the config uuid all fail this.
+  local pins=0 line url body
+  while IFS=$'\t' read -r url body; do
+    case "${url}" in
+      */model-override/*)
+        pins=$((pins + 1))
+        if [ "${body}" != "{\"model_config_id\":\"${agent_uuid}\"}" ]; then
+          printf 'lane %s got body [%s]\n' "${url##*/}" "${body}" >&2
+          return 1
+        fi
+        ;;
+    esac
+  done <"${STUB_LOG}/curl-in.log"
+  [ "${pins}" -eq 4 ]
+}
+
+@test "coder-agents: a model-config POST names the provider uuid, not the first uuid in the reply" {
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  provider_json "${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_OUT="${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_LOG_BODY=1
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  # Nothing reads back after the create, so the run still stops at the pins.
+  [ "${status}" -eq 1 ]
+  grep -qF -- '"model":"agent"' "${STUB_LOG}/curl-in.log"
+  # created_by is a decoy uuid placed ahead of id in the provider reply.
+  grep -qF -- '"ai_provider_id":"11111111-2222-4333-8444-555555555555"' "${STUB_LOG}/curl-in.log"
+  logs_absent '99999999-9999-4999-8999-999999999999' "${STUB_LOG}/curl-in.log"
+  grep -qF -- '"context_limit":262144' "${STUB_LOG}/curl-in.log"
+  grep -qF -- '"is_default":true' "${STUB_LOG}/curl-in.log"
+}
+
+@test "coder-agents: a dark Spark lane registers the Arc chat alias as the default" {
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  provider_json "${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_OUT="${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_LOG_BODY=1
+  # Only the Arc lane answers, which is the state of a box whose qwen2.5:7b
+  # weights were never pulled while Spark is down too.
+  export CODER_AGENTS_LIVE_ALIASES='chat'
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  [[ ${output} == *"model config agent: skipped"* ]]
+  [[ ${output} == *"the deployment default is the Arc chat alias"* ]]
+  [[ ${output} == *"creating model config chat (context_limit 32768, default)"* ]]
+  # The create that carries the default flag is the whole fix: hardcoded to
+  # agent, this run left the deployment with no default at all and a chat that
+  # errors on the first send.
+  local line url body seen=0
+  while IFS=$'\t' read -r url body; do
+    case "${body}" in
+      *'"model":"chat"'*)
+        seen=1
+        if ! printf '%s' "${body}" | grep -qF -- '"is_default":true'; then
+          printf 'chat create body: %s\n' "${body}" >&2
+          return 1
+        fi
+        ;;
+    esac
+  done <"${STUB_LOG}/curl-in.log"
+  [ "${seen}" -eq 1 ]
+  # The Spark aliases stay unregistered, so nothing POSTs them.
+  logs_absent '"model":"agent"' "${STUB_LOG}/curl-in.log"
+}
+
+@test "coder-agents: an admin's second provider key survives when ours is stored" {
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  # Two stored keys: ours (matching the placeholder's mask) and one an admin
+  # added in the UI. The patch replaces the whole set, so firing on the mere
+  # presence of the second key used to delete an admin's key on every re-run.
+  printf '%s' '{"name":"litellm","name":"litellm","base_url":"http://litellm:4000/v1","api_keys":[{"masked":"ch...lm"},{"masked":"ad...in"}],"id":"11111111-2222-4333-8444-555555555555"}' \
+    >"${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_OUT="${BATS_TEST_TMPDIR}/providers.json"
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  [[ ${output} == *"provider litellm: already configured (left untouched)"* ]]
+  [[ ${output} != *"drift in"* ]]
+  logs_absent 'PATCH' "${STUB_LOG}/curl.log"
+}
+
+@test "coder-agents: a rotated master key is detected by mask and re-patched" {
+  root="$(fake_root 'LITELLM_MASTER_KEY=sk-live-key-0123456789abcdef')"
+  running_stack
+  psql_token_variant
+  # The stored mask is the OLD key's; the .env key masks differently, so the
+  # only signal available is that the wanted mask is missing from the set.
+  printf '%s' '{"name":"litellm","name":"litellm","base_url":"http://litellm:4000/v1","api_keys":[{"masked":"ol...ey"}],"id":"11111111-2222-4333-8444-555555555555"}' \
+    >"${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_OUT="${BATS_TEST_TMPDIR}/providers.json"
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  [[ ${output} == *"provider litellm: drift in api_keys, patching"* ]]
+  grep -qF -- '-X PATCH' "${STUB_LOG}/curl.log"
+  [[ ${stderr} != *"sk-live-key-0123456789abcdef"* ]]
+  [[ ${output} != *"sk-live-key-0123456789abcdef"* ]]
+}
+
 # ── coder_api.sh (moved from lib.bats; keep these assertions) ──────────────
 
 source_libs() {

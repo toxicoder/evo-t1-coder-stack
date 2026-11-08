@@ -444,6 +444,17 @@ bazelisk run //scripts:coder-agents -- --apply
   re-running it repairs a provider that drifted and moves a model pin whose alias has
   since gone unhealthy.
 
+- The closing summary counts the auxiliary lanes that carry a pin. A `warning:` naming a
+  lane means that lane falls back to Coder's own pick, and `title_generation` and
+  `compaction` are the two an operator notices first: conversations stop getting titles,
+  then a long one stops at the compaction threshold. Re-run `--apply` once the alias
+  behind that lane answers.
+
+- A `warning:` that a stored model config is disabled, is not the default, or compacts
+  against the wrong window names a row this script found already in place. It reads
+  before it writes and this surface has no PATCH, so the correction is the one click in
+  Admin -> Experiments -> Agent Chat the line names.
+
 A chat that starts but narrates instead of calling tools is the no-Spark case above.
 
 ### Coder Agents offers a model that errors, or a chat never gets a title -> an alias with no healthy deployment

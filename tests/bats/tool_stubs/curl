@@ -19,6 +19,10 @@
 # after storing the body, without -o it appends the status after the body.
 # A script that reads the whole -o body from stdout gets the unchanged
 # default answer until it opts into STUB_CURL_STATUS or STUB_CURL_OUT.
+# STUB_CURL_LOG_BODY=1 also records each --data-binary @- request body, as one
+# "<url>\t<body>" line in $STUB_LOG/curl-in.log, so a test can assert on what a
+# write path actually sent. Opt-in because those bodies carry API keys and the
+# secret-leak tests scan every log in $STUB_LOG.
 # Records one argv line to $STUB_LOG/curl.log when STUB_LOG is set.
 #
 # Usage (in a .bats file): use_stubs curl; STUB_CURL_OUT='{"ok":true}' \
@@ -28,17 +32,37 @@ set -u
 
 if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "curl $*" >>"${STUB_LOG}/curl.log"; fi
 
+# Request bodies are opt-in. Draining --data-binary @- is mandatory (a piped
+# body would otherwise block the caller), recording it is not: the bodies this
+# script sends carry the LiteLLM master key, and the suites that prove that key
+# never reaches a log scan every file in $STUB_LOG. A test that wants to assert
+# on what was SENT — the whole point of a write path — opts in with
+# STUB_CURL_LOG_BODY=1 and gets one "<url>\t<body>" line per request in
+# curl-in.log; every other caller keeps the old drain-and-discard behaviour.
+stub_curl_body=""
+stub_curl_wants_body=""
+stub_curl_url=""
 outfile=""
 prev=""
 for a in "$@"; do
+  case "${a}" in http*) stub_curl_url="${a}" ;; esac
   if [ "${prev}" = "--data-binary" ] && [ "${a}" = "@-" ]; then
-    cat >/dev/null 2>&1 || true
+    stub_curl_wants_body=1
+    if [ -n "${STUB_LOG:-}" ] && [ -n "${STUB_CURL_LOG_BODY:-}" ]; then
+      stub_curl_body="$(cat 2>/dev/null || true)"
+    else
+      cat >/dev/null 2>&1 || true
+    fi
   fi
   if [ "${prev}" = "-o" ]; then
     outfile="${a}"
   fi
   prev="${a}"
 done
+if [ -n "${stub_curl_wants_body}" ] && [ -n "${STUB_LOG:-}" ] &&
+  [ -n "${STUB_CURL_LOG_BODY:-}" ]; then
+  printf '%s\t%s\n' "${stub_curl_url}" "${stub_curl_body}" >>"${STUB_LOG}/curl-in.log"
+fi
 
 body=""
 rc="${STUB_CURL_RC:-}"

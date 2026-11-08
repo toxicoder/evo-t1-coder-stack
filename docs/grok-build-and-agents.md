@@ -746,6 +746,20 @@ Apply it (or re-run after a skip):
 bazelisk run //scripts:coder-agents -- --apply
 ```
 
+`--help` prints the same two commands with every flag and every `CODER_AGENTS_*`
+override, which is the list to reach for from a shell.
+
+The deployment default follows the health gate. `agent` is registered as the default,
+and when LiteLLM reports no healthy deployment behind the Spark alias the Arc `chat`
+config takes the default in its place. That matters because a chat opened without an
+explicit model pick has only the default to resolve to, so a stack that comes up while
+the Spark lane is dark still gets an Agents chat that answers. An existing config is
+left as it stands, since this API surface has no PATCH: the script names the Admin
+screen to correct it when a stored row drifted.
+
+The closing summary counts how many of the four auxiliary lanes carry a pin, and a lane
+left without one prints a `warning:` that names the lane.
+
 `--wait` (or `--wait=SECONDS`) polls for that first owner instead of skip-0. The
 window is counted from the database's first "no owner" answer, so a slow buildinfo
 probe or a slow first query cannot spend it. `SKIP_CODER_AGENTS=1` skips bootstrap

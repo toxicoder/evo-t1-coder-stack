@@ -76,6 +76,7 @@
 #   bazelisk run //scripts:coder-agents -- --apply       # same as the default
 #   bazelisk run //scripts:coder-agents -- --apply --wait  # apply, polling up to 1800s for the first owner
 #   bazelisk run //scripts:coder-agents -- --apply --wait=60
+#   bazelisk run //scripts:coder-agents -- --help        # flags and overrides
 #   SKIP_CODER_AGENTS=1 bazelisk run //scripts:bootstrap # bootstrap skips this step
 #   CODER_AGENTS_WAIT_SECS=1800                          # stack `up` forwards this as --wait=
 # Overrides (rare; each exists for a stack that renamed something in compose):
@@ -113,6 +114,56 @@ source "${SELF_DIR}/lib/coder_api.sh"
 ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
 cd "${ROOT_DIR}"
 
+# @function usage
+# Print the usage block.
+#
+# The block names the four things this CLI owns and the two states an operator
+# actually arrives in — nothing wired yet, or wired but a lane whose models went
+# dark — because those are the questions asked of it. The env overrides are
+# listed here and not only in the header comment, since `--help` is what an
+# operator reaches for from a shell.
+# Globals:
+#   None
+# Arguments:
+#   None
+# Outputs:
+#   The usage block on stdout
+# Returns:
+#   0
+usage() {
+  cat <<'USAGE'
+usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] [--wait[=SECONDS]] [-h|--help]
+
+Wires the Coder Agents chat agent to this stack's own LiteLLM transport: the
+`litellm` AI provider, the tool-capable chat model configs, the four auxiliary
+model pins (general, explore, compaction, title_generation), and the deployment
+system prompt. Reads before every write, so it is safe to re-run at any time;
+an admin's own choice is left in place.
+
+Flags:
+  --apply            the default: write what is missing
+  --dry-run          print the intended end state and write nothing
+  --wait[=SECONDS]   with --apply, poll for the first Coder owner before giving
+                     up (bare --wait is 1800s); bootstrap and `prod-stack up`
+                     start this in the background so registering is enough
+  -h, --help         print this block and exit 0
+
+Overrides (each exists for a stack that renamed something in compose):
+  CODER_CONTAINER_SERVICE=coder        service holding the Coder server
+  CODER_DB_SERVICE=db                  service holding Postgres
+  CODER_CONTAINER_API_URL=...          server URL from inside that container
+  CODER_AGENTS_PROVIDER_URL=...        provider base_url from inside it
+  CODER_AGENTS_USER=<username>         user to mint the token for
+  CODER_AGENTS_TOKEN_MINUTES=10        lifetime of the minted token
+  CODER_AGENTS_LIVE_ALIASES="..."      replaces the LiteLLM health probe
+  CODER_AGENTS_WAIT_SECS=1800          `up` forwards this as --wait=
+  SKIP_CODER_AGENTS=1                  bootstrap skips this step entirely
+
+Exit codes: 0 = applied, or skipped because the stack is not up yet; 1 = a step
+that must succeed failed, or a usage error.
+USAGE
+}
+
 MODE=apply
 WAIT_SECS=0
 USAGE="usage: bazelisk run //scripts:coder-agents -- [--dry-run|--apply] [--wait[=SECONDS]] (default: --apply)"
@@ -126,6 +177,10 @@ for arg in "$@"; do
       case "${WAIT_SECS}" in
         '' | *[!0-9]*) die "${USAGE}" ;;
       esac
+      ;;
+    -h | --help | help)
+      usage
+      exit 0
       ;;
     *) die "${USAGE}" ;;
   esac
@@ -219,12 +274,12 @@ if [ "${MODE}" = "dry-run" ]; then
   log "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):"
   log "  ensure AI provider ${PROVIDER_NAME} (type openai-compat, enabled, base_url ${PROVIDER_URL}, api_keys: [LITELLM_MASTER_KEY from .env, or the compose placeholder — hidden])"
   log "  read LiteLLM /health and /v1/model/info, and treat only the aliases with a healthy deployment as registerable (fail open when the proxy will not answer)"
-  log "  ensure chat model config agent (context_limit 262144, is_default true)"
+  log "  ensure chat model config agent (context_limit 262144; made the deployment default unless one already carries it or the health gate rules the Spark alias out)"
   log "  ensure chat model config agent-low (context_limit 262144)"
   log "  ensure chat model config agent-medium (context_limit 262144)"
   log "  ensure chat model config agent-xhigh (context_limit 262144)"
-  log "  ensure chat model config chat (context_limit 32768)"
-  log "  pin model overrides general+explore -> agent, compaction+title_generation -> chat, each only among the aliases the health gate left standing"
+  log "  ensure chat model config chat (context_limit 32768; takes the default when the Spark alias is unhealthy and nothing else carries one)"
+  log "  pin model overrides general+explore -> agent and compaction+title_generation -> chat, each walked down its preference list to the first alias the health gate left live; a lane the admin pinned elsewhere is left alone"
   log "  ensure deployment system prompt (custom text appended to Coder's default)"
   exit 0
 fi
@@ -397,12 +452,12 @@ json_escape() {
 # mask_secret renders a key the way the server masks stored keys (aibridge's
 # MaskSecret): the API shows the first and last N characters, N being 4 for
 # keys of 20+ characters, 2 for 10+, 1 for 5+, and "..." alone below 5.
-# Comparing masks is how the script notices a rotated LITELLM_MASTER_KEY:
-# a changed key almost always changes its mask, and re-running --apply
-# re-patches the provider key set. Keys whose masks all still equal the
-# .env key's mask stay untouched — deliberate, since keys added by hand in
-# the Admin UI are an admin's decision to keep. (A key under 5 characters
-# masks to "..." and could hide a change; that is a placeholder, not a key.)
+# Comparing masks is how the script notices a rotated LITELLM_MASTER_KEY: the
+# patch fires when the current key's mask is missing from the stored set, and
+# a re-run then re-patches the provider key set. A key an admin added by hand
+# in the Admin UI survives every run in which our key is present too. (A key
+# under 5 characters masks to "..." and could hide a change; that is a
+# placeholder, not a key.)
 # @function mask_secret
 # Mask a key the way Coder's aibridge MaskSecret does, by length.
 # Globals:
@@ -470,18 +525,21 @@ if [ "${provider_exists}" = "1" ]; then
   fi
   # Key drift: the providers API returns each stored key masked (see
   # mask_secret), so a rotated LITELLM_MASTER_KEY is detectable by mask
-  # alone. Drift fires when no key is stored at all — an empty proxy would
-  # reject every forwarded request — or when any stored key's mask differs
-  # from the current key's mask; the patch below then replaces the whole
-  # set. Masks are pulled from the full provider_list: the provider_body
-  # chunk (split on '{') ends before that provider's api_keys array.
+  # alone. Drift fires when the key the live proxy demands is not among the
+  # stored keys at all — which includes a provider with no keys, an empty one
+  # that would reject every forwarded request — and the patch below then
+  # replaces the whole set, since a masked key cannot be read back to be kept.
+  # It deliberately does NOT fire just because some *other* key is stored:
+  # keys an admin added by hand in the Admin UI survive a re-run as long as
+  # ours is in the set too, which is the whole point of comparing masks.
+  # Masks are pulled from the full provider_list: the provider_body chunk
+  # (split on '{') ends before that provider's api_keys array.
   provider_masks="$(printf '%s' "${provider_list}" |
     awk -v RS="\"name\":\"" -v n="${PROVIDER_NAME}\"" 'index($0, n) == 1' |
     tr '{' '\n' | grep -o '"masked":"[^"]*"' |
     sed -e 's/^"masked":"//' -e 's/"$//' || true)"
   want_mask="$(mask_secret "${litellm_key}")"
-  if [ -z "${provider_masks}" ] ||
-    [ -n "$(printf '%s\n' "${provider_masks}" | grep -Fxv -e "${want_mask}" || true)" ]; then
+  if ! printf '%s\n' "${provider_masks}" | grep -qxF -- "${want_mask}"; then
     provider_drift="${provider_drift:+${provider_drift}+}api_keys"
   fi
   if [ -z "${provider_drift}" ]; then
@@ -681,7 +739,15 @@ model_config_chunk() {
 }
 
 # @function model_config_id
-# Print the chat model-config uuid for one model alias, or nothing.
+# Print the chat model-config uuid for one model alias, or nothing. Anchored on
+# the "id" key rather than "the first uuid anywhere in the row": the row also
+# carries ai_provider_id, and a response that serialised that field first used to
+# hand every create the provider's uuid as a model config. The anchor is "the
+# character before id is no identifier character", which rules out
+# ai_provider_id (underscore) and matches both a raw JSON brace and the comma
+# left in the chunk. It is written as a class rather than [{,] because
+# tests/extract_fn.py counts braces naively to find where a function ends, and a
+# literal brace in the body leaves it unbalanced.
 # Globals:
 #   UUID_RE, model_config_chunk
 # Arguments:
@@ -691,7 +757,9 @@ model_config_chunk() {
 # Returns:
 #   0
 model_config_id() {
-  model_config_chunk "$1" | grep -oE "${UUID_RE}" | head -1 || true
+  model_config_chunk "$1" |
+    grep -oE '(^|[^_[:alnum:]])"id":"'"${UUID_RE}"'"' | head -1 |
+    grep -oE "${UUID_RE}" || true
 }
 
 # @function check_model_config_drift
@@ -774,6 +842,13 @@ ensure_model_config() {
   fi
   if [ "${want_default}" = "true" ]; then
     suffix=", default"
+    # Only now, and only once: the note promises a write, so it belongs on the
+    # create path, not next to the decision that may turn out to change nothing
+    # (the config can already exist, and this surface has no PATCH).
+    if [ -n "${DEFAULT_NOTE}" ]; then
+      note "${DEFAULT_NOTE}"
+      DEFAULT_NOTE=""
+    fi
   fi
   log "creating model config ${alias_name} (context_limit ${want_ctx}${suffix})"
   if ! create_model_config "${alias_name}" "${display}" "${want_ctx}" "${want_default}"; then
@@ -785,17 +860,89 @@ ensure_model_config() {
   MODEL_CONFIG_ID="$(model_config_id "${alias_name}")"
 }
 
-# The provider uuid is needed for the model-config body.
+# @function first_live_alias
+# Print the first alias in a preference list the health gate has not ruled out,
+# ignoring whether a config for it exists yet. The deployment-default decision
+# has to be made before the sweep that creates the configs, so it cannot go
+# through pick_live_config, which only considers registered ones.
+# Globals:
+#   alias_is_live
+# Arguments:
+#   $1 - space-separated aliases, most preferred first
+# Outputs:
+#   The alias, or nothing when the gate ruled out every one of them
+# Returns:
+#   0
+first_live_alias() {
+  local try_alias
+  # shellcheck disable=SC2086 # $1 is deliberately a word list of aliases
+  for try_alias in $1; do
+    if alias_is_live "${try_alias}"; then
+      printf '%s' "${try_alias}"
+      return 0
+    fi
+  done
+  return 0
+}
+
+# @function default_flag_for
+# Print the is_default value one alias should be created with: true only for the
+# alias chosen as the deployment default, false for every other one and for all
+# of them when a default already exists. Named to stay clear of the
+# want_default local that check_model_config_drift and ensure_model_config
+# carry.
+# Globals:
+#   DEFAULT_ALIAS
+# Arguments:
+#   $1 - model alias
+# Outputs:
+#   true or false
+# Returns:
+#   0
+default_flag_for() {
+  if [ -n "${DEFAULT_ALIAS}" ] && [ "${DEFAULT_ALIAS}" = "$1" ]; then
+    printf 'true'
+  else
+    printf 'false'
+  fi
+}
+
+# The provider uuid is needed for the model-config body. Anchored on the "id"
+# key: "the first uuid in the reply" silently became the wrong uuid the day the
+# response grew any other uuid-typed field ahead of it, and every model config
+# would then have been created against some other provider.
 provider_get="$(api_read "/api/v2/ai/providers/${PROVIDER_NAME}")" ||
   die "could not read back provider ${PROVIDER_NAME} (its name may differ in case or the create failed)"
-provider_id="$(printf '%s' "${provider_get}" | grep -oE "${UUID_RE}" | head -1)"
+provider_id="$(printf '%s' "${provider_get}" |
+  grep -oE '(^|[^_[:alnum:]])"id":"'"${UUID_RE}"'"' | head -1 |
+  grep -oE "${UUID_RE}" || true)"
 if [ -z "${provider_id}" ]; then
   die "provider ${PROVIDER_NAME} exists but no provider uuid could be read from the API reply"
 fi
 
 section "Chat model configs"
 MODEL_CONFIG_ID=""
-ensure_model_config "agent" "${MODEL_AGENT_DISPLAY}" 262144 true ||
+
+# Which alias gets is_default is decided here, once, from the health gate. It
+# used to be hardcoded to `agent`, which is fine while the Spark lane serves and
+# fatal when it does not: with every Spark deployment dark, `agent` was skipped,
+# `chat` came in as a non-default, and the deployment was left with no default at
+# all — the exact visible-but-dead chat this script exists to prevent, now
+# reachable on a box that only needs its Arc weights pulled. Coder has no PATCH
+# for model configs, so the default can only be set on the create path, which is
+# why an existing default is respected rather than competed with.
+DEFAULT_ALIAS=""
+DEFAULT_NOTE=""
+existing_configs="$(api_read "/api/experimental/chats/model-configs" 2>/dev/null)" ||
+  existing_configs=""
+if ! printf '%s' "${existing_configs}" | grep -qF '"is_default":true'; then
+  DEFAULT_ALIAS="$(first_live_alias "agent chat")"
+  if [ "${DEFAULT_ALIAS}" = "chat" ]; then
+    DEFAULT_NOTE="the deployment default is the Arc chat alias: LiteLLM reports no healthy deployment behind the Spark 'agent' alias, and a chat opened without an explicit model pick has only the default to resolve to"
+  fi
+fi
+
+ensure_model_config "agent" "${MODEL_AGENT_DISPLAY}" 262144 "$(default_flag_for agent)" ||
   die "the agent model config could not be created — Agents chats will error until one exists"
 agent_id="${MODEL_CONFIG_ID}"
 
@@ -811,7 +958,7 @@ ensure_model_config "agent-xhigh" "${MODEL_AGENT_XHIGH_DISPLAY}" 262144 false ||
   die "the agent-xhigh model config could not be created — re-run after the server is healthy"
 agent_xhigh_id="${MODEL_CONFIG_ID}"
 
-ensure_model_config "chat" "${MODEL_CHAT_DISPLAY}" 32768 false ||
+ensure_model_config "chat" "${MODEL_CHAT_DISPLAY}" 32768 "$(default_flag_for chat)" ||
   die "the chat model config could not be created — re-run after the server is healthy"
 chat_id="${MODEL_CONFIG_ID}"
 
@@ -839,20 +986,27 @@ ok "chat model configs"
 # left alone, and so is a pin aimed at a config this script never created.
 
 # @function pick_live_config
-# Walk an alias preference list and print "<alias> <uuid>" for the first alias
-# that has both a registered config and a live alias behind it, so the caller
-# can label the pin with the alias that actually won.
+# Walk an alias preference list and set PICK_ALIAS and PICK_ID to the first
+# alias that has both a registered config and a live alias behind it. The two
+# are separate globals on purpose: an earlier shape returned "alias uuid" as one
+# string and split it back apart at the call site, and the split silently kept
+# the alias on the front of the uuid, so every model-override PUT carried
+# "agent 11111111-…" as its model_config_id and the server rejected all four
+# lanes. A caller that cannot get the split wrong cannot ship that bug again.
 # Globals:
-#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, chat_id,
-#   alias_is_live
+#   PICK_ALIAS, PICK_ID, agent_id, agent_low_id, agent_medium_id,
+#   agent_xhigh_id, chat_id, alias_is_live
 # Arguments:
 #   $1 - space-separated aliases, most preferred first
 # Outputs:
-#   "<alias> <uuid>", or nothing when no alias in the list qualifies
+#   None
 # Returns:
 #   0
 pick_live_config() {
   local try_alias try_id
+  PICK_ALIAS=""
+  PICK_ID=""
+  # shellcheck disable=SC2086 # $1 is deliberately a word list of aliases
   for try_alias in $1; do
     try_id=""
     case "${try_alias}" in
@@ -863,7 +1017,8 @@ pick_live_config() {
       chat) try_id="${chat_id}" ;;
     esac
     if [ -n "${try_id}" ] && alias_is_live "${try_alias}"; then
-      printf '%s %s' "${try_alias}" "${try_id}"
+      PICK_ALIAS="${try_alias}"
+      PICK_ID="${try_id}"
       return 0
     fi
   done
@@ -920,9 +1075,13 @@ dead_config_ids() {
 # @function pin_lane
 # PUT a model-config pin on one auxiliary lane when that lane is unset, or when
 # it is pinned to one of this script's configs whose alias has since gone
-# unhealthy.
+# unhealthy. Counts every outcome into LANES_PINNED / LANES_UNPINNED so the
+# closing summary can say how many of the four lanes actually carry a pin —
+# the header's whole reason for existing is that this script once printed
+# "ok: model pins" over a run that had pinned nothing.
 # Globals:
-#   api_read, api_write, log, warn, note, die, stack_config_ids, dead_config_ids
+#   api_read, api_write, log, warn, note, die, stack_config_ids, dead_config_ids,
+#   LANES_PINNED, LANES_UNPINNED, UUID_RE
 # Arguments:
 #   $1 - lane; $2 - label for the log; $3 - model-config uuid
 # Outputs:
@@ -933,11 +1092,19 @@ pin_lane() {
   # $1 = lane, $2 = model label (for the log line), $3 = model-config uuid.
   local lane="$1" label="$2" target="$3" current pinned_id dead ours
   if [ -z "${target}" ]; then
-    log "lane ${lane}: skipped — no live model config available to pin"
+    warn "lane ${lane}: left unpinned — no live model config was available to pin it to, so this lane falls back to whatever Coder picks (title generation and compaction are the lanes that fail first)"
+    LANES_UNPINNED=$((LANES_UNPINNED + 1))
     return 0
+  fi
+  # A model_config_id that is not a bare uuid is a caller bug, not a server
+  # state: the PUT would come back 400 with a message that names neither the
+  # lane nor the field. Refuse locally, with the offending value.
+  if ! printf '%s' "${target}" | grep -qxE -- "${UUID_RE}"; then
+    die "lane ${lane} was handed model_config_id '${target}', which is not a uuid — this is a bug in scripts/coder-agents.sh, not a server problem"
   fi
   if ! current="$(api_read "/api/experimental/chats/config/model-override/${lane}")"; then
     warn "lane ${lane}: the current pin could not be read, so it was left alone rather than overwritten — confirm it in Admin -> Experiments -> Agent Chat"
+    LANES_UNPINNED=$((LANES_UNPINNED + 1))
     return 0
   fi
   # The old test was grep for the literal "model_config_id":"" — an unset lane
@@ -955,42 +1122,53 @@ pin_lane() {
       warn "lane ${lane}: was pinned to a model config whose alias LiteLLM reports unhealthy — re-pinning it to ${label}"
     elif [ -n "${ours}" ] && printf '%s\n' "${ours}" | grep -qxF -- "${pinned_id}"; then
       log "lane ${lane}: already pinned to a healthy stack model config, leaving the admin's choice in place"
+      LANES_PINNED=$((LANES_PINNED + 1))
       return 0
     else
       note "lane ${lane}: already pinned to a model config this script did not create, leaving the admin's choice in place"
+      LANES_PINNED=$((LANES_PINNED + 1))
       return 0
     fi
   fi
   if api_write PUT "/api/experimental/chats/config/model-override/${lane}" \
     "{\"model_config_id\":\"${target}\"}" >/dev/null; then
     log "lane ${lane}: pinned to model config ${label}"
+    LANES_PINNED=$((LANES_PINNED + 1))
   else
     die "lane ${lane} could not be pinned to ${label}"
   fi
 }
 
-primary_pick="$(pick_live_config "agent chat")"
-primary="${primary_pick## }"
-secondary_pick="$(pick_live_config "chat agent")"
-secondary="${secondary_pick## }"
+pick_live_config "agent chat"
+primary="${PICK_ID}"
+primary_alias="${PICK_ALIAS}"
+pick_live_config "chat agent"
+secondary="${PICK_ID}"
+secondary_alias="${PICK_ALIAS}"
 if [ -z "${primary}" ]; then
   # Neither a pre-existing config nor a fresh create survived the reread
   # (e.g. a server that restarted mid-run), or every candidate alias was
   # unhealthy. Stop loudly instead of leaving the model pins without a target.
   die "no chat model config could be registered or found; Agents chat needs one — check the LiteLLM aliases against ${PROVIDER_URL}/v1/models"
 fi
-primary_label="${primary_pick%% *} (live tool-capable alias)"
-secondary_label="${secondary_pick%% *} (live alias for the helper calls)"
-if [ "${ALIASES_PROBED}" = "1" ] && [ "${secondary_pick%% *}" != "chat" ]; then
+primary_label="${primary_alias} (live tool-capable alias)"
+secondary_label="${secondary_alias} (live alias for the helper calls)"
+if [ "${ALIASES_PROBED}" = "1" ] && [ "${secondary_alias}" != "chat" ]; then
   note "compaction and title_generation go to ${secondary_label}: LiteLLM reports no healthy deployment behind the Arc chat alias"
 fi
 section "Model pins"
 phase "pin the four auxiliary lanes"
+LANES_PINNED=0
+LANES_UNPINNED=0
 pin_lane general "${primary_label}" "${primary}"
 pin_lane explore "${primary_label}" "${primary}"
 pin_lane compaction "${secondary_label}" "${secondary}"
 pin_lane title_generation "${secondary_label}" "${secondary}"
-ok "model pins"
+if [ "${LANES_UNPINNED}" -gt 0 ]; then
+  warn "model pins: ${LANES_PINNED} of 4 auxiliary lanes carry a pin and ${LANES_UNPINNED} do not — a lane with no pin falls back to Coder's own pick, which is how chats lose their titles and stop at the compaction threshold"
+else
+  ok "model pins (${LANES_PINNED} of 4 lanes carry a pin)"
+fi
 
 # ── 4. Deployment system prompt ─────────────────────────────────────────────
 # Exact-match compare (server sanitizes, our text is plain printable ASCII).

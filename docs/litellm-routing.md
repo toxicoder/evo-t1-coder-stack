@@ -191,7 +191,7 @@ key, so a config that looks correct silently does nothing, which is why
 
 - Agent mode therefore needs either the Spark `agent` lane or the small `chat` model.
 - Grok Build, Cline, Roo and Kilo all default to `agent`.
-- `scripts/coder-agents.sh` registers `agent` (default),
+- `scripts/coder-agents.sh` registers `agent` (the default, with `chat` standing in when the Spark lane is dark),
   `agent-low`/`agent-medium`/`agent-xhigh`, and `chat` as Coder Agents chat model
   configs, for the same reason: an agent turn without callable tools cannot browse or
   edit, so registering `coder` or `coder-fast` would only add a visibly broken model to
@@ -343,7 +343,7 @@ docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml rest
 
 ### Where an alias edit lands
 
-- `scripts/coder-agents.sh` registers `agent` (default),
+- `scripts/coder-agents.sh` registers `agent` (the default, with `chat` standing in when the Spark lane is dark),
   `agent-low`/`agent-medium`/`agent-xhigh`, and `chat` as the Coder Agents chat model
   configs, through `CODER_AGENTS_PROVIDER_URL`
   (default `http://litellm:4000/v1`).
