@@ -34,6 +34,26 @@ A restart is a diagnosis-destroyer: it clears the evidence and, if the cause is 
 config or a full disk, it comes back in ten minutes. Read first, restart once,
 with a reason.
 
+## Two doors, two toolchains
+
+The official image ships git, curl, rg, vmstat, df, du and the Docker CLI. It has
+no bazelisk, and no `jq`, `sqlite3`, `sensors`, `iotop`, `sar`, `mpstat`, `iostat`
+or `ollama` either. So a line below that starts with `bazelisk run //scripts:...`
+or names one of those tools is the **operator's host command**: run
+`command -v <tool>` before you rely on anything, and when it is missing, print the
+line and hand it over instead of inventing an output. The same question from inside
+this container goes through compose against the same project and file:
+
+```sh
+ROOT="${STACK_HOST_PATH:-/opt/stack}"
+docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" ps
+docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" logs --tail 200 litellm
+docker stats --no-stream            # per-container CPU and memory, no host tools
+```
+
+`//scripts:hermes-shell -- check` is the host-side readiness report for this very
+container, so it is a hand-over too.
+
 ## Playbooks
 
 **Slow / unresponsive.** `vmstat 1 5` first: high `wa` is I/O, high `si` is
@@ -48,8 +68,10 @@ restarts "silently" and looks like a slow box.
 means airflow, not software: check the vents and the shelf, then reduce what is
 running here. The iGPU model lane (`ollama` on the Arc) is the heat this chassis
 has to carry; a loaded Spark box is a different machine and does not warm this
-one, so `bazelisk run //scripts:spark-verify` tells you whether the heat source
-is even local.
+one, so `bazelisk run //scripts:spark-verify` (the operator's host command) tells
+you whether the heat source is even local. From here, `docker compose -p
+evo-t1-prod -f "$ROOT/docker-compose.yml" ps` and `docker stats --no-stream` name
+what on this box is busy.
 
 **Disk full.** `df -h` and `df -i` (inode exhaustion looks identical). Then walk
 it: `du -xh -d1 / | sort -h | tail -15` and repeat on the fat branch. The usual
@@ -79,14 +101,21 @@ that `server_name`), is the upstream name resolvable on the compose network, is
 the upstream answering (`curl -fsS http://<service>:<port>/`)? A WebSocket page
 that dies on close code 4403 is Hermes' Host/Origin guard, not a network fault.
 
-**Model lane down.** `bazelisk run //scripts:prod-stack -- status`, then the
-LiteLLM health endpoint on the host (`:4000/health/liveliness`), then
-`bazelisk run //scripts:spark-verify` for the Spark fleet. If every Spark is
+**Model lane down.** `docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml"
+ps` here, then the LiteLLM health endpoint
+(`curl -fsS http://litellm:4000/health/liveliness` - the compose name, from this
+container), then `bazelisk run //scripts:spark-verify` on the host for the Spark
+fleet. If every Spark is
 dark, the `agent` alias falls back inside LiteLLM to a model that cannot emit
 tool calls - say that out loud and offer `chat`, do not let a session quietly
 lose its tools.
 
-**Search returns nothing.** `bazelisk run //scripts:search-check` (it probes per
+**Search returns nothing.** First ask the instance yourself:
+`curl -s -H 'Accept: application/json' "$SEARXNG_URL/search?q=<terms>&format=json"`.
+`SEARXNG_URL` is what registers the `web_search` provider, so an empty one is the
+first finding, and a body carrying `unresponsive_engines` is the instance naming
+the engines it gave up on. Then `bazelisk run //scripts:search-check` on the host
+(it probes per
 engine and distinguishes "engine refused" from "json format disabled" from
 "network dead", and prints each parked engine with the reason its backend gave).
 A 200 that carries no results while the service is up is normally the engines
@@ -97,7 +126,8 @@ zero rows from a lane that answers twenty unpinned - that is an agent-usage
 fault, not a host fault.
 
 **A workspace misbehaves.** `bazelisk run //scripts:github-auth -- check` for the
-credential chain, `docker logs --tail 100 coder-<owner>-<ws>` for the agent
+credential chain (host command: it enumerates the labeled workspace containers
+through the daemon), `docker logs --tail 100 coder-<owner>-<ws>` for the agent
 tunnel, and remember the `dind` sidecar inside it is not a workspace.
 
 ## Do not

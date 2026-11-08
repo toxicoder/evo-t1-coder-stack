@@ -896,8 +896,9 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
   agent on one memory store, with inline `[o]nce | [s]ession | [a]lways | [d]eny`
   approvals. `-- check` reports readiness without launching, and `ask`, `shell`,
   `commands`, `--model` and `--writable` cover the rest.
-- **Skills:** six tracked under `hermes/skills/` - stack ops, Coder workspaces, model
-  routing, plus the host-ops trio: `host-linux-ops` (the right command, and what each
+- **Skills:** seven tracked under `hermes/skills/` - stack ops, Coder workspaces, model
+  routing, the web lane (`web-research`: what to look up and what the lane refuses),
+  plus the host-ops trio: `host-linux-ops` (the right command, and what each
   flag does), `host-diagnostics` (read-only triage playbooks) and
   `deploy-from-github` (a repository to running, in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`).
 - **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the

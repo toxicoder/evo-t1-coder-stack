@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # shellcheck shell=bash
 #
-# ## hermes-skills.bats - pin what the six Hermes skills *tell the assistant to do*.
+# ## hermes-skills.bats - pin what the Hermes skills *tell the assistant to do*.
 #
 # hermes-config.bats guards the seed (file exists, frontmatter name matches). It
 # cannot see a claim, so a skill that tells the host assistant to run
@@ -377,4 +377,61 @@ targets = next(item["agent"] for item in fallbacks if isinstance(item, dict) and
 if "coder" not in targets:
     sys.exit("FAIL: the agent alias falls back to %r, not coder as model-routing states" % (targets,))
 PY
+}
+
+# --- 6. what the pinned image actually ships ------------------------------
+
+# Read off the pinned image (`docker run --rm --entrypoint /bin/bash
+# nousresearch/hermes-agent:v0.22.5`, then `command -v <tool>`), not remembered:
+# each of these answers MISSING there, while git, curl, rg, vmstat, df, du and the
+# Docker CLI are present. `ollama` is left out because it is also a compose service
+# name, and a skill naming the service is not naming a command.
+HS_IMAGE_MISSING_TOOLS=(bazelisk jq sqlite3 sensors iotop sar)
+
+@test "hermes skills: a file that names a tool the image lacks also says the image lacks it" {
+  # The failure this pins is the one an operator sees: the assistant copies the
+  # line, gets "command not found", and reports the box as broken. Saying the tool
+  # is absent in the same file is what turns that into a hand-over instead.
+  local tool file offenders=""
+  for file in "${SKILLS}"/*/SKILL.md "${REPO_ROOT}/hermes/SOUL.md"; do
+    [[ -f ${file} ]] || continue
+    for tool in "${HS_IMAGE_MISSING_TOOLS[@]}"; do
+      grep -qw -- "${tool}" "${file}" || continue
+      # The admission is one sentence long: "no bazelisk, and no `jq`, `sqlite3`
+      # ..." counts for every tool in the list, so the window runs to the first
+      # full stop rather than to the next word.
+      grep -qiEz 'no [^.]*'"${tool}" "${file}" \
+        || offenders+="  ${file#"${REPO_ROOT}"/}: names ${tool}, never says the image has none"$'\n'
+    done
+  done
+  [[ -z ${offenders} ]] \
+    || { printf 'FAIL: skills that name a tool the pinned image does not ship:\n%s' "${offenders}" >&2; return 1; }
+}
+
+@test "hermes skills: the web lane they teach is the lane the seed configures" {
+  # The skills are what the assistant reads when it decides how to look something
+  # up. If the seed moves and the prose does not, the assistant is told one door
+  # exists while the config opens another - and the difference is invisible until
+  # a search leaves the box.
+  local research="${SKILLS}/web-research/SKILL.md"
+  assert_file_exists "web-research skill" "${research}"
+  assert_contains_file "names the pin" "${research}" 'web\.search_backend: searxng'
+  assert_contains_file "names the registering env" "${research}" 'SEARXNG_URL'
+  assert_contains_file "names the extract gap" "${research}" 'web_extract'
+  assert_contains_file "names the keyless switches" "${research}" 'keyless_fallback'
+
+  # Naming a vendor to forbid it is documentation, which is what the seed's own
+  # comment does. Handing one a route is not, so the skills get checked on the two
+  # things that would actually send a query out: an endpoint and a backend value.
+  # The glob is deliberate - under runfiles the skill files are symlinks, and a
+  # recursive grep walks past a symlink it did not receive as an argument.
+  local hosts backends
+  hosts="$(grep -niE 'https?://[a-z0-9.-]*(exa|parallel|firecrawl|keenable|tavily|brave|perplexity|serpapi)' \
+    "${SKILLS}"/*/SKILL.md || true)"
+  [[ -z ${hosts} ]] \
+    || { printf 'FAIL: a skill gives a web vendor an endpoint:\n%s\n' "${hosts}" >&2; return 1; }
+  backends="$(grep -hoE 'search_backend:[[:space:]]*[a-z-]+' "${SKILLS}"/*/SKILL.md \
+    | awk '{print $2}' | sort -u | tr '\n' ' ')"
+  [[ "${backends}" == 'searxng ' ]] \
+    || { printf 'FAIL: the skills set a web search backend other than searxng: [%s]\n' "${backends}" >&2; return 1; }
 }

@@ -19,7 +19,9 @@ laptop, not a box that serves other people's workspaces.
 If what the operator wants is a *development* environment for the repository,
 that is a Coder workspace, not a host deployment: `bazelisk run
 //scripts:new-workspace -- --dry-run <git-url>` plans one, and `bazelisk run
-//scripts:github-auth -- check` proves a workspace's credential chain. Deploy
+//scripts:github-auth -- check` proves a workspace's credential chain. Both are
+host commands - this image has no bazelisk - so from here print them and hand
+them over. Deploy
 here is for something that should keep running and serve a port.
 
 ## 1. Read before you run

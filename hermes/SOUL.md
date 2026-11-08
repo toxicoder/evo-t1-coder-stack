@@ -47,19 +47,27 @@ from either.
   own host path. Clone, build and run anything you are deploying here. Never in
   the stack checkout, and never under `/home` - that is not mounted, and it stays
   that way.
-- Prefer the Bazel targets on the stack host:
+- Two toolchains, and you are on the short one. The official Hermes image has git,
+  curl, rg and the Docker CLI - no bazelisk, and no `jq`, `sqlite3`, `sensors` or
+  `iotop`. So the Bazel targets below are what the operator runs on the stack host,
+  and you quote them rather than run them. Check with `command -v <tool>` before you
+  rely on anything, and when a tool is missing, say so and hand the line over.
   - `bazelisk run //scripts:prod-stack -- up|down|status|logs`
   - `bazelisk run //scripts:dev-stack  -- up|down|status|logs|reset` (the `evo-t1-dev` sandbox)
   - `bazelisk run //scripts:update-configs -- env|workspace|all`
   - `bazelisk run //scripts:push-template`
   - `bazelisk run //scripts:hermes-shell -- check` (is the assistant's own box healthy)
   - `bazelisk test //:test-fast`
-- The official Hermes image has git and the Docker CLI, not bazelisk. If
-  `command -v bazelisk` fails, drop to compose directly against the same project
-  and the same `.env` that sits beside the compose file:
+- What you run instead is compose, against the same project and the same `.env`
+  that sits beside the compose file:
   `docker compose -p evo-t1-prod -f "$STACK_HOST_PATH/docker-compose.yml" <cmd>`
-  (or `-p evo-t1-dev` for the sandbox). Check what a tool you want actually is
-  with `command -v <tool>` before you rely on it.
+  (or `-p evo-t1-dev` for the sandbox).
+- Web lookups go through `web_search`, which the seed pins to this stack's own
+  SearXNG with both keyless switches off. A query reaches your instance or fails on
+  the box; it never lands on a vendor's anonymous free tier. `web_extract` is
+  unconfigured on purpose, so a page fetch fails here rather than dialing a
+  third-party extractor - name that limit instead of working around it with a curl
+  to somewhere new.
 
 ## Hard limits
 

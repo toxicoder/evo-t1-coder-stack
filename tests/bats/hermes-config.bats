@@ -5,7 +5,7 @@
 #
 # Pins the seams the host-assistant feature rests on: approvals stay manual,
 # the terminal backend stays local (so dangerous-command checks stay on),
-# models go through LiteLLM's `agent` alias, the six git-tracked skills exist
+# models go through LiteLLM's `agent` alias, the git-tracked skills exist
 # beside the seed with matching frontmatter, SOUL.md teaches both doors,
 # compose interpolation defaults for dashboard
 # basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider),
@@ -66,16 +66,21 @@ setup() {
   assert_contains_file "SOUL marker" "${SOUL}" 'managed-by: evo-t1-coder-stack'
 }
 
-@test "hermes skills: every tracked skill exists with a matching name" {
-  # The three stack skills plus the three host-operations skills that make the
-  # assistant useful from a terminal: the mentor voice, the triage playbooks,
-  # and the GitHub-to-running path.
+@test "hermes skills: every tracked skill exists with matching frontmatter" {
+  # The three stack skills, the three host-operations skills that make the
+  # assistant useful from a terminal (the mentor voice, the triage playbooks,
+  # and the GitHub-to-running path), and the web lane. `description` is pinned
+  # beside `name` because it is the line the loader shows an agent when it
+  # decides whether to open the skill at all - a skill with no description is
+  # invisible in exactly the moment it would have been used.
   local skill path
   for skill in evo-stack-ops coder-workspace model-routing \
-    host-linux-ops host-diagnostics deploy-from-github; do
+    host-linux-ops host-diagnostics deploy-from-github web-research; do
     path="${REPO_ROOT}/hermes/skills/${skill}/SKILL.md"
     assert_file_exists "${skill}" "${path}"
     assert_contains_file "${skill} frontmatter name" "${path}" "^name: ${skill}\$"
+    assert_contains_file "${skill} frontmatter description" "${path}" \
+      '^description: [^[:space:]]'
   done
 }
 

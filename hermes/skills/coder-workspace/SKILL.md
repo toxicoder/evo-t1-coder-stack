@@ -32,7 +32,8 @@ a workspace and should be skipped when enumerating.
 
 ## Preflight from the mounted checkout
 
-Run these from a host context (they address the stack host, not a workspace):
+Run these from a host context: they address the stack host, and this image has
+no bazelisk, so from here you print the line and hand it over.
 
 ```sh
 bazelisk run //scripts:new-workspace -- --dry-run <git-url>   # plan only, creates nothing

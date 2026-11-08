@@ -67,5 +67,11 @@ expanded from the environment.
 - Do not hand-edit `litellm/config.yaml` from this container to fix a model: that
   file is bind-mounted from the checkout, so edit it in git and recreate the
   `litellm` service.
-- For web lookups there is no MCP server configured; query SearXNG directly:
-  `curl -s "http://searxng:8181/search?q=…&format=json"`.
+- For a web lookup use the `web_search` tool: the seed pins `web.search_backend`
+  to `searxng` and turns both keyless switches off, so the query goes to this
+  stack's own instance and nowhere else. `web_extract` is left unconfigured on
+  purpose, so a page fetch fails on the box rather than dialing an extractor.
+  To see exactly what the instance returns, ask it directly:
+  `curl -s "http://searxng:8181/search?q=<terms>&format=json"`. Do not add a vendor
+  key or a `web.backend` for a third party to make an extract work - that is the
+  operator's call, and it has a privacy cost worth naming first.

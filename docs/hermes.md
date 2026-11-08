@@ -316,9 +316,11 @@ recreate the container and the env applies.
   restart, logs for this stack), `coder-workspace` (workspaces and their GitHub auth),
   `model-routing` (which LiteLLM alias, and how to switch it), `host-linux-ops` (the
   right Linux command, what each flag does, and the blast radius before it runs),
-  `host-diagnostics` (read-only triage for a slow, hot, full or failing box), and
+  `host-diagnostics` (read-only triage for a slow, hot, full or failing box),
+  `web-research` (what is worth looking up, how to read an empty answer from the
+  lane above, and what that lane refuses to do), and
   `deploy-from-github` (a named repository to running, with the read-first, pin-the-ref,
-  isolate, preflight, health-check, keep-a-rollback order). The last three are what make
+  isolate, preflight, health-check, keep-a-rollback order). The last four are what make
   the terminal door worth opening: they carry the mentoring stance - inspect, explain,
   propose, then act on the yes.
 - A bind-mounted skill needs no recreate when the agent reloads skills from disk; start a
