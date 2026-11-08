@@ -206,3 +206,19 @@ Ship tests with the shell they cover. New function needs a `# @function` block a
 
 ## Branching
 Trunk-based: `main` is the only long-lived branch. Commits: `feat:`, `fix:`, `docs:`, `test:`, `chore:`, `ci:`, `refactor:` + imperative summary.
+
+Non-negotiables, in this repo and in any repo this agent converts:
+
+- `development` / `staging` / `production` are environments (GitHub Environments, compose
+  project names + env files, namespaces, overlays, inventory groups), never git branches.
+- Work branches are short-lived, cut from the tip of `main`, merged by PR, deleted on merge.
+- Incomplete work lands on `main` behind a flag that defaults off — env var, compose profile,
+  `config/flags.yaml`, template parameter, in that order. No flag service unless asked.
+- Promotion is the same commit/tag applied to another environment; nothing is rebuilt per
+  environment.
+- Never force-push, never rewrite a shared branch, never delete a remote branch without
+  confirmation, and record each proposed deletion's tip SHA.
+- Converting a repo to this model is `/trunk-refactor`
+  (`skills/trunk-refactor/SKILL.md`); the prose version is
+  `docs/workflows/trunk-feature-flags-refactor.md`, and `docs/branching.md` stays the rule of
+  record.

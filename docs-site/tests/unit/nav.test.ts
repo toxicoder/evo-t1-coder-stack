@@ -177,7 +177,7 @@ describe("buildPageTree", () => {
     );
     const operate = folderAt(source, 2);
     expect(operate.index).toEqual(operate.children[0]);
-    expect(pageUrl(operate.children[0])).toBe("/page-9");
+    expect(pageUrl(operate.children[0])).toBe("/page-10");
   });
 
   it("names the section and the missing page when a declared path has no page behind it", () => {
@@ -216,7 +216,9 @@ describe("navTabsSchema", () => {
 describe("NAVIGATED_PATHS", () => {
   it("lists every declared page in menu order, folders traversed in place", () => {
     expect(NAVIGATED_PATHS.slice(0, 3)).toEqual(["index.mdx", "getting-started.mdx", "learn/index.md"]);
-    expect(NAVIGATED_PATHS.slice(9, 13)).toEqual([
+    // Conventions holds three pages (conventions, branching, the trunk refactor workflow),
+    // so the Operate run starts at 10 rather than 9.
+    expect(NAVIGATED_PATHS.slice(10, 14)).toEqual([
       "operate/index.md",
       "dashboard.md",
       "config-updates.md",
@@ -275,7 +277,7 @@ describe("neighborsOf", () => {
   it("finds a page given without its extension", () => {
     expect(neighborsOf(completeSource(), "dashboard").next).toEqual({
       name: "Config updates",
-      url: "/page-11"
+      url: "/page-12"
     });
   });
 

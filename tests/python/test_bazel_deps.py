@@ -35,12 +35,15 @@ _module_ids = itertools.count()
 # The groups //:stack_data aggregates; a fixture that satisfies check_aggregate lists
 # all of them, which is the same list the checker keeps as its expectation.
 STACK_DATA_LABELS = [
+    "//:agent_rules",
     "//:compose_file",
     "//:devcontainer",
     "//:env_example",
     "//:env_sample",
+    "//:flags_example",
     "//:githooks",
     "//:license",
+    "//:skill_sources",
     "//:templates_payload",
     "//hermes:payload",
     "//homepage:payload",

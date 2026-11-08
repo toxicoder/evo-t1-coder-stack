@@ -117,6 +117,13 @@ TOKEN_GROUPS: Final[LabelMap] = {
     # The content tree the site renders. :manage-docs.sh rides beside it because a suite
     # runs that one file by path and owes nobody the pages beside it.
     "docs/": ["//docs:content", "//docs:manage-docs.sh"],
+    # The trunk-refactor set, spelled as its two file stems rather than as `skills/` or
+    # `.grok/`: a directory token would match the `~/.agents/skills/` and `.grok/config.toml`
+    # paths the skill-authoring and seeding suites already name, billing them for payload
+    # they never open. Same reason `run_mypy.sh` is a file token and `lints/` is not.
+    "trunk-feature-flags.md": ["//:agent_rules", "//:stack_data"],
+    "trunk-refactor/SKILL.md": ["//:skill_sources", "//:stack_data"],
+    "flags.yaml.example": ["//:flags_example", "//:stack_data"],
     "fixtures/": [":fixtures"],
     "hermes/": [
         "//hermes:seed",
@@ -185,12 +192,15 @@ TOKEN_GROUPS: Final[LabelMap] = {
 # The payload groups //:stack_data is supposed to aggregate. A payload group left out of the
 # aggregate is invisible to the compose bind-mount gate, so it belongs here.
 STACK_DATA_GROUPS: Final[list[str]] = [
+    "//:agent_rules",
     "//:compose_file",
     "//:devcontainer",
     "//:env_example",
     "//:env_sample",
+    "//:flags_example",
     "//:githooks",
     "//:license",
+    "//:skill_sources",
     "//:templates_payload",
     "//hermes:payload",
     "//homepage:payload",

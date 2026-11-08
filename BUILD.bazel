@@ -113,6 +113,41 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
+# The trunk-based + feature-flags skill body, shipped with the repo so a session reads
+# it from the checkout instead of a home copy that another workspace may rewrite.
+filegroup(
+    name = "skill_sources",
+    srcs = glob(
+        ["skills/**/*.md"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# The always-loaded agent rules and the repo-tier skill entry that links to the group
+# above. Grok scans `.grok/rules/*.md` and `.grok/skills/` at every directory level, so
+# these two files are what make the trunk + flags model load without being asked; the
+# skill is a symlink, which is why the glob names `**/*` and not `**/*.md`.
+filegroup(
+    name = "agent_rules",
+    srcs = glob(
+        [".grok/**/*"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
+# The checked-in flag declaration the trunk-refactor skill copies into a repo that has
+# outgrown bare env vars. A sample, never parsed by //:validate.
+filegroup(
+    name = "flags_example",
+    srcs = glob(
+        ["config/*"],
+        allow_empty = True,
+    ),
+    visibility = ["//visibility:public"],
+)
+
 # Both Coder template trees plus the payload they share. push-template.sh globs *.tf
 # inside each tree, so a consumer that pushes reads all three.
 filegroup(
@@ -172,12 +207,15 @@ filegroup(
 filegroup(
     name = "stack_data",
     srcs = [
+        ":agent_rules",
         ":compose_file",
         ":devcontainer",
         ":env_example",
         ":env_sample",
+        ":flags_example",
         ":githooks",
         ":license",
+        ":skill_sources",
         ":templates_payload",
         "//hermes:payload",
         "//homepage:payload",
