@@ -1,0 +1,73 @@
+# Example feature-flag declaration for the trunk-based + flags model.
+#
+# Copy beside the code it guards, then wire it:
+#
+#   cp config/flags.yaml.example config/flags.yaml
+#
+# One file per checkout is the inventory a reviewer reads: it names every switch,
+# who owns it, when it dies, and where it is on. Anything a switch guards that is
+# not listed here is an undeclared flag, and the trunk-refactor skill counts that as
+# a failure of Ideal State Criterion 8.
+#
+# Precedence, highest first, and the order the ladder in
+# docs/workflows/trunk-feature-flags-refactor.md tells you to climb:
+#
+#   1. the real process environment (a shell export, CI env, systemd Environment=)
+#   2. stacks.<stack>.<FLAG> below, where <stack> is the deploy target's own name
+#      (the compose project name, the k8s namespace, the inventory group)
+#   3. flags.<FLAG>.environments.<environment>
+#   4. flags.<FLAG>.default
+#
+# Secrets never belong in this file: it is checked in. Put a secret in the GitHub
+# Environment's own secrets, or in the environment file the deploy already reads.
+#
+# A flag whose expires date has passed is a task, not a state: delete the flag, the
+# dead branch, and the off-path in one `chore:` pull request.
+
+version: 1
+
+flags:
+  # The shape every entry carries. Keys are the environment variable the running
+  # process actually sees, so grep for the key and you land on the seam that reads it.
+  FEATURE_WORKSPACE_PREVIEWS:
+    default: false
+    owner: platform
+    description: "Serve the not-yet-default preview proxy route for a workspace."
+    # One of: a date, or a condition a human can check without asking anyone.
+    expires: 2026-12-31
+    environments:
+      dev: true
+      staging: false
+      production: false
+
+  FEATURE_AGENT_TUNNEL_V2:
+    default: false
+    owner: agent-team
+    description: "Route the agent tunnel through the v2 multiplexer. Incomplete: no resume."
+    expires: "remove when the v2 resume work lands, whichever release that is"
+    environments:
+      dev: true
+      staging: true
+      production: false
+
+  # A flag can guard a whole optional service instead of a code path. Pair it with a
+  # compose profile so `docker compose up` stays clean without it.
+  FEATURE_EXPERIMENTAL_SEARCH_LAN:
+    default: false
+    owner: search
+    description: "Start the experimental search container, which costs a GB of RAM."
+    expires: 2026-11-30
+    compose_profile: experimental
+    environments:
+      dev: false
+      production: false
+
+# Optional per-stack overrides for a host or tenant that differs from the plain
+# environment defaults. <stack> is whatever the deploy already calls itself, so the
+# lookup needs no new concept: compose project name, k8s namespace suffix, Ansible
+# inventory group, or Terraform workspace. Omit the block when there is only one stack.
+stacks:
+  dgx-spark-lab-dev:
+    FEATURE_EXPERIMENTAL_SEARCH_LAN: true
+  inkorporated-stable:
+    FEATURE_AGENT_TUNNEL_V2: false
