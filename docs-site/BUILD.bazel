@@ -1,4 +1,4 @@
-"""Package purpose: Fumadocs (Next.js App Router) documentation site — npm runners, typecheck and the unit gates.
+"""Package purpose: Fumadocs (Next.js App Router) documentation site - npm runners, typecheck and the unit gates.
 
 The site renders the markdown/MDX content in the sibling `docs/` package, so the content
 data dependencies below come from `//docs:content`. Keeping content out of this package
@@ -53,7 +53,7 @@ _NPM_DATA = [
 #                and :runners are load-bearing there. The generator's REPO_ROOT comes
 #                from Path(__file__).resolve(), which follows the runfiles symlink back
 #                into the checkout, so the docs/ pages it validates and the nav.json it
-#                reads come from the checkout, not from :docs:content — that edge is
+#                reads come from the checkout, not from :docs:content - that edge is
 #                declared for honesty about what the generator touches, not because the
 #                sandbox copy is ever opened.
 #   unit_coverage run_in_real_checkout() refuses to measure symlinked sources (v8 reads
@@ -74,6 +74,8 @@ filegroup(
 
 filegroup(
     name = "app",
+    # glob-policy: Next.js file-system routing makes the directory the contract; a new
+    # page.mdx must build with no BUILD edit.
     srcs = glob(
         ["app/**"],
         allow_empty = True,
@@ -83,6 +85,8 @@ filegroup(
 
 filegroup(
     name = "components",
+    # glob-policy: Feeds :sources to :typecheck; a new component must never silently
+    # escape the typecheck lane.
     srcs = glob(
         ["components/**"],
         allow_empty = True,
@@ -92,6 +96,8 @@ filegroup(
 
 filegroup(
     name = "lib",
+    # glob-policy: Feeds :sources to :typecheck; a new lib module must never silently
+    # escape the typecheck lane.
     srcs = glob(
         ["lib/**"],
         allow_empty = True,
@@ -101,6 +107,8 @@ filegroup(
 
 filegroup(
     name = "site_scripts",
+    # glob-policy: Feeds :sources to :build and the npm lane; a new site script must be
+    # picked up, not left unbuilt.
     srcs = glob(
         ["scripts/**"],
         allow_empty = True,
@@ -110,6 +118,8 @@ filegroup(
 
 filegroup(
     name = "unit_tests",
+    # glob-policy: Feeds :sources to the Vitest lane; a new suite must run, not silently
+    # escape //docs-site:unit.
     srcs = glob(
         ["tests/**"],
         allow_empty = True,
@@ -149,10 +159,10 @@ filegroup(
 # Python test entry point.
 filegroup(
     name = "python_sources",
-    srcs = glob(
-        ["test_*.py"],
-        allow_empty = True,
-    ) + ["scripts/gen_nav.py"],
+    srcs = [
+        "scripts/gen_nav.py",
+        "test_gen_nav.py",
+    ],
     visibility = ["//visibility:public"],
 )
 

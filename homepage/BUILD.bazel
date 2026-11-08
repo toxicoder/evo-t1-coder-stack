@@ -12,6 +12,8 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "config",
+    # glob-policy: Compose bind-mounts the config dir and //:validate globs
+    # config/*.yaml, so the directory is the contract.
     srcs = glob(
         ["config/**"],
         allow_empty = True,
@@ -20,6 +22,8 @@ filegroup(
 
 filegroup(
     name = "icons",
+    # glob-policy: Compose mounts ./homepage/assets/icons at /app/public/icons:ro, so
+    # the directory is the mount contract.
     srcs = glob(
         ["assets/icons/**"],
         allow_empty = True,

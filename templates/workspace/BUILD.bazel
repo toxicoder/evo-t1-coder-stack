@@ -13,6 +13,8 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "payload",
+    # glob-policy: push-template globs *.tf/*.tftpl per tree and the lockfile is named
+    # explicitly outside the glob, so the tree is the contract.
     srcs = [".terraform.lock.hcl"] + glob(
         [
             "*.tf",

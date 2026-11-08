@@ -113,7 +113,7 @@ suite_map() {
     printf 'FAIL: the dependency gate reported:\n%s\n' "${output}" >&2
     return 1
   }
-  assert_match "the whole gate ran" 'summary: 3 ok, 0 warnings, 0 failed' "${output}"
+  assert_match "the whole gate ran" 'summary: 4 ok, 0 warnings, 0 failed' "${output}"
 }
 
 @test "bazel_deps: a suite that names a docs page owes the group that ships it" {

@@ -398,13 +398,36 @@ class MainTest(CheckerTestCase):
     def test_the_real_repo_passes_the_whole_gate(self) -> None:
         status, output = run_checker(REPO_ROOT)
         self.assertEqual(0, status, output)
-        self.assertIn("summary: 3 ok, 0 warnings, 0 failed", output)
+        self.assertIn("summary: 4 ok, 0 warnings, 0 failed", output)
 
     def test_one_target_selects_one_check(self) -> None:
         status, output = run_checker(REPO_ROOT, "--target", "aggregate")
         self.assertEqual(0, status, output)
         self.assertIn("-> checking aggregate", output)
         self.assertNotIn("-> checking scripts", output)
+
+    def test_the_glob_ratchet_is_one_of_the_selected_checks(self) -> None:
+        # The ratchet has to run in the default `all` pass, not only when named, or an
+        # unannotated glob reaches main and nothing in //:test-fast notices.
+        status, output = run_checker(REPO_ROOT)
+        self.assertEqual(0, status, output)
+        self.assertIn("-> checking globs", output)
+
+    def test_an_unannotated_glob_is_a_finding_and_the_budget_is_a_one_way_ratchet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            (root / "BUILD.bazel").write_text(
+                'filegroup(name = "a", srcs = glob(["x/**"]))\n', encoding="utf-8")
+            status, output = run_checker(root, "--target", "globs")
+            self.assertEqual(1, status)
+            self.assertIn("globs with no '# glob-policy: <reason>' line above it", output)
+
+            # Same tree with the policy line: the count check alone then decides.
+            (root / "BUILD.bazel").write_text(
+                'filegroup(\n    # glob-policy: the directory is the contract\n'
+                '    name = "a",\n    srcs = glob(["x/**"]),\n)\n', encoding="utf-8")
+            status, output = run_checker(root, "--target", "globs")
+            self.assertEqual(0, status, output)
 
     def test_a_broken_tree_exits_one_with_a_summary(self) -> None:
         root = make_tmp("broken")
@@ -422,7 +445,7 @@ class MainTest(CheckerTestCase):
                 with self.assertRaises(SystemExit) as caught:
                     runpy.run_path(str(CHECKER_PATH), run_name="__main__")
         self.assertEqual(0, caught.exception.code)
-        self.assertIn("summary: 3 ok", buffer.getvalue())
+        self.assertIn("summary: 4 ok", buffer.getvalue())
 
 
 if __name__ == "__main__":
