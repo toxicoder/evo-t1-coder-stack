@@ -22,6 +22,11 @@ setup() {
   use_stubs docker timeout curl psql ssh
   export STUB_CURL_RC=0
   export STUB_CURL_OUT='ok'
+  # coder-agents.sh sets this at the top of the script; pin_lane validates a
+  # model_config_id against it, so every test that reaches a pin needs it.
+  UUID_RE='[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  LANES_PINNED=0
+  LANES_UNPINNED=0
   # api_read / api_write / cleanup_token call stack_timeout from coder_api.sh.
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/coder_api.sh"
@@ -135,12 +140,19 @@ run_strict() {
   export STUB_CURL_OUT='{"model_config_id":""}'
   run create_model_config agent 'Coder "Agents"' 262144 true
   [ "${status}" -eq 0 ]
+  export STUB_CURL_LOG_BODY=1
   run pin_lane general agent "d162f0a4-1111-4444-8888-121212121212"
   [ "${status}" -eq 0 ]
   assert_match "pinned" 'lane general: pinned' "${output}"
+  # The body, and not just which lane was written. The shipped bug put
+  # "agent d162f0a4-…" in here: the log line still read "pinned", every lane
+  # came back 400, and no argv in the stub log could tell the difference.
+  grep -qF -- '{"model_config_id":"d162f0a4-1111-4444-8888-121212121212"}' \
+    "${STUB_LOG}/curl-in.log"
+  grep -qF -- 'model-override/general' "${STUB_LOG}/curl-in.log"
   run pin_lane general agent ""
   [ "${status}" -eq 0 ]
-  assert_match "no target" 'skipped' "${output}"
+  assert_match "no target" 'left unpinned' "${output}"
 }
 
 @test "coder-agents: pin_lane re-pins a lane aimed at an alias the proxy calls dead" {
@@ -301,19 +313,51 @@ run_strict() {
   agent_xhigh_id=""
   chat_id="22222222-2222-4222-8222-222222222222"
   # compaction prefers chat, but chat is unhealthy, so agent wins and the caller
-  # learns which alias it is labelling.
-  run pick_live_config "chat agent"
-  [ "${status}" -eq 0 ]
-  [ "${output}" = "agent ${agent_id}" ]
-  run pick_live_config "agent chat"
-  [ "${output}" = "agent ${agent_id}" ]
-  export LIVE_ALIASES=$'chat'
-  run pick_live_config "chat agent"
-  [ "${output}" = "chat ${chat_id}" ]
-  # Nothing in the list qualifies: the caller stops rather than pin to nothing.
-  export LIVE_ALIASES=$'agent-low'
-  run pick_live_config "chat agent"
-  [ "${output}" = "" ]
+  # learns which alias it is labelling. The pair comes back as two globals now:
+  # it used to be returned as one "alias uuid" string that the caller split
+  # apart, and that split kept the alias glued to the front of the uuid, so all
+  # four model-override PUTs sent "agent 11111111-…" as their model_config_id
+  # and the server rejected every lane. Called directly, not under run, so the
+  # globals survive into the assertions.
+  pick_live_config "chat agent"
+  [ "${PICK_ALIAS}" = "agent" ]
+  [ "${PICK_ID}" = "${agent_id}" ]
+  pick_live_config "agent chat"
+  [ "${PICK_ALIAS}" = "agent" ]
+  [ "${PICK_ID}" = "${agent_id}" ]
+  LIVE_ALIASES=$'chat'
+  pick_live_config "chat agent"
+  [ "${PICK_ALIAS}" = "chat" ]
+  [ "${PICK_ID}" = "${chat_id}" ]
+  # Nothing in the list qualifies: both come back empty, so the caller stops
+  # rather than pin to nothing.
+  LIVE_ALIASES=$'agent-low'
+  pick_live_config "chat agent"
+  [ "${PICK_ALIAS}" = "" ]
+  [ "${PICK_ID}" = "" ]
+}
+
+@test "coder-agents: the deployment default follows the health gate, not a fixed alias" {
+  load_fn scripts/coder-agents.sh alias_is_live
+  load_fn scripts/coder-agents.sh first_live_alias
+  load_fn scripts/coder-agents.sh default_flag_for
+  # Only the Arc lane answers: the default has to land on chat, or a chat opened
+  # without an explicit model pick has nothing to resolve to.
+  ALIASES_PROBED=1
+  LIVE_ALIASES=$'chat'
+  [ "$(first_live_alias "agent chat")" = "chat" ]
+  [ "$(first_live_alias "agent agent-low")" = "" ]
+  # A gate that could not answer rules nothing out, so the Spark alias wins.
+  ALIASES_PROBED=0
+  [ "$(first_live_alias "agent chat")" = "agent" ]
+  # Only the chosen alias is created as the default, and a deployment that
+  # already has one (DEFAULT_ALIAS empty) creates none of them as default.
+  DEFAULT_ALIAS=chat
+  [ "$(default_flag_for chat)" = "true" ]
+  [ "$(default_flag_for agent)" = "false" ]
+  DEFAULT_ALIAS=""
+  [ "$(default_flag_for chat)" = "false" ]
+  [ "$(default_flag_for agent)" = "false" ]
 }
 
 @test "coder-agents: litellm_get keeps the master key out of every argv" {  load_fn scripts/lib/common.sh log
