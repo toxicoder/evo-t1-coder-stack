@@ -226,6 +226,59 @@ setup() {
   done
 }
 
+@test "git policy: the seed branches before the first edit, commits per unit, and defers the push" {
+  # The seed used to close its own Done Means checklist with "Commit, push, and
+  # git config happen only when explicitly asked or required to open the PR",
+  # which is the line an agent quotes when it hands over a day of uncommitted
+  # work sitting on main. The three obligations below are what replaced it, and
+  # the negative pin is the point of the test: with both sentences in the file
+  # an agent obeys whichever it read last, so the contradiction has to stay out.
+  local common_md="${REPO_ROOT}/templates/common/GROK_BUILD_AGENTS.md"
+  [ -f "${common_md}" ] ||
+    skip "no common GROK_BUILD_AGENTS.md payload under ${REPO_ROOT}/templates/common"
+  run grep -F '# Git, Commits, and Pull Requests' "${common_md}"
+  [ "${status}" -eq 0 ]
+  local phrase
+  for phrase in \
+    '**Branch before the first edit.**' \
+    '**Commit each unit as it lands.**' \
+    '**Push once, when the PR opens.**' \
+    '**Stage by path.**' \
+    'git switch -c' \
+    'git log --oneline main..HEAD'; do
+    run grep -F -- "${phrase}" "${common_md}"
+    [ "${status}" -eq 0 ] || {
+      echo "the seed dropped: ${phrase}" >&2
+      return 1
+    }
+  done
+  run grep -F 'happen only when explicitly asked' "${common_md}"
+  [ "${status}" -ne 0 ] || {
+    echo "the seed forbids the commits this policy asks for" >&2
+    return 1
+  }
+  # The rule of record carries the same three obligations, so the doc an
+  # operator reads and the text every workspace seeds cannot drift apart.
+  local branching="${REPO_ROOT}/docs/branching.md"
+  run grep -F '## Commits, and when they happen' "${branching}"
+  [ "${status}" -eq 0 ]
+  for phrase in \
+    '**Branch first, then edit.**' \
+    '**Commit each unit as it lands.**' \
+    '**A local commit is free, a push is not.**' \
+    '**Push once, when the pull request opens**'; do
+    run grep -F -- "${phrase}" "${branching}"
+    [ "${status}" -eq 0 ] || {
+      echo "docs/branching.md dropped: ${phrase}" >&2
+      return 1
+    }
+  done
+  # The always-loaded copy in .grok/rules/ is pinned for the same rule by
+  # tests/bats/trunk-refactor-skill.bats, which is the suite that already owns
+  # that file. AGENTS.md restates the rule in prose and defers to
+  # docs/branching.md as the rule of record.
+}
+
 @test "search lane: both config twins carry the gated searxng block and the parked native-search key" {
   # search_mcp (template default: true) gates the [mcp_servers.searxng] block,
   # and push-template.sh passes its --var array to BOTH pushes, so the block and
