@@ -16,7 +16,7 @@ The declaration names each page by its on-disk spelling. ``validate`` accepts ei
 for a page, because a page that needed JSX is ``.mdx`` and the rest are ``.md``.
 
 Usage:
-    python3 docs-site/scripts/gen_nav.py [--check]
+    bazelisk run //docs-site:npm -- run nav:check
 
 Options:
     --check   Exit 1 if the committed nav.json differs from this declaration.
@@ -318,7 +318,10 @@ def main(argv: list[str] | None = None) -> int:
     existing = OUT_JSON.read_text(encoding="utf-8") if OUT_JSON.is_file() else None
     if args.check:
         if existing != payload:
-            print("docs-site/lib/nav.json is stale; run docs-site/scripts/gen_nav.py", file=sys.stderr)
+            print(
+                "docs-site/lib/nav.json is stale; run: bazelisk run //docs-site:npm -- run nav:generate",
+                file=sys.stderr,
+            )
             return 1
         print("nav.json is up to date.")
         return 0

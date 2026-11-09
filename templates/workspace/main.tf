@@ -57,7 +57,7 @@ locals {
     {
       value       = "evo-t1-dev:latest"
       name        = "EVO-T1 golden image"
-      description = "Pinned polyglot toolchain with pre-warmed uv/npm caches and the MCP servers baked in. Build it first: scripts/build-dev-image.sh."
+      description = "Pinned polyglot toolchain with pre-warmed uv/npm caches and the MCP servers baked in. Build it first: bazelisk run //scripts:build-dev-image."
     },
     {
       value       = "ubuntu:24.04"

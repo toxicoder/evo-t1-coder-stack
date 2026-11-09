@@ -2,7 +2,7 @@
 # tftpl: coder_script body; $${shell} stays a shell var; $${terraform_var} is passed from main.tf.
 set -u
 if ! command -v docker >/dev/null 2>&1; then
-  echo "the docker CLI is missing — this template needs the golden image (scripts/build-dev-image.sh), which ships the client" >&2
+  echo "the docker CLI is missing - this template needs the golden image (bazelisk run //scripts:build-dev-image), which ships the client" >&2
   exit 1
 fi
 # Explicit -H rather than relying on the inherited DOCKER_HOST, so the log

@@ -96,6 +96,7 @@ filegroup(
 # new-workspace's template probe a miss.
 filegroup(
     name = "devcontainer",
+    # glob-policy: the directory is a container build context. The contributor-env sentinel inside it is what makes new-workspace's template probe a miss, so a file added there has to travel without a BUILD edit.
     srcs = glob(
         [".devcontainer/**"],
         allow_empty = True,
@@ -106,6 +107,7 @@ filegroup(
 # The commit and push gates installed by scripts/install-hooks.sh.
 filegroup(
     name = "githooks",
+    # glob-policy: install-hooks.sh and seed-dev-env.sh install the directory wholesale, so a new hook must ride along silently -- the install path names the directory, never a file in it.
     srcs = glob(
         [".githooks/**"],
         allow_empty = True,
@@ -117,6 +119,7 @@ filegroup(
 # it from the checkout instead of a home copy that another workspace may rewrite.
 filegroup(
     name = "skill_sources",
+    # glob-policy: a skill body is a prose tree read from the checkout, and the trunk-refactor skill grows by adding pages. The gate that pins its content is //tests:bats_trunk_refactor_skill_test, which names the group, not the files.
     srcs = glob(
         ["skills/**/*.md"],
         allow_empty = True,
@@ -130,6 +133,7 @@ filegroup(
 # skill is a symlink, which is why the glob names `**/*` and not `**/*.md`.
 filegroup(
     name = "agent_rules",
+    # glob-policy: Grok scans .grok/rules/*.md and .grok/skills/ at every boot, so the directory is the load contract -- a rule file that needs a BUILD edit to be seen is a rule that silently stops loading. **/* rather than **/*.md because the skill entry is a symlink.
     srcs = glob(
         [".grok/**/*"],
         allow_empty = True,
@@ -141,6 +145,7 @@ filegroup(
 # outgrown bare env vars. A sample, never parsed by //:validate.
 filegroup(
     name = "flags_example",
+    # glob-policy: config/ is the sample directory the trunk-refactor skill copies into a repo that has outgrown bare env vars. Samples are meant to accumulate, and //:validate deliberately does not parse them.
     srcs = glob(
         ["config/*"],
         allow_empty = True,
@@ -244,6 +249,17 @@ filegroup(
         "//lints:__pkg__",
         "//visibility:public",
     ],
+)
+
+# The exclusion ledger //tests:owned_files_audit reads: the tracked files no target can
+# own, each carrying its reason. It sits at the root beside mypy.ini for the same reason
+# -- it configures a repo-wide gate rather than belonging to one package's sources -- and
+# it is declared as a group so the audit's data edge is what owns the file the audit
+# consults to decide whether a file is owned.
+filegroup(
+    name = "bazel_unowned_ledger",
+    srcs = ["unowned-files.txt"],
+    visibility = ["//visibility:public"],
 )
 
 # Every Starlark file that declares targets, so //tests:bats_bazel_deps_test can read the

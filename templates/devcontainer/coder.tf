@@ -1,6 +1,6 @@
 variable "image" {
   type        = string
-  description = "Image for the *workspace* container — the one the agent runs in and where the repo is cloned. The dev container itself is defined by the repo's own .devcontainer/devcontainer.json and built on the DinD sidecar, so this image never decides the toolchain inside the editor. Build the golden image with scripts/build-dev-image.sh; a bare Ubuntu still boots but without the Docker CLI, Node or the Grok CLI."
+  description = "Image for the *workspace* container - the one the agent runs in and where the repo is cloned. The dev container itself is defined by the repo's own .devcontainer/devcontainer.json and built on the DinD sidecar, so this image never decides the toolchain inside the editor. Build the golden image with bazelisk run //scripts:build-dev-image; a bare Ubuntu still boots but without the Docker CLI, Node or the Grok CLI."
   default     = "evo-t1-dev:latest"
 }
 

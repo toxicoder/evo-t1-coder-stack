@@ -1,0 +1,27 @@
+# Files git tracks that no Bazel target can own, each with the reason it stays
+# that way. Managed by //tests:owned_files_audit (tests/owned_files.sh), which
+# fails on an entry with no reason and, under --strict-ledger, on an entry that
+# matches nothing -- so a deletion cannot leave a claim behind here.
+#
+# Shape: `path<TAB>reason` (two spaces work as the separator too). `*` and `?`
+# are globs. Bazel's own control plane (.bazelrc, MODULE.bazel, every BUILD file,
+# and anything under a .bazelignore directory) is exempt in code and does not
+# belong here.
+#
+# Two rules keep this from becoming the place files go to hide. An entry with no
+# reason is a finding. A file that a target could own belongs in a filegroup, not
+# on this line: check `bazelisk run //scripts:bazel-map -- owners <path>` first.
+
+# Human-facing prose. GitHub renders these at the repo root and no build step,
+# template, or container reads them; //:entry_docs carries the two documents a
+# target does cite by name.
+CONTRIBUTING.md	human-facing prose, read by nobody at build time
+SECURITY.md	human-facing prose, read by nobody at build time
+
+# The Makefile is a compatibility shim: every recipe forwards to a //:target so a
+# contributor who types `make test` still runs the Bazel gate. Nothing reads it.
+Makefile	shim that forwards to //:targets
+
+# Editor convenience. The tasks invoke `bazelisk` directly, so the file is a
+# launcher for a human and carries no build meaning a target would consume.
+.vscode/tasks.json	editor convenience, no build meaning

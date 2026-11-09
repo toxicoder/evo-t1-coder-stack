@@ -15,7 +15,7 @@
 #             demand) and network for the first install. This is what pre-push
 #             runs, and what a PR should be green on before it is opened.
 #   --image   the same full set inside evo-t1-dev:latest through
-#             scripts/test-in-image.sh, which is how CI answers the question.
+#             //scripts:test-in-image, which is how CI answers the question.
 #             Needs docker.
 #
 # A failure here is a fact about the tree, not a suggestion. git's own
@@ -81,6 +81,12 @@ run_hermetic_gate() {
   section "Hermetic gate"
   phase "${bazel} test //:test-fast //:lint --test_tag_filters=manual"
   "${bazel}" test //:test-fast //:lint --test_tag_filters=manual || rc=1
+  # The ownership audit asks the real dependency graph, so it is a `bazel run` and not
+  # a member of //:test-fast: a test action holds the server its own query needs. It
+  # lives here because this script runs under `bazel run`, where that query does get a
+  # server, which is also how the //:test-fast line above works.
+  phase "${bazel} run //tests:owned_files_audit"
+  "${bazel}" run //tests:owned_files_audit || rc=1
   phase "cmp .env.sample .env.example"
   cmp .env.sample .env.example || rc=1
   if has_tool docker; then
@@ -131,7 +137,7 @@ run_image_gate() {
     err "docker is not on PATH; --image runs the gate inside evo-t1-dev:latest"
     return 1
   fi
-  phase "scripts/test-in-image.sh -- test //:test-all"
+  phase "//scripts:test-in-image -- test //:test-all"
   "${bazel}" run //scripts:test-in-image -- -- test //:test-all || return 1
   return 0
 }

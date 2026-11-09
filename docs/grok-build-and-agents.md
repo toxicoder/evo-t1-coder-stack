@@ -300,7 +300,7 @@ report for a script. What the report should read here:
   while `grok` is missing from PATH. That installer follows the `stable` pointer, not
   this pin. It deliberately does **not** fetch on every boot: the bake-in under
   `/usr/local/bin` is the upgrade path, so shipping a new CLI means bumping the pin,
-  rebuilding the image (`scripts/build-dev-image.sh`) and re-pushing the templates.
+  rebuilding the image (`bazelisk run //scripts:build-dev-image`) and re-pushing the templates.
 - A self-installed CLI under `~/.grok/bin` stays first on the login-shell PATH, so it
   wins over the baked copy.
 - **No published source names an upstream `/learn`, and the bundled skill set never

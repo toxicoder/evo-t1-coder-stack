@@ -38,6 +38,7 @@ filegroup(
 
 filegroup(
     name = "shell_sources",
+    # glob-policy: this is the lint and shell-coverage denominator; consciousness is enforced one step up, where a new CLI without a _SCRIPT_LIBS or _SCRIPT_PAYLOAD key fails analysis
     srcs = glob(
         ["**/*.sh"],
         allow_empty = True,
@@ -51,6 +52,7 @@ filegroup(
 
 filegroup(
     name = "py_programs",
+    # glob-policy: the mypy and py_coverage denominator for scripts/lib; a module listed by hand is a module that ships untype-checked
     srcs = glob(
         ["**/*.py"],
         allow_empty = True,
@@ -64,6 +66,7 @@ filegroup(
 
 filegroup(
     name = "awk_programs",
+    # glob-policy: scripts/lib/*.awk programs are linted and coverage-measured as a tree by the shell runners, so a new program joins those gates on arrival
     srcs = glob(
         ["**/*.awk"],
         allow_empty = True,
@@ -468,6 +471,7 @@ _SCRIPT_PAYLOAD_ALLOW = {
 #
 # A scripts/*.sh with no key in _SCRIPT_LIBS or _SCRIPT_PAYLOAD fails analysis rather than
 # quietly inheriting the world, which is what keeps the two maps complete.
+# glob-policy: the directory is the CLI inventory and the review lives in the maps below, where a script with no _SCRIPT_LIBS or _SCRIPT_PAYLOAD key fails analysis
 _ENTRY_SCRIPTS = glob(
     ["*.sh"],
     allow_empty = True,

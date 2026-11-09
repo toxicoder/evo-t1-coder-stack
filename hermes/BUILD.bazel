@@ -17,6 +17,8 @@ filegroup(
 
 filegroup(
     name = "skills",
+    # glob-policy: Compose bind-mounts ./hermes/skills at /opt/stack-skills:ro, so the
+    # directory is the mount contract.
     srcs = glob(
         ["skills/**"],
         allow_empty = True,

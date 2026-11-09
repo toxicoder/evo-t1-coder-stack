@@ -59,6 +59,89 @@ Reporter: TypeAlias = Callable[[str], None]
 Check: TypeAlias = Callable[[], int]
 
 
+# ---------------------------------------------------------------------------
+# The glob ratchet.
+#
+# A glob is right where the directory is the contract and a new file is meant to be
+# picked up silently (a payload tree a container bind-mounts); it is wrong where a new
+# file should be a conscious act (a source list, a test suite). This repo has both, so
+# neither is banned outright: every surviving glob owes a written policy line above it
+# and the total is pinned, so the number only moves down and each exemption carries a
+# sentence a reviewer can read and refuse.
+# ---------------------------------------------------------------------------
+
+# The count when this check was written. A conversion that removes a glob lowers this
+# line; a change that adds one has to argue for it in review before it moves up.
+GLOB_BUDGET: Final[int] = 29
+
+# How many lines above a glob() its policy comment may sit. A reason that has to be
+# read has to stay next to the thing it excuses.
+GLOB_POLICY_CONTEXT: Final[int] = 3
+
+# `glob(` as a call, so prose saying a script "globs a directory" is not counted.
+_GLOB_RE: Final[re.Pattern[str]] = re.compile(r"\bglob\(")
+_GLOB_POLICY_RE: Final[re.Pattern[str]] = re.compile(r"#\s*glob-policy\s*:\s*(\S.*)$", re.I)
+
+# Not source: build output, installed packages, generated site trees. Walking them
+# would count globs in files this repo does not own.
+_GLOB_SKIP_DIRS: Final[frozenset[str]] = frozenset(
+    {
+        ".git",
+        ".next",
+        "bazel-bin",
+        "bazel-out",
+        "bazel-testlogs",
+        "__pycache__",
+        "node_modules",
+        "out",
+    },
+)
+
+
+def build_files(root: Root) -> list[str]:
+    """Repo-relative BUILD files, discovered from the tree the way the suite scan is.
+
+    Discovered rather than declared from a filegroup: a package that added a glob
+    would otherwise only have to forget to list its BUILD file to hide it.
+    """
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in _GLOB_SKIP_DIRS)
+        for name in filenames:
+            if name in ("BUILD", "BUILD.bazel"):
+                found.append(os.path.relpath(os.path.join(dirpath, name), os.fspath(root)))
+    return sorted(found)
+
+
+def check_globs(root: Root, report: Reporter) -> int:
+    """Every glob() owes a policy line above it, and the total owes the budget."""
+    total = 0
+    findings = 0
+    for rel in build_files(root):
+        text = read(root, rel)
+        if text is None:
+            continue
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if not _GLOB_RE.search(line):
+                continue
+            total += 1
+            window = lines[max(0, index - GLOB_POLICY_CONTEXT) : index + 1]
+            if not any(_GLOB_POLICY_RE.search(entry) for entry in window):
+                report(
+                    "error: %s:%d globs with no '# glob-policy: <reason>' line above it"
+                    % (rel, index + 1),
+                )
+                findings += 1
+    if total > GLOB_BUDGET:
+        report(
+            "error: %d glob() in the BUILD files; the budget is %d and it only moves down"
+            % (total, GLOB_BUDGET),
+        )
+        findings += 1
+    return findings
+
+
 class Drift(NamedTuple):
     """The two directions one target's map can disagree with its sources.
 
@@ -625,9 +708,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--root", default = ".", help = "repo root to check")
     parser.add_argument(
         "--target",
-        choices = ["all", "scripts", "suites", "aggregate"],
-        default = "all",
-        help = "which map to check",
+        choices=["all", "scripts", "suites", "aggregate", "globs"],
+        default="all",
+        help="which map to check",
     )
     args = parser.parse_args(argv)
 
@@ -635,13 +718,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         "scripts": lambda: check_scripts(args.root, report),
         "suites": lambda: check_suites(args.root, report),
         "aggregate": lambda: check_aggregate(args.root, report),
+        "globs": lambda: check_globs(args.root, report),
     }
     lines: list[str] = []
 
     def report(line: str) -> None:
         lines.append(line)
 
-    selected = ["scripts", "suites", "aggregate"] if args.target == "all" else [args.target]
+    selected = (
+        ["scripts", "suites", "aggregate", "globs"]
+        if args.target == "all"
+        else [args.target]
+    )
     print("== bazel_deps ==")
     failures = 0
     for name in selected:

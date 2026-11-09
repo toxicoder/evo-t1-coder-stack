@@ -12,6 +12,8 @@ package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "confs",
+    # glob-policy: Compose mounts the router conf by name; the exclude drops
+    # bootstrap's gitignored render, which is why a glob is right here.
     srcs = glob(
         [
             "*.conf",

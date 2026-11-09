@@ -1,4 +1,4 @@
-"""Package purpose: Documentation content — the MDX/markdown pages the Fumadocs site in docs-site/ renders, plus the Bazel entry points that drive it.
+"""Package purpose: Documentation content - the MDX/markdown pages the Fumadocs site in docs-site/ renders, plus the Bazel entry points that drive it.
 
 The site itself is the Next.js app in `docs-site/` (that package owns the npm runners).
 This package owns the *content*: the pages under `docs/`, the `includes/` the remark
@@ -31,6 +31,8 @@ filegroup(
 # content input (the glossary definitions), not pages, and is excluded from the source.
 filegroup(
     name = "content",
+    # glob-policy: The prose tree is the product and //docs:build walks it; a new page
+    # ships with no BUILD edit.
     srcs = glob(
         [
             "**/*.md",

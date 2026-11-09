@@ -8,6 +8,7 @@ marker) and nothing else. Everything a suite reads beyond that is named per suit
 the map cannot drift from what the suites actually open.
 """
 
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools:exec_shell.bzl", "exec_shell")
 load(":bats.bzl", "bats_file_tests")
@@ -32,6 +33,7 @@ filegroup(
 # tests/ entry of scan_dirs, so this group and that scan list are kept equal.
 filegroup(
     name = "shell_sources",
+    # glob-policy: this list equals the tests/ entry of each runner's scan_dirs, so the directory is the contract and a new tests/*.sh must enter //lints:shell and //lints:shfmt on its own
     srcs = glob(
         [
             "coverage/*.sh",
@@ -47,30 +49,38 @@ filegroup(
 
 # The coverage harness itself. A suite that pins how the harness hands it a tree reads
 # these by path, so they have to be in its runfiles beside the suites they drive.
+#
+# Explicit rather than a glob: this is five named files that change only when the
+# harness changes, and a sixth file dropped into coverage/ that nobody wired into a
+# driver should be a decision, not something the gate silently ships to every
+# consumer. //tests:shell_coverage and //tests:py_coverage name the same files in
+# their own data edges, so a new one has to be declared twice on purpose.
 filegroup(
     name = "coverage_tools",
-    srcs = glob(
-        [
-            "coverage/*.py",
-            "coverage/*.sh",
-        ],
-        allow_empty = True,
-    ),
+    srcs = [
+        "coverage/aggregate.py",
+        "coverage/instrument.py",
+        "coverage/py_cov.sh",
+        "coverage/py_report.py",
+        "coverage/shell_cov.sh",
+    ],
     visibility = ["//visibility:public"],
 )
 
 # The first-party Python this package owns: the Bazel data-map checker, the function
-# extractor, the three coverage drivers, and the unittest suites. It is the tests/ half
-# of what //lints:mypy type-checks, and equals the Python entries of :py_coverage's data
-# edge minus the groups this package does not own (//scripts:py_programs and
-# //docs-site:python_sources, which that target pulls directly). Keep the two in step:
-# a new .py here joins this list, and a new .py under scripts/lib or docs-site/scripts
-# joins the list in lints/run_mypy.sh instead.
+# extractor, the tracked-file ownership checker, the three coverage drivers, and the
+# unittest suites. It is the tests/ half of what //lints:mypy type-checks, and equals the
+# Python entries of :py_coverage's data edge minus the groups this package does not own
+# (//scripts:py_programs and //docs-site:python_sources, which that target pulls directly).
+# Keep the two in step: a new .py here joins this list, and a new .py under scripts/lib or
+# docs-site/scripts joins the list in lints/run_mypy.sh instead.
 filegroup(
     name = "python_sources",
     srcs = [
         "bazel_deps.py",
         "extract_fn.py",
+        "owned_files_check.py",
+        # glob-policy: coverage/ and python/ are the harness's and the unittest suite's own directories, and a new test module must reach //lints:mypy and //tests:py_coverage without a BUILD edit
     ] + glob(
         [
             "coverage/*.py",
@@ -88,6 +98,7 @@ filegroup(
 # greps them for function names and //tests:shell_coverage drives them all.
 filegroup(
     name = "all_bats",
+    # glob-policy: this is the inventory denominator //tests:shell_inventory greps, so a new .bats has to join it silently rather than stop being measured
     srcs = glob(
         [
             "bats/*.bash",
@@ -101,6 +112,7 @@ filegroup(
 # Scratch trees two suites build from a canned psql token.
 filegroup(
     name = "fixtures",
+    # glob-policy: a fixture tree is canned input a suite opens by path, and the per-suite _SUITE_PAYLOAD entry already makes each suite declare what it reads
     srcs = glob(
         ["bats/fixtures/**"],
         allow_empty = True,
@@ -140,6 +152,7 @@ _BATS_COMMON = [
     ":bats_tool",
     "//:compose_file",
     "//scripts:doc_sources",
+    # glob-policy: every bats_file_tests target gets this as common_data and stub_bin fails on a missing stub, so a new stub must reach every suite's runfiles
 ] + glob(
     ["bats/tool_stubs/**"],
     allow_empty = True,
@@ -309,6 +322,10 @@ _SUITE_PAYLOAD = {
     ],
     # The CLI renders a canned scaffold tree (the fixture stands in for the external
     # template repository) into a scratch directory and asserts on the result, so the
+    # It drives the ownership checker through a scratch fixture: every path the source
+    # scan finds here is a row it wrote into that fixture, not a file it opens. The four
+    # groups are declared so the suite still runs, and each is exempted below.
+    "owned_files.bats": [],
     # fixture has to be in the suite's runfiles; :all_bats is the group the registry
     # binds to a source that names a path under tests/bats/, which this suite does when
     # it locates that fixture.
@@ -473,6 +490,31 @@ _SUITE_PAYLOAD_ALLOW = {
     "workspace.bats": [
         "//:entry_docs",
     ],
+    # The suite builds its own tracked set and its own owned-label set, hands both to
+    # stubs of git and bazelisk, and reads nothing out of this checkout. So each side of
+    # the pairing needs a reason the scan cannot derive.
+    #
+    # The four groups: README.md is one row of the canned `git ls-files` the stub answers
+    # with, BUILD.bazel is the row that proves a per-package BUILD is control plane, and
+    # docs/ and proxy/ are prefixes in fabricated paths (docs/notes.md,
+    # proxy/certificates/stack.crt) that test the ignore-prefix and control-plane rules
+    # without any such file existing. None is opened.
+    #
+    # The four sources: the suite execs the runner, which sources repo_root.sh and runs
+    # the checker by path composed from ${REPO_ROOT}, and reads the ledger through the
+    # runner's EVO_T1_UNOWNED_LEDGER default. The scan matches a literal repo-relative
+    # path, so a composed one reads as no dependency at all while the runfiles still owe
+    # every one of them.
+    "owned_files.bats": [
+        "owned_files.sh",
+        "owned_files_check.py",
+        "repo_root.sh",
+        "//:bazel_unowned_ledger",
+        "//:bazel_files",
+        "//:entry_docs",
+        "//docs:content",
+        "//proxy:confs",
+    ],
 }
 
 exec_shell(
@@ -481,6 +523,7 @@ exec_shell(
 )
 
 bats_file_tests(
+    # glob-policy: the glob saves target boilerplate, not the review: bats_file_tests fails analysis unless the suite has a _SUITE_PAYLOAD key that //tests:bats_bazel_deps_test re-derives
     srcs = glob(["bats/*.bats"]),
     common_data = _BATS_COMMON,
     payload = _SUITE_PAYLOAD,
@@ -590,6 +633,7 @@ sh_test(
         "//:compose_file",
         "//docs-site:python_sources",
         "//scripts:py_programs",
+        # glob-policy: coverage/py_cov.sh discovers tests/python/test_*.py at runtime, so a new unittest module must arrive in runfiles or the suite silently measures less
     ] + glob(
         ["python/**"],
         allow_empty = True,
@@ -621,6 +665,32 @@ sh_test(
     tags = [
         "local",
         "no-sandbox",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+# The tracked-file ownership audit: every `git ls-files` path is either a target's
+# source or data, Bazel's own control plane, or named in unowned-files.txt with a
+# reason. It is an sh_binary rather than an sh_test on purpose. The owned set comes
+# from `bazelisk query`, and a test action holds the Bazel server that query needs,
+# while `bazel run` hands it one -- the same nested query //scripts:bazel-map runs.
+# .githooks/pre-push and the CI lane invoke this target, so drift fails a build;
+# //tests:bats_owned_files_test pins the bucketing itself hermetically against a
+# stubbed Bazelisk, which is what //:test-fast runs.
+exec_shell(
+    name = "owned_files_exec",
+    src = "owned_files.sh",
+    data = [
+        "owned_files_check.py",
+        "repo_root.sh",
+    ],
+)
+
+sh_binary(
+    name = "owned_files_audit",
+    srcs = [":owned_files_exec"],
+    data = [
+        "//:bazel_unowned_ledger",
     ],
     visibility = ["//visibility:public"],
 )

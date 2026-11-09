@@ -93,9 +93,12 @@ path_without() {
   run_gate
   [ "${status}" -eq 0 ]
   assert_match "section header" '^== Hermetic gate ==' "${output}"
-  assert_eq "one bazel invocation" "1" "$(stub_log_count bazelisk)"
-  assert_eq "bazel asked for test-fast and lint" \
-    "test //:test-fast //:lint --test_tag_filters=manual" "$(stub_log_last bazelisk)"
+  assert_eq "two bazel invocations" "2" "$(stub_log_count bazelisk)"
+  assert_eq "the first asked for test-fast and lint" \
+    "test //:test-fast //:lint --test_tag_filters=manual" \
+    "$(printf '%s\n' "$(stub_log bazelisk)" | sed -n '1p')"
+  assert_eq "the second asked the graph who owns each tracked file" \
+    "run //tests:owned_files_audit" "$(stub_log_last bazelisk)"
   assert_eq "compose checked" "compose config -q" "$(stub_log_last docker)"
   assert_match "closing summary" 'summary: 1 ok, 0 warnings, 0 failed' "${output}"
 }
@@ -130,7 +133,7 @@ path_without() {
   run_gate --all
   [ "${status}" -eq 0 ]
   assert_match "full section" '^== Full gate ==' "${output}"
-  assert_eq "bazel ran twice" "2" "$(stub_log_count bazelisk)"
+  assert_eq "bazel ran three times" "3" "$(stub_log_count bazelisk)"
   assert_eq "second call names test-all" "test //:test-all" "$(stub_log_last bazelisk)"
 }
 
@@ -177,7 +180,8 @@ STUB
     STUB_LOG="${STUB_LOG}" \
     bash "${SCRIPT}"
   [ "${status}" -eq 0 ]
-  assert_eq "bazel was used" "test //:test-fast //:lint --test_tag_filters=manual" "$(stub_log_last bazel)"
+  assert_eq "bazel was used" "test //:test-fast //:lint --test_tag_filters=manual" \
+    "$(printf '%s\n' "$(stub_log bazel)" | sed -n '1p')"
   assert_eq "bazelisk was never used" "0" "$(stub_log_count bazelisk)"
 }
 
@@ -217,8 +221,8 @@ STUB
 
   BAZEL_STUB_RC=0 DOCKER_STUB_RC=0 run --separate-stderr run_hermetic_gate
   [ "${status}" -eq 0 ]
-  assert_eq "the suite ran once" "test //:test-fast //:lint --test_tag_filters=manual" \
-    "$(stub_log_last bazelisk)"
+  assert_eq "the hermetic gate ran both checks" \
+    "run //tests:owned_files_audit" "$(stub_log_last bazelisk)"
 
   BAZEL_STUB_RC=1 run --separate-stderr run_hermetic_gate
   [ "${status}" -eq 1 ]
