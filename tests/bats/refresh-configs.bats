@@ -46,7 +46,13 @@ scratch_home() {
   mkdir -p "${1}/.shared/vscode" "${1}/.coder/skills/grok-build-delegation" \
     "${1}/.coder/skills/ez-learn" "${1}/.coder/skills/learn" "${1}/.agents/skills/learn" \
     "${1}/.coder/skills/ez-skillify" "${1}/.agents/skills/ez-skillify" \
-    "${1}/.coder/skills/ez-create-skill" "${1}/.agents/skills/ez-create-skill"
+    "${1}/.coder/skills/ez-create-skill" "${1}/.agents/skills/ez-create-skill" \
+    "${1}/.coder/skills/ez-bazel-first" "${1}/.agents/skills/ez-bazel-first" \
+    "${1}/.coder/skills/ez-strong-types" "${1}/.agents/skills/ez-strong-types"
+  # The two command skills carry helper scripts one level deeper, under the
+  # skill directory's own scripts/. That nesting is left uncreated on purpose:
+  # the reseed has to make the parent directory itself, so a seeder that only
+  # ever mkdir'd one level down fails the seed-what-is-absent test below.
   # What the stack left under /learn when the skill moved: the marker-carrying
   # copy is the stack's own and a reseed retires it, the marker-free one is
   # someone else's and survives every reseed.
@@ -78,12 +84,29 @@ scratch_home() {
   source "${LIB}"
   local lines target
   lines="$(seed_seed_targets)"
-  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 13 ]
+  # Twenty-three reseed targets: the five non-skill targets, then grok-build-delegation,
+  # ez-learn, ez-skillify and ez-create-skill as one SKILL.md per home (8), then
+  # ez-bazel-first as a SKILL.md per home plus two helper scripts per home (6),
+  # then ez-strong-types as a SKILL.md per home plus one helper per home (4).
+  # The count is a claim about the manifest, so a target that quietly
+  # disappears from config_seed.sh fails here before anything else notices.
+  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 23 ]
   # Home-relative targets keep dev-only paths (scripts/, tests/) out of any
   # workspace volume: an absolute target would put this script's trust
   # boundary in the wrong place.
   assert_not_match "no absolute paths" '^/' "${lines}"
-  assert_not_match "no dev-only sources" '(scripts|tests)/' "${lines}"
+  # Every payload reads from this repo's templates/ tree, in the one file:/render:
+  # form the seeder knows. Anchored on the source column rather than grepping the
+  # whole line, because a skill's own helper directory is a legitimate nested
+  # target path (~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py)
+  # while a source of scripts/foo.sh or tests/foo.bats is not a payload at all.
+  local bad_source="" source
+  while IFS=$'\t' read -r target source; do
+    [[ -n ${target} ]] || continue
+    [[ ${source} == "file:templates/"* || ${source} == "render:templates/"* ]] ||
+      bad_source="${target} -> ${source}"
+  done <<<"${lines}"
+  [ -z "${bad_source}" ] || fail "a reseed source reads outside templates/: ${bad_source}"
   # Payloads are repo files (file:) or rendered tftpl (render:). Heredoc
   # extraction (block:) is gone; tmux and the agent skill live under common/.
   assert_match "tmux from common" $'file:templates/common/tmux.conf' "${lines}"
@@ -107,6 +130,34 @@ scratch_home() {
     $'~/.coder/skills/ez-create-skill/SKILL.md\tfile:templates/common/ez-create-skill.SKILL.md' "${lines}"
   assert_match "ez-create-skill skill from common (agents)" \
     $'~/.agents/skills/ez-create-skill/SKILL.md\tfile:templates/common/ez-create-skill.SKILL.md' "${lines}"
+  # The two command skills ship helper programs beside their SKILL.md, and those
+  # sit one level deeper, in the skill directory's own scripts/. Both homes need
+  # them: the chat agent runs the ~/.coder copy and the CLI runs the ~/.agents
+  # copy, and a helper that only landed in one home is a command that half works.
+  assert_match "ez-bazel-first skill from common (coder)" \
+    $'~/.coder/skills/ez-bazel-first/SKILL.md\tfile:templates/common/ez-bazel-first.SKILL.md' "${lines}"
+  assert_match "ez-bazel-first skill from common (agents)" \
+    $'~/.agents/skills/ez-bazel-first/SKILL.md\tfile:templates/common/ez-bazel-first.SKILL.md' "${lines}"
+  assert_match "ez-bazel-first owned_files_check from common (coder)" \
+    $'~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py\tfile:templates/common/ez-bazel-first.owned_files_check.py' "${lines}"
+  assert_match "ez-bazel-first owned_files_check from common (agents)" \
+    $'~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py\tfile:templates/common/ez-bazel-first.owned_files_check.py' "${lines}"
+  assert_match "ez-bazel-first glob_budget from common (coder)" \
+    $'~/.coder/skills/ez-bazel-first/scripts/glob_budget.py\tfile:templates/common/ez-bazel-first.glob_budget.py' "${lines}"
+  assert_match "ez-bazel-first glob_budget from common (agents)" \
+    $'~/.agents/skills/ez-bazel-first/scripts/glob_budget.py\tfile:templates/common/ez-bazel-first.glob_budget.py' "${lines}"
+  assert_match "ez-strong-types skill from common (coder)" \
+    $'~/.coder/skills/ez-strong-types/SKILL.md\tfile:templates/common/ez-strong-types.SKILL.md' "${lines}"
+  assert_match "ez-strong-types skill from common (agents)" \
+    $'~/.agents/skills/ez-strong-types/SKILL.md\tfile:templates/common/ez-strong-types.SKILL.md' "${lines}"
+  assert_match "ez-strong-types type_baseline from common (coder)" \
+    $'~/.coder/skills/ez-strong-types/scripts/type_baseline.py\tfile:templates/common/ez-strong-types.type_baseline.py' "${lines}"
+  assert_match "ez-strong-types type_baseline from common (agents)" \
+    $'~/.agents/skills/ez-strong-types/scripts/type_baseline.py\tfile:templates/common/ez-strong-types.type_baseline.py' "${lines}"
+  # Six of the twenty-three are those nested helpers, named here as a count so a
+  # nested target dropped from the manifest is caught even when the total is
+  # restored by some unrelated target.
+  [ "$(printf '%s\n' "${lines}" | grep -c '/scripts/')" -eq 6 ]
   assert_not_match "no block kind" $'\tblock:' "${lines}"
 }
 
@@ -266,6 +317,32 @@ scratch_home() {
   assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-skillify/SKILL.md"
   assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-create-skill/SKILL.md"
   assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-create-skill/SKILL.md"
+  # The two command skills, both homes, SKILL.md and every nested helper. The
+  # helpers are the ones worth naming: their parent scripts/ directory does not
+  # exist in the fixture, so this is where a seeder that cannot create a nested
+  # parent is caught.
+  assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-bazel-first/SKILL.md"
+  assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-bazel-first/SKILL.md"
+  assert_file_exists "coder nested helper" \
+    "${scratch}/home/.coder/skills/ez-bazel-first/scripts/owned_files_check.py"
+  assert_file_exists "agents nested helper" \
+    "${scratch}/home/.agents/skills/ez-bazel-first/scripts/owned_files_check.py"
+  assert_file_exists "coder nested helper" \
+    "${scratch}/home/.coder/skills/ez-bazel-first/scripts/glob_budget.py"
+  assert_file_exists "agents nested helper" \
+    "${scratch}/home/.agents/skills/ez-bazel-first/scripts/glob_budget.py"
+  assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-strong-types/SKILL.md"
+  assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-strong-types/SKILL.md"
+  assert_file_exists "coder nested helper" \
+    "${scratch}/home/.coder/skills/ez-strong-types/scripts/type_baseline.py"
+  assert_file_exists "agents nested helper" \
+    "${scratch}/home/.agents/skills/ez-strong-types/scripts/type_baseline.py"
+  # A seeded helper is the payload, not an empty placeholder: the command's
+  # behaviour depends on this program being there and being itself.
+  assert_contains_file "owned_files_check is the repo payload" \
+    "${scratch}/home/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" 'def '
+  assert_contains_file "type_baseline is the repo payload" \
+    "${scratch}/home/.agents/skills/ez-strong-types/scripts/type_baseline.py" 'def '
   # The copy the stack seeded under /learn before the rename goes, because it
   # still carries the marker; the marker-free one is whoever's it is, and it
   # stays.
@@ -315,9 +392,24 @@ coder-ws2-dind-sidecar'
 import json, sys
 d = json.load(sys.stdin)
 assert d["dry_run"] is False and d["force"] is False, d
-# The thirteen reseed targets, plus the one /learn copy the reseed retired from
+# The twenty-three reseed targets, plus the one /learn copy the reseed retired from
 # this home (its ~/.agents twin is user-owned, so it earns no entry below).
-assert len(d["entries"]) == 14, d["entries"]
+# Every target earns exactly one entry, the user-owned tmux.conf included, so
+# this count is the size of the manifest read back through the JSON channel: a
+# target dropped from config_seed.sh drops an entry and fails here.
+assert len(d["entries"]) == 24, d["entries"]
+# A seeded entry names its target home-relative but already stripped the tilde
+# (the seeder prints the path it rooted at the home), while a retired entry
+# keeps the ~/ spelling it is listed under. Check the nested helpers by the
+# name the reseed reports, in both homes.
+targets = [e["target"] for e in d["entries"]]
+for want in [".coder/skills/ez-bazel-first/scripts/owned_files_check.py",
+             ".agents/skills/ez-bazel-first/scripts/owned_files_check.py",
+             ".coder/skills/ez-bazel-first/scripts/glob_budget.py",
+             ".agents/skills/ez-bazel-first/scripts/glob_budget.py",
+             ".coder/skills/ez-strong-types/scripts/type_baseline.py",
+             ".agents/skills/ez-strong-types/scripts/type_baseline.py"]:
+    assert want in targets, (want, targets)
 retired = [e for e in d["entries"] if e["target"] == "~/.coder/skills/learn/SKILL.md"]
 assert len(retired) == 1 and retired[0]["action"].startswith("retired"), retired
 # The marker-free copy is user-owned, so it earns no entry at all.

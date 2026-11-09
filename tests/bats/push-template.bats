@@ -55,10 +55,16 @@ COMMON_PAYLOADS=(
   ez-learn.SKILL.md
   ez-skillify.SKILL.md
   ez-create-skill.SKILL.md
+  ez-bazel-first.SKILL.md
+  ez-bazel-first.owned_files_check.py
+  ez-bazel-first.glob_budget.py
+  ez-strong-types.SKILL.md
+  ez-strong-types.type_baseline.py
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
   stack-skills.sh.tftpl
+  stack-repo-skills.sh.tftpl
 )
 
 # write_common_payloads <dir> — stub each required common/ file so a throwaway
@@ -76,10 +82,16 @@ write_common_payloads() {
   printf '%s\n' '# skill' >"${dest}/ez-learn.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/ez-skillify.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/ez-create-skill.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/ez-bazel-first.SKILL.md"
+  printf '%s\n' 'pass' >"${dest}/ez-bazel-first.owned_files_check.py"
+  printf '%s\n' 'pass' >"${dest}/ez-bazel-first.glob_budget.py"
+  printf '%s\n' '# skill' >"${dest}/ez-strong-types.SKILL.md"
+  printf '%s\n' 'pass' >"${dest}/ez-strong-types.type_baseline.py"
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
 }
 
 # fake_root <script> [env-line...] — print a throwaway repo root holding the

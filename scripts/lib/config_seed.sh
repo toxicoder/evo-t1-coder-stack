@@ -101,7 +101,17 @@ seed_seed_targets() {
     '~/.coder/skills/ez-skillify/SKILL.md	file:templates/common/ez-skillify.SKILL.md' \
     '~/.agents/skills/ez-skillify/SKILL.md	file:templates/common/ez-skillify.SKILL.md' \
     '~/.coder/skills/ez-create-skill/SKILL.md	file:templates/common/ez-create-skill.SKILL.md' \
-    '~/.agents/skills/ez-create-skill/SKILL.md	file:templates/common/ez-create-skill.SKILL.md'
+    '~/.agents/skills/ez-create-skill/SKILL.md	file:templates/common/ez-create-skill.SKILL.md' \
+    '~/.coder/skills/ez-bazel-first/SKILL.md	file:templates/common/ez-bazel-first.SKILL.md' \
+    '~/.agents/skills/ez-bazel-first/SKILL.md	file:templates/common/ez-bazel-first.SKILL.md' \
+    '~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py	file:templates/common/ez-bazel-first.owned_files_check.py' \
+    '~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py	file:templates/common/ez-bazel-first.owned_files_check.py' \
+    '~/.coder/skills/ez-bazel-first/scripts/glob_budget.py	file:templates/common/ez-bazel-first.glob_budget.py' \
+    '~/.agents/skills/ez-bazel-first/scripts/glob_budget.py	file:templates/common/ez-bazel-first.glob_budget.py' \
+    '~/.coder/skills/ez-strong-types/SKILL.md	file:templates/common/ez-strong-types.SKILL.md' \
+    '~/.agents/skills/ez-strong-types/SKILL.md	file:templates/common/ez-strong-types.SKILL.md' \
+    '~/.coder/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py' \
+    '~/.agents/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py'
 }
 
 # @function seed_retired_targets
