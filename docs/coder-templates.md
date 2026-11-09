@@ -91,6 +91,23 @@ missing one fails the push before the CLI runs.
   rendered with `templatefile()` from the three `chomp(file())` entries `main.tf` passes it.
   It is absent-only and silent on a healthy workspace, because its log is what an operator
   reads when a skill is missing.
+- `ez-bazel-first.SKILL.md`, `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`
+  are the stack's three repository-conversion commands, and they stand in for nothing
+  upstream: `/ez-bazel-first` puts every tracked file behind a target and budgets the
+  `glob()`s, `/ez-strong-types` pins a strict checker profile per language and ratchets the
+  broad-type census, and `/ez-trunk-based-repo` turns environment branches into
+  environments and unfinished work into flags. Unlike the authoring trio they are not
+  single files: the first two shells out to a python helper, so `ez-bazel-first` carries
+  `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py` and
+  `ez-strong-types` carries `ez-strong-types.type_baseline.py`, each written to a `scripts/`
+  subdirectory of the same skill directory. The bodies name the `~/.agents` spelling of
+  those helpers, which is why the twin copy is not optional.
+- `stack-repo-skills.sh.tftpl` is the `coder_script "stack_repo_skills"` body that seeds
+  that family, from six `chomp(file())` entries: one `SKILL.md` per command plus the three
+  python helpers. It is a second body rather than six
+  more heredocs in the first one for the reason this whole file keeps repeating: each
+  `coder_script.script` is its own `execve` argument with its own ceiling, and a family
+  that ships helpers grows faster than one that ships a `SKILL.md` each.
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
   writes, into `~/.grok/mcp-cache-proxy/config.json` and only while that file is absent
   (so a shared profile volume reuses one SQLite cache across that owner's workspaces). It
@@ -207,7 +224,10 @@ script at 115967 bytes, 6913 clear of the bound, with the workspace twin at 1137
 9113 clear. Before the trio moved out that same devcontainer body measured 122389 with
 only 491 clear, and `ez-learn.SKILL.md` plus its heredoc accounted for roughly 7 KB of
 it. The three payloads now travel in their own body, `coder_script.stack_skills`, which
-composes to 36847 bytes.
+composes to 36847 bytes. Measured again on 2026-11-09 after the repository-conversion
+family landed: `coder_script.stack_repo_skills`, carrying three `SKILL.md` payloads and
+three python helpers, composes to 60336 bytes, 62544 clear of the bound, and neither
+startup twin moved.
 
 When a body really does need to grow past the budget, the options are:
 

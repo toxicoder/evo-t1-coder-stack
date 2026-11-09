@@ -674,6 +674,29 @@ resource "coder_script" "stack_skills" {
   })
 }
 
+# The repository-refactoring commands, in a body of their own for the same reason the
+# authoring trio has one: every coder_script.script is a separate execve with its own
+# single-argument ceiling, and this family carries python helpers beside its SKILL.md
+# rather than shipping a single file each. Same absent-only contract, same two homes.
+resource "coder_script" "stack_repo_skills" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the repository refactoring commands"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/stack-repo-skills.sh.tftpl", {
+    ez_bazel_first_skill             = chomp(file("${path.module}/ez-bazel-first.SKILL.md"))
+    ez_bazel_first_owned_files_check = chomp(file("${path.module}/ez-bazel-first.owned_files_check.py"))
+    ez_bazel_first_glob_budget       = chomp(file("${path.module}/ez-bazel-first.glob_budget.py"))
+    ez_strong_types_skill            = chomp(file("${path.module}/ez-strong-types.SKILL.md"))
+    ez_strong_types_type_baseline    = chomp(file("${path.module}/ez-strong-types.type_baseline.py"))
+    ez_trunk_based_repo_skill        = chomp(file("${path.module}/ez-trunk-based-repo.SKILL.md"))
+  })
+}
+
 # In-browser VS Code (Coder's code-server fork) on port 13337. display_apps.vscode
 # above is only the desktop helper; the two resources below install the binary
 # into the home volume and expose it as a path-based coder_app.

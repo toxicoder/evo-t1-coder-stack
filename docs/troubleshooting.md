@@ -717,9 +717,12 @@ docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retr
 
 ### A stack skill command missing from Grok Build on code-server web -> the stack's own seed is what provides it
 
-Covers all three stack-shipped skill commands: `/ez-learn`, `/ez-skillify` and
-`/ez-create-skill`. The diagnosis and the commands below are identical for each one; only
-the name changes, so read `<name>` as whichever of the three you are chasing.
+Covers all six stack-shipped skill commands: `/ez-learn`, `/ez-skillify`,
+`/ez-create-skill`, `/ez-bazel-first`, `/ez-strong-types` and `/ez-trunk-based-repo`. The
+diagnosis and the commands below are identical for each one; only the name changes, so read
+`<name>` as whichever of the six you are chasing. The last three are the
+repository-conversion family and ride `coder_script.stack_repo_skills` rather than
+`coder_script.stack_skills`, so a missing one of those points at that body's log.
 
 Cause: no published source names an upstream `/learn`, so there is none to miss. The
 `xai-org/grok-build` built-in command table, all 240 pages of docs.x.ai, every
@@ -759,12 +762,16 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   workspace booted from templates pushed before the seed existed. Re-push the templates
   and restart the workspace, or reseed into the running container from the stack host:
   `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>`.
-- One of the three missing from both homes while the other two landed points at
-  `coder_script.stack_skills`, not at the startup script: that script's own log is where
-  its seed body ran or failed, and the body is silent on a healthy workspace, so an empty
+- One of the six missing from both homes while the others landed points at the one body
+  that seeds it: `coder_script.stack_skills` carries the authoring trio and
+  `coder_script.stack_repo_skills` carries the repository-conversion family. That script's
+  own log is where its seed body ran or failed, and the body is silent on a healthy
+  workspace, so an empty
   log with a missing file means the body did not run at all (restart the workspace and
   read that script's log). The trio moved out of `startup.sh.tftpl` into that one body, so
-  a startup-script log that says nothing no longer covers it.
+  a startup-script log that says nothing no longer covers it. A `SKILL.md` that is present
+  while its `scripts/*.py` helper is missing is the same story on the helper's own absent
+  guard: the family seeds six payloads, each guarded on its own path.
 - Both `ls` paths present but no `<name>` entry: the loader dropped the file. Frontmatter
   must start on line 1, so anything above the opening `---` silently kills the skill.
 - A `learn` directory still listed by the last `ls` is a copy someone took over: the boot
@@ -800,8 +807,8 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   its own a reason to rebuild the image.
 - A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
   `GROK_VERSION` (1.0.77 at the time of writing), and rebuilding `images/dev`
-  (`bazelisk run //scripts:build-dev-image`) is the CLI upgrade path - but the seeded skill trio
-  works on either CLI, so this symptom alone never justifies an image rebuild.
+  (`bazelisk run //scripts:build-dev-image`) is the CLI upgrade path - but the seeded skill commands
+  work on either CLI, so this symptom alone never justifies an image rebuild.
 - Pin notes and the seeding contract: [grok-build-and-agents.md](grok-build-and-agents.md).
 
 ### `grok doctor` flags `voice.no-input-device` or `terminal.limited-color` -> a headless container, and where you ran the command

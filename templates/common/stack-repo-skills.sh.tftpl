@@ -1,0 +1,97 @@
+#!/bin/sh
+# tftpl: coder_script body; the repository-command skill payloads are interpolated from
+# the map main.tf passes, each into a quoted here-doc so no shell text inside one is
+# expanded. Why these seeds ride their own script instead of stack-skills.sh.tftpl: the
+# agent execs every body as one argument, so a second body buys a second ceiling, and
+# two of this family's three members carry helper scripts beside their SKILL.md while
+# that one does not;
+# docs/coder-templates.md#the-one-argument-ceiling.
+set -u
+
+# Absent-only contract: a file that already exists belongs to the user, so a healthy
+# workspace writes nothing and prints nothing (this body's log is what an operator
+# reads). The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents copy
+# what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder copy,
+# never a second inline body. A skill whose body shells out to a helper gets that helper
+# under scripts/ in both homes, because the body names the ~/.agents path and the chat
+# agent reads the same body from ~/.coder.
+
+if [ ! -f "$HOME/.coder/skills/ez-bazel-first/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-bazel-first" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-bazel-first/SKILL.md" <<'EZ_BAZEL_FIRST_SKILL_MD_EOF'
+${ez_bazel_first_skill}
+EZ_BAZEL_FIRST_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-bazel-first/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-bazel-first" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-bazel-first/SKILL.md" \
+    "$HOME/.agents/skills/ez-bazel-first/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-bazel-first/scripts" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" <<'EZ_BAZEL_FIRST_OWNED_FILES_CHECK_PY_EOF'
+${ez_bazel_first_owned_files_check}
+EZ_BAZEL_FIRST_OWNED_FILES_CHECK_PY_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-bazel-first/scripts/owned_files_check.py" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-bazel-first/scripts" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" \
+    "$HOME/.agents/skills/ez-bazel-first/scripts/owned_files_check.py" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-bazel-first/scripts" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" <<'EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF'
+${ez_bazel_first_glob_budget}
+EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-bazel-first/scripts/glob_budget.py" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-bazel-first/scripts" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" \
+    "$HOME/.agents/skills/ez-bazel-first/scripts/glob_budget.py" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-strong-types/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-strong-types" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-strong-types/SKILL.md" <<'EZ_STRONG_TYPES_SKILL_MD_EOF'
+${ez_strong_types_skill}
+EZ_STRONG_TYPES_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-strong-types/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-strong-types" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-strong-types/SKILL.md" \
+    "$HOME/.agents/skills/ez-strong-types/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-strong-types/scripts/type_baseline.py" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-strong-types/scripts" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-strong-types/scripts/type_baseline.py" <<'EZ_STRONG_TYPES_TYPE_BASELINE_PY_EOF'
+${ez_strong_types_type_baseline}
+EZ_STRONG_TYPES_TYPE_BASELINE_PY_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-strong-types/scripts/type_baseline.py" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-strong-types/scripts" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-strong-types/scripts/type_baseline.py" \
+    "$HOME/.agents/skills/ez-strong-types/scripts/type_baseline.py" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-trunk-based-repo" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" <<'EZ_TRUNK_BASED_REPO_SKILL_MD_EOF'
+${ez_trunk_based_repo_skill}
+EZ_TRUNK_BASED_REPO_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-trunk-based-repo/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-trunk-based-repo" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" \
+    "$HOME/.agents/skills/ez-trunk-based-repo/SKILL.md" 2>/dev/null
+fi
+
+exit 0

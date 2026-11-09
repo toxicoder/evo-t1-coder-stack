@@ -293,6 +293,12 @@ _SUITE_PAYLOAD = {
         "//docs:content",
         "//:entry_docs",
     ],
+    # The repository-conversion family's own seam: its seed body, the three
+    # SKILL.md payloads and the three python helpers all arrive with the
+    # template payload, and the suite reads scripts/lib/ through _BATS_COMMON.
+    "ez-repo-skill-authoring.bats": [
+        "//:templates_payload",
+    ],
     "litellm-config.bats": [
         "//:templates_payload",
         "//litellm:config",
