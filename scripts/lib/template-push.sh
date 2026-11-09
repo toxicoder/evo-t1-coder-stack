@@ -22,7 +22,8 @@
 #     the ez- skill trio (ez-learn.SKILL.md, ez-skillify.SKILL.md,
 #     ez-create-skill.SKILL.md) and its stack-skills.sh.tftpl seed body, the
 #     repository-command skills (ez-bazel-first.SKILL.md with its two helpers,
-#     ez-strong-types.SKILL.md with its one) and their
+#     ez-strong-types.SKILL.md with its one, ez-trunk-based-repo.SKILL.md with
+#     none) and their
 #     stack-repo-skills.sh.tftpl seed body,
 #     mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above
 #     the template dirs under common/) ride along in every
@@ -70,7 +71,8 @@ fi
 # ez-skillify.SKILL.md, ez-create-skill.SKILL.md, stack-skills.sh.tftpl,
 # ez-bazel-first.SKILL.md, ez-bazel-first.owned_files_check.py,
 # ez-bazel-first.glob_budget.py, ez-strong-types.SKILL.md,
-# ez-strong-types.type_baseline.py, stack-repo-skills.sh.tftpl,
+# ez-strong-types.type_baseline.py, ez-trunk-based-repo.SKILL.md,
+# stack-repo-skills.sh.tftpl,
 # coder-agents.md,
 # mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above the
 # template dirs under common/) there with the common copies. Both templates'
@@ -138,6 +140,7 @@ template_push_one() {
     ez-bazel-first.glob_budget.py \
     ez-strong-types.SKILL.md \
     ez-strong-types.type_baseline.py \
+    ez-trunk-based-repo.SKILL.md \
     coder-agents.md \
     mcp-cache-proxy.json \
     gh-token-refresh.sh.tftpl \

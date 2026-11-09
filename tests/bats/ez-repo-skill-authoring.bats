@@ -1,37 +1,40 @@
 #!/usr/bin/env bats
 # shellcheck shell=bash
 #
-# ## ez_repo_skill_authoring.bats - the shared seam of the repository-refactoring pair.
+# ## ez-repo-skill-authoring.bats - the shared seam of the repository-refactoring family.
 #
-# The stack ships two more user-invocable commands beside the authoring trio:
-# /ez-bazel-first (put every tracked file behind a Bazel target and keep it there)
-# and /ez-strong-types (a strict checker profile per language plus a broad-type
-# ratchet). Each seeds its SKILL.md into ~/.coder/skills/<name>/, the only path the
+# The stack ships three more user-invocable commands beside the authoring trio:
+# /ez-bazel-first (put every tracked file behind a Bazel target and keep it there),
+# /ez-strong-types (a strict checker profile per language plus a broad-type
+# ratchet) and /ez-trunk-based-repo (collapse a repo onto one trunk, with the
+# environments and the flags as configuration). Each seeds its SKILL.md into
+# ~/.coder/skills/<name>/, the only path the
 # Coder Agents chat agent reads, and into its ~/.agents/skills/<name>/ twin, which
 # is what the Grok Build CLI reads - absent-only, from ONE
 # templates/common/stack-repo-skills.sh.tftpl body rendered by the
 # coder_script "stack_repo_skills" block in both main.tf twins. Unlike the trio,
-# these two carry python helpers beside the SKILL.md, under scripts/ in BOTH homes,
-# because a skill body names the ~/.agents path while the chat agent reads the same
-# text out of ~/.coder.
+# two of these three carry python helpers beside the SKILL.md, under scripts/ in
+# BOTH homes, because a skill body names the ~/.agents path while the chat agent
+# reads the same text out of ~/.coder; the third ships a SKILL.md alone, so the
+# gates below are driven by the payload lists rather than by a fixed shape.
 #
 # Why a second body at all: main.tf inlines every payload into
 # coder_agent.startup_script and the agent execs that body as one execve argument
 # gated at MAX_ARG_STRLEN; each coder_script.script gets its own ceiling, which is
-# the headroom five more payloads need (docs/coder-templates.md#the-one-argument-
+# the headroom six more payloads need (docs/coder-templates.md#the-one-argument-
 # ceiling). So the gates here are the ones that keep that escape hatch honest: the
 # body is MEASURED (scripts/lib/startup_size.awk must emit a record for it and for
 # every payload it inlines), each feed is chomped and sits INSIDE the block (both
 # byte readers credit a body only by the path.module names within it), the
 # ~/.agents side is a cp of the managed ~/.coder copy rather than a second here-doc
 # body, none of the family leaks back into startup.sh.tftpl, and the reseed list
-# and the push guard name all ten targets and all six files.
+# and the push guard name all twelve targets and all seven files.
 #
 # The authoring trio's own seam is tests/bats/ez-skill-authoring.bats; this suite
 # covers the other family and shares no assertion with it.
 #
 # Usage: bazelisk test //tests:bats_ez_repo_skill_authoring_test   (from any cwd)
-# Safety: reads templates/common/stack-repo-skills.sh.tftpl, the five payloads it
+# Safety: reads templates/common/stack-repo-skills.sh.tftpl, the six payloads it
 # inlines, both main.tf twins, both startup.sh.tftpl twins, and
 # scripts/lib/{config_seed.sh,template-push.sh,startup_size.awk}. Writes nothing.
 
@@ -52,6 +55,7 @@ TARGETS=(
   "ez-bazel-first/scripts/glob_budget.py"
   "ez-strong-types/SKILL.md"
   "ez-strong-types/scripts/type_baseline.py"
+  "ez-trunk-based-repo/SKILL.md"
 )
 PAYLOADS=(
   "ez-bazel-first.SKILL.md"
@@ -59,6 +63,7 @@ PAYLOADS=(
   "ez-bazel-first.glob_budget.py"
   "ez-strong-types.SKILL.md"
   "ez-strong-types.type_baseline.py"
+  "ez-trunk-based-repo.SKILL.md"
 )
 TAGS=(
   EZ_BAZEL_FIRST_SKILL_MD_EOF
@@ -66,6 +71,7 @@ TAGS=(
   EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF
   EZ_STRONG_TYPES_SKILL_MD_EOF
   EZ_STRONG_TYPES_TYPE_BASELINE_PY_EOF
+  EZ_TRUNK_BASED_REPO_SKILL_MD_EOF
 )
 KEYS=(
   ez_bazel_first_skill
@@ -73,6 +79,7 @@ KEYS=(
   ez_bazel_first_glob_budget
   ez_strong_types_skill
   ez_strong_types_type_baseline
+  ez_trunk_based_repo_skill
 )
 
 # The frontmatter keys Grok Build documents: the whole set a payload may carry.
@@ -123,7 +130,7 @@ setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SEED="${REPO_ROOT}/templates/common/stack-repo-skills.sh.tftpl"
   # Only the subject of the suite may skip it: with no seed body or no twin there is
-  # nothing left to claim. The five payloads deliberately are NOT gated here - a
+  # nothing left to claim. The six payloads deliberately are NOT gated here - a
   # payload renamed away must fail the tests that police it, not skip them quietly.
   [[ -f "${SEED}" ]] || skip "the repository-command seed body is not reachable from ${REPO_ROOT}"
   [[ -f "${REPO_ROOT}/templates/workspace/main.tf" &&
@@ -171,10 +178,10 @@ ascii_gate() {
 }
 
 # ---------------------------------------------------------------------------
-# The delivery seam: one body, five payloads, two homes.
+# The delivery seam: one body, six payloads, two homes.
 # ---------------------------------------------------------------------------
 
-@test "stack-repo-skills seed: the body seeds all five targets into the coder home only while absent" {
+@test "stack-repo-skills seed: the body seeds all six targets into the coder home only while absent" {
   # Absent-only is the takeover contract: a file that exists belongs to the user,
   # so a boot must never write over one. Lose a guard and the next boot silently
   # rewrites whatever the operator wrote into ~/.coder/skills. Each target needs
@@ -192,10 +199,10 @@ ascii_gate() {
     assert_contains_file "${tgt} coder cat" "${SEED}" \
       'cat >"\$HOME/\.coder/skills/'"${tgt}"'" '"$(hdoc_open)"
   done
-  # Five, not three: a target whose block was dropped mid-refactor would otherwise
+  # Six, not five: a target whose block was dropped mid-refactor would otherwise
   # leave the loop above asserting nothing about a file nobody seeds any more.
   n="$(grep -cE '^if \[ ! -f "\$HOME/\.coder/skills/' "${SEED}" || true)"
-  assert_eq "the body guards five coder targets" "5" "${n}"
+  assert_eq "the body guards six coder targets" "6" "${n}"
 }
 
 @test "stack-repo-skills seed: every payload arrives through a quoted here-doc whose tag closes alone" {
@@ -204,8 +211,8 @@ ascii_gate() {
   # f-strings and shell text) while the boot runs, so the seeded file is not the
   # payload. And a tag that is not exactly twice in the file (opener + closer, the
   # closer alone on its own line) means a here-doc that never terminates: the boot
-  # swallows the rest of the body and the workspace comes up with two commands and
-  # a truncated script.
+  # swallows the rest of the body and the workspace comes up with whatever
+  # commands landed before it and a truncated script.
   local i tag n
   for i in "${!TAGS[@]}"; do
     tag="${TAGS[i]}"
@@ -218,7 +225,7 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the five map keys" {
+@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the six map keys" {
   # A here-doc that quietly stopped receiving its payload still has a legal opener
   # and closer, so the tag checks above pass vacuously: the file that lands on disk
   # would be empty and the command simply missing. Pin the line right after each
@@ -237,8 +244,8 @@ ascii_gate() {
     printf 'FAIL: %s interpolates no map key at all\n' "${SEED}" >&2
     return 1; }
   want="$(printf '%s\n' "${KEYS[@]}" | sed 's/^/${/; s/$/}/' | sort -u)"
-  assert_eq "the body reads exactly the five keys the twins pass" "${want}" "${got}"
-  assert_eq "and each key is interpolated exactly once" "5" \
+  assert_eq "the body reads exactly the six keys the twins pass" "${want}" "${got}"
+  assert_eq "and each key is interpolated exactly once" "6" \
     "$(grep -cE '^\$\{[a-z_]+\}$' "${SEED}" || true)"
 }
 
@@ -246,11 +253,11 @@ ascii_gate() {
   # The two homes are two consumers of ONE file. If the ~/.agents side grew its own
   # here-doc body the two drift the moment one is edited, and first-match-wins
   # dedupe decides which of the two the CLI actually runs. So the twin must be a cp
-  # of the managed ~/.coder file, and the file must carry exactly five here-docs in
+  # of the managed ~/.coder file, and the file must carry exactly six here-docs in
   # total - one per payload, all on the coder side.
   local i tgt n
   n="$(grep -cE -- "$(hdoc_open)'[A-Z_]+_EOF'" "${SEED}" || true)"
-  assert_eq "the body holds exactly five quoted here-docs" "5" "${n}"
+  assert_eq "the body holds exactly six quoted here-docs" "6" "${n}"
   for i in "${!TARGETS[@]}"; do
     tgt="${TARGETS[i]}"
     assert_contains_file "${tgt} agents guard" "${SEED}" \
@@ -266,7 +273,7 @@ ascii_gate() {
     assert_eq "${tgt} never gets its own here-doc on the agents side" "0" "${n}"
   done
   n="$(grep -cE '^  cp "\$HOME/\.coder/skills/' "${SEED}" || true)"
-  assert_eq "five cp lines carry the twin" "5" "${n}"
+  assert_eq "six cp lines carry the twin" "6" "${n}"
 }
 
 @test "stack-repo-skills seed: the file is a plain-ASCII POSIX sh coder_script body" {
@@ -302,16 +309,16 @@ ascii_gate() {
     printf 'FAIL: %s writes a skills path with no absent-guard in front:\n%s' "${SEED}" "${bad}" >&2
     return 1
   fi
-  # Non-vacuity: the walk above has ten writers to cover, five cats and five cps.
+  # Non-vacuity: the walk above has twelve writers to cover, six cats and six cps.
   writers="$(grep -cE '^  (cat >|cp )"[^"]*/skills/' "${SEED}" || true)"
-  assert_eq "the walk covers ten guarded writers" "10" "${writers}"
+  assert_eq "the walk covers twelve guarded writers" "12" "${writers}"
 }
 
 # ---------------------------------------------------------------------------
 # The feed: one coder_script block per twin, measured and self-contained.
 # ---------------------------------------------------------------------------
 
-@test "stack-repo-skills feed: both main.tf twins declare the script gated on its five attributes" {
+@test "stack-repo-skills feed: both main.tf twins declare the script block with its five gating attributes" {
   # A coder_script with no count runs on every plan and re-runs the seed; with no
   # run_on_start the pair only appears after a manual start, so a freshly started
   # workspace has no command to find. A wrong agent_id sends the script to an agent
@@ -340,7 +347,7 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills feed: the five payloads are chomped and live inside that block alone" {
+@test "stack-repo-skills feed: the six payloads are chomped and live inside that block alone" {
   # Two load-bearing details. chomp: the here-doc closes on its own line, so a
   # trailing newline in the payload adds a blank line to every seeded file and
   # drifts the marker comment off the shape the parser and these tests expect.
@@ -397,12 +404,12 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills size: the body and all five payloads are measured in both twins" {
+@test "stack-repo-skills size: the body and all six payloads are measured in both twins" {
   # This is the guard that keeps the escape hatch honest. startup_size.awk is what
   # the push reads to refuse an argument past MAX_ARG_STRLEN before the workspace
   # ever boots; a body it does not emit a record for is a body nobody measures, and
   # it shows up as a workspace that fails to boot with "A startup script has failed"
-  # instead of as a failed push. Six records per twin: the body itself plus the five
+  # instead of as a failed push. Seven records per twin: the body itself plus the six
   # payloads it inlines, and none of them may fall through to a catch-all.
   local twin out want tab records
   tab="$(printf '\t')"
@@ -416,7 +423,7 @@ ascii_gate() {
         "^stack-repo-skills\.sh\.tftpl${tab}${want//./\\.}\$" "${out}"
     done
     records="$(printf '%s\n' "${out}" | grep -c "^stack-repo-skills\.sh\.tftpl${tab}" || true)"
-    assert_eq "${twin} emits exactly six records for the body" "6" "${records}"
+    assert_eq "${twin} emits exactly seven records for the body" "7" "${records}"
     # A body this reader cannot name is one it cannot size.
     assert_not_match "${twin} never reports the new body as unmeasurable" \
       "^stack-repo-skills\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"
@@ -427,7 +434,7 @@ ascii_gate() {
 # Invariants every payload of the family shares.
 # ---------------------------------------------------------------------------
 
-@test "payload: each of the five exists, is non-empty, plain ASCII, CR-free and marker-carrying" {
+@test "payload: each of the six exists, is non-empty, plain ASCII, CR-free and marker-carrying" {
   # The marker is what makes a seeded file reclaimable and what the boot's ownership
   # probe reads; a payload that lost it is a file the seeder may treat as the user's,
   # and a non-ASCII byte or a CR reaches every workspace of both templates as text a
@@ -447,7 +454,7 @@ ascii_gate() {
   done
 }
 
-@test "payload: the two SKILL.md frontmatters parse, carry only documented keys, and name themselves" {
+@test "payload: the three SKILL.md frontmatters parse, carry only documented keys, and name themselves" {
   # This is what registers each slash name. A key outside the documented set is
   # drift the CLI ignores while looking like configuration, a name that stopped
   # matching the skill it ships registers a command nobody calls by the path the
@@ -456,7 +463,7 @@ ascii_gate() {
   # as a frontmatter key nobody documents. PyYAML is optional the way
   # py_helpers.bats treats it.
   python3 -c 'import yaml' >/dev/null 2>&1 || skip "PyYAML is not installed"
-  local skills=(ez-bazel-first ez-strong-types) i name f close marker
+  local skills=(ez-bazel-first ez-strong-types ez-trunk-based-repo) i name f close marker
   for i in "${!skills[@]}"; do
     name="${skills[i]}"
     f="$(payload_path "${name}.SKILL.md")"
@@ -516,11 +523,11 @@ ascii_gate() {
 # The two lists that have to name the family: the reseed set and the push guard.
 # ---------------------------------------------------------------------------
 
-@test "stack-repo-skills seams: config_seed names exactly ten targets against the five payloads" {
+@test "stack-repo-skills seams: config_seed names exactly twelve targets against the six payloads" {
   # refresh-configs reseeds from this list and the boot only writes absent files, so
   # a target missing here leaves a workspace with a stale or absent command after a
   # stack update forever - and one home missing means the operator has the command
-  # in the CLI and not in the chat, or the reverse. Ten is five payloads x two homes.
+  # in the CLI and not in the chat, or the reverse. Twelve is six payloads x two homes.
   local lib="${REPO_ROOT}/scripts/lib/config_seed.sh"
   [ -f "${lib}" ] || skip "no config_seed lib under ${REPO_ROOT}/scripts/lib"
   local i tgt payload src_c src_a n
@@ -541,11 +548,11 @@ ascii_gate() {
     assert_file_exists "${payload} the reseed list points at exists" \
       "${REPO_ROOT}/${src_c}"
   done
-  n="$(grep -cE "^[[:space:]]*'~/\.(coder|agents)/skills/ez-(bazel-first|strong-types)/" "${lib}" || true)"
-  assert_eq "ten repo-command targets, both homes per payload" "10" "${n}"
+  n="$(grep -cE "^[[:space:]]*'~/\.(coder|agents)/skills/ez-(bazel-first|strong-types|trunk-based-repo)/" "${lib}" || true)"
+  assert_eq "twelve repo-command targets, both homes per payload" "12" "${n}"
 }
 
-@test "stack-repo-skills seams: the push guard refuses without all five payloads and the body" {
+@test "stack-repo-skills seams: the push guard refuses without all six payloads and the body" {
   # main.tf reads each of these out of the pushed copy, so a push that shipped
   # without one produces a template that renders garbage or fails to plan on every
   # workspace made from it afterwards. The guard has to live in template_push_one -

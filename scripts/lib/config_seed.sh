@@ -111,7 +111,9 @@ seed_seed_targets() {
     '~/.coder/skills/ez-strong-types/SKILL.md	file:templates/common/ez-strong-types.SKILL.md' \
     '~/.agents/skills/ez-strong-types/SKILL.md	file:templates/common/ez-strong-types.SKILL.md' \
     '~/.coder/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py' \
-    '~/.agents/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py'
+    '~/.agents/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py' \
+    '~/.coder/skills/ez-trunk-based-repo/SKILL.md	file:templates/common/ez-trunk-based-repo.SKILL.md' \
+    '~/.agents/skills/ez-trunk-based-repo/SKILL.md	file:templates/common/ez-trunk-based-repo.SKILL.md'
 }
 
 # @function seed_retired_targets

@@ -189,10 +189,10 @@ assert_contributor_home() {
   assert_file_exists "agents skill" "${home}/.agents/skills/grok-build-delegation/SKILL.md"
   assert_file_exists "coder skill" "${home}/.coder/skills/ez-learn/SKILL.md"
   assert_file_exists "agents skill" "${home}/.agents/skills/ez-learn/SKILL.md"
-  # The two command skills need their SKILL.md in both homes, and the helper
-  # programs they call sit one level deeper in the skill's own scripts/
-  # directory. Nothing in an empty home pre-creates that nesting, so these
-  # assertions are what prove the seeder makes the parent directory too.
+  # The two helper-carrying command skills need their SKILL.md in both homes,
+  # and the helper programs they call sit one level deeper in the skill's own
+  # scripts/ directory. Nothing in an empty home pre-creates that nesting, so
+  # these assertions are what prove the seeder makes the parent directory too.
   assert_file_exists "coder skill" "${home}/.coder/skills/ez-bazel-first/SKILL.md"
   assert_file_exists "agents skill" "${home}/.agents/skills/ez-bazel-first/SKILL.md"
   assert_file_exists "coder helper" \
@@ -209,6 +209,11 @@ assert_contributor_home() {
     "${home}/.coder/skills/ez-strong-types/scripts/type_baseline.py"
   assert_file_exists "agents helper" \
     "${home}/.agents/skills/ez-strong-types/scripts/type_baseline.py"
+  # The third repository-conversion command is a lone SKILL.md per home, like
+  # the original trio: no helper to nest, but a missing twin is still a slash
+  # command that silently does not exist for that consumer.
+  assert_file_exists "coder skill" "${home}/.coder/skills/ez-trunk-based-repo/SKILL.md"
+  assert_file_exists "agents skill" "${home}/.agents/skills/ez-trunk-based-repo/SKILL.md"
   assert_helpers "${home}"
   assert_contains_file "notes lib" "${home}/.grok/notes-setup.sh" 'managed-by: evo-t1-coder-stack'
   assert_grok_config "${home}/.grok/config.toml" "${url}"

@@ -3,7 +3,8 @@
 # the map main.tf passes, each into a quoted here-doc so no shell text inside one is
 # expanded. Why these seeds ride their own script instead of stack-skills.sh.tftpl: the
 # agent execs every body as one argument, so a second body buys a second ceiling, and
-# this family carries helper scripts beside its SKILL.md while that one does not;
+# two of this family's three members carry helper scripts beside their SKILL.md while
+# that one does not;
 # docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 
@@ -78,6 +79,19 @@ if [ ! -f "$HOME/.agents/skills/ez-strong-types/scripts/type_baseline.py" ]; the
   mkdir -p "$HOME/.agents/skills/ez-strong-types/scripts" 2>/dev/null
   cp "$HOME/.coder/skills/ez-strong-types/scripts/type_baseline.py" \
     "$HOME/.agents/skills/ez-strong-types/scripts/type_baseline.py" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-trunk-based-repo" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" <<'EZ_TRUNK_BASED_REPO_SKILL_MD_EOF'
+${ez_trunk_based_repo_skill}
+EZ_TRUNK_BASED_REPO_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-trunk-based-repo/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-trunk-based-repo" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" \
+    "$HOME/.agents/skills/ez-trunk-based-repo/SKILL.md" 2>/dev/null
 fi
 
 exit 0

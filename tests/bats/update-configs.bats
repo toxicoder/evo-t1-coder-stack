@@ -701,8 +701,8 @@ scratch_root() {
   assert_contains_file "the hand-written file is intact" "${home}/.grok/AGENTS.md" \
     'operator wrote this by hand'
 
-  # The twenty-three reseed targets seed_seed_targets lists are all home-relative,
-  # so a host --home tree has all twenty-three to fill.
+  # The twenty-five reseed targets seed_seed_targets lists are all home-relative,
+  # so a host --home tree has all twenty-five to fill.
   run --separate-stderr bash "${SCRIPT}" workspace --home "${home}"
   [ "${status}" -eq 0 ]
   assert_match "the shared agents file is reseeded" '\.grok/AGENTS\.md' "${output}"

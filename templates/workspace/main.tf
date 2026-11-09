@@ -693,6 +693,7 @@ resource "coder_script" "stack_repo_skills" {
     ez_bazel_first_glob_budget       = chomp(file("${path.module}/ez-bazel-first.glob_budget.py"))
     ez_strong_types_skill            = chomp(file("${path.module}/ez-strong-types.SKILL.md"))
     ez_strong_types_type_baseline    = chomp(file("${path.module}/ez-strong-types.type_baseline.py"))
+    ez_trunk_based_repo_skill        = chomp(file("${path.module}/ez-trunk-based-repo.SKILL.md"))
   })
 }
 

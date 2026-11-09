@@ -48,11 +48,14 @@ scratch_home() {
     "${1}/.coder/skills/ez-skillify" "${1}/.agents/skills/ez-skillify" \
     "${1}/.coder/skills/ez-create-skill" "${1}/.agents/skills/ez-create-skill" \
     "${1}/.coder/skills/ez-bazel-first" "${1}/.agents/skills/ez-bazel-first" \
-    "${1}/.coder/skills/ez-strong-types" "${1}/.agents/skills/ez-strong-types"
-  # The two command skills carry helper scripts one level deeper, under the
-  # skill directory's own scripts/. That nesting is left uncreated on purpose:
-  # the reseed has to make the parent directory itself, so a seeder that only
-  # ever mkdir'd one level down fails the seed-what-is-absent test below.
+    "${1}/.coder/skills/ez-strong-types" "${1}/.agents/skills/ez-strong-types" \
+    "${1}/.coder/skills/ez-trunk-based-repo" "${1}/.agents/skills/ez-trunk-based-repo"
+  # ez-bazel-first and ez-strong-types also carry helper scripts one level
+  # deeper, under the skill directory's own scripts/. That nesting is left
+  # uncreated on purpose: the reseed has to make the parent directory itself,
+  # so a seeder that only ever mkdir'd one level down fails the
+  # seed-what-is-absent test below. ez-trunk-based-repo is a lone SKILL.md,
+  # like the original trio, so its directory above is all it needs.
   # What the stack left under /learn when the skill moved: the marker-carrying
   # copy is the stack's own and a reseed retires it, the marker-free one is
   # someone else's and survives every reseed.
@@ -84,13 +87,15 @@ scratch_home() {
   source "${LIB}"
   local lines target
   lines="$(seed_seed_targets)"
-  # Twenty-three reseed targets: the five non-skill targets, then grok-build-delegation,
+  # Twenty-five reseed targets: the five non-skill targets, then grok-build-delegation,
   # ez-learn, ez-skillify and ez-create-skill as one SKILL.md per home (8), then
   # ez-bazel-first as a SKILL.md per home plus two helper scripts per home (6),
-  # then ez-strong-types as a SKILL.md per home plus one helper per home (4).
+  # then ez-strong-types as a SKILL.md per home plus one helper per home (4),
+  # then ez-trunk-based-repo as one SKILL.md per home (2) with no helper of its
+  # own.
   # The count is a claim about the manifest, so a target that quietly
   # disappears from config_seed.sh fails here before anything else notices.
-  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 23 ]
+  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 25 ]
   # Home-relative targets keep dev-only paths (scripts/, tests/) out of any
   # workspace volume: an absolute target would put this script's trust
   # boundary in the wrong place.
@@ -154,9 +159,17 @@ scratch_home() {
     $'~/.coder/skills/ez-strong-types/scripts/type_baseline.py\tfile:templates/common/ez-strong-types.type_baseline.py' "${lines}"
   assert_match "ez-strong-types type_baseline from common (agents)" \
     $'~/.agents/skills/ez-strong-types/scripts/type_baseline.py\tfile:templates/common/ez-strong-types.type_baseline.py' "${lines}"
-  # Six of the twenty-three are those nested helpers, named here as a count so a
-  # nested target dropped from the manifest is caught even when the total is
-  # restored by some unrelated target.
+  # The third repository-conversion command is a lone SKILL.md, with no helper
+  # program under it, but it rides the same twins-for-two-consumers contract:
+  # /ez-trunk-based-repo has to exist in the chat agent's home and in the CLI's.
+  assert_match "ez-trunk-based-repo skill from common (coder)" \
+    $'~/.coder/skills/ez-trunk-based-repo/SKILL.md\tfile:templates/common/ez-trunk-based-repo.SKILL.md' "${lines}"
+  assert_match "ez-trunk-based-repo skill from common (agents)" \
+    $'~/.agents/skills/ez-trunk-based-repo/SKILL.md\tfile:templates/common/ez-trunk-based-repo.SKILL.md' "${lines}"
+  # Six of the twenty-five are the nested helpers of the two skills that have
+  # them, counted separately from the total so a nested target dropped from the
+  # manifest is caught even when the total is restored by some unrelated target
+  # (a new lone SKILL.md pair must not move this number).
   [ "$(printf '%s\n' "${lines}" | grep -c '/scripts/')" -eq 6 ]
   assert_not_match "no block kind" $'\tblock:' "${lines}"
 }
@@ -317,10 +330,10 @@ scratch_home() {
   assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-skillify/SKILL.md"
   assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-create-skill/SKILL.md"
   assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-create-skill/SKILL.md"
-  # The two command skills, both homes, SKILL.md and every nested helper. The
-  # helpers are the ones worth naming: their parent scripts/ directory does not
-  # exist in the fixture, so this is where a seeder that cannot create a nested
-  # parent is caught.
+  # The two helper-carrying command skills, both homes, SKILL.md and every
+  # nested helper. The helpers are the ones worth naming: their parent scripts/
+  # directory does not exist in the fixture, so this is where a seeder that
+  # cannot create a nested parent is caught.
   assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-bazel-first/SKILL.md"
   assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-bazel-first/SKILL.md"
   assert_file_exists "coder nested helper" \
@@ -343,6 +356,14 @@ scratch_home() {
     "${scratch}/home/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" 'def '
   assert_contains_file "type_baseline is the repo payload" \
     "${scratch}/home/.agents/skills/ez-strong-types/scripts/type_baseline.py" 'def '
+  # The third conversion command has no helper, so both homes getting their own
+  # SKILL.md is the whole claim, and the copy has to be the trunk payload.
+  assert_file_exists "coder skill" "${scratch}/home/.coder/skills/ez-trunk-based-repo/SKILL.md"
+  assert_file_exists "agents skill" "${scratch}/home/.agents/skills/ez-trunk-based-repo/SKILL.md"
+  assert_contains_file "trunk skill is the repo payload" \
+    "${scratch}/home/.coder/skills/ez-trunk-based-repo/SKILL.md" '^name: ez-trunk-based-repo$'
+  assert_contains_file "trunk skill carries the stack marker" \
+    "${scratch}/home/.agents/skills/ez-trunk-based-repo/SKILL.md" 'managed-by: evo-t1-coder-stack'
   # The copy the stack seeded under /learn before the rename goes, because it
   # still carries the marker; the marker-free one is whoever's it is, and it
   # stays.
@@ -392,23 +413,26 @@ coder-ws2-dind-sidecar'
 import json, sys
 d = json.load(sys.stdin)
 assert d["dry_run"] is False and d["force"] is False, d
-# The twenty-three reseed targets, plus the one /learn copy the reseed retired from
+# The twenty-five reseed targets, plus the one /learn copy the reseed retired from
 # this home (its ~/.agents twin is user-owned, so it earns no entry below).
 # Every target earns exactly one entry, the user-owned tmux.conf included, so
 # this count is the size of the manifest read back through the JSON channel: a
 # target dropped from config_seed.sh drops an entry and fails here.
-assert len(d["entries"]) == 24, d["entries"]
+assert len(d["entries"]) == 26, d["entries"]
 # A seeded entry names its target home-relative but already stripped the tilde
 # (the seeder prints the path it rooted at the home), while a retired entry
-# keeps the ~/ spelling it is listed under. Check the nested helpers by the
-# name the reseed reports, in both homes.
+# keeps the ~/ spelling it is listed under. Check the nested helpers and the
+# newest skill by the name the reseed reports, in both homes: the count above
+# catches a target that vanished, this catches one traded for another.
 targets = [e["target"] for e in d["entries"]]
 for want in [".coder/skills/ez-bazel-first/scripts/owned_files_check.py",
              ".agents/skills/ez-bazel-first/scripts/owned_files_check.py",
              ".coder/skills/ez-bazel-first/scripts/glob_budget.py",
              ".agents/skills/ez-bazel-first/scripts/glob_budget.py",
              ".coder/skills/ez-strong-types/scripts/type_baseline.py",
-             ".agents/skills/ez-strong-types/scripts/type_baseline.py"]:
+             ".agents/skills/ez-strong-types/scripts/type_baseline.py",
+             ".coder/skills/ez-trunk-based-repo/SKILL.md",
+             ".agents/skills/ez-trunk-based-repo/SKILL.md"]:
     assert want in targets, (want, targets)
 retired = [e for e in d["entries"] if e["target"] == "~/.coder/skills/learn/SKILL.md"]
 assert len(retired) == 1 and retired[0]["action"].startswith("retired"), retired

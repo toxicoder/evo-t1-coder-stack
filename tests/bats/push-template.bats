@@ -60,6 +60,7 @@ COMMON_PAYLOADS=(
   ez-bazel-first.glob_budget.py
   ez-strong-types.SKILL.md
   ez-strong-types.type_baseline.py
+  ez-trunk-based-repo.SKILL.md
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
@@ -87,6 +88,7 @@ write_common_payloads() {
   printf '%s\n' 'pass' >"${dest}/ez-bazel-first.glob_budget.py"
   printf '%s\n' '# skill' >"${dest}/ez-strong-types.SKILL.md"
   printf '%s\n' 'pass' >"${dest}/ez-strong-types.type_baseline.py"
+  printf '%s\n' '# skill' >"${dest}/ez-trunk-based-repo.SKILL.md"
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"

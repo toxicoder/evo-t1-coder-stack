@@ -355,6 +355,14 @@ report for a script. What the report should read here:
   both `slash_commands` and `skills`, so it works on whichever CLI the image baked at
   `/usr/local/bin/grok` and this needs no image rebuild; the **Grok Build** terminal
   profile gets it because that profile execs the same binary.
+- **The stack ships its own three repository-conversion commands as `/ez-bazel-first`,
+  `/ez-strong-types` and `/ez-trunk-based-repo`**, and these stand in for nothing upstream:
+  they convert whatever repository the workspace happens to hold, which is why they carry no
+  path that only exists in this stack. They are seeded the same way, by
+  `coder_script.stack_repo_skills`, from `templates/common/ez-bazel-first.SKILL.md`,
+  `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`, plus the three python
+  helpers they shell out to. Same absent-only contract, same marker-based takeover rule,
+  same `[skills] disabled` escape hatch.
 - **A leftover `/learn` seed retires itself.** This skill was seeded under the name
   `learn` until it moved, and a copy left standing keeps offering that old name beside
   `/ez-learn` for the life of the volume; there is no bundled `learn` for it to hide,
@@ -887,7 +895,7 @@ decisions stop at the top-level chat.
 
 ### What seeds the agent's context
 
-Ten files seed into every new workspace, on first boot and only while the file is
+Twenty-two files seed into every new workspace, on first boot and only while the file is
 absent:
 
 1. `~/.coder/AGENTS.md`
@@ -900,6 +908,18 @@ absent:
 8. `~/.agents/skills/ez-skillify/SKILL.md`
 9. `~/.coder/skills/ez-create-skill/SKILL.md`
 10. `~/.agents/skills/ez-create-skill/SKILL.md`
+11. `~/.coder/skills/ez-bazel-first/SKILL.md`
+12. `~/.agents/skills/ez-bazel-first/SKILL.md`
+13. `~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py`
+14. `~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py`
+15. `~/.coder/skills/ez-bazel-first/scripts/glob_budget.py`
+16. `~/.agents/skills/ez-bazel-first/scripts/glob_budget.py`
+17. `~/.coder/skills/ez-strong-types/SKILL.md`
+18. `~/.agents/skills/ez-strong-types/SKILL.md`
+19. `~/.coder/skills/ez-strong-types/scripts/type_baseline.py`
+20. `~/.agents/skills/ez-strong-types/scripts/type_baseline.py`
+21. `~/.coder/skills/ez-trunk-based-repo/SKILL.md`
+22. `~/.agents/skills/ez-trunk-based-repo/SKILL.md`
 
 - 1 and 2 are the Coder agent's *default* discovery paths.
 - 3 and 4 are the same text under the Grok Build CLI's convention, and the CLI is
@@ -913,6 +933,12 @@ absent:
   ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Each `.agents`
   copy is a `cp` of the managed `.coder` copy, never a second inline body, so the pair
   cannot drift.
+- 11-22 are the stack's three repository-conversion commands and are written by
+  `coder_script.stack_repo_skills`, a second body with its own ceiling, for the same
+  reason and because this family also ships the python helpers 13-14, 16 and 19-20 that
+  two of the bodies invoke by `~/.agents` path. Same absent-only contract and the same
+  `cp` twin rule; the helper directories are made by the body, so a workspace that
+  already has the `SKILL.md` but lost a helper still gets the helper back.
 - 5 and 6 are `/ez-learn`: this stack's copy of the upstream memory commands `/flush`,
   `/dream`, `/remember` and `/memory`. It turns the current session into durable facts -
   flush the conversation into a session log under the workspace's `~/.grok/memory/`
@@ -991,6 +1017,29 @@ This is workflow curation, separate from the memory system, which stores durable
 (upstream `/remember`, `/memory`, `/dream`, shipped here as `/ez-learn`), and from
 `AGENTS.md`, which is the always-loaded rules file. A skill loads when its `description`
 matches, and holds a procedure.
+
+### The three repository-conversion commands
+
+One line each: `/ez-bazel-first` puts every tracked file behind a build target, budgets the
+`glob()`s and drives the gate to full file coverage; `/ez-strong-types` pins a strict
+checker profile per language and turns the broad-type census into a ratchet that fails on
+any widening; `/ez-trunk-based-repo` retires environment branches, lands unfinished work
+behind a flag that defaults off, and presents the leftover branches for deletion with their
+tip SHAs. All three take a repository path and work on that checkout, so they are useful in
+a workspace cloned against any of the fleet's repositories.
+
+They differ from the authoring trio in one structural way: two of them shell out to a
+python helper, so their seed ships `scripts/owned_files_check.py`, `scripts/glob_budget.py`
+and `scripts/type_baseline.py` beside the `SKILL.md`. Those helpers are stack payload like
+everything else here, which means the copy in a workspace is stack-owned while it carries the
+marker, and the way to fix a helper is to fix the seed under `templates/common/` and
+re-materialize, never to patch the copy that is running.
+
+This repo keeps its own project-scoped `/trunk-refactor` under
+`skills/trunk-refactor/SKILL.md`, which is the rule of record for *this* repository and
+cites its gates by label. `/ez-trunk-based-repo` is the portable version of the same model:
+it discovers a target repo's own gates at inventory time rather than assuming Bazel, so it
+works in a Compose, K3s, Ansible or Terraform repository too.
 
 ### What this is not
 
