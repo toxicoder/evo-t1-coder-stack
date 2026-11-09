@@ -426,6 +426,20 @@ while the managed block is intact.
   left the key list -- the file that keeps a real `.env` honest -- to drift.
   `.gitignore` carries the matching half on the git side: the whole family is
   ignored except the names `allow` lists.
+- `allow` also carries the verbs the branch-first, commit-per-unit policy needs:
+  `Bash(git switch *)`, `Bash(git checkout -b *)` and `-B`, `Bash(git add *)`,
+  `Bash(git commit *)`. A grant that cannot be had is how that policy fails quietly:
+  an unattended run (`grok -p`, how the delegation skill launches its children)
+  answers "headless run cannot ask for approval" and drops the call, so a child
+  would finish a whole task with its work uncommitted. Everything on that list is
+  local to the checkout and undone by another git command. `git push` is absent on
+  purpose - the one step that leaves the machine keeps a human in it - and so is
+  anything that can lose work (`git branch -D`, `git restore`,
+  `git reset --hard`). The deny side closes the two ways a commit could land with
+  no gate having seen it: `Bash(git commit --no-verify *)` / `-n`, past the
+  hermetic pre-commit hook, and `Bash(git add -f *)` / `--force`, past
+  `.gitignore`. Both are prefix globs, so they narrow that door rather than seal
+  it, and the `Stage by path` rule in the seed text is the rest of the defence.
 - `Bash(rm -rf *)` is a prefix glob, so it catches a benign per-path scratch cleanup
   along with the destruction it is there to prevent. Agents run into that constantly:
   across 271 workspace sessions, 86 recorded at least one denied tool call and 56
@@ -923,7 +937,9 @@ absent:
   marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
   above.
 - The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
-  probe-one-worker-first, verify-what-a-worker-actually-produced). It travels as
+  probe-one-worker-first, verify-what-a-worker-actually-produced, and the git cadence that
+  cuts the branch before the first edit and commits each unit as it lands, holding the push
+  for the pull request). It travels as
   `templates/common/GROK_BUILD_AGENTS.md`, staged beside the staged `main.tf` and
   read back with `file()` / `filebase64()`; `templates/common/` keeps one copy for
   both templates, and the push stages it into each template's pushed copy.

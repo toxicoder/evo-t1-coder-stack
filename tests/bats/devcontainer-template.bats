@@ -395,6 +395,78 @@ setup() {
   [ "${status}" -ne 0 ]
 }
 
+@test "git policy: both twins pre-allow the local commit verbs and keep the push gated" {
+  # The seed tells an agent to cut a branch before the first edit and commit each
+  # unit as it lands. A grant it cannot get turns that into a task that ends with
+  # the work uncommitted: an unattended run (`grok -p`, how the delegation skill
+  # launches its children) answers "headless run cannot ask for approval" and
+  # drops the call outright. So the verbs that policy needs are pre-allowed, and
+  # only those: each is local to the checkout and undone by another git command.
+  # The push stays a human step, and so does anything that can lose work.
+  local tpl allow deny allow_block="" deny_block="" first=1
+  local verbs=(
+    '"Bash(git switch *)"'
+    '"Bash(git checkout -b *)"'
+    '"Bash(git checkout -B *)"'
+    '"Bash(git add *)"'
+    '"Bash(git commit *)"')
+  local gated=(
+    '"Bash(git push '
+    '"Bash(git restore '
+    '"Bash(git reset --hard '
+    '"Bash(git branch -D ')
+  local escapes=(
+    '"Bash(git commit --no-verify *)"'
+    '"Bash(git commit -n *)"'
+    '"Bash(git add -f *)"'
+    '"Bash(git add --force *)"')
+  local item
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    run sed -n '/^allow = \[/,/^\]/p' "${tpl}"
+    [ "${status}" -eq 0 ]
+    allow="${output}"
+    run sed -n '/^deny = \[/,/^\]/p' "${tpl}"
+    [ "${status}" -eq 0 ]
+    deny="${output}"
+    for item in "${verbs[@]}"; do
+      [[ "${allow}" == *"${item}"* ]] || {
+        echo "${tpl} never pre-allows ${item}" >&2
+        return 1
+      }
+    done
+    for item in "${gated[@]}"; do
+      [[ "${allow}" != *"${item}"* ]] || {
+        echo "${tpl} pre-allows ${item}, which the policy keeps gated" >&2
+        return 1
+      }
+    done
+    # A commit that skipped the hermetic pre-commit hook, or an add that forced
+    # past .gitignore, would reach the branch with no gate having seen it.
+    for item in "${escapes[@]}"; do
+      [[ "${deny}" == *"${item}"* ]] || {
+        echo "${tpl} does not deny ${item}" >&2
+        return 1
+      }
+    done
+    if [ "${first}" -eq 1 ]; then
+      first=0
+    else
+      [ "${allow}" = "${allow_block}" ] || {
+        echo "the two twins no longer ship one allow list" >&2
+        return 1
+      }
+      [ "${deny}" = "${deny_block}" ] || {
+        echo "the two twins no longer ship one deny list" >&2
+        return 1
+      }
+    fi
+    allow_block="${allow}"
+    deny_block="${deny}"
+  done
+}
+
 @test "context7 lane: both config twins carry the gated cached context7 block" {
   # context7_mcp (template default: true) gates the [mcp_servers.context7]
   # block, and push-template.sh passes one --var array to BOTH pushes, so the
