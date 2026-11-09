@@ -194,7 +194,9 @@ proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.m
 - LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env): no static token or PAT in a template, an env file, a remote URL, or a commit. The one sanctioned credential is a pasted PAT in a single workspace's gh store, installed by `github-auth auth` from the stack host, and only after `check` has answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`.
 
 ## Working rules
-- Short-lived branch from tip of `main` (`feat/`, `fix/`, `refactor/`, …), one change per branch, PR into `main`.
+- Short-lived branch from tip of `main` (`feat/`, `fix/`, `refactor/`, …), one change per branch,
+  PR into `main`. Cut the branch before the first edit, commit each unit as it lands with that
+  unit's check green, and let the push wait for the pull request.
 - Prefer small focused changes. Default one repository per workspace.
 - Prefer Bazel targets over direct script execution.
 - Never introduce a static GitHub token into the stack. The single exception is the
@@ -212,6 +214,10 @@ Non-negotiables, in this repo and in any repo this agent converts:
 - `development` / `staging` / `production` are environments (GitHub Environments, compose
   project names + env files, namespaces, overlays, inventory groups), never git branches.
 - Work branches are short-lived, cut from the tip of `main`, merged by PR, deleted on merge.
+  Cut the branch before the first edit, and commit each unit as it lands with that unit's check
+  green: a local commit is free and reversible, so history is written as the work goes. The push is
+  the boundary — it waits for the pull request, and a commit the remote already has is never
+  rewritten.
 - Incomplete work lands on `main` behind a flag that defaults off — env var, compose profile,
   `config/flags.yaml`, template parameter, in that order. No flag service unless asked.
 - Promotion is the same commit/tag applied to another environment; nothing is rebuilt per

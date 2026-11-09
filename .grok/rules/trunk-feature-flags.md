@@ -14,8 +14,10 @@ asked to convert. The full procedure is the `trunk-refactor` skill
    or an inventory group. They are never git branches, and a deploy job never selects an
    environment by branch name.
 3. Work branches are `feat/`, `fix/`, `refactor/`, `docs/`, `chore/`, `ci/`, cut from the tip of
-   `main`, merged by pull request, deleted on merge. Anything older than the agreed branch
-   lifetime is a cleanup candidate, not a backlog.
+   `main` **before the first edit**, merged by pull request, deleted on merge. Anything older than
+   the agreed branch lifetime is a cleanup candidate, not a backlog. Commit each unit as it lands
+   with that unit's check green: a local commit is free, so the history is written while the work
+   happens. The push is the boundary and waits for the pull request.
 4. Incomplete or experimental work lands on `main` behind a flag that defaults off. Use the
    first mechanism that fits, in this order: environment variable with a dotenv sample, compose
    `profiles:`, a checked-in `config/flags.yaml` (see `config/flags.yaml.example`), then the

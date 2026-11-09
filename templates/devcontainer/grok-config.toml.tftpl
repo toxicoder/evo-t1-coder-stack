@@ -496,6 +496,16 @@ deny = [
   "Edit(**/.env.ci)",
   "Read(**/.env.override)",
   "Edit(**/.env.override)",
+  # The two ways a commit could reach the branch with no gate having seen it:
+  # past the hermetic pre-commit hook, and past .gitignore, which is what keeps a
+  # populated dotenv variant out of a commit. A human at a shell keeps both
+  # escapes; the agent does not. Matching is on the leading spelling, so this
+  # narrows that door rather than sealing it, and "Stage by path" in the seed
+  # text is the rest of the defence.
+  "Bash(git commit --no-verify *)",
+  "Bash(git commit -n *)",
+  "Bash(git add -f *)",
+  "Bash(git add --force *)",
 ]
 allow = [
   "Read(**/.env.example)",
@@ -523,6 +533,21 @@ allow = [
   # gate leaves its rule matching nothing, which is harmless.
   "MCPTool(searxng__*)",
   "MCPTool(context7__*)",
+  # The verbs the branch-first, commit-per-unit policy needs. A grant is still
+  # a grant, and an unattended run (`grok -p`, which is how the delegation skill
+  # launches its children) has nobody to ask, so one required here would come
+  # back "headless run cannot ask for approval" and the child would finish a
+  # whole task with its work uncommitted - the failure the seed text now argues
+  # against. Every rule here is local to this checkout and undone by another git
+  # command: a branch, the index, a commit. `git push` is absent on purpose, so
+  # the one step that leaves the machine keeps asking for a human, and so does
+  # anything that can lose work (`git branch -D`, `git restore`,
+  # `git reset --hard`).
+  "Bash(git switch *)",
+  "Bash(git checkout -b *)",
+  "Bash(git checkout -B *)",
+  "Bash(git add *)",
+  "Bash(git commit *)",
 ]
 
 %{if grok_config_extra != ""~}

@@ -179,6 +179,10 @@ criteria_items() {
   }
   # The two constraints an agent is most likely to violate under momentum.
   grep -qiE 'never (force-push|delete a remote branch)' "${RULES}"
+  # Branch timing is the third: an agent that works first and reaches for git at
+  # the end leaves the change uncommitted on trunk, so the rules file has to say
+  # the branch comes before the edit and the push comes after the pull request.
+  grep -qiE 'before the first edit' "${RULES}"
   grep -qiE 'defaults off|default.*off' "${RULES}"
   # And the prose twin has to lead a reader to both the body and the payload it copies.
   grep -q 'skills/trunk-refactor/SKILL.md' "${DOC_PAGE}"

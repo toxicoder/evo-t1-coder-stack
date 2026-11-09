@@ -9,13 +9,14 @@ tags: [git, branching, ci]
 **What's on this page**
 
 - What `main` is allowed to be, and what may not be committed to it
-- How to cut, name and delete a short-lived work branch
+- How to cut, name and delete a short-lived work branch, and when the branch and its commits happen
 - Where a hotfix branches from and where it lands first
 - What CI runs, what branch protection should require, and where secrets go
 
 **What this enables**
 
 - Naming a branch and a commit so CI and `git log` read the way the rest of the repo does
+- Recovering a half-finished change with one revert, because each landed step was committed as it landed
 - Knowing which green check actually gates a merge into `main`
 
 Trunk-based, GitHub-Flow shaped: one long-lived branch, short-lived work branches, and a pull
@@ -58,6 +59,37 @@ request as the only way back into `main`.
   `templates/common/GROK_BUILD_AGENTS.md`, which is the text every workspace seeds into
   `~/.grok/AGENTS.md`, so a commit written by an agent and one written by hand read the
   same way in `git log`.
+
+## Commits, and when they happen
+
+The branch and the commits are in place while the work happens, and the push waits. This is the
+order the agent seed teaches and the order a human contributor gets the most out of:
+
+- **Branch first, then edit.** The work branch is cut as the first action of the change, off the
+  tip of `main`. `main` is not a place to work: an agent edits it only when the operator asked for
+  that in words. Cut late and the branch is cheap to add anyway - `git switch -c` carries the
+  working tree with it - which is the fix, where `stash`, `reset --hard`, or `checkout -- .` to
+  clean the tree is how an unfinished change is destroyed.
+- **Commit each unit as it lands.** A unit is what a reviewer reads as one step: a script with its
+  Bats file, a template with its twin, a flag with the docs that name it. Commit when that unit's
+  own check is green, then start the next one. `git log --oneline main..HEAD` then shows the shape
+  of the change, and a wrong turn is one `git revert` away instead of a lost afternoon.
+- **Stage by path.** `git add <path> <path>`, and read the index back with
+  `git diff --cached --name-only`. `git add -A`, `git add .`, and `git commit -a` are how a scratch
+  file, a build artifact, or someone else's edit walks into a commit - and the secret hygiene rule
+  above depends on the agent being able to say what is in each one.
+- **A local commit is free, a push is not.** Nothing leaves the machine until you push, so err
+  toward committing, including a `WIP:` checkpoint before a step that might break something green.
+  History is local until then, so amend the message, fold the checkpoint into the commit it belongs
+  to, and reorder there; that door closes at the push, after which a shared commit is never
+  rewritten.
+- **Push once, when the pull request opens**, and pre-flight it: the log above reads as one commit
+  per unit with imperative prefixed subjects, `git diff --stat main...HEAD` matches what was meant,
+  and no `.env`, token, key, or workspace-local state is in any commit.
+
+Small commits cost nothing at the gate: `.githooks/pre-commit` runs the hermetic half on every
+commit and `.githooks/pre-push` runs the full set before anything leaves the machine, so a stream of
+focused commits is held to the same bar as one large one. See [`main`](#main) for installing them.
 
 ## CI and protection
 
