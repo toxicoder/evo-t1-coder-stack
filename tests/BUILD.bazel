@@ -210,6 +210,9 @@ _SUITE_PAYLOAD = {
     "coder-apps.bats": [
         "//:templates_payload",
     ],
+    # Every fact this suite drives comes through the docker and tmux stubs it writes
+    # itself; the CLI under test reads no payload file, so nothing is declared.
+    "coder-sessions.bats": [],
     "common.bats": [],
     "dashboard-password.bats": [],
     "dev-stack.bats": [

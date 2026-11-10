@@ -147,6 +147,14 @@ _SCRIPT_LIBS = {
         "lib/coder_api.sh",
         "lib/common.sh",
     ],
+    # The session control plane addresses the daemon the way coder-agents does (by
+    # label, through the capped wrappers in coder_api.sh) and reads no payload file:
+    # every fact it needs comes from `docker ps` and from `docker exec` into the
+    # workspace container.
+    "coder-sessions": [
+        "lib/coder_api.sh",
+        "lib/common.sh",
+    ],
     "dashboard-password": [
         "lib/coder_api.sh",
         "lib/common.sh",
@@ -292,6 +300,13 @@ _SCRIPT_PAYLOAD = {
         "//images/dev:context",
     ],
     "coder-agents": [
+        "//:compose_file",
+    ],
+    # The compose file is declared because common.sh is sourced and resolve_checkout
+    # probes for that marker by default, which is the same reason bazel-map carries it.
+    # The CLI's own facts come from `docker ps --filter label=coder.workspace_id` and
+    # from `docker exec ... tmux`; no payload file is opened by name.
+    "coder-sessions": [
         "//:compose_file",
     ],
     "dashboard-password": [
