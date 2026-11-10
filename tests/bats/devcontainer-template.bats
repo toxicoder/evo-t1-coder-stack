@@ -279,6 +279,64 @@ setup() {
   # docs/branching.md as the rule of record.
 }
 
+@test "issue policy: the seed reads the issue, links it once, and closes only on a full fix" {
+  # A bug fixed without touching the tracker lies twice: the report stays open
+  # for the next person to spend a session on, and a closing keyword written
+  # against a number nobody opened, or against work that covers half the
+  # report, retires a bug that is still live. The obligations below are what the
+  # seed teaches to end that - read before planning, search before filing, say
+  # so before a long fix, one closing keyword in the PR body, a keyword that
+  # matches what the PR settles, a failing-then-passing test as the proof, and
+  # the tracker left to the humans. One common copy feeds both twins, so a
+  # lapse here is every workspace.
+  local common_md="${REPO_ROOT}/templates/common/GROK_BUILD_AGENTS.md"
+  [ -f "${common_md}" ] ||
+    skip "no common GROK_BUILD_AGENTS.md payload under ${REPO_ROOT}/templates/common"
+  run grep -F '# GitHub issues and bug reports' "${common_md}"
+  [ "${status}" -eq 0 ]
+  local phrase
+  for phrase in \
+    '**Read the issue before you plan.**' \
+    'gh issue view' \
+    '**Search before you open one.**' \
+    'gh issue list --state open --search' \
+    'gh issue create' \
+    '**Say so before a long fix.**' \
+    'fix/<n>-<slug>' \
+    'gh pr create --body-file' \
+    '**Match the keyword to what the PR actually settles.**' \
+    '`Closes #<n>`' \
+    '`Refs #<n>`' \
+    '**A bug fix lands with its proof.**' \
+    'Cannot reproduce' \
+    '**The tracker is shared, and you are not a human in it.**' \
+    '**A 401 from the `github` MCP lane is token age.**' \
+    'takes effect only on a merge'; do
+    run grep -F -- "${phrase}" "${common_md}"
+    [ "${status}" -eq 0 ] || {
+      echo "the seed dropped: ${phrase}" >&2
+      return 1
+    }
+  done
+  # The Done Means checklist is what makes it verifiable at the end of the run:
+  # the number and its keyword have to be in the PR body, and an acceptance
+  # criterion the change missed has to be admitted, not implied by the merge.
+  run grep -F 'the keyword that matches what this PR settles' "${common_md}"
+  [ "${status}" -eq 0 ]
+  # Negative pins: the close belongs to the merge, so the seed must not hand the
+  # agent a close or a triage verb to run itself.
+  run grep -F 'gh issue close' "${common_md}"
+  [ "${status}" -ne 0 ] || {
+    echo "the seed tells the agent to close an issue by hand" >&2
+    return 1
+  }
+  run grep -F 'gh issue edit' "${common_md}"
+  [ "${status}" -ne 0 ] || {
+    echo "the seed hands the agent tracker triage" >&2
+    return 1
+  }
+}
+
 @test "search lane: both config twins carry the gated searxng block and the parked native-search key" {
   # search_mcp (template default: true) gates the [mcp_servers.searxng] block,
   # and push-template.sh passes its --var array to BOTH pushes, so the block and
