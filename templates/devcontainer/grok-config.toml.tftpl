@@ -506,6 +506,31 @@ deny = [
   "Bash(git commit -n *)",
   "Bash(git add -f *)",
   "Bash(git add --force *)",
+  # Self-teardown: the Bash tool runs inside the agent's own tmux session, so a sweep
+  # of "stray" sessions or processes ends the agent's run with them. An agent stops one
+  # process it started with kill_command_or_subagent; the rest is in the docs.
+  "Bash(*kill-server*)",
+  "Bash(*kill-session*)",
+  "Bash(*kill-window*)",
+  "Bash(*kill-pane*)",
+  "Bash(*restart-server*)",
+  "Bash(*pkill*tmux*)",
+  "Bash(*killall*tmux*)",
+  "Bash(*pkill*code-server*)",
+  "Bash(*killall*code-server*)",
+  "Bash(*pkill*node*)",
+  "Bash(*killall*node*)",
+  "Bash(*pkill*grok*)",
+  "Bash(*killall*grok*)",
+  "Bash(*pkill*bash*)",
+  "Bash(*killall*bash*)",
+  "Bash(*pkill -u *)",
+  "Bash(*pkill -U *)",
+  "Bash(*pkill -P *)",
+  "Bash(*kill 0*)",
+  "Bash(*kill -- -*)",
+  "Bash(*kill -1 -1*)",
+  "Bash(*kill -9 -1*)",
 ]
 allow = [
   "Read(**/.env.example)",

@@ -456,6 +456,21 @@ while the managed block is intact.
   so clean scratch that way. An `allow` entry cannot rescue `rm -rf`, because deny
   outranks allow. Narrowing the pattern is an operator call and a deliberate one: it
   is the only thing between an agent and a recursive delete on a path it got wrong.
+- The self-teardown family is denied alongside it, because an agent that closes its own
+  terminal cannot finish the task that closed it. `tmux kill-server` / `kill-session` /
+  `kill-window` / `kill-pane` / `restart-server`, `pkill` and `killall` naming `tmux`,
+  `node`, `code-server`, `grok` or `bash`, those killers aimed at a whole user or parent
+  (`pkill -u`, `-U`, `-P`), and the shell forms that signal a whole process group
+  (`kill 0`, `kill -- -<pgid>`, `kill -9 -1`) each match a `deny` rule. The reason is the
+  shape of the workspace: the Bash tool runs inside the tmux session the agent was
+  launched in, so a sweep that tidies up "stray" sessions or processes takes the agent,
+  its tool shell and the in-flight reply down together, and the editor tab dies with
+  `terminated with exit code: 1` over work left half-done. An agent stops one process it
+  started with the `kill_command_or_subagent` tool; bringing down a whole tmux server or
+  editor host stays an operator call. These are globs over the parsed command text, so
+  an abbreviated tmux verb (`tmux kill-sess`) or a bracketed pattern (`pkill -f [t]mux`)
+  walks past them - the seed rule that names the prohibition is the other half, and the
+  plain `bash` profile is how a session reaches a shell once they are all gone.
 - Stack ownership of the file rests on either marker spelling: the line-1
   `managed-by: evo-t1-coder-stack` comment or the top-level `__evoT1Stack = true` key.
   Both twins emit both, because the comment alone does not last - `grok mcp add`

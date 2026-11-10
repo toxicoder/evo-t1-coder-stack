@@ -836,6 +836,31 @@ echo "NO_COLOR=[${NO_COLOR-unset}]"         # set inside an agent tool command o
 - `terminal.ssh-wrap` asks to be run on the workstation you type `ssh` on:
   `grok doctor fix ssh-wrap` there. Nothing a workspace installs satisfies it.
 
+### `The terminal process "/bin/bash '-lc', 'exec "$HOME/.grok/bin/grok-build-terminal"'" terminated with exit code: 1` -> something closed the tmux session under the tab
+
+- Cause: that profile ends in `exec tmux new-session -A`, and tmux exits 1 whenever it
+  refuses. When a running agent meets it, the usual cause is the agent's own cleanup
+  sweep - `tmux kill-server`, `tmux kill-session`, `pkill -f tmux` - closing the session
+  the agent is typing in. The tab's process is that session's client, so the command
+  takes the agent, its tool call and the in-flight reply down together.
+- Other refusals answer with the same exit code: `sessions should be nested with care`
+  (a `TMUX` the tab inherited), `open terminal failed: not a terminal`, and `-c <dir>`
+  naming a directory that is gone.
+
+```sh
+tmux ls                                         # what survived
+tmux new-session -A -s probe; echo "exit=$?"    # replay the helper's exec by hand
+```
+
+- What the stack does about it: both config twins deny the self-teardown family, so an
+  agent's `kill-server`, `kill-session` or `pkill*tmux` is refused before it runs. The
+  `[permission]` bullets in [grok-build-and-agents.md](grok-build-and-agents.md) carry
+  the whole list and what an agent uses instead.
+- Reaching a shell once the sessions are gone: pick the **bash** profile from the
+  terminal dropdown, which opens a shell no helper mediates. Then reseed from a host
+  shell (`bazelisk run //scripts:update-configs -- workspace`) and restart the workspace,
+  which is what re-renders its `~/.grok/config.toml`.
+
 ### `docker` -> `command not found` inside a workspace -> an older image, or the wrong preset
 
 - Cause: that container was built from an image predating the Docker client toolchain,
