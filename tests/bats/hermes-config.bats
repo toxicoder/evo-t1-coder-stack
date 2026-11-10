@@ -67,14 +67,16 @@ setup() {
 }
 
 @test "hermes skills: every tracked skill exists with matching frontmatter" {
-  # The three stack skills, the three host-operations skills that make the
-  # assistant useful from a terminal (the mentor voice, the triage playbooks,
-  # and the GitHub-to-running path), and the web lane. `description` is pinned
+  # The four stack skills (the fourth being the coding-agent door, which is what
+  # makes the assistant worth opening from a phone), the three host-operations
+  # skills that make the assistant useful from a terminal (the mentor voice, the
+  # triage playbooks, and the GitHub-to-running path), and the web lane.
+  # `description` is pinned
   # beside `name` because it is the line the loader shows an agent when it
   # decides whether to open the skill at all - a skill with no description is
   # invisible in exactly the moment it would have been used.
   local skill path
-  for skill in evo-stack-ops coder-workspace model-routing \
+  for skill in evo-stack-ops coder-workspace coding-agents model-routing \
     host-linux-ops host-diagnostics deploy-from-github web-research; do
     path="${REPO_ROOT}/hermes/skills/${skill}/SKILL.md"
     assert_file_exists "${skill}" "${path}"

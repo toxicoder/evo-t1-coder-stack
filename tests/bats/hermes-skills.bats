@@ -435,3 +435,57 @@ HS_IMAGE_MISSING_TOOLS=(bazelisk jq sqlite3 sensors iotop sar)
   [[ "${backends}" == 'searxng ' ]] \
     || { printf 'FAIL: the skills set a web search backend other than searxng: [%s]\n' "${backends}" >&2; return 1; }
 }
+
+# --- 7. the coding-agent door ----------------------------------------------
+
+@test "hermes skills: the coding-agents state table is the states coder-sessions prints" {
+  # state_word is the only place these words are made, and the skill is what tells
+  # the assistant what each one means and what to say back. A sixth state added to
+  # the script without a row here gets read as one of the states the assistant did
+  # learn - the difference between "it is working" and "it is waiting on you".
+  local cli skill states table offenders=""
+  cli="${REPO_ROOT}/scripts/coder-sessions.sh"
+  skill="${SKILLS}/coding-agents/SKILL.md"
+  assert_file_exists "coder-sessions script" "${cli}"
+  assert_file_exists "coding-agents skill" "${skill}"
+  states="$(sed -n '/^state_word()/,/^}/p' "${cli}" \
+    | sed -nE "s/.*printf '([a-z-]+)\\\\n'.*/\\1/p" | sort -u)"
+  [[ -n ${states} ]] \
+    || { printf 'FAIL: state_word in %s prints no state words; the extraction is stale\n' "${cli}" >&2; return 1; }
+  # Only the state table, which is the one block whose first column is a state word.
+  # The backtick pre-filter is what drops the header and the |---| separator row.
+  table="$(sed -n '/^| state |/,/^$/p' "${skill}" \
+    | grep -E '^\|[[:space:]]*`' \
+    | sed -E 's/^\|[[:space:]]*`([^`]+)`.*/\1/' | sort -u)"
+  [[ -n ${table} ]] \
+    || { printf 'FAIL: no "| state |" table found in %s\n' "${skill}" >&2; return 1; }
+  offenders="$(comm -3 <(printf '%s\n' "${states}") <(printf '%s\n' "${table}"))"
+  [[ -z ${offenders} ]] \
+    || { printf 'FAIL: state words out of step between %s and %s:\n  %s\n  script prints: %s\n  table names: %s\n' \
+      "${cli}" "${skill}" "${offenders//$'\n'/ }" \
+      "$(tr '\n' ' ' <<<"${states}")" "$(tr '\n' ' ' <<<"${table}")" >&2; return 1; }
+}
+
+@test "hermes skills: the coding-agents door names the real script path and its verbs" {
+  # The assistant copies the invocation verbatim from a container that has no
+  # bazelisk, so the mounted-checkout path and the verb list are the whole door.
+  local skill="${SKILLS}/coding-agents/SKILL.md"
+  assert_contains_file "reaches the CLI through the mounted checkout" "${skill}" \
+    'STACK_HOST_PATH:-/opt/stack\}/scripts/coder-sessions\.sh'
+  # The three verbs that change something, named as such: the skill has to tell the
+  # assistant which commands are safe to run on its own and which need the yes.
+  assert_contains_file "names the mutating verbs" "${skill}" \
+    'Mutating verbs are `send`, `launch`, and `stop`'
+  # Every verb the skill demonstrates in its own examples must be a real subcommand;
+  # the section-2 test only sees the //scripts: form, and this file mostly shows the
+  # bash form, which is the one used from inside the container.
+  local verb offenders=""
+  for verb in list show tail send launch stop check; do
+    grep -qF -- "bash \"\$CS\" ${verb}" "${skill}" \
+      || offenders+="  ${verb}"$'\n'
+    hs_script_has_subcommand "${REPO_ROOT}/scripts/coder-sessions.sh" "${verb}" \
+      || offenders+="  ${verb} is not dispatched"$'\n'
+  done
+  [[ -z ${offenders} ]] \
+    || { printf 'FAIL: coding-agents verbs not both shown and dispatched:\n%s' "${offenders}" >&2; return 1; }
+}

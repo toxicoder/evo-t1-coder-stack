@@ -358,6 +358,8 @@ recreate the container and the env applies.
   Commit it, and the next `up` has it.
 - What ships, and which question each one answers: `evo-stack-ops` (pull, status,
   restart, logs for this stack), `coder-workspace` (workspaces and their GitHub auth),
+  `coding-agents` (what the coding agents in those workspaces are doing right now,
+  and how to answer, start, or stop one — the `//scripts:coder-sessions` verbs),
   `model-routing` (which LiteLLM alias, and how to switch it), `host-linux-ops` (the
   right Linux command, what each flag does, and the blast radius before it runs),
   `host-diagnostics` (read-only triage for a slow, hot, full or failing box),
