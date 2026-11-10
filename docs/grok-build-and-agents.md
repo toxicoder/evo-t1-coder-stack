@@ -1047,3 +1047,60 @@ Coder Agents is control-plane-native. This stack does not wrap Grok Build: the w
 above *teaches* (skill + instructions) and *equips* (the workspace-side CLI with its
 LiteLLM alias) the native Coder agent to drive Grok Build when work is too big to
 hand-drive. Delegation is a taught habit, not the product.
+
+## Watching those sessions from anywhere
+
+The sessions above are tmux panes, which means they outlive the browser tab that
+opened them and are visible to nothing else. `//scripts:coder-sessions` is the door
+for the operator who is not at the desk:
+
+```sh
+bazelisk run //scripts:coder-sessions -- list
+bazelisk run //scripts:coder-sessions -- show myrepo
+bazelisk run //scripts:coder-sessions -- tail myrepo grok-build-myrepo-1a2b3c 40
+bazelisk run //scripts:coder-sessions -- send myrepo grok-build-myrepo-1a2b3c "yes"
+bazelisk run //scripts:coder-sessions -- launch --dir /home/coder/myrepo myrepo
+bazelisk run //scripts:coder-sessions -- stop myrepo grok-build-myrepo-1a2b3c
+bazelisk run //scripts:coder-sessions -- watch myrepo grok-build-myrepo-1a2b3c 1800
+bazelisk run //scripts:coder-sessions -- check
+```
+
+`send`, `launch` and `stop` change things; the rest read. `watch` blocks: it returns
+0 as soon as a session stops working and 4 when its budget runs out with the session
+still `running`, which is what makes "tell me when it's done" a single call an
+assistant can follow with a push. Global options
+(`--json`, `--container`, `--timeout`, `--dry-run`) go before the subcommand, and
+`--json` makes `list`, `show` and `watch` printable by a phone client.
+
+**Why the daemon and not the Coder API.** A workspace that can host a session is a
+*running* one, and a running workspace is a labelled container: both templates stamp
+`coder.workspace_id` and `coder.workspace_name`, the same labels
+`scripts/github-auth.sh` enumerates. Reading the daemon needs no credential, which
+matters because the only Coder token this stack mints is the root-equivalent one
+`scripts/push-template.sh` creates for the length of a push and deletes on the way
+out. A chat turn should not mint one to answer "what is running", so where a verb
+belongs to Coder rather than to the daemon the CLI prints the hand-off command.
+
+**Two details that make the answer correct.** Each workspace creates a
+`coder-<id>-dind-sidecar` carrying the same labels; it runs a Docker daemon and no
+shell, so it is dropped by name. And a tmux server belongs to one uid and listens on
+`/tmp/tmux-<uid>/default`, so the sockets are enumerated per uid - `docker exec`
+lands as the image's user, and asking *that* user for its default server reports
+"no sessions" for an agent the operator can see on screen.
+
+**The state words** come from `state_word` in the script and are what the
+`coding-agents` Hermes skill teaches: `running` (output within 30 s), `quiet` (an
+agent loaded and silent for 30 s - finished, or parked on a question, which is what
+"it's stuck" usually is), `waiting` (a client attached at a plain shell - a person
+is already in that pane), `idle-shell`, `detached-shell`, and `unknown`. A state
+word is a pointer at the pane, never a verdict: `tail` before you say done.
+
+**From the phone.** The same file runs inside the Hermes container, whose image has
+no bazelisk, straight off the identical-path checkout mount:
+
+```sh
+bash "${STACK_HOST_PATH:-/opt/stack}/scripts/coder-sessions.sh" list
+```
+
+That is the whole integration - see [hermes.md](hermes.md) for the doors Hermes
+opens, and the `coding-agents` skill for the order the assistant works them in.

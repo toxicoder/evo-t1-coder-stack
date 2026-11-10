@@ -79,6 +79,11 @@ setup() {
   # stack ships, because check_image_pin compares a live container against it.
   printf 'services:\n  hermes:\n    image: nousresearch/hermes-agent:v0.22.5\n' >"${CHECKOUT}/docker-compose.yml"
   printf 'You are the host assistant.\n' >"${CHECKOUT}/hermes/SOUL.md"
+  # The coding-agent control plane the assistant is meant to be able to reach. The
+  # default world is a healthy one, so a clean bill stays clean; the test that wants
+  # the audit to notice removes this file.
+  mkdir -p "${CHECKOUT}/scripts"
+  printf '#!/usr/bin/env bash\n' >"${CHECKOUT}/scripts/coder-sessions.sh"
   write_default_seed
   write_env "LITELLM_MASTER_KEY=real-model-key-value" \
     "HERMES_DASHBOARD_USER=operator" \
@@ -98,7 +103,7 @@ setup() {
   # from the developer's shell would make a fixture mean something different on
   # every machine.
   unset STACK_HOST_PATH STUB_PS_OUT STUB_PS_NAMES STUB_ENV_FILE STUB_IMAGE \
-    STUB_VOLUME_NAME STUB_VOLUME_MOUNT
+    STUB_VOLUME_NAME STUB_VOLUME_MOUNT STUB_MOUNTS
 }
 
 # write_default_seed - the config this audit exists to bless: approvals gated
@@ -241,6 +246,11 @@ case "$*" in
     case "$*" in
       *".Config.Env"*)
         if [ -n "${STUB_ENV_FILE:-}" ] && [ -f "${STUB_ENV_FILE}" ]; then cat "${STUB_ENV_FILE}"; fi
+        exit 0
+        ;;
+      *".Mounts"*)
+        # One source path per line, the way the range over .Mounts prints them.
+        if [ -n "${STUB_MOUNTS:-}" ]; then printf '%s\n' "${STUB_MOUNTS}"; fi
         exit 0
         ;;
       *".Config.Image"*)
@@ -413,8 +423,14 @@ assert_report_lacks() {
   assert_status 0 "the full report"
   assert_report_has "opens with the project" '^== Hermes doctor \(report\) on evo-t1-prod ==$'
   assert_report_has "closes with the tally" '^summary: [0-9]+ ok, [0-9]+ warnings, [0-9]+ failed$'
-  [ "$(printf '%s\n' "${output}" | grep -c '^== ')" -eq 13 ] || \
-    fail "expected 12 check sections plus the header, got $(printf '%s\n' "${output}" | grep -c '^== ')"
+  local sections want
+  sections="$(printf '%s\n' "${output}" | grep -c '^== ')"
+  # Derived from the roster rather than counted by hand: the day a check is added is
+  # not the day this assertion should start lying.
+  load_shell_function "${SCRIPT}" checks_for || fail "could not load checks_for from the CLI"
+  want="$(( $(checks_for report | wc -l) + 1 ))"
+  [ "${sections}" -eq "${want}" ] || \
+    fail "expected $(($(checks_for report | wc -l))) check sections plus the header, got ${sections}"
 }
 
 # ── the shipped seed is the good case ────────────────────────────────────────
@@ -655,6 +671,16 @@ assert_report_lacks() {
   assert_report_lacks "never prints the credential" 'operator'
 }
 
+@test "doctor: a healthy dashboard is one ok line, not two" {
+  # The audit's value is that one line means one fact. The duplicate also made the
+  # function's status depend on whether anything had failed, which is the contract
+  # every check here breaks by returning 0 always.
+  run_doctor --check dashboard
+  assert_status 0 "a healthy dashboard"
+  [ "$(printf '%s\n' "${output}" | grep -c 'basic auth is set on all three keys')" -eq 1 ] || \
+    fail "the dashboard verdict printed more than once"
+}
+
 @test "doctor: a dashboard on plain http is a warning" {
   container_env "HERMES_DASHBOARD_USER=operator" "HERMES_DASHBOARD_PASSWORD=a-long-passphrase" \
     "HERMES_DASHBOARD_SECRET=a-long-secret" "HERMES_DASHBOARD_PUBLIC_URL=http://hermes.example.test"
@@ -756,6 +782,106 @@ assert_report_lacks() {
   run_doctor --check memories
   assert_status 0 "a store present"
   assert_report_has "says a store is present" 'a store is present in the volume'
+}
+
+# ── the anywhere door: the API server and the push channel ──────────────────
+
+@test "doctor: the shipped anywhere-door state is a clean bill, not a finding" {
+  # An operator who never opened either door has to read healthy. A report that
+  # warns about the shipped defaults is how a real finding gets skimmed past.
+  run_doctor --check anywhere-door
+  assert_status 0 "an API server that was never enabled is healthy"
+  assert_report_has "says it is closed" 'api server: closed'
+  assert_report_has "names the absent push channel as a note" 'no ntfy channel configured'
+}
+
+@test "doctor: an enabled API server on the placeholder key is a failure" {
+  container_env API_SERVER_ENABLED=true API_SERVER_KEY=change-me-hermes-api
+  run_doctor --check anywhere-door
+  assert_status 1 "a door opened on a well-known key"
+  assert_report_has "names the placeholder and the fix" 'shipped placeholder key'
+}
+
+@test "doctor: an enabled API server with no key is a failure, not a silent door" {
+  container_env API_SERVER_ENABLED=true
+  run_doctor --check anywhere-door
+  assert_status 1 "no key at all"
+  assert_report_has "says what the operator will experience" 'reads as a dead assistant'
+}
+
+@test "doctor: a keyed API server on a wide bind warns and never prints the token" {
+  container_env API_SERVER_ENABLED=true API_SERVER_KEY=a-real-bearer-token
+  write_env "HERMES_API_BIND=0.0.0.0"
+  run_doctor --check anywhere-door
+  assert_status 0 "keyed and reachable is a warning, not a failure"
+  assert_report_has "names the interface it published on" 'HERMES_API_BIND=0[.]0[.]0[.]0'
+  assert_report_lacks "never prints the bearer token" 'a-real-bearer-token'
+}
+
+@test "doctor: a loopback bind is the ok half of the same check" {
+  container_env API_SERVER_ENABLED=true API_SERVER_KEY=a-real-bearer-token
+  write_env "HERMES_API_BIND=127.0.0.1"
+  run_doctor --check anywhere-door
+  assert_report_has "says nothing off-host can dial it" 'published on loopback only'
+}
+
+@test "doctor: a wildcard CORS allowlist is called out" {
+  container_env API_SERVER_ENABLED=true API_SERVER_KEY=a-key API_SERVER_CORS_ORIGINS='*'
+  run_doctor --check anywhere-door
+  assert_report_has "names the wildcard and what to do instead" 'never a wildcard'
+}
+
+@test "doctor: a push topic anyone can publish to is a warning" {
+  # No allowlist is the recommended shape. With one, the topic is a two-way door
+  # whose only credential is its name, so the audit has to say that out loud.
+  seed_volume
+  printf '%s\n' 'NTFY_TOPIC=s3cret-topic-name' 'NTFY_ALLOWED_USERS=s3cret-topic-name' \
+    'NTFY_SERVER_URL=https://ntfy.example' >"${VOL}/.env"
+  run_doctor --check anywhere-door
+  assert_report_has "calls the channel open" 'inbound is open on this topic'
+  assert_report_has "explains the identity model" 'every publisher to it is one identity'
+  assert_report_lacks "never prints the topic" 's3cret-topic-name'
+}
+
+@test "doctor: the push-only shape is an ok, and the public server is a warning" {
+  seed_volume
+  printf '%s\n' 'NTFY_TOPIC=s3cret-topic-name' >"${VOL}/.env"
+  run_doctor --check anywhere-door
+  assert_report_has "confirms nobody can answer through it" 'push-only'
+  assert_report_has "names the public server the notices will reach" 'public ntfy[.]sh'
+  assert_report_lacks "never prints the topic" 's3cret-topic-name'
+}
+
+# ── the coding-agent control plane ──────────────────────────────────────────
+
+@test "doctor: a checkout without the sessions CLI is a failure the skill would hit" {
+  rm -f "${CHECKOUT}/scripts/coder-sessions.sh"
+  run_doctor --check agent-verbs
+  assert_status 1 "the missing CLI"
+  assert_report_has "names the file and where it is missing from" 'coder-sessions[.]sh is missing'
+  assert_report_has "points at the skill that dials it" 'coding-agents skill'
+}
+
+@test "doctor: the verbs need the docker socket, and say so when it is gone" {
+  container_env
+  STUB_MOUNTS="/opt/stack
+/var/lib/docker/volumes/hermes-data/_data"
+  export STUB_MOUNTS
+  run_doctor --check agent-verbs
+  assert_report_has "reports the missing socket as the consequence" 'no docker socket in the container'
+
+  STUB_MOUNTS="/var/run/docker.sock
+/opt/stack"
+  export STUB_MOUNTS
+  run_doctor --check agent-verbs
+  assert_report_has "and credits the socket when it is mounted" 'the docker socket is mounted'
+}
+
+@test "doctor: no running container is a note about the socket, never a guess" {
+  # An empty container argument would have the daemon answer about something else
+  # entirely, and the report would present that as the assistant's mounts.
+  run_doctor --check agent-verbs
+  assert_report_has "says it did not look" 'the assistant'"'"'s container is not running'
 }
 
 # ── the read-only promise ────────────────────────────────────────────────────
@@ -989,6 +1115,7 @@ load_cli_fn() {
   load_cli_fn check_approvals check_terminal_cwd check_write_root check_web_lane \
     check_keyless_egress check_mcp_servers check_seed_drift check_mount_identity \
     check_image_pin check_model_key check_dashboard check_memories \
+    check_anywhere_door check_agent_verbs \
     doctor_compose doctor_container doctor_container_running doctor_env_of \
     doctor_volume_dir doctor_pinned_image doctor_same_file || \
     fail "could not load the check functions"
@@ -1005,6 +1132,8 @@ load_cli_fn() {
     'check_image_pin|^ok: image: nousresearch/hermes-agent:v0.22.5' \
     'check_model_key|^ok: model key: LITELLM_MASTER_KEY is set' \
     'check_dashboard|^ok: dashboard: basic auth is set' \
+    'check_anywhere_door|^ok: api server: closed' \
+    'check_agent_verbs|^ok: agent verbs: scripts/coder-sessions[.]sh is on the checkout' \
     'check_memories|^note: memories: no SQLite store yet'; do
     fn="${pair%%|*}"
     want="${pair#*|}"

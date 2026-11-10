@@ -130,7 +130,7 @@ if [ "${check_only}" = "1" ]; then
     log ".env: missing — a full run would create it from .env.sample"
   else
     log "secrets (key names only, never values):"
-    for probe_key in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET; do
+    for probe_key in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET HERMES_API_SERVER_KEY; do
       if grep -q "^${probe_key}=change-me" .env; then
         log "  ${probe_key}: still a change-me placeholder — a full run would replace it"
       fi
@@ -212,7 +212,7 @@ if [ -f .env.sample ]; then
 fi
 
 # Only replace values still carrying the sample placeholder.
-for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET; do
+for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET HERMES_API_SERVER_KEY; do
   if grep -q "^${var}=change-me" .env; then
     set_secret "$var"
   fi

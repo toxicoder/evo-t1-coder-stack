@@ -915,10 +915,13 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
 - **Audit:** `bazelisk run //scripts:hermes-doctor` reads what readiness does not - the
   config the container actually loads, the environment it was created with, its mounts,
   and the seed beside the checkout - and reports whether approvals, the working
-  directory, the web lane, the write fence, the image pin and the dashboard door are
-  still what this repo ships. Read-only, and it prints key names with no value.
-- **Skills:** seven tracked under `hermes/skills/` - stack ops, Coder workspaces, model
-  routing, the web lane (`web-research`: what to look up and what the lane refuses),
+  directory, the web lane, the write fence, the image pin, the dashboard door, the
+  anywhere door (the gateway API server and the push channel) and the coding-agent
+  verbs are still what this repo ships. Read-only, and it prints key names with no value.
+- **Skills:** eight tracked under `hermes/skills/` - stack ops, Coder workspaces,
+  the coding-agent door (`coding-agents`: watch, answer, launch, and stop the Grok
+  Build sessions inside a running workspace, over `//scripts:coder-sessions`),
+  model routing, the web lane (`web-research`: what to look up and what the lane refuses),
   plus the host-ops trio: `host-linux-ops` (the right command, and what each
   flag does), `host-diagnostics` (read-only triage playbooks) and
   `deploy-from-github` (a repository to running, in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`).
@@ -1014,6 +1017,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── bootstrap.sh          # .env + secrets + access URL + certs + router conf + checks
 │   ├── build-dev-image.sh   # builds images/dev -> evo-t1-dev:latest
 │   ├── coder-agents.sh      # wires the control-plane chat agent (LiteLLM + thinking models)
+│   ├── coder-sessions.sh    # list, tail, answer, launch, stop, and watch the Grok Build
+│   │                        #   agent sessions inside running Coder workspaces (docker + tmux)
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
 │   ├── github-auth.sh       # GitHub credential doctor and one-command fix

@@ -12,11 +12,17 @@
 # HERMES_DASHBOARD_PUBLIC_URL comes from STACK_HERMES_URL, the seed trusts
 # the router subnet, the web lane stays on the stack's own SearXNG with both
 # keyless switches off, and proxy/router.conf vhosts the public hermes name.
+# The anywhere door is pinned too: the gateway's API server ships disabled, keyed
+# from a bootstrap-generated secret and published on loopback, no half-configured
+# messaging platform rides compose env, and the phone doors are written down in
+# docs/hermes.md.
 # The live volume copy is out of scope; this suite reads the checkout
-# payload, docker-compose.yml, and proxy/router.conf only.
+# payload, docker-compose.yml, .env.sample, docs/hermes.md and proxy/router.conf
+# only.
 #
 # Usage: bazelisk test //tests:bats_hermes_config_test   (from any cwd)
-# Safety: reads hermes/, docker-compose.yml, .env.sample, proxy/router.conf; writes nothing.
+# Safety: reads hermes/, docker-compose.yml, .env.sample, docs/hermes.md,
+# scripts/bootstrap.sh and proxy/router.conf; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -67,14 +73,16 @@ setup() {
 }
 
 @test "hermes skills: every tracked skill exists with matching frontmatter" {
-  # The three stack skills, the three host-operations skills that make the
-  # assistant useful from a terminal (the mentor voice, the triage playbooks,
-  # and the GitHub-to-running path), and the web lane. `description` is pinned
+  # The four stack skills (the fourth being the coding-agent door, which is what
+  # makes the assistant worth opening from a phone), the three host-operations
+  # skills that make the assistant useful from a terminal (the mentor voice, the
+  # triage playbooks, and the GitHub-to-running path), and the web lane.
+  # `description` is pinned
   # beside `name` because it is the line the loader shows an agent when it
   # decides whether to open the skill at all - a skill with no description is
   # invisible in exactly the moment it would have been used.
   local skill path
-  for skill in evo-stack-ops coder-workspace model-routing \
+  for skill in evo-stack-ops coder-workspace coding-agents model-routing \
     host-linux-ops host-diagnostics deploy-from-github web-research; do
     path="${REPO_ROOT}/hermes/skills/${skill}/SKILL.md"
     assert_file_exists "${skill}" "${path}"
@@ -193,4 +201,63 @@ setup() {
     'http://hermes:9119'
   assert_contains_file "forwarded host" "${router}" \
     'proxy_set_header X-Forwarded-Host'
+}
+
+# --- the anywhere door ------------------------------------------------------
+
+@test "hermes compose: the API server ships off, keyed, and bound to loopback" {
+  # This server adds /v1/chat/completions and /v1/runs onto a container that
+  # mounts the docker socket, with a bearer key as its only gate. Every default
+  # below has to be the closed one, and closed has to be spelled out: upstream
+  # documents API_SERVER_ENABLED as true/false, so an unset value is an operator
+  # guessing at the default instead of reading it.
+  local compose="${REPO_ROOT}/docker-compose.yml"
+  local sample="${REPO_ROOT}/.env.sample"
+  assert_contains_file "server off by default" "${compose}" \
+    'API_SERVER_ENABLED: \$\{HERMES_API_SERVER_ENABLED:-false\}'
+  assert_contains_file "key comes from the sample key" "${compose}" \
+    'API_SERVER_KEY: \$\{HERMES_API_SERVER_KEY:-\}'
+  assert_contains_file "container port is the documented one" "${compose}" \
+    'API_SERVER_PORT: "8642"'
+  assert_contains_file "the published mapping defaults to loopback" "${compose}" \
+    '"\$\{HERMES_API_BIND:-127\.0\.0\.1\}:\$\{HERMES_API_PORT:-8642\}:8642"'
+  assert_contains_file "sample ships the flag off" "${sample}" \
+    '^HERMES_API_SERVER_ENABLED=false$'
+  assert_contains_file "sample ships a placeholder key" "${sample}" \
+    '^HERMES_API_SERVER_KEY=change-me-hermes-api$'
+  assert_contains_file "sample binds loopback" "${sample}" \
+    '^HERMES_API_BIND=127\.0\.0\.1$'
+  # bootstrap only replaces change-me-* for the keys on its two lists. A key left
+  # off them ships a well-known secret, and an enabled server then authenticates
+  # to nothing. Both lists (the --check probe and the generator) have to carry it.
+  local listed
+  listed="$(grep -c 'HERMES_DASHBOARD_SECRET HERMES_API_SERVER_KEY' \
+    "${REPO_ROOT}/scripts/bootstrap.sh")"
+  [ "${listed}" -eq 2 ] \
+    || { printf 'FAIL: bootstrap generates the api key on %s of its 2 secret lists\n' "${listed}" >&2; return 1; }
+}
+
+@test "hermes compose: no half-configured messaging platform rides compose env" {
+  # The gateway registers the ntfy adapter from the presence of NTFY_TOPIC in its
+  # environment, so an empty NTFY_TOPIC= line handed it a platform with no topic -
+  # and a token in a container env is readable through `docker inspect`. Both
+  # belong in the assistant's own /opt/data/.env on the data volume.
+  local sample="${REPO_ROOT}/.env.sample"
+  local compose="${REPO_ROOT}/docker-compose.yml"
+  run grep -E '^[[:space:]]*#?[[:space:]]*NTFY_[A-Z_]+=' "${sample}"
+  [ "${status}" -ne 0 ]
+  run grep -E '^[[:space:]]*(NTFY|TELEGRAM)_[A-Z_]+:' "${compose}"
+  [ "${status}" -ne 0 ]
+}
+
+@test "hermes docs: the phone doors and their opt-ins are written down" {
+  # An operator on a phone reads this file, not the compose comments. A door that
+  # exists in compose but not here is a door nobody finds, and a door documented
+  # without its off-switch is how the API server gets enabled by accident.
+  local doc="${REPO_ROOT}/docs/hermes.md"
+  assert_file_exists "hermes doc" "${doc}"
+  assert_contains_file "the API server door" "${doc}" 'HERMES_API_SERVER_ENABLED=true'
+  assert_contains_file "the push door" "${doc}" 'NTFY_PUBLISH_TOPIC'
+  assert_contains_file "the push-only posture" "${doc}" 'NTFY_ALLOWED_USERS. unset and the channel'
+  assert_contains_file "the agent verbs from a phone" "${doc}" 'coder-sessions -- list'
 }
