@@ -700,8 +700,11 @@ clone is never asked to delete somebody else's committed file.
     Auth (the **GitHub reauth** app) and start a new session. An empty
     `CONTEXT7_API_KEY` is not a gap - see the key's paragraph above, the lane answers
     keyless at the public rate limit.
-- What the agent is told about all this lives in `~/.grok/AGENTS.md`, inlined from
-  `templates/common/GROK_BUILD_AGENTS.md`. Two sections cover the lanes. **Research
+- What the agent is told about all this lives in `~/.grok/AGENTS.md`, which
+  `coder_script.agents_seed` renders from `templates/common/GROK_BUILD_AGENTS.md` into a
+  body of its own (see "The one-argument ceiling" in
+  [coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Two sections cover
+  the lanes. **Research
   lanes** makes a lookup part of the normal loop rather than a last resort, with the
   routing fixed by question type: a library, framework, CLI or setup question goes to
   `context7` (resolve the library id first, then query docs on that id); anything else

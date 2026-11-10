@@ -49,8 +49,10 @@ Two templates live under `templates/`, and a push covers both.
 `template_push_one` stages every file in this list beside the staged `main.tf`; a
 missing one fails the push before the CLI runs.
 
-- `GROK_BUILD_AGENTS.md` is the orchestration-protocol seed text the startup scripts
-  inline into every workspace's `~/.grok/AGENTS.md` (read with `file()`, chomped).
+- `GROK_BUILD_AGENTS.md` is the orchestration-protocol seed text that becomes every
+  workspace's `~/.grok/AGENTS.md` (read with `file()`, chomped). It rides
+  `coder_script.agents_seed` rather than the startup script, for the reason that section
+  gives: it is the largest payload the twins inline.
 - `vscode-alt.svg` is the editor icon (read with `filebase64()`). It stays small
   enough that the resulting `data:image/svg+xml;base64,...` URL fits Coder
   v2.36's `workspace_apps.icon` column (`varchar(256)`).
@@ -91,6 +93,11 @@ missing one fails the push before the CLI runs.
   rendered with `templatefile()` from the three `chomp(file())` entries `main.tf` passes it.
   It is absent-only and silent on a healthy workspace, because its log is what an operator
   reads when a skill is missing.
+- `agents-seed.sh.tftpl` is the `coder_script "agents_seed"` body that writes
+  `~/.grok/AGENTS.md` from `GROK_BUILD_AGENTS.md`. Marker-aware rather than absent-only: a
+  copy still carrying the stack marker is rewritten on every start, and one whose marker
+  lines a person deleted stays theirs. `scripts/lib/config_seed.sh` names the same file and
+  target for the host-side reseed.
 - `ez-bazel-first.SKILL.md`, `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`
   are the stack's three repository-conversion commands, and they stand in for nothing
   upstream: `/ez-bazel-first` puts every tracked file behind a target and budgets the
@@ -201,7 +208,11 @@ Two things follow from the mechanism:
   `coder_script_order` needs Coder `>= v2.39`. This is the escape the stack now uses: the
   three skill payloads ride `coder_script.stack_skills` rather than the startup argument,
   because the devcontainer twin had 491 bytes of headroom left and three more inlined
-  payloads could not fit there. `grok-build-delegation.SKILL.md` still rides the startup
+  payloads could not fit there. The same move later made room for the rulebook:
+  `GROK_BUILD_AGENTS.md` is the largest payload the twins inline, and it left the startup
+  argument for `coder_script.agents_seed` when that twin stood 196 bytes from the budget
+  and one more instruction section could not land. `grok-build-delegation.SKILL.md` still
+  rides the startup
   argument - it predates the split, it fits, and its own tests pin it there.
 - **A `#!` line does not help.** The body still becomes
   `execve(env, [env, bash, -c, body])`; the interpreter line is content inside the

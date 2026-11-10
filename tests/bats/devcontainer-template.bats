@@ -214,15 +214,33 @@ setup() {
   [ "${status}" -eq 0 ]
   run grep -F 'names that branch as its base' "${common_md}"
   [ "${status}" -eq 0 ]
+  # The rulebook no longer rides the startup argument: it is the largest payload the
+  # template inlines, and the devcontainer twin was 196 bytes from the single-argument
+  # budget. It travels in coder_script.agents_seed's own body instead, where it has its
+  # own ceiling. docs/coder-templates.md#the-one-argument-ceiling.
+  local seed_body="${REPO_ROOT}/templates/common/agents-seed.sh.tftpl"
+  [ -f "${seed_body}" ] ||
+    skip "no agents-seed.sh.tftpl payload under ${REPO_ROOT}/templates/common"
+  run grep -F '${grok_build_agents}' "${seed_body}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'if [ ! -f "$HOME/.grok/AGENTS.md" ]' "${seed_body}"
+  [ "${status}" -eq 0 ]
+  run grep -F '"$HOME/.grok/AGENTS.md"; then' "${seed_body}"
+  [ "${status}" -eq 0 ]
   for tpl_dir in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
-    run grep -F '${grok_build_agents}' "${tpl_dir}/startup.sh.tftpl"
-    [ "${status}" -eq 0 ]
-    run grep -F 'if [ ! -f "$HOME/.grok/AGENTS.md" ]' "${tpl_dir}/startup.sh.tftpl"
-    [ "${status}" -eq 0 ]
-    run grep -F '"$HOME/.grok/AGENTS.md"; then' "${tpl_dir}/startup.sh.tftpl"
+    run grep -F 'resource "coder_script" "agents_seed"' "${tpl_dir}/main.tf"
     [ "${status}" -eq 0 ]
     run grep -F 'grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))' "${tpl_dir}/main.tf"
     [ "${status}" -eq 0 ]
+    run grep -F 'templatefile("${path.module}/agents-seed.sh.tftpl"' "${tpl_dir}/main.tf"
+    [ "${status}" -eq 0 ]
+    # And the startup argument has to be free of it: a payload that travels in both
+    # bodies is billed to both, which is the wall this move exists to get off.
+    run grep -F 'grok_build_agents' "${tpl_dir}/startup.sh.tftpl"
+    [ "${status}" -ne 0 ] || {
+      echo "${tpl_dir}/startup.sh.tftpl still renders the rulebook body" >&2
+      return 1
+    }
     # Same single-copy rule for the per-repo notes library: a twin that lost
     # this feed fails the push outright, because templatefile() rejects the
     # now-undefined ${notes_setup} interpolation while rendering the script.

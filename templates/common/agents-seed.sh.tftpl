@@ -1,0 +1,21 @@
+#!/bin/sh
+# tftpl: coder_script body; the orchestration-protocol payload is interpolated from the
+# map main.tf passes, into a quoted here-doc so no shell text inside it is expanded.
+# Why this seed rides a body of its own rather than startup.sh.tftpl: the agent execs
+# every body as ONE argument to execve(2), Linux caps one argument at 131072 bytes, and
+# this payload is the largest the template inlines. docs/coder-templates.md#the-one-argument-ceiling.
+set -u
+
+# Marker-aware, not absent-only: a copy carrying the stack marker
+# (managed-by: evo-t1-coder-stack) is stack-owned and gets the current text on every
+# start, while a copy whose marker lines a person deleted is theirs and is left alone.
+# The same marker refresh-configs checks before it rewrites the file from the seed in
+# this repo. Silent on a healthy workspace, because this body's log is what an operator
+# reads when the rulebook is missing.
+if [ ! -f "$HOME/.grok/AGENTS.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/AGENTS.md"; then
+  mkdir -p "$HOME/.grok" 2>/dev/null
+  cat >"$HOME/.grok/AGENTS.md" <<'GROK_AGENTS_EOF'
+${grok_build_agents}
+GROK_AGENTS_EOF
+fi
