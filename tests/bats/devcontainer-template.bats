@@ -939,3 +939,91 @@ permission_section() {
   assert_contains_file "the doc names a cleanup the deny leaves alone" \
     "${doc}" 'find <dir> -type f -delete'
 }
+
+@test "permission: the self-teardown family is denied in both twins" {
+  # The Bash tool runs inside the workspace's own tmux session, so a command that
+  # closes "stray" sessions or kills "stray" processes ends the agent's own run along
+  # with them: the tab dies reporting exit code 1, the tool call never returns, and no
+  # agent is left to finish the task. That is a failure an operator hit in a workspace,
+  # so the verbs are denied rather than only discouraged. Each entry earns its place:
+  # tmux's own session verbs, the process killers aimed at what the agent runs on, and
+  # the shell forms that signal a whole process group. Pinned entry by entry because
+  # the glob spelling is the guard: a rewrite to a blanket form would clear a test
+  # that only counted entries, and would take the second list below with it.
+  local -a teardown=(
+    '"Bash(*kill-server*)"'
+    '"Bash(*kill-session*)"'
+    '"Bash(*kill-window*)"'
+    '"Bash(*kill-pane*)"'
+    '"Bash(*restart-server*)"'
+    '"Bash(*pkill*tmux*)"'
+    '"Bash(*killall*tmux*)"'
+    '"Bash(*pkill*code-server*)"'
+    '"Bash(*killall*code-server*)"'
+    '"Bash(*pkill*node*)"'
+    '"Bash(*killall*node*)"'
+    '"Bash(*pkill*grok*)"'
+    '"Bash(*killall*grok*)"'
+    '"Bash(*pkill*bash*)"'
+    '"Bash(*killall*bash*)"'
+    '"Bash(*pkill -u *)"'
+    '"Bash(*pkill -U *)"'
+    '"Bash(*pkill -P *)"'
+    '"Bash(*kill 0*)"'
+    '"Bash(*kill -- -*)"'
+    '"Bash(*kill -1 -1*)"'
+    '"Bash(*kill -9 -1*)"'
+  )
+  # The blanket forms would take the agent's own process hygiene with them. A bracketed
+  # sweep is a pattern the seed text teaches, and `kill -0 <pid>` is how a script asks
+  # whether a pid is alive. Both stay reachable, so the deny stays a fence around the
+  # session rather than around process work in general.
+  local -a stays_open=(
+    '"Bash(*pkill*)"'
+    '"Bash(*kill*)"'
+    '"Bash(*killall*)"'
+    '"Bash(*kill -0 *)"'
+  )
+  local tpl item deny_block
+  for tpl in "${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl" \
+    "${REPO_ROOT}/templates/devcontainer/grok-config.toml.tftpl"; do
+    [[ -f "${tpl}" ]] || skip "config template not reachable from ${REPO_ROOT}"
+    deny_block="$(awk '/^deny = \[$/{f=1} f{print; if ($0 == "]") exit}' "${tpl}")"
+    [[ -n "${deny_block}" ]] || {
+      echo "${tpl}: no deny table" >&2
+      return 1
+    }
+    for item in "${teardown[@]}"; do
+      [[ "${deny_block}" == *"${item}"* ]] || {
+        echo "${tpl} does not deny ${item}" >&2
+        return 1
+      }
+    done
+    for item in "${stays_open[@]}"; do
+      if [[ "${deny_block}" == *"${item}"* ]]; then
+        echo "${tpl} denies ${item}: the agent loses its own process hygiene" >&2
+        return 1
+      fi
+    done
+  done
+}
+
+@test "permission: the docs name what an agent uses instead of a sweep" {
+  # The same pairing the rm guard is pinned on: an agent that meets the deny mid-task
+  # has to be handed the alternative in the same breath, or it reads a refusal as a
+  # missing grant and goes hunting for a workaround. The troubleshooting page carries
+  # the editor's own wording because that string is what gets pasted into a search.
+  local doc="${REPO_ROOT}/docs/grok-build-and-agents.md"
+  local ts="${REPO_ROOT}/docs/troubleshooting.md"
+  [[ -f "${doc}" ]] || skip "the CLI doc is not reachable from ${REPO_ROOT}"
+  [[ -f "${ts}" ]] || skip "the troubleshooting page is not reachable from ${REPO_ROOT}"
+
+  assert_contains_file "the doc names the tool that stops one process it started" \
+    "${doc}" 'kill_command_or_subagent'
+  assert_contains_file "the doc still names the denied family it is answering for" \
+    "${doc}" 'tmux kill-server'
+  assert_contains_file "the troubleshooting page carries the editor symptom verbatim" \
+    "${ts}" 'terminated with exit code: 1'
+  assert_contains_file "the troubleshooting page names the profile that skips tmux" \
+    "${ts}" 'bash.*profile'
+}
