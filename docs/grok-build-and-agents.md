@@ -1061,12 +1061,16 @@ bazelisk run //scripts:coder-sessions -- tail myrepo grok-build-myrepo-1a2b3c 40
 bazelisk run //scripts:coder-sessions -- send myrepo grok-build-myrepo-1a2b3c "yes"
 bazelisk run //scripts:coder-sessions -- launch --dir /home/coder/myrepo myrepo
 bazelisk run //scripts:coder-sessions -- stop myrepo grok-build-myrepo-1a2b3c
+bazelisk run //scripts:coder-sessions -- watch myrepo grok-build-myrepo-1a2b3c 1800
 bazelisk run //scripts:coder-sessions -- check
 ```
 
-`send`, `launch` and `stop` change things; the rest read. Global options
+`send`, `launch` and `stop` change things; the rest read. `watch` blocks: it returns
+0 as soon as a session stops working and 4 when its budget runs out with the session
+still `running`, which is what makes "tell me when it's done" a single call an
+assistant can follow with a push. Global options
 (`--json`, `--container`, `--timeout`, `--dry-run`) go before the subcommand, and
-`--json` makes `list` and `show` printable by a phone client.
+`--json` makes `list`, `show` and `watch` printable by a phone client.
 
 **Why the daemon and not the Coder API.** A workspace that can host a session is a
 *running* one, and a running workspace is a labelled container: both templates stamp

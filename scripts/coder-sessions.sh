@@ -112,6 +112,9 @@ JSON_MODE_WANTED=0
 CONTAINER_OVERRIDE=""
 TIMEOUT_SECS="${PROBE_TIMEOUT:-30}"
 MUTATE_TIMEOUT_SECS=120
+# How often watch asks tmux again. Small enough that a phone gets its answer soon,
+# large enough that a watched hour is 720 docker execs rather than 3600.
+WATCH_INTERVAL_SECS="${CODER_SESSIONS_WATCH_INTERVAL:-5}"
 DRY_RUN=0
 VERB=""
 ARGS=()
@@ -148,16 +151,18 @@ Subcommands:
                               start a detached session; default CMD is
                               `grok --cwd DIR`, the shipped terminal profile
   stop WORKSPACE SESSION      kill one session
+  watch WORKSPACE SESSION [S] block until it stops working (default 600s budget)
   check                       why a verb returned nothing (daemon, labels, tmux)
 
-Mutating verbs: send, launch, stop. Everything else reads.
+Mutating verbs: send, launch, stop. Everything else reads. watch reads, and waits.
 
-Options: --json (list and show), --container NAME, --timeout SECS, --dry-run,
--h/--help. Inside the Hermes container, whose image has no bazelisk:
+Options: --json (list, show and watch), --container NAME, --timeout SECS,
+--dry-run, -h/--help. Inside the Hermes container, whose image has no bazelisk:
   bash "$STACK_HOST_PATH/scripts/coder-sessions.sh" list
 
 Exit codes: 0 = verb ran or dry run; 1 = unknown workspace/container/session or a
-failed docker call; 2 = bad subcommand or missing argument; 5 = no Docker daemon.
+failed docker call; 2 = bad subcommand or missing argument; 4 = a watch budget ran
+out with the session still working; 5 = no Docker daemon.
 USAGE
 }
 
@@ -759,6 +764,116 @@ verb_stop() {
   summary
 }
 
+# @function watch_state
+# One word for what one session is doing right now: its state_word, or "gone" when
+# no such session is on the daemon any more. Split out of verb_watch so the polling
+# loop can be read, and tested, without a clock inside it.
+# Globals:
+#   None
+# Arguments:
+#   $1 - container name; $2 - session name
+# Outputs:
+#   The state word on stdout
+# Returns:
+#   0
+watch_state() {
+  local container="${1:-}" sess="${2:-}" rows="" name="" state=""
+  rows="$(session_rows_for "${container}")"
+  while IFS=$'\t' read -r name state _idle _command _path; do
+    [ -n "${name}" ] || continue
+    if [ "${name}" = "${sess}" ]; then
+      printf '%s\n' "${state}"
+      return 0
+    fi
+  done <<<"${rows}"
+  printf 'gone\n'
+}
+
+# @function verb_watch
+# Block until one session stops working, then say what it settled on. This is the
+# primitive behind "tell me when it is done" from a phone: the operator's side is one
+# blocking call, and the assistant's side is this verb followed by `hermes send` to
+# the push channel, which keeps the push path in the gateway that owns it rather than
+# duplicating it here.
+#
+# Everything that is not working counts as settled - quiet (the agent has gone silent,
+# which is what "stuck" looks like), idle-shell, detached-shell and waiting (the agent
+# process is gone and a shell is in the foreground), and gone (the session ended).
+# `unknown` keeps polling rather than settling: it means the pane's activity could not
+# be read, and calling that "finished" would wake the operator for nothing. A session
+# that never existed is an error rather than a settle, so a typo cannot read as done.
+# Globals:
+#   CONTAINER_OVERRIDE, DRY_RUN, WATCH_INTERVAL_SECS, JSON_MODE, SECONDS
+# Arguments:
+#   $1 - workspace name (optional when --container names one)
+#   $2 - session name
+#   $3 - budget in seconds (default 600)
+# Outputs:
+#   The verdict on stdout, or one JSON object under --json
+# Returns:
+#   0 when it settled; 1 when the workspace or session is unknown; 2 on a bad budget;
+#   4 when the budget ran out with the session still working
+verb_watch() {
+  local want="${1:-}" sess="${2:-}" budget="${3:-600}"
+  local container="" state="" start=""
+  if [ -z "${sess}" ]; then
+    err "watch needs a workspace and a session: watch <workspace> <session> [seconds]"
+    return 2
+  fi
+  [[ ${budget} =~ ^[0-9]+$ ]] || {
+    err "the watch budget must be a whole number of seconds, got '${budget}'"
+    return 2
+  }
+  container="$(resolve_container "${want}")" || {
+    err "no running workspace named '${want}'"
+    return 1
+  }
+  if [ "${DRY_RUN}" = 1 ]; then
+    printf 'dry run: poll the tmux state of %s in %s every %ss for %ss, and settle on anything but running\n' \
+      "${sess}" "${container}" "${WATCH_INTERVAL_SECS}" "${budget}"
+    ok "dry run: nothing waited on"
+    summary
+    return 0
+  fi
+  section "watch ${sess} (${container})"
+  state="$(watch_state "${container}" "${sess}")"
+  if [ "${state}" = "gone" ]; then
+    err "no session named '${sess}' in ${want:-${container}}: nothing to watch"
+    note "run 'show ${want:-${container}}' for what is there"
+    return 1
+  fi
+  start="${SECONDS}"
+  while :; do
+    case "${state}" in
+      running | unknown) ;;
+      *)
+        if [ "${JSON_MODE:-}" = "1" ]; then
+          printf '{"workspace":%s,"session":%s,"state":%s,"waited":%s}\n' \
+            "$(json_field "${want:-${container}}")" "$(json_field "${sess}")" \
+            "$(json_field "${state}")" "$((SECONDS - start))"
+        else
+          ok "settled:${state} after $((SECONDS - start))s"
+          summary
+        fi
+        return 0
+        ;;
+    esac
+    if [ "$((SECONDS - start))" -ge "${budget}" ]; then
+      if [ "${JSON_MODE:-}" = "1" ]; then
+        printf '{"workspace":%s,"session":%s,"state":%s,"waited":%s,"timeout":true}\n' \
+          "$(json_field "${want:-${container}}")" "$(json_field "${sess}")" \
+          "$(json_field "${state}")" "$((SECONDS - start))"
+      else
+        warn "still ${state} after ${budget}s: it is working, not stuck"
+        summary
+      fi
+      return 4
+    fi
+    sleep "${WATCH_INTERVAL_SECS}"
+    state="$(watch_state "${container}" "${sess}")"
+  done
+}
+
 # @function verb_check
 # Answer "why did that return nothing" without launching anything. Each line is a
 # blocker an operator would otherwise discover by guessing: the daemon is not this
@@ -901,7 +1016,7 @@ parse_args() {
   }
   VERB="${pre[0]}"
   case "${VERB}" in
-    list | show | tail | send | launch | stop | check) ;;
+    list | show | tail | send | launch | stop | watch | check) ;;
     *)
       err "unknown subcommand '${VERB}' (see --help)"
       usage >&2
@@ -948,13 +1063,15 @@ main() {
     tail) verb_tail "${ARGS[0]:-}" "${ARGS[1]:-}" "${ARGS[2]:-24}" ;;
     send) verb_send "${ARGS[0]:-}" "${ARGS[1]:-}" "${ARGS[2]:-}" ;;
     stop) verb_stop "${ARGS[0]:-}" "${ARGS[1]:-}" ;;
+    watch) verb_watch "${ARGS[0]:-}" "${ARGS[1]:-}" "${ARGS[2]:-600}" ;;
     check) verb_check "${ARGS[0]:-}" ;;
     launch) verb_launch "${ARGS[@]+"${ARGS[@]}"}" ;;
   esac
   # Read back rather than trust the wanted-flag: --json is only machine-readable for
-  # the two verbs that emit a document, and saying so belongs after the verb ran.
-  if [ -n "${JSON_MODE:-}" ] && [ "${VERB}" != "list" ] && [ "${VERB}" != "show" ]; then
-    warn "--json is machine-readable for list and show only; ${VERB} printed its report"
+  # the verbs that emit a document, and saying so belongs after the verb ran.
+  if [ -n "${JSON_MODE:-}" ] && [ "${VERB}" != "list" ] && [ "${VERB}" != "show" ] &&
+    [ "${VERB}" != "watch" ]; then
+    warn "--json is machine-readable for list, show and watch only; ${VERB} printed its report"
   fi
 }
 

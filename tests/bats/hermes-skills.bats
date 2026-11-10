@@ -480,7 +480,7 @@ HS_IMAGE_MISSING_TOOLS=(bazelisk jq sqlite3 sensors iotop sar)
   # the section-2 test only sees the //scripts: form, and this file mostly shows the
   # bash form, which is the one used from inside the container.
   local verb offenders=""
-  for verb in list show tail send launch stop check; do
+  for verb in list show tail send launch stop watch check; do
     grep -qF -- "bash \"\$CS\" ${verb}" "${skill}" \
       || offenders+="  ${verb}"$'\n'
     hs_script_has_subcommand "${REPO_ROOT}/scripts/coder-sessions.sh" "${verb}" \

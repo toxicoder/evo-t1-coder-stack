@@ -165,7 +165,22 @@ done
 if [ "${1:-}" = "-S" ]; then shift 2; fi
 case "${1:-}" in
   list-panes)
-    if [ -n "${STUB_PANES:-}" ]; then printf '%s\n' "${STUB_PANES}"; fi
+    # STUB_PANES_LATER makes the rows change under a caller that polls, which is the
+    # only way to prove watch really re-reads the pane instead of trusting its first
+    # answer. The counter lives in a file because every poll is a fresh process.
+    _rows="${STUB_PANES:-}"
+    if [ -n "${STUB_PANES_LATER:-}" ]; then
+      _polls=0
+      if [ -f "${STUB_LOG}/pane-polls" ]; then
+        _polls="$(cat "${STUB_LOG}/pane-polls")"
+      fi
+      _polls=$((_polls + 1))
+      printf '%s' "${_polls}" >"${STUB_LOG}/pane-polls"
+      if [ "${_polls}" -gt "${STUB_PANES_SWITCH_AFTER:-1}" ]; then
+        _rows="${STUB_PANES_LATER}"
+      fi
+    fi
+    if [ -n "${_rows}" ]; then printf '%s\n' "${_rows}"; fi
     ;;
   capture-pane)
     if [ -n "${STUB_PANE_TEXT:-}" ]; then printf '%s\n' "${STUB_PANE_TEXT}"; fi
@@ -765,9 +780,153 @@ PY
   LAUNCH_DIR="${SCRATCH}"
   verb_launch myrepo -- true
   verb_stop myrepo review
+  # watch is a wait, so it gets a spent budget here: the pane above is attached and
+  # running, and the contract that matters under a timeout is exit 4 with a verdict.
+  if verb_watch myrepo review 0; then return 1; fi
   # The failure half of each contract, too.
   if verb_show nosuch; then return 1; fi
   if verb_tail myrepo; then return 1; fi
   if verb_send myrepo nosuch 'x'; then return 1; fi
   if verb_stop myrepo; then return 1; fi
+  if verb_watch myrepo; then return 1; fi
+}
+
+# --- watch ------------------------------------------------------------------
+
+@test "coder-sessions: watch settles on a silent agent and names the state" {
+  # activity 5 against a clock in 2026 is an idle agent, which is what "it's stuck"
+  # looks like from a pane, and what an operator on a phone wants woken for.
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}5${TAB}grok${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES
+  run bash "${SCRIPT}" watch myrepo review 60
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"settled:quiet"* ]]
+}
+
+@test "coder-sessions: watch settles when the agent has exited and only a shell is left" {
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}5${TAB}bash${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES
+  run bash "${SCRIPT}" watch myrepo review 60
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"settled:detached-shell"* ]]
+}
+
+@test "coder-sessions: watch keeps polling and settles on the state the pane moved to" {
+  # The whole point of the verb is the second read. A stub whose rows never changed
+  # would let a watch that polled once and cached pass for one that waits.
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  local now
+  now="$(date +%s)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}${now}${TAB}grok${TAB}/home/coder/myrepo"
+  STUB_PANES_LATER="review${TAB}%0${TAB}0${TAB}5${TAB}grok${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES STUB_PANES_LATER
+  export STUB_PANES_SWITCH_AFTER=1
+  CODER_SESSIONS_WATCH_INTERVAL=0
+  export CODER_SESSIONS_WATCH_INTERVAL
+  run bash "${SCRIPT}" watch myrepo review 60
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"settled:quiet"* ]]
+  [ -f "${STUB_LOG}/pane-polls" ] || {
+    printf 'watch never polled the pane a second time\n' >&2
+    return 1
+  }
+  [ "$(cat "${STUB_LOG}/pane-polls")" -ge 2 ] || {
+    printf 'watch settled on its first read: %s polls\n' "$(cat "${STUB_LOG}/pane-polls")" >&2
+    return 1
+  }
+}
+
+@test "coder-sessions: watch reports a timeout rather than a false finish" {
+  # A busy agent has to read as "still working" and exit nonzero: the assistant is
+  # meant to wake the operator, and a budget that reports success is how a phone
+  # gets a notification that the work is done when it is not.
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  local now
+  now="$(date +%s)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}${now}${TAB}grok${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES
+  run bash "${SCRIPT}" watch myrepo review 0
+  [ "${status}" -eq 4 ]
+  [[ "${output}" == *"still running after 0s"* ]]
+}
+
+@test "coder-sessions: watch on a session that never existed is an error, not a finish" {
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}5${TAB}grok${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES
+  run bash "${SCRIPT}" watch myrepo nosuch 60
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"nothing to watch"* ]]
+  [[ "${output}" == *"run 'show myrepo'"* ]]
+}
+
+@test "coder-sessions: watch refuses a missing session and a non-numeric budget" {
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  export STUB_PS_OUT
+  run bash "${SCRIPT}" watch myrepo
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"needs a workspace and a session"* ]]
+  run bash "${SCRIPT}" watch myrepo review soon
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"whole number of seconds"* ]]
+}
+
+@test "coder-sessions: watch --dry-run plans without touching tmux" {
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}5${TAB}grok${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES
+  run bash "${SCRIPT}" --dry-run watch myrepo review 120
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"dry run"* ]]
+  [[ "${output}" == *"every 5s for 120s"* ]]
+  [ ! -e "${STUB_LOG}/tmux" ] || {
+    printf 'a dry watch still ran tmux:\n%s\n' "$(cat "${STUB_LOG}/tmux")" >&2
+    return 1
+  }
+}
+
+@test "coder-sessions: watch --json prints one parseable verdict" {
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}5${TAB}grok${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES
+  # Not `run`: bats merges the stream that carries the report into $output, and the
+  # document has to be judged on its own stream.
+  if ! bash "${SCRIPT}" --json watch myrepo review 60 >"${SCRATCH}/watch.json" 2>"${SCRATCH}/watch.err"; then
+    printf 'the CLI failed:\n%s\n' "$(cat "${SCRATCH}/watch.err")" >&2
+    return 1
+  fi
+  python3 - "${SCRATCH}/watch.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+assert doc["session"] == "review", doc
+assert doc["state"] == "quiet", doc
+assert isinstance(doc["waited"], int), doc
+assert "timeout" not in doc, doc
+PY
+}
+
+@test "coder-sessions: watch honours the interval the operator set" {
+  source_cli
+  [ "${WATCH_INTERVAL_SECS}" = "5" ] || {
+    printf 'the shipped interval is %s, not the 5s the usage promises\n' "${WATCH_INTERVAL_SECS}" >&2
+    return 1
+  }
+  # A subshell, because the value is read once at source time: the assignment has to
+  # precede the source for the new interval to be the one that lands.
+  (
+    CODER_SESSIONS_WATCH_INTERVAL=45
+    source_cli
+    [ "${WATCH_INTERVAL_SECS}" = "45" ]
+  )
+}
+
+@test "coder-sessions: watch_state answers gone for a session the daemon does not have" {
+  source_cli
+  STUB_PS_OUT="$(ps_row myrepo coder-alice-myrepo running)"
+  STUB_PANES="review${TAB}%0${TAB}0${TAB}5${TAB}grok${TAB}/home/coder/myrepo"
+  export STUB_PS_OUT STUB_PANES
+  [ "$(watch_state coder-alice-myrepo review)" = "quiet" ]
+  [ "$(watch_state coder-alice-myrepo nosuch)" = "gone" ]
 }

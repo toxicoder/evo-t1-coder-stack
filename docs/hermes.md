@@ -198,6 +198,8 @@ self-hosted ntfy keeps the notices on your hardware.
 - *what did it get stuck on* -> `tail <workspace> <session> 40`, then quote the pane
 - *tell it yes* -> `send <workspace> <session> "yes"`
 - *start one on repo X* -> `launch --dir /home/coder/<repo> <workspace>`
+- *wake me when it finishes* -> `watch <workspace> <session> 1800`, then `hermes send`
+  to the ntfy topic above
 - *is the box healthy* -> `//scripts:hermes-shell -- check`, and the `host-diagnostics` skill
 
 Session control needs no credential and no open browser: the verbs read the Docker

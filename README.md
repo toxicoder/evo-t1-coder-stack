@@ -1016,8 +1016,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── bootstrap.sh          # .env + secrets + access URL + certs + router conf + checks
 │   ├── build-dev-image.sh   # builds images/dev -> evo-t1-dev:latest
 │   ├── coder-agents.sh      # wires the control-plane chat agent (LiteLLM + thinking models)
-│   ├── coder-sessions.sh    # list, tail, answer, launch, and stop the Grok Build agent
-│   │                        #   sessions inside running Coder workspaces (docker + tmux)
+│   ├── coder-sessions.sh    # list, tail, answer, launch, stop, and watch the Grok Build
+│   │                        #   agent sessions inside running Coder workspaces (docker + tmux)
 │   ├── dashboard-password.sh # rotate the dashboard login password and apply it
 │   ├── dev-stack.sh         # up / down / status / logs / reset for one compose project
 │   ├── github-auth.sh       # GitHub credential doctor and one-command fix

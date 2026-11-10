@@ -102,6 +102,34 @@ To end one, name it:
 bash "$CS" stop <workspace> <session>
 ```
 
+## "Wake me when it's done"
+
+`watch` is the blocking half, and the reason a phone is enough:
+
+```sh
+bash "$CS" watch <workspace> <session> 1800   # up to 30 minutes
+```
+
+It returns 0 the moment the session stops working - `quiet`, `idle-shell`,
+`detached-shell`, `waiting`, or gone - and 4 with the session still `running` when
+the budget runs out. A session name that never existed is an error, so a typo cannot
+read as "finished". `--json` prints one object with `state` and `waited`.
+
+Then push the result if the operator has a channel:
+
+```sh
+hermes send --to "ntfy:<their-topic>" "myrepo: agent settled quiet - <one line>"
+```
+
+Quote what the pane actually said, taken from `tail`, rather than restating the state
+word alone. If no push channel is configured, say so and leave the summary in the
+chat - do not invent a topic or a URL.
+
+Run `watch` when the operator asked to be told, or before you start something long
+you were asked to report on. It is a read, but it blocks: keep the budget shorter
+than the patience the operator asked for, and re-invoke rather than parking a
+half-hour call nobody is waiting on.
+
 ## Do not
 
 - Do not create, start, or stop a *workspace* from here. That is Coder's job:
