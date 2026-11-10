@@ -915,8 +915,9 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
 - **Audit:** `bazelisk run //scripts:hermes-doctor` reads what readiness does not - the
   config the container actually loads, the environment it was created with, its mounts,
   and the seed beside the checkout - and reports whether approvals, the working
-  directory, the web lane, the write fence, the image pin and the dashboard door are
-  still what this repo ships. Read-only, and it prints key names with no value.
+  directory, the web lane, the write fence, the image pin, the dashboard door, the
+  anywhere door (the gateway API server and the push channel) and the coding-agent
+  verbs are still what this repo ships. Read-only, and it prints key names with no value.
 - **Skills:** eight tracked under `hermes/skills/` - stack ops, Coder workspaces,
   the coding-agent door (`coding-agents`: watch, answer, launch, and stop the Grok
   Build sessions inside a running workspace, over `//scripts:coder-sessions`),

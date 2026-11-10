@@ -230,9 +230,14 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   the file and stale in the container until the next recreate. Every container-level
   fact comes from `docker inspect` or `docker compose ps`; nothing writes, restarts,
   recreates, or execs.
-- **The twelve checks:** `approvals` (manual, with cron and unattended both deny),
+- **The fourteen checks:** `approvals` (manual, with cron and unattended both deny),
   `terminal-cwd`, `write-root`, `web-lane`, `keyless-egress`, `mcp-servers`,
-  `seed-drift`, `mount-identity`, `image-pin`, `model-key`, `dashboard`, `memories`.
+  `seed-drift`, `mount-identity`, `image-pin`, `model-key`, `dashboard`, `memories`,
+  `anywhere-door` (the API server's enabled/keyed/bound state and whether the push
+  channel can be answered by strangers), and `agent-verbs` (whether the assistant can
+  still reach `scripts/coder-sessions.sh` and the socket those verbs read). The last
+  two are the ones that keep the phone story honest: an open door nobody configured,
+  and a closed door nobody can find, are the same class of surprise.
 - **It reports, it does not gate.** Exit 0 on a clean bill (warnings allowed), 1 when a
   check failed, 2 on a bad invocation, 5 when it cannot find a checkout.
   `hermes-shell -- check` stays the thing that decides whether to launch a session.

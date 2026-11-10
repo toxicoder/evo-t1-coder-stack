@@ -15,7 +15,9 @@
 # working directory resolved to a real path, the web lane still pointed at the
 # stack's own SearXNG with both keyless switches off, no vendor credential
 # present, the image still the pinned one, the dashboard still behind a
-# non-default basic-auth pair. Each of those is a fact that can quietly stop
+# non-default basic-auth pair, the anywhere door still closed and the push channel
+# still push-only, and the coding-agent verbs still reachable from the mount. Each of
+# those is a fact that can quietly stop
 # being true: an operator edit inside the volume, a re-create from a stale
 # `.env`, a merge that changed the seed and never re-seeded a long-lived box.
 #
@@ -58,6 +60,8 @@
 #
 # Checks: approvals terminal-cwd write-root web-lane keyless-egress mcp-servers
 #   seed-drift mount-identity image-pin model-key dashboard memories
+#   anywhere-door (the API server and the push channel) agent-verbs (the coding-agent
+#   control plane the assistant drives)
 #
 # Exit codes: 0 when every selected check passed (warnings allowed); 1 when any
 # check failed; 2 for a bad invocation - an unknown subcommand, an unknown flag,
@@ -122,7 +126,8 @@ Subcommands: report (default, everything), posture (security and privacy),
 web (the search lane and its egress guards), diff (volume copy vs seed).
 
 Checks: approvals terminal-cwd write-root web-lane keyless-egress mcp-servers
-seed-drift mount-identity image-pin model-key dashboard memories
+seed-drift mount-identity image-pin model-key dashboard memories anywhere-door
+agent-verbs
 
 Exit codes: 0 = every selected check passed; 1 = something failed;
 2 = unknown subcommand, unknown flag, or a flag with no value;
@@ -717,6 +722,142 @@ check_model_key() {
   fi
 }
 
+# @function check_anywhere_door
+# Report the two doors that exist for an operator who is away from the desk.
+#
+# The API server is the widest opening on the box: it carries the whole toolset
+# behind one bearer token. It ships closed, so the audit answer that matters is not
+# "is it on" but "did someone open it and leave it half-wired" - enabled on a
+# placeholder key reads to the operator as an assistant that has stopped answering,
+# and a mapping published off loopback puts that token on the LAN. Push is the
+# mirror image: nothing to open in compose at all, and the one risk worth naming is
+# a topic anyone can publish to, because the gateway treats every publisher to a
+# topic as a single identity.
+# Globals:
+#   DRY_RUN, ENV_FILE, COMPOSE_FILE, ROOT
+# Arguments:
+#   None
+# Outputs:
+#   ok:, warning:, error:, or note: lines; never a key value and never a topic value
+# Returns:
+#   0 always; a failure is recorded with fail_item
+check_anywhere_door() {
+  local envf="" enabled="" api_key="" bind="" cors="" volume="" topic_line="" allowed=""
+  [ "${DRY_RUN}" -eq 1 ] && {
+    note "anywhere door: not probed under --dry-run"
+    return 0
+  }
+  envf="${ENV_FILE:-$(dirname "${COMPOSE_FILE:-${ROOT}/docker-compose.yml}")/.env}"
+  enabled="$(doctor_env_of API_SERVER_ENABLED)"
+  [ -n "${enabled}" ] || enabled="$(env_get "${envf}" HERMES_API_SERVER_ENABLED)"
+  case "${enabled}" in
+    1 | true | True | TRUE | yes | Yes | YES | on | On | ON) ;;
+    *)
+      ok "api server: closed (${enabled:-unset}) - the shipped state"
+      enabled=""
+      ;;
+  esac
+  if [ -n "${enabled}" ]; then
+    api_key="$(doctor_env_of API_SERVER_KEY)"
+    [ -n "${api_key}" ] || api_key="$(env_get "${envf}" HERMES_API_SERVER_KEY)"
+    case "${api_key}" in
+      '')
+        fail_item "api server is enabled with no key: upstream refuses to serve unauthenticated, so this reads as a dead assistant rather than an open one"
+        ;;
+      change-me*)
+        fail_item "api server is enabled on the shipped placeholder key - run bootstrap so it is generated"
+        ;;
+      *) ok "api server: enabled, with a key set (value not printed)" ;;
+    esac
+    bind="$(env_get "${envf}" HERMES_API_BIND)"
+    case "${bind}" in
+      '' | 127.0.0.1 | localhost)
+        ok "api server: published on loopback only, so nothing off this host can dial it"
+        ;;
+      *)
+        warn "api server: HERMES_API_BIND=${bind} puts the whole toolset on that interface behind one token"
+        ;;
+    esac
+    cors="$(doctor_env_of API_SERVER_CORS_ORIGINS)"
+    if [ -n "${cors}" ]; then
+      warn "api server: browser callers are allowed from ${cors} - name origins you chose, and never a wildcard"
+    fi
+  fi
+
+  # Push is configured on the volume, not in compose: the gateway registers the
+  # adapter from the presence of NTFY_TOPIC in its own environment, which is why an
+  # empty key in the compose env would have handed it a half-built platform.
+  volume="$(doctor_volume_dir || true)"
+  if [ -z "${volume}" ] || [ ! -f "${volume}/.env" ]; then
+    note "push: no ntfy channel configured, so nothing reaches a phone unprompted (--data DIR names the volume)"
+    return 0
+  fi
+  if ! grep -qE '^[[:space:]]*NTFY_TOPIC=.+' "${volume}/.env"; then
+    note "push: the volume's .env names no NTFY_TOPIC, so the adapter is not registered"
+    return 0
+  fi
+  ok "push: an ntfy channel is configured (topic and token not printed)"
+  # No allowlist is the recommended shape: with none, the agent never answers the
+  # topic, so the phone gets notices and the topic stays an output. An allowlist
+  # makes it a two-way door, and the topic name is its only credential.
+  allowed="$(grep -E '^[[:space:]]*NTFY_ALLOWED_USERS=.+' "${volume}/.env" | head -1 || true)"
+  if [ -n "${allowed}" ]; then
+    warn "push: NTFY_ALLOWED_USERS is set, so inbound is open on this topic - every publisher to it is one identity to the gateway"
+  else
+    ok "push: push-only (no NTFY_ALLOWED_USERS), so nobody can answer through the topic"
+  fi
+  topic_line="$(grep -E '^[[:space:]]*NTFY_SERVER_URL=.+' "${volume}/.env" | head -1 || true)"
+  if [ -z "${topic_line}" ]; then
+    warn "push: NTFY_SERVER_URL is unset, so the notices go to the public ntfy.sh - a self-hosted server keeps them on your hardware"
+  fi
+}
+
+# @function check_agent_verbs
+# Say whether the assistant can still reach the coding-agent control plane.
+#
+# The coding-agents skill tells the assistant to run scripts/coder-sessions.sh off
+# the identical-path checkout mount. Two ways that stops being true without anything
+# looking broken: the checkout on the host is older than the skill the volume
+# mounted, and the docker socket is no longer in the container the verbs need it in.
+# Globals:
+#   ROOT, DRY_RUN
+# Arguments:
+#   None
+# Outputs:
+#   ok:, warning:, or note: lines
+# Returns:
+#   0 always; a failure is recorded with fail_item
+check_agent_verbs() {
+  local cli="" mounts="" id=""
+  cli="${ROOT}/scripts/coder-sessions.sh"
+  if [ -f "${cli}" ]; then
+    ok "agent verbs: scripts/coder-sessions.sh is on the checkout the assistant mounts"
+  else
+    fail_item "scripts/coder-sessions.sh is missing from ${ROOT}: the coding-agents skill points the assistant at a file that is not there (pull, then recreate)"
+  fi
+  [ "${DRY_RUN}" -eq 1 ] && {
+    note "agent verbs: the socket was not inspected under --dry-run"
+    return 0
+  }
+  # Resolved before the inspect: an empty argument makes the daemon answer about the
+  # first container it likes, which would report some other service's mounts as the
+  # assistant's.
+  id="$(doctor_container || true)"
+  if [ -z "${id}" ]; then
+    note "agent verbs: the assistant's container is not running, so the socket was not checked"
+    return 0
+  fi
+  mounts="$(docker inspect -f '{{range .Mounts}}{{println .Source}}{{end}}' \
+    "${id}" 2>/dev/null || true)"
+  if [ -z "${mounts}" ]; then
+    note "agent verbs: the container is not readable from here, so the socket was not checked"
+  elif printf '%s\n' "${mounts}" | grep -qE 'docker\.sock$'; then
+    ok "agent verbs: the docker socket is mounted, which is how the verbs see workspaces"
+  else
+    warn "agent verbs: no docker socket in the container, so list/show/tail have nothing to read"
+  fi
+}
+
 # @function check_dashboard
 # Report the dashboard's door state.
 #
@@ -763,7 +904,6 @@ check_dashboard() {
   if [ -n "${user}" ] && [ "${user}" = "${pass}" ]; then
     warn "dashboard: the basic-auth user and the password are the same string"
   fi
-  [ "${failed}" -eq 0 ] && ok "dashboard: basic auth is set on all three keys (values not printed)"
   value="$(doctor_env_of HERMES_DASHBOARD_PUBLIC_URL)"
   case "${value}" in
     https://*) ok "dashboard: public URL is https" ;;
@@ -869,6 +1009,14 @@ run_check() {
       section "dashboard"
       check_dashboard
       ;;
+    anywhere-door)
+      section "anywhere door"
+      check_anywhere_door
+      ;;
+    agent-verbs)
+      section "agent verbs"
+      check_agent_verbs
+      ;;
     memories)
       section "memories"
       check_memories
@@ -898,10 +1046,12 @@ checks_for() {
   case "${1}" in
     report)
       printf '%s\n' approvals terminal-cwd write-root web-lane keyless-egress \
-        mcp-servers seed-drift mount-identity image-pin model-key dashboard memories
+        mcp-servers seed-drift mount-identity image-pin model-key dashboard \
+        memories anywhere-door agent-verbs
       ;;
     posture)
-      printf '%s\n' approvals write-root keyless-egress mcp-servers model-key dashboard
+      printf '%s\n' approvals write-root keyless-egress mcp-servers model-key dashboard \
+        anywhere-door
       ;;
     web)
       printf '%s\n' web-lane keyless-egress mcp-servers
