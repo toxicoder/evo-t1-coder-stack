@@ -245,6 +245,7 @@ _SUITE_PAYLOAD = {
     ],
     "hermes-config.bats": [
         "//:env_sample",
+        "//docs:content",
         "//hermes:payload",
         "//proxy:confs",
     ],
