@@ -978,9 +978,11 @@ absent:
   marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
   above.
 - The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
-  probe-one-worker-first, verify-what-a-worker-actually-produced, and the git cadence that
+  probe-one-worker-first, verify-what-a-worker-actually-produced, the git cadence that
   cuts the branch before the first edit and commits each unit as it lands, holding the push
-  for the pull request). It travels as
+  for the pull request, and the issue etiquette that reads the report before planning, puts a
+  single closing keyword in the pull request body, and leaves the actual close to the merge).
+  It travels as
   `templates/common/GROK_BUILD_AGENTS.md`, staged beside the staged `main.tf` and
   read back with `file()` / `filebase64()`; `templates/common/` keeps one copy for
   both templates, and the push stages it into each template's pushed copy.

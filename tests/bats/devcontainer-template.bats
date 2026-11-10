@@ -47,6 +47,11 @@
 # ships stays addable. It also pins the research half of the same tables: both
 # twins pre-allow the two read-only lane tools, byte-identically, inside the
 # [permission] table, with the write-capable github server left out.
+# It also pins the GitHub issue etiquette the seed teaches and docs/branching.md
+# restates: read the report before planning, search the tracker before filing,
+# one closing keyword in the pull request body, a keyword that matches what that
+# pull request settles, a failing-then-passing test as the proof of a bug fix,
+# the close left to the merge, and tracker triage left to a human.
 #
 # Usage: bazelisk test //tests:bats_devcontainer_template_test   (from any cwd)
 # Safety: reads templates/devcontainer/main.tf, the two startup.sh.tftpl
@@ -310,7 +315,8 @@ setup() {
     '**A bug fix lands with its proof.**' \
     'Cannot reproduce' \
     '**The tracker is shared, and you are not a human in it.**' \
-    '**A 401 from the `github` MCP lane is token age.**' \
+    '**Run issue work through `gh`, not the `github` MCP lane.**' \
+    'token age' \
     'takes effect only on a merge'; do
     run grep -F -- "${phrase}" "${common_md}"
     [ "${status}" -eq 0 ] || {
@@ -335,6 +341,24 @@ setup() {
     echo "the seed hands the agent tracker triage" >&2
     return 1
   }
+  # The rule of record carries the same etiquette, so the doc an operator reads
+  # and the text every workspace seeds cannot drift apart.
+  local branching="${REPO_ROOT}/docs/branching.md"
+  run grep -F '## Issues, and how they close' "${branching}"
+  [ "${status}" -eq 0 ]
+  for phrase in \
+    '**Read the report before you plan.**' \
+    '**Search before you file.**' \
+    '**Name the issue in the branch, close it in one place.**' \
+    '**Let the merge close it.**' \
+    '**A bug fix ships with its proof.**' \
+    '**Triage belongs to a person.**'; do
+    run grep -F -- "${phrase}" "${branching}"
+    [ "${status}" -eq 0 ] || {
+      echo "docs/branching.md dropped: ${phrase}" >&2
+      return 1
+    }
+  done
 }
 
 @test "search lane: both config twins carry the gated searxng block and the parked native-search key" {
