@@ -79,6 +79,7 @@ filegroup(
     srcs = [
         "bazel_deps.py",
         "extract_fn.py",
+        "homepage_config_check.py",
         "owned_files_check.py",
         # glob-policy: coverage/ and python/ are the harness's and the unittest suite's own directories, and a new test module must reach //lints:mypy and //tests:py_coverage without a BUILD edit
     ] + glob(
@@ -268,6 +269,14 @@ _SUITE_PAYLOAD = {
     # pair out of the data volume, so that read is this suite's read.
     "hermes-shell.bats": [
         "//hermes:seed",
+    ],
+    # The suite drives tests/homepage_config_check.py over the four YAML files the
+    # dashboard reads and over docker-compose.yml, which is where the HOMEPAGE_VAR_*
+    # tokens it substitutes have to be declared. The compose file itself rides
+    # _BATS_COMMON, which every suite already gets.
+    "homepage-config.bats": [
+        "homepage_config_check.py",
+        "//homepage:config",
     ],
     "host-state.bats": [
         "//homepage:icons",

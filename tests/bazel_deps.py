@@ -225,6 +225,11 @@ TOKEN_GROUPS: Final[LabelMap] = {
         "//homepage:payload",
         "//:stack_data",
     ],
+    # The dashboard payload gate's own program, which its suite runs out of its runfiles
+    # the way the gate suite runs bazel_deps.py. A file token, not `tests/`: the suite
+    # tree token below already bills the whole-repo gate for every .bats file, and a
+    # directory token here would bill it for the runner beside it.
+    "homepage_config_check.py": ["homepage_config_check.py"],
     "images/dev/": [
         "//images/dev:dockerfile",
         "//images/dev:tool_versions",
