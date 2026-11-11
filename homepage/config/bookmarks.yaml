@@ -8,6 +8,9 @@
 # Every URL below was checked to resolve.
 
 - Stack docs:
+    - Docs site:
+        - abbr: DOC
+          href: https://toxicoder.github.io/evo-t1-coder-stack/latest/
     - Homepage:
         - abbr: HP
           href: https://gethomepage.dev/
