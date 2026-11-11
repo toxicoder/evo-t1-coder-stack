@@ -8,9 +8,10 @@ tags: [homepage, kasm, dashboard, operate]
 
 **What's on this page**
 
-- What each dashboard card shows and which API it reads
-- The header tiles: CPU, memory, temperature, disk, interface throughput
+- What each dashboard card shows and which API it reads, the search lane included
+- The header tiles: CPU, memory, temperature, disk, interface throughput, clock, search
 - The password gate, the proxy in front of it, and how to rotate the password
+- The payload gate: which dashboard mistakes the build catches before a deploy does
 - Kasm's wizard-and-UI port pair, and what resetting it destroys
 
 **What this enables**
@@ -29,8 +30,19 @@ A card per service, with status pulled from each service's own API over the comp
 network - `http://coder:3000`, `http://litellm:4000`, `http://ollama:11434`,
 `http://hermes:9119/api/status` - so nothing here needs a daemon credential. The
 header carries boxed tiles for host CPU, memory, CPU temperature, disk and `eth0`
-throughput, beside the clock, local weather (open-meteo, keyless) and a DuckDuckGo
-search.
+throughput, beside the clock (date and 24-hour time), local weather (open-meteo,
+keyless) and a search box.
+
+That box asks the stack's own SearXNG rather than a public engine, so a search from the
+dashboard goes to the same instance the workspace agents and Hermes dial. The **Host**
+group carries the matching card: its badge probes `http://searxng:8181/healthz`, which
+answers from the instance's own state without querying an upstream engine, and its three
+fields come from `GET /config` on the same port - the release tag, and the two switches
+that decide whether the box is a public instance (`limiter`, `public_instance`). The
+dashboard never asks the instance for result rows: a polled `/search` would park engines
+on the rate-limit and CAPTCHA walls, which is why that probe is
+`bazelisk run //scripts:search-check`'s job, run on demand. See
+[troubleshooting.md](troubleshooting.md).
 
 Card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL` /
 `STACK_HERMES_URL`, which default to LAN URLs built from `STACK_LAN_HOST` and the
@@ -39,6 +51,10 @@ in `STACK_PUBLIC_HOSTS` and the cards follow the names bootstrap composes from t
 naming parts ([public-access.md](public-access.md)). The Hermes card
 follows `STACK_HERMES_URL` when bootstrap sets it, and stays on
 `http://<STACK_LAN_HOST>:9119` when that key is empty. See [hermes.md](hermes.md).
+The search card and the header box share `STACK_SEARCH_URL`. The router composes public
+names for the dashboard, coder, kasm, litellm and hermes only, so search has no public
+name to fall to: leave the key empty and both stay on the LAN, where the card's status
+still reports for anyone who can reach the dashboard.
 
 ### Login
 
@@ -73,6 +89,36 @@ needs its own mount line in `docker-compose.yml` before the app sees it.
 `/api/config/custom.css` route. It styles the sign-in page too, so keep internal
 hostnames out of it.
 
+### What the gate checks
+
+`//:validate` proves these files parse. `tests/homepage_config_check.py` reads them the
+way the app does and fails on the mistakes that parse happily:
+
+```sh
+bazelisk test //tests:bats_homepage_config_test
+```
+
+- every `{{HOMEPAGE_VAR_*}}` token has a key in `docker-compose.yml`, and every
+  `HOMEPAGE_VAR_*` key is used by some config file
+- every service and bookmark group has a `layout` entry, and every `layout` key names a
+  real group; a `style: row` group's `columns` equals the number of cards it holds
+- a card `href` is a token or a public URL, never a compose service name: the browser
+  cannot resolve `http://coder:3000`, only the dashboard server can
+- a `siteMonitor` or widget `url` names a compose service or a token, never a loopback
+  or LAN-address literal, which would bake the LAN into git
+- no `block` customapi widget declares more than four mappings - the shipped bundle
+  slices the list, so a fifth row silently never renders
+- a bookmark's value is a list of single-key mappings carrying both `abbr` and `href`;
+  written as a plain mapping the entry loads with a name and nothing else, because the
+  app drops the keys it did not ask for
+- a local `icon:` path is under `/icons/`, the one path the auth middleware exempts from
+  the sign-in redirect
+- a `search` widget with `provider: custom` carries a url ending in `=`, because v2.4.0
+  appends the encoded query to whatever `url` says and has no `{{query}}` token
+
+The suite also breaks each invariant in a scratch copy, so a check that has stopped
+failing fails the build.
+
 ### After a recreate: revalidate once
 
 v2.4.0 serves a prerendered page with the settings baked in, so a freshly created
@@ -105,7 +151,14 @@ resource tiles, clock, weather and search top-right, cards on a wallpaper. The
 wallpaper (`background.webp`) and the logo (`evo-t1.svg`) live in
 `homepage/assets/icons/`, mounted at `/app/public/icons` and served as `/icons/...`.
 Homepage's auth middleware exempts only that path from the sign-in redirect, which is
-what lets the same wallpaper render on the login page.
+what lets the same wallpaper render on the login page, and is why `favicon` points at
+`/icons/evo-t1.svg` too: a tab icon from anywhere else 307s to `/auth/signin`.
+
+`disableIndexing: true` is the whole anti-crawler measure: the app then serves
+`/robots.txt` with `User-agent: *` / `Disallow: /`, and writes no robots meta tag into
+the page. It matters only when `STACK_PUBLIC_HOSTS` gives the dashboard a public name -
+the page already sits behind the password, and its paths should not reach a crawler
+either.
 
 ## Kasm Workspaces
 
