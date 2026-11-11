@@ -234,3 +234,47 @@
         description: On-device host assistant - Chat tab is the interactive
           terminal with approval prompts (public name when configured, otherwise LAN)
         siteMonitor: http://hermes:9119/api/status
+
+    # The stack's own meta-search: the lane the workspace agents and Hermes dial
+    # (SEARXNG_URL, default http://host.docker.internal:8181). It was the one
+    # published service with no card, so an operator could not see the search
+    # path was down until an agent reported an empty answer.
+    #
+    # /healthz answers 200 with a two-byte body and queries no upstream engine,
+    # which is what makes it the right badge target. The widget reads /config for
+    # the same reason: both are served from the instance's own state, so the
+    # dashboard never asks Google what it thinks about anything. Probing the
+    # engine pool for real rows is //scripts:search-check's job precisely because
+    # it should happen on demand: a polled /search?format=json would park
+    # engines on the rate-limit and CAPTCHA walls suspended_engines.awk reports.
+    - SearXNG:
+        icon: mdi-magnify
+        href: "{{HOMEPAGE_VAR_SEARCH_URL}}"
+        description: Self-hosted meta-search - the web lane agents and Hermes use
+        siteMonitor: http://searxng:8181/healthz
+        widgets:
+          - type: customapi
+            url: http://searxng:8181/config
+            # Hourly: /config carries the whole engine catalog, and the three
+            # fields below change only when searxng/settings.yml changes.
+            refreshInterval: 3600000
+            mappings:
+              - field: version
+                label: Version
+              # The two security-relevant switches searxng/settings.yml names.
+              # Limiter is safe to leave off only while Public stays off, so
+              # they read as a pair; remap runs before format, hence booleans.
+              - field: limiter
+                label: Limiter
+                remap:
+                  - value: false
+                    to: "off"
+                  - any: true
+                    to: "ON"
+              - field: public_instance
+                label: Public
+                remap:
+                  - value: false
+                    to: "off"
+                  - any: true
+                    to: "ON"
