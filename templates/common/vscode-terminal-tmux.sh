@@ -10,9 +10,12 @@ fi
 # One pane per visible terminal. Clients attached to one tmux session share
 # that session's current window, so concurrent tabs attaching the same
 # session are mirrors: each pays for a full xterm.js in the browser
-# re-parsing the same stream (with its own preallocated scrollback buffer),
-# a per-client encode in the server, and a re-wrap repaint for every client
-# each time any of them activates. So a terminal reuses one of this folder's
+# re-parsing the same stream (its scrollback is an array of line slots sized
+# from terminal.integrated.scrollback, with the cell data filled in one line
+# at a time), and each takes its own copy of the rendered stream out through
+# the pty. The server renders the pane once, so a mirror is paid for in the
+# tab. A client that activates or resizes repaints the window's other clients
+# too. So a terminal reuses one of this folder's
 # sessions only while nothing is looking at it (that is the closed-tab
 # rejoin: a tab that closed left its session behind unattached), preferring
 # the oldest; a terminal opened next to live ones takes the next free

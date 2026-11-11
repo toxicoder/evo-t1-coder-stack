@@ -71,11 +71,15 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   reattaches makes every extra browser tab a mirror of the same pane: another
   full xterm.js in the Chrome tab re-parsing the same stream (each holding a
   line-slot array sized from `terminal.integrated.scrollback`, with the cell
-  data allocated per line as output arrives), another per-client encode in the
-  tmux server, and a re-wrap repaint for every client each time any client
-  activates or resizes. Measured on this workspace: 14 attached clients against
-  2 real panes. Two terminals opening in the same instant can still land on one
-  session - that same mirror, and rarer than a keystroke.
+  data allocated per line as output arrives), and another full copy of the
+  rendered stream through the pty. Measured on one flooding pane, 16 mirrors
+  took 78.7 MB out of the server over an 8 s window where a single mirror took
+  4.9 MB, while the server's own CPU only moved from 420 ms to 630 ms - it
+  renders the pane once, so a mirror is paid for in the tab. A client
+  activating or resizing repaints the window's other clients too. Measured on
+  this workspace: 14 attached clients against 2 real panes. Two terminals
+  opening in the same instant can still land on one session - that same
+  mirror, and rarer than a keystroke.
 - **An attached client is not the same thing as a viewer.** code-server's pty
   host keeps the pty open after the browser side of a tab goes away, so the tmux
   client stays attached, keeps its session's `session_attached` at 1, and

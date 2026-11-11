@@ -1227,21 +1227,23 @@ toast tells you to do.
 
 Cause: each client attached to a tmux session is a full xterm.js in its own
 Chrome tab re-parsing the same stream, each holding a line-slot array sized
-from `terminal.integrated.scrollback`, plus a per-client encode in the tmux
-server and a re-wrap repaint for every client each time any of them activates
-or resizes. Two of those three only apply to a client that is actually being
-read: measured on this workspace, 7 of 9 attached clients received 0 bytes over
-a 4 s window in which the pane produced 12858, because code-server's pty host
-keeps the pty open after the browser side of the tab goes away and nothing
-drains it any more. tmux stops feeding a client it cannot write to, so the CPU
-one of these carries is small: one probe on this build put 15 extra attached
-but unread clients against one pane pushing 8 MB through an 8 s window and
-moved the server from 450 ms to 730 ms, well under one core-second for all
-fifteen together. What a ghost really costs is the reuse decision. It holds
-`session_attached` at 1, and that is the number the attach helper reads, so the
-folder pays a whole new session - another pane, another xterm.js, another
-history - for every later tab. Count the clients against the panes, and count
-what each one is taking in:
+from `terminal.integrated.scrollback`, and each taking its own copy of the
+rendered stream out of the server - 16 mirrors of one pane pulled 78.7 MB
+through an 8 s window in which a single mirror pulled 4.9 MB. The server
+renders the pane once, so a mirror is paid for in the tab rather than in server
+CPU: those same 16 moved the server only from 420 ms to 630 ms. A client
+activating or resizing repaints the window's other clients as well.
+
+All of that applies to a client actually being read. Measured on this
+workspace, 7 of 9 attached clients received 0 bytes over a 4 s window in which
+the pane produced 12858, because code-server's pty host keeps the pty open
+after the browser side of the tab goes away and nothing drains it any more;
+tmux stops feeding a client it cannot write to, which is why 15 such clients
+against the same flooding pane took the server only from 450 ms to 730 ms. What
+a ghost really costs is the reuse decision. It holds `session_attached` at 1,
+and that is the number the attach helper reads, so the folder pays a whole new
+session - another pane, another xterm.js, another history - for every later
+tab. Count the clients against the panes, and count what each one is taking in:
 
 ```sh
 tmux list-clients
