@@ -1233,9 +1233,15 @@ or resizes. Two of those three only apply to a client that is actually being
 read: measured on this workspace, 7 of 9 attached clients received 0 bytes over
 a 4 s window in which the pane produced 12858, because code-server's pty host
 keeps the pty open after the browser side of the tab goes away and nothing
-drains it any more. Those clients still cost the server a render pass and still
-hold `session_attached` at 1, which is what breaks the rejoin. Count the clients
-against the panes, and count what each one is taking in:
+drains it any more. tmux stops feeding a client it cannot write to, so the CPU
+one of these carries is small: one probe on this build put 15 extra attached
+but unread clients against one pane pushing 8 MB through an 8 s window and
+moved the server from 450 ms to 730 ms, well under one core-second for all
+fifteen together. What a ghost really costs is the reuse decision. It holds
+`session_attached` at 1, and that is the number the attach helper reads, so the
+folder pays a whole new session - another pane, another xterm.js, another
+history - for every later tab. Count the clients against the panes, and count
+what each one is taking in:
 
 ```sh
 tmux list-clients
