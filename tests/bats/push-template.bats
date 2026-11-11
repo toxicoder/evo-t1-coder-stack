@@ -64,6 +64,7 @@ COMMON_PAYLOADS=(
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
+  agents-seed.sh.tftpl
   stack-skills.sh.tftpl
   stack-repo-skills.sh.tftpl
 )
@@ -92,6 +93,7 @@ write_common_payloads() {
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
 }
@@ -851,6 +853,7 @@ source_libs() {
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/ez-skillify.SKILL.md")" = '# skill' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/ez-create-skill.SKILL.md")" = '# skill' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/stack-skills.sh.tftpl")" = '#!/bin/bash' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/agents-seed.sh.tftpl")" = '#!/bin/bash' ]
 }
 
 @test "template-push: a tree without the seed payload is refused before the CLI runs" {

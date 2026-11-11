@@ -25,7 +25,9 @@
 #     ez-strong-types.SKILL.md with its one, ez-trunk-based-repo.SKILL.md with
 #     none) and their
 #     stack-repo-skills.sh.tftpl seed body,
-#     mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above
+#     mcp-cache-proxy.json, the agents-seed.sh.tftpl body that writes
+#     ~/.grok/AGENTS.md from GROK_BUILD_AGENTS.md, and
+#     gh-token-refresh.sh.tftpl, kept one level above
 #     the template dirs under common/) ride along in every
 #     staged copy, because that is where the server-side Terraform reads them
 #     from.
@@ -74,7 +76,8 @@ fi
 # ez-strong-types.type_baseline.py, ez-trunk-based-repo.SKILL.md,
 # stack-repo-skills.sh.tftpl,
 # coder-agents.md,
-# mcp-cache-proxy.json and gh-token-refresh.sh.tftpl, kept one level above the
+# mcp-cache-proxy.json, agents-seed.sh.tftpl (the coder_script "agents_seed" body) and
+# gh-token-refresh.sh.tftpl, kept one level above the
 # template dirs under common/) there with the common copies. Both templates'
 # main.tf reads those payloads - seed text, notes library, tmux, helpers,
 # agent skill/instructions and the gh-token-refresh body through file() /
@@ -144,6 +147,7 @@ template_push_one() {
     coder-agents.md \
     mcp-cache-proxy.json \
     gh-token-refresh.sh.tftpl \
+    agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
     stack-repo-skills.sh.tftpl; do
     if [ ! -f "${common}/${payload}" ]; then

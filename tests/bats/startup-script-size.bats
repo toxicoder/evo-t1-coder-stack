@@ -22,6 +22,10 @@
 # file that ships. A budget on exec'd bytes has to be a budget on the shipping bytes,
 # so every size measurement here resolves its tree through bats_source_repo_root and
 # only the production functions it loads come from REPO_ROOT.
+# It also pins the escape the stack uses when a payload outgrows the argument:
+# GROK_BUILD_AGENTS.md, the largest of them, rides coder_script.agents_seed's own body,
+# and the startup argument is held well under the budget so the rulebook can grow
+# again without crossing a wall nobody sees until a workspace fails to boot.
 #
 # Usage: bazelisk test //tests:bats_startup_script_size_test   (from any cwd)
 # Safety: reads the two template twins, their staged payloads, the push guard and its
@@ -262,6 +266,35 @@ load_production_guard() {
       echo "${dir}: no coder_script body was measured, so the pass proved nothing" >&2
       return 1
     }
+  done
+}
+
+@test "startup budget: the rulebook rides its own measured body, not the startup argument" {
+  # GROK_BUILD_AGENTS.md is the largest payload the twins inline, and it grows every
+  # time a policy is taught to the agent. Riding startup.sh.tftpl it left the
+  # devcontainer twin 196 bytes of headroom, so the next instruction could not land;
+  # riding coder_script.agents_seed it has a body, and therefore a ceiling, of its
+  # own. Both halves are pinned: the reader has to bill the payload to the new body
+  # (a body it cannot name is a body nobody sizes), and the startup total has to be
+  # free of it, with real room left for the next documentation-sized PR.
+  local twin out tab dir total
+  tab="$(printf '\t')"
+  for twin in "${MEASURE_ROOT}/templates/workspace" "${MEASURE_ROOT}/templates/devcontainer"; do
+    out="$(awk -f "${REPO_ROOT}/scripts/lib/startup_size.awk" "${twin}/main.tf")"
+    assert_match "${twin} bills the rulebook to its own body" \
+      "^agents-seed\.sh\.tftpl${tab}GROK_BUILD_AGENTS\.md\$" "${out}"
+    assert_not_match "${twin} never reports the rulebook body as unmeasurable" \
+      "^agents-seed\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"
+  done
+  for dir in workspace devcontainer; do
+    composed_bytes "${dir}"
+    total="$(cat "${BATS_TEST_TMPDIR}/total-${dir}")"
+    [ -n "${total}" ] || return 1
+    if [ "${total}" -gt "$((BOUND - 16384))" ]; then
+      echo "templates/${dir}: the startup argument still weighs ${total} bytes" >&2
+      echo "against a ${BOUND} budget: the rulebook did not really leave it" >&2
+      return 1
+    fi
   done
 }
 

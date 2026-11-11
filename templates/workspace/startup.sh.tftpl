@@ -108,14 +108,10 @@ if [ ! -f "$HOME/.agents/INSTRUCTIONS.md" ]; then
   cp "$HOME/.coder/AGENTS.md" "$HOME/.agents/INSTRUCTIONS.md" 2>/dev/null
 fi
 
-# --- Grok Build orchestration protocol ----------------------------------------
-if [ ! -f "$HOME/.grok/AGENTS.md" ] \
-   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/AGENTS.md"; then
-  mkdir -p "$HOME/.grok" 2>/dev/null
-  cat >"$HOME/.grok/AGENTS.md" <<'GROK_AGENTS_EOF'
-${grok_build_agents}
-GROK_AGENTS_EOF
-fi
+# The Grok Build rulebook (~/.grok/AGENTS.md) is seeded by coder_script.agents_seed,
+# which carries the GROK_BUILD_AGENTS.md payload in its own execve argument: this body is
+# one argument with one kernel ceiling, and that payload is the largest the template
+# inlines. docs/coder-templates.md#the-one-argument-ceiling.
 
 # --- Private per-repo notes ---------------------------------------------------
 # docs/coder-templates.md#marker-ownership-of-the-seeded-files

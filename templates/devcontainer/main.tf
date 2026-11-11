@@ -511,14 +511,6 @@ resource "coder_agent" "main" {
       search_url             = var.searxng_url
       context7_mcp           = var.context7_mcp
     })
-    # The whole orchestration-protocol payload, read verbatim from
-    # GROK_BUILD_AGENTS.md and interpolated into the quoted heredoc that
-    # writes ~/.grok/AGENTS.md in startup.sh.tftpl. This dir does not keep the
-    # file: the stack holds one copy in templates/common/ and push-template
-    # stages it into this template's pushed copy beside this file, which is
-    # why the path below resolves. chomp() drops the payload's own trailing
-    # newline so the seeded file ends on its last line.
-    grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))
     # The per-repo notes library, interpolated verbatim into the quoted heredoc
     # that writes ~/.grok/notes-setup.sh in startup.sh.tftpl. One copy under
     # templates/common/ again, staged beside this file the same way. Chomped
@@ -701,6 +693,26 @@ resource "coder_script" "gh_token_refresh" {
   script = templatefile("${path.module}/gh-token-refresh.sh.tftpl", {
     github_auth_id               = var.github_auth_id
     coder_github_app_install_url = local.coder_github_app_install_url
+  })
+}
+
+# The Grok Build rulebook, seeded by a body of its own for the reason the skill trio has
+# one: every coder_script.script is a separate execve with its own single-argument
+# ceiling, and this payload is the largest the template inlines, so the rulebook had no
+# room left to grow inside the startup argument. The body rewrites a copy that still
+# carries the stack marker and leaves a marker-free one to its owner.
+# docs/coder-templates.md#the-one-argument-ceiling.
+resource "coder_script" "agents_seed" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the Grok Build rulebook"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/agents-seed.sh.tftpl", {
+    grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))
   })
 }
 

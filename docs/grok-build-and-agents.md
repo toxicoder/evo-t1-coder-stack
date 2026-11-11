@@ -700,8 +700,11 @@ clone is never asked to delete somebody else's committed file.
     Auth (the **GitHub reauth** app) and start a new session. An empty
     `CONTEXT7_API_KEY` is not a gap - see the key's paragraph above, the lane answers
     keyless at the public rate limit.
-- What the agent is told about all this lives in `~/.grok/AGENTS.md`, inlined from
-  `templates/common/GROK_BUILD_AGENTS.md`. Two sections cover the lanes. **Research
+- What the agent is told about all this lives in `~/.grok/AGENTS.md`, which
+  `coder_script.agents_seed` renders from `templates/common/GROK_BUILD_AGENTS.md` into a
+  body of its own (see "The one-argument ceiling" in
+  [coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Two sections cover
+  the lanes. **Research
   lanes** makes a lookup part of the normal loop rather than a last resort, with the
   routing fixed by question type: a library, framework, CLI or setup question goes to
   `context7` (resolve the library id first, then query docs on that id); anything else
@@ -978,9 +981,11 @@ absent:
   marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
   above.
 - The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
-  probe-one-worker-first, verify-what-a-worker-actually-produced, and the git cadence that
+  probe-one-worker-first, verify-what-a-worker-actually-produced, the git cadence that
   cuts the branch before the first edit and commits each unit as it lands, holding the push
-  for the pull request). It travels as
+  for the pull request, and the issue etiquette that reads the report before planning, puts a
+  single closing keyword in the pull request body, and leaves the actual close to the merge).
+  It travels as
   `templates/common/GROK_BUILD_AGENTS.md`, staged beside the staged `main.tf` and
   read back with `file()` / `filebase64()`; `templates/common/` keeps one copy for
   both templates, and the push stages it into each template's pushed copy.

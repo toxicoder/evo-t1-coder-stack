@@ -11,6 +11,7 @@ tags: [git, branching, ci]
 - What `main` is allowed to be, and what may not be committed to it
 - How to cut, name and delete a short-lived work branch, and when the branch and its commits happen
 - Where a hotfix branches from and where it lands first
+- How an issue is read, referenced by the branch, and closed by the merge that fixes it
 - What CI runs, what branch protection should require, and where secrets go
 
 **What this enables**
@@ -90,6 +91,36 @@ order the agent seed teaches and the order a human contributor gets the most out
 Small commits cost nothing at the gate: `.githooks/pre-commit` runs the hermetic half on every
 commit and `.githooks/pre-push` runs the full set before anything leaves the machine, so a stream of
 focused commits is held to the same bar as one large one. See [`main`](#main) for installing them.
+
+## Issues, and how they close
+
+Every change answers something, and the tracker is where the answer gets recorded. This is the
+same etiquette `templates/common/GROK_BUILD_AGENTS.md` teaches every workspace, so a bug an agent
+fixes and a bug a human fixes leave the tracker in the same state.
+
+- **Read the report before you plan.** `gh issue view <n> --comments` is the requirements and the
+  reproduction in one place, and it is the wording the change is measured against. An agent reads
+  it through `env -u GH_TOKEN -u GITHUB_TOKEN gh ...` for the reason in
+  [troubleshooting.md](troubleshooting.md).
+- **Search before you file.** `gh issue list --state open --search '<keywords> in:title,body'`,
+  then the same with `--state closed`. A duplicate becomes a link to the original, something
+  `main` already fixed becomes a comment naming the commit, and only a genuinely new report
+  becomes `gh issue create` - with the reproduction and the verbatim output in its body.
+- **Announce a long fix.** For anything past an obvious edit, a short comment saying what is about
+  to change lets a maintainer redirect the work early and keeps two people off the same file.
+- **Name the issue in the branch, close it in one place.** A bug fix branches as `fix/<n>-<slug>`,
+  and the closing keyword goes in the pull request body only. GitHub auto-links `#<n>` in a commit
+  subject too, so repeating `Fixes #<n>` down the branch multiplies one link and hides which
+  commit answers the report.
+- **Let the merge close it.** `Closes #<n>` / `Fixes #<n>` claim the pull request fully satisfies
+  the report, and GitHub closes the issue when it lands on the default branch - a merge a human
+  performs. `Refs #<n>` is the keyword for a pull request that is one step of the work, or lands
+  before the fix. Nobody closes an issue by hand to announce that a pull request exists.
+- **A bug fix ships with its proof.** The test that fails before the change and passes after it,
+  with the reproduction's failing output quoted in the pull request. "Cannot reproduce" is a
+  finding to post on the issue, and the issue stays open.
+- **Triage belongs to a person.** Closing, reopening, reassigning, labelling and milestoning are
+  the maintainer's calls, and an agent makes them only when the operator asked for that in words.
 
 ## CI and protection
 
