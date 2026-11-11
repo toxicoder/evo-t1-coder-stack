@@ -937,3 +937,240 @@ attach_wait_clients() {
     echo "the reopen left a dead pane: $(TXA list-panes -a)" >&2; return 1; }
   TXA kill-server 2>/dev/null || true
 }
+
+# The Grok Build profile (the "Grok Build" terminal profile) runs the agent
+# inside one tmux session per repository, so a second tab is a second pair of
+# eyes on the same pane rather than a second agent run. Two things follow that
+# the attach helper's tests do not cover: the session has to survive the tab
+# that created it (that tab is the one that brings the server up, and the pane
+# it carries is a running agent), and the clients that stop draining their pty
+# have to stop counting. Both are asserted against a scratch server here, with
+# HOME and PATH isolated so the payload's own ~/.grok/bin/grok cannot shadow the
+# stub the pane-command test hands it.
+GROK_HELPER=""
+
+grok_helper_path() {
+  GROK_HELPER="${REPO_ROOT}/templates/common/grok-build-terminal.sh"
+  [ -f "${GROK_HELPER}" ] || skip "attach payload missing: ${GROK_HELPER}"
+}
+
+# run_grok_helper <tmpdir> <cwd> <label> [stale-grace] [bin-dir]
+# The same shape as run_attach_helper -- a pty from script(1), its own session
+# from setsid --fork, and the runner's inherited descriptors closed so a tab
+# that outlives the test cannot hold bats's output pipe open.
+run_grok_helper() {
+  local tmpdir="$1" cwd="$2" label="$3" grace="${4:-3600}" bindir="${5:-}"
+  local path="${PATH}"
+  [ -n "${bindir}" ] && path="${bindir}:${PATH}"
+  (
+    local fd
+    for fd in $(seq 3 64); do
+      # shellcheck disable=SC2294
+      eval "exec ${fd}>&-" 2>/dev/null
+    done
+    exec setsid --fork env -u TMUX -C "${cwd}" TERM=xterm-256color TMUX_TMPDIR="${tmpdir}" \
+      HOME="${tmpdir}/home" PATH="${path}" EVO_TMUX_STALE_AFTER="${grace}" \
+      script -qec "bash '${GROK_HELPER}'" "${tmpdir}/grok-ts.${label}" >/dev/null 2>&1
+  )
+}
+
+# grok_wait <tmpdir> <want-sessions> <want-clients> - poll the server this
+# family of tests brings up, on the same budget attach_wait uses.
+grok_wait() {
+  local tmpdir="$1" want_sessions="$2" want_clients="$3"
+  local deadline=$((SECONDS + 60)) s c
+  while [ "${SECONDS}" -lt "${deadline}" ]; do
+    s=$(timeout -k 2 10 env -u TMUX TMUX_TMPDIR="${tmpdir}" tmux list-sessions 2>/dev/null) || s=""
+    c=$(timeout -k 2 10 env -u TMUX TMUX_TMPDIR="${tmpdir}" tmux list-clients 2>/dev/null) || c=""
+    if [ "$(printf '%s\n' "${s}" | grep -c .)" = "${want_sessions}" ] &&
+      [ "$(printf '%s\n' "${c}" | grep -c .)" = "${want_clients}" ]; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+@test "attach helper: a client that stopped draining stops holding its session busy" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  command -v script >/dev/null 2>&1 || skip "script(1) not on PATH"
+  env -C / true 2>/dev/null || skip "env lacks -C"
+  local helper="${REPO_ROOT}/templates/common/vscode-terminal-tmux.sh"
+  [ -f "${helper}" ] || skip "attach payload missing"
+  local work="${BATS_TEST_TMPDIR}/proj"
+  mkdir -p "${work}"
+  ATTACH_TMPDIR="${BATS_TEST_TMPDIR}/tmux-sockets"
+  mkdir -p "${ATTACH_TMPDIR}"
+  local ttys before
+  TXA() { timeout -k 2 10 env -u TMUX TMUX_TMPDIR="${ATTACH_TMPDIR}" tmux "$@"; }
+  TXA new-session -d -s vscode-proj-warmup -c "${work}" >/dev/null 2>&1
+  attach_wait "${ATTACH_TMPDIR}" 1 0 || {
+    echo "the scratch server never came up" >&2; return 1; }
+
+  # Two tabs, each with its own session, both of them live: a grace that no
+  # client here can reach has to leave both of them alone, or the sweep would
+  # be closing the terminal the operator is looking at.
+  export EVO_TMUX_STALE_AFTER=3600
+  run_attach_helper "${ATTACH_TMPDIR}" "${work}"
+  attach_wait "${ATTACH_TMPDIR}" 2 1 || {
+    echo "the first terminal never brought up a session" >&2; return 1; }
+  run_attach_helper "${ATTACH_TMPDIR}" "${work}"
+  attach_wait "${ATTACH_TMPDIR}" 3 2 || {
+    echo "the second terminal mirrored the first instead of taking its own session" >&2; return 1; }
+
+  # Now the state a closed or backgrounded browser tab leaves behind: the
+  # clients are still attached and still hold session_attached at 1, and that
+  # number is the whole reuse decision, so without the sweep the next terminal
+  # reads "watched" and raises a fourth session beside two nobody is looking
+  # at. Measured on this workspace's live server, 7 of 9 clients were in
+  # exactly that state, having drained 0 bytes over a 4 s window of output.
+  # The sleep is what ages the two clients past the one-second grace below;
+  # client_activity is written when the client attaches and does not move with
+  # the output a pane produces, so without it they would still read as fresh.
+  ttys=$(TXA list-clients -F '#{client_tty}' | grep -v '^$' | tr '\n' ' ')
+  before=$(TXA list-sessions | grep -c .)
+  sleep 2
+  export EVO_TMUX_STALE_AFTER=1
+  run_attach_helper "${ATTACH_TMPDIR}" "${work}"
+  attach_wait "${ATTACH_TMPDIR}" 3 1 || {
+    {
+      echo "the sweep left the folder's sessions watched, so the tab could not reclaim one"
+      TXA list-sessions -F '  #{session_name} attached=#{session_attached}'
+      TXA list-clients -F '  client tty=#{client_tty} sess=#{session_name}'
+    } >&2
+    return 1; }
+  # The reclaimed tab is the only client, and no fourth session was born.
+  [ "$(TXA list-sessions | grep -c .)" = "${before}" ] || {
+    echo "a stale client still pushed the tab into raising a new session: $(TXA list-sessions)" >&2
+    return 1; }
+  local t
+  for t in ${ttys}; do
+    [ -z "$(TXA list-clients -F '#{client_tty}' | grep -Fx "${t}")" ] || {
+      echo "the client on ${t} survived the sweep" >&2; return 1; }
+  done
+  TXA kill-server 2>/dev/null || true
+}
+
+@test "grok build helper: a missing tmux still opens a shell" {
+  grok_helper_path
+  # Everything the payload runs before it asks for tmux, and no tmux. stdin is
+  # a pipe, so the login shell the payload falls back to reads its command from
+  # there and leaves when the pipe closes -- which is what makes this a
+  # foreground assertion instead of a tab that has to be reaped.
+  local stub="${BATS_TEST_TMPDIR}/stub"
+  mkdir -p "${stub}" "${BATS_TEST_TMPDIR}/home"
+  local t src
+  for t in basename cksum od tr cut awk; do
+    src=$(command -v "${t}" 2>/dev/null) || continue
+    ln -s "${src}" "${stub}/${t}"
+  done
+  local runner="${BATS_TEST_TMPDIR}/run-fallback.sh"
+  printf '%s\n' \
+    'printf "echo EVO_FALLBACK_OK\n" | /bin/bash "$1"' \
+    >"${runner}"
+  run env -i PATH="${stub}" HOME="${BATS_TEST_TMPDIR}/home" \
+    /bin/bash "${runner}" "${GROK_HELPER}"
+  [ "${status}" -eq 0 ] || {
+    echo "the payload exited ${status} instead of handing over a shell: ${output}" >&2
+    return 1; }
+  [[ "${output}" == *EVO_FALLBACK_OK* ]] || {
+    echo "no login shell on the no-tmux path: ${output}" >&2; return 1; }
+}
+
+@test "grok build helper: the agent runs as the pane command with its path whole" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  command -v script >/dev/null 2>&1 || skip "script(1) not on PATH"
+  env -C / true 2>/dev/null || skip "env lacks -C"
+  grok_helper_path
+  # A path with a space is the whole point of the folder name here: tmux takes
+  # new-session's trailing shell-command as one string and hands it to /bin/sh,
+  # so a root passed as loose argv words reaches the agent as two arguments.
+  local work="${BATS_TEST_TMPDIR}/a repo with space"
+  mkdir -p "${work}"
+  local tmpdir="${BATS_TEST_TMPDIR}/tmux-sockets" bin argv
+  mkdir -p "${tmpdir}/home" "${tmpdir}/bin"
+  bin="${tmpdir}/bin"
+  argv="${tmpdir}/grok-argv.txt"
+  printf '%s\n' \
+    '#!/bin/bash' \
+    'printf "%s\n" "$@" >'"${argv}" \
+    'exec sleep 300' >"${bin}/grok"
+  chmod +x "${bin}/grok"
+  ATTACH_TMPDIR="${tmpdir}"
+  local
+  TXA() { timeout -k 2 10 env -u TMUX TMUX_TMPDIR="${tmpdir}" tmux "$@"; }
+
+  run_grok_helper "${tmpdir}" "${work}" 1 3600 "${bin}"
+  grok_wait "${tmpdir}" 1 1 || {
+    {
+      echo "the first Grok Build tab did not bring up its session"
+      TXA list-sessions 2>&1 | sed 's/^/  session: /'
+      [ -f "${tmpdir}/grok-ts.1" ] && tail -5 "${tmpdir}/grok-ts.1" | sed 's/^/  tab: /'
+    } >&2
+    return 1; }
+
+  # The agent got its root as one argument.
+  local waited=0
+  while [ ! -s "${argv}" ] && [ "${waited}" -lt 40 ]; do
+    sleep 0.25; waited=$((waited + 1))
+  done
+  [ -s "${argv}" ] || {
+    echo "the stub agent never ran; pane_start_command is: $(TXA list-panes -a -F '#{pane_start_command}')" >&2
+    return 1; }
+  [ "$(grep -c . "${argv}")" = "2" ] || {
+    echo "the agent got $(grep -c . "${argv}") arguments, not --cwd and the root:"
+    sed 's/^/  arg: /' "${argv}" >&2
+    return 1; }
+  [ "$(sed -n '2p' "${argv}")" = "${work}" ] || {
+    echo "the root arrived split: [$(sed -n '2p' "${argv}")] wanted [${work}]" >&2
+    return 1; }
+
+  # And a second tab is a second viewer of the one agent run, not a second
+  # agent: same session, two clients.
+  run_grok_helper "${tmpdir}" "${work}" 2 3600 "${bin}"
+  grok_wait "${tmpdir}" 1 2 || {
+    {
+      echo "the second tab did not join the running agent's session"
+      TXA list-sessions -F '  #{session_name} attached=#{session_attached}'
+    } >&2
+    return 1; }
+  TXA kill-server 2>/dev/null || true
+}
+
+@test "grok build helper: clients that stopped draining are detached on the way in" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  command -v script >/dev/null 2>&1 || skip "script(1) not on PATH"
+  env -C / true 2>/dev/null || skip "env lacks -C"
+  grok_helper_path
+  local work="${BATS_TEST_TMPDIR}/gbats-proj"
+  mkdir -p "${work}"
+  local tmpdir="${BATS_TEST_TMPDIR}/tmux-sockets" bin
+  mkdir -p "${tmpdir}/home" "${tmpdir}/bin"
+  bin="${tmpdir}/bin"
+  printf '%s\n' '#!/bin/bash' 'exec sleep 300' >"${bin}/grok"
+  chmod +x "${bin}/grok"
+  ATTACH_TMPDIR="${tmpdir}"
+  local
+  TXA() { timeout -k 2 10 env -u TMUX TMUX_TMPDIR="${tmpdir}" tmux "$@"; }
+
+  run_grok_helper "${tmpdir}" "${work}" 1 3600 "${bin}"
+  grok_wait "${tmpdir}" 1 1 || { echo "no first tab" >&2; return 1; }
+  run_grok_helper "${tmpdir}" "${work}" 2 3600 "${bin}"
+  grok_wait "${tmpdir}" 1 2 || { echo "no second tab" >&2; return 1; }
+  # Both viewers are now past a one-second grace, which is the shape of a tab
+  # whose browser side went away while code-server kept its pty open.
+  sleep 2
+  run_grok_helper "${tmpdir}" "${work}" 3 1 "${bin}"
+  grok_wait "${tmpdir}" 1 1 || {
+    {
+      echo "the new tab did not end up as the only client"
+      TXA list-clients -F '  client tty=#{client_tty} act=#{client_activity}'
+    } >&2
+    return 1; }
+  # One agent run still, and the pane never died on the way.
+  [ "$(TXA list-sessions | grep -c .)" = "1" ] || {
+    echo "the sweep took the session with the clients: $(TXA list-sessions)" >&2; return 1; }
+  [ -z "$(TXA list-panes -a -F '#{pane_dead}' | grep -v '^0$')" ] || {
+    echo "the sweep left a dead pane: $(TXA list-panes -a)" >&2; return 1; }
+  TXA kill-server 2>/dev/null || true
+}

@@ -33,6 +33,51 @@ tmux_q() {
     tmux -u "$@"
   fi
 }
+# A client can outlive the tab it was opened for. code-server's pty host keeps
+# the pty open after the browser side of it goes away, so the tmux client stays
+# attached and simply stops draining: measured on this workspace's live server,
+# 7 of its 9 clients received 0 bytes across a 4 s window of continuous pane
+# output while the 2 tabs actually on screen each received all 12858 of them,
+# and the quiet ones had reported no input for 30 minutes to 36 hours. Nothing
+# in the browser shows such a client, and each one still holds its session's
+# session_attached at 1 -- which is the entire reuse decision below. So a
+# folder whose tab was closed this morning never rejoins again: every later
+# terminal reads "someone is watching", takes the numbered-sibling branch, and
+# raises a fresh session beside the one it should have walked back into.
+# Detach the clients that stopped being a viewer before the snapshot is taken,
+# so the snapshot answers who is really looking. Scoped to this folder's own
+# sessions, bounded like every other call here, and a client whose activity tmux
+# never filled in is left alone. The grace is the one variable: 6 hours clears a
+# lunch and a meeting and stays well under the quietest client the measurement
+# above found. Set EVO_TMUX_STALE_AFTER (seconds) to move it.
+now=$(date +%s 2>/dev/null || true)
+case "${now}" in '' | *[!0-9]*) now=0 ;; esac
+stale_grace=${EVO_TMUX_STALE_AFTER:-21600}
+case "${stale_grace}" in '' | *[!0-9]*) stale_grace=21600 ;; esac
+if [ "${now}" -gt 0 ]; then
+  # Target by tty, not pid: this tmux (3.4) answers detach-client -t for a
+  # client's tty path and refuses a pid with "can't find client", and it has no
+  # kill-client at all. The tty is fixed-width and carries no spaces, so it can
+  # sit in a field; the session name goes last and is recovered by offset,
+  # because a folder name may hold spaces and a name read as a field would be
+  # only its first word -- which would make the sweep match nothing and do
+  # nothing at all, the same trap folders() below avoids. Requiring the tty to
+  # be a /dev/ path also keeps a control client (tmux -C, no tty) out of reach.
+  client_rows=$(tmux_q list-clients -F '#{client_activity} #{client_tty} #{session_name}' 2>/dev/null)
+  if [ -n "${client_rows}" ]; then
+    printf '%s\n' "${client_rows}" |
+      awk -v p="$session" -v now="$now" -v grace="$stale_grace" '
+        { name = substr($0, length($1) + length($2) + 3) }
+        (name == p || index(name, p "-") == 1) &&
+        $1 ~ /^[0-9]+$/ && $1 > 0 && $2 ~ /^\/dev\// &&
+        (now - $1) > grace { print $2 }
+      ' |
+      while read -r stale_tty; do
+        [ -n "${stale_tty}" ] || continue
+        tmux_q detach-client -t "${stale_tty}" >/dev/null 2>&1
+      done
+  fi
+fi
 # One snapshot decides everything below. Three separate queries would let a tab
 # that attaches between them answer "nothing is attached" and "here is an
 # attached one" from different worlds, and a scan that times out answers with
@@ -50,15 +95,22 @@ while [ "${attempt}" -lt 2 ]; do
   fi
 done
 folders() {
+  # The name is recovered by offset rather than as field 2 for the same reason
+  # the client sweep above does it that way: a folder may hold spaces, and a
+  # name read as a field would be only its first word, which makes the folder
+  # look like it has no sessions at all and raises a new one every tab.
   printf '%s\n' "${scan}" |
-    awk -v p="$session" '($2 == p || index($2, p "-") == 1) {print $1, $2}'
+    awk -v p="$session" '
+      { name = substr($0, length($1) + 2) }
+      (name == p || index(name, p "-") == 1) { print $1, name }
+    '
 }
 existing=""
 if [ "${scan_ok}" = "1" ]; then
   if [ -z "$(folders | awk '$1 != 0')" ]; then
-    existing=$(folders | head -n 1 | cut -d' ' -f2)
+    existing=$(folders | head -n 1 | cut -d' ' -f2-)
   else
-    existing=$(folders | awk '$1 == 0' | head -n 1 | cut -d' ' -f2)
+    existing=$(folders | awk '$1 == 0' | head -n 1 | cut -d' ' -f2-)
   fi
 fi
 # Every target below carries tmux's "=" exact-match prefix: a bare target-name
