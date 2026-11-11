@@ -69,13 +69,35 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 - One pane per visible terminal is what that rule buys. Clients attached to one
   tmux session share that session's current window, so a design that always
   reattaches makes every extra browser tab a mirror of the same pane: another
-  full xterm.js in the Chrome tab re-parsing the same stream (each with a
-  scrollback buffer preallocated from `terminal.integrated.scrollback`), another
-  per-client encode in the tmux server, and a re-wrap repaint for every client
-  each time any client activates or resizes. Measured on this workspace: 14
-  attached clients against 2 real panes. Two terminals opening in the same
-  instant can still land on one session - that same mirror, and rarer than a
-  keystroke.
+  full xterm.js in the Chrome tab re-parsing the same stream (each holding a
+  line-slot array sized from `terminal.integrated.scrollback`, with the cell
+  data allocated per line as output arrives), another per-client encode in the
+  tmux server, and a re-wrap repaint for every client each time any client
+  activates or resizes. Measured on this workspace: 14 attached clients against
+  2 real panes. Two terminals opening in the same instant can still land on one
+  session - that same mirror, and rarer than a keystroke.
+- **An attached client is not the same thing as a viewer.** code-server's pty
+  host keeps the pty open after the browser side of a tab goes away, so the tmux
+  client stays attached, keeps its session's `session_attached` at 1, and
+  receives nothing at all. Measured on this workspace's live server: 7 of its 9
+  clients received 0 bytes across a 4 s window of continuous pane output while
+  the 2 tabs actually on screen each received all 12858 of them, and the quiet
+  ones had reported no input for 30 minutes to 36 hours. That number is the
+  whole reuse decision in the attach helper, so one of these is enough to make a
+  free session look watched forever, and the folder pays a new session for every
+  later tab. Both helpers now sweep their own sessions for a client that has been
+  quiet past a 6 h grace before they read the snapshot;
+  `EVO_TMUX_STALE_AFTER` (seconds) moves the number. Seeing the state yourself:
+
+  ```sh
+  # Two reads a few seconds apart: a client whose written count does not move
+  # while its pane produces output has stopped being a viewer.
+  tmux list-clients -F '#{client_activity} #{client_written} #{client_tty} #{session_name}'
+  ```
+
+  Detaching one needs its tty: this tmux 3.4 answers `detach-client -t` for a
+  `/dev/pts/…` path, refuses a pid with `can't find client`, and has no
+  `kill-client` command at all.
 - **Grok Build** keeps its own session, keyed off the repository: the helper walks up
   from the terminal's folder with `git rev-parse --show-toplevel` (or uses the
   terminal's `$PWD` outside a clone), names the session `grok-build-<folder>-<hash>`
@@ -86,7 +108,11 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   feature, and the mirrors pay what mirrors pay. What the seed gives them is
   `focus-events on`, so a TUI in the pane can idle its animations while its tab
   is blurred, and `escape-time 10`, which keeps typing responsive on each of
-  them.
+  them. Two things it does borrow from the attach helper: the session is created
+  detached and attached in a second call, because the tab that brings the server
+  up is otherwise the one that can take a running agent down with it (the same
+  9-of-20 loss the helper documents), and the stale viewers above are detached on
+  the way in, which is where the 8-clients-on-one-pane count came from.
 - With no tmux (offline first boot) the helper execs a plain login shell, so the
   default terminal still opens.
 - `display_apps.web_terminal` stays **off**: it would open a shell on the agent's
@@ -220,14 +246,19 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   in the settings seed is the xterm.js buffer, which is what a plain `bash`
   profile scrolls through; tmux's `history-limit` is what `Prefix-[` walks
   inside a pane. They read 2000 and 100000 lines here, and the two numbers
-  differ on purpose because the two stores are billed differently. VS Code
-  preallocates the xterm.js buffer from the setting's value - its own
-  description warns that "as the value increases, so will the amount of
-  memory", against a VS Code default of 1000
-  ([terminalConfiguration.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts)) -
-  and xterm.js keeps 3 `Uint32` words per column per line
+  differ on purpose because the two stores are billed differently. What VS Code
+  preallocates from the setting is the buffer's array of line slots - xterm.js
+  builds `new Array(rows + scrollback)` for it up front
+  ([CircularList.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/CircularList.ts),
+  [Buffer.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/Buffer.ts))
+  - and the cell data lands one `BufferLine` at a time as output arrives, at
+  3 `Uint32` words per column per line
   ([BufferLine.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/BufferLine.ts)),
-  so that cost is paid per terminal in the tab, and again per view of a pane. tmux
+  against a VS Code default of 1000
+  ([terminalConfiguration.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts)).
+  So the setting costs a pointer array per terminal in the tab either way, and
+  real memory only for the lines a pane actually emits - which is why a busy
+  build log is where a large value is felt, and an idle prompt is not. tmux
   holds its history once per pane, in the server, and every client of that pane
   shares the one buffer. Hence the split: the deep store is tmux's and the
   browser keeps a short viewport. Inside a tmux pane the client's wheel has nothing
@@ -235,8 +266,13 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   history - and the 100000 lines live behind `Prefix-[`, paid for in the server and
   not in the tab. Measured on tmux 3.4 with one pane pushed to its limit, 100000
   lines of 120-column output holds the tmux server at 381 MB RSS; the same 100000
-  lines of plain 80-column output costs 60 MB. tmux reads `history-limit` when a
-  pane is created, so an existing pane keeps the number it was born with.
+  lines of plain 80-column output costs 60 MB. The same sweep repeated at 120
+  columns came out close to linear at about 3 KB of server per history line -
+  10 MB at 2000, 35 MB at 10000, 160 MB at 50000, 308 MB at 100000 - so this is
+  the one terminal number that turns a chatty pane into real container memory,
+  and it is a deliberate trade: the deep store is what lets `Prefix-[` still
+  reach the start of a build. tmux reads `history-limit` when a pane is created,
+  so an existing pane keeps the number it was born with.
 
 ### `grok doctor` findings in a workspace
 

@@ -838,28 +838,35 @@ echo "NO_COLOR=[${NO_COLOR-unset}]"         # set inside an agent tool command o
 
 ### `The terminal process "/bin/bash '-lc', 'exec "$HOME/.grok/bin/grok-build-terminal"'" terminated with exit code: 1` -> something closed the tmux session under the tab
 
-- Cause: that profile ends in `exec tmux new-session -A`, and tmux exits 1 whenever it
-  refuses. When a running agent meets it, the usual cause is the agent's own cleanup
-  sweep - `tmux kill-server`, `tmux kill-session`, `pkill -f tmux` - closing the session
-  the agent is typing in. The tab's process is that session's client, so the command
-  takes the agent, its tool call and the in-flight reply down together.
+- Cause: the profile asks tmux questions before it hands the tab to anything, and tmux
+  exits 1 whenever it refuses. When a running agent meets it, the usual cause is the
+  agent's own cleanup sweep - `tmux kill-server`, `tmux kill-session`, `pkill -f tmux` -
+  closing the session the agent is typing in. The tab's process is that session's
+  client, so the command takes the agent, its tool call and the in-flight reply down
+  together.
 - Other refusals answer with the same exit code: `sessions should be nested with care`
   (a `TMUX` the tab inherited), `open terminal failed: not a terminal`, and `-c <dir>`
   naming a directory that is gone.
+- What the seed does about it, in the payload itself: the profile creates its session
+  detached and attaches in a second call, so the tab that brings the server up is not
+  the one whose close can take a running agent with it; every control call is bounded
+  by `timeout`; and a create or attach that still fails lands the tab in a plain login
+  shell rather than in VS Code's terminated-process message. So the message above names
+  tmux itself failing, not the profile's logic. Confirm with:
 
 ```sh
 tmux ls                                         # what survived
-tmux new-session -A -s probe; echo "exit=$?"    # replay the helper's exec by hand
+tmux new-session -d -s probe && tmux attach -t probe; echo "exit=$?"   # replay the shape
 ```
 
 - What the stack does about it: both config twins deny the self-teardown family, so an
   agent's `kill-server`, `kill-session` or `pkill*tmux` is refused before it runs. The
   `[permission]` bullets in [grok-build-and-agents.md](grok-build-and-agents.md) carry
   the whole list and what an agent uses instead.
-- Reaching a shell once the sessions are gone: pick the **bash** profile from the
-  terminal dropdown, which opens a shell no helper mediates. Then reseed from a host
-  shell (`bazelisk run //scripts:update-configs -- workspace`) and restart the workspace,
-  which is what re-renders its `~/.grok/config.toml`.
+- Reaching a shell once the sessions are gone: the profile does it for you now, and the
+  **bash** profile in the terminal dropdown remains the route that no helper mediates.
+  Then reseed from a host shell (`bazelisk run //scripts:update-configs -- workspace`)
+  and restart the workspace, which is what re-renders its `~/.grok/config.toml`.
 
 ### `docker` -> `command not found` inside a workspace -> an older image, or the wrong preset
 
@@ -1219,21 +1226,35 @@ toast tells you to do.
 ### VS Code Web tab in Chrome creeps to gigabytes, or freezes now and then -> every tab was another mirror of one pane
 
 Cause: each client attached to a tmux session is a full xterm.js in its own
-Chrome tab re-parsing the same stream, each with a scrollback buffer
-preallocated from `terminal.integrated.scrollback` (VS Code preallocates the
-buffer from the value, and xterm.js keeps 3 `Uint32` words per column per
-line), plus a per-client encode in the tmux server and a re-wrap repaint for
-every client each time any of them activates or resizes. Count the clients
-against the panes:
+Chrome tab re-parsing the same stream, each holding a line-slot array sized
+from `terminal.integrated.scrollback`, plus a per-client encode in the tmux
+server and a re-wrap repaint for every client each time any of them activates
+or resizes. Two of those three only apply to a client that is actually being
+read: measured on this workspace, 7 of 9 attached clients received 0 bytes over
+a 4 s window in which the pane produced 12858, because code-server's pty host
+keeps the pty open after the browser side of the tab goes away and nothing
+drains it any more. Those clients still cost the server a render pass and still
+hold `session_attached` at 1, which is what breaks the rejoin. Count the clients
+against the panes, and count what each one is taking in:
 
 ```sh
 tmux list-clients
 tmux list-sessions -F '#{session_name} attached=#{session_attached}'
+# twice, a few seconds apart, while a pane is producing output: a client whose
+# written count never moves has stopped being a viewer
+tmux list-clients -F '#{client_activity} #{client_written} #{client_tty} #{session_name}'
 ```
 
-More clients than you have visible terminals means the tabs are mirrors.
+More clients than you have visible terminals means the tabs are mirrors, and a
+client whose `#{client_written}` stands still while its pane is busy is a tab
+whose browser side is already gone.
 
-Fix: the seed keeps one pane per visible terminal. `vscode-terminal-tmux`
+Fix: the seed keeps one pane per visible terminal, and both launchers sweep their own
+sessions for a client that has reported no activity past a 6 h grace before they read
+`session_attached` - `EVO_TMUX_STALE_AFTER` (seconds) moves the
+number. tmux 3.4 only lets you detach by the client's tty path
+(`detach-client -t /dev/pts/N`): it refuses a pid with `can't find client` and
+has no `kill-client`. `vscode-terminal-tmux`
 reattaches a folder's session only while nothing is attached to it, and opens a
 numbered sibling (`vscode-<folder>-<hash>-2`, `-3`, ...) beside live ones, so an
 extra tab is a new pane rather than a mirror. Every session target in that
