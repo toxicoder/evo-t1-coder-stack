@@ -60,8 +60,12 @@
 
 - datetime:
     text_size: md
+    # `format` is spread straight into Intl.DateTimeFormat, so both styles
+    # render: date first, then the 24-hour time. A dashboard left up on a
+    # second monitor needs the date: uptime alone does not say what day it is.
     format:
       timeStyle: short
+      dateStyle: medium
       hourCycle: h23
 
 - openmeteo:
@@ -71,6 +75,14 @@
     units: metric
     cache: 10
 
+# The header search asks the box's own SearXNG, the same instance the agents
+# and Hermes dial and the Search card above reports on. v2.4.0 has no SearXNG
+# provider and no {{query}} token: `provider: custom` opens `<url>` with the
+# encoded query appended, so the URL has to end at `?q=`. Only the first
+# `search` entry renders, and it wins over any settings.yaml quicklaunch block.
+# To hand the box back to a public engine, replace both keys with
+# `provider: duckduckgo`.
 - search:
-    provider: duckduckgo
+    provider: custom
+    url: "{{HOMEPAGE_VAR_SEARCH_URL}}/search?q="
     target: _blank

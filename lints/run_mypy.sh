@@ -39,6 +39,7 @@ targets=(
   scripts/lib
   tests/bazel_deps.py
   tests/extract_fn.py
+  tests/homepage_config_check.py
   tests/owned_files_check.py
   tests/coverage
   tests/python

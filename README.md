@@ -854,9 +854,10 @@ Details, including how to reset it: [docs/dashboard.md](docs/dashboard.md).
 
 The [Homepage](https://gethomepage.dev) dashboard is the landing page: a card per
 service with live status from each service's own API (Coder version, LiteLLM health and
-alias count, Ollama version), plus a header of boxed tiles - host CPU, memory, CPU
-temperature, disk, `eth0` throughput - beside the clock, local weather (open-meteo,
-keyless) and a DuckDuckGo search.
+alias count, Ollama version, SearXNG release and limiter state), plus a header of boxed
+tiles - host CPU, memory, CPU temperature, disk, `eth0` throughput - beside the clock
+(date and 24-hour time), local weather (open-meteo, keyless) and a search box that asks
+the stack's own SearXNG, the same instance the workspace agents and Hermes dial.
 
 - **URL:** `https://<host>/` - self-signed cert, so expect a one-time browser warning;
   port 80 redirects to HTTPS.

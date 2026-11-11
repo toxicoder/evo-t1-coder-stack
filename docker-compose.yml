@@ -414,6 +414,12 @@ services:
       HOMEPAGE_VAR_LITELLM_URL: ${STACK_LITELLM_URL:-http://${STACK_LAN_HOST:-localhost}:${LITELLM_PORT:-4000}}
       HOMEPAGE_VAR_KASM_URL: ${STACK_KASM_URL:-https://${STACK_LAN_HOST:-localhost}:${KASM_UI_PORT:-4443}}
       HOMEPAGE_VAR_HERMES_URL: ${STACK_HERMES_URL:-http://${STACK_LAN_HOST:-localhost}:${HERMES_DASHBOARD_PORT:-9119}}
+      # Browser URL for the Search card and the header search box. The router
+      # has no search vhost (scripts/lib/domain.sh composes names for dashboard,
+      # coder, kasm, litellm and hermes only), so unlike the four above this one
+      # has no public name to fall to: it stays LAN unless STACK_SEARCH_URL says
+      # otherwise. Remote users get the card's status either way.
+      HOMEPAGE_VAR_SEARCH_URL: ${STACK_SEARCH_URL:-http://${STACK_LAN_HOST:-localhost}:${STACK_SEARCH_PORT:-8181}}
       HOMEPAGE_VAR_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
       # The agent backend lives off-box on the LAN, so compose DNS does not
       # apply: the same LAN URL serves both the browser href and the server-side

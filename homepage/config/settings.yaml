@@ -35,6 +35,16 @@
 # hideVersion drops the footer version string; disableUpdateCheck drops the
 # outbound GitHub /api/releases request the update notice would make.
 #
+# favicon replaces the stock homepage tab icon. It has to come from /icons/ for
+# the same reason the wallpaper does: the auth middleware exempts only that path
+# from the sign-in redirect, so it is the one place a pre-login page can load
+# from.
+#
+# disableIndexing serves /robots.txt with `User-agent: *` / `Disallow: /`; it is
+# the whole mechanism, there is no robots meta tag in the page. Cheap insurance
+# for the case where STACK_PUBLIC_HOSTS gives the dashboard a public name: the
+# page sits behind a password, but its paths should not reach a crawler either.
+#
 # A group listed with `style: row` becomes a full-width band with its cards side
 # by side; a group listed without it keeps the default narrow column. Keys must
 # match group names in services.yaml / bookmarks.yaml exactly, including case.
@@ -45,6 +55,8 @@ title: EVO-T1 Coder Stack
 theme: dark
 color: slate
 iconStyle: theme
+favicon: /icons/evo-t1.svg
+disableIndexing: true
 
 background:
   image: /icons/background.webp
