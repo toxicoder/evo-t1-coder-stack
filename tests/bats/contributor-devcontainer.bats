@@ -186,7 +186,7 @@ bazelrc_blocks() {
   extensions="$(dc_get customizations.vscode.extensions)"
   local extension
   for extension in timonwong.shellcheck foxundermoon.shell-format bazelbuild.vscode-bazel \
-    hashicorp.terraform redhat.vscode-yaml ms-python.python golang.go; do
+    hashicorp.terraform redhat.vscode-yaml ms-python.python; do
     [[ "${extensions}" == *"${extension}"* ]] || {
       printf 'FAIL: extension %s is missing\n' "${extension}" >&2
       return 1

@@ -68,18 +68,18 @@ Command Palette → Dev Containers: Reopen in Container
 
 | Key | Value | Why |
 | --- | --- | --- |
-| `build.context` / `build.dockerfile` | `../images/dev` / `Dockerfile` | The same Dockerfile the workspace and CI use; `ARG` defaults are the pins, so no build args are needed. |
+| `build.context` / `build.dockerfile` | `../images/dev` / `Dockerfile` | The Dockerfile the Coder workspaces boot and CI builds; `ARG` defaults are the pins, so no build args are needed. |
 | `build.cacheFrom` | `ghcr.io/toxicoder/evo-t1-coder-stack/evo-t1-dev:latest` | Seeds BuildKit's layer cache from the image CI publishes on every merge to `main`, so a fresh clone pulls finished layers. An unreachable registry is a buildx warning, not a failed build. |
 | `remoteUser` | `coder` | uid/gid 1000, bash as its login shell — the user the Coder agent runs as. |
 | `updateRemoteUserUID` | `true` | The container's `coder` uid matches the host user's, so the bind-mounted checkout stays writable without a `chmod` dance. |
 | `containerEnv` / `remoteEnv` | `EVO_T1_DEVCONTAINER=1` | The marker that says *contributor container*, not Coder workspace. Also carries `SEARXNG_URL`, `EVO_T1_BAZEL_CACHE_ROOT`, and the `BAZELISK_HOME` / `NPM_CONFIG_CACHE` / `UV_CACHE_DIR` / `PIP_CACHE_DIR` download dirs. |
-| `mounts` | `/var/run/docker.sock` + four named volumes | The socket is the workstation's own daemon, which is how a `docker run` inside it is a real one. The volumes are Bazel's disk, repository and output caches plus the package-manager download cache; see [The cache seam](#the-cache-seam). |
-| `runArgs` | `--add-host=host.docker.internal:host-gateway`, `--ulimit nofile=1048576` | Reaches LiteLLM on `:4000` and SearXNG on `:8181` on the laptop; the Bazel sandbox and the Next dev server both want more than Docker's 1024 default. |
+| `mounts` | `/var/run/docker.sock` + four named volumes | The socket is the workstation's own daemon, which is how a `docker run` inside it is a real one. The volumes are Bazel's disk, repository and output caches plus the package-manager download cache; see [The cache seam](#the-cache-seam). A host whose daemon is not on that path (a remote or TCP `DOCKER_HOST`, or a Docker Desktop with no `/var/run/docker.sock` compatibility symlink) drops that one entry: the build, the seed and every gate work without it, and only `docker` commands in here lose their daemon. |
+| `runArgs` | `--add-host=host.docker.internal:host-gateway`, `--ulimit nofile=1048576` | Reaches LiteLLM on `:4000` and SearXNG on `:8181` on the laptop; the Bazel sandbox and the Next dev server both want more file descriptors than the 1024 soft limit Docker gives a container. |
 | `forwardPorts` | `3000` | `bazelisk run //docs-site:dev` serves the docs site there. |
 | `hostRequirements` | 4 cpus, 8 GB, 32 GB | Advisory floor for the gate and a Next build (the devcontainer CLI and Codespaces enforce it, an editor warns). |
 | `postCreateCommand` | `bash .devcontainer/library-scripts/configure.sh create` | One idempotent script: the cache seam, the seed, the git hooks, the socket ACL, then the background warm-up. |
 | `postStartCommand` | `bash .devcontainer/library-scripts/configure.sh start` | Runs on every start, not just the first: cheap checks, the socket ACL again (host-side perms change), and a warm-up a previous start skipped. |
-| `customizations.vscode.extensions` | Bazel, shellcheck, shell-format, Terraform, Docker, YAML, Python, Ruff, Go, Tailwind, Even Better TOML | shellcheck and shfmt are the two `//:lint` runners, wired into the editor beside the Terraform, Docker, YAML, Python, Go and Tailwind helpers the tree actually holds. |
+| `customizations.vscode.extensions` | Bazel, shellcheck, shell-format, Terraform, Docker, YAML, Python, Ruff, Tailwind | shellcheck and shfmt are the two `//:lint` runners, wired into the editor beside the Terraform, Docker, YAML, Python and Tailwind helpers this tree holds. Nothing else is installed: the list is the languages under `git ls-files`, because every extension is a download at container start. |
 
 `customizations.vscode.settings` carries container-scoped settings only: the
 formatter and linter paths and flags, the `bazel-*` and `node_modules` watcher

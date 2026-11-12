@@ -53,9 +53,7 @@
         "redhat.vscode-yaml",
         "ms-python.python",
         "charliermarsh.ruff",
-        "golang.go",
-        "bradlc.vscode-tailwindcss",
-        "tamasfe.even-better-toml"
+        "bradlc.vscode-tailwindcss"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "tmux",
