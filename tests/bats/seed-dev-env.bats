@@ -752,8 +752,18 @@ assert_contributor_home() {
   # The dev container is the laptop/CI twin of a workspace, and a workspace gets
   # the context7 docs lane by default. Without the flag the home is seeded
   # context7-free unless the environment happens to carry a key, which is how a
-  # contributor ends up with a lane their workspaces have.
-  run grep -o 'seed-dev-env\.sh[^"]*' "${dc}"
+  # contributor ends up with a lane their workspaces have. postCreate runs one
+  # idempotent setup script rather than the seeder directly, so follow that hop
+  # and assert on the line that actually invokes it.
+  local post_create invoked
+  post_create="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("postCreateCommand",""))' "${dc}")"
+  [ -n "${post_create}" ] || fail "postCreateCommand is absent from devcontainer.json"
+  invoked="$(printf '%s\n' "${post_create}" | grep -o '[^[:space:]]*\.sh' | head -1)"
+  [ -n "${invoked}" ] || fail "postCreateCommand names no script: ${post_create}"
+  invoked="${invoked#./}"
+  [ -f "${REPO_ROOT}/${invoked}" ] || fail "postCreateCommand runs a missing script: ${invoked}"
+
+  run grep -o 'seed-dev-env\.sh[^"]*' "${REPO_ROOT}/${invoked}"
   [ "${status}" -eq 0 ]
   assert_match "postCreate seeds the home" 'seed-dev-env\.sh' "${output}"
   assert_match "as a devcontainer" '\-\-devcontainer' "${output}"

@@ -215,6 +215,15 @@ _SUITE_PAYLOAD = {
     # itself; the CLI under test reads no payload file, so nothing is declared.
     "coder-sessions.bats": [],
     "common.bats": [],
+    # The contributor container and the two things it must keep true: the mounts
+    # it declares are the caches configure.sh points Bazel at, and its postCreate
+    # steps are idempotent. :githooks is the payload the fixture copies so the
+    # hooks-install branch reads the same files the pre-commit gate runs.
+    "contributor-devcontainer.bats": [
+        "//:devcontainer",
+        "//:githooks",
+        "//images/dev:context",
+    ],
     "dashboard-password.bats": [],
     "dev-stack.bats": [
         "//homepage:payload",
@@ -447,6 +456,14 @@ _SUITE_PAYLOAD = {
 
 # Pairings the source scan cannot derive in either direction, each with its reason.
 _SUITE_PAYLOAD_ALLOW = {
+    # make_fixture builds a throwaway checkout to aim configure.sh at, and the
+    # hooks-install branch runs scripts/install-hooks.sh inside it, so the CLI and
+    # the lib it sources have to be in runfiles. Neither path appears in the suite
+    # as a token: the suite names the container files, and the CLI is reached
+    # through the configure script it copies in.
+    "contributor-devcontainer.bats": [
+        "//scripts:shell_sources",
+    ],
     # It dials nothing: `searxng:8181` appears only as a value written into a
     # scratch container-environment fixture, which the web-lane check reads back
     # out of a stubbed `docker inspect`. The suite never opens searxng/settings.yml.
