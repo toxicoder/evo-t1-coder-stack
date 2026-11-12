@@ -190,18 +190,22 @@ proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.m
   in `images/dev/tool-versions.env` is the dependency update and needs no container edit; a
   new *gate* tool goes into the image plus its pin, a contributor-only convenience goes into
   `library-scripts/configure.sh`, and nothing contributor-only goes into the image (it is
-  shared with Coder workspaces and CI). The editor formatter flags in `customizations.vscode`
-  equal the flags the gate runs (`shellcheck -x --severity=warning`, `shfmt -s -i 2 -ci`);
+  shared with Coder workspaces and CI). The editor lint and format pins in
+  `customizations.vscode` (`shellcheck.executablePath` + `shellcheck.customArgs`,
+  `shellformat.path` + `shellformat.flag`) carry the gate's own flags and must belong
+  to an extension the config installs — `bashIde.*` configures a different shellcheck
+  extension and is inert;
   the `mounts` volumes and the block `configure.sh` writes into `~/.bazelrc` move together on
   the shared `EVO_T1_BAZEL_CACHE_ROOT` — that pairing is the build-efficiency seam, since
   Bazel's disk, repository and output caches live in named volumes while `$HOME` dies with
   the container; and a new top-level directory of shell joins the
   `lints/run_shellcheck.sh` / `lints/run_shfmt.sh` / `fix.sh` scan sets and `lints/BUILD.bazel`
   (`.devcontainer` is already in all four). `//:devcontainer` ships the whole directory, and
-  `bazelisk test //tests:bats_contributor_devcontainer_test` reads the JSON as data and drives
-  `configure.sh` against a fixture, so a renamed mount target, a missing
-  `EVO_T1_DEVCONTAINER` marker, or a formatter flag that drifted from the gate is a failing
-  test rather than a cold cache on someone's laptop. Keep `contributor-env` tracked.
+  `bazelisk test //tests:bats_contributor_devcontainer_test` reads the JSON as data, reads the
+  lint flags out of the two runners instead of repeating them, and drives `configure.sh`
+  against a fixture, so a renamed mount target, a missing `EVO_T1_DEVCONTAINER` marker, or a
+  lint pin that drifted from the gate is a failing test rather than a cold cache on someone's
+  laptop. Keep `contributor-env` tracked.
 - `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys: `proxy/router.conf.template` is the source, `proxy/router.conf` is its render under the shipped defaults, and `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`. Edit the naming parts, never a rendered conf. A new top-level payload directory is invisible to `test-fast` and `lint` until it is added to `//:stack_data` (a new `scripts/*.sh` needs no filegroup edit — the `shell_sources` glob picks it up, and it instead needs a key in `_SCRIPT_LIBS` or `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than quietly inheriting the world; `//scripts:doc_sources` is the union of those sources), and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, `hermes/config.yaml`, and `searxng/settings.yml`.
 - Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
 - The project scaffold `scripts/new-repo.sh` renders is its own repository (`toxicoder/ezrepo`

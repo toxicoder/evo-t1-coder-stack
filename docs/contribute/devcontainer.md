@@ -78,14 +78,17 @@ Command Palette → Dev Containers: Reopen in Container
 | `forwardPorts` | `3000` | `bazelisk run //docs-site:dev` serves the docs site there. |
 | `hostRequirements` | 4 cpus, 8 GB, 32 GB | Advisory floor for the gate and a Next build (the devcontainer CLI and Codespaces enforce it, an editor warns). |
 | `postCreateCommand` | `bash .devcontainer/library-scripts/configure.sh create` | One idempotent script: the cache seam, the seed, the git hooks, the socket ACL, then the background warm-up. |
-| `postStartCommand` | `bash .devcontainer/library-scripts/configure.sh start` | Runs on every start, not just the first: cheap checks, the socket ACL again (host-side perms change), and a warm-up a previous start skipped. |
+| `postStartCommand` | `bash .devcontainer/library-scripts/configure.sh start` | Runs on every start, not just the first: cheap checks, the socket ACL again (host-side perms change), and a warm-up a previous start skipped or failed. |
 | `customizations.vscode.extensions` | Bazel, shellcheck, shell-format, Terraform, Docker, YAML, Python, Ruff, Tailwind | shellcheck and shfmt are the two `//:lint` runners, wired into the editor beside the Terraform, Docker, YAML, Python and Tailwind helpers this tree holds. Nothing else is installed: the list is the languages under `git ls-files`, because every extension is a download at container start. |
 
-`customizations.vscode.settings` carries container-scoped settings only: the
-formatter and linter paths and flags, the `bazel-*` and `node_modules` watcher
-excludes, and `git.branchProtection` for `main`. Editor taste (theme, minimap,
-word wrap) still arrives from `seed-dev-env.sh` through
-`~/.shared/vscode/settings.json`, so the two never fight.
+`customizations.vscode.settings` carries container-scoped settings only: the two
+lint-and-format tool pins (`shellcheck.executablePath` with
+`shellcheck.customArgs`, `shellformat.path` with `shellformat.flag`), the
+`bazel-*` and `node_modules` watcher excludes, and `git.branchProtection` for
+`main`. Each key belongs to an extension the row above installs, which is what
+makes the pin do something. Editor taste (theme, minimap, word wrap) still
+arrives from `seed-dev-env.sh` through `~/.shared/vscode/settings.json`, so the
+two never fight.
 
 Nothing in this table belongs in the image. `images/dev/Dockerfile` is shared with
 the Coder workspaces and the CI gate, so it carries the toolchain and stays
@@ -121,7 +124,9 @@ so the mount targets and the block move together, and
 `bazelisk test //tests:bats_contributor_devcontainer_test` fails if they drift.
 
 Docker creates a named volume once and reuses it, so the caches survive recreations
-until you deliberately drop them:
+until you deliberately drop them. The volumes belong to the host's daemon, so a host
+shell is the reliable place to run this: from inside the container the same commands
+work only while the config's socket mount is in place.
 
 ```sh
 docker volume ls --filter name=evo-t1-dev-
@@ -138,7 +143,9 @@ the Dev Containers CLI's teardown of the postCreate process group does not take 
 with it). It runs `bazelisk test //:test-fast` and then `bazelisk run
 //docs-site:install`, which is where a cold container actually spends its time: the
 Bazelisk download, every `MODULE.bazel` fetch, and the site's `npm ci`. The editor is
-usable the whole time; the first real gate run then reads a warm cache.
+usable the whole time; the first real gate run then reads a warm cache. A warm-up that
+did not finish is not skipped forever: `postStartCommand` re-runs it whenever the status
+file still says `failed: <step>`, and only an `ok` one is left alone.
 
 ```sh
 tail -f /tmp/evo-t1-warmup.log
@@ -161,7 +168,7 @@ These are the moments that oblige a contributor to touch it, and each has a gate
 | --- | --- |
 | A pin moves or is added in `images/dev/tool-versions.env` | The matching `ARG` in `images/dev/Dockerfile`, or `bazelisk run //scripts:build-dev-image` refuses the build. `build.cacheFrom` keeps the rebuild cheap. |
 | A gate gains a tool (`//:lint`, `//:validate`, a coverage target) | The tool belongs in the image and its pins in `tool-versions.env`; a container-only convenience belongs in `configure.sh`, never in the image. |
-| A new language or lint runner appears | The extension and its formatter path and flags in `customizations.vscode`, set to the exact binary and flags the gate runs, so save-time formatting cannot fight `//:lint`. |
+| A new language or lint runner appears | The extension and its formatter path and flags in `customizations.vscode` (`shellcheck.executablePath` + `shellcheck.customArgs`, `shellformat.path` + `shellformat.flag`), set to the exact binary and flags the gate runs - the Bats suite reads those flags out of `lints/run_shellcheck.sh` and `lints/run_shfmt.sh` rather than repeating them, so a gate change goes red here, and `//lints:runners` stays declared for that suite in `_SUITE_PAYLOAD_ALLOW` (`tests/BUILD.bazel`) or the comparison loses the files it reads. Keys must belong to an extension the config actually installs: `bashIde.*` configures a different shellcheck extension and is inert here. |
 | A new top-level payload directory of shell | `lints/run_shellcheck.sh`, `lints/run_shfmt.sh` and `fix.sh` scan sets, plus the matching entry in `lints/BUILD.bazel`. `.devcontainer` joined all three; a fourth directory is a one-line change to each. |
 | A new contributor-facing env var | `containerEnv` (and `remoteEnv` when a VS Code terminal or task must see it), never a shell profile the image writes. |
 | A new cache worth keeping across recreations | A named volume in `mounts`, a download-cache env var pointed inside it, and the path asserted in the Bats suite. |
@@ -299,6 +306,11 @@ That is the host ingress: it `docker run`s `evo-t1-dev:latest` as this process's
 and a name for a uid the image passwd file does not list, and runs the same suites CI
 runs. A macOS laptop gets the Linux result without a Linux box. Build the tag first with
 `bazelisk run //scripts:build-dev-image` if the daemon does not have it.
+
+Typed *inside* the contributor container that same target touches no docker:
+`EVO_T1_DEVCONTAINER=1` tells it this environment already is the golden image, so it
+execs `bazelisk` in place. The command is the same on both sides of the seam, and a
+container never nests inside itself.
 
 Native `bazelisk test` on macOS is a convenience, not a merge path. The suites run there,
 but the BSD userland differs from the GNU one the image ships (`sed`, `date`, `find`,
