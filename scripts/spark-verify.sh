@@ -190,17 +190,19 @@ if [ "${#hosts[@]}" -eq 0 ]; then
     done
   else
     # No host list from the caller: check the fleet this checkout already points at.
-    # The per-Spark URL keys in .env name its addresses as far as the stack is
-    # concerned — LiteLLM routes to the SPARKn_OPENAI_URL ones and the dashboard
-    # probes them — so the host part of each (scheme and port stripped, deduplicated)
-    # becomes the default list. A .env filled with real Spark IPs therefore gets
-    # those boxes checked with nothing to retype; a .env left on the shipped
-    # spark-<n>.lan placeholders (or with no Spark URLs at all) still checks the
+    # The SPARKn_HOST keys in .env name its addresses as far as the stack is
+    # concerned — docker-compose.yml composes every Spark URL from them, so the
+    # LiteLLM deployments, the dashboard cards and these probes all read the
+    # same three names. The host part of each SPARKn_OLLAMA_URL /
+    # SPARKn_OPENAI_URL key (scheme and port stripped, deduplicated) joins them,
+    # which is how a .env that names a box only in a URL still gets it checked.
+    # A .env left on the shipped spark-<n>.lan placeholders still checks the
     # placeholder trio, whose names do not resolve — checked and skipped as a
     # "not yet" state, exactly as before.
     derived_hosts=""
     if [ -f .env ]; then
-      for key in SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
+      for key in SPARK1_HOST SPARK2_HOST SPARK3_HOST \
+        SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
         url="$(sed -n "s|^${key}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' | tr -d ' \r' || true)"
         [ -n "${url}" ] || continue
         host="$(printf '%s' "${url}" | sed -E 's|^https?://||; s|[:/].*$||')"
@@ -210,12 +212,12 @@ if [ "${#hosts[@]}" -eq 0 ]; then
       done
     fi
     if [ -n "${derived_hosts}" ]; then
-      log "note: no host given and SPARK_HOSTS is not set or empty — checking the hosts named by the SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL keys in .env:${derived_hosts}"
+      log "note: no host given and SPARK_HOSTS is not set or empty — checking the hosts named by the SPARKn_HOST keys (and any SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL) in .env:${derived_hosts}"
       for host in ${derived_hosts}; do
         hosts+=("${host}")
       done
     else
-      log 'note: no host given and SPARK_HOSTS is not set or empty, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample and docker-compose.yml also ship as placeholders. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
+      log 'note: no host given and SPARK_HOSTS is not set or empty, and no SPARKn_HOST or SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample ships as the value of SPARKn_HOST. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
       hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
     fi
   fi
@@ -482,12 +484,14 @@ for host in ${hosts[@]+"${hosts[@]}"}; do
     printf 'requests_running=%s\n' "${requests_running}"
     printf 'context_length=%s\n' "${context_length}"
   } >>"${facts}"
-  # The three proxy-side URLs come from .env.sample / docker-compose.yml, not from the
-  # box: an :8888 that answers on its plain path is a V1OpenAIChatProvider deployment
-  # (chat completions), not a /v1/messages one, and the proxy would not say so.
-  printf 'spark1_openai=%s\n' "$(env_get .env SPARK1_OPENAI_URL)" >>"${facts}"
-  printf 'spark2_openai=%s\n' "$(env_get .env SPARK2_OPENAI_URL)" >>"${facts}"
-  printf 'spark3_openai=%s\n' "$(env_get .env SPARK3_OPENAI_URL)" >>"${facts}"
+  # The three proxy-side URLs are what LiteLLM is handed: an explicit
+  # SPARKn_OPENAI_URL from .env, or the URL docker-compose.yml composes from
+  # SPARKn_HOST plus SPARK_HTTP_PORT. Not from the box: an :8888 that answers on
+  # its plain path is a V1OpenAIChatProvider deployment (chat completions), not
+  # a /v1/messages one, and the proxy would not say so.
+  printf 'spark1_openai=%s\n' "$(spark_openai_url .env 1)" >>"${facts}"
+  printf 'spark2_openai=%s\n' "$(spark_openai_url .env 2)" >>"${facts}"
+  printf 'spark3_openai=%s\n' "$(spark_openai_url .env 3)" >>"${facts}"
   if [ -s "${report}" ]; then
     {
       printf 'context_pairs=%s\n' "$(report_get context_pairs "${report}")"

@@ -208,10 +208,12 @@ calls as plain text.
 
 - Look at the dashboard's **Agent backend** card first: its per-box widgets go to error
   state while `agent` still answers.
-- Probe that endpoint (the card reads the same URL, `AGENT_MODEL_URL` in `.env`):
+- Probe that endpoint. The card reads the same URL: `AGENT_MODEL_URL` from `.env` when
+  it is set, and otherwise box 2 composed from `SPARK2_HOST` plus `SPARK_HTTP_PORT`,
+  which is what `spark-verify` prints as `spark2_openai` in its `--json` facts:
 
 ```sh
-curl -sS "${AGENT_MODEL_URL:-http://spark-2.lan:8888/v1/models}" | head -c 200
+curl -sS "${AGENT_MODEL_URL:-http://${SPARK2_HOST:-localhost}:${SPARK_HTTP_PORT:-8888}/v1/models}" | head -c 200
 ```
 
 - Or check the whole fleet at once, from the checkout. `spark-verify.sh` takes `--json`

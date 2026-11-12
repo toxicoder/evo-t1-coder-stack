@@ -131,6 +131,32 @@ PY
   check_fires "${root}" monitor-network
 }
 
+# The Spark boxes are off-stack, so compose DNS cannot reach them and a hostname
+# written into docker-compose.yml names a machine nobody owns. Each box is named
+# once, by SPARKn_HOST in .env, and compose composes every URL from it.
+@test "a Spark URL that names a host in compose is a finding" {
+  local root; root="$(scratch_tree)"
+  sed -i 's|^      HOMEPAGE_VAR_SPARK1_HEALTH: .*|      HOMEPAGE_VAR_SPARK1_HEALTH: ${SPARK1_HEALTH_URL:-http://spark-off.example:8888/health}|' "${root}/docker-compose.yml"
+  check_fires "${root}" spark-host
+}
+
+@test "a Spark URL whose fallback is an address literal is a finding" {
+  local root; root="$(scratch_tree)"
+  sed -i 's|^      HOMEPAGE_VAR_AGENT_HEALTH: .*|      HOMEPAGE_VAR_AGENT_HEALTH: ${AGENT_MODEL_URL:-http://192.168.4.20:8888/v1/models}|' "${root}/docker-compose.yml"
+  check_fires "${root}" spark-host
+}
+
+@test "the Spark cards and the LiteLLM deployments read one hostname per box" {
+  # Pinned because the cards once defaulted to a spark-<n>.lan literal that no
+  # operator's .env agreed with: configure the boxes and the cards went stale.
+  local compose; compose="$(cat "${REPO_ROOT}/docker-compose.yml")"
+  assert_match "box 1 agent deployment" 'SPARK1_OPENAI_URL: \$\{SPARK1_OPENAI_URL:-http://\$\{SPARK1_HOST' "${compose}"
+  assert_match "box 1 health card" 'HOMEPAGE_VAR_SPARK1_HEALTH: \$\{SPARK1_HEALTH_URL:-http://\$\{SPARK1_HOST' "${compose}"
+  assert_match "agent card rides box 2 host" 'HOMEPAGE_VAR_AGENT_HEALTH: \$\{AGENT_MODEL_URL:-http://\$\{SPARK2_HOST' "${compose}"
+  assert_match "the ollama alias reads the host too" 'SPARK1_OLLAMA_URL: \$\{SPARK1_OLLAMA_URL:-http://\$\{SPARK1_HOST' "${compose}"
+  assert_not_match "no LAN hostname left in compose" 'spark-[123]\.lan' "${compose}"
+}
+
 @test "a block widget with more mappings than the bundle renders is a finding" {
   local root; root="$(scratch_tree)"
   python3 - "${root}/homepage/config/services.yaml" <<'PY'

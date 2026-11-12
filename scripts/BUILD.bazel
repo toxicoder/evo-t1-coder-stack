@@ -137,6 +137,7 @@ _SCRIPT_LIBS = {
         "lib/bootstrap.sh",
         "lib/common.sh",
         "lib/domain.sh",
+        "lib/spark.sh",
     ],
     "build-dev-image": [
         "lib/common.sh",
