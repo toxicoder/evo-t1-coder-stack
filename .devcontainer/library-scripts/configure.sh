@@ -110,7 +110,7 @@ run_or_report() {
 # Returns:
 #   0 always; the caller decides what a failure means
 ensure_cache_dirs() {
-  local d owner
+  local d owner create_err
   # The two roots come first: install -d gives a directory it has to create the
   # default mode, and a root-owned parent makes its leaf unwritable no matter
   # what the leaf itself is owned by.
@@ -121,13 +121,26 @@ ensure_cache_dirs() {
       phase "would create and own ${d}"
       continue
     fi
-    if ! ${SUDO:-} install -d -m 0775 "${d}"; then
-      fail_item "cannot create the cache directory ${d}"
-      continue
+    # Create unprivileged first. A uid that the host's sudo refuses - a Bazel
+    # test sandbox, an unmapped uid - must not lose the seam to a sudo that
+    # cannot even start, and the plain create is the one that succeeds there.
+    # sudo stays the fallback for a volume Docker mounted root-owned, where
+    # install -d would need the chmod it also does.
+    create_err=""
+    if ! create_err="$(install -d -m 0775 "${d}" 2>&1)"; then
+      if [ -z "${SUDO}" ] || ! ${SUDO} install -d -m 0775 "${d}" >/dev/null 2>&1; then
+        if [ -n "${create_err}" ]; then
+          note "${create_err}"
+        fi
+        fail_item "cannot create the cache directory ${d}"
+        continue
+      fi
     fi
     owner="$(stat -c %u "${d}" 2>/dev/null || printf 'none')"
     if [ "${owner}" != "$(id -u)" ]; then
-      if ! ${SUDO:-} chown "$(id -u):$(id -g)" "${d}" 2>/dev/null; then
+      if [ -n "${SUDO}" ] && ${SUDO} chown "$(id -u):$(id -g)" "${d}" >/dev/null 2>&1; then
+        ok "${d} handed to uid $(id -u)"
+      else
         warn "${d} is owned by uid ${owner}, not $(id -u); Bazel may refuse to write it"
       fi
     fi

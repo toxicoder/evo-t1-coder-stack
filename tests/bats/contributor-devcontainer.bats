@@ -229,6 +229,27 @@ bazelrc_blocks() {
   bazelrc_blocks 1
 }
 
+@test "configure: a sudo that cannot start still lays the seam" {
+  make_fixture
+  # CI runs the suite under a uid the runner's sudo refuses with "you do not
+  # exist in the passwd database". configure.sh probes for sudo before using it,
+  # so a create that needs no privilege at all must be attempted unprivileged
+  # first: a sudo that cannot start may not be the reason the seam is missing.
+  local stubs="${BATS_TEST_TMPDIR}/sudo-bin"
+  mkdir -p "${stubs}"
+  printf '%s\n' '#!/usr/bin/env bash' \
+    "printf 'sudo: you do not exist in the passwd database\\n' >&2" \
+    'exit 1' >"${stubs}/sudo"
+  chmod 755 "${stubs}/sudo"
+
+  PATH="$(with_path "${stubs}")" run_configure start
+  [ "${status}" -eq 0 ]
+  assert_not_match "no failed cache dir" 'cannot create the cache directory' "${output}"
+  [ -d "${FIXTURE}/cache/disk" ] || fail "the disk cache directory was not created"
+  assert_contains_file "the seam survived" "${FIXTURE_HOME}/.bazelrc" \
+    "^common --disk_cache=${FIXTURE}/cache/disk$"
+}
+
 @test "configure: a second start does not stack a second block" {
   make_fixture
   run_configure start
