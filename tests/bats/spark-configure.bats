@@ -51,6 +51,41 @@ source_libs() {
   [ "${SPARK_HOSTS_RESOLVED}" = "spark-1.lan spark-2.lan spark-3.lan" ]
 }
 
+# SPARKn_HOST is the key the operator sets once and the one docker-compose.yml
+# composes every Spark URL from, so the CLIs have to read it: a .env that names
+# its boxes only there still has to point the fleet at those boxes.
+@test "spark: derive_spark_hosts reads the SPARKn_HOST keys" {
+  source_libs
+  printf '%s\n' 'SPARK1_HOST=10.9.8.7' 'SPARK2_HOST=10.9.8.6' 'SPARK3_HOST=10.9.8.6' > "${BATS_TEST_TMPDIR}/.env"
+  derive_spark_hosts "${BATS_TEST_TMPDIR}/.env"
+  [ "${SPARK_HOSTS_SOURCE}" = "derived" ]
+  [ "${SPARK_HOSTS_RESOLVED}" = "10.9.8.7 10.9.8.6" ]
+}
+
+@test "spark: spark_openai_url composes the URL the proxy is handed" {
+  source_libs
+  printf '%s\n' 'SPARK2_HOST=tbox' > "${BATS_TEST_TMPDIR}/.env"
+  run spark_openai_url "${BATS_TEST_TMPDIR}/.env" 2
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "http://tbox:8888/v1" ]
+}
+
+@test "spark: spark_openai_url prefers the explicit full-URL override" {
+  source_libs
+  printf '%s\n' 'SPARK1_HOST=tbox' 'SPARK1_OPENAI_URL=https://proxy.example/v1' > "${BATS_TEST_TMPDIR}/.env"
+  run spark_openai_url "${BATS_TEST_TMPDIR}/.env" 1
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "https://proxy.example/v1" ]
+}
+
+@test "spark: spark_openai_url reports a box with no host as no URL" {
+  source_libs
+  : > "${BATS_TEST_TMPDIR}/.env"
+  run spark_openai_url "${BATS_TEST_TMPDIR}/.env" 3
+  [ "${status}" -eq 1 ]
+  [ -z "${output}" ]
+}
+
 @test "spark: probe_http treats an unanswered probe as empty, not as a pass" {
   source_libs
   x="$(probe_http 8 "http://10.255.255.1:11434/version")"

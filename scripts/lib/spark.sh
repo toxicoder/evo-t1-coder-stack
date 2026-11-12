@@ -30,12 +30,16 @@ fi
 
 # ── Knobs ────────────────────────────────────────────────────────────────────
 
-# SPARK_DEFAULT_HOSTS — the placeholder trio .env.sample and docker-compose.yml
-# also ship. These names do not resolve; they exist so an unconfigured checkout
-# still reports every host as "not yet", rather than passing silently.
+# SPARK_DEFAULT_HOSTS — the placeholder trio .env.sample ships as the value of
+# SPARK1_HOST / SPARK2_HOST / SPARK3_HOST. These names do not resolve; they exist
+# so an unconfigured checkout still reports every host as "not yet", rather than
+# passing silently.
 SPARK_DEFAULT_HOSTS="spark-1.lan spark-2.lan spark-3.lan"
 
-# SPARK_HTTP_PORT — the JupyterLab port the probe URLs use across this stack.
+# SPARK_HTTP_PORT — the TensorFold port of a Spark box: the /v1 endpoint the
+# `agent` alias routes to, the /health path the dashboard cards probe, and the
+# port both Spark CLIs use. docker-compose.yml composes every Spark URL from
+# it, so one value covers the proxy, the dashboard, and these scripts.
 SPARK_HTTP_PORT="${SPARK_HTTP_PORT:-8888}"
 
 # ── Host-list derivation ─────────────────────────────────────────────────────
@@ -45,10 +49,11 @@ SPARK_HTTP_PORT="${SPARK_HTTP_PORT:-8888}"
 #   SPARK_HOSTS_RESOLVED — the resolved host list, one line, never empty
 #   SPARK_HOSTS_SOURCE   — how it was resolved: env | derived | default
 # Order of precedence (identical in both entry scripts): a non-empty
-# SPARK_HOSTS from the process environment wins; otherwise the host part of
-# the SPARKn_OLLAMA_URL / SPARKn_OPENAI_URL keys in <env-file> (stripped of
-# scheme and port, deduplicated, malformed hosts dropped); when that yields
-# nothing, the placeholder trio from SPARK_DEFAULT_HOSTS.
+# SPARK_HOSTS from the process environment wins; otherwise the SPARKn_HOST keys
+# in <env-file>, then the host part of the SPARKn_OLLAMA_URL / SPARKn_OPENAI_URL
+# keys (stripped of scheme and port), all deduplicated and malformed hosts
+# dropped; when that yields nothing, the placeholder trio from
+# SPARK_DEFAULT_HOSTS.
 # @function derive_spark_hosts
 # Resolve the fleet host list into SPARK_HOSTS_RESOLVED and SPARK_HOSTS_SOURCE.
 # Globals:
@@ -72,7 +77,12 @@ derive_spark_hosts() {
     return 0
   fi
   if [ -f "${file}" ]; then
-    for key in SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
+    # SPARKn_HOST first: it is the key the operator sets once and the one
+    # docker-compose.yml composes every Spark URL from, so the fleet this
+    # checkout points at is the fleet these probes check. The URL keys stay in
+    # the list for a .env that names a box only there.
+    for key in SPARK1_HOST SPARK2_HOST SPARK3_HOST \
+      SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
       url="$(env_get "${file}" "${key}" | tr -d ' \r' || true)"
       [ -n "${url}" ] || continue
       host="$(canonical_url "${url}")"
@@ -87,6 +97,40 @@ derive_spark_hosts() {
     SPARK_HOSTS_RESOLVED="${SPARK_DEFAULT_HOSTS}"
     SPARK_HOSTS_SOURCE="default"
   fi
+}
+
+# ── Endpoint derivation ──────────────────────────────────────────────────────
+
+# spark_openai_url <env-file> <n> — print the OpenAI-compatible /v1 URL the
+# proxy is handed for box n, which is the endpoint a probe must ask. An
+# explicit SPARKn_OPENAI_URL in <env-file> wins (compose passes it through
+# verbatim); otherwise the URL is composed from SPARKn_HOST, falling to
+# STACK_LAN_HOST, plus SPARK_HTTP_PORT — the composition docker-compose.yml
+# performs, kept here so a probe never asks a different question than the proxy
+# answers. Prints nothing and returns 1 when no host is named at all: that box
+# is not configured, which is the caller's "not yet" state to report.
+# @function spark_openai_url
+# Compose the /v1 URL for one Spark box, or report that it names no host.
+# Globals:
+#   SPARK_HTTP_PORT, STACK_LAN_HOST
+# Arguments:
+#   $1 - env file to read
+#   $2 - box number (1, 2 or 3)
+# Outputs:
+#   The URL on stdout, or nothing when no host is named.
+# Returns:
+#   0 when a URL was printed, 1 when the box names no host.
+spark_openai_url() {
+  local file="$1" box="$2" url host
+  url="$(env_get "${file}" "SPARK${box}_OPENAI_URL" | tr -d ' \r' || true)"
+  if [ -n "${url}" ]; then
+    printf '%s\n' "${url}"
+    return 0
+  fi
+  host="$(env_get "${file}" "SPARK${box}_HOST" | tr -d ' \r' || true)"
+  [ -n "${host}" ] || host="${STACK_LAN_HOST:-}"
+  [ -n "${host}" ] || return 1
+  printf 'http://%s:%s/v1\n' "${host}" "${SPARK_HTTP_PORT:-8888}"
 }
 
 # ── Probe plumbing ───────────────────────────────────────────────────────────

@@ -115,6 +115,11 @@ bazelisk test //tests:bats_homepage_config_test
   the sign-in redirect
 - a `search` widget with `provider: custom` carries a url ending in `=`, because v2.4.0
   appends the encoded query to whatever `url` says and has no `{{query}}` token
+- a Spark URL in `docker-compose.yml` takes its host from an env var. The boxes are
+  off-stack, so compose DNS cannot reach them and a hostname written here names a
+  machine nobody owns: `SPARKn_HOST` in `.env` names each box once and compose
+  composes the card's probe URL from it (see
+  [config-updates.md](config-updates.md#spark-agent-model-group))
 
 The suite also breaks each invariant in a scratch copy, so a check that has stopped
 failing fails the build.

@@ -22,6 +22,50 @@ model:
   # assistant holds; there is no GitHub token here by design.
   api_key: ${LITELLM_MASTER_KEY}
 
+# Optional local providers, reachable through the same LiteLLM door as the model
+# above. These three name the models this stack runs on its own hardware: the
+# Arc 140T's IPEX-LLM Ollama weights, behind the `coder` / `coder-fast` / `chat`
+# aliases. A `providers:` entry is inert until something asks for it, so the
+# default above stays `agent` and nothing about a healthy Spark box changes;
+# reach one with `hermes --provider arc-chat`, or make it the default with
+# `hermes config set model.provider arc-chat`. `default_model` travels with the
+# entry, which is why there is one entry per alias rather than one shared
+# endpoint: LiteLLM owns the choice of what that alias means.
+#
+# Why through LiteLLM and not at http://ollama:11434 directly: the proxy is the
+# stack's sole model transport, it is where the aliases and the Arc's context
+# window are defined, and 11434 is deliberately unpublished. The same door also
+# means these entries carry the same key the default one does, expanded from the
+# container's environment at load. No context_length is set here: 32768 is the
+# Arc weights' window, litellm/config.yaml owns that number, and a second copy
+# would be a second owner of it.
+#
+# The `spark-coder` / `spark-chat` aliases (Ollama on a Spark box) answer on this
+# endpoint too; no entry is shipped for them because they are off-box, optional,
+# and usually powered off. Add one with the same three keys when a box is there.
+providers:
+  # The one Arc model that can drive an agent loop: qwen2.5:7b returns a real
+  # tool_calls array on this runtime (measured), so this is the local lane to
+  # pick when every Spark box is down and a Chat tab session still needs tools.
+  arc-chat:
+    base_url: http://litellm:4000/v1
+    api_key: ${LITELLM_MASTER_KEY}
+    default_model: chat
+  # The Qwen2.5-Coder weights, at two sizes. Chat and summarisation only: on this
+  # runtime a request carrying `tools` answers with the call written into the
+  # message body as plain text and finish_reason "stop", so an agent turn quietly
+  # loses its tools. They stay listed because they are the strongest local
+  # completions the box has, and a non-agent session wants them; they are simply
+  # not an agent driver. litellm-routing.md names the measured limitation.
+  arc-coder:
+    base_url: http://litellm:4000/v1
+    api_key: ${LITELLM_MASTER_KEY}
+    default_model: coder
+  arc-coder-fast:
+    base_url: http://litellm:4000/v1
+    api_key: ${LITELLM_MASTER_KEY}
+    default_model: coder-fast
+
 terminal:
   # `local`, not `docker`: the docker backend runs the command inside a fresh
   # container and skips the dangerous-command approvals this file depends on.

@@ -366,12 +366,24 @@ checks to run on the Traefik box.
 The `agent` model group is three deployments behind one LiteLLM alias, one per
 Spark box, and these are the keys that fill it:
 
-- `SPARKn_OLLAMA_URL` are the Ollama endpoints behind the `spark-<n>` aliases. The
-  placeholder hostnames are on purpose: replace them with real Ollama URLs or
-  leave them as-is, and those aliases simply fail when used.
-- `SPARKn_OPENAI_URL` are the OpenAI-compatible `/v1` endpoints. A workspace pins
-  its session to one healthy box; fresh session-id-less traffic fans out by
-  `least-busy`, shortest in-flight queue first.
+- `SPARKn_HOST` is where each box is named - once. docker-compose.yml composes
+  every Spark URL from it plus the two ports below, so a box that gets a new
+  DHCP name or a static IP is edited in this one place and the LiteLLM
+  deployments, the dashboard's per-box cards, and the host list
+  `//scripts:spark-verify` / `//scripts:spark-configure` probe all move
+  together. The shipped placeholders do not resolve on purpose: leave a box you
+  do not run empty and its alias and its card both report down.
+- `SPARK_OLLAMA_PORT` (default 11434) and `SPARK_HTTP_PORT` (default 8888) are
+  the ports every box of the recipe answers on - Ollama for the `spark-<n>`
+  aliases, TensorFold's `/v1` and `/health` for the `agent` lane and the cards.
+- `SPARKn_OLLAMA_URL` are the Ollama endpoints behind the `spark-<n>` aliases,
+  and `SPARKn_OPENAI_URL` the OpenAI-compatible `/v1` endpoints. Both are
+  overrides, kept commented in the twin: set one when that box answers somewhere
+  the host plus port cannot express (https behind a reverse proxy, two boxes on
+  one host). A value set there wins outright, and that box's dashboard card does
+  not follow it - name the same host in `SPARKn_HEALTH_URL` too. A workspace
+  pins its session to one healthy `/v1` box; fresh session-id-less traffic fans
+  out by `least-busy`, shortest in-flight queue first.
 - `SPARK_n_API_KEY` is the bearer token for each endpoint. TensorFold is
   vLLM-lineage, so treat it like vLLM/SGLang: any non-empty string is accepted
   unless the server was started with `--api-key`, in which case set the REAL key
@@ -380,16 +392,20 @@ Spark box, and these are the keys that fill it:
   falls back to `coder`. The placeholder `local-spark` is not a secret and is
   ignored by a keyless backend.
 - `SPARKn_HEALTH_URL` (kept commented in the twin) feed the dashboard's per-box
-  Spark cards - one widget per box, so no card assumes one "usual" box.
+  Spark cards - one widget per box, so no card assumes one "usual" box. Compose
+  builds each from `SPARKn_HOST` plus `SPARK_HTTP_PORT`; nothing but the
+  dashboard reads them.
 - `AGENT_MODEL_URL` is the single `/v1/models` URL the "Agent backend" card uses
-  for both its browser link and its status probe. All three boxes serve the same
-  model id, so point it at any reachable one; the per-box health keys are what tell
-  you which box answered.
+  for both its browser link and its status probe. It defaults to box 2 - same
+  `SPARK2_HOST`, same `SPARK_HTTP_PORT` - and all three boxes serve the same
+  model id, so point it at any reachable one when you want the card to follow a
+  particular box; the per-box health keys are what tell you which one answered.
 
-Leaving all three `SPARKn_OPENAI_URL` keys empty keeps `agent` defined but
-unusable: LiteLLM then falls back to `coder`, the Arc alias. That fallback is what
-the "Agent backend" card exists to catch - Grok Build, Cline and Roo need
-structured tool calls, which the Arc IPEX-LLM Ollama returns as plain text for the
-Qwen2.5-Coder weights. [litellm-routing.md](litellm-routing.md) owns the alias
+With no `SPARKn_HOST` and no `SPARKn_OPENAI_URL` set, compose takes the host from
+`STACK_LAN_HOST`, which is at least a machine this stack owns: `agent` stays
+defined but unusable and LiteLLM falls back to `coder`, the Arc alias. That
+fallback is what the "Agent backend" card exists to catch - Grok Build, Cline and
+Roo need structured tool calls, which the Arc IPEX-LLM Ollama returns as plain text
+for the Qwen2.5-Coder weights. [litellm-routing.md](litellm-routing.md) owns the alias
 table, the picker, the pin, and the measured tool-call limitation (including which
 aliases do emit real calls).

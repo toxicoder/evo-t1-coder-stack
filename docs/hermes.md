@@ -290,8 +290,27 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
     those weights write the tool call into the message body as plain text, so agent
     turns silently lose their tools. See
     [litellm-routing.md](litellm-routing.md#tool-calls-the-measured-limitation).
-- Switch it inside the container with `hermes config set model.model chat` (or
-  `agent-medium` for a thinking level), which edits the live config under `/opt/data`.
+- The Arc models above are also seeded as named **providers**, so the local lane is
+  something you can pick rather than remember an alias for. `hermes/config.yaml`
+  carries a `providers:` block with `arc-chat`, `arc-coder` and `arc-coder-fast`,
+  each pointing at the same LiteLLM door with its `default_model` set, so the alias
+  travels with the provider:
+
+  ```sh
+  hermes --provider arc-chat              # one session on the Arc's tool-capable model
+  hermes config set model.provider arc-chat   # make it the default
+  ```
+
+  An entry is inert until something asks for it, so the default stays `agent` and a
+  healthy Spark box behaves exactly as before. They go through LiteLLM rather than
+  `http://ollama:11434` because the proxy is the stack's sole model transport, it is
+  where the aliases and the Arc's context window are defined, and 11434 is
+  deliberately unpublished. `spark-coder` / `spark-chat` answer on that endpoint too
+  when a Spark box is up; no entry ships for them because they are off-box, optional,
+  and usually powered off - copy the three keys of any entry to add one.
+- Switch the alias alone inside the container with `hermes config set model.model chat`
+  (or `agent-medium` for a thinking level), which edits the live config under
+  `/opt/data`.
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
 

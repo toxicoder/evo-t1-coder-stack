@@ -5,7 +5,9 @@
 #
 # Pins the seams the host-assistant feature rests on: approvals stay manual,
 # the terminal backend stays local (so dangerous-command checks stay on),
-# models go through LiteLLM's `agent` alias, the git-tracked skills exist
+# models go through LiteLLM's `agent` alias, the Arc's own Ollama models ship as
+# opt-in `providers:` entries reached through the same door with no key byte in
+# the seed, the git-tracked skills exist
 # beside the seed with matching frontmatter, SOUL.md teaches both doors,
 # compose interpolation defaults for dashboard
 # basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider),
@@ -59,6 +61,39 @@ setup() {
   assert_contains_file "agent alias" "${CONFIG}" 'model: agent'
   assert_contains_file "litellm base_url" "${CONFIG}" 'base_url: http://litellm:4000/v1'
   assert_contains_file "env-expanded key" "${CONFIG}" 'api_key: \$\{LITELLM_MASTER_KEY\}'
+}
+
+# The Arc's own Ollama weights are the only models this stack runs on its own
+# hardware, so they ship as opt-in providers: inert until selected, which keeps
+# `agent` the default, and reached through LiteLLM because the proxy is the only
+# model transport here and 11434 is deliberately unpublished.
+@test "hermes config: the Arc Ollama models ship as optional providers" {
+  assert_contains_file "providers block" "${CONFIG}" 'providers:'
+  assert_contains_file "tool-capable local lane" "${CONFIG}" 'arc-chat:'
+  assert_contains_file "coder lane" "${CONFIG}" 'arc-coder:'
+  assert_contains_file "coder-fast lane" "${CONFIG}" 'arc-coder-fast:'
+  assert_contains_file "chat alias travels" "${CONFIG}" 'default_model: chat'
+  assert_contains_file "coder alias travels" "${CONFIG}" 'default_model: coder'
+  assert_contains_file "coder-fast alias travels" "${CONFIG}" 'default_model: coder-fast'
+  # One entry per Arc alias, each with its own credential line: model plus three.
+  run grep -E '^[[:space:]]*api_key:' "${CONFIG}"
+  [ "${#lines[@]}" -eq 4 ]
+  # And no credential byte anywhere: every one is an ${...} env ref.
+  run grep -E '^[[:space:]]*api_key:[[:space:]]*[^[:space:]$]' "${CONFIG}"
+  [ "${status}" -ne 0 ]
+  # Local means the LiteLLM door, never the unpublished Ollama port.
+  run grep -E 'base_url:[[:space:]]*http://ollama' "${CONFIG}"
+  [ "${status}" -ne 0 ]
+  # Opt-in: selecting a provider is what changes the model, never the seed.
+  assert_contains_file "default stays the Spark lane" "${CONFIG}" 'model: agent'
+}
+
+@test "hermes docs: the local providers and how to select one are written down" {
+  local doc="${REPO_ROOT}/docs/hermes.md"
+  assert_file_exists "hermes doc" "${doc}"
+  assert_contains_file "names the local lane" "${doc}" 'arc-chat'
+  assert_contains_file "shows the one-shot switch" "${doc}" 'hermes --provider arc-chat'
+  assert_contains_file "shows the durable switch" "${doc}" 'hermes config set model.provider arc-chat'
 }
 
 @test "hermes config: cwd follows STACK_HOST_PATH and skills stay external" {

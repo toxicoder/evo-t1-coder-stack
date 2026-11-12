@@ -71,6 +71,8 @@ cd "${ROOT_DIR}"
 source "scripts/lib/bootstrap.sh"
 # shellcheck source=lib/domain.sh disable=SC1091
 source "scripts/lib/domain.sh"
+# shellcheck source=lib/spark.sh disable=SC1091
+source "scripts/lib/spark.sh" # spark_openai_url: the /v1 URL compose will hand the proxy
 
 check_only=0
 
@@ -565,9 +567,9 @@ upsert_env HERMES_GID "${ids##*:}"
 # the first agent session fail silently.
 # (The Arc `chat` alias — qwen2.5:7b — does emit real tool calls, so it is the
 # offline substitute when no Spark answers.)
-probe_agent_endpoint "SPARK1_OPENAI_URL" "$(env_get .env SPARK1_OPENAI_URL)"
-probe_agent_endpoint "SPARK2_OPENAI_URL" "$(env_get .env SPARK2_OPENAI_URL)"
-probe_agent_endpoint "SPARK3_OPENAI_URL" "$(env_get .env SPARK3_OPENAI_URL)"
+probe_agent_endpoint "SPARK1_OPENAI_URL" "$(spark_openai_url .env 1 || true)"
+probe_agent_endpoint "SPARK2_OPENAI_URL" "$(spark_openai_url .env 2 || true)"
+probe_agent_endpoint "SPARK3_OPENAI_URL" "$(spark_openai_url .env 3 || true)"
 
 # ── Golden workspace image ───────────────────────────────────────────────────
 # The workspace template's default image is built locally, not pulled: the Coder

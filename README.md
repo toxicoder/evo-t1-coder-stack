@@ -106,10 +106,12 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
   |                 +-- local:  http://ollama:11434 (compose network only)
-  |                 +-- remote: SPARK1/2_OLLAMA_URL (Ollama aliases) and
-  |                 |           SPARK1/2/3_OPENAI_URL (TensorFold on :8888 -
-  |                 |           one `agent` group, one deployment per Spark box,
-  |                 |           the only tool-capable path)
+  |                 +-- remote: SPARKn_HOST + SPARK_OLLAMA_PORT/SPARK_HTTP_PORT
+  |                 |           compose every Spark URL from them - Ollama
+  |                 |           aliases on 11434, TensorFold on 8888 - one
+  |                 |           `agent` group, one deployment per Spark box,
+  |                 |           the only tool-capable path. SPARKn_OLLAMA_URL
+  |                 |           and SPARKn_OPENAI_URL override a whole URL
   |
   +-- :9119 ----> Hermes Web Dashboard (host assistant; Chat tab + approvals;
   |               basic auth). LAN port stays; the public name is opt-in and
@@ -655,15 +657,15 @@ measured 30-request burst, the **Agent backend** card) are in
 
 | Alias | Model | Backend | Structured tool calls |
 |---|---|---|---|
-| `agent` | `Qwen3.8-Flash-Next` | `SPARK1/2/3_OPENAI_URL` (TensorFold on :8888, optional); thinking `xhigh` by default, request can pick `low` / `medium` / `xhigh` | yes (measured) |
+| `agent` | `Qwen3.8-Flash-Next` | `SPARK1_HOST`/`SPARK2_HOST`/`SPARK3_HOST` (TensorFold on `SPARK_HTTP_PORT`, optional; `SPARKn_OPENAI_URL` overrides a whole URL); thinking `xhigh` by default, request can pick `low` / `medium` / `xhigh` | yes (measured) |
 | `agent-low` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low` | yes (same as `agent`) |
 | `agent-medium` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `medium` | yes (same as `agent`) |
 | `agent-xhigh` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh` | yes (same as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
-| `spark-coder` | `qwen2.5-coder:32b` | `SPARK1_OLLAMA_URL` (NVIDIA Spark, optional) | unverified |
-| `spark-chat` | `qwen2.5:7b` | `SPARK2_OLLAMA_URL` (NVIDIA Spark, optional) | unverified |
+| `spark-coder` | `qwen2.5-coder:32b` | `SPARK1_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK1_OLLAMA_URL` overrides) | unverified |
+| `spark-chat` | `qwen2.5:7b` | `SPARK2_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK2_OLLAMA_URL` overrides) | unverified |
 
 One measured fact decides what you can actually run: the Qwen2.5-Coder weights do not
 emit structured tool calls on this box's IPEX-LLM Ollama, so agent mode needs the Spark
@@ -902,6 +904,11 @@ reach one agent, one memory store, and one approval gate, with models going thro
 existing LiteLLM `agent` alias. It mounts the stack checkout at `STACK_HOST_PATH` and
 the docker socket (root-equivalent, same standing as Coder), so approvals stay `manual`.
 
+- **Models:** the default is the LiteLLM `agent` alias. The three local IPEX-LLM
+  Ollama aliases ship beside it as the optional providers `arc-chat` (the
+  tool-capable one), `arc-coder` and `arc-coder-fast`, all routed through
+  LiteLLM. Pick one for a session with `hermes --provider arc-chat`, or keep it
+  with `hermes config set model.provider arc-chat`.
 - **URL:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, basic auth
   (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`). The LAN
   port stays. The public name (`hermes-<suffix>.<base>`, so

@@ -34,6 +34,11 @@ from the shipped v2.4.0 bundle:
   search-url       a `search` widget with `provider: custom` carries a url ending in `=`.
                    v2.4.0 appends the encoded query to the string it is given; there is
                    no `{{query}}` token to place it.
+  spark-host       a Spark URL that docker-compose.yml fills takes its host from an
+                   env var. The boxes are off-stack, so compose DNS cannot help and a
+                   hostname written here is a machine nobody owns: the cards then
+                   report a box that was never configured. `.env` names each box once
+                   (SPARKn_HOST) and compose composes the URL from it.
 
 Usage: homepage_config_check.py [--root DIR] [--quiet]
 
@@ -78,6 +83,17 @@ COMPOSE_SERVICES = frozenset(
     }
 )
 MAX_BLOCK_MAPPINGS = 4
+# The compose keys whose value is a URL for an off-stack Spark box: the two the
+# LiteLLM deployments read, and the five the dashboard's Agent-backend and
+# per-box Spark cards read. Their host part is the operator's LAN, never this
+# file's business.
+SPARK_URL_KEY_RE = re.compile(
+    r"^[ \t]+(?:SPARK[123]_(?:OPENAI|OLLAMA)_URL|SPARK[123]_HEALTH_URL|AGENT_MODEL_URL"
+    r"|HOMEPAGE_VAR_(?:SPARK[123]_HEALTH|AGENT_URL|AGENT_HEALTH)):"
+)
+# A `*.lan` name is the shape this stack's Spark placeholders ship in, and the
+# tell that a LAN hostname was typed into a committed file.
+LAN_HOSTNAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*\.lan\b")
 
 
 class PayloadError(Exception):
@@ -247,6 +263,29 @@ def check_monitors(service_groups: dict[str, JsonList]) -> list[str]:
     return findings
 
 
+def check_spark_hosts(compose_text: str) -> list[str]:
+    """A Spark box is off-stack, so compose may not name it: the host comes from `.env`."""
+    findings: list[str] = []
+    for line in compose_text.splitlines():
+        if SPARK_URL_KEY_RE.match(line) is None:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip(), value.strip()
+        # The value is usually `${OVERRIDE:-http://${SPARK1_HOST:-...}:8888/health}`,
+        # so the host is whatever sits between the scheme and the next path
+        # separator or closing brace. It has to carry an interpolation.
+        scheme_end = value.find("://")
+        if scheme_end >= 0:
+            rest = value[scheme_end + 3:]
+            host = re.split(r"[/?#}]", rest, maxsplit=1)[0]
+            if "${" not in host:
+                findings.append(f"error: spark-host: {key} hard-codes the host '{host}'; compose builds Spark URLs from SPARKn_HOST in .env")
+        baked = LAN_HOSTNAME_RE.search(value)
+        if baked is not None:
+            findings.append(f"error: spark-host: {key} names the LAN host '{baked.group(0)}' in compose; a box's hostname belongs in .env")
+    return findings
+
+
 def check_widgets(service_groups: dict[str, JsonList]) -> list[str]:
     """Per-widget rules from the shipped v2.4.0 component."""
     findings: list[str] = []
@@ -368,6 +407,7 @@ def main(argv: list[str]) -> int:
     findings += check_layout(settings, service_groups, bookmark_groups)
     findings += check_hrefs(service_groups, bookmark_groups)
     findings += check_monitors(service_groups)
+    findings += check_spark_hosts(compose)
     findings += check_widgets(service_groups)
     findings += check_bookmarks(bookmark_groups)
     findings += check_icons(settings, service_groups, widgets)

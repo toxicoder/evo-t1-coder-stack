@@ -296,7 +296,8 @@ traceparent and baggage, plus `metadata.session_id` in the body.
 - Its per-box widgets go to error state while `agent` still answers, because `agent`
   answers from the Arc while every Spark is down.
 - The card and its per-box widgets read `AGENT_MODEL_URL` and `SPARKn_HEALTH_URL` from
-  `.env`, so they follow the LAN, and they answer without a key.
+  `.env`, and compose builds both from the box's `SPARKn_HOST` plus `SPARK_HTTP_PORT`,
+  so a card follows the hostname you set once and they answer without a key.
 
 ### Which box answered
 
