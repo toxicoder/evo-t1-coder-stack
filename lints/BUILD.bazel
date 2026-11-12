@@ -32,8 +32,8 @@ filegroup(
 # :shfmt, whose contents equal the scan set rather than a subset of it.
 #
 # It mirrors, entry for entry, the scan_dirs line in each runner —
-#   run_shellcheck.sh:16  scan_dirs=(scripts lints tests .github templates/common docs)
-#   run_shfmt.sh:15       scan_dirs=(scripts lints tests .github templates/common docs)
+#   run_shellcheck.sh:18  scan_dirs=(scripts lints tests .github templates/common docs .devcontainer)
+#   run_shfmt.sh:17       scan_dirs=(scripts lints tests .github templates/common docs .devcontainer)
 # — plus the fix.sh each appends after the find (run_shellcheck.sh:22, run_shfmt.sh:21),
 # minus tests/bats/tool_stubs/, which both find calls exclude. Edit one side and edit the
 # other: a runner that gains a scan_dir without this list keeps linting files a sandboxed
@@ -58,6 +58,9 @@ _LINT_SHELL_SOURCES = [
     # tests/: the shell its runners and coverage drivers are made of. tests/bats/ holds
     # .bats, fixtures and tool_stubs, which the find either excludes or does not match.
     "//tests:shell_sources",
+    # .devcontainer/: the contributor container's postCreate scripts. They run on
+    # every laptop that opens the repo, so they carry the same lint as the CLIs.
+    "//:devcontainer",
 ]
 
 exec_shell(
