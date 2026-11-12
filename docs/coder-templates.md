@@ -1182,12 +1182,20 @@ Template-side facts only; the long prose lives in
   terminals are live); it takes the next numbered sibling, `vscode-<folder>-<hash>-2`,
   `-3`, ... only when every session of the folder already has a client. With no
   `tmux` on PATH it falls back to a plain login shell.
+  Before it reads who is attached it detaches any client on those sessions that has
+  reported no activity for over 6 hours (`EVO_TMUX_STALE_AFTER`, in seconds): a tab
+  whose browser side went away can leave its client attached and draining nothing,
+  and one such client is enough to keep a free session looking busy forever.
   Because the profile runs inside a session rather than in the tab's own process,
   closing a tab detaches the client and leaves whatever was running alive.
 - `grok-build-terminal` keeps its own session, `grok-build-<folder>-<hash>`, keyed off
   the repository root found with `git rev-parse --show-toplevel` (or the terminal's own
   `$PWD` outside a clone) and runs `grok --cwd <that root>` inside it. It is the
   always-reattach case on purpose: every tab of the clone watches the one agent run.
+  The session is created detached and attached in a second call, so the tab that
+  brings the server up never takes a running agent down with it, and it makes the same
+  stale-client sweep its sibling does. With no `tmux` on PATH, and on any create or
+  attach it cannot complete, it hands the tab a plain login shell.
 - The seed also pins `terminal.integrated.cwd` and `terminal.integrated.splitCwd` to the
   opened folder, adds a `terminal.integrated.env.linux` block, and carries a
   `commandsToSkipShell` list - all described in the sibling doc.
