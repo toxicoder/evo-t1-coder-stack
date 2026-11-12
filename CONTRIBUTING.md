@@ -51,10 +51,17 @@ GitHub — the same image the Coder workspaces boot. Pick either path; you insta
 
 - **Contributor dev container.** Open the checkout in VS Code (or a compatible editor) with
   Dev Containers and *Reopen in Container*. `.devcontainer/devcontainer.json` builds
-  `../images/dev/Dockerfile`, runs as `coder`, sets `EVO_T1_DEVCONTAINER=1`, mounts the
-  docker socket, and its `postCreateCommand` runs `bash scripts/seed-dev-env.sh --devcontainer`
-  to materialize the Grok config, editor settings, notes, tmux and helpers from the
-  templates Coder uses. Then run the commands below unchanged.
+  `../images/dev/Dockerfile` and pulls BuildKit's layer cache from the image CI publishes,
+  runs as `coder`, sets `EVO_T1_DEVCONTAINER=1`, mounts the docker socket, and keeps
+  Bazel's disk, repository and output caches plus the package-manager download caches in
+  named volumes so a rebuild does not repay a cold cache. Its `postCreateCommand` runs
+  `bash .devcontainer/library-scripts/configure.sh create`, which writes that cache seam
+  into `~/.bazelrc`, materializes the Grok config, editor settings, notes, tmux and helpers
+  from the templates Coder uses (`scripts/seed-dev-env.sh`), installs the `.githooks`, then
+  starts a detached warm-up (`//:test-fast` and the docs-site `npm ci`) you can ignore.
+  Then run the commands below unchanged. When you change the container config or the
+  image, keep `.devcontainer/` in the same PR: `AGENTS.md` names what each kind of change
+  owes it, and `bazelisk test //tests:bats_contributor_devcontainer_test` proves it.
 - **`test-in-image`.** From a machine that is not that container,
   `bazelisk run //scripts:test-in-image --` docker-runs `evo-t1-dev:latest` and runs the
   same suites inside it — the fastest way to reproduce a CI failure. Build the tag first
