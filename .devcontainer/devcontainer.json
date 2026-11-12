@@ -79,10 +79,10 @@
           "**/coverage/**": true,
           "**/__pycache__/**": true
         },
-        "bashIde.shellcheckPath": "/usr/bin/shellcheck",
-        "bashIde.shellcheckArguments": "-x --severity=warning",
+        "shellcheck.executablePath": "/usr/bin/shellcheck",
+        "shellcheck.customArgs": ["-x", "--severity=warning"],
         "shellformat.path": "/usr/local/bin/shfmt",
-        "shellformat.flag": "-s -i 2 -ci -w",
+        "shellformat.flag": "-s -i 2 -ci",
         "[shellscript]": {
           "editor.defaultFormatter": "foxundermoon.shell-format"
         },

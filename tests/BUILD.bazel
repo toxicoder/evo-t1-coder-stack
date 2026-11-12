@@ -460,9 +460,13 @@ _SUITE_PAYLOAD_ALLOW = {
     # hooks-install branch runs scripts/install-hooks.sh inside it, so the CLI and
     # the lib it sources have to be in runfiles. Neither path appears in the suite
     # as a token: the suite names the container files, and the CLI is reached
-    # through the configure script it copies in.
+    # through the configure script it copies in. //lints:runners is reached the
+    # same way: the suite builds "lints/<runner>" from a directory list, so the
+    # two runner names never appear as a path, and the flags comparison that
+    # needs them would silently skip without the declaration.
     "contributor-devcontainer.bats": [
         "//scripts:shell_sources",
+        "//lints:runners",
     ],
     # It dials nothing: `searxng:8181` appears only as a value written into a
     # scratch container-environment fixture, which the web-lane check reads back

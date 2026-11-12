@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 #
-# ## contributor-devcontainer.bats — the laptop/CI container stays pre-configured.
+# ## contributor-devcontainer.bats - the laptop/CI container stays pre-configured.
 #
 # .devcontainer/devcontainer.json builds the same golden image the Coder
 # workspaces and CI run, and library-scripts/ is what makes it a development
@@ -36,7 +36,7 @@ setup() {
   WARMUP="${CHECKOUT}/.devcontainer/library-scripts/warmup.sh"
 }
 
-# contributor_checkout — print the directory that holds the contributor container.
+# contributor_checkout - print the directory that holds the contributor container.
 # Bazel runfiles ship only what the suite declares, and configure.sh resolves
 # scripts/lib from its own location, so prefer a tree that has the whole repo.
 contributor_checkout() {
@@ -59,23 +59,83 @@ contributor_checkout() {
   return 1
 }
 
-# dc_get <dotted.path> — print one value from devcontainer.json as JSON text.
-# A missing key is a failure, so a renamed key cannot pass as an empty answer.
-dc_get() {
-  python3 - "${DC_JSON}" "$1" <<'PY'
+# dc_lookup <json|text> <dotted.path> - resolve one value in devcontainer.json.
+# A missing key exits 3, so a renamed key cannot pass as an empty answer. The path
+# splits on dots and each step takes the longest key that matches, because the
+# spec nests objects (customizations.vscode) while VS Code settings are written as
+# flat dotted keys beside them ("shellcheck.customArgs").
+dc_lookup() {
+  python3 - "${DC_JSON}" "$2" "$1" <<'PY'
 import json
 import sys
 
 node = json.load(open(sys.argv[1], encoding="utf-8"))
-for part in sys.argv[2].split("."):
-    if part not in node:
+parts = sys.argv[2].split(".")
+mode = sys.argv[3]
+i = 0
+while i < len(parts):
+    for j in range(len(parts), i, -1):
+        key = ".".join(parts[i:j])
+        if isinstance(node, dict) and key in node:
+            node = node[key]
+            i = j
+            break
+    else:
         sys.exit(3)
-    node = node[part]
-print(json.dumps(node))
+if mode == "json":
+    print(json.dumps(node))
+elif isinstance(node, list):
+    print(" ".join(str(x) for x in node))
+else:
+    print(node)
 PY
 }
 
-# dc_has <label> <needle> — fail unless the whole config contains the substring.
+dc_get() { dc_lookup json "$1"; }
+
+# dc_value <dotted.path> - print one setting as plain text; a list joins on spaces.
+# Comparing a flag string to the gate's own flags needs the text, not JSON.
+dc_value() { dc_lookup text "$1"; }
+
+# gate_runner <file> - print the path of one lint runner in the tree this suite reads.
+gate_runner() {
+  local dir candidate
+  for dir in "${CHECKOUT}" "${TEST_SRCDIR:-}/_main" "$(dirname "${BATS_TEST_DIRNAME}")"; do
+    candidate="${dir}/lints/$1"
+    if [ -n "${dir}" ] && [ -f "${candidate}" ]; then
+      printf '%s' "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# gate_flags <runner-file> <tool> - print the flags the gate runs <tool> with.
+# Only the line that passes the file list is the gate: a runner also probes the
+# tool with `--version` and echoes its own name, and neither is the invocation
+# the editor has to match. -d is the gate's check-only diff mode, which has no
+# meaning for a formatter that answers on stdout, so it is dropped; -i keeps its
+# argument. The last match wins, so a runner may lint several sets in turn.
+gate_flags() {
+  awk -v tool="$2" '
+    index($0, tool " ") == 1 && /files\[@\]/ {
+      flags = ""
+      for (i = 2; i <= NF; i++) {
+        if ($i == "-d") continue
+        if ($i ~ /^-/) {
+          flags = flags sprintf("%s ", $i)
+          if ($i == "-i") {
+            i++
+            flags = flags sprintf("%s ", $i)
+          }
+        }
+      }
+    }
+    END { printf "%s", flags }
+  ' "$1"
+}
+
+# dc_has <label> <needle> - fail unless the whole config contains the substring.
 dc_has() {
   if ! grep -qF -- "$2" "${DC_JSON}"; then
     printf 'FAIL: %s: %s does not contain %s\n' "$1" "${DC_JSON}" "$2" >&2
@@ -83,7 +143,7 @@ dc_has() {
   fi
 }
 
-# make_fixture — build a throwaway checkout with its own git config and HOME.
+# make_fixture - build a throwaway checkout with its own git config and HOME.
 #
 # configure.sh writes the cache seam, the bazelrc block and the hooks path, so
 # the tests aim it at a fixture instead of the checkout under test. The real
@@ -101,7 +161,7 @@ make_fixture() {
   git init -q "${FIXTURE}"
 }
 
-# run_configure <mode> [extra args...] — run configure.sh against the fixture.
+# run_configure <mode> [extra args...] - run configure.sh against the fixture.
 run_configure() {
   run env \
     "HOME=${FIXTURE_HOME}" \
@@ -115,7 +175,7 @@ run_configure() {
     bash "${CONFIGURE}" "$@"
 }
 
-# bazelrc_blocks <n> — fail unless the managed block appears exactly <n> times.
+# bazelrc_blocks <n> - fail unless the managed block appears exactly <n> times.
 # A re-run that appends instead of replacing would hand the developer a bazelrc
 # whose last copy silently wins, so every run of configure.sh asserts on this.
 bazelrc_blocks() {
@@ -177,11 +237,43 @@ bazelrc_blocks() {
   [ "${status}" -eq 0 ]
 }
 
-@test "contributor container: the editor formatters are the gate's own tools" {
-  dc_has "the shell lint runner" '"bashIde.shellcheckArguments": "-x --severity=warning"'
-  dc_has "the shell format runner" '"shellformat.flag": "-s -i 2 -ci -w"'
-  dc_has "the shellcheck binary" '"bashIde.shellcheckPath": "/usr/bin/shellcheck"'
-  dc_has "the shfmt binary" '"shellformat.path": "/usr/local/bin/shfmt"'
+@test "contributor container: the editor runs the gate's tools with the gate's flags" {
+  local shellcheck_runner shfmt_runner gate_shellcheck gate_shfmt settings
+  # A skip here would silence the only check that the editor pins track the gate,
+  # and //tests:BUILD.bazel declares //lints:runners for exactly this test, so a
+  # missing runner is a broken declaration and has to be loud.
+  shellcheck_runner="$(gate_runner run_shellcheck.sh)" ||
+    fail "run_shellcheck.sh is not in this tree or the suite's runfiles"
+  shfmt_runner="$(gate_runner run_shfmt.sh)" ||
+    fail "run_shfmt.sh is not in this tree or the suite's runfiles"
+  settings="customizations.vscode.settings"
+
+  # The editor settings are only worth having if they track the gate, so read
+  # the flags out of the runners rather than repeating them: change the gate and
+  # this test is the thing that goes red.
+  gate_shellcheck="$(gate_flags "${shellcheck_runner}" shellcheck)"
+  gate_shfmt="$(gate_flags "${shfmt_runner}" shfmt)"
+  [ -n "${gate_shellcheck}" ] || fail "could not read the gate's shellcheck flags from ${shellcheck_runner}"
+  [ -n "${gate_shfmt}" ] || fail "could not read the gate's shfmt flags from ${shfmt_runner}"
+
+  local want_shellcheck want_shfmt have_shellcheck have_shfmt
+  want_shellcheck="${gate_shellcheck% }"
+  want_shfmt="${gate_shfmt% }"
+  have_shellcheck="$(dc_value "${settings}.shellcheck.customArgs")"
+  have_shfmt="$(dc_value "${settings}.shellformat.flag")"
+  [ "${have_shellcheck}" = "${want_shellcheck}" ] ||
+    fail "shellcheck.customArgs is '${have_shellcheck}', the gate runs '${want_shellcheck}' (${shellcheck_runner})"
+  [ "$(dc_value "${settings}.shellcheck.executablePath")" = "/usr/bin/shellcheck" ]
+  [ "${have_shfmt}" = "${want_shfmt}" ] ||
+    fail "shellformat.flag is '${have_shfmt}', the gate runs '${want_shfmt}' (${shfmt_runner})"
+  [ "$(dc_value "${settings}.shellformat.path")" = "/usr/local/bin/shfmt" ]
+
+  # bashIde.* belongs to an extension this container does not install, so those
+  # keys would be inert and the lint would run with someone else's defaults.
+  if grep -q 'bashIde\.' "${DC_JSON}"; then
+    fail "devcontainer.json pins bashIde.* keys no installed extension reads"
+  fi
+
   local extensions
   extensions="$(dc_get customizations.vscode.extensions)"
   local extension
@@ -270,6 +362,39 @@ bazelrc_blocks() {
   bazelrc_blocks 1
 }
 
+@test "configure: a bazelrc missing its END line is rewritten, and says so" {
+  make_fixture
+  printf '%s\n' '# mine' 'build --define=mine=1' >"${FIXTURE_HOME}/.bazelrc"
+  run_configure start
+  [ "${status}" -eq 0 ]
+  # A careless edit that deletes the END marker makes the next strip swallow
+  # everything after BEGIN. That has to be said out loud: the lines are gone.
+  sed -i '/^# END evo-t1 contributor dev container$/d' "${FIXTURE_HOME}/.bazelrc"
+  run_configure start
+  [ "${status}" -eq 0 ]
+  assert_match "the warning" "no managed-block END line" "${output}"
+  assert_contains_file "the developer line" "${FIXTURE_HOME}/.bazelrc" '^build --define=mine=1$'
+  assert_contains_file "the seam rewritten" "${FIXTURE_HOME}/.bazelrc" \
+    "^common --disk_cache=${FIXTURE}/cache/disk$"
+  bazelrc_blocks 1
+}
+
+@test "configure: a symlinked bazelrc keeps being a symlink" {
+  make_fixture
+  mkdir -p "${FIXTURE}/dotfiles"
+  printf '%s\n' '# from my dotfiles' >"${FIXTURE}/dotfiles/bazelrc"
+  ln -s "${FIXTURE}/dotfiles/bazelrc" "${FIXTURE_HOME}/.bazelrc"
+  run_configure start
+  [ "${status}" -eq 0 ]
+  [ -L "${FIXTURE_HOME}/.bazelrc" ] || fail "the developer's symlink was replaced by a plain file"
+  # Writing through the link is the point: the canonical file in the dotfiles
+  # tree has to carry the block, or the next sync erases the seam.
+  assert_contains_file "the dotfile got the block" "${FIXTURE}/dotfiles/bazelrc" \
+    "^common --disk_cache=${FIXTURE}/cache/disk$"
+  assert_contains_file "the dotfile kept its line" "${FIXTURE}/dotfiles/bazelrc" \
+    '^# from my dotfiles$'
+}
+
 @test "configure: a foreign hooksPath is reported, never overwritten" {
   make_fixture
   git -C "${FIXTURE}" config core.hooksPath someone-elses-hooks
@@ -316,6 +441,61 @@ bazelrc_blocks() {
   assert_contains_file "the gate step" "${FIXTURE}/warmup.log" "ok: warm bazel gate"
 }
 
+@test "configure: a socket it cannot open is reported, never claimed" {
+  make_fixture
+  local sock="${BATS_TEST_TMPDIR}/docker.sock" stubs="${BATS_TEST_TMPDIR}/acl-bin"
+  python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "${sock}"
+  chmod 000 "${sock}"
+  mkdir -p "${stubs}"
+  # setfacl never works here and the a+rw fallback is refused, so the only
+  # honest answer is the note. The chmod stub passes everything else through so
+  # the rest of configure.sh keeps a real chmod.
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"${stubs}/setfacl"
+  printf '%s\n' '#!/usr/bin/env bash' 'case "$*" in *a+rw*) exit 1 ;; esac' 'exec /bin/chmod "$@"' >"${stubs}/chmod"
+  printf '%s\n' '#!/usr/bin/env bash' 'exec "$@"' >"${stubs}/sudo"
+  chmod 755 "${stubs}/setfacl" "${stubs}/chmod" "${stubs}/sudo"
+
+  PATH="$(with_path "${stubs}")" EVO_T1_DOCKER_SOCKET="${sock}" run_configure start
+  [ "${status}" -eq 0 ]
+  assert_match "the honest note" "docker socket is not writable by uid" "${output}"
+  assert_not_match "no claimed success" "docker socket opened for uid" "${output}"
+}
+
+@test "configure: the privilege helpers never fall back to a command that fakes success" {
+  # ${SUDO:-true} with no sudo expands to `true`, which swallows its arguments
+  # and exits 0: the script would print an ok line for a chmod it never made.
+  if grep -vE '^[[:space:]]*#' "${CONFIGURE}" | grep -qE '\$\{SUDO:-true\}'; then
+    fail "configure.sh runs \${SUDO:-true}, which reports success while running nothing"
+  fi
+}
+
+@test "configure: a warm-up that failed last time runs again" {
+  make_fixture
+  mkdir -p "${BATS_TEST_TMPDIR}/bin"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${BATS_TEST_TMPDIR}/bin/bazelisk"
+  chmod +x "${BATS_TEST_TMPDIR}/bin/bazelisk"
+  printf '%s\n' 'failed: test-fast' >"${FIXTURE}/warmup.status"
+
+  PATH="$(with_path "${BATS_TEST_TMPDIR}/bin")" EVO_T1_WARMUP=full run_configure start
+  [ "${status}" -eq 0 ]
+  assert_match "the retry is announced" "the last warm-up failed: test-fast" "${output}"
+  assert_match "a warm-up starts" "warm-up started" "${output}"
+  assert_not_match "not called finished" "warm-up already finished" "${output}"
+}
+
+@test "configure: status reports the seam, the hooks and the warm-up" {
+  make_fixture
+  run_configure start
+  [ "${status}" -eq 0 ]
+  printf '%s\n' 'ok' >"${FIXTURE}/warmup.status"
+  run_configure status
+  [ "${status}" -eq 0 ]
+  assert_match "the state section" "container state" "${output}"
+  assert_match "the writable cache" "bazel cache writable: ${FIXTURE}/cache/disk" "${output}"
+  assert_match "the armed gate" "commit and push gates are armed" "${output}"
+  assert_match "the warm-up line" "warm-up ok" "${output}"
+}
+
 @test "configure: an unknown mode or option is a usage error" {
   make_fixture
   run_configure nonsense
@@ -324,4 +504,21 @@ bazelrc_blocks() {
   run_configure create --frobnicate
   [ "${status}" -eq 1 ]
   assert_match "the unknown option" "unknown option --frobnicate" "${output}"
+}
+
+@test "configure: --help works in either position and names every knob" {
+  make_fixture
+  local knob
+  for knob in --help -h; do
+    run_configure "${knob}"
+    [ "${status}" -eq 0 ]
+    run_configure create "${knob}"
+    [ "${status}" -eq 0 ]
+  done
+  assert_match "the create form" 'configure\.sh create \[--dry-run\]' "${output}"
+  # That header is the only documentation these flags have, so every variable the
+  # script reads has to be named by it: a new knob cannot ship undocumented.
+  while read -r knob; do
+    assert_match "help names ${knob}" "${knob}" "${output}"
+  done < <(grep -oh 'EVO_T1_[A-Z_]\+' "${CONFIGURE}" | sort -u)
 }

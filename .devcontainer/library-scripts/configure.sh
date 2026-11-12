@@ -31,6 +31,10 @@
 #                            else (unset included) runs it
 #   EVO_T1_WARMUP_LOG        warm-up log path (default /tmp/evo-t1-warmup.log)
 #   EVO_T1_WARMUP_STATUS     warm-up status file (default /tmp/evo-t1-warmup.status)
+#   EVO_T1_WARMUP_LOCK       warm-up lock file (default /tmp/evo-t1-warmup.lock)
+#   EVO_T1_DOCKER_SOCKET     the socket to make usable (default
+#                            /var/run/docker.sock, which is where the config
+#                            bind-mounts the workstation's daemon)
 #
 # Exit codes: 0 when every required step succeeded (advisory findings are
 # warnings, not failures); 1 for a usage error or a failed required step; 5 when
@@ -71,7 +75,12 @@ SUDO=""
 # Returns:
 #   0
 usage() {
-  sed -n '3,36p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  # Print the header block verbatim. It is read up to the first line that is not
+  # a comment, so documenting a new variable here cannot fall off the end of a
+  # hardcoded line range.
+  awk 'NR < 3 { next }
+       /^#/ { sub(/^# ?/, ""); print; next }
+       { exit }' "${BASH_SOURCE[0]}"
 }
 
 # @function run_or_report
@@ -93,6 +102,28 @@ run_or_report() {
     return 0
   fi
   "$@"
+}
+
+# @function run_maybe_sudo
+# Run a command as root when a usable sudo was found, and plainly when not.
+#
+# The `${SUDO:-true}` shorthand is a trap here: with no sudo it expands to
+# `true`, which ignores its arguments and exits 0, so the caller reports a
+# privilege change that never happened.
+# Globals:
+#   SUDO
+# Arguments:
+#   $* - the command and its arguments
+# Outputs:
+#   Whatever the command prints
+# Returns:
+#   The command's status
+run_maybe_sudo() {
+  if [ -n "${SUDO}" ]; then
+    "${SUDO}" "$@"
+  else
+    "$@"
+  fi
 }
 
 # @function ensure_cache_dirs
@@ -175,6 +206,11 @@ strip_bazelrc_managed_block() {
       printf '%s\n' "${line}"
     fi
   done <"${src}"
+  # A hand-edited file that lost its END line would otherwise swallow every
+  # line after BEGIN with no trace, so say so before the caller replaces it.
+  if [ "${skip}" != 0 ]; then
+    printf 'warning: %s has no managed-block END line; the lines after BEGIN were dropped and will be rewritten\n' "${src}" >&2
+  fi
 }
 
 # @function write_bazelrc
@@ -212,10 +248,22 @@ write_bazelrc() {
     printf 'startup --output_user_root=%s/root\n' "${BAZEL_CACHE_ROOT}"
     printf '%s\n' "${BAZELRC_END}"
   } >>"${tmp}"
-  if mv "${tmp}" "${target}"; then
+  # A dotfiles manager keeps ~/.bazelrc as a symlink into its own tree, and mv
+  # would leave the developer's canonical file behind without the block. Write
+  # through the link when there is one, and keep a plain file world-readable
+  # rather than at mktemp's 0600.
+  local written=0
+  if [ -L "${target}" ]; then
+    if cat "${tmp}" >"${target}" 2>/dev/null; then
+      written=1
+    fi
+  elif chmod 644 "${tmp}" 2>/dev/null && mv "${tmp}" "${target}" 2>/dev/null; then
+    written=1
+  fi
+  rm -f "${tmp}"
+  if [ "${written}" = 1 ]; then
     ok "bazel caches point at ${BAZEL_CACHE_ROOT}"
   else
-    rm -f "${tmp}"
     fail_item "cannot write ${target}"
   fi
 }
@@ -228,7 +276,7 @@ write_bazelrc() {
 # on every start rather than settled once. Either route is fine; both are
 # best effort because a locked-down host may permit neither.
 # Globals:
-#   SUDO
+#   SUDO, EVO_T1_DOCKER_SOCKET
 # Arguments:
 #   None
 # Outputs:
@@ -236,7 +284,7 @@ write_bazelrc() {
 # Returns:
 #   0
 relax_docker_socket() {
-  local sock=/var/run/docker.sock
+  local sock="${EVO_T1_DOCKER_SOCKET:-/var/run/docker.sock}"
   if [ ! -S "${sock}" ]; then
     note "no docker socket at ${sock}: docker commands in here will not reach a daemon"
     return 0
@@ -245,8 +293,8 @@ relax_docker_socket() {
     ok "docker socket is usable"
     return 0
   fi
-  if ${SUDO:-true} setfacl -m "u:$(id -u):rw" "${sock}" 2>/dev/null ||
-    ${SUDO:-true} chmod a+rw "${sock}" 2>/dev/null; then
+  if run_maybe_sudo setfacl -m "u:$(id -u):rw" "${sock}" 2>/dev/null ||
+    run_maybe_sudo chmod a+rw "${sock}" 2>/dev/null; then
     ok "docker socket opened for uid $(id -u)"
   else
     note "docker socket is not writable by uid $(id -u); add the user to the docker group on the host"
@@ -341,24 +389,39 @@ warmup_enabled() {
 # Returns:
 #   0 always; the caller decides what a failure means
 launch_warmup() {
+  local prior
   if ! warmup_enabled; then
     note "warm-up skipped (EVO_T1_WARMUP=${WARMUP_MODE}); the first gate run pays the cold-cache cost"
     return 0
   fi
-  if [ -f "${WARMUP_STATUS}" ] && [ "$(cat "${WARMUP_STATUS}")" != "running" ]; then
-    ok "warm-up already finished: $(cat "${WARMUP_STATUS}")"
-    return 0
+  # A finished warm-up is not repeated, but a failed one is: the status file
+  # lives in /tmp for the life of the container, and postStart is where a
+  # transient registry or Bazel failure gets its retry.
+  if [ -f "${WARMUP_STATUS}" ]; then
+    prior="$(cat "${WARMUP_STATUS}")"
+    case "${prior}" in
+      '' | running) ;;
+      failed:*) warn "the last warm-up ${prior}; running it again" ;;
+      *)
+        ok "warm-up already finished: ${prior}"
+        return 0
+        ;;
+    esac
   fi
   if [ "${DRY_RUN}" = 1 ]; then
     phase "would start the background warm-up"
     return 0
   fi
   if has_tool flock; then
+    # fd 9 stays open into the setsid child, so the lock is held for the whole
+    # warm-up and a second start finds it busy.
     exec 9>"${WARMUP_LOCK}"
     if ! flock -n 9; then
       note "warm-up is already running; log at ${WARMUP_LOG}"
       return 0
     fi
+  else
+    note "no flock on PATH; two overlapping starts would each launch a warm-up"
   fi
   phase "background warm-up"
   : >"${WARMUP_LOG}"
@@ -439,6 +502,12 @@ main() {
   done
   case "${mode}" in
     create | start | status) ;;
+    -h | --help)
+      # The documented `-h|--help` form lands in the mode position, so it is
+      # answered here as well as in the option loop above.
+      usage
+      return 0
+      ;;
     *)
       err "configure.sh: mode must be create, start or status"
       usage >&2
