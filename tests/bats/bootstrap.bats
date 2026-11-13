@@ -31,6 +31,7 @@ setup() {
   # is sourced, which puts its own shipped defaults back.
   unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
   unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+  unset STACK_GRAFANA_NAME
   unset STACK_DOMAIN_BASE_DEFAULT STACK_SUBDOMAIN_SUFFIX_DEFAULT
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/domain.sh"
@@ -235,7 +236,7 @@ assert_no_router_vhost() {
   [ -z "${output}" ]
 }
 
-@test "bootstrap: render_public_router_conf fills the five vhosts from the shipped defaults" {
+@test "bootstrap: render_public_router_conf fills the six vhosts from the shipped defaults" {
   run render_public_router_conf "${REPO_ROOT}/proxy/router.conf.template" router.gen.conf
   [ "${status}" -eq 0 ]
   [ -z "${output}" ]
@@ -243,7 +244,7 @@ assert_no_router_vhost() {
   local name
   for name in gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io \
     kasm-gmktecbeast.overeazy.io litellm-gmktecbeast.overeazy.io \
-    hermes-gmktecbeast.overeazy.io; do
+    hermes-gmktecbeast.overeazy.io grafana-gmktecbeast.overeazy.io; do
     assert_router_vhost router.gen.conf "${name}"
   done
 }
@@ -291,7 +292,8 @@ assert_no_router_vhost() {
 @test "bootstrap: warn_missing_router_hosts checks the rendered router conf" {
   run render_public_router_conf "${REPO_ROOT}/proxy/router.conf.template" router.gen.conf
   [ "${status}" -eq 0 ]
-  run warn_missing_router_hosts router.gen.conf gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io
+  run warn_missing_router_hosts router.gen.conf gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io \
+    grafana-gmktecbeast.overeazy.io
   [ "${status}" -eq 0 ]
   [ -z "${output}" ]
   run warn_missing_router_hosts router.gen.conf coder-dev-gmktecbeast.overeazy.io
@@ -307,6 +309,27 @@ assert_no_router_vhost() {
   [ "$(classify_public_entry "${name}")" = "ok coder https://${name}" ]
   name=hermes-dev-gmktecbeast.overeazy.io
   [ "$(classify_public_entry "${name}")" = "ok hermes https://${name}" ]
+}
+
+@test "bootstrap: classify_public_entry routes a grafana name to the grafana role" {
+  # The role is what decides which STACK_*_URL an entry fills. Without the grafana case
+  # the name falls through to the dashboard branch and, since it is last in the composed
+  # list, it would overwrite STACK_DASHBOARD_URL with the observability UI's origin.
+  local name
+  name=grafana-gmktecbeast.overeazy.io
+  [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
+  name=grafana-dev-gmktecbeast.overeazy.io
+  [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
+}
+
+@test "bootstrap: the entry script routes and upserts the grafana origin" {
+  # The router vhost, the cert SAN and the dashboard card all hang off these two lines in
+  # scripts/bootstrap.sh. A rename or a rebase that drops either one leaves STACK_GRAFANA_URL
+  # empty forever and nothing else fails, so pin the pair here rather than trust the run.
+  assert_contains_file "entry script routes the grafana role" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'grafana\) public_grafana_url='
+  assert_contains_file "entry script upserts the grafana origin" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'upsert_env STACK_GRAFANA_URL "\${public_grafana_url}"'
 }
 
 # --- resolve_auto_public_hosts: the STACK_PUBLIC_HOSTS=auto path --------------
@@ -326,6 +349,7 @@ resolve_public_case() {
     # default at source time, so unsetting afterwards would erase those defaults.
     unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
     unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+    unset STACK_GRAFANA_NAME
     unset STACK_DOMAIN_BASE_DEFAULT STACK_SUBDOMAIN_SUFFIX_DEFAULT
     # shellcheck source=/dev/null
     source "${REPO_ROOT}/scripts/lib/common.sh"
@@ -351,13 +375,14 @@ resolve_public_case() {
   )
 }
 
-@test "bootstrap: auto resolves the five names from the parts in the file" {
+@test "bootstrap: auto resolves the six names from the parts in the file" {
   run resolve_public_case 'STACK_PUBLIC_HOSTS=auto
 STACK_ENV_LABEL=dev
 '
   [ "${status}" -eq 0 ]
   assert_match "the label rides every service name" 'raw=.*coder-dev-gmktecbeast\.overeazy\.io' "${output}"
   assert_match "the dashboard carries it too" '^raw=dev-gmktecbeast\.overeazy\.io,' "${output}"
+  assert_match "the observability UI is one of the names" 'raw=.*grafana-dev-gmktecbeast\.overeazy\.io' "${output}"
   assert_match "the mode is recorded" '^mode=auto$' "${output}"
   assert_match "the caller is told it composed" '^auto=1$' "${output}"
   assert_match "the label reached the environment" '^label=dev$' "${output}"
@@ -436,4 +461,16 @@ STACK_CODER_NAME=coderctl
   assert_match "the file's prefix was lifted" '^coder_name=coderctl$' "${output}"
   assert_match "and composed with it" 'raw=.*coderctl-gmktecbeast\.overeazy\.io' "${output}"
   assert_not_match "the shipped prefix is not used" 'raw=.*[^a-z]coder-gmktecbeast' "${output}"
+}
+
+@test "bootstrap: a grafana prefix the file carries is lifted and composed" {
+  # Same rule as the other parts, and the same failure if it is broken: lib/domain.sh
+  # reads only the process environment, so a renamed observability UI has to be lifted
+  # out of the file or the router vhost and the card href keep answering `grafana-`.
+  run resolve_public_case 'STACK_PUBLIC_HOSTS=auto
+STACK_GRAFANA_NAME=boards
+'
+  [ "${status}" -eq 0 ]
+  assert_match "the file's prefix was lifted" 'raw=.*boards-gmktecbeast\.overeazy\.io' "${output}"
+  assert_not_match "the shipped prefix is not used" 'raw=.*grafana-gmktecbeast' "${output}"
 }

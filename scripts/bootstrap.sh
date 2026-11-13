@@ -292,8 +292,9 @@ public_coder_url=""
 public_kasm_url=""
 public_litellm_url=""
 public_hermes_url=""
+public_grafana_url=""
 # STACK_PUBLIC_HOSTS has three states: empty is LAN-only, a comma-separated list is
-# used verbatim, and `auto` composes the five names from the naming parts in .env
+# used verbatim, and `auto` composes the six names from the naming parts in .env
 # (STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL and the per-service
 # *_NAME keys). resolve_auto_public_hosts owns the auto path and the sentinel
 # bookkeeping: it lifts the parts out of the file, exports them for lib/domain.sh,
@@ -331,6 +332,11 @@ while IFS= read -r entry; do
     kasm) public_kasm_url="${url}" ;;
     litellm) public_litellm_url="${url}" ;;
     hermes) public_hermes_url="${url}" ;;
+    # Grafana is the observability bundle's only public face: Prometheus, Loki, Tempo
+    # and Mimir get no vhost at all (SECURITY.md keeps the metrics backends off the LAN),
+    # so nothing routes for them here and a name that claims otherwise falls to the
+    # dashboard branch, which is where an unknown prefix belongs.
+    grafana) public_grafana_url="${url}" ;;
     *) public_dashboard_url="${url}" ;;
   esac
   public_entries+=("${entry}")
@@ -371,7 +377,7 @@ upsert_env STACK_PUBLIC_HOSTS_MODE "${public_hosts_mode}"
 # nginx holds, so a host that was renamed in .env but never added to the router's
 # vhost table would survive bootstrap and only show up as a 421 after the
 # recreate. That table is rendered here rather than hand-edited:
-# proxy/router.conf.template carries the five blocks with __EVO_HOST_*__ tokens and the
+# proxy/router.conf.template carries the six blocks with __EVO_HOST_*__ tokens and the
 # composed names fill them. The check then runs against the file compose will actually
 # mount, which STACK_ROUTER_CONF picks — an empty value leaves compose on the
 # checked-in proxy/router.conf.
@@ -426,6 +432,11 @@ upsert_env STACK_CODER_URL "${public_coder_url}"
 upsert_env STACK_KASM_URL "${public_kasm_url}"
 upsert_env STACK_LITELLM_URL "${public_litellm_url}"
 upsert_env STACK_HERMES_URL "${public_hermes_url}"
+# Compose feeds this to the dashboard's Grafana card (HOMEPAGE_VAR_GRAFANA_URL), so an
+# empty value here is what keeps that card on its LAN fallback rather than on a
+# half-composed public origin. Grafana's own GF_SERVER_ROOT_URL reads the separate
+# GRAFANA_URL key, which stays operator-set the way the other LAN ports are.
+upsert_env STACK_GRAFANA_URL "${public_grafana_url}"
 
 # Coder builds every workspace link and the `coder login` target from
 # CODER_ACCESS_URL, so the public name is the whole point of public mode: the
@@ -726,5 +737,8 @@ log " 10. LiteLLM: ${litellm_reach_url}/health — the transport every agent rou
 hermes_port="$(env_get .env HERMES_DASHBOARD_PORT)"
 hermes_reach_url="${public_hermes_url:-http://${stack_lan_host:-<host>}:${hermes_port:-9119}}"
 log " 11. Hermes: ${hermes_reach_url} — on-device host assistant (basic auth is HERMES_DASHBOARD_USER / HERMES_DASHBOARD_PASSWORD in .env, never printed here). Docs: docs/hermes.md"
+grafana_port="$(env_get .env GRAFANA_PORT)"
+grafana_reach_url="${public_grafana_url:-http://${stack_lan_host:-<host>}:${grafana_port:-3005}}"
+log " 12. Grafana: ${grafana_reach_url} - the observability bundle's UI (admin is GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD in .env, never printed here). It and its four backends come up only under the observability profile, so a stack started with OBSERVABILITY_ENABLED=false answers nothing here."
 ok "bootstrap"
 summary "bazelisk run //scripts:prod-stack -- up"
