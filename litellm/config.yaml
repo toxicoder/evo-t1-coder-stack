@@ -6,7 +6,10 @@
 # Ollama paths, "agent" for the tool-capable Spark lane (ONE model group whose
 # three deployments are one TensorFold-served inference backend per Spark box),
 # and "agent-low" / "agent-medium" / "agent-xhigh" for the same lane with a
-# thinking level baked in. `agent` itself already thinks at xhigh.
+# thinking level baked in. `agent` itself already thinks at xhigh. The fifth
+# Spark alias, "agent-swarm", is the same lane with the session pin dropped for
+# that group alone, so a parallel fan-out is placed across every reachable box
+# instead of sharing the five streams of the one box its workspace is pinned to.
 # Routing inside that group is session-scoped and best-effort: one conversation
 # — or one workspace sharing one affinity key — rides the same healthy box
 # while that pin stays warm, and a fresh conversation or a request with no
@@ -279,6 +282,80 @@ model_list:
       supports_tool_choice: true
       max_input_tokens: 262144
 
+  # Swarm lane - the same three boxes, ONE MORE independent model group, with the
+  # session pin lifted for this group alone. Nothing about what a request costs a
+  # box changes; what changes is which box a request lands on.
+  #
+  # Why the four groups above need their pin and why a fan-out does not: the pin
+  # makes a conversation stay on one box, which is what a conversation wants (its
+  # prefix cache stays warm and every turn of it is prefilled once). The cost
+  # shows up under parallelism. Every call of a workspace, the parent loop and
+  # each of its subagents alike, carries that workspace's one x-litellm-session-id,
+  # so a whole fan-out resolves to the SAME deployment and shares that one box's
+  # admission slots - PARALLEL, 5 full-length streams by default, set in
+  # scripts/spark-configure.sh. A fan-out of six then waits on five slots while the
+  # other two boxes sit reachable and under-offered.
+  #
+  # `agent-swarm` asks the fleet instead of the box. model_group_affinity_config
+  # (router_settings, below) gives this group an empty flag list, which at v1.102.1
+  # REPLACES the global affinity flags for this group only, so no pin resolves and
+  # each request goes to the global least-busy picker and lands on the healthy
+  # deployment with the fewest requests in flight. One workspace's fan-out ceiling
+  # goes from PARALLEL streams on one box to PARALLEL on each reachable box - 15
+  # across three - with no cap added in the proxy to get there.
+  #
+  # The trade stated plainly: an agent-swarm CONVERSATION is not sticky, so its
+  # next turn may be prefilled on a different box and pay prefill again. That is
+  # the right trade for independent parallel work (subagents, batch edits, one-shot
+  # jobs, anything whose turns do not share a long warm prefix) and the wrong one
+  # for a single long thread, which is what `agent` and its three thinking aliases
+  # remain there for.
+  #
+  # Reusing the SPARKn_OPENAI_URL / SPARK_n_API_KEY pairs is the same deliberate
+  # reuse the thinking aliases document above: routing state is per group, so
+  # least-busy's in-flight counters are computed inside this group and a fifth
+  # group costs no extra hardware. What still holds inside this group is one
+  # deployment per box - three boxes, three deployments, three unique ids. And
+  # still no rpm/tpm/max_parallel_requests anywhere: a saturated box sheds load in
+  # its own scheduler, and relocation on a refusal lives on the box (patch 0029).
+  - model_name: agent-swarm
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK1_OPENAI_URL
+      api_key: os.environ/SPARK_1_API_KEY
+      # Baked to match `agent`, so the swarm lane is a drop-in for it and a
+      # subagent that cannot send a thinking level still gets xhigh.
+      reasoning_effort: xhigh
+    model_info:
+      # Unique per deployment for the same reason as every group above: health
+      # checks, cooldowns and the least-busy counters attribute per deployment.
+      id: agent-swarm-spark-1
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-swarm
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK2_OPENAI_URL
+      api_key: os.environ/SPARK_2_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-swarm-spark-2
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-swarm
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK3_OPENAI_URL
+      api_key: os.environ/SPARK_3_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-swarm-spark-3
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   # No DB-backed key management, virtual keys, or Admin UI on this box.
@@ -376,6 +453,26 @@ router_settings:
   # control-plane chat agent (2.36.6 aibridge forwards no per-conversation and
   # no custom session header); both are spread by least-busy, as intended.
   optional_pre_call_checks: ["session_affinity"]
+  # Per-group affinity. Real at this tag: it is a Router.__init__ argument and is
+  # not in ROUTER_SETTINGS_MANAGED_OUTSIDE_CONFIG, so config.yaml reaches it, and
+  # setting it also self-arms the affinity callback. The valid flag names are
+  # deployment_affinity, responses_api_deployment_check, session_affinity and
+  # encrypted_content_affinity; an entry here REPLACES the global flag list for the
+  # group it names instead of adding to it. So `agent-swarm: []` means "no affinity
+  # check of any kind for this group": no session pin resolves, and every request is
+  # placed by the least-busy picker above. Every group absent from this map keeps
+  # falling back to the global ["session_affinity"], which is why the four lanes
+  # that a conversation rides stay pinned exactly as they were - this is the one
+  # place the pin is lifted, and it is lifted for the fan-out lane alone.
+  #
+  # This key is the opt-out; a client header is not. An empty or short
+  # x-litellm-session-id does NOT skip the pin at this tag - that header and
+  # x-litellm-trace-id are read verbatim at any length, and only the generic
+  # x-<vendor>-session-id family is shape-checked - so a caller that tried to
+  # spread by sending an empty value would collapse every swarm request onto one
+  # shared pin, the opposite of the intent.
+  model_group_affinity_config:
+    agent-swarm: []
   allowed_fails: 40
   cooldown_time: 5
   # TensorFold on the Spark boxes answers an over-admitted stream with the Zig
@@ -386,9 +483,12 @@ router_settings:
   # is the only field that can reach this error, which is why it is set here; do
   # not "clean it up" into a status-coded field.
   #
-  # Scoped to the four Spark lanes, so coder (Arc) and chat keep the plain
-  # num_retries path. The four groups are independent: none inherits agent's
-  # entry, so each needs its own six keys.
+  # Scoped to the five Spark lanes, so coder (Arc) and chat keep the plain
+  # num_retries path. The five groups are independent: none inherits agent's
+  # entry, so each needs its own six keys. agent-swarm needs its own for the same
+  # reason the other four do - its NoRoom refusals arrive status-less too, and an
+  # unpinned group relocates better than a pinned one only because the retry lands
+  # on whichever box is now least busy, not on a box the pin keeps naming.
   #
   # The zeros pin the exceptions DefaultRetries would otherwise reach, and
   # NotFoundError is one of them: at this tag it has no field of its own, so a
@@ -464,8 +564,23 @@ router_settings:
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
       ContentPolicyViolationErrorRetries: 0
+    agent-swarm:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
   fallbacks:
     - agent: ["coder"]
     - agent-low: ["coder"]
     - agent-medium: ["coder"]
     - agent-xhigh: ["coder"]
+    # The swarm lane degrades one step further than its siblings, and the extra
+    # step is worth it here. Its own three deployments can be fully cooled while
+    # the SAME boxes are healthy under another alias, because health state,
+    # cooldowns and in-flight counters are kept per group - so `agent` is tried
+    # first, where least-busy still has a healthy box to pick, and Arc `coder`
+    # stays the last resort it is for every other Spark lane. The chain is
+    # acyclic: agent-swarm -> agent -> coder, and coder declares no hop of its own.
+    - agent-swarm: ["agent", "coder"]

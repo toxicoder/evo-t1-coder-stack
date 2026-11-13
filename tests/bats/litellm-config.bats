@@ -15,7 +15,16 @@
 # group of three Spark deployments carrying that one effort, the same tool-calling
 # flags, and their own hop to coder. Qwen3.8-Flash-Next takes no other effort.
 #
-# And it pins the NoRoom retry contract: each of the four agent lanes declares the
+# And it pins the fan-out lane: `agent-swarm` is a fifth Spark group whose three
+# deployments are the same three boxes, and the one group the session pin does not
+# cover. model_group_affinity_config names it with an empty flag list, which at this
+# tag replaces the global flags for that group alone and leaves least-busy to place
+# every request on the box with the fewest in flight. The four conversation lanes
+# stay absent from that map so they keep their pin, no twin tries to lift the pin
+# with a client header (that is not an opt-out at this tag), and the lane degrades
+# agent-then-coder rather than Arc-only.
+#
+# And it pins the NoRoom retry contract: each of the five agent lanes declares the
 # six-field model_group_retry_policy whose DefaultRetries is the only field that
 # can catch TensorFold's status-less refusal at this LiteLLM tag, the policy names
 # the Spark lanes only, and no key the pinned tag lacks was pasted in.
@@ -159,6 +168,98 @@ entries_for() {
   [ "${status}" -ne 0 ]
 }
 
+# affinity_config_block — the model_group_affinity_config mapping, its own line plus
+# every deeper-indented line, stopping at its first sibling key. Scoped the way
+# retry_policy_block is: a grep over the whole file would also be satisfied by a
+# same-named key living in another block.
+affinity_config_block() {
+  awk '
+    BEGIN { depth = -1 }
+    /^[[:space:]]*model_group_affinity_config:/ {
+      depth = index($0, "model_group_affinity_config:") - 1
+      print
+      next
+    }
+    depth >= 0 {
+      if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) { next }
+      if (match($0, /[^[:space:]]/) - 1 <= depth) { depth = -1; next }
+      print
+    }
+  ' "${CONFIG}"
+}
+
+@test "swarm: the fan-out group is the same three boxes with unique ids" {
+  # Routing state lives inside a model group, so a fifth group over hardware the
+  # other four already use costs no new box. Inside the group the standing rule
+  # still holds: one deployment is one box, three distinct SPARKn urls, and three
+  # unique model_info.id values for per-deployment health and least-busy counting.
+  local body deps params efforts bases keys flags ids unique expected
+  body="$(entries_for agent-swarm)"
+  deps="$(printf '%s\n' "${body}" | grep -Ec '^[[:space:]]*-[[:space:]]+model_name: agent-swarm$')"
+  params="$(printf '%s\n' "${body}" | grep -Ec '^[[:space:]]+litellm_params:$')"
+  # Same baked level as `agent`, so the lane is a drop-in for the agent loop.
+  efforts="$(printf '%s\n' "${body}" | grep -Ec '^[[:space:]]+reasoning_effort: xhigh$')"
+  bases="$(printf '%s\n' "${body}" | grep -Ec '^[[:space:]]+api_base: os.environ/SPARK[123]_OPENAI_URL$')"
+  keys="$(printf '%s\n' "${body}" | grep -Ec '^[[:space:]]+api_key: os.environ/SPARK_[123]_API_KEY$')"
+  flags="$(printf '%s\n' "${body}" | grep -Ec '^[[:space:]]+(supports_function_calling|supports_tool_choice|max_input_tokens): ')"
+  ids="$(printf '%s\n' "${body}" | grep -Eo 'id: agent-swarm-spark-[0-9]+' | sort -u | tr '\n' ' ' | sed -e 's/[[:space:]]*$//')"
+  unique="$(printf '%s\n' "${body}" | grep -Eo 'id: agent-swarm-spark-[0-9]+' | sort -u | grep -c '.' | tr -d ' ')"
+  [[ "${deps}" -eq 3 ]] || { echo "agent-swarm: ${deps} deployments" >&2; return 1; }
+  [[ "${params}" -eq 3 ]] || { echo "agent-swarm: ${params} nested litellm_params" >&2; return 1; }
+  [[ "${efforts}" -eq 3 ]] || { echo "agent-swarm: ${efforts} lines bake xhigh" >&2; return 1; }
+  [[ "${bases}" -eq 3 && "${keys}" -eq 3 ]] || { echo "agent-swarm: not the same three boxes (${bases} urls, ${keys} keys)" >&2; return 1; }
+  [[ "${flags}" -eq 9 ]] || { echo "agent-swarm: ${flags} tool-calling/window flags, expected 9" >&2; return 1; }
+  [[ "${unique}" -eq 3 ]] || { echo "agent-swarm: ids are ${ids}" >&2; return 1; }
+  expected="id: agent-swarm-spark-1 id: agent-swarm-spark-2 id: agent-swarm-spark-3"
+  [[ "${ids}" == "${expected}" ]] || { echo "agent-swarm: ids are ${ids}" >&2; return 1; }
+}
+
+@test "swarm: the session pin is lifted for this group and this group only" {
+  # One key buys the spread. At v1.102.1 model_group_affinity_config is a Router
+  # argument reachable from router_settings, and an entry there REPLACES the global
+  # optional_pre_call_checks flags for the group it names -- so the empty list is
+  # what leaves this group unpinned and lets least-busy place every request on the
+  # box with the fewest in flight. Both halves matter: a flag name pasted into that
+  # list would quietly restore the pin, and a group left out of the map keeps the
+  # global pin, which is exactly what the four conversation lanes want.
+  local block groups group
+  block="$(affinity_config_block)"
+  [ -n "${block}" ] || { echo "router_settings declares no model_group_affinity_config" >&2; return 1; }
+  assert_match "agent-swarm opts out with an empty flag list" \
+    '^[[:space:]]+agent-swarm:[[:space:]]*\[\][[:space:]]*$' "${block}"
+  groups="$(printf '%s\n' "${block}" | grep -E '^[[:space:]]+[A-Za-z][A-Za-z-]+:' |
+    sed -e 's/[[:space:]]//g' -e 's/:.*//' | sort -u | paste -sd, -)"
+  assert_eq "the fan-out lane is the only group named" "agent-swarm" "${groups}"
+  for group in agent agent-low agent-medium agent-xhigh; do
+    assert_not_match "${group} keeps the global pin" "^[[:space:]]+${group}:" "${block}"
+  done
+}
+
+@test "swarm: a twin never tries to lift the pin with a client header" {
+  # Not an opt-out at this tag: x-litellm-session-id is read verbatim at any
+  # length, and only the generic x-<vendor>-session-id family is shape-checked, so
+  # a per-model override that blanked the header would hand every swarm request the
+  # SAME pin instead of none. The lane inherits the [models] header verbatim and the
+  # proxy's group config does the work.
+  local tpl block
+  for tpl in "${REPO_ROOT}"/templates/*/grok-config.toml.tftpl; do
+    [[ -f "${tpl}" ]] || continue
+    block="$(sed -n '/^\[model\."agent-swarm"\]/,/^\[model\."coder"\]/p' "${tpl}")"
+    assert_match "the swarm lane is declared in ${tpl}" '^\[model\."agent-swarm"\]$' "${block}"
+    assert_not_match "the swarm lane overrides no header in ${tpl}" 'extra_headers' "${block}"
+  done
+}
+
+@test "swarm: the lane degrades through a Spark alias before it reaches Arc" {
+  # This group's own three deployments can all be cooling while the same boxes are
+  # healthy under another alias, since health state, cooldowns and in-flight
+  # counters are kept per group. So agent is tried first, where least-busy still
+  # has a healthy box to pick, and Arc coder stays the last resort it is for every
+  # Spark lane. The chain is acyclic: agent-swarm -> agent -> coder.
+  run grep -Eq '^[[:space:]]*-[[:space:]]+agent-swarm: \["agent", "coder"\]' "${CONFIG}"
+  [ "${status}" -eq 0 ] || { echo "agent-swarm has no agent-then-coder fallback" >&2; return 1; }
+}
+
 @test "affinity: every grok-config twin renders the session-affinity header" {
   # Every template directory that exists, so renaming or dropping one cannot
   # leave this guard reading a path that is gone.
@@ -278,7 +379,7 @@ policy_fields_for() {
 
 @test "retry: every agent lane carries the policy that reaches NoRoom" {
   local group fields
-  for group in agent agent-low agent-medium agent-xhigh; do
+  for group in agent agent-low agent-medium agent-xhigh agent-swarm; do
     fields="$(policy_fields_for "${group}")"
     assert_match "DefaultRetries is set for ${group}" 'DefaultRetries: 2' "${fields}"
     assert_match "500 is retried for ${group}" 'InternalServerErrorRetries: 2' "${fields}"
@@ -307,7 +408,7 @@ policy_fields_for() {
   # ServiceUnavailableErrorRetries and never reaches DefaultRetries. Zeroing the
   # second therefore cannot undo the first: 1200 s once, not three times.
   local group fields
-  for group in agent agent-low agent-medium agent-xhigh; do
+  for group in agent agent-low agent-medium agent-xhigh agent-swarm; do
     fields="$(policy_fields_for "${group}")"
     assert_match "NoRoom still gets its two attempts on ${group}" 'DefaultRetries: 2' "${fields}"
     assert_match "a dead stream gets none on ${group}" 'ServiceUnavailableErrorRetries: 0' "${fields}"
@@ -322,8 +423,8 @@ policy_fields_for() {
   local groups
   groups="$(retry_policy_block | grep -E '^[[:space:]]+[A-Za-z][A-Za-z-]+:[[:space:]]*$' |
     sed -e 's/[[:space:]]//g' -e 's/:$//' | sort | paste -sd, -)"
-  assert_eq "only the four agent groups are named" \
-    "agent,agent-low,agent-medium,agent-xhigh" "${groups}"
+  assert_eq "only the five agent groups are named" \
+    "agent,agent-low,agent-medium,agent-swarm,agent-xhigh" "${groups}"
   # coder (Arc) and chat keep today's plain num_retries path.
   run retry_policy_block
   assert_not_match "coder is untouched" '^[[:space:]]+coder:' "${output}"
