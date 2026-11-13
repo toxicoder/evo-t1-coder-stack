@@ -17,8 +17,8 @@ repo can verify.
   proxy-side policy you configure — not by ad-hoc port-forwarding, which skips both.
   LiteLLM requires `LITELLM_MASTER_KEY` for every request; Coder has its own login, and
   once either name resolves publicly assume it is being probed.
-- **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder, the dashboard and
-  Hermes can be reachable from the WAN. Keep the Coder login strong: that account is the site admin
+- **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder, the dashboard,
+  Hermes and Grafana can be reachable from the WAN. Keep the Coder login strong: that account is the site admin
   and the control plane it authenticates to creates containers on this host's docker
   socket. The dashboard's NextAuth password (`HOMEPAGE_AUTH_PASSWORD`) stays the only
   gate unless an Authelia policy covers the new names too, and that policy is an
@@ -80,11 +80,35 @@ repo can verify.
   printed. If a run is SIGKILLed mid-push the row survives until it expires; check
   with `docker compose exec db psql -U coder -d coder -c "select id, token_name,
   scopes, expires_at from api_keys where login_type = 'token';"`.
-- **Metrics stay on the host.** The Coder control plane publishes Prometheus
-  metrics on 2112, mapped to `127.0.0.1` only, so a scrape needs a shell on the
-  stack host. LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
+- **Metrics stay on the host, and the observability bundle keeps that rule.** The Coder
+  control plane publishes Prometheus metrics on 2112, mapped to `127.0.0.1` only, so a
+  scrape needs a shell on the stack host, and Prometheus' own UI binds `127.0.0.1` on
+  `PROMETHEUS_PORT` (9090) for the same reason: the series there name every LiteLLM
+  model alias and its traffic volume. The bundle adds exactly one new published port and
+  no other new door. Mimir, Loki, Tempo and Alloy declare no `ports:` at all and answer on
+  the compose network only - Mimir's query API in particular has no auth of its own once
+  tenancy is off, which is why publishing it would be publishing the whole metric set. The
+  one LAN-published UI is Grafana on `GRAFANA_PORT` (3005). Grafana is also the only one
+  of the six that can take a public name, and it is credentialed - anonymous access is
+  off (`GF_AUTH_ANONYMOUS_ENABLED=false`) and the admin login comes from
+  `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` in `.env`, which is git-ignored and
+  never committed; `scripts/bootstrap.sh` replaces the `change-me-grafana` placeholder
+  with a generated value the way it does the other secrets, and no output prints it. Treat
+  `grafana-data` as holding whatever is rendered into a dashboard from it. What a reviewer
+  has to know about the collector: Alloy mounts the host's container log directory
+  (`STACK_DOCKER_LOG_DIR`, default `/var/lib/docker/containers`) read-only at the same
+  path inside the container, which is host filesystem content - every line every
+  container printed - but not the daemon: the docker socket stays unmounted here as it
+  does for the dashboard, so Alloy can read logs and cannot start, stop or inspect
+  anything. It runs as root (`user: "0:0"`) for that read alone, because those json-file
+  logs are mode 0600 and owned by the daemon's uid on a rootful host; the mount is the
+  only host path it gets and it is read-only. The volumes behind it (`alloy-data`,
+  `loki-data`, `mimir-data`, `tempo-data`)
+  hold that same text at rest, so a shell that can read them reads what the containers
+  said. LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
   other LiteLLM endpoint — keep it that way, since the metrics name your model
-  aliases and traffic volumes.
+  aliases and traffic volumes; Prometheus sends that key from its own environment, so it
+  never lands in the committed scrape file.
 - **Workspace credentials.** The LiteLLM master key reaches each workspace as the
   `LITELLM_API_KEY` environment variable, which the startup script injects into the
   rendered `~/.grok/config.toml` (the key lives in the file as an `env_key`

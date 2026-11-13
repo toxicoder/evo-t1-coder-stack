@@ -49,7 +49,8 @@ docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" logs --tail 100 code
 ```
 
 Services: `coder`, `db`, `litellm`, `ollama`, `searxng`, `kasm`, `homepage`,
-`homepage-proxy`, `router`, `hermes`, `hermes-init`.
+`homepage-proxy`, `router`, `hermes`, `hermes-init`, `prometheus`, `mimir`, `loki`,
+`tempo`, `grafana`, `alloy`.
 
 The stack's own health, from the host: `bazelisk run //scripts:hermes-shell -- check`
 reports this container's state, its seed, and the model lane.

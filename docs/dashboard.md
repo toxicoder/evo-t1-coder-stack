@@ -56,6 +56,22 @@ names for the dashboard, coder, kasm, litellm and hermes only, so search has no 
 name to fall to: leave the key empty and both stay on the LAN, where the card's status
 still reports for anyone who can reach the dashboard.
 
+The **Observability** group is the one group that reports on services publishing no port.
+Its five cards - Grafana, Prometheus, Loki, Tempo, Mimir - carry a `siteMonitor` on
+compose DNS (`http://grafana:3000/api/health`, `http://prometheus:9090/-/healthy`,
+`http://loki:3100/ready`, `http://tempo:3200/ready`, `http://mimir:8080/ready`), which is
+what proves the bundle is wired up: four of those six containers ship no healthcheck at
+all (distroless image, no shell), so the badge is the only automatic signal they have.
+The hrefs go through `HOMEPAGE_VAR_GRAFANA_URL` and `HOMEPAGE_VAR_PROMETHEUS_URL`, which
+default to the LAN URLs built from `STACK_LAN_HOST`, `GRAFANA_PORT` and
+`PROMETHEUS_PORT`, and follow `STACK_GRAFANA_URL` once bootstrap composes the public name
+- so the card that opens Grafana Explore for Loki and Tempo opens the same Grafana the
+datasources point at. The Grafana card also carries a `customapi` widget on
+`/api/health` - the one endpoint that needs no session or API key - so the tile shows the
+storage state and the running version, which is what you compare against the image pin in
+`docker-compose.yml` after a pull. Only Grafana has a URL a browser can resolve; the
+three backends are reached from inside it. See [observability.md](observability.md).
+
 ### Login
 
 `https://<host>/` serves the dashboard behind a self-signed certificate that
@@ -106,6 +122,19 @@ bazelisk test //tests:bats_homepage_config_test
   cannot resolve `http://coder:3000`, only the dashboard server can
 - a `siteMonitor` or widget `url` names a compose service or a token, never a loopback
   or LAN-address literal, which would bake the LAN into git
+- the **Observability** group, card by card: five cards, one per bundle service, each
+  probing its own health path over compose DNS - `http://grafana:3000/api/health`,
+  `http://prometheus:9090/-/healthy`, `http://loki:3100/ready`,
+  `http://tempo:3200/ready`, `http://mimir:8080/ready`. Those four distroless containers
+  ship no in-container healthcheck, so this probe is the only liveness read the stack has
+  for them, and a badge pointed anywhere else is caught here
+- the same group's links: every href rides a `{{HOMEPAGE_VAR_*}}` token and none carries
+  a URL literal (Loki, Tempo and Mimir publish no port, so their two hrefs open
+  `{{HOMEPAGE_VAR_GRAFANA_URL}}/explore` rather than a store nobody can reach), and no
+  probe bakes a loopback or LAN address
+- the group's place on the page: `Observability` has its own `layout` entry, renders as
+  one `style: row` band whose `columns` equals the cards it holds, and sits after the
+  **Host** group
 - no `block` customapi widget declares more than four mappings - the shipped bundle
   slices the list, so a fifth row silently never renders
 - a bookmark's value is a list of single-key mappings carrying both `abbr` and `href`;
