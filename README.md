@@ -1006,7 +1006,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │                          #   (.env.example is a copy)
 ├── .devcontainer/         # laptop/CI contributor env (probe sentinel keeps Coder on workspace)
 │   ├── contributor-env    # new-workspace treats this as a miss; do not copy to other repos
-│   └── devcontainer.json
+│   ├── devcontainer.json  # builds images/dev, cacheFrom the CI image, Bazel caches in volumes
+│   └── library-scripts/   # configure.sh (cache seam, seed, hooks, warm-up) + warmup.sh
 ├── hermes/                # Hermes seed: config.yaml, SOUL.md, skills (ro-mounted)
 ├── homepage/config/       # dashboard: services, widgets, settings, bookmarks, custom.css
 ├── homepage/assets/icons/ # dashboard wallpaper + header logo, served at /icons/

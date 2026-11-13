@@ -11,9 +11,11 @@ cd "${ROOT}"
 echo "Running shellcheck..."
 shellcheck --version
 # templates/common holds the payloads the templates inline and source, and docs holds
-# the docs operator CLI, so both are first-party shell too. bazel_checkout_root lands
+# the docs operator CLI, so both are first-party shell too. .devcontainer holds the
+# contributor container's postCreate scripts, which run on every laptop and so are
+# held to the same lint as the CLIs. bazel_checkout_root lands
 # on the real checkout, which is where fix.sh, the templates and these payloads live.
-scan_dirs=(scripts lints tests .github templates/common docs)
+scan_dirs=(scripts lints tests .github templates/common docs .devcontainer)
 files=()
 while IFS= read -r -d '' file; do
   files+=("${file}")

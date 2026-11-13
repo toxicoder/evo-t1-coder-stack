@@ -2,25 +2,46 @@
   "name": "evo-t1 contributor",
   "build": {
     "context": "../images/dev",
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
+    "cacheFrom": ["ghcr.io/toxicoder/evo-t1-coder-stack/evo-t1-dev:latest"]
   },
   "remoteUser": "coder",
   "updateRemoteUserUID": true,
   "containerEnv": {
     "EVO_T1_DEVCONTAINER": "1",
     "SEARXNG_URL": "http://host.docker.internal:8181",
-    "GROK_MAX_MCP_OUTPUT_BYTES": "40000"
+    "GROK_MAX_MCP_OUTPUT_BYTES": "40000",
+    "EVO_T1_BAZEL_CACHE_ROOT": "/var/cache/evo-t1-bazel",
+    "BAZELISK_HOME": "/var/cache/evo-t1-toolcache/bazelisk",
+    "NPM_CONFIG_CACHE": "/var/cache/evo-t1-toolcache/npm",
+    "UV_CACHE_DIR": "/var/cache/evo-t1-toolcache/uv",
+    "PIP_CACHE_DIR": "/var/cache/evo-t1-toolcache/pip",
+    "EVO_T1_WARMUP": "${localEnv:EVO_T1_WARMUP}"
   },
   "remoteEnv": {
-    "EVO_T1_DEVCONTAINER": "1"
+    "EVO_T1_DEVCONTAINER": "1",
+    "SEARXNG_URL": "http://host.docker.internal:8181"
   },
-  "runArgs": [
-    "--add-host=host.docker.internal:host-gateway"
-  ],
   "mounts": [
-    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+    "source=evo-t1-dev-bazel-disk,target=/var/cache/evo-t1-bazel/disk,type=volume",
+    "source=evo-t1-dev-bazel-repo,target=/var/cache/evo-t1-bazel/repo,type=volume",
+    "source=evo-t1-dev-bazel-root,target=/var/cache/evo-t1-bazel/root,type=volume",
+    "source=evo-t1-dev-toolcache,target=/var/cache/evo-t1-toolcache,type=volume"
   ],
-  "postCreateCommand": "bash -lc 'if [ -S /var/run/docker.sock ]; then sudo setfacl -m u:coder:rw /var/run/docker.sock 2>/dev/null || sudo chmod a+rw /var/run/docker.sock 2>/dev/null || true; fi; bash scripts/seed-dev-env.sh --devcontainer --context7-mcp'",
+  "runArgs": [
+    "--add-host=host.docker.internal:host-gateway",
+    "--ulimit",
+    "nofile=1048576:1048576"
+  ],
+  "forwardPorts": [3000],
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+  "postCreateCommand": "bash .devcontainer/library-scripts/configure.sh create",
+  "postStartCommand": "bash .devcontainer/library-scripts/configure.sh start",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -29,11 +50,52 @@
         "foxundermoon.shell-format",
         "hashicorp.terraform",
         "ms-azuretools.vscode-docker",
-        "redhat.vscode-yaml"
+        "redhat.vscode-yaml",
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "bradlc.vscode-tailwindcss"
       ],
       "settings": {
         "terminal.integrated.defaultProfile.linux": "tmux",
-        "editor.formatOnSave": true
+        "terminal.integrated.scrollback": 10000,
+        "editor.formatOnSave": true,
+        "files.eol": "\n",
+        "files.exclude": {
+          "**/bazel-*": true
+        },
+        "files.watcherExclude": {
+          "**/bazel-*": true,
+          "**/docs-site/node_modules/**": true,
+          "**/docs-site/.next/**": true,
+          "**/docs-site/out/**": true,
+          "**/__pycache__/**": true,
+          "**/.git/objects/**": true
+        },
+        "search.exclude": {
+          "**/bazel-*": true,
+          "**/docs-site/node_modules/**": true,
+          "**/docs-site/.next/**": true,
+          "**/docs-site/out/**": true,
+          "**/coverage/**": true,
+          "**/__pycache__/**": true
+        },
+        "shellcheck.executablePath": "/usr/bin/shellcheck",
+        "shellcheck.customArgs": ["-x", "--severity=warning"],
+        "shellformat.path": "/usr/local/bin/shfmt",
+        "shellformat.flag": "-s -i 2 -ci",
+        "[shellscript]": {
+          "editor.defaultFormatter": "foxundermoon.shell-format"
+        },
+        "[starlark]": {
+          "editor.defaultFormatter": "bazelbuild.vscode-bazel"
+        },
+        "bazel.buildifierFixOnFormat": true,
+        "yaml.format.enable": false,
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "[python]": {
+          "editor.formatOnSave": false
+        },
+        "git.branchProtection": ["main"]
       }
     }
   }
