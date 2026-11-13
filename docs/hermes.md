@@ -281,6 +281,12 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   it - the same Qwen3.8-Flash-Next on the same three Spark boxes, with real
   `tool_calls` and that level baked into the alias instead. Use one when a run needs a
   different level; Qwen3.8-Flash-Next takes `low`, `medium` and `xhigh` and nothing else.
+- **`agent-swarm`** is the fifth Spark alias and the only one with no LiteLLM session pin:
+  same model, same three boxes, same baked `xhigh`, but each request is placed on the
+  least-busy healthy box. It is the lane for a parallel fan-out, not for one long Hermes
+  session - a single thread would give up the pin's prefix-cache locality and could be
+  prefilled on a different box each turn. Hermes keeps `agent` as its default; see
+  [litellm-routing.md](litellm-routing.md#the-swarm-lane-agent-swarm).
 - The key is `LITELLM_MASTER_KEY`, substituted from the environment into the seeded
   `config.yaml`. Do not copy the key into a Hermes file - one secret, one owner.
 - Fallbacks, in the order worth trying them:
