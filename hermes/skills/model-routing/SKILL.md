@@ -28,6 +28,7 @@ behind that one base URL — never bypass it.
 | `agent-low` | same 3 Spark boxes, own group, effort baked to `low` | real `tool_calls` | an explicit low thinking level |
 | `agent-medium` | same 3 Spark boxes, own group, effort baked to `medium` | real `tool_calls` | an explicit medium thinking level |
 | `agent-xhigh` | same 3 Spark boxes, own group, effort baked to `xhigh` | real `tool_calls` | an explicit xhigh level — what `agent` already bakes |
+| `agent-swarm` | same 3 Spark boxes, own group, effort baked to `xhigh`, no session pin | real `tool_calls` | a fan-out that should spread over all three boxes at once |
 | `coder` | Arc, `qwen2.5-coder:32b` | **plain text** | chat about code, summarising diffs |
 | `coder-fast` | Arc, `qwen2.5-coder:14b` | **plain text** | cheap and quick, same limit |
 | `chat` | Arc, `qwen2.5:7b` | real `tool_calls` | agent work while the Sparks are down |
@@ -46,13 +47,27 @@ Notes that matter:
 - Those groups are independent: least-busy and the session pin are computed per
   group, so a chat on `agent-medium` can sit on the same box as one on `agent`. The
   box still serves 5 streams in total, which is why nothing here gets a cap.
+- `agent-swarm` is the same model on the same three boxes, `xhigh` baked: only its
+  routing state differs. It is the one group the session pin does not cover, so
+  every request goes to least-busy and lands on whichever healthy box has the
+  fewest requests in flight.
+- That is why a fan-out uses it and a long thread does not: independent parallel
+  work reaches all 15 streams (5 on each of the three boxes), where a pinned
+  session only ever reaches the 5 streams of the one box it was pinned to. The
+  price is stickiness — the next turn may prefill on a different box — so a single
+  long conversation stays on `agent`, which keeps the pin.
+- Its degradation hop differs as well: `agent-swarm` falls back to `agent` and only
+  then to `coder`, where each sibling Spark lane hops straight to `coder`. Health
+  state is per group, so the swarm's own three deployments can all be cooled while
+  the same boxes stay healthy under `agent`. The working degraded mode is still
+  `chat`, for the same reason as above.
 - `coder` / `coder-fast` cap at 32k context; `agent` is much larger.
 
 ## Switching the model
 
 ```sh
 hermes config get model.model
-hermes config set model.model chat     # or: agent, agent-medium
+hermes config set model.model chat     # or: agent, agent-medium, agent-swarm
 ```
 
 Never write a key into `config.yaml` — `api_key` stays `${LITELLM_MASTER_KEY}`,
