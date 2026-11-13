@@ -1,0 +1,78 @@
+# Tempo, single binary, filesystem storage, no Kafka.
+#
+# Tempo 3.x needs no external queue for one instance: the ingest/queueing
+# components are only required when the distributor and ingester are separate
+# processes, and here they are one process. Upstream's own single-binary overlay
+# (integration/util/config-single-binary.yaml at the pinned tag) is the reference.
+#
+# Nothing here reads the environment: the one operator-tunable value this component
+# has (trace retention) is passed as a flag, because Tempo 3.x moved it out of the
+# config file. See the service's command in docker-compose.yml.
+
+# Lets Grafana's trace viewer stream spans instead of buffering the whole result.
+# Upstream default is false, which is the right choice for a cluster and the wrong
+# one for a browser waiting on a trace.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
+  log_level: warn
+
+distributor:
+  receivers:
+    # OTLP is the only ingest path: Loki's own OTLP receiver is switched off so
+    # this is the one place a span can land. gRPC on 4317 is what the services
+    # reach for; 4318 HTTP is kept for a browser or a curl probe.
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+# No `ingester:` block. Tempo 3.1's app.Config keeps only the three per-user
+# limits there (`tempo -help-all` lists max-bytes-per-trace,
+# max-global-traces-per-user and max-traces-per-user); trace_idle_period,
+# max_block_duration and max_block_bytes are gone, and naming them here is a
+# startup failure, not a tuneable. The defaults are the ones upstream ships for a
+# single binary.
+#
+# No `compactor:` block either, for the same reason: Tempo 3.x replaced the
+# compactor with a backend-scheduler that hands out compaction work, and its
+# block-retention knob is set as a flag on the service in docker-compose.yml
+# rather than here, because compose interpolates the operator's key for us.
+
+metrics_generator:
+  # Span metrics and service graphs are computed here and pushed to Prometheus,
+  # which is what makes the Grafana service-map and "requests per trace" panels
+  # work without a second metrics pipeline. Remote-writing into Prometheus (not
+  # Mimir) keeps one queryable window for everything Prometheus scrapes, and the
+  # series land in Mimir through Prometheus's own remote_write.
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://prometheus:9090/api/v1/write
+        send_exemplars: true
+  registry:
+    external_labels:
+      source: tempo
+      stack: evo-t1
+
+overrides:
+  defaults:
+    metrics_generator:
+      # Processors are per-tenant in Tempo 3.x; naming them here is what actually
+      # turns the generator on, since an empty list makes the block above idle.
+      processors: [service-graphs, span-metrics]
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+    pool:
+      max_workers: 100
+      queue_depth: 10000

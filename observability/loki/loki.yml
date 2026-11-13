@@ -1,0 +1,77 @@
+# Loki, single binary, filesystem storage.
+#
+# Base shape is upstream's own single-node config
+# (cmd/loki/loki-docker-config.yaml at the pinned tag): auth off, inmemory ring,
+# replication factor 1, filesystem chunks. What is added here is the retention
+# floor and the analytics opt-out.
+#
+# `${LOKI_RETENTION_PERIOD}` is expanded by Loki itself: the service passes
+# `-config.expand-env=true`, and docker-compose.yml always defines the key with a
+# compose-level default, so the value is never empty. Expansion is used rather
+# than a CLI flag because retention is a limits-config field, not a flag.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+  log_level: warn
+  # The distributor's own OTLP receiver is off: traces belong to Tempo, and a
+  # second collector on the box would give two answers to "where did this span go".
+
+common:
+  # Upstream ships 127.0.0.1 for the single-binary case: the ring is in-memory and
+  # there is exactly one member, so the address is only ever used to talk to itself.
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+storage_config:
+  # The compactor needs somewhere to stage deletes on a filesystem backend;
+  # `delete_request_store` below points at it.
+  filesystem:
+    directory: /loki/tsdb-shipper
+
+limits_config:
+  retention_period: ${LOKI_RETENTION_PERIOD}
+  # Alloy ships one label set per container; these guards keep a mis-labelled
+  # stream (or a label storm from a chatty app) from becoming a cardinals problem
+  # that only shows up when the box is out of memory.
+  max_global_streams_per_user: 5000
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  # Without this the retention_period above is advisory: the compactor is the
+  # component that actually deletes, and it is off by default.
+  retention_enabled: true
+  delete_request_store: filesystem
+  compaction_interval: 10m
+
+# No `ruler:` block on purpose. Its storage would inherit common.storage above,
+# and writing the `filesystem:` key there explicitly is rejected by
+# base.RuleStoreConfig -- which is how this file was first found to be wrong.
+# Alerting rules are not used in this bundle: there is no Alertmanager.
+
+analytics:
+  reporting_enabled: false

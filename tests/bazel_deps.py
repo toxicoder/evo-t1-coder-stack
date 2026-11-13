@@ -72,7 +72,15 @@ Check: TypeAlias = Callable[[], int]
 
 # The count when this check was written. A conversion that removes a glob lowers this
 # line; a change that adds one has to argue for it in review before it moves up.
-GLOB_BUDGET: Final[int] = 29
+#
+# 29 -> 31: the observability bundle's two payload globs. Both are the case the
+# ratchet exists for, not a convenience -- compose bind-mounts `prometheus/` as a
+# directory so an operator can drop a recording-rule file beside prometheus.yml
+# without a compose edit, and it mounts `grafana/dashboards/` whole because the file
+# provider loads whatever is in it, so a fourth dashboard is a file add by design.
+# The sibling bundle filegroups are listed file by file for exactly the opposite
+# reason, and you can see the pair in observability/BUILD.bazel.
+GLOB_BUDGET: Final[int] = 31
 
 # How many lines above a glob() its policy comment may sit. A reason that has to be
 # read has to stay next to the thing it excuses.
@@ -244,6 +252,10 @@ TOKEN_GROUPS: Final[LabelMap] = {
     # way a suite that reads .gitignore owes //:gitignore. It sits outside the
     # compose aggregate on purpose: it configures a gate, it is not stack payload.
     "mypy.ini": ["//:mypy_config"],
+    # The observability bundle's six payload trees. One token for the whole
+    # directory because compose mounts it one subdirectory per container, so a
+    # script that opens any one of those files reads the same tree.
+    "observability/": ["//observability:payload", "//:stack_data"],
     "proxy/": ["//proxy:confs", "//:stack_data"],
     "psql-token": [":fixtures"],
     # The mypy runner, which the suite that pins the Python type gate reads by path to
@@ -294,6 +306,7 @@ STACK_DATA_GROUPS: Final[list[str]] = [
     "//homepage:payload",
     "//images/dev:context",
     "//litellm:config",
+    "//observability:payload",
     "//proxy:confs",
     "//searxng:settings",
 ]

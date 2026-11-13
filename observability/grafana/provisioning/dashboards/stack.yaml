@@ -1,0 +1,21 @@
+# Dashboard provider: everything under ../dashboards is loaded from git.
+#
+# Provisioned rather than hand-imported so a dashboard change is a reviewable diff
+# and a recreated container comes back with the same screens. `allowUiUpdates:
+# false` and `disableDeletion: true` are what keep that true: an edit made in the
+# browser cannot drift the copy in git from the copy on screen, and someone cannot
+# delete the shipped set. Edit the JSON in the repo instead.
+
+apiVersion: 1
+
+providers:
+  - name: stack
+    orgId: 1
+    folder: EVO-T1
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 60
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
