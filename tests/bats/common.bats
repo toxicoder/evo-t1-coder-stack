@@ -95,6 +95,117 @@ line two")"; b="$(first_line "   ")"; printf "[%s][%s]" "${a}" "${b}"'
   fi
 }
 
+# compose_observability_args is the one seam that decides whether the six
+# profile-gated observability services are addressed at all, so every state of
+# OBSERVABILITY_ENABLED is pinned here rather than left to a caller's test: the
+# stack runners only forward what this prints.
+
+@test "common: compose_observability_args prints the two profile words when the key is on" {
+  source_libs
+  local envf="${BATS_TEST_TMPDIR}/on.env" spelling
+  unset OBSERVABILITY_ENABLED
+  for spelling in true TRUE True on ON 1 yes Yes; do
+    printf 'OBSERVABILITY_ENABLED=%s\n' "${spelling}" >"${envf}"
+    [ "$(compose_observability_args "${envf}")" = "--profile observability" ] ||
+      fail "accepted-on failed for ${spelling}"
+  done
+  # One line, two words: the caller splits it into exactly the two argv entries
+  # `docker compose` wants, never one argument holding both.
+  printf 'OBSERVABILITY_ENABLED=true\n' >"${envf}"
+  [ "$(printf '%s\n' "$(compose_observability_args "${envf}")" | wc -l)" -eq 1 ]
+}
+
+@test "common: compose_observability_args prints nothing for the off spellings" {
+  source_libs
+  local envf="${BATS_TEST_TMPDIR}/off.env" spelling
+  unset OBSERVABILITY_ENABLED
+  for spelling in false FALSE False off OFF 0 no No; do
+    printf 'OBSERVABILITY_ENABLED=%s\n' "${spelling}" >"${envf}"
+    [ -z "$(compose_observability_args "${envf}")" ] ||
+      fail "the off spelling ${spelling} still printed a profile"
+  done
+  # A key present but blank is an operator writing "off", not an absent key.
+  printf 'OBSERVABILITY_ENABLED=\n' >"${envf}"
+  [ -z "$(compose_observability_args "${envf}")" ] ||
+    fail "a blank value still printed a profile"
+}
+
+@test "common: compose_observability_args defaults on when nothing states the key" {
+  source_libs
+  local envf="${BATS_TEST_TMPDIR}/silent.env"
+  unset OBSERVABILITY_ENABLED
+  # No file at all: .env.example ships OBSERVABILITY_ENABLED=true, so silence is
+  # the default-on state and a fresh clone gets the bundle.
+  [ "$(compose_observability_args "${BATS_TEST_TMPDIR}/absent.env")" = "--profile observability" ] ||
+    fail "a missing file switched the bundle off"
+  # A file that never mentions the key answers the same way: absence is not a
+  # refusal, which is what separates this from the blank value above.
+  printf 'CODER_HTTP_PORT=13001\n' >"${envf}"
+  [ "$(compose_observability_args "${envf}")" = "--profile observability" ] ||
+    fail "a file without the key switched the bundle off"
+  # Junk is not truthy: only the four spellings truthy accepts turn it on, so a
+  # typo in the file stays off rather than publishing the metrics stack.
+  printf 'OBSERVABILITY_ENABLED=maybe\n' >"${envf}"
+  [ -z "$(compose_observability_args "${envf}")" ] ||
+    fail "a junk value turned the bundle on"
+}
+
+@test "common: an exported OBSERVABILITY_ENABLED outranks the env file" {
+  # compose interpolates ${VAR} from the process environment in preference to
+  # --env-file, so the profile has to follow the same precedence: a bundle that
+  # came up under another deployment's values would publish the wrong ports.
+  source_libs
+  local envf="${BATS_TEST_TMPDIR}/rank.env"
+  printf 'OBSERVABILITY_ENABLED=true\n' >"${envf}"
+  [ "$(OBSERVABILITY_ENABLED=false compose_observability_args "${envf}")" = "" ] ||
+    fail "the file outranked an exported false"
+  printf 'OBSERVABILITY_ENABLED=false\n' >"${envf}"
+  [ "$(OBSERVABILITY_ENABLED=true compose_observability_args "${envf}")" = "--profile observability" ] ||
+    fail "the file outranked an exported true"
+  # Exported-but-blank is an explicit off, not the same thing as unset.
+  [ -z "$(OBSERVABILITY_ENABLED= compose_observability_args "${envf}")" ] ||
+    fail "an exported blank still printed a profile"
+}
+
+@test "common: compose_observability_args reads ENV_FILE, then the .env beside COMPOSE_FILE" {
+  # The helper has to ask the file compose itself will read, or a dev run could
+  # decide the profile from the stable stack's answer.
+  source_libs
+  local tree="${BATS_TEST_TMPDIR}/compose-tree"
+  mkdir -p "${tree}"
+  printf 'services: {}\n' >"${tree}/docker-compose.yml"
+  unset OBSERVABILITY_ENABLED
+  COMPOSE_FILE="${tree}/docker-compose.yml"
+  ENV_FILE=""
+  printf 'OBSERVABILITY_ENABLED=false\n' >"${tree}/.env"
+  [ -z "$(compose_observability_args)" ] || fail "the .env beside COMPOSE_FILE was ignored"
+  rm -f "${tree}/.env"
+  [ "$(compose_observability_args)" = "--profile observability" ] ||
+    fail "no .env beside COMPOSE_FILE should mean on"
+  # An explicit --env-file wins over that neighbour, which is the whole point of
+  # naming one: the dev run never inherits the stable stack's flag.
+  printf 'OBSERVABILITY_ENABLED=true\n' >"${tree}/.env"
+  printf 'OBSERVABILITY_ENABLED=false\n' >"${BATS_TEST_TMPDIR}/named.env"
+  ENV_FILE="${BATS_TEST_TMPDIR}/named.env"
+  [ -z "$(compose_observability_args)" ] || fail "ENV_FILE did not outrank the .env beside the file"
+  # Neither name resolves (a fresh clone, a Bazel copy): the answer is the
+  # default, and the missing file is never an error.
+  COMPOSE_FILE=""
+  ENV_FILE=""
+  [ "$(compose_observability_args)" = "--profile observability" ] ||
+    fail "no resolvable env file should still mean on"
+}
+
+@test "common: compose_observability_args never aborts a strict-mode caller" {
+  # The stack runners expand this inside a command substitution while building
+  # argv under `set -euo pipefail`; a non-zero answer there would abort the
+  # runner before it ever addressed compose, on a tree with no .env yet.
+  drive 'unset OBSERVABILITY_ENABLED; COMPOSE_FILE=""; ENV_FILE=""
+         printf "[%s]" "$(compose_observability_args)"'
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "[--profile observability]" ]
+}
+
 @test "common: canonical_url strips scheme, port and path" {
   source_libs
   [ "$(canonical_url "http://h:8888/v1")" = "h" ]

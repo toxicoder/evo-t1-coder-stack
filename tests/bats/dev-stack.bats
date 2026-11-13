@@ -99,7 +99,10 @@ setup() {
 
   # `up` prints the compose line it is about to run, and the URL summary reads
   # its ports from the same file: both have to name the stable stack's own.
-  run --separate-stderr env REPO_ROOT="${scratch}" bash "${STACK}" up --project-name evo-t1-coder-stack
+  # OBSERVABILITY_ENABLED=false pins the profile off so this stays a test about
+  # the env file: the profile's own two states are pinned in the argv test below.
+  run --separate-stderr env REPO_ROOT="${scratch}" OBSERVABILITY_ENABLED=false \
+    bash "${STACK}" up --project-name evo-t1-coder-stack
   [ "${status}" -eq 0 ]
   assert_match "compose line" 'run: docker compose -p evo-t1-coder-stack -f .*/docker-compose\.yml up -d' "${output}"
   assert_match "password line" 'HOMEPAGE_AUTH_PASSWORD in .*/\.env ' "${output}"
@@ -129,6 +132,41 @@ setup() {
   run --separate-stderr bash "${STACK}" logs --follow --tail 5 coder litellm
   [ "${status}" -eq 0 ]
   assert_match "follow" '\-f .*/docker-compose\.yml logs -f --tail 5 coder litellm$' "${output}"
+}
+
+@test "dev-stack: OBSERVABILITY_ENABLED decides whether compose is told about the profile" {
+  # The bundle's six services all carry profiles: ["observability"] in
+  # docker-compose.yml, so a compose call without --profile never brings them up
+  # and one with it does. One key decides that in one place, so status, logs, up
+  # and down cannot disagree about which stack they are addressing.
+  local log="${STUB_LOG}/docker.log"
+
+  : >"${log}"
+  run --separate-stderr env OBSERVABILITY_ENABLED=false bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "off: no profile word reaches compose" 'observability' "$(stub_log docker)"
+
+  : >"${log}"
+  run --separate-stderr env OBSERVABILITY_ENABLED=true bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "on: the two profile words reach compose in order" \
+    '\-p evo-t1-dev --profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' \
+    "$(stub_log docker)"
+
+  # Unset is the shipped default: .env.example carries OBSERVABILITY_ENABLED=true,
+  # so a fresh clone gets the bundle and the on answer must not need the key.
+  : >"${log}"
+  run --separate-stderr env -u OBSERVABILITY_ENABLED bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "unset: on by default" \
+    '\-\-profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' "$(stub_log docker)"
+
+  # A value that is not one of truthy's four spellings is off, not on: a typo in
+  # the file must not silently publish the metrics stack.
+  : >"${log}"
+  run --separate-stderr env OBSERVABILITY_ENABLED=maybe bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "junk: treated as off" 'observability' "$(stub_log docker)"
 }
 
 # ── Helper-level coverage ----------------------------------------------------
@@ -198,13 +236,27 @@ load_fn() {
   load_fn scripts/lib/common.sh has_tool
   load_fn scripts/dev-stack.sh compose_cli
   [ "$(compose_cli)" = "docker compose" ]
+  # compose_prefix asks the flag helper for the profile words, so the helper has
+  # to be loaded too: load_shell_function pulls one function, not its closure.
+  load_fn scripts/lib/common.sh compose_observability_args
+  load_fn scripts/lib/common.sh env_get
+  load_fn scripts/lib/common.sh truthy
 
   PROJECT="evo-t1-review"
   COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
   ENV_FILE=""
   load_fn scripts/dev-stack.sh compose_prefix
+  # Flag off: the argv is the one this suite pinned before the bundle existed,
+  # which is what an OBSERVABILITY_ENABLED=false deployment still runs.
+  OBSERVABILITY_ENABLED=false
   assert_eq "no env file" \
     "docker compose -p evo-t1-review -f ${REPO_ROOT}/docker-compose.yml" \
+    "$(compose_prefix)"
+  # Flag unset: the default is on, and the two profile words travel as arguments
+  # between the project selector and -f, so the printed prefix stays pasteable.
+  unset OBSERVABILITY_ENABLED
+  assert_eq "default on carries the profile" \
+    "docker compose -p evo-t1-review --profile observability -f ${REPO_ROOT}/docker-compose.yml" \
     "$(compose_prefix)"
   ENV_FILE="${BATS_TEST_TMPDIR}/dev-stack.env"
   assert_match "env file" '\-\-env-file .*/dev-stack\.env' "$(compose_prefix)"
@@ -243,6 +295,10 @@ load_fn() {
   load_fn scripts/dev-stack.sh report_stack
   load_fn scripts/dev-stack.sh compose_cli
   load_fn scripts/dev-stack.sh compose_prefix
+  # report_stack builds its `command:` line through compose_prefix, which needs
+  # the profile helper present even in the branches that never print it.
+  load_fn scripts/lib/common.sh compose_observability_args
+  load_fn scripts/lib/common.sh truthy
 
   # No docker CLI at all: four lines, and the report still exits 0.
   has_tool() { return 1; }
@@ -271,6 +327,8 @@ CODER_HTTP_PORT=13001
 LITELLM_PORT=14000
 KASM_UI_PORT=14443
 HOMEPAGE_HTTPS_PORT=1443
+GRAFANA_PORT=13005
+PROMETHEUS_PORT=19090
 STACK_DASHBOARD_URL=https://dashboard.example
 STACK_CODER_URL=https://coder.example
 STACK_LITELLM_URL=http://litellm.example:14000
@@ -281,6 +339,11 @@ ENV
   assert_match "dashboard origin" '^dashboard: https://dashboard.example$' "${output}"
   assert_match "litellm origin" '^litellm: +http://litellm.example:14000$' "${output}"
   assert_match "hermes origin" '^hermes: +http://box.example:9119$' "${output}"
+  # The bundle's two published endpoints: Grafana rides the LAN host, Prometheus
+  # is printed on 127.0.0.1 because that is the only address compose publishes
+  # it on, and the label says so in the same line.
+  assert_match "grafana origin" '^grafana: +http://box\.example:13005$' "${output}"
+  assert_match "prometheus origin" '^prom: +http://127\.0\.0\.1:19090 \(loopback-only' "${output}"
   assert_match "password lives" 'HOMEPAGE_AUTH_PASSWORD in .*/dev-stack.env' "${output}"
   assert_match "next command" '^next: +bazelisk run //scripts:dev-stack -- logs' "${output}"
   assert_not_match "no secret" 's3cr3t-not-printed' "${output}"
@@ -293,6 +356,16 @@ ENV
   assert_match "fallback dashboard" '^dashboard: https://localhost:443$' "${output}"
   assert_match "fallback coder" '^coder: +https://localhost:3001$' "${output}"
   assert_match "fallback hermes" '^hermes: +http://localhost:9119$' "${output}"
+  assert_match "fallback grafana" '^grafana: +http://localhost:3005$' "${output}"
+  assert_match "fallback prometheus" '^prom: +http://127\.0\.0\.1:9090 \(loopback-only' "${output}"
+
+  # An exported GRAFANA_URL / PROMETHEUS_URL outranks the file, the same way the
+  # five STACK_*_URL keys do: that is what an auto deploy composes for itself.
+  export GRAFANA_URL='https://grafana.example' PROMETHEUS_URL='http://127.0.0.1:29090'
+  run report_urls
+  assert_match "grafana override" '^grafana: +https://grafana\.example$' "${output}"
+  assert_match "prometheus override" '^prom: +http://127\.0\.0\.1:29090 \(loopback-only' "${output}"
+  unset GRAFANA_URL PROMETHEUS_URL
 }
 
 @test "dev-stack: report_urls survives a missing env file under strict shell options" {
@@ -323,6 +396,9 @@ ENV
   load_fn scripts/lib/common.sh has_tool
   load_fn scripts/dev-stack.sh compose_cli
   load_fn scripts/dev-stack.sh run_compose
+  load_fn scripts/lib/common.sh compose_observability_args
+  load_fn scripts/lib/common.sh env_get
+  load_fn scripts/lib/common.sh truthy
   PROJECT="evo-t1-dev"
   COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
   ENV_FILE=""
@@ -333,6 +409,9 @@ ENV
   assert_match "refused" 'no compose CLI' "${stderr}"
 
   has_tool() { command -v "${1}" >/dev/null 2>&1; }
+  # Off path: OBSERVABILITY_ENABLED=false has to leave the argv exactly as it was
+  # before the bundle existed, so a stack that does not want it pays nothing.
+  OBSERVABILITY_ENABLED=false
   run --separate-stderr run_compose logs --tail 20 coder
   [ "${status}" -eq 0 ]
   # The project name and the compose file travel with the subcommand: compose
@@ -341,6 +420,18 @@ ENV
   assert_match "command line" \
     'docker compose -p evo-t1-dev -f .*/docker-compose\.yml logs --tail 20 coder' "${output}"
   assert_match "service forwarded" ' -p evo-t1-dev -f .*/docker-compose\.yml logs --tail 20 coder$' \
+    "$(stub_log docker)"
+
+  # On path (the default): the same argv plus the two profile words, and only
+  # them, between the project selector and -f.
+  unset OBSERVABILITY_ENABLED
+  : >"${STUB_LOG}/docker.log"
+  run --separate-stderr run_compose logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "command line with the profile" \
+    'docker compose -p evo-t1-dev --profile observability -f .*/docker-compose\.yml logs --tail 20 coder' "${output}"
+  assert_match "profile reached compose" \
+    ' -p evo-t1-dev --profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' \
     "$(stub_log docker)"
 }
 
@@ -416,8 +507,10 @@ composed_public_env() {
     COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
     unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
     unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+    unset STACK_GRAFANA_NAME
     unset STACK_PUBLIC_HOSTS STACK_PUBLIC_HOSTS_MODE
     unset STACK_DASHBOARD_URL STACK_CODER_URL STACK_KASM_URL STACK_LITELLM_URL STACK_HERMES_URL
+    unset STACK_GRAFANA_URL
     load_shell_function "${REPO_ROOT}/scripts/dev-stack.sh" public_deploy_env
     # The function only ever speaks on the failure path, so its stderr travels with
     # the four printed facts and a test can assert on the warning it emits.

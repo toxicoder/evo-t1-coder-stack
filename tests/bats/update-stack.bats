@@ -536,6 +536,28 @@ EOF
   # The restart goes to compose carrying the dev project name and its env file.
   assert_match "dev project" '-p evo-t1-dev' "$(stub_log docker)"
   assert_match "dev env file" "--env-file ${ROOT_FAKE}/dev-stack.env" "$(stub_log docker)"
+  # OBSERVABILITY_ENABLED is unset here and the fake .env files carry no key, so
+  # the restart must address the profile-gated bundle the same way `up` did:
+  # --profile sits after the project and env file and before -f, on every verb.
+  assert_match "profile before the compose file" \
+    '-p evo-t1-dev --env-file .*/dev-stack\.env --profile observability -f .*/docker-compose\.yml restart litellm' \
+    "$(stub_log docker)"
+}
+
+@test "--stack dev leaves the profile out when OBSERVABILITY_ENABLED=false" {
+  # The off path has to be byte-identical to the pre-bundle argv: a deployment
+  # that switched the bundle off must not have compose reach for a profile it
+  # never brought up, and must not pay an empty argument either.
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  export OBSERVABILITY_ENABLED=false
+  run_cli --stack dev
+  [ "${status}" -eq 0 ]
+  assert_match "dev restart still addressed the project" \
+    '-p evo-t1-dev --env-file .*/dev-stack\.env -f .*/docker-compose\.yml restart litellm' \
+    "$(stub_log docker)"
+  assert_not_match "no profile word reaches compose" 'observability' "$(stub_log docker)"
+  unset OBSERVABILITY_ENABLED
 }
 
 @test "--litellm-url is forwarded to the workspace reseed" {

@@ -100,6 +100,39 @@ setup() {
   assert_match "follow" '\-f .*/docker-compose\.yml logs -f --tail 5 coder litellm$' "${output}"
 }
 
+@test "prod-stack: OBSERVABILITY_ENABLED decides whether compose is told about the profile" {
+  # Same seam as dev-stack: the six bundle services carry
+  # profiles: ["observability"] in docker-compose.yml, so --profile is what makes
+  # a `up`/`down`/`logs` call about them at all. One key, read in one place, so
+  # no verb can disagree with another about which stack it addresses.
+  local log="${STUB_LOG}/docker.log"
+
+  : >"${log}"
+  run --separate-stderr env OBSERVABILITY_ENABLED=false bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "off: no profile word reaches compose" 'observability' "$(stub_log docker)"
+
+  : >"${log}"
+  run --separate-stderr env OBSERVABILITY_ENABLED=true bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "on: the two profile words reach compose in order" \
+    '\-p evo-t1-prod --profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' \
+    "$(stub_log docker)"
+
+  # Unset means on, because that is what .env.example ships.
+  : >"${log}"
+  run --separate-stderr env -u OBSERVABILITY_ENABLED bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "unset: on by default" \
+    '\-\-profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' "$(stub_log docker)"
+
+  # A typo is off, not on: an unset-looking value must not publish metrics.
+  : >"${log}"
+  run --separate-stderr env OBSERVABILITY_ENABLED=maybe bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "junk: treated as off" 'observability' "$(stub_log docker)"
+}
+
 @test "prod-stack: an env file given with --env-file travels to compose and to the report" {
   scratch="$(make_scratch)"
   cat >"${scratch}/custom.env" <<'ENV'
@@ -184,8 +217,22 @@ load_fn() {
   COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
   ENV_FILE=""
   load_fn scripts/prod-stack.sh compose_prefix
+  # The prefix asks the flag helper for the profile words, so the helper is
+  # loaded with it: load_shell_function pulls one function, never its closure.
+  load_fn scripts/lib/common.sh compose_observability_args
+  load_fn scripts/lib/common.sh env_get
+  load_fn scripts/lib/common.sh truthy
+  # Off: the argv this suite pinned before the bundle existed, which is what a
+  # stack that does not want the metrics services still runs.
+  OBSERVABILITY_ENABLED=false
   assert_eq "no env file" \
     "docker compose -p evo-t1-stable -f ${REPO_ROOT}/docker-compose.yml" \
+    "$(compose_prefix)"
+  # Unset: on by default, with the two profile words between -p and -f so the
+  # printed prefix is the command `status` reports and an operator can paste.
+  unset OBSERVABILITY_ENABLED
+  assert_eq "default on carries the profile" \
+    "docker compose -p evo-t1-stable --profile observability -f ${REPO_ROOT}/docker-compose.yml" \
     "$(compose_prefix)"
   ENV_FILE="${BATS_TEST_TMPDIR}/custom.env"
   assert_match "env file" '\-\-env-file .*/custom\.env' "$(compose_prefix)"
@@ -200,6 +247,10 @@ load_fn() {
   load_fn scripts/prod-stack.sh report_stack
   load_fn scripts/prod-stack.sh compose_cli
   load_fn scripts/prod-stack.sh compose_prefix
+  # report_stack builds its `command:` line through compose_prefix, which needs
+  # the profile helper present even in the branches that never print it.
+  load_fn scripts/lib/common.sh compose_observability_args
+  load_fn scripts/lib/common.sh truthy
 
   # No docker CLI at all: four lines, and the report still exits 0.
   has_tool() { return 1; }
@@ -228,6 +279,8 @@ CODER_HTTP_PORT=13001
 LITELLM_PORT=14000
 KASM_UI_PORT=14443
 HOMEPAGE_HTTPS_PORT=1443
+GRAFANA_PORT=13005
+PROMETHEUS_PORT=19090
 STACK_DASHBOARD_URL=https://dashboard.example
 STACK_CODER_URL=https://coder.example
 STACK_LITELLM_URL=http://litellm.example:14000
@@ -280,6 +333,9 @@ ENV
   load_fn scripts/lib/common.sh has_tool
   load_fn scripts/prod-stack.sh compose_cli
   load_fn scripts/prod-stack.sh run_compose
+  load_fn scripts/lib/common.sh compose_observability_args
+  load_fn scripts/lib/common.sh env_get
+  load_fn scripts/lib/common.sh truthy
   PROJECT="evo-t1-prod"
   COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
   ENV_FILE=""
@@ -290,6 +346,9 @@ ENV
   assert_match "refused" 'no compose CLI' "${stderr}"
 
   has_tool() { command -v "${1}" >/dev/null 2>&1; }
+  # Off path: OBSERVABILITY_ENABLED=false leaves the argv exactly as it was
+  # before the bundle existed, so a stack that does not want it pays nothing.
+  OBSERVABILITY_ENABLED=false
   run --separate-stderr run_compose logs --tail 20 coder
   [ "${status}" -eq 0 ]
   # The project name and the compose file travel with the subcommand: compose
@@ -298,6 +357,18 @@ ENV
   assert_match "command line" \
     'docker compose -p evo-t1-prod -f .*/docker-compose\.yml logs --tail 20 coder' "${output}"
   assert_match "service forwarded" ' -p evo-t1-prod -f .*/docker-compose\.yml logs --tail 20 coder$' \
+    "$(stub_log docker)"
+
+  # On path (the default): the same argv plus the two profile words, and only
+  # them, between the project selector and -f.
+  unset OBSERVABILITY_ENABLED
+  : >"${STUB_LOG}/docker.log"
+  run --separate-stderr run_compose logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "command line with the profile" \
+    'docker compose -p evo-t1-prod --profile observability -f .*/docker-compose\.yml logs --tail 20 coder' "${output}"
+  assert_match "profile reached compose" \
+    ' -p evo-t1-prod --profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' \
     "$(stub_log docker)"
 }
 
@@ -372,8 +443,10 @@ composed_public_env() {
     COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
     unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
     unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+    unset STACK_GRAFANA_NAME
     unset STACK_PUBLIC_HOSTS STACK_PUBLIC_HOSTS_MODE
     unset STACK_DASHBOARD_URL STACK_CODER_URL STACK_KASM_URL STACK_LITELLM_URL STACK_HERMES_URL
+    unset STACK_GRAFANA_URL
     if [ -n "${process_label}" ]; then
       export STACK_ENV_LABEL="${process_label}"
     fi

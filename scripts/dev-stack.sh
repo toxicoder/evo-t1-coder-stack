@@ -262,7 +262,7 @@ default_env_file() {
 # Arguments:
 #   $1 - env file compose will read; empty resolves it the way report_urls does
 # Outputs:
-#   STACK_ENV_LABEL, STACK_PUBLIC_HOSTS, the five STACK_*_URL keys and any naming
+#   STACK_ENV_LABEL, STACK_PUBLIC_HOSTS, the six STACK_*_URL keys and any naming
 #   part the file carries, exported into the process environment; note:/warning:
 #   lines when no name composes
 # Returns:
@@ -294,7 +294,8 @@ public_deploy_env() {
   # operator put in the file have to travel there first: composing from the baked
   # defaults while the file names another zone would export names nobody owns.
   for key in STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_DASHBOARD_NAME \
-    STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME; do
+    STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME \
+    STACK_GRAFANA_NAME; do
     if [[ -z ${!key+set} ]]; then
       value="$(env_get "${env_src}" "${key}")"
       if [[ -n ${value} ]]; then
@@ -332,6 +333,7 @@ public_deploy_env() {
       STACK_KASM_URL) export STACK_KASM_URL="${value}" ;;
       STACK_LITELLM_URL) export STACK_LITELLM_URL="${value}" ;;
       STACK_HERMES_URL) export STACK_HERMES_URL="${value}" ;;
+      STACK_GRAFANA_URL) export STACK_GRAFANA_URL="${value}" ;;
     esac
   done < <(public_urls_default)
   return 0
@@ -342,7 +344,8 @@ public_deploy_env() {
 # two files. The project name travels as an argument and never as an environment
 # variable, so `status` and `logs` can be checked against one printed command.
 # Globals:
-#   PROJECT, COMPOSE_FILE, ENV_FILE
+#   PROJECT, COMPOSE_FILE, ENV_FILE, OBSERVABILITY_ENABLED (via
+#   compose_observability_args, which also reads ENV_FILE/COMPOSE_FILE itself)
 # Arguments:
 #   None
 # Outputs:
@@ -351,11 +354,16 @@ public_deploy_env() {
 #   0
 compose_prefix() {
   local -a argv=()
+  local -a prof=()
   argv=("$(compose_cli)")
   argv+=("-p" "${PROJECT}")
   if [ -n "${ENV_FILE}" ]; then
     argv+=("--env-file" "${ENV_FILE}")
   fi
+  # Read into an array rather than expanding the helper unquoted: the two words
+  # have to arrive as two arguments, and an off flag must add no empty word.
+  read -r -a prof <<<"$(compose_observability_args)"
+  argv+=("${prof[@]}")
   argv+=("-f" "${COMPOSE_FILE}")
   printf '%s\n' "${argv[*]}"
 }
@@ -415,11 +423,12 @@ report_stack() {
 
 # @function report_urls
 # Print where the running stack can be opened (dashboard, Coder, LiteLLM, Kasm,
-# Hermes), then where the dashboard password lives and one command worth
-# running next.
+# Hermes, Grafana, Prometheus), then where the dashboard password lives and one
+# command worth running next.
 # Globals:
 #   ENV_FILE, COMPOSE_FILE, STACK_DASHBOARD_URL, STACK_CODER_URL, STACK_KASM_URL,
-#   STACK_LITELLM_URL, STACK_HERMES_URL (each preferred over the file when exported)
+#   STACK_LITELLM_URL, STACK_HERMES_URL, GRAFANA_URL, PROMETHEUS_URL (each
+#   preferred over the file when exported)
 # Arguments:
 #   None
 # Outputs:
@@ -427,7 +436,8 @@ report_stack() {
 # Returns:
 #   0
 report_urls() {
-  local host coder_port litellm_port kasm_port dash_port hermes_port coder_url litellm_url dash_url hermes_url kasm_url env_src
+  local host coder_port litellm_port kasm_port dash_port hermes_port grafana_port prom_port
+  local coder_url litellm_url dash_url hermes_url kasm_url grafana_url prom_url env_src
   host=""
   # The env file is where these keys live: compose interpolates them from --env-file
   # when one is named and from the .env beside the compose file when it is not, so
@@ -446,16 +456,27 @@ report_urls() {
   kasm_port="$(env_get "${env_src}" KASM_UI_PORT)"
   dash_port="$(env_get "${env_src}" HOMEPAGE_HTTPS_PORT)"
   hermes_port="$(env_get "${env_src}" HERMES_DASHBOARD_PORT)"
+  grafana_port="$(env_get "${env_src}" GRAFANA_PORT)"
+  prom_port="$(env_get "${env_src}" PROMETHEUS_PORT)"
   coder_url="${STACK_CODER_URL:-$(env_get "${env_src}" STACK_CODER_URL)}"
   litellm_url="${STACK_LITELLM_URL:-$(env_get "${env_src}" STACK_LITELLM_URL)}"
   dash_url="${STACK_DASHBOARD_URL:-$(env_get "${env_src}" STACK_DASHBOARD_URL)}"
   hermes_url="${STACK_HERMES_URL:-$(env_get "${env_src}" STACK_HERMES_URL)}"
   kasm_url="${STACK_KASM_URL:-$(env_get "${env_src}" STACK_KASM_URL)}"
+  grafana_url="${GRAFANA_URL:-$(env_get "${env_src}" GRAFANA_URL)}"
+  prom_url="${PROMETHEUS_URL:-$(env_get "${env_src}" PROMETHEUS_URL)}"
   printf 'dashboard: %s\n' "${dash_url:-https://${host}:${dash_port:-443}}"
   printf 'coder:     %s\n' "${coder_url:-https://${host}:${coder_port:-3001}}"
   printf 'litellm:   %s\n' "${litellm_url:-http://${host}:${litellm_port:-4000}}"
   printf 'kasm:      %s\n' "${kasm_url:-https://${host}:${kasm_port:-4443}}"
   printf 'hermes:    %s\n' "${hermes_url:-http://${host}:${hermes_port:-9119}}"
+  # The two observability endpoints print on the same column. Prometheus is
+  # published on 127.0.0.1 only (SECURITY.md keeps metrics off the LAN), so the
+  # line names the loopback host instead of ${host}, which would send an
+  # operator to an address that never answers.
+  printf 'grafana:   %s\n' "${grafana_url:-http://${host}:${grafana_port:-3005}}"
+  printf 'prom:      %s (loopback-only: 127.0.0.1, not published on the LAN)\n' \
+    "${prom_url:-http://127.0.0.1:${prom_port:-9090}}"
   printf 'password:  the dashboard login password is HOMEPAGE_AUTH_PASSWORD in %s (rotate it with bazelisk run //scripts:dashboard-password)\n' \
     "${env_src}"
   printf 'next:      bazelisk run //scripts:dev-stack -- logs --tail 200 coder\n'
@@ -464,7 +485,8 @@ report_urls() {
 # @function run_compose
 # Run one compose command against the resolved project, printing it first.
 # Globals:
-#   PROJECT, COMPOSE_FILE, ENV_FILE
+#   PROJECT, COMPOSE_FILE, ENV_FILE, OBSERVABILITY_ENABLED (via
+#   compose_observability_args)
 # Arguments:
 #   $1... - the compose subcommand and its arguments
 # Outputs:
@@ -474,6 +496,7 @@ report_urls() {
 run_compose() {
   local cli=""
   local -a argv=()
+  local -a prof=()
   if ! cli="$(compose_cli)"; then
     printf 'error: no compose CLI (neither `docker compose` nor `docker-compose`)\n' >&2
     return 1
@@ -486,6 +509,12 @@ run_compose() {
   if [ -n "${ENV_FILE}" ]; then
     argv+=("--env-file" "${ENV_FILE}")
   fi
+  # The profile sits with the project selector, before -f, so the printed line
+  # stays the shape `compose -p <project> [--env-file f] [--profile observability]
+  # -f <file> <verb>` that the suites pin: the bundle is either addressed on
+  # every verb or on none, `up` and `down` included.
+  read -r -a prof <<<"$(compose_observability_args)"
+  argv+=("${prof[@]}")
   argv+=("-f" "${COMPOSE_FILE}")
   argv+=("$@")
   if [ "${JSON_MODE:-}" = "1" ]; then

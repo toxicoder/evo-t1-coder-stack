@@ -346,6 +346,49 @@ truthy() {
   esac
 }
 
+# @function compose_observability_args
+# Print the compose argv words that select the `observability` profile, or
+# nothing when the bundle is switched off. One seam on purpose: every command
+# that addresses the compose project passes what this prints, so the six
+# profile-gated services are either in every invocation or in none: a runner
+# that forgot it would print a `status` line for a stack it never brings up.
+#
+# OBSERVABILITY_ENABLED defaults ON. "Absent" is the default state and means the
+# bundle is wanted, which is what the shipped .env.example carries; a value that
+# truthy rejects (false, 0, no, off, blank) is the off path. env_get cannot tell
+# "key missing" from "key present and blank", and the two must not agree, so the
+# grep probe settles that one case: a blank key is an operator writing "off".
+# The process environment outranks the file because that is compose's own
+# precedence for interpolation, and a profile that disagreed with the values it
+# was interpolated with would publish the bundle under the wrong ports.
+# Globals:
+#   OBSERVABILITY_ENABLED (when set, it wins), ENV_FILE, COMPOSE_FILE
+# Arguments:
+#   $1 - env file that carries the key; defaults to $ENV_FILE, then the .env
+#     beside COMPOSE_FILE, which is the file compose itself will read
+# Outputs:
+#   "--profile observability" on one line when enabled; nothing otherwise
+# Returns:
+#   0, always: callers expand this inside a command substitution under
+#   `set -e`, where a non-zero answer would abort the argv build
+compose_observability_args() {
+  local env_src="${1:-${ENV_FILE:-}}" value=""
+  if [ -z "${env_src}" ]; then
+    env_src="$(dirname "${COMPOSE_FILE:-/nonexistent}")/.env"
+  fi
+  if [ -n "${OBSERVABILITY_ENABLED+set}" ]; then
+    value="${OBSERVABILITY_ENABLED}"
+  elif [ -f "${env_src}" ] && grep -q '^OBSERVABILITY_ENABLED=' "${env_src}" 2>/dev/null; then
+    value="$(env_get "${env_src}" OBSERVABILITY_ENABLED)"
+  else
+    value="true"
+  fi
+  if truthy "${value}"; then
+    printf '%s\n' '--profile observability'
+  fi
+  return 0
+}
+
 # ── URLs and JSON ────────────────────────────────────────────────────────────
 
 # @function canonical_url

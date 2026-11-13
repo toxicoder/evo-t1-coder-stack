@@ -45,8 +45,16 @@ main() {
       return 1
     fi
   fi
+  # The observability services all sit behind the `observability` compose
+  # profile, so one plain run only parses the always-on half of the file. Two
+  # runs, both cheap and both offline: the plain one is the OBSERVABILITY_ENABLED
+  # =false path an operator can actually deploy, and the profiled one is the
+  # default-on path, so a bundle config that only composes when selected still
+  # fails the gate.
   phase "docker compose config -q"
   docker compose config -q
+  phase "docker compose --profile observability config -q"
+  docker compose --profile observability config -q
   phase "cmp .env.sample .env.example"
   cmp .env.sample .env.example
   if command -v terraform >/dev/null 2>&1; then
@@ -76,9 +84,14 @@ main() {
     # searxng/settings.yml belongs in this list: it is bind-mounted read-only
     # into the container, where a YAML error is a service that will not start,
     # and nothing else here parsed it. The three that were already listed fail
-    # loudly in the same way.
+    # loudly in the same way. The observability bundle joins it for that exact
+    # reason, and only its YAML: config.alloy is the Alloy pipeline language,
+    # which safe_load would reject as a parse error on a file that is fine.
     phase "yaml parse"
-    python3 scripts/lib/parse_yaml.py homepage/config/*.yaml litellm/config.yaml hermes/config.yaml searxng/settings.yml
+    python3 scripts/lib/parse_yaml.py homepage/config/*.yaml litellm/config.yaml hermes/config.yaml searxng/settings.yml \
+      observability/prometheus/prometheus.yml observability/loki/loki.yml observability/tempo/tempo.yml \
+      observability/mimir/mimir.yml observability/grafana/provisioning/datasources/stack.yaml \
+      observability/grafana/provisioning/dashboards/stack.yaml
   else
     phase "PyYAML not installed, skipping yaml parse"
   fi
