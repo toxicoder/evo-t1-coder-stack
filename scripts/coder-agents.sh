@@ -29,12 +29,16 @@
 #   2. Chat model configs for the tool-capable aliases in litellm/config.yaml:
 #      `agent` (Spark vLLM lane, 262144-token window, made the default, LiteLLM
 #      bakes reasoning_effort xhigh), `agent-low` / `agent-medium` /
-#      `agent-xhigh` (same lane with a baked thinking level), and `chat` (Arc
+#      `agent-xhigh` (same lane with a baked thinking level), `agent-swarm`
+#      (same lane with the session pin dropped for that group alone, so a
+#      fan-out lands on whichever Spark box is least busy) and `chat` (Arc
 #      qwen2.5:7b, 32768, the offline substitute). `coder` and `coder-fast` are
 #      deliberately NOT registered: on this stack's IPEX-LLM runtime those
 #      weights return tool calls as plain text with no tool_calls, and an agent
 #      turn without callable tools cannot browse or edit — registering them
 #      would only add a silently broken model to the pickers.
+#      `agent-swarm` is the opposite case: tool-capable, so it is registered and
+#      offered in the picker, but never pinned (step 3 says why).
 #      context_limit is the agent's own compaction budget, so it is pinned to
 #      each alias's serving window (70% default compaction threshold applies).
 #
@@ -260,13 +264,20 @@ fi
 # lane (Qwen3.8-Flash-Next, 262144-token window, LiteLLM bakes reasoning_effort
 # xhigh and degrades to the text-only `coder` when every Spark box is dark),
 # `agent-low` / `agent-medium` / `agent-xhigh` = the same lane with a baked
-# thinking level, `chat` = the Arc qwen2.5:7b, tool-capable and always on the
-# compose network. context_limit is the agent's compaction budget and is set
-# to each alias's serving window; the compression threshold keeps its default.
+# thinking level, `agent-swarm` = that lane with the session pin lifted for its
+# group alone so the fleet spreads it across every reachable Spark box, and
+# `chat` = the Arc qwen2.5:7b, tool-capable and always on the compose network.
+# context_limit is the agent's compaction budget and is set to each alias's
+# serving window; the compression threshold keeps its default.
 MODEL_AGENT_DISPLAY="Coder Agents — tool-calling (Spark vLLM Qwen3.8-Flash-Next)"
 MODEL_AGENT_LOW_DISPLAY="Coder Agents — tool-calling (Spark, thinking low)"
 MODEL_AGENT_MEDIUM_DISPLAY="Coder Agents — tool-calling (Spark, thinking medium)"
 MODEL_AGENT_XHIGH_DISPLAY="Coder Agents — tool-calling (Spark, thinking extra high)"
+# Coder's model-config surface has no description field, only display_name, so
+# this lane's pinned picker text ("Spark agent lane; every request placed on the
+# least-busy Spark") has no column to ride in here and lives in the grok-config
+# twins instead.
+MODEL_AGENT_SWARM_DISPLAY="agent-swarm (Spark, spread across all boxes)"
 MODEL_CHAT_DISPLAY="Coder Agents — tool-calling (Arc IPEX-LLM qwen2.5:7b)"
 
 # ── Dry-run prints the plan and stops before any write (no token minted) ──
@@ -278,6 +289,7 @@ if [ "${MODE}" = "dry-run" ]; then
   log "  ensure chat model config agent-low (context_limit 262144)"
   log "  ensure chat model config agent-medium (context_limit 262144)"
   log "  ensure chat model config agent-xhigh (context_limit 262144)"
+  log "  ensure chat model config agent-swarm (context_limit 262144; registered for the picker only, no auxiliary lane is pinned to it)"
   log "  ensure chat model config chat (context_limit 32768; takes the default when the Spark alias is unhealthy and nothing else carries one)"
   log "  pin model overrides general+explore -> agent and compaction+title_generation -> chat, each walked down its preference list to the first alias the health gate left live; a lane the admin pinned elsewhere is left alone"
   log "  ensure deployment system prompt (custom text appended to Coder's default)"
@@ -722,7 +734,8 @@ ok "model health"
 # Globals:
 #   api_read
 # Arguments:
-#   $1 - model alias (agent, agent-low, agent-medium, agent-xhigh, or chat)
+#   $1 - model alias (agent, agent-low, agent-medium, agent-xhigh, agent-swarm,
+#        or chat)
 # Outputs:
 #   The config's fields, or nothing when there is no such config
 # Returns:
@@ -751,7 +764,8 @@ model_config_chunk() {
 # Globals:
 #   UUID_RE, model_config_chunk
 # Arguments:
-#   $1 - model alias (agent, agent-low, agent-medium, agent-xhigh, or chat)
+#   $1 - model alias (agent, agent-low, agent-medium, agent-xhigh, agent-swarm,
+#        or chat)
 # Outputs:
 #   The uuid, or nothing when the list cannot be read or has no row
 # Returns:
@@ -958,6 +972,13 @@ ensure_model_config "agent-xhigh" "${MODEL_AGENT_XHIGH_DISPLAY}" 262144 false ||
   die "the agent-xhigh model config could not be created — re-run after the server is healthy"
 agent_xhigh_id="${MODEL_CONFIG_ID}"
 
+# Registered so the Agents picker can offer the fan-out lane. No auxiliary lane
+# is pinned to it: the Model pins section says why the control-plane chat gains
+# nothing from the spread.
+ensure_model_config "agent-swarm" "${MODEL_AGENT_SWARM_DISPLAY}" 262144 false ||
+  die "the agent-swarm model config could not be created; re-run after the server is healthy"
+agent_swarm_id="${MODEL_CONFIG_ID}"
+
 ensure_model_config "chat" "${MODEL_CHAT_DISPLAY}" 32768 "$(default_flag_for chat)" ||
   die "the chat model config could not be created — re-run after the server is healthy"
 chat_id="${MODEL_CONFIG_ID}"
@@ -995,7 +1016,7 @@ ok "chat model configs"
 # lanes. A caller that cannot get the split wrong cannot ship that bug again.
 # Globals:
 #   PICK_ALIAS, PICK_ID, agent_id, agent_low_id, agent_medium_id,
-#   agent_xhigh_id, chat_id, alias_is_live
+#   agent_xhigh_id, agent_swarm_id, chat_id, alias_is_live
 # Arguments:
 #   $1 - space-separated aliases, most preferred first
 # Outputs:
@@ -1014,6 +1035,9 @@ pick_live_config() {
       agent-low) try_id="${agent_low_id}" ;;
       agent-medium) try_id="${agent_medium_id}" ;;
       agent-xhigh) try_id="${agent_xhigh_id}" ;;
+      # No preference list names the fan-out lane today (the Model pins section
+      # says why); the arm is here so one that does resolves like the others.
+      agent-swarm) try_id="${agent_swarm_id}" ;;
       chat) try_id="${chat_id}" ;;
     esac
     if [ -n "${try_id}" ] && alias_is_live "${try_alias}"; then
@@ -1028,7 +1052,8 @@ pick_live_config() {
 # @function stack_config_ids
 # Print every model-config uuid this script knows about, one per line.
 # Globals:
-#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, chat_id
+#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, agent_swarm_id,
+#   chat_id
 # Arguments:
 #   None
 # Outputs:
@@ -1038,7 +1063,7 @@ pick_live_config() {
 stack_config_ids() {
   local candidate
   for candidate in "${agent_id}" "${agent_low_id}" "${agent_medium_id}" \
-    "${agent_xhigh_id}" "${chat_id}"; do
+    "${agent_xhigh_id}" "${agent_swarm_id}" "${chat_id}"; do
     if [ -n "${candidate}" ]; then
       printf '%s\n' "${candidate}"
     fi
@@ -1051,8 +1076,8 @@ stack_config_ids() {
 # was permanent: the old check kept any pin it could see, so a re-run after the
 # Arc weights came back still left compaction on a model that could not answer.
 # Globals:
-#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, chat_id,
-#   alias_is_live
+#   agent_id, agent_low_id, agent_medium_id, agent_xhigh_id, agent_swarm_id,
+#   chat_id, alias_is_live
 # Arguments:
 #   None
 # Outputs:
@@ -1063,7 +1088,7 @@ dead_config_ids() {
   local pair alias id
   for pair in "agent:${agent_id}" "agent-low:${agent_low_id}" \
     "agent-medium:${agent_medium_id}" "agent-xhigh:${agent_xhigh_id}" \
-    "chat:${chat_id}"; do
+    "agent-swarm:${agent_swarm_id}" "chat:${chat_id}"; do
     alias="${pair%%:*}"
     id="${pair#*:}"
     if [ -n "${id}" ] && ! alias_is_live "${alias}"; then
@@ -1139,6 +1164,14 @@ pin_lane() {
   fi
 }
 
+# Neither preference list names `agent-swarm`, for the same kind of reason that
+# keeps `coder` and `coder-fast` out of the picker (header, step 2): a pin is a
+# standing choice and the control-plane chat agent is one conversation, so the
+# fleet spread buys this lane nothing. It would only move that single
+# conversation off the box its Spark lane is pinned to, and it fans out nothing
+# the way a swarm of subagents does. The parallel requests that do want the
+# spread are Grok's subagents, and they reach the alias through
+# [subagents.models] in the grok-config twins, not through these four pins.
 pick_live_config "agent chat"
 primary="${PICK_ID}"
 primary_alias="${PICK_ALIAS}"

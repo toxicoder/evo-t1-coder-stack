@@ -118,12 +118,13 @@ logs_absent() {
   running_stack
   run --separate-stderr bash "${root}/scripts/coder-agents.sh" --dry-run
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 11 ]
+  [ "${#lines[@]}" -eq 12 ]
   [[ ${lines[0]} == *"probing the Coder API"* ]]
   [ "${lines[1]}" = "dry run (no changes; apply with: bazelisk run //scripts:coder-agents -- --apply):" ]
   [[ ${output} == *"ensure chat model config agent-low"* ]]
   [[ ${output} == *"ensure chat model config agent-medium"* ]]
   [[ ${output} == *"ensure chat model config agent-xhigh"* ]]
+  [[ ${output} == *"ensure chat model config agent-swarm (context_limit 262144; registered for the picker only, no auxiliary lane is pinned to it)"* ]]
   [[ ${output} == *"pin model overrides general+explore -> agent"* ]]
   [[ ${output} == *"treat only the aliases with a healthy deployment as registerable"* ]]
   # The probes may read; nothing may be written: no token minted, no API call.
@@ -451,6 +452,86 @@ provider_json() {
     esac
   done <"${STUB_LOG}/curl-in.log"
   [ "${pins}" -eq 4 ]
+}
+
+# The fan-out lane `agent-swarm` is the one alias this script registers and never
+# pins: the control-plane chat is a single conversation, so the least-busy spread
+# buys it nothing (the Model pins comment in the script says why). Both halves of
+# that choice have to hold, so both are asserted here: the create POST must carry
+# the alias, and the dead-pin sweep must still recognise the swarm config's uuid.
+@test "coder-agents: the fan-out lane registers with its window and takes no pin" {
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  local swarm_uuid="44444444-4444-4444-8444-444444444444"
+  local agent_uuid="11111111-1111-4111-8111-111111111111"
+  provider_json "${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_OUT="${BATS_TEST_TMPDIR}/providers.json"
+  export STUB_CURL_LOG_BODY=1
+  export CODER_AGENTS_LIVE_ALIASES='agent agent-low agent-medium agent-xhigh agent-swarm'
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  # Nothing reads back after the create, so the run still stops at the pins.
+  [ "${status}" -eq 1 ]
+  [[ ${output} == *"creating model config agent-swarm (context_limit 262144)"* ]]
+  local url body seen=0 want
+  while IFS=$'\t' read -r url body; do
+    case "${body}" in
+      *'"model":"agent-swarm"'*)
+        seen=1
+        # The display name is the contract's Coder form name verbatim, the window
+        # is the Spark one (not the Arc 32768), and only `agent` may be default.
+        for want in \
+          '"display_name":"agent-swarm (Spark, spread across all boxes)"' \
+          '"context_limit":262144' '"is_default":false'; do
+          if ! printf '%s' "${body}" | grep -qF -- "${want}"; then
+            printf 'agent-swarm create body lacks %s: %s\n' "${want}" "${body}" >&2
+            return 1
+          fi
+        done
+        ;;
+    esac
+  done <"${STUB_LOG}/curl-in.log"
+  [ "${seen}" -eq 1 ]
+
+  # Second half: the swarm row exists and its alias has gone unhealthy, while the
+  # general lane still points at it. That pin must move: if agent_swarm_id were
+  # missing from stack_config_ids/dead_config_ids it would read as "a model config
+  # this script did not create" and the dead pin would be permanent.
+  root="$(fake_root)"
+  running_stack
+  psql_token_variant
+  provider_json "${BATS_TEST_TMPDIR}/providers.json"
+  printf '%s' '{"configs":[{"id":"'"${agent_uuid}"'","model":"agent","enabled":true,"is_default":true,"context_limit":262144},{"id":"'"${swarm_uuid}"'","model":"agent-swarm","enabled":true,"is_default":false,"context_limit":262144}]}' \
+    >"${BATS_TEST_TMPDIR}/configs.json"
+  write_map "${BATS_TEST_TMPDIR}/map" \
+    '/api/v2/ai/providers' "${BATS_TEST_TMPDIR}/providers.json" \
+    '/api/experimental/chats/model-configs' "${BATS_TEST_TMPDIR}/configs.json" \
+    'model-override/general' "{\"model_config_id\":\"${swarm_uuid}\"}" \
+    'model-override/' '{"model_config_id":""}' \
+    'system-prompt' '{"system_prompt":"grok-build-delegation skill, then review its diff"}'
+  export STUB_CURL_OUT_MAP="${BATS_TEST_TMPDIR}/map"
+  export CODER_AGENTS_LIVE_ALIASES='agent agent-low agent-medium agent-xhigh'
+  run --separate-stderr bash "${root}/scripts/coder-agents.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"model config agent-swarm: already present (left untouched)"* ]]
+  [[ ${output} == *"lane general: was pinned to a model config whose alias LiteLLM reports unhealthy"* ]]
+  [[ ${output} == *"lane general: pinned to model config agent (live tool-capable alias)"* ]]
+  # Registered, never pinned: every one of the four lanes got a PUT, and each one
+  # points at the pinned agent config; the walk-down goes agent, never swarm.
+  local pins=0
+  while IFS=$'\t' read -r url body; do
+    case "${url}" in
+      */model-override/*)
+        pins=$((pins + 1))
+        if [ "${body}" != "{\"model_config_id\":\"${agent_uuid}\"}" ]; then
+          printf 'lane %s got body [%s]\n' "${url##*/}" "${body}" >&2
+          return 1
+        fi
+        ;;
+    esac
+  done <"${STUB_LOG}/curl-in.log"
+  [ "${pins}" -eq 4 ]
+  logs_absent "${swarm_uuid}" "${STUB_LOG}/curl-in.log"
 }
 
 @test "coder-agents: a model-config POST names the provider uuid, not the first uuid in the reply" {
