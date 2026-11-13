@@ -201,6 +201,9 @@ _SCRIPT_LIBS = {
         "lib/common.sh",
         "lib/workspace.sh",
     ],
+    "observability-check": [
+        "lib/common.sh",
+    ],
     "pre-commit": [
         "lib/common.sh",
     ],
@@ -365,6 +368,12 @@ _SCRIPT_PAYLOAD = {
     "new-workspace": [
         "//:compose_file",
     ],
+    # The prober reads no payload of its own: it asks the daemon and the loopback.
+    # What remains is what the sourced lib names - the docker-compose.yml marker
+    # resolve_repo_root probes and compose_cmd addresses with -f.
+    "observability-check": [
+        "//:compose_file",
+    ],
     "pre-commit": [
         "//:compose_file",
         "//:env_example",
@@ -431,6 +440,7 @@ _SCRIPT_PAYLOAD = {
         "//hermes:seed",
         "//homepage:config",
         "//litellm:config",
+        "//observability:payload",
         "//searxng:settings",
     ],
 }
