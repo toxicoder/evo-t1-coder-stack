@@ -5,9 +5,9 @@
 #
 # The library is the single place a public hostname is composed, so this suite
 # pins the whole grammar: `<service>-<environment>-<suffix>.<base>`, always ONE
-# label under the zone. Five of these names are typed by nobody any more — the
+# label under the zone. Six of these names are typed by nobody any more — the
 # operator sets a zone, a box label and a service prefix, and the router table,
-# the HOMEPAGE_ALLOWED_HOSTS entries, the cert SANs and the five STACK_*_URL keys
+# the HOMEPAGE_ALLOWED_HOSTS entries, the cert SANs and the six STACK_*_URL keys
 # all follow from what these functions print. A wrong character here becomes a
 # 421 at the edge or a card that points at a name nothing answers, so the
 # assertions are on exact strings rather than shapes.
@@ -37,6 +37,7 @@ setup() {
   # would silently change every expected name in this suite.
   unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL
   unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+  unset STACK_GRAFANA_NAME
   unset STACK_DASHBOARD_NAME
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/domain.sh"
@@ -95,7 +96,7 @@ setup() {
 
 # ----------------------------------------------------------- domain_service_default
 
-@test "domain_service_default: the four services carry their shipped prefixes" {
+@test "domain_service_default: the five services carry their shipped prefixes" {
   run domain_service_default STACK_CODER_NAME
   [ "${output}" = "coder" ]
   run domain_service_default STACK_KASM_NAME
@@ -104,6 +105,11 @@ setup() {
   [ "${output}" = "litellm" ]
   run domain_service_default STACK_HERMES_NAME
   [ "${output}" = "hermes" ]
+  # Grafana is the observability bundle's only public face; the metrics backends stay
+  # unexposed, so there is deliberately no STACK_PROMETHEUS_NAME or similar key here.
+  run domain_service_default STACK_GRAFANA_NAME
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "grafana" ]
 }
 
 @test "domain_service_default: the dashboard and an unknown key have no label" {
@@ -124,6 +130,9 @@ setup() {
   run public_host_for STACK_HERMES_NAME hermes
   [ "${status}" -eq 0 ]
   [ "${output}" = "hermes-gmktecbeast.overeazy.io" ]
+  run public_host_for STACK_GRAFANA_NAME grafana
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "grafana-gmktecbeast.overeazy.io" ]
 }
 
 @test "public_host_for: an environment label goes AFTER the service, keeping the prefix first" {
@@ -133,6 +142,9 @@ setup() {
   run public_host_for STACK_CODER_NAME coder
   [ "${status}" -eq 0 ]
   [ "${output}" = "coder-dev-gmktecbeast.overeazy.io" ]
+  run public_host_for STACK_GRAFANA_NAME grafana
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "grafana-dev-gmktecbeast.overeazy.io" ]
 }
 
 @test "public_host_for: an empty service label yields the zone apex" {
@@ -177,16 +189,16 @@ setup() {
 
 # ------------------------------------------------------------ public_hosts_default
 
-@test "public_hosts_default: the five names come out dashboard-first" {
+@test "public_hosts_default: the six names come out dashboard-first" {
   run public_hosts_default
   [ "${status}" -eq 0 ]
-  [ "${output}" = "gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io,hermes-gmktecbeast.overeazy.io" ]
+  [ "${output}" = "gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io,hermes-gmktecbeast.overeazy.io,grafana-gmktecbeast.overeazy.io" ]
 }
 
-@test "public_hosts_default: an environment label reaches all five names" {
+@test "public_hosts_default: an environment label reaches all six names" {
   export STACK_ENV_LABEL=dev
   run public_hosts_default
-  [ "${output}" = "dev-gmktecbeast.overeazy.io,coder-dev-gmktecbeast.overeazy.io,kasm-dev-gmktecbeast.overeazy.io,litellm-dev-gmktecbeast.overeazy.io,hermes-dev-gmktecbeast.overeazy.io" ]
+  [ "${output}" = "dev-gmktecbeast.overeazy.io,coder-dev-gmktecbeast.overeazy.io,kasm-dev-gmktecbeast.overeazy.io,litellm-dev-gmktecbeast.overeazy.io,hermes-dev-gmktecbeast.overeazy.io,grafana-dev-gmktecbeast.overeazy.io" ]
 }
 
 @test "public_hosts_default: a single broken service is skipped, the rest survive" {
@@ -196,6 +208,7 @@ setup() {
   assert_not_match "the broken service is left out" "kasm" "${output}"
   assert_match "coder survives" "coder-gmktecbeast\.overeazy\.io" "${output}"
   assert_match "hermes survives" "hermes-gmktecbeast\.overeazy\.io" "${output}"
+  assert_match "grafana survives" "grafana-gmktecbeast\.overeazy\.io" "${output}"
   # A skipped service must not leave an empty list item behind.
   assert_not_match "no empty list item" ",," "${output}"
 }
@@ -207,16 +220,31 @@ setup() {
   [ "${output}" = "" ]
 }
 
+@test "public_hosts_default: an unusable grafana name costs only the grafana name" {
+  # Grafana rides the observability compose profile, so a bad STACK_GRAFANA_NAME has to
+  # drop that one name and leave the names the stack has always served. The alternative
+  # would be a typo in one optional key taking Coder and Kasm off the public edge.
+  export STACK_GRAFANA_NAME="graf ana!"
+  run public_hosts_default
+  [ "${status}" -eq 0 ]
+  assert_not_match "grafana is left out" "grafana-gmktecbeast" "${output}"
+  assert_match "coder survives" "coder-gmktecbeast\.overeazy\.io" "${output}"
+  assert_match "hermes survives" "hermes-gmktecbeast\.overeazy\.io" "${output}"
+  assert_not_match "no empty list item" ",," "${output}"
+}
+
 # -------------------------------------------------------------- public_urls_default
 
-@test "public_urls_default: five origins in the order bootstrap writes them" {
+@test "public_urls_default: six origins in the order bootstrap writes them" {
   run public_urls_default
   [ "${status}" -eq 0 ]
+  [ "${#lines[@]}" -eq 6 ]
   [ "${lines[0]}" = "STACK_DASHBOARD_URL=https://gmktecbeast.overeazy.io" ]
   [ "${lines[1]}" = "STACK_CODER_URL=https://coder-gmktecbeast.overeazy.io" ]
   [ "${lines[2]}" = "STACK_KASM_URL=https://kasm-gmktecbeast.overeazy.io" ]
   [ "${lines[3]}" = "STACK_LITELLM_URL=https://litellm-gmktecbeast.overeazy.io" ]
   [ "${lines[4]}" = "STACK_HERMES_URL=https://hermes-gmktecbeast.overeazy.io" ]
+  [ "${lines[5]}" = "STACK_GRAFANA_URL=https://grafana-gmktecbeast.overeazy.io" ]
 }
 
 @test "public_urls_default: a name that will not compose is written empty, clearing the key" {
@@ -229,6 +257,18 @@ setup() {
   [ "${lines[1]}" = "STACK_CODER_URL=https://coder-gmktecbeast.overeazy.io" ]
 }
 
+@test "public_urls_default: an unusable grafana name clears only STACK_GRAFANA_URL" {
+  # The observability profile is optional, so Grafana failing to compose must not take
+  # the other origins with it; and the key still has to be written empty so a value left
+  # over from an earlier public run cannot keep pointing the card at a dead name.
+  export STACK_GRAFANA_NAME="graf ana!"
+  run public_urls_default
+  [ "${status}" -eq 0 ]
+  [ "${#lines[@]}" -eq 6 ]
+  [ "${lines[5]}" = "STACK_GRAFANA_URL=" ]
+  [ "${lines[4]}" = "STACK_HERMES_URL=https://hermes-gmktecbeast.overeazy.io" ]
+}
+
 # -------------------------------------------------------- render_public_router_conf
 
 @test "render_public_router_conf: the shipped defaults fill every vhost" {
@@ -237,10 +277,21 @@ setup() {
   [ -f "${BATS_TEST_TMPDIR}/router.conf" ]
   for name in dev-gmktecbeast.overeazy.io coder-dev-gmktecbeast.overeazy.io \
     kasm-dev-gmktecbeast.overeazy.io litellm-dev-gmktecbeast.overeazy.io \
-    hermes-dev-gmktecbeast.overeazy.io; do
+    hermes-dev-gmktecbeast.overeazy.io grafana-dev-gmktecbeast.overeazy.io; do
     grep -qF -- "server_name ${name};" "${BATS_TEST_TMPDIR}/router.conf" ||
       fail "rendered router conf is missing server_name ${name};"
   done
+}
+
+@test "render_public_router_conf: an unusable grafana name refuses the whole table" {
+  # All-or-nothing is the point: a vhost table that omits Grafana answers 421 for a Host
+  # Traefik is still forwarding, which reads as an edge bug rather than a bad naming key.
+  export STACK_GRAFANA_NAME="graf ana!"
+  run render_public_router_conf "${REPO_ROOT}/proxy/router.conf.template" "${BATS_TEST_TMPDIR}/router.conf"
+  [ "${status}" -ne 0 ]
+  [ ! -e "${BATS_TEST_TMPDIR}/router.conf" ]
+  assert_match "it names the service it could not compose" "grafana" "${output}"
+  assert_match "it says why" "^warning:" "${output}"
 }
 
 @test "render_public_router_conf: nothing is written when a part is unusable" {
