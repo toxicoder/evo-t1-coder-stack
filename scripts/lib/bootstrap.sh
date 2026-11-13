@@ -148,6 +148,7 @@ classify_public_entry() {
     kasm-* | kasm.*) printf 'ok kasm https://%s\n' "${entry}" ;;
     litellm-* | litellm.*) printf 'ok litellm https://%s\n' "${entry}" ;;
     hermes-* | hermes.*) printf 'ok hermes https://%s\n' "${entry}" ;;
+    grafana-* | grafana.*) printf 'ok grafana https://%s\n' "${entry}" ;;
     *) printf 'ok dashboard https://%s\n' "${entry}" ;;
   esac
 }
@@ -291,7 +292,7 @@ resolve_auto_public_hosts() {
   # from the environment, so lift them out before composing.
   for part_key in STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL \
     STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME \
-    STACK_DASHBOARD_NAME; do
+    STACK_DASHBOARD_NAME STACK_GRAFANA_NAME; do
     part_value="$(sed -n "s|^${part_key}=||p" "${env_src}" | tail -n 1)"
     if [ -n "${part_value}" ]; then
       # shellcheck disable=SC2163  # the key names are this fixed literal list

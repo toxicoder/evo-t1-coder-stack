@@ -77,6 +77,40 @@ assert_no_router_vhost() {
   [[ "${value}" =~ ^[0-9a-f]{32}$ ]]
 }
 
+@test "bootstrap: GRAFANA_ADMIN_PASSWORD leaves the sample placeholder and is not rotated" {
+  # The observability bundle's admin password ships as `change-me-grafana`, so a stack
+  # that never rotated it signs every dashboard in with a value that is in the repo. The
+  # entry script rotates it in the same guarded loop as the other seven secrets, so run
+  # that guard here and pin the key's presence in the loop below.
+  printf 'GRAFANA_ADMIN_PASSWORD=change-me-grafana\n' > .env
+  if grep -q "^GRAFANA_ADMIN_PASSWORD=change-me" .env; then
+    run set_secret GRAFANA_ADMIN_PASSWORD
+  fi
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "generated GRAFANA_ADMIN_PASSWORD" ]
+  value="$(sed -n 's|^GRAFANA_ADMIN_PASSWORD=||p' .env)"
+  [ -n "${value}" ]
+  [ "${value}" != "change-me-grafana" ]
+  [[ "${value}" =~ ^[0-9a-f]{32}$ ]]
+
+  # A re-run must keep a working password: the running container holds the old value in
+  # its environment, so a second rotation locks the operator out of the UI.
+  output=""
+  if grep -q "^GRAFANA_ADMIN_PASSWORD=change-me" .env; then
+    run set_secret GRAFANA_ADMIN_PASSWORD
+  fi
+  [ -z "${output}" ]
+  [ "$(sed -n 's|^GRAFANA_ADMIN_PASSWORD=||p' .env)" = "${value}" ]
+
+  # The key has to sit in both fixed lists: the --check pass that reports a live
+  # placeholder, and the full run that replaces it. A rename that drops either one
+  # leaves the sample password serving Grafana while everything else still passes.
+  assert_contains_file "check pass reports the grafana placeholder" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'for probe_key in [^;]*GRAFANA_ADMIN_PASSWORD'
+  assert_contains_file "full run rotates the grafana placeholder" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'for var in [^;]*GRAFANA_ADMIN_PASSWORD'
+}
+
 @test "bootstrap: upsert_env appends, replaces, and stays quiet when equal" {
   printf 'K=old\n' > .env
   run upsert_env K new
@@ -320,6 +354,8 @@ assert_no_router_vhost() {
   [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
   name=grafana-dev-gmktecbeast.overeazy.io
   [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
+  name=grafana.overeazy.io
+  [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
 }
 
 @test "bootstrap: the entry script routes and upserts the grafana origin" {
@@ -371,6 +407,7 @@ resolve_public_case() {
     printf 'auto=%s\n' "${public_hosts_are_auto}"
     printf 'file=%s\n' "${file_public_hosts}"
     printf 'coder_name=%s\n' "${STACK_CODER_NAME-<unset>}"
+    printf 'grafana_name=%s\n' "${STACK_GRAFANA_NAME-<unset>}"
     printf 'label=%s\n' "${STACK_ENV_LABEL-<unset>}"
   )
 }
@@ -472,5 +509,27 @@ STACK_GRAFANA_NAME=boards
 '
   [ "${status}" -eq 0 ]
   assert_match "the file's prefix was lifted" 'raw=.*boards-gmktecbeast\.overeazy\.io' "${output}"
+  assert_match "and it reached the environment" '^grafana_name=boards$' "${output}"
   assert_not_match "the shipped prefix is not used" 'raw=.*grafana-gmktecbeast' "${output}"
+}
+
+@test "bootstrap: STACK_GRAFANA_NAME is read wherever its sibling naming keys are" {
+  # Every consumer of the naming parts keeps its own fixed key list, so a key that joins
+  # one list and not the next composes for one caller and stays the shipped prefix for
+  # another: the router would answer boards-... while the deploy exported grafana-...
+  # Each of the three lists below names the five sibling parts, so the grafana key has to
+  # appear exactly as often as the hermes key does in the file that holds the loop.
+  local holder hermes grafana
+  for holder in "${REPO_ROOT}/scripts/lib/bootstrap.sh" "${REPO_ROOT}/scripts/dev-stack.sh" \
+    "${REPO_ROOT}/scripts/prod-stack.sh"; do
+    assert_file_exists "the naming loop lives in a file that exists" "${holder}"
+    hermes="$(grep -c 'STACK_HERMES_NAME' "${holder}" || true)"
+    grafana="$(grep -c 'STACK_GRAFANA_NAME' "${holder}" || true)"
+    if [ "${hermes}" -ne "${grafana}" ]; then
+      printf 'FAIL: %s lists STACK_HERMES_NAME %s time(s) but STACK_GRAFANA_NAME %s time(s):\n  that file never lifts the observability prefix\n' \
+        "${holder#"${REPO_ROOT}/"}" "${hermes}" "${grafana}" >&2
+      grep -n 'STACK_[A-Z]*_NAME' "${holder}" >&2
+      return 1
+    fi
+  done
 }
