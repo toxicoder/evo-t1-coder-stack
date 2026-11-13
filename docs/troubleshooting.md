@@ -383,12 +383,13 @@ What the fix changed, and how to land it:
 grep -n 'ServiceUnavailableErrorRetries\|DefaultRetries' litellm/config.yaml
 ```
 
-- `ServiceUnavailableErrorRetries` is 0, not 2, on each of the four Spark lanes (`agent`,
-  `agent-low`, `agent-medium`, `agent-xhigh`): one attempt for a dead stream, so a hung
-  request is bounded at 1200 s instead of up to 3465 s. `DefaultRetries: 2` is untouched
-  on purpose - TensorFold's `NoRoom` refusal arrives as `APIConnectionError`, which is
-  absent from `_RETRIES_BY_EXCEPTION_TYPE`, so that walk falls through to
-  `DefaultRetries` and keeps its two attempts. The proxy reads the file at boot:
+- `ServiceUnavailableErrorRetries` is 0, not 2, on each of the five Spark lanes
+  (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`): one attempt for a
+  dead stream, so a hung request is bounded at 1200 s instead of up to 3465 s.
+  `DefaultRetries: 2` is untouched on purpose - TensorFold's `NoRoom` refusal arrives as
+  `APIConnectionError`, which is absent from `_RETRIES_BY_EXCEPTION_TYPE`, so that walk
+  falls through to `DefaultRetries` and keeps its two attempts. The proxy reads the file
+  at boot:
 
 ```sh
 docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm

@@ -198,6 +198,34 @@ stream_tool_calls = true
 max_retries = 1
 inference_idle_timeout_secs = 1800
 
+# The fan-out lane: the same three Spark boxes, the same baked xhigh, the same tool
+# calling as [model."agent"], and the one group the LiteLLM session pin does not
+# cover -- litellm/config.yaml gives it an empty flag list in
+# router_settings.model_group_affinity_config, so least-busy places each request on
+# whichever reachable box has the fewest in flight. This workspace's parent loop and
+# all its subagents share one x-litellm-session-id, which on a pinned lane puts the
+# whole fan-out on one box and that box's PARALLEL streams; here they spread over
+# every box. The price is stickiness, so a single long thread belongs on `agent` and
+# this lane is for independent parallel work. Never lift the pin with
+# extra_headers -- a blank x-litellm-session-id is not an opt-out at the pinned tag,
+# it would give every swarm request the same pin. Prose: docs/litellm-routing.md.
+[model."agent-swarm"]
+model = "agent-swarm"
+base_url = "${litellm_url}"
+name = "Agent swarm (all DGX Sparks)"
+description = "Spark agent lane; every request placed on the least-busy Spark"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1800
+
 # --- Arc 140T (IPEX-LLM Ollama): completion-style fallbacks -----------------
 # Measured against the running stack: these endpoints answer tool requests as
 # plain text with finish_reason "stop" and no tool_calls array, so Grok's
@@ -274,18 +302,23 @@ allow_local = false
 # the compaction section of docs/troubleshooting.md.
 auto_compact_threshold_percent = 70
 
-# Three Spark boxes behind one model lane, and LiteLLM's "least-busy" routing
-# spreads the fan-out across them, so keep the fan-out modest and let
-# limit_behavior "queue" hold the overflow instead of failing the spawn.
+# Which lane a fan-out rides and how wide it goes, both from --var so one workspace
+# can target the whole fleet: `--var grok_subagents_lane=agent-swarm` and
+# `--var grok_subagent_max_concurrent=8`. Shipped defaults are today's behavior. The
+# width is bounded by the fleet, not by taste: each box admits PARALLEL full-length
+# streams (5 by default, scripts/spark-configure.sh), a pinned lane reaches only one
+# box's worth so a higher number just deepens that queue, and only the unpinned swarm
+# lane spreads over all of them. limit_behavior "queue" below holds overflow instead
+# of failing the spawn.
 [subagents]
 enabled = true
-max_concurrent = 4
+max_concurrent = ${grok_subagent_max_concurrent}
 max_depth = 1
 limit_behavior = "queue"
 
 [subagents.models]
-explore = "agent"
-plan = "agent"
+explore = "${grok_subagents_lane}"
+plan = "${grok_subagents_lane}"
 
 # MCP servers: three gated entries ship by default, each behind its own boolean
 # that defaults to true. search_mcp renders the searxng stdio server, which is

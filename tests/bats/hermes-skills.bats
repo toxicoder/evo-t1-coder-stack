@@ -338,6 +338,63 @@ hs_script_has_subcommand() {
       "${offenders}" "$(tr '\n' ' ' <<<"${names}")" >&2; return 1; }
 }
 
+@test "hermes skills: the agent-swarm row is a real row and the config routes it that way" {
+  # The swarm row is the routing answer for a fan-out, and everything that makes it
+  # worth a fifth group lives in router_settings rather than in the deployment. So
+  # the row is checked as the claim (same boxes, real tool calls, no session pin,
+  # two-step degradation) and model_group_affinity_config + fallbacks as the truth:
+  # a row that promises an unpinned lane the config still pins is how a fan-out ends
+  # up 15 conversations deep on one box.
+  local row flat
+  row="$(grep -E '^\|[[:space:]]*`agent-swarm`[[:space:]]*\|' "${SKILLS}/model-routing/SKILL.md")"
+  [[ -n ${row} ]] \
+    || { printf 'FAIL: model-routing table has no `agent-swarm` row, so the assistant never routes a fan-out\n' >&2; return 1; }
+  # Same four columns as every other row (five pipes), and the same real tool calls.
+  [[ "$(tr -cd '|' <<<"${row}" | wc -c)" -eq 5 ]] \
+    || { printf 'FAIL: the agent-swarm row is not a four-column row: %s\n' "${row}" >&2; return 1; }
+  [[ ${row} == *'real `tool_calls`'* ]] \
+    || { printf 'FAIL: the agent-swarm row does not promise real tool_calls: %s\n' "${row}" >&2; return 1; }
+  [[ ${row} == *'no session pin'* ]] \
+    || { printf 'FAIL: the agent-swarm row does not name the pin being off: %s\n' "${row}" >&2; return 1; }
+  # The notes carry the two facts the row cannot: the fan-out-versus-thread rule and
+  # the deeper degradation hop. Flattened, because this prose is hard-wrapped.
+  flat="$(tr '\n' ' ' <"${SKILLS}/model-routing/SKILL.md" | tr -s '[:space:]' ' ')"
+  [[ ${flat} == *'a fan-out uses it and a long thread does not'* ]] \
+    || { printf 'FAIL: the notes never say when to pick agent-swarm over agent\n' >&2; return 1; }
+  [[ ${flat} == *'falls back to `agent` and only then to `coder`'* ]] \
+    || { printf 'FAIL: the notes do not state agent-swarm two-step degradation\n' >&2; return 1; }
+  python3 -c 'import yaml' >/dev/null 2>&1 || skip "PyYAML is not installed"
+  python3 - "${LITELLM_CFG}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    cfg = yaml.safe_load(handle)
+router = cfg.get("router_settings") or {}
+
+affinity = router.get("model_group_affinity_config") or {}
+if affinity.get("agent-swarm") != []:
+    sys.exit("FAIL: model_group_affinity_config gives agent-swarm %r, not the empty "
+             "flag list the table promises for the fan-out lane"
+             % (affinity.get("agent-swarm"),))
+
+def hop(alias):
+    for item in router.get("fallbacks") or []:
+        if isinstance(item, dict) and alias in item:
+            return item[alias]
+    return None
+
+if hop("agent-swarm") != ["agent", "coder"]:
+    sys.exit("FAIL: agent-swarm falls back to %r, not the agent-then-coder chain the "
+             "notes state" % (hop("agent-swarm"),))
+for sibling in ("agent", "agent-low", "agent-medium", "agent-xhigh"):
+    if hop(sibling) != ["coder"]:
+        sys.exit("FAIL: %s falls back to %r, so it is not the single hop the notes "
+                 "contrast agent-swarm against" % (sibling, hop(sibling)))
+PY
+}
+
 @test "hermes skills: the 32k context ceiling they quote is the coder lane's own config" {
   # "coder / coder-fast cap at 32k" is what makes the assistant refuse a long diff
   # instead of overflowing the model; agent's much larger window is the reason it

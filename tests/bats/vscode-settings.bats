@@ -76,18 +76,25 @@ setup() {
 }
 
 @test "settings: the model list names every alias the Grok config catalogues" {
-  # The editor's model picker reads this array; it has to carry the Spark lane
-  # and its three baked-thinking aliases alongside the Arc fallbacks, or the
-  # extensions offer aliases the rendered ~/.grok/config.toml does not define.
+  # The editor's model picker reads this array; it has to carry the Spark lane,
+  # its three baked-thinking aliases and the unpinned swarm alias alongside the
+  # Arc fallbacks, or the extensions offer aliases the rendered
+  # ~/.grok/config.toml does not define.
   # `high` stays out of every spelling: Qwen3.8-Flash-Next does not answer it.
-  local a b need unfolded models
+  local a b f need unfolded models
   a="${REPO_ROOT}/templates/workspace/settings.json.tftpl"
   b="${REPO_ROOT}/templates/devcontainer/settings.json.tftpl"
   for need in \
-    '"agent"' '"agent-low"' '"agent-medium"' '"agent-xhigh"' \
+    '"agent"' '"agent-low"' '"agent-medium"' '"agent-xhigh"' '"agent-swarm"' \
     '"coder"' '"coder-fast"' '"chat"'; do
     run grep -F "${need}" "${a}"
     [ "${status}" -eq 0 ] || { echo "missing ${need} in ${a}" >&2; return 1; }
+  done
+  # The swarm alias is the only one that reaches all three Spark boxes, so a
+  # twin that lost it cannot fan a workspace out at all.
+  for f in "${a}" "${b}"; do
+    run grep -F '"agent-swarm"' "${f}"
+    [ "${status}" -eq 0 ] || { echo "missing \"agent-swarm\" in ${f}" >&2; return 1; }
   done
   run grep -F '"agent-high"' "${a}"
   [ "${status}" -ne 0 ] || { echo "agent-high is not a level this runtime answers" >&2; return 1; }
@@ -96,7 +103,7 @@ setup() {
   models="$(printf '%s' "${unfolded}" | python3 -c \
     'import json,sys; print(" ".join(json.load(sys.stdin)["__evoT1StackModels"]))')"
   assert_eq "the seed lists every stack alias" \
-    "agent agent-low agent-medium agent-xhigh coder coder-fast chat" "${models}"
+    "agent agent-low agent-medium agent-xhigh agent-swarm coder coder-fast chat" "${models}"
   cmp -s "${a}" "${b}"
   # The keys that make the editor open on the folder the script pins: no
   # restored window, no startup editor.

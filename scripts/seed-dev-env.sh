@@ -134,8 +134,8 @@ resolve_repo_root() {
 # the public rate limits, so a keyless home dropping it is a default, not a
 # failure), so a keyless home
 # keeps the context7-free file. ${litellm_url} becomes STACK_LITELLM_URL; the
-# model default is agent; the affinity key is contributor; the cache-proxy
-# config path the template hardcodes is re-rooted under the seed home.
+# model default and the subagent lane are agent, the subagent fan-out 4, the
+# affinity key contributor; the cache-proxy path is re-rooted under the seed home.
 # Substitutions are sed, never eval. A doubled dollar unfolds to one dollar
 # before the template variables are replaced.
 # Globals:
@@ -191,6 +191,8 @@ seed_render_grok_config() {
     -e "s|\${litellm_url}|${STACK_LITELLM_URL}|g" \
     -e 's|\${grok_default_model}|agent|g' \
     -e 's|\${workspace_affinity_key}|contributor|g' \
+    -e 's|\${grok_subagents_lane}|agent|g' \
+    -e 's|\${grok_subagent_max_concurrent}|4|g' \
     -e "s|\${search_url}|${search}|g" \
     -e "s|${proxy_lit}|${proxy_path}|g" \
     >"${rendered}"; then

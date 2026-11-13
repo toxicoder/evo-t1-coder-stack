@@ -428,18 +428,32 @@ while the managed block is intact.
   template variable or the create form's **Grok default model** dropdown names
   another. `[models] default_reasoning_effort = "xhigh"`. The Spark lane answers
   `low` / `medium` / `xhigh`; `high` is never advertised.
-- The seven aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `coder`,
-  `coder-fast`, `chat`) are defined with `base_url` set to `litellm_url` and
+- The eight aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`,
+  `coder`, `coder-fast`, `chat`) are defined with `base_url` set to `litellm_url` and
   `env_key = "LITELLM_API_KEY"`. The key is injected as an environment variable, so
   it never appears in a file. `agent` carries three
   `[[model."agent".reasoning_efforts]]` tables (`xhigh` is the default). The
-  `agent-low` / `agent-medium` / `agent-xhigh` aliases set
+  `agent-low` / `agent-medium` / `agent-xhigh` / `agent-swarm` aliases set
   `supports_reasoning_effort = false` because LiteLLM bakes the level for callers
   that have no reasoning-effort field.
 - `[models]` also carries `extra_headers` with
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
   workspace's traffic to one healthy Spark box. Under a shared profile the
   last-booted workspace's key wins for the whole fleet.
+- `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane it
+  rides, both rendered from template variables: `grok_subagents_lane` (default
+  `agent`) and `grok_subagent_max_concurrent` (default `4`). The two keys are one
+  calculation, and the header above is what bounds the width. A parent session and
+  every subagent it spawns carry the same `x-litellm-session-id`, so on a pinned lane
+  the whole fan-out resolves to one deployment and competes for that box's `PARALLEL`
+  streams - 5 by default, set in `scripts/spark-configure.sh` - which means raising
+  the width past about 4 buys a longer queue and no capacity. Pointing the lane at
+  `agent-swarm` is the case where widening pays: that group carries no pin, so each
+  subagent request is placed on whichever reachable box has the fewest requests in
+  flight and the ceiling becomes `PARALLEL` per box rather than per workspace.
+  `limit_behavior = "queue"` below them holds the overflow instead of failing the
+  spawn, so overshoot costs a subagent latency rather than its life. The mapping
+  ships `explore` and `plan` on the same lane as everything else.
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
@@ -759,8 +773,8 @@ clone is never asked to delete somebody else's committed file.
   confidence stated - and keeps the raw pages to itself.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
   default `http://host.docker.internal:4000/v1`; model alias `agent`, with
-  `agent-low`/`agent-medium`/`agent-xhigh`/`coder`/`coder-fast`/`chat` listed in
-  `__evoT1StackModels`). The seed is
+  `agent-low`/`agent-medium`/`agent-xhigh`/`agent-swarm`/`coder`/`coder-fast`/`chat`
+  listed in `__evoT1StackModels`). The seed is
   `settings.json.tftpl`, copied onto the per-owner volume
   `vscode-settings-<owner-id>` (mounted at `~/.shared/vscode/settings.json`) only
   while that file is absent, and symlinked from
@@ -871,11 +885,12 @@ drives the server's experimental chat API:
   `base_url` or key.
 - chat model configs `agent` (context limit 262144, set as the default; LiteLLM bakes
   `reasoning_effort` `xhigh`), `agent-low` / `agent-medium` / `agent-xhigh` (same
-  lane with a baked thinking level, not default), and `chat` (32768), for models not
-  already registered. `coder` and `coder-fast` stay out on purpose: on this stack's
-  IPEX-LLM runtime those weights return tool calls as plain text with no
-  `tool_calls`, and an agent turn without callable tools cannot browse or edit, so
-  registering them would only add a silently broken model to the pickers.
+  lane with a baked thinking level, not default), `agent-swarm` (same lane and the same
+  baked level with the session pin lifted for that group, not default), and `chat`
+  (32768), for models not already registered. `coder` and `coder-fast` stay out on
+  purpose: on this stack's IPEX-LLM runtime those weights return tool calls as plain
+  text with no `tool_calls`, and an agent turn without callable tools cannot browse or
+  edit, so registering them would only add a silently broken model to the pickers.
   `context_limit` is the agent's own compaction budget (a 70 per cent default
   compaction threshold applies), which is why it is pinned per alias.
   Before that sweep the script asks the proxy `GET /v1/model/info` and `GET /health`
@@ -894,7 +909,10 @@ drives the server's experimental chat API:
   has since gone unhealthy. A pin aimed at a config the script did not create is the
   admin's and is left alone. Both helper lanes landing on a dead `chat` is what made
   conversations lose their titles and die at the compaction threshold, which is why a
-  stale pin now moves instead of being kept forever.
+  stale pin now moves instead of being kept forever. Neither preference list names
+  `agent-swarm`: that config is registered for the model picker only, because these lanes
+  serve the control-plane chat agent, which is one conversation, and one conversation
+  wants the pin.
 - a read-only drift check on the stored configs: a config that is disabled, is not
   the deployment default, or carries a `context_limit` that does not match the alias's
   serving window is reported with a `warning:` and the screen to fix it on. The

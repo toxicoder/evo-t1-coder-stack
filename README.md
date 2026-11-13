@@ -311,10 +311,11 @@ reach the dev stack when `dev-stack.env` exists.
 
 3. **Wire the control-plane chat agent.** `prod-stack` / `dev-stack` `up` already start
    this with `--wait` after compose is up, so registering the first account is enough:
-   the seeder writes the `litellm` AI provider, the `agent` default plus
-   `agent-low` / `agent-medium` / `agent-xhigh` thinking aliases and the `chat`
-   fallback, the subagent lane pins, and the system-prompt addendum. No extra Coder UI
-   setup. Re-run `--apply` if you skipped that, or print the plan first:
+   the seeder writes the `litellm` AI provider, the `agent` default plus the
+   `agent-low` / `agent-medium` / `agent-xhigh` thinking aliases, the `agent-swarm`
+   fleet lane, the `chat` fallback, the subagent lane pins, and the system-prompt
+   addendum. No extra Coder UI setup. Re-run `--apply` if you skipped that, or print the
+   plan first:
 
    ```sh
    bazelisk run //scripts:coder-agents -- --dry-run
@@ -661,6 +662,7 @@ measured 30-request burst, the **Agent backend** card) are in
 | `agent-low` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low` | yes (same as `agent`) |
 | `agent-medium` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `medium` | yes (same as `agent`) |
 | `agent-xhigh` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh` | yes (same as `agent`) |
+| `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group alone carries no session pin, so every request lands on the least-busy healthy box | yes (same as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
@@ -673,9 +675,12 @@ emit structured tool calls on this box's IPEX-LLM Ollama, so agent mode needs th
 routing, the `agent` -> `coder` fallback, the burst that produced it, and the two
 `docker compose restart litellm` commands (one per stack) are on
 [docs/litellm-routing.md](docs/litellm-routing.md). `scripts/coder-agents.sh` registers
-`agent` (default), the three thinking aliases, and `chat` as the Coder Agents chat
-models, so an alias edited here moves in the Agents dropdowns too. There is no `high`
-level on this runtime.
+`agent` (default), the three thinking aliases, `agent-swarm`, and `chat` as the Coder
+Agents chat models, so an alias edited here moves in the Agents dropdowns too. There is
+no `high` level on this runtime. `agent-swarm` is the fifth Spark lane and the only one
+with no session pin: same boxes, same baked `xhigh`, each request placed on the box
+carrying the fewest in flight, which is the lane a parallel subagent fan-out wants -
+point one at it with `--var grok_subagents_lane=agent-swarm`.
 
 ## Coder workspace templates
 

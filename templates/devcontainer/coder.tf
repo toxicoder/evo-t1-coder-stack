@@ -27,6 +27,18 @@ variable "grok_default_model" {
   default     = "agent"
 }
 
+variable "grok_subagents_lane" {
+  type        = string
+  description = "Grok catalog key every subagent a session spawns runs on, rendered into [subagents.models] in the workspace's ~/.grok/config.toml. The default keeps subagents on the same pinned Spark lane as the parent session. `agent-swarm` is the fan-out choice: it is the one Spark group with no LiteLLM session pin, so the least-busy picker spreads a fan-out over all three boxes instead of queueing them behind one box's streams."
+  default     = "agent"
+}
+
+variable "grok_subagent_max_concurrent" {
+  type        = number
+  description = "How many subagents one session may have in flight, rendered into [subagents] max_concurrent in the workspace's ~/.grok/config.toml. The number is bounded by the fleet, not by taste: each Spark box admits PARALLEL full-length streams (5 by default), so a pinned lane can only reach one box's worth and raising this past about 4 deepens a queue rather than buying capacity. Only the unpinned agent-swarm lane spreads a fan-out over more than one box, where the ceiling is PARALLEL per reachable box."
+  default     = 4
+}
+
 variable "litellm_url" {
   type        = string
   description = "LiteLLM proxy base URL reachable from the workspace (via the Docker host gateway)."

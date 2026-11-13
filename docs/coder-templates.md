@@ -471,6 +471,8 @@ workspace.
 | `litellm_url` | `http://host.docker.internal:4000/v1` | Reached through the Docker host gateway. |
 | `litellm_key` | `""`, `sensitive` | Handed to the workspace as `LITELLM_API_KEY`. Sensitive: pass the LiteLLM master key when creating a workspace. |
 | `grok_default_model` | `agent` | One of the LiteLLM aliases. `agent` is the tool-capable Spark lane (thinking `xhigh` by default, picker `low` / `medium` / `xhigh`); `agent-low` / `agent-medium` / `agent-xhigh` bake the level into the alias. |
+| `grok_subagents_lane` | `agent` | The Grok catalog key both `[subagents.models]` entries (`explore` and `plan`) run on. A `--var` knob only - no create-form field, so `--var grok_subagents_lane=agent-swarm` is how an operator points one workspace's subagents at the unpinned fleet lane. The default keeps subagents on the same pinned lane as the parent session. |
+| `grok_subagent_max_concurrent` | `4` | `[subagents] max_concurrent`: how many subagents one session may have in flight. A `--var` knob only, no create-form field. Raising it is a fleet calculation, not a taste setting: each Spark box admits `PARALLEL` full-length streams (5 by default, `scripts/spark-configure.sh`), and a pinned lane only ever reaches the one box its session key resolves to - so past about 4 on `agent` it deepens a queue behind those 5 slots instead of buying capacity. On `agent-swarm` the ceiling is `PARALLEL` per reachable box, 15 across three, which is where a number like 8 is real concurrency. Overflow is held, not failed (`limit_behavior = "queue"`), so overshoot costs a subagent latency rather than its life. |
 | `docker_socket` | `""` | Optional Docker socket URI; empty means the provider default. |
 | `coder_agent_url` | `http://host.docker.internal:3002` | The URL the agent dials. Kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent traffic through the reverse proxy. Empty keeps the provider-rendered access URL. |
 | `dind` | `false` | Turns on the per-workspace privileged daemon described below. Does not exist in `devcontainer`. |
@@ -485,8 +487,8 @@ workspace.
 Notes on the two dropdowns that take a custom value:
 
 - The `grok_default_model` aliases are `agent`, `agent-low`, `agent-medium`,
-  `agent-xhigh`, `coder`, `coder-fast` and `chat`, plus a **Custom** entry when the
-  variable names another one.
+  `agent-xhigh`, `agent-swarm`, `coder`, `coder-fast` and `chat`, plus a **Custom** entry
+  when the variable names another one.
 - The provider requires a parameter default to be one of its options, which is why a
   custom `--var` value is injected as its own option instead of being dropped.
 - A `github_mcp` of `true` with no GitHub account connected gives that workspace a server

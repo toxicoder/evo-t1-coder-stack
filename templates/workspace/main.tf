@@ -100,6 +100,13 @@ locals {
       name        = "agent-xhigh (Spark, thinking extra high)"
       description = "Spark agent lane; thinking baked to xhigh in LiteLLM"
     },
+    # Same three Spark boxes, minus the session pin: the proxy places each
+    # request on the least-busy box, so this is the lane a fan-out spreads over.
+    {
+      value       = "agent-swarm"
+      name        = "agent-swarm (Spark, spread across all boxes)"
+      description = "Spark agent lane; every request placed on the least-busy Spark"
+    },
     {
       value       = "coder"
       name        = "coder (Arc iGPU)"
@@ -459,7 +466,7 @@ resource "coder_agent" "main" {
   # prose to the docs rather than raising the bound.
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
-    # resolve, so all eight are declared together. github_mcp, search_mcp and
+    # resolve, so all ten are declared together. github_mcp, search_mcp and
     # context7_mcp are *boolean* gates in there - each only decides whether its
     # [mcp_servers.*] block appears - and no token is part of the decision: no
     # credential bytes are ever interpolated into the rendered script or into
@@ -480,6 +487,11 @@ resource "coder_agent" "main" {
       search_mcp             = var.search_mcp
       search_url             = var.searxng_url
       context7_mcp           = var.context7_mcp
+
+      # The two fan-out knobs: --var only, no coder_parameter, so a workspace
+      # opts into the swarm lane without the form's option-membership rule.
+      grok_subagents_lane          = var.grok_subagents_lane
+      grok_subagent_max_concurrent = var.grok_subagent_max_concurrent
     })
     # The per-repo notes library, interpolated verbatim into the quoted heredoc
     # that writes ~/.grok/notes-setup.sh in startup.sh.tftpl. One copy under
