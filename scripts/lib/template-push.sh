@@ -74,6 +74,7 @@ fi
 # ez-bazel-first.SKILL.md, ez-bazel-first.owned_files_check.py,
 # ez-bazel-first.glob_budget.py, ez-strong-types.SKILL.md,
 # ez-strong-types.type_baseline.py, ez-trunk-based-repo.SKILL.md,
+# ez-micro-plan.SKILL.md, ez-micro-plan.plan_check.py,
 # stack-repo-skills.sh.tftpl,
 # coder-agents.md,
 # mcp-cache-proxy.json, agents-seed.sh.tftpl (the coder_script "agents_seed" body) and
