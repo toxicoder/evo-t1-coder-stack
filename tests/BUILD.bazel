@@ -485,6 +485,14 @@ _SUITE_PAYLOAD_ALLOW = {
         "//scripts:shell_sources",
         "//lints:runners",
     ],
+    # It reads neither tree: the canned plan it hands the checker assigns its eight
+    # example tasks files under docs/ and tests/bats/, which is what a real plan
+    # would name, and the checker only parses those strings. The suite builds its
+    # own scratch plan tree and never opens a page or a sibling suite.
+    "ez-micro-plan.bats": [
+        "//docs:content",
+        "//tests:all_bats",
+    ],
     # It dials nothing: `searxng:8181` appears only as a value written into a
     # scratch container-environment fixture, which the web-lane check reads back
     # out of a stubbed `docker inspect`. The suite never opens searxng/settings.yml.
