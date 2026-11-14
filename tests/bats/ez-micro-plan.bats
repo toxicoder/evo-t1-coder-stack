@@ -442,3 +442,17 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
     "summary: 8 tasks | 3 lanes | 4 slots | wave width 4 | 0 errors, 1 warnings" \
     "${lines[1]}"
 }
+
+@test "a task that skips the L0 contract is warned about by name" {
+  # The layering only holds if every child reads the shared contract: L0 carries
+  # the seams two children must agree on, so a task dispatched without it is a
+  # task that will invent its own spelling of one.
+  task_set T01 6 "L1-src"
+  write_plan
+  check
+  [[ ${status} -eq 0 ]] || report_status
+  assert_match "the contract-less task was named" \
+    'warning: T01 reads no L0' "${output}"
+  check --strict
+  [[ ${status} -eq 1 ]] || report_status
+}

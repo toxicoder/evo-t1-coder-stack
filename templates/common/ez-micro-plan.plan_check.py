@@ -254,6 +254,10 @@ def check_tasks(tasks, lanes, report):
                         % (task["id"], len(owns), OWNS_SOFT_MAX))
         if not task.get("done"):
             report.error("%s has no done check" % task["id"])
+        reads = split_list(task.get("reads"))
+        if reads and "L0" not in reads:
+            report.warn("%s reads no L0, so it starts without the contract every "
+                        "other child was given" % task["id"])
         calls = task.get("calls", "")
         if calls:
             if not re.match(r"^\d+$", calls):
