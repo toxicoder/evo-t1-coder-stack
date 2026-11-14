@@ -113,7 +113,11 @@ seed_seed_targets() {
     '~/.coder/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py' \
     '~/.agents/skills/ez-strong-types/scripts/type_baseline.py	file:templates/common/ez-strong-types.type_baseline.py' \
     '~/.coder/skills/ez-trunk-based-repo/SKILL.md	file:templates/common/ez-trunk-based-repo.SKILL.md' \
-    '~/.agents/skills/ez-trunk-based-repo/SKILL.md	file:templates/common/ez-trunk-based-repo.SKILL.md'
+    '~/.agents/skills/ez-trunk-based-repo/SKILL.md	file:templates/common/ez-trunk-based-repo.SKILL.md' \
+    '~/.coder/skills/ez-micro-plan/SKILL.md	file:templates/common/ez-micro-plan.SKILL.md' \
+    '~/.agents/skills/ez-micro-plan/SKILL.md	file:templates/common/ez-micro-plan.SKILL.md' \
+    '~/.coder/skills/ez-micro-plan/scripts/plan_check.py	file:templates/common/ez-micro-plan.plan_check.py' \
+    '~/.agents/skills/ez-micro-plan/scripts/plan_check.py	file:templates/common/ez-micro-plan.plan_check.py'
 }
 
 # @function seed_retired_targets

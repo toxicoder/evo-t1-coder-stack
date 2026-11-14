@@ -144,6 +144,8 @@ template_push_one() {
     ez-strong-types.SKILL.md \
     ez-strong-types.type_baseline.py \
     ez-trunk-based-repo.SKILL.md \
+    ez-micro-plan.SKILL.md \
+    ez-micro-plan.plan_check.py \
     coder-agents.md \
     mcp-cache-proxy.json \
     gh-token-refresh.sh.tftpl \
