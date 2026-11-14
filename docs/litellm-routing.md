@@ -120,8 +120,13 @@ The two levers that actually move load off a shedding box:
    override file those settings belong in, and `//scripts:spark-verify` already fails a
    box whose `streams.max` drifts from the fleet's `PARALLEL`. Asserting the
    admit-reclaim setting itself is still open work: neither script names that key today.
-2. Keep in-flight fan-out at or under a box's `PARALLEL` (5) per workspace. The
-   orchestrator cap of 4 is inside that budget.
+2. Keep what one workspace puts on one box at or under that box's `PARALLEL` (5). A
+   pinned lane sends the whole fan-out to the box its session key resolves to, which is
+   why the derived width there is 4: one box's streams, minus the parent's own request.
+   The unpinned `agent-swarm` lane is the one that can afford a wider wave - 8 subagents
+   spread by `least-busy` over three boxes sit under `PARALLEL` on each, which is the
+   difference between buying wall-clock and buying queue depth. Past 15 the fleet has no
+   streams left to give, whatever the lane.
 
 Two knobs that look right and do nothing here: `retry_after` is only a `min_timeout` and
 is never consulted while the group has healthy deployments, and `fallbacks_by_model`

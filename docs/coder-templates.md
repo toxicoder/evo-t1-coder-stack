@@ -103,15 +103,23 @@ missing one fails the push before the CLI runs.
   upstream: `/ez-bazel-first` puts every tracked file behind a target and budgets the
   `glob()`s, `/ez-strong-types` pins a strict checker profile per language and ratchets the
   broad-type census, and `/ez-trunk-based-repo` turns environment branches into
-  environments and unfinished work into flags. Unlike the authoring trio they are not
-  single files: the first two shells out to a python helper, so `ez-bazel-first` carries
-  `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py` and
-  `ez-strong-types` carries `ez-strong-types.type_baseline.py`, each written to a `scripts/`
+  environments and unfinished work into flags. The family's fourth member,
+  `ez-micro-plan.SKILL.md`, converts nothing: it is the parent's dispatch protocol, the one
+  that cuts a change into micro tasks a fleet of subagents can each finish alone. It writes
+  the dispatch plan to `.grok/plans/<slug>/plan.md` (Goal, Dispatch, Lanes, Tasks, Ledger,
+  Not doing) with `ctx/` briefs and `results/` reports beside it, in the same shape the
+  rulebook at `~/.grok/AGENTS.md` tells the parent to expect, and the plan tree is
+  git-ignored by `templates/common/notes-setup.sh` beside the two scratch note names.
+  Unlike the authoring trio these are not single files: three of the four shell out to a
+  python helper, so `ez-bazel-first` carries
+  `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py`,
+  `ez-strong-types` carries `ez-strong-types.type_baseline.py`, and `ez-micro-plan` carries
+  `ez-micro-plan.plan_check.py`, each written to a `scripts/`
   subdirectory of the same skill directory. The bodies name the `~/.agents` spelling of
   those helpers, which is why the twin copy is not optional.
 - `stack-repo-skills.sh.tftpl` is the `coder_script "stack_repo_skills"` body that seeds
-  that family, from six `chomp(file())` entries: one `SKILL.md` per command plus the three
-  python helpers. It is a second body rather than six
+  that family, from eight `chomp(file())` entries: one `SKILL.md` per command plus the four
+  python helpers. It is a second body rather than eight
   more heredocs in the first one for the reason this whole file keeps repeating: each
   `coder_script.script` is its own `execve` argument with its own ceiling, and a family
   that ships helpers grows faster than one that ships a `SKILL.md` each.
@@ -238,7 +246,11 @@ it. The three payloads now travel in their own body, `coder_script.stack_skills`
 composes to 36847 bytes. Measured again on 2026-11-09 after the repository-conversion
 family landed: `coder_script.stack_repo_skills`, carrying three `SKILL.md` payloads and
 three python helpers, composes to 60336 bytes, 62544 clear of the bound, and neither
-startup twin moved.
+startup twin moved. Measured again on 2026-11-14 after the family's fourth member
+landed: that same body now carries four `SKILL.md` payloads and four python helpers and
+composes to 91203 bytes, 31677 clear of the bound, and neither startup twin moved -
+which is the point of giving a payload family its own `coder_script` instead of feeding
+it to `startup_script`.
 
 When a body really does need to grow past the budget, the options are:
 
@@ -471,8 +483,8 @@ workspace.
 | `litellm_url` | `http://host.docker.internal:4000/v1` | Reached through the Docker host gateway. |
 | `litellm_key` | `""`, `sensitive` | Handed to the workspace as `LITELLM_API_KEY`. Sensitive: pass the LiteLLM master key when creating a workspace. |
 | `grok_default_model` | `agent` | One of the LiteLLM aliases. `agent` is the tool-capable Spark lane (thinking `xhigh` by default, picker `low` / `medium` / `xhigh`); `agent-low` / `agent-medium` / `agent-xhigh` bake the level into the alias. |
-| `grok_subagents_lane` | `agent` | The Grok catalog key both `[subagents.models]` entries (`explore` and `plan`) run on. A `--var` knob only - no create-form field, so `--var grok_subagents_lane=agent-swarm` is how an operator points one workspace's subagents at the unpinned fleet lane. The default keeps subagents on the same pinned lane as the parent session. |
-| `grok_subagent_max_concurrent` | `4` | `[subagents] max_concurrent`: how many subagents one session may have in flight. A `--var` knob only, no create-form field. Raising it is a fleet calculation, not a taste setting: each Spark box admits `PARALLEL` full-length streams (5 by default, `scripts/spark-configure.sh`), and a pinned lane only ever reaches the one box its session key resolves to - so past about 4 on `agent` it deepens a queue behind those 5 slots instead of buying capacity. On `agent-swarm` the ceiling is `PARALLEL` per reachable box, 15 across three, which is where a number like 8 is real concurrency. Overflow is held, not failed (`limit_behavior = "queue"`), so overshoot costs a subagent latency rather than its life. |
+| `grok_subagents_lane` | `agent` | The Grok catalog key every subagent a session spawns runs on, rendered into `[subagents.models]` for all three built-in types: `general-purpose` (the type a spawn gets when it names none, so every writer in a fan-out), plus `explore` and `plan`. A `--var` knob only - no create-form field, so `--var grok_subagents_lane=agent-swarm` is how an operator points one workspace's subagents at the unpinned fleet lane. The default keeps subagents on the same pinned lane as the parent session. Pinning only the two read-only types was the earlier shape, and it made the swarm lane a lie: the writers inherited the parent's pinned model and queued behind one box anyway. Turning this knob also sets the default width below. |
+| `grok_subagent_max_concurrent` | `null`, derived | `[subagents] max_concurrent`: how many subagents one session may have in flight. `null` asks the lane, and `main.tf` answers 8 on the unpinned `agent-swarm` lane and 4 on a pinned one; an explicit `--var` wins, and a validation keeps the override between 1 and 32. The widths are fleet arithmetic, not taste: each Spark box admits `PARALLEL` full-length streams (5 by default, `scripts/spark-configure.sh`), a pinned lane only ever reaches the one box its session key resolves to - so past about 4 on `agent` it deepens a queue behind those 5 slots instead of buying capacity - while `agent-swarm` spreads over every box, where the ceiling is `PARALLEL` per reachable box, 15 across three. Overflow is held, not failed (`limit_behavior = "queue"`), so overshoot costs a subagent latency rather than its life, and `sampling_limit` is left unset because it defaults to `max_concurrent`. |
 | `docker_socket` | `""` | Optional Docker socket URI; empty means the provider default. |
 | `coder_agent_url` | `http://host.docker.internal:3002` | The URL the agent dials. Kept on the local plain listener so a public `CODER_ACCESS_URL` does not hairpin agent traffic through the reverse proxy. Empty keeps the provider-rendered access URL. |
 | `dind` | `false` | Turns on the per-workspace privileged daemon described below. Does not exist in `devcontainer`. |

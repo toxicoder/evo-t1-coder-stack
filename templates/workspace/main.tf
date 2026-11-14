@@ -489,9 +489,13 @@ resource "coder_agent" "main" {
       context7_mcp           = var.context7_mcp
 
       # The two fan-out knobs: --var only, no coder_parameter, so a workspace
-      # opts into the swarm lane without the form's option-membership rule.
+      # opts into the swarm lane without the form's option-membership rule. The
+      # width is derived from the lane rather than one number for both: only the
+      # unpinned swarm lane spreads a fan-out over several boxes, so it gets the
+      # width that keeps three boxes busy (8), and a pinned lane gets one box's
+      # PARALLEL minus the parent's own stream (4). An explicit --var wins.
       grok_subagents_lane          = var.grok_subagents_lane
-      grok_subagent_max_concurrent = var.grok_subagent_max_concurrent
+      grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : (var.grok_subagents_lane == "agent-swarm" ? 8 : 4)
     })
     # The per-repo notes library, interpolated verbatim into the quoted heredoc
     # that writes ~/.grok/notes-setup.sh in startup.sh.tftpl. One copy under
@@ -718,6 +722,8 @@ resource "coder_script" "stack_repo_skills" {
     ez_strong_types_skill            = chomp(file("${path.module}/ez-strong-types.SKILL.md"))
     ez_strong_types_type_baseline    = chomp(file("${path.module}/ez-strong-types.type_baseline.py"))
     ez_trunk_based_repo_skill        = chomp(file("${path.module}/ez-trunk-based-repo.SKILL.md"))
+    ez_micro_plan_skill              = chomp(file("${path.module}/ez-micro-plan.SKILL.md"))
+    ez_micro_plan_plan_check         = chomp(file("${path.module}/ez-micro-plan.plan_check.py"))
   })
 }
 

@@ -41,8 +41,9 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   and `~/.grok/notes/` (the canonical scratch file is `~/.grok/notes/<host/owner/repo>/notes.md`,
   one directory per clone) are both stack-owned
   and rewritten on every start; that start also sets `core.excludesFile` to
-  `~/.grok/notes/exclude` when you never set it, which is why `notes.md` and
-  `.scratch-notes.md` are ignored in every repo here.
+  `~/.grok/notes/exclude` when you never set it, which is why `notes.md`,
+  `.scratch-notes.md` and `.grok/plans/` (the `ez-micro-plan` dispatch plan, its `ctx/`
+  briefs and its `results/` reports) are ignored in every repo here.
 - Bazel behaves the same here, so `//:test-fast`, `//:lint` and
   `bazelisk run //scripts:<stem>` all still run.
 - `EVO_T1_DEVCONTAINER=1` instead of `CODER_WORKSPACE_ID` means the **contributor** dev
@@ -182,7 +183,7 @@ proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.m
 - Operator CLIs source `scripts/lib/common.sh` and print `== section ==`, `-> phase`, `ok:`, `warning:`, `note:`, `error:`, and a closing `summary: N ok, W warnings, F failed`. CLIs without `--json` unset `JSON_MODE` after source.
 - `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `coder_script` bodies are sibling `.tftpl` files rendered with `templatefile()`. `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md` with its `agents-seed.sh.tftpl` body (the
   `coder_script "agents_seed"` that writes `~/.grok/AGENTS.md`, which keeps the rulebook out
-  of the startup argument's byte budget), `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`, `vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`, `ez-create-skill.SKILL.md`, `stack-skills.sh.tftpl` (the `coder_script "stack_skills"` body that seeds that trio), `ez-bazel-first.SKILL.md` with its `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py` helpers, `ez-strong-types.SKILL.md` with its `ez-strong-types.type_baseline.py` helper, `ez-trunk-based-repo.SKILL.md`, `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body that seeds those three, each helper into a `scripts/` subdir of the same skill directory), `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`. The push stages all of them beside each staged `main.tf`; pushing without any one of them fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
+  of the startup argument's byte budget), `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`, `vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`, `ez-create-skill.SKILL.md`, `stack-skills.sh.tftpl` (the `coder_script "stack_skills"` body that seeds that trio), `ez-bazel-first.SKILL.md` with its `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py` helpers, `ez-strong-types.SKILL.md` with its `ez-strong-types.type_baseline.py` helper, `ez-trunk-based-repo.SKILL.md`, `ez-micro-plan.SKILL.md` with its `ez-micro-plan.plan_check.py` helper, `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body that seeds those four, each helper into a `scripts/` subdir of the same skill directory), `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`. The push stages all of them beside each staged `main.tf`; pushing without any one of them fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
 - `.devcontainer/` is the contributor entry point and is maintained *with* the project, not
   beside it. `devcontainer.json` builds `images/dev/` directly (no overlay Dockerfile, no

@@ -3,8 +3,8 @@
 # the map main.tf passes, each into a quoted here-doc so no shell text inside one is
 # expanded. Why these seeds ride their own script instead of stack-skills.sh.tftpl: the
 # agent execs every body as one argument, so a second body buys a second ceiling, and
-# two of this family's three members carry helper scripts beside their SKILL.md while
-# that one does not;
+# three of this family's four members carry helper scripts beside their SKILL.md while
+# the fourth does not;
 # docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 
@@ -92,6 +92,32 @@ if [ ! -f "$HOME/.agents/skills/ez-trunk-based-repo/SKILL.md" ]; then
   mkdir -p "$HOME/.agents/skills/ez-trunk-based-repo" 2>/dev/null
   cp "$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" \
     "$HOME/.agents/skills/ez-trunk-based-repo/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-micro-plan/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-micro-plan" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-micro-plan/SKILL.md" <<'EZ_MICRO_PLAN_SKILL_MD_EOF'
+${ez_micro_plan_skill}
+EZ_MICRO_PLAN_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-micro-plan/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-micro-plan" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-micro-plan/SKILL.md" \
+    "$HOME/.agents/skills/ez-micro-plan/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/ez-micro-plan/scripts/plan_check.py" ]; then
+  mkdir -p "$HOME/.coder/skills/ez-micro-plan/scripts" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-micro-plan/scripts/plan_check.py" <<'EZ_MICRO_PLAN_PLAN_CHECK_PY_EOF'
+${ez_micro_plan_plan_check}
+EZ_MICRO_PLAN_PLAN_CHECK_PY_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-micro-plan/scripts/plan_check.py" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-micro-plan/scripts" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-micro-plan/scripts/plan_check.py" \
+    "$HOME/.agents/skills/ez-micro-plan/scripts/plan_check.py" 2>/dev/null
 fi
 
 exit 0
