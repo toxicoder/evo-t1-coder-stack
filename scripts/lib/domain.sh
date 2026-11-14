@@ -3,7 +3,7 @@
 # ## domain.sh — composed public hostnames (sourced; never executed)
 #
 # One place that turns composable parts into the stack's public DNS names, so an
-# operator sets a zone and a box label once instead of typing five long names into
+# operator sets a zone and a box label once instead of typing six long names into
 # STACK_PUBLIC_HOSTS and again into the router's vhost table.
 #
 # The grammar is fixed: `<service>-<environment>-<suffix>.<base>`, always ONE label
@@ -43,7 +43,7 @@
 #   None
 # Arguments:
 #   $1 - the naming key, one of STACK_CODER_NAME, STACK_KASM_NAME, STACK_LITELLM_NAME,
-#        STACK_HERMES_NAME, STACK_DASHBOARD_NAME
+#        STACK_HERMES_NAME, STACK_GRAFANA_NAME, STACK_DASHBOARD_NAME
 # Outputs:
 #   The default label on stdout, or nothing for an unknown or unlabelled key
 # Returns:
@@ -54,6 +54,7 @@ domain_service_default() {
     STACK_KASM_NAME) printf 'kasm\n' ;;
     STACK_LITELLM_NAME) printf 'litellm\n' ;;
     STACK_HERMES_NAME) printf 'hermes\n' ;;
+    STACK_GRAFANA_NAME) printf 'grafana\n' ;;
     *) printf '\n' ;;
   esac
 }
@@ -138,12 +139,18 @@ public_host_for() {
 
 # @function public_hosts_default
 # Print the comma-separated name list STACK_PUBLIC_HOSTS carries, composed from the
-# parts: dashboard, coder, kasm, litellm, hermes. A service whose name will not compose
-# is left out rather than sent as an empty list item, and the line is empty when the zone
-# itself is missing, which is LAN-only.
+# parts: dashboard, coder, kasm, litellm, hermes, grafana. A service whose name will not
+# compose is left out rather than sent as an empty list item, and the line is empty when
+# the zone itself is missing, which is LAN-only.
+# Grafana is the only role behind a compose profile (observability), and this file reads
+# no flag to hide it: domain.sh never opens .env, so the name is composed whether or not
+# that profile is on. A stack that runs without it simply has no container behind that
+# vhost, which is a plain 502; leaving the name out of HOMEPAGE_ALLOWED_HOSTS would be
+# the worse failure, because homepage refuses an unlisted Host before anything answers.
 # Globals:
 #   STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL, STACK_DASHBOARD_NAME,
-#   STACK_CODER_NAME, STACK_KASM_NAME, STACK_LITELLM_NAME, STACK_HERMES_NAME
+#   STACK_CODER_NAME, STACK_KASM_NAME, STACK_LITELLM_NAME, STACK_HERMES_NAME,
+#   STACK_GRAFANA_NAME
 # Arguments:
 #   None
 # Outputs:
@@ -151,7 +158,8 @@ public_host_for() {
 # Returns:
 #   0 always
 public_hosts_default() {
-  local keys=('' STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME)
+  local keys=('' STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+    STACK_GRAFANA_NAME)
   local key name host out=""
   for key in "${keys[@]}"; do
     name="$(domain_part "${key:-STACK_DASHBOARD_NAME}" "$(domain_service_default "${key}")")" || continue
@@ -166,13 +174,14 @@ public_hosts_default() {
 }
 
 # @function public_urls_default
-# Print `key=value` lines for the five derived origins a public deploy needs, one per
+# Print `key=value` lines for the six derived origins a public deploy needs, one per
 # line, in the order bootstrap writes them into .env. An origin whose name will not
 # compose is emitted with an empty value, which is what clears the key and lets compose's
 # LAN fallback apply.
 # Globals:
 #   STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL, STACK_DASHBOARD_NAME,
-#   STACK_CODER_NAME, STACK_KASM_NAME, STACK_LITELLM_NAME, STACK_HERMES_NAME
+#   STACK_CODER_NAME, STACK_KASM_NAME, STACK_LITELLM_NAME, STACK_HERMES_NAME,
+#   STACK_GRAFANA_NAME
 # Arguments:
 #   None
 # Outputs:
@@ -183,7 +192,7 @@ public_urls_default() {
   local pair key role host
   for pair in "STACK_DASHBOARD_URL:STACK_DASHBOARD_NAME" "STACK_CODER_URL:STACK_CODER_NAME" \
     "STACK_KASM_URL:STACK_KASM_NAME" "STACK_LITELLM_URL:STACK_LITELLM_NAME" \
-    "STACK_HERMES_URL:STACK_HERMES_NAME"; do
+    "STACK_HERMES_URL:STACK_HERMES_NAME" "STACK_GRAFANA_URL:STACK_GRAFANA_NAME"; do
     key="${pair%%:*}"
     role="${pair##*:}"
     host="$(public_host_for "${role}" "$(domain_service_default "${role}")")" || host=""
@@ -194,13 +203,14 @@ public_urls_default() {
 
 # @function render_public_router_conf
 # Write the public router nginx config for the composed names by substituting the
-# __EVO_HOST_*__ tokens in the template. The token set is exactly the five vhosts the
+# __EVO_HOST_*__ tokens in the template. The token set is exactly the six vhosts the
 # router answers, so a rendered file cannot gain or lose a service on its own. Writes
 # nothing when a name will not compose or a token survived: half a vhost table would
 # answer 421 for a name Traefik is forwarding, which is worse than no render at all.
 # Globals:
 #   STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL, STACK_DASHBOARD_NAME,
-#   STACK_CODER_NAME, STACK_KASM_NAME, STACK_LITELLM_NAME, STACK_HERMES_NAME
+#   STACK_CODER_NAME, STACK_KASM_NAME, STACK_LITELLM_NAME, STACK_HERMES_NAME,
+#   STACK_GRAFANA_NAME
 # Arguments:
 #   $1 - path to the tokenized template
 #   $2 - path to write
@@ -216,7 +226,7 @@ render_public_router_conf() {
   fi
   body="$(cat "${template}")"
   local roles=('dashboard:STACK_DASHBOARD_NAME' 'coder:STACK_CODER_NAME' 'kasm:STACK_KASM_NAME'
-    'litellm:STACK_LITELLM_NAME' 'hermes:STACK_HERMES_NAME')
+    'litellm:STACK_LITELLM_NAME' 'hermes:STACK_HERMES_NAME' 'grafana:STACK_GRAFANA_NAME')
   for role in "${roles[@]}"; do
     token="__EVO_HOST_${role%%:*}__"
     token="$(printf '%s' "${token}" | tr '[:lower:]' '[:upper:]')"

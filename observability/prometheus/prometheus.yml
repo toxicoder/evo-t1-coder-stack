@@ -1,0 +1,90 @@
+# Prometheus scrape and remote-write config for the EVO-T1 stack.
+#
+# Read this file's own two halves together: Prometheus is the *collection* tier
+# (it is the only component that talks to the services being observed) and Mimir
+# is the *storage* tier everything else queries. Keeping both here is deliberate:
+# one file, so a new scrape target and its remote-write stay one edit.
+#
+# What is scraped is the set of services that actually expose a Prometheus
+# endpoint. SearXNG, Kasm, Hermes, the Postgres db and the two nginx sidecars do
+# not (see docs/observability.md), so they are absent here rather than present and
+# permanently red: a dead target is a firing `up == 0` alert, which is not the
+# same signal as "this service publishes no metrics".
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  # Stamped on every series that leaves for Mimir, so a dashboard that spans
+  # several stacks can still tell this box's series from another's.
+  external_labels:
+    stack: evo-t1
+
+# Long-term storage. Prometheus keeps its own 15d window (the retention flags on
+# the service) so a Mimir outage costs nothing, and Mimir holds the long window;
+# Grafana's `mimir` datasource is what reads it back.
+remote_write:
+  - url: http://mimir:8080/api/v1/push
+    # Mimir's ingest path is per-tenant. `-auth.enabled: false` in
+    # observability/mimir/mimir.yml is what makes the header unnecessary; if that
+    # is ever switched back on, this needs an `X-Scope-OrgID` header again.
+    queue_config:
+      max_samples_per_send: 2000
+      capacity: 10000
+      # A stalled Mimir should cost latency, not the newest samples. Without a cap
+      # on the retry backoff the send queue fills and what gets dropped is the
+      # data an operator is most likely asking about.
+      max_backoff: 1m
+
+scrape_configs:
+  # ---- the bundle itself ----------------------------------------------------
+  # Each of these answers /metrics from its own binary; they are here because a
+  # monitoring layer that does not monitor itself is how a silent gap becomes
+  # normal. `job` becomes the `job` label, which the Grafana overview dashboard
+  # groups on.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+
+  - job_name: mimir
+    static_configs:
+      - targets: ["mimir:8080"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]
+
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+
+  # ---- stack services that publish metrics ---------------------------------
+  # Coder's metrics listener is already on for the stack: docker-compose.yml sets
+    # CODER_PROMETHEUS_ENABLE and binds 0.0.0.0:2112 *inside* the container, and
+  # publishes it to 127.0.0.1:2112 only. Both facts matter here: the compose
+  # network reaches coder:2112 fine (the loopback prefix restricts the host-side
+  # mapping, not the in-network listener), and nothing outside this network can.
+  - job_name: coder
+    static_configs:
+      - targets: ["coder:2112"]
+
+  # LiteLLM's /metrics comes from `callbacks: ["prometheus"]` in
+  # litellm/config.yaml, and it sits behind LITELLM_MASTER_KEY like every other
+  # LiteLLM route (SECURITY.md). Prometheus expands `$(VAR)` from its own process
+  # environment, so the key arrives through the service's `environment:` block and
+  # never enters this committed file. An unset key means this one target 401s,
+  # which `observability-check` reports as its own finding.
+  - job_name: litellm
+    authorization:
+      type: Bearer
+      credentials: "$(LITELLM_MASTER_KEY)"
+    static_configs:
+      - targets: ["litellm:4000"]

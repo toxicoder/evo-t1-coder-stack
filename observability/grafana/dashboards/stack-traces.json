@@ -1,0 +1,74 @@
+{
+  "uid": "evo-stack-traces",
+  "title": "Traces and service map",
+  "tags": ["evo-t1", "tracing"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "text",
+      "title": "How to read this page",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Span metrics below are computed by Tempo's metrics generator and remote-written into Prometheus, so this page is a map to traces rather than a trace viewer. Open **Explore -> Tempo** to search spans by service and duration, or **Explore -> Tempo -> Service graph** to walk the graph; every span there links to this container's logs at the same timestamp (the `tracesToLogsV2` wiring in the Tempo datasource)."
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Span rate by service",
+      "description": "Spans per second per instrumented service, as counted by Tempo. A service missing here emits no OTLP; it is not down.",
+      "id": 2,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (service) (rate(traces_spanmetrics_calls_total[$__rate_interval]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Span latency, p95 by service",
+      "description": "Histogram buckets published by the span-metrics processor. The same series exist in Mimir under the long window.",
+      "id": 3,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(traces_spanmetrics_latency_bucket[$__rate_interval])))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Span errors",
+      "description": "Spans whose status was Error, per second. On this box the producers are the observability components themselves, so this is the bundle reporting on itself.",
+      "id": 4,
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (service) (rate(traces_spanmetrics_calls_total{status=\"error\"}[$__rate_interval]))",
+          "legendFormat": "{{service}}"
+        }
+      ]
+    }
+  ]
+}

@@ -18,11 +18,29 @@
 #   hermes          Hermes Agent + Web Dashboard (host 9119 stays published;
 #                   public access is additive via the router)
 #
+#
+# Observability bundle (one compose profile; OBSERVABILITY_ENABLED=false drops
+# all six out of the project - see the bundle block near the end of this file):
+#   prometheus      collects: scrapes every service that publishes /metrics and
+#                   remote-writes to mimir (host 127.0.0.1:9090, loopback only)
+#   mimir           keeps metrics long-term; no published port
+#   loki            keeps logs; no published port
+#   alloy           tails the daemon json-file logs into loki; no published port
+#   tempo           keeps traces and computes the span metrics the map uses
+#   grafana         the credentialed read path for all of it (host 3005)
 # Secrets live in .env (see .env.sample). Never commit .env.
 
 services:
   coder:
     image: ghcr.io/coder/coder:v2.36.6
+    # Named log stream: Alloy ships this container to Loki under `container=coder`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: coder, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     # Optional file, absent by default. Leave it absent to use Coder CE's
     # injected GitHub App (provider id `github`, device-flow); the templates
@@ -186,6 +204,14 @@ services:
 
   db:
     image: postgres:17
+    # Named log stream: Alloy ships this container to Loki under `container=db`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: db, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     # The image only honours POSTGRES_PASSWORD on first volume init. The
     # wrapper re-applies it on every start (local socket is trust) so a later
@@ -220,6 +246,14 @@ services:
 
   litellm:
     image: ghcr.io/berriai/litellm:v1.102.1
+    # Named log stream: Alloy ships this container to Loki under `container=litellm`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: litellm, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     command: ["--config", "/app/config.yaml"]
     ports:
@@ -267,6 +301,14 @@ services:
 
   ollama:
     image: intelanalytics/ipex-llm-inference-cpp-xpu:latest
+    # Named log stream: Alloy ships this container to Loki under `container=ollama`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: ollama, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     devices:
       - /dev/dri:/dev/dri
@@ -333,6 +375,14 @@ services:
   # so dev and stable could never both run one; hostname is per-project.
   searxng:
     image: searxng/searxng:latest
+    # Named log stream: Alloy ships this container to Loki under `container=searxng`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: searxng, max-size: "10m", max-file: "3" }
     hostname: searxng
     restart: unless-stopped
     ports:
@@ -371,6 +421,14 @@ services:
 
   kasm:
     image: lscr.io/linuxserver/kasm:latest
+    # Named log stream: Alloy ships this container to Loki under `container=kasm`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: kasm, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     privileged: true
     security_opt:
@@ -393,6 +451,14 @@ services:
   # API instead.
   homepage:
     image: ghcr.io/gethomepage/homepage:v2.4.0
+    # Named log stream: Alloy ships this container to Loki under `container=homepage`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: homepage, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     environment:
       # Host validation (required since v1.0). Must match the Host header the
@@ -426,6 +492,15 @@ services:
       # has no public name to fall to: it stays LAN unless STACK_SEARCH_URL says
       # otherwise. Remote users get the card's status either way.
       HOMEPAGE_VAR_SEARCH_URL: ${STACK_SEARCH_URL:-http://${STACK_LAN_HOST:-localhost}:${STACK_SEARCH_PORT:-8181}}
+      # The two observability cards' browser URLs. Only Grafana and Prometheus
+      # have a URL a browser can use: Loki, Tempo and Mimir publish no port, so
+      # their cards point at Grafana's explore screens and probe the service
+      # directly (homepage/config/services.yaml). Prometheus falls back to the
+      # LAN address even though its own publish is loopback-bound — an href that
+      # only answers on the box is still the honest link, and its card's status
+      # comes from compose DNS either way.
+      HOMEPAGE_VAR_GRAFANA_URL: ${STACK_GRAFANA_URL:-http://${STACK_LAN_HOST:-localhost}:${GRAFANA_PORT:-3005}}
+      HOMEPAGE_VAR_PROMETHEUS_URL: ${PROMETHEUS_URL:-http://${STACK_LAN_HOST:-localhost}:${PROMETHEUS_PORT:-9090}}
       HOMEPAGE_VAR_LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
       # The agent backend lives off-box on the LAN, so compose DNS does not
       # apply: the same LAN URL serves both the browser href and the server-side
@@ -471,6 +546,14 @@ services:
 
   homepage-proxy:
     image: nginx:1.29-alpine
+    # Named log stream: Alloy ships this container to Loki under `container=homepage-proxy`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: homepage-proxy, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     ports:
       - "${HOMEPAGE_HTTP_PORT:-80}:80"
@@ -491,6 +574,14 @@ services:
   # publishes one plain-HTTP port and holds no certificate.
   router:
     image: nginx:1.29-alpine
+    # Named log stream: Alloy ships this container to Loki under `container=router`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: router, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     ports:
       - "${STACK_PROXY_HTTP_PORT:-8080}:8080"
@@ -519,6 +610,14 @@ services:
   # key — s6 needs root to drop.
   hermes-init:
     image: nousresearch/hermes-agent:v0.22.5
+    # Named log stream: Alloy ships this container to Loki under `container=hermes-init`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: hermes-init, max-size: "10m", max-file: "3" }
     restart: "no"
     environment:
       HERMES_UID: ${HERMES_UID:-1000}
@@ -549,6 +648,14 @@ services:
   # back to .:/opt/stack.
   hermes:
     image: nousresearch/hermes-agent:v0.22.5
+    # Named log stream: Alloy ships this container to Loki under `container=hermes`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: hermes, max-size: "10m", max-file: "3" }
     restart: unless-stopped
     command: ["gateway", "run"]
     environment:
@@ -646,9 +753,293 @@ services:
       hermes-init:
         condition: service_completed_successfully
 
+  # ---------------------------------------------------------------------------
+  # Observability bundle.
+  #
+  # Six services, one compose profile, one flag. `OBSERVABILITY_ENABLED=false`
+  # (scripts/lib/common.sh's compose_observability_args) leaves every one of them
+  # out of the project entirely, which is the point of the profile: a box that is
+  # serving models should not pay for a metrics tier it is not looking at.
+  #
+  # The division of labour is worth being explicit about, because four of these
+  # products can each do several of these jobs and a stack that lets them all try
+  # gives three answers to one question:
+  #   prometheus  collects. The only component that talks to the observed services.
+  #   mimir       keeps metrics. Long window, queried through /prometheus.
+  #   loki        keeps logs. Queried by Grafana, never scraped.
+  #   alloy       collects logs. Loki has no collector of its own, so this is the
+  #               piece that makes "the containers are in Loki" true.
+  #   tempo       keeps traces, and computes the span metrics the service map uses.
+  #   grafana     reads all of it. The only component with a published UI.
+  # ---------------------------------------------------------------------------
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+    # Named log stream: Alloy ships this container to Loki under `container=prometheus`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: prometheus, max-size: "10m", max-file: "3" }
+    hostname: prometheus
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      # Prometheus expands $(VAR) in its config file from its own process
+      # environment, which is how observability/prometheus/prometheus.yml can
+      # present LiteLLM's bearer token without the key ever being committed. An
+      # empty value is not a startup failure: that one target 401s and
+      # //scripts:observability-check names it.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # Both caps are written out rather than left to the defaults: the default
+      # retention is 15d by *time* with no size limit, and on a box whose disk also
+      # holds model weights and Kasm's /opt, a time-only cap is how a metrics tier
+      # becomes the thing that fills the volume.
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION_TIME:-15d}
+      - --storage.tsdb.retention.size=${PROMETHEUS_RETENTION_SIZE:-10GB}
+      # /-/reload, so an operator who edits prometheus.yml can apply it with
+      # `curl -X POST .../-/reload` instead of a restart that drops the scrape
+      # loop's in-flight state.
+      - --web.enable-lifecycle
+      # Tempo's metrics_generator remote-writes span-metrics and service-graph
+      # series here, and /api/v1/write answers 404 until this is on. Without it
+      # the tracing dashboards' service map has no data to graph and Tempo logs
+      # "non-recoverable error" once a minute forever.
+      - --web.enable-remote-write-receiver
+    ports:
+      # Loopback, the same call coder makes for its own 2112 and for the same
+      # reason: the series here include LiteLLM's model aliases and traffic
+      # volumes, and SECURITY.md keeps that off the LAN. Grafana is the read path
+      # for anyone who is not on the box.
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      # The whole directory rather than the one file: prometheus.yml and anything
+      # the operator adds under rules/ arrive together, and Prometheus reads
+      # rule_files as paths relative to this mount.
+      - ./observability/prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    # This image keeps its busybox shell (the -distroless and -busybox variants are
+    # separate tags), so a real probe is available here and on grafana below. The
+    # other four are distroless with no shell and no published -debug variant,
+    # which is why they carry no healthcheck at all rather than one that cannot
+    # run and leaves the service stuck in "starting".
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      mimir:
+        condition: service_started
+
+  mimir:
+    image: grafana/mimir:3.2.5
+    # Named log stream: Alloy ships this container to Loki under `container=mimir`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: mimir, max-size: "10m", max-file: "3" }
+    hostname: mimir
+    restart: unless-stopped
+    profiles: ["observability"]
+    # Single-dash Go flags are this binary's form, and -config.expand-env is what
+    # lets observability/mimir/mimir.yml read ${MIMIR_RETENTION_PERIOD} instead of
+    # hard-coding a cap someone has to find a config file to change.
+    command:
+      - -config.file=/etc/mimir/mimir.yml
+      - -config.expand-env=true
+    environment:
+      # Always defined, so the config file never expands to empty.
+      MIMIR_RETENTION_PERIOD: ${MIMIR_RETENTION_PERIOD:-90d}
+    # Deliberately no `ports:`: Mimir's query API has no auth of its own once
+    # -auth.enabled is off, so the compose network is the whole access control.
+    # Grafana queries it by service name; nothing on the LAN needs to.
+    volumes:
+      - ./observability/mimir/mimir.yml:/etc/mimir/mimir.yml:ro
+      - mimir-data:/data/mimir
+
+  loki:
+    image: grafana/loki:3.7.10
+    # Named log stream: Alloy ships this container to Loki under `container=loki`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: loki, max-size: "10m", max-file: "3" }
+    hostname: loki
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - -config.file=/etc/loki/loki.yml
+      - -config.expand-env=true
+    environment:
+      LOKI_RETENTION_PERIOD: ${LOKI_RETENTION_PERIOD:-168h}
+    # No ports and no healthcheck: same reasoning as mimir (distroless image, and
+    # an unpublished API needs no host-facing probe). Readiness is proven at the
+    # application layer by //scripts:observability-check hitting /ready, which
+    # works without a shell in the container.
+    volumes:
+      - ./observability/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+
+  tempo:
+    image: grafana/tempo:3.1.1
+    # Named log stream: Alloy ships this container to Loki under `container=tempo`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: tempo, max-size: "10m", max-file: "3" }
+    hostname: tempo
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - -config.file=/etc/tempo/tempo.yml
+      # Tempo 3.x replaced the standalone compactor with a backend-scheduler that
+      # hands out compaction work, and trace retention is a property of that work
+      # rather than of the config file (both names are taken from
+      # `tempo -help-all` at the pinned tag). Compose interpolates the value, so
+      # this needs no -config.expand-env.
+      - -backend-scheduler.provider.work.compaction.block-retention=${TEMPO_BLOCK_RETENTION_TIME:-168h}
+    volumes:
+      - ./observability/tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo-data:/var/tempo
+
+  grafana:
+    image: grafana/grafana:13.3.1
+    # Named log stream: Alloy ships this container to Loki under `container=grafana`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: grafana, max-size: "10m", max-file: "3" }
+    hostname: grafana
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      GF_SERVER_HTTP_PORT: "3000"
+      # Root URL has to be the origin the browser actually used or the public
+      # name's panels load their assets from a LAN address. Same shape as
+      # HOMEPAGE_EXTERNAL_URL above: public name when bootstrap composed one,
+      # LAN address otherwise.
+      GF_SERVER_ROOT_URL: ${GRAFANA_URL:-http://${STACK_LAN_HOST:-localhost}:${GRAFANA_PORT:-3005}}
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      # Shipped as a placeholder the same way HOMEPAGE_AUTH_PASSWORD is, and
+      # rotated the same way: bootstrap generates the real value, and the value
+      # never needs to be read to log in -- it lives in .env.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me-grafana}
+      GF_ANALYTICS_REPORTING_ENABLED: ${GRAFANA_ANALYTICS_ENABLED:-false}
+      # Anonymous access would put the whole stack's metrics and logs behind a
+      # URL with no credential, which is a different security story from the
+      # dashboard's own login. Keep it off; the admin account is the way in.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # The Logs and Trace explore experiences are separate plugins in Grafana 13.
+      # Preinstalled at start rather than clicked into, so a fresh box gets the
+      # same log and trace views as everyone else's.
+      GF_PLUGINS_PREINSTALL: grafana-lokiexplore-app,grafana-tempo-app
+      # Grafana traces itself into Tempo, over OTLP/gRPC. It is here because a
+      # query that times out in the UI is otherwise unanswerable: this is the only
+      # way to see whether Grafana, Loki or Tempo was the slow hop.
+      GF_TRACING_ENABLED: "true"
+      GF_TRACING_OTLP_ADDRESS: "tempo:4317"
+      GF_TRACING_OTLP_PROPAGATION: "tracecontext,baggage"
+    ports:
+      # Published on every interface, like the dashboard and Kasm: this is the
+      # credentialed read path for the whole bundle, and it is the one new service
+      # that also gets a public name (scripts/lib/domain.sh's grafana role).
+      - "${GRAFANA_PORT:-3005}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      # The two provisioning subdirectories individually, not
+      # /etc/grafana/provisioning as a whole: that directory also holds the
+      # image's own plugins/ and access-control/ subdirectories, and mounting over
+      # it would delete them from the container.
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      prometheus:
+        condition: service_started
+      mimir:
+        condition: service_started
+      loki:
+        condition: service_started
+      tempo:
+        condition: service_started
+
+  alloy:
+    image: grafana/alloy:v1.22.0
+    # Named log stream: Alloy ships this container to Loki under `container=alloy`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: alloy, max-size: "10m", max-file: "3" }
+    hostname: alloy
+    restart: unless-stopped
+    profiles: ["observability"]
+    # Root, for one reason: the json-file logs it tails are mode 0600 and owned by
+    # the daemon's uid on a rootful host. The mount below is read-only and the
+    # daemon socket stays unmounted, which is the same trade the homepage block
+    # makes in the other direction.
+    user: "0:0"
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      # Positions (how far it has read into each log file) live in a named volume:
+      # a restart resumes where it stopped, so a `restart` does not re-ship every
+      # line the box has ever written.
+      - --storage.path=/var/lib/alloy/data
+      # 0.0.0.0 inside the container; nothing publishes 12345, so this only has to
+      # be reachable from the compose network for Prometheus to scrape it.
+      - --server.http.listen-addr=0.0.0.0:12345
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      # Where the daemon keeps container logs. A parameter rather than a literal
+      # because a rootless daemon keeps them under ~/.local/share/docker, and the
+      # wrong value here fails silently -- the glob matches nothing, Alloy reports
+      # no error, and Loki stays empty. //scripts:observability-check is what turns
+      # that silence into a finding.
+      - ${STACK_DOCKER_LOG_DIR:-/var/lib/docker/containers}:/var/lib/docker/containers:ro
+    depends_on:
+      loki:
+        condition: service_started
+
 volumes:
   coder-home:
   coder-db:
   ollama-models:
   kasm-data:
   hermes-data:
+  # The bundle's stores, one volume each so `dev-stack -- reset` and
+  # //scripts:storage-clean can name them individually.
+  prometheus-data:
+  mimir-data:
+  loki-data:
+  tempo-data:
+  grafana-data:
+  alloy-data:

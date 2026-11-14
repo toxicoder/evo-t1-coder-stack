@@ -278,3 +278,73 @@
                     to: "off"
                   - any: true
                     to: "ON"
+
+- Observability:
+    # The whole bundle is one flag (OBSERVABILITY_ENABLED, see README "Observability"):
+    # off, compose brings up none of these containers, and all five cards read `down`
+    # together on a stack that was never asked to run them. That is the honest signal,
+    # not a card bug - the badge reports what the endpoint answers, and the flag is the
+    # reason it does not answer.
+    #
+    # Still no docker socket (see the header comment): the badge is each service's own
+    # health endpoint, which proves the wiring rather than the container record. That
+    # matters more here than anywhere else on this page - the Loki, Tempo, Mimir and
+    # Alloy images are distroless (no shell, no wget), so they carry no in-container
+    # healthcheck and this probe is the only liveness read the stack has for them.
+    #
+    # Loki, Tempo and Mimir ship no UI of their own, so their href opens the Grafana
+    # view that queries them while the badge still probes each service directly. The
+    # hrefs are tokens because Prometheus and Grafana are the two published ports; the
+    # other three are compose-network only and are reachable to nobody but the dashboard.
+    - Grafana:
+        icon: si-grafana
+        href: "{{HOMEPAGE_VAR_GRAFANA_URL}}"
+        description: One pane for the stack - metrics, logs and traces on provisioned datasources
+        siteMonitor: http://grafana:3000/api/health
+        widget:
+          type: customapi
+          url: http://grafana:3000/api/health
+          refreshInterval: 300000
+          # /api/health is the one Grafana endpoint that needs no session or API key,
+          # and it answers {"database":"ok","version":"<tag>"}. The version is what an
+          # operator checks against the image pin in docker-compose.yml after a pull,
+          # and `database` is the failure Grafana reports there rather than in its log.
+          mappings:
+            - field: database
+              label: Storage
+              remap:
+                - value: ok
+                  to: OK
+                - any: true
+                  to: Problem
+            - field: version
+              label: Version
+
+    - Prometheus:
+        icon: si-prometheus
+        href: "{{HOMEPAGE_VAR_PROMETHEUS_URL}}"
+        description: Scrapes every stack service and remote_writes to Mimir - loopback :9090 only
+        # /-/healthy is Prometheus' own readiness path (200 once the TSDB is open);
+        # it is not /metrics, so the probe never pulls a scrape body into the dashboard.
+        siteMonitor: http://prometheus:9090/-/healthy
+
+    # No href: 3100 is unpublished (SECURITY.md keeps the stores off the LAN), and the
+    # only UI that speaks to Loki is Grafana's Explore. {{HOMEPAGE_VAR_GRAFANA_URL}} is
+    # the browser-reachable half of that pair.
+    - Loki:
+        icon: mdi-file-search-outline
+        href: "{{HOMEPAGE_VAR_GRAFANA_URL}}/explore"
+        description: Log store - opens Grafana Explore, Loki serves no UI of its own
+        siteMonitor: http://loki:3100/ready
+
+    - Tempo:
+        icon: mdi-call-split
+        href: "{{HOMEPAGE_VAR_GRAFANA_URL}}/explore"
+        description: Trace store - opens Grafana Explore, Tempo serves no UI of its own
+        siteMonitor: http://tempo:3200/ready
+
+    - Mimir:
+        icon: mdi-database
+        href: "{{HOMEPAGE_VAR_GRAFANA_URL}}"
+        description: Long-term metrics behind Prometheus remote_write - opens Grafana
+        siteMonitor: http://mimir:8080/ready

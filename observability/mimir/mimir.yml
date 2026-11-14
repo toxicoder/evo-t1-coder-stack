@@ -1,0 +1,85 @@
+# Mimir, single binary (`target: all`), filesystem storage.
+#
+# This is the long-term metrics store, not a second scraper: Prometheus
+# remote-writes here and Grafana reads through Mimir's Prometheus-compatible
+# /prometheus API. Filesystem is upstream's default backend, so this file is about
+# one thing: running a system whose rings default to three replicas as one process.
+#
+# Every key here was read out of cmd/mimir/config-descriptor.json at the pinned tag
+# rather than copied from a tutorial, and that is worth stating because Mimir 3.x
+# moved most of what the single-node examples show: `common.path_prefix` and
+# `common.ring` are gone (each ring configures itself now), the multi-tenancy switch
+# is a top-level `multitenancy_enabled` rather than an `auth:` block, the delete-side
+# retention lives at `limits.compactor_blocks_retention_period`, and
+# `blocks_storage.tsdb.retention_period` is a plain Go duration, which is why the
+# operator's key is in hours (`2160h`) rather than `90d` -- a day suffix does not
+# parse there, and the failure is a startup exit naming a line number.
+
+target: all
+
+# Mimir is multi-tenant by default and rejects any request with no `X-Scope-OrgID`
+# header. Switching multi-tenancy off is what lets Prometheus remote-write and
+# Grafana query with plain URLs. Safe only because this service publishes no host
+# port (docker-compose.yml): the compose network is the whole access control.
+# Turning it back on means the tenant header comes home to both the remote_write
+# config and the Grafana datasource.
+multitenancy_enabled: false
+
+server:
+  http_listen_port: 8080
+  grpc_listen_port: 9095
+  log_level: warn
+
+common:
+  storage:
+    backend: filesystem
+    filesystem:
+      # `dir`, not `directory`: filesystem.Config has no other name for it. One
+      # value here is the root the other storage blocks hang off.
+      dir: /data/mimir
+
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/mimir/blocks
+  tsdb:
+    dir: /data/mimir/tsdb
+    # Hours, not days: this field is a Go time.Duration.
+    retention_period: ${MIMIR_RETENTION_PERIOD}
+
+ingester:
+  ring:
+    # The value that makes single-binary Mimir writable: the default of 3 asks
+    # three ingesters for every series, and with one member nothing is replicable,
+    # so writes never become queryable.
+    replication_factor: 1
+    # A shutdown that sleeps first would hold `compose down` for 30s+ on a box
+    # where restarts are routine.
+    final_sleep: 0s
+    tokens_file_path: /data/mimir/tokens
+
+store_gateway:
+  sharding_ring:
+    # Same one-replica reasoning as the ingester ring: the default of 3 asks for
+    # three store-gateways to own every block, and there is one process here.
+    replication_factor: 1
+
+limits:
+  # The delete side. Without it the retention above only bounds what is read and
+  # the volume grows forever.
+  compactor_blocks_retention_period: ${MIMIR_RETENTION_PERIOD}
+  # A single ingester cannot absorb a scrape-config typo that multiplies series;
+  # rejecting is better than filling the volume.
+  max_global_series_per_user: 200000
+  ingestion_rate: 50000
+  ingestion_burst_size: 100000
+
+alertmanager:
+  # No Alertmanager in this bundle, so nothing would read what it stored.
+  enable_api: false
+
+memberlist:
+  # One member: never fail startup over a cluster join, and never try to join
+  # anyone.
+  join_members: []
+  abort_if_cluster_join_fails: false

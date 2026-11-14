@@ -1,0 +1,68 @@
+# Grafana datasources, provisioned so the stack ships already wired.
+#
+# The UIDs are the contract: every dashboard JSON in ../dashboards references these
+# strings, so a rename here silently unpanels four dashboards. Change a UID and
+# change the dashboards in the same commit.
+#
+# `prometheus` is the default because it holds the last 15 days with no lag;
+# `mimir` is the same series over the long window and is what a panel that asks
+# about last quarter should use.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+
+  - name: Mimir
+    uid: mimir
+    type: prometheus
+    access: proxy
+    # The Prometheus-compatible query path. `/api/v1` alone is the write-side
+    # namespace and answers 404 to a query_range, which is the single most common
+    # way this datasource shows green in the UI and returns nothing in a panel.
+    url: http://mimir:8080/prometheus
+    jsonData:
+      httpMethod: POST
+      # Mimir's own Prometheus API; no tenancy header because
+      # observability/mimir/mimir.yml runs with auth off.
+      prometheusType: Mimir
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # Derivative maps and the volume graph both come free when the datasource
+      # knows the line format Loki keeps stats for.
+      maxLines: 1000
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      httpMethod: GET
+      # Trace -> logs and trace -> metrics are what make the bundle one story
+      # rather than four screens: from a slow LiteLLM span an operator lands on
+      # that container's logs at the same timestamp, and on the service graph.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterBy: ["traceID"]
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

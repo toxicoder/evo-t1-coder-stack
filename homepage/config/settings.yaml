@@ -82,5 +82,16 @@ layout:
     useEqualHeights: false
   Desktops: {}
   Host: {}
+  # The five bundle services as one band, read top-to-bottom the way the pipeline runs
+  # (Grafana, then Prometheus, then the three stores behind it). They stay a group of
+  # their own rather than cards folded into Coder/Models/Host because they share one
+  # switch: OBSERVABILITY_ENABLED=false takes the whole row down at once, and a row
+  # that goes dark together is the signal.
+  # useEqualHeights stays off for the Models reason above - only the Grafana card
+  # carries a widget, so equal heights would pad the four badge-only cards.
+  Observability:
+    style: row
+    columns: 5
+    useEqualHeights: false
   Stack docs: {}
   Repo: {}

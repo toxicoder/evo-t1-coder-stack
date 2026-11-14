@@ -122,6 +122,7 @@ describe("buildPageTree", () => {
     expect(loop.$id).toContain("Everyday loop");
     expect(loop.children.map((child) => child.name)).toEqual([
       "Dashboard",
+      "Observability bundle",
       "Config updates",
       "New projects from the template"
     ]);
@@ -218,9 +219,10 @@ describe("NAVIGATED_PATHS", () => {
     expect(NAVIGATED_PATHS.slice(0, 3)).toEqual(["index.mdx", "getting-started.mdx", "learn/index.md"]);
     // Conventions holds three pages (conventions, branching, the trunk refactor workflow),
     // so the Operate run starts at 10 rather than 9.
-    expect(NAVIGATED_PATHS.slice(10, 14)).toEqual([
+    expect(NAVIGATED_PATHS.slice(10, 15)).toEqual([
       "operate/index.md",
       "dashboard.md",
+      "observability.md",
       "config-updates.md",
       "new-repo.md"
     ]);
@@ -276,8 +278,12 @@ describe("neighborsOf", () => {
 
   it("finds a page given without its extension", () => {
     expect(neighborsOf(completeSource(), "dashboard").next).toEqual({
-      name: "Config updates",
+      name: "Observability bundle",
       url: "/page-12"
+    });
+    expect(neighborsOf(completeSource(), "observability").next).toEqual({
+      name: "Config updates",
+      url: "/page-13"
     });
   });
 

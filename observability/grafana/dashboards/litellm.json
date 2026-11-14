@@ -1,0 +1,395 @@
+{
+  "uid": "evo-litellm",
+  "title": "LiteLLM proxy",
+  "tags": ["evo-t1", "litellm"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "query": "label_values(litellm_proxy_total_requests_metric_total, requested_model)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "status_code",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "query": "label_values(litellm_proxy_total_requests_metric_total, status_code)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "text",
+      "title": "How to read this page",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "options": {
+        "mode": "markdown",
+        "content": "Every number here is LiteLLM's own prometheus callback (`callbacks: [prometheus]` in `litellm/config.yaml`), scraped from `litellm:4000/metrics` by the `litellm` job in `observability/prometheus/prometheus.yml`, which sends `authorization: Bearer $(LITELLM_MASTER_KEY)` because the proxy guards `/metrics` the same way it guards every other route. So a page of No data is a scrape problem before it is an inference problem: a wrong or unset master key 401s that one target, and a proxy that has served nothing yet simply has no series to show."
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Requests per second",
+      "description": "Client-side request rate at the proxy, counted where the request arrives rather than where it is routed. One line per alias in litellm/config.yaml, so a workspace that starts hammering one alias is visible here before anywhere else.",
+      "id": 2,
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+    },
+    {
+      "type": "stat",
+      "title": "Error ratio",
+      "description": "Failed proxy responses over all proxy responses. The proxy counts a failure as the client not getting a success, so a stale workspace key answering 401 moves this line as much as a dead Spark box does.",
+      "id": 3,
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(litellm_proxy_failed_requests_metric_total{requested_model=~\"$model\"}[5m])) / sum(rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 0.02 },
+          { "color": "red", "value": 0.1 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Spend in the selected range",
+      "description": "Dollars LiteLLM charged across the window. Every model on this box is local and absent from LiteLLM's cost map, so the expected reading is a flat 0: the counter is written, it is just written with nothing in it.",
+      "id": 4,
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(increase(litellm_spend_metric_total{requested_model=~\"$model\"}[$__range]))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+    },
+    {
+      "type": "stat",
+      "title": "Requests in flight",
+      "description": "HTTP requests the proxy is holding at this instant. It counts every route, /health and /metrics included, so a small non-zero floor is the scrape itself and not a backlog.",
+      "id": 5,
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(litellm_in_flight_requests)",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 20 },
+          { "color": "red", "value": 60 }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by model",
+      "description": "One line per alias: coder and chat ride the Arc, the agent lanes ride the Spark boxes. A group that goes quiet while the proxy stays busy is a routing or a client change, not an outage.",
+      "id": 6,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model) (rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\"}[5m]))",
+          "legendFormat": "{{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests by status code",
+      "description": "What the caller actually got back. This is the only metric on the page that carries status_code; the failure metrics below carry exception_status instead, which is the upstream status and not the one the client saw.",
+      "id": 7,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (status_code) (rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\", status_code=~\"$status_code\"}[5m]))",
+          "legendFormat": "{{status_code}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Failed requests by model",
+      "description": "Requests where the client did not get a success, split by alias and by the upstream status. Read it against the two deployment panels at the bottom: a failure here with nothing behind it there was raised inside the proxy, not by a box.",
+      "id": 8,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model, exception_status) (rate(litellm_proxy_failed_requests_metric_total{requested_model=~\"$model\"}[5m]))",
+          "legendFormat": "{{requested_model}} {{exception_status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens per second, prompt vs completion",
+      "description": "Prompt tokens are what the boxes have to prefill, completion tokens what they hand back. The two lines coming apart is the cheapest read on whether a lane is generating or merely being asked a lot.",
+      "id": 9,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(litellm_input_tokens_metric_total{requested_model=~\"$model\"}[5m]))",
+          "legendFormat": "prompt"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(litellm_output_tokens_metric_total{requested_model=~\"$model\"}[5m]))",
+          "legendFormat": "completion"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Spend per second by model",
+      "description": "Dollars per second charged per alias, from the same cost map as the spend stat above, so the same flat zero is expected on local weights. It earns its keep the day a price map names these models.",
+      "id": 10,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model) (rate(litellm_spend_metric_total{requested_model=~\"$model\"}[5m]))",
+          "legendFormat": "{{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "bargauge",
+      "title": "Spend per model, selected range",
+      "description": "increase() over the whole time picker rather than a per-second rate, so the number next to a name is what that alias cost across the window, and the ranking is the answer rather than a shape to interpret.",
+      "id": 11,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model) (increase(litellm_spend_metric_total{requested_model=~\"$model\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "{{requested_model}}"
+        }
+      ],
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true, "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+    },
+    {
+      "type": "timeseries",
+      "title": "End-to-end latency by model",
+      "description": "Request arrival at the proxy through the end of processing, so authentication, routing and post-call work are all inside it. Compare with the panel beside it: quantiles far apart mean the boxes are slow, quantiles locked together mean the proxy or its queue is.",
+      "id": 12,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.5, sum by (requested_model, le) (rate(litellm_request_total_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 {{requested_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (requested_model, le) (rate(litellm_request_total_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 {{requested_model}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (requested_model, le) (rate(litellm_request_total_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p99 {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Time to first token by model",
+      "description": "Provider call start to the first token, streamed only. A client that does not stream is absent from this panel rather than fast, so a missing alias here is not a healthy alias.",
+      "id": 13,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.5, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 {{requested_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Failures per deployment",
+      "description": "Per-deployment failures, attributed by model_id, which for the Spark lanes is the model_info.id written into litellm/config.yaml. That per-deployment attribution is the whole point: a box that is failing inside a healthy group stays visible here instead of blending into the group.",
+      "id": 14,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id, exception_status) (rate(litellm_deployment_failure_responses_total{requested_model=~\"$model\"}[5m]))",
+          "legendFormat": "{{model_id}} {{exception_status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cooldown events per deployment",
+      "description": "How often the router pulled a deployment out of rotation, counted over a 15 minute window. This metric carries no requested_model, so the model filter above does not reach it. With cooldown_time at 5 s a flapping box can be cooled constantly and still look healthy under traffic; this is the panel that says otherwise.",
+      "id": 15,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id, api_base) (increase(litellm_deployment_cooled_down_total[15m]))",
+          "legendFormat": "{{model_id}} {{api_base}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Traffic per deployment",
+      "description": "Requests per second per deployment, which is the same in-flight picture the least-busy picker is working from. Two aliases that share a physical box show up as two lines with the same api_base, and an unbalanced lane shows up as one line that owns its group.",
+      "id": 16,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 54 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id, api_provider) (rate(litellm_deployment_total_requests_total{requested_model=~\"$model\"}[5m]))",
+          "legendFormat": "{{model_id}} {{api_provider}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Deployment state",
+      "description": "0 healthy, 1 partial outage, 2 complete outage, per deployment, as the router's background health checks last saw it (re-probed every 300 s per litellm/config.yaml). A box that is off is legitimately 2; a box stuck at 1 is the one to read.",
+      "id": 17,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 54 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 2,
+          "custom": { "fillOpacity": 0, "lineWidth": 1, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm_deployment_state",
+          "legendFormat": "{{model_id}} {{api_base}}"
+        }
+      ]
+    }
+  ]
+}

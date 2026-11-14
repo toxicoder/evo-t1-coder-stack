@@ -139,6 +139,7 @@ NAV: list[tuple[str, list[DeclaredNode]]] = [
                 "Everyday loop",
                 [
                     ("Dashboard", "dashboard.md"),
+                    ("Observability bundle", "observability.md"),
                     ("Config updates", "config-updates.md"),
                     ("New projects from the template", "new-repo.md"),
                 ],

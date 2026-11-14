@@ -13,6 +13,7 @@ tags: [troubleshooting, operate, errors]
 - Workspaces: startup, the golden image, Grok Build (`/ez-learn`, MCP), the toolchain
 - Docker-in-Docker, Terraform, and the host `coder` CLI
 - Editor, credentials, the clone, UI logins, and the public names (`421`, Chat `4403`, Traefik)
+- The observability bundle: a card that reads down, a scrape with no targets, a collector with nothing to ship
 
 **What this enables**
 
@@ -1740,3 +1741,229 @@ not this public path. Full notes: [hermes.md](hermes.md).
 - The first registered account is the site admin.
 - If the UI is unreachable, check that `CODER_ACCESS_URL` matches the address you are
   browsing from: the LAN IP by default, or the public coder name in public mode.
+
+## Observability
+
+The six profile-gated services (`prometheus`, `mimir`, `loki`, `tempo`, `grafana`,
+`alloy`) fail quietly, because a monitoring stack that stopped collecting still answers
+`/ready`. The shape of every entry below is the same: the read path (Grafana) and the
+write path (Prometheus -> Mimir, Alloy -> Loki) are separate, so decide which side is
+empty before you touch either. What each piece is for and where its config lives is in
+[observability.md](observability.md).
+
+### An Observability card reads DOWN while the container is up -> the badge probes an endpoint, not a process
+
+Cause: the card's `siteMonitor` is a specific path (`/api/health`, `/-/healthy`,
+`/ready`), and "the container exists" says nothing about that path answering. Four of the
+six containers are distroless, so nothing inside them can be asked; the log is the only
+interrogation available.
+
+```sh
+bazelisk run //scripts:prod-stack -- status
+bazelisk run //scripts:prod-stack -- logs --tail 200 loki
+```
+
+Use the name that failed, and `dev-stack` for the dev project. A service that restarts
+into the same failure has usually been handed a config file it rejects -
+`observability/loki/loki.yml` and its three siblings are bind-mounted read-only, so the
+file in the checkout is the file that failed, and `git diff` names what changed.
+
+The other cause is that the service genuinely is not ready: Mimir, Loki and Tempo report
+`/ready` only once their ingester is, so a badge that goes down under load is a real
+signal, not a stale card.
+
+### Prometheus shows no target for a service -> the scrape list, the `/metrics` path, or the bearer
+
+Cause: "no target" and "one target, `down`" are different faults. Check which one you
+have from the stack host:
+
+```sh
+curl -s http://127.0.0.1:9090/api/v1/targets
+```
+
+- **Absent from the list entirely**: the job is not in
+  `observability/prometheus/prometheus.yml`. Add it there and recreate Prometheus - a
+  `restart` keeps the old mount and the old config, since the file is mounted read-only.
+  Prometheus also runs with `--web.enable-lifecycle`, but nothing here calls it; a
+  recreate is the path the stack uses.
+- **Present and `down`**: the app is not answering on the name Prometheus dials. The
+  scrapes are compose-DNS (`coder:2112`, `litellm:4000`), not the host mappings - a
+  `curl 127.0.0.1:2112` that works from the host proves only that the port mapping is
+  fine.
+- **`litellm` alone is `down` with a 401**: the scrape sends the master key, and
+  Prometheus expands it from its own environment. `LITELLM_MASTER_KEY` rotated in `.env`
+  without recreating `prometheus` leaves the collector holding the old one.
+
+### Grafana's datasource tests green but the panel is empty -> the Mimir query path, then the tenancy header
+
+Cause: the `mimir` datasource is `http://mimir:8080/prometheus`, and that suffix is
+Mimir's Prometheus-compatible query namespace - not its root and not its write endpoint.
+`/api/v1` on its own is the write-side namespace and answers 404 to a `query_range`, so a
+datasource pointed there still reads green in the UI and returns nothing in a panel. That
+URL is the single most common cause of this symptom.
+
+Work it in this order:
+
+1. Run the same query in Explore against the `prometheus` datasource and then the `mimir`
+   one, over the same range. Data in one and not the other is a write-path fault, not a
+   dashboard fault.
+2. Data in `prometheus` and none in `mimir`: read what the write did.
+
+   ```sh
+   bazelisk run //scripts:prod-stack -- logs --tail 200 prometheus
+   ```
+
+   A refused or failing `remote_write` (target `http://mimir:8080/api/v1/push`) shows up
+   here, and an ingester that refuses a block shows up in
+   `bazelisk run //scripts:prod-stack -- logs --tail 200 mimir`.
+3. Nothing anywhere: the scrape is the fault, so take the target entry above.
+4. Only then look at tenancy. Mimir is multi-tenant by design and keeps tenancy on until
+   a config says otherwise; once it is on, every read and every write must carry an
+   `X-Scope-OrgID` header or be refused. This stack turns it off with
+   `multitenancy_enabled: false` in `observability/mimir/mimir.yml`, so the provisioned
+   datasource sends no tenancy header and the compose network is the trust boundary. A
+   query that starts insisting on a header means that file changed, not that the data went
+   missing - and re-enabling tenancy is a change to the `remote_write` credentials as
+   well, not just to Grafana.
+
+The shipped datasources carry fixed UIDs (`prometheus`, `mimir`, `loki`, `tempo`) that
+every shipped dashboard references, so a datasource you rebuilt by hand in the UI is a
+datasource no panel will ever query. Diff anything suspicious against
+`observability/grafana/provisioning/datasources/stack.yaml`: that file is the record of
+what the working config is.
+
+### Alloy ships no logs and Loki stays empty -> the host's log root is not `STACK_DOCKER_LOG_DIR`
+
+Cause: the only host path in the bundle is
+`${STACK_DOCKER_LOG_DIR:-/var/lib/docker/containers}`, mounted read-only into Alloy. If
+the daemon writes its json-file logs somewhere else, Alloy tails an empty directory and
+Loki's badge stays green, because `/ready` reports the store, not the supply.
+
+Check the source path on the stack host, where the daemon actually is (inside a workspace
+`docker` addresses that workspace's own sidecar, so the answer you get is about the wrong
+daemon):
+
+```sh
+ls /var/lib/docker/containers | head
+```
+
+No `*-json.log` files there means the daemon has a different `--data-root`. Rootless
+Docker is the usual case - it keeps them under the user's own state directory
+(`~/.local/share/docker/containers`) - and a daemon started with an explicit
+`--data-root` is the other. Name the real one in the env file that belongs to that stack
+and recreate the service:
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+```
+
+The second cause is the logging driver: a container not using `json-file` has no such
+file to tail, so its logs are missing from Loki while every other service's arrive. The
+collector's own log names which files it opened:
+
+```sh
+bazelisk run //scripts:prod-stack -- logs --tail 200 alloy
+```
+
+### The traces dashboard is empty and Tempo logs a 404 once a minute -> Prometheus has no write receiver
+
+Cause: Tempo's metrics_generator does not expose span-metrics for Prometheus to scrape.
+It computes them and `remote_write`s them to `http://prometheus:9090/api/v1/write`, and
+Prometheus answers that with `404 remote write receiver needs to be enabled with
+--web.enable-remote-write-receiver` until the flag is on. The service is healthy either
+way, so the only visible symptom is a tracing dashboard with no series and a Tempo log
+that repeats `msg="non-recoverable error" ... failedSampleCount` once a flush interval.
+
+```sh
+bazelisk run //scripts:prod-stack -- logs --tail 200 tempo | grep -m3 'remote_name'
+```
+
+The flag is on the Prometheus command in `docker-compose.yml`. Confirm it survived, then
+confirm the series arrived:
+
+```sh
+grep -c enable-remote-write-receiver docker-compose.yml
+curl -sG http://127.0.0.1:9090/api/v1/series --data-urlencode 'match[]={__name__=~"traces_.*"}'
+```
+
+An empty `data` with the flag present and no Tempo error means nothing is producing spans
+yet. Grafana is the one shipped client (`GF_TRACING_ENABLED`), so drive a few requests
+through the Grafana API and check again; a `traces_spanmetrics_calls_total` series with a
+`service_name` is the proof the whole path works.
+
+### Public `grafana-gmktecbeast` answers `421` -> the name composed, the container did not
+
+Cause: the same `421` the Hermes entry above describes - this box's `router` answers it
+when the Host matches no `server_name` - with one extra way to reach it that the other
+five names do not have. `scripts/lib/domain.sh` composes the Grafana name from the naming
+parts and reads no flag, so `bootstrap` writes the vhost and `STACK_GRAFANA_URL` even when
+`OBSERVABILITY_ENABLED=false`. The router then has a correct `server_name` with nothing
+behind it, and the browser gets a `502` from Traefik or a `421` if the Host was rewritten
+before it arrived.
+
+Work it in this order:
+
+1. Is the container there at all? A name with no container is the flag, not the router.
+
+   ```sh
+   bazelisk run //scripts:prod-stack -- status
+   ```
+
+2. Does the router carry the vhost? `STACK_ROUTER_CONF` in `.env` decides which conf
+   compose mounts, so a rendered `proxy/router.gen.conf` that predates the Grafana naming
+   has no `grafana` block in it. Re-run `bazelisk run //scripts:bootstrap` and compare.
+3. Is Traefik aimed at the router and not at `:3005`? The public path is
+   Traefik -> router `:8080` -> `grafana:3000`; a backend that points straight at the
+   container never reads the vhost file and Grafana answers with its own 404.
+4. Is Grafana behind a login you have not supplied? `GF_AUTH_ANONYMOUS_ENABLED` is `false`
+   in this stack, so an unauthenticated probe is redirected to `/login` and a monitoring
+   check that treats a redirect as a failure reports the UI as down.
+
+### `dev-stack status` says `running`, never `healthy` -> those four images have no shell
+
+Cause: by design. Only `prometheus` and `grafana` declare a healthcheck, because
+`grafana/mimir`, `grafana/loki`, `grafana/tempo` and `grafana/alloy` are distroless -
+no shell, no `wget`, no `curl` - so any command a healthcheck ran would fail in the image
+rather than on the service. `running` is the best state those four can report, and adding
+a healthcheck to one of them is not the fix for an anxious operator.
+
+Prove liveness the way the stack does: the **Observability** cards on the dashboard
+(`http://loki:3100/ready`, `http://tempo:3200/ready`, `http://mimir:8080/ready` over
+compose DNS), or a datasource's *Test* button in Grafana. Those three publish no host
+port, so there is no host-side curl to fall back to, and `docker compose exec` cannot
+help either - there is nothing to exec into. The container log is the last word:
+
+```sh
+bazelisk run //scripts:prod-stack -- logs --tail 200 mimir
+```
+
+### The six never come up after setting the flag -> which env file that project reads
+
+Cause: `OBSERVABILITY_ENABLED` is read from the environment the compose command runs
+with, and each project reads a different file. `dev-stack` passes `--env-file
+dev-stack.env` when that file sits beside the compose file, so a dev run never sees
+`.env`; `prod-stack` names no env file unless `-e` does, and compose then reads `.env`
+beside the compose file. Setting the key in the wrong one changes nothing.
+
+```sh
+bazelisk run //scripts:dev-stack -- status
+bazelisk run //scripts:prod-stack -- status
+```
+
+Six rows when the profile is selected, none when it is not. With the flag off the five
+**Observability** cards on the dashboard read `down` together, which is the honest signal
+rather than a card bug: the badge reports what each endpoint answers, and the flag is the
+reason none of them answer. Then:
+
+- A value of `false`, `0`, `no` or `off` turns the bundle off; anything else turns it on.
+  One helper decides, `compose_observability_args` in `scripts/lib/common.sh`, so the
+  runners (`dev-stack`, `prod-stack`, `update-stack`) cannot disagree with each other.
+- A hand-typed `docker compose ... up -d` selects no profile at all, flag or not -
+  profiles are per command, which is exactly what the runners add. A service the profile
+  did create also keeps running after the flag goes off until you stop it.
+- Both paths parse or the build fails: `bazelisk run //scripts:validate` runs
+  `docker compose config -q` once plain and once with `--profile observability`.
+- Turning the flag on needs the payload tree, not just the flag: the six bind mounts read
+  `observability/**`, so a checkout that has `docker-compose.yml` ahead of the
+  `observability/` directory (a partial pull) fails mounting, the same failure shape as
+  the missing bind-mount source at the top of this page.

@@ -14,6 +14,9 @@ One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra
   with approval prompts). LAN `:9119` stays; the public name is opt-in with the
   other public hosts.
 - **SearXNG** - the keyless metasearch lane.
+- **Observability bundle** - Prometheus, Mimir, Loki, Tempo, Grafana and Alloy behind
+  one Compose profile: metrics, container logs and traces, with Grafana as the single
+  read path. On by default; `OBSERVABILITY_ENABLED=false` drops all six.
 
 The box runs **two isolated copies** of the stack on purpose: a *stable* one you work
 in and a *dev* one you break. [Spin up the stack](#spin-up-the-stack) has the
@@ -54,6 +57,7 @@ and kept in `docs/` beside this file:
 [litellm-routing.md](docs/litellm-routing.md),
 [luks-unlock.md](docs/luks-unlock.md),
 [public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
+[observability.md](docs/observability.md),
 [troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
 what reading it lets you do.
 
@@ -131,6 +135,20 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |               an answered one, and the probe names each engine the instance
   |               parked along with the reason its backend gave).
   |
+  +-- :3005 ----> Grafana (the read path for metrics, logs and traces; one login from
+  |               GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD). The only observability
+  |               name that is published
+  |
+  +-- :9090 ----> Prometheus (scrapes the apps' /metrics and remote_writes every sample
+  |               to Mimir; bound to 127.0.0.1 like :2112, so the graph UI there needs
+  |               a shell on the stack host)
+  |
+  +-- (no host port) the rest of the observability bundle - Mimir :8080 (long-term
+  |               metrics), Loki :3100 (logs), Tempo :3200 query and :4317 OTLP,
+  |               Alloy :12345 (tails the host's Docker json-file logs). All six sit
+  |               behind profiles: ["observability"] and OBSERVABILITY_ENABLED
+  |               (default true), so the flag is what adds or drops the whole group
+  |
   +-- :3000 ----> Kasm install wizard (first boot only)
   +-- :4443 ----> Kasm Workspaces UI (privileged DinD desktop streaming)
 ```
@@ -150,11 +168,21 @@ LAN clients (laptops, phones, the EVO-T1 itself)
    cannot load a certificate, so the nginx sidecar owns :80 and :443 and proxies to it
    over the compose network.
 6. **Public subdomains are opt-in and additive.** The LAN shape above is the default
-   and stays intact when the five public names are on.
+   and stays intact when the public names are on - all six, `grafana-*` among them.
+   `scripts/lib/domain.sh` composes that last name whatever the bundle's flag says, so a
+   stack started with `OBSERVABILITY_ENABLED=false` still has the vhost and nothing
+   behind it.
 7. **Hermes publishes `:9119` with HTTP basic auth.** The public `hermes-*` name is
    the supported opt-in in that same list: Authelia in front, basic auth still on
    (LAN `:9119` and a matching Host on `:8080` never see Authelia), and the docker
    socket still root-equivalent. Traefik aims at `:8080`, not at `:9119`.
+8. **The observability bundle is one profile, not six switches.** The only key it reads
+   is `OBSERVABILITY_ENABLED`, and one helper - `compose_observability_args` in
+   `scripts/lib/common.sh` - turns it into `--profile observability` for all six
+   services. Grafana is the only UI the bundle publishes and the only one with a public
+   name; Mimir, Loki, Tempo and Alloy publish no port at all, and Prometheus keeps the
+   loopback rule the Coder `:2112` metrics port follows. Full page:
+   [docs/observability.md](docs/observability.md).
 
 ## Ports
 
@@ -173,12 +201,19 @@ port binds once, so two stacks on one box need two sets.
 | 4000 | 14000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
 | 9119 | 19119 | Hermes | Host-assistant Web Dashboard (`HERMES_DASHBOARD_PORT`) - Chat tab + approvals; LAN listener with HTTP basic auth. The public name is opt-in and reaches it through the router on 8080 |
 | 8181 | 18181 | SearXNG | Metasearch (`STACK_SEARCH_PORT`) - published, because a workspace reaches the host through its gateway, where the compose network does not help. `push-template.sh` reads this key and pushes `--var searxng_url=http://host.docker.internal:<that port>`, so a remapped port reaches each new workspace's config |
+| 3005 | 13005 | Grafana | The observability read path - metrics, logs and traces behind one login (`GRAFANA_PORT`; credentials are `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`). The only bundle UI that is published |
+| 9090 | 19090 | Prometheus | Scrape and `remote_write` (`PROMETHEUS_PORT`) - bound to 127.0.0.1, so the graph UI needs a shell on the stack host |
+| — | — | Mimir | `8080` on the compose network only - long-term metrics, queried through Grafana |
+| — | — | Loki | `3100` on the compose network only - logs, queried through Grafana |
+| — | — | Tempo | `3200` (query) and `4317` (OTLP/gRPC) on the compose network only - traces |
+| — | — | Alloy | `12345` on the compose network only - the collector's own UI |
 | — | — | Homepage app | `3000` on the compose network only - reached through the proxy |
 | — | — | Ollama | `11434` on the compose network only - deliberately not published |
 
 Change a port in `.env` for the stable stack and in `dev-stack.env` for the dev one. A
 dev stack still carrying the stable numbers cannot start beside it, and `.env` does not
-reach the dev stack when `dev-stack.env` exists.
+reach the dev stack when `dev-stack.env` exists. The Grafana and Prometheus rows bind
+only while `OBSERVABILITY_ENABLED` selects the `observability` profile.
 
 ## Spin up the stack
 
@@ -413,7 +448,8 @@ and the LAN host, and move every published port by 10000:
 awk -F= '{ if ($1 ~ /^[A-Z0-9_]*PORT$/ && $2 ~ /^[0-9]+$/) print $1 "=" $2 + 10000; else print }' .env > dev-stack.env
 ```
 
-That maps 3001 to 13001, 443 to 10443, 80 to 10080, 2112 to 12112 and 9119 to 19119.
+That maps 3001 to 13001, 443 to 10443, 80 to 10080, 2112 to 12112, 9119 to 19119, and
+the two observability ports to 13005 and 19090.
 
 ### Rules that keep them apart
 
@@ -611,8 +647,11 @@ strings.
 
 The default shape is LAN-only. Set the naming parts in `.env` (`STACK_DOMAIN_BASE`,
 `STACK_SUBDOMAIN_SUFFIX`, `STACK_ENV_LABEL`, the per-service `STACK_*_NAME` keys) and
-`STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the five
-public names from them and serves the same five services over real TLS. A
+`STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the six
+public names from them and serves the same six services over real TLS. Grafana is the
+sixth and the only one behind a Compose profile: `scripts/lib/domain.sh` reads no flag,
+so the name composes with `OBSERVABILITY_ENABLED=false` too and the router answers that
+Host with no container behind it. A
 comma-separated list in `STACK_PUBLIC_HOSTS` is still the way to pin a name by hand;
 empty stays LAN-only. Full detail, including what `bootstrap` rewrites and how to check
 the Traefik side, is in [docs/public-access.md](docs/public-access.md).
@@ -629,6 +668,7 @@ Under the shipped defaults (`overeazy.io` + `gmktecbeast`) `auto` composes:
 | `kasm-gmktecbeast.overeazy.io` | `https://kasm:4443` (TLS verify off) |
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 | `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
+| `grafana-gmktecbeast.overeazy.io` | `grafana:3000` - the observability bundle's only name |
 
 The dev row is what `bazelisk run //scripts:dev-stack -- up` composes: it applies
 `STACK_ENV_LABEL=dev` for the `evo-t1-dev` project only, and only when neither the shell
@@ -643,8 +683,8 @@ wildcard certificate allows, the `bootstrap` run that composes the names and rew
 the card URLs, the recreate that applies it, the plain-HTTP hop to the `router` sidecar
 on `:8080` (every name, including Hermes - not `:9119`), and why the interactive names
 302 to Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
-The other machine needs one file: the paste-ready Traefik config - five routers, TLS
-on all of them, `passHostHeader: true`, Authelia on the four interactive names and the
+The other machine needs one file: the paste-ready Traefik config - six routers, TLS
+on all of them, `passHostHeader: true`, Authelia on the five interactive names and the
 long-lived timeouts - is
 [docs/public-access.md#traefik-configuration](docs/public-access.md#traefik-configuration).
 
@@ -864,7 +904,12 @@ service with live status from each service's own API (Coder version, LiteLLM hea
 alias count, Ollama version, SearXNG release and limiter state), plus a header of boxed
 tiles - host CPU, memory, CPU temperature, disk, `eth0` throughput - beside the clock
 (date and 24-hour time), local weather (open-meteo, keyless) and a search box that asks
-the stack's own SearXNG, the same instance the workspace agents and Hermes dial.
+the stack's own SearXNG, the same instance the workspace agents and Hermes dial. With the
+observability bundle on, an **Observability** group adds five cards - Grafana, Prometheus
+and the three stores - each badged by its own health path over compose DNS. Four of the
+six bundle containers are distroless and ship no healthcheck, so for those the badge is
+the only automatic liveness read the stack has; Alloy has no card, and its container log
+is the read there.
 
 - **URL:** `https://<host>/` - self-signed cert, so expect a one-time browser warning;
   port 80 redirects to HTTPS.
@@ -1020,10 +1065,16 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── Dockerfile
 │   └── tool-versions.env  # every version pin, single source of truth
 ├── litellm/config.yaml    # model aliases
+├── observability/         # the monitoring bundle, behind profiles: ["observability"]:
+│   ├── prometheus/        #   prometheus.yml (no rules dir: nothing alerts here)
+│   ├── mimir/ loki/ tempo/#   one config file each
+│   ├── grafana/           #   provisioning/ (datasources, dashboards) + dashboards/*.json
+│   └── alloy/             #   config.alloy - the only service that reads the host's
+│                          #     Docker log dir, and it reads it read-only
 ├── proxy/homepage.conf    # nginx TLS terminator for the dashboard
 ├── proxy/router.conf      # nginx Host-header router for the public subdomains (no cert):
 │                          #   the render below, under the shipped defaults
-├── proxy/router.conf.template # the same five vhosts with __EVO_HOST_*__ tokens; bootstrap
+├── proxy/router.conf.template # the same six vhosts with __EVO_HOST_*__ tokens; bootstrap
 │                          #   renders them into proxy/router.gen.conf (gitignored), and
 │                          #   STACK_ROUTER_CONF tells compose which one to mount
 ├── searxng/settings.yml   # SearXNG metasearch config, mounted read-only
@@ -1045,6 +1096,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── mcp-check.sh         # prove the Grok Build MCP lanes: binaries, creds, handshake
 │   ├── new-repo.sh          # clone ezrepo -> render tokens/lanes -> GitHub repo + Coder task
 │   ├── new-workspace.sh     # git URL -> workspace: picks the template + parameters
+│   ├── observability-check.sh # prove the monitoring bundle: dotenv, log source, render,
+│   │                          #   containers, endpoints, and the two write paths
 │   ├── pull-models.sh       # pulls OLLAMA_MODELS into the IPEX-LLM container
 │   ├── pre-commit.sh        # the gate the hooks run: hermetic, --all, --image
 │   ├── prod-stack.sh        # up / down / status / logs / reset for the stable stack

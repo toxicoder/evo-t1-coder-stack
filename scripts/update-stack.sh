@@ -435,7 +435,8 @@ compose_cli() {
 # follows them, so this is only used for the two verbs they do not expose:
 # `restart` for a bind-mounted payload change and `pull` for a bumped tag.
 # Globals:
-#   STACK_FLAVOUR, ROOT_DIR, DRY_RUN
+#   STACK_FLAVOUR, ROOT_DIR, DRY_RUN,
+#   OBSERVABILITY_ENABLED (via compose_observability_args)
 # Arguments:
 #   $@ - the compose subcommand and its own arguments
 # Outputs:
@@ -444,6 +445,7 @@ compose_cli() {
 #   0 in a dry run, the compose status, or 1 when no compose CLI exists
 stack_compose() {
   local cli="" env_file=""
+  local -a prof=()
   if [ "${DRY_RUN}" = "1" ]; then
     note "dry run: would run compose $*"
     return 0
@@ -457,6 +459,12 @@ stack_compose() {
   if [ -n "${env_file}" ]; then
     argv+=("--env-file" "${env_file}")
   fi
+  # Same seam as the two stack runners: this script's `restart`/`pull` must
+  # address the profile-gated services with the same flag `up` brought them up
+  # with, and it reads the file compose itself reads, which is the .env beside
+  # the compose file whenever the flavour names no env file of its own.
+  read -r -a prof <<<"$(compose_observability_args "${env_file:-${ROOT_DIR}/.env}")"
+  argv+=("${prof[@]}")
   argv+=("-f" "${ROOT_DIR}/docker-compose.yml" "$@")
   # shellcheck disable=SC2086 # cli is deliberately two words
   ${cli} "${argv[@]}"

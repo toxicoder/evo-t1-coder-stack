@@ -31,6 +31,7 @@ setup() {
   # is sourced, which puts its own shipped defaults back.
   unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
   unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+  unset STACK_GRAFANA_NAME
   unset STACK_DOMAIN_BASE_DEFAULT STACK_SUBDOMAIN_SUFFIX_DEFAULT
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/domain.sh"
@@ -74,6 +75,40 @@ assert_no_router_vhost() {
   [ "${output}" = "generated CODER_PG_PASSWORD" ]
   value="$(sed -n 's|^CODER_PG_PASSWORD=||p' .env)"
   [[ "${value}" =~ ^[0-9a-f]{32}$ ]]
+}
+
+@test "bootstrap: GRAFANA_ADMIN_PASSWORD leaves the sample placeholder and is not rotated" {
+  # The observability bundle's admin password ships as `change-me-grafana`, so a stack
+  # that never rotated it signs every dashboard in with a value that is in the repo. The
+  # entry script rotates it in the same guarded loop as the other seven secrets, so run
+  # that guard here and pin the key's presence in the loop below.
+  printf 'GRAFANA_ADMIN_PASSWORD=change-me-grafana\n' > .env
+  if grep -q "^GRAFANA_ADMIN_PASSWORD=change-me" .env; then
+    run set_secret GRAFANA_ADMIN_PASSWORD
+  fi
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "generated GRAFANA_ADMIN_PASSWORD" ]
+  value="$(sed -n 's|^GRAFANA_ADMIN_PASSWORD=||p' .env)"
+  [ -n "${value}" ]
+  [ "${value}" != "change-me-grafana" ]
+  [[ "${value}" =~ ^[0-9a-f]{32}$ ]]
+
+  # A re-run must keep a working password: the running container holds the old value in
+  # its environment, so a second rotation locks the operator out of the UI.
+  output=""
+  if grep -q "^GRAFANA_ADMIN_PASSWORD=change-me" .env; then
+    run set_secret GRAFANA_ADMIN_PASSWORD
+  fi
+  [ -z "${output}" ]
+  [ "$(sed -n 's|^GRAFANA_ADMIN_PASSWORD=||p' .env)" = "${value}" ]
+
+  # The key has to sit in both fixed lists: the --check pass that reports a live
+  # placeholder, and the full run that replaces it. A rename that drops either one
+  # leaves the sample password serving Grafana while everything else still passes.
+  assert_contains_file "check pass reports the grafana placeholder" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'for probe_key in [^;]*GRAFANA_ADMIN_PASSWORD'
+  assert_contains_file "full run rotates the grafana placeholder" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'for var in [^;]*GRAFANA_ADMIN_PASSWORD'
 }
 
 @test "bootstrap: upsert_env appends, replaces, and stays quiet when equal" {
@@ -235,7 +270,7 @@ assert_no_router_vhost() {
   [ -z "${output}" ]
 }
 
-@test "bootstrap: render_public_router_conf fills the five vhosts from the shipped defaults" {
+@test "bootstrap: render_public_router_conf fills the six vhosts from the shipped defaults" {
   run render_public_router_conf "${REPO_ROOT}/proxy/router.conf.template" router.gen.conf
   [ "${status}" -eq 0 ]
   [ -z "${output}" ]
@@ -243,7 +278,7 @@ assert_no_router_vhost() {
   local name
   for name in gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io \
     kasm-gmktecbeast.overeazy.io litellm-gmktecbeast.overeazy.io \
-    hermes-gmktecbeast.overeazy.io; do
+    hermes-gmktecbeast.overeazy.io grafana-gmktecbeast.overeazy.io; do
     assert_router_vhost router.gen.conf "${name}"
   done
 }
@@ -291,7 +326,8 @@ assert_no_router_vhost() {
 @test "bootstrap: warn_missing_router_hosts checks the rendered router conf" {
   run render_public_router_conf "${REPO_ROOT}/proxy/router.conf.template" router.gen.conf
   [ "${status}" -eq 0 ]
-  run warn_missing_router_hosts router.gen.conf gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io
+  run warn_missing_router_hosts router.gen.conf gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io \
+    grafana-gmktecbeast.overeazy.io
   [ "${status}" -eq 0 ]
   [ -z "${output}" ]
   run warn_missing_router_hosts router.gen.conf coder-dev-gmktecbeast.overeazy.io
@@ -307,6 +343,29 @@ assert_no_router_vhost() {
   [ "$(classify_public_entry "${name}")" = "ok coder https://${name}" ]
   name=hermes-dev-gmktecbeast.overeazy.io
   [ "$(classify_public_entry "${name}")" = "ok hermes https://${name}" ]
+}
+
+@test "bootstrap: classify_public_entry routes a grafana name to the grafana role" {
+  # The role is what decides which STACK_*_URL an entry fills. Without the grafana case
+  # the name falls through to the dashboard branch and, since it is last in the composed
+  # list, it would overwrite STACK_DASHBOARD_URL with the observability UI's origin.
+  local name
+  name=grafana-gmktecbeast.overeazy.io
+  [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
+  name=grafana-dev-gmktecbeast.overeazy.io
+  [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
+  name=grafana.overeazy.io
+  [ "$(classify_public_entry "${name}")" = "ok grafana https://${name}" ]
+}
+
+@test "bootstrap: the entry script routes and upserts the grafana origin" {
+  # The router vhost, the cert SAN and the dashboard card all hang off these two lines in
+  # scripts/bootstrap.sh. A rename or a rebase that drops either one leaves STACK_GRAFANA_URL
+  # empty forever and nothing else fails, so pin the pair here rather than trust the run.
+  assert_contains_file "entry script routes the grafana role" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'grafana\) public_grafana_url='
+  assert_contains_file "entry script upserts the grafana origin" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'upsert_env STACK_GRAFANA_URL "\${public_grafana_url}"'
 }
 
 # --- resolve_auto_public_hosts: the STACK_PUBLIC_HOSTS=auto path --------------
@@ -326,6 +385,7 @@ resolve_public_case() {
     # default at source time, so unsetting afterwards would erase those defaults.
     unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
     unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
+    unset STACK_GRAFANA_NAME
     unset STACK_DOMAIN_BASE_DEFAULT STACK_SUBDOMAIN_SUFFIX_DEFAULT
     # shellcheck source=/dev/null
     source "${REPO_ROOT}/scripts/lib/common.sh"
@@ -347,17 +407,19 @@ resolve_public_case() {
     printf 'auto=%s\n' "${public_hosts_are_auto}"
     printf 'file=%s\n' "${file_public_hosts}"
     printf 'coder_name=%s\n' "${STACK_CODER_NAME-<unset>}"
+    printf 'grafana_name=%s\n' "${STACK_GRAFANA_NAME-<unset>}"
     printf 'label=%s\n' "${STACK_ENV_LABEL-<unset>}"
   )
 }
 
-@test "bootstrap: auto resolves the five names from the parts in the file" {
+@test "bootstrap: auto resolves the six names from the parts in the file" {
   run resolve_public_case 'STACK_PUBLIC_HOSTS=auto
 STACK_ENV_LABEL=dev
 '
   [ "${status}" -eq 0 ]
   assert_match "the label rides every service name" 'raw=.*coder-dev-gmktecbeast\.overeazy\.io' "${output}"
   assert_match "the dashboard carries it too" '^raw=dev-gmktecbeast\.overeazy\.io,' "${output}"
+  assert_match "the observability UI is one of the names" 'raw=.*grafana-dev-gmktecbeast\.overeazy\.io' "${output}"
   assert_match "the mode is recorded" '^mode=auto$' "${output}"
   assert_match "the caller is told it composed" '^auto=1$' "${output}"
   assert_match "the label reached the environment" '^label=dev$' "${output}"
@@ -436,4 +498,38 @@ STACK_CODER_NAME=coderctl
   assert_match "the file's prefix was lifted" '^coder_name=coderctl$' "${output}"
   assert_match "and composed with it" 'raw=.*coderctl-gmktecbeast\.overeazy\.io' "${output}"
   assert_not_match "the shipped prefix is not used" 'raw=.*[^a-z]coder-gmktecbeast' "${output}"
+}
+
+@test "bootstrap: a grafana prefix the file carries is lifted and composed" {
+  # Same rule as the other parts, and the same failure if it is broken: lib/domain.sh
+  # reads only the process environment, so a renamed observability UI has to be lifted
+  # out of the file or the router vhost and the card href keep answering `grafana-`.
+  run resolve_public_case 'STACK_PUBLIC_HOSTS=auto
+STACK_GRAFANA_NAME=boards
+'
+  [ "${status}" -eq 0 ]
+  assert_match "the file's prefix was lifted" 'raw=.*boards-gmktecbeast\.overeazy\.io' "${output}"
+  assert_match "and it reached the environment" '^grafana_name=boards$' "${output}"
+  assert_not_match "the shipped prefix is not used" 'raw=.*grafana-gmktecbeast' "${output}"
+}
+
+@test "bootstrap: STACK_GRAFANA_NAME is read wherever its sibling naming keys are" {
+  # Every consumer of the naming parts keeps its own fixed key list, so a key that joins
+  # one list and not the next composes for one caller and stays the shipped prefix for
+  # another: the router would answer boards-... while the deploy exported grafana-...
+  # Each of the three lists below names the five sibling parts, so the grafana key has to
+  # appear exactly as often as the hermes key does in the file that holds the loop.
+  local holder hermes grafana
+  for holder in "${REPO_ROOT}/scripts/lib/bootstrap.sh" "${REPO_ROOT}/scripts/dev-stack.sh" \
+    "${REPO_ROOT}/scripts/prod-stack.sh"; do
+    assert_file_exists "the naming loop lives in a file that exists" "${holder}"
+    hermes="$(grep -c 'STACK_HERMES_NAME' "${holder}" || true)"
+    grafana="$(grep -c 'STACK_GRAFANA_NAME' "${holder}" || true)"
+    if [ "${hermes}" -ne "${grafana}" ]; then
+      printf 'FAIL: %s lists STACK_HERMES_NAME %s time(s) but STACK_GRAFANA_NAME %s time(s):\n  that file never lifts the observability prefix\n' \
+        "${holder#"${REPO_ROOT}/"}" "${hermes}" "${grafana}" >&2
+      grep -n 'STACK_[A-Z]*_NAME' "${holder}" >&2
+      return 1
+    fi
+  done
 }

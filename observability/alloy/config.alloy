@@ -1,0 +1,108 @@
+// Alloy ships this stack's container logs to Loki.
+//
+// Why this component exists: Loki stores and queries logs, but it does not
+// collect them. Nothing else in the stack reads a container's stdout either --
+// today `docker compose logs` is the only log path -- so a shipper is what turns
+// "the other services are wired into Loki" from a claim into something that
+// happens.
+//
+// Why it tails files instead of asking the Docker API: the daemon socket is a
+// root-equivalent host credential, and this repo already refuses to mount it for
+// homepage (docker-compose.yml, the homepage block). /var/lib/docker/containers
+// read-only gets the same logs with far less authority, at the cost of knowing
+// where the daemon keeps them -- which is why the host path is
+// ${STACK_DOCKER_LOG_DIR} in compose and not a literal here (a rootless daemon
+// keeps them under ~/.local/share/docker).
+//
+// Positions (how far it has read into each file) live under the service's
+// --storage.path, which is a named volume, so a restart resumes rather than
+// re-shipping every line.
+
+logging {
+  level = "warn"
+}
+
+// File discovery is a separate component: loki.source.file takes an explicit
+// `targets` list and will happily stat the literal string
+// ".../containers/*/*-json.log" and report nothing found. local.file_match is the
+// component that understands the glob.
+local.file_match "docker_logs" {
+  // The json-file driver writes one <container-id>-json.log per container; the
+  // daemon rotates the numbered siblings, which this glob deliberately does NOT
+  // match: tailing a rotated file forever is how a shipper pins deleted inodes.
+  path_targets = [{
+    __path__ = "/var/lib/docker/containers/*/*-json.log",
+    job      = "docker",
+    stack    = "evo-t1",
+  }]
+}
+
+loki.source.file "containers" {
+  // The export is `targets`. It was `result` in earlier Alloy releases, and a
+  // stale name is a startup failure here, not a warning.
+  targets = local.file_match.docker_logs.targets
+
+  // Read new lines from the end. The first boot of a box that has been running for
+  // months would otherwise ship its whole history into Loki.
+  tail_from_end = true
+
+  forward_to = [loki.process.containers.receiver]
+}
+
+loki.process "containers" {
+  forward_to = [loki.write.loki.receiver]
+
+  // A json-file line is `{"log":...,"stream":...,"time":...,"attrs":{"tag":...}}`.
+  // The tag is what docker-compose.yml sets per service, and it is the reason this
+  // pipeline needs no daemon socket: the container's own name is inside its line.
+  stage.json {
+    expressions = {
+      log     = "log",
+      stream  = "stream",
+      tag     = "attrs.tag",
+      ts      = "time",
+    }
+  }
+
+  // `container` is the label every Grafana log panel and every trace->logs jump
+  // filters on, so this one line is the join key across the whole bundle.
+  stage.labels {
+    values = {
+      container = "tag",
+      stream    = "stream",
+    }
+  }
+
+  // Timestamp from the line, not from arrival: a container that was quiet for an
+  // hour and then wrote ten lines should show them at their own times. `format` is
+  // a required attribute of this stage, and the daemon writes RFC3339Nano.
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+  }
+
+  // What lands in Loki is what the process printed, without the JSON wrapper.
+  stage.output {
+    source = "log"
+  }
+
+  // Healthcheck polling is the one thing this box logs a great deal of and never
+  // reads. Dropped per stream so the volume graph stays about real work. One
+  // selector with a regex matcher: a match stage takes a single LogQL selector, so
+  // two brace groups joined by `|` is a parse error rather than an OR.
+  stage.match {
+    selector = "{container=~\"router|homepage-proxy\"}"
+    stage.drop {
+      expression = "^\\S+ - \\S+ \"(GET|HEAD) /(healthz|api/health|) HTTP/[0-9.]+\" 20[0-9] "
+    }
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+  external_labels = {
+    stack = "evo-t1",
+  }
+}

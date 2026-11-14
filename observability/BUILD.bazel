@@ -1,0 +1,83 @@
+"""Package purpose: the observability bundle's payload (metrics, logs, traces).
+
+One directory holds every config the six profiled services mount, and the tree is
+separated per component because that is how compose mounts it: one bind per service,
+each read by exactly one container. `prometheus/` is mounted as a directory so an
+operator can drop rule files beside prometheus.yml without a compose edit; the rest
+are single files, and each grafana/ subdirectory mirrors one provisioning mount so
+shadowing the image's own /etc/grafana/provisioning siblings stays impossible.
+
+Nothing under this tree is read by a production script except //scripts:validate
+(parses the YAML) and //scripts:observability-check (reads the Alloy config to
+report what the shipper tails). Both declare it in scripts/BUILD.bazel.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "prometheus_config",
+    # glob-policy: compose mounts ./observability/prometheus as a directory at
+    # /etc/prometheus, so the directory itself is the mount contract and anything
+    # added to it ships without a BUILD edit.
+    srcs = glob(
+        ["prometheus/**"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "loki_config",
+    srcs = ["loki/loki.yml"],
+)
+
+filegroup(
+    name = "tempo_config",
+    srcs = ["tempo/tempo.yml"],
+)
+
+filegroup(
+    name = "mimir_config",
+    srcs = ["mimir/mimir.yml"],
+)
+
+filegroup(
+    name = "grafana_provisioning",
+    # Listed, not globbed: these two files name the datasource UIDs the four
+    # dashboards query by, so a third provisioning file is a change someone has to
+    # read, not a file that ships because it landed in a directory.
+    srcs = [
+        "grafana/provisioning/dashboards/stack.yaml",
+        "grafana/provisioning/datasources/stack.yaml",
+    ],
+)
+
+filegroup(
+    name = "grafana_dashboards",
+    # glob-policy: ./observability/grafana/dashboards is mounted at
+    # /var/lib/grafana/dashboards and the provider file loads whatever is in it, so
+    # a new dashboard JSON is a file add with no BUILD edit.
+    srcs = glob(
+        ["grafana/dashboards/*.json"],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "alloy_config",
+    srcs = ["alloy/config.alloy"],
+)
+
+# Every file the bundle's six containers mount, for the gates that address the tree
+# as one directory (//:stack_data, the compose-config suites).
+filegroup(
+    name = "payload",
+    srcs = [
+        ":alloy_config",
+        ":grafana_dashboards",
+        ":grafana_provisioning",
+        ":loki_config",
+        ":mimir_config",
+        ":prometheus_config",
+        ":tempo_config",
+    ],
+)

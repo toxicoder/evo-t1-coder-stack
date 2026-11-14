@@ -1,0 +1,147 @@
+{
+  "uid": "evo-stack-overview",
+  "title": "Stack overview",
+  "tags": ["evo-t1", "stack"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Scrape targets up",
+      "id": 1,
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(up == 1)",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "red", "value": null },
+          { "color": "yellow", "value": 6 },
+          { "color": "green", "value": 8 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Scrape targets down",
+      "id": 2,
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(up == 0) or vector(0)",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "red", "value": 1 }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Prometheus TSDB on disk",
+      "description": "The local 15d window. A line that climbs past the retention cap means the size flag stopped being honoured; Mimir's own block count is on the Mimir row below.",
+      "id": 3,
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "prometheus_tsdb_storage_blocks_bytes",
+          "legendFormat": "tsdb blocks"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "prometheus_tsdb_wal_size_bytes",
+          "legendFormat": "wal"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Target availability",
+      "description": "One line per scrape job. A job that is absent here was never configured; a job pinned at 0 is configured and not answering, which is the difference between a docs gap and an outage.",
+      "id": 4,
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "min": 0, "max": 1, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Log lines per second, by container",
+      "description": "Counted by Loki as it receives them, so this is the shipper's view rather than the container's. A container that goes quiet looks identical to one that stopped logging, which is why the log panels live in stack-logs.",
+      "id": 5,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (container) (rate(loki_distributor_lines_received_total{container!=\"\"}[5m])) or sum by (name) (rate(loki_distributor_lines_received_total{name!=\"\"}[5m]))",
+          "legendFormat": "{{container}}{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Remote write to Mimir",
+      "description": "Samples per second leaving Prometheus, the ones that failed, and the ones being retried. The retry line is the one that matters: Prometheus keeps 15d locally, so a stalled write costs query latency in Mimir, not the data itself.",
+      "id": 6,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(prometheus_remote_storage_samples_pending[5m]))",
+          "legendFormat": "pending"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(prometheus_remote_storage_samples_failed_total[5m]))",
+          "legendFormat": "failed"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(prometheus_remote_storage_samples_retried_total[5m]))",
+          "legendFormat": "retried"
+        }
+      ]
+    }
+  ]
+}

@@ -39,7 +39,10 @@ scratch_checkout() {
   local scratch
   scratch="$(make_scratch)"
   mkdir -p "${scratch}/scripts/lib" "${scratch}/homepage/config" "${scratch}/litellm" "${scratch}/hermes" "${scratch}/searxng" \
-    "${scratch}/templates/workspace" "${scratch}/templates/devcontainer"
+    "${scratch}/templates/workspace" "${scratch}/templates/devcontainer" \
+    "${scratch}/observability/prometheus" "${scratch}/observability/loki" "${scratch}/observability/tempo" \
+    "${scratch}/observability/mimir" "${scratch}/observability/grafana/provisioning/datasources" \
+    "${scratch}/observability/grafana/provisioning/dashboards"
   printf 'services: {}\n' >"${scratch}/docker-compose.yml"
   cp "${REPO_ROOT}/scripts/lib/common.sh" "${scratch}/scripts/lib/common.sh"
   cp "${REPO_ROOT}/scripts/lib/parse_yaml.py" "${scratch}/scripts/lib/parse_yaml.py"
@@ -57,6 +60,19 @@ scratch_checkout() {
   cp "${REPO_ROOT}/litellm/config.yaml" "${scratch}/litellm/config.yaml"
   cp "${REPO_ROOT}/hermes/config.yaml" "${scratch}/hermes/config.yaml"
   cp "${REPO_ROOT}/searxng/settings.yml" "${scratch}/searxng/settings.yml"
+  # The observability bundle is parsed by the same phase, so the scratch checkout
+  # owes the six configs validate.sh names. They are YAML (the Alloy pipeline
+  # config is not, so validate.sh leaves it out and so does this list), and
+  # copying the real files is what makes a syntax error in one of them a red
+  # suite here rather than a container that will not start on the host.
+  cp "${REPO_ROOT}/observability/prometheus/prometheus.yml" "${scratch}/observability/prometheus/prometheus.yml"
+  cp "${REPO_ROOT}/observability/loki/loki.yml" "${scratch}/observability/loki/loki.yml"
+  cp "${REPO_ROOT}/observability/tempo/tempo.yml" "${scratch}/observability/tempo/tempo.yml"
+  cp "${REPO_ROOT}/observability/mimir/mimir.yml" "${scratch}/observability/mimir/mimir.yml"
+  cp "${REPO_ROOT}/observability/grafana/provisioning/datasources/stack.yaml" \
+    "${scratch}/observability/grafana/provisioning/datasources/stack.yaml"
+  cp "${REPO_ROOT}/observability/grafana/provisioning/dashboards/stack.yaml" \
+    "${scratch}/observability/grafana/provisioning/dashboards/stack.yaml"
   printf '%s' "${scratch}"
 }
 
@@ -118,17 +134,30 @@ minimal_path() {
     bash "${SCRIPT}"
   [ "${status}" -eq 0 ]
   assert_match "the section header" '^== Validate ==$' "${output}"
-  assert_match "the compose check" '^-> docker compose config -q$' "${output}"
+  assert_match "the compose check, flag off" '^-> docker compose config -q$' "${output}"
+  assert_match "the compose check, flag on" '^-> docker compose --profile observability config -q$' "${output}"
   assert_match "the env twins are compared" '^-> cmp \.env\.sample \.env\.example$' "${output}"
   assert_match "terraform is checked" '^-> terraform fmt -check$' "${output}"
   assert_match "the variable-type gate ran" '^-> terraform variable types$' "${output}"
   assert_match "the yaml parse runs" '^-> yaml parse$' "${output}"
   assert_match "the closing ok line" '^ok: validate$' "${output}"
   assert_match "the summary counts one ok" '^summary: 1 ok, 0 warnings, 0 failed$' "${output}"
-  assert_eq "compose was the only docker call" "docker compose config -q" "$(stub_log_last docker)"
+  # Two compose runs, in that order: the plain one is the flag-off path and the
+  # profiled one is the flag-on path. `--profile` is a compose-level flag, so it
+  # sits before `config`, and a single run would prove nothing about the bundle.
+  assert_eq "the compose runs are the only docker calls" \
+    $'docker compose config -q\ndocker compose --profile observability config -q' \
+    "$(stub_log docker)"
   assert_match "both template trees are formatted" 'terraform -chdir=templates/workspace fmt -check' "$(stub_log terraform)"
   assert_match "the devcontainer twin too" 'terraform -chdir=templates/devcontainer fmt -check' "$(stub_log terraform)"
   assert_match "the parse argv names the payloads" 'parse_yaml\.py homepage/config/.*litellm/config\.yaml hermes/config\.yaml searxng/settings\.yml' "$(stub_log python3)"
+  # The observability configs are read by the same phase, and only the YAML of
+  # them: config.alloy is the Alloy pipeline language, which yaml.safe_load
+  # would reject as a parse error on a file that is fine.
+  assert_match "the parse argv names the observability YAML" \
+    'observability/prometheus/prometheus\.yml observability/loki/loki\.yml observability/tempo/tempo\.yml observability/mimir/mimir\.yml observability/grafana/provisioning/datasources/stack\.yaml observability/grafana/provisioning/dashboards/stack\.yaml' \
+    "$(stub_log python3)"
+  assert_not_match "the alloy pipeline config stays out of the YAML parse" 'config\.alloy' "$(stub_log python3)"
   [ "$(stub_log_count bazelisk)" -eq 0 ]
 }
 
@@ -264,7 +293,11 @@ minimal_path() {
   run --separate-stderr env VALIDATE_INNER=1 BUILD_WORKSPACE_DIRECTORY="${ROOT}" \
     STUB_DOCKER_RC=1 bash "${SCRIPT}"
   [ "${status}" -ne 0 ]
-  assert_match "the compose phase was the last one reached" '^-> docker compose config -q$' "${output}"
+  # The unprofiled run is first of the two, so a compose file that cannot parse
+  # at all is refused before the profiled run is ever attempted.
+  assert_match "the compose phase was the last one reached" \
+    '^-> docker compose config -q$' "${output}"
+  [ "$(stub_log_count docker)" -eq 1 ]
   assert_not_match "no verdict is printed for a failed gate" 'summary:' "${output}"
   [ "$(stub_log_count terraform)" -eq 0 ]
 }

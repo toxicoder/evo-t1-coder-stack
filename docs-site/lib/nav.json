@@ -79,6 +79,10 @@
             "path": "dashboard.md"
           },
           {
+            "title": "Observability bundle",
+            "path": "observability.md"
+          },
+          {
             "title": "Config updates",
             "path": "config-updates.md"
           },

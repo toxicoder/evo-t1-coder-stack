@@ -362,6 +362,10 @@ _SUITE_PAYLOAD = {
         ":fixtures",
     ],
     "pg-apply-password.bats": [],
+    # Stubs are written into the test's own tmpdir and the fixture env file, the
+    # compose project and the log tree all live under its scratch dir, so this
+    # suite reads nothing the common set does not already carry.
+    "observability-check.bats": [],
     "pre-commit.bats": [
         "//:env_example",
         "//:env_sample",
@@ -441,6 +445,7 @@ _SUITE_PAYLOAD = {
         "//hermes:seed",
         "//homepage:config",
         "//litellm:config",
+        "//observability:payload",
         "//searxng:settings",
     ],
     "vscode-settings.bats": [

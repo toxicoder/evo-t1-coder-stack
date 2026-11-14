@@ -226,6 +226,7 @@ filegroup(
         "//homepage:payload",
         "//images/dev:context",
         "//litellm:config",
+        "//observability:payload",
         "//proxy:confs",
         "//searxng:settings",
     ],

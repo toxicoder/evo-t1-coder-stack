@@ -49,6 +49,7 @@ STACK_DATA_LABELS = [
     "//homepage:payload",
     "//images/dev:context",
     "//litellm:config",
+    "//observability:payload",
     "//proxy:confs",
     "//searxng:settings",
 ]
