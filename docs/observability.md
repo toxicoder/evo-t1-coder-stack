@@ -75,6 +75,15 @@ every container stays up:
   metrics stay behind `LITELLM_MASTER_KEY` the way every other LiteLLM endpoint is; the
   key arrives in Prometheus' own environment and is expanded there, which is why it is
   not written into the committed scrape file.
+- **The apps with no `/metrics` are observed by logs alone, on purpose.** `ollama`,
+  `searxng`, `kasm`, `homepage`, the two nginx hops and `hermes` publish no Prometheus
+  endpoint, so scraping them would leave a target answering 404 forever and a tally no
+  one trusts. Ollama is the one operators ask about: upstream has had the request for a
+  `/metrics` endpoint open since 2024 (ollama/ollama#3144), and the IPEX-LLM image runs a
+  stock `ollama serve`, so there is nothing to scrape. Its traffic is measured anyway,
+  because every request reaches it through LiteLLM, which does publish. What every one of
+  those containers does contribute is its log stream, which is where a SearXNG rate limit
+  or a Kasm start failure lands.
 - **Mimir is written to, not scraped from.** Prometheus `remote_write`s to
   `http://mimir:8080/api/v1/push`. A query against the `prometheus` datasource answers
   from the local TSDB; the `mimir` datasource answers through
