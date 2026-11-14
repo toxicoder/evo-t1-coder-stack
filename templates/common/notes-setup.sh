@@ -193,9 +193,12 @@ notes_append_once() {
   return 0
 }
 
-# notes_ensure_excludes <clone-root> — hide the scratch file from git.
+# notes_ensure_excludes <clone-root> — hide the stack's scratch from git.
 # @function notes_ensure_excludes
-# Make git ignore both scratch names, globally and inside one clone.
+# Make git ignore both scratch note names and the micro-plan tree, globally and
+# inside one clone. The plan tree (.grok/plans/) is where the ez-micro-plan skill
+# writes its dispatch plan, context briefs and child reports; it is work-in-progress
+# for one change, so it stays out of git unless the operator commits it by hand.
 # Globals:
 #   HOME
 # Arguments:
@@ -225,7 +228,7 @@ notes_ensure_excludes() {
     esac
     if [ -z "${user_exclude}" ]; then
       # Nothing was named, so the file set here is the one git will consult.
-      notes_append_once "${stack_exclude}" notes.md .scratch-notes.md
+      notes_append_once "${stack_exclude}" notes.md .scratch-notes.md .grok/plans/
       git config --global core.excludesFile "${stack_exclude}" 2>/dev/null || true
     elif [[ ${user_exclude} != /* ]]; then
       # A relative value resolves against whatever directory git runs in, so
@@ -237,12 +240,12 @@ notes_ensure_excludes() {
       printf 'notes: core.excludesFile=%s is a directory\n' "${user_exclude}" >&2
     else
       mkdir -p "$(dirname "${user_exclude}")" 2>/dev/null || true
-      notes_append_once "${user_exclude}" notes.md .scratch-notes.md
+      notes_append_once "${user_exclude}" notes.md .scratch-notes.md .grok/plans/
     fi
   fi
   if [ -n "${root}" ] && [ -d "${root}/.git" ]; then
     mkdir -p "${root}/.git/info" 2>/dev/null || true
-    notes_append_once "${root}/.git/info/exclude" notes.md .scratch-notes.md
+    notes_append_once "${root}/.git/info/exclude" notes.md .scratch-notes.md .grok/plans/
   fi
   return 0
 }

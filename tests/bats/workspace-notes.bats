@@ -541,13 +541,18 @@ age_live() {
   run cat "${HOME}/.grok/notes/exclude"
   grep -qxF 'notes.md' "${HOME}/.grok/notes/exclude"
   grep -qxF '.scratch-notes.md' "${HOME}/.grok/notes/exclude"
+  # The micro-plan tree is stack scratch too: a dispatch plan, its briefs and the
+  # child reports are one change's work-in-progress, not history.
+  grep -qxF '.grok/plans/' "${HOME}/.grok/notes/exclude"
   [ "$(git config --global --get core.excludesFile)" = "${HOME}/.grok/notes/exclude" ]
   grep -qxF 'notes.md' "${clone}/.git/info/exclude"
   grep -qxF '.scratch-notes.md' "${clone}/.git/info/exclude"
+  grep -qxF '.grok/plans/' "${clone}/.git/info/exclude"
   # Idempotent: a second start must not duplicate either line.
   notes_ensure_excludes "${clone}"
   [ "$(grep -cxF 'notes.md' "${HOME}/.grok/notes/exclude")" -eq 1 ]
   [ "$(grep -cxF 'notes.md' "${clone}/.git/info/exclude")" -eq 1 ]
+  [ "$(grep -cxF '.grok/plans/' "${clone}/.git/info/exclude")" -eq 1 ]
 }
 
 @test "notes_ensure_excludes: an excludesFile the developer set is appended to, not replaced" {
