@@ -246,7 +246,11 @@ it. The three payloads now travel in their own body, `coder_script.stack_skills`
 composes to 36847 bytes. Measured again on 2026-11-09 after the repository-conversion
 family landed: `coder_script.stack_repo_skills`, carrying three `SKILL.md` payloads and
 three python helpers, composes to 60336 bytes, 62544 clear of the bound, and neither
-startup twin moved.
+startup twin moved. Measured again on 2026-11-14 after the family's fourth member
+landed: that same body now carries four `SKILL.md` payloads and four python helpers and
+composes to 91203 bytes, 31677 clear of the bound, and neither startup twin moved -
+which is the point of giving a payload family its own `coder_script` instead of feeding
+it to `startup_script`.
 
 When a body really does need to grow past the budget, the options are:
 

@@ -327,8 +327,8 @@ _SUITE_PAYLOAD = {
     "ez-micro-plan.bats": [
         "//:templates_payload",
     ],
-    # The repository-conversion family's own seam: its seed body, the three
-    # SKILL.md payloads and the three python helpers all arrive with the
+    # The repository-conversion family's own seam: its seed body, the four
+    # SKILL.md payloads and the four python helpers all arrive with the
     # template payload, and the suite reads scripts/lib/ through _BATS_COMMON.
     "ez-repo-skill-authoring.bats": [
         "//:templates_payload",

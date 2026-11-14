@@ -12,6 +12,7 @@ tags: [grok, agents, workspace, mcp]
 - What `grok doctor` reports inside a workspace, and which findings are expected
 - The Grok Build CLI in the golden image, and how it is pinned
 - The rendered `~/.grok/config.toml`: model aliases and role fallbacks
+- How a subagent fan-out is sized, laned, and dispatched from a micro-plan
 - One shared profile volume per user, and what last-booted rewrites
 - The search lane and the MCP servers behind it
 - Coder Agents on the control plane and the model config it needs
@@ -403,6 +404,19 @@ report for a script. What the report should read here:
   `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`, plus the three python
   helpers they shell out to. Same absent-only contract, same marker-based takeover rule,
   same `[skills] disabled` escape hatch.
+- **A fourth command rides that same body: `/ez-micro-plan`.** It converts nothing - it is
+  the parent's dispatch protocol for a fan-out of subagents: a repo-local plan at
+  `.grok/plans/<slug>/plan.md`, the change split into micro tasks, layered context briefs
+  beside it, and a check that refuses a plan too narrow to fill the session's subagent
+  slots. It shares the body because that body exists to stay under the one-argument
+  ceiling ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)), not because
+  the four commands do the same job; three of the four carry a python helper next to their
+  `SKILL.md` and `ez-trunk-based-repo` carries none. Its payloads are
+  `templates/common/ez-micro-plan.SKILL.md` and
+  `templates/common/ez-micro-plan.plan_check.py`, seeded into `~/.coder/skills/` and its
+  `~/.agents` twin on the same absent-only contract, the helper under `scripts/` like the
+  trio's. What the plan carries and what the check prints is under
+  [The fan-out seam](#the-fan-out-seam).
 - **A leftover `/learn` seed retires itself.** This skill was seeded under the name
   `learn` until it moved, and a copy left standing keeps offering that old name beside
   `/ez-learn` for the life of the volume; there is no bundled `learn` for it to hide,
@@ -442,18 +456,32 @@ while the managed block is intact.
   last-booted workspace's key wins for the whole fleet.
 - `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane it
   rides, both rendered from template variables: `grok_subagents_lane` (default
-  `agent`) and `grok_subagent_max_concurrent` (default `4`). The two keys are one
-  calculation, and the header above is what bounds the width. A parent session and
-  every subagent it spawns carry the same `x-litellm-session-id`, so on a pinned lane
-  the whole fan-out resolves to one deployment and competes for that box's `PARALLEL`
-  streams - 5 by default, set in `scripts/spark-configure.sh` - which means raising
-  the width past about 4 buys a longer queue and no capacity. Pointing the lane at
-  `agent-swarm` is the case where widening pays: that group carries no pin, so each
-  subagent request is placed on whichever reachable box has the fewest requests in
-  flight and the ceiling becomes `PARALLEL` per box rather than per workspace.
-  `limit_behavior = "queue"` below them holds the overflow instead of failing the
-  spawn, so overshoot costs a subagent latency rather than its life. The mapping
-  ships `explore` and `plan` on the same lane as everything else.
+  `agent`) and `grok_subagent_max_concurrent` (default `null`, which means "derive it
+  from the lane"). The two keys are one calculation, and `main.tf` is where it is made:
+  `var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent :
+  (var.grok_subagents_lane == "agent-swarm" ? 8 : 4)`, so
+  `--var grok_subagents_lane=agent-swarm` on its own yields 8 slots, a pinned lane yields
+  4, and an explicit `--var grok_subagent_max_concurrent=N` always wins. The variable's
+  own validation accepts null or a whole number 1..32, because past the fleet's ceiling
+  a bigger number is only a longer queue. A parent session and every subagent it spawns
+  carry the same `x-litellm-session-id`, so on a pinned lane the whole fan-out resolves
+  to one deployment and competes for that box's `PARALLEL` streams - 5 by default, set in
+  `scripts/spark-configure.sh` - and that is where 4 comes from: one box's `PARALLEL`
+  minus the parent's own stream. Pointing the lane at `agent-swarm` is the case where
+  widening pays: that group carries no pin, so each subagent request is placed on
+  whichever reachable box has the fewest requests in flight and the ceiling becomes
+  `PARALLEL` per box rather than per workspace - 3 boxes x 5 = 15, which asks the fleet
+  for every stream it has, so treat 15 as a one-workspace-at-a-time number.
+  `sampling_limit` is deliberately left unset: it defaults to `max_concurrent`, so the
+  two caps cannot drift apart. `limit_behavior = "queue"` below them holds the overflow
+  instead of failing the spawn, so overshoot costs a subagent latency rather than its
+  life. `[subagents.models]` pins all three built-in subagent types - `general-purpose`,
+  `explore` and `plan` - to whatever lane `grok_subagents_lane` names. Pinning only the
+  two read-only types was the defect this block fixes: a spawn that names no type gets
+  `general-purpose`, and that is the type every writer in a fan-out runs as, so those
+  children inherited the parent's model and queued behind the one box a pinned parent
+  resolves to while the swarm-named readers spread over three. The width follows the same
+  one variable, so the lane is the single knob a workspace turns on to fan out.
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
@@ -535,6 +563,151 @@ while the managed block is intact.
   file and restart to hand it back. When the guard does re-render, the CLI-owned tables
   `[cli]`, `[ui]` and `[marketplace]` are carried over rather than wiped, because the
   stack owns no approval mode - `[ui] permission_mode` / yolo stays a per-user call.
+
+## The fan-out seam
+
+Three stack-owned numbers decide whether a fan-out of subagents is parallel here at all:
+how many slots one session gets, which lane those children's traffic rides, and whether
+the work was cut finely enough to fill the slots. The first two are the rendered
+`[subagents]` keys just above; the third is a seeded skill and one command the parent runs
+before wave 1.
+
+**How a session learns its own ceiling.** `[subagents] max_concurrent` is the per-session
+number, and `sampling_limit` is left unset because it defaults to that same number - one
+variable, so the two caps cannot drift apart. The parent reads it once per session and
+dispatches to it:
+
+```sh
+grep -A4 '^\[subagents\]' ~/.grok/config.toml
+```
+
+The rulebook (`~/.grok/AGENTS.md`, from
+`templates/common/GROK_BUILD_AGENTS.md`) states the ceiling as that key rather than as a
+number of its own: the prompt used to hardcode a smaller fleet and to tell the parent to
+run two or three children per wave, and both are gone, because a cap the prompt invents is
+wrong on both lanes - it leaves slots empty on a swarm session and overbooks a pinned
+one. Overflow is held, not failed (`limit_behavior = "queue"`), so an under-wide wave is
+silent and counting it stays the parent's job.
+`max_depth = 1` is what makes that true: a child cannot spawn a child, so the slot count
+describes one tree and orchestration cannot leak.
+
+**What the lane choice buys.** `grok_subagents_lane` is the one knob, and the width now
+follows it: 8 on `agent-swarm`, 4 on a pinned lane, and an explicit
+`grok_subagent_max_concurrent` overrules both (its validation accepts null or 1..32). Both
+defaults are the fleet's arithmetic rather than taste. A parent and every child it spawns
+carry the same `x-litellm-session-id`, so a pinned lane places the whole fan-out on one
+box and the useful width is that box's `PARALLEL` - 5 by default, from
+`scripts/spark-configure.sh` - minus the parent's own stream; past that, extra slots are
+LiteLLM queue depth. `agent-swarm` is the one Spark group with no session pin, so each
+child lands on whichever reachable box has the fewest requests in flight and the ceiling
+becomes `PARALLEL` per box: 3 boxes x 5 = 15, which is every stream the fleet has and
+therefore a one-workspace-at-a-time number. All three built-in types (`general-purpose`,
+`explore`, `plan`) ride the lane through `[subagents.models]`, which is what makes the
+lane one decision instead of two: every writer in a fan-out is a `general-purpose` child,
+and while only the two read-only types were pinned those writers inherited the parent's
+model, so a swarm-named wave still queued its edits behind one box's streams. The lane is
+therefore a config decision: the guide documents `[subagents.models]` as the per-type
+override that "applies for any parent", and documents the spawn call's own `model`
+argument as the agent's choice of one child's model, without saying which of the two wins
+when both name one. Set the pin when the lane matters.
+
+A contributor home gets the same seam from the environment of the seed, so a laptop
+matches what a template `--var` renders:
+
+```sh
+GROK_SUBAGENTS_LANE=agent-swarm bazelisk run //scripts:seed-dev-env -- --home <dir>
+```
+
+`GROK_SUBAGENTS_LANE` names the lane and `GROK_SUBAGENT_MAX_CONCURRENT` the width, with
+the same derivation `main.tf` uses. A value the seeder cannot use is refused in place and
+the default goes in, so a typo is a line in the output rather than a broken key in
+`~/.grok/config.toml`:
+
+```text
+note: GROK_SUBAGENTS_LANE='not a model id' is not a model id - using agent
+note: GROK_SUBAGENT_MAX_CONCURRENT='99' is past the fleet's ceiling - using 32
+```
+
+**How the work is cut.** `/ez-micro-plan` is the parent's protocol for splitting one
+multi-file change across that fleet, and it writes its own document, separate from Grok
+Build's `/plan`: `/plan` lives at `~/.grok/sessions/<cwd>/<session-id>/plan.md`, is the
+Plan Mode preview, and dies with the session, while this one is repo-local at
+`.grok/plans/<slug>/plan.md` and is what the parent and every child read from. It carries
+`## Goal` with numbered acceptance checks, `## Dispatch` (lane, `slots:`, where the slot
+count came from, `parent keeps:` for the hotspots the parent merges itself), `## Lanes`,
+`## Tasks`, `## Ledger`, and `## Not doing`. Beside it sit the context briefs and the
+child reports:
+
+| file | answers | written by | read by | cap |
+|---|---|---|---|---|
+| `ctx/L0.md` | what is being built, and every pinned seam | parent | every child | 80 lines |
+| `ctx/L1-<lane>.md` | that lane's file map and the pattern to copy | parent | that lane's children | 40 lines |
+| `ctx/L2-T<nn>.md` | the one fact only this task needs | parent, just in time | one child | 20 lines |
+| `results/T<nn>.md` | what happened and what was found | child | parent | 12 lines |
+
+One writer per layer is the rule that keeps a child from inheriting the parent's session:
+children write only their own `results/T<nn>.md`, never a brief, and the parent is the
+only thing that moves a fact sideways from one child to the next (a child reports
+`found:`, the parent writes it into the lane brief before the next wave). `ctx/L0.md` is
+frozen before wave 1, because children already running read the copy that was there when
+they started - editing it mid-run is a re-dispatch, not an edit.
+
+A task is micro when all of this holds: one deliverable, three or fewer files in `owns`
+from one directory family, a `calls:` budget of 15 or fewer counting the reads a child
+needs to get oriented, one `done:` command a reviewer can run, no other ready task
+sharing a path, and `needs:` naming only finished tasks. Below that bar the plan costs
+more than it saves, which is why the skill opens by asking whether the change touches
+about five files at all.
+
+**How it is dispatched, and what the check prints.** `plan_check.py` is the gate, and it
+is the same file in both skill homes:
+
+```sh
+python3 ~/.agents/skills/ez-micro-plan/scripts/plan_check.py \
+  .grok/plans/<slug>/plan.md --ready
+```
+
+It prints one `error:` or `warning:` line per finding and then a tally, so a parent reads
+six lines instead of a plan:
+
+```text
+warning: T02 reads the L1-src brief from lane map
+summary: 2 tasks | 2 lanes | 2 slots | wave width 2 | 0 errors, 1 warnings
+T01
+T02
+```
+
+The bare ids after the summary are the wave to spawn - `--ready` prints the tasks whose
+`needs:` are all satisfied, capped at `slots`, and the parent takes that set rather than
+the plan's order and spawns the whole wave in one turn. The refusals are the collisions a
+fan-out otherwise discovers at wave 3; a plan with two ready tasks on the same file and a
+read-only role handed that file prints:
+
+```text
+error: T02 is explore but owns scripts/lib/search.sh
+error: T01 and T02 both own scripts/lib/search.sh and no dependency orders them
+warning: T02 reads the L1-src brief from lane map
+summary: 2 tasks | 2 lanes | 2 slots | wave width 2 | 2 errors, 1 warnings
+```
+
+It also refuses a missing task key, a task with no `done:` check, a `calls` budget over
+25 (over 15 is a warning - 15 is the bar for a micro task, 25 is where the plan is wrong),
+a dependency cycle or an unknown dependency id, a lane or context file that does not
+exist on disk, a task without a `## Ledger` row, and a first wave narrower than `slots`
+(compared against `min(slots, task count)`, so a small plan is not scolded for being
+small, but a coarse one is). `--slots N` overrides the plan's number, `--json` prints the
+same findings as an object with `plan`, `slots`, `tasks`, `lanes`, `ready`, `errors` and
+`warnings` for a script to read, `--no-files` skips the on-disk existence check for the
+briefs, and `--strict` makes warnings fail. Exit is 0 clean, 1 with violations, 2 when the
+plan path is missing or unreadable. The plan is a work artifact rather than the record, so
+its tree stays out of git: `notes_ensure_excludes` in `templates/common/notes-setup.sh`
+adds `.grok/plans/` to the stack's global excludes file
+(`~/.grok/notes/exclude`, or the `core.excludesFile` you already point at) next to
+`notes.md` and `.scratch-notes.md`, and `results/` is deleted once the change is
+committed. The seam is pinned by `bazelisk test //tests:bats_grok_subagent_slots_test`
+(both twins' `[subagents]` block, the `coder.tf` validation, the `main.tf` derivation, and
+the rulebook's slot-filling rule) and `bazelisk test //tests:bats_ez_micro_plan_test`
+(the checker driven over a scratch plan tree).
 
 ## Grok Build state: one shared profile per user
 
@@ -971,7 +1144,7 @@ decisions stop at the top-level chat.
 
 ### What seeds the agent's context
 
-Twenty-two files seed into every new workspace, on first boot and only while the file is
+Twenty-six files seed into every new workspace, on first boot and only while the file is
 absent:
 
 1. `~/.coder/AGENTS.md`
@@ -996,6 +1169,10 @@ absent:
 20. `~/.agents/skills/ez-strong-types/scripts/type_baseline.py`
 21. `~/.coder/skills/ez-trunk-based-repo/SKILL.md`
 22. `~/.agents/skills/ez-trunk-based-repo/SKILL.md`
+23. `~/.coder/skills/ez-micro-plan/SKILL.md`
+24. `~/.agents/skills/ez-micro-plan/SKILL.md`
+25. `~/.coder/skills/ez-micro-plan/scripts/plan_check.py`
+26. `~/.agents/skills/ez-micro-plan/scripts/plan_check.py`
 
 - 1 and 2 are the Coder agent's *default* discovery paths.
 - 3 and 4 are the same text under the Grok Build CLI's convention, and the CLI is
@@ -1009,11 +1186,12 @@ absent:
   ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Each `.agents`
   copy is a `cp` of the managed `.coder` copy, never a second inline body, so the pair
   cannot drift.
-- 11-22 are the stack's three repository-conversion commands and are written by
+- 11-26 are the four commands of that second family - the three repository conversions
+  plus the `/ez-micro-plan` dispatcher - and are written by
   `coder_script.stack_repo_skills`, a second body with its own ceiling, for the same
-  reason and because this family also ships the python helpers 13-14, 16 and 19-20 that
-  two of the bodies invoke by `~/.agents` path. Same absent-only contract and the same
-  `cp` twin rule; the helper directories are made by the body, so a workspace that
+  reason and because this family also ships the python helpers 13-14, 16, 19-20 and 25-26
+  that three of its four bodies invoke by `~/.agents` path. Same absent-only contract and
+  the same `cp` twin rule; the helper directories are made by the body, so a workspace that
   already has the `SKILL.md` but lost a helper still gets the helper back.
 - 5 and 6 are `/ez-learn`: this stack's copy of the upstream memory commands `/flush`,
   `/dream`, `/remember` and `/memory`. It turns the current session into durable facts -
@@ -1118,6 +1296,11 @@ This repo keeps its own project-scoped `/trunk-refactor` under
 cites its gates by label. `/ez-trunk-based-repo` is the portable version of the same model:
 it discovers a target repo's own gates at inventory time rather than assuming Bazel, so it
 works in a Compose, K3s, Ansible or Terraform repository too.
+
+The fourth payload `coder_script.stack_repo_skills` seeds is not a converter.
+`/ez-micro-plan` is the parent's protocol for splitting one change across a fleet of
+subagents and proving the split dispatches; how its slots, lane and check fit together is
+[The fan-out seam](#the-fan-out-seam).
 
 ### What this is not
 

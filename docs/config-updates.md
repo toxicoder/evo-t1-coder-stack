@@ -80,12 +80,12 @@ the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
 list those keys and write no answers. A `summary:` line closes the pass.
 
 `workspace` re-materialises the stack-owned config inside the targets you name.
-The reseed set is the twenty-five home-relative targets the templates seed -
+The reseed set is the twenty-nine home-relative targets the templates seed -
 `~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
 `~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the six
 `ez-learn`, `ez-skillify` and `ez-create-skill` `SKILL.md` copies (two homes each), the
-twelve `ez-bazel-first`, `ez-strong-types` and `ez-trunk-based-repo` copies (three
-`SKILL.md` and three python helpers, two homes each), and
+sixteen `ez-bazel-first`, `ez-strong-types`, `ez-trunk-based-repo` and `ez-micro-plan`
+copies (four `SKILL.md` and four python helpers, two homes each), and
 `~/.shared/vscode/settings.json` - and the same rule
 applies as in `refresh-configs`: a file is replaced only while it still carries its
 stack marker - the `managed-by: evo-t1-coder-stack` comment, the
@@ -100,10 +100,13 @@ skills: flush the conversation into a session log, dream those logs into organiz
 memory, save one note, browse or manage the store. Three of the four are gated on a
 memory store that is off by default, so they stay hidden until one is configured);
 `/ez-skillify`, which captures the session that just worked; and
-`/ez-create-skill`, which scaffolds one from a description. The twelve other skill copies
-are the three repository-conversion commands on the same contract - `/ez-bazel-first`,
-`/ez-strong-types` and `/ez-trunk-based-repo` - and six of those twelve are the python
-helpers the first two run, under a `scripts/` subdirectory of the same skill directory;
+`/ez-create-skill`, which scaffolds one from a description. The sixteen other skill copies
+are four more commands, seeded the same way into the same two homes - `/ez-bazel-first`,
+`/ez-strong-types` and `/ez-trunk-based-repo`, which convert whatever repository the
+workspace is sitting in, and `/ez-micro-plan`, which cuts one change into micro tasks for a
+fleet of subagents and checks the cut before wave 1 - and eight of those sixteen are the
+python helpers three of them run, under a `scripts/` subdirectory of the same skill
+directory;
 a reseed recreates that directory when a workspace lost it. To take a seeded copy
 over, edit it and
 delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free file is
@@ -111,8 +114,8 @@ user-owned, and the seeder leaves it alone unless you pass `--force`. A deletion
 undone - the workspace boot writes the file again whenever it is absent, and
 `refresh-configs` re-seeds an absent target, so the next boot restores the stack's
 copy. To hide one of the slash commands, set `disabled = ["ez-learn"]` (or
-`ez-skillify`, `ez-create-skill`, `ez-bazel-first`, `ez-strong-types`, or
-`ez-trunk-based-repo`) under `[skills]` in
+`ez-skillify`, `ez-create-skill`, `ez-bazel-first`, `ez-strong-types`,
+`ez-trunk-based-repo`, or `ez-micro-plan`) under `[skills]` in
 `~/.grok/config.toml`. An edited copy which keeps its marker is still rewritten
 back to its `templates/common/ez-<name>.SKILL.md` by this tool. The pass also retires the two
 `skills/learn/SKILL.md` paths this skill occupied before the rename, and only while
@@ -192,11 +195,22 @@ you try a change on a scratch tree before pointing a live stack at it. See
   dollar-brace unfoldings are rewritten, and that workspace's own `cline.apiKey`
   and `roo.openaiApiKey` are carried forward.
 
-Inside a running container the same twenty-five targets are `refresh-configs`'s job
+Inside a running container the same twenty-nine targets are `refresh-configs`'s job
 too: same reseed set, same marker rule, `--json` for a machine-readable
 answer, and `--litellm-url <url>` for a stack environment that publishes
 LiteLLM on a port other than 4000 (the reseeded `settings.json` then still
-names that stack's own model transport). [grok-build-and-agents.md](grok-build-and-agents.md) covers the profile
+names that stack's own model transport). A third tool covers the same set on a
+host home rather than a container:
+`bazelisk run //scripts:seed-dev-env -- --home <dir>` materialises it into a
+laptop or CI home, and it takes the two fan-out knobs from the environment
+while it renders the config - `GROK_SUBAGENTS_LANE` names the lane the
+subagents ride and `GROK_SUBAGENT_MAX_CONCURRENT` the width, with the same
+derivation the templates use (8 on the unpinned `agent-swarm` lane, 4 on a
+pinned one). A value the seeder cannot use - a lane that is not a bare model id, a
+width that is not a count or sits past 32 - is refused with
+a `note:` line naming the key, and the derived default goes in, so a typo lands as output
+you read rather than as an unusable key in the rendered `~/.grok/config.toml`.
+[grok-build-and-agents.md](grok-build-and-agents.md) covers the profile
 volume and what seeds on first boot.
 
 ## GitHub external auth and coder.env

@@ -702,7 +702,7 @@ measured 30-request burst, the **Agent backend** card) are in
 | `agent-low` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low` | yes (same as `agent`) |
 | `agent-medium` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `medium` | yes (same as `agent`) |
 | `agent-xhigh` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh` | yes (same as `agent`) |
-| `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group alone carries no session pin, so every request lands on the least-busy healthy box | yes (same as `agent`) |
+| `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group alone carries no session pin, so every request lands on the least-busy healthy box; naming it as `grok_subagents_lane` is also what widens a fan-out to 8 subagents by default | yes (same as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
@@ -720,7 +720,18 @@ Agents chat models, so an alias edited here moves in the Agents dropdowns too. T
 no `high` level on this runtime. `agent-swarm` is the fifth Spark lane and the only one
 with no session pin: same boxes, same baked `xhigh`, each request placed on the box
 carrying the fewest in flight, which is the lane a parallel subagent fan-out wants -
-point one at it with `--var grok_subagents_lane=agent-swarm`.
+point one at it with `--var grok_subagents_lane=agent-swarm`. That one variable is the
+whole fan-out switch, because the width now follows the lane: it pins all three built-in
+subagent types in `[subagents.models]` - `general-purpose`, which is the type a spawn gets
+when it names none and the one every writer in a fan-out runs as, plus the read-only
+`explore` and `plan` - and it raises the default to 8 subagents in flight, where a pinned
+lane stays at 4. That 4 is one box's `PARALLEL` (5 by default, `scripts/spark-configure.sh`)
+minus the parent's own stream, which is why a bigger number on a pinned lane buys queue
+depth and not capacity; the swarm lane spreads over all three boxes, so its ceiling is
+`PARALLEL` per box x 3 = 15. `--var grok_subagent_max_concurrent=N` overrules the derived
+width whenever one workspace wants a number of its own, and
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
+seam and the `/ez-micro-plan` plan that fills the slots.
 
 ## Coder workspace templates
 
@@ -867,7 +878,7 @@ inside a workspace and which findings are expected there, the one `~/.grok` volu
 per owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP
 servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
 control-plane Coder Agents chat that needs nothing enabled:
-[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). The six stack-seeded skill commands at the
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). The seven stack-seeded skill commands at the
 Grok Build prompt are `/ez-learn` (flush this session into a memory log, dream those logs
 into organized memory, remember one note, or browse and clear the store - this stack's copy
 of the upstream `/flush`, `/dream`, `/remember` and `/memory`), `/ez-skillify` (capture the
@@ -882,7 +893,22 @@ per language and a broad-type census wired as a ratchet), and `/ez-trunk-based-r
 stray branches get inventoried for deletion); their payloads are
 `templates/common/ez-bazel-first.SKILL.md`, `templates/common/ez-strong-types.SKILL.md` and
 `templates/common/ez-trunk-based-repo.SKILL.md`, plus three `*.py` helpers that ride
-alongside, seeded into both skill homes by `coder_script "stack_repo_skills"`.
+alongside, seeded into both skill homes by `coder_script "stack_repo_skills"`. A fourth
+command rides that same body and converts nothing: `/ez-micro-plan` cuts one multi-file
+change into micro tasks (one deliverable, three files or fewer, a 15-call budget, an
+`owns` set) for a fleet of subagents, in a repo-local plan at `.grok/plans/<slug>/plan.md`
+with layered `ctx/` briefs beside it. Its dispatch gate prints the wave to spawn:
+
+```sh
+python3 ~/.agents/skills/ez-micro-plan/scripts/plan_check.py \
+  .grok/plans/<slug>/plan.md --ready
+```
+
+That command refuses two live tasks sharing an owned path, a dependency cycle, a missing
+brief, and a first wave too narrow to fill the session's subagent slots. The payloads are
+`templates/common/ez-micro-plan.SKILL.md` and
+`templates/common/ez-micro-plan.plan_check.py`, the helper landing under `scripts/` in the
+same skill directory as the family's other three.
 
 ## Kasm
 

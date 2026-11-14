@@ -22,8 +22,8 @@
 #     the ez- skill trio (ez-learn.SKILL.md, ez-skillify.SKILL.md,
 #     ez-create-skill.SKILL.md) and its stack-skills.sh.tftpl seed body, the
 #     repository-command skills (ez-bazel-first.SKILL.md with its two helpers,
-#     ez-strong-types.SKILL.md with its one, ez-trunk-based-repo.SKILL.md with
-#     none) and their
+#     ez-strong-types.SKILL.md with its one, ez-micro-plan.SKILL.md with its
+#     one, ez-trunk-based-repo.SKILL.md with none) and their
 #     stack-repo-skills.sh.tftpl seed body,
 #     mcp-cache-proxy.json, the agents-seed.sh.tftpl body that writes
 #     ~/.grok/AGENTS.md from GROK_BUILD_AGENTS.md, and
