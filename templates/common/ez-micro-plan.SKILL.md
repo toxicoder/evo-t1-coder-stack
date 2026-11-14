@@ -62,8 +62,11 @@ Read your real slot count once, here, and never guess it again:
 unset. Put that number in the plan as `slots:`. If it is above 5 and the session's
 subagents ride a pinned Spark lane, the fan-out queues behind that one box's streams: the
 fix is the unpinned lane, not a smaller plan. `docs/litellm-routing.md` explains the
-trade and `--var grok_subagents_lane=agent-swarm` sets it; per wave you can also pass
-`model = "agent-swarm"` on the spawn call, which wins over the config pin for that child.
+trade and `--var grok_subagents_lane=agent-swarm` sets it. `[subagents.models]` is the
+seam that routes a subagent type to a lane, and the guide documents it applying whatever
+the parent's own model is, so the lane is a config decision: the spawn call's `model`
+argument names one child's model, and the guide leaves how it ranks against that pin
+open, so change the pin when you want the lane itself to move.
 
 ## Step 1 -- map the change surface before you split anything (up to 5 calls)
 
