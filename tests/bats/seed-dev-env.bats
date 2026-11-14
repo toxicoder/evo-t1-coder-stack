@@ -423,6 +423,52 @@ assert_contributor_home() {
     'SEARXNG_URL = "http://host.docker.internal:8181"'
 }
 
+@test "seed-dev-env: the fan-out width follows the lane unless the env says otherwise" {
+  load_seed_api
+  local scratch out tpl notes
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # The shipped default is a pinned lane, so one box's PARALLEL minus the parent's
+  # own stream, and every built-in type rides that lane - a fan-out that left the
+  # writers on the parent's model would queue behind one box.
+  seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "pinned lane" "${out}" 'explore = "agent"'
+  assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
+  assert_fixed "pinned plan lane" "${out}" 'plan = "agent"'
+  assert_fixed "pinned width" "${out}" 'max_concurrent = 4'
+
+  # The unpinned swarm lane is what buys the width: it spreads over every box, so
+  # the default doubles to the number that keeps three of them busy.
+  GROK_SUBAGENTS_LANE='agent-swarm' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "swarm lane for the readers" "${out}" 'explore = "agent-swarm"'
+  assert_fixed "swarm lane for the writers" "${out}" 'general-purpose = "agent-swarm"'
+  assert_fixed "swarm width" "${out}" 'max_concurrent = 8'
+
+  # An explicit width wins over the derivation in both directions.
+  GROK_SUBAGENTS_LANE='agent-swarm' GROK_SUBAGENT_MAX_CONCURRENT='15' \
+    seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "explicit width wins on the swarm lane" "${out}" 'max_concurrent = 15'
+  GROK_SUBAGENT_MAX_CONCURRENT='2' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "explicit width wins on a pinned lane" "${out}" 'max_concurrent = 2'
+
+  # A value sed could not substitute safely is refused out loud, and the width
+  # still comes out of the lane rather than rendering a broken TOML integer.
+  notes="$(GROK_SUBAGENTS_LANE='bad lane|pipe' GROK_SUBAGENT_MAX_CONCURRENT='many' \
+    seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+  assert_match "lane refused" 'is not a model id' "${notes}"
+  assert_match "width refused" 'is not a count' "${notes}"
+  assert_fixed "lane fell back" "${out}" 'general-purpose = "agent"'
+  assert_fixed "width fell back with the lane" "${out}" 'max_concurrent = 4'
+
+  # The ceiling is the fleet's, so an absurd width is clamped where it is stated.
+  notes="$(GROK_SUBAGENT_MAX_CONCURRENT='9999' \
+    seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+  assert_match "width clamped" 'past the fleet' "${notes}"
+  assert_fixed "clamped width" "${out}" 'max_concurrent = 32'
+}
+
 @test "seed-dev-env: the context7 lane is kept when a key or --context7-mcp says so" {
   load_seed_api
   local scratch home out tpl
