@@ -249,6 +249,12 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//images/dev:context",
     ],
+    # The fan-out seam: the two grok-config twins, both coder.tf and main.tf
+    # twins, the contributor seed, and the rulebook all arrive with the template
+    # payload, which is what the suite reads and writes nothing else.
+    "grok-subagent-slots.bats": [
+        "//:templates_payload",
+    ],
     "github-auth.bats": [],
     "hermes-bootstrap.bats": [
         "//hermes:seed",
@@ -314,6 +320,12 @@ _SUITE_PAYLOAD = {
         "//:bazel_files",
         "//docs:content",
         "//:entry_docs",
+    ],
+    # The micro-plan dispatcher: the checker and the skill body it parses both
+    # ride the template payload, and the suite drives the checker over a scratch
+    # plan tree it builds itself.
+    "ez-micro-plan.bats": [
+        "//:templates_payload",
     ],
     # The repository-conversion family's own seam: its seed body, the three
     # SKILL.md payloads and the three python helpers all arrive with the
