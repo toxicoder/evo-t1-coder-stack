@@ -63,12 +63,26 @@ COMMON_PAYLOADS=(
   ez-trunk-based-repo.SKILL.md
   ez-micro-plan.SKILL.md
   ez-micro-plan.plan_check.py
+  explorer.AGENT.md
+  architect.AGENT.md
+  implementer.AGENT.md
+  tester.AGENT.md
+  reviewer.AGENT.md
+  security-auditor.AGENT.md
+  thorough-researcher.PERSONA.toml
+  senior-implementer.PERSONA.toml
+  skeptical-reviewer.PERSONA.toml
+  feature-implementation.SKILL.md
+  skeptical-review.SKILL.md
+  security-audit.SKILL.md
+  bug-hunt.SKILL.md
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
   agents-seed.sh.tftpl
   stack-skills.sh.tftpl
   stack-repo-skills.sh.tftpl
+  stack-fleet.sh.tftpl
 )
 
 # write_common_payloads <dir> — stub each required common/ file so a throwaway
@@ -94,12 +108,26 @@ write_common_payloads() {
   printf '%s\n' '# skill' >"${dest}/ez-trunk-based-repo.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/ez-micro-plan.SKILL.md"
   printf '%s\n' 'pass' >"${dest}/ez-micro-plan.plan_check.py"
+  printf '%s\n' '# agent' >"${dest}/explorer.AGENT.md"
+  printf '%s\n' '# agent' >"${dest}/architect.AGENT.md"
+  printf '%s\n' '# agent' >"${dest}/implementer.AGENT.md"
+  printf '%s\n' '# agent' >"${dest}/tester.AGENT.md"
+  printf '%s\n' '# agent' >"${dest}/reviewer.AGENT.md"
+  printf '%s\n' '# agent' >"${dest}/security-auditor.AGENT.md"
+  printf '%s\n' '# persona' >"${dest}/thorough-researcher.PERSONA.toml"
+  printf '%s\n' '# persona' >"${dest}/senior-implementer.PERSONA.toml"
+  printf '%s\n' '# persona' >"${dest}/skeptical-reviewer.PERSONA.toml"
+  printf '%s\n' '# skill' >"${dest}/feature-implementation.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/skeptical-review.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/security-audit.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/bug-hunt.SKILL.md"
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/stack-fleet.sh.tftpl"
 }
 
 # fake_root <script> [env-line...] — print a throwaway repo root holding the
@@ -858,6 +886,10 @@ source_libs() {
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/ez-create-skill.SKILL.md")" = '# skill' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/stack-skills.sh.tftpl")" = '#!/bin/bash' ]
   [ "$(cat "${BATS_TEST_TMPDIR}/extracted/agents-seed.sh.tftpl")" = '#!/bin/bash' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/stack-fleet.sh.tftpl")" = '#!/bin/bash' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/explorer.AGENT.md")" = '# agent' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/thorough-researcher.PERSONA.toml")" = '# persona' ]
+  [ "$(cat "${BATS_TEST_TMPDIR}/extracted/bug-hunt.SKILL.md")" = '# skill' ]
 }
 
 @test "template-push: a tree without the seed payload is refused before the CLI runs" {

@@ -1,0 +1,1 @@
+../../templates/common/explorer.AGENT.md

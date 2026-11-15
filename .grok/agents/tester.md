@@ -1,0 +1,1 @@
+../../templates/common/tester.AGENT.md

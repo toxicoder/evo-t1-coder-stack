@@ -488,14 +488,20 @@ resource "coder_agent" "main" {
       search_url             = var.searxng_url
       context7_mcp           = var.context7_mcp
 
-      # The two fan-out knobs: --var only, no coder_parameter, so a workspace
+      # The fan-out knobs: --var only, no coder_parameter, so a workspace
       # opts into the swarm lane without the form's option-membership rule. The
       # width is derived from the lane rather than one number for both: only the
-      # unpinned swarm lane spreads a fan-out over several boxes, so it gets the
+      # unpinned lane spreads a fan-out over several boxes, so it gets the
       # width that keeps three boxes busy (8), and a pinned lane gets one box's
       # PARALLEL minus the parent's own stream (4). An explicit --var wins.
+      # The three role lanes ride their own aliases (litellm/config.yaml) so a
+      # wave of mappers and a wave of reviewers reach every box while the
+      # writers still follow grok_subagents_lane; see [subagents.models].
       grok_subagents_lane          = var.grok_subagents_lane
       grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : (var.grok_subagents_lane == "agent-swarm" ? 8 : 4)
+      grok_explore_lane            = var.grok_explore_lane
+      grok_plan_lane               = var.grok_plan_lane
+      grok_review_lane             = var.grok_review_lane
     })
     # The per-repo notes library, interpolated verbatim into the quoted heredoc
     # that writes ~/.grok/notes-setup.sh in startup.sh.tftpl. One copy under
@@ -724,6 +730,40 @@ resource "coder_script" "stack_repo_skills" {
     ez_trunk_based_repo_skill        = chomp(file("${path.module}/ez-trunk-based-repo.SKILL.md"))
     ez_micro_plan_skill              = chomp(file("${path.module}/ez-micro-plan.SKILL.md"))
     ez_micro_plan_plan_check         = chomp(file("${path.module}/ez-micro-plan.plan_check.py"))
+  })
+}
+
+# The fleet suite: the six agent definitions, the three persona overlays and the four
+# parent-side skills, in a body of their own for the same reason every other family has one
+# -- each coder_script.script is a separate execve with its own single-argument ceiling.
+# The contract splits by home, and the split is deliberate: a skill a person has edited is
+# theirs and stays absent-only, while an agent definition or a persona the stack owns is
+# rewritten on every start for as long as it carries the marker, the way ~/.grok/AGENTS.md
+# is. A stale role definition is worth refreshing for, because it silently changes how every
+# child in every workspace behaves.
+resource "coder_script" "stack_fleet" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the fleet agents, personas and skills"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/stack-fleet.sh.tftpl", {
+    explorer_agent               = chomp(file("${path.module}/explorer.AGENT.md"))
+    architect_agent              = chomp(file("${path.module}/architect.AGENT.md"))
+    implementer_agent            = chomp(file("${path.module}/implementer.AGENT.md"))
+    tester_agent                 = chomp(file("${path.module}/tester.AGENT.md"))
+    reviewer_agent               = chomp(file("${path.module}/reviewer.AGENT.md"))
+    security_auditor_agent       = chomp(file("${path.module}/security-auditor.AGENT.md"))
+    thorough_researcher_persona  = chomp(file("${path.module}/thorough-researcher.PERSONA.toml"))
+    senior_implementer_persona   = chomp(file("${path.module}/senior-implementer.PERSONA.toml"))
+    skeptical_reviewer_persona   = chomp(file("${path.module}/skeptical-reviewer.PERSONA.toml"))
+    feature_implementation_skill = chomp(file("${path.module}/feature-implementation.SKILL.md"))
+    skeptical_review_skill       = chomp(file("${path.module}/skeptical-review.SKILL.md"))
+    security_audit_skill         = chomp(file("${path.module}/security-audit.SKILL.md"))
+    bug_hunt_skill               = chomp(file("${path.module}/bug-hunt.SKILL.md"))
   })
 }
 

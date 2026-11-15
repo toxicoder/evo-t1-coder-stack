@@ -1,0 +1,1 @@
+../../../templates/common/feature-implementation.SKILL.md

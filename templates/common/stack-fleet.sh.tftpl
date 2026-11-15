@@ -1,0 +1,154 @@
+#!/bin/sh
+# tftpl: coder_script body; the fleet suite payloads are interpolated from the map
+# main.tf passes, each into a quoted here-doc so no shell text inside one is
+# expanded. Why this family rides a body of its own rather than stack-skills.sh.tftpl
+# or stack-repo-skills.sh.tftpl: the agent execs every body as ONE argument to
+# execve(2), Linux caps one argument at 131072 bytes, and this body inlines thirteen
+# payloads on top of the two families already at their own ceiling;
+# docs/coder-templates.md#the-one-argument-ceiling.
+set -u
+
+# The contract splits by home, and the split is deliberate.
+#
+# Agents and personas are marker-aware, the way ~/.grok/AGENTS.md is: a copy carrying
+# the stack marker (managed-by: evo-t1-coder-stack) is stack-owned and gets the current
+# text on every start, while a copy whose marker lines a person deleted is theirs and is
+# left alone. A stale role definition is worth refreshing for, because it silently
+# changes how every child in every workspace behaves. The same marker refresh-configs
+# checks before it rewrites the file from the seed in this repo.
+#
+# Skills stay absent-only, like the ez- families: a SKILL.md that already exists belongs
+# to the user. The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents
+# copy what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder
+# copy, never a second inline body.
+#
+# Silent on a healthy workspace either way: this body's log is what an operator reads
+# when a role or a skill is missing.
+
+if [ ! -f "$HOME/.grok/agents/explorer.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/explorer.md"; then
+  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  cat >"$HOME/.grok/agents/explorer.md" <<'EXPLORER_AGENT_EOF'
+${explorer_agent}
+EXPLORER_AGENT_EOF
+fi
+
+if [ ! -f "$HOME/.grok/agents/architect.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/architect.md"; then
+  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  cat >"$HOME/.grok/agents/architect.md" <<'ARCHITECT_AGENT_EOF'
+${architect_agent}
+ARCHITECT_AGENT_EOF
+fi
+
+if [ ! -f "$HOME/.grok/agents/implementer.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/implementer.md"; then
+  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  cat >"$HOME/.grok/agents/implementer.md" <<'IMPLEMENTER_AGENT_EOF'
+${implementer_agent}
+IMPLEMENTER_AGENT_EOF
+fi
+
+if [ ! -f "$HOME/.grok/agents/tester.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/tester.md"; then
+  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  cat >"$HOME/.grok/agents/tester.md" <<'TESTER_AGENT_EOF'
+${tester_agent}
+TESTER_AGENT_EOF
+fi
+
+if [ ! -f "$HOME/.grok/agents/reviewer.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/reviewer.md"; then
+  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  cat >"$HOME/.grok/agents/reviewer.md" <<'REVIEWER_AGENT_EOF'
+${reviewer_agent}
+REVIEWER_AGENT_EOF
+fi
+
+# The hyphen stays in the file name: the definition's own name: field says
+# security-auditor, and grok-build resolves the definition by that name.
+if [ ! -f "$HOME/.grok/agents/security-auditor.md" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/security-auditor.md"; then
+  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  cat >"$HOME/.grok/agents/security-auditor.md" <<'SECURITY_AUDITOR_AGENT_EOF'
+${security_auditor_agent}
+SECURITY_AUDITOR_AGENT_EOF
+fi
+
+if [ ! -f "$HOME/.grok/personas/thorough-researcher.toml" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/personas/thorough-researcher.toml"; then
+  mkdir -p "$HOME/.grok/personas" 2>/dev/null
+  cat >"$HOME/.grok/personas/thorough-researcher.toml" <<'THOROUGH_RESEARCHER_PERSONA_EOF'
+${thorough_researcher_persona}
+THOROUGH_RESEARCHER_PERSONA_EOF
+fi
+
+if [ ! -f "$HOME/.grok/personas/senior-implementer.toml" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/personas/senior-implementer.toml"; then
+  mkdir -p "$HOME/.grok/personas" 2>/dev/null
+  cat >"$HOME/.grok/personas/senior-implementer.toml" <<'SENIOR_IMPLEMENTER_PERSONA_EOF'
+${senior_implementer_persona}
+SENIOR_IMPLEMENTER_PERSONA_EOF
+fi
+
+if [ ! -f "$HOME/.grok/personas/skeptical-reviewer.toml" ] \
+   || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/personas/skeptical-reviewer.toml"; then
+  mkdir -p "$HOME/.grok/personas" 2>/dev/null
+  cat >"$HOME/.grok/personas/skeptical-reviewer.toml" <<'SKEPTICAL_REVIEWER_PERSONA_EOF'
+${skeptical_reviewer_persona}
+SKEPTICAL_REVIEWER_PERSONA_EOF
+fi
+
+if [ ! -f "$HOME/.coder/skills/feature-implementation/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/feature-implementation" 2>/dev/null
+  cat >"$HOME/.coder/skills/feature-implementation/SKILL.md" <<'FEATURE_IMPLEMENTATION_SKILL_MD_EOF'
+${feature_implementation_skill}
+FEATURE_IMPLEMENTATION_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/feature-implementation/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/feature-implementation" 2>/dev/null
+  cp "$HOME/.coder/skills/feature-implementation/SKILL.md" \
+    "$HOME/.agents/skills/feature-implementation/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/skeptical-review/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/skeptical-review" 2>/dev/null
+  cat >"$HOME/.coder/skills/skeptical-review/SKILL.md" <<'SKEPTICAL_REVIEW_SKILL_MD_EOF'
+${skeptical_review_skill}
+SKEPTICAL_REVIEW_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/skeptical-review/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/skeptical-review" 2>/dev/null
+  cp "$HOME/.coder/skills/skeptical-review/SKILL.md" \
+    "$HOME/.agents/skills/skeptical-review/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/security-audit/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/security-audit" 2>/dev/null
+  cat >"$HOME/.coder/skills/security-audit/SKILL.md" <<'SECURITY_AUDIT_SKILL_MD_EOF'
+${security_audit_skill}
+SECURITY_AUDIT_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/security-audit/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/security-audit" 2>/dev/null
+  cp "$HOME/.coder/skills/security-audit/SKILL.md" \
+    "$HOME/.agents/skills/security-audit/SKILL.md" 2>/dev/null
+fi
+
+if [ ! -f "$HOME/.coder/skills/bug-hunt/SKILL.md" ]; then
+  mkdir -p "$HOME/.coder/skills/bug-hunt" 2>/dev/null
+  cat >"$HOME/.coder/skills/bug-hunt/SKILL.md" <<'BUG_HUNT_SKILL_MD_EOF'
+${bug_hunt_skill}
+BUG_HUNT_SKILL_MD_EOF
+fi
+
+if [ ! -f "$HOME/.agents/skills/bug-hunt/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/bug-hunt" 2>/dev/null
+  cp "$HOME/.coder/skills/bug-hunt/SKILL.md" \
+    "$HOME/.agents/skills/bug-hunt/SKILL.md" 2>/dev/null
+fi
+
+exit 0
