@@ -3,11 +3,12 @@
 # ## grok-subagent-slots.bats - hermetic coverage for the fan-out seam
 #
 # Three things decide whether a fan-out on this stack is parallel at all, and all
-# three are text in a template someone can edit: every built-in subagent type has
-# to ride the fan-out lane (naming only the two read-only types leaves the writers
-# on the parent's pinned box, which is how a swarm wave ends up queued behind one
-# box anyway), the width has to be derived from the lane rather than one number for
-# both lanes, and the rulebook has to tell the parent to fill the slots it was
+# three are text in a template someone can edit: every subagent type a session can
+# spawn has to ride a lane, each role on the alias that suits the work (a named type
+# with no entry inherits the parent's model, which is how a swarm wave ends up
+# queued behind one box anyway), the width has to be derived from the lane rather
+# than one number for both lanes, and the rulebook has to tell the parent to fill
+# the slots it was
 # given. Each is pinned for both template twins, and the seed body's own literals
 # are pinned so a re-hardcoded default cannot sneak back in.
 #
@@ -70,13 +71,28 @@ subagents_block() {
   done
 }
 
-@test "subagents config: every built-in type rides the lane, not just the readers" {
-  local file type
+@test "subagents config: every subagent type rides a lane, each role on its own" {
+  # One knob per role, and no type left unpinned: a named type with no entry
+  # inherits the parent's model, which is how a fleet ends up queued behind the
+  # box that spawned it. The writers follow the fan-out knob; the readers, the
+  # planner and the skeptic each have their own, so a cheap alias serves the
+  # evidence-gathering half of a wave and a deep one serves the review.
+  local file type var entry
   for file in "${CONFIG_TWINS[@]}"; do
-    for type in general-purpose explore plan; do
-      run grep -F "${type} = \"\${grok_subagents_lane}\"" "${file}"
+    for entry in \
+      'general-purpose ${grok_subagents_lane}' \
+      'implementer ${grok_subagents_lane}' \
+      'tester ${grok_subagents_lane}' \
+      'explore ${grok_explore_lane}' \
+      'explorer ${grok_explore_lane}' \
+      'plan ${grok_plan_lane}' \
+      'architect ${grok_plan_lane}' \
+      'reviewer ${grok_review_lane}' \
+      'security-auditor ${grok_review_lane}'; do
+      read -r type var <<<"${entry}"
+      run grep -F "${type} = \"${var}\"" "${file}"
       [ "${status}" -eq 0 ] || {
-        echo "${file} leaves ${type} off the fan-out lane" >&2
+        echo "${file} leaves ${type} off ${var}" >&2
         return 1
       }
     done
@@ -111,6 +127,41 @@ subagents_block() {
     # only place a reader learns the writers ride it too.
     run grep -F 'general-purpose, explore, plan' "${file}"
     [ "${status}" -eq 0 ]
+    # Each role lane is a declared variable with its own default and its own
+    # validator: the default is what makes the routing the shipped behaviour, and
+    # the regex is what keeps a typo out of a rendered model id.
+    local role
+    for role in grok_explore_lane grok_plan_lane grok_review_lane; do
+      run grep -F "variable \"${role}\"" "${file}"
+      [ "${status}" -eq 0 ] || {
+        echo "${file} has no ${role} variable, so the role cannot be rolled back alone" >&2
+        return 1
+      }
+      run grep -F "can(regex(\"^[a-z0-9._-]+\$\", var.${role}))" "${file}"
+      [ "${status}" -eq 0 ] || {
+        echo "${file} renders ${role} without validating it is a model id" >&2
+        return 1
+      }
+    done
+  done
+}
+
+@test "subagents config: the role defaults are local Spark aliases" {
+  # A role default is the routing most workspaces get, so it has to name a Spark
+  # group in litellm/config.yaml. The agent- prefix pin is what keeps a cloud
+  # model id from ever arriving in a rendered lane.
+  local file
+  for file in "${CODER_TWINS[@]}"; do
+    run grep -F 'default     = "agent-explore"' "${file}"
+    [ "${status}" -eq 0 ] || {
+      echo "${file} has no agent-explore default for the reader lane" >&2
+      return 1
+    }
+    run grep -F 'default     = "agent-review"' "${file}"
+    [ "${status}" -eq 0 ] || {
+      echo "${file} has no agent-review default for the skeptic lane" >&2
+      return 1
+    }
   done
 }
 
@@ -137,6 +188,10 @@ subagents_block() {
   [ "${status}" -eq 0 ]
   run grep -F 'GROK_SUBAGENT_MAX_CONCURRENT' "${seed}"
   [ "${status}" -eq 0 ]
+  run grep -F 'GROK_EXPLORE_LANE' "${seed}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'GROK_REVIEW_LANE' "${seed}"
+  [ "${status}" -eq 0 ]
   # The two tokens must be substituted from those reads. A re-hardcoded literal
   # here is how a contributor home drifts from what a template --var renders.
   run grep -F "s|\\\${grok_subagents_lane}|\${lane}|g" "${seed}"
@@ -149,6 +204,16 @@ subagents_block() {
     echo "seed-dev-env.sh no longer substitutes the width from a variable" >&2
     return 1
   }
+  # A contributor home gets the same role routing a workspace does, so the three
+  # role tokens are substituted too.
+  local role
+  for role in grok_explore_lane grok_plan_lane grok_review_lane; do
+    run grep -F "s|\\\${${role}}|" "${seed}"
+    [ "${status}" -eq 0 ] || {
+      echo "seed-dev-env.sh leaves \${${role}} unsubstituted" >&2
+      return 1
+    }
+  done
 }
 
 @test "rulebook: the parent is told to fill the slots and to prove the wave" {
@@ -160,7 +225,11 @@ subagents_block() {
     'plan_check.py .grok/plans/' \
     'ctx/L0.md' \
     'Promotion is your job' \
-    'a task that wants more is two tasks'; do
+    'a task that wants more is two tasks' \
+    'Mandatory independent review' \
+    'Any wave of three or more independent children rides `agent-swarm`' \
+    'ends with an independent skeptic on `agent-review`' \
+    'wrote none of the change reviewed it'; do
     run grep -F -- "${phrase}" "${RULEBOOK}"
     [ "${status}" -eq 0 ] || {
       echo "the seed dropped: ${phrase}" >&2

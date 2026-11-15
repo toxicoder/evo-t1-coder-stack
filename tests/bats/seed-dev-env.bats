@@ -430,21 +430,45 @@ assert_contributor_home() {
   out="${scratch}/config.toml"
   tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
 
-  # The shipped default is a pinned lane, so one box's PARALLEL minus the parent's
-  # own stream, and every built-in type rides that lane - a fan-out that left the
-  # writers on the parent's model would queue behind one box.
+  # The shipped default puts the writers on a pinned lane, so one box's PARALLEL
+  # minus the parent's own stream, and reads each role's own alias: a reader on
+  # the cheap lane, a planner on the parent's, a skeptic on the deep one. A
+  # fan-out that left the writers on the parent's model would queue behind one box.
   seed_render_grok_config "${tpl}" "${out}"
-  assert_fixed "pinned lane" "${out}" 'explore = "agent"'
   assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
-  assert_fixed "pinned plan lane" "${out}" 'plan = "agent"'
+  assert_fixed "pinned lane for the implementers" "${out}" 'implementer = "agent"'
+  assert_fixed "pinned lane for the testers" "${out}" 'tester = "agent"'
+  assert_fixed "explore lane" "${out}" 'explore = "agent-explore"'
+  assert_fixed "explorer agent lane" "${out}" 'explorer = "agent-explore"'
+  assert_fixed "plan lane" "${out}" 'plan = "agent"'
+  assert_fixed "architect agent lane" "${out}" 'architect = "agent"'
+  assert_fixed "reviewer lane" "${out}" 'reviewer = "agent-review"'
+  assert_fixed "security-auditor lane" "${out}" 'security-auditor = "agent-review"'
   assert_fixed "pinned width" "${out}" 'max_concurrent = 4'
+  # Every token the template carries must be substituted here, or a contributor
+  # home gets a literal ${...} where a model id belongs.
+  assert_not_fixed "no unsubstituted template token" "${out}" '${grok_'
 
   # The unpinned swarm lane is what buys the width: it spreads over every box, so
-  # the default doubles to the number that keeps three of them busy.
+  # the default doubles to the number that keeps three of them busy. It moves the
+  # writer types and leaves each reader, planner and skeptic on its own alias.
   GROK_SUBAGENTS_LANE='agent-swarm' seed_render_grok_config "${tpl}" "${out}"
-  assert_fixed "swarm lane for the readers" "${out}" 'explore = "agent-swarm"'
   assert_fixed "swarm lane for the writers" "${out}" 'general-purpose = "agent-swarm"'
+  assert_fixed "swarm lane for the implementers" "${out}" 'implementer = "agent-swarm"'
+  assert_fixed "reader lane survives the writer lane" "${out}" 'explore = "agent-explore"'
+  assert_fixed "skeptic lane survives the writer lane" "${out}" 'reviewer = "agent-review"'
   assert_fixed "swarm width" "${out}" 'max_concurrent = 8'
+
+  # Each role knob is its own rollback, so a proxy that has not reloaded the new
+  # aliases can be stepped around one role at a time.
+  GROK_EXPLORE_LANE='agent-low' GROK_PLAN_LANE='agent-medium' \
+    GROK_REVIEW_LANE='agent-xhigh' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "explore lane override" "${out}" 'explore = "agent-low"'
+  assert_fixed "plan lane override" "${out}" 'plan = "agent-medium"'
+  assert_fixed "architect follows the plan lane" "${out}" 'architect = "agent-medium"'
+  assert_fixed "review lane override" "${out}" 'reviewer = "agent-xhigh"'
+  assert_fixed "auditor follows the review lane" "${out}" 'security-auditor = "agent-xhigh"'
+  assert_fixed "writer lane untouched by the role overrides" "${out}" 'general-purpose = "agent"'
 
   # An explicit width wins over the derivation in both directions.
   GROK_SUBAGENTS_LANE='agent-swarm' GROK_SUBAGENT_MAX_CONCURRENT='15' \
@@ -461,6 +485,18 @@ assert_contributor_home() {
   assert_match "width refused" 'is not a count' "${notes}"
   assert_fixed "lane fell back" "${out}" 'general-purpose = "agent"'
   assert_fixed "width fell back with the lane" "${out}" 'max_concurrent = 4'
+
+  # The same refusal guards each role knob, so one bad value cannot render a
+  # model id the proxy has never heard of.
+  notes="$(GROK_EXPLORE_LANE='two words' GROK_PLAN_LANE='a|b' GROK_REVIEW_LANE=' ' \
+    seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+  assert_match "explore lane refused" 'GROK_EXPLORE_LANE' "${notes}"
+  assert_match "plan lane refused" 'GROK_PLAN_LANE' "${notes}"
+  assert_match "review lane refused" 'GROK_REVIEW_LANE' "${notes}"
+  seed_render_grok_config "${tpl}" "${out}" >/dev/null 2>&1
+  assert_fixed "explore lane fell back" "${out}" 'explore = "agent-explore"'
+  assert_fixed "plan lane fell back" "${out}" 'plan = "agent"'
+  assert_fixed "review lane fell back" "${out}" 'reviewer = "agent-review"'
 
   # The ceiling is the fleet's, so an absurd width is clamped where it is stated.
   notes="$(GROK_SUBAGENT_MAX_CONCURRENT='9999' \

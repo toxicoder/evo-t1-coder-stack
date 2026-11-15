@@ -29,8 +29,43 @@ variable "grok_default_model" {
 
 variable "grok_subagents_lane" {
   type        = string
-  description = "Grok catalog key every subagent a session spawns runs on, rendered into [subagents.models] in the workspace's ~/.grok/config.toml for all three built-in types (general-purpose, explore, plan). The default keeps subagents on the same pinned Spark lane as the parent session. `agent-swarm` is the fan-out choice: it is the one Spark group with no LiteLLM session pin, so the least-busy picker spreads a fan-out over all three boxes instead of queueing them behind one box's streams. It also raises the default fan-out width, so this is the one knob a workspace turns on to fan out."
+  description = "Grok catalog key every subagent a session spawns runs on, rendered into [subagents.models] in the workspace's ~/.grok/config.toml for all three built-in types (general-purpose, explore, plan). The default keeps subagents on the same pinned Spark lane as the parent session. `agent-swarm` is the fan-out choice: it is the one Spark group with no LiteLLM session pin, so the least-busy picker spreads a fan-out over all three boxes instead of queueing them behind one box's streams. It also raises the default fan-out width, so this is the one knob a workspace turns on to fan out. It now drives the writer types only; the read/search and skeptic lanes have their own variables below."
   default     = "agent"
+}
+
+# The three role lanes. Each is its own --var so one role can be put back on the parent's
+# lane without moving the others, which is the rollback an operator needs when a workspace
+# is older than the LiteLLM config that registers the alias. Every default is a Spark alias
+# in litellm/config.yaml, so no lane can drift onto a cloud endpoint from here.
+
+variable "grok_explore_lane" {
+  type        = string
+  description = "Grok catalog key the `explore` subagent type runs on. The default `agent-explore` is the read/search lane: the same three Spark boxes as `agent`, thinking baked to low, and the second group with no LiteLLM session pin, so a wave of read-only mappers is placed across the whole fleet rather than queueing behind one box's streams. Set `agent-low` to keep the pin at the same thinking level, or `agent` to send mapping work at full depth."
+  default     = "agent-explore"
+  validation {
+    condition     = can(regex("^[a-z0-9._-]+$", var.grok_explore_lane))
+    error_message = "grok_explore_lane must be a single Grok catalog key, for example agent-explore, agent-low or agent."
+  }
+}
+
+variable "grok_plan_lane" {
+  type        = string
+  description = "Grok catalog key the `plan` subagent type runs on. A planner is one conversation that re-reads what it just read and steers every wave after it, so the default keeps the session pin (`agent`) and the depth that goes with it, rather than spreading. Set `agent-medium` to trade depth for turnaround on a busy fleet."
+  default     = "agent"
+  validation {
+    condition     = can(regex("^[a-z0-9._-]+$", var.grok_plan_lane))
+    error_message = "grok_plan_lane must be a single Grok catalog key, for example agent, agent-medium or agent-xhigh."
+  }
+}
+
+variable "grok_review_lane" {
+  type        = string
+  description = "Grok catalog key the skeptical roles run on - `reviewer` and `security-auditor` in [subagents.models], which is where the mandatory independent-review phase of a multi-file change gets its thinking level. The default `agent-review` bakes xhigh and lifts the session pin, so a wave of reviewers spreads and each one thinks as hard as the parent. It is also the single seam for the cost of that phase: set `agent-medium` here and the alias in litellm/config.yaml to make reviews cheaper without touching any other lane."
+  default     = "agent-review"
+  validation {
+    condition     = can(regex("^[a-z0-9._-]+$", var.grok_review_lane))
+    error_message = "grok_review_lane must be a single Grok catalog key, for example agent-review, agent-xhigh or agent."
+  }
 }
 
 variable "grok_subagent_max_concurrent" {
