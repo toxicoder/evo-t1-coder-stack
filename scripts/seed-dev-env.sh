@@ -126,27 +126,23 @@ resolve_repo_root() {
 }
 
 # @function seed_render_grok_config
-# Render grok-config.toml.tftpl for a contributor home, with the contributor
+# Render grok-config.toml.tftpl for a contributor home with the contributor
 # defaults fixed here (no Coder Terraform variables): github and
 # grok_config_extra blocks dropped, the search block kept, the context7 block
-# kept only with CONTEXT7_API_KEY set or the --context7-mcp verdict (the lane
-# handshakes and answers keyless at the public rate limits, so a keyless home
-# is a default, not a failure). ${litellm_url} becomes STACK_LITELLM_URL; the
-# model default is agent and the fan-out width 4, the writer lane is agent and
-# the reader lane agent-explore, the planner agent and the skeptic agent-review,
-# matching the template variable defaults; the affinity key is contributor; the
-# cache-proxy path re-roots under the seed home.
-# GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE, GROK_REVIEW_LANE and
-# GROK_SUBAGENT_MAX_CONCURRENT override those knobs, and an absent width follows
-# the writer lane as templates/workspace/main.tf derives it. Substitutions are
-# sed, never eval; a doubled dollar unfolds first.
+# kept only with CONTEXT7_API_KEY set or the --context7-mcp verdict (that lane
+# handshakes and answers keyless at the public rate limits). ${litellm_url}
+# becomes STACK_LITELLM_URL, the affinity key is contributor, the cache-proxy
+# path re-roots under the seed home, and each fan-out role ships on the alias
+# its template variable defaults to (writers and the planner on agent, readers
+# on agent-explore, the skeptic on agent-review). Substitutions are sed, never
+# eval; a doubled dollar unfolds first.
 # Globals:
-#   STACK_LITELLM_URL, SEARXNG_URL (search URL default
-#   http://host.docker.internal:8181, written as a concrete TOML string),
-#   CONTEXT7_API_KEY (non-empty keeps the context7 block), HOME (the home
-#   default when $3 is not given), GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE,
-#   GROK_PLAN_LANE, GROK_REVIEW_LANE,
-#   GROK_SUBAGENT_MAX_CONCURRENT (an unusable value falls back and is noted)
+#   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
+#   written as a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the
+#   context7 block), HOME (the home default when $3 is not given), and the five
+#   fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
+#   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT (an unusable value falls
+#   back to its default and is noted)
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write
