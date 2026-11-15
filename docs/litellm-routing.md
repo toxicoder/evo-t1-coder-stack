@@ -131,7 +131,15 @@ The two levers that actually move load off a shedding box:
    can afford a wider wave - 15 subagents spread by `least-busy` over three boxes fill each
    box's `PARALLEL` exactly, which is the
    difference between buying wall-clock and buying queue depth. That default asks every box
-   for all of its streams. The two reader lanes
+   for all of its streams, and it reserves nothing for the parent's own request the way
+   the pinned derivation's minus-one does. That is a deliberate trade rather than an
+   oversight: the parent's conversation, the reader waves and the review pass all arrive
+   on the same three boxes and share those `PARALLEL` streams, so at 15 a single busy
+   workspace can have the fleet fully subscribed and the last arrivals wait. What makes
+   that survivable is `limit_behavior = "queue"` holding the overflow instead of failing
+   the spawn, so the cost of overshoot is a subagent's latency. Drop
+   `grok_subagent_max_concurrent` below 15 when several workspaces share the fleet. The
+   two reader lanes
    spread the same way, and each group counts its own in-flight requests, but the box's
    `PARALLEL` streams are one pool that every alias arriving on it shares.
    Past 15 across the fleet the boxes have no

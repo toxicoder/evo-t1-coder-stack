@@ -472,10 +472,12 @@ assert_contributor_home() {
   assert_fixed "auditor follows the review lane" "${out}" 'security-auditor = "agent-xhigh"'
   assert_fixed "writer lane untouched by the role overrides" "${out}" 'general-purpose = "agent-swarm"'
 
-  # An explicit width wins over the derivation in both directions.
-  GROK_SUBAGENTS_LANE='agent-swarm' GROK_SUBAGENT_MAX_CONCURRENT='15' \
+  # An explicit width wins over the derivation in both directions. The number has to
+  # differ from both derived widths: asserting 15 here is also what the lane derives on
+  # its own, so that case would survive an override that never fired.
+  GROK_SUBAGENTS_LANE='agent-swarm' GROK_SUBAGENT_MAX_CONCURRENT='11' \
     seed_render_grok_config "${tpl}" "${out}"
-  assert_fixed "explicit width wins on the swarm lane" "${out}" 'max_concurrent = 15'
+  assert_fixed "explicit width wins on the swarm lane" "${out}" 'max_concurrent = 11'
   GROK_SUBAGENTS_LANE='agent' GROK_SUBAGENT_MAX_CONCURRENT='2' \
     seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "explicit width wins on a pinned lane" "${out}" 'max_concurrent = 2'

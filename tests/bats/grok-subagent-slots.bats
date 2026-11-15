@@ -171,11 +171,26 @@ subagents_block() {
   # fleet behind one box again. Assert it inside the variable block: each twin
   # carries two other default     = "agent" lines (grok_default_model,
   # grok_plan_lane) that a file-wide grep cannot tell apart from this one.
+  #
+  # Pin those two neighbours in the same pass. A blanket flip to agent-swarm would take
+  # the session model and the planner with it, and only this test can see that it did:
+  # the session model decides which lane the parent conversation runs on, and the planner
+  # stays pinned on purpose because one planner steers every wave after it.
   local file block
   for file in "${CODER_TWINS[@]}"; do
     block="$(awk '/^variable "grok_subagents_lane" \{/,/^\}/' "${file}")"
     [[ "${block}" == *'default     = "agent-swarm"'* ]] || {
       echo "${file} does not default grok_subagents_lane to agent-swarm" >&2
+      return 1
+    }
+    block="$(awk '/^variable "grok_default_model" \{/,/^\}/' "${file}")"
+    [[ "${block}" == *'default     = "agent"'* ]] || {
+      echo "${file} does not default grok_default_model to agent" >&2
+      return 1
+    }
+    block="$(awk '/^variable "grok_plan_lane" \{/,/^\}/' "${file}")"
+    [[ "${block}" == *'default     = "agent"'* ]] || {
+      echo "${file} does not default grok_plan_lane to agent" >&2
       return 1
     }
   done
