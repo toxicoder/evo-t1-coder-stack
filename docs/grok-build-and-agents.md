@@ -876,6 +876,11 @@ The family splits by home, and the split is deliberate:
   and the file is the person's - the boot leaves a marker-free copy alone.
 - The eight skill copies are **absent-only**, like the `ez-` families: a `SKILL.md` that
   already exists belongs to the user and is never rewritten.
+- A managed path that is a **symlink** is left alone in both families. The marker test
+  reads the file a path points at, so writing through a link would replace a file the
+  stack does not own - a link aimed at `~/.grok/AGENTS.md` would have the seed overwrite
+  the rulebook. A link a person planted stays theirs, and one symlinked root stops the
+  seed before its first write.
 
 Either way the fix is the seed under `templates/common/` and a re-materialize, never a patch
 to the copy that is running - the same rule the two skill families above live by

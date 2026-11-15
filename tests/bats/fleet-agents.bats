@@ -607,7 +607,7 @@ assert_link_to() {
     name="${AGENTS[i]}"
     tag="${AGENT_TAGS[i]}"
     assert_contains_file "${name} absent-or-marker guard" "${SEED}" \
-      '^if \[ ! -f "\$HOME/\.grok/agents/'"${name}"'\.md" \][[:space:]]*\\$'
+      '^if ! \[ -L "\$HOME/\.grok/agents/'"${name}"'\.md" \][[:space:]]*\\$'
     assert_contains_file "${name} guard asks the marker first" "${SEED}" \
       "grep -qs 'managed-by: evo-t1-coder-stack' \"\\\$HOME/\.grok/agents/${name}\.md\""
     assert_contains_file "${name} agents dir is created" "${SEED}" \
@@ -646,7 +646,7 @@ assert_link_to() {
     name="${PERSONAS[i]}"
     tag="${PERSONA_TAGS[i]}"
     assert_contains_file "${name} absent-or-marker guard" "${SEED}" \
-      '^if \[ ! -f "\$HOME/\.grok/personas/'"${name}"'\.toml" \][[:space:]]*\\$'
+      '^if ! \[ -L "\$HOME/\.grok/personas/'"${name}"'\.toml" \][[:space:]]*\\$'
     assert_contains_file "${name} guard asks the marker first" "${SEED}" \
       "grep -qs 'managed-by: evo-t1-coder-stack' \"\\\$HOME/\.grok/personas/${name}\.toml\""
     assert_contains_file "${name} personas dir is created" "${SEED}" \
@@ -681,13 +681,13 @@ assert_link_to() {
   for i in "${!SKILLS[@]}"; do
     name="${SKILLS[i]}"
     assert_contains_file "${name} coder guard" "${SEED}" \
-      '^if \[ ! -f "\$HOME/\.coder/skills/'"${name}"'/SKILL\.md" \]; then$'
+      '^if ! \[ -L "\$HOME/\.coder/skills/'"${name}"'/SKILL\.md" \][[:space:]]*\\$'
     assert_contains_file "${name} coder mkdir" "${SEED}" \
       'mkdir -p "\$HOME/\.coder/skills/'"${name}"'" 2>/dev/null'
     assert_contains_file "${name} coder cat" "${SEED}" \
       'cat >"\$HOME/\.coder/skills/'"${name}"'/SKILL\.md" '"$(hdoc_open)"
     assert_contains_file "${name} agents guard" "${SEED}" \
-      '^if \[ ! -f "\$HOME/\.agents/skills/'"${name}"'/SKILL\.md" \]; then$'
+      '^if ! \[ -L "\$HOME/\.agents/skills/'"${name}"'/SKILL\.md" \][[:space:]]*\\$'
     assert_contains_file "${name} agents mkdir" "${SEED}" \
       'mkdir -p "\$HOME/\.agents/skills/'"${name}"'" 2>/dev/null'
     assert_contains_file "${name} copies the managed coder copy" "${SEED}" \
@@ -735,6 +735,70 @@ assert_link_to() {
 # ---------------------------------------------------------------------------
 # Registration: the three lists a payload has to appear in, or it does not ship.
 # ---------------------------------------------------------------------------
+
+@test "fleet seed: a planted symlink is refused and no write lands outside the four homes" {
+  # The marker guard reads the file a managed path points at, so a link planted at
+  # ~/.grok/agents/explorer.md aimed the body's cat at whatever it named: a link to the
+  # operator's own ~/.grok/AGENTS.md satisfied the marker test and got that file
+  # replaced. The guard now refuses a symlinked destination, and one symlinked root
+  # stops the body before its first write. Rendered, not grepped: this is behaviour.
+  local home rendered
+  home="$(mktemp -d "${BATS_TEST_TMPDIR}/symlink-home.XXXXXX")"
+  rendered="${BATS_TEST_TMPDIR}/rendered-fleet.sh"
+
+  # Each map key becomes one inert line: the guards are what is under test, and the
+  # payload bytes only have to be non-empty for the here-docs to close.
+  python3 - "$SEED" "$rendered" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="ascii").read()
+for key in sorted(set(re.findall(r"\$\{([a-z_]+)\}", text))):
+    text = text.replace("${" + key + "}", "seeded by the fleet body for " + key)
+open(sys.argv[2], "w", encoding="ascii").write(text)
+PY
+  [ -s "${rendered}" ] || {
+    printf 'FAIL: the fleet body rendered to nothing at %s\n' "${rendered}" >&2
+    return 1; }
+
+  mkdir -p "${home}/.grok/agents" "${home}/.coder/skills/bug-hunt" "${home}/.agents/skills"
+  printf 'managed-by: evo-t1-coder-stack\nthe operator wrote this rulebook\n' \
+    >"${home}/.grok/AGENTS.md"
+  ln -s "${home}/.grok/AGENTS.md" "${home}/.grok/agents/explorer.md"
+  # A dangling link passes a bare [ ! -f ], so cat would create the target instead.
+  ln -s "${home}/outside/SKILL.md" "${home}/.coder/skills/bug-hunt/SKILL.md"
+
+  HOME="${home}" sh "${rendered}"
+
+  assert_contains_file "the rulebook the link aimed at is untouched" \
+    "${home}/.grok/AGENTS.md" 'the operator wrote this rulebook'
+  [ -L "${home}/.grok/agents/explorer.md" ] || {
+    printf 'FAIL: the planted link at explorer.md was replaced by a real file\n' >&2
+    return 1; }
+  [ ! -e "${home}/outside/SKILL.md" ] || {
+    printf 'FAIL: the dangling link wrote its target at %s\n' \
+      "${home}/outside/SKILL.md" >&2
+    return 1; }
+  # The refusals are per path: the body still seeds the roles and skills nobody
+  # sabotaged. bug-hunt earns no twin here, because its ~/.coder source is the link the
+  # body refused to write through, and cp copies from a file that was never created.
+  assert_file_exists "an unsabotaged role still lands" \
+    "${home}/.grok/agents/architect.md"
+  assert_file_exists "an unsabotaged skill lands in both homes" \
+    "${home}/.coder/skills/feature-implementation/SKILL.md"
+  assert_file_exists "its twin too" \
+    "${home}/.agents/skills/feature-implementation/SKILL.md"
+
+  # One symlinked root would aim every write at a directory outside the four homes.
+  local rooty
+  rooty="$(mktemp -d "${BATS_TEST_TMPDIR}/symlink-root.XXXXXX")"
+  mkdir -p "${rooty}/.grok" "${rooty}/elsewhere" "${rooty}/.coder/skills" \
+    "${rooty}/.agents/skills"
+  ln -s "${rooty}/elsewhere" "${rooty}/.grok/agents"
+  HOME="${rooty}" sh "${rendered}"
+  [ -z "$(ls -A "${rooty}/elsewhere")" ] || {
+    printf 'FAIL: a symlinked agents root let writes into %s: %s\n' \
+      "${rooty}/elsewhere" "$(ls -A "${rooty}/elsewhere")" >&2
+    return 1; }
+}
 
 @test "registration: the push lib's payload loop lists all thirteen" {
   # main.tf reads every one of these from the copy pushed beside it, so a name
