@@ -55,6 +55,29 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   copy that sentinel into another repo. `scripts/setup-host.sh` remains the stack-host
   bootstrap only.
 
+## Agent fleet
+
+Local lanes only, every one of them an alias in `litellm/config.yaml` over the three Spark
+boxes (or the Arc): `agent` (xhigh, session-pinned), `agent-low` / `agent-medium` /
+`agent-xhigh` (that group at a baked thinking level), `agent-swarm` (xhigh, pin lifted: the
+fan-out lane), plus the two role lanes `agent-explore` (low, pin lifted: mapping and evidence)
+and `agent-review` (xhigh, pin lifted: the mandatory independent-review phase). No cloud model
+id belongs anywhere in this repo. Alias detail and the routing arithmetic:
+`docs/litellm-routing.md`.
+
+The rulebook a workspace boots with is the seed `templates/common/GROK_BUILD_AGENTS.md`,
+rewritten into `~/.grok/AGENTS.md` on every start while it carries the stack marker. This file
+is repo operator documentation; the seed is the source of truth for agent behaviour. The rest
+of the suite the same boot seeds is `templates/common/*.AGENT.md` (six role definitions) and
+`templates/common/*.PERSONA.toml` (three overlays) into `~/.grok/agents/` and
+`~/.grok/personas/`, and `templates/common/*.SKILL.md` into `~/.coder/skills/` with a `cp` twin
+in `~/.agents/skills/`. Change the seed in this repo and re-materialize it, never the copy that
+lives in a workspace. Which lane each role rides is rendered from the `grok_subagents_lane`,
+`grok_explore_lane`, `grok_plan_lane` and `grok_review_lane` template variables, and the
+checkpoints a fleet run has to clear are the skill trio `ez-micro-plan` (plan, lanes, dispatch
+check), `feature-implementation` (Plan Mode to verified change), and `skeptical-review` (the
+independent pass every multi-file change ends with).
+
 ## GitHub auth
 
 Read this before you touch a credential. Across 222 past sessions in this workspace 29 hit
