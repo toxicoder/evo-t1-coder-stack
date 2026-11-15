@@ -974,18 +974,27 @@ rules above.
 
 ### Startup script templatefile rules
 
-- `startup.sh.tftpl` is rendered by `templatefile()`, so every braced shell expansion has
-  to be written `$${name}`; the one-dollar braced form is swallowed as an interpolation.
-  The unbraced form (`$name`) needs no escape.
+- Every `coder_script` body (`startup.sh.tftpl`, `stack-fleet.sh.tftpl`, the two skill
+  families, `gh-token-refresh.sh.tftpl`, `code-server.sh.tftpl`) is rendered by
+  `templatefile()`, so every braced shell expansion has to be written `$${name}`; the
+  one-dollar braced form is swallowed as an interpolation, in a comment or a `for` loop as
+  readily as in a command. The unbraced form (`$name`) needs no escape.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
-  twelve: `grok_config`, `grok_build_agents`, `notes_setup`, `tmux_conf`,
-  `grok_build_terminal`, `vscode_terminal_tmux`, `grok_build_delegation_skill`,
-  `coder_agents`, `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`.
-  The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The three skill payloads
-  are not among them: `ez_learn_skill`, `ez_skillify_skill` and `ez_create_skill_skill`
-  belong to the `coder_script.stack_skills` map, and their `chomp(file())` calls sit inside
-  that block rather than behind a `local.`, because both size readers credit a body by the
+  eleven: `grok_config`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
+  `vscode_terminal_tmux`, `grok_build_delegation_skill`, `coder_agents`,
+  `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`.
+  The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The payloads of the other
+  families are not among them: `ez_learn_skill`, `ez_skillify_skill` and
+  `ez_create_skill_skill` belong to the `coder_script.stack_skills` map,
+  `grok_build_agents` to `coder_script.agents_seed`, and the fleet's thirteen to
+  `coder_script.stack_fleet`. Each of those `chomp(file())` calls sits inside its own block
+  rather than behind a `local.`, because both size readers credit a body by the
   `path.module}` names in its own block.
+- `//tests:bats_tftpl_interpolation_test` settles that list rather than trusting it: it
+  reads every `templatefile()` call in both twins, takes the keys each map declares and the
+  names each body interpolates, and fails on either direction of drift. Run the checker
+  directly to see the offending body and line:
+  `python3 scripts/lib/tftpl_interpolation.py templates --strict`.
 - That is why the `.git` suffix is stripped with `sed` rather than the shorter
   `${leaf%.git}`: a braced expansion would add an interpolation `main.tf` does not pass.
 - The repository URLs arrive as rendered literals and are read through a *quoted* heredoc,

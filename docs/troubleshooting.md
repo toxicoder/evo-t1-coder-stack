@@ -1111,6 +1111,33 @@ bazelisk run //scripts:push-template
 coder restart <workspace>
 ```
 
+### A template push stops in "Detecting persistent resources" with `vars map does not contain key` -> a body used the one-dollar brace form for a shell variable
+
+Cause: `templatefile()` reads a single-dollar brace reference anywhere in a
+`coder_script` body as an interpolation - inside a shell comment or a `for` loop
+as readily as in a command - and the plan then asks the caller's map for a key
+`main.tf` never declares. Both twins fail at once, because both render the same
+body from `templates/common/`:
+
+```text
+Error: Invalid function argument
+  on main.tf line 753, in resource "coder_script" "stack_fleet":
+Invalid value for "vars" parameter: vars map does not contain key
+"evo_t1_root", referenced at ./stack-fleet.sh.tftpl:32,14-25.
+```
+
+The message names the body and the position, which is the whole diagnosis: line
+32 there is `if [ -L "${evo_t1_root}" ]; then`, a shell loop variable.
+
+Fix: write the shell variable through the double-dollar escape, which renders
+back to the literal `${name}` in the emitted script. The unbraced form (`$name`)
+needs no escape. The gate that refuses the one-dollar form is
+`//tests:bats_tftpl_interpolation_test`; name the offending body and line with:
+
+```sh
+python3 scripts/lib/tftpl_interpolation.py templates --strict
+```
+
 ### VS Code Web opens `/home/coder` instead of the cloned repository -> last workspace won
 
 Cause: path-based Coder apps drop the `?folder=` query before the browser sees
