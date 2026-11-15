@@ -13,6 +13,8 @@ tags: [grok, agents, workspace, mcp]
 - The Grok Build CLI in the golden image, and how it is pinned
 - The rendered `~/.grok/config.toml`: model aliases and role fallbacks
 - How a subagent fan-out is sized, laned, and dispatched from a micro-plan
+- The seeded fleet suite: six definitions, three personas, four skills, and the skeptic
+  that closes every multi-file change
 - One shared profile volume per user, and what last-booted rewrites
 - The search lane and the MCP servers behind it
 - Coder Agents on the control plane and the model config it needs
@@ -442,21 +444,28 @@ while the managed block is intact.
   template variable or the create form's **Grok default model** dropdown names
   another. `[models] default_reasoning_effort = "xhigh"`. The Spark lane answers
   `low` / `medium` / `xhigh`; `high` is never advertised.
-- The eight aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`,
-  `coder`, `coder-fast`, `chat`) are defined with `base_url` set to `litellm_url` and
+- The ten aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`,
+  `agent-explore`, `agent-review`, `coder`, `coder-fast`, `chat`) are defined with
+  `base_url` set to `litellm_url` and
   `env_key = "LITELLM_API_KEY"`. The key is injected as an environment variable, so
   it never appears in a file. `agent` carries three
   `[[model."agent".reasoning_efforts]]` tables (`xhigh` is the default). The
-  `agent-low` / `agent-medium` / `agent-xhigh` / `agent-swarm` aliases set
+  `agent-low` / `agent-medium` / `agent-xhigh` / `agent-swarm` / `agent-explore` /
+  `agent-review` aliases set
   `supports_reasoning_effort = false` because LiteLLM bakes the level for callers
-  that have no reasoning-effort field.
+  that have no reasoning-effort field. The last two are the reader and the skeptic: the
+  `explore` type and the seeded `explorer` ride `agent-explore` (`low`), and the seeded
+  `reviewer` and `security-auditor` ride `agent-review` (`xhigh`). What each lifts, what
+  it costs, and the `--var` that rolls it back are in
+  [litellm-routing.md](litellm-routing.md#the-fan-out-lanes-agent-explore-and-agent-review).
 - `[models]` also carries `extra_headers` with
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
   workspace's traffic to one healthy Spark box. Under a shared profile the
   last-booted workspace's key wins for the whole fleet.
-- `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane it
-  rides, both rendered from template variables: `grok_subagents_lane` (default
-  `agent`) and `grok_subagent_max_concurrent` (default `null`, which means "derive it
+- `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane each
+  type rides, both rendered from template variables: `grok_subagents_lane` (default
+  `agent`) for the writers, three more for the reader, planner and skeptic roles named
+  below, and `grok_subagent_max_concurrent` (default `null`, which means "derive it
   from the lane"). The two keys are one calculation, and `main.tf` is where it is made:
   `var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent :
   (var.grok_subagents_lane == "agent-swarm" ? 8 : 4)`, so
@@ -475,13 +484,24 @@ while the managed block is intact.
   `sampling_limit` is deliberately left unset: it defaults to `max_concurrent`, so the
   two caps cannot drift apart. `limit_behavior = "queue"` below them holds the overflow
   instead of failing the spawn, so overshoot costs a subagent latency rather than its
-  life. `[subagents.models]` pins all three built-in subagent types - `general-purpose`,
-  `explore` and `plan` - to whatever lane `grok_subagents_lane` names. Pinning only the
+  life. `[subagents.models]` pins every subagent type a session can get to a lane of its
+  own, and there are four variables behind those pins, not one: `grok_subagents_lane`
+  (default `agent`) for the writers, `grok_explore_lane` (default `agent-explore`) for the
+  mappers, `grok_plan_lane` (default `agent`) for the planner, and `grok_review_lane`
+  (default `agent-review`) for the skeptics. Concretely the block renders
+  `general-purpose`, `implementer` and `tester` from the writers' lane, `explore` and
+  `explorer` from the reader's, `plan` and `architect` from the planner's, and `reviewer`
+  and `security-auditor` from the skeptic's - the last six keys are the seeded role
+  definitions named in [the seeded fleet suite](#the-seeded-fleet-suite), and a key no
+  session selects is inert. Splitting the block that way is what lets one role go back on
+  the parent's lane without moving the others: a wave of mappers can spread over the whole
+  fleet while the planner that steers the next wave stays pinned to one box. Pinning only the
   two read-only types was the defect this block fixes: a spawn that names no type gets
   `general-purpose`, and that is the type every writer in a fan-out runs as, so those
   children inherited the parent's model and queued behind the one box a pinned parent
-  resolves to while the swarm-named readers spread over three. The width follows the same
-  one variable, so the lane is the single knob a workspace turns on to fan out.
+  resolves to while the swarm-named readers spread over three. The width still follows the
+  writers' one variable, so `grok_subagents_lane` remains the knob a workspace turns on to
+  fan out.
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
@@ -591,19 +611,27 @@ silent and counting it stays the parent's job.
 `max_depth = 1` is what makes that true: a child cannot spawn a child, so the slot count
 describes one tree and orchestration cannot leak.
 
-**What the lane choice buys.** `grok_subagents_lane` is the one knob, and the width now
-follows it: 8 on `agent-swarm`, 4 on a pinned lane, and an explicit
+**What the lane choice buys.** `grok_subagents_lane` is the knob for the writers, and the
+width follows it: 8 on `agent-swarm`, 4 on a pinned lane, and an explicit
 `grok_subagent_max_concurrent` overrules both (its validation accepts null or 1..32). Both
 defaults are the fleet's arithmetic rather than taste. A parent and every child it spawns
 carry the same `x-litellm-session-id`, so a pinned lane places the whole fan-out on one
 box and the useful width is that box's `PARALLEL` - 5 by default, from
 `scripts/spark-configure.sh` - minus the parent's own stream; past that, extra slots are
-LiteLLM queue depth. `agent-swarm` is the one Spark group with no session pin, so each
-child lands on whichever reachable box has the fewest requests in flight and the ceiling
+LiteLLM queue depth. `agent-swarm` is one of three Spark groups with no session pin -
+`agent-explore` and `agent-review` lift it the same way, and
+[litellm-routing.md](litellm-routing.md#the-fan-out-lanes-agent-explore-and-agent-review)
+is where what each lane buys is worked out - so each child lands on whichever reachable
+box has the fewest requests in flight and the ceiling
 becomes `PARALLEL` per box: 3 boxes x 5 = 15, which is every stream the fleet has and
-therefore a one-workspace-at-a-time number. All three built-in types (`general-purpose`,
-`explore`, `plan`) ride the lane through `[subagents.models]`, which is what makes the
-lane one decision instead of two: every writer in a fan-out is a `general-purpose` child,
+therefore a one-workspace-at-a-time number. The pins no longer put every type on that one
+lane: `[subagents.models]` renders `general-purpose` and the seeded `implementer` and
+`tester` from `grok_subagents_lane`, `explore` and the seeded `explorer` from
+`grok_explore_lane` (default `agent-explore`), `plan` and the seeded `architect` from
+`grok_plan_lane` (default `agent`, still pinned, because one planner is a conversation that
+steers every wave after it), and the seeded `reviewer` and `security-auditor` from
+`grok_review_lane` (default `agent-review`). What has not changed is why the block exists
+at all: every writer in a fan-out is a `general-purpose` child,
 and while only the two read-only types were pinned those writers inherited the parent's
 model, so a swarm-named wave still queued its edits behind one box's streams. The lane is
 therefore a config decision: the guide documents `[subagents.models]` as the per-type
@@ -618,8 +646,10 @@ matches what a template `--var` renders:
 GROK_SUBAGENTS_LANE=agent-swarm bazelisk run //scripts:seed-dev-env -- --home <dir>
 ```
 
-`GROK_SUBAGENTS_LANE` names the lane and `GROK_SUBAGENT_MAX_CONCURRENT` the width, with
-the same derivation `main.tf` uses. A value the seeder cannot use is refused in place and
+`GROK_SUBAGENTS_LANE` names the writers' lane and `GROK_SUBAGENT_MAX_CONCURRENT` the width,
+with the same derivation `main.tf` uses; `GROK_EXPLORE_LANE` (default `agent-explore`),
+`GROK_PLAN_LANE` (default `agent`) and `GROK_REVIEW_LANE` (default `agent-review`) name the
+three role lanes the same way. A value the seeder cannot use is refused in place and
 the default goes in, so a typo is a line in the output rather than a broken key in
 `~/.grok/config.toml`:
 
@@ -708,6 +738,148 @@ committed. The seam is pinned by `bazelisk test //tests:bats_grok_subagent_slots
 (both twins' `[subagents]` block, the `coder.tf` validation, the `main.tf` derivation, and
 the rulebook's slot-filling rule) and `bazelisk test //tests:bats_ez_micro_plan_test`
 (the checker driven over a scratch plan tree).
+
+## The seeded fleet suite
+
+The seam above is what a fan-out costs; this is who is in it. The family has its own seeding
+`coder_script`, `stack_fleet` (`templates/workspace/main.tf:744`,
+`templates/devcontainer/main.tf:795`), which puts thirteen payloads in place on every start
+from `templates/common/`, and `//scripts:seed-dev-env` seeds the same thirteen into a
+contributor home through the last seventeen lines of `seed_seed_targets`
+(`scripts/lib/config_seed.sh:129-145`). The body that writes them is
+`templates/common/stack-fleet.sh.tftpl`, its own body for the same one-argument reason the
+two skill families have theirs
+([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Thirteen is six agent
+definitions, three persona overlays, and four parent-side skills.
+
+### The six agent definitions
+
+Each is a markdown file with YAML frontmatter whose body is the child's system prompt; the
+seeds are `templates/common/<name>.AGENT.md` and they land at
+`~/.grok/agents/<name>.md`. A definition is what fixes a role's model, tools and prompt
+mode, which a persona deliberately does not (`~/.grok/docs/user-guide/16-subagents.md:77`).
+
+| Definition | What it delivers | Baked lane |
+|---|---|---|
+| `explorer` | a digest of numbered claims, each with the `path:line` that proves it, plus what it looked for and did not find | `agent-explore` |
+| `architect` | the approach, the single-writer slices, and the seam a consumer needs before it can be written | `agent` |
+| `implementer` | one owned slice as a minimal patch, with its own check quoted | `agent-swarm` |
+| `tester` | the verdict on one `done:` line: the command run verbatim and what it printed | `agent-swarm` |
+| `reviewer` | findings ordered by what breaks if they stand, each with the command that proves it | `agent-review` |
+| `security-auditor` | secrets, injection, authorization and egress hunts, ranked by what an attacker gets | `agent-review` |
+
+Only `implementer` names `search_replace`, and only `implementer` and `tester` name `write`
+at all; the other four name no edit tool and each says in its own body that it edits
+nothing. `explorer` is the one definition that inherits the MCP catalog, because it is the
+one whose tools name `search_tool` and `use_tool`; the other five set `mcpInheritance: none`,
+the frontmatter key the guide documents for that choice
+(`~/.grok/docs/user-guide/16-subagents.md:228`), on the seeds' own reasoning that an
+inherited catalog with no MCP tool in `tools:` would be empty anyway.
+
+**How one is selected.** Four layers name an agent definition, and they are not the same
+knob:
+
+- `[agent] name` in `~/.grok/config.toml` picks the definition for an interactive `grok`
+  run; a missing name falls through to `GROK_AGENT`, which takes an absolute path or a bare
+  agent name (`~/.grok/docs/user-guide/05-configuration.md:124-132`, `:810`).
+- `--agent-profile` overrides both and loads no file, so that session runs the default agent
+  unless the client names one (`~/.grok/docs/user-guide/15-agent-mode.md:69`).
+- A child's type names its definition: `spawn_subagent` offers project and user agents in
+  its `subagent_type` enum, which is how a parent asks for `reviewer` by name
+  (`~/.grok/docs/user-guide/16-subagents.md:69-71`).
+- `[subagents.models]` pins the lane for that type, and it is what the workspace renders -
+  see [The fan-out seam](#the-fan-out-seam).
+
+The four layers can name different lanes: the guide ranks the per-type pin as applying "for
+any parent" without ranking it against a definition's own `model:`
+(`~/.grok/docs/user-guide/16-subagents.md:287`). Four of the six bake the same alias their
+pin defaults to; `implementer` and `tester` bake `agent-swarm` while `grok_subagents_lane`
+defaults to `agent`, so a workspace that wants its writers somewhere specific should set the
+variable rather than rely on the file. `/config-agents` (alias `/agents`) is where a person
+sees and toggles the set.
+
+### The three persona overlays
+
+`thorough-researcher`, `senior-implementer` and `skeptical-reviewer` ship as
+`templates/common/<name>.PERSONA.toml` and land at `~/.grok/personas/<name>.toml`, where the
+file stem is the persona name (`~/.grok/docs/user-guide/16-subagents.md:93`). Discovery runs
+the project's `.grok/personas/`, then this user directory, then the bundled catalog, and an
+inline `[subagents.personas]` table outranks all three (`:89-93`). A persona is an overlay
+only: its `instructions` reach the child as a
+`<system-reminder>` and move tone, output format and task focus, never the agent type, the
+model, or the tools (`:77`) - which is why none of the three names either, and why the header
+comment in each file says so. `thorough-researcher` and `skeptical-reviewer` also declare
+`[[inputs]]` and `[[outputs]]` contracts, so a parent knows what to hand each role and what
+artifact to expect back; `senior-implementer` declares none.
+
+The caveat worth knowing before you wire one in: Grok Build applies personas through subagent
+resolution and roles, not through a `spawn_subagent` parameter - the parent does not pass a
+persona name when it spawns a child (`~/.grok/docs/user-guide/16-subagents.md:97`). A persona
+is therefore configured, not handed over: it attaches through a role or through
+`[subagents.personas]`, and `/personas` is where the catalog is read.
+
+### The four skills
+
+`templates/common/<name>.SKILL.md` for `feature-implementation`, `skeptical-review`,
+`security-audit` and `bug-hunt`, each seeded twice - `~/.coder/skills/<name>/SKILL.md` for
+the Coder Agents chat and `~/.agents/skills/<name>/SKILL.md` for the Grok Build CLI, the
+second always a `cp` of the first:
+
+- `/feature-implementation <request-or-issue> [--slots N] [--dry-run]` takes one request
+  from Plan Mode to a verified change: map with read-only explorers, hand the split to
+  `/ez-micro-plan`, fan the writers out, close with an independent tester and reviewer.
+- `/skeptical-review <diff-spec|pr-number> [--focus <risk>] [--json]` takes the author's
+  claim as unverified, re-runs the exact commands the producer said proved it, attacks the
+  change from several independent angles, and reports each requirement kept or broken with
+  the line that decides it.
+- `/security-audit <path-or-diff> [--scope secrets|injection|authz|egress] [--json]`
+  inventories sources and sinks separately, traces each source to a sink with read-only
+  tracers, and ranks findings by severity with one checkable line of proof each.
+- `/bug-hunt <symptom-or-issue> [--bisect <good-ref>] [--no-fix]` reproduces before
+  touching anything, localises with explorers and a real bisect, tests competing hypotheses
+  with a fleet, and ships the test that fails before the fix and passes after it.
+
+All four name only the local aliases - `agent-explore` for their mapping lanes,
+`agent-swarm` for their writers, `agent-review` for their skeptic - and none of them reaches
+for a cloud model id, which is the rule in
+[litellm-routing.md](litellm-routing.md#the-alias-table) rather than a preference.
+
+### The saved workflow
+
+`.grok/workflows/fleet-verify.js` is the same three phases as a saved workflow rather than a
+procedure an agent follows by hand: **Map** puts two read-only explorers on `agent-explore`,
+**Implement** puts one writer on `agent-swarm`, and **Verify** puts an independent skeptic on
+`agent-review` that re-runs the producer's own command and returns a structured verdict of
+`kept`, `broken` or `mixed` with the evidence behind each finding. Its three model ids are
+aliases in `litellm/config.yaml`, so `grok inspect` is the check after an alias edit - a name
+the catalog no longer carries fails the run rather than degrading it.
+
+### The rule the suite exists to enforce
+
+Every multi-file change ends with an independent skeptic that wrote none of it, on
+`agent-review`, before anything is reported done. The rulebook states it as a requirement,
+not a suggestion (`templates/common/GROK_BUILD_AGENTS.md`, "Mandatory independent review"),
+and its reasoning is one sentence: a delegated result is a claim, and a review that trusts
+the claim rather than the artifact is not a review. The skeptic re-runs the producer's
+`done:` command rather than reading the producer's report of it, which is why `tester` and
+`reviewer` exist as separate definitions with read-only tool lists rather than as instructions
+tacked onto the writer.
+
+### How a seeded file becomes yours
+
+The family splits by home, and the split is deliberate:
+
+- `~/.grok/agents/*.md` and `~/.grok/personas/*.toml` are **marker-aware**, the way
+  `~/.grok/AGENTS.md` is: a copy that still carries `managed-by: evo-t1-coder-stack` is
+  stack-owned and gets the current seed text on every start, so a stale role definition
+  cannot silently change how every child in every workspace behaves. Delete the marker line
+  and the file is the person's - the boot leaves a marker-free copy alone.
+- The eight skill copies are **absent-only**, like the `ez-` families: a `SKILL.md` that
+  already exists belongs to the user and is never rewritten.
+
+Either way the fix is the seed under `templates/common/` and a re-materialize, never a patch
+to the copy that is running - the same rule the two skill families above live by
+([the three stack-seeded skill commands](#the-three-stack-seeded-skill-commands)).
 
 ## Grok Build state: one shared profile per user
 
@@ -1145,7 +1317,9 @@ decisions stop at the top-level chat.
 ### What seeds the agent's context
 
 Twenty-six files seed into every new workspace, on first boot and only while the file is
-absent:
+absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
+`~/.grok/personas` and the two skill homes, on the contracts in
+[The seeded fleet suite](#the-seeded-fleet-suite)):
 
 1. `~/.coder/AGENTS.md`
 2. `~/.coder/skills/grok-build-delegation/SKILL.md`

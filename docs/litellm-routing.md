@@ -12,8 +12,8 @@ tags: [litellm, models, routing, spark]
 - The alias table, and which backend each alias resolves to
 - Tool calls: the measured limitation and the path that supports them
 - Thinking levels: what `agent` bakes, and what the baked aliases change
-- Routing inside the `agent` group, the unpinned `agent-swarm` lane, and the `agent` to
-  `coder` fallback
+- Routing inside the `agent` group, the three unpinned lanes (`agent-swarm`,
+  `agent-explore`, `agent-review`), and the `agent` to `coder` fallback
 - Reading the routing back, and editing an alias safely
 
 **What this enables**
@@ -62,7 +62,9 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 - `routing_strategy: least-busy` is the picker;
   `optional_pre_call_checks: ["session_affinity"]` is the pinning layer above it.
 - `fallbacks:` carries the degrade path `agent: ["coder"]`, repeated for each thinking
-  alias, because those groups go down with exactly the same boxes.
+  alias, because those groups go down with exactly the same boxes. The three unpinned
+  lanes hop one step further, through the pinned alias that bakes their own level, so a
+  lane that asked for `low` is not served an `xhigh` answer by its fallback.
 - `allowed_fails: 40` and `cooldown_time: 5` decide when a box stops being a candidate.
 - `background_health_checks: true`, with `health_check_interval: 300` and
   `health_check_concurrency: 2`, re-probe a box on their own, so recovery does not
@@ -76,7 +78,7 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
   the retry chain's. `request_timeout: 1200` is now the tightest deadline on the chain -
   the CLI's streaming idle allowance (`inference_idle_timeout_secs`) sits at 1800 s - so
   the proxy is the end that gives up first, at a full twenty minutes per attempt.
-- `model_group_retry_policy:` gives the five agent lanes their own `RetryPolicy`. The
+- `model_group_retry_policy:` gives the seven agent lanes their own `RetryPolicy`. The
   reason it exists is narrow enough to be worth its own section below.
 
 ### When a box answers `NoRoom`
@@ -91,14 +93,15 @@ the only field that can reach the error, which is why each agent lane declares o
 
 ```yaml
 model_group_retry_policy:
-  agent:            # repeated for agent-low, agent-medium, agent-xhigh, agent-swarm
+  agent:            # repeated for agent-low, agent-medium, agent-xhigh, agent-swarm,
+                    # agent-explore and agent-review
     DefaultRetries: 2
     ...
 ```
 
 Read these three facts before changing the block:
 
-- The five Spark groups are independent and none inherits `agent`, so each needs its own
+- The seven Spark groups are independent and none inherits `agent`, so each needs its own
   six keys. The zeros pin the exceptions `DefaultRetries` would otherwise reach; at this
   tag `NotFoundError` has no field of its own, so without a policy a typo'd model id is
   retried on `DefaultRetries`.
@@ -109,8 +112,9 @@ Read these three facts before changing the block:
   returns 0 while any deployment is healthy, and on the four pinned groups the
   workspace-wide `x-litellm-session-id` pin sends every subagent of a workspace to one
   box anyway. The block makes a refusal less likely to surface. Relocation comes from the
-  box and the fan-out. `agent-swarm` is the exception: it has no pin, so its retry is
-  re-placed by `least-busy` and can land on another box.
+  box and the fan-out. The three unpinned lanes - `agent-swarm`, `agent-explore` and
+  `agent-review` - are the exception: with no pin to name a box, each of their retries is
+  re-placed by `least-busy` and can land on another one.
 
 The two levers that actually move load off a shedding box:
 
@@ -123,9 +127,13 @@ The two levers that actually move load off a shedding box:
 2. Keep what one workspace puts on one box at or under that box's `PARALLEL` (5). A
    pinned lane sends the whole fan-out to the box its session key resolves to, which is
    why the derived width there is 4: one box's streams, minus the parent's own request.
-   The unpinned `agent-swarm` lane is the one that can afford a wider wave - 8 subagents
-   spread by `least-busy` over three boxes sit under `PARALLEL` on each, which is the
-   difference between buying wall-clock and buying queue depth. Past 15 the fleet has no
+   The unpinned `agent-swarm` lane is the one the writers ride, and the one that can afford
+   a wider wave - 8 subagents spread by `least-busy` over three boxes sit under `PARALLEL`
+   on each, which is the
+   difference between buying wall-clock and buying queue depth. The two reader lanes
+   spread the same way, and each group counts its own in-flight requests, but the box's
+   `PARALLEL` streams are one pool that every alias arriving on it shares.
+   Past 15 across the fleet the boxes have no
    streams left to give, whatever the lane.
 
 Two knobs that look right and do nothing here: `retry_after` is only a `min_timeout` and
@@ -142,7 +150,9 @@ key, so a config that looks correct silently does nothing, which is why
 | `agent-low` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `low` | yes (same model and boxes as `agent`) |
 | `agent-medium` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `medium` | yes (same model and boxes as `agent`) |
 | `agent-xhigh` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh` | yes (same model and boxes as `agent`) |
-| `agent-swarm` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh`, and the only group with no session pin, so each request is placed on the least-busy healthy box | yes (same model and boxes as `agent`) |
+| `agent-swarm` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh`, and the first group with no session pin, so each request is placed on the least-busy healthy box | yes (same model and boxes as `agent`) |
+| `agent-explore` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `low`, and no pin here either, so a wave of one-shot read-only children is placed across the fleet rather than queueing behind one box; the default `grok_explore_lane` | yes (same model and boxes as `agent`) |
+| `agent-review` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh` like `agent`, and the same pin lift as `agent-explore`, so a wave of reviewers spreads the same way; the default `grok_review_lane` | yes (same model and boxes as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
@@ -153,27 +163,31 @@ key, so a config that looks correct silently does nothing, which is why
 
 - The `agent` row is ONE model group with three deployments, one per Spark box,
   all equal.
-- The three `agent-*` rows are that same lane with a thinking level baked into
+- The six `agent-*` rows are that same lane with a thinking level baked into
   `litellm_params.reasoning_effort`. Qwen3.8-Flash-Next takes `low`, `medium` and
   `xhigh` and nothing else - there is no `high` - so the level is a name to pick
   rather than a knob to turn, and `agent-low` / `agent-medium` / `agent-xhigh` are
   how the level reaches Coder Agents: its model dropdown chooses an alias, not a
-  request parameter.
+  request parameter. The last two rows are the same idea aimed at a fleet role rather
+  than at a person in that dropdown - see
+  [the fan-out lanes](#the-fan-out-lanes-agent-explore-and-agent-review).
 - `agent` is not the unthinking default. It bakes `reasoning_effort: xhigh`, so a
   Coder Agents chat on the default alias thinks hard, and `agent-xhigh` asks the
   box for the same level by name. A `reasoning_effort` the client sends in the
   request still wins over the baked one.
-- Those four groups reuse the same `SPARK1/2/3_OPENAI_URL` / `SPARK_n_API_KEY`
-  pairs as `agent`. They are separate model groups on the same hardware, not four
+- Those six groups reuse the same `SPARK1/2/3_OPENAI_URL` / `SPARK_n_API_KEY`
+  pairs as `agent`. They are separate model groups on the same hardware, not six
   more boxes: routing state is per group, so least-busy's counters and the session
   pin are computed inside a group and two chats on different aliases can land on the
   same box at once. What does not change is the box - 5 full 262144-token streams in
   total, whichever aliases arrive on it. This is not the "two deployments on one
   box" mistake below, which is about a single group counting two URLs on one machine
   as two machines.
-- `agent-swarm` differs from the four rows above in routing state only: same model,
-  same three boxes, same baked `xhigh`, and no session pin. See
-  [the swarm lane](#the-swarm-lane-agent-swarm).
+- The three rows after `agent-xhigh` differ from the four above them in routing state
+  only: same model, same three boxes, the thinking level each row names, and no session
+  pin. See
+  [the swarm lane](#the-swarm-lane-agent-swarm) and
+  [the fan-out lanes](#the-fan-out-lanes-agent-explore-and-agent-review).
 - The `spark-*` rows are a different thing: the same Qwen2.5-Coder and Qwen2.5
   weights, served over Ollama on the Spark boxes instead of on the Arc.
 - `unverified` on the `spark-*` rows means exactly that: this box never ran them
@@ -206,8 +220,10 @@ key, so a config that looks correct silently does nothing, which is why
   `agent-low`/`agent-medium`/`agent-xhigh`, `agent-swarm`, and `chat` as Coder Agents chat
   model configs, for the same reason: an agent turn without callable tools cannot browse or
   edit, so registering `coder` or `coder-fast` would only add a visibly broken model to
-  the pickers. The five Spark aliases all drive tools, so all five are registerable - the
-  thinking aliases are there to make the level selectable from that picker.
+  the pickers. Seven Spark aliases drive tools, so seven could be registered; only the
+  five above are - the thinking aliases are there to make the level selectable from that
+  picker, while `agent-explore` and `agent-review` answer a parent's dispatch rather than
+  a person at the dropdown, so registering them would add two names nobody types.
 
 ## Routing inside the `agent` group
 
@@ -227,13 +243,16 @@ key, so a config that looks correct silently does nothing, which is why
   `routing_strategy_args` block to set, and `ttl` there would be a paste from newer docs.
 - It decides only for unpinned traffic: the affinity pin below resolves first, and
   `least-busy` runs when nothing is pinned, when the pinned deployment is unhealthy or in
-  cooldown, and for any request with no session id. Every `agent-swarm` request is
-  unpinned traffic, which is the whole of that lane.
+  cooldown, and for any request with no session id. Every `agent-swarm`,
+  `agent-explore` and `agent-review` request is unpinned traffic, which is the whole of
+  those three lanes.
 - Health checks, cooldowns and those counters all attribute per deployment through
   `model_info.id`, which is why each box carries a unique id: `agent-spark-1`,
-  `agent-spark-2`, `agent-spark-3`. Each thinking group and the swarm group has its own
-  triple - `agent-low-spark-1/2/3`, `agent-medium-spark-1/2/3`,
-  `agent-xhigh-spark-1/2/3`, `agent-swarm-spark-1/2/3` - so the same physical box is a
+  `agent-spark-2`, `agent-spark-3`. Each thinking group, the swarm group and the two
+  fan-out groups carry their own triple - `agent-low-spark-1/2/3`,
+  `agent-medium-spark-1/2/3`,
+  `agent-xhigh-spark-1/2/3`, `agent-swarm-spark-1/2/3`,
+  `agent-explore-spark-1/2/3`, `agent-review-spark-1/2/3` - so the same physical box is a
   separate deployment, with its own health state and its own in-flight counter, inside
   every group it belongs to.
 - A cooled box therefore stays visibly out of `healthy_deployments` instead of blending
@@ -255,13 +274,14 @@ key, so a config that looks correct silently does nothing, which is why
 
 ### The swarm lane: `agent-swarm`
 
-The fifth Spark group, and the only one with no pin. Same `openai/Qwen3.8-Flash-Next` on
-the same three boxes, same baked `xhigh`, same tool-calling flags and 262144 window - the
+The fifth Spark group, and the first of the three that carry no pin. Same
+`openai/Qwen3.8-Flash-Next` on the same three boxes, same baked `xhigh`, same tool-calling
+flags and 262144 window - the
 difference is routing state only, so no pin resolves and every request goes to the global
 `least-busy` picker, landing on the healthy box with the fewest requests in flight.
 
-One key lifts the pin, and apart from the group's three deployment entries it is the only
-thing in the config that differs:
+One key lifts the pin; apart from that key and the group's own deployment, retry-policy
+and fallback entries, nothing in the config distinguishes it from the four pinned lanes:
 
 ```yaml
 router_settings:
@@ -286,11 +306,12 @@ spread by sending an empty value would collapse every swarm request onto one sha
 
 Two facts not to get wrong:
 
-- It is the ONLY unpinned group, which makes it the wrong home for a long single-thread
+- It has no pin, and that is what makes it the wrong home for a long single-thread
   conversation. Pinning buys prefix-cache locality; without it the next turn may be
   prefilled on a different box and pay prefill again. A chat, an orchestrator, or
   anything whose turns share a warm prefix belongs on `agent`. The lane is for
-  independent parallel work - subagents, batch edits, one-shot jobs.
+  independent parallel work - subagents, batch edits, one-shot jobs, which is also why
+  the two reader lanes below lift the pin the same way.
 - The spread is bought by removing a pin, not by adding a proxy queue or a cap. There is
   still no `rpm`, `tpm` or `max_parallel_requests` anywhere in the config, and
   `queue_class`, `queue_class_config` and `enable_queue` do not exist at this tag. A
@@ -300,6 +321,47 @@ Two facts not to get wrong:
 That is the arithmetic the lane exists for: 3 boxes x `PARALLEL` 5 full-length streams is
 15 concurrent streams, and a pinned workspace only ever reaches the 5 of the one box its
 key resolves to.
+
+### The fan-out lanes: `agent-explore` and `agent-review`
+
+The sixth and seventh Spark groups, `agent-explore` and `agent-review`, lift the same pin
+the swarm lane lifts, and for the same reason taken one step further: both serve a child
+that answers once. The `explore` type and the seeded `explorer` agent dig for evidence and
+return a digest; `reviewer` and `security-auditor` read what landed and return findings.
+Neither carries a long warm prefix into a next turn, so the prefix-cache warmth the pin
+protects is worth nothing here, while its cost is paid in full - the parent loop and every
+child it spawns carry that workspace's one `x-litellm-session-id`, so a pinned wave of six
+resolves to a single deployment and waits on that box's `PARALLEL` admission slots while
+the other two boxes sit reachable and under-offered.
+
+The baked level is the only thing that separates them. An explore child is a lookup, so it
+takes `low` and answers fast; a review child is the check that a landed claim is actually
+true, so it takes the `xhigh` `agent` itself carries. Each names itself with an empty flag
+list beside the swarm lane's (`litellm/config.yaml:583-586`) and declares its own six-key
+`model_group_retry_policy` block, because a group inherits nothing from its siblings.
+
+What the lift costs is what it costs the swarm lane, said plainly: a second turn of the
+same conversation is not sticky, so it may be prefilled on a different box and pay prefill
+again. For a child that answers once there is no second turn to pay for; point a
+conversation at these aliases and there is. A long single-thread chat, an orchestrator, or
+anything whose turns share a warm prefix belongs on `agent`.
+
+Each lane is the default for its own role and is set by its own template variable, so
+either rolls back alone without moving the others:
+
+| Lane | Role it carries | Default | `--var` that puts it back on a pinned lane |
+|---|---|---|---|
+| `agent-explore` | the built-in `explore` type and the seeded `explorer` | `agent-explore` | `--var grok_explore_lane=agent-low` keeps the level and the pin; `=agent` sends mapping work at full depth |
+| `agent-review` | the seeded `reviewer` and `security-auditor`, which carry the independent review of a multi-file change | `agent-review` | `--var grok_review_lane=agent-xhigh` keeps the level and the pin; `=agent` matches the parent exactly |
+
+The variables are declared in `templates/workspace/coder.tf:24-52` and its devcontainer
+twin, and they are what fills `[subagents.models]` in
+`templates/workspace/grok-config.toml.tftpl`. The workspace side of that seam, including how
+the fan-out width follows the lane, is
+[grok-build-and-agents.md](grok-build-and-agents.md#the-fan-out-seam). A contributor home
+names the same three lanes with `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and
+`GROK_REVIEW_LANE` for `//scripts:seed-dev-env`. Neither lane is registered as a Coder
+Agents chat model, so a pin is the only way onto either one.
 
 ### What carries a session id
 
@@ -345,6 +407,16 @@ traceparent and baggage, plus `metadata.session_id` in the body.
   first, where `least-busy` may still have a box to pick, and Arc `coder` stays the last
   resort it is for every other Spark lane. The chain is acyclic: agent-swarm -> agent ->
   coder, and `coder` declares no hop of its own.
+- The two fan-out lanes degrade the way the swarm lane does, one step further than the
+  pinned lanes, and each hops through the lane that bakes its own level:
+  `agent-explore: ["agent-low", "coder"]` and `agent-review: ["agent-xhigh", "coder"]`
+  (`litellm/config.yaml:722-723`). The extra step is worth taking for the same reason -
+  these groups' own three deployments can all be cooling while the same boxes are healthy
+  under the pinned alias, since health state and cooldowns are kept per group - and the
+  hop is chosen so a parent that dispatched an explore child at `low` gets a `low` answer
+  from the fallback rather than an `xhigh` it did not ask for. Both chains are acyclic and
+  end at `coder`: agent-explore -> agent-low -> coder, agent-review -> agent-xhigh ->
+  coder, and neither fallback lane names a lane that hops back here.
 - It used to be a chain, `agent -> agent-fast -> coder`. `agent-fast` was a second alias
   for the same model on a second box with a lower output ceiling; one group of three equal
   deployments already covers every reachable box, so the chain collapsed to one acyclic
@@ -396,6 +468,15 @@ Measured on a harness boot of this config against the live Spark boxes, before
    non-empty. An empty key fails every request inside the proxy, before it ever reaches
    the box.
 
+Order matters when an alias is new rather than changed: the proxy reads
+`litellm/config.yaml` at boot and a workspace renders its catalog from that file when it
+starts, so restart the proxy first and boot the workspace after it. A workspace older than
+the proxy asks for an alias the config does not have, and the router answers "No
+deployments available" rather than falling back. The rollback is one variable per lane, and
+it does not need the proxy at all: `--var grok_explore_lane=agent-low` and
+`--var grok_review_lane=agent` put each role back on a pinned alias that every config
+version already carries.
+
 Neither stack runner has a `restart` subcommand (`up`, `down`, `status`, `logs`, `reset`
 are the whole set), so the proxy restart stays a direct compose call. Stable stack:
 
@@ -417,6 +498,9 @@ docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml rest
   (default `http://litellm:4000/v1`). `agent-swarm` is registerable but is never picked
   for an auxiliary lane pin: the control-plane chat agent is one conversation, and one
   conversation wants the pin.
+- The two fan-out lanes are absent from that list on purpose. `agent-explore` and
+  `agent-review` exist to be pinned by `[subagents.models]`, not chosen from a picker, so
+  editing them moves a fleet role's traffic and leaves the Agents dropdowns alone.
 - So an alias edited or deleted in `litellm/config.yaml` moves in the Agents model
   dropdowns exactly as it does in the CLI.
 
