@@ -1,0 +1,1 @@
+../../../templates/common/security-audit.SKILL.md

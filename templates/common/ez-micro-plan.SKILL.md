@@ -62,7 +62,10 @@ Read your real slot count once, here, and never guess it again:
 unset. Put that number in the plan as `slots:`. If it is above 5 and the session's
 subagents ride a pinned Spark lane, the fan-out queues behind that one box's streams: the
 fix is the unpinned lane, not a smaller plan. `docs/litellm-routing.md` explains the
-trade and `--var grok_subagents_lane=agent-swarm` sets it. `[subagents.models]` is the
+trade and `--var grok_subagents_lane=agent-swarm` sets it. That knob moves the writer
+types only: `grok_explore_lane`, `grok_plan_lane` and `grok_review_lane` route the
+mappers, the planner and the skeptics, so a wave of readers or a review pass can be put
+on its own alias without touching the writers. `[subagents.models]` is the
 seam that routes a subagent type to a lane, and the guide documents it applying whatever
 the parent's own model is, so the lane is a config decision: the spawn call's `model`
 argument names one child's model, and the guide leaves how it ranks against that pin
@@ -107,6 +110,7 @@ Skeleton (keep the headings; the check keys on them):
     - lane: agent-swarm
     - slots: 8
     - cap source: [subagents] max_concurrent
+    - review: T09
     - parent keeps: BUILD.bazel, docs/index.ts, package-lock.json
     - between waves: run the lane's own test target; keep the tree buildable
 
@@ -141,7 +145,10 @@ Every task block carries all nine lines, exactly those keys. `owns` is a comma l
 nothing else; the repo files a task edits are in `owns`, and any file it reads to copy a
 pattern is named in `reads` with a line range (`src/lib/spark.sh:40-75`). `needs` is
 `none` or a comma list of task ids that must be done first. `done` is one command or one
-inspectable artifact. `report` is that task's own result path.
+inspectable artifact. `report` is that task's own result path. In `## Dispatch`, `review:`
+is optional and names the skeptic that reviews the rest of the plan: it must own nothing
+and need every task that owns a file, which the check enforces once you write the key and
+warns about when you leave it out.
 
 ## Step 3 -- layer the context, and keep it thin
 
@@ -230,6 +237,8 @@ on `--ready`, which is the wave to spawn.
    leaves the tree broken costs every later child its `done` check.
 6. Re-run the check when the Ledger changes; states move, and a task unblocked is a task
    to dispatch.
+7. The `review:` task is dispatched last, once every producer has landed, and it re-runs
+   each producer's own `done` command itself instead of trusting `results/T<nn>.md`.
 
 A wave is not a phase: it is whatever fits in the slots. Prefer many small waves over two
 big ones. A child that fails twice with the same error is a layer problem, not a retry
@@ -246,6 +255,8 @@ still parent-owned orchestration, and children still cannot spawn children.
   child.
 - The Ledger holds no `ready` or `running` row, and every `verified` row was checked by
   you.
+- The `review:` task ran last, after every producer, and re-ran each producer's own
+  `done` command itself rather than trusting what `results/T<nn>.md` claimed.
 - Anything the next session should know goes to the notes file
   (`~/.grok/notes/<host>/<owner>/<repo>/notes.md`, the `ez-learn` skill), not into the
   plan.

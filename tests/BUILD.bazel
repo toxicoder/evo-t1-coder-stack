@@ -249,6 +249,15 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//images/dev:context",
     ],
+    # The fleet family's own gate, and a completeness gate is exactly when the
+    # aggregate is the right name: it reads the thirteen payloads and the stack_fleet
+    # body from templates/common, each definition's model: against the alias table
+    # the proxy serves, and the repo-tier links under .grok/ that carry the same
+    # bytes to this checkout's CLI. Only //:stack_data ships all three together, and
+    # the source scan has no .grok/ token to bill for the link check with.
+    "fleet-agents.bats": [
+        "//:stack_data",
+    ],
     # The fan-out seam: the two grok-config twins, both coder.tf and main.tf
     # twins, the contributor seed, and the rulebook all arrive with the template
     # payload, which is what the suite reads and writes nothing else.

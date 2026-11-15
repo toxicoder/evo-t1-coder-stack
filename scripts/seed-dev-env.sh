@@ -126,23 +126,23 @@ resolve_repo_root() {
 }
 
 # @function seed_render_grok_config
-# Render grok-config.toml.tftpl for a contributor home, with the contributor
+# Render grok-config.toml.tftpl for a contributor home with the contributor
 # defaults fixed here (no Coder Terraform variables): github and
 # grok_config_extra blocks dropped, the search block kept, the context7 block
-# kept only with CONTEXT7_API_KEY set or the --context7-mcp verdict (the lane
-# handshakes and answers keyless at the public rate limits, so a keyless home
-# is a default, not a failure). ${litellm_url} becomes STACK_LITELLM_URL; the
-# model default and the subagent lane are agent, the fan-out 4, the affinity
-# key contributor; the cache-proxy path re-roots under the seed home.
-# GROK_SUBAGENTS_LANE and GROK_SUBAGENT_MAX_CONCURRENT override those two
-# knobs, and an absent width follows the lane as templates/workspace/main.tf
-# derives it. Substitutions are sed, never eval; a doubled dollar unfolds first.
+# kept only with CONTEXT7_API_KEY set or the --context7-mcp verdict (that lane
+# handshakes and answers keyless at the public rate limits). ${litellm_url}
+# becomes STACK_LITELLM_URL, the affinity key is contributor, the cache-proxy
+# path re-roots under the seed home, and each fan-out role ships on the alias
+# its template variable defaults to (writers and the planner on agent, readers
+# on agent-explore, the skeptic on agent-review). Substitutions are sed, never
+# eval; a doubled dollar unfolds first.
 # Globals:
-#   STACK_LITELLM_URL, SEARXNG_URL (search URL default
-#   http://host.docker.internal:8181, written as a concrete TOML string),
-#   CONTEXT7_API_KEY (non-empty keeps the context7 block), HOME (the home
-#   default when $3 is not given), GROK_SUBAGENTS_LANE,
-#   GROK_SUBAGENT_MAX_CONCURRENT (an unusable value falls back and is noted)
+#   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
+#   written as a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the
+#   context7 block), HOME (the home default when $3 is not given), and the five
+#   fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
+#   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT (an unusable value falls
+#   back to its default and is noted)
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write
@@ -158,7 +158,8 @@ seed_render_grok_config() {
   local src="${1:-}" dest="${2:-}" rendered="" lbrace="" dollar='$' search=""
   local home="${3:-${HOME:-/home/coder}}" keep_ctx7="${4:-0}" keep7="0"
   local proxy_lit="" proxy_path="" lane="" slots=""
-  # The two fan-out knobs, with the same derivation templates/workspace/main.tf
+  local explore_lane="" plan_lane="" review_lane=""
+  # The fan-out knobs, with the same derivation templates/workspace/main.tf
   # uses: only the unpinned swarm lane spreads a fan-out across the fleet, so it
   # gets the width that keeps three boxes busy. A value the sed could not take
   # safely (a model id is a bare token, the width is a count) falls back.
@@ -176,6 +177,25 @@ seed_render_grok_config() {
   elif ((slots > 32)); then
     note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is past the fleet's ceiling - using 32"
     slots="32"
+  fi
+  # The three role knobs, same defaults as the template variables in
+  # templates/workspace/coder.tf, so a contributor home routes a reader, a
+  # planner and a skeptic to the same aliases a workspace does. Each one is a
+  # separate rollback: point it at a lane the proxy already reloads.
+  explore_lane="${GROK_EXPLORE_LANE:-agent-explore}"
+  if [[ ! ${explore_lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
+    note "GROK_EXPLORE_LANE='${explore_lane}' is not a model id - using agent-explore"
+    explore_lane="agent-explore"
+  fi
+  plan_lane="${GROK_PLAN_LANE:-agent}"
+  if [[ ! ${plan_lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
+    note "GROK_PLAN_LANE='${plan_lane}' is not a model id - using agent"
+    plan_lane="agent"
+  fi
+  review_lane="${GROK_REVIEW_LANE:-agent-review}"
+  if [[ ! ${review_lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
+    note "GROK_REVIEW_LANE='${review_lane}' is not a model id - using agent-review"
+    review_lane="agent-review"
   fi
   # Octal keeps a literal brace out of this file so extract_fn's brace scan
   # stays balanced. The sed below unfolds a doubled dollar into one.
@@ -210,6 +230,9 @@ seed_render_grok_config() {
     -e 's|\${grok_default_model}|agent|g' \
     -e 's|\${workspace_affinity_key}|contributor|g' \
     -e "s|\${grok_subagents_lane}|${lane}|g" \
+    -e "s|\${grok_explore_lane}|${explore_lane}|g" \
+    -e "s|\${grok_plan_lane}|${plan_lane}|g" \
+    -e "s|\${grok_review_lane}|${review_lane}|g" \
     -e "s|\${grok_subagent_max_concurrent}|${slots}|g" \
     -e "s|\${search_url}|${search}|g" \
     -e "s|${proxy_lit}|${proxy_path}|g" \

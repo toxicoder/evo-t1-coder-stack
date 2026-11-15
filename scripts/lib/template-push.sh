@@ -24,7 +24,9 @@
 #     repository-command skills (ez-bazel-first.SKILL.md with its two helpers,
 #     ez-strong-types.SKILL.md with its one, ez-micro-plan.SKILL.md with its
 #     one, ez-trunk-based-repo.SKILL.md with none) and their
-#     stack-repo-skills.sh.tftpl seed body,
+#     stack-repo-skills.sh.tftpl seed body, the fleet suite (six agent
+#     definitions *.AGENT.md, three persona overlays *.PERSONA.toml, four
+#     parent-side skills *.SKILL.md) and its stack-fleet.sh.tftpl seed body,
 #     mcp-cache-proxy.json, the agents-seed.sh.tftpl body that writes
 #     ~/.grok/AGENTS.md from GROK_BUILD_AGENTS.md, and
 #     gh-token-refresh.sh.tftpl, kept one level above
@@ -75,7 +77,12 @@ fi
 # ez-bazel-first.glob_budget.py, ez-strong-types.SKILL.md,
 # ez-strong-types.type_baseline.py, ez-trunk-based-repo.SKILL.md,
 # ez-micro-plan.SKILL.md, ez-micro-plan.plan_check.py,
-# stack-repo-skills.sh.tftpl,
+# explorer.AGENT.md, architect.AGENT.md, implementer.AGENT.md, tester.AGENT.md,
+# reviewer.AGENT.md, security-auditor.AGENT.md,
+# thorough-researcher.PERSONA.toml, senior-implementer.PERSONA.toml,
+# skeptical-reviewer.PERSONA.toml, feature-implementation.SKILL.md,
+# skeptical-review.SKILL.md, security-audit.SKILL.md, bug-hunt.SKILL.md,
+# stack-repo-skills.sh.tftpl, stack-fleet.sh.tftpl,
 # coder-agents.md,
 # mcp-cache-proxy.json, agents-seed.sh.tftpl (the coder_script "agents_seed" body) and
 # gh-token-refresh.sh.tftpl, kept one level above the
@@ -147,12 +154,26 @@ template_push_one() {
     ez-trunk-based-repo.SKILL.md \
     ez-micro-plan.SKILL.md \
     ez-micro-plan.plan_check.py \
+    explorer.AGENT.md \
+    architect.AGENT.md \
+    implementer.AGENT.md \
+    tester.AGENT.md \
+    reviewer.AGENT.md \
+    security-auditor.AGENT.md \
+    thorough-researcher.PERSONA.toml \
+    senior-implementer.PERSONA.toml \
+    skeptical-reviewer.PERSONA.toml \
+    feature-implementation.SKILL.md \
+    skeptical-review.SKILL.md \
+    security-audit.SKILL.md \
+    bug-hunt.SKILL.md \
     coder-agents.md \
     mcp-cache-proxy.json \
     gh-token-refresh.sh.tftpl \
     agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
-    stack-repo-skills.sh.tftpl; do
+    stack-repo-skills.sh.tftpl \
+    stack-fleet.sh.tftpl; do
     if [ ! -f "${common}/${payload}" ]; then
       printf 'error: %s: %s/%s is missing - main.tf reads it from the pushed copy, so no push works without it\n' \
         "${name}" "${common}" "${payload}" >&2

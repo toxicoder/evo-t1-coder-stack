@@ -87,6 +87,14 @@ seed_seed_targets() {
   # The ~/... spellings below are home-relative KEYS, not tilde paths: the
   # readers strip the leading ~ and re-root the rest at $HOME or at the
   # --container-root, so nothing here must expand early.
+  #
+  # The fleet family (six agent definitions, three persona overlays, four
+  # parent-side skills) is listed under the same two contracts the boot body
+  # templates/common/stack-fleet.sh.tftpl implements: one marker-aware copy each
+  # under ~/.grok/agents and ~/.grok/personas, and a SKILL.md per home for the
+  # skills, because the chat reads ~/.coder and the CLI reads ~/.agents. The
+  # coder_script seeds them on a workspace start; this list is what brings a host
+  # tree, or a workspace that missed a boot, to the same bytes.
   # shellcheck disable=SC2088
   printf '%s\n' \
     '~/.tmux.conf	file:templates/common/tmux.conf' \
@@ -117,7 +125,24 @@ seed_seed_targets() {
     '~/.coder/skills/ez-micro-plan/SKILL.md	file:templates/common/ez-micro-plan.SKILL.md' \
     '~/.agents/skills/ez-micro-plan/SKILL.md	file:templates/common/ez-micro-plan.SKILL.md' \
     '~/.coder/skills/ez-micro-plan/scripts/plan_check.py	file:templates/common/ez-micro-plan.plan_check.py' \
-    '~/.agents/skills/ez-micro-plan/scripts/plan_check.py	file:templates/common/ez-micro-plan.plan_check.py'
+    '~/.agents/skills/ez-micro-plan/scripts/plan_check.py	file:templates/common/ez-micro-plan.plan_check.py' \
+    '~/.grok/agents/explorer.md	file:templates/common/explorer.AGENT.md' \
+    '~/.grok/agents/architect.md	file:templates/common/architect.AGENT.md' \
+    '~/.grok/agents/implementer.md	file:templates/common/implementer.AGENT.md' \
+    '~/.grok/agents/tester.md	file:templates/common/tester.AGENT.md' \
+    '~/.grok/agents/reviewer.md	file:templates/common/reviewer.AGENT.md' \
+    '~/.grok/agents/security-auditor.md	file:templates/common/security-auditor.AGENT.md' \
+    '~/.grok/personas/thorough-researcher.toml	file:templates/common/thorough-researcher.PERSONA.toml' \
+    '~/.grok/personas/senior-implementer.toml	file:templates/common/senior-implementer.PERSONA.toml' \
+    '~/.grok/personas/skeptical-reviewer.toml	file:templates/common/skeptical-reviewer.PERSONA.toml' \
+    '~/.coder/skills/feature-implementation/SKILL.md	file:templates/common/feature-implementation.SKILL.md' \
+    '~/.agents/skills/feature-implementation/SKILL.md	file:templates/common/feature-implementation.SKILL.md' \
+    '~/.coder/skills/skeptical-review/SKILL.md	file:templates/common/skeptical-review.SKILL.md' \
+    '~/.agents/skills/skeptical-review/SKILL.md	file:templates/common/skeptical-review.SKILL.md' \
+    '~/.coder/skills/security-audit/SKILL.md	file:templates/common/security-audit.SKILL.md' \
+    '~/.agents/skills/security-audit/SKILL.md	file:templates/common/security-audit.SKILL.md' \
+    '~/.coder/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md' \
+    '~/.agents/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md'
 }
 
 # @function seed_retired_targets

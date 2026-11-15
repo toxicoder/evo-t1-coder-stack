@@ -93,10 +93,13 @@ scratch_home() {
   # ez-bazel-first as a SKILL.md per home plus two helper scripts per home (6),
   # then ez-strong-types as a SKILL.md per home plus one helper per home (4),
   # then ez-trunk-based-repo as one SKILL.md per home (2) with no helper of its
-  # own, then ez-micro-plan as a SKILL.md per home plus one helper per home (4).
+  # own, then ez-micro-plan as a SKILL.md per home plus one helper per home (4),
+  # then the seeded fleet: six agent definitions and three persona overlays into the
+  # one shared ~/.grok profile (9), and the four fleet skills as one SKILL.md per
+  # home (8). The fleet family carries no helper of its own, so nothing nests under it.
   # The count is a claim about the manifest, so a target that quietly
   # disappears from config_seed.sh fails here before anything else notices.
-  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 29 ]
+  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 46 ]
   # Home-relative targets keep dev-only paths (scripts/, tests/) out of any
   # workspace volume: an absolute target would put this script's trust
   # boundary in the wrong place.
@@ -425,12 +428,12 @@ coder-ws2-dind-sidecar'
 import json, sys
 d = json.load(sys.stdin)
 assert d["dry_run"] is False and d["force"] is False, d
-# The twenty-nine reseed targets, plus the one /learn copy the reseed retired from
+# The forty-six reseed targets, plus the one /learn copy the reseed retired from
 # this home (its ~/.agents twin is user-owned, so it earns no entry below).
 # Every target earns exactly one entry, the user-owned tmux.conf included, so
 # this count is the size of the manifest read back through the JSON channel: a
 # target dropped from config_seed.sh drops an entry and fails here.
-assert len(d["entries"]) == 30, d["entries"]
+assert len(d["entries"]) == 47, d["entries"]
 # A seeded entry names its target home-relative but already stripped the tilde
 # (the seeder prints the path it rooted at the home), while a retired entry
 # keeps the ~/ spelling it is listed under. Check the nested helpers and the
@@ -448,7 +451,11 @@ for want in [".coder/skills/ez-bazel-first/scripts/owned_files_check.py",
              ".coder/skills/ez-micro-plan/SKILL.md",
              ".agents/skills/ez-micro-plan/SKILL.md",
              ".coder/skills/ez-micro-plan/scripts/plan_check.py",
-             ".agents/skills/ez-micro-plan/scripts/plan_check.py"]:
+             ".agents/skills/ez-micro-plan/scripts/plan_check.py",
+             ".coder/skills/skeptical-review/SKILL.md",
+             ".agents/skills/skeptical-review/SKILL.md",
+             ".grok/agents/reviewer.md",
+             ".grok/personas/skeptical-reviewer.toml"]:
     assert want in targets, (want, targets)
 retired = [e for e in d["entries"] if e["target"] == "~/.coder/skills/learn/SKILL.md"]
 assert len(retired) == 1 and retired[0]["action"].startswith("retired"), retired

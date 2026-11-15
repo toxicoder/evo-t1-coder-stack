@@ -228,6 +228,49 @@ stream_tool_calls = true
 max_retries = 1
 inference_idle_timeout_secs = 1800
 
+# The read/search lane: the same three Spark boxes, thinking baked to low, and the second
+# group the LiteLLM session pin does not cover - a one-shot mapper shares no warm prefix for
+# the pin to protect, so with its affinity list emptied in litellm/config.yaml least-busy
+# places each probe. Same rule as [model."agent-swarm"]: never lift the pin from here with
+# extra_headers.
+[model."agent-explore"]
+model = "agent-explore"
+base_url = "${litellm_url}"
+name = "Agent explore (all DGX Sparks, thinking low)"
+description = "Spark read/search lane; thinking baked to low, placed on the least-busy Spark"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1800
+
+# The skeptical lane: the same three boxes, thinking baked to xhigh, pin lifted for the same
+# one-shot reason as agent-explore. A reviewer has to think harder than the child it checks,
+# so this alias sets how deep the mandatory review phase goes; reasoning_effort in the proxy
+# config is the seam that retunes it.
+[model."agent-review"]
+model = "agent-review"
+base_url = "${litellm_url}"
+name = "Agent review (all DGX Sparks, thinking extra high)"
+description = "Spark skeptic lane; thinking baked to xhigh, placed on the least-busy Spark"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1800
+
 # --- Arc 140T (IPEX-LLM Ollama): completion-style fallbacks -----------------
 # Measured against the running stack: these endpoints answer tool requests as
 # plain text with finish_reason "stop" and no tool_calls array, so Grok's
@@ -327,10 +370,24 @@ limit_behavior = "queue"
 # block exists to prevent: the writers then inherit the parent's model, which on a
 # pinned Spark lane means the whole write fan-out queues behind one box's streams
 # while the swarm-named readers spread over three.
+#
+# The pins then split by what the type does, each from its own --var so any one rolls back
+# alone: general-purpose stays on the fan-out lane (it is the writer); explore goes to
+# agent-explore, low effort and no pin, the traffic that gains most from spreading; plan
+# stays pinned, because one planner is a conversation that steers every wave after it. The
+# named keys are the project definitions under .grok/agents/ that coder_script.stack_fleet
+# seeds; a key no session selects is inert, and naming them pins the skeptics on
+# agent-review, the one seam that sets how hard the review phase thinks.
 [subagents.models]
 general-purpose = "${grok_subagents_lane}"
-explore = "${grok_subagents_lane}"
-plan = "${grok_subagents_lane}"
+explore = "${grok_explore_lane}"
+plan = "${grok_plan_lane}"
+explorer = "${grok_explore_lane}"
+architect = "${grok_plan_lane}"
+implementer = "${grok_subagents_lane}"
+tester = "${grok_subagents_lane}"
+reviewer = "${grok_review_lane}"
+security-auditor = "${grok_review_lane}"
 
 # MCP servers: three gated entries ship by default, each behind its own boolean
 # that defaults to true. search_mcp renders the searxng stdio server, which is

@@ -202,9 +202,11 @@ LiteLLM on a port other than 4000 (the reseeded `settings.json` then still
 names that stack's own model transport). A third tool covers the same set on a
 host home rather than a container:
 `bazelisk run //scripts:seed-dev-env -- --home <dir>` materialises it into a
-laptop or CI home, and it takes the two fan-out knobs from the environment
+laptop or CI home, and it takes the fan-out knobs from the environment
 while it renders the config - `GROK_SUBAGENTS_LANE` names the lane the
-subagents ride and `GROK_SUBAGENT_MAX_CONCURRENT` the width, with the same
+writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width, and
+`GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
+reader, the planner and the skeptic ride, with the same
 derivation the templates use (8 on the unpinned `agent-swarm` lane, 4 on a
 pinned one). A value the seeder cannot use - a lane that is not a bare model id, a
 width that is not a count or sits past 32 - is refused with

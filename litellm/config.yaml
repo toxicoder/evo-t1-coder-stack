@@ -15,6 +15,11 @@
 # while that pin stays warm, and a fresh conversation or a request with no
 # session id fans out across every reachable box by least-busy. With none
 # reachable `agent` falls back to `coder`.
+# The sixth and seventh Spark aliases, "agent-explore" and "agent-review", are
+# that same pin lift for the two one-shot roles a parent fleet dispatches: the
+# read-only child that digs for evidence bakes low, the child that checks what
+# landed bakes xhigh. Neither is a conversation and neither carries a warm
+# prefix into a next turn, so neither wants the pin.
 #
 # Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
 # network only). The spark-* aliases target optional NVIDIA Spark boxes;
@@ -356,6 +361,110 @@ model_list:
       supports_tool_choice: true
       max_input_tokens: 262144
 
+  # Fan-out lanes - the same three boxes, TWO MORE independent model groups, each
+  # with the session pin lifted the way agent-swarm lifted it above. Nothing about
+  # what a request costs a box changes; what changes is which box lands on.
+  #
+  # Why these two need the lift and the four lanes above keep the pin: both serve a
+  # child that answers once. An explore child digs for evidence and returns a
+  # digest; a review child reads what landed and returns findings. Neither carries
+  # a long warm prefix into a next turn, so the prefix-cache warmth the pin
+  # protects is worth nothing here - and the parent loop that dispatches them puts
+  # every one of those calls under the SAME x-litellm-session-id, which is exactly
+  # the shape agent-swarm exists for. A fan-out of six pinned children waits on one
+  # box's admission slots while the other two boxes sit reachable and under-offered:
+  # those slots are PARALLEL, 5 full-length streams by default, set in
+  # scripts/spark-configure.sh. Lift the pin and the same fan-out costs PARALLEL on
+  # each reachable box - 15 across three - with no cap added in the proxy to get
+  # there.
+  #
+  # The baked level is the only thing that separates the two lanes: an explore child
+  # is a lookup, so it takes low and answers fast; a review child is the check that
+  # a landed claim is actually true, so it takes the level `agent` itself carries.
+  # model_group_affinity_config (router_settings, below) names both with an empty
+  # flag list, and each declares its own six-key model_group_retry_policy block
+  # because a group inherits nothing from its siblings. Reusing the
+  # SPARKn_OPENAI_URL / SPARK_n_API_KEY pairs is the same deliberate reuse the
+  # groups above document - routing state is per group, so a sixth and seventh group
+  # cost no extra hardware - and inside a group it stays one deployment per box:
+  # three boxes, three deployments, three unique ids. Still no
+  # rpm/tpm/max_parallel_requests anywhere: a saturated box sheds load in its own
+  # scheduler, and relocation on a refusal lives on the box (patch 0029).
+  - model_name: agent-explore
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK1_OPENAI_URL
+      api_key: os.environ/SPARK_1_API_KEY
+      reasoning_effort: low
+    model_info:
+      # Unique per deployment for the same reason as every group above: health
+      # checks, cooldowns and the least-busy counters attribute per deployment.
+      id: agent-explore-spark-1
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-explore
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK2_OPENAI_URL
+      api_key: os.environ/SPARK_2_API_KEY
+      reasoning_effort: low
+    model_info:
+      id: agent-explore-spark-2
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-explore
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK3_OPENAI_URL
+      api_key: os.environ/SPARK_3_API_KEY
+      reasoning_effort: low
+    model_info:
+      id: agent-explore-spark-3
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+
+  # The reviewer's lane: same three boxes, same pin lift as agent-explore above,
+  # and the level `agent` bakes, because a child that has to catch a wrong claim is
+  # the one place extra thinking pays for itself. The tool-calling flags are real
+  # here for the same reason they are real for `agent`: the reviewer opens the
+  # files it is judging rather than trusting the diff it was handed.
+  - model_name: agent-review
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK1_OPENAI_URL
+      api_key: os.environ/SPARK_1_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-review-spark-1
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-review
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK2_OPENAI_URL
+      api_key: os.environ/SPARK_2_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-review-spark-2
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-review
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK3_OPENAI_URL
+      api_key: os.environ/SPARK_3_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-review-spark-3
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   # No DB-backed key management, virtual keys, or Admin UI on this box.
@@ -458,12 +567,12 @@ router_settings:
   # setting it also self-arms the affinity callback. The valid flag names are
   # deployment_affinity, responses_api_deployment_check, session_affinity and
   # encrypted_content_affinity; an entry here REPLACES the global flag list for the
-  # group it names instead of adding to it. So `agent-swarm: []` means "no affinity
-  # check of any kind for this group": no session pin resolves, and every request is
-  # placed by the least-busy picker above. Every group absent from this map keeps
-  # falling back to the global ["session_affinity"], which is why the four lanes
-  # that a conversation rides stay pinned exactly as they were - this is the one
-  # place the pin is lifted, and it is lifted for the fan-out lane alone.
+  # group it names instead of adding to it. So the three `[]` entries below mean
+  # "no affinity check of any kind for these groups": no session pin resolves, and
+  # every request is placed by the least-busy picker above. Every group absent from
+  # this map keeps falling back to the global ["session_affinity"], which is why the
+  # four lanes that a conversation rides stay pinned exactly as they were - this is
+  # the one place the pin is lifted, and it is lifted for the fan-out lanes alone.
   #
   # This key is the opt-out; a client header is not. An empty or short
   # x-litellm-session-id does NOT skip the pin at this tag - that header and
@@ -473,6 +582,8 @@ router_settings:
   # shared pin, the opposite of the intent.
   model_group_affinity_config:
     agent-swarm: []
+    agent-explore: []
+    agent-review: []
   allowed_fails: 40
   cooldown_time: 5
   # TensorFold on the Spark boxes answers an over-admitted stream with the Zig
@@ -483,12 +594,13 @@ router_settings:
   # is the only field that can reach this error, which is why it is set here; do
   # not "clean it up" into a status-coded field.
   #
-  # Scoped to the five Spark lanes, so coder (Arc) and chat keep the plain
-  # num_retries path. The five groups are independent: none inherits agent's
-  # entry, so each needs its own six keys. agent-swarm needs its own for the same
-  # reason the other four do - its NoRoom refusals arrive status-less too, and an
-  # unpinned group relocates better than a pinned one only because the retry lands
-  # on whichever box is now least busy, not on a box the pin keeps naming.
+  # Scoped to the seven Spark lanes, so coder (Arc) and chat keep the plain
+  # num_retries path. The seven groups are independent: none inherits agent's
+  # entry, so each needs its own six keys. The three unpinned lanes need their own
+  # for the same reason the four pinned ones do - their NoRoom refusals arrive
+  # status-less too, and an unpinned group relocates better than a pinned one only
+  # because the retry lands on whichever box is now least busy, not on a box the pin
+  # keeps naming.
   #
   # The zeros pin the exceptions DefaultRetries would otherwise reach, and
   # NotFoundError is one of them: at this tag it has no field of its own, so a
@@ -571,6 +683,20 @@ router_settings:
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
       ContentPolicyViolationErrorRetries: 0
+    agent-explore:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+    agent-review:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
   fallbacks:
     - agent: ["coder"]
     - agent-low: ["coder"]
@@ -584,3 +710,14 @@ router_settings:
     # stays the last resort it is for every other Spark lane. The chain is
     # acyclic: agent-swarm -> agent -> coder, and coder declares no hop of its own.
     - agent-swarm: ["agent", "coder"]
+    # The two fan-out lanes degrade the same way the swarm lane does, one step
+    # further than the pinned lanes, and each hops through the lane that bakes its
+    # own level: a parent that dispatched an explore child at low gets a low answer
+    # from the fallback, not an xhigh one it did not ask for. The hop is worth
+    # taking for the reason above - these groups' own three deployments can all be
+    # cooling while the SAME boxes are healthy under the pinned alias, since health
+    # state and cooldowns are kept per group. Both chains are acyclic and end at
+    # coder: agent-explore -> agent-low -> coder, agent-review -> agent-xhigh ->
+    # coder, and neither fallback lane names a lane that hops back here.
+    - agent-explore: ["agent-low", "coder"]
+    - agent-review: ["agent-xhigh", "coder"]
