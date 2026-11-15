@@ -522,13 +522,13 @@ resource "coder_agent" "main" {
       # opts into the swarm lane without the form's option-membership rule. The
       # width is derived from the lane rather than one number for both: only the
       # unpinned lane spreads a fan-out over several boxes, so it gets the
-      # width that keeps three boxes busy (8), and a pinned lane gets one box's
+      # width that keeps three boxes busy (15), and a pinned lane gets one box's
       # PARALLEL minus the parent's own stream (4). An explicit --var wins.
       # The three role lanes ride their own aliases (litellm/config.yaml) so a
       # wave of mappers and a wave of reviewers reach every box while the
       # writers still follow grok_subagents_lane; see [subagents.models].
       grok_subagents_lane          = var.grok_subagents_lane
-      grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : (var.grok_subagents_lane == "agent-swarm" ? 8 : 4)
+      grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : (var.grok_subagents_lane == "agent-swarm" ? 15 : 4)
       grok_explore_lane            = var.grok_explore_lane
       grok_plan_lane               = var.grok_plan_lane
       grok_review_lane             = var.grok_review_lane

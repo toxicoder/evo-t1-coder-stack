@@ -348,9 +348,10 @@ allow_local = false
 auto_compact_threshold_percent = 70
 
 # Which lane a fan-out rides and how wide it goes, both from --var so one workspace
-# can target the whole fleet: `--var grok_subagents_lane=agent-swarm` and
-# `--var grok_subagent_max_concurrent=15`. Left alone, the width follows the lane: 8
-# on the unpinned swarm lane, 4 on a pinned one. The width is bounded by the fleet,
+# can target the whole fleet: the writers default to the unpinned `agent-swarm` lane,
+# and an explicit `--var grok_subagent_max_concurrent=N` still overrides the width.
+# Unset, that width follows the lane: 15 on the unpinned swarm lane,
+# 4 on a pinned one. The width is bounded by the fleet,
 # not by taste: each box admits PARALLEL full-length streams (5 by default,
 # scripts/spark-configure.sh), a pinned lane reaches only one box's worth so a higher
 # number just deepens that queue, and only the unpinned swarm lane spreads over all of

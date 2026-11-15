@@ -12,8 +12,8 @@ variable "grok_default_model" {
 
 variable "grok_subagents_lane" {
   type        = string
-  description = "Grok catalog key every subagent a session spawns runs on, rendered into [subagents.models] in the workspace's ~/.grok/config.toml for all three built-in types (general-purpose, explore, plan). The default keeps subagents on the same pinned Spark lane as the parent session. `agent-swarm` is the fan-out choice: it is the one Spark group with no LiteLLM session pin, so the least-busy picker spreads a fan-out over all three boxes instead of queueing them behind one box's streams. It also raises the default fan-out width, so this is the one knob a workspace turns on to fan out. It now drives the writer types only; the read/search and skeptic lanes have their own variables below."
-  default     = "agent"
+  description = "Grok catalog key every subagent a session spawns runs on, rendered into [subagents.models] in the workspace's ~/.grok/config.toml for all three built-in types (general-purpose, explore, plan). The default puts subagents on the unpinned `agent-swarm` fan-out lane, and `agent` is the rollback that puts them back on the same pinned Spark lane as the parent session. `agent-swarm` is the fan-out choice: it is the one Spark group with no LiteLLM session pin, so the least-busy picker spreads a fan-out over all three boxes instead of queueing them behind one box's streams. It also raises the default fan-out width, so this is the one knob a workspace turns on to fan out. It now drives the writer types only; the read/search and skeptic lanes have their own variables below."
+  default     = "agent-swarm"
 }
 
 # The three role lanes. Each is its own --var so one role can be put back on the parent's
@@ -53,7 +53,7 @@ variable "grok_review_lane" {
 
 variable "grok_subagent_max_concurrent" {
   type        = number
-  description = "How many subagents one session may have in flight, rendered into [subagents] max_concurrent in the workspace's ~/.grok/config.toml. Leave it unset to derive the width from the lane: 8 on the unpinned agent-swarm lane, which is the width that actually keeps three boxes busy, and 4 on a pinned lane, which is one box's PARALLEL (5 by default, scripts/spark-configure.sh) minus the parent's own stream. Set a number to override: the ceiling is PARALLEL per reachable box, 15 across three on agent-swarm, and past that a number deepens LiteLLM's queue rather than buying capacity. Only the unpinned agent-swarm lane spreads a fan-out over more than one box."
+  description = "How many subagents one session may have in flight, rendered into [subagents] max_concurrent in the workspace's ~/.grok/config.toml. Leave it unset to derive the width from the lane: 15 on the unpinned agent-swarm lane, which is the fleet ceiling (3 boxes x PARALLEL 5, scripts/spark-configure.sh), and 4 on a pinned lane, which is one box's PARALLEL (5 by default) minus the parent's own stream. Set a number to override: the 1..32 validation accepts any explicit value, and above 15 on the agent-swarm lane a number deepens LiteLLM's queue rather than buying capacity. Only the unpinned agent-swarm lane spreads a fan-out over more than one box."
   default     = null
   validation {
     condition     = var.grok_subagent_max_concurrent == null || (var.grok_subagent_max_concurrent >= 1 && var.grok_subagent_max_concurrent <= 32)

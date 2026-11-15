@@ -430,34 +430,36 @@ assert_contributor_home() {
   out="${scratch}/config.toml"
   tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
 
-  # The shipped default puts the writers on a pinned lane, so one box's PARALLEL
-  # minus the parent's own stream, and reads each role's own alias: a reader on
-  # the cheap lane, a planner on the parent's, a skeptic on the deep one. A
-  # fan-out that left the writers on the parent's model would queue behind one box.
+  # The shipped default puts the writers on the unpinned swarm lane, so the width
+  # is the fleet's rather than one box's, and reads each role's own alias: a
+  # reader on the cheap lane, a planner on the parent's, a skeptic on the deep
+  # one. A fan-out that left the writers on the parent's model would queue behind
+  # one box.
   seed_render_grok_config "${tpl}" "${out}"
-  assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
-  assert_fixed "pinned lane for the implementers" "${out}" 'implementer = "agent"'
-  assert_fixed "pinned lane for the testers" "${out}" 'tester = "agent"'
+  assert_fixed "default writers on the swarm lane" "${out}" 'general-purpose = "agent-swarm"'
+  assert_fixed "default implementers on the swarm lane" "${out}" 'implementer = "agent-swarm"'
+  assert_fixed "default testers on the swarm lane" "${out}" 'tester = "agent-swarm"'
   assert_fixed "explore lane" "${out}" 'explore = "agent-explore"'
   assert_fixed "explorer agent lane" "${out}" 'explorer = "agent-explore"'
   assert_fixed "plan lane" "${out}" 'plan = "agent"'
   assert_fixed "architect agent lane" "${out}" 'architect = "agent"'
   assert_fixed "reviewer lane" "${out}" 'reviewer = "agent-review"'
   assert_fixed "security-auditor lane" "${out}" 'security-auditor = "agent-review"'
-  assert_fixed "pinned width" "${out}" 'max_concurrent = 4'
+  assert_fixed "width derived from the default lane" "${out}" 'max_concurrent = 15'
   # Every token the template carries must be substituted here, or a contributor
   # home gets a literal ${...} where a model id belongs.
   assert_not_fixed "no unsubstituted template token" "${out}" '${grok_'
 
-  # The unpinned swarm lane is what buys the width: it spreads over every box, so
-  # the default doubles to the number that keeps three of them busy. It moves the
-  # writer types and leaves each reader, planner and skeptic on its own alias.
+  # Naming the lane by hand is the path a template --var takes, so it has to render
+  # exactly what the default gives: three Spark boxes at PARALLEL 5 each is the
+  # width that keeps the fleet busy, and each reader, planner and skeptic stays on
+  # its own alias.
   GROK_SUBAGENTS_LANE='agent-swarm' seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "swarm lane for the writers" "${out}" 'general-purpose = "agent-swarm"'
   assert_fixed "swarm lane for the implementers" "${out}" 'implementer = "agent-swarm"'
   assert_fixed "reader lane survives the writer lane" "${out}" 'explore = "agent-explore"'
   assert_fixed "skeptic lane survives the writer lane" "${out}" 'reviewer = "agent-review"'
-  assert_fixed "swarm width" "${out}" 'max_concurrent = 8'
+  assert_fixed "swarm width" "${out}" 'max_concurrent = 15'
 
   # Each role knob is its own rollback, so a proxy that has not reloaded the new
   # aliases can be stepped around one role at a time.
@@ -468,14 +470,21 @@ assert_contributor_home() {
   assert_fixed "architect follows the plan lane" "${out}" 'architect = "agent-medium"'
   assert_fixed "review lane override" "${out}" 'reviewer = "agent-xhigh"'
   assert_fixed "auditor follows the review lane" "${out}" 'security-auditor = "agent-xhigh"'
-  assert_fixed "writer lane untouched by the role overrides" "${out}" 'general-purpose = "agent"'
+  assert_fixed "writer lane untouched by the role overrides" "${out}" 'general-purpose = "agent-swarm"'
 
   # An explicit width wins over the derivation in both directions.
   GROK_SUBAGENTS_LANE='agent-swarm' GROK_SUBAGENT_MAX_CONCURRENT='15' \
     seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "explicit width wins on the swarm lane" "${out}" 'max_concurrent = 15'
-  GROK_SUBAGENT_MAX_CONCURRENT='2' seed_render_grok_config "${tpl}" "${out}"
+  GROK_SUBAGENTS_LANE='agent' GROK_SUBAGENT_MAX_CONCURRENT='2' \
+    seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "explicit width wins on a pinned lane" "${out}" 'max_concurrent = 2'
+
+  # The rollback lane still derives one box's PARALLEL, less the parent's own
+  # stream: a contributor who pins the writers back gets the narrow fleet back.
+  GROK_SUBAGENTS_LANE='agent' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
+  assert_fixed "pinned lane width" "${out}" 'max_concurrent = 4'
 
   # A value sed could not substitute safely is refused out loud, and the width
   # still comes out of the lane rather than rendering a broken TOML integer.
@@ -483,8 +492,8 @@ assert_contributor_home() {
     seed_render_grok_config "${tpl}" "${out}" 2>&1)"
   assert_match "lane refused" 'is not a model id' "${notes}"
   assert_match "width refused" 'is not a count' "${notes}"
-  assert_fixed "lane fell back" "${out}" 'general-purpose = "agent"'
-  assert_fixed "width fell back with the lane" "${out}" 'max_concurrent = 4'
+  assert_fixed "lane fell back" "${out}" 'general-purpose = "agent-swarm"'
+  assert_fixed "width fell back with the lane" "${out}" 'max_concurrent = 15'
 
   # The same refusal guards each role knob, so one bad value cannot render a
   # model id the proxy has never heard of.
