@@ -10,9 +10,10 @@ two ready tasks that share a file collide the moment both are spawned, so both
 are refused here rather than discovered at wave 3.
 
 Parsed shape (see the skill body for the format): a `## Dispatch` block with
-`slots:` and `lane:`, a `## Lanes` table, `### T<nn> -- <summary>` task blocks
-each carrying lane/role/owns/reads/needs/calls/done/report, and a `## Ledger`
-table with one row per task.
+`slots:`, `lane:` and the optional `review:` skeptic, a `## Lanes` table,
+`### T<nn> -- <summary>` task blocks each carrying
+lane/role/owns/reads/needs/calls/done/report, and a `## Ledger` table with one
+row per task.
 
 Usage:
     ez-micro-plan.plan_check.py PLAN [--slots N] [--ready] [--json]
@@ -184,6 +185,44 @@ def check_collisions(tasks, report):
                     report.error(
                         "%s and %s both own %s and no dependency orders them"
                         % (first, second, path))
+
+
+def check_review_task(dispatch, tasks, report):
+    """The named skeptic waits on every producer and ships nothing itself.
+
+    A plan with no `review:` is legal but incomplete, so its absence warns. Once
+    one is named it is a contract: a reviewer that owns a file is its own producer,
+    and one that skips a producer never re-runs that producer's `done` check.
+    """
+    review_id = (dispatch.get("review") or "").strip().strip("`")
+    if not review_id:
+        report.warn("Dispatch names no `review:` task, so nothing re-runs the "
+                    "producers' own done checks but their own reports")
+        return
+    by_id = {task["id"]: task for task in tasks}
+    if review_id not in by_id:
+        report.error("Dispatch reviews with %s, which ## Tasks does not define" % review_id)
+        return
+    reviewer = by_id[review_id]
+    owned = split_list(reviewer.get("owns"))
+    if owned:
+        report.error("%s is the review task but owns %s; a skeptic cannot review "
+                     "its own work" % (review_id, ", ".join(owned)))
+    needs = {task["id"]: task["_needs"] for task in tasks}
+    waits = set(reviewer["_needs"])
+    for task in tasks:
+        if task["id"] == review_id:
+            continue
+        produced = split_list(task.get("owns"))
+        if produced and split_list(task.get("needs")).count(review_id) > 1:
+            report.error("%s lists %s in needs twice" % (task["id"], review_id))
+        # A fix-up task is allowed to sit behind the reviewer, so it is not one of
+        # the producers the reviewer has to wait for.
+        if not produced or review_id in ancestors(task["id"], needs):
+            continue
+        if task["id"] not in waits:
+            report.error("%s reviews but does not need %s, which owns %s"
+                         % (review_id, task["id"], ", ".join(produced)))
 
 
 def check_context_files(plan_dir, tasks, lanes, report, want_files):
@@ -374,6 +413,7 @@ def main():
     check_acyclic(tasks, report)
     check_tasks(tasks, lanes, report)
     check_collisions(tasks, report)
+    check_review_task(dispatch, tasks, report)
     states = check_ledger(tasks, parse_table(sections.get("Ledger", [])), report,
                           "Ledger" in sections)
     check_context_files(os.path.dirname(os.path.abspath(args.plan)), tasks, lanes, report,

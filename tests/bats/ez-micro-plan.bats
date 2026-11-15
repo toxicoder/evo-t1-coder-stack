@@ -4,7 +4,7 @@
 # ## ez-micro-plan.bats - hermetic coverage for the micro-plan dispatcher check
 #
 # templates/common/ez-micro-plan.plan_check.py decides, before a fleet is spawned,
-# whether a micro-plan can actually dispatch. What is worth pinning is the eight
+# whether a micro-plan can actually dispatch. What is worth pinning is the nine
 # ways that decision has most often lied: a document that never carries the
 # `ez-micro-plan v1` marker read as a plan at all; a section that went missing
 # silently instead of naming itself; a task block that dropped a key still counted
@@ -12,10 +12,12 @@
 # a `needs:` orders them; a cycle and an unknown id, both of which otherwise surface
 # as a wave that is simply empty; a `calls:` budget that warns forever and never
 # blocks; a first wave too narrow to fill the fleet, which is the whole point of the
-# gate; and a Ledger that drifted from the task blocks in either direction. Each of
-# those gets an asserting test below, driven over one eight-task, three-lane fixture
-# that a helper writes into the test's own scratch directory, so the fixture lives in
-# exactly one place and a variant mutates a row rather than repeating the document.
+# gate; a `review:` skeptic that owns a file or skips a producer, which is the
+# independent review that never happens; and a Ledger that drifted from the task
+# blocks in either direction. Each of those gets an asserting test below, driven
+# over one nine-task, four-lane fixture that a helper writes into the test's own
+# scratch directory, so the fixture lives in exactly one place and a variant
+# mutates a row rather than repeating the document.
 #
 # Usage: bazelisk test //tests:bats_ez_micro_plan_test   (from any cwd)
 # Safety: the suite writes only into its own scratch directory (make_scratch) and
@@ -47,6 +49,10 @@ LEDGER_DONE=""
 LEDGER_SKIP=""
 LEDGER_EXTRA=""
 
+# The Dispatch `review:` knob. reset_fixture names the skeptic; the absence test
+# empties it, which is the one plan shape that must warn rather than refuse.
+REVIEW=""
+
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   CHECKER="${REPO_ROOT}/templates/common/ez-micro-plan.plan_check.py"
@@ -57,6 +63,7 @@ setup() {
   LEDGER_DONE=""
   LEDGER_SKIP=""
   LEDGER_EXTRA=""
+  REVIEW=""
   mkdir -p "${ROOT}" "${PLAN_DIR}/ctx" "${PLAN_DIR}/results"
   make_context_files
   make_repo_files
@@ -67,14 +74,18 @@ setup() {
   cd "${ROOT}"
 }
 
-# reset_fixture - the one copy of the plan's task and lane tables. Eight tasks over
-# three lanes: two writers in src, two in tests, one read-only map task, one doc
-# task, and T08, which needs the resolver T03 writes and carries the L2 brief.
+# reset_fixture - the one copy of the plan's task and lane tables. Nine tasks over
+# four lanes: three writers and the doc task in src, two writers in tests, one
+# read-only map task, and T08, which needs the resolver T03 writes and carries the
+# L2 brief. T09 is the skeptic Dispatch `review:` names: read-only, and it needs
+# every task that owns a file.
 reset_fixture() {
+  REVIEW="T09"
   LANE_ROWS=(
     "src|scripts/lib/search.sh|general-purpose|ctx/L1-src.md|resolver lives here"
     "tests|tests/bats/search.bats|general-purpose|ctx/L1-tests.md|bats suite"
     "map|-|explore|ctx/L1-map.md|context only"
+    "review|-|explore|ctx/L1-review.md|independent skeptic"
   )
   TASK_ROWS=(
     "T01|add the lane resolver to scripts/lib/search.sh|src|general-purpose|scripts/lib/search.sh|L0, L1-src|none|12|\`bazelisk test //tests:bats_search_test\`|results/T01.md"
@@ -85,6 +96,7 @@ reset_fixture() {
     "T06|map the search surface into the map lane brief|map|explore|-|L0, L1-map|none|8|ctx/L1-map.md names every file the src lane owns|results/T06.md"
     "T07|document the lane in docs/search-lane.md|src|general-purpose|docs/search-lane.md|L0, L1-src|none|6|\`grep -q swarm lane docs/search-lane.md\`|results/T07.md"
     "T08|cover the lane reader in tests/bats/search-lane.bats|tests|general-purpose|tests/bats/search-lane.bats|L0, L1-tests, L2-T08|T03|11|\`bazelisk test //tests:bats_search_lane_test\`|results/T08.md"
+    "T09|independently review the whole change|review|explore|-|L0, L1-review|T01, T02, T03, T04, T05, T06, T07, T08|12|results/T09.md quotes each producer's own done command and its result|results/T09.md"
   )
 }
 
@@ -95,6 +107,7 @@ make_context_files() {
   printf '# L1 src\n\nscripts/lib/search.sh holds the resolver; copy the reader in\nscripts/lib/search-core.sh. Prove it with //tests:bats_search_test.\n' >"${PLAN_DIR}/ctx/L1-src.md"
   printf '# L1 tests\n\nOne bats file per source file, load test_helper, no eval.\n' >"${PLAN_DIR}/ctx/L1-tests.md"
   printf '# L1 map\n\nRead only. Report the file map; write nothing.\n' >"${PLAN_DIR}/ctx/L1-map.md"
+  printf '# L1 review\n\nRead only. Re-run the done command of every producer\nyourself; results/T<nn>.md is a claim, not the check.\n' >"${PLAN_DIR}/ctx/L1-review.md"
   printf '# L2 T08\n\nThe lane reader returns an empty list for an unknown id; assert that.\n' >"${PLAN_DIR}/ctx/L2-T08.md"
 }
 
@@ -166,6 +179,11 @@ Add the swarm search lane to the search helper, its bats suite, and its doc.
 - lane: agent-swarm
 - slots: 4
 - cap source: [subagents] max_concurrent
+EOF
+    if [[ -n ${REVIEW} ]]; then
+      printf -- '- review: %s\n' "${REVIEW}"
+    fi
+    cat <<'EOF'
 - parent keeps: tests/BUILD.bazel, docs/index.ts
 - between waves: run the lane's own test target; keep the tree buildable
 
@@ -243,8 +261,8 @@ ready_csv() {
 @test "a well-formed plan passes and the summary reports no errors" {
   check
   [[ ${status} -eq 0 ]] || report_status
-  assert_eq "eight tasks over three lanes, wave four wide, nothing to fix" \
-    "summary: 8 tasks | 3 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
+  assert_eq "nine tasks over four lanes, wave four wide, nothing to fix" \
+    "summary: 9 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
     "${lines[0]}"
 }
 
@@ -327,7 +345,7 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
   [[ ${status} -eq 0 ]] || report_status
   assert_not_match "the shared path was no longer a collision" 'both own' "${output}"
   assert_eq "the plan dispatched clean" \
-    "summary: 8 tasks | 3 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
+    "summary: 9 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
     "${lines[0]}"
 }
 
@@ -409,7 +427,7 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
   check --no-files
   [[ ${status} -eq 0 ]] || report_status
   assert_eq "with the disk out of it the plan is dispatchable" \
-    "summary: 8 tasks | 3 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
+    "summary: 9 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
     "${lines[0]}"
 }
 
@@ -439,7 +457,7 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
     'warning: T04 reads scripts/lib/spark.sh:40-75, which is not in the checkout' "${output}"
   # The findings print before the tally, so the one warning occupies the first line.
   assert_eq "one warning, no errors" \
-    "summary: 8 tasks | 3 lanes | 4 slots | wave width 4 | 0 errors, 1 warnings" \
+    "summary: 9 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 1 warnings" \
     "${lines[1]}"
 }
 
@@ -453,6 +471,92 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
   [[ ${status} -eq 0 ]] || report_status
   assert_match "the contract-less task was named" \
     'warning: T01 reads no L0' "${output}"
+  check --strict
+  [[ ${status} -eq 1 ]] || report_status
+}
+
+@test "a review task that owns nothing and needs every producer is clean" {
+  # The fixture's Dispatch names T09 as the skeptic: read-only, and it needs all
+  # eight other tasks. The gate stays silent on that, and the wave is what it was
+  # before the key existed, with the skeptic held back behind its producers.
+  check --ready
+  [[ ${status} -eq 0 ]] || report_status
+  assert_not_match "the named skeptic raised no finding" \
+    'review task|reviews but|no .review:. task' "${output}"
+  assert_eq "the review key does not disturb the wave" "T01,T02,T03,T04" "$(ready_csv)"
+  assert_not_match "the skeptic waited for the producers" '^T09$' "${output}"
+}
+
+@test "a review task that owns a file is refused" {
+  # A skeptic that ships a file reviews its own work, which is the one thing the
+  # key exists to prevent; the role moves with it so only the review rule fires.
+  task_set T09 4 general-purpose
+  task_set T09 5 scripts/lib/search-review.sh
+  write_plan
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the skeptic and the file it ships were named" \
+    'T09 is the review task but owns scripts/lib/search-review.sh' "${output}"
+}
+
+@test "a review task that skips a file-owning task is refused" {
+  # The skeptic re-runs each producer's own done command, so a producer it never
+  # waits for is a producer nobody but its own author checked.
+  task_set T09 7 "T01, T02, T03, T05, T06, T07, T08"
+  write_plan
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the skipped producer and its file were named" \
+    'T09 reviews but does not need T04, which owns tests/bats/search.bats' "${output}"
+  assert_not_match "a producer it does wait for was not blamed" 'does not need T01' "${output}"
+}
+
+@test "a fix-up task may sit behind the reviewer instead of before it" {
+  # T05 here is the repair task that acts on the skeptic's findings: the reviewer
+  # cannot wait on a task that waits on it, so a producer needing the reviewer
+  # drops out of the set the reviewer has to cover.
+  task_set T09 7 "T01, T02, T03, T04, T06, T07, T08"
+  task_set T05 7 T09
+  write_plan
+  check
+  [[ ${status} -eq 0 ]] || report_status
+  assert_not_match "the fix-up task was not demanded of the reviewer" \
+    'reviews but does not need T05' "${output}"
+}
+
+@test "a producer that lists the reviewer in needs twice is refused" {
+  task_set T09 7 "T01, T02, T03, T04, T06, T07, T08"
+  task_set T05 7 "T09, T09"
+  write_plan
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the doubled need was named by its task" \
+    'T05 lists T09 in needs twice' "${output}"
+}
+
+@test "a review task the plan does not define is refused" {
+  REVIEW="T77"
+  write_plan
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the unknown skeptic id was named" \
+    'Dispatch reviews with T77, which ## Tasks does not define' "${output}"
+}
+
+@test "a plan with no review: key still passes and warns instead" {
+  # A plan without a skeptic is legal but incomplete, so the absence of the key
+  # is a nudge: an error here would refuse every plan written before it existed.
+  REVIEW=""
+  write_plan
+  check
+  [[ ${status} -eq 0 ]] || report_status
+  assert_match "the missing skeptic was named" \
+    'warning: Dispatch names no .review:. task' "${output}"
+  # The findings print before the tally, so the one warning occupies the first line.
+  assert_eq "one warning, no errors" \
+    "summary: 9 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 1 warnings" \
+    "${lines[1]}"
+
   check --strict
   [[ ${status} -eq 1 ]] || report_status
 }
