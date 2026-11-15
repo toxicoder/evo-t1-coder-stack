@@ -228,14 +228,11 @@ stream_tool_calls = true
 max_retries = 1
 inference_idle_timeout_secs = 1800
 
-# The read/search lane: the same three Spark boxes, thinking baked to low in the alias, and
-# the second group the LiteLLM session pin does not cover. An explorer is a one-shot child
-# that shares no long warm prefix with anything else in the session, so the pin buys this
-# group nothing and costs the wave a box's PARALLEL streams; with the group's affinity flag
-# list emptied in litellm/config.yaml, least-busy places each probe on whichever reachable
-# box has the fewest in flight. Same reasoning as [model."agent-swarm"] above, and the same
-# rule: never try to lift the pin from here with extra_headers. Prose:
-# docs/litellm-routing.md.
+# The read/search lane: the same three Spark boxes, thinking baked to low, and the second
+# group the LiteLLM session pin does not cover - a one-shot mapper shares no warm prefix for
+# the pin to protect, so with its affinity list emptied in litellm/config.yaml least-busy
+# places each probe. Same rule as [model."agent-swarm"]: never lift the pin from here with
+# extra_headers.
 [model."agent-explore"]
 model = "agent-explore"
 base_url = "${litellm_url}"
@@ -253,11 +250,10 @@ stream_tool_calls = true
 max_retries = 1
 inference_idle_timeout_secs = 1800
 
-# The skeptical lane: the same three boxes again, thinking baked to xhigh, pin lifted for
-# the same one-shot reason as agent-explore. A reviewer's whole job is to think harder than
-# the child it is checking, so this is the alias that decides how deep the mandatory review
-# phase goes -- and the one place to retune it (drop reasoning_effort in
-# litellm/config.yaml to medium) if review turns out to cost more than it saves.
+# The skeptical lane: the same three boxes, thinking baked to xhigh, pin lifted for the same
+# one-shot reason as agent-explore. A reviewer has to think harder than the child it checks,
+# so this alias sets how deep the mandatory review phase goes; reasoning_effort in the proxy
+# config is the seam that retunes it.
 [model."agent-review"]
 model = "agent-review"
 base_url = "${litellm_url}"
@@ -375,18 +371,13 @@ limit_behavior = "queue"
 # pinned Spark lane means the whole write fan-out queues behind one box's streams
 # while the swarm-named readers spread over three.
 #
-# The three pins then split by what the type actually does, each from its own --var so
-# any one of them can be put back on its own:
-#   general-purpose stays on the fan-out lane -- it is the writer, and the lane is the knob.
-#   explore goes to agent-explore (thinking low, pin lifted). Mapping and evidence work is
-#   the traffic that gains most from spreading over every box and has no warm prefix the
-#   pin would be protecting, and low effort is the speed half of the split.
-#   plan stays on a pinned lane. One planner is a conversation, it re-reads what it just
-#   read, and its answer steers every wave after it -- stickiness and depth both pay there.
-# The named keys below are the project agent definitions under .grok/agents/, seeded to
-# ~/.grok/agents/ by coder_script.stack_fleet. A key no session selects is inert, so naming
-# them costs nothing today and pins the two skeptical roles onto agent-review, which is the
-# single seam that decides how hard the mandatory review phase thinks.
+# The pins then split by what the type does, each from its own --var so any one rolls back
+# alone: general-purpose stays on the fan-out lane (it is the writer); explore goes to
+# agent-explore, low effort and no pin, the traffic that gains most from spreading; plan
+# stays pinned, because one planner is a conversation that steers every wave after it. The
+# named keys are the project definitions under .grok/agents/ that coder_script.stack_fleet
+# seeds; a key no session selects is inert, and naming them pins the skeptics on
+# agent-review, the one seam that sets how hard the review phase thinks.
 [subagents.models]
 general-purpose = "${grok_subagents_lane}"
 explore = "${grok_explore_lane}"
