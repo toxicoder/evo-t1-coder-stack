@@ -551,6 +551,48 @@ class OrphanBodyTest(CheckerTestCase):
         self.assertEqual((0, CLEAN_SUMMARY, ""), self.check())
 
 
+class SymlinkedTreeTest(CheckerTestCase):
+    """A tree reached through a symlink is still that tree.
+
+    //tests:shell_coverage runs every Bats suite with REPO_ROOT pointed at an instrumented
+    mirror of the checkout, where templates/common is a real directory holding symlinks and
+    each twin directory is a bare symlink back into the tree. A walk that stops at a link
+    finds no templatefile() call and then reports every shared body as an orphan, so the
+    same finding would appear only under the coverage gate.
+    """
+
+    def test_a_twin_reached_through_a_symlinked_directory_is_checked(self) -> None:
+        checkout = self.root() / "checkout" / "templates"
+        (checkout / "workspace").mkdir(parents=True)
+        (checkout / "workspace" / "main.tf").write_text(CLEAN_TF, encoding="utf-8")
+        mirror = self.root() / "mirror" / "templates"
+        (mirror / "common").mkdir(parents=True)
+        (mirror / "common" / "body.sh.tftpl").write_text(CLEAN_BODY, encoding="utf-8")
+        (mirror / "workspace").symlink_to(checkout / "workspace")
+        self.assertEqual((0, CLEAN_SUMMARY, ""), run_argv(str(mirror)))
+
+    def test_a_symlink_loop_is_walked_once_and_reports_nothing_extra(self) -> None:
+        # Following links needs the visited-set guard. Without it the walk re-enters the
+        # same directory through the link and counts every call inside it again: measured
+        # on the fixture below, the run reported 41 calls where one exists, bounded only
+        # by the kernel's symlink limit rather than by the tree. A silent over-count is
+        # the worse failure of the two, so the guard has a test of its own.
+        pair = self.root() / "pair"
+        pair.mkdir()
+        (pair / "main.tf").write_text(CLEAN_TF, encoding="utf-8")
+        (pair / "body.sh.tftpl").write_text(CLEAN_BODY, encoding="utf-8")
+        (pair / "up").symlink_to(pair)
+        self.assertEqual((0, CLEAN_SUMMARY, ""), run_argv(str(self.root())))
+
+    def test_a_body_the_tree_reaches_twice_is_reported_once(self) -> None:
+        # Two names for one file (a mirror symlink beside its target) is one orphan.
+        self.make_file("stale.sh.tftpl", "echo ${nobody_passes_me}\n")
+        (self.root() / "also-stale.sh.tftpl").symlink_to(self.root() / "stale.sh.tftpl")
+        code, out, _ = self.check()
+        self.assertEqual(1, code)
+        self.assertEqual(1, out.count("no templatefile() call under"))
+
+
 class BadCallTest(CheckerTestCase):
     """A call this parser cannot read is reported, never passed in silence."""
 

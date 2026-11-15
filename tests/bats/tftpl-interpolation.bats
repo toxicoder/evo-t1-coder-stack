@@ -240,6 +240,54 @@ printf %s "${payload}"'
   [ "${status}" -eq 2 ]
 }
 
+@test "checker: a twin reached through a symlinked directory is not an orphan" {
+  # //tests:shell_coverage runs every suite with REPO_ROOT pointed at an instrumented
+  # mirror of the checkout, where templates/common is a real directory and each twin is a
+  # bare symlink back into the tree. A walk that refuses to follow that link sees no
+  # templatefile() call at all and calls every shared body an orphan, which is how this
+  # suite first went red under the coverage gate.
+  local tree="${BATS_TEST_TMPDIR}/mirror/templates"
+  local real="${BATS_TEST_TMPDIR}/mirror/checkout/templates"
+  mkdir -p "${tree}/common" "${real}/workspace"
+  one_pair "${real}/workspace" "shared.sh.tftpl" "    payload = \"x\"" \
+    '#!/bin/sh
+echo "${payload} $${shell_var}"'
+  cp "${real}/workspace/shared.sh.tftpl" "${tree}/common/shared.sh.tftpl"
+  rm -f "${real}/workspace/shared.sh.tftpl"
+  ln -s "${real}/workspace" "${tree}/workspace"
+
+  run python3 "${CHECKER}" "${tree}"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"1 call(s) checked"* ]]
+  [[ ${output} != *"reaches it"* ]]
+}
+
+@test "docs: the startup key list in coder-templates.md is the map main.tf declares" {
+  # The prose in docs/coder-templates.md enumerates the keys the startup body receives,
+  # and an enumeration is exactly the kind of sentence that goes stale: the list it carried
+  # named a payload that belongs to a different coder_script. The checker reads the real
+  # map, so this compares the two instead of trusting the page.
+  local doc="${REPO_ROOT}/docs/coder-templates.md"
+  [[ -f ${doc} ]] || skip "docs/coder-templates.md is not in the tree"
+
+  local declared written
+  declared="$(
+    python3 "${CHECKER}" "${REPO_ROOT}/templates" --list 2>/dev/null |
+      # The prose describes the workspace twin only, so the row is picked by the file the
+      # call sits in - the repo's own path can contain "workspace", so it is anchored.
+      awk -F'\t' '$3 ~ /startup\.sh\.tftpl$/ && $1 ~ /templates\/workspace\/[^\/]+$/ { print $4 }' |
+      tr ',' '\n' | sort -u
+  )"
+  written="$(
+    awk '/startup script gets/ { flag = 1; next } flag && /twin adds/ { exit } flag' "${doc}" |
+      grep -o '`[a-z_][a-z0-9_]*`' | tr -d '`' | sort -u
+  )"
+  # Both sides have to be non-empty, or an agreement between two nothing proves nothing.
+  [ -n "${declared}" ]
+  [ -n "${written}" ]
+  diff <(printf '%s\n' "${declared}") <(printf '%s\n' "${written}")
+}
+
 @test "render: every body renders through terraform and each shell body parses" {
   # The plan-time half of the check, run for real: a uniform string for every declared key
   # (HCL coerces it where a body asks for a bool), one providerless config, one apply, then
@@ -247,7 +295,7 @@ printf %s "${payload}"'
   # the only judge of a malformed interpolation - ${...} and ${a b} both read as no names
   # at all to a text scan - so the bodies the checker reasons about are rendered here too.
   local tf_bin
-  tf_bin="$(real_bin terraform)"
+  tf_bin="$(real_bin terraform || true)"
   if [ -z "${tf_bin}" ]; then
     skip "terraform is not on PATH, so there is nothing to render with"
   fi
@@ -311,7 +359,7 @@ printf %s "${payload}"'
   # body that over-escaped would land in the workspace with a literal $${...} in the shell
   # and every guard in it would test the wrong string.
   local tf_bin
-  tf_bin="$(real_bin terraform)"
+  tf_bin="$(real_bin terraform || true)"
   if [ -z "${tf_bin}" ]; then
     skip "terraform is not on PATH, so there is nothing to render with"
   fi

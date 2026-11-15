@@ -756,7 +756,7 @@ text = open(sys.argv[1], encoding="ascii").read()
 # declared key and becomes seed text. A renderer that skips the fold leaves "$${name}"
 # in the file, the shell reads it as the PID plus a literal word, and every guard that
 # tests that variable silently stops testing anything.
-pattern = re.compile(r"(\$\$\{)|(%%\{)|\$\{([a-z_]+)\}")
+pattern = re.compile(r"(\$\$\{)|(%%\{)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 def emit(match):
     if match.group(1):
         return "${"

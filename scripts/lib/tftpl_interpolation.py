@@ -22,6 +22,7 @@ per line and a closing "summary:" line.
 suite can drive terraform from the key list.
 """
 
+import os
 import re
 import sys
 from pathlib import Path
@@ -292,6 +293,36 @@ def _resolve_body(tf_path: Path, rel: str, templates_dir: Path) -> Path | None:
     return None
 
 
+def _tree_files(root: Path, suffix: str) -> list[Path]:
+    """Every file under root ending in suffix, following a directory that is a symlink.
+
+    Path.rglob does not descend into a symlinked directory, and two real trees reach this
+    program in that shape: the shell-coverage harness points the suites at a mirror whose
+    templates/workspace and templates/devcontainer are links back into the checkout, and
+    the instrumented copies sit beside them. Skipping those links would report the bodies
+    they name as orphans, which is the opposite of what the pass is for. The visited set is
+    the loop guard that following links needs.
+    """
+    files: list[Path] = []
+    visited: set[str] = set()
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+        here = os.path.realpath(dirpath)
+        if here in visited:
+            dirnames[:] = []
+            continue
+        visited.add(here)
+        dirnames[:] = [d for d in dirnames if d != ".terraform"]
+        for name in filenames:
+            if name.endswith(suffix):
+                files.append(Path(dirpath, name))
+    return sorted(files)
+
+
+def _identity(path: Path) -> str:
+    """The key that says two paths are the same file, across a symlinked tree."""
+    return os.path.realpath(path)
+
+
 class _Report:
     """Findings and the counters the closing summary prints."""
 
@@ -300,7 +331,7 @@ class _Report:
         self.warnings = 0
         self.checked = 0
         self.rows: list[str] = []
-        self.reached: set[Path] = set()
+        self.reached: set[str] = set()
 
     def error(self, message: str) -> None:
         print(f"error: {message}")
@@ -350,7 +381,7 @@ def check_call(tf_path: Path, call_at: int, templates_dir: Path, report: _Report
     uses, broken = _body_names(body_text)
     declared = set(keys)
     report.rows.append("\t".join([str(tf_path), str(line), str(body_path), ",".join(keys)]))
-    report.reached.add(body_path)
+    report.reached.add(_identity(body_path))
 
     if broken:
         # Terraform refuses to render a body whose interpolation never closes, so a
@@ -377,19 +408,21 @@ def check_call(tf_path: Path, call_at: int, templates_dir: Path, report: _Report
 
 def check_tree(templates_dir: Path, report: _Report) -> None:
     """Check every templatefile() call under templates_dir, and every body one should reach."""
-    for tf_path in sorted(templates_dir.rglob("*.tf")):
-        if ".terraform" in tf_path.parts:
-            continue
+    for tf_path in _tree_files(templates_dir, ".tf"):
         masked = _mask_comments(tf_path.read_text(encoding="utf-8"))
         for match in TEMPLATE_CALL_RE.finditer(masked):
             check_call(tf_path, match.start(), templates_dir, report)
     # A body no call names renders nowhere: it may be a rename that left the old file
     # behind, or a payload the push stopped staging beside its twin. Either way the tree
-    # carries text nobody reads, which is what this pass is for.
-    for body in sorted(templates_dir.rglob("*.tftpl")):
-        if ".terraform" in body.parts:
+    # carries text nobody reads, which is what this pass is for. Paths are compared by
+    # identity, so a body the tree reaches twice - once through a symlink - reports once.
+    seen: set[str] = set()
+    for body in _tree_files(templates_dir, ".tftpl"):
+        key = _identity(body)
+        if key in seen:
             continue
-        if body not in report.reached:
+        seen.add(key)
+        if key not in report.reached:
             report.error(f"{body}: no templatefile() call under {templates_dir} reaches it")
 
 
