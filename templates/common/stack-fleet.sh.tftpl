@@ -1,5 +1,6 @@
 #!/bin/sh
-# tftpl: coder_script body; the fleet suite payloads are interpolated from the map
+# tftpl: coder_script body; $${shell} stays a shell var; $${terraform_var} is passed from
+# main.tf. The fleet suite payloads are interpolated from the map
 # main.tf passes, each into a quoted here-doc so no shell text inside one is
 # expanded. Why this family rides a body of its own rather than stack-skills.sh.tftpl
 # or stack-repo-skills.sh.tftpl: the agent execs every body as ONE argument to
@@ -27,9 +28,12 @@ set -u
 
 # One symlinked root would aim every write below at a directory outside the four homes
 # this body owns, so bail before the first of them. Silent, like every other path here.
+# The loop variable below is a shell var, so every reference to it carries the
+# double-dollar escape: templatefile() reads a single-dollar brace reference anywhere in
+# this file as an interpolation, and the plan fails when main.tf does not pass that key.
 for evo_t1_root in "$HOME/.grok/agents" "$HOME/.grok/personas" \
                    "$HOME/.coder/skills" "$HOME/.agents/skills"; do
-  if [ -L "${evo_t1_root}" ]; then
+  if [ -L "$${evo_t1_root}" ]; then
     exit 0
   fi
 done
