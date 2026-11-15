@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # shellcheck shell=bash
 #
-# ## ez-skill-authoring.bats - the shared seam of the stack's skill-authoring trio.
+# ## ez-skill-authoring.bats - the shared seam of the stack's own Skills.
 #
 # The stack ships three user-invocable Skills: /ez-learn (mine many sessions and
 # propose), /ez-skillify (capture the session that just worked) and
@@ -10,6 +10,15 @@
 # reads, and into its ~/.agents/skills/<name>/SKILL.md twin, which is the Grok
 # Build CLI's - absent-only, from one templates/common/stack-skills.sh.tftpl
 # rendered by the coder_script "stack_skills" block in both main.tf twins.
+#
+# The gate covers the fleet quartet as well: /feature-implementation,
+# /skeptical-review, /security-audit and /bug-hunt, four more templates/common/
+# payloads the same two consumers read off the same parser. They travel in a
+# DIFFERENT coder_script, "stack_fleet", whose body is a templatefile() map with
+# no here-doc, so they carry no TAGS row and never join the heredoc loops.
+# What they share with the trio is the file format, so every SHAPE invariant
+# below runs over all seven payloads, and only the delivery seam is split by
+# list: KEYS against the stack_skills block, FLEET_KEYS against stack_fleet.
 #
 # The move out of startup.sh.tftpl is the reason this suite exists. main.tf
 # inlines every payload into coder_agent.startup_script and the agent execs that
@@ -24,14 +33,16 @@
 # shared payload invariants hold for the two new files as well as for ez-learn.
 #
 # ez-learn's own content claims are pinned by tests/bats/ez-learn-skill.bats;
-# this suite applies only the SHARED invariants across all three files and owns
+# this suite applies only the SHARED invariants across all seven files and owns
 # the claims that belong to ez-skillify and ez-create-skill alone.
 #
 # Usage: bazelisk test //tests:bats_ez_skill_authoring_test   (from any cwd)
-# Safety: reads templates/common/{ez-learn,ez-skillify,ez-create-skill}.SKILL.md,
-# templates/common/stack-skills.sh.tftpl, both main.tf twins, both
-# startup.sh.tftpl twins, scripts/lib/config_seed.sh, scripts/lib/startup_size.awk,
-# the root BUILD file, README.md/AGENTS.md and the docs tree. Writes nothing.
+# Safety: reads templates/common/{ez-learn,ez-skillify,ez-create-skill,
+# feature-implementation,skeptical-review,security-audit,bug-hunt}.SKILL.md,
+# templates/common/stack-skills.sh.tftpl, templates/common/stack-fleet.sh.tftpl,
+# both main.tf twins, both startup.sh.tftpl twins, scripts/lib/config_seed.sh,
+# scripts/lib/startup_size.awk, the root BUILD file, README.md/AGENTS.md and the
+# docs tree. Writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -40,11 +51,23 @@ load 'test_helper'
 
 REPO_ROOT=""
 SEED=""
+FLEET_SEED=""
 
 # The trio, and the heredoc tag plus the main.tf map key each travels under.
 SKILLS=(ez-learn ez-skillify ez-create-skill)
 TAGS=(EZ_LEARN_SKILL_MD_EOF EZ_SKILLIFY_SKILL_MD_EOF EZ_CREATE_SKILL_SKILL_MD_EOF)
 KEYS=(ez_learn_skill ez_skillify_skill ez_create_skill_skill)
+
+# The fleet quartet: four parent-side runbooks seeded by coder_script
+# "stack_fleet" from templates/common/stack-fleet.sh.tftpl. That body is a
+# templatefile() + file() map, so there is no here-doc tag per payload and no
+# TAGS row - the map key is the only seam they share with the trio's KEYS.
+FLEET_SKILLS=(feature-implementation skeptical-review security-audit bug-hunt)
+FLEET_KEYS=(feature_implementation_skill skeptical_review_skill security_audit_skill
+  bug_hunt_skill)
+
+# Every payload the shared shape invariants apply to: the trio plus the quartet.
+ALL_SKILLS=("${SKILLS[@]}" "${FLEET_SKILLS[@]}")
 
 # The frontmatter keys Grok Build documents: the whole set a payload may carry.
 DOC_KEYS=(name description when-to-use allowed-tools argument-hint user-invocable
@@ -93,11 +116,15 @@ if "user-invocable" in data and data["user-invocable"] is not True:
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SEED="${REPO_ROOT}/templates/common/stack-skills.sh.tftpl"
+  FLEET_SEED="${REPO_ROOT}/templates/common/stack-fleet.sh.tftpl"
   local f
   for f in "${SKILLS[@]}"; do
     [[ -f "${REPO_ROOT}/templates/common/${f}.SKILL.md" ]] ||
       skip "the ${f} payload is not reachable from ${REPO_ROOT}"
   done
+  # The quartet is deliberately absent from that guard: a quartet payload that
+  # stopped shipping is a defect the shape loops below have to report, not a
+  # reason to skip the trio's own gates with it.
   [[ -f "${SEED}" &&
     -f "${REPO_ROOT}/templates/workspace/main.tf" &&
     -f "${REPO_ROOT}/templates/devcontainer/main.tf" &&
@@ -106,7 +133,8 @@ setup() {
     skip "the skill seed body or a template twin is not reachable from ${REPO_ROOT}"
 }
 
-# payload_path <skill> — the staged payload for one skill of the trio.
+# payload_path <skill> -- the staged payload for one skill of the trio or of the
+# quartet; both lists name their file by stem under templates/common/.
 payload_path() {
   printf '%s' "${REPO_ROOT}/templates/common/${1}.SKILL.md"
 }
@@ -365,7 +393,9 @@ main_block() {
 }
 
 # ---------------------------------------------------------------------------
-# Invariants every payload of the trio shares.
+# Invariants every stack-authored payload shares: the trio and the quartet are
+# one file format read by one parser, so nothing below is allowed to cover only
+# three of the seven.
 # ---------------------------------------------------------------------------
 
 @test "payload: line 1 is the opening fence and the managed-by marker sits below the close" {
@@ -375,10 +405,10 @@ main_block() {
   # structure - inside the frontmatter it would become a skill key nobody
   # documents and the seeder's ownership probe reads as content.
   local i f close marker
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
     run head -n 1 "${f}"
-    assert_eq "${SKILLS[i]} opens the frontmatter on line 1" "---" "${output}"
+    assert_eq "${ALL_SKILLS[i]} opens the frontmatter on line 1" "---" "${output}"
 
     close="$(awk 'NR > 1 && /^---[[:space:]]*$/ { print NR; exit }' "${f}")"
     [ -n "${close}" ] || {
@@ -402,20 +432,20 @@ main_block() {
   # exists to ship. PyYAML is optional the way py_helpers.bats treats it.
   python3 -c 'import yaml' >/dev/null 2>&1 || skip "PyYAML is not installed"
   local i f
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
-    python3 -c "${FRONTMATTER_PROG}" "${SKILLS[i]}" <"${f}"
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
+    python3 -c "${FRONTMATTER_PROG}" "${ALL_SKILLS[i]}" <"${f}"
   done
 }
 
-@test "payload: each of the three stays plain ASCII with no CR" {
+@test "payload: each of the seven stays plain ASCII with no CR" {
   # Every consumer reads these as text a shell or a parser parses: a curly quote
   # or an en dash survives into the seeded skill, reads as mojibake in the
   # terminal, and byte-wise comparisons treat it as a different file - which is
   # how a takeover edit becomes a diff that never matches.
   local i f stray
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
     stray="$(tr -d '\0-\177' <"${f}" | wc -c | tr -d ' ')"
     if [ "${stray}" -ne 0 ]; then
       printf 'FAIL: %s holds %s non-ASCII byte(s)\n' "${f}" "${stray}" >&2
@@ -424,7 +454,7 @@ main_block() {
     fi
     local n_cr
     n_cr="$(grep -c $'\r' "${f}" || true)"
-    assert_eq "${SKILLS[i]} carries no carriage return" "0" "${n_cr}"
+    assert_eq "${ALL_SKILLS[i]} carries no carriage return" "0" "${n_cr}"
   done
 }
 
@@ -435,16 +465,16 @@ main_block() {
   # next boot silently undoes - the exact advice that costs them an afternoon.
   # And an operator who wants the command gone needs [skills]/disabled, not rm.
   local i f n
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
     n="$(grep -Eic -- 'delete[[:space:]]+this[[:space:]]+file' "${f}" || true)"
-    assert_eq "${SKILLS[i]} never tells the reader to delete the file" "0" "${n}"
-    assert_contains_file "${SKILLS[i]} keeps the seeder marker string" "${f}" \
+    assert_eq "${ALL_SKILLS[i]} never tells the reader to delete the file" "0" "${n}"
+    assert_contains_file "${ALL_SKILLS[i]} keeps the seeder marker string" "${f}" \
       'managed-by: evo-t1-coder-stack'
-    assert_contains_file "${SKILLS[i]} says ownership moves by marker deletion" "${f}" \
+    assert_contains_file "${ALL_SKILLS[i]} says ownership moves by marker deletion" "${f}" \
       'delete[^.]*marker'
-    assert_contains_file "${SKILLS[i]} hiding names the skills table" "${f}" '\[skills\]'
-    assert_contains_file "${SKILLS[i]} names the disabled knob" "${f}" \
+    assert_contains_file "${ALL_SKILLS[i]} hiding names the skills table" "${f}" '\[skills\]'
+    assert_contains_file "${ALL_SKILLS[i]} names the disabled knob" "${f}" \
       'disabled[[:space:]]*=[[:space:]]*\['
   done
 }
@@ -456,11 +486,11 @@ main_block() {
   # Agents chat agent, or the model narrates the steps instead of running them
   # and the operator believes the workflow was performed.
   local i f
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
-    assert_contains_file "${SKILLS[i]} names the CLI terminal tool" "${f}" 'run_terminal_command'
-    assert_contains_file "${SKILLS[i]} names the chat-side shell tool" "${f}" 'execute'
-    assert_match "${SKILLS[i]} ties the two tools to the two consumers" \
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
+    assert_contains_file "${ALL_SKILLS[i]} names the CLI terminal tool" "${f}" 'run_terminal_command'
+    assert_contains_file "${ALL_SKILLS[i]} names the chat-side shell tool" "${f}" 'execute'
+    assert_match "${ALL_SKILLS[i]} ties the two tools to the two consumers" \
       'run_terminal_command[^!]{0,120}execute|execute[^!]{0,120}run_terminal_command' \
       "$(payload_prose "${f}")"
   done
@@ -474,11 +504,11 @@ main_block() {
   # ships a skill the chat side cannot invoke. Naming .grok/skills is legal -
   # lying about who reads it is not.
   local i f n
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
-    assert_contains_file "${SKILLS[i]} names the CLI-side home" "${f}" \
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
+    assert_contains_file "${ALL_SKILLS[i]} names the CLI-side home" "${f}" \
       '~/\.agents/skills/<[A-Za-z0-9_.-]+>/SKILL\.md'
-    assert_contains_file "${SKILLS[i]} names the chat-side twin" "${f}" \
+    assert_contains_file "${ALL_SKILLS[i]} names the chat-side twin" "${f}" \
       '~/\.coder/skills/<[A-Za-z0-9_.-]+>/SKILL\.md'
 
     if grep -qF -- '.grok/skills' "${f}"; then
@@ -504,8 +534,8 @@ main_block() {
     skip "the root BUILD file is not in this suite's runfiles (//:bazel_files)"
 
   local i f tokens resolvable token stem label bad missing required
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
     # The guard rejects a // preceded by a colon or a word char, so an https://
     # URL is not mistaken for a label, and the class carries <> so the generic
     # //scripts:<stem> spelling survives capture.
@@ -518,11 +548,22 @@ main_block() {
 
     # The targets each skill is answerable for: the loop below would otherwise
     # pass vacuously on a payload that had quietly dropped every one of them.
-    case "${SKILLS[i]}" in
+    case "${ALL_SKILLS[i]}" in
       ez-skillify)
         required="$(printf '%s\n' //:test-fast //scripts:mcp-check //scripts:refresh-configs | sort -u)" ;;
       ez-create-skill)
         required="$(printf '%s\n' //scripts:refresh-configs | sort -u)" ;;
+      feature-implementation)
+        # The map verb it tells you to run before grepping, and the full gate it
+        # owes the pull request.
+        required="$(printf '%s\n' //:test-fast //:test-all //scripts:bazel-map | sort -u)" ;;
+      skeptical-review | security-audit)
+        # The reviewer and the auditor both re-run the gate in their own shell.
+        required="$(printf '%s\n' //:test-fast //:lint | sort -u)" ;;
+      bug-hunt)
+        # The bats target a failing test is run under: quoted, because <stem> is
+        # the payload's placeholder, not a redirection.
+        required="$(printf '%s\n' //:test-fast "//tests:bats_<stem>_test" | sort -u)" ;;
       *)
         required="$(printf '%s\n' //:test-fast | sort -u)" ;;
     esac
@@ -532,8 +573,10 @@ main_block() {
       return 1
     fi
 
-    # //scripts:<stem> is the payloads' generic spelling for a CLI target, so it
-    # is pinned as a citation, not resolved as a label.
+    # //scripts:<stem> and //tests:bats_<stem>_test are the payloads' generic
+    # spellings for a CLI target and for one bats target, so they are pinned as
+    # citations, not resolved as labels. Anything else that reaches the case
+    # below has to name a real target in one of the two places it can come from.
     resolvable="$(printf '%s\n' "${tokens}" | grep -v '<' || true)"
     bad=""
     for token in ${resolvable}; do
@@ -563,7 +606,7 @@ main_block() {
 
     # A cited target has to travel in the runnable form, not as a bare mention:
     # `bazelisk test` / `bazelisk run` is what makes it a step an agent runs.
-    assert_contains_file "${SKILLS[i]} shows the labels as commands to run" "${f}" \
+    assert_contains_file "${ALL_SKILLS[i]} shows the labels as commands to run" "${f}" \
       'bazelisk (test|run) //'
   done
 }
@@ -584,8 +627,8 @@ main_block() {
     return 1; }
 
   local i f cited name path unresolved want missing total=0 count
-  for i in "${!SKILLS[@]}"; do
-    f="$(payload_path "${SKILLS[i]}")"
+  for i in "${!ALL_SKILLS[@]}"; do
+    f="$(payload_path "${ALL_SKILLS[i]}")"
     # Two segments at most, so a config path or a notes path is not mistaken for
     # a doc citation; SKILL.md is the artifact every skill writes and MEMORY.md is
     # the memory file /ez-learn maintains upstream, so neither is a doc here.
@@ -595,8 +638,11 @@ main_block() {
     count="$(printf '%s\n' "${cited}" | grep -c . || true)"
     total=$((total + ${count:-0}))
 
-    case "${SKILLS[i]}" in
+    case "${ALL_SKILLS[i]}" in
       ez-create-skill) want="$(printf '%s\n' grok-build-and-agents.md | sort -u)" ;;
+      feature-implementation)
+        # The rule it tells the parent to obey before the first edit.
+        want="$(printf '%s\n' branching.md | sort -u)" ;;
       *) want="" ;;
     esac
     missing="$(comm -23 <(printf '%s\n' "${want}") <(printf '%s\n' "${cited}"))"
@@ -617,11 +663,112 @@ main_block() {
       return 1
     fi
   done
-  # Non-vacuity: the trio has to point at the docs tree at all, or the loop
+  # Non-vacuity: the payloads have to point at the docs tree at all, or the loop
   # above passes on a set of payloads that had quietly stopped citing anything.
   [ "${total}" -gt 0 ] || {
-    printf 'FAIL: none of the three payloads cites a doc any more\n' >&2
+    printf 'FAIL: none of the seven payloads cites a doc any more\n' >&2
     return 1; }
+}
+
+# ---------------------------------------------------------------------------
+# The quartet's own seam: how four more payloads reach the two homes.
+# ---------------------------------------------------------------------------
+
+@test "fleet payloads: the quartet names the local lanes, its own slash form, and the parent-only spawn rule" {
+  # These four are parent-side runbooks: they tell the reader to fan children
+  # out, so the three lanes that decide WHERE a fan-out lands (agent-swarm for
+  # independent writers, agent-explore for pure mapping, agent-review for the
+  # mandatory independent pass) have to be named by every one of them, and no
+  # cloud id may appear anywhere - the aliases in litellm/config.yaml are the
+  # only transport this stack has. And a child has no spawn_subagent, so a
+  # payload that told a child to fan out would teach a call that does not exist
+  # in a child's toolset.
+  local i f name prose n
+  for i in "${!FLEET_SKILLS[@]}"; do
+    name="${FLEET_SKILLS[i]}"
+    f="$(payload_path "${name}")"
+    prose="$(payload_prose "${f}")"
+
+    n="$(grep -Eic -- 'grok-|claude-|gpt-|gemini-|llama-|mistral-' "${f}" || true)"
+    assert_eq "${name} names no cloud model id" "0" "${n}"
+    assert_contains_file "${name} names the fan-out lane" "${f}" 'agent-swarm'
+    assert_contains_file "${name} names the mapping lane" "${f}" 'agent-explore'
+    assert_contains_file "${name} names the review lane" "${f}" 'agent-review'
+    assert_match "${name} says a child cannot spawn the lanes" \
+      'child has no .spawn_subagent.' "${prose}"
+    assert_match "${name} states its own slash form with its argument" \
+      "/${name} <" "${prose}"
+    assert_match "${name} hands the split to /ez-micro-plan" '/ez-micro-plan' "${prose}"
+  done
+}
+
+@test "fleet-skills feed: both twins feed the quartet into the stack_fleet body alone, chomped" {
+  # Same two failures the trio pins: a key moved behind a local. stops being
+  # counted by either byte reader, so the payload rides the argument while the
+  # ceiling guard cannot see it; and a copy left in the coder_agent.main
+  # startup_script map ships the bytes twice, spending the headroom the separate
+  # coder_script was cut to buy. chomp, because the seeded file must not grow a
+  # trailing blank line that drifts the marker off the shape these tests parse.
+  local twin block agent i key name total
+  for twin in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
+    block="$(main_block "${twin}/main.tf" coder_script stack_fleet)"
+    [ -n "${block}" ] || {
+      printf 'FAIL: %s has no coder_script "stack_fleet" block\n' "${twin}/main.tf" >&2
+      return 1; }
+    assert_match "${twin} renders the quartet from the shared fleet body" \
+      'script = templatefile\("\$\{path\.module\}/stack-fleet\.sh\.tftpl"' "${block}"
+    agent="$(main_block "${twin}/main.tf" coder_agent main)"
+    for i in "${!FLEET_KEYS[@]}"; do
+      key="${FLEET_KEYS[i]}"
+      name="${FLEET_SKILLS[i]}"
+      assert_match "${twin} chomps ${key} from its payload, inside the block" \
+        "${key}[[:space:]]+=[[:space:]]+chomp\(file\(\"\\\$\{path\.module\}/${name}\.SKILL\.md\"\)\)" "${block}"
+      total="$(grep -cF -- "${key}" "${twin}/main.tf" || true)"
+      assert_eq "${twin} feeds ${key} exactly once, out of the startup map" "1" "${total}"
+      if printf '%s' "${agent}" | grep -Fq -- "${key}"; then
+        printf 'FAIL: %s still inlines %s into coder_agent.main startup_script\n' \
+          "${twin}/main.tf" "${key}" >&2
+        return 1
+      fi
+    done
+  done
+}
+
+@test "fleet-skills size: the quartet is measured inside the stack_fleet body in both twins" {
+  # The guard that keeps the escape hatch honest, for the second body: a payload
+  # startup_size.awk emits no record for is a payload nobody sizes, and it shows
+  # up as a workspace that fails to boot with "A startup script has failed"
+  # rather than as a failed push.
+  local twin out name tab
+  tab="$(printf '\t')"
+  [[ -f "${REPO_ROOT}/scripts/lib/startup_size.awk" ]] ||
+    skip "startup_size.awk is not reachable under ${REPO_ROOT}/scripts/lib"
+  for twin in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
+    out="$(awk -f "${REPO_ROOT}/scripts/lib/startup_size.awk" "${twin}/main.tf")"
+    for name in "${FLEET_SKILLS[@]}"; do
+      assert_match "${twin} measures ${name} inside the stack_fleet body" \
+        "^stack-fleet\.sh\.tftpl${tab}${name}\.SKILL\.md\$" "${out}"
+    done
+    assert_not_match "${twin} never reports the fleet body as unmeasurable" \
+      "^stack-fleet\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"
+  done
+}
+
+@test "fleet-skills seed: each quartet payload reaches the fleet body as its map key, once" {
+  # The interpolation is the fleet's heredoc: a key main.tf fills that the body
+  # never renders ships an empty SKILL.md while the bytes still travel in the
+  # argument, so the size guard stays green and the slash command is simply
+  # gone. Twice, and the payload spends the headroom twice.
+  [[ -f "${FLEET_SEED}" ]] ||
+    skip "the stack_fleet seed body is not reachable at ${FLEET_SEED}"
+  local i key n
+  for i in "${!FLEET_KEYS[@]}"; do
+    key="${FLEET_KEYS[i]}"
+    assert_contains_file "${key} is rendered by the fleet body" "${FLEET_SEED}" \
+      "\\\$\{${key}\}"
+    n="$(grep -cF -- "\${${key}}" "${FLEET_SEED}" || true)"
+    assert_eq "${key} is rendered exactly once by the fleet body" "1" "${n}"
+  done
 }
 
 # ---------------------------------------------------------------------------
