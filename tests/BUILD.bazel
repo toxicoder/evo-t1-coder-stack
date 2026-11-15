@@ -436,6 +436,13 @@ _SUITE_PAYLOAD = {
     "tf-types.bats": [
         "//:templates_payload",
     ],
+    # The subject is the twins themselves: the checker reads both main.tf files and every
+    # body they name, the render tier renders each shell body through terraform, and one
+    # test diffs the startup key list in the templates doc against the real map.
+    "tftpl-interpolation.bats": [
+        "//:templates_payload",
+        "//docs:content",
+    ],
     "tmux-fidelity.bats": [
         "//:templates_payload",
     ],

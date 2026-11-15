@@ -751,8 +751,19 @@ assert_link_to() {
   python3 - "$SEED" "$rendered" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="ascii").read()
-for key in sorted(set(re.findall(r"\$\{([a-z_]+)\}", text))):
-    text = text.replace("${" + key + "}", "seeded by the fleet body for " + key)
+# One pass, the way templatefile() reads the body: $${ is a literal ${ and %%{ is a
+# literal %{, so a shell variable survives into the script; anything else braced is a
+# declared key and becomes seed text. A renderer that skips the fold leaves "$${name}"
+# in the file, the shell reads it as the PID plus a literal word, and every guard that
+# tests that variable silently stops testing anything.
+pattern = re.compile(r"(\$\$\{)|(%%\{)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+def emit(match):
+    if match.group(1):
+        return "${"
+    if match.group(2):
+        return "%{"
+    return "seeded by the fleet body for " + match.group(3)
+text = pattern.sub(emit, text)
 open(sys.argv[2], "w", encoding="ascii").write(text)
 PY
   [ -s "${rendered}" ] || {
