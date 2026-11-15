@@ -702,7 +702,9 @@ measured 30-request burst, the **Agent backend** card) are in
 | `agent-low` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low` | yes (same as `agent`) |
 | `agent-medium` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `medium` | yes (same as `agent`) |
 | `agent-xhigh` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh` | yes (same as `agent`) |
-| `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group alone carries no session pin, so every request lands on the least-busy healthy box; naming it as `grok_subagents_lane` is also what widens a fan-out to 8 subagents by default | yes (same as `agent`) |
+| `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group carries no session pin, so every request lands on the least-busy healthy box; naming it as `grok_subagents_lane` is also what widens a fan-out to 8 subagents by default | yes (same as `agent`) |
+| `agent-explore` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low`, and no session pin either, so a wave of read-only fleet children is placed across all three boxes; the default `grok_explore_lane`, and not a Coder Agents chat model | yes (same as `agent`) |
+| `agent-review` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and no session pin like `agent-explore`; the default `grok_review_lane` for the skeptical roles, and not a Coder Agents chat model | yes (same as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
@@ -717,21 +719,41 @@ routing, the `agent` -> `coder` fallback, the burst that produced it, and the tw
 [docs/litellm-routing.md](docs/litellm-routing.md). `scripts/coder-agents.sh` registers
 `agent` (default), the three thinking aliases, `agent-swarm`, and `chat` as the Coder
 Agents chat models, so an alias edited here moves in the Agents dropdowns too. There is
-no `high` level on this runtime. `agent-swarm` is the fifth Spark lane and the only one
-with no session pin: same boxes, same baked `xhigh`, each request placed on the box
-carrying the fewest in flight, which is the lane a parallel subagent fan-out wants -
-point one at it with `--var grok_subagents_lane=agent-swarm`. That one variable is the
-whole fan-out switch, because the width now follows the lane: it pins all three built-in
-subagent types in `[subagents.models]` - `general-purpose`, which is the type a spawn gets
-when it names none and the one every writer in a fan-out runs as, plus the read-only
-`explore` and `plan` - and it raises the default to 8 subagents in flight, where a pinned
-lane stays at 4. That 4 is one box's `PARALLEL` (5 by default, `scripts/spark-configure.sh`)
-minus the parent's own stream, which is why a bigger number on a pinned lane buys queue
-depth and not capacity; the swarm lane spreads over all three boxes, so its ceiling is
-`PARALLEL` per box x 3 = 15. `--var grok_subagent_max_concurrent=N` overrules the derived
-width whenever one workspace wants a number of its own, and
+no `high` level on this runtime. There are seven Spark aliases in all: `agent-swarm` is the
+fifth and, with the two after it, one of the three that carry no session pin - same boxes,
+same baked `xhigh`, each request placed on the box carrying the fewest in flight, which is
+the lane a parallel subagent fan-out wants - point one at it with
+`--var grok_subagents_lane=agent-swarm`. That one variable is the whole fan-out switch,
+because the width now follows the lane: it pins the writer types in `[subagents.models]` -
+`general-purpose`, which is the type a spawn gets when it names none and the one every
+writer in a fan-out runs as, plus the seeded `implementer` and `tester`, while the read-only
+`explore` and `plan` follow their own lane variables below - and it raises the default to 8
+subagents in flight, where a pinned lane stays at 4. That 4 is one box's `PARALLEL` (5 by
+default, `scripts/spark-configure.sh`) minus the parent's own stream, which is why a bigger
+number on a pinned lane buys queue depth and not capacity; the swarm lane spreads over all
+three boxes, so its ceiling is `PARALLEL` per box x 3 = 15.
+`--var grok_subagent_max_concurrent=N` overrules the derived width whenever one workspace
+wants a number of its own, and
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
 seam and the `/ez-micro-plan` plan that fills the slots.
+
+The sixth and seventh, `agent-explore` and `agent-review`, are that same pin lift cut for
+the two one-shot roles a fleet dispatches rather than for a conversation: a child that
+answers once carries no warm prefix into a next turn, so the pin protects nothing here and
+only costs a box's admission slots. The read-only mappers - the built-in `explore` type and
+the seeded `explorer` agent - ride `agent-explore`, which bakes `low` because mapping work
+is a lookup; the skeptical roles `reviewer` and `security-auditor`, which carry the
+mandatory independent review of a multi-file change, ride `agent-review`, which bakes the
+`xhigh` that `agent` itself carries. Both defaults are template variables
+(`--var grok_explore_lane=`, `--var grok_review_lane=`, declared in
+`templates/workspace/coder.tf`), and each is the single seam for its role's cost: name
+`agent-low` or `agent-xhigh` there to put that role back on a pinned lane at the same
+thinking level. Neither is registered as a Coder Agents chat model, because neither is
+meant to be typed into the Agents dropdown, and each degrades one step deeper than a pinned
+lane, hopping through the alias that bakes its own level before Arc - `agent-explore` ->
+`agent-low` -> `coder`, `agent-review` -> `agent-xhigh` -> `coder`
+(`litellm/config.yaml:722-723`) - so a parent that dispatched a mapper at `low` gets a
+`low` answer from the fallback rather than an `xhigh` it did not ask for.
 
 ## Coder workspace templates
 
