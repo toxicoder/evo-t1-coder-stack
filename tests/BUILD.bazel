@@ -436,6 +436,11 @@ _SUITE_PAYLOAD = {
     "tf-types.bats": [
         "//:templates_payload",
     ],
+    # The subject is the twins themselves: the checker reads both main.tf files and every
+    # body they name, and the render tier renders each shell body through terraform.
+    "tftpl-interpolation.bats": [
+        "//:templates_payload",
+    ],
     "tmux-fidelity.bats": [
         "//:templates_payload",
     ],
