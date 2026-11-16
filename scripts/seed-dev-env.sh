@@ -133,19 +133,17 @@ resolve_repo_root() {
 # handshakes and answers keyless at the public rate limits). ${litellm_url}
 # becomes STACK_LITELLM_URL, the affinity key is contributor, the cache-proxy
 # path re-roots under the seed home, and each fan-out role ships on the alias
-# its template variable defaults to (writers on agent-swarm,
-# the planner on agent, readers on agent-explore, the skeptic on
-# agent-review). Substitutions are sed, never
-# eval; a doubled dollar unfolds first.
+# its template variable defaults to: writers on agent-swarm, the planner on
+# agent, readers on agent-explore, the skeptic on agent-review. Substitutions
+# are sed, never eval; a doubled dollar unfolds first.
 # Globals:
 #   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
 #   written as a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the
 #   context7 block), HOME (the home default when $3 is not given), and the six
 #   fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
 #   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT and GROK_SWARM_WIDTH. An
-#   unusable value falls back to its default and is noted; the width defaults to
-#   the fleet's 15 on every lane, so a contributor home is swarm-ready whatever
-#   lane it picked, because agent-swarm is ungated in the rendered config.
+#   unusable value falls back and is noted; the width is the fleet's 15 on every
+#   lane, since agent-swarm is ungated in the render and always selectable.
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write

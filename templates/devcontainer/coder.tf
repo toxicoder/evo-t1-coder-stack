@@ -84,7 +84,7 @@ variable "grok_subagent_max_concurrent" {
   default     = null
   validation {
     condition     = var.grok_subagent_max_concurrent == null || (var.grok_subagent_max_concurrent >= 1 && var.grok_subagent_max_concurrent <= 32)
-    error_message = "grok_subagent_max_concurrent must be null (derive it from the lane) or a whole number between 1 and 32."
+    error_message = "grok_subagent_max_concurrent must be null (take grok_swarm_width, the fleet's width) or a whole number between 1 and 32."
   }
 }
 
