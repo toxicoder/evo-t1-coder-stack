@@ -1695,7 +1695,7 @@ bazelisk run //scripts:prod-stack -- up
   at `templates/devcontainer/main.tf:769`):
 
 ```text
-infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the template fills them from INFISICAL_URL and from the five of the same spelling in the stack host's .env once INFISICAL_ENABLED is truthy: set them there and re-run bazelisk run //scripts:push-template.
+infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the template fills them from INFISICAL_PORT and from the five of the same spelling in the stack host's .env once INFISICAL_ENABLED is truthy: set them there and re-run bazelisk run //scripts:push-template.
 ```
 
 - Cause: the body's first gate, `templates/common/infisical-secrets.sh.tftpl:14-20` - any
@@ -1705,8 +1705,8 @@ infisical: vault not configured for this stack. These six names arrive on the co
   is not the flag being off; it is one value that never arrived. The push forwards each of
   the five read-side values only when `.env` carries something real - `env_get_forwardable` drops an
   empty value and one still spelling `change-me*` (`scripts/push-template.sh:198-205`, the five
-  forwards at `:697-731`) - and the template variable then keeps its own empty default
-  (`templates/workspace/coder.tf:215-219`), which hands the boot body a key that is
+  forwards at `:696-730`) - and the template variable then keeps its own empty default
+  (`templates/workspace/coder.tf:223-227`), which hands the boot body a key that is
   present and empty.
 - Fix it on the stack host: fill the five read-side keys (`INFISICAL_PROJECT_ID`,
   `INFISICAL_MACHINE_IDENTITY_ID`, `INFISICAL_ENVIRONMENT`,
@@ -1726,7 +1726,7 @@ bazelisk run //scripts:push-template
   so a running workspace keeps the empty set until it starts again.
 
 - The push prints only the key each value came from, never the value
-  (`scripts/push-template.sh:697-701`), so a CI log that shows
+  (`scripts/push-template.sh:696-700`), so a CI log that shows
   `infisical_project_id passed from INFISICAL_PROJECT_ID in .env (value not shown)` proves
   the key was read, not that it was right. `check` is the read that answers. The instance
   URL is the one vault value the log does print, because the push composes it rather than

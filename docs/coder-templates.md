@@ -422,11 +422,11 @@ Nothing else about GitHub travels in a `--var`.
 - `coder_agent_url` exists so agents keep dialing the local plain listener when
   `CODER_ACCESS_URL` is a public name.
 - The five values the boot reads the vault with are forwarded **whether or not the flag is
-  on** (`scripts/push-template.sh:697-731`), so adopting the vault later is a re-push of one
+  on** (`scripts/push-template.sh:696-730`), so adopting the vault later is a re-push of one
   word rather than a re-config of five, and a stack that never adopted Infisical pushes none
   of them. None of the five is echoed either: a project id and a machine identity id both end
   up transcribed into whoever's CI log this output lands in, so the log line names only the
-  key a value came from (`scripts/push-template.sh:697-701`). The sixth value, the instance
+  key a value came from (`scripts/push-template.sh:696-700`). The sixth value, the instance
   URL, is the one a workspace cannot do without and the one this script composes rather than
   forwards, inside the flag gate (`scripts/push-template.sh:652-661`): `.env`'s
   `INFISICAL_URL` is the address the *host* dials, and a container handed that spelling reaches
@@ -440,7 +440,7 @@ Nothing else about GitHub travels in a `--var`.
   names its keys after how the Infisical CLI reads them
   (`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `..._SECRET`), and `bazelisk run //scripts:infisical
   -- check` is the reader that keeps the `.env` spelling honest
-  (`scripts/push-template.sh:687-690`, `:710-715`, `:726-731`).
+  (`scripts/push-template.sh:686-689`, `:709-714`, `:725-730`).
 - The vault itself is not this page's subject: the three compose services, the operator CLI,
   the managed key inventory, the outage bounds and rotation are
   [operate/secrets.md](operate/secrets.md). What the templates do with what these keys
@@ -582,7 +582,7 @@ its alias (`templates/workspace/coder.tf:19-22`).
 | `infisical_url` | `""` | Handed to the boot fetch as `INFISICAL_DOMAIN`: the base URL of the self-hosted instance, e.g. `http://host.docker.internal:8182`. The CLI dials Infisical Cloud when handed no domain, so an empty value disables the fetch rather than guessing one, and a self-hosted vault nobody names is a wrong-server bug (`templates/workspace/coder.tf:215-219`). `//scripts:push-template` composes the value as `http://host.docker.internal:<INFISICAL_PORT>` rather than forwarding `.env`'s `INFISICAL_URL`, because that key is the address the stack host dials and a workspace has to reach the host gateway instead (`scripts/push-template.sh:652-661`). |
 | `infisical_project_id` | `""` | → `INFISICAL_PROJECT_ID`. The project the export reads. Not a credential, but no read works without it, so an empty value disables the fetch the way an empty URL does (`templates/workspace/coder.tf:221-227`). |
 | `infisical_machine_identity_id` | `""` | → `INFISICAL_MACHINE_IDENTITY_ID`. The machine identity the boot authenticates as - the id, never the token. It has no slot in any CLI argv, since the client id/secret are the credential, so it gates the fetch and records which identity the stack means (`templates/common/infisical-secrets.sh.tftpl:10-13`). |
-| `infisical_client_id` | `""` | → `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`. The Universal Auth client id; **not** sensitive, because it identifies the identity but cannot authenticate alone. `.env` spells this key the way the Infisical CLI reads it, which is the one name pair here that differs (`scripts/push-template.sh:710-715`). |
+| `infisical_client_id` | `""` | → `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`. The Universal Auth client id; **not** sensitive, because it identifies the identity but cannot authenticate alone. `.env` spells this key the way the Infisical CLI reads it, which is the one name pair here that differs (`scripts/push-template.sh:709-714`). |
 | `infisical_client_secret` | `""`, `sensitive` | → `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`, and only when non-empty: it keeps its own conditional so an empty secret omits the key rather than handing the boot script a credential it would try to authenticate with (`templates/workspace/main.tf:649-652`). Never printed, and never interpolated into the body, which only names the variable (`templates/workspace/coder.tf:244-252`). |
 | `infisical_environment` | `prod` | → `INFISICAL_ENVIRONMENT`. Which Infisical environment the export reads; the CLI takes `--env` on every read, so a fork that keeps another environment slug has no default that fits it (`templates/workspace/coder.tf:254-261`). |
 | `infisical_pull_on_start` | `false` | The second gate, under `infisical_enabled`, and it decides only whether a start *waits* on the vault. Forwarded only when both `.env` keys are truthy (`scripts/push-template.sh:668-671`). Off leaves the script present but idle: one log line naming the gate and exit 0 (`templates/common/infisical-secrets.sh.tftpl:27-30`). Handed over as the string `"true"`/`"false"`, because a `coder_agent` env value has to be a string and the body compares it against a literal (`templates/workspace/main.tf:644-647`). |
