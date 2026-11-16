@@ -1,0 +1,135 @@
+#!/bin/sh
+# tftpl: coder_script body; $${shell} stays a shell var; the six hook payloads are
+# interpolated from the map main.tf passes, each into a quoted here-doc so no shell text
+# inside one is expanded. What this family seeds: ~/.grok/hooks/evo-t1-hooks.json, the
+# manifest Grok Build reads, plus the five files under ~/.grok/hooks/bin/ that manifest
+# names (four guard scripts and the deny-patterns list they share). Why it rides a body of
+# its own rather than stack-skills.sh.tftpl or stack-fleet.sh.tftpl: the agent execs every
+# body as ONE argument to execve(2), Linux caps one argument at 131072 bytes, and this body
+# inlines six payloads on top of the three families already at their own ceiling;
+# docs/coder-templates.md#the-one-argument-ceiling.
+set -u
+
+# The contract is marker-aware all the way down, the way ~/.grok/agents/ is: a copy that
+# carries the stack marker is stack-owned and gets the current text on every start, while a
+# copy whose marker lines a person deleted is theirs and the boot leaves it alone. Hooks get
+# the refresh rather than the absent-only rule the skills keep, because a guard that drifted
+# from the seed is a silent behaviour change: these scripts decide what a session may run
+# and what it must not write, so a stale copy is worth more than a stale SKILL.md.
+#
+# Two marker spellings, because the two kinds of file have two readers. The manifest has to
+# stay parseable JSON, so its marker is the "__evoT1Stack": true key, and the bin/ files are
+# shell, so theirs is the managed-by comment. Both are the spellings config_seed.sh keeps.
+#
+# Each .sh is executable, not data: the runner starts a relative command out of the manifest
+# directly, so row 1 of each file has to stay the payload's #! line and the mode has to carry
+# the executable bit, which is why every .sh write ends on its own chmod and why the marker
+# below is appended rather than prepended.
+#
+# Silent on a healthy workspace either way: no echo, no progress. This body's log is what an
+# operator reads when a hook is missing.
+
+# One symlinked root would aim every write below at a directory outside the home this body
+# owns, so bail before the first of them. Silent, like every other path here. The loop
+# variable below is a shell var, so every reference to it carries the double-dollar escape:
+# templatefile() reads a single-dollar brace reference anywhere in this file as an
+# interpolation, and the plan fails when main.tf does not pass that key.
+for evo_t1_root in "$HOME/.grok" "$HOME/.grok/hooks" "$HOME/.grok/hooks/bin"; do
+  if [ -L "$${evo_t1_root}" ]; then
+    exit 0
+  fi
+done
+
+# Every guard below starts with a symlink refusal for the same reason: the marker test reads
+# the file a managed path points at, so writing through a planted link would replace a file
+# this body does not own. notes-setup.sh:19-21 keeps that discipline for the live notes
+# file, and a link a person left in place stays theirs.
+
+if ! [ -L "$HOME/.grok/hooks/evo-t1-hooks.json" ] \
+   && { [ ! -f "$HOME/.grok/hooks/evo-t1-hooks.json" ] \
+        || grep -qs '"__evoT1Stack": true' "$HOME/.grok/hooks/evo-t1-hooks.json"; }; then
+  mkdir -p "$HOME/.grok/hooks" 2>/dev/null
+  cat >"$HOME/.grok/hooks/evo-t1-hooks.json" <<'EVO_T1_HOOKS_JSON_EOF'
+${evo_t1_hooks_json}
+EVO_T1_HOOKS_JSON_EOF
+fi
+
+# The marker printf under each here-doc is the backstop for a payload that lost its own
+# marker line: without it the guard above would treat the rewritten file as a person's and
+# never seed it again. It runs after the write, never before, because the runner execs these
+# files and execve reads row 1 for the interpreter.
+
+if ! [ -L "$HOME/.grok/hooks/bin/secret-guard.sh" ] \
+   && { [ ! -f "$HOME/.grok/hooks/bin/secret-guard.sh" ] \
+        || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/secret-guard.sh"; }; then
+  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  cat >"$HOME/.grok/hooks/bin/secret-guard.sh" <<'SECRET_GUARD_EOF'
+${secret_guard_sh}
+SECRET_GUARD_EOF
+  if ! grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/secret-guard.sh"; then
+    printf '# %s\n' 'managed-by: evo-t1-coder-stack' \
+      >>"$HOME/.grok/hooks/bin/secret-guard.sh"
+  fi
+  chmod 0755 "$HOME/.grok/hooks/bin/secret-guard.sh" 2>/dev/null
+fi
+
+if ! [ -L "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" ] \
+   && { [ ! -f "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" ] \
+        || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/dangerous-command-guard.sh"; }; then
+  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  cat >"$HOME/.grok/hooks/bin/dangerous-command-guard.sh" <<'DANGEROUS_COMMAND_GUARD_EOF'
+${dangerous_command_guard_sh}
+DANGEROUS_COMMAND_GUARD_EOF
+  if ! grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/dangerous-command-guard.sh"; then
+    printf '# %s\n' 'managed-by: evo-t1-coder-stack' \
+      >>"$HOME/.grok/hooks/bin/dangerous-command-guard.sh"
+  fi
+  chmod 0755 "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" 2>/dev/null
+fi
+
+if ! [ -L "$HOME/.grok/hooks/bin/post-edit-format.sh" ] \
+   && { [ ! -f "$HOME/.grok/hooks/bin/post-edit-format.sh" ] \
+        || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/post-edit-format.sh"; }; then
+  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  cat >"$HOME/.grok/hooks/bin/post-edit-format.sh" <<'POST_EDIT_FORMAT_EOF'
+${post_edit_format_sh}
+POST_EDIT_FORMAT_EOF
+  if ! grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/post-edit-format.sh"; then
+    printf '# %s\n' 'managed-by: evo-t1-coder-stack' \
+      >>"$HOME/.grok/hooks/bin/post-edit-format.sh"
+  fi
+  chmod 0755 "$HOME/.grok/hooks/bin/post-edit-format.sh" 2>/dev/null
+fi
+
+if ! [ -L "$HOME/.grok/hooks/bin/selective-test-runner.sh" ] \
+   && { [ ! -f "$HOME/.grok/hooks/bin/selective-test-runner.sh" ] \
+        || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/selective-test-runner.sh"; }; then
+  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  cat >"$HOME/.grok/hooks/bin/selective-test-runner.sh" <<'SELECTIVE_TEST_RUNNER_EOF'
+${selective_test_runner_sh}
+SELECTIVE_TEST_RUNNER_EOF
+  if ! grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/selective-test-runner.sh"; then
+    printf '# %s\n' 'managed-by: evo-t1-coder-stack' \
+      >>"$HOME/.grok/hooks/bin/selective-test-runner.sh"
+  fi
+  chmod 0755 "$HOME/.grok/hooks/bin/selective-test-runner.sh" 2>/dev/null
+fi
+
+# The deny list is data the guard reads line by line, so it is seeded 0644 like the
+# manifest: the printf above is a comment line to that reader, which is why the marker is
+# safe to append here too.
+
+if ! [ -L "$HOME/.grok/hooks/bin/deny-patterns.txt" ] \
+   && { [ ! -f "$HOME/.grok/hooks/bin/deny-patterns.txt" ] \
+        || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/deny-patterns.txt"; }; then
+  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  cat >"$HOME/.grok/hooks/bin/deny-patterns.txt" <<'DENY_PATTERNS_EOF'
+${deny_patterns_txt}
+DENY_PATTERNS_EOF
+  if ! grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/deny-patterns.txt"; then
+    printf '# %s\n' 'managed-by: evo-t1-coder-stack' \
+      >>"$HOME/.grok/hooks/bin/deny-patterns.txt"
+  fi
+fi
+
+exit 0

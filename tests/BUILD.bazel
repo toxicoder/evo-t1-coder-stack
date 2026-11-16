@@ -418,6 +418,22 @@ _SUITE_PAYLOAD = {
     "spark-configure.bats": [],
     "spark-verify.bats": [],
     "stack-data.bats": [],
+    # The guard family is five payload files plus the manifest, and the suite drives
+    # each script by piping an event at it, so the payloads are the suite's whole
+    # world. It reads no service and no template.
+    "stack-hooks.bats": [
+        "//:stack_data",
+    ],
+    # The advisor family's gate: the five skills, the one role definition, the two
+    # main.tf twins that feed them, and the seed manifest that names their homes.
+    "stack-advisors.bats": [
+        "//:stack_data",
+    ],
+    # The suite runs the helper against a scratch clone it builds itself, and reads
+    # the skill body beside it to pin that the prose names the flags the code takes.
+    "ez-code-index.bats": [
+        "//:stack_data",
+    ],
     # The suite reads both twins and every payload main.tf inlines into them, which
     # is exactly what has to be summed to know how big the exec'd argument gets.
     "startup-script-size.bats": [
@@ -519,6 +535,13 @@ _SUITE_PAYLOAD_ALLOW = {
     # scratch file; the repo's images/dev/Dockerfile is never opened here.
     "awk.bats": [
         "//images/dev:dockerfile",
+    ],
+    # Its BUILD.bazel is a fixture, not a read: each case writes ${dir}/pkg/BUILD.bazel
+    # inside its own scratch clone and asks the indexer which language it guessed. The
+    # suite opens no repo payload at all -- it drives the helper in templates/common/
+    # against trees it builds itself.
+    "ez-code-index.bats": [
+        "//:bazel_files",
     ],
     # It reads back the .gitignore publish-pages-tree.sh commits onto gh-pages, out of
     # the scratch origin it builds, not out of this checkout. The README.md it stages is

@@ -68,10 +68,11 @@ STACK_LITELLM_URL="${STACK_LITELLM_URL:-http://host.docker.internal:4000/v1}"
 
 # @function seed_seed_targets
 # Print the reseed set, one "<target path>\t<payload kind>:<source>" line per
-# stack-owned target. Kinds: file (copy this repo file), render (render this
-# repo file, substituting ${litellm_url}, $${...} unfolds to ${...}, and carrying
-# each target's own cline.apiKey / roo.openaiApiKey forward). Targets are
-# home-relative (~/...) so --container-root can repoint them in a test.
+# stack-owned target. Kinds: file (copy this repo file), exec (copy it and set
+# mode 755, for a payload the runner starts rather than reads), render (render
+# this repo file, substituting ${litellm_url}, $${...} unfolds to ${...}, and
+# carrying each target's own cline.apiKey / roo.openaiApiKey forward). Targets
+# are home-relative (~/...) so --container-root can repoint them in a test.
 # A twin pair is listed twice on purpose: the Coder Agents chat reads the
 # ~/.coder copy, the Grok Build CLI reads the ~/.agents copy, and the two
 # never dedupe each other.
@@ -88,7 +89,7 @@ seed_seed_targets() {
   # readers strip the leading ~ and re-root the rest at $HOME or at the
   # --container-root, so nothing here must expand early.
   #
-  # The fleet family (six agent definitions, three persona overlays, four
+  # The fleet family (seven agent definitions, three persona overlays, four
   # parent-side skills) is listed under the same two contracts the boot body
   # templates/common/stack-fleet.sh.tftpl implements: one marker-aware copy each
   # under ~/.grok/agents and ~/.grok/personas, and a SKILL.md per home for the
@@ -132,6 +133,7 @@ seed_seed_targets() {
     '~/.grok/agents/tester.md	file:templates/common/tester.AGENT.md' \
     '~/.grok/agents/reviewer.md	file:templates/common/reviewer.AGENT.md' \
     '~/.grok/agents/security-auditor.md	file:templates/common/security-auditor.AGENT.md' \
+    '~/.grok/agents/documenter.md	file:templates/common/documenter.AGENT.md' \
     '~/.grok/personas/thorough-researcher.toml	file:templates/common/thorough-researcher.PERSONA.toml' \
     '~/.grok/personas/senior-implementer.toml	file:templates/common/senior-implementer.PERSONA.toml' \
     '~/.grok/personas/skeptical-reviewer.toml	file:templates/common/skeptical-reviewer.PERSONA.toml' \
@@ -142,7 +144,25 @@ seed_seed_targets() {
     '~/.coder/skills/security-audit/SKILL.md	file:templates/common/security-audit.SKILL.md' \
     '~/.agents/skills/security-audit/SKILL.md	file:templates/common/security-audit.SKILL.md' \
     '~/.coder/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md' \
-    '~/.agents/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md'
+    '~/.agents/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md' \
+    '~/.coder/skills/documenter/SKILL.md	file:templates/common/documenter.SKILL.md' \
+    '~/.agents/skills/documenter/SKILL.md	file:templates/common/documenter.SKILL.md' \
+    '~/.coder/skills/performance-optimizer/SKILL.md	file:templates/common/performance-optimizer.SKILL.md' \
+    '~/.agents/skills/performance-optimizer/SKILL.md	file:templates/common/performance-optimizer.SKILL.md' \
+    '~/.coder/skills/debugger/SKILL.md	file:templates/common/debugger.SKILL.md' \
+    '~/.agents/skills/debugger/SKILL.md	file:templates/common/debugger.SKILL.md' \
+    '~/.coder/skills/migrator/SKILL.md	file:templates/common/migrator.SKILL.md' \
+    '~/.agents/skills/migrator/SKILL.md	file:templates/common/migrator.SKILL.md' \
+    '~/.coder/skills/ez-code-index/SKILL.md	file:templates/common/ez-code-index.SKILL.md' \
+    '~/.agents/skills/ez-code-index/SKILL.md	file:templates/common/ez-code-index.SKILL.md' \
+    '~/.coder/skills/ez-code-index/scripts/code_index.py	file:templates/common/ez-code-index.code_index.py' \
+    '~/.agents/skills/ez-code-index/scripts/code_index.py	file:templates/common/ez-code-index.code_index.py' \
+    '~/.grok/hooks/evo-t1-hooks.json	file:templates/common/hooks.evo-t1-hooks.json' \
+    '~/.grok/hooks/bin/deny-patterns.txt	file:templates/common/hooks.deny-patterns.txt' \
+    '~/.grok/hooks/bin/secret-guard.sh	exec:templates/common/hooks.secret-guard.sh' \
+    '~/.grok/hooks/bin/dangerous-command-guard.sh	exec:templates/common/hooks.dangerous-command-guard.sh' \
+    '~/.grok/hooks/bin/post-edit-format.sh	exec:templates/common/hooks.post-edit-format.sh' \
+    '~/.grok/hooks/bin/selective-test-runner.sh	exec:templates/common/hooks.selective-test-runner.sh'
 }
 
 # @function seed_retired_targets
@@ -513,7 +533,7 @@ seed_container_seed() {
     fi
 
     case "${kind}" in
-      file)
+      file | exec)
         if [[ ! -f "${root}/${source}" ]]; then
           note "${name}: ${source} is not in this checkout - skipped"
           continue
@@ -551,10 +571,15 @@ seed_container_seed() {
     if [[ -z ${target} ]]; then
       mkdir -p "$(dirname "${path}")"
       cp "${staged}" "${path}"
+      # A hook is exec'd by the runner, not read as data, so the mode is part of the
+      # payload: a copied script that lost its executable bit fails at the first edit.
+      [[ ${kind} == "exec" ]] && chmod 755 "${path}"
     elif ! seed_container_exec --stdin "${target}" "$(cat "${_CONFIG_SEED_DIR}/probes/seed-write.sh")" \
       sh "${path}" <"${staged}"; then
       printf '  %s: skipped (nothing could be written there)\n' "${name}"
       continue
+    elif [[ ${kind} == "exec" ]]; then
+      seed_container_exec "${target}" 'chmod 755 "${1}"' sh "${path}" || true
     fi
     printf '  %s: %s\n' "${name}" "${verb}"
   done <<<"$(seed_seed_targets)"

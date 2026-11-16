@@ -329,11 +329,14 @@ count_suffix() {
 # ---------------------------------------------------------------------------
 
 @test "fleet payloads: six definitions, three overlays and four skills ship, and the set is exact" {
-  # The count is the claim, not just the presence: a payload that was renamed or
+  # The count is the claim, not just the set: a payload that was renamed or
   # added without being wired into the push loop, the seed list, or the fleet body
   # is invisible to every boot, and a payload that vanished leaves a home path
   # that nothing fills. The docs name six and three, so six and three is what
-  # templates/common/ has to hold.
+  # the fleet family has to hold. The directory carries one more definition than
+  # the fleet owns: documenter is the advisor family's, seeded by
+  # stack-advisors.sh.tftpl beside the skill that dispatches it, so the whole-tree
+  # count is seven and the fleet's own list stays six.
   local i name
 
   for i in "${!AGENTS[@]}"; do
@@ -349,7 +352,7 @@ count_suffix() {
     assert_file_exists "${name} skill" "$(skill_path "${name}")"
   done
 
-  assert_eq "templates/common holds exactly six *.AGENT.md" "6" "$(count_suffix AGENT.md)"
+  assert_eq "templates/common holds exactly seven *.AGENT.md (the fleet's six plus the advisor's documenter)" "7" "$(count_suffix AGENT.md)"
   assert_eq "templates/common holds exactly three *.PERSONA.toml" "3" "$(count_suffix PERSONA.toml)"
 
   [[ -f "${SEED}" ]] || {
@@ -892,7 +895,7 @@ PY
 
   n="$(printf '%s\n' "${targets}" |
     grep -cE "^~/\.grok/(agents|personas)/|~/\.(coder|agents)/skills/(feature-implementation|skeptical-review|security-audit|bug-hunt)/SKILL\.md" || true)"
-  assert_eq "the fleet family carries seventeen seed rows" "17" "${n}"
+  assert_eq "the fleet family carries eighteen seed rows (six fleet agents, the advisor's documenter, three overlays, four skill pairs)" "18" "${n}"
 }
 
 @test "registration: both main.tf twins feed all thirteen keys, chomped, into the stack_fleet block" {

@@ -76,12 +76,27 @@ COMMON_PAYLOADS=(
   skeptical-review.SKILL.md
   security-audit.SKILL.md
   bug-hunt.SKILL.md
+  documenter.SKILL.md
+  documenter.AGENT.md
+  performance-optimizer.SKILL.md
+  debugger.SKILL.md
+  migrator.SKILL.md
+  ez-code-index.SKILL.md
+  ez-code-index.code_index.py
+  hooks.evo-t1-hooks.json
+  hooks.deny-patterns.txt
+  hooks.secret-guard.sh
+  hooks.dangerous-command-guard.sh
+  hooks.post-edit-format.sh
+  hooks.selective-test-runner.sh
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
   agents-seed.sh.tftpl
   stack-skills.sh.tftpl
   stack-repo-skills.sh.tftpl
+  stack-advisors.sh.tftpl
+  stack-hooks.sh.tftpl
   stack-fleet.sh.tftpl
 )
 
@@ -121,12 +136,27 @@ write_common_payloads() {
   printf '%s\n' '# skill' >"${dest}/skeptical-review.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/security-audit.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/bug-hunt.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/documenter.SKILL.md"
+  printf '%s\n' '# agent' >"${dest}/documenter.AGENT.md"
+  printf '%s\n' '# skill' >"${dest}/performance-optimizer.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/debugger.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/migrator.SKILL.md"
+  printf '%s\n' '# skill' >"${dest}/ez-code-index.SKILL.md"
+  printf '%s\n' 'pass' >"${dest}/ez-code-index.code_index.py"
+  printf '%s\n' '{}' >"${dest}/hooks.evo-t1-hooks.json"
+  printf '%s\n' '# deny list' >"${dest}/hooks.deny-patterns.txt"
+  printf '%s\n' '#!/bin/sh' >"${dest}/hooks.secret-guard.sh"
+  printf '%s\n' '#!/bin/sh' >"${dest}/hooks.dangerous-command-guard.sh"
+  printf '%s\n' '#!/bin/sh' >"${dest}/hooks.post-edit-format.sh"
+  printf '%s\n' '#!/bin/sh' >"${dest}/hooks.selective-test-runner.sh"
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/stack-advisors.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/stack-hooks.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-fleet.sh.tftpl"
 }
 
