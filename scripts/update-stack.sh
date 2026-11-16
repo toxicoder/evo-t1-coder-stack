@@ -89,6 +89,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/common.sh disable=SC1091
 source "${SELF_DIR}/lib/common.sh"
+# shellcheck source=lib/infisical.sh disable=SC1091
+source "${SELF_DIR}/lib/infisical.sh"
 # This CLI has no --json mode: a leftover JSON_MODE would route every report
 # line to stderr and leave stdout empty.
 unset JSON_MODE
@@ -436,7 +438,8 @@ compose_cli() {
 # `restart` for a bind-mounted payload change and `pull` for a bumped tag.
 # Globals:
 #   STACK_FLAVOUR, ROOT_DIR, DRY_RUN,
-#   OBSERVABILITY_ENABLED (via compose_observability_args)
+#   OBSERVABILITY_ENABLED (via compose_observability_args), INFISICAL_ENABLED
+#   (via compose_infisical_args)
 # Arguments:
 #   $@ - the compose subcommand and its own arguments
 # Outputs:
@@ -446,6 +449,7 @@ compose_cli() {
 stack_compose() {
   local cli="" env_file=""
   local -a prof=()
+  local -a sec=()
   if [ "${DRY_RUN}" = "1" ]; then
     note "dry run: would run compose $*"
     return 0
@@ -465,6 +469,11 @@ stack_compose() {
   # the compose file whenever the flavour names no env file of its own.
   read -r -a prof <<<"$(compose_observability_args "${env_file:-${ROOT_DIR}/.env}")"
   argv+=("${prof[@]}")
+  # The `secrets` bundle rides the same seam: a restart or a pull has to address
+  # the three vault services with the flag that brought them up, and off adds no
+  # word at all.
+  read -r -a sec <<<"$(compose_infisical_args "${env_file:-${ROOT_DIR}/.env}")"
+  argv+=("${sec[@]}")
   argv+=("-f" "${ROOT_DIR}/docker-compose.yml" "$@")
   # shellcheck disable=SC2086 # cli is deliberately two words
   ${cli} "${argv[@]}"
@@ -489,6 +498,7 @@ services_for_path() {
     proxy/*) out="router homepage-proxy" ;;
     homepage/*) out="homepage" ;;
     hermes/*) out="hermes" ;;
+    infisical/*) out="infisical infisical-db infisical-redis" ;;
   esac
   printf '%s\n' "${out}"
   return 0

@@ -133,6 +133,42 @@ setup() {
   assert_not_match "junk: treated as off" 'observability' "$(stub_log docker)"
 }
 
+@test "prod-stack: INFISICAL_ENABLED decides whether compose is told about the secrets profile" {
+  # Same seam as dev-stack: the vault's three services carry
+  # profiles: ["secrets"] in docker-compose.yml, so compose_prefix/run_compose
+  # append what compose_infisical_args prints (scripts/lib/infisical.sh:329)
+  # after the observability words and before -f, on every verb.
+  local log="${STUB_LOG}/docker.log"
+
+  : >"${log}"
+  run --separate-stderr env INFISICAL_ENABLED=false bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "off: no profile word reaches compose" 'secrets' "$(stub_log docker)"
+
+  : >"${log}"
+  run --separate-stderr env INFISICAL_ENABLED=true bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "on: the four profile words reach compose in order" \
+    '\-p evo-t1-prod --profile observability --profile secrets -f .*/docker-compose\.yml logs --tail 20 coder$' \
+    "$(stub_log docker)"
+
+  # Unset is the shipped default and it means OFF here, the deliberate asymmetry
+  # with OBSERVABILITY_ENABLED above, which answers ON to the same unset. One call
+  # settles both halves: the bundle is addressed, the vault is not.
+  : >"${log}"
+  run --separate-stderr env -u INFISICAL_ENABLED bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "unset: off by default while the bundle stays on" \
+    '\-\-profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' "$(stub_log docker)"
+  assert_not_match "unset: no secrets word reaches compose" 'secrets' "$(stub_log docker)"
+
+  # A typo is off, not on: an unset-looking value must not start the vault.
+  : >"${log}"
+  run --separate-stderr env INFISICAL_ENABLED=maybe bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "junk: treated as off" 'secrets' "$(stub_log docker)"
+}
+
 @test "prod-stack: an env file given with --env-file travels to compose and to the report" {
   scratch="$(make_scratch)"
   cat >"${scratch}/custom.env" <<'ENV'

@@ -560,6 +560,59 @@ EOF
   unset OBSERVABILITY_ENABLED
 }
 
+@test "--stack dev takes the secrets profile into the restart only when INFISICAL_ENABLED is truthy" {
+  # The third runner of the same seam: stack_compose (scripts/update-stack.sh:449)
+  # appends what compose_infisical_args prints (scripts/lib/infisical.sh:329)
+  # after the observability words and before -f, so a restart addresses the three
+  # vault services with the flag that brought them up. A payload change drives the
+  # verb, so each case rebuilds the checkout, clears the compose log so the four
+  # answers cannot leak into one another, and drops the git shim's HEAD counter:
+  # that counter is what makes only the first rev-parse HEAD of a test answer
+  # STUB_HEAD_BEFORE, and a pull that moves no HEAD populates no CHANGED_PATHS,
+  # which would leave the case with no restart line to read at all.
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=false --stack dev
+  [ "${status}" -eq 0 ]
+  assert_not_match "off: no profile word reaches compose" 'secrets' "$(stub_log docker)"
+
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=true --stack dev
+  [ "${status}" -eq 0 ]
+  assert_match "on: the four profile words reach compose in order" \
+    '-p evo-t1-dev --env-file .*/dev-stack\.env --profile observability --profile secrets -f .*/docker-compose\.yml restart litellm$' \
+    "$(stub_log docker)"
+
+  # Unset is the shipped default and it means OFF here, the deliberate asymmetry
+  # with the two cases above, where an unset OBSERVABILITY_ENABLED answers ON. One
+  # restart line carries --profile observability and no secrets word at all.
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  unset INFISICAL_ENABLED
+  run_cli --stack dev
+  [ "${status}" -eq 0 ]
+  assert_match "unset: the bundle is addressed without the vault" \
+    '-p evo-t1-dev --env-file .*/dev-stack\.env --profile observability -f .*/docker-compose\.yml restart litellm$' \
+    "$(stub_log docker)"
+  assert_not_match "unset: no secrets word reaches compose" 'secrets' "$(stub_log docker)"
+
+  # Only truthy's four spellings count, so a typo in the file keeps the vault out.
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=maybe --stack dev
+  [ "${status}" -eq 0 ]
+  assert_not_match "junk: treated as off" 'secrets' "$(stub_log docker)"
+}
+
 @test "--litellm-url is forwarded to the workspace reseed" {
   prepare STUB_DIFF_OUT='README.md'
   run_cli --litellm-url 'http://host.docker.internal:4100/v1'
