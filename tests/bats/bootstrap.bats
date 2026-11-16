@@ -80,7 +80,7 @@ assert_no_router_vhost() {
 @test "bootstrap: GRAFANA_ADMIN_PASSWORD leaves the sample placeholder and is not rotated" {
   # The observability bundle's admin password ships as `change-me-grafana`, so a stack
   # that never rotated it signs every dashboard in with a value that is in the repo. The
-  # entry script rotates it in the same guarded loop as the other seven secrets, so run
+  # entry script rotates it in the same guarded loop as the other managed secrets, so run
   # that guard here and pin the key's presence in the loop below.
   printf 'GRAFANA_ADMIN_PASSWORD=change-me-grafana\n' > .env
   if grep -q "^GRAFANA_ADMIN_PASSWORD=change-me" .env; then
@@ -102,13 +102,14 @@ assert_no_router_vhost() {
   [ -z "${output}" ]
   [ "$(sed -n 's|^GRAFANA_ADMIN_PASSWORD=||p' .env)" = "${value}" ]
 
-  # The key has to sit in both fixed lists: the --check pass that reports a live
-  # placeholder, and the full run that replaces it. A rename that drops either one
-  # leaves the sample password serving Grafana while everything else still passes.
-  assert_contains_file "check pass reports the grafana placeholder" \
-    "${REPO_ROOT}/scripts/bootstrap.sh" 'for probe_key in [^;]*GRAFANA_ADMIN_PASSWORD'
-  assert_contains_file "full run rotates the grafana placeholder" \
-    "${REPO_ROOT}/scripts/bootstrap.sh" 'for var in [^;]*GRAFANA_ADMIN_PASSWORD'
+  # The key has to reach both loops: the --check pass that reports a live placeholder,
+  # and the full run that replaces it. Both now walk the one list the managed-key
+  # inventory builds, so that is what pins the key here -- its membership lives in
+  # infisical/managed-secrets.txt, which this target's runfiles do not carry.
+  assert_contains_file "check pass walks the managed-key list" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'for probe_key in .*mint_keys'
+  assert_contains_file "full run walks the managed-key list" \
+    "${REPO_ROOT}/scripts/bootstrap.sh" 'for var in .*mint_keys'
 }
 
 @test "bootstrap: upsert_env appends, replaces, and stays quiet when equal" {
@@ -171,6 +172,8 @@ assert_no_router_vhost() {
   [ "$(classify_public_entry litellm-box.example)" = "ok litellm https://litellm-box.example" ]
   [ "$(classify_public_entry hermes-box.example)" = "ok hermes https://hermes-box.example" ]
   [ "$(classify_public_entry hermes.example)" = "ok hermes https://hermes.example" ]
+  [ "$(classify_public_entry infisical-box.example)" = "ok infisical https://infisical-box.example" ]
+  [ "$(classify_public_entry infisical.example)" = "ok infisical https://infisical.example" ]
   [ "$(classify_public_entry box.example)" = "ok dashboard https://box.example" ]
   [ "$(classify_public_entry 'https://box.example')" = "skip url" ]
   [ "$(classify_public_entry 'bad_name')" = "skip dns" ]
@@ -270,17 +273,31 @@ assert_no_router_vhost() {
   [ -z "${output}" ]
 }
 
-@test "bootstrap: render_public_router_conf fills the six vhosts from the shipped defaults" {
+@test "bootstrap: render_public_router_conf fills the seven vhosts from the shipped defaults" {
   run render_public_router_conf "${REPO_ROOT}/proxy/router.conf.template" router.gen.conf
   [ "${status}" -eq 0 ]
   [ -z "${output}" ]
   [ -f router.gen.conf ]
-  local name
-  for name in gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io \
-    kasm-gmktecbeast.overeazy.io litellm-gmktecbeast.overeazy.io \
-    hermes-gmktecbeast.overeazy.io grafana-gmktecbeast.overeazy.io; do
+  local names=(
+    gmktecbeast.overeazy.io coder-gmktecbeast.overeazy.io
+    kasm-gmktecbeast.overeazy.io litellm-gmktecbeast.overeazy.io
+    hermes-gmktecbeast.overeazy.io grafana-gmktecbeast.overeazy.io
+    infisical-gmktecbeast.overeazy.io
+  )
+  local name served
+  for name in "${names[@]}"; do
     assert_router_vhost router.gen.conf "${name}"
   done
+  # Presence alone cannot catch a vhost that joins the template without joining the list
+  # above, so count the named directives too. The catch-all `server_name _;` is the only
+  # one that names no host, so it is the one the count leaves out.
+  served="$(grep -cE '^[[:space:]]*server_name [^_]' router.gen.conf)"
+  if [ "${served}" -ne "${#names[@]}" ]; then
+    printf 'FAIL: router.gen.conf serves %s named vhost(s) but this test lists %s:\n' \
+      "${served}" "${#names[@]}" >&2
+    grep -nE '^[[:space:]]*server_name ' router.gen.conf >&2
+    return 1
+  fi
 }
 
 @test "bootstrap: the checked-in router.conf is the template rendered with the shipped defaults" {
@@ -532,4 +549,82 @@ STACK_GRAFANA_NAME=boards
       return 1
     fi
   done
+}
+
+@test "bootstrap: the mint list comes from the inventory, not a literal in the script" {
+  local script="${REPO_ROOT}/scripts/bootstrap.sh"
+  assert_file_exists "the entry script exists" "${script}"
+  if ! grep -q 'infisical_managed_keys' "${script}"; then
+    printf 'FAIL: scripts/bootstrap.sh never reads the managed-key inventory,\n' >&2
+    printf 'FAIL: so the key list is hand-written there again\n' >&2
+    grep -n 'CODER_PG_PASSWORD' "${script}" >&2
+    return 1
+  fi
+  # The two sites that used to each carry the 8-key literal on one line.
+  if grep -nE 'for (probe_key|var) in CODER_PG_PASSWORD' "${script}" >&2; then
+    printf 'FAIL: scripts/bootstrap.sh still hand-writes the managed-key list above\n' >&2
+    return 1
+  fi
+  # Sourcing the lib is what makes the seam callable from the entry script.
+  if ! grep -q 'source "scripts/lib/infisical.sh"' "${script}"; then
+    printf 'FAIL: scripts/bootstrap.sh does not source scripts/lib/infisical.sh\n' >&2
+    return 1
+  fi
+}
+
+@test "bootstrap: both secret loops walk the whole mint list" {
+  # The list is built once from the inventory and shared by the --check probe and the
+  # mint, so a loop that keeps its own subset is how a key gets reported but never
+  # minted, or the other way round. The empty-list guard matters for the same reason:
+  # an unreadable inventory would otherwise mint nothing and say nothing.
+  local script="${REPO_ROOT}/scripts/bootstrap.sh"
+  local -a loops=(
+    'for probe_key in "${mint_keys[@]}"; do'
+    'for var in "${mint_keys[@]}"; do'
+    'die "bootstrap: infisical/managed-secrets.txt yielded no managed key'
+  )
+  local line
+  for line in "${loops[@]}"; do
+    if ! grep -Fq -- "${line}" "${script}"; then
+      printf 'FAIL: scripts/bootstrap.sh is missing:\n  %s\n' "${line}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "bootstrap: the four vault-own keys are minted outside the inventory" {
+  # The vault cannot hand out its own credentials, so these four are not in
+  # infisical/managed-secrets.txt; they join the mint list in the script itself and are
+  # minted locally whichever way the flag sits.
+  local script="${REPO_ROOT}/scripts/bootstrap.sh" key
+  local vault_keys=(
+    INFISICAL_DB_PASSWORD INFISICAL_ENCRYPTION_KEY
+    INFISICAL_AUTH_SECRET INFISICAL_ADMIN_PASSWORD
+  )
+  for key in "${vault_keys[@]}"; do
+    if ! grep -Fq "${key}" "${script}"; then
+      printf 'FAIL: scripts/bootstrap.sh never names %s, so nothing mints it\n' "${key}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "bootstrap: the mint writes .env only after Infisical accepted the value" {
+  local script="${REPO_ROOT}/scripts/bootstrap.sh" set_line write_line
+  if ! grep -q 'infisical_enabled' "${script}"; then
+    printf 'FAIL: scripts/bootstrap.sh mints without reading the vault flag\n' >&2
+    return 1
+  fi
+  set_line="$(grep -nF 'infisical_secret_set "${var}"' "${script}" | head -n 1 | cut -d: -f1)"
+  write_line="$(grep -nF 'sed_inplace "s|^${var}=' "${script}" | head -n 1 | cut -d: -f1)"
+  if [ -z "${set_line}" ] || [ -z "${write_line}" ]; then
+    printf 'FAIL: scripts/bootstrap.sh lost the vault write or the .env write (%s/%s)\n' \
+      "${set_line:-none}" "${write_line:-none}" >&2
+    return 1
+  fi
+  if [ "${write_line}" -lt "${set_line}" ]; then
+    printf 'FAIL: .env is written at line %s, before the vault at line %s\n' \
+      "${write_line}" "${set_line}" >&2
+    return 1
+  fi
 }
