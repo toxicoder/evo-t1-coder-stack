@@ -940,7 +940,13 @@ guard exits non-zero on its own account, so a broken one cannot wedge a session.
   write whose text carries an AWS access-key id, a GitHub token, a Slack token, a Google API
   key, a `-----BEGIN ... PRIVATE KEY-----` block, a URL that carries both a user and a
   password, or a credential-keyword assignment (`api_key`, `secret`, `token`, `password`, and
-  their upper-case SDK spellings) whose value carries a digit. The deny reason names the pattern
+  their upper-case SDK spellings) whose value carries a digit. It sweeps every string the write
+  puts into the file - the flat `new_string`, `content`, `contents`, `command` and `text` fields
+  and each entry of a batched `edits` array - and leaves the read-side `old_string`/`old_text`
+  alone, so a secret an older commit wrote cannot convict every later edit beside it. A value
+  that names the environment instead of carrying a secret is the correct pattern, not a hit, so
+  `os.environ/X`, `os.environ["X"]`, `process.env.X` and `getenv("X")` are folded to one short
+  token before the scan. The deny reason names the pattern
   class and never the matched text. It fails open on an event it cannot parse, and denies when
   the runner reports `toolInputTruncated`, because that is text the scan never saw
   (`templates/common/hooks.secret-guard.sh`).
@@ -952,7 +958,8 @@ guard exits non-zero on its own account, so a broken one cannot wedge a session.
   Bazel files - `shfmt -w -s -i 2 -ci` for `.sh`, `buildifier -mode=fix` for `BUILD`,
   `BUILD.bazel`, `MODULE.bazel` and `.bzl` - plus `ruff format --quiet` for `.py`. It refuses
   anything outside `CLAUDE_PROJECT_DIR`,
-  anything under `.git/`, `bazel-*/`, `node_modules/` or `__pycache__/`, `.env` and `.env.*`,
+  anything under `.git/`, `bazel-out/`, `bazel-bin/`, `bazel-testlogs/`, `node_modules/` or
+  `__pycache__/`, `.env` and `.env.*`,
   and any path containing `/.grok/`, `/.agents/` or `/.coder/`. It only ever answers, never
   blocks: a rewrite is reported as `additionalContext`, and silence means nothing changed or
   the formatter is not on PATH.
@@ -977,6 +984,26 @@ skipped with a
 single note on stderr rather than blocking every shell call, which is why the file's own header
 carries the one-line compile check to run before you commit a rule:
 `LC_ALL=C grep -E -q -- '<pattern>' </dev/null`.
+
+Three limits are worth knowing before you trust a clean scan, and each is a choice rather than
+an oversight.
+
+- The secret guard's generic assignment scan requires a digit on the matched line, which is what
+  separates a credential from an identifier. A digit-free value under a name the keyword list
+  does not carry is therefore invisible to it; only the five known-format scans (AWS, GitHub,
+  Slack, Google, private-key block) plus the credential-bearing URL are exact. A missed shape is
+  a line in `hooks.secret-guard.sh`, not a reason to trust the ones it does catch.
+- The command guard matches the whole command string, so a command that *quotes* a denied form
+  is refused the same way a real one is: `awk '/dd if=/' notes.txt` denies, and so does a commit
+  message that names `rm -rf` followed by a space. Stripping quoted regions first would clear
+  those, and would equally blind the guard to `sh -c "..."` and `bash -c "..."`, the indirection
+  a command actually travels through most, so the text is read as written. The remedy is to
+  rewrite the quoted sentence; the stack's own `Bash(rm -rf *)` permission deny behaves the same
+  way for the same reason.
+- The deny list is a floor, not a fence. It catches the forms this repo has actually measured,
+  and a novel destructive command walks straight through it. Nothing in a hook reads the state
+  the command will act on, which is why "confirm before an action that is hard to undo" stays a
+  rulebook rule that no pattern can replace.
 
 Two things seed them, and both are wanted. `coder_script "stack_hooks"`
 (`templates/workspace/main.tf:805`, `templates/devcontainer/main.tf:856`) runs

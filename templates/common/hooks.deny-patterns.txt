@@ -38,6 +38,10 @@ rm[[:space:]]+.*--recursive([[:space:]]|=)
 rm[[:space:]]+.*--no-preserve-root
 find[[:space:]]+/([[:space:]]|$).*-delete
 find[[:space:]]+(~|\$\{?HOME\}?)([[:space:]]|/|$).*-delete
+# A -delete rooted at the working directory is the same sweep wearing a relative path.
+# The sanctioned cleanup this stack documents names a scratch directory and nothing else
+# (`find <dir> -type f -delete`), so refusing the bare dot costs no legitimate call.
+find[[:space:]]+\.([[:space:]]|/).*-delete
 
 # --- disk, device, and filesystem writes --------------------------------------------
 # These rewrite a block device in place, and the device in reach here is the one the
@@ -80,8 +84,36 @@ tmux[[:space:]]+restart-server
 git[[:space:]]+push[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*--force([[:space:]]|$)
 git[[:space:]]+push[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-f([[:space:]]|$)
 git[[:space:]]+reset[[:space:]]+--hard
+git[[:space:]]+checkout[[:space:]]+--[[:space:]]+\.([[:space:]]|$)
+git[[:space:]]+restore[[:space:]]+(-[[:graph:]]+[[:space:]]+)*\.([[:space:]]|$)
+git[[:space:]]+stash[[:space:]]+(drop|clear)([[:space:]]|$)
 # Deliberately absent: `git clean -fd` is destructive only in a tree with uncommitted
 # work, and a command string cannot tell you which tree it is. It stays a rulebook rule.
+
+# --- the stack's own profile files --------------------------------------------------
+# ~/.grok/ is one volume per owner, shared with that owner's other workspaces, and the
+# boot rewrites most of it. Zeroing or removing a piece of it from a workspace is both
+# hard to undo and visible in every other workspace that mounts the volume, so the
+# rulebook says change the seed under templates/common/ instead -- these lines are that
+# rule with teeth. Scoped to a path that names .grok/ so an ordinary truncate of a log
+# file stays available.
+truncate[[:space:]]+[^|;]*\.grok/
+:[[:space:]]*>[[:space:]]*[^[:space:]]*\.grok/
+cp[[:space:]]+/dev/null[[:space:]]+[^|;]*\.grok/
+rm[[:space:]]+[^|;]*\.grok/(hooks|config\.toml|AGENTS\.md|notes|agents|personas)([/.]|$)
+
+# --- the stack's volumes and containers ---------------------------------------------
+# The named volumes here carry the shared grok profile, the Coder Postgres, and the
+# model store; docker compose down -v and docker volume rm destroy them, and a volume
+# is not a container -- there is no image to rebuild it from. A workspace's own DinD
+# sidecar has none of these, so the refusal costs a workspace nothing; the host
+# operator who does want it deletes the marker line at the top of this file.
+docker[[:space:]]+(volume|system|network)[[:space:]]+(rm|prune)([[:space:]]|$)
+docker[[:space:]]+compose[[:space:]].*down.*(-v|--volumes)([[:space:]]|$)
+docker[[:space:]]+rm[[:space:]]+[^|;]*(coder|litellm|searxng|kasm|homepage|hermes|ollama|evo-t1)
+# World-writable on a root path is the permission that turns any local compromise into
+# a total one, and no workspace task needs it.
+chmod[[:space:]]+(-[[:graph:]]+[[:space:]]+)*0*777[[:space:]]+/([[:space:]]|$)
 
 # --- the credential chain -----------------------------------------------------------
 # GitHub auth has exactly one entry point in this stack, and each of these was tried in

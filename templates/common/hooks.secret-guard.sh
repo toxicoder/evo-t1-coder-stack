@@ -6,7 +6,7 @@
 # Seeded to ~/.grok/hooks/bin/secret-guard.sh by
 # templates/common/stack-hooks.sh.tftpl (which chmods it 0755, because the runner
 # execs it directly), and matched by the PreToolUse entry in
-# templates/common/hooks/evo-t1-hooks.json: Edit|Write|search_replace|write, timeout 5.
+# templates/common/hooks.evo-t1-hooks.json: Edit|Write|search_replace|write, timeout 5.
 #
 # Why this guard exists: the agent that writes a file is the same agent that may have
 # just read a credential out of one, and a secret that reaches a file is one commit
@@ -50,9 +50,15 @@ fi
 [ -n "${event}" ] || allow
 
 if command -v jq >/dev/null 2>&1; then
-  # The four text fields a write can carry, joined for one scan. The type guards keep a
-  # malformed event (toolInput a string, or the whole event an array) from failing jq:
-  # jq's exit status is the only signal here, and a failure must read as "the guard
+  # Every field that carries text this write puts INTO the file, joined for one scan: the
+  # single-string shapes a write can take, plus each entry of the multi-edit array a
+  # batched edit carries -- a guard that reads only the flat shapes sweeps the calls that
+  # carry one edit and waves through the ones that carry five. The read-side fields
+  # (old_string, old_text) stay out on purpose: they quote text already on disk, so a
+  # credential an older commit put there would convict every later edit beside it, which
+  # is a wedged session rather than a prevented leak. The type guards keep a malformed
+  # event (toolInput a string, edits an object, or the whole event an array) from failing
+  # jq: jq's exit status is the only signal here, and a failure must read as "the guard
   # could not see this event", which is an allow, not as "no secrets".
   #
   # "malformed" and "absent" are kept apart on purpose. The runner documents
@@ -68,7 +74,11 @@ if command -v jq >/dev/null 2>&1; then
     jq -r '
       def body: if type == "object" then
         (if (.toolInput | type) == "object" then .toolInput else {} end)
-        | [.new_string, .content, .contents, .command]
+        | ( [ .new_string, .content, .contents, .command, .text ]
+            + ( if (.edits | type) == "array" then
+                  [ .edits[] | select(type == "object")
+                    | ( .new_string, .new_text, .content, .contents, .text ) ]
+                else [] end ) )
         | map(select(type == "string")) | join("\n")
       else "" end;
       body
@@ -100,14 +110,25 @@ if [ "${truncated}" != "false" ]; then
 fi
 [ -n "${haystack}" ] || allow
 
-# A LiteLLM secret source names the environment instead of carrying a value, and it is the
-# form this repo's own litellm/config.yaml writes: api_key: os.environ/SPARK_1_API_KEY. The
-# value class below excludes a leading dollar sign, which is the shell's reference, and this
-# indirection spells the same idea in Python, so it would be denied as a credential. Folding
-# every secret source to one fixed token keeps the line's shape for the rest of the scan and
+# A secret source that names the environment instead of carrying a value is the correct
+# pattern this guard exists to protect, and every language spells the indirection its own
+# way: LiteLLM writes api_key: os.environ/SPARK_1_API_KEY in the YAML this repo edits most,
+# a config module reads process.env.SPARK_API_KEY_V2, a Python one reads
+# os.environ["DB_PASSWORD_1"]. The value class below excludes only a leading dollar sign,
+# which is the shell's spelling of the same idea, so each of these reaches the scan as a
+# 12-character-plus value sitting on a credential name and reads as a credential. Folding
+# every indirection to one fixed token keeps the line's shape for the rest of the scan and
 # takes the digits out of the name with it, which is what the assignment gate reads.
+#
+# The token has to stay shorter than the shortest value the scan asks for -- eight
+# characters, in the upper-case list -- or the fold would survive as a match of its own.
+# stack-hooks.bats pins that length.
 haystack="$(printf '%s\n' "${haystack}" |
-  sed -E 's#(os\.environ|os\.env|base64_environ|base64_env)/[A-Za-z_][A-Za-z0-9_]*([?][^"[:space:]]*)?#ENVIRON_REF#g')"
+  sed -E \
+    -e 's#(os\.environ|os\.env|base64_environ|base64_env)/[A-Za-z_][A-Za-z0-9_]*([?][^"[:space:]]*)?#ENVREF#g' \
+    -e 's#(os\.environ|os\.env)\[["'"'"'][^"'"'"']*["'"'"']\]#ENVREF#g' \
+    -e 's#[A-Za-z_][A-Za-z0-9_]*\.env\.[A-Za-z_$][A-Za-z0-9_$]*#ENVREF#g' \
+    -e 's#[A-Za-z_.]*getenv\([[:space:]]*["'"'"'][^"'"'"']*["'"'"'][[:space:]]*\)#ENVREF#g')"
 
 # One grep per class, so the reason can name the class that fired. The patterns are the
 # family's pinned list.

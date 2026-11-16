@@ -51,8 +51,13 @@ path=$(field '(.toolInput.file_path? // .toolInput.target_file? // .toolInput.pa
 # A /../ segment is refused with the build artifacts because the containment test below
 # is lexical, and a hop is the one spelling that could walk it out of the project.
 probe="/$path/"
+# The three names Bazel links into the workspace, spelled out because a prefix match on
+# bazel- would refuse this clone's own sources: scripts/bazel-map.sh and
+# tests/bats/bazel-map.bats both start with it, and a guard that skips them looks exactly
+# like a session that needed nothing.
 case "$probe" in
-  *"/../"* | *"/.git/"* | *"/bazel-"* | *"/node_modules/"* | *"/__pycache__/"*) exit 0 ;;
+  *"/../"* | *"/.git/"* | *"/bazel-out/"* | *"/bazel-bin/"* | *"/bazel-testlogs/"* | \
+    *"/node_modules/"* | *"/__pycache__/"*) exit 0 ;;
 esac
 case "$probe" in
   *"/.grok/"* | *"/.agents/"* | *"/.coder/"*) exit 0 ;;

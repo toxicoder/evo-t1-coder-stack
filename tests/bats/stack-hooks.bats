@@ -270,6 +270,68 @@ assert_quiet() {
   done
 }
 
+@test "secret-guard: sweeps every write-side field, a batched edits array included" {
+  # A tool call that carries five edits puts its text in toolInput.edits[].new_string, and a
+  # text-only write puts it in toolInput.text. A scan of the four flat fields alone passes
+  # every other test in this section and lets both shapes through, which is the difference
+  # between a guard and a speed bump.
+  local ev
+  for ev in \
+    '{"toolName":"write","toolInput":{"edits":[{"old_string":"x","new_string":"apiKey = \"abc123def456ghi789jkl\""}]},"toolInputTruncated":false}' \
+    '{"toolName":"write","toolInput":{"edits":[{"new_string":"x = 1"},{"new_string":"token: gh'"$(printf 'p')"'_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"}]},"toolInputTruncated":false}' \
+    '{"toolName":"write","toolInput":{"text":"aws_access_key_id: AKI'"$(printf 'A')"'IOSFODNN7EXAMPLE"},"toolInputTruncated":false}'; do
+    run_hook secret-guard.sh "${ev}"
+    assert_decision deny || { printf 'a credential in a write-side field was allowed: %s -> %s\n' "${ev}" "${hook_out}" >&2; return 1; }
+  done
+
+  # An edits key that is not an array is a malformed event, and a malformed event is an
+  # allow: this guard's error paths stay out of the way whatever shape arrives.
+  run_hook secret-guard.sh '{"toolName":"write","toolInput":{"edits":{"new_string":"x = 1"}},"toolInputTruncated":false}'
+  assert_decision || { printf 'a malformed edits key blocked a write: %s\n' "${hook_out}" >&2; return 1; }
+
+  # And the sweep is of what the write PUTS INTO the file. old_string quotes text already on
+  # disk; convicting it would deny every later edit beside a credential an older commit
+  # wrote, which wedges the session that has to remove it rather than preventing a leak.
+  run_hook secret-guard.sh "$(event_json search_replace old_string \
+    "AWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")"
+  assert_decision || { printf 'the read-side field was swept, so every edit near an old secret is denied: %s\n' "${hook_out}" >&2; return 1; }
+}
+
+@test "secret-guard: an environment reference is the correct pattern in every spelling" {
+  # This repo's own litellm config writes os.environ/NAME; a Node config reads
+  # process.env.NAME and a Python one os.environ["NAME"] or getenv("NAME"). Each is the
+  # indirection the rulebook tells an agent to use, and each reaches the assignment scan as
+  # a long value on a credential name, so each has to be folded away before the scan runs.
+  # The trailing comment carries a digit on purpose: it is what turns the digit gate off as
+  # a defence and leaves the fold as the only thing standing between this line and a deny.
+  local spelling
+  for spelling in 'process.env.SPARK_API_KEY_V2' 'os.environ["DB_PASSWORD_1"]' \
+    'os.getenv("CLIENT_SECRET_V1")' 'os.environ/DB_PASSWORD_1'; do
+    run_hook secret-guard.sh "$(event_json write new_string \
+      "aws_secret_access_key = ${spelling}  # pool sized for 5432 conns")"
+    assert_decision || { printf 'a write that points at the environment was refused: %s -> %s\n' "${spelling}" "${hook_out}" >&2; return 1; }
+  done
+}
+
+@test "secret-guard: the fold token stays shorter than the shortest value the scan asks for" {
+  # The fold above only works while the token it substitutes is shorter than the eight
+  # characters the upper-case list asks for. The first draft used ENVIRON_REF, eleven
+  # characters, and a reference carrying any digit anywhere on the line was still denied --
+  # so the length is part of the fix, and it is measured here rather than asserted: the
+  # same event run against a copy with a longer token has to deny.
+  local ev long_guard
+  ev="$(event_json write new_string "aws_secret_access_key = os.environ/DB_PASSWORD_1  # pool sized for 5432 conns")"
+  run_hook secret-guard.sh "${ev}"
+  assert_decision || { printf 'the shipped guard refuses an environment reference: %s\n' "${hook_out}" >&2; return 1; }
+
+  long_guard="${BATS_TEST_TMPDIR}/long-token-guard.sh"
+  sed 's/ENVREF/ENVIRON_REF/g' "${BINDIR}/secret-guard.sh" >"${long_guard}"
+  hook_out="$(printf '%s' "${ev}" | sh "${long_guard}" 2>/dev/null)" && hook_rc=0 || hook_rc=$?
+  assert_decision deny || {
+    printf 'lengthening the fold token changed nothing, so this test pins nothing\n' >&2
+    return 1; }
+}
+
 # ---------------------------------------------------------------------------
 # dangerous-command-guard and its list.
 # ---------------------------------------------------------------------------
@@ -349,6 +411,86 @@ assert_quiet() {
 @test "dangerous-command-guard: denies a command it could not see whole" {
   run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "ls -1" true)"
   assert_decision deny
+}
+
+@test "dangerous-command-guard: denies what the first list missed" {
+  # Each of these was measured walking through the guard: discarding the working tree the
+  # rulebook names as how a day of work is destroyed, zeroing a file on the shared profile
+  # volume, and the three docker forms that take out a named volume there is no image to
+  # rebuild. They live in this file rather than in a shell command so the tool that runs
+  # this suite never carries one in its own command text.
+  local case_name cmd
+  for case_name in \
+    "find-dot-delete:find . -type f -delete" \
+    "git-checkout-discard:git checkout -- ." \
+    "git-restore-dot:git restore ." \
+    "git-restore-flagged:git restore --source=HEAD ." \
+    "git-stash-drop:git stash drop" \
+    "git-stash-clear:git stash clear" \
+    "truncate-profile:truncate -s 0 ~/.grok/config.toml" \
+    "redirect-truncate: : > ~/.grok/config.toml" \
+    "devnull-overwrite:cp /dev/null ~/.grok/AGENTS.md" \
+    "rm-hooks-dir:rm -f ~/.grok/hooks/evo-t1-hooks.json" \
+    "chmod-777-root:chmod -R 777 /" \
+    "docker-volume-rm:docker volume rm grok-profile-me" \
+    "docker-volume-prune:docker volume prune -f" \
+    "docker-system-prune:docker system prune -a --volumes" \
+    "compose-down-volumes:docker compose -p evo-t1 down -v" \
+    "compose-down-long:docker compose down --remove-orphans --volumes" \
+    "docker-rm-stack:docker rm -f coder-dev"; do
+    cmd="${case_name#*:}"
+    run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
+    assert_decision deny || { printf 'not denied: %s (%s) -> %s\n' "${case_name}" "${cmd}" "${hook_out}" >&2; return 1; }
+  done
+}
+
+@test "dangerous-command-guard: leaves the sibling of every new rule alone" {
+  # The half that keeps the list above honest. Each new rule has a legitimate command one
+  # character away from it -- a named scratch dir rather than a dot, one path rather than
+  # the tree, a log rather than the profile, a workspace container rather than a stack one
+  # -- and a rule that denies those is a rule an operator deletes.
+  local cmd
+  for cmd in "find /tmp/scratch -type f -delete" \
+    "find . -name '*.orig' -print" \
+    "git checkout -- scripts/x.sh" \
+    "git restore --source=HEAD~1 scripts/x.sh" \
+    "git stash push -m wip" \
+    "git stash list" \
+    "truncate -s 0 /tmp/evo-t1-hook-tests/run.log" \
+    "cp /dev/null /tmp/scratch/empty" \
+    "rm -f /tmp/scratch/one-file" \
+    "chmod 777 /tmp/scratch/x" \
+    "chmod -R u+rwX ." \
+    "docker ps -a" \
+    "docker rm -f my-build-container" \
+    "docker compose -p evo-t1 down" \
+    "docker logs coder-dev" \
+    "grep -rn 'docker volume rm' docs"; do
+    run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
+    assert_decision || { printf 'a legitimate command blocked: %s -> %s\n' "${cmd}" "${hook_out}" >&2; return 1; }
+  done
+}
+
+@test "dangerous-command-guard: reads the command as text, and says so in the reason" {
+  # Matching the whole string is the choice, not an oversight: stripping quoted regions would
+  # clear the two prose probes below and would equally blind the guard to sh -c "..." and
+  # bash -c "...", the way a real command usually travels. So a command that QUOTES a denied
+  # form followed by a space reads as that form -- the same edge the stack's own
+  # Bash(rm -rf *) permission deny has. Pinned both ways so either half changing is a
+  # decision someone made rather than a surprise.
+  local cmd
+  for cmd in "awk '/dd if=/' notes.txt" "echo 'rm -rf is denied here'"; do
+    run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
+    assert_decision deny || { printf 'expected the accepted text-match edge to deny: %s\n' "${cmd}" >&2; return 1; }
+    printf '%s' "${hook_out}" | grep -q 'line [0-9]' || {
+      printf 'an accepted false positive still has to point at the rule: %s\n' "${hook_out}" >&2; return 1; }
+  done
+  # The same tokens with nothing after the flag read as prose and pass, which is what makes
+  # the remedy a rewrite of the sentence and not a fight with the guard.
+  for cmd in "grep -rn 'rm -rf' scripts" "echo 'the rm deny rules'"; do
+    run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
+    assert_decision || { printf 'prose blocked where it should read as text: %s -> %s\n' "${cmd}" "${hook_out}" >&2; return 1; }
+  done
 }
 
 # ---------------------------------------------------------------------------
@@ -563,6 +705,44 @@ wait_for_line() {
   done
   [ ! -s "${EVO_T1_STUB_LOG}" ] || {
     printf 'bazelisk was called for a refused path: %s\n' "$(cat "${EVO_T1_STUB_LOG}")" >&2
+    return 1; }
+}
+
+@test "the guards treat this clone's bazel-map files as ordinary sources" {
+  # The artifact refusals name the three directories Bazel links into the workspace. A
+  # `bazel-` prefix match also reads scripts/bazel-map.sh and tests/bats/bazel-map.bats as
+  # generated output: the formatter skips the first and the test lookup never runs for the
+  # second, and both look exactly like a session that needed nothing. Named one by one in
+  # the seed, and this is the test that keeps them named.
+  command -v shfmt >/dev/null 2>&1 || {
+    printf 'shfmt is not on PATH, so the formatter half of this test cannot see a format happen\n' >&2
+    return 1; }
+  make_project
+  local stub; stub="$(stub_bazelisk)"
+  EVO_T1_STUB_LOG="${BATS_TEST_TMPDIR}/stub-bazelmap.log"
+  export EVO_T1_STUB_LOG
+  PATH="${stub}:${PATH}"
+  export PATH
+  EVO_T1_HOOK_TESTS=1
+  export EVO_T1_HOOK_TESTS
+
+  local path before after
+  path="${project}/scripts/bazel-map.sh"
+  plant_dirty "${path}"
+  before="$(cat "${path}")"
+  run_hook post-edit-format.sh "$(event_json write file_path "${path}")"
+  assert_quiet || { printf 'the formatter obstructed the edit: %s\n' "${hook_out}" >&2; return 1; }
+  after="$(cat "${path}")"
+  [ "${before}" != "${after}" ] || {
+    printf 'post-edit-format skipped %s, which a bazel- prefix match reads as build output\n' "${path}" >&2
+    return 1; }
+
+  path="${project}/tests/bats/bazel-map.bats"
+  printf '#!/usr/bin/env bats\n' >"${path}"
+  run_hook selective-test-runner.sh "$(event_json write file_path "${path}")"
+  assert_quiet || { printf 'the runner obstructed the edit: %s\n' "${hook_out}" >&2; return 1; }
+  wait_for_line "${EVO_T1_STUB_LOG}" "test //tests:bats_bazel_map_test --test_output=errors" || {
+    printf 'selective-test-runner refused to look up a test for %s\n' "${path}" >&2
     return 1; }
 }
 
