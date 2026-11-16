@@ -28,7 +28,8 @@
 #     definitions *.AGENT.md, three persona overlays *.PERSONA.toml, four
 #     parent-side skills *.SKILL.md) and its stack-fleet.sh.tftpl seed body,
 #     mcp-cache-proxy.json, the agents-seed.sh.tftpl body that writes
-#     ~/.grok/AGENTS.md from GROK_BUILD_AGENTS.md, and
+#     ~/.grok/AGENTS.md from GROK_BUILD_AGENTS.md, the infisical-secrets.sh.tftpl
+#     body that fetches the workspace's credentials at boot, and
 #     gh-token-refresh.sh.tftpl, kept one level above
 #     the template dirs under common/) ride along in every
 #     staged copy, because that is where the server-side Terraform reads them
@@ -85,7 +86,8 @@ fi
 # stack-repo-skills.sh.tftpl, stack-fleet.sh.tftpl,
 # coder-agents.md,
 # mcp-cache-proxy.json, agents-seed.sh.tftpl (the coder_script "agents_seed" body) and
-# gh-token-refresh.sh.tftpl, kept one level above the
+# gh-token-refresh.sh.tftpl and infisical-secrets.sh.tftpl (the
+# coder_script "infisical_secrets" body), kept one level above the
 # template dirs under common/) there with the common copies. Both templates'
 # main.tf reads those payloads - seed text, notes library, tmux, helpers,
 # agent skill/instructions and the gh-token-refresh body through file() /
@@ -183,6 +185,7 @@ template_push_one() {
     coder-agents.md \
     mcp-cache-proxy.json \
     gh-token-refresh.sh.tftpl \
+    infisical-secrets.sh.tftpl \
     agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
     stack-repo-skills.sh.tftpl \
