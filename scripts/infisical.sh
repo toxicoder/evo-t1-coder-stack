@@ -494,7 +494,9 @@ cmd_rotate() {
   phase "mint a fresh value for ${key}"
   infisical_mktemp "infisical-rotate"
   value_file="${INFISICAL_MKTEMP}"
-  gen_secret >"${value_file}"
+  # No trailing newline: the file is handed to the CLI as KEY=@file and the value is
+  # stored byte for byte, so a newline here would become part of the secret.
+  printf '%s' "$(gen_secret_for "${key}")" >"${value_file}"
   chmod 600 "${value_file}"
 
   phase "write the vault first, so .env never holds what the vault does not"
