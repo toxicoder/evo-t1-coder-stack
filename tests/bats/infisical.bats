@@ -11,8 +11,11 @@
 # rotate writes the vault BEFORE .env and leaves .env byte-identical when the vault
 # says no; and no secret VALUE ever rides argv or a printed line - the stub's argv
 # log is the witness, which is why the minted value is asserted absent from it. The
-# fifteen functions the CLI declares are pinned by name, each with its # @function
-# block, which is also the reference tests/shell_inventory.sh counts on.
+# value rotate mints is created under TMPDIR, never the directory the operator was
+# standing in, and every managed key the inventory names has an assignment in both
+# dotenv twins -- the invariant that file states for itself and no other gate
+# checks. The fifteen functions the CLI declares are pinned by name, each with its
+# # @function block, which is also the reference tests/shell_inventory.sh counts on.
 #
 # Hermetic by construction. Every call is one process:
 #   run --separate-stderr "${BASH}" "${SCRIPT}" --env-file "${ENV_FILE}" <verb>
@@ -77,8 +80,10 @@ setup() {
   mkdir -p "${SCRATCH}/home"
   use_stubs infisical curl tar timeout
   # Nothing may reach outside the test: the installer's target is under
-  # XDG_DATA_HOME, every lib temp under TMPDIR, the rotate temp under the cwd (the
-  # tests that rotate cd into SCRATCH), and the CLI's own config under HOME.
+  # XDG_DATA_HOME, the CLI's own config under HOME, and every lib temp (the pull
+  # export and the rotate value alike) under TMPDIR, which is why the rotate tests
+  # cd into their own cwd dir rather than into TMPDIR -- a template that resolved
+  # against the cwd would then leave its mark where this suite can see it.
   export HOME="${SCRATCH}/home"
   export TMPDIR="${SCRATCH}"
   export XDG_DATA_HOME="${SCRATCH}/xdg"
@@ -215,6 +220,34 @@ key_list() {
     fi
   )
   [ "${#into[@]}" -gt 0 ]
+}
+
+# dotenv_missing_keys - print the managed keys a dotenv file never assigns. The
+# inventory's own header states the invariant ("Every key must also exist in
+# .env.example"): Infisical feeds .env on a pull and compose keeps interpolating
+# .env, so a managed key with no line in the twins is a key bootstrap never mints
+# (it only mints a line still reading =change-me) and no service ever receives.
+# The inventory reader's `^[A-Z0-9_]+$` filter runs first, so no key name can
+# reach grep as a pattern.
+# Arguments:
+#   $1 - the inventory file; $2 - the dotenv file to compare it against
+# Outputs:
+#   One KEY per line on stdout, for each managed key ${2} does not assign
+# Returns:
+#   0 when both files were readable; 1 when either is not, with the reason on stderr
+dotenv_missing_keys() {
+  local inventory="$1" dotenv="$2" key
+  [ -r "${inventory}" ] || {
+    printf 'inventory is not readable: %s\n' "${inventory}" >&2
+    return 1
+  }
+  [ -r "${dotenv}" ] || {
+    printf 'dotenv is not readable: %s\n' "${dotenv}" >&2
+    return 1
+  }
+  while IFS= read -r key; do
+    grep -Eq "^${key}[[:space:]]*=" "${dotenv}" || printf '%s\n' "${key}"
+  done < <(grep -E '^[A-Z0-9_]+$' "${inventory}")
 }
 
 # rotate_cli - run `rotate <key>` until the CLI's managed-key probe accepts it.
@@ -807,11 +840,15 @@ summary_line() {
 @test "rotate: the value goes to the vault as KEY=@file before .env moves at all" {
   vault_on "${ENV_FILE}" >/dev/null
   printf '%s\n' "LITELLM_MASTER_KEY=old-master-value" >>"${ENV_FILE}"
-  cd "${SCRATCH}"
+  # The rotate temp must land under TMPDIR, not the cwd, so this test stands its
+  # cwd apart from TMPDIR: a template that resolved against the cwd would then drop
+  # the mode-600 secret here instead, and the two checks below catch it either way.
+  mkdir -p "${SCRATCH}/cwd"
+  cd "${SCRATCH}/cwd"
   # The stock stub files a set value away only for a KEY=@path word that carries a
-  # slash, and cmd_rotate hands it a relative template, so this one test shadows the
-  # stub with a wrapper that captures whatever file the CLI named before execing the
-  # stub. Everything the wrapper writes lives under this test's own tmpdir.
+  # slash, and this test wants the file's bytes, its mode and the directory it was
+  # created in, so it shadows the stub with a wrapper that captures all three before
+  # execing the stub. Everything the wrapper writes lives under this test's own tree.
   local capture="${SCRATCH}/capture"
   mkdir -p "${capture}/bin"
   export CAPTURE_DIR="${capture}" STUB_COPY_DIR="${BATS_TEST_TMPDIR}/bin"
@@ -827,6 +864,7 @@ for word in "$@"; do
         cp "${target}" "${CAPTURE_DIR}/value.txt"
         printf '%s\n' "${word}" >"${CAPTURE_DIR}/word.txt"
         stat -c '%a' "${target}" >"${CAPTURE_DIR}/mode.txt"
+        dirname "${target}" >"${CAPTURE_DIR}/dir.txt"
       fi
       ;;
   esac
@@ -879,6 +917,10 @@ STUBWRAP
   assert_match "the argv word was the @file form" \
     '^LITELLM_MASTER_KEY=@[^[:space:]]*infisical-rotate\.[A-Za-z0-9]+$' \
     "$(cat "${capture}/word.txt")"
+  assert_match "and that path is absolute, never a name the cwd resolves" \
+    '^LITELLM_MASTER_KEY=@/' "$(cat "${capture}/word.txt")"
+  assert_eq "the secret was minted under TMPDIR, not where the operator was standing" \
+    "${TMPDIR}" "$(cat "${capture}/dir.txt")"
 
   local logged
   logged="$(stub_log infisical)"
@@ -891,6 +933,8 @@ STUBWRAP
   leftover="$(find "${SCRATCH}" -maxdepth 1 -name 'infisical-rotate.*' | wc -l |
     tr -d '[:space:]')"
   assert_eq "the mode-600 value file is gone once the CLI exited" "0" "${leftover}"
+  leftover="$(find "${SCRATCH}/cwd" -name 'infisical-rotate.*' | wc -l | tr -d '[:space:]')"
+  assert_eq "and the cwd never held one at all" "0" "${leftover}"
 }
 
 @test "rotate: a vault that refuses the write leaves .env byte-identical" {
@@ -1108,6 +1152,67 @@ EOS
   assert_match "the placeholder is named as the problem" \
     'INFISICAL_ADMIN_PASSWORD is empty or still the shipped change-me placeholder' "${stderr:-}"
   assert_eq "and the CLI was never called with it" "0" "$(stub_log_count infisical)"
+}
+
+# ---------------------------------------------------------------------------
+# The inventory's own invariant, which its header states and nothing else enforces:
+# every managed key has a line in both dotenv twins. bootstrap mints a value only
+# for a key whose .env line still reads =change-me, so a key added to
+# infisical/managed-secrets.txt with no dotenv line is never minted, never pushed,
+# and reaches no service -- silently. This is the gate for that.
+# ---------------------------------------------------------------------------
+
+@test "inventory: all twelve managed keys are assigned in both dotenv twins" {
+  local example="${REPO_ROOT}/.env.example" sample="${REPO_ROOT}/.env.sample"
+  if [ ! -r "${example}" ] || [ ! -r "${sample}" ]; then
+    skip "the dotenv twins are not in this target's runfiles: tests/BUILD.bazel _SUITE_PAYLOAD[\"infisical.bats\"] needs //:env_example and //:env_sample"
+  fi
+
+  # Non-vacuous from both ends: an empty inventory reader would report every twin
+  # clean, so the count the reader produces is pinned here as well.
+  local count
+  count="$(cli_managed_keys | grep -c .)"
+  assert_eq "the inventory holds the twelve keys the contract names" "12" "${count}"
+
+  local missing
+  missing="$(dotenv_missing_keys "${INVENTORY}" "${example}")"
+  assert_eq ".env.example is missing a managed key, which bootstrap would never mint" \
+    "" "${missing}"
+  missing="$(dotenv_missing_keys "${INVENTORY}" "${sample}")"
+  assert_eq ".env.sample is missing a managed key, which bootstrap would never mint" \
+    "" "${missing}"
+}
+
+@test "inventory: a managed key with no dotenv line is named, not skipped" {
+  local fixture="${SCRATCH}/twins" dropped="SPARK_2_API_KEY" key out status
+  mkdir -p "${fixture}"
+
+  # A twin that satisfies the invariant has to read clean, or the drop below would
+  # pass on a helper that reports every key missing.
+  : >"${fixture}/.env.example"
+  while IFS= read -r key; do
+    printf '%s=change-me\n' "${key}" >>"${fixture}/.env.example"
+  done < <(cli_managed_keys)
+  assert_eq "a twin carrying every managed key is reported clean" "" \
+    "$(dotenv_missing_keys "${INVENTORY}" "${fixture}/.env.example")"
+
+  # The shape of the defect: one managed key with no assignment anywhere.
+  grep -v "^${dropped}=" "${fixture}/.env.example" >"${fixture}/.env.gap"
+  status=0
+  out="$(dotenv_missing_keys "${INVENTORY}" "${fixture}/.env.gap")" || status=$?
+  [ "${status}" -eq 0 ] || {
+    echo "the check failed outright instead of reporting the gap" >&2
+    return 1
+  }
+  assert_eq "the key with no dotenv line is the one thing it names" "${dropped}" "${out}"
+  assert_match "and it names it as a bare key, so the message can be acted on" \
+    "^${dropped}$" "${out}"
+
+  # An unreadable twin is a failure, never the empty answer that would read as clean.
+  if dotenv_missing_keys "${INVENTORY}" "${fixture}/absent" 2>/dev/null; then
+    echo "a twin that does not exist read as if it carried every key" >&2
+    return 1
+  fi
 }
 
 # ---------------------------------------------------------------------------

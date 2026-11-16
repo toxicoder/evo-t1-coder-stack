@@ -463,7 +463,7 @@ cmd_pull() {
 # @function cmd_rotate
 # Mint one managed key, vault first, env file second.
 # Globals:
-#   ENV_FILE
+#   ENV_FILE, TMPDIR (the root the minted value's temp is created under)
 # Arguments:
 #   $1 - env file
 #   $2 - the key to rotate
@@ -492,7 +492,10 @@ cmd_rotate() {
   fi
 
   phase "mint a fresh value for ${key}"
-  infisical_mktemp "infisical-rotate"
+  # The template is absolute on purpose: a bare "infisical-rotate" resolves against
+  # the cwd, which on a host run is the checkout, so the freshly minted secret would
+  # land as litter an operator could commit. The seam refuses a relative template.
+  infisical_mktemp "${TMPDIR:-/tmp}/infisical-rotate"
   value_file="${INFISICAL_MKTEMP}"
   # No trailing newline: the file is handed to the CLI as KEY=@file and the value is
   # stored byte for byte, so a newline here would become part of the secret.

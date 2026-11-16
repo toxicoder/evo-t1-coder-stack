@@ -285,6 +285,8 @@ _SUITE_PAYLOAD = {
     # //scripts:doc_sources in _BATS_COMMON.
     "infisical.bats": [
         "//infisical:payload",
+        "//:env_example",
+        "//:env_sample",
     ],
     "infisical_lib.bats": [
         "//infisical:payload",
