@@ -447,8 +447,9 @@ assert_quiet() {
 @test "dangerous-command-guard: leaves the sibling of every new rule alone" {
   # The half that keeps the list above honest. Each new rule has a legitimate command one
   # character away from it -- a named scratch dir rather than a dot, one path rather than
-  # the tree, a log rather than the profile, a workspace container rather than a stack one
-  # -- and a rule that denies those is a rule an operator deletes.
+  # the tree, a log rather than the profile, a workspace container rather than a stack one,
+  # and the two `rm` calls the ez-learn dream flow documents for the logs it consumed --
+  # and a rule that denies those is a rule an operator deletes.
   local cmd
   for cmd in "find /tmp/scratch -type f -delete" \
     "find . -name '*.orig' -print" \
@@ -459,6 +460,8 @@ assert_quiet() {
     "truncate -s 0 /tmp/evo-t1-hook-tests/run.log" \
     "cp /dev/null /tmp/scratch/empty" \
     "rm -f /tmp/scratch/one-file" \
+    "rm -f ~/.grok/notes/git/host/owner/repo/notes.md" \
+    "rm -f ~/.grok/memory/evo-t1-a1b2c3d4/session-2026-11-16.md" \
     "chmod 777 /tmp/scratch/x" \
     "chmod -R u+rwX ." \
     "docker ps -a" \

@@ -95,12 +95,18 @@ git[[:space:]]+stash[[:space:]]+(drop|clear)([[:space:]]|$)
 # boot rewrites most of it. Zeroing or removing a piece of it from a workspace is both
 # hard to undo and visible in every other workspace that mounts the volume, so the
 # rulebook says change the seed under templates/common/ instead -- these lines are that
-# rule with teeth. Scoped to a path that names .grok/ so an ordinary truncate of a log
-# file stays available.
+# rule with teeth.
+#
+# The two halves below are deliberately asymmetric. Deleting one file by path is a step
+# the ez-learn dream flow documents (`rm` the session logs it consumed), so notes and
+# memory stay deletable; nothing documents zeroing a file in place, so the three
+# truncation forms cover any path that names .grok/, and an ordinary truncate of a log
+# file outside it stays available. The removal rule is limited to what the boot
+# re-materialises and an agent has no business deleting at all.
 truncate[[:space:]]+[^|;]*\.grok/
 :[[:space:]]*>[[:space:]]*[^[:space:]]*\.grok/
 cp[[:space:]]+/dev/null[[:space:]]+[^|;]*\.grok/
-rm[[:space:]]+[^|;]*\.grok/(hooks|config\.toml|AGENTS\.md|notes|agents|personas)([/.]|$)
+rm[[:space:]]+[^|;]*\.grok/(hooks|config\.toml|AGENTS\.md|agents|personas)([/.]|$)
 
 # --- the stack's volumes and containers ---------------------------------------------
 # The named volumes here carry the shared grok profile, the Coder Postgres, and the
