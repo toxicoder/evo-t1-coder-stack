@@ -328,16 +328,19 @@ RUN case "${TARGETARCH}" in \
     # the only thing that call would prove at build time is that node starts, and a
     # bundle that changed its flag surface would fail the image build for no gain.
     #
-    # The release archive carries licence, README and completion members beside the
-    # binary, so the whole archive is unpacked into a scratch dir and the one regular
-    # file named `infisical` is installed from it. The probe uses find's own -quit
-    # rather than `| head`: this layer runs under `set -o pipefail`, where an
-    # early-exit reader turns a good archive into exit 141.
+    # The release asset is listed and its binary member is `infisical` at the archive
+    # root, beside LICENSE, README, three completion files and one manpage. That
+    # member is named on extract, the way the docker layer below names
+    # `docker/docker`: nothing in the archive then gets to choose what lands in
+    # /usr/local/bin, and a release that drops or moves the member fails this layer
+    # instead of installing a file that happens to match a `find -name` pattern. The
+    # member goes to stdout into a scratch file, so no pipe is opened here: this layer
+    # runs under `set -o pipefail`, where an early-exit reader turns a good archive
+    # into exit 141.
     && fetch /tmp/infisical-cli.tgz "https://github.com/Infisical/cli/releases/download/v${INFISICAL_CLI_VERSION}/cli_${INFISICAL_CLI_VERSION}_linux_${ARCH}.tar.gz" \
-    && mkdir -p /tmp/infisical-cli \
-    && tar -xzf /tmp/infisical-cli.tgz -C /tmp/infisical-cli \
-    && install -m 0755 "$(find /tmp/infisical-cli -type f -name infisical -print -quit)" /usr/local/bin/infisical \
-    && rm -rf /tmp/infisical-cli.tgz /tmp/infisical-cli \
+    && tar -xzf /tmp/infisical-cli.tgz -O infisical > /tmp/infisical-cli.bin \
+    && install -m 0755 /tmp/infisical-cli.bin /usr/local/bin/infisical \
+    && rm -f /tmp/infisical-cli.tgz /tmp/infisical-cli.bin \
     # Docker client toolchain — the *client* only, so a workspace can drive a
     # Docker daemon. download.docker.com's static tarball also ships dockerd,
     # containerd, containerd-shim-runc-v2, docker-proxy and runc, so it must
