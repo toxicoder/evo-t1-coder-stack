@@ -1,6 +1,6 @@
 ---
 title: Public subdomains
-description: Serving the same six services on public names over real TLS, additively, with the LAN shape left intact.
+description: Serving the same seven services on public names over real TLS, additively, with the LAN shape left intact.
 tags: [public, tls, traefik, authelia, hermes, operate]
 ---
 
@@ -18,13 +18,13 @@ tags: [public, tls, traefik, authelia, hermes, operate]
 
 - Exposing the stack without breaking the LAN routes anyone at home uses
 - Telling a router problem apart from an Authelia problem when a name fails
-- Putting the six routers on the Traefik box without guessing its timeouts
+- Putting the seven routers on the Traefik box without guessing its timeouts
 
 The default shape is LAN-only. `STACK_PUBLIC_HOSTS=auto` additionally serves the same
-six services on public names over real TLS, each name composed from the parts you set
-once. It is purely additive: every LAN route keeps working. Grafana is the sixth and the
-only new service on this path: the observability backends behind it (Prometheus, Loki,
-Tempo, Mimir) stay unexposed, because
+seven services on public names over real TLS, each name composed from the parts you set
+once. It is purely additive: every LAN route keeps working. Grafana and Infisical are the
+two new services on this path: the observability backends behind Grafana (Prometheus,
+Loki, Tempo, Mimir) stay unexposed, because
 [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md) keeps
 metrics and logs off the LAN, let alone the WAN.
 
@@ -92,7 +92,7 @@ The dev row is what `bazelisk run //scripts:dev-stack -- up` composes for the
 `evo-t1-dev` project: that command applies `STACK_ENV_LABEL=dev` when neither the shell
 nor the env file already sets a label, and only for that project, so
 `--project-name evo-t1-review` gets none. A label goes on every name, so that stack's
-dashboard is `dev-gmktecbeast.overeazy.io` too, and all six need their own Traefik
+dashboard is `dev-gmktecbeast.overeazy.io` too, and all seven need their own Traefik
 routers (see below). `bazelisk run //scripts:prod-stack -- up` never invents a label.
 
 Hermes is the same additive hop as the other four. Traefik forwards
@@ -116,11 +116,12 @@ joined, so a value copied out of a browser bar cannot leak into an origin or a
   names the observability UI only: the metrics backends it fronts get no key of their
   own, and stay unexposed.
   `STACK_DASHBOARD_NAME` is empty by default, which puts the dashboard on the zone apex.
-- `STACK_INFISICAL_NAME` (default `infisical`) is the seventh prefix and the only one
-  behind a compose profile: the vault's three containers start only under
+- `STACK_INFISICAL_NAME` (default `infisical`) is the seventh prefix and one of the two
+  behind a compose profile - `STACK_GRAFANA_NAME` is the other, whose `grafana` service
+  sits under `profiles: ["observability"]`. The vault's three containers start only under
   `profiles: ["secrets"]`, which `INFISICAL_ENABLED` (off as shipped) selects, so a
   stack with the flag off has no vault behind that name and answers `502`. `domain.sh`
-  reads no flag, so the name still composes and still reaches
+  reads no flag for either of them, so both names still compose and still reach
   `HOMEPAGE_ALLOWED_HOSTS`, which is the safer half of that trade. The router sends it
   to `http://infisical:8080` - the container port, not the published one - and the
   mapping is `${INFISICAL_PORT:-8182}:8080`, published plainly rather than
@@ -141,7 +142,7 @@ joined, so a value copied out of a browser bar cannot leak into an origin or a
 `STACK_PUBLIC_HOSTS` has three states, and only the middle one composes:
 
 - empty is LAN-only;
-- `auto` composes the six names from the parts above;
+- `auto` composes the seven names from the parts above;
 - a comma-separated list is used verbatim, which is how you pin a name by hand (leave
   `STACK_PUBLIC_HOSTS_MODE` empty, or that key keeps re-deriving).
 
@@ -254,7 +255,7 @@ http:
   services:
     evo-t1-router:
       loadBalancer:
-        # One backend for all six names: the nginx `router` sidecar on this box,
+        # One backend for all seven names: the nginx `router` sidecar on this box,
         # which picks the upstream from the Host header. Never :9119, :3001 or
         # :4000 -- a router aimed at a container port skips this box's vhost
         # table and its Host header entirely.
@@ -288,8 +289,8 @@ http:
 - `authelia@file` is a placeholder for the Authelia middleware that box already
   declares. Name it exactly as that box names it - a middleware created by labels is
   `authelia@docker`, and a name Traefik cannot resolve fails the router rather than
-  serving it unauthenticated. The five interactive names (dashboard, Coder, Kasm, Hermes,
-  Grafana) carry it; LiteLLM must not.
+  serving it unauthenticated. The six interactive names (dashboard, Coder, Kasm, Hermes,
+  Grafana, Infisical) carry it; LiteLLM must not.
 - `tls: {}` means "serve whatever certificate matches the SNI", which is the zone's
   `*.overeazy.io` pair. Add `tls: { certResolver: <name> }` if that box issues through
   an ACME resolver instead. SNI has to be the public name itself - the wildcard covers
@@ -301,10 +302,10 @@ http:
   something in between drops the upgrade, and Cloudflare has WebSockets on by
   default, so the usual suspect is an Authelia middleware configured to buffer.
 - **Timeouts.** `proxy/router.conf` on this box already holds per-service read
-  timeouts - dashboard 60s, coder, hermes and grafana 300s, LiteLLM 600s, Kasm 3600s - so
-  Traefik must not be the shorter link. One transport for all six at `3600s` is the
-  simple choice because Kasm needs that floor anyway. To cap each tier separately,
-  declare one `loadBalancer` service per tier, each pointing at the same
+  timeouts - dashboard 60s, coder, hermes, grafana and infisical 300s, LiteLLM 600s,
+  Kasm 3600s - so Traefik must not be the shorter link. One transport for all seven at
+  `3600s` is the simple choice because Kasm needs that floor anyway. To cap each tier
+  separately, declare one `loadBalancer` service per tier, each pointing at the same
   `http://<this-box-lan-ip>:8080` with `passHostHeader: true` and its own transport
   (`evo-t1-coder` / `evo-t1-hermes` / `evo-t1-grafana` / `evo-t1-infisical` at `300s`,
   `evo-t1-litellm` at
@@ -335,12 +336,12 @@ This repo cannot verify any of it; check it on the Traefik box.
    authenticates nothing, so a name whose router skips the auth middleware reaches
    its container the same way the LAN does. The app path is behind that policy
    like the rest of its name, so an expired session surfaces there too.
-4. DNS records for all six names, each one label deep and Cloudflare-proxied (orange
+4. DNS records for all seven names, each one label deep and Cloudflare-proxied (orange
    cloud). WebSockets are on there by default. A missing record shows up as a DNS
    error, a rewritten Host as `421`. Homepage, Coder, Kasm and LiteLLM resolve
    that way and complete the TLS handshake, checked from this box; the Hermes
-   name is the same zone and the same proxy. The Grafana record is new with this
-   name and has not been measured from this box, so check it there.
+   name is the same zone and the same proxy. The Grafana and Infisical records are new
+   with their names and have not been measured from this box, so check them there.
 5. WebSocket `Upgrade` forwarded by Traefik and Authelia on the Hermes router. The
    Chat tab uses `/api/pty` and `/api/ws`, and Hermes sends a keepalive every 20
    seconds. A proxy that drops `Upgrade` loads the page and then fails the tab.
@@ -348,15 +349,15 @@ This repo cannot verify any of it; check it on the Traefik box.
 ## Authelia
 
 - `https://gmktecbeast.overeazy.io/`, `coder-gmktecbeast.overeazy.io`,
-  `kasm-gmktecbeast.overeazy.io`, `hermes-gmktecbeast.overeazy.io` and
-  `grafana-gmktecbeast.overeazy.io` 302 to
-  `https://authelia.overeazy.io/`. Homepage, Coder, Kasm, Hermes and Grafana are
-  interactive sessions, and the Hermes policy is already in place. Covering a newly named host
+  `kasm-gmktecbeast.overeazy.io`, `hermes-gmktecbeast.overeazy.io`,
+  `grafana-gmktecbeast.overeazy.io` and `infisical-gmktecbeast.overeazy.io` 302 to
+  `https://authelia.overeazy.io/`. Homepage, Coder, Kasm, Hermes, Grafana and Infisical
+  are interactive sessions, and the Hermes policy is already in place. Covering a newly named host
   is an Authelia-side config choice; nothing here adds or requires a policy, so the
-  Grafana policy is the one this box cannot assume exists. Hermes
+  Grafana and Infisical policies are the two this box cannot assume exist. Hermes
   is not an API bypass: it stays behind that interactive policy, and after Authelia
   it asks for its own HTTP basic auth. Both prompts on the public URL are expected.
-  Grafana is the same shape: Authelia first, then Grafana's own login.
+  Grafana and Infisical are the same shape: Authelia first, then each one's own login.
 - Put LiteLLM behind it and every client breaks: LiteLLM authenticates from the
   `Authorization` header, and header-carried API traffic cannot pass an interactive
   sign-in. Either leave `litellm-gmktecbeast` outside any policy or add an explicit

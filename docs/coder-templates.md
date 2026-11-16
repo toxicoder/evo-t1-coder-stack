@@ -574,7 +574,7 @@ its alias (`templates/workspace/coder.tf:19-22`).
 | `context7_mcp` | `true` | Wires the cached `context7` MCP stdio server into Grok's rendered `config.toml`. The key is optional, so it ships without one. Set `CONTEXT7_MCP=false` and re-push to drop the block. |
 | `context7_api_key` | `""`, `sensitive` | Handed to the workspace as `CONTEXT7_API_KEY`. The rendered file names the variable. |
 | `grok_config_extra` | `""` | The **Grok config extras** textarea: free-form TOML appended verbatim, under a comment header, to that workspace's rendered `~/.grok/config.toml`. |
-| `infisical_enabled` | `false` | The vault's switch, and the first of two gates. Off means the workspace cannot tell Infisical exists: no `INFISICAL_*` key in the agent env, no `coder_script.infisical_secrets` at all (`templates/workspace/main.tf:712`), no boot log line. Forwarded only as `--var infisical_enabled=true` for a truthy `.env` `INFISICAL_ENABLED` (`scripts/push-template.sh:636-638`), which is the deliberate inverse of `OBSERVABILITY_ENABLED` - that bundle ships on, so here an absent key is off (`scripts/push-template.sh:623-630`). All eight `infisical_*` variables exist in both twins (`templates/workspace/coder.tf:207-274`, `templates/devcontainer/coder.tf:194-261`). |
+| `infisical_enabled` | `false` | The vault's switch, and the first of two gates. Off means the workspace cannot tell Infisical exists: no `INFISICAL_*` key in the agent env, no `coder_script.infisical_secrets` at all (`templates/workspace/main.tf:715-716`), no boot log line. Forwarded only as `--var infisical_enabled=true` for a truthy `.env` `INFISICAL_ENABLED` (`scripts/push-template.sh:636-638`), which is the deliberate inverse of `OBSERVABILITY_ENABLED` - that bundle ships on, so here an absent key is off (`scripts/push-template.sh:623-630`). All eight `infisical_*` variables exist in both twins (`templates/workspace/coder.tf:207-274`, `templates/devcontainer/coder.tf:194-261`). |
 | `infisical_url` | `""` | Handed to the boot fetch as `INFISICAL_DOMAIN`: the base URL of the self-hosted instance, e.g. `http://host.docker.internal:8182`. The CLI dials Infisical Cloud when handed no domain, so an empty value disables the fetch rather than guessing one, and a self-hosted vault nobody names is a wrong-server bug (`templates/workspace/coder.tf:213-219`). |
 | `infisical_project_id` | `""` | → `INFISICAL_PROJECT_ID`. The project the export reads. Not a credential, but no read works without it, so an empty value disables the fetch the way an empty URL does (`templates/workspace/coder.tf:221-227`). |
 | `infisical_machine_identity_id` | `""` | → `INFISICAL_MACHINE_IDENTITY_ID`. The machine identity the boot authenticates as - the id, never the token. It has no slot in any CLI argv, since the client id/secret are the credential, so it gates the fetch and records which identity the stack means (`templates/common/infisical-secrets.sh.tftpl:10-12`). |
@@ -1078,7 +1078,7 @@ rules above.
   one-dollar braced form is swallowed as an interpolation, in a comment or a `for` loop as
   readily as in a command. The unbraced form (`$name`) needs no escape.
   `infisical-secrets.sh.tftpl` is the one body rendered with an empty map
-  (`templates/workspace/main.tf:723`), so every braced expansion in it is shell text, none
+  (`templates/workspace/main.tf:727`), so every braced expansion in it is shell text, none
   of it interpolates, and the rendered bytes are the same for every workspace.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
   twelve: `grok_config`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
@@ -1182,16 +1182,16 @@ What the vault is, how to adopt it, and how to rotate a key in it is
 - With the first gate off the `coder_script` is not merely idle - its `count` is `0`, so the
   template renders no script, no boot log line, and no `INFISICAL_*` agent-env key, and a
   workspace whose stack never adopted Infisical cannot tell the difference
-  (`templates/workspace/main.tf:703-712`). With the first on and the second off the resource
+  (`templates/workspace/main.tf:703-716`). With the first on and the second off the resource
   exists and does nothing but name its gate (`templates/common/infisical-secrets.sh.tftpl:27-30`).
 - Every credential rides the **agent environment** rather than the script body, for the
   reason every credential in `main.tf` rides it: Coder stores a rendered
   `coder_script.script` as text on the server, so a value interpolated into one would sit in
   Coder's database in plain sight, while an agent-env value is rendered per start and never
-  written to disk (`templates/workspace/main.tf:630-634`). The body accordingly declares no
-  Terraform variable of its own and renders with an empty map, and the eight keys the
+  written to disk (`templates/workspace/main.tf:634-637`). The body accordingly declares no
+  Terraform variable of its own and renders with an empty map, and the seven keys the
   `env = merge({...})` block hands it are its whole interface
-  (`templates/workspace/main.tf:635-649`, `:707-710`).
+  (`templates/workspace/main.tf:639-653`, `:727`).
 - The body runs in this order, and every step that cannot proceed prints what it needs and
   exits 0: no `infisical` binary in the image (`templates/common/infisical-secrets.sh.tftpl:8`),
   the six-name not-configured guard (`:14-20`), the `INFISICAL_PULL_ON_START` gate
@@ -1208,19 +1208,19 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   else, staged as `~/.infisical/.agent.env.XXXXXX` in that same directory and `mv`'d in, so
   a reader never sees a half-written file - the same write-then-rename discipline
   `~/.grok/notes-setup.sh` uses above. Its one reader is `~/.bashrc`, which sources it under
-  `set -a` (`templates/workspace/startup.sh.tftpl:81-83`), and that login shell is what every
+  `set -a` (`templates/workspace/startup.sh.tftpl:76-80`), and that login shell is what every
   terminal, tmux pane and command in the workspace inherits from. The file sits on the
-  workspace's own home volume (`templates/workspace/main.tf:1370-1373`), where every shell
+  workspace's own home volume (`templates/workspace/main.tf:1374-1377`), where every shell
   that workspace runs can read it.
 - Nothing is copied out of the export line by line: each value is taken apart and re-emitted
   as `export KEY='value'` under quoting with no escape hatch, because the CLI's own dotenv
   writer leaves an embedded single quote raw, which makes its output either unsources or
-  runnable (`templates/common/infisical-secrets.sh.tftpl:96-137`). That is what makes the
+  runnable (`templates/common/infisical-secrets.sh.tftpl:99-117`). That is what makes the
   `.bashrc` source above safe, and it is why the reader and the publish step are one pair -
   the startup comment says to read the publish step before changing either side
-  (`templates/workspace/startup.sh.tftpl:76-80`).
+  (`templates/workspace/startup.sh.tftpl:71-72`).
 - Every `INFISICAL_` name is filtered out of that file, and that filter is the load-bearing
-  line (`templates/common/infisical-secrets.sh.tftpl:129`): the vault's own address and
+  line (`templates/common/infisical-secrets.sh.tftpl:180`): the vault's own address and
   Universal Auth pair are plausible keys in the very project being exported, and they must
   not be republished as workspace environment through a file, when the agent environment is
   the place Coder renders them per start (`:83-88`). The log line that follows reports a key
@@ -1230,9 +1230,9 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   promised order (`coder_script_order` needs Coder >= v2.39, see
   [The one-argument ceiling](#the-one-argument-ceiling)): a first boot whose startup script
   wins the race still ends up with a working hook, and the leading `grep -qs` keeps a later
-  start from appending the block twice (`templates/workspace/startup.sh.tftpl:69-83`).
+  start from appending the block twice (`templates/workspace/startup.sh.tftpl:64-80`).
 - The fetch is best-effort and cannot fail a workspace start. `timeout = 120`
-  (`templates/workspace/main.tf:721`) bounds the realistic slow case, a vault container
+  (`templates/workspace/main.tf:725`) bounds the realistic slow case, a vault container
   still coming up, and every failure path - a refused login, an export that came back empty,
   an `mv` that did not land - prints one line, exits 0, and leaves the boot running on
   whatever `agent.env` the previous start wrote

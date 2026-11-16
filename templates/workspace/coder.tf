@@ -269,6 +269,6 @@ variable "infisical_environment" {
 # INFISICAL_PULL_ON_START so the rendered script text stays identical either way.
 variable "infisical_pull_on_start" {
   type        = bool
-  description = "When true, the workspace boot fetch pulls the managed keys before the rest of startup. Default false keeps the coder_script present but idle: it logs that the gate is off and exits 0, so a workspace never waits on Infisical being up. Has no effect while infisical_enabled is false."
+  description = "When true, the workspace boot fetch pulls the managed keys on its own start, in no promised order with the startup script. Default false keeps the coder_script present but idle: it logs that the gate is off and exits 0, so a workspace never waits on Infisical being up. Has no effect while infisical_enabled is false."
   default     = false
 }

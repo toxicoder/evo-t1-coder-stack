@@ -13,6 +13,8 @@ tags: [env, config, update-configs, maintenance]
 - That env comments always refresh from the twin, even when values stay
 - Where the command may run, and where it refuses to
 - The long form of the `.env.sample` comments: GitHub external auth, Grok profile mode, public hosts, the Spark `agent` group
+- That the vault rewrites the managed keys before a bring-up interpolates them, and
+  nothing else in the file
 
 **What this enables**
 
@@ -78,6 +80,21 @@ value whose example default is also empty is the intended value (LAN-only
 sibling's value or the example default. A missing live file is created from
 the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
 list those keys and write no answers. A `summary:` line closes the pass.
+
+One other writer touches the env files, and it is not this tool. With
+`INFISICAL_ENABLED` on, `bazelisk run //scripts:dev-stack -- up`,
+`bazelisk run //scripts:prod-stack -- up` and `bazelisk run //scripts:update-stack` each
+pull the env file from the vault immediately before compose interpolates it, through
+`infisical_pull` in `scripts/lib/infisical.sh`. That pass **does** overwrite values you
+set, and only the twelve it manages: the keys listed in `infisical/managed-secrets.txt`,
+which are the stack's service credentials. Every other key in the file - the ports, the
+hosts, the naming parts, the URLs, the feature flags - keeps what you set. A managed key
+the vault does not hold, or holds empty, is left alone too, with one `warning:` naming
+the key instead of a blanked line, and a failed export leaves the file untouched so the
+bring-up runs on the credentials it already has. With the flag off - the shipped default
+- that branch never runs and the file keeps every value it has, and
+`bazelisk run //scripts:update-stack -- --dry-run` plans the fetch and writes nothing.
+[operate/secrets.md](operate/secrets.md) owns the vault, its inventory and its verbs.
 
 `workspace` re-materialises the stack-owned config inside the targets you name.
 The reseed set is the twenty-nine home-relative targets the templates seed -
@@ -329,7 +346,7 @@ reseeds `~/.grok/config.toml` for exactly that reason.
 ## Public hosts and the dashboard
 
 `STACK_PUBLIC_HOSTS` is the one switch, and it has three states. Empty keeps everything
-below LAN-only and every derived `STACK_*_URL` stays empty. `auto` composes the five
+below LAN-only and every derived `STACK_*_URL` stays empty. `auto` composes the seven
 names from the naming parts - `STACK_DOMAIN_BASE`, `STACK_SUBDOMAIN_SUFFIX`,
 `STACK_ENV_LABEL` and the per-service `STACK_*_NAME` prefixes, all documented in
 `.env.sample`. A comma-separated list is the hand-pin: those names are used verbatim.
@@ -345,8 +362,9 @@ names from the naming parts - `STACK_DOMAIN_BASE`, `STACK_SUBDOMAIN_SUFFIX`,
   in `STACK_PUBLIC_HOSTS` is ignored. Bootstrap prints a `note:` naming the key to
   clear when that happens.
 - `bootstrap.sh` derives `STACK_DASHBOARD_URL` / `STACK_CODER_URL` /
-  `STACK_KASM_URL` / `STACK_LITELLM_URL` / `STACK_HERMES_URL` from the prefix on
-  each entry (`coder-` / `kasm-` / `litellm-` / `hermes-`, dotted form still
+  `STACK_KASM_URL` / `STACK_LITELLM_URL` / `STACK_HERMES_URL` / `STACK_GRAFANA_URL` /
+  `STACK_INFISICAL_URL` from the prefix on each entry (`coder-` / `kasm-` / `litellm-` /
+  `hermes-` / `grafana-` / `infisical-`, dotted form still
   recognised) and upgrades `CODER_ACCESS_URL` to the coder name, so Coder builds
   workspace links on a secure context with a real certificate. Compose sets
   `HERMES_DASHBOARD_PUBLIC_URL` from `STACK_HERMES_URL` (the Chat tab's Host and
@@ -361,7 +379,7 @@ names from the naming parts - `STACK_DOMAIN_BASE`, `STACK_SUBDOMAIN_SUFFIX`,
   `$http_host` on `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host comes back
   as `421`.
   That box needs one file, and the paste-ready version of it - one `loadBalancer`
-  at `:8080`, a router per name, Authelia on the four interactive names, the
+  at `:8080`, a router per name, Authelia on the six interactive names, the
   long-lived timeouts - is
   [public-access.md#traefik-configuration](public-access.md#traefik-configuration).
 

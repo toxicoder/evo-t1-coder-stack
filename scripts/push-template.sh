@@ -644,7 +644,7 @@ if truthy "$(env_get INFISICAL_ENABLED)"; then
   # a boot that never waits on the vault. Off is also what .env.example ships.
   if truthy "$(env_get INFISICAL_PULL_ON_START)"; then
     vars+=(--var "infisical_pull_on_start=true")
-    log "infisical_pull_on_start=true passed from INFISICAL_PULL_ON_START in .env (each workspace start fetches before startup)"
+    log "infisical_pull_on_start=true passed from INFISICAL_PULL_ON_START in .env (each workspace start also runs the vault fetch, in no promised order with the startup script)"
   fi
 fi
 

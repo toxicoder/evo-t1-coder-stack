@@ -59,6 +59,7 @@ and kept in `docs/` beside this file:
 [grok-build-and-agents.md](docs/grok-build-and-agents.md),
 [litellm-routing.md](docs/litellm-routing.md),
 [luks-unlock.md](docs/luks-unlock.md),
+[operate/secrets.md](docs/operate/secrets.md),
 [public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
 [observability.md](docs/observability.md),
 [troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
@@ -661,11 +662,12 @@ strings.
 
 The default shape is LAN-only. Set the naming parts in `.env` (`STACK_DOMAIN_BASE`,
 `STACK_SUBDOMAIN_SUFFIX`, `STACK_ENV_LABEL`, the per-service `STACK_*_NAME` keys) and
-`STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the six
-public names from them and serves the same six services over real TLS. Grafana is the
-sixth and the only one behind a Compose profile: `scripts/lib/domain.sh` reads no flag,
-so the name composes with `OBSERVABILITY_ENABLED=false` too and the router answers that
-Host with no container behind it. A
+`STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the seven
+public names from them and serves the same seven services over real TLS. Grafana and
+Infisical are the last two and the only ones behind a Compose profile:
+`scripts/lib/domain.sh` reads no flag, so each name composes with
+`OBSERVABILITY_ENABLED=false` and `INFISICAL_ENABLED=false` too and the router answers
+that Host with no container behind it. A
 comma-separated list in `STACK_PUBLIC_HOSTS` is still the way to pin a name by hand;
 empty stays LAN-only. Full detail, including what `bootstrap` rewrites and how to check
 the Traefik side, is in [docs/public-access.md](docs/public-access.md).
@@ -683,6 +685,7 @@ Under the shipped defaults (`overeazy.io` + `gmktecbeast`) `auto` composes:
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 | `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
 | `grafana-gmktecbeast.overeazy.io` | `grafana:3000` - the observability bundle's only name |
+| `infisical-gmktecbeast.overeazy.io` | `infisical:8080` - the secrets bundle's only name |
 
 The dev row is what `bazelisk run //scripts:dev-stack -- up` composes: it applies
 `STACK_ENV_LABEL=dev` for the `evo-t1-dev` project only, and only when neither the shell
@@ -697,8 +700,8 @@ wildcard certificate allows, the `bootstrap` run that composes the names and rew
 the card URLs, the recreate that applies it, the plain-HTTP hop to the `router` sidecar
 on `:8080` (every name, including Hermes - not `:9119`), and why the interactive names
 302 to Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
-The other machine needs one file: the paste-ready Traefik config - six routers, TLS
-on all of them, `passHostHeader: true`, Authelia on the five interactive names and the
+The other machine needs one file: the paste-ready Traefik config - seven routers, TLS
+on all of them, `passHostHeader: true`, Authelia on the six interactive names and the
 long-lived timeouts - is
 [docs/public-access.md#traefik-configuration](docs/public-access.md#traefik-configuration).
 
@@ -1152,6 +1155,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 ├── images/dev/            # golden workspace image
 │   ├── Dockerfile
 │   └── tool-versions.env  # every version pin, single source of truth
+├── infisical/             # the vault's one key inventory: managed-secrets.txt
+│                          #   (one KEY per line; read via infisical_managed_keys)
 ├── litellm/config.yaml    # model aliases
 ├── observability/         # the monitoring bundle, behind profiles: ["observability"]:
 │   ├── prometheus/        #   prometheus.yml (no rules dir: nothing alerts here)
@@ -1162,7 +1167,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 ├── proxy/homepage.conf    # nginx TLS terminator for the dashboard
 ├── proxy/router.conf      # nginx Host-header router for the public subdomains (no cert):
 │                          #   the render below, under the shipped defaults
-├── proxy/router.conf.template # the same six vhosts with __EVO_HOST_*__ tokens; bootstrap
+├── proxy/router.conf.template # the same seven vhosts with __EVO_HOST_*__ tokens; bootstrap
 │                          #   renders them into proxy/router.gen.conf (gitignored), and
 │                          #   STACK_ROUTER_CONF tells compose which one to mount
 ├── searxng/settings.yml   # SearXNG metasearch config, mounted read-only
@@ -1178,6 +1183,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
 │   ├── hermes-doctor.sh     # audit the Hermes assistant's posture and its seed drift
 │   ├── hermes-shell.sh      # open the Hermes assistant in the terminal you are in
+│   ├── infisical.sh         # move the managed keys between .env and the vault
+│   │                        #   (check, pull, push, rotate); off unless INFISICAL_ENABLED
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
 │   ├── luks-unlock.sh       # make an encrypted root unlockable over SSH after a reboot
