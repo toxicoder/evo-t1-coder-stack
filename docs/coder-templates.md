@@ -1081,9 +1081,9 @@ rules above.
   (`templates/workspace/main.tf:723`), so every braced expansion in it is shell text, none
   of it interpolates, and the rendered bytes are the same for every workspace.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
-  eleven: `grok_config`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
+  twelve: `grok_config`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
   `vscode_terminal_tmux`, `grok_build_delegation_skill`, `coder_agents`,
-  `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`.
+  `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`, `infisical_hook`.
   The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The payloads of the other
   families are not among them: `ez_learn_skill`, `ez_skillify_skill` and
   `ez_create_skill_skill` belong to the `coder_script.stack_skills` map,

@@ -465,6 +465,11 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//tests:coverage_tools",
     ],
+    # The suite reads both startup twins for the vault hook and both main.tf twins for
+    # the render-map key that gates it, which is every template tree at once.
+    "startup-vault-hook.bats": [
+        "//:templates_payload",
+    ],
     "storage-clean.bats": [
         "//:templates_payload",
     ],

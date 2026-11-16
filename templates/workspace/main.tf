@@ -538,6 +538,10 @@ resource "coder_agent" "main" {
     # interpolated again here. No key bytes: the script fills those from
     # LITELLM_API_KEY when it copies the file in.
     vscode_settings = local.vscode_settings
+    # Gates the ~/.bashrc hook that sources the vault's agent.env. A stack with the
+    # flag off gets no hook line at all rather than an inert one, so a subsystem the
+    # operator never turned on leaves a file the operator owns completely alone.
+    infisical_hook = var.infisical_enabled
   })
 
   # These environment variables allow you to make Git commits right away

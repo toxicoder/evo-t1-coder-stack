@@ -574,6 +574,10 @@ resource "coder_agent" "main" {
     # What the clone preflight in the script has to say about a repo that ships
     # no devcontainer.json: a fallback it chose, or a build that will now fail.
     build_devcontainer = local.use_dc ? "yes" : "no"
+    # Gates the ~/.bashrc hook that sources the vault's agent.env. A stack with the
+    # flag off gets no hook line at all rather than an inert one, so a subsystem the
+    # operator never turned on leaves a file the operator owns completely alone.
+    infisical_hook = var.infisical_enabled
   })
 
   # These environment variables allow you to make Git commits right away
