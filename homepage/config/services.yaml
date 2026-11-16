@@ -279,6 +279,26 @@
                   - any: true
                     to: "ON"
 
+    # The secrets bundle is one flag (INFISICAL_ENABLED) over three containers compose
+    # starts under `profiles: ["secrets"]` (docker-compose.yml). Off, none of them runs
+    # and the card reads DOWN together with a stack that was never asked to run them -
+    # the same honest signal the observability band gives, for the same reason.
+    #
+    # The href rides the token: the bundle publishes INFISICAL_PORT on the LAN face, so
+    # the browser needs the public name or the LAN address, and `http://infisical:8080`
+    # would be a link only this container could follow.
+    #
+    # The badge is "/" on purpose. The image's own HEALTHCHECK (frontend/scripts/
+    # healthcheck.js at the pinned infisical/infisical:v0.167.10) requests "/" on its
+    # listening port and calls the service healthy on 200, so that is what upstream
+    # treats as liveness; the same tag ships no separate health route an unauthenticated
+    # probe could use, and an API path behind auth would badge a live service DOWN.
+    - Infisical:
+        icon: mdi-lock
+        href: "{{HOMEPAGE_VAR_INFISICAL_URL}}"
+        description: Secrets manager - source of record for the managed credential keys
+        siteMonitor: http://infisical:8080/
+
 - Observability:
     # The whole bundle is one flag (OBSERVABILITY_ENABLED, see README "Observability"):
     # off, compose brings up none of these containers, and all five cards read `down`

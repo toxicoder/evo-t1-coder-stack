@@ -16,7 +16,9 @@
 # broken (a check that cannot fail guards nothing), and the search lane - the card, the
 # header search box and the compose variable behind both - keeps the shape the
 # dashboard needs. The observability lane is pinned the same way: five cards, one per
-# bundle service, each badge pointed at that service's own health endpoint.
+# bundle service, each badge pointed at that service's own health endpoint. The secrets
+# bundle card is pinned too: one card under Host, its link a compose token, its badge the
+# container's own root path over compose DNS.
 #
 # Usage: bazelisk test //tests:bats_homepage_config_test   (from any cwd)
 # Safety: reads homepage/config/*.yaml, docker-compose.yml and the checker; writes only
@@ -311,4 +313,19 @@ PY
   local compose; compose="$(grep -E '^[[:space:]]+HOMEPAGE_VAR_(GRAFANA|PROMETHEUS)_URL:' "${REPO_ROOT}/docker-compose.yml" || true)"
   assert_match "compose declares the grafana link" 'HOMEPAGE_VAR_GRAFANA_URL: \$\{STACK_GRAFANA_URL' "${compose}"
   assert_match "compose declares the prometheus link" 'HOMEPAGE_VAR_PROMETHEUS_URL: \$\{PROMETHEUS_URL' "${compose}"
+}
+
+# The secrets card is the same seam in two files: the token compose fills from
+# STACK_INFISICAL_URL and the badge that has to stay on compose DNS. Pinned because the
+# checker cannot catch the failure this card is closest to: a siteMonitor copied from the
+# href passes monitor-network (it rejects address literals, not a public name) and leaves
+# the dashboard probing its own published port instead of the container.
+@test "the Infisical card links by token and probes the container over the compose network" {
+  local services compose
+  services="$(cat "${CONFIG_DIR}/services.yaml")"
+  # Scoped to the one line, for the reason the pair above gives.
+  compose="$(grep -E '^[[:space:]]+HOMEPAGE_VAR_INFISICAL_URL:' "${REPO_ROOT}/docker-compose.yml" || true)"
+  assert_match "browser link rides the token" 'href: "{{HOMEPAGE_VAR_INFISICAL_URL}}"' "${services}"
+  assert_match "badge is the container root" "siteMonitor: http://infisical:8080/" "${services}"
+  assert_match "compose declares the link" 'HOMEPAGE_VAR_INFISICAL_URL: \$\{STACK_INFISICAL_URL' "${compose}"
 }
