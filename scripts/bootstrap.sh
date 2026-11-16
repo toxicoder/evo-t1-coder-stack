@@ -246,7 +246,7 @@ for var in "${mint_keys[@]}"; do
       set_secret "$var"
       continue
     fi
-    mint_value="$(gen_secret)"
+    mint_value="$(gen_secret_for "$var")"
     printf '%s' "${mint_value}" >"${vault_mint_file}"
     if infisical_secret_set "${var}" "${vault_mint_file}" .env; then
       sed_inplace "s|^${var}=.*|${var}=${mint_value}|" .env

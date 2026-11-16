@@ -31,7 +31,7 @@ setup() {
   # is sourced, which puts its own shipped defaults back.
   unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
   unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
-  unset STACK_GRAFANA_NAME
+  unset STACK_GRAFANA_NAME STACK_INFISICAL_NAME
   unset STACK_DOMAIN_BASE_DEFAULT STACK_SUBDOMAIN_SUFFIX_DEFAULT
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/domain.sh"
@@ -60,6 +60,37 @@ assert_no_router_vhost() {
 @test "bootstrap: gen_secret prints 32 hex characters" {
   secret="$(gen_secret)"
   [[ "${secret}" =~ ^[0-9a-f]{32}$ ]]
+}
+
+@test "bootstrap: gen_secret_for mints each key in the shape its consumer requires" {
+  # The asymmetry is the whole test. Infisical documents AUTH_SECRET as a 32-byte
+  # base64 NextAuth secret; minting it like every other key yields an instance that
+  # boots, signs users in, and then corrupts its own session tokens.
+  local auth other raw err_out
+  auth="$(gen_secret_for INFISICAL_AUTH_SECRET)"
+  # Byte count of the raw stream, not of a captured copy: $( ) strips a trailing
+  # newline and would hide one, and a newline that reaches the vault through
+  # KEY=@file becomes part of the secret.
+  raw="$(gen_secret_for INFISICAL_AUTH_SECRET | wc -c)"
+  assert_eq "exactly 44 bytes and no trailing newline" "44" "${raw}"
+  [ "${#auth}" -eq 44 ] || { echo "AUTH_SECRET is ${#auth} chars, expected 44" >&2; return 1; }
+  [[ "${auth}" =~ ^[A-Za-z0-9+/=]+$ ]] || { echo "AUTH_SECRET is not base64: ${auth}" >&2; return 1; }
+
+  other="$(gen_secret_for INFISICAL_ENCRYPTION_KEY)"
+  [[ "${other}" =~ ^[0-9a-f]{32}$ ]] ||
+    { echo "ENCRYPTION_KEY must stay 32 hex chars, got '${other}'" >&2; return 1; }
+
+  other="$(gen_secret_for GRAFANA_ADMIN_PASSWORD)"
+  [[ "${other}" =~ ^[0-9a-f]{32}$ ]] ||
+    { echo "an unlisted key falls through to gen_secret" >&2; return 1; }
+
+  # Two calls must not hand back the same credential.
+  [ "$(gen_secret_for INFISICAL_AUTH_SECRET)" != "$(gen_secret_for INFISICAL_AUTH_SECRET)" ]
+
+  # And the value must never reach a log: this is the shape both mint sites use, so a
+  # printf of the value here is the leak the operator-facing CLIs rely on not existing.
+  err_out="$(gen_secret_for INFISICAL_AUTH_SECRET 2>&1 1>/dev/null)"
+  assert_eq "nothing is written to stderr" "" "${err_out}"
 }
 
 @test "bootstrap: sed_inplace rewrites a file in place" {
@@ -402,7 +433,7 @@ resolve_public_case() {
     # default at source time, so unsetting afterwards would erase those defaults.
     unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL STACK_DASHBOARD_NAME
     unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
-    unset STACK_GRAFANA_NAME
+    unset STACK_GRAFANA_NAME STACK_INFISICAL_NAME
     unset STACK_DOMAIN_BASE_DEFAULT STACK_SUBDOMAIN_SUFFIX_DEFAULT
     # shellcheck source=/dev/null
     source "${REPO_ROOT}/scripts/lib/common.sh"

@@ -29,6 +29,34 @@ gen_secret() {
   openssl rand -hex 16
 }
 
+# @function gen_secret_for
+# Mint one managed value in the shape its own consumer requires. gen_secret's 32 hex
+# characters are what Infisical's ENCRYPTION_KEY asks for and what every other managed
+# key takes; INFISICAL_AUTH_SECRET is the documented exception - a 32-byte base64
+# NextAuth secret - and minting it as 32 hex characters yields an instance that boots
+# and then corrupts its own session tokens, which reads as a broken login rather than
+# as a weak key. Name a key; get its value on stdout.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the key being minted
+# Outputs:
+#   The minted value on stdout, with no trailing newline
+# Returns:
+#   the generator's status
+gen_secret_for() {
+  local key="${1:-}"
+  case "${key}" in
+    INFISICAL_AUTH_SECRET)
+      # openssl -base64 32 emits 44 characters then a newline; the newline is dropped
+      # so the value is one line that survives both a sed rewrite of .env and the
+      # KEY=@file channel without becoming part of the secret.
+      openssl rand -base64 32 | tr -d '\n'
+      ;;
+    *) printf '%s' "$(gen_secret)" ;;
+  esac
+}
+
 # @function sed_inplace
 # Apply one sed script in place. GNU sed uses -i; BSD sed uses -i ''.
 # Globals:
