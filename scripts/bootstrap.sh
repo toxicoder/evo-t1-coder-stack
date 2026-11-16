@@ -331,7 +331,7 @@ public_litellm_url=""
 public_hermes_url=""
 public_grafana_url=""
 # STACK_PUBLIC_HOSTS has three states: empty is LAN-only, a comma-separated list is
-# used verbatim, and `auto` composes the six names from the naming parts in .env
+# used verbatim, and `auto` composes the seven names from the naming parts in .env
 # (STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL and the per-service
 # *_NAME keys). resolve_auto_public_hosts owns the auto path and the sentinel
 # bookkeeping: it lifts the parts out of the file, exports them for lib/domain.sh,
