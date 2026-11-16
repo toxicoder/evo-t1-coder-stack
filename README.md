@@ -934,6 +934,30 @@ brief, and a first wave too narrow to fill the session's subagent slots. The pay
 `templates/common/ez-micro-plan.plan_check.py`, the helper landing under `scripts/` in the
 same skill directory as the family's other three.
 
+Five more commands advise rather than convert: `/documenter` (make the pages match a change
+that already exists, then let a skeptic run every command the new prose names),
+`/performance-optimizer` (baseline, one change, re-measure), `/debugger` (no fix until the
+failing command and its real output are quoted), `/migrator` (one dependency or API move, plan
+and rollback written first), and `/ez-code-index`, which writes a map of the clone beside that
+repository's notes file, outside the clone, so the next session reads a map instead of grepping
+the tree again:
+
+```sh
+python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo <clone>
+```
+
+That prints one `ok:` line and leaves `code-index.json` and `code-index.md` under
+`~/.grok/notes/<host>/<owner>/<repo>/`; compare the `sha` the markdown records against
+`git rev-parse HEAD` before trusting a line the map gives you. The four advisors and the index
+ride `coder_script "stack_advisors"` into both skill homes, with
+`templates/common/documenter.AGENT.md` landing beside the fleet roles as
+`~/.grok/agents/documenter.md`. The guard family under `~/.grok/hooks/` - secret guard,
+dangerous-command guard reading `hooks/bin/deny-patterns.txt`, the post-edit formatter, and the
+selective test runner that is off until `EVO_T1_HOOK_TESTS=1` - rides
+`coder_script "stack_hooks"`, and the two `.grok/workflows/` files added alongside
+`fleet-verify.js` are `implement-reviewed` and `debug-fix`. Detail:
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-five-advisor-commands).
+
 ## Kasm
 
 - **First boot:** `https://<host>:3000` - run the install wizard once.
