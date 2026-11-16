@@ -687,6 +687,10 @@ resource "coder_agent" "main" {
       INFISICAL_PROJECT_ID               = var.infisical_project_id,
       INFISICAL_MACHINE_IDENTITY_ID      = var.infisical_machine_identity_id,
       INFISICAL_ENVIRONMENT              = var.infisical_environment,
+      # The second gate, read by the boot body itself so the rendered script stays
+      # one text for every workspace. Stringified because a coder_agent env value
+      # has to be a string, and the body compares it against the literal "true".
+      INFISICAL_PULL_ON_START            = var.infisical_pull_on_start ? "true" : "false",
       INFISICAL_UNIVERSAL_AUTH_CLIENT_ID = var.infisical_client_id,
       # Named separately from the map above so the one sensitive variable keeps its own
       # conditional: an empty secret must omit the key rather than hand the boot script
