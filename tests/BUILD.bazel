@@ -573,6 +573,20 @@ _SUITE_PAYLOAD_ALLOW = {
     "infisical_boot_body.bats": [
         "//infisical:payload",
     ],
+    # Its BUILD.bazel is a pointer inside a skip string, not a read: the dotenv-twin cases
+    # name the map an operator has to extend with two labels when the twins are missing
+    # from this target's runfiles. The suite opens the two dotenv files themselves, which
+    # _SUITE_PAYLOAD declares, and never opens tests/BUILD.bazel.
+    "infisical.bats": [
+        "//:bazel_files",
+    ],
+    # It opens nothing under infisical/. The token comes from the grep patterns and the
+    # header prose naming what the appended .bashrc line sources -- ~/.infisical/agent.env,
+    # a path inside the workspace home that the boot body writes at run time. What this
+    # suite actually reads is the startup body and both main.tf twins, all three declared.
+    "startup-vault-hook.bats": [
+        "//infisical:payload",
+    ],
     # Each case writes its own ${dir}/Dockerfile and points dockerfile_args.awk at that
     # scratch file; the repo's images/dev/Dockerfile is never opened here.
     "awk.bats": [
