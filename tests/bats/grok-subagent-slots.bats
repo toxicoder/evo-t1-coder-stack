@@ -41,7 +41,8 @@ setup() {
   FANOUT_DOCS=("${REPO_ROOT}/README.md"
     "${REPO_ROOT}/docs/coder-templates.md"
     "${REPO_ROOT}/docs/grok-build-and-agents.md"
-    "${REPO_ROOT}/docs/litellm-routing.md")
+    "${REPO_ROOT}/docs/litellm-routing.md"
+    "${REPO_ROOT}/docs/config-updates.md")
   local file
   for file in "${CONFIG_TWINS[@]}" "${CODER_TWINS[@]}" "${MAIN_TWINS[@]}" "${RULEBOOK}"; do
     [ -f "${file}" ] || skip "no ${file} in the checkout"
@@ -412,15 +413,14 @@ subagents_block() {
   # terraform ternary was still printed verbatim in the agents guide. This refuses
   # the retired wording and requires the variable that actually supplies the width
   # to be named, so the prose cannot drift from main.tf again unnoticed.
-  local file phrase
+  local file flat pattern
   local -a banned=(
-    '15 : 4'
-    'width now follows the lane'
-    'width still follows the'
-    'fan-out width follows the lane'
+    'width[^.]{0,60}follows? the (lane|writers|same)'
+    'width[^.]{0,60}(derived|derives|derivation|taken|comes)[^.]{0,15}(from|by|off) the lane'
     'asks the lane'
-    'stays at 4'
-    'where 4 comes from'
+    '4 on a pinned (one|lane)'
+    '15 on the unpinned[^.]{0,40}lane'
+    'var\.grok_subagents_lane == "agent-swarm" \? 15 : 4'
   )
   for file in "${FANOUT_DOCS[@]}"; do
     # A missing page is a failure here, not a skip: the setup probe skips the
@@ -429,10 +429,19 @@ subagents_block() {
       echo "${file} is not in the runfiles: add its filegroup to this suite's _SUITE_PAYLOAD entry" >&2
       return 1
     }
-    for phrase in "${banned[@]}"; do
-      if grep -qF -- "${phrase}" "${file}"; then
-        echo "${file} still teaches the retired width rule: ${phrase}" >&2
-        grep -nF -- "${phrase}" "${file}" >&2
+    # Match sentences, not lines. This prose is hard-wrapped, and the stale
+    # sentence this gate was written for ran across three source lines, so a
+    # per-line grep walked straight past it and reported the page clean.
+    flat="$(tr '\n' ' ' <"${file}" | tr -s ' ')"
+    # A sentence that calls itself history, or denies the retired rule, may keep
+    # the old wording. The gate exists to stop the current rule being wrong, not
+    # to forbid documenting what was retired or stating the negative.
+    flat="$(printf '%s' "${flat}" \
+      | sed -E "s/[^.]*\b(retired|used to|no longer|historical|formerly|does not|doesn't|never|independent of)\b[^.]*\.//Ig")"
+    for pattern in "${banned[@]}"; do
+      if printf '%s' "${flat}" | grep -qiE -- "${pattern}"; then
+        echo "${file} still teaches the retired width rule (${pattern})" >&2
+        printf '%s' "${flat}" | grep -oiE -- ".{0,50}${pattern}.{0,50}" | head -1 >&2
         return 1
       fi
     done
