@@ -434,6 +434,9 @@ _SUITE_PAYLOAD = {
     "ez-code-index.bats": [
         "//:stack_data",
     ],
+    "agent-workflows.bats": [
+        "//:stack_data",
+    ],
     # The suite reads both twins and every payload main.tf inlines into them, which
     # is exactly what has to be summed to know how big the exec'd argument gets.
     "startup-script-size.bats": [
