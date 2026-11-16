@@ -350,13 +350,15 @@ auto_compact_threshold_percent = 70
 # Which lane a fan-out rides and how wide it goes, both from --var so one workspace
 # can target the whole fleet: the writers default to the unpinned `agent-swarm` lane,
 # and an explicit `--var grok_subagent_max_concurrent=N` still overrides the width.
-# Unset, that width follows the lane: 15 on the unpinned swarm lane,
-# 4 on a pinned one. The width is bounded by the fleet,
-# not by taste: each box admits PARALLEL full-length streams (5 by default,
-# scripts/spark-configure.sh), a pinned lane reaches only one box's worth so a higher
-# number just deepens that queue, and only the unpinned swarm lane spreads over all of
-# them (3 boxes x PARALLEL = 15, and that number asks the fleet for every stream it
-# has, so it is a one-workspace-at-a-time setting). limit_behavior "queue" below holds
+# Unset, that width is `grok_swarm_width`, the fleet's own ceiling (3 boxes x
+# PARALLEL 5 = 15, scripts/spark-configure.sh), on every lane rather than 15-swarm /
+# 4-pinned. The reason is a choice the user gets to make at the spawn: the
+# `agent-swarm` block below is ungated, so a session whose default lane is pinned can
+# still name the swarm lane on any subagent, and a config sized at one box's PARALLEL
+# would cap a swarm that was one argument away. An operator who pins every lane to
+# one box and wants the narrower queue sets the number explicitly; a number past 15
+# deepens LiteLLM's queue rather than buying capacity, because the fleet has no more
+# streams to give. limit_behavior "queue" below holds
 # overflow instead of failing the spawn, and sampling_limit is deliberately unset
 # because it defaults to max_concurrent, which keeps the two caps from drifting.
 [subagents]
@@ -386,6 +388,7 @@ plan = "${grok_plan_lane}"
 explorer = "${grok_explore_lane}"
 architect = "${grok_plan_lane}"
 implementer = "${grok_subagents_lane}"
+documenter = "${grok_subagents_lane}"
 tester = "${grok_subagents_lane}"
 reviewer = "${grok_review_lane}"
 security-auditor = "${grok_review_lane}"

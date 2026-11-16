@@ -491,14 +491,18 @@ resource "coder_agent" "main" {
       # The fan-out knobs: --var only, no coder_parameter, so a workspace
       # opts into the swarm lane without the form's option-membership rule. The
       # width is derived from the lane rather than one number for both: only the
-      # unpinned lane spreads a fan-out over several boxes, so it gets the
-      # width that keeps three boxes busy (15), and a pinned lane gets one box's
-      # PARALLEL minus the parent's own stream (4). An explicit --var wins.
+      # unpinned lane spreads a fan-out over several boxes, so the default width
+      # is the fleet's own (grok_swarm_width, 3 boxes x PARALLEL 5 = 15) on every
+      # lane: agent-swarm is ungated in the config below and a session whose
+      # default lane is pinned can still name it on any spawn, so sizing the
+      # session at one box's PARALLEL would cap a swarm the user had only to ask
+      # for. An explicit --var wins, which is how an operator who pins every lane
+      # to one box narrows the queue back to that box's PARALLEL (4).
       # The three role lanes ride their own aliases (litellm/config.yaml) so a
       # wave of mappers and a wave of reviewers reach every box while the
       # writers still follow grok_subagents_lane; see [subagents.models].
       grok_subagents_lane          = var.grok_subagents_lane
-      grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : (var.grok_subagents_lane == "agent-swarm" ? 15 : 4)
+      grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width
       grok_explore_lane            = var.grok_explore_lane
       grok_plan_lane               = var.grok_plan_lane
       grok_review_lane             = var.grok_review_lane
@@ -764,6 +768,56 @@ resource "coder_script" "stack_fleet" {
     skeptical_review_skill       = chomp(file("${path.module}/skeptical-review.SKILL.md"))
     security_audit_skill         = chomp(file("${path.module}/security-audit.SKILL.md"))
     bug_hunt_skill               = chomp(file("${path.module}/bug-hunt.SKILL.md"))
+  })
+}
+
+# The four advisor commands and the code-index skill, in a body of their own for the same
+# reason every family has one: each coder_script.script is a separate execve with its own
+# single-argument ceiling, and these six payloads together would push the fleet body past
+# it. The documenter role definition rides with the skill that dispatches it, so a start
+# either has both or has neither. Same absent-only contract, same two homes.
+resource "coder_script" "stack_advisors" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the advisor commands and the code index"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/stack-advisors.sh.tftpl", {
+    documenter_skill            = chomp(file("${path.module}/documenter.SKILL.md"))
+    documenter_agent            = chomp(file("${path.module}/documenter.AGENT.md"))
+    performance_optimizer_skill = chomp(file("${path.module}/performance-optimizer.SKILL.md"))
+    debugger_skill              = chomp(file("${path.module}/debugger.SKILL.md"))
+    migrator_skill              = chomp(file("${path.module}/migrator.SKILL.md"))
+    ez_code_index_skill         = chomp(file("${path.module}/ez-code-index.SKILL.md"))
+    ez_code_index_py            = chomp(file("${path.module}/ez-code-index.code_index.py"))
+  })
+}
+
+# The guard family under ~/.grok/hooks/, seeded by its own body for the same ceiling
+# reason. Unlike every family above this one is marker-aware rather than absent-only: a
+# hook decides what a session may run and what it may write, so a copy that drifted from
+# the seed is a silent behaviour change and gets the current text on every start. The
+# scripts are written executable, because the runner starts them directly out of the
+# manifest. docs/grok-build-and-agents.md#hooks.
+resource "coder_script" "stack_hooks" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the guard hooks"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/stack-hooks.sh.tftpl", {
+    evo_t1_hooks_json          = chomp(file("${path.module}/hooks.evo-t1-hooks.json"))
+    secret_guard_sh            = chomp(file("${path.module}/hooks.secret-guard.sh"))
+    dangerous_command_guard_sh = chomp(file("${path.module}/hooks.dangerous-command-guard.sh"))
+    post_edit_format_sh        = chomp(file("${path.module}/hooks.post-edit-format.sh"))
+    selective_test_runner_sh   = chomp(file("${path.module}/hooks.selective-test-runner.sh"))
+    deny_patterns_txt          = chomp(file("${path.module}/hooks.deny-patterns.txt"))
   })
 }
 

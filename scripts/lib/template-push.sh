@@ -167,12 +167,27 @@ template_push_one() {
     skeptical-review.SKILL.md \
     security-audit.SKILL.md \
     bug-hunt.SKILL.md \
+    documenter.SKILL.md \
+    documenter.AGENT.md \
+    performance-optimizer.SKILL.md \
+    debugger.SKILL.md \
+    migrator.SKILL.md \
+    ez-code-index.SKILL.md \
+    ez-code-index.code_index.py \
+    hooks.evo-t1-hooks.json \
+    hooks.deny-patterns.txt \
+    hooks.secret-guard.sh \
+    hooks.dangerous-command-guard.sh \
+    hooks.post-edit-format.sh \
+    hooks.selective-test-runner.sh \
     coder-agents.md \
     mcp-cache-proxy.json \
     gh-token-refresh.sh.tftpl \
     agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
     stack-repo-skills.sh.tftpl \
+    stack-advisors.sh.tftpl \
+    stack-hooks.sh.tftpl \
     stack-fleet.sh.tftpl; do
     if [ ! -f "${common}/${payload}" ]; then
       printf 'error: %s: %s/%s is missing - main.tf reads it from the pushed copy, so no push works without it\n' \

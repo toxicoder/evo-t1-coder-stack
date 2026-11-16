@@ -123,6 +123,34 @@ missing one fails the push before the CLI runs.
   more heredocs in the first one for the reason this whole file keeps repeating: each
   `coder_script.script` is its own `execve` argument with its own ceiling, and a family
   that ships helpers grows faster than one that ships a `SKILL.md` each.
+- `documenter.SKILL.md`, `performance-optimizer.SKILL.md`, `debugger.SKILL.md` and
+  `migrator.SKILL.md` are the stack's four advisor commands (`/documenter`,
+  `/performance-optimizer`, `/debugger`, `/migrator`), `ez-code-index.SKILL.md` is the fifth
+  and ships its helper `ez-code-index.code_index.py` in a `scripts/` subdir of the same skill
+  directory, and `documenter.AGENT.md` is the one role definition the `/documenter` skill
+  dispatches. What each does and which lane each phase rides is
+  [grok-build-and-agents.md](grok-build-and-agents.md#the-five-advisor-commands).
+- `stack-advisors.sh.tftpl` is the `coder_script "stack_advisors"` body that seeds those seven
+  payloads: each skill into `~/.coder/skills/<name>/` and its `cp` twin into
+  `~/.agents/skills/<name>/`, with `documenter.md` written under `~/.grok/agents/` beside the
+  skill that needs it so a start has the command and its role or has neither. Absent-only and
+  silent on a healthy workspace, the way the two skill bodies above are.
+- `hooks.evo-t1-hooks.json` is the hook manifest Grok Build reads at
+  `~/.grok/hooks/evo-t1-hooks.json`, and five more files land under `hooks/bin/` beside it:
+  the four handlers it names (`hooks.secret-guard.sh`, `hooks.dangerous-command-guard.sh`,
+  `hooks.post-edit-format.sh`, `hooks.selective-test-runner.sh`) plus the
+  `hooks.deny-patterns.txt` the command guard reads one ERE per line. The manifest has to stay
+  parseable JSON, so its stack marker is the `"__evoT1Stack": true` key rather than a comment
+  line.
+- `stack-hooks.sh.tftpl` is the `coder_script "stack_hooks"` body that seeds that family, from
+  six `chomp(file())` entries, on its own body for the usual ceiling reason. Unlike the three
+  skill bodies above it is **marker-aware** rather than absent-only: a copy still carrying the
+  marker is rewritten on every start, because a guard that drifted from the seed silently
+  changes what a session may run and what it may write. The four `.sh` files are written
+  executable, with the payload's `#!` line kept on row 1, because the runner starts a relative
+  command out of the manifest directly; the manifest and the deny list are data and carry no
+  executable bit. What the four guards decide, and how an operator extends the deny list, is
+  [grok-build-and-agents.md](grok-build-and-agents.md#hooks).
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
   writes, into `~/.grok/mcp-cache-proxy/config.json` and only while that file is absent
   (so a shared profile volume reuses one SQLite cache across that owner's workspaces). It
@@ -250,7 +278,13 @@ startup twin moved. Measured again on 2026-11-14 after the family's fourth membe
 landed: that same body now carries four `SKILL.md` payloads and four python helpers and
 composes to 91203 bytes, 31677 clear of the bound, and neither startup twin moved -
 which is the point of giving a payload family its own `coder_script` instead of feeding
-it to `startup_script`.
+it to `startup_script`. Measured again on 2026-11-16 with the same reader
+(`awk -f scripts/lib/startup_size.awk templates/workspace/main.tf`, bytes summed per body)
+after the advisor and guard families landed: `coder_script.stack_advisors`, carrying four
+advisor `SKILL.md` payloads, the `documenter` role, the code-index skill and its helper,
+composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four guards
+and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively, with neither
+startup twin touched.
 
 When a body really does need to grow past the budget, the options are:
 
@@ -883,6 +917,16 @@ decided by a marker - never by mtime and never by first boot:
 - `~/.tmux.conf` and `~/.grok/AGENTS.md` are rewritten while the
   `managed-by: evo-t1-coder-stack` line is present; editing the file away from the marker
   hands it to the user for good, and each prints one warning line when it is marker-free.
+- The guard family under `~/.grok/hooks/` follows the same rule for a sharper reason. The
+  manifest and the five files under `hooks/bin/` are rewritten on every start while they carry
+  the marker - the `"__evoT1Stack": true` key in the JSON, the only spelling that leaves it
+  parseable, and the `managed-by: evo-t1-coder-stack` comment in the four scripts and the deny
+  list. A hook decides what a session may run and what it may write, so a copy that drifted
+  from the seed is a silent behaviour change, while a stale `SKILL.md` misleads one run; that
+  difference is why the skills stay absent-only (the advisors' twelve copies and their
+  `~/.grok/agents/documenter.md` included) and this family does not. Each write ends by
+  appending the marker line if the payload lost its own, so a rewritten file never becomes
+  unrecognisable as stack-owned on the next boot.
 - `~/.grok/config.toml` is re-rendered when it is absent, when
   `GROK_FRESH_INSTALL` is set, or while *either* marker is present: the `managed-by`
   comment or the top-level `__evoT1Stack = true` key.
@@ -977,8 +1021,9 @@ rules above.
 - Every script the template renders is a `templatefile()` body: the agent's
   `startup_script` (`startup.sh.tftpl`) and one body per `coder_script` -
   `agents-seed.sh.tftpl`, `code-server.sh.tftpl`, `gh-token-refresh.sh.tftpl`,
-  `stack-fleet.sh.tftpl`, the two skill families, and `dind-bootstrap.sh.tftpl` in the
-  devcontainer twin. Every braced shell expansion in one has to be written `$${name}`; the
+  `stack-fleet.sh.tftpl`, `stack-advisors.sh.tftpl`, `stack-hooks.sh.tftpl`, the two skill
+  families, and `dind-bootstrap.sh.tftpl` in the devcontainer twin. Every braced shell
+  expansion in one has to be written `$${name}`; the
   one-dollar braced form is swallowed as an interpolation, in a comment or a `for` loop as
   readily as in a command. The unbraced form (`$name`) needs no escape.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
@@ -988,8 +1033,13 @@ rules above.
   The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The payloads of the other
   families are not among them: `ez_learn_skill`, `ez_skillify_skill` and
   `ez_create_skill_skill` belong to the `coder_script.stack_skills` map,
-  `grok_build_agents` to `coder_script.agents_seed`, and the fleet's thirteen to
-  `coder_script.stack_fleet`. Each of those `chomp(file())` calls sits inside its own block
+  `grok_build_agents` to `coder_script.agents_seed`, the fleet's thirteen to
+  `coder_script.stack_fleet`, the advisors' seven (`documenter_skill`, `documenter_agent`,
+  `performance_optimizer_skill`, `debugger_skill`, `migrator_skill`, `ez_code_index_skill`,
+  `ez_code_index_py`) to `coder_script.stack_advisors`, and the guards' six
+  (`evo_t1_hooks_json`, `secret_guard_sh`, `dangerous_command_guard_sh`,
+  `post_edit_format_sh`, `selective_test_runner_sh`, `deny_patterns_txt`) to
+  `coder_script.stack_hooks`. Each of those `chomp(file())` calls sits inside its own block
   rather than behind a `local.`, because a size reader credits a payload by the
   `chomp(file("${path.module}/name"))` literal it can see in the body's own block, and
   follows a `local.` exactly one hop (`scripts/lib/startup_size.awk`, invariants).

@@ -1,0 +1,148 @@
+# Deny patterns the dangerous-command guard reads, one extended regex per line.
+# managed-by: evo-t1-coder-stack -- stack-seeded. To take this list over, edit it and
+# delete the `managed-by: evo-t1-coder-stack` line: a marker-free file is yours and the
+# boot leaves it alone. Add a line to forbid a command; there is no allow list here, so
+# removing a line is the only way to permit something again.
+#
+# This file is the machine-readable half of the Execution section of the workspace
+# rulebook (~/.grok/AGENTS.md, seeded from templates/common/GROK_BUILD_AGENTS.md). When
+# a rule there says "never do this to the session you run in", the line that enforces it
+# is here. The guard names the matching line number, so keep one pattern per line, put no
+# trailing whitespace on a line, and check that a new line compiles. Read it from no input
+# at all: grep exits 2 for a regex it cannot compile and 1 for one that simply matched
+# nothing, and only the 2 is a defect here (a deny rule must never match a bare probe).
+#   LC_ALL=C grep -E -q -- '<pattern>' </dev/null; [ $? -gt 1 ] && echo does not compile
+# A line that fails to compile is skipped with one note on stderr, never a crash, so a
+# typo here fails open quietly rather than blocking every shell call.
+#
+# Two properties of the match itself, both worth knowing before you trust a clean run. It
+# is case-sensitive and byte-wise (LC_ALL=C), so a rule written lower-case does not see an
+# upper-case command -- write a class, `[sS]udo`, when a case matters. And it reads the
+# whole command string, quotes included, because stripping quoted regions would equally
+# blind the guard to `sh -c "..."`, the way a real command usually travels; a rule that
+# must match inside quotes has to spell the quote, as the dot-rooted find rule above does.
+#
+# Nothing below denies the ordinary loop: bazelisk test and query, git add / commit /
+# push -u / status / log, rg, and the operator CLIs under //scripts: all pass untouched.
+
+# --- irreversible deletes -----------------------------------------------------------
+# The stack already denies Bash(rm -rf *) at the permission layer; these lines catch the
+# forms that slip past a prefix match, and the find -delete equivalents that carry no
+# -rf at all. A scratch cleanup is `find <dir> -type f -delete` or a per-path `rm -f`.
+# The root and home rules mean exactly that root and that home: `find /tmp/scratch
+# -type f -delete`, the sanctioned form, matches neither of them and passes untouched.
+rm -rf[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*[^[:space:]]*\*
+rm -rf[[:space:]]+/([[:space:]]|$)
+rm -rf[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*(~|\$\{?HOME\}?)([[:space:]]|/|$)
+# The same operation written the other way round, or split across two flags: -fr,
+# -f -r, -r -f. A list that only matched the contiguous -rf let every one of those
+# through, and the target that made it irreversible was never the part that varied.
+# Requiring only the recursive flag is what catches the split forms in one ERE: an
+# ERE cannot AND two flags in either order, and the sanctioned cleanup here carries
+# no r at all (a per-path `rm -f`, or `find <dir> -type f -delete`).
+rm[[:space:]]+(-[[:alpha:]]+[[:space:]]+)*-[[:alpha:]]*[rR][[:alpha:]]*([[:space:]]|$)
+rm[[:space:]]+.*--recursive([[:space:]]|=)
+rm[[:space:]]+.*--no-preserve-root
+find[[:space:]]+/([[:space:]]|$).*-delete
+find[[:space:]]+(~|\$\{?HOME\}?)([[:space:]]|/|$).*-delete
+# A -delete rooted at the working directory is the same sweep wearing a relative path,
+# quoted or not. The sanctioned cleanup this stack documents names a scratch directory and
+# nothing else (`find /tmp/scratch -type f -delete`), so refusing every root that starts at
+# the tree costs no legitimate call -- a repo-local ./tmp included, which a command string
+# cannot tell from the tree itself. A quote may sit on either side of the dot and the
+# terminator is any non-word byte, so `find "." -type f -delete` is that same command.
+find[[:space:]]+["']?\.([^[:alnum:]_]|$).*-delete
+
+# --- disk, device, and filesystem writes --------------------------------------------
+# These rewrite a block device in place, and the device in reach here is the one the
+# container's own data lives on, so there is nothing to restore from afterwards.
+mkfs([[:space:]]|[-.])
+dd[[:space:]]+if=
+wipefs
+>[[:space:]]*/dev/sd[a-z]
+
+# --- process sweeps and the fork bomb ------------------------------------------------
+# A sweep of "stray" processes matches, and can kill, the wrapper the agent's own Bash
+# tool runs inside, which ends the run mid-task. These are the forms that do that.
+:\(\)\{[[:space:]]*:\|:&[[:space:]]*\};:
+kill[[:space:]]+0([[:space:]]|$)
+kill[[:space:]]+--+-[[:space:]]*[0-9]
+kill[[:space:]]+--+[[:space:]]+-[[:space:]]*[0-9]
+# The same group signal with a name or a number in front of it: kill -TERM -2507 reaches
+# every process in the group, which is the sweep the rules above exist for, and the two
+# plain rules only see a negative pid that comes first.
+kill[[:space:]]+(-[A-Za-z0-9]+[[:space:]]+)+-[0-9]+([[:space:]]|$)
+pkill[[:space:]]+(-[[:alnum:]]*[[:space:]]+)*-(u|U|P)[[:space:]]
+# The long forms of those same three flags, and -f, which is the sweep that matches the
+# wrapper the agent's own shell runs inside -- the reason the working rules tell you to
+# use a bracket pattern instead. pgrep keeps its -f: reading a pid list kills nothing.
+pkill[[:space:]]+.*--(user|uid|group|parent|pgid|session)([[:space:]]|=)
+pkill[[:space:]]+(-[[:alnum:]]*[[:space:]]+)*-f([[:space:]]|$)
+pgrep[[:space:]]+(-[[:alnum:]]*[[:space:]]+)*-(u|U|P)[[:space:]]
+killall([[:space:]]|$)
+
+# --- the tmux host ------------------------------------------------------------------
+# The editor host and the agent's shell live in the same tmux server. A whole-server or
+# whole-session action takes the session down with it, so it is an operator call.
+tmux[[:space:]]+kill-(server|session|window|pane)
+tmux[[:space:]]+restart-server
+
+# --- history a remote already has ---------------------------------------------------
+# A commit the remote has is not yours to rewrite. The plain form of each is enough:
+# nothing here needs --force-with-lease to be permitted, since an operator passing it is
+# an operator editing this file.
+git[[:space:]]+push[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*--force([[:space:]]|$)
+git[[:space:]]+push[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-f([[:space:]]|$)
+git[[:space:]]+reset[[:space:]]+--hard
+# The three ways the rulebook says a day of work gets thrown away, with a ref allowed in
+# front of the `--` because `git checkout HEAD -- .` discards the tree just as completely as
+# `git checkout -- .` does. A quote may sit in front of the dot and the terminator is any
+# non-word byte, and a quoted single path stays legal: `git restore 'scripts/x.sh'` is not
+# this rule.
+git[[:space:]]+checkout[[:space:]]+([^[:space:]]+[[:space:]]+)?--[[:space:]]+["']?\.([^[:alnum:]_]|$)
+git[[:space:]]+restore[[:space:]]+(-[[:graph:]]+[[:space:]]+)*["']?\.([^[:alnum:]_]|$)
+git[[:space:]]+stash[[:space:]]+(drop|clear)([^[:alnum:]_]|$)
+# Deliberately absent: `git clean -fd` is destructive only in a tree with uncommitted
+# work, and a command string cannot tell you which tree it is. It stays a rulebook rule.
+
+# --- the stack's own profile files --------------------------------------------------
+# ~/.grok/ is one volume per owner, shared with that owner's other workspaces, and the
+# boot rewrites most of it. Zeroing or removing a piece of it from a workspace is both
+# hard to undo and visible in every other workspace that mounts the volume, so the
+# rulebook says change the seed under templates/common/ instead -- these lines are that
+# rule with teeth.
+#
+# The two halves below are deliberately asymmetric. Deleting one file by path is a step
+# the ez-learn dream flow documents (`rm` the session logs it consumed), so notes and
+# memory stay deletable; the removal rule is limited to what the boot re-materialises and
+# an agent has no business deleting at all. The three forms that zero a file in place --
+# `truncate`, the `: >` redirect, and `cp /dev/null` -- appear in no workflow this repo
+# documents, so those three cover any path that names .grok/, and an ordinary truncate
+# of a log outside it stays available. A plain `echo junk > file` is not one of the three
+# and is not refused: it is how a person writes a file, and telling it apart from a wipe
+# needs a parser this guard does not carry.
+truncate[[:space:]]+[^|;]*\.grok/
+:[[:space:]]*>[[:space:]]*[^[:space:]]*\.grok/
+cp[[:space:]]+/dev/null[[:space:]]+[^|;]*\.grok/
+rm[[:space:]]+[^|;]*\.grok/(hooks|config\.toml|AGENTS\.md|agents|personas)([/.]|$)
+
+# --- the stack's volumes and containers ---------------------------------------------
+# The named volumes here carry the shared grok profile, the Coder Postgres, and the
+# model store; docker compose down -v and docker volume rm destroy them, and a volume
+# is not a container -- there is no image to rebuild it from. A workspace's own DinD
+# sidecar has none of these, so the refusal costs a workspace nothing; the host
+# operator who does want it deletes the marker line at the top of this file.
+docker[[:space:]]+(volume|system|network)[[:space:]]+(rm|prune)([[:space:]]|$)
+docker[[:space:]]+compose[[:space:]].*down.*(-v|--volumes)([[:space:]]|$)
+docker[[:space:]]+rm[[:space:]]+[^|;]*(coder|litellm|searxng|kasm|homepage|hermes|ollama|evo-t1)
+# World-writable on a root path is the permission that turns any local compromise into
+# a total one, and no workspace task needs it.
+chmod[[:space:]]+(-[[:graph:]]+[[:space:]]+)*0*777[[:space:]]+/([[:space:]]|$)
+
+# --- the credential chain -----------------------------------------------------------
+# GitHub auth has exactly one entry point in this stack, and each of these was tried in
+# a past session, cost turns, and fixed nothing. See the GitHub auth section of the
+# rulebook: a hand-rolled helper or askpass is the failure, not the fix.
+git[[:space:]]+config([[:space:]]+.*)?[[:space:]]credential\.helper
+GIT_ASKPASS=[^[:space:]]+
+gh[[:space:]]+auth[[:space:]]+login

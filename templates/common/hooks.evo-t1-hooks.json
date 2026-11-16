@@ -1,0 +1,33 @@
+{
+  "__evoT1Stack": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|search_replace|write",
+        "hooks": [
+          { "type": "command", "command": "bin/secret-guard.sh", "timeout": 5 }
+        ]
+      },
+      {
+        "matcher": "Bash|run_terminal_command",
+        "hooks": [
+          { "type": "command", "command": "bin/dangerous-command-guard.sh", "timeout": 5 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|search_replace|write",
+        "hooks": [
+          { "type": "command", "command": "bin/post-edit-format.sh", "timeout": 20 }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|search_replace|write",
+        "hooks": [
+          { "type": "command", "command": "bin/selective-test-runner.sh", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

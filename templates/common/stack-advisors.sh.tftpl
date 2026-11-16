@@ -1,0 +1,147 @@
+#!/bin/sh
+# tftpl: coder_script body; the seven advisor payloads are interpolated from the map main.tf
+# passes, each into a quoted here-doc so no shell text inside one is expanded. What this
+# family seeds: the four advisor skills (documenter, performance-optimizer, debugger,
+# migrator) and the code-index skill with its helper, in both skill homes, plus the one
+# role definition the documenter skill dispatches. Why a body of its own rather than
+# stack-skills.sh.tftpl or stack-repo-skills.sh.tftpl: the agent execs every body as ONE
+# argument to execve(2), Linux caps one argument at 131072 bytes, and the two skill bodies
+# already sit near that ceiling; docs/coder-templates.md#the-one-argument-ceiling.
+#
+# The documenter role rides here with the skill that dispatches it, not with the fleet
+# family: the role exists only to serve that skill, and seeding them from two bodies would
+# let a workspace boot with a /documenter command and no role to dispatch, or the reverse.
+set -u
+
+# Absent-only contract, the same one stack-skills.sh.tftpl keeps for the skills: a file
+# that already exists belongs to the person who wrote it, so a healthy workspace writes
+# nothing and prints nothing (this body's log is what an operator reads when a skill is
+# missing). An advisor body is advice, not a guard -- a stale copy of it misleads one run
+# rather than deciding what a session may execute -- so it does not need the marker-aware
+# refresh the hook family under ~/.grok/hooks/ keeps.
+#
+# Two homes, always: ~/.coder/skills is what the Coder Agents chat reads and
+# ~/.agents/skills is what the Grok Build CLI reads, and the two never dedupe each other.
+# The second copy is a cp of the managed first copy, never a second inline body, so one
+# payload has one source of truth in the rendered template.
+#
+# Each guard goes through writable() below, which is where the symlink refusal lives:
+# cat and cp both follow a link, so a planted one at a target or at the directory above it
+# would have this body replace a file it does not own. A refusal is a warning on stderr --
+# a skill that quietly failed to install is the failure an operator has to be able to see.
+
+if [ -L "$HOME/.coder" ] || [ -L "$HOME/.agents" ]; then
+  printf 'warning: a skill home is a symlink - the advisor family is left alone\n' >&2
+  exit 0
+fi
+
+# True when this body may create path $1: nothing sits there yet, and neither the path nor
+# the directory above it is a link. The absent-only contract covers the first half; the
+# second is why the check cannot be just "[ ! -e ]", which a dangling link passes.
+writable() {
+  if [ -L "$1" ] || [ -L "$(dirname "$1")" ]; then
+    printf 'warning: %s sits behind a symlink - left alone\n' "$1" >&2
+    return 1
+  fi
+  [ ! -e "$1" ]
+}
+
+if writable "$HOME/.coder/skills/documenter/SKILL.md"; then
+  mkdir -p "$HOME/.coder/skills/documenter" 2>/dev/null
+  cat >"$HOME/.coder/skills/documenter/SKILL.md" <<'DOCUMENTER_SKILL_MD_EOF'
+${documenter_skill}
+DOCUMENTER_SKILL_MD_EOF
+fi
+
+if writable "$HOME/.agents/skills/documenter/SKILL.md" &&
+  [ -f "$HOME/.coder/skills/documenter/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/documenter" 2>/dev/null
+  cp "$HOME/.coder/skills/documenter/SKILL.md" \
+    "$HOME/.agents/skills/documenter/SKILL.md" 2>/dev/null
+fi
+
+# The role the skill dispatches, under ~/.grok/agents/ the way the fleet family writes its
+# own six. The stem is the name the skill's prompt names, and the [subagents.models] pin in
+# grok-config.toml.tftpl routes it onto the writers' lane.
+if writable "$HOME/.grok/agents/documenter.md"; then
+  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  cat >"$HOME/.grok/agents/documenter.md" <<'DOCUMENTER_AGENT_MD_EOF'
+${documenter_agent}
+DOCUMENTER_AGENT_MD_EOF
+fi
+
+if writable "$HOME/.coder/skills/performance-optimizer/SKILL.md"; then
+  mkdir -p "$HOME/.coder/skills/performance-optimizer" 2>/dev/null
+  cat >"$HOME/.coder/skills/performance-optimizer/SKILL.md" <<'PERFORMANCE_OPTIMIZER_SKILL_MD_EOF'
+${performance_optimizer_skill}
+PERFORMANCE_OPTIMIZER_SKILL_MD_EOF
+fi
+
+if writable "$HOME/.agents/skills/performance-optimizer/SKILL.md" &&
+  [ -f "$HOME/.coder/skills/performance-optimizer/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/performance-optimizer" 2>/dev/null
+  cp "$HOME/.coder/skills/performance-optimizer/SKILL.md" \
+    "$HOME/.agents/skills/performance-optimizer/SKILL.md" 2>/dev/null
+fi
+
+if writable "$HOME/.coder/skills/debugger/SKILL.md"; then
+  mkdir -p "$HOME/.coder/skills/debugger" 2>/dev/null
+  cat >"$HOME/.coder/skills/debugger/SKILL.md" <<'DEBUGGER_SKILL_MD_EOF'
+${debugger_skill}
+DEBUGGER_SKILL_MD_EOF
+fi
+
+if writable "$HOME/.agents/skills/debugger/SKILL.md" &&
+  [ -f "$HOME/.coder/skills/debugger/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/debugger" 2>/dev/null
+  cp "$HOME/.coder/skills/debugger/SKILL.md" \
+    "$HOME/.agents/skills/debugger/SKILL.md" 2>/dev/null
+fi
+
+if writable "$HOME/.coder/skills/migrator/SKILL.md"; then
+  mkdir -p "$HOME/.coder/skills/migrator" 2>/dev/null
+  cat >"$HOME/.coder/skills/migrator/SKILL.md" <<'MIGRATOR_SKILL_MD_EOF'
+${migrator_skill}
+MIGRATOR_SKILL_MD_EOF
+fi
+
+if writable "$HOME/.agents/skills/migrator/SKILL.md" &&
+  [ -f "$HOME/.coder/skills/migrator/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/migrator" 2>/dev/null
+  cp "$HOME/.coder/skills/migrator/SKILL.md" \
+    "$HOME/.agents/skills/migrator/SKILL.md" 2>/dev/null
+fi
+
+if writable "$HOME/.coder/skills/ez-code-index/SKILL.md"; then
+  mkdir -p "$HOME/.coder/skills/ez-code-index" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-code-index/SKILL.md" <<'EZ_CODE_INDEX_SKILL_MD_EOF'
+${ez_code_index_skill}
+EZ_CODE_INDEX_SKILL_MD_EOF
+fi
+
+if writable "$HOME/.agents/skills/ez-code-index/SKILL.md" &&
+  [ -f "$HOME/.coder/skills/ez-code-index/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-code-index" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-code-index/SKILL.md" \
+    "$HOME/.agents/skills/ez-code-index/SKILL.md" 2>/dev/null
+fi
+
+# The helper sits in a scripts/ subdir of the same skill directory, the way
+# ez-bazel-first and ez-strong-types ship theirs, so the skill body can name one path and
+# the person reading it finds the code beside the prose. It is read by python3, never
+# exec'd, so it carries no executable bit.
+if writable "$HOME/.coder/skills/ez-code-index/scripts/code_index.py"; then
+  mkdir -p "$HOME/.coder/skills/ez-code-index/scripts" 2>/dev/null
+  cat >"$HOME/.coder/skills/ez-code-index/scripts/code_index.py" <<'EZ_CODE_INDEX_PY_EOF'
+${ez_code_index_py}
+EZ_CODE_INDEX_PY_EOF
+fi
+
+if writable "$HOME/.agents/skills/ez-code-index/scripts/code_index.py" &&
+  [ -f "$HOME/.coder/skills/ez-code-index/scripts/code_index.py" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-code-index/scripts" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-code-index/scripts/code_index.py" \
+    "$HOME/.agents/skills/ez-code-index/scripts/code_index.py" 2>/dev/null
+fi
+
+exit 0

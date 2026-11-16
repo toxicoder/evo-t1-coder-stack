@@ -68,10 +68,11 @@ STACK_LITELLM_URL="${STACK_LITELLM_URL:-http://host.docker.internal:4000/v1}"
 
 # @function seed_seed_targets
 # Print the reseed set, one "<target path>\t<payload kind>:<source>" line per
-# stack-owned target. Kinds: file (copy this repo file), render (render this
-# repo file, substituting ${litellm_url}, $${...} unfolds to ${...}, and carrying
-# each target's own cline.apiKey / roo.openaiApiKey forward). Targets are
-# home-relative (~/...) so --container-root can repoint them in a test.
+# stack-owned target. Kinds: file (copy this repo file), exec (copy it and set
+# mode 755, for a payload the runner starts rather than reads), render (render
+# this repo file, substituting ${litellm_url}, $${...} unfolds to ${...}, and
+# carrying each target's own cline.apiKey / roo.openaiApiKey forward). Targets
+# are home-relative (~/...) so --container-root can repoint them in a test.
 # A twin pair is listed twice on purpose: the Coder Agents chat reads the
 # ~/.coder copy, the Grok Build CLI reads the ~/.agents copy, and the two
 # never dedupe each other.
@@ -88,7 +89,7 @@ seed_seed_targets() {
   # readers strip the leading ~ and re-root the rest at $HOME or at the
   # --container-root, so nothing here must expand early.
   #
-  # The fleet family (six agent definitions, three persona overlays, four
+  # The fleet family (seven agent definitions, three persona overlays, four
   # parent-side skills) is listed under the same two contracts the boot body
   # templates/common/stack-fleet.sh.tftpl implements: one marker-aware copy each
   # under ~/.grok/agents and ~/.grok/personas, and a SKILL.md per home for the
@@ -132,6 +133,7 @@ seed_seed_targets() {
     '~/.grok/agents/tester.md	file:templates/common/tester.AGENT.md' \
     '~/.grok/agents/reviewer.md	file:templates/common/reviewer.AGENT.md' \
     '~/.grok/agents/security-auditor.md	file:templates/common/security-auditor.AGENT.md' \
+    '~/.grok/agents/documenter.md	file:templates/common/documenter.AGENT.md' \
     '~/.grok/personas/thorough-researcher.toml	file:templates/common/thorough-researcher.PERSONA.toml' \
     '~/.grok/personas/senior-implementer.toml	file:templates/common/senior-implementer.PERSONA.toml' \
     '~/.grok/personas/skeptical-reviewer.toml	file:templates/common/skeptical-reviewer.PERSONA.toml' \
@@ -142,7 +144,25 @@ seed_seed_targets() {
     '~/.coder/skills/security-audit/SKILL.md	file:templates/common/security-audit.SKILL.md' \
     '~/.agents/skills/security-audit/SKILL.md	file:templates/common/security-audit.SKILL.md' \
     '~/.coder/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md' \
-    '~/.agents/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md'
+    '~/.agents/skills/bug-hunt/SKILL.md	file:templates/common/bug-hunt.SKILL.md' \
+    '~/.coder/skills/documenter/SKILL.md	file:templates/common/documenter.SKILL.md' \
+    '~/.agents/skills/documenter/SKILL.md	file:templates/common/documenter.SKILL.md' \
+    '~/.coder/skills/performance-optimizer/SKILL.md	file:templates/common/performance-optimizer.SKILL.md' \
+    '~/.agents/skills/performance-optimizer/SKILL.md	file:templates/common/performance-optimizer.SKILL.md' \
+    '~/.coder/skills/debugger/SKILL.md	file:templates/common/debugger.SKILL.md' \
+    '~/.agents/skills/debugger/SKILL.md	file:templates/common/debugger.SKILL.md' \
+    '~/.coder/skills/migrator/SKILL.md	file:templates/common/migrator.SKILL.md' \
+    '~/.agents/skills/migrator/SKILL.md	file:templates/common/migrator.SKILL.md' \
+    '~/.coder/skills/ez-code-index/SKILL.md	file:templates/common/ez-code-index.SKILL.md' \
+    '~/.agents/skills/ez-code-index/SKILL.md	file:templates/common/ez-code-index.SKILL.md' \
+    '~/.coder/skills/ez-code-index/scripts/code_index.py	file:templates/common/ez-code-index.code_index.py' \
+    '~/.agents/skills/ez-code-index/scripts/code_index.py	file:templates/common/ez-code-index.code_index.py' \
+    '~/.grok/hooks/evo-t1-hooks.json	file:templates/common/hooks.evo-t1-hooks.json' \
+    '~/.grok/hooks/bin/deny-patterns.txt	file:templates/common/hooks.deny-patterns.txt' \
+    '~/.grok/hooks/bin/secret-guard.sh	exec:templates/common/hooks.secret-guard.sh' \
+    '~/.grok/hooks/bin/dangerous-command-guard.sh	exec:templates/common/hooks.dangerous-command-guard.sh' \
+    '~/.grok/hooks/bin/post-edit-format.sh	exec:templates/common/hooks.post-edit-format.sh' \
+    '~/.grok/hooks/bin/selective-test-runner.sh	exec:templates/common/hooks.selective-test-runner.sh'
 }
 
 # @function seed_retired_targets
@@ -196,10 +216,14 @@ seed_container_exec() {
   if [[ -z ${container} || -z ${script} ]]; then
     return 1
   fi
+  # The argv0 slot that makes the script's own $1 its first argument is the
+  # leading "sh" every caller passes, not a word added here: adding one here too
+  # shifts every probe by one, so seed-write.sh writes the payload to a file
+  # named "sh" in the container's cwd and the target never lands.
   if [[ ${inherit_stdin} == 1 ]]; then
-    docker exec -i "${container}" sh -c "${script}" sh "$@"
+    docker exec -i "${container}" sh -c "${script}" "$@"
   else
-    docker exec -i "${container}" sh -c "${script}" sh "$@" </dev/null
+    docker exec -i "${container}" sh -c "${script}" "$@" </dev/null
   fi
 }
 
@@ -450,6 +474,47 @@ seed_retire_renamed() {
   return "${rc}"
 }
 
+# @function seed_ensure_mode
+# Re-assert the executable bit on a payload the runner execs. The byte compare in
+# seed_container_seed answers "does the content match this checkout", which says
+# nothing about the mode, and a hook whose bit was cleared by a copy or an editor
+# still matches while failing at the first edit - so the mode is checked on the
+# already-matches path too, not only after a write. A kind other than exec has no
+# mode to assert, and a payload that is not there yet is the write's business.
+# Globals:
+#   none
+# Arguments:
+#   $1 - payload kind from seed_seed_targets ("exec" is the only one that matters)
+#   $2 - path the payload lands at
+#   $3 - container name ("" for a host directory tree)
+#   $4 - payload name, for the note
+# Outputs:
+#   Nothing on success - the caller's own verb line is the one record this target gets,
+#   and refresh-configs reads one decision line per payload off this function's stdout.
+#   A refused chmod is a note naming the payload, since a guard that never runs is the
+#   failure this prevents
+# Returns:
+#   0 when the mode is right or the kind needs none, 1 when a chmod was refused
+seed_ensure_mode() {
+  local kind="${1:-}" path="${2:-}" target="${3:-}" name="${4:-}"
+  local have=""
+
+  [[ ${kind} == "exec" ]] || return 0
+  if [[ -z ${target} ]]; then
+    [[ -f ${path} ]] || return 0
+    have="$(stat -c '%a' "${path}" 2>/dev/null)" || have=""
+    [[ ${have} == "755" ]] && return 0
+    if ! chmod 755 "${path}" 2>/dev/null; then
+      note "${name}: could not be made executable (mode ${have:-unknown}) - it will not run"
+      return 1
+    fi
+  elif ! seed_container_exec "${target}" 'chmod 755 "${1}"' sh "${path}"; then
+    note "${target}:${name}: the container refused chmod 755 - the hook will not run"
+    return 1
+  fi
+  return 0
+}
+
 # @function seed_container_seed
 # Re-materialize the whole reseed set into one target (a container name, a
 # container's home-relative paths under a host directory standing in for one,
@@ -513,7 +578,7 @@ seed_container_seed() {
     fi
 
     case "${kind}" in
-      file)
+      file | exec)
         if [[ ! -f "${root}/${source}" ]]; then
           note "${name}: ${source} is not in this checkout - skipped"
           continue
@@ -533,6 +598,7 @@ seed_container_seed() {
 
     if [[ ${state} != "absent" ]] && cmp -s "${current}" "${staged}"; then
       printf '  %s: already matches this checkout\n' "${name}"
+      seed_ensure_mode "${kind}" "${path}" "${target}" "${name}" || true
       continue
     fi
 
@@ -556,6 +622,9 @@ seed_container_seed() {
       printf '  %s: skipped (nothing could be written there)\n' "${name}"
       continue
     fi
+    # A hook is exec'd by the runner, not read as data, so the mode is part of the
+    # payload, and the container's chmod has to be able to say it was refused.
+    seed_ensure_mode "${kind}" "${path}" "${target}" "${name}" || true
     printf '  %s: %s\n' "${name}" "${verb}"
   done <<<"$(seed_seed_targets)"
 

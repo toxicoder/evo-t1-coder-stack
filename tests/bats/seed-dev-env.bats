@@ -482,11 +482,14 @@ assert_contributor_home() {
     seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "explicit width wins on a pinned lane" "${out}" 'max_concurrent = 2'
 
-  # The rollback lane still derives one box's PARALLEL, less the parent's own
-  # stream: a contributor who pins the writers back gets the narrow fleet back.
+  # The rollback lane pins the writers to one box; it does not narrow the fleet's
+  # width. agent-swarm is ungated in the render, so a session whose default lane is
+  # pinned can still name it on any spawn, and sizing the session at one box's
+  # PARALLEL would cap a swarm the contributor had only to ask for. The narrow
+  # queue is the explicit knob two cases above, not a side effect of the lane.
   GROK_SUBAGENTS_LANE='agent' seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
-  assert_fixed "pinned lane width" "${out}" 'max_concurrent = 4'
+  assert_fixed "pinned lane stays swarm-sized" "${out}" 'max_concurrent = 15'
 
   # A value sed could not substitute safely is refused out loud, and the width
   # still comes out of the lane rather than rendering a broken TOML integer.

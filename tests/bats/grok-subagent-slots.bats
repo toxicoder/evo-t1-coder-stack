@@ -82,6 +82,7 @@ subagents_block() {
     for entry in \
       'general-purpose ${grok_subagents_lane}' \
       'implementer ${grok_subagents_lane}' \
+      'documenter ${grok_subagents_lane}' \
       'tester ${grok_subagents_lane}' \
       'explore ${grok_explore_lane}' \
       'explorer ${grok_explore_lane}' \
@@ -93,6 +94,22 @@ subagents_block() {
       run grep -F "${type} = \"${var}\"" "${file}"
       [ "${status}" -eq 0 ] || {
         echo "${file} leaves ${type} off ${var}" >&2
+        return 1
+      }
+    done
+    # And the derived half: the list above is a claim about which roles exist, so
+    # a seventh definition added to templates/common/ slips past it unpinned and
+    # inherits the parent's model - which is the exact failure the block exists to
+    # prevent. Enumerate the definitions from the tree and require each one's own
+    # line, so an unpinned role is a red gate rather than a fleet queued behind
+    # the box that spawned it.
+    local def stem
+    for def in "${REPO_ROOT}"/templates/common/*.AGENT.md; do
+      [ -e "${def}" ] || continue
+      stem="$(basename "${def}" .AGENT.md)"
+      run grep -E "^${stem} = \"\\\$\{grok_[a-z_]*lane\}\"" "${file}"
+      [ "${status}" -eq 0 ] || {
+        echo "${file} defines no [subagents.models] pin for the ${stem} role" >&2
         return 1
       }
     done
@@ -196,20 +213,83 @@ subagents_block() {
   done
 }
 
-@test "subagent width: both main.tf twins derive 15 on the swarm lane and 4 pinned" {
+@test "subagent width: both main.tf twins default to the fleet width on every lane" {
+  # The width used to follow the lane: 15 on agent-swarm, 4 on a pinned one. That
+  # was right only while the lane was a workspace-wide decision, and it is not:
+  # the agent-swarm model block is ungated, so a session whose default lane is
+  # pinned can still name the swarm lane on any spawn. A config sized at one box's
+  # PARALLEL then caps a swarm the user was one argument away from, which is the
+  # failure this assertion now forbids. An explicit --var still overrides.
   local file
   for file in "${MAIN_TWINS[@]}"; do
     run grep -F 'var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent' "${file}"
     [ "${status}" -eq 0 ] || {
-      echo "${file} feeds the raw variable, so the lane cannot set the width" >&2
+      echo "${file} feeds the raw variable, so the operator override is dead" >&2
       return 1
     }
-    run grep -F 'var.grok_subagents_lane == "agent-swarm" ? 15 : 4' "${file}"
+    run grep -F ': var.grok_swarm_width' "${file}"
     [ "${status}" -eq 0 ] || {
-      echo "${file} lost the per-lane widths" >&2
+      echo "${file} does not fall back to the fleet width" >&2
+      return 1
+    }
+    if grep -qF 'var.grok_subagents_lane == "agent-swarm" ? 15 : 4' "${file}"; then
+      echo "${file} re-tied the width to the default lane, capping a swarm the user can still choose" >&2
+      return 1
+    fi
+  done
+}
+
+@test "subagent width: both coder.tf twins declare the fleet width as a validated variable" {
+  local file block
+  for file in "${CODER_TWINS[@]}"; do
+    block="$(awk '/^variable "grok_swarm_width" \{/,/^\}/' "${file}")"
+    [[ -n "${block}" ]] || {
+      echo "${file} has no grok_swarm_width variable, so the fleet width is a literal" >&2
+      return 1
+    }
+    [[ "${block}" == *'default     = 15'* ]] || {
+      echo "${file} does not default grok_swarm_width to the fleet's 15 streams" >&2
+      return 1
+    }
+    [[ "${block}" == *'var.grok_swarm_width >= 1 && var.grok_swarm_width <= 32'* ]] || {
+      echo "${file} renders grok_swarm_width without validating the count" >&2
       return 1
     }
   done
+}
+
+@test "swarm lane: every generated config can reach agent-swarm whatever the default lane" {
+  # The whole point of sizing every config at the fleet width. If the alias block
+  # ever sits behind a %{if} gate, or the width is the only swarm-sized thing in
+  # the file, then "the user can choose the swarm" is a sentence about a lane that
+  # is not always there. Assert it in both twins and in the contributor seed.
+  local file block
+  for file in "${CONFIG_TWINS[@]}"; do
+    run grep -F '[model."agent-swarm"]' "${file}"
+    [ "${status}" -eq 0 ] || {
+      echo "${file} has no agent-swarm alias block at all" >&2
+      return 1
+    }
+    # Ungated: no %{if ...} may open between the file start and that header
+    # without a matching endif before it.
+    block="$(sed -n '1,/\[model\."agent-swarm"\]/p' "${file}" | grep -c '^%{if' || true)"
+    [ "${block}" -eq 0 ] || {
+      echo "${file} opens ${block} gate(s) before [model.\"agent-swarm\"]; the swarm lane must always render" >&2
+      return 1
+    }
+    run grep -F 'enabled = true' "${file}"
+    [ "${status}" -eq 0 ] || {
+      echo "${file} can ship with [subagents] disabled" >&2
+      return 1
+    }
+  done
+  # The seed renders the same template, so it has to carry the swarm alias in its
+  # own default rather than drop it: an unpinned seed home would lose the lane.
+  run grep -F 'GROK_SUBAGENTS_LANE:-agent-swarm' "${REPO_ROOT}/scripts/seed-dev-env.sh"
+  [ "${status}" -eq 0 ] || {
+    echo "seed-dev-env.sh no longer defaults a contributor home onto the swarm lane" >&2
+    return 1
+  }
 }
 
 @test "contributor seed: the lane and the width are variables, not literals" {
@@ -219,6 +299,18 @@ subagents_block() {
   [ "${status}" -eq 0 ]
   run grep -F 'GROK_SUBAGENT_MAX_CONCURRENT' "${seed}"
   [ "${status}" -eq 0 ]
+  # The seed's own fallback is the fleet width, not a lane-conditional 4: a
+  # contributor home that sized itself at one box could not run the swarm a
+  # session there can name on any spawn.
+  run grep -F 'GROK_SUBAGENT_MAX_CONCURRENT:-${GROK_SWARM_WIDTH:-15}' "${seed}"
+  [ "${status}" -eq 0 ] || {
+    echo "seed-dev-env.sh no longer defaults a contributor home to the fleet width" >&2
+    return 1
+  }
+  if grep -qF 'slots="4"' "${seed}"; then
+    echo "seed-dev-env.sh re-introduced the pinned-lane width of 4" >&2
+    return 1
+  fi
   run grep -F 'GROK_EXPLORE_LANE' "${seed}"
   [ "${status}" -eq 0 ]
   run grep -F 'GROK_REVIEW_LANE' "${seed}"

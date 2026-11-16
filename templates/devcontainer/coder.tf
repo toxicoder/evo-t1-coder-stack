@@ -68,13 +68,23 @@ variable "grok_review_lane" {
   }
 }
 
+variable "grok_swarm_width" {
+  type        = number
+  description = "The fleet's own fan-out width, and the default for [subagents] max_concurrent whatever lane the operator picked. 15 is 3 Spark boxes x PARALLEL 5 (scripts/spark-configure.sh): the number of full-length streams the whole fleet can hold at once. It is the default rather than a lane-conditional 4 because `agent-swarm` is always selectable - the alias block ships ungated in grok-config.toml.tftpl, and a session on a pinned default lane can still name it on any spawn - so a config that sized itself at one box's PARALLEL would cap a swarm the user had only to ask for. An operator who pins every lane to one box and wants the narrower queue sets grok_subagent_max_concurrent explicitly."
+  default     = 15
+  validation {
+    condition     = var.grok_swarm_width >= 1 && var.grok_swarm_width <= 32
+    error_message = "grok_swarm_width must be a whole number between 1 and 32; above the fleet's 15 streams it deepens LiteLLM's queue rather than buying capacity."
+  }
+}
+
 variable "grok_subagent_max_concurrent" {
   type        = number
-  description = "How many subagents one session may have in flight, rendered into [subagents] max_concurrent in the workspace's ~/.grok/config.toml. Leave it unset to derive the width from the lane: 15 on the unpinned agent-swarm lane, which is the fleet ceiling (3 boxes x PARALLEL 5, scripts/spark-configure.sh), and 4 on a pinned lane, which is one box's PARALLEL (5 by default) minus the parent's own stream. Set a number to override: the 1..32 validation accepts any explicit value, and above 15 on the agent-swarm lane a number deepens LiteLLM's queue rather than buying capacity. Only the unpinned agent-swarm lane spreads a fan-out over more than one box."
+  description = "How many subagents one session may have in flight, rendered into [subagents] max_concurrent in the workspace's ~/.grok/config.toml. Leave it unset to take grok_swarm_width, the fleet ceiling, so the session is sized for a swarm on every lane; set a number to override, which is how an operator who pins everything to one box narrows the queue to that box's PARALLEL. The 1..32 validation accepts any explicit value, and above the fleet's 15 streams a number deepens LiteLLM's queue rather than buying capacity. Only the unpinned agent-swarm lane spreads a fan-out over more than one box."
   default     = null
   validation {
     condition     = var.grok_subagent_max_concurrent == null || (var.grok_subagent_max_concurrent >= 1 && var.grok_subagent_max_concurrent <= 32)
-    error_message = "grok_subagent_max_concurrent must be null (derive it from the lane) or a whole number between 1 and 32."
+    error_message = "grok_subagent_max_concurrent must be null (take grok_swarm_width, the fleet's width) or a whole number between 1 and 32."
   }
 }
 

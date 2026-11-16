@@ -13,8 +13,8 @@ tags: [grok, agents, workspace, mcp]
 - The Grok Build CLI in the golden image, and how it is pinned
 - The rendered `~/.grok/config.toml`: model aliases and role fallbacks
 - How a subagent fan-out is sized, laned, and dispatched from a micro-plan
-- The seeded fleet suite: six definitions, three personas, four skills, and the skeptic
-  that closes every multi-file change
+- The seeded fleet suite: six definitions, three personas, four skills, the five advisor
+  commands, the seeded guard hooks, and the skeptic that closes every multi-file change
 - One shared profile volume per user, and what last-booted rewrites
 - The search lane and the MCP servers behind it
 - Coder Agents on the control plane and the model config it needs
@@ -743,11 +743,13 @@ the rulebook's slot-filling rule) and `bazelisk test //tests:bats_ez_micro_plan_
 ## The seeded fleet suite
 
 The seam above is what a fan-out costs; this is who is in it. The family has its own seeding
-`coder_script`, `stack_fleet` (`templates/workspace/main.tf:744`,
-`templates/devcontainer/main.tf:795`), which puts thirteen payloads in place on every start
+`coder_script`, `stack_fleet` (`templates/workspace/main.tf:748`,
+`templates/devcontainer/main.tf:799`), which puts thirteen payloads in place on every start
 from `templates/common/`, and `//scripts:seed-dev-env` seeds the same thirteen into a
-contributor home through the last seventeen lines of `seed_seed_targets`
-(`scripts/lib/config_seed.sh:129-145`). The body that writes them is
+contributor home through the `~/.grok/agents`, `~/.grok/personas` and fleet-skill rows of
+`seed_seed_targets` (`scripts/lib/config_seed.sh:130-147`, seventeen of them; the
+`documenter.md` row at 136 sitting in the middle belongs to the advisor family below). The
+body that writes them is
 `templates/common/stack-fleet.sh.tftpl`, its own body for the same one-argument reason the
 two skill families have theirs
 ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Thirteen is six agent
@@ -769,10 +771,14 @@ mode, which a persona deliberately does not (`~/.grok/docs/user-guide/16-subagen
 | `reviewer` | findings ordered by what breaks if they stand, each with the command that proves it | `agent-review` |
 | `security-auditor` | secrets, injection, authorization and egress hunts, ranked by what an attacker gets | `agent-review` |
 
-Only `implementer` names `search_replace`, and only `implementer` and `tester` name `write`
-at all; the other four name no edit tool and each says in its own body that it edits
-nothing. `explorer` is the one definition that inherits the MCP catalog, because it is the
-one whose tools name `search_tool` and `use_tool`; the other five set `mcpInheritance: none`,
+Within these six, only `implementer` names `search_replace`, and only `implementer` and
+`tester` name `write` at all; the other four name no edit tool and each says in its own body
+that it edits nothing. The seventh definition `templates/common/` holds, `documenter`, is the
+advisor family's rather than this one's and names both `search_replace` and `write`
+(`templates/common/documenter.AGENT.md:5`), because the deliverable of that role is an edit to
+a page - see [The five advisor commands](#the-five-advisor-commands). `explorer` is the one
+definition here that inherits the MCP catalog, because it is the one whose tools name
+`search_tool` and `use_tool`; the other five set `mcpInheritance: none`,
 the frontmatter key the guide documents for that choice
 (`~/.grok/docs/user-guide/16-subagents.md:228`), on the seeds' own reasoning that an
 inherited catalog with no MCP tool in `tools:` would be empty anyway.
@@ -844,7 +850,56 @@ All four name only the local aliases - `agent-explore` for their mapping lanes,
 for a cloud model id, which is the rule in
 [litellm-routing.md](litellm-routing.md#the-alias-table) rather than a preference.
 
-### The saved workflow
+### The five advisor commands
+
+Five more commands ride a `coder_script` of their own, `stack_advisors`
+(`templates/workspace/main.tf:779`, `templates/devcontainer/main.tf:830`), whose body is
+`templates/common/stack-advisors.sh.tftpl`. Four are advisors that each gate a different kind
+of work, and the fifth writes the local map described at the end of this section. Same contract
+and same two homes as the four above: `~/.coder/skills/<name>/SKILL.md` for the chat and the
+`cp` twin at `~/.agents/skills/<name>/SKILL.md` for the CLI, each written only while absent,
+and `//scripts:seed-dev-env` seeds the same copies into a contributor home through the twelve
+advisor rows of `seed_seed_targets` (`scripts/lib/config_seed.sh:148-159`).
+
+- `/documenter <commit-ish|path|PR-number> [--surface docs|readme|rulebook|comments]` documents
+  a change that already exists: read the diff, fan read-only mappers over every documentation
+  surface on `agent-explore` to find the text the change made wrong, write one file per writer,
+  then put the result past an independent skeptic on `agent-review` that runs every command the
+  new prose names.
+- `/performance-optimizer <path|command> [--metric <name>] [--no-change]` takes a baseline with
+  an instrument that is already local (`time`, `rg --stats`, Bazel `--profile`), hunts the cost
+  with read-only mappers, ranks proposals by measured cost rather than how bad the code looks,
+  lands at most one change, re-measures, and ends its skeptical pass on `agent-review`.
+- `/debugger <symptom|failing-test|issue-number> [--no-fix]` is the gate against the
+  guess-and-patch pass: no fix is written until a read-only `agent-explore` child has quoted the
+  failing command and its real output, and the skeptic re-runs both the red and the green run.
+- `/migrator <dep>@<version>|<api-change>` pins where a version actually lives by `path:line`,
+  reads the upstream delta from a research lane rather than from memory, writes the plan and the
+  rollback before touching anything, then fans the edits out and answers to a skeptic.
+- `/ez-code-index [repo-path]` writes the local map described below.
+
+One new role definition ships with this family rather than with the fleet: `documenter`
+(`templates/common/documenter.AGENT.md`, landing at `~/.grok/agents/documenter.md`) is the
+light read-and-write role `/documenter` dispatches, and it rides the same body as the skill so
+a start has both or has neither.
+
+The code index is a file, not a service:
+
+```sh
+python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo <clone>
+```
+
+It writes `code-index.json` for a program and `code-index.md` for a person under
+`~/.grok/notes/<host>/<owner>/<repo>/` - the same notes directory `ez-learn` owns, outside the
+clone, carried by the shared profile volume, so nothing new runs and nothing is committed.
+`--home DIR` points it at another profile home instead of `$HOME`, and `--json` prints
+the whole record instead of the one `ok: N files, M symbols -> ...` line. The helper is
+`templates/common/ez-code-index.code_index.py`, seeded into a `scripts/` subdir of the same
+skill directory the way the other helper-carrying skills ship theirs. The `code-index.md`
+header records the `sha` it indexed, so compare that line against `git rev-parse HEAD` before
+trusting a `path:line` the map hands you; a stale map is a fresh `rg`.
+
+### The saved workflows
 
 `.grok/workflows/fleet-verify.js` is the same three phases as a saved workflow rather than a
 procedure an agent follows by hand: **Map** puts two read-only explorers on `agent-explore`,
@@ -853,6 +908,125 @@ procedure an agent follows by hand: **Map** puts two read-only explorers on `age
 `kept`, `broken` or `mixed` with the evidence behind each finding. Its three model ids are
 aliases in `litellm/config.yaml`, so `grok inspect` is the check after an alias edit - a name
 the catalog no longer carries fails the run rather than degrading it.
+
+Two more sit beside it in the same directory, invocable by name under the same rule that every
+id in them is a local alias:
+
+- `implement-reviewed` (`{ goal, question, verify }`) is `fleet-verify` with the repair round
+  added: map on `agent-explore`, fan the change out on `agent-swarm`, close on `agent-review`,
+  then one bounded fix round for the findings the skeptic marked `broken` and one more skeptic
+  pass. Without `verify` the writer names the proof and the skeptic challenges that choice.
+- `debug-fix` (`{ symptom, issue, bisect }`) is the defect shape: evidence on `agent-explore`
+  before any edit, because **Reproduce** quotes the failing command with the output it really
+  produced and no reproduction means no fix; two read-only explorers then localise on disjoint
+  hypotheses (one bisecting when a known-good ref is given), one writer on `agent-swarm` lands
+  the fix with the test that is red before the change and green after, and a skeptic on
+  `agent-review` re-runs both runs.
+
+### Hooks
+
+Six payloads in `templates/common/` become one manifest and five files under `~/.grok/hooks/`:
+`evo-t1-hooks.json` plus, under `hooks/bin/`, the four guards and the deny list the command
+guard reads.
+Grok Build reads `~/.grok/hooks/*.json`, and a handler `command` that is a relative path
+resolves against the manifest's own directory and is started directly, so each script is seeded
+`0755` with the payload's `#!` line still on row 1. Every one reads one line of event JSON on
+stdin. The two PreToolUse guards always print a parseable decision there - `{"decision":"allow"}`
+or `{"decision":"deny","reason":...}` - and a deny additionally exits 2; a PostToolUse handler
+cannot block at all, so it stays silent on stdout unless it has something to tell the model. No
+guard exits non-zero on its own account, so a broken one cannot wedge a session.
+
+- `PreToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/secret-guard.sh`: denies a
+  write whose text carries an AWS access-key id, a GitHub token, a Slack token, a Google API
+  key, a `-----BEGIN ... PRIVATE KEY-----` block, a URL that carries both a user and a
+  password, or a credential-keyword assignment (`api_key`, `secret`, `token`, `password`, and
+  their upper-case SDK spellings) whose value carries a digit. It sweeps the fields a write
+  puts text into - the flat `new_string`, `content`, `contents`, `command` and `text`, and
+  `new_string`, `new_text`, `content`, `contents` and `text` inside each entry of a batched
+  `edits` array - one level deep and no deeper, so an unknown nesting is not swept and the
+  truncation check is what covers it. It leaves the read-side `old_string`/`old_text`
+  alone, so a secret an older commit wrote cannot convict every later edit beside it. A value
+  that names the environment instead of carrying a secret is the correct pattern, not a hit, so
+  `os.environ/X`, `os.environ["X"]`, `process.env.X` and `getenv("X")` are folded to one short
+  token before the scan. The deny reason names the pattern
+  class and never the matched text. It fails open on an event it cannot parse, and denies when
+  the runner reports `toolInputTruncated`, because that is text the scan never saw
+  (`templates/common/hooks.secret-guard.sh`).
+- `PreToolUse`, matcher `Bash|run_terminal_command` -> `bin/dangerous-command-guard.sh`: tests
+  `toolInput.command` against the list beside itself and denies, naming the file, the line
+  number and the pattern that matched.
+- `PostToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/post-edit-format.sh`: the
+  formatters the golden image already ships, at the same invocations `//:fix` uses for shell and
+  Bazel files - `shfmt -w -s -i 2 -ci` for `.sh`, `buildifier -mode=fix` for `BUILD`,
+  `BUILD.bazel`, `MODULE.bazel` and `.bzl` - plus `ruff format --quiet` for `.py`. It refuses
+  anything outside `CLAUDE_PROJECT_DIR`, addressed directly or reached through a link (the
+  containment test runs again on the resolved path),
+  anything under `.git/`, `bazel-out/`, `bazel-bin/`, `bazel-testlogs/`, `node_modules/` or
+  `__pycache__/`, `.env` and `.env.*`,
+  and any path containing `/.grok/`, `/.agents/` or `/.coder/`. It only ever answers, never
+  blocks: a rewrite is reported as `additionalContext`, and silence means nothing changed or
+  the formatter is not on PATH.
+- `PostToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/selective-test-runner.sh`:
+  **off unless `EVO_T1_HOOK_TESTS=1`**. When it is on, the hook derives one Bazel label -
+  `//tests:bats_<stem>_test` straight from a `tests/bats/<stem>.bats` path, otherwise the first
+  label `bazelisk run //scripts:bazel-map -- tests-for <path>` prints - and starts
+  `bazelisk test <label>` detached with `nohup`, logging to
+  `${TMPDIR:-/tmp}/evo-t1-hook-tests/<sanitized-label>.log`. It returns one context line naming
+  the label and that log; it never runs a test inline, so the edit turn does not wait on the
+  suite.
+
+The deny list is the extension point. `~/.grok/hooks/bin/deny-patterns.txt` holds one extended
+regex per line, `#` starts a comment and blank lines are ignored, so an operator forbids one
+more command by appending one line - and because there is no allow list, deleting a line is the
+only way to permit something again. That copy is stack-owned: the boot rewrites it from
+`templates/common/hooks.deny-patterns.txt` while its `managed-by:` marker stands, so a line
+appended in a workspace is gone at the next start. Land the rule in the seed (with the Bats case
+in `tests/bats/stack-hooks.bats` that denies it), or delete the marker from that one file to keep
+a copy of your own, which the boot then leaves alone. A line that does not compile as an ERE is
+skipped with a
+single note on stderr rather than blocking every shell call, which is why the file's own header
+carries the one-line compile check to run before you commit a rule:
+`LC_ALL=C grep -E -q -- '<pattern>' </dev/null`.
+
+Three limits are worth knowing before you trust a clean scan, and each is a choice rather than
+an oversight.
+
+- The secret guard's generic assignment scan requires a digit on the matched line, which is
+  what keeps a variable name from reading as a credential. The cost runs in both directions:
+  `api_key = XyZaBcDeFgHiJk` (a name the list carries, no digit) walks through, and so does
+  `github_token_string = Abcd1234EFGH5678` (a digit, a name the list does not carry). Only the
+  five known-format scans (AWS, GitHub, Slack, Google, private-key block) plus the
+  credential-bearing URL are exact, and they run on the text before the environment-reference
+  fold, so a vendor key pasted inside `getenv("...")` still denies. What the fold does excuse
+  is entropy sitting in the name position of a reference - `os.environ/KEY_XyZaBc12345678` -
+  because that position is where the correct pattern lives and the guard's whole job is to
+  keep it writable. A missed shape is a line in `hooks.secret-guard.sh`, not a reason to trust
+  the ones it does catch.
+- The command guard matches the whole command string, case-sensitively and byte-wise, so a
+  command that *quotes* a denied form is refused the same way a real one is: `awk '/dd if=/'
+  notes.txt` denies, and so does a commit message that names `rm -rf` followed by a space.
+  Stripping quoted regions before matching would clear those and would catch a quoted dot
+  (`find "." -type f -delete`) for free, and it would equally blind the guard to `sh -c "..."`
+  and `bash -c "..."`, the indirection a command actually travels through most - so the string
+  is read as written, and the few rules that have to see inside a quote spell the quote
+  themselves. The remedy for the rest is to rewrite the quoted sentence; the stack's own
+  `Bash(rm -rf *)` permission deny behaves the same way for the same reason.
+- The deny list is a floor, not a fence. It catches the forms this repo has actually measured,
+  and a novel destructive command walks straight through it. Nothing in a hook reads the state
+  the command will act on, which is why "confirm before an action that is hard to undo" stays a
+  rulebook rule that no pattern can replace.
+
+Two things seed them, and both are wanted. `coder_script "stack_hooks"`
+(`templates/workspace/main.tf:805`, `templates/devcontainer/main.tf:856`) runs
+`templates/common/stack-hooks.sh.tftpl` on every workspace start (`run_on_start`, gated on
+`data.coder_workspace.me.start_count`), and `scripts/lib/config_seed.sh:160-165` carries the
+same six targets for a host tree or a workspace that missed a boot. This family is
+**marker-aware** rather than absent-only like the skills: a copy that still carries the stack
+marker - the `"__evoT1Stack": true` key in the manifest, which has to stay parseable JSON, and
+the `managed-by: evo-t1-coder-stack` comment in the shell files - is rewritten on every start.
+That is deliberate, because a guard that drifted from the seed is a silent behaviour change:
+these scripts decide what a session may run and what it may write. Delete the marker and the
+copy is yours, and the boot leaves it alone.
 
 ### The rule the suite exists to enforce
 
@@ -869,13 +1043,25 @@ tacked onto the writer.
 
 The family splits by home, and the split is deliberate:
 
-- `~/.grok/agents/*.md` and `~/.grok/personas/*.toml` are **marker-aware**, the way
+- The fleet's six `~/.grok/agents/*.md` definitions and its three
+  `~/.grok/personas/*.toml` overlays are **marker-aware**, the way
   `~/.grok/AGENTS.md` is: a copy that still carries `managed-by: evo-t1-coder-stack` is
   stack-owned and gets the current seed text on every start, so a stale role definition
   cannot silently change how every child in every workspace behaves. Delete the marker line
   and the file is the person's - the boot leaves a marker-free copy alone.
-- The eight skill copies are **absent-only**, like the `ez-` families: a `SKILL.md` that
-  already exists belongs to the user and is never rewritten.
+- `~/.grok/hooks/` is **marker-aware** on the same rule, with two spellings because its two
+  kinds of file have two readers: the `"__evoT1Stack": true` key, which is the only marker
+  spelling that leaves the manifest parseable JSON, and the `managed-by: evo-t1-coder-stack`
+  comment in the four scripts and the deny list. A guard that drifted from the seed is a
+  behaviour change nobody sees, so this family gets the refresh rather than the first-write
+  rule. See [Hooks](#hooks).
+- The skill copies are **absent-only**, like the `ez-` families: a `SKILL.md` that
+  already exists belongs to the user and is never rewritten - the fleet's eight, and the
+  advisor family's twelve, which are five `SKILL.md`s plus `code_index.py` in each of the two
+  homes. The advisor family's `~/.grok/agents/documenter.md` rides that absent-only contract
+  with the skill it serves rather than the refresh the fleet's six keep, on the body's own
+  reasoning that a stale piece of advice misleads one run while a stale guard decides what a
+  session may do.
 - A managed path that is a **symlink** is left alone in both families. The marker test
   reads the file a path points at, so writing through a link would replace a file the
   stack does not own - a link aimed at `~/.grok/AGENTS.md` would have the seed overwrite

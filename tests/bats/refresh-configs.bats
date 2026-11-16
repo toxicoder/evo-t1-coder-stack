@@ -88,7 +88,7 @@ scratch_home() {
   source "${LIB}"
   local lines target
   lines="$(seed_seed_targets)"
-  # Twenty-nine reseed targets: the five non-skill targets, then grok-build-delegation,
+  # Sixty-five reseed targets: the five non-skill targets, then grok-build-delegation,
   # ez-learn, ez-skillify and ez-create-skill as one SKILL.md per home (8), then
   # ez-bazel-first as a SKILL.md per home plus two helper scripts per home (6),
   # then ez-strong-types as a SKILL.md per home plus one helper per home (4),
@@ -97,22 +97,30 @@ scratch_home() {
   # then the seeded fleet: six agent definitions and three persona overlays into the
   # one shared ~/.grok profile (9), and the four fleet skills as one SKILL.md per
   # home (8). The fleet family carries no helper of its own, so nothing nests under it.
+  # Then the two families this change adds: the four advisor skills as one SKILL.md
+  # per home (8), ez-code-index as a SKILL.md per home plus its helper per home (4),
+  # the documenter role as the one definition that rides with that skill (1), and the
+  # hook family -- the manifest, the deny list, and the four guards the runner execs
+  # (6), which are the only rows the seeder has to carry as exec: rather than file:.
   # The count is a claim about the manifest, so a target that quietly
   # disappears from config_seed.sh fails here before anything else notices.
-  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 46 ]
+  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 65 ]
   # Home-relative targets keep dev-only paths (scripts/, tests/) out of any
   # workspace volume: an absolute target would put this script's trust
   # boundary in the wrong place.
   assert_not_match "no absolute paths" '^/' "${lines}"
-  # Every payload reads from this repo's templates/ tree, in the one file:/render:
-  # form the seeder knows. Anchored on the source column rather than grepping the
+  # Every payload reads from this repo's templates/ tree, in one of the three forms
+  # the seeder knows. Anchored on the source column rather than grepping the
   # whole line, because a skill's own helper directory is a legitimate nested
   # target path (~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py)
   # while a source of scripts/foo.sh or tests/foo.bats is not a payload at all.
+  # exec: is the hook family's kind: the same bytes as file:, written with the
+  # executable bit, because the runner starts those scripts directly.
   local bad_source="" source
   while IFS=$'\t' read -r target source; do
     [[ -n ${target} ]] || continue
-    [[ ${source} == "file:templates/"* || ${source} == "render:templates/"* ]] ||
+    [[ ${source} == "file:templates/"* || ${source} == "render:templates/"* ||
+       ${source} == "exec:templates/"* ]] ||
       bad_source="${target} -> ${source}"
   done <<<"${lines}"
   [ -z "${bad_source}" ] || fail "a reseed source reads outside templates/: ${bad_source}"
@@ -181,11 +189,12 @@ scratch_home() {
     $'~/.coder/skills/ez-micro-plan/scripts/plan_check.py\tfile:templates/common/ez-micro-plan.plan_check.py' "${lines}"
   assert_match "ez-micro-plan plan_check from common (agents)" \
     $'~/.agents/skills/ez-micro-plan/scripts/plan_check.py\tfile:templates/common/ez-micro-plan.plan_check.py' "${lines}"
-  # Eight of the twenty-nine are the nested helpers of the three skills that
-  # have them, counted separately from the total so a nested target dropped from
+  # Ten of the sixty-five are the nested helpers of the four skills that have them
+  # -- ez-bazel-first two per home, ez-strong-types, ez-micro-plan and ez-code-index
+  # one each -- counted separately from the total so a nested target dropped from
   # the manifest is caught even when the total is restored by some unrelated
   # target (a new lone SKILL.md pair must not move this number).
-  [ "$(printf '%s\n' "${lines}" | grep -c '/scripts/')" -eq 8 ]
+  [ "$(printf '%s\n' "${lines}" | grep -c '/scripts/')" -eq 10 ]
   assert_not_match "no block kind" $'\tblock:' "${lines}"
 }
 
@@ -428,12 +437,12 @@ coder-ws2-dind-sidecar'
 import json, sys
 d = json.load(sys.stdin)
 assert d["dry_run"] is False and d["force"] is False, d
-# The forty-six reseed targets, plus the one /learn copy the reseed retired from
+# The sixty-five reseed targets, plus the one /learn copy the reseed retired from
 # this home (its ~/.agents twin is user-owned, so it earns no entry below).
 # Every target earns exactly one entry, the user-owned tmux.conf included, so
 # this count is the size of the manifest read back through the JSON channel: a
 # target dropped from config_seed.sh drops an entry and fails here.
-assert len(d["entries"]) == 47, d["entries"]
+assert len(d["entries"]) == 66, d["entries"]
 # A seeded entry names its target home-relative but already stripped the tilde
 # (the seeder prints the path it rooted at the home), while a retired entry
 # keeps the ~/ spelling it is listed under. Check the nested helpers and the
@@ -481,6 +490,66 @@ assert not [e for e in d["entries"] if e["target"] == "~/.agents/skills/learn/SK
   # seed_container_exec and seed_target_owner ran their probe scripts, and
   # seed_container_seed drove the whole reseed list through them.
   [ "$(stub_log_count docker)" -gt 0 ]
+}
+
+@test "config_seed: the container probe answers about the path it was handed" {
+  # One `docker exec -i <name> sh -c <script> sh <args...>` puts the caller's
+  # "sh" in the script's argv0 slot, which is what makes the probe's own $1 the
+  # path. A second "sh" anywhere in that chain shifts the probe by one, and
+  # seed-owner.sh then reports who owns a file called "sh" in the container's
+  # working directory: every target reads absent, so a reseed overwrites the
+  # user-owned files it exists to leave alone. The argv log cannot see that --
+  # the call is well-formed either way -- so the answer is what gets asserted.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  local scratch state
+  scratch="$(make_scratch)"
+  printf -- '---\nname: demo\nmanaged-by: evo-t1-coder-stack\n' >"${scratch}/managed.md"
+  printf 'written by hand\n' >"${scratch}/user.md"
+
+  state="$(seed_target_owner "coder-demo-abc" "${scratch}/managed.md")"
+  [ "${state}" = "managed" ] || {
+    printf 'a marker-carrying file read as %s, which is what a probe reading its\n' "${state}" >&2
+    printf 'own argv0 answers when no file named "sh" is there\n' >&2
+    return 1; }
+  state="$(seed_target_owner "coder-demo-abc" "${scratch}/user.md")"
+  [ "${state}" = "user" ] || { printf 'a marker-free file read as %s\n' "${state}" >&2; return 1; }
+  state="$(seed_target_owner "coder-demo-abc" "${scratch}/absent.md")"
+  [ "${state}" = "absent" ] || { printf 'a missing file read as %s\n' "${state}" >&2; return 1; }
+}
+
+@test "refresh-configs: a container reseed writes each payload to its own path" {
+  # The test above proves the call was made; this proves the far end understood
+  # it. A probe whose $1 is the argv0 word reads and writes a file named "sh" in
+  # the working directory, so the payload bytes never reach ~/.grok/hooks/bin/
+  # while the CLI still prints a verb for it. The run is given its own cwd so
+  # the litter a shifted probe makes is something this test can see and name.
+  export STUB_COMPOSE_PS='coder-demo-abc'
+  local scratch cwd hook litter
+  scratch="$(make_scratch)"
+  cwd="${scratch}/cwd"
+  mkdir -p "${cwd}" "${scratch}/root/.shared/vscode"
+  printf 'set -g mouse on\n' >"${scratch}/root/.tmux.conf"
+  run env -C "${cwd}" bash "${REFRESH}" --container coder-demo-abc \
+    --container-root "${scratch}/root"
+  [ "${status}" -eq 0 ] || {
+    printf 'the container reseed exited %s: %s\n' "${status}" "${output}" >&2
+    return 1; }
+
+  hook="${scratch}/root/.grok/hooks/bin/secret-guard.sh"
+  assert_file_exists "the guard the runner execs" "${hook}"
+  grep -q 'managed-by: evo-t1-coder-stack' "${hook}" || {
+    printf 'the guard that landed carries no marker\n' >&2
+    return 1; }
+  [ "$(stat -c '%a' "${hook}")" = "755" ] || {
+    printf 'the exec: payload landed as mode %s; the runner starts it directly\n' \
+      "$(stat -c '%a' "${hook}")" >&2
+    return 1; }
+
+  litter="$(find "${cwd}" -mindepth 1 2>/dev/null | sort | tr '\n' ' ')"
+  [ -z "${litter}" ] || {
+    printf 'the container exec wrote into its working directory: %s\n' "${litter}" >&2
+    return 1; }
 }
 
 @test "refresh-configs: --litellm-url renders the url this stack environment publishes" {

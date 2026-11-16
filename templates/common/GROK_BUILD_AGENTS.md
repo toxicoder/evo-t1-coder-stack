@@ -183,6 +183,21 @@ An issue is the contract the change has to satisfy, and the pull request is wher
 - Follow the Tool Call Discipline on every tool invocation.
 - MCP servers (searxng, context7, github) are declared in ~/.grok/config.toml when the stack left them on. Never invent their tool names or argument shapes: call search_tool with the server name and action, then use_tool with exactly the schema it returns.
 
+# Hooks
+Four stack-owned handlers wrap your tool calls. They live in `~/.grok/hooks/` - the manifest `evo-t1-hooks.json` plus the four guards and the deny list under `bin/` - and the boot rewrites them on every start while each file carries the stack marker, so change the seed under `templates/common/` and re-materialize it, never the copy that lives in a workspace.
+
+- `bin/secret-guard.sh` (PreToolUse, on the write tools) refuses a write whose text looks like a live credential: AWS/GitHub/Slack/Google key shapes, a private-key block, a credential-bearing URL, or a `token`/`secret`/`password`/`api_key` assignment whose value carries a digit. It is the same boundary the `.env` deny enforces, so never paste a value to get past it - name the operator CLI that prints it (`dev-stack -- status`, `bootstrap -- --check`, `update-configs`), or read `.env.example` for the shape. It fails open on an event it cannot parse and refuses when the runner reports the input was clipped.
+- `bin/dangerous-command-guard.sh` (PreToolUse, on the shell tool) refuses the forms listed in `bin/deny-patterns.txt`: the recursive-force glob, `kill 0`, a process-group kill, the `pkill -u`/`-U`/`-P` sweeps, the tmux server sweeps, `git checkout -- .`/`git restore .`/`git stash drop` on the whole tree, the three forms that zero a file under `~/.grok/`, and the docker commands that destroy a named volume. That file is the extension point - one ERE per line, and a line that does not compile is skipped with one stderr note, so prove a rule with `grep -E` before you trust it. A refusal there means rewrite the command (per-path `rm -f`, `find <dir> -type f -delete`, one `kill` by pid), never wrap it to slip past the guard.
+- `bin/post-edit-format.sh` (PostToolUse) runs the gate's own formatters over what you just wrote - `shfmt -w -s -i 2 -ci` for `.sh` and `buildifier -mode=fix` for `BUILD`, `BUILD.bazel`, `MODULE.bazel` and `.bzl`, both at the invocation `bazelisk run //:fix` uses, plus `ruff format` for `.py`, which `//:fix` does not touch. It cannot block and it never edits behind your back: a formatting note there is the hint to re-read the file, and the gate to run is `//:fix` for shell and Bazel or `ruff format` for Python.
+- `bin/selective-test-runner.sh` (PostToolUse) stays off unless the operator set `EVO_T1_HOOK_TESTS=1`. When on it asks `bazelisk run //scripts:bazel-map -- tests-for <path>` for the one target that covers the file you touched, then detaches `bazelisk test <label> --test_output=errors` and logs under `${TMPDIR:-/tmp}/evo-t1-hook-tests/`, so read that log instead of assuming a test ran.
+
+# Code index
+A local map of the clone that needs no service: `python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo .` writes `code-index.json` and `code-index.md` beside your notes file at `~/.grok/notes/<host>/<owner>/<repo>/`, on the shared profile volume and outside the tree, so it is never committed and your other workspaces see it.
+
+- Consult it before a wide recursive grep or glob over a repo you have not mapped this session: one read answers where things live and what is public, and its top-directory table says which lane to point an explorer at.
+- The header carries the `sha` the map was built from. Compare it with `git rev-parse HEAD`: a few commits behind is a fine map, far behind is a hint. Rebuild it after a large merge and at the start of a long fleet run.
+- The index is a map, never an answer. Quote a line only from the file itself, and do the fresh search when the index is missing, badly stale, or when you need current contents.
+
 # Research lanes
 Looking something up is part of the normal loop, not a last resort. Reach for a lane as soon as an answer depends on a version number, a release date, an API surface this repo does not contain, or an error string you did not just produce yourself. Guessing a current fact is the failure mode; a wasted query is cheap.
 
