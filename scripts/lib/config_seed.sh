@@ -216,10 +216,14 @@ seed_container_exec() {
   if [[ -z ${container} || -z ${script} ]]; then
     return 1
   fi
+  # The argv0 slot that makes the script's own $1 its first argument is the
+  # leading "sh" every caller passes, not a word added here: adding one here too
+  # shifts every probe by one, so seed-write.sh writes the payload to a file
+  # named "sh" in the container's cwd and the target never lands.
   if [[ ${inherit_stdin} == 1 ]]; then
-    docker exec -i "${container}" sh -c "${script}" sh "$@"
+    docker exec -i "${container}" sh -c "${script}" "$@"
   else
-    docker exec -i "${container}" sh -c "${script}" sh "$@" </dev/null
+    docker exec -i "${container}" sh -c "${script}" "$@" </dev/null
   fi
 }
 

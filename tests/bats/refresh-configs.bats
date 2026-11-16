@@ -492,6 +492,66 @@ assert not [e for e in d["entries"] if e["target"] == "~/.agents/skills/learn/SK
   [ "$(stub_log_count docker)" -gt 0 ]
 }
 
+@test "config_seed: the container probe answers about the path it was handed" {
+  # One `docker exec -i <name> sh -c <script> sh <args...>` puts the caller's
+  # "sh" in the script's argv0 slot, which is what makes the probe's own $1 the
+  # path. A second "sh" anywhere in that chain shifts the probe by one, and
+  # seed-owner.sh then reports who owns a file called "sh" in the container's
+  # working directory: every target reads absent, so a reseed overwrites the
+  # user-owned files it exists to leave alone. The argv log cannot see that --
+  # the call is well-formed either way -- so the answer is what gets asserted.
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  local scratch state
+  scratch="$(make_scratch)"
+  printf -- '---\nname: demo\nmanaged-by: evo-t1-coder-stack\n' >"${scratch}/managed.md"
+  printf 'written by hand\n' >"${scratch}/user.md"
+
+  state="$(seed_target_owner "coder-demo-abc" "${scratch}/managed.md")"
+  [ "${state}" = "managed" ] || {
+    printf 'a marker-carrying file read as %s, which is what a probe reading its\n' "${state}" >&2
+    printf 'own argv0 answers when no file named "sh" is there\n' >&2
+    return 1; }
+  state="$(seed_target_owner "coder-demo-abc" "${scratch}/user.md")"
+  [ "${state}" = "user" ] || { printf 'a marker-free file read as %s\n' "${state}" >&2; return 1; }
+  state="$(seed_target_owner "coder-demo-abc" "${scratch}/absent.md")"
+  [ "${state}" = "absent" ] || { printf 'a missing file read as %s\n' "${state}" >&2; return 1; }
+}
+
+@test "refresh-configs: a container reseed writes each payload to its own path" {
+  # The test above proves the call was made; this proves the far end understood
+  # it. A probe whose $1 is the argv0 word reads and writes a file named "sh" in
+  # the working directory, so the payload bytes never reach ~/.grok/hooks/bin/
+  # while the CLI still prints a verb for it. The run is given its own cwd so
+  # the litter a shifted probe makes is something this test can see and name.
+  export STUB_COMPOSE_PS='coder-demo-abc'
+  local scratch cwd hook litter
+  scratch="$(make_scratch)"
+  cwd="${scratch}/cwd"
+  mkdir -p "${cwd}" "${scratch}/root/.shared/vscode"
+  printf 'set -g mouse on\n' >"${scratch}/root/.tmux.conf"
+  run env -C "${cwd}" bash "${REFRESH}" --container coder-demo-abc \
+    --container-root "${scratch}/root"
+  [ "${status}" -eq 0 ] || {
+    printf 'the container reseed exited %s: %s\n' "${status}" "${output}" >&2
+    return 1; }
+
+  hook="${scratch}/root/.grok/hooks/bin/secret-guard.sh"
+  assert_file_exists "the guard the runner execs" "${hook}"
+  grep -q 'managed-by: evo-t1-coder-stack' "${hook}" || {
+    printf 'the guard that landed carries no marker\n' >&2
+    return 1; }
+  [ "$(stat -c '%a' "${hook}")" = "755" ] || {
+    printf 'the exec: payload landed as mode %s; the runner starts it directly\n' \
+      "$(stat -c '%a' "${hook}")" >&2
+    return 1; }
+
+  litter="$(find "${cwd}" -mindepth 1 2>/dev/null | sort | tr '\n' ' ')"
+  [ -z "${litter}" ] || {
+    printf 'the container exec wrote into its working directory: %s\n' "${litter}" >&2
+    return 1; }
+}
+
 @test "refresh-configs: --litellm-url renders the url this stack environment publishes" {
   local scratch
   scratch="$(make_scratch)"
