@@ -599,6 +599,339 @@ EOS
 }
 
 # ---------------------------------------------------------------------------
+# The prefix a dotenv-export dump carries, and the two name filters that decide
+# what a file sourced by every workspace shell is allowed to contain.
+# ---------------------------------------------------------------------------
+
+@test "publish: a dotenv-export dump publishes the operator's key, and a key that only starts with the prefix keeps its own name" {
+  local dump="${SCRATCH}/export-dump.env" home agent want got sourced pair
+  # --format=dotenv-export is the shape the CLI writes when asked for an executable file,
+  # and a loop that reads the prefix as the start of the key then lands an empty agent.env,
+  # which is the failure nobody sees until every credential is missing. The four spellings
+  # of the prefix are here, along with the two names an over-broad strip eats: a key that
+  # merely starts with the word, and a key that is the word. The tab line goes through
+  # printf because a literal tab in a heredoc is invisible to the next reader.
+  {
+    printf '%s\n' "export ALPHA='one'" "export  BETA='two'" "exportED='four'" "export='five'"
+    printf 'export\tGAMMA=%s\n' "'three'"
+  } >"${dump}"
+  chmod 600 "${dump}"
+
+  home="${SCRATCH}/home-export"
+  export STUB_INFISICAL_DUMP="${dump}"
+  drive_vault "${home}" "true" ""
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the body exited %s:\nout:\n%s\nerr:\n%s\n' "${status}" "${output}" "${stderr}" >&2
+    return 1
+  }
+  agent="$(agent_env "${home}")"
+  assert_file_exists "the body published the file" "${agent}"
+
+  # Byte for byte, because a strip that half-worked would still look plausible: one
+  # export per key, the prefix gone from the four, and the two lookalikes untouched.
+  want="${SCRATCH}/export-want"
+  printf '%s\n' "export ALPHA='one'" "export BETA='two'" "export exportED='four'" \
+    "export export='five'" "export GAMMA='three'" >"${want}"
+  run cmp "${want}" "${agent}"
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the published bytes differ\nwant:\n%s\ngot:\n%s\n' \
+      "$(cat "${want}")" "$(cat "${agent}")" >&2
+    return 1
+  }
+
+  # And the file still does the one job it exists for: a shell that sources it comes out
+  # holding all five values, the name that is the word export included.
+  got="${SCRATCH}/export-got"
+  mkdir -p "${got}"
+  sourced="${SCRATCH}/export-source.sh"
+  cat >"${sourced}" <<EOS
+set -e
+set -a
+. "${agent}"
+set +a
+for k in "\$@"; do printf '%s' "\${!k-}" >"${got}/\${k}"; done
+EOS
+  run bash "${sourced}" ALPHA BETA GAMMA exportED export
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: sourcing the published file failed with %s:\n%s\n' "${status}" "${output}" >&2
+    return 1
+  }
+  for pair in ALPHA=one BETA=two GAMMA=three exportED=four export=five; do
+    [ -f "${got}/${pair%%=*}" ] || {
+      printf 'FAIL: %s never reached the sourced environment\n' "${pair%%=*}" >&2
+      return 1
+    }
+    assert_eq "and ${pair%%=*} holds what the vault held" "${pair#*=}" \
+      "$(cat "${got}/${pair%%=*}")"
+  done
+}
+
+@test "security: a vault key named for shell code or loader configuration never reaches the published file, in any spelling" {
+  local dump="${SCRATCH}/deny-dump.env" home agent evil pc marker pcmarker
+  local ctrl ctrlmarker ctrlpc ctrl_evil name line
+  # The names a shell or a loader would act on. This is a contract spelled here rather
+  # than read back out of the body: a list that quietly loses BASH_ENV is the bug, so the
+  # test carries the expectation independently of the thing it checks. The four lookalikes
+  # at the bottom are what stops a fix that over-matches and drops a real secret whose
+  # name merely begins with one of these.
+  evil="${SCRATCH}/deny-evil.sh"
+  marker="${SCRATCH}/deny-pwned"
+  printf 'touch %s\n' "${marker}" >"${evil}"
+  chmod 755 "${evil}"
+  pc="${SCRATCH}/deny-pwned-pc"
+  pcmarker="${pc}"
+  write_dump "${dump}" EVIL="${evil}" PC="${pcmarker}" <<'EOS'
+BASH_ENV='@@EVIL@@'
+bash_env='@@EVIL@@'
+Bash_Env='@@EVIL@@'
+ENV='@@EVIL@@'
+PROMPT_COMMAND='touch @@PC@@'
+PS4='+$(touch @@PC@@) '
+IFS=' '
+PATH='/tmp/evo-evil-bin'
+HOME='/tmp/evo-evil-home'
+TMPDIR='/tmp/evo-evil-tmp'
+LD_PRELOAD='/tmp/evo-evil.so'
+NODE_OPTIONS='--require /tmp/evo-evil.js'
+PYTHONSTARTUP='/tmp/evo-evil.py'
+GIT_SSH_COMMAND='touch /tmp/evo-never'
+EDITOR='/tmp/evo-evil-editor'
+SUDO_ASKPASS='/tmp/evo-evil-askpass'
+ENVIRONMENT='production'
+PATHFINDER='still-a-secret'
+PS1_PROMPT='still-a-secret'
+HOMEDIR='still-a-secret'
+EOS
+
+  # The controls first, so nothing below can pass vacuously. Each of the two names owns a
+  # different kind of shell, and the probe has to be the kind that actually reads it:
+  # BASH_ENV is a file bash opens and runs when a non-interactive shell starts with -c (an
+  # inline command as the value names no file and is silently ignored), and PROMPT_COMMAND
+  # runs before an interactive shell reads a command, which `bash -ic ':'` never does
+  # because -c never prints a prompt. If either control stops creating its marker the
+  # fixture has gone harmless and every assertion that feeds on it is decoration.
+  ctrl="${SCRATCH}/deny-control.env"
+  ctrlmarker="${SCRATCH}/deny-control-pwned"
+  ctrlpc="${SCRATCH}/deny-control-pc"
+  ctrl_evil="${SCRATCH}/deny-control-evil.sh"
+  printf 'touch %s\n' "${ctrlmarker}" >"${ctrl_evil}"
+  chmod 755 "${ctrl_evil}"
+  write_dump "${ctrl}" EVIL="${ctrl_evil}" PCM="${ctrlpc}" <<'EOS'
+BASH_ENV='@@EVIL@@'
+PROMPT_COMMAND='touch @@PCM@@'
+EOS
+  run bash -c "set -a; . '${ctrl}'; set +a; bash -c 'true'"
+  assert_file_exists "the raw dump really does execute a vault-chosen BASH_ENV" "${ctrlmarker}"
+  run bash -c "set -a; . '${ctrl}'; set +a; printf 'exit\n' | bash -i" </dev/null
+  assert_file_exists "and really does run a vault-chosen PROMPT_COMMAND" "${ctrlpc}"
+
+  home="${SCRATCH}/home-deny"
+  export STUB_INFISICAL_DUMP="${dump}"
+  drive_vault "${home}" "true" ""
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the body exited %s:\nout:\n%s\nerr:\n%s\n' "${status}" "${output}" "${stderr}" >&2
+    return 1
+  }
+  agent="$(agent_env "${home}")"
+  assert_file_exists "the body published the file" "${agent}"
+
+  # One export line per admissible key and nothing else in the file, which is also the pin
+  # that a trailing scrub line never comes back: agent.env is sourced by every shell the
+  # workspace starts, so a line that unsets PATH or HOME would take those names away from
+  # the shell that sourced it, a worse outage than the one the filter prevents.
+  assert_eq "only the four lookalike keys were published" "4" \
+    "$(grep -c '^export ' "${agent}")"
+  assert_eq "and every line is a plain export assignment" "0" \
+    "$(grep -vc "^export [A-Za-z_][A-Za-z0-9_]*='.*'\$" "${agent}")"
+  assert_eq "and the file holds no unset line" "0" \
+    "$(grep -c '^unset ' "${agent}")"
+
+  for name in BASH_ENV ENV PROMPT_COMMAND PS4 IFS PATH HOME TMPDIR LD_PRELOAD \
+    NODE_OPTIONS PYTHONSTARTUP GIT_SSH_COMMAND EDITOR SUDO_ASKPASS; do
+    line="$(grep -iE "^[[:space:]]*(export[[:space:]]+)?${name}[[:space:]]*=" "${agent}" || true)"
+    [ -z "${line}" ] || {
+      printf 'FAIL: %s reached the published file: %s\n' "${name}" "${line}" >&2
+      return 1
+    }
+  done
+
+  # The lookalikes kept their own names and values, and the case-normalised spellings of
+  # BASH_ENV are gone rather than only the uppercase one.
+  run grep -qxF "export ENVIRONMENT='production'" "${agent}"
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: ENVIRONMENT was dropped although it is an ordinary key\n' >&2
+    return 1
+  }
+  for name in PATHFINDER PS1_PROMPT HOMEDIR; do
+    run grep -qxF "export ${name}='still-a-secret'" "${agent}"
+    [ "${status}" -eq 0 ] || {
+      printf 'FAIL: %s was dropped although only its prefix is on the list\n' "${name}" >&2
+      return 1
+    }
+  done
+
+  # Nothing executes. Sourced the way .bashrc sources it, in a child so a spawn cannot end
+  # the run, then the same two probes the controls proved are run against the published
+  # file: the control wrote to its own paths, so these two markers stay absent unless the
+  # filtered file smuggled one back in.
+  run bash -c "set -a; . '${agent}'; set +a; bash -c 'true'"
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: sourcing the published file failed with %s:\n%s\n' "${status}" "${output}" >&2
+    return 1
+  }
+  assert_file_not_exists "no non-interactive child ran a vault-chosen BASH_ENV" "${marker}"
+  run bash -c "set -a; . '${agent}'; set +a; printf 'exit\n' | bash -i" </dev/null
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: sourcing the published file for an interactive shell failed with %s:\n%s\n' \
+      "${status}" "${output}" >&2
+    return 1
+  }
+  assert_file_not_exists "and no interactive shell ran a vault-chosen PROMPT_COMMAND" "${pc}"
+}
+
+@test "publish: a value whose quote never closes is dropped whole, named once for the boot, and the keys around it survive" {
+  local dump="${SCRATCH}/multiline-dump.env" home agent note
+  # The pinned CLI leaves an embedded single quote raw, so a blob like this arrives as one
+  # secret spread over lines, with the closing quote several lines on. Republishing those
+  # continuation lines would invent keys out of secret bytes, so the whole entry goes. The
+  # note is once per boot rather than once per entry, and it names neither key nor value.
+  # The block markers are inert on purpose: the unclosed-quote shape is what is pinned.
+  write_dump "${dump}" <<'EOS'
+KEY_BEFORE='before'
+BLOB_ONE='-----BEGIN STACK BLOB-----
+MIIabc-not-a-key
+surface = value
+INJECTED='from-the-continuation'
+-----END STACK BLOB-----'
+BLOB_TWO='-----BEGIN STACK BLOB TWO-----
+second-block-bytes
+ALSO_INJECTED='from-the-second-continuation'
+-----END STACK BLOB TWO-----'
+KEY_AFTER='after'
+EOS
+
+  home="${SCRATCH}/home-multiline"
+  export STUB_INFISICAL_DUMP="${dump}"
+  drive_vault "${home}" "true" ""
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the body exited %s:\nout:\n%s\nerr:\n%s\n' "${status}" "${output}" "${stderr}" >&2
+    return 1
+  }
+  agent="$(agent_env "${home}")"
+  assert_file_exists "the body published the file" "${agent}"
+
+  assert_eq "only the two single-line keys were published" "2" \
+    "$(grep -c '^export ' "${agent}")"
+  run grep -qxF "export KEY_BEFORE='before'" "${agent}"
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the key before a multi-line secret did not survive\n' >&2
+    return 1
+  }
+  run grep -qxF "export KEY_AFTER='after'" "${agent}"
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the key after a multi-line secret did not survive\n' >&2
+    return 1
+  }
+
+  # No byte of either block reached the file, and no key was invented out of a
+  # continuation line. The two INJECTED names sit inside the blobs as admissible
+  # assignments on purpose: they are what separates this case from the shape filter, which
+  # on its own would drop the lines that merely look like prose and keep these two.
+  note="$(grep -E 'BEGIN|MIIabc|surface|second-block|END |INJECTED' "${agent}" || true)"
+  [ -z "${note}" ] || {
+    printf 'FAIL: secret bytes from a multi-line value were published:\n%s\n' "${note}" >&2
+    return 1
+  }
+
+  # One note, on stderr, for two dropped entries, and it names nothing.
+  assert_eq "the drop is reported exactly once" "1" \
+    "$(printf '%s\n' "${stderr}" | grep -c 'spans more than one line')"
+  assert_eq "and on stderr, not in the boot log" "0" \
+    "$(printf '%s\n' "${output}" | grep -c 'spans more than one line')"
+  run grep -qiE 'BLOB_ONE|BLOB_TWO|BEGIN' <<<"${stderr}"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: the note named a key or a secret byte:\n%s\n' "${stderr}" >&2
+    return 1
+  }
+}
+
+@test "security: with the name filter deleted the pre-publish guard still refuses, and the earlier file survives" {
+  local home="${SCRATCH}/home-belt" agent first good regressed unbelted
+  local dump evil marker before after
+
+  # A first boot with the body as shipped, so there is a real published file on disk for
+  # the refusal to leave alone. A workspace that keeps the working credentials it already
+  # has is the behaviour; one that loses them to a refused refresh is not.
+  first="${SCRATCH}/belt-first.env"
+  printf '%s\n' "GOOD_ONE='alpha'" >"${first}"
+  export STUB_INFISICAL_DUMP="${first}"
+  drive_vault "${home}" "true" ""
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the first boot exited %s:\nout:\n%s\nerr:\n%s\n' \
+      "${status}" "${output}" "${stderr}" >&2
+    return 1
+  }
+  agent="$(agent_env "${home}")"
+  assert_file_exists "the first boot published a file" "${agent}"
+  good="$(cat "${agent}")"
+
+  evil="${SCRATCH}/belt-evil.sh"
+  marker="${SCRATCH}/belt-pwned"
+  printf 'touch %s\n' "${marker}" >"${evil}"
+  chmod 755 "${evil}"
+  dump="${SCRATCH}/belt-dump.env"
+  write_dump "${dump}" EVIL="${evil}" <<'EOS'
+BASH_ENV='@@EVIL@@'
+GOOD_ONE='alpha'
+EOS
+  export STUB_INFISICAL_DUMP="${dump}"
+
+  # The regression the guard exists for, derived rather than imagined: the one arm that
+  # drops the denied name comes out of this test's render. BOOT is the render setup()
+  # made, and this case replaces it deliberately. If the body's shape changes, the
+  # deletion stops matching and the count assertion says so rather than the test passing
+  # on a body that never had the arm to remove.
+  regressed="${SCRATCH}/boot-regressed.sh"
+  before="$(wc -l <"${BOOT}")"
+  sed '/\$evo_up "\*) continue ;;/d' "${BOOT}" >"${regressed}"
+  after="$(wc -l <"${regressed}")"
+  assert_eq "the regressed copy is exactly the filter arm shorter" "$((before - 1))" "${after}"
+
+  BOOT="${regressed}"
+  drive_vault "${home}" "true" ""
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: a refused publish must not fail the boot, exited %s\n' "${status}" >&2
+    return 1
+  }
+  run grep -q 'refused to publish' <<<"${stderr}"
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: the guard stayed silent on a poisoned staged file\nerr:\n%s\n' "${stderr}" >&2
+    return 1
+  }
+  assert_eq "the file the good boot wrote is byte-identical still" "${good}" "$(cat "${agent}")"
+  assert_file_not_exists "and nothing in it executed" "${marker}"
+
+  # The complement, so the guard is proven load-bearing rather than decorative: take the
+  # guard out as well and the very same poisoned dump does land. The condition is made
+  # false rather than deleted so the body still parses, and the substitution is counted so
+  # a body whose guard line moved fails here instead of silently unbelted.
+  unbelted="${SCRATCH}/boot-unbelted.sh"
+  sed -e '/\$evo_up "\*) continue ;;/d' \
+    -e 's/if grep -qiE/if false \&\& grep -qiE/' "${BOOT}" >"${unbelted}"
+  assert_eq "the unbelted copy is the guard switched off once" "1" \
+    "$(grep -c 'if false && grep -qiE' "${unbelted}")"
+
+  BOOT="${unbelted}"
+  drive_vault "${home}" "true" ""
+  run grep -qxF "export BASH_ENV='${evil}'" "${agent}"
+  [ "${status}" -eq 0 ] || {
+    printf 'FAIL: with both filters off the poisoned line still did not land,\nso this case proves nothing about the guard:\n%s\n' \
+      "$(cat "${agent}")" >&2
+    return 1
+  }
+}
+
+# ---------------------------------------------------------------------------
 # Leftovers and leaks.
 # ---------------------------------------------------------------------------
 
