@@ -464,20 +464,21 @@ while the managed block is intact.
   last-booted workspace's key wins for the whole fleet.
 - `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane each
   type rides, both rendered from template variables: `grok_subagents_lane` (default
-  `agent`) for the writers, three more for the reader, planner and skeptic roles named
+  `agent-swarm`) for the writers, three more for the reader, planner and skeptic roles named
   below, and `grok_subagent_max_concurrent` (default `null`, which means "derive it
   from the lane"). The two keys are one calculation, and `main.tf` is where it is made:
   `var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent :
-  (var.grok_subagents_lane == "agent-swarm" ? 8 : 4)`, so
-  `--var grok_subagents_lane=agent-swarm` on its own yields 8 slots, a pinned lane yields
-  4, and an explicit `--var grok_subagent_max_concurrent=N` always wins. The variable's
+  (var.grok_subagents_lane == "agent-swarm" ? 15 : 4)`, so the shipped swarm default
+  yields 15 slots, `--var grok_subagents_lane=agent` is the rollback that puts the writers
+  back on the parent's pinned box for 4, and an explicit
+  `--var grok_subagent_max_concurrent=N` always wins. The variable's
   own validation accepts null or a whole number 1..32, because past the fleet's ceiling
   a bigger number is only a longer queue. A parent session and every subagent it spawns
   carry the same `x-litellm-session-id`, so on a pinned lane the whole fan-out resolves
   to one deployment and competes for that box's `PARALLEL` streams - 5 by default, set in
   `scripts/spark-configure.sh` - and that is where 4 comes from: one box's `PARALLEL`
-  minus the parent's own stream. Pointing the lane at `agent-swarm` is the case where
-  widening pays: that group carries no pin, so each subagent request is placed on
+  minus the parent's own stream. The `agent-swarm` default is where widening pays: that
+  group carries no pin, so each subagent request is placed on
   whichever reachable box has the fewest requests in flight and the ceiling becomes
   `PARALLEL` per box rather than per workspace - 3 boxes x 5 = 15, which asks the fleet
   for every stream it has, so treat 15 as a one-workspace-at-a-time number.
@@ -486,7 +487,7 @@ while the managed block is intact.
   instead of failing the spawn, so overshoot costs a subagent latency rather than its
   life. `[subagents.models]` pins every subagent type a session can get to a lane of its
   own, and there are four variables behind those pins, not one: `grok_subagents_lane`
-  (default `agent`) for the writers, `grok_explore_lane` (default `agent-explore`) for the
+  (default `agent-swarm`) for the writers, `grok_explore_lane` (default `agent-explore`) for the
   mappers, `grok_plan_lane` (default `agent`) for the planner, and `grok_review_lane`
   (default `agent-review`) for the skeptics. Concretely the block renders
   `general-purpose`, `implementer` and `tester` from the writers' lane, `explore` and
@@ -612,7 +613,7 @@ silent and counting it stays the parent's job.
 describes one tree and orchestration cannot leak.
 
 **What the lane choice buys.** `grok_subagents_lane` is the knob for the writers, and the
-width follows it: 8 on `agent-swarm`, 4 on a pinned lane, and an explicit
+width follows it: 15 on `agent-swarm`, 4 on a pinned lane, and an explicit
 `grok_subagent_max_concurrent` overrules both (its validation accepts null or 1..32). Both
 defaults are the fleet's arithmetic rather than taste. A parent and every child it spawns
 carry the same `x-litellm-session-id`, so a pinned lane places the whole fan-out on one
@@ -654,7 +655,7 @@ the default goes in, so a typo is a line in the output rather than a broken key 
 `~/.grok/config.toml`:
 
 ```text
-note: GROK_SUBAGENTS_LANE='not a model id' is not a model id - using agent
+note: GROK_SUBAGENTS_LANE='not a model id' is not a model id - using agent-swarm
 note: GROK_SUBAGENT_MAX_CONCURRENT='99' is past the fleet's ceiling - using 32
 ```
 
@@ -792,11 +793,10 @@ knob:
 
 The four layers can name different lanes: the guide ranks the per-type pin as applying "for
 any parent" without ranking it against a definition's own `model:`
-(`~/.grok/docs/user-guide/16-subagents.md:287`). Four of the six bake the same alias their
-pin defaults to; `implementer` and `tester` bake `agent-swarm` while `grok_subagents_lane`
-defaults to `agent`, so a workspace that wants its writers somewhere specific should set the
-variable rather than rely on the file. `/config-agents` (alias `/agents`) is where a person
-sees and toggles the set.
+(`~/.grok/docs/user-guide/16-subagents.md:287`). All six bake the same alias their
+pin defaults to, `implementer` and `tester` among them, so a workspace that wants its
+writers somewhere specific should set the variable rather than rely on the file.
+`/config-agents` (alias `/agents`) is where a person sees and toggles the set.
 
 ### The three persona overlays
 

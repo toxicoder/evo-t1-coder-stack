@@ -702,7 +702,7 @@ measured 30-request burst, the **Agent backend** card) are in
 | `agent-low` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low` | yes (same as `agent`) |
 | `agent-medium` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `medium` | yes (same as `agent`) |
 | `agent-xhigh` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh` | yes (same as `agent`) |
-| `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group carries no session pin, so every request lands on the least-busy healthy box; naming it as `grok_subagents_lane` is also what widens a fan-out to 8 subagents by default | yes (same as `agent`) |
+| `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group carries no session pin, so every request lands on the least-busy healthy box; the default `grok_subagents_lane`, so the writer types fan out over all three boxes with 15 in flight by default | yes (same as `agent`) |
 | `agent-explore` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low`, and no session pin either, so a wave of read-only fleet children is placed across all three boxes; the default `grok_explore_lane`, and not a Coder Agents chat model | yes (same as `agent`) |
 | `agent-review` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and no session pin like `agent-explore`; the default `grok_review_lane` for the skeptical roles, and not a Coder Agents chat model | yes (same as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
@@ -722,16 +722,18 @@ Agents chat models, so an alias edited here moves in the Agents dropdowns too. T
 no `high` level on this runtime. There are seven Spark aliases in all: `agent-swarm` is the
 fifth and, with the two after it, one of the three that carry no session pin - same boxes,
 same baked `xhigh`, each request placed on the box carrying the fewest in flight, which is
-the lane a parallel subagent fan-out wants - point one at it with
-`--var grok_subagents_lane=agent-swarm`. That one variable is the whole fan-out switch,
-because the width now follows the lane: it pins the writer types in `[subagents.models]` -
+the lane a parallel subagent fan-out wants, and the shipped default for the writers.
+Rolling them back to one box is `--var grok_subagents_lane=agent`. That one variable is
+the whole fan-out switch, because the width now follows the lane: it pins the writer
+types in `[subagents.models]` -
 `general-purpose`, which is the type a spawn gets when it names none and the one every
 writer in a fan-out runs as, plus the seeded `implementer` and `tester`, while the read-only
-`explore` and `plan` follow their own lane variables below - and it raises the default to 8
+`explore` and `plan` follow their own lane variables below - and it sets the default to 15
 subagents in flight, where a pinned lane stays at 4. That 4 is one box's `PARALLEL` (5 by
 default, `scripts/spark-configure.sh`) minus the parent's own stream, which is why a bigger
 number on a pinned lane buys queue depth and not capacity; the swarm lane spreads over all
-three boxes, so its ceiling is `PARALLEL` per box x 3 = 15.
+three boxes, so its ceiling is `PARALLEL` per box x 3 = 15, which asks every box for all of
+its streams.
 `--var grok_subagent_max_concurrent=N` overrules the derived width whenever one workspace
 wants a number of its own, and
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the

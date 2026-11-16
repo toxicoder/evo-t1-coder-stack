@@ -207,7 +207,7 @@ while it renders the config - `GROK_SUBAGENTS_LANE` names the lane the
 writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width, and
 `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
 reader, the planner and the skeptic ride, with the same
-derivation the templates use (8 on the unpinned `agent-swarm` lane, 4 on a
+derivation the templates use (15 on the unpinned `agent-swarm` lane, 4 on a
 pinned one). A value the seeder cannot use - a lane that is not a bare model id, a
 width that is not a count or sits past 32 - is refused with
 a `note:` line naming the key, and the derived default goes in, so a typo lands as output

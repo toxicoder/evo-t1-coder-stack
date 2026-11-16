@@ -59,10 +59,12 @@ Read your real slot count once, here, and never guess it again:
     grep -A4 '^\[subagents\]' ~/.grok/config.toml
 
 `max_concurrent` is the ceiling for one session and `sampling_limit` follows it when
-unset. Put that number in the plan as `slots:`. If it is above 5 and the session's
-subagents ride a pinned Spark lane, the fan-out queues behind that one box's streams: the
-fix is the unpinned lane, not a smaller plan. `docs/litellm-routing.md` explains the
-trade and `--var grok_subagents_lane=agent-swarm` sets it. That knob moves the writer
+unset. Put that number in the plan as `slots:`. The writer types ship on the unpinned
+`agent-swarm` lane by default, so a workspace that passed no `--var` already spreads a
+fan-out over every Spark box. If this one instead reports a pinned Spark lane, someone
+rolled it back with `--var grok_subagents_lane=agent`, and the fix is to put that lane
+back rather than to plan a smaller wave. `docs/litellm-routing.md` explains the
+trade. That knob moves the writer
 types only: `grok_explore_lane`, `grok_plan_lane` and `grok_review_lane` route the
 mappers, the planner and the skeptics, so a wave of readers or a review pass can be put
 on its own alias without touching the writers. `[subagents.models]` is the

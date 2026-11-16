@@ -127,10 +127,19 @@ The two levers that actually move load off a shedding box:
 2. Keep what one workspace puts on one box at or under that box's `PARALLEL` (5). A
    pinned lane sends the whole fan-out to the box its session key resolves to, which is
    why the derived width there is 4: one box's streams, minus the parent's own request.
-   The unpinned `agent-swarm` lane is the one the writers ride, and the one that can afford
-   a wider wave - 8 subagents spread by `least-busy` over three boxes sit under `PARALLEL`
-   on each, which is the
-   difference between buying wall-clock and buying queue depth. The two reader lanes
+   The unpinned `agent-swarm` lane is what the writers ride by default, and the one that
+   can afford a wider wave - 15 subagents spread by `least-busy` over three boxes fill each
+   box's `PARALLEL` exactly, which is the
+   difference between buying wall-clock and buying queue depth. That default asks every box
+   for all of its streams, and it reserves nothing for the parent's own request the way
+   the pinned derivation's minus-one does. That is a deliberate trade rather than an
+   oversight: the parent's conversation, the reader waves and the review pass all arrive
+   on the same three boxes and share those `PARALLEL` streams, so at 15 a single busy
+   workspace can have the fleet fully subscribed and the last arrivals wait. What makes
+   that survivable is `limit_behavior = "queue"` holding the overflow instead of failing
+   the spawn, so the cost of overshoot is a subagent's latency. Drop
+   `grok_subagent_max_concurrent` below 15 when several workspaces share the fleet. The
+   two reader lanes
    spread the same way, and each group counts its own in-flight requests, but the box's
    `PARALLEL` streams are one pool that every alias arriving on it shares.
    Past 15 across the fleet the boxes have no
@@ -150,7 +159,7 @@ key, so a config that looks correct silently does nothing, which is why
 | `agent-low` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `low` | yes (same model and boxes as `agent`) |
 | `agent-medium` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `medium` | yes (same model and boxes as `agent`) |
 | `agent-xhigh` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh` | yes (same model and boxes as `agent`) |
-| `agent-swarm` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh`, and the first group with no session pin, so each request is placed on the least-busy healthy box | yes (same model and boxes as `agent`) |
+| `agent-swarm` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh`, and the first group with no session pin, so each request is placed on the least-busy healthy box; the default `grok_subagents_lane`, so the writer types fan out here | yes (same model and boxes as `agent`) |
 | `agent-explore` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `low`, and no pin here either, so a wave of one-shot read-only children is placed across the fleet rather than queueing behind one box; the default `grok_explore_lane` | yes (same model and boxes as `agent`) |
 | `agent-review` | `Qwen3.8-Flash-Next` | the same three Spark boxes as `agent`, as its own group; thinking baked to `xhigh` like `agent`, and the same pin lift as `agent-explore`, so a wave of reviewers spreads the same way; the default `grok_review_lane` | yes (same model and boxes as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
@@ -346,8 +355,9 @@ again. For a child that answers once there is no second turn to pay for; point a
 conversation at these aliases and there is. A long single-thread chat, an orchestrator, or
 anything whose turns share a warm prefix belongs on `agent`.
 
-Each lane is the default for its own role and is set by its own template variable, so
-either rolls back alone without moving the others:
+Each reader lane is the default for its own role and is set by its own template
+variable, so either rolls back alone without moving the other or the writers'
+`agent-swarm` default:
 
 | Lane | Role it carries | Default | `--var` that puts it back on a pinned lane |
 |---|---|---|---|
@@ -473,9 +483,9 @@ Order matters when an alias is new rather than changed: the proxy reads
 starts, so restart the proxy first and boot the workspace after it. A workspace older than
 the proxy asks for an alias the config does not have, and the router answers "No
 deployments available" rather than falling back. The rollback is one variable per lane, and
-it does not need the proxy at all: `--var grok_explore_lane=agent-low` and
-`--var grok_review_lane=agent` put each role back on a pinned alias that every config
-version already carries.
+it does not need the proxy at all: `--var grok_subagents_lane=agent` re-pins the writers to
+one box, and `--var grok_explore_lane=agent-low` and `--var grok_review_lane=agent` put each
+reader role back on a pinned alias that every config version already carries.
 
 Neither stack runner has a `restart` subcommand (`up`, `down`, `status`, `logs`, `reset`
 are the whole set), so the proxy restart stays a direct compose call. Stable stack:

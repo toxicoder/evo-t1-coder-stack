@@ -133,8 +133,9 @@ resolve_repo_root() {
 # handshakes and answers keyless at the public rate limits). ${litellm_url}
 # becomes STACK_LITELLM_URL, the affinity key is contributor, the cache-proxy
 # path re-roots under the seed home, and each fan-out role ships on the alias
-# its template variable defaults to (writers and the planner on agent, readers
-# on agent-explore, the skeptic on agent-review). Substitutions are sed, never
+# its template variable defaults to (writers on agent-swarm,
+# the planner on agent, readers on agent-explore, the skeptic on
+# agent-review). Substitutions are sed, never
 # eval; a doubled dollar unfolds first.
 # Globals:
 #   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
@@ -163,17 +164,17 @@ seed_render_grok_config() {
   # uses: only the unpinned swarm lane spreads a fan-out across the fleet, so it
   # gets the width that keeps three boxes busy. A value the sed could not take
   # safely (a model id is a bare token, the width is a count) falls back.
-  lane="${GROK_SUBAGENTS_LANE:-agent}"
+  lane="${GROK_SUBAGENTS_LANE:-agent-swarm}"
   if [[ ! ${lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
-    note "GROK_SUBAGENTS_LANE='${lane}' is not a model id - using agent"
-    lane="agent"
+    note "GROK_SUBAGENTS_LANE='${lane}' is not a model id - using agent-swarm"
+    lane="agent-swarm"
   fi
   slots="${GROK_SUBAGENT_MAX_CONCURRENT:-}"
   if [[ -z ${slots} ]]; then
-    if [[ ${lane} == "agent-swarm" ]]; then slots="8"; else slots="4"; fi
+    if [[ ${lane} == "agent-swarm" ]]; then slots="15"; else slots="4"; fi
   elif [[ ! ${slots} =~ ^[1-9][0-9]*$ ]]; then
     note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is not a count - deriving it from lane ${lane}"
-    if [[ ${lane} == "agent-swarm" ]]; then slots="8"; else slots="4"; fi
+    if [[ ${lane} == "agent-swarm" ]]; then slots="15"; else slots="4"; fi
   elif ((slots > 32)); then
     note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is past the fleet's ceiling - using 32"
     slots="32"

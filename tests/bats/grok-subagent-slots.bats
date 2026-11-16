@@ -165,7 +165,38 @@ subagents_block() {
   done
 }
 
-@test "subagent width: both main.tf twins derive 8 on the swarm lane and 4 pinned" {
+@test "subagent lane: both coder.tf twins default the writers to the swarm lane" {
+  # This default is the routing every workspace that passes no --var gets, and the
+  # width is derived from it, so a re-hardcoded "agent" here quietly puts the whole
+  # fleet behind one box again. Assert it inside the variable block: each twin
+  # carries two other default     = "agent" lines (grok_default_model,
+  # grok_plan_lane) that a file-wide grep cannot tell apart from this one.
+  #
+  # Pin those two neighbours in the same pass. A blanket flip to agent-swarm would take
+  # the session model and the planner with it, and only this test can see that it did:
+  # the session model decides which lane the parent conversation runs on, and the planner
+  # stays pinned on purpose because one planner steers every wave after it.
+  local file block
+  for file in "${CODER_TWINS[@]}"; do
+    block="$(awk '/^variable "grok_subagents_lane" \{/,/^\}/' "${file}")"
+    [[ "${block}" == *'default     = "agent-swarm"'* ]] || {
+      echo "${file} does not default grok_subagents_lane to agent-swarm" >&2
+      return 1
+    }
+    block="$(awk '/^variable "grok_default_model" \{/,/^\}/' "${file}")"
+    [[ "${block}" == *'default     = "agent"'* ]] || {
+      echo "${file} does not default grok_default_model to agent" >&2
+      return 1
+    }
+    block="$(awk '/^variable "grok_plan_lane" \{/,/^\}/' "${file}")"
+    [[ "${block}" == *'default     = "agent"'* ]] || {
+      echo "${file} does not default grok_plan_lane to agent" >&2
+      return 1
+    }
+  done
+}
+
+@test "subagent width: both main.tf twins derive 15 on the swarm lane and 4 pinned" {
   local file
   for file in "${MAIN_TWINS[@]}"; do
     run grep -F 'var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent' "${file}"
@@ -173,7 +204,7 @@ subagents_block() {
       echo "${file} feeds the raw variable, so the lane cannot set the width" >&2
       return 1
     }
-    run grep -F 'var.grok_subagents_lane == "agent-swarm" ? 8 : 4' "${file}"
+    run grep -F 'var.grok_subagents_lane == "agent-swarm" ? 15 : 4' "${file}"
     [ "${status}" -eq 0 ] || {
       echo "${file} lost the per-lane widths" >&2
       return 1
