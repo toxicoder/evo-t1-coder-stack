@@ -1695,7 +1695,7 @@ bazelisk run //scripts:prod-stack -- up
   at `templates/devcontainer/main.tf:769`):
 
 ```text
-infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the template fills them from INFISICAL_PORT and from the five of the same spelling in the stack host's .env once INFISICAL_ENABLED is truthy: set them there and re-run bazelisk run //scripts:push-template.
+infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the push composes INFISICAL_DOMAIN itself, from INFISICAL_PORT, so the name missing here is one of the other five: each is read from the key of the same spelling in the stack host's .env, and one that is empty or still spells change-me is skipped rather than sent: set it there and re-run bazelisk run //scripts:push-template.
 ```
 
 - Cause: the body's first gate, `templates/common/infisical-secrets.sh.tftpl:14-20` - any
@@ -1747,7 +1747,7 @@ infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps th
   the push forwards
   `--var infisical_pull_on_start=true` only when `.env` carries a truthy
   `INFISICAL_PULL_ON_START` *under* a truthy `INFISICAL_ENABLED`
-  (`scripts/push-template.sh:668-671`), so an adopted vault still ships a boot that never
+  (`scripts/push-template.sh:636`, `:668-671`), so an adopted vault still ships a boot that never
   waits on the network. That off is the safe side of a real trade: a fetch that reaches the
   vault is a fetch bounded by the script's own `timeout = 120`
   (`templates/workspace/main.tf:725`), and the exit is `0` either way because no secret

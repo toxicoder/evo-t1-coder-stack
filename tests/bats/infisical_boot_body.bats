@@ -404,6 +404,15 @@ ${twin_b}:1" "${output}"
         "${seam}" "${stderr:-}"
     done
     assert_match "and what to do about it" 'push-template' "${stderr:-}"
+    # The remedy has to name the key the domain is really composed from. The line once
+    # sent the operator to INFISICAL_URL, which reaches no workspace, and the fix must
+    # not rot back: scripts/push-template.sh:652-661 gives the port a default, so a boot
+    # that reaches this guard is missing one of the other five and the domain is the one
+    # name nobody fills by hand.
+    assert_match "and it names the composed domain" \
+      'INFISICAL_DOMAIN itself, from INFISICAL_PORT' "${stderr:-}"
+    assert_not_match "and it never sends the operator to the host-only origin" \
+      'INFISICAL_URL' "${stderr:-}"
     assert_not_match "and the pull gate is not what answered" 'pull-on-start' "${stderr:-}"
     assert_file_not_exists "and no agent.env was published for ${name}" "$(agent_env "${home}")"
     assert_eq "and the CLI was never called for ${name}" "0" "$(stub_log_count infisical)"
