@@ -33,9 +33,15 @@
 # reason: in a command substitution the registration dies with the subshell and the
 # secret outlives the run.
 #
-# The flag: INFISICAL_ENABLED is read in exactly one place, infisical_enabled, and
-# only through truthy(). It defaults OFF, which is the deliberate opposite of
+# The flag: infisical_enabled below is the single decision point for
+# INFISICAL_ENABLED - every behaviour gate in the vault calls it, and it reads the
+# key through truthy() alone. It defaults OFF, which is the deliberate opposite of
 # OBSERVABILITY_ENABLED in scripts/lib/common.sh:349, where an absent key means on.
+# One file reads the key without this function: scripts/push-template.sh:636 does it
+# through that file's own env_get, because it never sources this lib and reads only
+# the .env file, never the process environment, which is what keeps a stray exported
+# INFISICAL_ENABLED from changing what gets pushed. That is the whole inventory, and
+# push-template.bats pins it by asserting a vault-off push leaves no vault word at all.
 #
 # Usage (from an entry script, after `set -euo pipefail` and the repo-root cd):
 #   # shellcheck source=lib/infisical.sh disable=SC1091
@@ -424,9 +430,12 @@ infisical_write_env() {
 }
 
 # @function infisical_enabled
-# The one reader of the INFISICAL_ENABLED flag. Off unless truthy accepts the value,
-# so an absent key and a blank one both mean off -- the deliberate opposite of
-# compose_observability_args in scripts/lib/common.sh:349, where absent means on.
+# The single decision point for the INFISICAL_ENABLED flag: every behaviour gate in
+# the vault calls this rather than reading the key itself. Off unless truthy accepts
+# the value, so an absent key and a blank one both mean off -- the deliberate opposite
+# of compose_observability_args in scripts/lib/common.sh:349, where absent means on.
+# scripts/push-template.sh is the one file that reads the key directly (its own
+# env_get, file only, by design); see the header note above.
 # The process environment outranks the file, which is compose's own interpolation
 # precedence, so a profile cannot disagree with the values it was interpolated with.
 # Globals:
