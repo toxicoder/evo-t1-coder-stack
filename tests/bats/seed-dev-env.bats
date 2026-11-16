@@ -491,6 +491,12 @@ assert_contributor_home() {
   assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
   assert_fixed "pinned lane stays swarm-sized" "${out}" 'max_concurrent = 15'
 
+  # GROK_SWARM_WIDTH is where the 15 actually comes from, so a contributor on a
+  # smaller fleet narrows it here. Hard-coding 15 in the seeder passes every other
+  # case in this file, which is why the key needs a case of its own.
+  GROK_SWARM_WIDTH='7' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "the fleet width key supplies the width" "${out}" 'max_concurrent = 7'
+
   # A value sed could not substitute safely is refused out loud, and the width
   # still comes out of the lane rather than rendering a broken TOML integer.
   notes="$(GROK_SUBAGENTS_LANE='bad lane|pipe' GROK_SUBAGENT_MAX_CONCURRENT='many' \

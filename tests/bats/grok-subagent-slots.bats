@@ -415,12 +415,14 @@ subagents_block() {
   # to be named, so the prose cannot drift from main.tf again unnoticed.
   local file flat pattern
   local -a banned=(
-    'width[^.]{0,60}follows? the (lane|writers|same)'
-    'width[^.]{0,60}(derived|derives|derivation|taken|comes)[^.]{0,15}(from|by|off) the lane'
+    'width.{0,60}follows? the (lane|writers)'
+    'width.{0,60}(deriv[ey]|derived|derives|derivation|taken|comes|set).{0,15}(from|by|off) the lane'
     'asks the lane'
     '4 on a pinned (one|lane)'
-    '15 on the unpinned[^.]{0,40}lane'
-    'var\.grok_subagents_lane == "agent-swarm" \? 15 : 4'
+    '15 on the unpinned.{0,40}lane'
+    '15 : 4'
+    'stays at 4'
+    'where 4 comes from'
   )
   for file in "${FANOUT_DOCS[@]}"; do
     # A missing page is a failure here, not a skip: the setup probe skips the

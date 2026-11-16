@@ -262,7 +262,7 @@ _SUITE_PAYLOAD = {
     ],
     # The fan-out seam: the two grok-config twins, both coder.tf and main.tf
     # twins, the contributor seed, and the rulebook all arrive with the template
-    # payload. The suite also reads the four operator pages that teach the same
+    # payload. The suite also reads the five operator pages that teach the same
     # width rule, so they ride in too: without them every test in the file skips
     # on the setup probe and the whole seam reads green while asserting nothing.
     "grok-subagent-slots.bats": [
