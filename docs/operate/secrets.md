@@ -107,7 +107,9 @@ The body gates itself twice before it dials anything. First the **six configured
 where they come from, and exits 0. Then `INFISICAL_PULL_ON_START`, whose off path prints that the
 boot "keeps the credentials it already has" and also exits 0. Every other failure path - no
 `infisical` binary in the image, no `HOME`, a refused Universal Auth login, an empty export, a
-refused publish - exits 0 as well. A vault outage has never once stopped a workspace.
+refused publish - exits 0 as well. The golden image bakes the pinned CLI (`images/dev/Dockerfile`,
+`INFISICAL_CLI_VERSION` in `images/dev/tool-versions.env`), so the missing-binary path is what an
+image older than that pin hits. A vault outage has never once stopped a workspace.
 
 What gets published is whatever the workspace's own machine identity can read in the project,
 which is what the vault scopes - the twelve-key inventory is a host-side list
@@ -379,7 +381,9 @@ is what this inventory replaced.
 
 ## Keys the vault does not hold
 
-Four secret-shaped keys compose interpolates sit outside the inventory, and each one is
+Two lists sit outside the inventory, and they are outside for different reasons.
+
+Four secret-shaped keys compose interpolates are among them, and each one is
 outside for a reason worth knowing before you add it:
 
 - `INFISICAL_DB_PASSWORD`, `INFISICAL_ENCRYPTION_KEY`, `INFISICAL_AUTH_SECRET` - the
@@ -387,8 +391,26 @@ outside for a reason worth knowing before you add it:
   needs them to start. They live in `.env`, and you set them.
 - `CODER_DEFAULT_TOKEN_LIFETIME` - a duration, not a secret.
 
-Anything else that looks like a credential and is not on this page is either a bug in the
-inventory or a bug in the compose file, and `check` is the command that catches the first.
+Three more are credentials that never appear in a compose interpolation, so they
+travel to their consumer through a CLI rather than through `${VAR}`:
+
+- `INFISICAL_ADMIN_PASSWORD` - the login `bootstrap` uses to create the project and the
+  machine identity (`scripts/lib/infisical.sh:1216`), minted by
+  `scripts/bootstrap.sh:119`. It is spent before the project exists, so there is no
+  vault to read it from yet.
+- `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` - the machine identity's Universal Auth
+  secret, which is the credential every fetch authenticates with
+  (`scripts/lib/infisical.sh:803`). Storing it in the project it unlocks would make the
+  vault a precondition of reading the vault.
+- `CONTEXT7_API_KEY` - the optional Context7 MCP lane's upstream key, forwarded as
+  `context7_api_key` by `scripts/push-template.sh:573-577` and seeded into
+  `~/.grok/config.toml` by `//scripts:seed-dev-env`. Most operators never set it, and
+  `pull` prints one `warning:` per inventory key the vault does not carry, so shipping
+  it in the inventory would make the default state a warning on every fetch.
+
+Anything compose interpolates that looks like a credential and appears nowhere on this
+page is either a bug in the inventory or a bug in the compose file, and `check` is the
+command that catches the first.
 
 ## When Infisical is unreachable
 
@@ -409,7 +431,8 @@ whose failure is one `warning:` line.
   empty, is a `warning:` per key and the existing value in `.env` stays exactly as it was
   - a half-seeded project must not lock every service out of its own credential.
 - **A workspace still starts.** The boot fetch is best-effort: with the flag off, with
-  `INFISICAL_PULL_ON_START` off, with no CLI in the image, with a refused Universal Auth
+  `INFISICAL_PULL_ON_START` off, with no CLI in the image (the golden image bakes the
+  pinned release, so that is an image older than the pin), with a refused Universal Auth
   login, with an empty export, or with a refused publish, it exits 0 and the workspace
   continues its startup. `agent.env` keeps whatever the last start wrote, since the body
   stages beside the destination and moves in one step rather than truncating first. A vault
