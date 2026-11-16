@@ -646,33 +646,33 @@ vault_prepare() {
   vault_lib
 }
 
-@test "the deploy refreshes the env file from the vault before the bring-up" {
-  # The order is the requirement: compose resolves ${VAR} when it parses the file,
-  # so a fetch after `<flavour>-stack.sh up` is a fetch no container ever saw. The
-  # stable stack names no env file, so the file is the .env beside the compose file.
+@test "the deploy leaves the vault fetch to the bring-up and never dials the vault twice" {
+  # The fetch has to land immediately before compose interpolates the env file, and
+  # the sibling's `up` is the step that sits there - it performs the pull itself, which
+  # dev-stack.bats and prod-stack.bats each pin. This deploy pulling as well dialled the
+  # vault twice per run and printed the same outage warning twice, so what is pinned
+  # here is the absence: the deploy makes no fetch of its own, and the bring-up still
+  # happens. The stable stack names no env file, so the file in play is the .env beside
+  # the compose file.
   export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
   export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
   vault_prepare STUB_DIFF_OUT='README.md'
   run_cli INFISICAL_ENABLED=true
   [ "${status}" -eq 0 ]
-  assert_match "phase line" '^-> vault: refreshing the env file from Infisical$' "${output}"
-  assert_eq "exactly one pull" "1" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
-  assert_eq "the file compose reads" "pull | ${ROOT_FAKE}/.env" \
-    "$(grep -e '^pull | ' "${VAULT_PULL_LOG}")"
-  local pull_line up_line
-  pull_line="$(grep -nF -e 'pull | ' "${VAULT_PULL_LOG}" | head -n1 | cut -d: -f1 || true)"
-  up_line="$(grep -nF -e 'prod-stack | up' "${SIBLING_LOG}" | head -n1 | cut -d: -f1 || true)"
-  [ -n "${pull_line}" ] && [ -n "${up_line}" ]
-  [ "${pull_line}" -lt "${up_line}" ]
+  assert_match "the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+  assert_eq "the deploy made no pull of its own" "0" \
+    "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "and printed no fetch phase of its own" 'vault: refreshing' "${output}"
 
-  # The dev flavour reads its own env file, and that is the one that gets refreshed.
-  : >"${ROOT_FAKE}/dev-stack.env"
+  # A dry run never reaches the sibling, so the plan is where the operator learns the
+  # bring-up will refresh the file first.
   : >"${VAULT_PULL_LOG}"
   rm -f "${BATS_TEST_TMPDIR?}/head.count"
-  run_cli INFISICAL_ENABLED=true --stack dev
+  run_cli INFISICAL_ENABLED=true --dry-run
   [ "${status}" -eq 0 ]
-  assert_eq "the dev flavour refreshes dev-stack.env" "pull | ${ROOT_FAKE}/dev-stack.env" \
-    "$(grep -e '^pull | ' "${VAULT_PULL_LOG}")"
+  assert_match "the dry run names the refresh it will not perform" \
+    'would refresh .* from Infisical' "${output}"
+  assert_eq "and a plan pulls nothing" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
 }
 
 @test "the deploy with the vault flag off fetches nothing and says nothing about it" {
@@ -701,35 +701,35 @@ vault_prepare() {
   assert_match "false: the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
 }
 
-@test "an unreachable vault is one warning and the deploy brings the stack up anyway" {
+@test "an unreachable vault does not stop the deploy" {
   # A deploy that cannot reach its vault still deploys the code it pulled: the env
-  # file keeps the credentials it already has, and the warning names that file and
-  # the retry command - never a key name, and never a value.
+  # file keeps the credentials it already has. The operator-facing warning that says
+  # so, and the retry command it names, belong to the bring-up that owns the fetch
+  # (pinned in dev-stack.bats and prod-stack.bats) - this deploy is the caller, so
+  # what is pinned here is that a vault failure neither makes a second attempt nor
+  # adds a warning of its own nor costs the operator the deploy.
   export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
   export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
   vault_prepare STUB_DIFF_OUT='README.md'
   run_cli INFISICAL_ENABLED=true VAULT_RC=1
   [ "${status}" -eq 0 ]
-  assert_eq "still exactly one attempt" "1" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
-  assert_match "one warning naming the file" \
-    '^warning: the env file was not refreshed from Infisical; .*/\.env keeps the credentials it already has' \
-    "${output}"
-  assert_eq "one such warning" "1" \
-    "$(grep -c -e 'not refreshed from Infisical' <<<"${output}" || true)"
-  assert_match "it names the retry" 'bazelisk run //scripts:infisical -- pull' "${output}"
+  assert_eq "no attempt of its own to retry" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "and no second copy of the bring-up's warning" \
+    'not refreshed from Infisical' "${output}"
   assert_match "the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
 }
 
 @test "a dry run plans the vault refresh and writes nothing" {
-  # --dry-run promises a plan, and the refresh writes the env file, so the flag
-  # alone must not let a planning run touch a live credential file.
+  # --dry-run promises a plan, and the refresh writes the env file. The fetch itself
+  # sits in the bring-up, which a plan never reaches, so the deploy's whole duty here
+  # is to tell the operator the file will be refreshed before compose interpolates it.
   export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
   export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
   vault_prepare STUB_DIFF_OUT='README.md'
   run_cli INFISICAL_ENABLED=true --dry-run
   [ "${status}" -eq 0 ]
   assert_eq "nothing pulled" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
-  assert_match "the plan names it" '^note: dry run: would refresh .*/\.env from Infisical$' "${output}"
+  assert_match "the plan names it" '^note: dry run: would refresh .*/\.env from Infisical' "${output}"
 }
 
 @test "--litellm-url is forwarded to the workspace reseed" {

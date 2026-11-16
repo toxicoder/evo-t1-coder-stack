@@ -640,13 +640,13 @@ carry_deploy_state() {
 # docker-compose.yml or an env file, the project is stopped first: `up -d`
 # leaves a service that was deleted from the file running, and a changed
 # interpolation only lands in a recreated container.
-# With INFISICAL_ENABLED on, the env file the sibling's compose is about to
-# interpolate is refreshed from the vault first, so a rotated credential reaches
-# every service on this deploy; a failed fetch is a warning and the stack comes up
-# regardless.
+# With INFISICAL_ENABLED on, the env file compose is about to interpolate is refreshed
+# from the vault by the sibling's `up`, immediately before that interpolation; a failed
+# fetch is a warning there and the stack comes up regardless. This function only names
+# that step in a plan, which is the one case where the sibling never runs to do it.
 # Globals:
 #   STACK_FLAVOUR, RESTART_MODE, PULL_IMAGES, DRY_RUN, ROOT_DIR,
-#   INFISICAL_ENABLED (through infisical_enabled and infisical_pull)
+#   INFISICAL_ENABLED (through infisical_enabled, to decide what the plan says)
 # Arguments:
 #   $1 - 1 when the pull changed compose or the env file, anything else for no
 # Outputs:
@@ -681,25 +681,19 @@ converge_stack() {
     note "litellm/config.yaml changed; the proxy restarts below to pick it up"
   fi
 
-  # The vault is the source of record for the managed credentials when the flag is
-  # on, so the file the sibling's compose is about to interpolate is refreshed here,
-  # after the pull/plan phases and before any container is recreated: a key rotated
-  # in Infisical then lands in this deploy instead of waiting for a human to run the
-  # pull verb. A dry run plans the fetch and writes nothing. Off is the shipped
-  # default and the branch never runs. A vault that cannot be reached must not stop
-  # a deploy: one warning, and the env file keeps the credentials it already has.
+  # The vault is the source of record for the managed credentials when the flag is on,
+  # and the fetch belongs to the sibling's `up`, immediately before compose interpolates
+  # the env file: a fetch after that parse is a fetch no container ever saw. Doing it
+  # here too dialled the vault twice per deploy and printed the same warning twice on an
+  # outage, so the deploy plans the step and the runners perform it - dev-stack.bats and
+  # prod-stack.bats each pin "up pulls the env file from the vault before compose
+  # renders". A dry run never reaches the sibling, so the plan says what will happen.
+  # Off is the shipped default and this branch never runs.
   local vault_env=""
   vault_env="$(stack_env_file)"
   vault_env="${vault_env:-${ROOT_DIR}/.env}"
-  if infisical_enabled "${vault_env}"; then
-    if [ "${DRY_RUN}" = "1" ]; then
-      note "dry run: would refresh ${vault_env} from Infisical"
-    else
-      phase "vault: refreshing the env file from Infisical"
-      if ! infisical_pull "${vault_env}"; then
-        warn "the env file was not refreshed from Infisical; ${vault_env} keeps the credentials it already has - retry with bazelisk run //scripts:infisical -- pull"
-      fi
-    fi
+  if [ "${DRY_RUN}" = "1" ] && infisical_enabled "${vault_env}"; then
+    note "dry run: would refresh ${vault_env} from Infisical (the bring-up does it, before compose interpolates)"
   fi
 
   run_sibling "compose up" "scripts/${STACK_FLAVOUR}-stack.sh" up || failed=1
