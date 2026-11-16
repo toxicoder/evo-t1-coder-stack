@@ -390,7 +390,7 @@ Nothing else about GitHub travels in a `--var`.
 | `STACK_SEARCH_PORT` | `--var searxng_url=http://host.docker.internal:<port>` | always; a blank or non-numeric value falls back to `8181` |
 | `INFISICAL_ENABLED` | `--var infisical_enabled=true` | only when truthy (`on`/`1`/`true`/`yes`); absent, blank or any other value passes nothing and each template's own `default = false` stands |
 | `INFISICAL_PULL_ON_START` | `--var infisical_pull_on_start=true` | only when truthy **and** `INFISICAL_ENABLED` is truthy, because it is read inside that branch |
-| `INFISICAL_URL` | `--var infisical_url=...` | only when present and not a `change-me*` placeholder; the value is never logged |
+| `INFISICAL_PORT` | `--var infisical_url=http://host.docker.internal:<port>` | read inside the `INFISICAL_ENABLED` branch, so a vault-off push passes no URL at all; the value is composed rather than forwarded, and an unset, blank or non-numeric port falls back to the published `8182` |
 | `INFISICAL_PROJECT_ID` | `--var infisical_project_id=...` | same reader and same condition |
 | `INFISICAL_MACHINE_IDENTITY_ID` | `--var infisical_machine_identity_id=...` | same reader and same condition |
 | `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` | `--var infisical_client_id=...` | same reader and same condition; the two names differ on purpose (see the bullet below) |
@@ -421,12 +421,16 @@ Nothing else about GitHub travels in a `--var`.
   token. See [GitHub credentials for a workspace](#github-credentials-for-a-workspace).
 - `coder_agent_url` exists so agents keep dialing the local plain listener when
   `CODER_ACCESS_URL` is a public name.
-- The six values the boot dials the vault with are forwarded **whether or not the flag is
-  on** (`scripts/push-template.sh:670-709`), so adopting the vault later is a re-push of one
-  word rather than a re-config of six, and a stack that never adopted Infisical pushes none
-  of them. None of the six is echoed either: an instance URL, a project id and a machine
-  identity id all end up transcribed into whoever's CI log this output lands in, so the log
-  line names only the key a value came from (`scripts/push-template.sh:659-662`).
+- The five values the boot reads the vault with are forwarded **whether or not the flag is
+  on** (`scripts/push-template.sh:697-731`), so adopting the vault later is a re-push of one
+  word rather than a re-config of five, and a stack that never adopted Infisical pushes none
+  of them. None of the five is echoed either: a project id and a machine identity id both end
+  up transcribed into whoever's CI log this output lands in, so the log line names only the
+  key a value came from (`scripts/push-template.sh:697-701`). The sixth value, the instance
+  URL, is the one a workspace cannot do without and the one this script composes rather than
+  forwards, inside the flag gate (`scripts/push-template.sh:652-661`): `.env`'s
+  `INFISICAL_URL` is the address the *host* dials, and a container handed that spelling reaches
+  its own loopback, where nothing listens.
 - Both gates are read with this script's own `env_get`, not with `infisical_enabled` from
   `scripts/lib/infisical.sh`: no push variable there reads the process environment, so a
   stray exported `INFISICAL_ENABLED` cannot change what gets pushed
@@ -436,7 +440,7 @@ Nothing else about GitHub travels in a `--var`.
   names its keys after how the Infisical CLI reads them
   (`INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `..._SECRET`), and `bazelisk run //scripts:infisical
   -- check` is the reader that keeps the `.env` spelling honest
-  (`scripts/push-template.sh:664-667`, `:689-694`, `:705-709`).
+  (`scripts/push-template.sh:687-690`, `:710-715`, `:726-731`).
 - The vault itself is not this page's subject: the three compose services, the operator CLI,
   the managed key inventory, the outage bounds and rotation are
   [operate/secrets.md](operate/secrets.md). What the templates do with what these keys
@@ -575,13 +579,13 @@ its alias (`templates/workspace/coder.tf:19-22`).
 | `context7_api_key` | `""`, `sensitive` | Handed to the workspace as `CONTEXT7_API_KEY`. The rendered file names the variable. |
 | `grok_config_extra` | `""` | The **Grok config extras** textarea: free-form TOML appended verbatim, under a comment header, to that workspace's rendered `~/.grok/config.toml`. |
 | `infisical_enabled` | `false` | The vault's switch, and the first of two gates. Off means the workspace cannot tell Infisical exists: no `INFISICAL_*` key in the agent env, no `coder_script.infisical_secrets` at all (`templates/workspace/main.tf:715-716`), no boot log line. Forwarded only as `--var infisical_enabled=true` for a truthy `.env` `INFISICAL_ENABLED` (`scripts/push-template.sh:636-638`), which is the deliberate inverse of `OBSERVABILITY_ENABLED` - that bundle ships on, so here an absent key is off (`scripts/push-template.sh:623-630`). All eight `infisical_*` variables exist in both twins (`templates/workspace/coder.tf:207-274`, `templates/devcontainer/coder.tf:194-261`). |
-| `infisical_url` | `""` | Handed to the boot fetch as `INFISICAL_DOMAIN`: the base URL of the self-hosted instance, e.g. `http://host.docker.internal:8182`. The CLI dials Infisical Cloud when handed no domain, so an empty value disables the fetch rather than guessing one, and a self-hosted vault nobody names is a wrong-server bug (`templates/workspace/coder.tf:213-219`). |
+| `infisical_url` | `""` | Handed to the boot fetch as `INFISICAL_DOMAIN`: the base URL of the self-hosted instance, e.g. `http://host.docker.internal:8182`. The CLI dials Infisical Cloud when handed no domain, so an empty value disables the fetch rather than guessing one, and a self-hosted vault nobody names is a wrong-server bug (`templates/workspace/coder.tf:215-219`). `//scripts:push-template` composes the value as `http://host.docker.internal:<INFISICAL_PORT>` rather than forwarding `.env`'s `INFISICAL_URL`, because that key is the address the stack host dials and a workspace has to reach the host gateway instead (`scripts/push-template.sh:652-661`). |
 | `infisical_project_id` | `""` | → `INFISICAL_PROJECT_ID`. The project the export reads. Not a credential, but no read works without it, so an empty value disables the fetch the way an empty URL does (`templates/workspace/coder.tf:221-227`). |
-| `infisical_machine_identity_id` | `""` | → `INFISICAL_MACHINE_IDENTITY_ID`. The machine identity the boot authenticates as - the id, never the token. It has no slot in any CLI argv, since the client id/secret are the credential, so it gates the fetch and records which identity the stack means (`templates/common/infisical-secrets.sh.tftpl:10-12`). |
-| `infisical_client_id` | `""` | → `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`. The Universal Auth client id; **not** sensitive, because it identifies the identity but cannot authenticate alone. `.env` spells this key the way the Infisical CLI reads it, which is the one name pair here that differs (`scripts/push-template.sh:689-694`). |
-| `infisical_client_secret` | `""`, `sensitive` | → `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`, and only when non-empty: it keeps its own conditional so an empty secret omits the key rather than handing the boot script a credential it would try to authenticate with (`templates/workspace/main.tf:645-648`). Never printed, and never interpolated into the body, which only names the variable (`templates/workspace/coder.tf:244-252`). |
+| `infisical_machine_identity_id` | `""` | → `INFISICAL_MACHINE_IDENTITY_ID`. The machine identity the boot authenticates as - the id, never the token. It has no slot in any CLI argv, since the client id/secret are the credential, so it gates the fetch and records which identity the stack means (`templates/common/infisical-secrets.sh.tftpl:10-13`). |
+| `infisical_client_id` | `""` | → `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`. The Universal Auth client id; **not** sensitive, because it identifies the identity but cannot authenticate alone. `.env` spells this key the way the Infisical CLI reads it, which is the one name pair here that differs (`scripts/push-template.sh:710-715`). |
+| `infisical_client_secret` | `""`, `sensitive` | → `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`, and only when non-empty: it keeps its own conditional so an empty secret omits the key rather than handing the boot script a credential it would try to authenticate with (`templates/workspace/main.tf:649-652`). Never printed, and never interpolated into the body, which only names the variable (`templates/workspace/coder.tf:244-252`). |
 | `infisical_environment` | `prod` | → `INFISICAL_ENVIRONMENT`. Which Infisical environment the export reads; the CLI takes `--env` on every read, so a fork that keeps another environment slug has no default that fits it (`templates/workspace/coder.tf:254-261`). |
-| `infisical_pull_on_start` | `false` | The second gate, under `infisical_enabled`, and it decides only whether a start *waits* on the vault. Forwarded only when both `.env` keys are truthy (`scripts/push-template.sh:645-648`). Off leaves the script present but idle: one log line naming the gate and exit 0 (`templates/common/infisical-secrets.sh.tftpl:27-30`). Handed over as the string `"true"`/`"false"`, because a `coder_agent` env value has to be a string and the body compares it against a literal (`templates/workspace/main.tf:642-643`). |
+| `infisical_pull_on_start` | `false` | The second gate, under `infisical_enabled`, and it decides only whether a start *waits* on the vault. Forwarded only when both `.env` keys are truthy (`scripts/push-template.sh:668-671`). Off leaves the script present but idle: one log line naming the gate and exit 0 (`templates/common/infisical-secrets.sh.tftpl:27-30`). Handed over as the string `"true"`/`"false"`, because a `coder_agent` env value has to be a string and the body compares it against a literal (`templates/workspace/main.tf:644-647`). |
 
 Notes on the two dropdowns that take a custom value:
 
@@ -1188,23 +1192,23 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   reason every credential in `main.tf` rides it: Coder stores a rendered
   `coder_script.script` as text on the server, so a value interpolated into one would sit in
   Coder's database in plain sight, while an agent-env value is rendered per start and never
-  written to disk (`templates/workspace/main.tf:634-637`). The body accordingly declares no
+  written to disk (`templates/workspace/main.tf:634-638`). The body accordingly declares no
   Terraform variable of its own and renders with an empty map, and the seven keys the
   `env = merge({...})` block hands it are its whole interface
   (`templates/workspace/main.tf:639-653`, `:727`).
 - The body runs in this order, and every step that cannot proceed prints what it needs and
-  exits 0: no `infisical` binary in the image (`templates/common/infisical-secrets.sh.tftpl:8`),
+  exits 0: no `infisical` binary in the image (`templates/common/infisical-secrets.sh.tftpl:8` - the golden image bakes the pinned release, so that is an image older than `INFISICAL_CLI_VERSION`),
   the six-name not-configured guard (`:14-20`), the `INFISICAL_PULL_ON_START` gate
   (`:27-30`), no `HOME` to write into (`:32-36`), the Universal Auth login as the machine
   identity (`:61-65`), the dotenv export into a `mktemp` dump (`:45`, `:67`), and the publish
-  (`:140`). Both temp files die in the `EXIT` trap whatever happens between the `mktemp` and
+  (`:245`). Both temp files die in the `EXIT` trap whatever happens between the `mktemp` and
   the `mv` (`:45-52`).
 - A CLI error is scrubbed before it is printed. The CLI can echo the bearer token back in an
   error line, and that line lands in the workspace's script log, so both the token and the
   client secret are replaced with `<token>` / `<secret>` on their way to stderr
   (`templates/common/infisical-secrets.sh.tftpl:68-77`).
 - `~/.infisical/agent.env` is what a successful fetch produces: mode `0600` inside a `0700`
-  `~/.infisical` (`templates/common/infisical-secrets.sh.tftpl:37-40`), written by nobody
+  `~/.infisical` (`templates/common/infisical-secrets.sh.tftpl:37-40`, `:92`, `:244-246`), written by nobody
   else, staged as `~/.infisical/.agent.env.XXXXXX` in that same directory and `mv`'d in, so
   a reader never sees a half-written file - the same write-then-rename discipline
   `~/.grok/notes-setup.sh` uses above. Its one reader is `~/.bashrc`, which sources it under
@@ -1215,7 +1219,7 @@ What the vault is, how to adopt it, and how to rotate a key in it is
 - Nothing is copied out of the export line by line: each value is taken apart and re-emitted
   as `export KEY='value'` under quoting with no escape hatch, because the CLI's own dotenv
   writer leaves an embedded single quote raw, which makes its output either unsources or
-  runnable (`templates/common/infisical-secrets.sh.tftpl:99-117`). That is what makes the
+  runnable (`templates/common/infisical-secrets.sh.tftpl:99-107`, `:217`). That is what makes the
   `.bashrc` source above safe, and it is why the reader and the publish step are one pair -
   the startup comment says to read the publish step before changing either side
   (`templates/workspace/startup.sh.tftpl:71-72`).
@@ -1223,8 +1227,8 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   line (`templates/common/infisical-secrets.sh.tftpl:180`): the vault's own address and
   Universal Auth pair are plausible keys in the very project being exported, and they must
   not be republished as workspace environment through a file, when the agent environment is
-  the place Coder renders them per start (`:83-88`). The log line that follows reports a key
-  *count*, never a value, and counts what the publish loop actually wrote (`:142-146`).
+  the place Coder renders them per start (`:86-87`). The log line that follows reports a key
+  *count*, never a value, and counts what the publish loop actually wrote (`:249-251`).
 - The `[ -f ... ]` test for that file lives **inside** the appended `.bashrc` line rather
   than around it, because the startup script and the fetch are two `coder_script`s with no
   promised order (`coder_script_order` needs Coder >= v2.39, see
@@ -1236,7 +1240,7 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   still coming up, and every failure path - a refused login, an export that came back empty,
   an `mv` that did not land - prints one line, exits 0, and leaves the boot running on
   whatever `agent.env` the previous start wrote
-  (`templates/common/infisical-secrets.sh.tftpl:62-65`, `:68-77`, `:147-149`).
+  (`templates/common/infisical-secrets.sh.tftpl:62-65`, `:68-77`, `:252-254`).
   [operate/secrets.md](operate/secrets.md) states the same bound from the other side.
 - To change the body, edit `templates/common/infisical-secrets.sh.tftpl` and re-materialise
   it with `bazelisk run //scripts:push-template`. It is not one of the twins:

@@ -1639,7 +1639,7 @@ bazelisk run //scripts:build-dev-image
 None of this appears on a stack that never adopted the vault: every line below needs
 `INFISICAL_ENABLED` truthy in `.env`, and a verb that needs the vault answers `note:
 <verb> refused: INFISICAL_ENABLED is off. Set INFISICAL_ENABLED=true in .env to adopt the
-vault, then re-run.` (`scripts/infisical.sh:226`). The flag, the twelve managed keys, the
+vault, then re-run.` (`scripts/infisical.sh:230`). The flag, the twelve managed keys, the
 three containers and the operator CLI are
 [operate/secrets.md](operate/secrets.md); what is here is the text you actually see when
 something in that path does not answer.
@@ -1660,7 +1660,7 @@ warning: the env file was not refreshed from Infisical; <checkout>/.env keeps th
   (`scripts/dev-stack.sh:677-683`), and a vault that cannot be reached must not hold the
   stack down - so a failed pull costs one warning and the bring-up continues on the
   credentials the file already held. The reason sits directly above it
-  (`scripts/lib/infisical.sh:913-924`): `error: the Infisical export failed; <file> is
+  (`scripts/lib/infisical.sh:984-992`): `error: the Infisical export failed; <file> is
   untouched` when the CLI could not reach the vault, `warning: the Infisical export
   produced an empty file; <file> is untouched` when it answered with nothing, or
   `note: the pull was refused before it ran; <file> keeps the values it has` when a
@@ -1674,14 +1674,14 @@ bazelisk run //scripts:infisical -- check
 ```
 
 - Each answer is one line: `note: <KEY> is empty; set it in <file> before this verb can
-  reach the vault` per key that is not filled (`scripts/infisical.sh:211`),
+  reach the vault` per key that is not filled (`scripts/infisical.sh:215`),
   `note: no Infisical CLI installed; run: bazelisk run //scripts:infisical -- install-cli`
-  when the binary is what is missing (`scripts/infisical.sh:342`), and `warning: the
+  when the binary is what is missing (`scripts/infisical.sh:346`), and `warning: the
   machine identity could not exchange a token; check the client id and secret, and that
   the vault answers` when the vault is there but will not authenticate the identity
-  (`scripts/infisical.sh:357`). Then retry the pull and bring the stack up again, because
+  (`scripts/infisical.sh:361`). Then retry the pull and bring the stack up again, because
   compose reads the file only when it recreates a container
-  (`scripts/infisical.sh:523`):
+  (`scripts/infisical.sh:527`):
 
 ```sh
 bazelisk run //scripts:infisical -- pull
@@ -1703,15 +1703,18 @@ infisical: vault not configured for this stack. These six names arrive on the co
   workspace boots with no vault secrets and nothing else complains. The resource exists at
   all only while `infisical_enabled` is true (`templates/workspace/main.tf:716`), so this
   is not the flag being off; it is one value that never arrived. The push forwards each of
-  the six only when `.env` carries something real - `env_get_forwardable` drops an empty
-  value and one still spelling `change-me*` (`scripts/push-template.sh:198-205`, the six
-  forwards at `:670-709`) - and the template variable then keeps its own empty default
+  the five read-side values only when `.env` carries something real - `env_get_forwardable` drops an
+  empty value and one still spelling `change-me*` (`scripts/push-template.sh:198-205`, the five
+  forwards at `:697-731`) - and the template variable then keeps its own empty default
   (`templates/workspace/coder.tf:215-219`), which hands the boot body a key that is
   present and empty.
-- Fix it on the stack host: fill `INFISICAL_URL` and the five of the same spelling
-  (`INFISICAL_PROJECT_ID`, `INFISICAL_MACHINE_IDENTITY_ID`, `INFISICAL_ENVIRONMENT`,
+- Fix it on the stack host: fill the five read-side keys (`INFISICAL_PROJECT_ID`,
+  `INFISICAL_MACHINE_IDENTITY_ID`, `INFISICAL_ENVIRONMENT`,
   `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`) in
-  `.env`, then read back what still counts as empty and push the template again:
+  `.env`. The sixth name, `INFISICAL_DOMAIN`, is the one the push composes, so it is
+  empty only when the flag itself is off; `INFISICAL_URL` is the host CLI's own origin
+  and reaches no workspace. Then read back what still counts as empty and push the
+  template again:
 
 ```sh
 bazelisk run //scripts:infisical -- check
@@ -1723,9 +1726,12 @@ bazelisk run //scripts:push-template
   so a running workspace keeps the empty set until it starts again.
 
 - The push prints only the key each value came from, never the value
-  (`scripts/push-template.sh:659-662`), so a CI log that shows
-  `infisical_url passed from INFISICAL_URL in .env (value not shown)` proves the key was
-  read, not that it was right. `check` is the read that answers.
+  (`scripts/push-template.sh:697-701`), so a CI log that shows
+  `infisical_project_id passed from INFISICAL_PROJECT_ID in .env (value not shown)` proves
+  the key was read, not that it was right. `check` is the read that answers. The instance
+  URL is the one vault value the log does print, because the push composes it rather than
+  forwarding it: a workspace is handed `http://host.docker.internal:<INFISICAL_PORT>`
+  (`scripts/push-template.sh:652-661`), never the host's own `INFISICAL_URL`.
 
 ### `infisical: pull-on-start is off (INFISICAL_PULL_ON_START)` -> this boot never dials the vault, which is the shipped state
 
@@ -1741,7 +1747,7 @@ infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps th
   the push forwards
   `--var infisical_pull_on_start=true` only when `.env` carries a truthy
   `INFISICAL_PULL_ON_START` *under* a truthy `INFISICAL_ENABLED`
-  (`scripts/push-template.sh:636-648`), so an adopted vault still ships a boot that never
+  (`scripts/push-template.sh:668-671`), so an adopted vault still ships a boot that never
   waits on the network. That off is the safe side of a real trade: a fetch that reaches the
   vault is a fetch bounded by the script's own `timeout = 120`
   (`templates/workspace/main.tf:725`), and the exit is `0` either way because no secret
@@ -1810,7 +1816,7 @@ infisical: skipped a secret whose value spans more than one line; only single-li
   to the one that closes the quote (`:146-153`). The vault stores such a value happily;
   only the workspace publish drops it, and the host-side pull of the twelve managed keys
   is a different path that never passes through this loop
-  (`scripts/lib/infisical.sh:889-948`).
+  (`scripts/lib/infisical.sh:958-1017`).
 - Nothing prints which key, on purpose, so the shape to look for is the secret you added
   most recently that is not one line - a private key or a certificate. Either store it as
   one line (base64 of the PEM is the usual form) or keep it host-side, then restart the
