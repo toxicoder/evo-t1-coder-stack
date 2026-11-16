@@ -71,6 +71,20 @@ It decides only whether a workspace's boot fetch tries to pull the managed keys 
 workspace environment before the rest of its startup. It is off by default so a workspace
 never waits on the vault, and it does nothing while `INFISICAL_ENABLED` is off.
 
+Both gates reach the templates through `bazelisk run //scripts:push-template`: the CLI forwards
+`--var infisical_enabled=true` and `--var infisical_pull_on_start=true` only for a truthy value in
+`.env`, so the shipped state pushes neither word and each template's own `default = false` stands.
+
+When both are on, the fetch is a `coder_script` (`"infisical_secrets"`, `run_on_start`, 120s
+timeout) that logs in as the machine identity, exports the project's dotenv, and publishes it to
+`~/.infisical/agent.env` at mode 600 on the shared profile volume. Two things about that file are
+deliberate. Keys beginning `INFISICAL_` are filtered out of it, so the vault's own address and
+Universal Auth pair never get republished as workspace environment. And `~/.bashrc` sources it
+under `set -a` - the reader is what makes the fetch worth doing, since a login shell is what every
+terminal, tmux pane and command in the workspace inherits from. `docs/coder-templates.md` carries
+the template side of that: the eight `infisical_*` variables, why the credential pair rides the
+agent environment rather than the rendered script body, and the order the boot body runs in.
+
 ## The three services
 
 | Service | Image | Job | Published | Volume |
