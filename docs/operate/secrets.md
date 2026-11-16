@@ -367,4 +367,4 @@ the wrong file: `status` and `check` answer the same question.
 
 Related: [observability.md](../observability.md) (the `GRAFANA_ADMIN_PASSWORD` login and
 the log stream these containers ship), [public-access.md](../public-access.md) (the
-`infisical-*` public name), [troubleshooting.md](troubleshooting.md).
+`infisical-*` public name), [troubleshooting.md](../troubleshooting.md).
