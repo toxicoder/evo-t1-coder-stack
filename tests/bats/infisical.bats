@@ -250,33 +250,6 @@ dotenv_missing_keys() {
   done < <(grep -E '^[A-Z0-9_]+$' "${inventory}")
 }
 
-# rotate_cli - run `rotate <key>` until the CLI's managed-key probe accepts it.
-# cmd_rotate probes the inventory with `infisical_managed_keys | grep -qx KEY` under
-# `set -o pipefail`: grep -q exits on the first match, the producer then dies of
-# SIGPIPE, and the pipeline reports 141, which the verb reads as "not a managed key".
-# A managed key is therefore rejected on most attempts (found: scripts/infisical.sh:482,
-# reported with this suite). A rejected attempt performs no side effect at all, so
-# retrying is free; were every attempt rejected, the last rejection would stay in
-# stderr and the caller's assertion would fail loudly rather than pass over a rotate
-# that never ran.
-# Arguments:
-#   $1 - the key to rotate
-# Outputs:
-#   The CLI's streams, through status/output/stderr
-# Returns:
-#   0 as soon as an attempt got past the probe
-rotate_cli() {
-  local tries=0
-  while [ "${tries}" -lt 80 ]; do
-    tries=$((tries + 1))
-    run_cli rotate "$1"
-    case "${stderr:-}" in
-      *"is not a managed key"*) continue ;;
-    esac
-    return 0
-  done
-}
-
 # summary_line - print the closing summary line out of a captured stdout.
 # Arguments:
 #   $1 - the captured output
@@ -572,13 +545,54 @@ summary_line() {
   cd "${SCRATCH}"
   local before after
   before="$(sha256sum "${ENV_FILE}")"
-  rotate_cli LITELLM_MASTER_KEY
+  run_cli rotate LITELLM_MASTER_KEY
   [ "${status}" -eq 5 ]
   assert_match "the refusal names the verb and the key to set" \
     '^note: rotate refused: INFISICAL_ENABLED is off\.' "${output}"
   after="$(sha256sum "${ENV_FILE}")"
   assert_eq "a refused rotate moves no byte in .env" "${before}" "${after}"
   assert_eq "a refused rotate execs no CLI" "0" "$(stub_log_count infisical)"
+}
+
+@test "rotate: every managed name is accepted on the first attempt, every time" {
+  # The managed-key probe used to be `infisical_managed_keys | grep -qx KEY` under the
+  # CLI's `set -o pipefail`, so grep -q's early exit killed the reader with SIGPIPE and
+  # the verb called a managed key unmanaged on 195 of 200 attempts. This suite did not
+  # see it because it retried the verb up to 80 times around exactly that. There is no
+  # retry now, and none belongs here: one pass over all twelve names, plus a repeat of
+  # one, all taken from the inventory the CLI itself reads. With the flag off the only
+  # thing being proven is that each attempt reached the flag check at all, which is the
+  # half the probe gates, and no vault is touched.
+  write_env "${ENV_FILE}" "INFISICAL_ENABLED=false" "LITELLM_MASTER_KEY=keep-me"
+  cd "${SCRATCH}"
+  local key attempts=0
+  while IFS= read -r key; do
+    run_cli rotate "${key}"
+    [ "${status}" -eq 5 ] || {
+      printf '%s was refused before the flag check (status %s): %s\n' \
+        "${key}" "${status}" "${stderr:-}" >&2
+      return 1
+    }
+    case "${stderr:-}" in
+      *"is not a managed key"*)
+        printf '%s is in the inventory and the CLI said otherwise\n' "${key}" >&2
+        return 1
+        ;;
+    esac
+    attempts=$((attempts + 1))
+  done < <(grep -E '^[A-Z0-9_]+$' "${INVENTORY}")
+  [ "${attempts}" -eq 12 ] || {
+    printf 'expected twelve names, walked %s\n' "${attempts}" >&2
+    return 1
+  }
+  for key in 1 2 3; do
+    run_cli rotate CODER_PG_PASSWORD
+    [ "${status}" -eq 5 ] || {
+      printf 'CODER_PG_PASSWORD refused on a repeat (status %s): %s\n' \
+        "${status}" "${stderr:-}" >&2
+      return 1
+    }
+  done
 }
 
 @test "flag off: run prints the refusal, exits 0, and never runs the command" {
@@ -874,7 +888,7 @@ STUBWRAP
   chmod 755 "${capture}/bin/infisical"
   PATH="${capture}/bin:${PATH}"
   export PATH
-  rotate_cli LITELLM_MASTER_KEY
+  run_cli rotate LITELLM_MASTER_KEY
   [ "${status}" -eq 0 ]
   assert_match "the mint phase names the key only" \
     '^-> mint a fresh value for LITELLM_MASTER_KEY$' "${output}"
@@ -944,7 +958,7 @@ STUBWRAP
   local before after
   before="$(sha256sum "${ENV_FILE}")"
   export STUB_INFISICAL_SET_RC=1
-  rotate_cli LITELLM_MASTER_KEY
+  run_cli rotate LITELLM_MASTER_KEY
   [ "${status}" -eq 1 ]
   assert_match "the failure names the vault as the half that said no" \
     "^error: LITELLM_MASTER_KEY: the vault refused the write, so ${ENV_FILE} was left untouched$" \

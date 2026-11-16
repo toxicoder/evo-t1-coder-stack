@@ -487,13 +487,21 @@ compose_infisical_args() {
 infisical_managed_keys() {
   local inventory="${1:-}" root="" own="" candidate=""
   if [ -z "${inventory}" ]; then
-    # The checkout first: that is the copy an operator edits. The directory beside
-    # this file is the fallback, because `bazelisk run` executes from a runfiles
-    # tree whose cwd holds no inventory of its own, and this list is read-only
-    # payload, so reading the copy that sits with the code is never wrong here.
+    # The checkout first: that is the copy an operator edits. The two paths beside
+    # this file are the fallback for a run whose cwd and environment name no
+    # checkout - `bazelisk run` from a runfiles tree, or a bare
+    # `bash <abs>/scripts/infisical.sh` from anywhere - because this list is
+    # read-only payload, so reading the copy that sits with the code is never wrong
+    # here. Both candidates are tried, and the order matters: this file lives at
+    # <root>/scripts/lib/, so the inventory sits two levels up, and the one-level
+    # form after it covers a layout that stages the lib directly under the payload
+    # root. A single-level guess alone was the bug: it named <root>/scripts/infisical/
+    # managed-secrets.txt, a path that has never existed, so every such run was told
+    # its own managed keys were unmanaged.
     own="${BASH_SOURCE[0]%/*}"
     root="$(resolve_checkout "${own}" docker-compose.yml 2>/dev/null)" || root=""
     for candidate in "${root:+${root}/infisical/managed-secrets.txt}" \
+      "${own}/../../infisical/managed-secrets.txt" \
       "${own}/../infisical/managed-secrets.txt"; do
       if [ -r "${candidate}" ]; then
         inventory="${candidate}"
@@ -517,6 +525,37 @@ infisical_managed_keys() {
     return 5
   }
   return 0
+}
+
+# @function infisical_is_managed_key
+# Say whether one name belongs to the managed-key inventory. This is the one place
+# the question gets asked, and it asks it without a two-process pipeline on purpose:
+# the shape `infisical_managed_keys | grep -qx KEY` loses to SIGPIPE under the
+# caller's `set -o pipefail`. grep -q exits the instant it matches, the reader is
+# then killed by the signal on its next write, and the pipeline reports 141 - which
+# every caller read as "unmanaged", so a name that genuinely is managed was refused on
+# 195 of 200 attempts (measured against this inventory). A process substitution keeps
+# the reader out of the pipeline whose status decides the answer, and twelve names are
+# cheaper to compare in the shell than to hand to a grep.
+# Globals:
+#   Read through infisical_managed_keys, which owns the checkout lookup
+# Arguments:
+#   $1 - the key name to test; an empty name is never managed
+#   $2 - inventory path; defaults to infisical_managed_keys' own
+# Outputs:
+#   None - the answer travels in the exit status only. A missing or empty inventory
+#   answers "no" with the reader's own error already on stderr.
+# Returns:
+#   0 when the name is managed; 1 when it is not
+infisical_is_managed_key() {
+  local key="${1:-}" inventory="${2:-}" line=""
+  [ -n "${key}" ] || return 1
+  while IFS= read -r line; do
+    if [[ ${line} == "${key}" ]]; then
+      return 0
+    fi
+  done < <(infisical_managed_keys "${inventory}")
+  return 1
 }
 
 # @function infisical_cli_install_path

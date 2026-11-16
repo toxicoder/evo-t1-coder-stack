@@ -28,7 +28,11 @@
 #
 # The credential rules that shape every function here, all inherited from
 # scripts/dashboard-password.sh:
-#   - a value never travels in argv, so it cannot be read out of another user's `ps`;
+#   - a value never travels in argv, so it cannot be read out of another user's `ps`.
+#     Two exceptions, both required by the upstream CLI and named at
+#     scripts/lib/infisical.sh:21: --client-secret= on login and --password= on
+#     bootstrap, where the CLI offers no stdin path. A single write uses KEY=@<file>,
+#     which names a file;
 #   - a value never appears in a log line, including a failure line;
 #   - a file that holds one is mode 600 and is removed on the failure path too;
 #   - a write is verified by hashing the value read back before anything claims ok;
@@ -479,7 +483,7 @@ cmd_rotate() {
   if [ -z "${key}" ]; then
     die "rotate names one key, for example: rotate LITELLM_MASTER_KEY"
   fi
-  if ! infisical_managed_keys | grep -qx "${key}"; then
+  if ! infisical_is_managed_key "${key}"; then
     err "${key} is not a managed key; see infisical/managed-secrets.txt for the twelve that are"
     fail_item "rotate ${key}"
     summary "rotate"

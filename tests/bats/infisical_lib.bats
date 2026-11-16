@@ -196,6 +196,58 @@ vault_on() {
   [ "${status}" -eq 5 ]
 }
 
+@test "seam: the default inventory lookup survives a foreign cwd with no checkout named" {
+  # The shape that was broken. `bash <abs>/scripts/infisical.sh` from a directory that
+  # is not the checkout, with no REPO_ROOT, BUILD_WORKSPACE_DIRECTORY or
+  # GITHUB_WORKSPACE to name it, leaves resolve_checkout with nothing to prove, so the
+  # fallback beside the lib file has to carry the run. That file sits two levels above
+  # scripts/lib/, and the one-level form it used to try named a path that has never
+  # existed - so every such run was told its own managed keys were unmanaged. Counting
+  # the keys here is the assertion; reading the path off the source is not.
+  source_lib
+  local elsewhere="${SCRATCH}/elsewhere" n rc=0
+  mkdir -p "${elsewhere}"
+  (
+    cd "${elsewhere}" || exit 9
+    unset REPO_ROOT BUILD_WORKSPACE_DIRECTORY GITHUB_WORKSPACE
+    n="$(infisical_managed_keys | grep -c .)" || n="rc$?"
+    if [ "${n}" != "12" ]; then
+      printf 'keys printed by the default lookup: %s\n' "${n}" >&2
+      exit 8
+    fi
+  ) || rc=$?
+  [ "${rc}" -eq 0 ]
+}
+
+@test "seam: infisical_is_managed_key answers both ways and cannot lose the probe to SIGPIPE" {
+  source_lib
+  local inv="${REPO_ROOT}/infisical/managed-secrets.txt" key i bad=0 rc=0
+  run infisical_is_managed_key "LITELLM_MASTER_KEY" "${inv}"
+  [ "${status}" -eq 0 ]
+  run infisical_is_managed_key "NOT_A_STACK_KEY" "${inv}"
+  [ "${status}" -eq 1 ]
+  run infisical_is_managed_key "" "${inv}"
+  [ "${status}" -eq 1 ]
+  run infisical_is_managed_key "LITELLM_MASTER_KEY" "${SCRATCH}/absent.txt"
+  [ "${status}" -eq 1 ]
+  # The probe this replaces was `infisical_managed_keys | grep -qx KEY` under the
+  # caller's `set -o pipefail`: grep -q exited on its first match, the reader died of
+  # SIGPIPE, the pipeline reported 141, and the verb refused a genuinely managed key
+  # on 195 of 200 attempts. Drive every name in the inventory through the predicate
+  # five times inside one pipefail shell, so a reintroduced early-exit pipe lands in
+  # the counter and the gate goes red on the first lost probe.
+  (
+    set -o pipefail
+    while IFS= read -r key; do
+      for i in 1 2 3 4 5; do
+        infisical_is_managed_key "${key}" "${inv}" || bad=$((bad + 1))
+      done
+    done < <(grep -E '^[A-Z0-9_]+$' "${inv}")
+    exit "${bad}"
+  ) || rc=$?
+  [ "${rc}" -eq 0 ]
+}
+
 # ---------------------------------------------------------------------------
 # The dotenv writer: the file compose reads must survive every edit intact.
 # ---------------------------------------------------------------------------
