@@ -48,6 +48,7 @@ STACK_DATA_LABELS = [
     "//hermes:payload",
     "//homepage:payload",
     "//images/dev:context",
+    "//infisical:payload",
     "//litellm:config",
     "//observability:payload",
     "//proxy:confs",
