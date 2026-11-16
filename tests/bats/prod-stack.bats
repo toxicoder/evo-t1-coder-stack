@@ -133,6 +133,168 @@ setup() {
   assert_not_match "junk: treated as off" 'observability' "$(stub_log docker)"
 }
 
+@test "prod-stack: INFISICAL_ENABLED decides whether compose is told about the secrets profile" {
+  # Same seam as dev-stack: the vault's three services carry
+  # profiles: ["secrets"] in docker-compose.yml, so compose_prefix/run_compose
+  # append what compose_infisical_args prints (scripts/lib/infisical.sh:329)
+  # after the observability words and before -f, on every verb.
+  local log="${STUB_LOG}/docker.log"
+
+  : >"${log}"
+  run --separate-stderr env INFISICAL_ENABLED=false bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "off: no profile word reaches compose" 'secrets' "$(stub_log docker)"
+
+  : >"${log}"
+  run --separate-stderr env INFISICAL_ENABLED=true bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "on: the four profile words reach compose in order" \
+    '\-p evo-t1-prod --profile observability --profile secrets -f .*/docker-compose\.yml logs --tail 20 coder$' \
+    "$(stub_log docker)"
+
+  # Unset is the shipped default and it means OFF here, the deliberate asymmetry
+  # with OBSERVABILITY_ENABLED above, which answers ON to the same unset. One call
+  # settles both halves: the bundle is addressed, the vault is not.
+  : >"${log}"
+  run --separate-stderr env -u INFISICAL_ENABLED bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_match "unset: off by default while the bundle stays on" \
+    '\-\-profile observability -f .*/docker-compose\.yml logs --tail 20 coder$' "$(stub_log docker)"
+  assert_not_match "unset: no secrets word reaches compose" 'secrets' "$(stub_log docker)"
+
+  # A typo is off, not on: an unset-looking value must not start the vault.
+  : >"${log}"
+  run --separate-stderr env INFISICAL_ENABLED=maybe bash "${STACK}" logs --tail 20 coder
+  [ "${status}" -eq 0 ]
+  assert_not_match "junk: treated as off" 'secrets' "$(stub_log docker)"
+}
+
+# --- the vault feeds the env file compose renders from --------------------------
+# `up` is the seam: when INFISICAL_ENABLED is on it refreshes the env file from
+# Infisical before compose interpolates it, so a credential rotated in the vault
+# reaches coder, litellm, homepage, hermes, grafana and searxng on that bring-up
+# instead of waiting for a human to run the pull verb. What is pinned here is the
+# call the deploy makes - the fetch itself is pinned in infisical_lib.bats - so the
+# driver replaces infisical_pull with a recorder that cannot reach a vault. Each
+# call it takes appends the env-file argument to $PULL_LOG and answers $VAULT_RC.
+
+vault_up_driver() {
+  local f="${BATS_TEST_TMPDIR}/vault-up.sh"
+  cat >"${f}" <<'DRV'
+#!/usr/bin/env bash
+source "$1"
+shift
+infisical_pull() {
+  printf '%s\n' "${1:-}" >>"${PULL_LOG}"
+  return "${VAULT_RC:-0}"
+}
+main "$@"
+DRV
+  printf '%s' "${f}"
+}
+
+# vault_workspace - a scratch checkout holding only what `up` needs to resolve.
+vault_workspace() {
+  local workspace="${1}"
+  mkdir -p "${workspace}"
+  cp "${REPO_ROOT}/docker-compose.yml" "${workspace}/docker-compose.yml"
+  printf 'CODER_HTTP_PORT=13001\n' >"${workspace}/.env"
+}
+
+@test "prod-stack: up pulls the env file from the vault before compose renders" {
+  # The stable stack names no env file of its own, so the file the vault has to
+  # feed is the .env beside the compose file - the one compose interpolates - and
+  # the fetch must land before `up -d`, because compose resolves ${VAR} at parse
+  # time. An explicit --env-file is the same seam with a different path.
+  workspace="$(make_scratch)/workspace"
+  vault_workspace "${workspace}"
+  pull_log="${BATS_TEST_TMPDIR}/pulls.log"
+  : >"${pull_log}"
+
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    INFISICAL_ENABLED=true PULL_LOG="${pull_log}" VAULT_RC=0 \
+    bash "$(vault_up_driver)" "${STACK}" up
+  [ "${status}" -eq 0 ]
+  assert_match "phase line" '^-> vault: refreshing the env file from Infisical$' "${output}"
+  assert_eq "exactly one pull" "1" "$(wc -l <"${pull_log}" | tr -d '[:space:]')"
+  assert_eq "the file compose reads" "${workspace}/.env" "$(cat "${pull_log}")"
+
+  local phase_line compose_line
+  phase_line="$(grep -nF -e '-> vault: refreshing' <<<"${output}" | head -n1 | cut -d: -f1 || true)"
+  compose_line="$(grep -nF -e 'up -d' <<<"${output}" | head -n1 | cut -d: -f1 || true)"
+  [ -n "${phase_line}" ] && [ -n "${compose_line}" ]
+  [ "${phase_line}" -lt "${compose_line}" ]
+
+  # A named env file outranks the fallback, and it is that file, not the default
+  # one, that has to be refreshed.
+  : >"${pull_log}"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    INFISICAL_ENABLED=true PULL_LOG="${pull_log}" VAULT_RC=0 \
+    bash "$(vault_up_driver)" "${STACK}" up --env-file "${workspace}/custom.env"
+  [ "${status}" -eq 0 ]
+  assert_eq "one pull of the named file" "${workspace}/custom.env" "$(cat "${pull_log}")"
+}
+
+@test "prod-stack: up with the vault flag off fetches nothing and says nothing about it" {
+  # Off is the shipped default, and the off path is byte-identical to the one that
+  # predates the vault: no call, no phase line, no warning. The `infisical:` row in
+  # the endpoint summary is not part of this branch - it is an URL line that prints
+  # whatever the flag says - so the assertions name the fetch, not the report.
+  workspace="$(make_scratch)/workspace"
+  vault_workspace "${workspace}"
+  pull_log="${BATS_TEST_TMPDIR}/pulls.log"
+
+  : >"${pull_log}"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    INFISICAL_ENABLED=false PULL_LOG="${pull_log}" VAULT_RC=0 \
+    bash "$(vault_up_driver)" "${STACK}" up
+  [ "${status}" -eq 0 ]
+  assert_eq "false: no pull" "0" "$(wc -l <"${pull_log}" | tr -d '[:space:]')"
+  assert_not_match "false: no phase line" 'vault' "${output}"
+  assert_not_match "false: no vault warning" 'not refreshed from Infisical' "${output}"
+  assert_match "false: compose still runs" 'up -d' "$(stub_log docker)"
+
+  # Unset is what a fresh clone carries, and it means off here.
+  : >"${pull_log}"
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE -u INFISICAL_ENABLED \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    PULL_LOG="${pull_log}" VAULT_RC=0 \
+    bash "$(vault_up_driver)" "${STACK}" up
+  [ "${status}" -eq 0 ]
+  assert_eq "unset: no pull" "0" "$(wc -l <"${pull_log}" | tr -d '[:space:]')"
+  assert_not_match "unset: no phase line" 'vault' "${output}"
+  assert_match "unset: compose still runs" 'up -d' "$(stub_log docker)"
+}
+
+@test "prod-stack: an unreachable vault is one warning and the stack comes up anyway" {
+  # The stable stack coming down because its vault is unreachable would be worse
+  # than a stale credential, so a failed fetch is one warning that names the file
+  # and the retry - never a key, and never a value.
+  workspace="$(make_scratch)/workspace"
+  vault_workspace "${workspace}"
+  pull_log="${BATS_TEST_TMPDIR}/pulls.log"
+  : >"${pull_log}"
+
+  run --separate-stderr env -u REPO_ROOT -u GITHUB_WORKSPACE \
+    BUILD_WORKSPACE_DIRECTORY="${workspace}" OBSERVABILITY_ENABLED=false \
+    INFISICAL_ENABLED=true PULL_LOG="${pull_log}" VAULT_RC=1 \
+    bash "$(vault_up_driver)" "${STACK}" up
+  [ "${status}" -eq 0 ]
+  assert_eq "still exactly one attempt" "1" "$(wc -l <"${pull_log}" | tr -d '[:space:]')"
+  assert_match "one warning naming the file" \
+    '^warning: the env file was not refreshed from Infisical; .*/\.env keeps the credentials it already has' \
+    "${output}"
+  assert_eq "one such warning" "1" \
+    "$(grep -c -e 'not refreshed from Infisical' <<<"${output}" || true)"
+  assert_match "it names the retry" \
+    'bazelisk run //scripts:infisical -- pull' "${output}"
+  assert_match "the bring-up continued" 'up -d' "$(stub_log docker)"
+  assert_match "the summary still closes the run" '^summary: ' "${output}"
+}
+
 @test "prod-stack: an env file given with --env-file travels to compose and to the report" {
   scratch="$(make_scratch)"
   cat >"${scratch}/custom.env" <<'ENV'

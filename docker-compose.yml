@@ -28,6 +28,13 @@
 #   alloy           tails the daemon json-file logs into loki; no published port
 #   tempo           keeps traces and computes the span metrics the map uses
 #   grafana         the credentialed read path for all of it (host 3005)
+#
+# Secrets bundle (one compose profile; INFISICAL_ENABLED=false drops all three
+# out of the project - see the bundle block near the end of this file):
+#   infisical       Infisical CE, the source of record for the managed keys
+#                   (host 8182; starts only when the profile is selected)
+#   infisical-db    Postgres 16 for Infisical; container network only, no port
+#   infisical-redis job queue and cache for Infisical; no published port
 # Secrets live in .env (see .env.sample). Never commit .env.
 
 services:
@@ -519,6 +526,14 @@ services:
       HOMEPAGE_VAR_SPARK1_HEALTH: ${SPARK1_HEALTH_URL:-http://${SPARK1_HOST:-${STACK_LAN_HOST:-localhost}}:${SPARK_HTTP_PORT:-8888}/health}
       HOMEPAGE_VAR_SPARK2_HEALTH: ${SPARK2_HEALTH_URL:-http://${SPARK2_HOST:-${STACK_LAN_HOST:-localhost}}:${SPARK_HTTP_PORT:-8888}/health}
       HOMEPAGE_VAR_SPARK3_HEALTH: ${SPARK3_HEALTH_URL:-http://${SPARK3_HOST:-${STACK_LAN_HOST:-localhost}}:${SPARK_HTTP_PORT:-8888}/health}
+      # The secrets manager card, filled whether or not the bundle is running:
+      # an off bundle shows a dead card, which is the honest state, rather than a
+      # card the dashboard cannot even link to. STACK_INFISICAL_URL is the public
+      # name (scripts/lib/domain.sh composes it) and the fallback is the LAN face
+      # on the port the bundle publishes -- the same shape as the Grafana and
+      # Prometheus pair above, because this is an href a browser off the box has
+      # to resolve, so it is never the compose hostname `infisical`.
+      HOMEPAGE_VAR_INFISICAL_URL: ${STACK_INFISICAL_URL:-http://${STACK_LAN_HOST:-localhost}:${INFISICAL_PORT:-8182}}
     volumes:
       # Each config file mounted read-only individually, which keeps /app/config
       # itself writable. Mounting the directory with :ro breaks startup: the
@@ -1029,6 +1044,147 @@ services:
       loki:
         condition: service_started
 
+  # ---------------------------------------------------------------------------
+  # Secrets bundle.
+  #
+  # Three services, one compose profile, one flag. `INFISICAL_ENABLED=false`
+  # (scripts/lib/common.sh's compose_infisical_args, which mirrors
+  # compose_observability_args) leaves every one of them out of the project
+  # entirely, which is the point of the profile: compose reads its credentials
+  # from .env either way, so a box that is not running the secrets manager pays
+  # nothing for one. //scripts:infisical -- status is the operator's read of that
+  # flag.
+  #
+  # None of the three is a Prometheus target. Infisical publishes no /metrics
+  # endpoint the stack can rely on and neither alpine image ships one, so
+  # docs/observability.md records all three as unscraped rather than this file
+  # pointing a scrape at a path that would only ever answer 404.
+  # ---------------------------------------------------------------------------
+
+  infisical:
+    image: infisical/infisical:v0.167.10
+    # Named log stream: Alloy ships this container to Loki under `container=infisical`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: infisical, max-size: "10m", max-file: "3" }
+    hostname: infisical
+    restart: unless-stopped
+    profiles: ["secrets"]
+    ports:
+      # Published plainly, the way 4000, 80/443, 8080 and 8181 are, so the same
+      # port answers on the host's loopback and on its LAN face. A `127.0.0.1:`
+      # prefix here would satisfy the compose layer and still answer nothing to a
+      # workspace: a workspace reaches the host through the host-gateway, which is
+      # the host's LAN address, and the two workspace networks (bridge plus
+      # coder-<wsid>-dind) are not joined to the compose network. Same reasoning
+      # the searxng block above gives for 8181.
+      - "${INFISICAL_PORT:-8182}:8080"
+    environment:
+      # Bound to every interface *inside* the container. Both paths in reach of
+      # this service arrive on the container's routable address -- the published
+      # mapping above, and the router's upstream `http://infisical:8080` -- so a
+      # loopback listener would look healthy in `docker compose ps` while every
+      # request to it was refused.
+      HOST: "0.0.0.0"
+      PORT: "8080"
+      # Absolute, scheme and host included, not a root-relative path: Infisical
+      # writes this value into the links and callbacks it hands to a browser, so
+      # it must name the same origin the operator actually opened. A relative or
+      # empty value leaves the app pointing its API calls and its cookie scope at
+      # a host other than the one that served the UI. STACK_INFISICAL_URL is the
+      # public name scripts/lib/domain.sh composes; the fallback is the loopback
+      # face on the published port, so the bundle still starts with no public name.
+      SITE_URL: ${INFISICAL_SITE_URL:-${INFISICAL_URL:-http://127.0.0.1:8182}}
+      # Both are generated once, live in .env, and never here: ENCRYPTION_KEY is
+      # 16-byte hex (openssl rand -hex 16) and AUTH_SECRET 32-byte base64
+      # (openssl rand -base64 32). An empty default is deliberate -- a literal in
+      # this file would put a credential in git -- and a blank one is a finding
+      # for //scripts:infisical -- check to name, not something to paper over.
+      ENCRYPTION_KEY: ${INFISICAL_ENCRYPTION_KEY:-}
+      AUTH_SECRET: ${INFISICAL_AUTH_SECRET:-}
+      # PostgreSQL only: upstream retired the Mongo path, so the whole pointer is
+      # this one URI rather than a host/port/db/user/password set. The password
+      # interpolates the same INFISICAL_DB_PASSWORD the db service below hands
+      # POSTGRES_PASSWORD, so a rotation in .env moves both at once.
+      DB_CONNECTION_URI: postgres://infisical:${INFISICAL_DB_PASSWORD:-change-me-infisical-db}@infisical-db:5432/infisical
+      # Compose DNS on the project network; redis publishes nothing, so this
+      # address is never reachable from outside the project.
+      REDIS_URL: redis://infisical-redis:6379
+    depends_on:
+      # service_started, not service_healthy: neither dependency carries a
+      # healthcheck, so a wait on health would hold this service forever in
+      # "starting" (the rule the searxng block states at its own closing comment).
+      # Infisical retries its own connect at startup, and a db that is not up yet
+      # surfaces as a crash loop in the logs Alloy ships to Loki.
+      infisical-db:
+        condition: service_started
+      infisical-redis:
+        condition: service_started
+
+  infisical-db:
+    image: postgres:16-alpine
+    # Named log stream: Alloy ships this container to Loki under `container=infisical-db`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: infisical-db, max-size: "10m", max-file: "3" }
+    hostname: infisical-db
+    restart: unless-stopped
+    profiles: ["secrets"]
+    environment:
+      POSTGRES_USER: infisical
+      # Same key DB_CONNECTION_URI above interpolates, which is the only thing
+      # keeping the role and the pointer in step across a rotation. Like the
+      # coder db, the image honours this on first volume init only, so a rotated
+      # value needs the volume reset rather than a recreate.
+      POSTGRES_PASSWORD: ${INFISICAL_DB_PASSWORD:-change-me-infisical-db}
+      POSTGRES_DB: infisical
+    volumes:
+      - infisical-db-data:/var/lib/postgresql/data
+    # No healthcheck: the only consumer waits on service_started, so a probe here
+    # would decide nothing and could only hold the bundle in "starting".
+
+  infisical-redis:
+    image: redis:7-alpine
+    # Named log stream: Alloy ships this container to Loki under `container=infisical-redis`
+    # (observability/alloy/config.alloy reads the tag out of each json-file line),
+    # which is how a Loki query says `coder` without anyone mounting the daemon
+    # socket. max-size/max-file are the caps the daemon default leaves unset,
+    # and this box's disk also holds model weights.
+    logging:
+      driver: json-file
+      options: { tag: infisical-redis, max-size: "10m", max-file: "3" }
+    hostname: infisical-redis
+    restart: unless-stopped
+    profiles: ["secrets"]
+    # Infisical requires the noeviction policy. It is redis' own default, but it
+    # is written down here because a volatile-* policy (volatile-lru, allkeys-lru)
+    # evicts queued jobs under memory pressure, and a dropped job is a sync that
+    # silently never runs rather than an error anyone sees.
+    #
+    # --save '' and --appendonly no turn RDB snapshots and the AOF off: this is a
+    # queue and a cache, not a store. The audit trail is in Postgres and Infisical
+    # rebuilds the queue from it, so a snapshot on this box would buy a stale
+    # queue replayed after a restart and cost the writes on a disk that also holds
+    # the model weights. A queue that dies with the container is the accepted
+    # trade; a lost audit trail would not be.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    volumes:
+      # Named volume rather than nothing: with persistence off it stays empty, so
+      # the cost is one unused volume, and the benefit is that the day someone
+      # drops --save '' the snapshot lands somewhere a recreate survives instead
+      # of in the container's writable layer, where it goes away with the
+      # container and is misread as durable storage.
+      - infisical-redis-data:/data
+    # No healthcheck, for the reason the db block above gives.
+
 volumes:
   coder-home:
   coder-db:
@@ -1043,3 +1199,10 @@ volumes:
   tempo-data:
   grafana-data:
   alloy-data:
+  # The secrets bundle's stores, one volume each so `dev-stack -- reset` and
+  # //scripts:storage-clean can name them individually. infisical-redis-data
+  # carries no data while redis runs with persistence off (see that service's
+  # command); it is declared so the queue's directory is never on the
+  # container's writable layer if that changes.
+  infisical-db-data:
+  infisical-redis-data:

@@ -14,6 +14,9 @@ One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra
   with approval prompts). LAN `:9119` stays; the public name is opt-in with the
   other public hosts.
 - **SearXNG** - the keyless metasearch lane.
+- **Infisical** - self-hosted secrets manager holding the stack's credentials, behind a
+  second Compose profile. Off by default; `INFISICAL_ENABLED=true` brings up the server
+  with its own Postgres and Redis. Compose keeps reading `.env`, which the vault feeds.
 - **Observability bundle** - Prometheus, Mimir, Loki, Tempo, Grafana and Alloy behind
   one Compose profile: metrics, container logs and traces, with Grafana as the single
   read path. On by default; `OBSERVABILITY_ENABLED=false` drops all six.
@@ -56,6 +59,7 @@ and kept in `docs/` beside this file:
 [grok-build-and-agents.md](docs/grok-build-and-agents.md),
 [litellm-routing.md](docs/litellm-routing.md),
 [luks-unlock.md](docs/luks-unlock.md),
+[operate/secrets.md](docs/operate/secrets.md),
 [public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
 [observability.md](docs/observability.md),
 [troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
@@ -135,6 +139,12 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |               an answered one, and the probe names each engine the instance
   |               parked along with the reason its backend gave).
   |
+  +-- :8182 ----> Infisical secrets manager (UI + API on one port; `INFISICAL_ENABLED`
+  |               gates the whole bundle, and off is the shipped state). Published for the
+  |               same reason as :8181 - a workspace reaches the host through its gateway.
+  |               Compose itself never dials it: `bazelisk run //scripts:infisical -- pull`
+  |               writes `.env`, and compose reads that file as it always has.
+  |
   +-- :3005 ----> Grafana (the read path for metrics, logs and traces; one login from
   |               GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD). The only observability
   |               name that is published
@@ -201,6 +211,7 @@ port binds once, so two stacks on one box need two sets.
 | 4000 | 14000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
 | 9119 | 19119 | Hermes | Host-assistant Web Dashboard (`HERMES_DASHBOARD_PORT`) - Chat tab + approvals; LAN listener with HTTP basic auth. The public name is opt-in and reaches it through the router on 8080 |
 | 8181 | 18181 | SearXNG | Metasearch (`STACK_SEARCH_PORT`) - published, because a workspace reaches the host through its gateway, where the compose network does not help. `push-template.sh` reads this key and pushes `--var searxng_url=http://host.docker.internal:<that port>`, so a remapped port reaches each new workspace's config |
+| 8182 | 18182 | Infisical | Secrets manager UI and API on one port (`INFISICAL_PORT`) - a whole Compose profile, so nothing listens here until `INFISICAL_ENABLED=true`. Published rather than loopback-bound for the same host-gateway reason as 8181, and not a Prometheus target |
 | 3005 | 13005 | Grafana | The observability read path - metrics, logs and traces behind one login (`GRAFANA_PORT`; credentials are `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`). The only bundle UI that is published |
 | 9090 | 19090 | Prometheus | Scrape and `remote_write` (`PROMETHEUS_PORT`) - bound to 127.0.0.1, so the graph UI needs a shell on the stack host |
 | — | — | Mimir | `8080` on the compose network only - long-term metrics, queried through Grafana |
@@ -208,12 +219,16 @@ port binds once, so two stacks on one box need two sets.
 | — | — | Tempo | `3200` (query) and `4317` (OTLP/gRPC) on the compose network only - traces |
 | — | — | Alloy | `12345` on the compose network only - the collector's own UI |
 | — | — | Homepage app | `3000` on the compose network only - reached through the proxy |
+| — | — | Infisical Postgres | `5432` on the compose network only - the vault's own database; Infisical supports no other |
+| — | — | Infisical Redis | `6379` on the compose network only - the vault's job queue and locks, which is why it needs the `noeviction` policy |
 | — | — | Ollama | `11434` on the compose network only - deliberately not published |
 
 Change a port in `.env` for the stable stack and in `dev-stack.env` for the dev one. A
 dev stack still carrying the stable numbers cannot start beside it, and `.env` does not
 reach the dev stack when `dev-stack.env` exists. The Grafana and Prometheus rows bind
-only while `OBSERVABILITY_ENABLED` selects the `observability` profile.
+only while `OBSERVABILITY_ENABLED` selects the `observability` profile, and the Infisical
+row only while `INFISICAL_ENABLED` selects the `secrets` one - that profile is off as
+shipped, so `8182` answers nothing until a box opts in.
 
 ## Spin up the stack
 
@@ -647,11 +662,12 @@ strings.
 
 The default shape is LAN-only. Set the naming parts in `.env` (`STACK_DOMAIN_BASE`,
 `STACK_SUBDOMAIN_SUFFIX`, `STACK_ENV_LABEL`, the per-service `STACK_*_NAME` keys) and
-`STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the six
-public names from them and serves the same six services over real TLS. Grafana is the
-sixth and the only one behind a Compose profile: `scripts/lib/domain.sh` reads no flag,
-so the name composes with `OBSERVABILITY_ENABLED=false` too and the router answers that
-Host with no container behind it. A
+`STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the seven
+public names from them and serves the same seven services over real TLS. Grafana and
+Infisical are the last two and the only ones behind a Compose profile:
+`scripts/lib/domain.sh` reads no flag, so each name composes with
+`OBSERVABILITY_ENABLED=false` and `INFISICAL_ENABLED=false` too and the router answers
+that Host with no container behind it. A
 comma-separated list in `STACK_PUBLIC_HOSTS` is still the way to pin a name by hand;
 empty stays LAN-only. Full detail, including what `bootstrap` rewrites and how to check
 the Traefik side, is in [docs/public-access.md](docs/public-access.md).
@@ -669,6 +685,7 @@ Under the shipped defaults (`overeazy.io` + `gmktecbeast`) `auto` composes:
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 | `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
 | `grafana-gmktecbeast.overeazy.io` | `grafana:3000` - the observability bundle's only name |
+| `infisical-gmktecbeast.overeazy.io` | `infisical:8080` - the secrets bundle's only name |
 
 The dev row is what `bazelisk run //scripts:dev-stack -- up` composes: it applies
 `STACK_ENV_LABEL=dev` for the `evo-t1-dev` project only, and only when neither the shell
@@ -683,8 +700,8 @@ wildcard certificate allows, the `bootstrap` run that composes the names and rew
 the card URLs, the recreate that applies it, the plain-HTTP hop to the `router` sidecar
 on `:8080` (every name, including Hermes - not `:9119`), and why the interactive names
 302 to Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
-The other machine needs one file: the paste-ready Traefik config - six routers, TLS
-on all of them, `passHostHeader: true`, Authelia on the five interactive names and the
+The other machine needs one file: the paste-ready Traefik config - seven routers, TLS
+on all of them, `passHostHeader: true`, Authelia on the six interactive names and the
 long-lived timeouts - is
 [docs/public-access.md#traefik-configuration](docs/public-access.md#traefik-configuration).
 
@@ -1138,6 +1155,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 ├── images/dev/            # golden workspace image
 │   ├── Dockerfile
 │   └── tool-versions.env  # every version pin, single source of truth
+├── infisical/             # the vault's one key inventory: managed-secrets.txt
+│                          #   (one KEY per line; read via infisical_managed_keys)
 ├── litellm/config.yaml    # model aliases
 ├── observability/         # the monitoring bundle, behind profiles: ["observability"]:
 │   ├── prometheus/        #   prometheus.yml (no rules dir: nothing alerts here)
@@ -1148,7 +1167,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 ├── proxy/homepage.conf    # nginx TLS terminator for the dashboard
 ├── proxy/router.conf      # nginx Host-header router for the public subdomains (no cert):
 │                          #   the render below, under the shipped defaults
-├── proxy/router.conf.template # the same six vhosts with __EVO_HOST_*__ tokens; bootstrap
+├── proxy/router.conf.template # the same seven vhosts with __EVO_HOST_*__ tokens; bootstrap
 │                          #   renders them into proxy/router.gen.conf (gitignored), and
 │                          #   STACK_ROUTER_CONF tells compose which one to mount
 ├── searxng/settings.yml   # SearXNG metasearch config, mounted read-only
@@ -1164,6 +1183,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── hermes-bootstrap.sh  # seed Hermes /opt/data (config.yaml, SOUL.md)
 │   ├── hermes-doctor.sh     # audit the Hermes assistant's posture and its seed drift
 │   ├── hermes-shell.sh      # open the Hermes assistant in the terminal you are in
+│   ├── infisical.sh         # move the managed keys between .env and the vault
+│   │                        #   (check, pull, push, rotate); off unless INFISICAL_ENABLED
 │   ├── install-hooks.sh     # point this checkout's git hooks at .githooks
 │   ├── lib/                 # sourced-only helpers (no Bazel target of their own)
 │   ├── luks-unlock.sh       # make an encrypted root unlockable over SSH after a reboot

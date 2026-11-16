@@ -400,3 +400,27 @@ echo "${payload} $${shell_var}"'
   [[ ${rendered} == *'EXPLORER'* ]]
   [[ ${rendered} == *'BUGHUNT'* ]]
 }
+
+@test "fmt: terraform itself accepts the formatting of both twins' HCL" {
+  # The formatter check lives in //:validate, and that is a `run` target rather than a test,
+  # so neither //:test-all nor //:test-fast reaches it: CI runs it as its own step. A map
+  # hand-aligned to the width of its longest key instead of the width terraform gives it kept
+  # every test target green and failed that step with exit 3. This is the same argv
+  # scripts/validate.sh:62-63 hands terraform, so the next such edit fails in a test.
+  local tf_bin
+  tf_bin="$(real_bin terraform || true)"
+  if [ -z "${tf_bin}" ]; then
+    skip "terraform is not on PATH, so there is nothing to format-check with"
+  fi
+
+  local twin out rc
+  for twin in workspace devcontainer; do
+    rc=0
+    out="$("${tf_bin}" -chdir="${REPO_ROOT}/templates/${twin}" fmt -check 2>&1)" || rc=$?
+    if [ "${rc}" -ne 0 ] || [ -n "${out}" ]; then
+      printf 'FAIL: terraform wants templates/%s reformatted (exit %s), and //:test-all cannot see it:\n%s\n' \
+        "${twin}" "${rc}" "${out}" >&2
+      return 1
+    fi
+  done
+}

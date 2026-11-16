@@ -17,8 +17,9 @@
 #   2. re-enter the updated checkout        (so the rest runs the new logic)
 #   3. recover the host for Bazel and DNS   (setup-host.sh --repair)
 #   4. reconcile the env files              (update-configs.sh env)
-#   5. converge the compose project         (compose up, after a down when
-#                                            compose or the env file changed)
+#   5. converge the compose project         (vault refresh, then compose up,
+#                                            after a down when compose or the
+#                                            env file changed)
 #   6. restart what a bind mount changed    (compose restart <services>)
 #   7. push the Coder templates             (push-template.sh)
 #   8. reseed the running workspaces        (refresh-configs.sh)
@@ -89,6 +90,8 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # shellcheck source=lib/common.sh disable=SC1091
 source "${SELF_DIR}/lib/common.sh"
+# shellcheck source=lib/infisical.sh disable=SC1091
+source "${SELF_DIR}/lib/infisical.sh"
 # This CLI has no --json mode: a leftover JSON_MODE would route every report
 # line to stderr and leave stdout empty.
 unset JSON_MODE
@@ -436,7 +439,8 @@ compose_cli() {
 # `restart` for a bind-mounted payload change and `pull` for a bumped tag.
 # Globals:
 #   STACK_FLAVOUR, ROOT_DIR, DRY_RUN,
-#   OBSERVABILITY_ENABLED (via compose_observability_args)
+#   OBSERVABILITY_ENABLED (via compose_observability_args), INFISICAL_ENABLED
+#   (via compose_infisical_args)
 # Arguments:
 #   $@ - the compose subcommand and its own arguments
 # Outputs:
@@ -446,6 +450,7 @@ compose_cli() {
 stack_compose() {
   local cli="" env_file=""
   local -a prof=()
+  local -a sec=()
   if [ "${DRY_RUN}" = "1" ]; then
     note "dry run: would run compose $*"
     return 0
@@ -465,6 +470,11 @@ stack_compose() {
   # the compose file whenever the flavour names no env file of its own.
   read -r -a prof <<<"$(compose_observability_args "${env_file:-${ROOT_DIR}/.env}")"
   argv+=("${prof[@]}")
+  # The `secrets` bundle rides the same seam: a restart or a pull has to address
+  # the three vault services with the flag that brought them up, and off adds no
+  # word at all.
+  read -r -a sec <<<"$(compose_infisical_args "${env_file:-${ROOT_DIR}/.env}")"
+  argv+=("${sec[@]}")
   argv+=("-f" "${ROOT_DIR}/docker-compose.yml" "$@")
   # shellcheck disable=SC2086 # cli is deliberately two words
   ${cli} "${argv[@]}"
@@ -489,6 +499,7 @@ services_for_path() {
     proxy/*) out="router homepage-proxy" ;;
     homepage/*) out="homepage" ;;
     hermes/*) out="hermes" ;;
+    infisical/*) out="infisical infisical-db infisical-redis" ;;
   esac
   printf '%s\n' "${out}"
   return 0
@@ -629,8 +640,13 @@ carry_deploy_state() {
 # docker-compose.yml or an env file, the project is stopped first: `up -d`
 # leaves a service that was deleted from the file running, and a changed
 # interpolation only lands in a recreated container.
+# With INFISICAL_ENABLED on, the env file compose is about to interpolate is refreshed
+# from the vault by the sibling's `up`, immediately before that interpolation; a failed
+# fetch is a warning there and the stack comes up regardless. This function only names
+# that step in a plan, which is the one case where the sibling never runs to do it.
 # Globals:
-#   STACK_FLAVOUR, RESTART_MODE, PULL_IMAGES, DRY_RUN
+#   STACK_FLAVOUR, RESTART_MODE, PULL_IMAGES, DRY_RUN, ROOT_DIR,
+#   INFISICAL_ENABLED (through infisical_enabled, to decide what the plan says)
 # Arguments:
 #   $1 - 1 when the pull changed compose or the env file, anything else for no
 # Outputs:
@@ -663,6 +679,21 @@ converge_stack() {
 
   if changed_paths_match 'litellm/*'; then
     note "litellm/config.yaml changed; the proxy restarts below to pick it up"
+  fi
+
+  # The vault is the source of record for the managed credentials when the flag is on,
+  # and the fetch belongs to the sibling's `up`, immediately before compose interpolates
+  # the env file: a fetch after that parse is a fetch no container ever saw. Doing it
+  # here too dialled the vault twice per deploy and printed the same warning twice on an
+  # outage, so the deploy plans the step and the runners perform it - dev-stack.bats and
+  # prod-stack.bats each pin "up pulls the env file from the vault before compose
+  # renders". A dry run never reaches the sibling, so the plan says what will happen.
+  # Off is the shipped default and this branch never runs.
+  local vault_env=""
+  vault_env="$(stack_env_file)"
+  vault_env="${vault_env:-${ROOT_DIR}/.env}"
+  if [ "${DRY_RUN}" = "1" ] && infisical_enabled "${vault_env}"; then
+    note "dry run: would refresh ${vault_env} from Infisical (the bring-up does it, before compose interpolates)"
   fi
 
   run_sibling "compose up" "scripts/${STACK_FLAVOUR}-stack.sh" up || failed=1

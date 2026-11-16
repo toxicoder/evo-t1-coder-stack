@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## tar — deterministic tar(1) stub (test fixture; never ships)
+#
+# Purpose: stand in for tar(1) so the CLI installer's two archive reads are
+# testable with no real tarball on disk. The installer treats the member
+# listing as its integrity check, so this stub answers exactly the two shapes
+# it sends and fails everything else: an unhandled argv means the caller
+# drifted from the contract rather than getting a silent success.
+#   -tzf <file>             -> print STUB_TAR_LIST (default "infisical"), one
+#                              member per line, exit STUB_TAR_LIST_RC (0)
+#   -xzf <file> -O -- <mem> -> print STUB_TAR_OUT (default "stub-binary"),
+#                              exit STUB_TAR_EXTRACT_RC (0)
+# Records one argv line to $STUB_LOG/tar.log when STUB_LOG is set, so a suite
+# can prove the archive was listed BEFORE anything was extracted from it and
+# that extraction named one member rather than unpacking the whole archive.
+#
+# Usage (in a .bats file): use_stubs tar curl
+#   STUB_TAR_LIST='infisical'          # or 'evil/infisical', or '' for none
+#   STUB_TAR_LIST_FILE=/path/file      # a listing too big for the environment
+#   STUB_TAR_LIST_RC=2                 # drive the "not a readable tar.gz" path
+#   STUB_TAR_OUT='...'                 # the bytes the installer lands on disk
+# Safety: stub only — never reads or writes an archive, never creates a path
+# named by an archive member.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "tar $*" >>"${STUB_LOG}/tar.log"; fi
+
+list_mode=""
+extract_mode=""
+member=""
+prev=""
+for a in "$@"; do
+  case "${a}" in
+    -tzf | -tzf* | --list) list_mode=1 ;;
+    -xzf | -xzf* | --extract | --get) extract_mode=1 ;;
+    -O | --to-stdout) extract_mode="stdout" ;;
+  esac
+  if [ "${prev}" = "--" ]; then member="${a}"; fi
+  prev="${a}"
+done
+
+if [ -n "${list_mode}" ]; then
+  if [ -n "${STUB_TAR_LIST_RC:-}" ] && [ "${STUB_TAR_LIST_RC}" != "0" ]; then
+    exit "${STUB_TAR_LIST_RC}"
+  fi
+  # A suite that needs a listing past the pipe buffer passes a file: an archive
+  # listing big enough to make the writer block is far too large to carry through
+  # the environment (execve caps one variable at 128 KiB), and the point of those
+  # tests is the size.
+  if [ -n "${STUB_TAR_LIST_FILE:-}" ]; then
+    cat "${STUB_TAR_LIST_FILE}"
+    exit 0
+  fi
+  printf '%s\n' "${STUB_TAR_LIST-infisical}"
+  exit 0
+fi
+
+if [ -n "${extract_mode}" ]; then
+  # Naming the member after -- is the whole point of the installer's extraction: it
+  # never lets the archive choose a path. An caller that omits it gets a failure here
+  # rather than a stub that happily unpacks anything.
+  if [ -z "${member}" ]; then
+    printf 'stub: tar -x must name exactly one member after --\n' >&2
+    exit 65
+  fi
+  if [ -n "${STUB_TAR_EXTRACT_RC:-}" ] && [ "${STUB_TAR_EXTRACT_RC}" != "0" ]; then
+    exit "${STUB_TAR_EXTRACT_RC}"
+  fi
+  printf '%s' "${STUB_TAR_OUT-stub-binary}"
+  exit 0
+fi
+
+# Unhandled shape: the caller asked tar to do something the installer never does.
+exit 64

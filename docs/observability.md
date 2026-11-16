@@ -76,7 +76,8 @@ every container stays up:
   key arrives in Prometheus' own environment and is expanded there, which is why it is
   not written into the committed scrape file.
 - **The apps with no `/metrics` are observed by logs alone, on purpose.** `ollama`,
-  `searxng`, `kasm`, `homepage`, the two nginx hops and `hermes` publish no Prometheus
+  `searxng`, `kasm`, `homepage`, the two nginx hops, `hermes`, and the three Infisical
+  containers (`infisical`, `infisical-db`, `infisical-redis`) publish no Prometheus
   endpoint, so scraping them would leave a target answering 404 forever and a tally no
   one trusts. Ollama is the one operators ask about: upstream has had the request for a
   `/metrics` endpoint open since 2024 (ollama/ollama#3144), and the IPEX-LLM image runs a

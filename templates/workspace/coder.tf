@@ -199,3 +199,76 @@ variable "context7_api_key" {
   default     = ""
   sensitive   = true
 }
+
+# Self-hosted Infisical is the source of record for the stack's credentials, and this
+# switch is the one seam that turns the workspace-side fetch on. It is off by default,
+# like the stack-wide INFISICAL_ENABLED flag: with false the boot fetch exits 0 without
+# acting and the agent environment carries no INFISICAL_* key at all.
+variable "infisical_enabled" {
+  type        = bool
+  description = "When true, the workspace boot fetches its credentials from the self-hosted Infisical instance named by infisical_url. Default false leaves the fetch disabled: the boot script exits without acting and the agent environment omits every INFISICAL_* key, so the workspace keeps the credentials the agent env already carries."
+  default     = false
+}
+
+# The instance the boot fetch dials. The Infisical CLI needs the domain on every call or
+# it dials Infisical Cloud, so an empty value disables the fetch instead of guessing one.
+variable "infisical_url" {
+  type        = string
+  description = "Base URL of the self-hosted Infisical instance the workspace dials, e.g. http://host.docker.internal:8182, handed to it as INFISICAL_DOMAIN. Empty default means the workspace boot fetch stays disabled rather than dialing Infisical Cloud."
+  default     = ""
+}
+
+# The project the secrets are read from. Not a credential, but no read works without it,
+# so an empty value disables the fetch the way an empty URL does.
+variable "infisical_project_id" {
+  type        = string
+  description = "Infisical project id the workspace boot reads its secrets from, handed to it as INFISICAL_PROJECT_ID. Empty default means the workspace boot fetch stays disabled."
+  default     = ""
+}
+
+# The Universal Auth principal the boot authenticates as -- the id, never the token.
+variable "infisical_machine_identity_id" {
+  type        = string
+  description = "Infisical machine identity id the workspace authenticates as, handed to it as INFISICAL_MACHINE_IDENTITY_ID. Empty default means the workspace boot fetch stays disabled."
+  default     = ""
+}
+
+# The client id pairs with the secret below. It identifies the machine identity but
+# cannot authenticate alone, so it is not marked sensitive.
+variable "infisical_client_id" {
+  type        = string
+  description = "Universal Auth client id the workspace boots with, handed to it as INFISICAL_UNIVERSAL_AUTH_CLIENT_ID. Empty default means the workspace boot fetch stays disabled."
+  default     = ""
+}
+
+# The Universal Auth client secret. Sensitive: never printed, never interpolated into
+# the rendered boot script -- that body only names the environment variable, and this
+# value reaches the workspace through the agent env.
+variable "infisical_client_secret" {
+  type        = string
+  description = "Universal Auth client secret the workspace boots with, handed to it as INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET when non-empty. The rendered boot script only names the variable. Empty default means the workspace boot fetch stays disabled."
+  default     = ""
+  sensitive   = true
+}
+
+# Which Infisical environment the fetch reads. The stack keeps one, so this rarely
+# moves; it is a variable because the CLI takes --env on every read and a fork with
+# another environment slug has no default that fits it.
+variable "infisical_environment" {
+  type        = string
+  description = "Infisical environment name the workspace boot reads, handed to it as INFISICAL_ENVIRONMENT. Defaults to prod; set it to the slug of another environment in the project. An empty value means the workspace boot fetch stays disabled."
+  default     = "prod"
+}
+
+# The second gate, under infisical_enabled. The first decides whether the vault is
+# part of this workspace at all; this one decides whether a workspace start waits
+# on it. A boot fetch is bounded by coder_script's 120s timeout, so an unreachable
+# vault is a slow start, and an operator adopting the vault usually wants to run one
+# `pull` by hand and watch the keys settle before every start depends on the round
+# trip. Off by default for exactly that reason. Handed to the boot script as
+# INFISICAL_PULL_ON_START so the rendered script text stays identical either way.
+variable "infisical_pull_on_start" {
+  type        = bool
+  description = "When true, the workspace boot fetch pulls the managed keys on its own start, in no promised order with the startup script. Default false keeps the coder_script present but idle: it logs that the gate is off and exits 0, so a workspace never waits on Infisical being up. Has no effect while infisical_enabled is false."
+  default     = false
+}

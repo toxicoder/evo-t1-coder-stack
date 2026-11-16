@@ -45,6 +45,7 @@ files that go stale are not tracked — see
 | A public name does not resolve or redirects wrong | [public-access.md](../public-access.md) |
 | The box will not finish booting and nobody is at the console | [luks-unlock.md](../luks-unlock.md) |
 | The assistant will not sign in | [hermes.md](../hermes.md) |
+| A credential needs rotating, or the vault is unreachable | [operate/secrets.md](secrets.md) |
 
 ## Before you reach for a hammer
 

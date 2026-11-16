@@ -538,6 +538,10 @@ resource "coder_agent" "main" {
     # interpolated again here. No key bytes: the script fills those from
     # LITELLM_API_KEY when it copies the file in.
     vscode_settings = local.vscode_settings
+    # Gates the ~/.bashrc hook that sources the vault's agent.env. A stack with the
+    # flag off gets no hook line at all rather than an inert one, so a subsystem the
+    # operator never turned on leaves a file the operator owns completely alone.
+    infisical_hook = var.infisical_enabled
   })
 
   # These environment variables allow you to make Git commits right away
@@ -622,6 +626,31 @@ resource "coder_agent" "main" {
     # config.toml names CONTEXT7_API_KEY, it never carries the value, and the CLI
     # expands that reference from the agent environment at run time.
     length(var.context7_api_key) > 0 ? { CONTEXT7_API_KEY = var.context7_api_key } : {},
+    # The vault's address and the identifiers the boot fetch needs, added as one map
+    # and only when the flag is on. With infisical_enabled false - the shipped default,
+    # matching the stack-wide INFISICAL_ENABLED - the agent environment carries no
+    # INFISICAL_* key at all, coder_script.infisical_secrets' guard exits on its first
+    # lines, and a workspace whose stack never adopted Infisical cannot tell the
+    # difference. The credential pair rides here for the reason every credential in
+    # this file rides here rather than being interpolated into a script body: rendered
+    # coder_script bodies are stored on the server as text, so a value inside one would
+    # sit in Coder's database in plain sight, while an agent-env value is rendered per
+    # start and never written to disk.
+    var.infisical_enabled ? {
+      INFISICAL_DOMAIN              = var.infisical_url,
+      INFISICAL_PROJECT_ID          = var.infisical_project_id,
+      INFISICAL_MACHINE_IDENTITY_ID = var.infisical_machine_identity_id,
+      INFISICAL_ENVIRONMENT         = var.infisical_environment,
+      # The second gate, read by the boot body itself so the rendered script stays
+      # one text for every workspace. Stringified because a coder_agent env value
+      # has to be a string, and the body compares it against the literal "true".
+      INFISICAL_PULL_ON_START            = var.infisical_pull_on_start ? "true" : "false",
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_ID = var.infisical_client_id,
+      # Named separately from the map above so the one sensitive variable keeps its own
+      # conditional: an empty secret must omit the key rather than hand the boot script
+      # an empty credential it would try to authenticate with.
+      INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET = var.infisical_client_secret,
+    } : {},
   )
 }
 
@@ -669,6 +698,33 @@ resource "coder_script" "gh_token_refresh" {
     github_auth_id               = var.github_auth_id
     coder_github_app_install_url = local.coder_github_app_install_url
   })
+}
+
+# The workspace's own copy of the stack's credentials, pulled from the self-hosted
+# vault on start. It is its own coder_script rather than another paragraph of
+# startup_script for the reason every family here has one: each script body is a
+# separate execve with its own single-argument ceiling. With the flag off - the shipped
+# default, matching the stack-wide INFISICAL_ENABLED - the resource is absent outright,
+# so a stack that never adopted Infisical renders no script, no boot log line, and no
+# agent-env key.
+#
+# The body declares no Terraform variable of its own and is rendered with an empty map,
+# which is the point: the rendered text is identical for every workspace, and Coder
+# stores a rendered script body as text on the server, so nothing secret may be
+# interpolated into it. Every input arrives through the agent environment above.
+resource "coder_script" "infisical_secrets" {
+  count        = var.infisical_enabled ? data.coder_workspace.me.start_count : 0
+  agent_id     = coder_agent.main.id
+  display_name = "Fetch stack secrets from Infisical"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Universal Auth login plus a dotenv export over the host-gateway route. The realistic
+  # slow case is a vault container still coming up, and a fetch that misses is not
+  # fatal: agent.env keeps whatever the last start wrote and the workspace boots.
+  timeout = 120
+
+  script = templatefile("${path.module}/infisical-secrets.sh.tftpl", {})
 }
 
 # The Grok Build rulebook, seeded by a body of its own for the reason the skill trio has

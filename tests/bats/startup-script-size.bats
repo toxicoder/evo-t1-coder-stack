@@ -303,6 +303,45 @@ load_production_guard() {
   done
 }
 
+@test "startup budget: a body whose templatefile call closes on one line bills only itself" {
+  # The reader ends a body's block at the line that is exactly `  })`. A call written
+  # as `script = templatefile("...", {})` has no such line, and scanning past it read
+  # the *next* resource's inlined payloads as this body's - the size guard then charged
+  # one argument for bytes it never carried and left the following body unmeasured,
+  # which is the failure that ships a workspace that dies with E2BIG at boot. Driven on
+  # a fixture rather than the twins, so the contract is on the record even while the
+  # real main.tf happens to hold no call of this shape.
+  local fixture out tab
+  tab="$(printf '\t')"
+  fixture="${BATS_TEST_TMPDIR}/main.tf"
+  cat >"${fixture}" <<'EOF'
+resource "coder_script" "one_liner" {
+  agent_id     = coder_agent.main.id
+  display_name = "One-liner"
+  script = templatefile("${path.module}/one-liner.sh.tftpl", {})
+}
+
+resource "coder_script" "follower" {
+  agent_id     = coder_agent.main.id
+  display_name = "Follower"
+  script = templatefile("${path.module}/follower.sh.tftpl", {
+    book = chomp(file("${path.module}/FOLLOWER_BOOK.md"))
+  })
+}
+EOF
+  out="$(awk -f "${REPO_ROOT}/scripts/lib/startup_size.awk" "${fixture}")"
+  assert_match "the one-line body is measured, and against its own template only" \
+    "^one-liner\.sh\.tftpl${tab}one-liner\.sh\.tftpl\$" "${out}"
+  assert_not_match "the one-line body never carries the follower's payload" \
+    "^one-liner\.sh\.tftpl${tab}FOLLOWER_BOOK\.md\$" "${out}"
+  assert_not_match "the one-line body is never called unmeasurable" \
+    "^one-liner\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"
+  # The follower keeps what is actually its own, which is the half that proves the scan
+  # stopped rather than the half that proves it started.
+  assert_match "the following body still bills the payload it inlines" \
+    "^follower\.sh\.tftpl${tab}FOLLOWER_BOOK\.md\$" "${out}"
+}
+
 @test "startup budget: the guard carries this suite's numbers and runs on every push" {
   local src="${REPO_ROOT}/scripts/push-template.sh"
   # The two constants live in the guard and in this file. Pinned by text so drift is a

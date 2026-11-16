@@ -147,6 +147,7 @@ NAV: list[tuple[str, list[DeclaredNode]]] = [
             (
                 "Access and recovery",
                 [
+                    ("Secrets with Infisical", "operate/secrets.md"),
                     ("Public access", "public-access.md"),
                     ("Unlock an encrypted host remotely", "luks-unlock.md"),
                     ("Troubleshooting", "troubleshooting.md"),

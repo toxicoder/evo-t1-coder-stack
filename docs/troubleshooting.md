@@ -13,6 +13,7 @@ tags: [troubleshooting, operate, errors]
 - Workspaces: startup, the golden image, Grok Build (`/ez-learn`, MCP), the toolchain
 - Docker-in-Docker, Terraform, and the host `coder` CLI
 - Editor, credentials, the clone, UI logins, and the public names (`421`, Chat `4403`, Traefik)
+- The secrets vault: the bring-up refresh, the workspace boot fetch's notes, and what it refuses to publish
 - The observability bundle: a card that reads down, a scrape with no targets, a collector with nothing to ship
 
 **What this enables**
@@ -1632,6 +1633,196 @@ bazelisk run //scripts:build-dev-image
 - Whether you are looking at a missing tool or a missing credential, `check` is what tells
   them apart: a missing binary shows up as a slot that cannot answer, a missing grant
   shows up as `REFUSED-GRANT`.
+
+## Secrets vault (Infisical)
+
+None of this appears on a stack that never adopted the vault: every line below needs
+`INFISICAL_ENABLED` truthy in `.env`, and a verb that needs the vault answers `note:
+<verb> refused: INFISICAL_ENABLED is off. Set INFISICAL_ENABLED=true in .env to adopt the
+vault, then re-run.` (`scripts/infisical.sh:230`). The flag, the twelve managed keys, the
+three containers and the operator CLI are
+[operate/secrets.md](operate/secrets.md); what is here is the text you actually see when
+something in that path does not answer.
+
+### `the env file was not refreshed from Infisical` -> the vault did not answer the bring-up refresh
+
+- What you see is one warning between `-> vault: refreshing the env file from Infisical`
+  and `-> compose up`, printed by `scripts/dev-stack.sh:681` and its prod twin
+  `scripts/prod-stack.sh:657` (`${vault_env}` there is the env file that project reads, so
+  the checkout's `.env` on a default run):
+
+```text
+warning: the env file was not refreshed from Infisical; <checkout>/.env keeps the credentials it already has - retry with bazelisk run //scripts:infisical -- pull
+```
+
+- Cause: that refresh is best-effort on purpose. With the flag on, `up` pulls the managed
+  keys into the very file compose is about to interpolate
+  (`scripts/dev-stack.sh:677-683`), and a vault that cannot be reached must not hold the
+  stack down - so a failed pull costs one warning and the bring-up continues on the
+  credentials the file already held. The reason sits directly above it
+  (`scripts/lib/infisical.sh:984-992`): `error: the Infisical export failed; <file> is
+  untouched` when the CLI could not reach the vault, `warning: the Infisical export
+  produced an empty file; <file> is untouched` when it answered with nothing, or
+  `note: the pull was refused before it ran; <file> keeps the values it has` when a
+  required key is still empty.
+- Nothing is broken yet and nothing repairs itself by waiting: the stack is up, on values
+  the vault may no longer hold. Ask the vault and the inventory first - `check` is a
+  diagnostic and always exits `0`:
+
+```sh
+bazelisk run //scripts:infisical -- check
+```
+
+- Each answer is one line: `note: <KEY> is empty; set it in <file> before this verb can
+  reach the vault` per key that is not filled (`scripts/infisical.sh:215`),
+  `note: no Infisical CLI installed; run: bazelisk run //scripts:infisical -- install-cli`
+  when the binary is what is missing (`scripts/infisical.sh:346`), and `warning: the
+  machine identity could not exchange a token; check the client id and secret, and that
+  the vault answers` when the vault is there but will not authenticate the identity
+  (`scripts/infisical.sh:361`). Then retry the pull and bring the stack up again, because
+  compose reads the file only when it recreates a container
+  (`scripts/infisical.sh:527`):
+
+```sh
+bazelisk run //scripts:infisical -- pull
+bazelisk run //scripts:prod-stack -- up
+```
+
+### `infisical: vault not configured for this stack` -> the boot fetch ran with an empty name on the agent environment
+
+- The line is in the workspace start log, in the script Coder labels **Fetch stack secrets
+  from Infisical** (`templates/workspace/main.tf:718`, same body in the devcontainer twin
+  at `templates/devcontainer/main.tf:769`):
+
+```text
+infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the push composes INFISICAL_DOMAIN itself, from INFISICAL_PORT, so the name missing here is one of the other five: each is read from the key of the same spelling in the stack host's .env, and one that is empty or still spells change-me is skipped rather than sent: set it there and re-run bazelisk run //scripts:push-template.
+```
+
+- Cause: the body's first gate, `templates/common/infisical-secrets.sh.tftpl:14-20` - any
+  one of those six empty on the agent environment prints this and exits `0`, so the
+  workspace boots with no vault secrets and nothing else complains. The resource exists at
+  all only while `infisical_enabled` is true (`templates/workspace/main.tf:716`), so this
+  is not the flag being off; it is one value that never arrived. The push forwards each of
+  the five read-side values only when `.env` carries something real - `env_get_forwardable` drops an
+  empty value and one still spelling `change-me*` (`scripts/push-template.sh:198-205`, the five
+  forwards at `:696-730`) - and the template variable then keeps its own empty default
+  (`templates/workspace/coder.tf:223-227`), which hands the boot body a key that is
+  present and empty.
+- Fix it on the stack host: fill the five read-side keys (`INFISICAL_PROJECT_ID`,
+  `INFISICAL_MACHINE_IDENTITY_ID`, `INFISICAL_ENVIRONMENT`,
+  `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`) in
+  `.env`. The sixth name, `INFISICAL_DOMAIN`, is the one the push composes, so it is
+  empty only when the flag itself is off; `INFISICAL_URL` is the host CLI's own origin
+  and reaches no workspace. Then read back what still counts as empty and push the
+  template again:
+
+```sh
+bazelisk run //scripts:infisical -- check
+bazelisk run //scripts:push-template
+```
+
+- Then restart the workspace. The six are agent environment values Coder renders per start
+  (`templates/workspace/main.tf:549`, `:639-653`) and the body is `run_on_start` (`:720`),
+  so a running workspace keeps the empty set until it starts again.
+
+- The push prints only the key each value came from, never the value
+  (`scripts/push-template.sh:696-700`), so a CI log that shows
+  `infisical_project_id passed from INFISICAL_PROJECT_ID in .env (value not shown)` proves
+  the key was read, not that it was right. `check` is the read that answers. The instance
+  URL is the one vault value the log does print, because the push composes it rather than
+  forwarding it: a workspace is handed `http://host.docker.internal:<INFISICAL_PORT>`
+  (`scripts/push-template.sh:652-661`), never the host's own `INFISICAL_URL`.
+
+### `infisical: pull-on-start is off (INFISICAL_PULL_ON_START)` -> this boot never dials the vault, which is the shipped state
+
+- Same script, one line, and it is a note rather than a fault:
+
+```text
+infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps the credentials it already has. Run bazelisk run //scripts:infisical -- pull on the stack host to load them now, or set the key to true to fetch at every start.
+```
+
+- Cause: the body's second gate, `templates/common/infisical-secrets.sh.tftpl:27-30`. Each
+  twin declares `infisical_pull_on_start` with `default = false`
+  (`templates/workspace/coder.tf:270-274`, `templates/devcontainer/coder.tf:257-261`), and
+  the push forwards
+  `--var infisical_pull_on_start=true` only when `.env` carries a truthy
+  `INFISICAL_PULL_ON_START` *under* a truthy `INFISICAL_ENABLED`
+  (`scripts/push-template.sh:636`, `:668-671`), so an adopted vault still ships a boot that never
+  waits on the network. That off is the safe side of a real trade: a fetch that reaches the
+  vault is a fetch bounded by the script's own `timeout = 120`
+  (`templates/workspace/main.tf:725`), and the exit is `0` either way because no secret
+  manager gets to fail a workspace start.
+- What the boot keeps is whatever `~/.infisical/agent.env` an earlier start wrote, which on
+  a workspace that has never pulled is nothing at all. To load the credentials now, on the
+  stack host:
+
+```sh
+bazelisk run //scripts:infisical -- pull
+```
+
+- That writes the stack's env file, not the workspace's. For the workspace's own copy, set
+  `INFISICAL_PULL_ON_START=true` in `.env`, re-push, and restart - every later start then
+  fetches, and the note stops printing:
+
+```sh
+bazelisk run //scripts:push-template
+```
+
+### `infisical: refused to publish <home>/.infisical/agent.env; the staged file names a shell-control variable` -> the belt fired, not the filter
+
+- The line is the workspace's, from the same script, and the path is that home directory
+  (`templates/common/infisical-secrets.sh.tftpl:238-243`):
+
+```text
+infisical: refused to publish /home/coder/.infisical/agent.env; the staged file names a shell-control variable. Nothing was written and no secret value is shown.
+```
+
+- Cause: after the publish loop the body reads the staged file once more against one
+  alternation built from its own deny list, and a match deletes the staged file, prints
+  that, and exits `0` - it refuses rather than correcting, and the `agent.env` an earlier
+  boot wrote stays exactly as it was. That is why the workspace keeps working, and why the
+  line names neither a key nor a value.
+- This is the belt, not the filter. The loop already drops every deny-listed name before a
+  line is staged (`templates/common/infisical-secrets.sh.tftpl:181-189`), compared
+  upper-cased so `BASH_ENV`, `bash_env` and `Bash_Env` fall in one arm, and the body's own
+  comment reserves the second pass for a filter that regressed or a staged file edited by
+  hand (`templates/common/infisical-secrets.sh.tftpl:219-229`). A vault key that is simply
+  on that list is therefore *not* this entry: it disappears from `agent.env` with no line
+  at all, which is the quiet path.
+- Cost of the refusal is one refresh - unlike the loop's filter, which would have cost the
+  workspace an `unset PATH HOME IFS` line had the body appended one instead
+  (`templates/common/infisical-secrets.sh.tftpl:225-229`). Clear whatever wrote to the
+  staged file, prove the vault answers from the stack host, and restart the workspace to
+  run the fetch again:
+
+```sh
+bazelisk run //scripts:infisical -- check
+```
+
+### `infisical: skipped a secret whose value spans more than one line` -> the vault holds a multi-line secret
+
+- One line per boot, whatever the number of such secrets, and it names neither the key nor
+  the value (`templates/common/infisical-secrets.sh.tftpl:200-204`):
+
+```text
+infisical: skipped a secret whose value spans more than one line; only single-line secrets are published.
+```
+
+- Cause: the body publishes single-line values only
+  (`templates/common/infisical-secrets.sh.tftpl:190-209`). A value that opens a single
+  quote without closing it on the same line is a multi-line secret - a PEM, say - and its
+  continuation lines would be republished as keys of their own, which corrupts the value
+  and puts secret bytes into key names. So the whole entry goes, including every line up
+  to the one that closes the quote (`:146-153`). The vault stores such a value happily;
+  only the workspace publish drops it, and the host-side pull of the twelve managed keys
+  is a different path that never passes through this loop
+  (`scripts/lib/infisical.sh:958-1017`).
+- Nothing prints which key, on purpose, so the shape to look for is the secret you added
+  most recently that is not one line - a private key or a certificate. Either store it as
+  one line (base64 of the PEM is the usual form) or keep it host-side, then restart the
+  workspace to fetch again.
+- The drop is a stated boundary rather than a bug: see the **No multi-line value reaches a
+  workspace** bullet in [operate/secrets.md](operate/secrets.md).
 
 ## UI and logins
 

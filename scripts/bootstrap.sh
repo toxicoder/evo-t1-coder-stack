@@ -73,6 +73,8 @@ source "scripts/lib/bootstrap.sh"
 source "scripts/lib/domain.sh"
 # shellcheck source=lib/spark.sh disable=SC1091
 source "scripts/lib/spark.sh" # spark_openai_url: the /v1 URL compose will hand the proxy
+# shellcheck source=lib/infisical.sh disable=SC1091
+source "scripts/lib/infisical.sh" # infisical_managed_keys: the one managed-key inventory
 
 check_only=0
 
@@ -103,6 +105,19 @@ HELP
   esac
 done
 
+# The keys this script mints are data in infisical/managed-secrets.txt, read through
+# infisical_managed_keys(), not a literal copied into this script twice. The vault's own
+# credentials cannot come out of the vault, so the four INFISICAL_* keys join the list
+# here and are minted locally whichever way the flag sits.
+mint_keys=()
+while IFS= read -r mint_key; do
+  mint_keys+=("${mint_key}")
+done < <(infisical_managed_keys)
+if [ "${#mint_keys[@]}" = 0 ]; then
+  die "bootstrap: infisical/managed-secrets.txt yielded no managed key to mint"
+fi
+mint_keys+=(INFISICAL_DB_PASSWORD INFISICAL_ENCRYPTION_KEY INFISICAL_AUTH_SECRET INFISICAL_ADMIN_PASSWORD)
+
 if [ "${check_only}" = "1" ]; then
   section "Check"
   log "bootstrap --check: read-only pass. Nothing below is written, built or pushed."
@@ -132,7 +147,7 @@ if [ "${check_only}" = "1" ]; then
     log ".env: missing — a full run would create it from .env.sample"
   else
     log "secrets (key names only, never values):"
-    for probe_key in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET HERMES_API_SERVER_KEY GRAFANA_ADMIN_PASSWORD; do
+    for probe_key in "${mint_keys[@]}"; do
       if grep -q "^${probe_key}=change-me" .env; then
         log "  ${probe_key}: still a change-me placeholder — a full run would replace it"
       fi
@@ -213,10 +228,32 @@ if [ -f .env.sample ]; then
   done < <(grep -E '^[A-Z0-9_]+=' .env.sample)
 fi
 
-# Only replace values still carrying the sample placeholder.
-for var in CODER_PG_PASSWORD LITELLM_MASTER_KEY HOMEPAGE_AUTH_SECRET HOMEPAGE_AUTH_PASSWORD HERMES_DASHBOARD_PASSWORD HERMES_DASHBOARD_SECRET HERMES_API_SERVER_KEY GRAFANA_ADMIN_PASSWORD; do
+# Only replace values still carrying the sample placeholder. With the flag on the value
+# goes to the vault first and only into .env once Infisical has accepted it, so a dead
+# Infisical cannot leave .env holding a secret the vault does not have; the key then
+# keeps its placeholder and a re-run picks it up, which is the recovery path this script
+# is built around. With the flag off this is exactly the local mint it always was.
+vault_mint_file=""
+if infisical_enabled .env; then
+  infisical_mktemp "${TMPDIR:-/tmp}/bootstrap-mint" ||
+    die "bootstrap: cannot make a mode-600 temp to hand Infisical the minted value"
+  vault_mint_file="${INFISICAL_MKTEMP}"
+fi
+
+for var in "${mint_keys[@]}"; do
   if grep -q "^${var}=change-me" .env; then
-    set_secret "$var"
+    if [ -z "${vault_mint_file}" ]; then
+      set_secret "$var"
+      continue
+    fi
+    mint_value="$(gen_secret_for "$var")"
+    printf '%s' "${mint_value}" >"${vault_mint_file}"
+    if infisical_secret_set "${var}" "${vault_mint_file}" .env; then
+      sed_inplace "s|^${var}=.*|${var}=${mint_value}|" .env
+      echo "generated ${var}"
+    else
+      warn "${var} did not reach Infisical; its change-me placeholder stays in .env"
+    fi
   fi
 done
 
@@ -294,7 +331,7 @@ public_litellm_url=""
 public_hermes_url=""
 public_grafana_url=""
 # STACK_PUBLIC_HOSTS has three states: empty is LAN-only, a comma-separated list is
-# used verbatim, and `auto` composes the six names from the naming parts in .env
+# used verbatim, and `auto` composes the seven names from the naming parts in .env
 # (STACK_DOMAIN_BASE, STACK_SUBDOMAIN_SUFFIX, STACK_ENV_LABEL and the per-service
 # *_NAME keys). resolve_auto_public_hosts owns the auto path and the sentinel
 # bookkeeping: it lifts the parts out of the file, exports them for lib/domain.sh,
@@ -377,7 +414,7 @@ upsert_env STACK_PUBLIC_HOSTS_MODE "${public_hosts_mode}"
 # nginx holds, so a host that was renamed in .env but never added to the router's
 # vhost table would survive bootstrap and only show up as a 421 after the
 # recreate. That table is rendered here rather than hand-edited:
-# proxy/router.conf.template carries the six blocks with __EVO_HOST_*__ tokens and the
+# proxy/router.conf.template carries the seven blocks with __EVO_HOST_*__ tokens and the
 # composed names fill them. The check then runs against the file compose will actually
 # mount, which STACK_ROUTER_CONF picks — an empty value leaves compose on the
 # checked-in proxy/router.conf.

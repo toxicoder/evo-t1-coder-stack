@@ -1,0 +1,15 @@
+"""Package purpose: Infisical managed-secret inventory.
+
+`managed-secrets.txt` is the single list of the credential keys Infisical owns;
+`infisical_managed_keys()` in scripts/lib/infisical.sh reads it with
+`grep -E '^[A-Z0-9_]+$'`. It is data, not a build input -- no genrule and no
+action consumes it. The group is named `payload` because `//:stack_data` and
+`tests/bazel_deps.py` address this directory as `//infisical:payload`.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "payload",
+    srcs = ["managed-secrets.txt"],
+)

@@ -188,6 +188,7 @@ _SUITE_PAYLOAD = {
         "//hermes:skills",
     ],
     "bootstrap.bats": [
+        "//infisical:payload",
         "//proxy:confs",
     ],
     # The suite sources the shipped probe and drives both of its functions, so it
@@ -227,6 +228,7 @@ _SUITE_PAYLOAD = {
     "dashboard-password.bats": [],
     "dev-stack.bats": [
         "//homepage:payload",
+        "//infisical:payload",
         "//proxy:confs",
     ],
     "devcontainer-template.bats": [
@@ -272,11 +274,39 @@ _SUITE_PAYLOAD = {
         "//:env_sample",
         "//docs:content",
         "//hermes:payload",
+        "//infisical:payload",
         "//proxy:confs",
     ],
     # The suite execs scripts/hermes-doctor.sh, whose seed-drift check opens both
     # seeded files beside the checkout and their volume copies, so those reads are
     # the suite's own. Everything else it reads is a scratch fixture it builds.
+    # Both suites drive the vault seam, so each owes the group that carries the one
+    # inventory file the seam reads. The scripts themselves arrive through
+    # //scripts:doc_sources in _BATS_COMMON.
+    "infisical.bats": [
+        "//infisical:payload",
+        "//:env_example",
+        "//:env_sample",
+    ],
+    # The same inventory, plus the five files the CLI-version pin compares: the host
+    # installer's fallback in the lib, the operator default in each dotenv twin, and
+    # the two spellings the golden image bakes. A pin test that cannot open its files
+    # skips, and a skipped pin is the drift this test exists to catch.
+    "infisical_lib.bats": [
+        "//infisical:payload",
+        "//:env_example",
+        "//:env_sample",
+        "//images/dev:dockerfile",
+        "//images/dev:tool_versions",
+    ],
+    # The suite renders the coder_script body and drives it against its own stub CLI, so
+    # the only repo payload it opens is the body itself -- plus both main.tf twins, whose
+    # empty-map `script = templatefile(...)` call the render case pins from each side.
+    "infisical_boot_body.bats": [
+        "//templates/common:payload",
+        "//templates/devcontainer:payload",
+        "//templates/workspace:payload",
+    ],
     "hermes-doctor.bats": [
         "//hermes:seed",
     ],
@@ -286,6 +316,7 @@ _SUITE_PAYLOAD = {
     # scripts/*.sh already ride _BATS_COMMON.
     "hermes-skills.bats": [
         "//hermes:payload",
+        "//infisical:payload",
         "//litellm:config",
         "//searxng:settings",
     ],
@@ -394,6 +425,7 @@ _SUITE_PAYLOAD = {
     "probes.bats": [],
     "prod-stack.bats": [
         "//homepage:payload",
+        "//infisical:payload",
         "//proxy:confs",
     ],
     "publish-pages-tree.bats": [],
@@ -443,6 +475,11 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//tests:coverage_tools",
     ],
+    # The suite reads both startup twins for the vault hook and both main.tf twins for
+    # the render-map key that gates it, which is every template tree at once.
+    "startup-vault-hook.bats": [
+        "//:templates_payload",
+    ],
     "storage-clean.bats": [
         "//:templates_payload",
     ],
@@ -484,7 +521,9 @@ _SUITE_PAYLOAD = {
         "//:env_sample",
         "//:templates_payload",
     ],
-    "update-stack.bats": [],
+    "update-stack.bats": [
+        "//infisical:payload",
+    ],
     "validate.bats": [
         "//:env_example",
         "//:env_sample",
@@ -533,6 +572,28 @@ _SUITE_PAYLOAD_ALLOW = {
     # out of a stubbed `docker inspect`. The suite never opens searxng/settings.yml.
     "hermes-doctor.bats": [
         "//searxng:settings",
+    ],
+    # It reads no inventory: the token comes from the stub CLI's own filename, which the
+    # suite writes to a scratch bin dir and puts first on PATH so the boot body's
+    # `command -v infisical` resolves to it. `/bin/infisical` is what the scan sees as
+    # the payload directory. The suite drives the coder_script against that stub and
+    # never opens infisical/managed-secrets.txt.
+    "infisical_boot_body.bats": [
+        "//infisical:payload",
+    ],
+    # Its BUILD.bazel is a pointer inside a skip string, not a read: the dotenv-twin cases
+    # name the map an operator has to extend with two labels when the twins are missing
+    # from this target's runfiles. The suite opens the two dotenv files themselves, which
+    # _SUITE_PAYLOAD declares, and never opens tests/BUILD.bazel.
+    "infisical.bats": [
+        "//:bazel_files",
+    ],
+    # It opens nothing under infisical/. The token comes from the grep patterns and the
+    # header prose naming what the appended .bashrc line sources -- ~/.infisical/agent.env,
+    # a path inside the workspace home that the boot body writes at run time. What this
+    # suite actually reads is the startup body and both main.tf twins, all three declared.
+    "startup-vault-hook.bats": [
+        "//infisical:payload",
     ],
     # Each case writes its own ${dir}/Dockerfile and points dockerfile_args.awk at that
     # scratch file; the repo's images/dev/Dockerfile is never opened here.

@@ -5,9 +5,9 @@
 #
 # The library is the single place a public hostname is composed, so this suite
 # pins the whole grammar: `<service>-<environment>-<suffix>.<base>`, always ONE
-# label under the zone. Six of these names are typed by nobody any more — the
+# label under the zone. Seven of these names are typed by nobody any more — the
 # operator sets a zone, a box label and a service prefix, and the router table,
-# the HOMEPAGE_ALLOWED_HOSTS entries, the cert SANs and the six STACK_*_URL keys
+# the HOMEPAGE_ALLOWED_HOSTS entries, the cert SANs and the seven STACK_*_URL keys
 # all follow from what these functions print. A wrong character here becomes a
 # 421 at the edge or a card that points at a name nothing answers, so the
 # assertions are on exact strings rather than shapes.
@@ -38,6 +38,7 @@ setup() {
   unset STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_ENV_LABEL
   unset STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME
   unset STACK_GRAFANA_NAME
+  unset STACK_INFISICAL_NAME
   unset STACK_DASHBOARD_NAME
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/domain.sh"
@@ -96,7 +97,7 @@ setup() {
 
 # ----------------------------------------------------------- domain_service_default
 
-@test "domain_service_default: the five services carry their shipped prefixes" {
+@test "domain_service_default: the six services carry their shipped prefixes" {
   run domain_service_default STACK_CODER_NAME
   [ "${output}" = "coder" ]
   run domain_service_default STACK_KASM_NAME
@@ -110,6 +111,12 @@ setup() {
   run domain_service_default STACK_GRAFANA_NAME
   [ "${status}" -eq 0 ]
   [ "${output}" = "grafana" ]
+  # Infisical is the other role behind a compose profile (secrets), and like grafana it
+  # carries a shipped prefix: domain.sh composes its name whether or not that profile is
+  # on, so a secrets-less deploy just has no container behind the vhost.
+  run domain_service_default STACK_INFISICAL_NAME
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "infisical" ]
 }
 
 @test "domain_service_default: the dashboard and an unknown key have no label" {
@@ -189,16 +196,16 @@ setup() {
 
 # ------------------------------------------------------------ public_hosts_default
 
-@test "public_hosts_default: the six names come out dashboard-first" {
+@test "public_hosts_default: the seven names come out dashboard-first" {
   run public_hosts_default
   [ "${status}" -eq 0 ]
-  [ "${output}" = "gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io,hermes-gmktecbeast.overeazy.io,grafana-gmktecbeast.overeazy.io" ]
+  [ "${output}" = "gmktecbeast.overeazy.io,coder-gmktecbeast.overeazy.io,kasm-gmktecbeast.overeazy.io,litellm-gmktecbeast.overeazy.io,hermes-gmktecbeast.overeazy.io,grafana-gmktecbeast.overeazy.io,infisical-gmktecbeast.overeazy.io" ]
 }
 
-@test "public_hosts_default: an environment label reaches all six names" {
+@test "public_hosts_default: an environment label reaches all seven names" {
   export STACK_ENV_LABEL=dev
   run public_hosts_default
-  [ "${output}" = "dev-gmktecbeast.overeazy.io,coder-dev-gmktecbeast.overeazy.io,kasm-dev-gmktecbeast.overeazy.io,litellm-dev-gmktecbeast.overeazy.io,hermes-dev-gmktecbeast.overeazy.io,grafana-dev-gmktecbeast.overeazy.io" ]
+  [ "${output}" = "dev-gmktecbeast.overeazy.io,coder-dev-gmktecbeast.overeazy.io,kasm-dev-gmktecbeast.overeazy.io,litellm-dev-gmktecbeast.overeazy.io,hermes-dev-gmktecbeast.overeazy.io,grafana-dev-gmktecbeast.overeazy.io,infisical-dev-gmktecbeast.overeazy.io" ]
 }
 
 @test "public_hosts_default: a single broken service is skipped, the rest survive" {
@@ -235,16 +242,17 @@ setup() {
 
 # -------------------------------------------------------------- public_urls_default
 
-@test "public_urls_default: six origins in the order bootstrap writes them" {
+@test "public_urls_default: seven origins in the order bootstrap writes them" {
   run public_urls_default
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 6 ]
+  [ "${#lines[@]}" -eq 7 ]
   [ "${lines[0]}" = "STACK_DASHBOARD_URL=https://gmktecbeast.overeazy.io" ]
   [ "${lines[1]}" = "STACK_CODER_URL=https://coder-gmktecbeast.overeazy.io" ]
   [ "${lines[2]}" = "STACK_KASM_URL=https://kasm-gmktecbeast.overeazy.io" ]
   [ "${lines[3]}" = "STACK_LITELLM_URL=https://litellm-gmktecbeast.overeazy.io" ]
   [ "${lines[4]}" = "STACK_HERMES_URL=https://hermes-gmktecbeast.overeazy.io" ]
   [ "${lines[5]}" = "STACK_GRAFANA_URL=https://grafana-gmktecbeast.overeazy.io" ]
+  [ "${lines[6]}" = "STACK_INFISICAL_URL=https://infisical-gmktecbeast.overeazy.io" ]
 }
 
 @test "public_urls_default: a name that will not compose is written empty, clearing the key" {
@@ -264,7 +272,7 @@ setup() {
   export STACK_GRAFANA_NAME="graf ana!"
   run public_urls_default
   [ "${status}" -eq 0 ]
-  [ "${#lines[@]}" -eq 6 ]
+  [ "${#lines[@]}" -eq 7 ]
   [ "${lines[5]}" = "STACK_GRAFANA_URL=" ]
   [ "${lines[4]}" = "STACK_HERMES_URL=https://hermes-gmktecbeast.overeazy.io" ]
 }
@@ -277,7 +285,8 @@ setup() {
   [ -f "${BATS_TEST_TMPDIR}/router.conf" ]
   for name in dev-gmktecbeast.overeazy.io coder-dev-gmktecbeast.overeazy.io \
     kasm-dev-gmktecbeast.overeazy.io litellm-dev-gmktecbeast.overeazy.io \
-    hermes-dev-gmktecbeast.overeazy.io grafana-dev-gmktecbeast.overeazy.io; do
+    hermes-dev-gmktecbeast.overeazy.io grafana-dev-gmktecbeast.overeazy.io \
+    infisical-dev-gmktecbeast.overeazy.io; do
     grep -qF -- "server_name ${name};" "${BATS_TEST_TMPDIR}/router.conf" ||
       fail "rendered router conf is missing server_name ${name};"
   done

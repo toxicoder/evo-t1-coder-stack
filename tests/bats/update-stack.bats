@@ -560,6 +560,178 @@ EOF
   unset OBSERVABILITY_ENABLED
 }
 
+@test "--stack dev takes the secrets profile into the restart only when INFISICAL_ENABLED is truthy" {
+  # The third runner of the same seam: stack_compose (scripts/update-stack.sh:449)
+  # appends what compose_infisical_args prints (scripts/lib/infisical.sh:329)
+  # after the observability words and before -f, so a restart addresses the three
+  # vault services with the flag that brought them up. A payload change drives the
+  # verb, so each case rebuilds the checkout, clears the compose log so the four
+  # answers cannot leak into one another, and drops the git shim's HEAD counter:
+  # that counter is what makes only the first rev-parse HEAD of a test answer
+  # STUB_HEAD_BEFORE, and a pull that moves no HEAD populates no CHANGED_PATHS,
+  # which would leave the case with no restart line to read at all.
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=false --stack dev
+  [ "${status}" -eq 0 ]
+  assert_not_match "off: no profile word reaches compose" 'secrets' "$(stub_log docker)"
+
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=true --stack dev
+  [ "${status}" -eq 0 ]
+  assert_match "on: the four profile words reach compose in order" \
+    '-p evo-t1-dev --env-file .*/dev-stack\.env --profile observability --profile secrets -f .*/docker-compose\.yml restart litellm$' \
+    "$(stub_log docker)"
+
+  # Unset is the shipped default and it means OFF here, the deliberate asymmetry
+  # with the two cases above, where an unset OBSERVABILITY_ENABLED answers ON. One
+  # restart line carries --profile observability and no secrets word at all.
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  unset INFISICAL_ENABLED
+  run_cli --stack dev
+  [ "${status}" -eq 0 ]
+  assert_match "unset: the bundle is addressed without the vault" \
+    '-p evo-t1-dev --env-file .*/dev-stack\.env --profile observability -f .*/docker-compose\.yml restart litellm$' \
+    "$(stub_log docker)"
+  assert_not_match "unset: no secrets word reaches compose" 'secrets' "$(stub_log docker)"
+
+  # Only truthy's four spellings count, so a typo in the file keeps the vault out.
+  prepare STUB_DIFF_OUT='litellm/config.yaml'
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${STUB_LOG}/docker.log"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=maybe --stack dev
+  [ "${status}" -eq 0 ]
+  assert_not_match "junk: treated as off" 'secrets' "$(stub_log docker)"
+}
+
+# --- the vault feeds the env file the deploy brings up from ---------------------
+# The deploy is the seam that makes the vault the source of record: after the
+# pull/plan phases and before the sibling recreates the containers, it refreshes
+# the env file compose interpolates, so a credential rotated in Infisical lands in
+# this deploy instead of waiting for a human to run the pull verb. What is pinned
+# here is the call the deploy makes - the fetch itself is pinned in
+# infisical_lib.bats - so the seam the fake checkout copies in is replaced by one
+# that records and cannot reach a vault.
+
+# vault_lib - rewrite the copied seam in the fake checkout so it sources the real
+# lib (which keeps infisical_enabled, the flag's one reader, and
+# compose_infisical_args) and redefines only infisical_pull. Each call appends
+# "pull | <env-file>" to $VAULT_PULL_LOG and answers $VAULT_RC.
+vault_lib() {
+  cat >"${ROOT_FAKE}/scripts/lib/infisical.sh" <<'SHIM'
+#!/usr/bin/env bash
+# shellcheck source=/dev/null
+source "${VAULT_REAL_LIB}"
+infisical_pull() {
+  printf 'pull | %s\n' "${1:-}" >>"${VAULT_PULL_LOG}"
+  return "${VAULT_RC:-0}"
+}
+SHIM
+}
+
+# vault_prepare [git-answers...] - the fake checkout, the git shim, and the vault
+# seam wired to a log of its own.
+vault_prepare() {
+  prepare "$@"
+  : >"${VAULT_PULL_LOG}"
+  vault_lib
+}
+
+@test "the deploy leaves the vault fetch to the bring-up and never dials the vault twice" {
+  # The fetch has to land immediately before compose interpolates the env file, and
+  # the sibling's `up` is the step that sits there - it performs the pull itself, which
+  # dev-stack.bats and prod-stack.bats each pin. This deploy pulling as well dialled the
+  # vault twice per run and printed the same outage warning twice, so what is pinned
+  # here is the absence: the deploy makes no fetch of its own, and the bring-up still
+  # happens. The stable stack names no env file, so the file in play is the .env beside
+  # the compose file.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+  run_cli INFISICAL_ENABLED=true
+  [ "${status}" -eq 0 ]
+  assert_match "the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+  assert_eq "the deploy made no pull of its own" "0" \
+    "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "and printed no fetch phase of its own" 'vault: refreshing' "${output}"
+
+  # A dry run never reaches the sibling, so the plan is where the operator learns the
+  # bring-up will refresh the file first.
+  : >"${VAULT_PULL_LOG}"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=true --dry-run
+  [ "${status}" -eq 0 ]
+  assert_match "the dry run names the refresh it will not perform" \
+    'would refresh .* from Infisical' "${output}"
+  assert_eq "and a plan pulls nothing" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+}
+
+@test "the deploy with the vault flag off fetches nothing and says nothing about it" {
+  # Off is the shipped default and the deploy is byte-identical to the one that
+  # predates the vault: no call, no phase line, no vault-named line at all. The
+  # endpoint rows of the status report are not this branch - they print whatever the
+  # flag says - so the assertions name the fetch.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+
+  unset INFISICAL_ENABLED
+  run_cli
+  [ "${status}" -eq 0 ]
+  assert_eq "unset: no pull" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "unset: no phase line" 'vault' "${output}"
+  assert_not_match "unset: no vault warning" 'not refreshed from Infisical' "${output}"
+  assert_match "unset: the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+
+  : >"${VAULT_PULL_LOG}"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=false
+  [ "${status}" -eq 0 ]
+  assert_eq "false: no pull" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "false: no phase line" 'vault' "${output}"
+  assert_match "false: the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+}
+
+@test "an unreachable vault does not stop the deploy" {
+  # A deploy that cannot reach its vault still deploys the code it pulled: the env
+  # file keeps the credentials it already has. The operator-facing warning that says
+  # so, and the retry command it names, belong to the bring-up that owns the fetch
+  # (pinned in dev-stack.bats and prod-stack.bats) - this deploy is the caller, so
+  # what is pinned here is that a vault failure neither makes a second attempt nor
+  # adds a warning of its own nor costs the operator the deploy.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+  run_cli INFISICAL_ENABLED=true VAULT_RC=1
+  [ "${status}" -eq 0 ]
+  assert_eq "no attempt of its own to retry" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "and no second copy of the bring-up's warning" \
+    'not refreshed from Infisical' "${output}"
+  assert_match "the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+}
+
+@test "a dry run plans the vault refresh and writes nothing" {
+  # --dry-run promises a plan, and the refresh writes the env file. The fetch itself
+  # sits in the bring-up, which a plan never reaches, so the deploy's whole duty here
+  # is to tell the operator the file will be refreshed before compose interpolates it.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+  run_cli INFISICAL_ENABLED=true --dry-run
+  [ "${status}" -eq 0 ]
+  assert_eq "nothing pulled" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_match "the plan names it" '^note: dry run: would refresh .*/\.env from Infisical' "${output}"
+}
+
 @test "--litellm-url is forwarded to the workspace reseed" {
   prepare STUB_DIFF_OUT='README.md'
   run_cli --litellm-url 'http://host.docker.internal:4100/v1'

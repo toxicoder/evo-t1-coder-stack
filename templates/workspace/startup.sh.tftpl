@@ -61,6 +61,24 @@ if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
 fi
 export PATH="$HOME/.grok/bin:$PATH"
 
+# Vault-fed credentials. The infisical_secrets coder_script writes the project's
+# secrets to ~/.infisical/agent.env; sourcing it here puts them in every shell and
+# command this workspace runs, and set -a exports each line rather than leaving it
+# shell-local. Gated on infisical_hook (main.tf, from var.infisical_enabled), so a
+# stack that never adopted the vault gets no line in a file the operator owns. The
+# existence test sits inside the appended line because the fetch is a separate
+# coder_script with no promised order; the grep stops a later start doubling it.
+# Sourcing is safe only because of what the writer does: read the publish step of
+# infisical-secrets.sh.tftpl and docs/operate/secrets.md before changing either side.
+# The trim markers are load-bearing. A ~} on either tag eats a newline, and with the one on
+# the opening tag the whole if lands inside the comment above it, leaving its fi for bash to
+# trip over -- which the render gate catches and a rendered-fragment test alone will not.
+%{~ if infisical_hook }
+if ! grep -qs 'infisical/agent.env' "$HOME/.bashrc"; then
+  printf '\n# Infisical vault secrets, fetched at workspace start by the infisical_secrets script\nif [ -f "$HOME/.infisical/agent.env" ]; then set -a; . "$HOME/.infisical/agent.env"; set +a; fi\n' >>"$HOME/.bashrc"
+fi
+%{ endif }
+
 # --- terminal-profile helpers -------------------------------------------------
 # docs/coder-templates.md#terminal-and-editor-defaults
 mkdir -p "$HOME/.grok/bin"

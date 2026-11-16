@@ -93,6 +93,8 @@ source "${SELF_DIR}/lib/common.sh"
 source "${SELF_DIR}/lib/host_state.sh"
 # shellcheck source=lib/pg-apply-password.sh disable=SC1091
 source "${SELF_DIR}/lib/pg-apply-password.sh"
+# shellcheck source=lib/infisical.sh disable=SC1091
+source "${SELF_DIR}/lib/infisical.sh"
 # shellcheck source=lib/domain.sh disable=SC1091
 source "${SELF_DIR}/lib/domain.sh"
 
@@ -124,7 +126,10 @@ usage: bazelisk run //scripts:dev-stack -- [--project-name <name>] [--file <file
 
   up            docker compose up -d for the project, re-apply the Postgres
                 role password from .env, bounce coder if it was failing auth,
-                then the URL summary. When the env file asks for public mode
+                then the URL summary. With INFISICAL_ENABLED on, the env file
+                is refreshed from the vault before compose renders; a vault
+                that cannot be reached is one warning and the bring-up
+                continues. When the env file asks for public mode
                 (STACK_PUBLIC_HOSTS=auto, or STACK_PUBLIC_HOSTS_MODE=auto), the
                 composed public names and STACK_ENV_LABEL=dev are exported for
                 that compose run; an empty value or a hand-written list exports
@@ -295,7 +300,7 @@ public_deploy_env() {
   # defaults while the file names another zone would export names nobody owns.
   for key in STACK_DOMAIN_BASE STACK_SUBDOMAIN_SUFFIX STACK_DASHBOARD_NAME \
     STACK_CODER_NAME STACK_KASM_NAME STACK_LITELLM_NAME STACK_HERMES_NAME \
-    STACK_GRAFANA_NAME; do
+    STACK_GRAFANA_NAME STACK_INFISICAL_NAME; do
     if [[ -z ${!key+set} ]]; then
       value="$(env_get "${env_src}" "${key}")"
       if [[ -n ${value} ]]; then
@@ -345,7 +350,8 @@ public_deploy_env() {
 # variable, so `status` and `logs` can be checked against one printed command.
 # Globals:
 #   PROJECT, COMPOSE_FILE, ENV_FILE, OBSERVABILITY_ENABLED (via
-#   compose_observability_args, which also reads ENV_FILE/COMPOSE_FILE itself)
+#   compose_observability_args, which also reads ENV_FILE/COMPOSE_FILE itself),
+#   INFISICAL_ENABLED (via compose_infisical_args, same resolution)
 # Arguments:
 #   None
 # Outputs:
@@ -355,6 +361,7 @@ public_deploy_env() {
 compose_prefix() {
   local -a argv=()
   local -a prof=()
+  local -a sec=()
   argv=("$(compose_cli)")
   argv+=("-p" "${PROJECT}")
   if [ -n "${ENV_FILE}" ]; then
@@ -364,6 +371,10 @@ compose_prefix() {
   # have to arrive as two arguments, and an off flag must add no empty word.
   read -r -a prof <<<"$(compose_observability_args)"
   argv+=("${prof[@]}")
+  # Same shape for the `secrets` bundle, whose three services are gated the way
+  # the six observability ones are, and off is the shipped default.
+  read -r -a sec <<<"$(compose_infisical_args)"
+  argv+=("${sec[@]}")
   argv+=("-f" "${COMPOSE_FILE}")
   printf '%s\n' "${argv[*]}"
 }
@@ -427,8 +438,8 @@ report_stack() {
 # command worth running next.
 # Globals:
 #   ENV_FILE, COMPOSE_FILE, STACK_DASHBOARD_URL, STACK_CODER_URL, STACK_KASM_URL,
-#   STACK_LITELLM_URL, STACK_HERMES_URL, GRAFANA_URL, PROMETHEUS_URL (each
-#   preferred over the file when exported)
+#   STACK_LITELLM_URL, STACK_HERMES_URL, GRAFANA_URL, PROMETHEUS_URL,
+#   STACK_INFISICAL_URL (each preferred over the file when exported)
 # Arguments:
 #   None
 # Outputs:
@@ -437,7 +448,9 @@ report_stack() {
 #   0
 report_urls() {
   local host coder_port litellm_port kasm_port dash_port hermes_port grafana_port prom_port
+  local infisical_port
   local coder_url litellm_url dash_url hermes_url kasm_url grafana_url prom_url env_src
+  local infisical_url
   host=""
   # The env file is where these keys live: compose interpolates them from --env-file
   # when one is named and from the .env beside the compose file when it is not, so
@@ -458,6 +471,7 @@ report_urls() {
   hermes_port="$(env_get "${env_src}" HERMES_DASHBOARD_PORT)"
   grafana_port="$(env_get "${env_src}" GRAFANA_PORT)"
   prom_port="$(env_get "${env_src}" PROMETHEUS_PORT)"
+  infisical_port="$(env_get "${env_src}" INFISICAL_PORT)"
   coder_url="${STACK_CODER_URL:-$(env_get "${env_src}" STACK_CODER_URL)}"
   litellm_url="${STACK_LITELLM_URL:-$(env_get "${env_src}" STACK_LITELLM_URL)}"
   dash_url="${STACK_DASHBOARD_URL:-$(env_get "${env_src}" STACK_DASHBOARD_URL)}"
@@ -465,6 +479,7 @@ report_urls() {
   kasm_url="${STACK_KASM_URL:-$(env_get "${env_src}" STACK_KASM_URL)}"
   grafana_url="${GRAFANA_URL:-$(env_get "${env_src}" GRAFANA_URL)}"
   prom_url="${PROMETHEUS_URL:-$(env_get "${env_src}" PROMETHEUS_URL)}"
+  infisical_url="${STACK_INFISICAL_URL:-$(env_get "${env_src}" STACK_INFISICAL_URL)}"
   printf 'dashboard: %s\n' "${dash_url:-https://${host}:${dash_port:-443}}"
   printf 'coder:     %s\n' "${coder_url:-https://${host}:${coder_port:-3001}}"
   printf 'litellm:   %s\n' "${litellm_url:-http://${host}:${litellm_port:-4000}}"
@@ -477,6 +492,11 @@ report_urls() {
   printf 'grafana:   %s\n' "${grafana_url:-http://${host}:${grafana_port:-3005}}"
   printf 'prom:      %s (loopback-only: 127.0.0.1, not published on the LAN)\n' \
     "${prom_url:-http://127.0.0.1:${prom_port:-9090}}"
+  # The vault's row prints on the same column whether or not the `secrets`
+  # profile is up, the way the two observability rows do. Its port is published
+  # plainly (a workspace reaches the host through the host-gateway), so the row
+  # names ${host} rather than the loopback address.
+  printf 'infisical: %s\n' "${infisical_url:-http://${host}:${infisical_port:-8182}}"
   printf 'password:  the dashboard login password is HOMEPAGE_AUTH_PASSWORD in %s (rotate it with bazelisk run //scripts:dashboard-password)\n' \
     "${env_src}"
   printf 'next:      bazelisk run //scripts:dev-stack -- logs --tail 200 coder\n'
@@ -486,7 +506,7 @@ report_urls() {
 # Run one compose command against the resolved project, printing it first.
 # Globals:
 #   PROJECT, COMPOSE_FILE, ENV_FILE, OBSERVABILITY_ENABLED (via
-#   compose_observability_args)
+#   compose_observability_args), INFISICAL_ENABLED (via compose_infisical_args)
 # Arguments:
 #   $1... - the compose subcommand and its arguments
 # Outputs:
@@ -497,6 +517,7 @@ run_compose() {
   local cli=""
   local -a argv=()
   local -a prof=()
+  local -a sec=()
   if ! cli="$(compose_cli)"; then
     printf 'error: no compose CLI (neither `docker compose` nor `docker-compose`)\n' >&2
     return 1
@@ -511,10 +532,12 @@ run_compose() {
   fi
   # The profile sits with the project selector, before -f, so the printed line
   # stays the shape `compose -p <project> [--env-file f] [--profile observability]
-  # -f <file> <verb>` that the suites pin: the bundle is either addressed on
-  # every verb or on none, `up` and `down` included.
+  # [--profile secrets] -f <file> <verb>` that the suites pin: each bundle is
+  # either addressed on every verb or on none, `up` and `down` included.
   read -r -a prof <<<"$(compose_observability_args)"
   argv+=("${prof[@]}")
+  read -r -a sec <<<"$(compose_infisical_args)"
+  argv+=("${sec[@]}")
   argv+=("-f" "${COMPOSE_FILE}")
   argv+=("$@")
   if [ "${JSON_MODE:-}" = "1" ]; then
@@ -530,7 +553,8 @@ run_compose() {
 # @function main
 # Parse argv, resolve the root, and dispatch one subcommand.
 # Globals:
-#   PROJECT, COMPOSE_FILE, ENV_FILE, LOG_TAIL, LOG_FOLLOW, CONFIRMED, JSON_MODE
+#   PROJECT, COMPOSE_FILE, ENV_FILE, LOG_TAIL, LOG_FOLLOW, CONFIRMED, JSON_MODE,
+#   INFISICAL_ENABLED (through infisical_enabled and infisical_pull, on `up` only)
 # Arguments:
 #   $* - optional flags, one subcommand, that subcommand's arguments, and the
 #     same flags again (a leading `-` is what makes a word an option)
@@ -541,7 +565,7 @@ run_compose() {
 main() {
   local -a rest=()
   local -a services=()
-  local root="" action=""
+  local root="" action="" vault_env=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -h | --help)
@@ -642,6 +666,21 @@ main() {
       # compose call here, and status/logs must stay byte-identical on a host that
       # is configured for public mode.
       public_deploy_env "${ENV_FILE}"
+      # The vault is the source of record for the managed credentials when the flag
+      # is on, so refresh the very file compose is about to interpolate: a key
+      # rotated in Infisical then reaches coder, litellm, homepage, hermes, grafana
+      # and searxng on this bring-up instead of waiting for a human to run the pull
+      # verb. Off is the shipped default and the branch never runs, so a stack that
+      # never opted in reads and prints exactly what it did before. A vault that
+      # cannot be reached must not hold the stack down: one warning, and the env
+      # file keeps the credentials it already has.
+      vault_env="${ENV_FILE:-$(dirname "${COMPOSE_FILE}")/.env}"
+      if infisical_enabled "${vault_env}"; then
+        phase "vault: refreshing the env file from Infisical"
+        if ! infisical_pull "${vault_env}"; then
+          warn "the env file was not refreshed from Infisical; ${vault_env} keeps the credentials it already has - retry with bazelisk run //scripts:infisical -- pull"
+        fi
+      fi
       compose_up_or_diagnose_db
       restart_coder_if_pg_auth_failed
       start_coder_agents_wait "${root}"

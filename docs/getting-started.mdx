@@ -66,9 +66,12 @@ bazelisk run //scripts:bootstrap -- --check
 ```
 
 Prepare the box: rotate the secrets, set `CODER_ACCESS_URL`, issue the self-signed
-certificates, build `evo-t1-dev:latest`, pull the DinD image. It is idempotent, so re-run
-it after changing `docker-compose.yml`, `litellm/config.yaml`, `searxng/settings.yml` or
-`proxy/*.conf`.
+certificates, build `evo-t1-dev:latest`, pull the DinD image. With `INFISICAL_ENABLED` on
+in `.env`, a minted secret goes to the vault first and into `.env` only once Infisical has
+accepted it; if the vault refuses, that key keeps its `change-me` placeholder, the run
+warns, and a later re-run picks it up. [operate/secrets.md](operate/secrets.md) covers the
+vault itself. It is idempotent, so re-run it after changing `docker-compose.yml`,
+`litellm/config.yaml`, `searxng/settings.yml`, `infisical/` or `proxy/*.conf`.
 
 ```sh
 bazelisk run //scripts:bootstrap

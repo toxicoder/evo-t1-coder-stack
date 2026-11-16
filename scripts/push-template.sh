@@ -181,6 +181,29 @@ env_get() {
   sed -n "s|^${1}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' || true
 }
 
+# @function env_get_forwardable
+# Read one .env key for a --var that must stay unpushed rather than be pushed blank
+# or pushed as the shipped sample value. One seam for the six vault values below,
+# and it is the litellm_key / context7_api_key rule written once: empty means the
+# template's own default stands, and change-me* means nobody has filled the sample
+# in yet, so pushing it would put a public constant into every workspace.
+# Globals:
+#   env_get
+# Arguments:
+#   $1 - key name
+# Outputs:
+#   The value on stdout, or nothing when there is nothing to forward
+# Returns:
+#   0 when the key holds a real value, 1 when it is absent, blank or a placeholder
+env_get_forwardable() {
+  local value
+  value="$(env_get "${1}")"
+  case "${value}" in
+    '' | change-me*) return 1 ;;
+  esac
+  printf '%s' "${value}"
+}
+
 # @function github_auth_provider_id
 # Print the Coder External Auth provider id the templates should declare.
 # coder.env's CODER_EXTERNAL_AUTH_0_ID wins when set (a custom GitHub OAuth
@@ -595,6 +618,115 @@ if grep -q '^REPO_URL=' .env 2>/dev/null; then
     vars+=(--var "repo_url=${repo_default_url}")
     log "repo_url passed from .env (prefills the Git repository field on both create forms)"
   fi
+fi
+
+# infisical_enabled is the vault's switch and it is the deliberate inverse of
+# OBSERVABILITY_ENABLED: off is the shipped state, so an absent, blank or non-truthy
+# INFISICAL_ENABLED must pass no --var at all and let each template's own
+# `default = false` stand. That is context7_mcp's asymmetry with the polarity
+# flipped - there, only an explicit false is worth saying; here, only an explicit
+# truthy value is. Truthiness is common.sh's truthy(), the same acceptance test the
+# flag has everywhere else (on|1|true|yes), and what travels is the literal "true"
+# so Terraform is handed a bool rather than one of four spellings of it.
+#
+# Read with this file's own env_get rather than with infisical_enabled in
+# scripts/lib/infisical.sh: this script does not source that lib, and no push
+# variable here reads the process environment - .env is the only source, which is
+# what keeps a stray exported INFISICAL_ENABLED from changing what gets pushed.
+if truthy "$(env_get INFISICAL_ENABLED)"; then
+  vars+=(--var "infisical_enabled=true")
+  log "infisical_enabled=true passed from INFISICAL_ENABLED in .env (workspaces fetch their credentials from the vault)"
+
+  # The address a workspace dials is not the address the host dials, so this one
+  # value is composed rather than forwarded. INFISICAL_URL in .env is the operator
+  # CLI's origin: 127.0.0.1:8182 reaches the published port from the stack host, and
+  # the same spelling inside a workspace container reaches that container's own
+  # loopback, where nothing listens - every login would fail against a dead address.
+  # The workspace gets the host gateway composed from the published port instead,
+  # exactly as the search lane above composes its URL from STACK_SEARCH_PORT rather
+  # than forwarding SEARXNG_URL. The port is the one docker-compose.yml publishes
+  # (INFISICAL_PORT, default 8182); a missing or non-numeric value falls back to that
+  # same default rather than shipping a URL that cannot resolve. It rides the flag
+  # gate below rather than travelling with the other six: a stack that never opted in
+  # pushes no vault word of any kind.
+  infisical_port="$(env_get INFISICAL_PORT)"
+  case "${infisical_port}" in
+    '' | *[!0-9]*)
+      infisical_port=8182
+      infisical_port_from="the default (INFISICAL_PORT in .env is unset, empty or not a port)"
+      ;;
+    *) infisical_port_from="INFISICAL_PORT in .env" ;;
+  esac
+  vars+=(--var "infisical_url=http://host.docker.internal:${infisical_port}")
+  log "infisical_url=http://host.docker.internal:${infisical_port} passed from ${infisical_port_from} (a workspace dials the host gateway, so the port has to match the one the stack publishes)"
+
+  # The second gate, and it is read only under the first: a stack that never adopted
+  # the vault has no reason to carry a word about when to pull from it. Forwarded the
+  # same one-way way - an absent or non-truthy INFISICAL_PULL_ON_START passes nothing
+  # and leaves each template's own `default = false` standing, so the shipped state is
+  # a boot that never waits on the vault. Off is also what .env.example ships.
+  if truthy "$(env_get INFISICAL_PULL_ON_START)"; then
+    vars+=(--var "infisical_pull_on_start=true")
+    log "infisical_pull_on_start=true passed from INFISICAL_PULL_ON_START in .env (each workspace start also runs the vault fetch, in no promised order with the startup script)"
+  fi
+fi
+
+# The five values the workspace boot fetch reads the vault with. Each is forwarded
+# only when .env carries something real, exactly as litellm_key and context7_api_key
+# are: a blank line must not override a template default, and a value still carrying
+# its .env.example placeholder would push a public constant into every workspace.
+# They travel whether or not the flag is on, so turning the vault on later is a
+# re-push of one word rather than a re-config of five, and a stack that never adopted
+# Infisical pushes none of them.
+#
+# None of the five is echoed: a project id and a machine identity id both end up
+# transcribed into whoever's CI log this output lands in, and printing only the key a
+# value came from is what this file's credential-bearing forwards already do.
+#
+# The Terraform name and the .env key differ for the Universal Auth pair on purpose:
+# the templates name the variables after what they are, .env names them after how the
+# Infisical CLI reads them, and scripts/infisical.sh check is the reader that keeps
+# the .env spelling honest. infisical_url is the exception, and the one a workspace
+# cannot do without: the Infisical CLI dials Infisical Cloud when it is handed no
+# domain, so a self-hosted instance that is never named is a wrong-server bug rather
+# than a no-op. It is composed inside the flag gate above rather than read from
+# INFISICAL_URL here, because that key is the host's own origin and a workspace must
+# dial the host gateway instead.
+
+infisical_project_id="$(env_get_forwardable INFISICAL_PROJECT_ID)" || infisical_project_id=""
+if [ -n "${infisical_project_id}" ]; then
+  vars+=(--var "infisical_project_id=${infisical_project_id}")
+  log "infisical_project_id passed from INFISICAL_PROJECT_ID in .env (value not shown)"
+fi
+
+infisical_machine_identity_id="$(env_get_forwardable INFISICAL_MACHINE_IDENTITY_ID)" ||
+  infisical_machine_identity_id=""
+if [ -n "${infisical_machine_identity_id}" ]; then
+  vars+=(--var "infisical_machine_identity_id=${infisical_machine_identity_id}")
+  log "infisical_machine_identity_id passed from INFISICAL_MACHINE_IDENTITY_ID in .env (value not shown)"
+fi
+
+infisical_client_id="$(env_get_forwardable INFISICAL_UNIVERSAL_AUTH_CLIENT_ID)" ||
+  infisical_client_id=""
+if [ -n "${infisical_client_id}" ]; then
+  vars+=(--var "infisical_client_id=${infisical_client_id}")
+  log "infisical_client_id passed from INFISICAL_UNIVERSAL_AUTH_CLIENT_ID in .env (value not shown)"
+fi
+
+infisical_environment="$(env_get_forwardable INFISICAL_ENVIRONMENT)" || infisical_environment=""
+if [ -n "${infisical_environment}" ]; then
+  vars+=(--var "infisical_environment=${infisical_environment}")
+  log "infisical_environment passed from INFISICAL_ENVIRONMENT in .env (value not shown)"
+fi
+
+# infisical_client_secret is the credential of that pair, so it is handled exactly as
+# context7_api_key is: the value reaches the CLI as an argument and is never printed
+# anywhere, including in the log line that says it was passed.
+infisical_client_secret="$(env_get_forwardable INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET)" ||
+  infisical_client_secret=""
+if [ -n "${infisical_client_secret}" ]; then
+  vars+=(--var "infisical_client_secret=${infisical_client_secret}")
+  log "infisical_client_secret passed from INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET in .env (value not shown)"
 fi
 
 # ── Per-template work ───────────────────────────────────────────────────────

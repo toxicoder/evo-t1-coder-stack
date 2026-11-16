@@ -44,6 +44,15 @@ on the rate-limit and CAPTCHA walls, which is why that probe is
 `bazelisk run //scripts:search-check`'s job, run on demand. See
 [troubleshooting.md](troubleshooting.md).
 
+The **Host** group carries one more card, for the secrets vault: its badge probes
+`http://infisical:8080/` - the container port, not the published `INFISICAL_PORT`,
+because this dashboard reaches every service over compose DNS - and `/` is the path the
+pinned image's own healthcheck calls live. Its `href` rides
+`{{HOMEPAGE_VAR_INFISICAL_URL}}`, which bootstrap fills from `STACK_INFISICAL_URL` when
+the public names are set. The bundle is one flag, `INFISICAL_ENABLED`, off as shipped:
+with it off compose starts none of the three containers and the badge reads down with
+them, so run `bazelisk run //scripts:infisical -- status` before chasing the card.
+
 Card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL` /
 `STACK_HERMES_URL`, which default to LAN URLs built from `STACK_LAN_HOST` and the
 port variables. Change a port or re-detect the LAN IP and the links follow; set `auto`
