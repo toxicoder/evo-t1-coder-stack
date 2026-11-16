@@ -72,6 +72,7 @@ ARG NODE_VERSION_DEFAULT=24 \
     TERRAGRUNT_VERSION=1.1.6 \
     GH_VERSION=2.101.0 \
     CODER_CLI_VERSION=v2.36.6 \
+    INFISICAL_CLI_VERSION=0.45.8 \
     BAZELISK_VERSION=v1.25.0 \
     BUILDIFIER_VERSION=v8.2.1 \
     SHFMT_ASSET_VERSION=3.10.0 \
@@ -315,6 +316,28 @@ RUN case "${TARGETARCH}" in \
     && tar -xzf /tmp/coder.tgz -C /tmp/coder-cli \
     && install -m 0755 /tmp/coder-cli/coder /usr/local/bin/coder \
     && rm -rf /tmp/coder.tgz /tmp/coder-cli \
+    # Infisical CLI — the workspace's half of the secrets vault. The boot fetch
+    # (templates/common/infisical-secrets.sh.tftpl) is a shell script that execs this
+    # binary, and its first line is `command -v infisical || exit 0`, so on an image
+    # without it every workspace boot fetches nothing and says nothing. Baked for the
+    # same reason as the Coder CLI: a workspace start must not depend on a download.
+    # The stack host keeps using `bazelisk run //scripts:infisical -- install-cli`,
+    # and the suites pin this version against the one that installer defaults to.
+    #
+    # No `infisical --version` smoke check here: the CLI is a bundled Node program, so
+    # the only thing that call would prove at build time is that node starts, and a
+    # bundle that changed its flag surface would fail the image build for no gain.
+    #
+    # The release archive carries licence, README and completion members beside the
+    # binary, so the whole archive is unpacked into a scratch dir and the one regular
+    # file named `infisical` is installed from it. The probe uses find's own -quit
+    # rather than `| head`: this layer runs under `set -o pipefail`, where an
+    # early-exit reader turns a good archive into exit 141.
+    && fetch /tmp/infisical-cli.tgz "https://github.com/Infisical/cli/releases/download/v${INFISICAL_CLI_VERSION}/cli_${INFISICAL_CLI_VERSION}_linux_${ARCH}.tar.gz" \
+    && mkdir -p /tmp/infisical-cli \
+    && tar -xzf /tmp/infisical-cli.tgz -C /tmp/infisical-cli \
+    && install -m 0755 "$(find /tmp/infisical-cli -type f -name infisical -print -quit)" /usr/local/bin/infisical \
+    && rm -rf /tmp/infisical-cli.tgz /tmp/infisical-cli \
     # Docker client toolchain — the *client* only, so a workspace can drive a
     # Docker daemon. download.docker.com's static tarball also ships dockerd,
     # containerd, containerd-shim-runc-v2, docker-proxy and runc, so it must

@@ -785,6 +785,35 @@ EOS
   [ "${status}" -eq 1 ]
 }
 
+@test "seam: the CLI version the workspace image bakes is the version the host installer defaults to" {
+  # The workspace half of the vault execs the Infisical CLI, so images/dev/ bakes it;
+  # One file owns each spelling, and this test is what keeps them one version. The
+  # pins are read from the shipping tree (bats_source_repo_root), because under the
+  # coverage mirror a production .sh carries instrumentation and is no longer the bytes
+  # that ship. A missing file is a broken //tests:BUILD.bazel declaration, not a
+  # reason to skip: a pin test that skips is a pin that does not exist.
+  local src
+  src="$(bats_source_repo_root)" || skip "no source tree to pin against"
+  local pins="${src}/images/dev/tool-versions.env" envs="${src}/.env.example"
+  local lib="${src}/scripts/lib/infisical.sh" dockerfile="${src}/images/dev/Dockerfile"
+  local f
+  for f in "${pins}" "${envs}" "${lib}" "${dockerfile}"; do
+    [ -r "${f}" ]
+  done
+  # Each reader drains its producer: this suite's runner runs under pipefail, and a
+  # head(1) that leaves early would report 141 for a file that answered fine.
+  local image_pin env_pin lib_default dockerfile_arg
+  image_pin="$(sed -n 's/^INFISICAL_CLI_VERSION=//p' "${pins}" | tail -n 1)"
+  env_pin="$(sed -n 's/^INFISICAL_CLI_VERSION=//p' "${envs}" | tail -n 1)"
+  lib_default="$(sed -n 's/.*version="\([0-9][0-9.]*\)".*/\1/p' "${lib}" | tail -n 1)"
+  dockerfile_arg="$(sed -n 's/^[[:space:]]*INFISICAL_CLI_VERSION=\([0-9][0-9.]*\).*/\1/p' \
+    "${dockerfile}" | tail -n 1)"
+  assert_eq "the image pin is a bare version" "0.45.8" "${image_pin}"
+  assert_eq "the Dockerfile's own default agrees" "${image_pin}" "${dockerfile_arg}"
+  assert_eq "the operator default agrees" "${image_pin}" "${env_pin}"
+  assert_eq "and the installer's fallback agrees" "${image_pin}" "${lib_default}"
+}
+
 @test "seam: infisical_install_cli fails on an empty download and never runs tar" {
   source_lib
   export XDG_DATA_HOME="${SCRATCH}/xdg"
