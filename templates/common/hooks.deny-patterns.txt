@@ -15,6 +15,13 @@
 # A line that fails to compile is skipped with one note on stderr, never a crash, so a
 # typo here fails open quietly rather than blocking every shell call.
 #
+# Two properties of the match itself, both worth knowing before you trust a clean run. It
+# is case-sensitive and byte-wise (LC_ALL=C), so a rule written lower-case does not see an
+# upper-case command -- write a class, `[sS]udo`, when a case matters. And it reads the
+# whole command string, quotes included, because stripping quoted regions would equally
+# blind the guard to `sh -c "..."`, the way a real command usually travels; a rule that
+# must match inside quotes has to spell the quote, as the dot-rooted find rule above does.
+#
 # Nothing below denies the ordinary loop: bazelisk test and query, git add / commit /
 # push -u / status / log, rg, and the operator CLIs under //scripts: all pass untouched.
 
@@ -38,10 +45,13 @@ rm[[:space:]]+.*--recursive([[:space:]]|=)
 rm[[:space:]]+.*--no-preserve-root
 find[[:space:]]+/([[:space:]]|$).*-delete
 find[[:space:]]+(~|\$\{?HOME\}?)([[:space:]]|/|$).*-delete
-# A -delete rooted at the working directory is the same sweep wearing a relative path.
-# The sanctioned cleanup this stack documents names a scratch directory and nothing else
-# (`find <dir> -type f -delete`), so refusing the bare dot costs no legitimate call.
-find[[:space:]]+\.([[:space:]]|/).*-delete
+# A -delete rooted at the working directory is the same sweep wearing a relative path,
+# quoted or not. The sanctioned cleanup this stack documents names a scratch directory and
+# nothing else (`find /tmp/scratch -type f -delete`), so refusing every root that starts at
+# the tree costs no legitimate call -- a repo-local ./tmp included, which a command string
+# cannot tell from the tree itself. A quote may sit on either side of the dot and the
+# terminator is any non-word byte, so `find "." -type f -delete` is that same command.
+find[[:space:]]+["']?\.([^[:alnum:]_]|$).*-delete
 
 # --- disk, device, and filesystem writes --------------------------------------------
 # These rewrite a block device in place, and the device in reach here is the one the
@@ -84,9 +94,14 @@ tmux[[:space:]]+restart-server
 git[[:space:]]+push[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*--force([[:space:]]|$)
 git[[:space:]]+push[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-f([[:space:]]|$)
 git[[:space:]]+reset[[:space:]]+--hard
-git[[:space:]]+checkout[[:space:]]+--[[:space:]]+\.([[:space:]]|$)
-git[[:space:]]+restore[[:space:]]+(-[[:graph:]]+[[:space:]]+)*\.([[:space:]]|$)
-git[[:space:]]+stash[[:space:]]+(drop|clear)([[:space:]]|$)
+# The three ways the rulebook says a day of work gets thrown away, with a ref allowed in
+# front of the `--` because `git checkout HEAD -- .` discards the tree just as completely as
+# `git checkout -- .` does. A quote may sit in front of the dot and the terminator is any
+# non-word byte, and a quoted single path stays legal: `git restore 'scripts/x.sh'` is not
+# this rule.
+git[[:space:]]+checkout[[:space:]]+([^[:space:]]+[[:space:]]+)?--[[:space:]]+["']?\.([^[:alnum:]_]|$)
+git[[:space:]]+restore[[:space:]]+(-[[:graph:]]+[[:space:]]+)*["']?\.([^[:alnum:]_]|$)
+git[[:space:]]+stash[[:space:]]+(drop|clear)([^[:alnum:]_]|$)
 # Deliberately absent: `git clean -fd` is destructive only in a tree with uncommitted
 # work, and a command string cannot tell you which tree it is. It stays a rulebook rule.
 
@@ -99,10 +114,13 @@ git[[:space:]]+stash[[:space:]]+(drop|clear)([[:space:]]|$)
 #
 # The two halves below are deliberately asymmetric. Deleting one file by path is a step
 # the ez-learn dream flow documents (`rm` the session logs it consumed), so notes and
-# memory stay deletable; nothing documents zeroing a file in place, so the three
-# truncation forms cover any path that names .grok/, and an ordinary truncate of a log
-# file outside it stays available. The removal rule is limited to what the boot
-# re-materialises and an agent has no business deleting at all.
+# memory stay deletable; the removal rule is limited to what the boot re-materialises and
+# an agent has no business deleting at all. The three forms that zero a file in place --
+# `truncate`, the `: >` redirect, and `cp /dev/null` -- appear in no workflow this repo
+# documents, so those three cover any path that names .grok/, and an ordinary truncate
+# of a log outside it stays available. A plain `echo junk > file` is not one of the three
+# and is not refused: it is how a person writes a file, and telling it apart from a wipe
+# needs a parser this guard does not carry.
 truncate[[:space:]]+[^|;]*\.grok/
 :[[:space:]]*>[[:space:]]*[^[:space:]]*\.grok/
 cp[[:space:]]+/dev/null[[:space:]]+[^|;]*\.grok/

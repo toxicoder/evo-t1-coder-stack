@@ -114,21 +114,30 @@ fi
 # pattern this guard exists to protect, and every language spells the indirection its own
 # way: LiteLLM writes api_key: os.environ/SPARK_1_API_KEY in the YAML this repo edits most,
 # a config module reads process.env.SPARK_API_KEY_V2, a Python one reads
-# os.environ["DB_PASSWORD_1"]. The value class below excludes only a leading dollar sign,
-# which is the shell's spelling of the same idea, so each of these reaches the scan as a
-# 12-character-plus value sitting on a credential name and reads as a credential. Folding
-# every indirection to one fixed token keeps the line's shape for the rest of the scan and
-# takes the digits out of the name with it, which is what the assignment gate reads.
+# os.environ["DB_PASSWORD_1"] or os.environ.get("DB_PASSWORD_1"), a Rust one
+# std::env::var("SPARK_API_KEY_1"). The value class below excludes only a leading dollar
+# sign, which is the shell's spelling of the same idea, so each of these reaches the scan as
+# a long value sitting on a credential name and reads as a credential -- the fold prefix
+# itself supplies the twelve characters the value class asks for. Folding every indirection
+# to one fixed token keeps the line's shape for the rest of the scan and takes the digits out
+# of the name with it, which is what the assignment gate reads.
 #
 # The token has to stay shorter than the shortest value the scan asks for -- eight
 # characters, in the upper-case list -- or the fold would survive as a match of its own.
 # stack-hooks.bats pins that length.
+#
+# The fold is what the ASSIGNMENT scans see. The exact vendor formats are scanned against
+# the text before it, so a credential pasted inside a call that normally names the
+# environment still denies: getenv("AKIA...") is a leak wearing the shape of the correct
+# pattern, and the shape is exactly what the fold exists to excuse.
+raw="${haystack}"
 haystack="$(printf '%s\n' "${haystack}" |
   sed -E \
     -e 's#(os\.environ|os\.env|base64_environ|base64_env)/[A-Za-z_][A-Za-z0-9_]*([?][^"[:space:]]*)?#ENVREF#g' \
-    -e 's#(os\.environ|os\.env)\[["'"'"'][^"'"'"']*["'"'"']\]#ENVREF#g' \
+    -e 's#(os\.environ|os\.env|[A-Za-z_][A-Za-z0-9_]*\.env)\.get\([[:space:]]*["'"'"'][^"'"'"']*["'"'"'][[:space:]]*\)#ENVREF#g' \
+    -e 's#(os\.environ|os\.env|[A-Za-z_][A-Za-z0-9_]*\.env)\[["'"'"'][^"'"'"']*["'"'"']\]#ENVREF#g' \
     -e 's#[A-Za-z_][A-Za-z0-9_]*\.env\.[A-Za-z_$][A-Za-z0-9_$]*#ENVREF#g' \
-    -e 's#[A-Za-z_.]*getenv\([[:space:]]*["'"'"'][^"'"'"']*["'"'"'][[:space:]]*\)#ENVREF#g')"
+    -e 's#[A-Za-z_.:]*(getenv|env::var)\([[:space:]]*["'"'"'][^"'"'"']*["'"'"'][[:space:]]*\)#ENVREF#g')"
 
 # One grep per class, so the reason can name the class that fired. The patterns are the
 # family's pinned list.
@@ -144,14 +153,16 @@ haystack="$(printf '%s\n' "${haystack}" |
 # case-folded, because a real write names the variable the way its SDK does --
 # AWS_SECRET_ACCESS_KEY in upper case -- and LC_ALL=C makes grep byte-wise, so a lowercase
 # list alone would walk straight past it.
+# The exact formats, run on the text before the fold. A vendor key is a vendor key whatever
+# call it is sitting inside, and the fold is there to excuse a reference, not a literal.
 scan() {
-  if printf '%s\n' "${haystack}" | grep -qE -- "$2"; then
+  if printf '%s\n' "${raw}" | grep -qE -- "$2"; then
     deny "$1 matched; its text is not quoted here, so pass the credential through the environment instead of the file"
   fi
 }
 
 scan_i() {
-  if printf '%s\n' "${haystack}" | grep -qiE -- "$2"; then
+  if printf '%s\n' "${raw}" | grep -qiE -- "$2"; then
     deny "$1 matched; its text is not quoted here, so pass the credential through the environment instead of the file"
   fi
 }
@@ -172,12 +183,15 @@ scan_assign_i() {
   fi
 }
 
-# Whitespace or a quote may sit between the separator and the value; a dollar sign may not,
-# because that is a reference. The value class excludes the punctuation that ends a value in
-# the formats a workspace actually writes, so a bare word cannot stretch to 12 characters by
-# eating its own sentence.
+# Whitespace or a quote may sit between the separator and the value, with no cap: aligned
+# YAML and a columned settings table put more than four spaces there, and a bound that
+# refused them let the secret through. What keeps the match from running away is the rest of
+# the pattern, not a length limit on the gap -- a value must follow a real `:` or `=`, it may
+# not start on a dollar sign because that is a reference, and the value class excludes the
+# punctuation that ends a value in the formats a workspace actually writes, so a bare word
+# cannot stretch to 12 characters by eating its own sentence.
 KW='(api[_-]?key|apikey|secret|token|password|passwd|client[_-]?secret|access[_-]?token|refresh[_-]?token|private[_-]?key|credentials?)'
-GAP='[[:space:]"'"'"']{0,4}'
+GAP='[[:space:]"'"'"']*'
 VAL='[^$[:space:]"'"'"',;()<>]{12,}'
 
 scan 'the AWS access key id pattern' 'AKIA[0-9A-Z]{16}'
@@ -193,7 +207,7 @@ scan_assign 'the generic api key / secret / token assignment pattern' \
   "${KW}[[:space:]]*[:=]${GAP}${VAL}"
 # The same shape under the names an SDK spells in upper case, which the pass above cannot see.
 scan_assign_i 'an upper-case credential assignment' \
-  '(aws_secret_access_key|aws_session_token|azure_client_secret|google_api_key|db[_-]?password|database_url)[[:space:]]*[:=]?[[:space:]"'"'"']{0,4}[^$[:space:]"'"'"',;()<>]{8,}'
+  '(aws_secret_access_key|aws_session_token|azure_client_secret|google_api_key|db[_-]?password|database_url)[[:space:]]*[:=]?[[:space:]"'"'"']*[^$[:space:]"'"'"',;()<>]{8,}'
 # The same shape case-folded, and under the same digit gate: a write that names a
 # credential the way a non-upper-case SDK does still has to carry the entropy a real
 # secret has, or it is a variable holding a value that lives somewhere else.

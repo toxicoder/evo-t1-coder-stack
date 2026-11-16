@@ -332,6 +332,53 @@ assert_quiet() {
     return 1; }
 }
 
+@test "secret-guard: the fold reaches every call form that names the environment" {
+  # Python reads a variable with os.environ.get("NAME") as well as os.environ["NAME"], Node
+  # indexes process.env["NAME"], Rust calls std::env::var("NAME"). Each begins with a prefix
+  # long enough to satisfy the value class on its own, so an unfolded one is denied as a
+  # credential with the fold never having applied.
+  local spelling
+  for spelling in 'os.environ.get("DB_PASSWORD_1")' 'process.env["SPARK_API_KEY_1"]' \
+    'std::env::var("SPARK_API_KEY_1")' 'ENV.get("DB_PASSWORD_1")'; do
+    run_hook secret-guard.sh "$(event_json write new_string \
+      "aws_secret_access_key = ${spelling}  # pool sized for 5432 conns")"
+    assert_decision || { printf 'a call that names the environment was refused: %s -> %s\n' "${spelling}" "${hook_out}" >&2; return 1; }
+  done
+}
+
+@test "secret-guard: a vendor key inside a reference call is still a vendor key" {
+  # The fold excuses a reference, and a credential pasted into the position a reference
+  # usually occupies is a leak wearing that shape. The exact-format scans therefore run on
+  # the text before the fold, so the AKIA id below is seen even though getenv() ate it.
+  local sample
+  for sample in \
+    "aws_access_key_id = getenv(\"AKI$(printf 'A')IOSFODNN7EXAMPLE\")" \
+    "api_key: os.environ[\"gh$(printf 'p')_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij\"]"; do
+    run_hook secret-guard.sh "$(event_json write new_string "${sample}")"
+    assert_decision deny || { printf 'a literal credential hid behind a reference call: %s -> %s\n' "${sample}" "${hook_out}" >&2; return 1; }
+  done
+}
+
+@test "secret-guard: an aligned assignment is as swept as a tight one" {
+  # Aligned YAML and a columned settings block put more than a handful of spaces between the
+  # separator and the value. A capped separator let exactly those through, which is the
+  # shape a hand-written config file is most often in.
+  local sample
+  for sample in 'api_key:      abc123def456ghi789jkl' \
+    'client_secret    =      s3cr3tvalue0987654321x' \
+    'aws_secret_access_key:       wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'; do
+    run_hook secret-guard.sh "$(event_json write new_string "${sample}")"
+    assert_decision deny || { printf 'an aligned assignment was allowed: %s -> %s\n' "${sample}" "${hook_out}" >&2; return 1; }
+  done
+  # And widening the gap cannot turn prose into a credential: without a real separator the
+  # keyword is just a word in a sentence.
+  for sample in 'the token list for this lane is long and has no separator at all 42' \
+    'password rotation is documented in the runbook, section 4'; do
+    run_hook secret-guard.sh "$(event_json write new_string "${sample}")"
+    assert_decision || { printf 'prose was read as an assignment: %s -> %s\n' "${sample}" "${hook_out}" >&2; return 1; }
+  done
+}
+
 # ---------------------------------------------------------------------------
 # dangerous-command-guard and its list.
 # ---------------------------------------------------------------------------
@@ -437,7 +484,14 @@ assert_quiet() {
     "docker-system-prune:docker system prune -a --volumes" \
     "compose-down-volumes:docker compose -p evo-t1 down -v" \
     "compose-down-long:docker compose down --remove-orphans --volumes" \
-    "docker-rm-stack:docker rm -f coder-dev"; do
+    "docker-rm-stack:docker rm -f coder-dev" \
+    "find-dot-quoted:find \".\" -type f -delete" \
+    "find-dot-single:find '.' -type f -delete" \
+    "find-dot-relative:find ./tmp -type f -delete" \
+    "checkout-dot-quoted:git checkout -- '.'" \
+    "checkout-dot-ref:git checkout HEAD -- ." \
+    "restore-dot-slash:git restore ./" \
+    "stash-clear-terminated:git stash clear;"; do
     cmd="${case_name#*:}"
     run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
     assert_decision deny || { printf 'not denied: %s (%s) -> %s\n' "${case_name}" "${cmd}" "${hook_out}" >&2; return 1; }
@@ -454,7 +508,10 @@ assert_quiet() {
   for cmd in "find /tmp/scratch -type f -delete" \
     "find . -name '*.orig' -print" \
     "git checkout -- scripts/x.sh" \
+    "git checkout HEAD~1 -- scripts/x.sh" \
+    "git restore 'scripts/x.sh'" \
     "git restore --source=HEAD~1 scripts/x.sh" \
+    "find ./data -name '*.orig' -print" \
     "git stash push -m wip" \
     "git stash list" \
     "truncate -s 0 /tmp/evo-t1-hook-tests/run.log" \
@@ -612,6 +669,28 @@ wait_for_line() {
     assert_quiet || { printf 'a formatter must not obstruct an edit: %s -> %s\n' "${path}" "${hook_out}" >&2; return 1; }
     after="$(cat "${path}")"
     [ "${before}" = "${after}" ] || { printf 'the formatter rewrote a path it refuses: %s\n' "${path}" >&2; return 1; }
+  done
+}
+
+@test "post-edit-format: a link further up the path cannot carry it out of the project" {
+  # The containment test is a string compare, so `linkdir/keep.sh` reads as inside the project
+  # while the formatter follows the link and rewrites a file the project does not own. The
+  # hook resolves what it would really open and tests that too; addressed directly the same
+  # file is refused, and both halves have to leave the bytes alone.
+  make_project
+  local outside target before after
+  outside="${BATS_TEST_TMPDIR}/outside"
+  mkdir -p "${outside}"
+  plant_dirty "${outside}/keep.sh"
+  ln -s "${outside}" "${project}/linkdir"
+  for target in "${project}/linkdir/keep.sh" "${outside}/keep.sh"; do
+    before="$(cat "${outside}/keep.sh")"
+    run_hook post-edit-format.sh "$(event_json write file_path "${target}")"
+    assert_quiet || { printf 'the formatter obstructed the edit: %s\n' "${hook_out}" >&2; return 1; }
+    after="$(cat "${outside}/keep.sh")"
+    [ "${before}" = "${after}" ] || {
+      printf 'the formatter wrote through a link out of the project: %s\n' "${target}" >&2
+      return 1; }
   done
 }
 

@@ -94,8 +94,19 @@ root="${root%/}"
 # is what keeps /proj-off from passing for /proj.
 [ "${abs#"$root"/}" != "$abs" ] || exit 0
 
-# -f follows a link, so the link itself has to be refused first.
+# -f follows a link, so the link itself has to be refused first. That catches the last
+# component only, and the containment test above is a string compare, so a link further up
+# the path would walk the formatter out of the project while the path still read as inside
+# it. Resolve what the formatter would really open and test that too; where readlink is
+# missing the last-component check is the floor, which is the behaviour before this test.
 [ -L "$abs" ] && exit 0
+real="$(readlink -f -- "$abs" 2>/dev/null)" || real=""
+if [ -n "$real" ]; then
+  root_real="$(readlink -f -- "$root" 2>/dev/null)" || root_real="$root"
+  # "$root_real" quoted so a metacharacter in it stays a literal prefix, and the trailing
+  # slash is what keeps /proj-off passing for /proj at the resolved end as well.
+  [ "${real#"$root_real"/}" != "$real" ] || exit 0
+fi
 [ -f "$abs" ] || exit 0
 
 formatter=""
