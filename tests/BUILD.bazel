@@ -289,6 +289,14 @@ _SUITE_PAYLOAD = {
     "infisical_lib.bats": [
         "//infisical:payload",
     ],
+    # The suite renders the coder_script body and drives it against its own stub CLI, so
+    # the only repo payload it opens is the body itself -- plus both main.tf twins, whose
+    # empty-map `script = templatefile(...)` call the render case pins from each side.
+    "infisical_boot_body.bats": [
+        "//templates/common:payload",
+        "//templates/devcontainer:payload",
+        "//templates/workspace:payload",
+    ],
     "hermes-doctor.bats": [
         "//hermes:seed",
     ],
@@ -549,6 +557,14 @@ _SUITE_PAYLOAD_ALLOW = {
     # out of a stubbed `docker inspect`. The suite never opens searxng/settings.yml.
     "hermes-doctor.bats": [
         "//searxng:settings",
+    ],
+    # It reads no inventory: the token comes from the stub CLI's own filename, which the
+    # suite writes to a scratch bin dir and puts first on PATH so the boot body's
+    # `command -v infisical` resolves to it. `/bin/infisical` is what the scan sees as
+    # the payload directory. The suite drives the coder_script against that stub and
+    # never opens infisical/managed-secrets.txt.
+    "infisical_boot_body.bats": [
+        "//infisical:payload",
     ],
     # Each case writes its own ${dir}/Dockerfile and points dockerfile_args.awk at that
     # scratch file; the repo's images/dev/Dockerfile is never opened here.
