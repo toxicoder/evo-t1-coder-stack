@@ -77,7 +77,8 @@ Both gates reach the templates through `bazelisk run //scripts:push-template`: t
 
 When both are on, the fetch is a `coder_script` (`"infisical_secrets"`, `run_on_start`, 120s
 timeout) that logs in as the machine identity, exports the project's dotenv, and publishes it to
-`~/.infisical/agent.env` at mode 600 on the shared profile volume. Two things about that file are
+`~/.infisical/agent.env` at mode 600, on this workspace's own home volume rather than the
+per-owner profile volume. Two things about that file are
 deliberate. Keys beginning `INFISICAL_` are filtered out of it, so the vault's own address and
 Universal Auth pair never get republished as workspace environment. And `~/.bashrc` sources it
 under `set -a` - the reader is what makes the fetch worth doing, since a login shell is what every
