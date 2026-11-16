@@ -262,14 +262,23 @@ setup() {
     '^HERMES_API_SERVER_KEY=change-me-hermes-api$'
   assert_contains_file "sample binds loopback" "${sample}" \
     '^HERMES_API_BIND=127\.0\.0\.1$'
-  # bootstrap only replaces change-me-* for the keys on its two lists. A key left
+  # bootstrap only replaces change-me-* for the keys on its mint lists. A key left
   # off them ships a well-known secret, and an enabled server then authenticates
-  # to nothing. Both lists (the --check probe and the generator) have to carry it.
-  local listed
-  listed="$(grep -c 'HERMES_DASHBOARD_SECRET HERMES_API_SERVER_KEY' \
-    "${REPO_ROOT}/scripts/bootstrap.sh")"
-  [ "${listed}" -eq 2 ] \
-    || { printf 'FAIL: bootstrap generates the api key on %s of its 2 secret lists\n' "${listed}" >&2; return 1; }
+  # to nothing. Both lists (the --check probe and the generator) have to carry it --
+  # and they are no longer two literals that can drift apart: bootstrap builds one
+  # array from infisical/managed-secrets.txt through infisical_managed_keys() and both
+  # loops iterate that array, so the proof is that the key is on the inventory and that
+  # both loops read the inventory. A key dropped from the file now fails here instead
+  # of silently shipping a placeholder.
+  grep -Fq 'infisical_managed_keys' "${REPO_ROOT}/scripts/bootstrap.sh" ||
+    { printf 'FAIL: bootstrap no longer mints from the managed-key inventory\n' >&2; return 1; }
+  [ "$(grep -cF '"${mint_keys[@]}"' "${REPO_ROOT}/scripts/bootstrap.sh")" -eq 2 ] ||
+    { printf 'FAIL: bootstrap does not drive both its check probe and its generator from one array\n' >&2; return 1; }
+  local minted
+  for minted in HERMES_DASHBOARD_SECRET HERMES_API_SERVER_KEY; do
+    grep -Fxq "${minted}" "${REPO_ROOT}/infisical/managed-secrets.txt" ||
+      { printf 'FAIL: %s is off the managed-key inventory bootstrap mints from\n' "${minted}" >&2; return 1; }
+  done
 }
 
 @test "hermes compose: no half-configured messaging platform rides compose env" {
