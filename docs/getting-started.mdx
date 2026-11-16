@@ -67,8 +67,8 @@ bazelisk run //scripts:bootstrap -- --check
 
 Prepare the box: rotate the secrets, set `CODER_ACCESS_URL`, issue the self-signed
 certificates, build `evo-t1-dev:latest`, pull the DinD image. It is idempotent, so re-run
-it after changing `docker-compose.yml`, `litellm/config.yaml`, `searxng/settings.yml` or
-`proxy/*.conf`.
+it after changing `docker-compose.yml`, `litellm/config.yaml`, `searxng/settings.yml`,
+`infisical/` or `proxy/*.conf`.
 
 ```sh
 bazelisk run //scripts:bootstrap

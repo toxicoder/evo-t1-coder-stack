@@ -86,6 +86,7 @@ under the zone.
 | `litellm-gmktecbeast.overeazy.io` | `litellm:4000` |
 | `hermes-gmktecbeast.overeazy.io` | `hermes:9119` |
 | `grafana-gmktecbeast.overeazy.io` | `grafana:3000` - the observability UI |
+| `infisical-gmktecbeast.overeazy.io` | `infisical:8080` - the vault, up only with `INFISICAL_ENABLED` |
 
 The dev row is what `bazelisk run //scripts:dev-stack -- up` composes for the
 `evo-t1-dev` project: that command applies `STACK_ENV_LABEL=dev` when neither the shell
@@ -110,10 +111,20 @@ joined, so a value copied out of a browser bar cannot leak into an origin or a
   `STACK_SUBDOMAIN_SUFFIX` (default `gmktecbeast`) is this box's label, shared by every
   name.
 - `STACK_CODER_NAME` / `STACK_KASM_NAME` / `STACK_LITELLM_NAME` / `STACK_HERMES_NAME` /
-  `STACK_GRAFANA_NAME` (defaults `coder` / `kasm` / `litellm` / `hermes` / `grafana`)
-  are the service prefixes. `STACK_GRAFANA_NAME` names the observability UI only: the
-  metrics backends it fronts get no key of their own, and stay unexposed.
+  `STACK_GRAFANA_NAME` / `STACK_INFISICAL_NAME` (defaults `coder` / `kasm` / `litellm` /
+  `hermes` / `grafana` / `infisical`) are the service prefixes. `STACK_GRAFANA_NAME`
+  names the observability UI only: the metrics backends it fronts get no key of their
+  own, and stay unexposed.
   `STACK_DASHBOARD_NAME` is empty by default, which puts the dashboard on the zone apex.
+- `STACK_INFISICAL_NAME` (default `infisical`) is the seventh prefix and the only one
+  behind a compose profile: the vault's three containers start only under
+  `profiles: ["secrets"]`, which `INFISICAL_ENABLED` (off as shipped) selects, so a
+  stack with the flag off has no vault behind that name and answers `502`. `domain.sh`
+  reads no flag, so the name still composes and still reaches
+  `HOMEPAGE_ALLOWED_HOSTS`, which is the safer half of that trade. The router sends it
+  to `http://infisical:8080` - the container port, not the published one - and the
+  mapping is `${INFISICAL_PORT:-8182}:8080`, published plainly rather than
+  loopback-bound for the same host-gateway reason the search lane gives for `:8181`.
 - `STACK_ENV_LABEL` is empty for the stable stack and sits **after** the service prefix.
   Two reasons: the one-label rule below rules the dotted form out anyway, and
   `classify_public_entry` in `scripts/lib/bootstrap.sh` routes an entry by its service
@@ -149,6 +160,9 @@ rather than sent as an empty entry, and a missing zone keeps the whole stack LAN
   Host and Origin the Chat tab checks. The same prefix rule fills `STACK_GRAFANA_URL`
   from a `grafana-*` or `grafana.*` entry, and compose copies that into
   `HOMEPAGE_VAR_GRAFANA_URL`, the observability card's `href`;
+- `STACK_INFISICAL_URL`, from a `infisical-*` or `infisical.*` entry, the vault card's
+  `href`. Its badge reads down while `INFISICAL_ENABLED` is off, which is the flag
+  saying so rather than a broken link;
 - an upgraded `CODER_ACCESS_URL` (the public coder name);
 - an extended `HOMEPAGE_ALLOWED_HOSTS` - homepage validates the incoming Host against
   that exact-match list, so an unlisted name fails its host check;
@@ -159,7 +173,9 @@ rather than sent as an empty entry, and a missing zone keeps the whole stack LAN
   the parts are the source of truth and `STACK_PUBLIC_HOSTS` is output only, so a list
   edited by hand there is ignored and bootstrap prints a `note:` naming the key to
   clear. It clears itself on the LAN-only and explicit-list paths;
-- the router's vhost table: `proxy/router.conf.template` is rendered into
+- the router's vhost table, whose token set is exactly the seven vhosts it answers
+  (`__EVO_HOST_INFISICAL__` among them: a name that will not compose refuses the render
+  rather than writing half a table): `proxy/router.conf.template` is rendered into
   `proxy/router.gen.conf` (gitignored) and `STACK_ROUTER_CONF=router.gen.conf` is
   written, because compose mounts `./proxy/${STACK_ROUTER_CONF:-router.conf}`. The
   `warn_missing_router_hosts` check runs against that rendered file, so a name the
@@ -225,6 +241,15 @@ http:
       # second gate, not a substitute for this one: the name serves the metrics bundle.
       middlewares: [authelia@file]
       tls: {}
+    evo-t1-infisical:
+      rule: "Host(`infisical-gmktecbeast.overeazy.io`)"
+      entryPoints: [websecure]
+      service: evo-t1-router
+      # The vault signs its own login, so it gets the interactive policy the dashboard
+      # and Coder get. The flag is the other gate: with INFISICAL_ENABLED off the
+      # profile never starts and this router serves a 502 from this box's vhost table.
+      middlewares: [authelia@file]
+      tls: {}
 
   services:
     evo-t1-router:
@@ -281,7 +306,8 @@ http:
   simple choice because Kasm needs that floor anyway. To cap each tier separately,
   declare one `loadBalancer` service per tier, each pointing at the same
   `http://<this-box-lan-ip>:8080` with `passHostHeader: true` and its own transport
-  (`evo-t1-coder` / `evo-t1-hermes` / `evo-t1-grafana` at `300s`, `evo-t1-litellm` at
+  (`evo-t1-coder` / `evo-t1-hermes` / `evo-t1-grafana` / `evo-t1-infisical` at `300s`,
+  `evo-t1-litellm` at
   `600s`, `evo-t1-kasm` at `3600s`), and point each router at its own service. If a
   session dies at about a minute with the page still loaded, check the client-facing side
   too: an entryPoint's `transport.respondingTimeouts.readTimeout` (default 60s) and
