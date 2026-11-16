@@ -335,6 +335,15 @@ The rules that shape every write in this subsystem, inherited from
   trap - export, push payload, verify read-back and rotate value all go through it.
 - A write is verified by hashing the value read back before anything claims `ok:`.
 - A key the vault does not carry is a warning, never a blanked line.
+- **A vault value is never sourced in the shape the CLI wrote it.** Measured against
+  `infisical/infisical:v0.167.10` with CLI v0.45.8: `secrets export --format=dotenv` wraps
+  each value in single quotes and leaves an embedded quote raw, so a secret carrying an
+  apostrophe closes its quote early and the rest of the line is shell - sourcing it either
+  aborts or runs the tail as a command. `--format=dotenv-export` uses the same writer and
+  fails the same way. The boot body therefore takes every value apart and re-emits it under
+  quoting that has no escape hatch, which is what makes `~/.bashrc`'s `set -a; . agent.env`
+  safe to keep. Anything else that reads that file inherits the guarantee; nothing should
+  feed the CLI's own dotenv output to a shell.
 
 There is no reason to open `.env` by hand while this subsystem is adopted, and no command
 here prints a credential. If you are cat-ing the env file to debug a sync, you are reading
