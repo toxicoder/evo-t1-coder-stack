@@ -126,6 +126,41 @@ real_bin() {
   PATH="${stripped}" command -v "${tool}" 2>/dev/null
 }
 
+# path_without <tool> — print PATH with this test's stub bin/ and every other directory
+# that holds an executable <tool> removed: the PATH of a machine that never installed it.
+# Removing only the stub bin stopped being enough the day the golden workspace image
+# started shipping the real Infisical CLI at /usr/local/bin, because this repo's gate
+# runs *inside* that image: a fixture that means "the binary is absent" has to remove it
+# from the PATH it hands the code under test, or it drives the wrong branch and says
+# nothing. Returns 1 when no usable directory would be left, so the caller can say so.
+# Globals:
+#   PATH, BATS_TEST_TMPDIR
+# Arguments:
+#   tool - the executable name to remove from every PATH directory
+# Outputs:
+#   The stripped PATH on stdout
+# Returns:
+#   0 on success, 1 when only empty entries would survive
+path_without() {
+  local tool="$1" dir
+  local -a parts=() kept=()
+  IFS=':' read -r -a parts <<<"${PATH}"
+  for dir in "${parts[@]}"; do
+    [ "${dir}" = "${BATS_TEST_TMPDIR?}/bin" ] && continue
+    if [ -n "${dir}" ] && [ -f "${dir}/${tool}" ] && [ -x "${dir}/${tool}" ]; then
+      continue
+    fi
+    kept+=("${dir}")
+  done
+  for dir in "${kept[@]}"; do
+    if [ -n "${dir}" ]; then
+      ( IFS=: ; printf '%s' "${kept[*]}" )
+      return 0
+    fi
+  done
+  return 1
+}
+
 # stub_log <tool> — print the full argv log recorded for <tool> this test.
 stub_log() {
   if [ -f "${STUB_LOG:-}/${1}.log" ]; then

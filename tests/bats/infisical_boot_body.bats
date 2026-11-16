@@ -207,8 +207,11 @@ drive_vault() {
   drive_body "${home}" "${runpath}" "${env_args[@]}"
 }
 
-# cli_free_path - print PATH with this test's stub bin/ removed: the PATH of an image that
-# never installed the CLI. The complement of real_bin, which resolves the other way.
+# cli_free_path - print PATH with this test's stub bin/ and any directory holding a real
+# infisical removed: the PATH of an image that never installed the CLI. The complement of
+# real_bin, which resolves the other way. The golden image ships the CLI at
+# /usr/local/bin/infisical and the gate runs inside that image, so dropping the stub bin
+# alone would leave a real binary answering on the PATH this fixture calls empty.
 # Globals:
 #   PATH, BATS_TEST_TMPDIR
 # Arguments:
@@ -216,9 +219,9 @@ drive_vault() {
 # Outputs:
 #   The stripped PATH on stdout
 # Returns:
-#   0
+#   0 on success, 1 when path_without finds nothing usable to leave on PATH
 cli_free_path() {
-  printf '%s' "${PATH}" | tr ':' '\n' | grep -vxF "${BATS_TEST_TMPDIR?}/bin" | paste -sd: -
+  path_without infisical
 }
 
 # install_export_stub - cover this test's bin/infisical with a stub that answers the one
@@ -365,7 +368,10 @@ ${twin_b}:1" "${output}"
 
 @test "boot: with no infisical on PATH the body exits 0, prints nothing, and creates no ~/.infisical" {
   local nocli home
-  nocli="$(cli_free_path)"
+  nocli="$(cli_free_path)" || {
+    printf 'FAIL: every PATH directory carries an infisical, so the absent-binary branch cannot be driven\n' >&2
+    return 1
+  }
   # The fixture before the finding: if any infisical answered on that PATH the test below
   # would be driving a real CLI and every assertion in it would mean nothing.
   run env -i "PATH=${nocli}" bash -c 'command -v infisical'

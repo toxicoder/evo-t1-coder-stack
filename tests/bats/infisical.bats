@@ -489,10 +489,14 @@ summary_line() {
 }
 
 @test "check: no CLI on PATH points at install-cli and stops before the vault" {
-  if [ -n "$(real_bin infisical)" ]; then
-    skip "a real Infisical CLI is on this host's PATH, so the branch cannot be driven"
-  fi
-  local stripped="${PATH#"${BATS_TEST_TMPDIR}/bin:"}"
+  # The golden workspace image ships a real infisical at /usr/local/bin and the gate runs
+  # inside that image, so this branch has to be reached by removing the binary from the
+  # PATH handed to the CLI rather than by skipping whenever one happens to be installed.
+  local stripped
+  stripped="$(path_without infisical)" || {
+    printf 'FAIL: every PATH directory carries an infisical, so the absent-binary branch cannot be driven\n' >&2
+    return 1
+  }
   [ "${stripped}" != "${PATH}" ] || {
     echo "the stub directory is not at the head of PATH" >&2
     return 1
