@@ -223,9 +223,11 @@ laptop or CI home, and it takes the fan-out knobs from the environment
 while it renders the config - `GROK_SUBAGENTS_LANE` names the lane the
 writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width, and
 `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
-reader, the planner and the skeptic ride, with the same
-derivation the templates use (15 on the unpinned `agent-swarm` lane, 4 on a
-pinned one). A value the seeder cannot use - a lane that is not a bare model id, a
+reader, the planner and the skeptic ride. The width default is the fleet's
+own `GROK_SWARM_WIDTH` (15: three Spark boxes at `PARALLEL` 5), which is the same
+`grok_swarm_width` the templates take, on every lane rather than one number per lane;
+a pinned lane only ever keeps one box's streams busy, so an operator who pins
+everything sets `GROK_SUBAGENT_MAX_CONCURRENT` by hand. A value the seeder cannot use - a lane that is not a bare model id, a
 width that is not a count or sits past 32 - is refused with
 a `note:` line naming the key, and the derived default goes in, so a typo lands as output
 you read rather than as an unusable key in the rendered `~/.grok/config.toml`.
