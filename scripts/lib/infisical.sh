@@ -23,12 +23,15 @@
 #     (the CLI offers no stdin path), and the KEY=@<file> form for a single write,
 #     which names a file rather than the value.
 # Every temp this file makes is chmod 600 the instant mktemp returns it and is
-# removed by the EXIT trap infisical_install_exit_trap installs, which the seam owns
-# outright: an entry script that sources this file installs no EXIT trap of its own,
-# because bash keeps one handler and taking the slot back would strand a file of
-# secrets on the failure path. The seam suite pins that rule. infisical_mktemp hands
-# its path back in a global and must be called plainly for that reason: in a command
-# substitution the registration dies with the subshell and the secret outlives the run.
+# removed by the EXIT trap infisical_install_exit_trap installs. bash keeps a single
+# handler, so the seam captures whatever the caller had installed first and
+# infisical_tmp_cleanup runs it once the temps are off the disk: taking the caller's
+# EXIT slot is not a licence to delete its cleanup. What an entry script must not do
+# is install its own EXIT trap AFTER sourcing this file, because taking the slot back
+# would strand a file of secrets on the failure path. The seam suite pins both halves.
+# infisical_mktemp hands its path back in a global and must be called plainly for that
+# reason: in a command substitution the registration dies with the subshell and the
+# secret outlives the run.
 #
 # The flag: INFISICAL_ENABLED is read in exactly one place, infisical_enabled, and
 # only through truthy(). It defaults OFF, which is the deliberate opposite of
@@ -43,31 +46,83 @@ if ! declare -f die >/dev/null 2>&1; then
   source "${BASH_SOURCE[0]%/*}/common.sh"
 fi
 
-# Temps this shell made, each tagged "pid:path", cleaned by the EXIT trap below.
+# Temps this shell made, one "pid:path" entry per line, cleaned by the EXIT trap below.
+# One entry per line rather than one per space because the template is caller-supplied:
+# a whitespace-split list breaks a path that holds a space into two entries, and the
+# mode-600 file holding vault values is then never matched and never removed.
 INFISICAL_TMP_FILES=""
 # The last path infisical_mktemp created; see that function for why it is a global.
 INFISICAL_MKTEMP=""
 # The pid whose shell already owns the EXIT slot for this lib. See
 # infisical_install_exit_trap.
 INFISICAL_EXIT_TRAP_SET=""
+# The caller's own EXIT handler, captured verbatim before the seam took the slot, and
+# the pid of the shell that already ran it. See infisical_install_exit_trap and
+# infisical_tmp_cleanup, which runs this once the temps are gone.
+INFISICAL_EXIT_TRAP_PRIOR=""
+INFISICAL_EXIT_TRAP_RAN=""
 
 # The release asset name is goreleaser's, pinned by .env.example's INFISICAL_CLI_VERSION.
 # The version token is substituted literally, not through a printf format string.
 INFISICAL_CLI_ASSET="cli_{version}_linux_amd64.tar.gz"
 INFISICAL_CLI_RELEASE_BASE="https://github.com/Infisical/cli/releases/download"
 
+# @function infisical_trap_body
+# Print the handler text one `trap -p EXIT` line carries, unwrapped from the single
+# quotes bash puts around it. This is the only way to read a handler the caller
+# installed before the seam took the EXIT slot, so the caller's own cleanup can be run
+# afterwards rather than silently dropped. No eval: the text is taken apart with
+# parameter expansion and executed by infisical_tmp_cleanup.
+#
+# bash's own quoting wraps the handler in single quotes and spells each embedded single
+# quote as the four-character run '\'' ; stripping the wrapper and folding that run back
+# to one quote is the inverse, and it is the reason this is a function rather than a
+# line of the caller. The fold pattern is written inline on purpose: built from a
+# variable the backslash survives expansion and the run stops matching.
+# Globals:
+#   None
+# Arguments:
+#   $1 - one `trap -p EXIT` line, verbatim
+# Outputs:
+#   The handler text on stdout, with no trailing newline, when there was one
+# Returns:
+#   0 with the handler printed; 1 when the line names no handler at all (no trap set,
+#   an empty handler, or a trap for some other signal), which callers read as "the
+#   caller had nothing to preserve"
+infisical_trap_body() {
+  local line="${1:-}" body=""
+  case "${line}" in
+    'trap -- '*\ EXIT) ;;
+    *) return 1 ;;
+  esac
+  body="${line#trap -- }"
+  body="${body% EXIT}"
+  if [[ ${body} == \'*\' ]]; then
+    body="${body#\'}"
+    body="${body%\'}"
+    body="${body//\'\\\'\'/\'}"
+  fi
+  [ -n "${body}" ] || return 1
+  printf '%s' "${body}"
+}
+
 # @function infisical_install_exit_trap
-# Install the seam's EXIT cleanup once per shell. bash keeps a single EXIT handler and
-# the last setter wins, so this file owns that slot: an entry script that sources the
-# seam must not install an EXIT trap of its own afterwards, because taking the slot
-# back would leave a mode-600 file of secrets behind on the failure path. The seam
-# suite pins that no script which sources this file does so.
+# Install the seam's EXIT cleanup once per shell, keeping whatever handler the caller
+# had installed first. bash keeps a single EXIT handler and the last setter wins, so the
+# slot is captured with `trap -p EXIT` before it is overwritten and
+# infisical_tmp_cleanup runs the caller's handler once the temps are gone. What an entry
+# script must still not do is install an EXIT trap of its own AFTER sourcing the seam,
+# because taking the slot back would leave a mode-600 file of secrets behind on the
+# failure path. The seam suite pins that no script which sources this file does so.
 #
 # The guard is keyed on BASHPID rather than a yes/no because a command substitution is
 # a forked subshell that inherits the parent's environment and needs a handler of its
-# own to clean what it created.
+# own to clean what it created. Such a subshell never re-emits a handler: the shell it
+# forked from still holds its own copy and will run it at its own exit, so running it
+# here would run the caller's cleanup twice, or run it in a shell whose caller never
+# asked for it.
 # Globals:
-#   INFISICAL_EXIT_TRAP_SET, BASHPID
+#   INFISICAL_EXIT_TRAP_SET, INFISICAL_EXIT_TRAP_PRIOR, INFISICAL_EXIT_TRAP_RAN, BASHPID
 # Arguments:
 #   None
 # Outputs:
@@ -75,7 +130,24 @@ INFISICAL_CLI_RELEASE_BASE="https://github.com/Infisical/cli/releases/download"
 # Returns:
 #   0, always
 infisical_install_exit_trap() {
-  if [ "${INFISICAL_EXIT_TRAP_SET}" != "${BASHPID}" ]; then
+  local prior="" body="" flat=""
+  if [ "${INFISICAL_EXIT_TRAP_SET:-}" != "${BASHPID}" ]; then
+    if [ "${BASHPID}" = "$$" ]; then
+      prior="$(trap -p EXIT)" || prior=""
+      body="$(infisical_trap_body "${prior}")" || body=""
+      flat="${body//[[:space:]]/}"
+      flat="${flat//;/}"
+      # A handler that is the seam's own cleanup is not a caller's: re-emitting it would
+      # clean the list twice in one shell and hand a caller that had none a phantom one.
+      if [ -n "${body}" ] && [ "${flat}" != "infisical_tmp_cleanup" ]; then
+        INFISICAL_EXIT_TRAP_PRIOR="${body}"
+        INFISICAL_EXIT_TRAP_RAN=""
+      else
+        INFISICAL_EXIT_TRAP_PRIOR=""
+      fi
+    else
+      INFISICAL_EXIT_TRAP_PRIOR=""
+    fi
     INFISICAL_EXIT_TRAP_SET="${BASHPID}"
     trap 'infisical_tmp_cleanup' EXIT
   fi
@@ -89,17 +161,23 @@ infisical_install_exit_trap() {
 # list, and without the tag it would either delete a dump the parent is still reading
 # or, cleaned by nobody, leave a file of secrets behind when it exits. The caller's
 # entries stay in the list for the caller's own trap.
+#
+# Entries are read one per line with `IFS= read -r`, never by word splitting: a template
+# is caller-supplied and may hold a space, and a split path matches no file, so the
+# mode-600 dump survives. Once the temps are gone the handler infisical_install_exit_trap
+# captured from the caller runs, once per shell, so taking the EXIT slot costs the caller
+# nothing.
 # Globals:
-#   INFISICAL_TMP_FILES, BASHPID
+#   INFISICAL_TMP_FILES, INFISICAL_EXIT_TRAP_PRIOR, INFISICAL_EXIT_TRAP_RAN, BASHPID
 # Arguments:
 #   None
 # Outputs:
-#   None
+#   Whatever the caller's own EXIT handler prints
 # Returns:
 #   0, always: cleanup runs on a failure path and must not mask the failure
 infisical_tmp_cleanup() {
   local entry own="" mine=""
-  for entry in ${INFISICAL_TMP_FILES:-}; do
+  while IFS= read -r entry; do
     [ -n "${entry}" ] || continue
     if [ "${entry%%:*}" = "${BASHPID}" ]; then
       own="${entry#*:}"
@@ -112,10 +190,19 @@ infisical_tmp_cleanup() {
         rm -f -- "${own}"
       fi
     else
-      mine="${mine} ${entry}"
+      mine="${mine}${entry}"$'\n'
     fi
-  done
+  done <<<"${INFISICAL_TMP_FILES:-}"
   INFISICAL_TMP_FILES="${mine}"
+  if [ -n "${INFISICAL_EXIT_TRAP_PRIOR:-}" ] &&
+    [ "${INFISICAL_EXIT_TRAP_RAN:-}" != "${BASHPID}" ]; then
+    INFISICAL_EXIT_TRAP_RAN="${BASHPID}"
+    # The captured handler runs here, in this shell, so it still sees the caller's
+    # functions and variables. A here-string and source is the one way to run a handler
+    # text without eval.
+    # shellcheck source=/dev/null disable=SC1090
+    source /dev/stdin <<<"${INFISICAL_EXIT_TRAP_PRIOR}" || true
+  fi
   return 0
 }
 
@@ -130,15 +217,26 @@ infisical_tmp_cleanup() {
 #   INFISICAL_TMP_FILES, INFISICAL_MKTEMP (the new path),
 #   BASHPID
 # Arguments:
-#   $1 - mktemp template, without the XXXXXX (a path prefix)
+#   $1 - mktemp template: an absolute path prefix, without the XXXXXX. A relative
+#     template is refused rather than passed on, because mktemp then writes the file
+#     into whatever directory the caller happens to be standing in, next to the repo,
+#     holding secret values, where no EXIT trap was asked to look for it. A newline is
+#     refused for the same reason in the other direction: one entry per line is what
+#     infisical_tmp_cleanup reads back.
 #   $2 - "dir" for a directory, anything else for a file
 # Outputs:
 #   None; the path lands in INFISICAL_MKTEMP
 # Returns:
-#   0 with the path set; 1 when mktemp failed, with the global left empty
+#   0 with the path set; 1 when mktemp failed, with the global left empty; 2 when the
+#   template is not an absolute path or holds a newline, with one error line naming it
+#   and no file created
 infisical_mktemp() {
-  local template="${1:-infisical}" kind="${2:-file}" made=""
+  local template="${1:-}" kind="${2:-file}" made=""
   INFISICAL_MKTEMP=""
+  if [[ ${template} != /* ]] || [[ ${template} == *$'\n'* ]]; then
+    err "infisical_mktemp needs an absolute template, got '${1:-}'"
+    return 2
+  fi
   if [ "${kind}" = "dir" ]; then
     made="$(mktemp -d "${template}.XXXXXX" 2>/dev/null)" || return 1
     chmod 700 "${made}"
@@ -146,7 +244,7 @@ infisical_mktemp() {
     made="$(mktemp "${template}.XXXXXX" 2>/dev/null)" || return 1
     chmod 600 "${made}"
   fi
-  INFISICAL_TMP_FILES="${INFISICAL_TMP_FILES} ${BASHPID}:${made}"
+  INFISICAL_TMP_FILES="${INFISICAL_TMP_FILES}${BASHPID}:${made}"$'\n'
   # Set on every call rather than once per shell: a command substitution inherits the
   # parent's environment, and it needs a trap of its own to clean what it created.
   infisical_install_exit_trap

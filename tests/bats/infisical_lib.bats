@@ -370,12 +370,201 @@ EOS
   local mine="${SCRATCH}/mine" other="${SCRATCH}/other"
   : >"${mine}"
   : >"${other}"
-  INFISICAL_TMP_FILES=" ${BASHPID}:${mine} 999999:${other}"
+  # One entry per line: the list is read back with `IFS= read -r`, so the format is part
+  # of the contract. The pid tag is what makes this safe, and stays pinned below.
+  INFISICAL_TMP_FILES="${BASHPID}:${mine}"$'\n'"999999:${other}"$'\n'
   infisical_tmp_cleanup
   [ ! -e "${mine}" ]
   [ -f "${other}" ]
-  assert_eq "the foreign entry is carried forward, not dropped" " 999999:${other}" "${INFISICAL_TMP_FILES}"
+  assert_eq "the foreign entry is carried forward, not dropped" \
+    "999999:${other}"$'\n' "${INFISICAL_TMP_FILES}"
 }
+
+@test "seam: infisical_tmp_cleanup removes a temp whose path holds a space" {
+  source_lib
+  local spaced="${SCRATCH}/a b/keep" foreign="${SCRATCH}/a b/other"
+  mkdir -p "${SCRATCH}/a b"
+  : >"${spaced}"
+  : >"${foreign}"
+  INFISICAL_TMP_FILES="${BASHPID}:${spaced}"$'\n'"999999:${foreign}"$'\n'
+  infisical_tmp_cleanup
+  [ ! -e "${spaced}" ] || {
+    echo "a mode-600 secret with a space in its path survived: ${spaced}" >&2
+    return 1
+  }
+  [ -f "${foreign}" ] || {
+    echo "word splitting matched a foreign spaced path and deleted it" >&2
+    return 1
+  }
+  assert_eq "the foreign spaced entry survives whole, not as two halves" \
+    "999999:${foreign}"$'\n' "${INFISICAL_TMP_FILES}"
+
+  # And through the door an operator actually walks in: infisical_mktemp with a
+  # caller-supplied --env-file / COMPOSE_FILE path that holds a space, on a failure exit.
+  local dir="${SCRATCH}/dir with space" made="${SCRATCH}/made" script="${SCRATCH}/spacecase.sh"
+  mkdir -p "${dir}"
+  cat >"${script}" <<EOS
+set -u
+# shellcheck source=/dev/null disable=SC1091
+source "${LIB}" >/dev/null 2>&1
+infisical_mktemp "${dir}/sec" || exit 3
+printf '%s' "\${INFISICAL_MKTEMP}" >"${made}"
+infisical_mktemp "${dir}/d" dir || exit 3
+printf '%s' "\${INFISICAL_MKTEMP}" >>"${made}"
+exit 7
+EOS
+  run bash "${script}"
+  [ "${status}" -eq 7 ]
+  [ -s "${made}" ]
+  local listing path
+  listing="$(cat "${made}")"
+  assert_match "the file temp really does carry a space" 'dir with space/sec\.' "${listing}"
+  assert_match "and so does the directory temp" 'dir with space/d\.' "${listing}"
+  while IFS= read -r path; do
+    [ -e "${path}" ] || continue
+    echo "a temp with a space in its path survived the exit: ${path}" >&2
+    return 1
+  done <"${made}"
+  assert_eq "nothing at all is left in that directory" "0" \
+    "$(find "${dir}" -mindepth 1 -print | wc -l)"
+}
+
+@test "seam: infisical_mktemp refuses a template that is not an absolute path" {
+  source_lib
+  local script="${SCRATCH}/relative.sh"
+  # The child cd's into the scratch tree so a leaked relative temp is visible: mktemp
+  # writes a bare template into the caller's cwd, which is how a secret file landed next
+  # to the repo instead of next to TMPDIR.
+  cat >"${script}" <<EOS
+set -u
+# shellcheck source=/dev/null disable=SC1091
+source "${LIB}" >/dev/null 2>&1
+cd "${SCRATCH}" || exit 2
+infisical_mktemp "infisical-rotate"; echo "rc1=\$?"
+infisical_mktemp "./dotted"; echo "rc2=\$?"
+infisical_mktemp ""; echo "rc3=\$?"
+printf 'mktemp=[%s]\n' "\${INFISICAL_MKTEMP}"
+EOS
+  run bash "${script}"
+  [ "${status}" -eq 0 ]
+  assert_eq "a bare name, a dotted name, and an empty template all refuse" \
+    "$(printf 'rc1=2\nrc2=2\nrc3=2')" "$(printf '%s\n' "${output}" | grep '^rc')"
+  assert_eq "the global stays empty on every refusal" "mktemp=[]" \
+    "$(printf '%s\n' "${output}" | grep '^mktemp=')"
+  assert_eq "one error line per refusal, no more" "3" \
+    "$(printf '%s\n' "${output}" | grep -c '^error: ')"
+  assert_match "the refusal names the argument the caller passed" \
+    "infisical-rotate" "${output}"
+  assert_match "and it stays in the operator vocabulary" '^error: ' "${output}"
+  assert_eq "nothing was created next to the caller" "0" \
+    "$(find "${SCRATCH}" -maxdepth 1 \( -name 'infisical-rotate*' -o -name 'dotted*' \
+      -o -name 'tmp*' -o -name '.tmp*' \) -print | wc -l)"
+
+  # An absolute template in a directory that does not exist is still mktemp's own
+  # failure, not the new refusal.
+  run infisical_mktemp "${SCRATCH}/no-such-dir/x"
+  [ "${status}" -eq 1 ]
+}
+
+@test "seam: infisical_trap_body unwraps one trap -p EXIT line" {
+  source_lib
+  run infisical_trap_body "trap -- 'echo hi' EXIT"
+  [ "${status}" -eq 0 ]
+  assert_eq "the single-quoted word comes back as the handler it holds" "echo hi" "${output}"
+
+  run infisical_trap_body "trap -- 'rm -f \"a b\"' EXIT"
+  [ "${status}" -eq 0 ]
+  assert_eq "quotes and spaces inside the handler survive" 'rm -f "a b"' "${output}"
+
+  run infisical_trap_body ""
+  [ "${status}" -ne 0 ]
+  run infisical_trap_body "trap -- '' EXIT"
+  [ "${status}" -ne 0 ]
+  run infisical_trap_body "trap -- 'echo hi' INT"
+  [ "${status}" -ne 0 ]
+
+  # A handler that holds a quote of its own, taken from what bash really prints rather
+  # than from a hand-written imitation of it.
+  local script="${SCRATCH}/quotecase.sh"
+  cat >"${script}" <<EOS
+set -u
+# shellcheck source=/dev/null disable=SC1091
+source "${LIB}" >/dev/null 2>&1
+trap 'echo "it'\''s here"' EXIT
+caller_line="\$(trap -p EXIT)"
+infisical_mktemp "${SCRATCH}/quoted" || exit 3
+printf 'body='
+infisical_trap_body "\${caller_line}"
+printf '\n'
+exit 8
+EOS
+  run bash "${script}"
+  [ "${status}" -eq 8 ]
+  assert_eq "bash's '\'' run folds back to one quote" 'body=echo "it'"'"'s here"' \
+    "$(printf '%s\n' "${output}" | grep '^body=')"
+  assert_eq "and the folded handler executes as the caller wrote it" 'it'"'"'s here' \
+    "$(printf '%s\n' "${output}" | tail -n 1)"
+}
+
+@test "seam: the caller's own EXIT trap still runs after the seam takes the slot" {
+  source_lib
+  local script="${SCRATCH}/callertrap.sh" made="${SCRATCH}/caller-path"
+  # bash keeps one EXIT handler, so this is the half the seam used to lose: the caller's
+  # cleanup must still run, once, and with the secrets already off the disk.
+  cat >"${script}" <<EOS
+set -u
+# shellcheck source=/dev/null disable=SC1091
+source "${LIB}" >/dev/null 2>&1
+caller_cleanup() { printf 'CALLER_TRAP_RAN %s\n' "\${1:-once}"; }
+trap 'caller_cleanup once; printf "SECOND LINE with space\n"' EXIT
+infisical_mktemp "${SCRATCH}/caller-secret" || exit 3
+printf '%s' "\${INFISICAL_MKTEMP}" >"${made}"
+( infisical_mktemp "${SCRATCH}/forked-secret" )
+exit 7
+EOS
+  run bash "${script}"
+  assert_eq "the caller's own exit code survives the chained handler" "7" "${status}"
+  assert_match "the caller's handler function ran at exit" '^CALLER_TRAP_RAN once$' "${output}"
+  assert_match "including its second statement" '^SECOND LINE with space$' "${output}"
+  assert_eq "and it ran once, not once per forked subshell" "1" \
+    "$(printf '%s\n' "${output}" | grep -c '^CALLER_TRAP_RAN ')"
+  local path
+  for path in "$(cat "${made}")" "${SCRATCH}/caller-secret".* "${SCRATCH}/forked-secret".*; do
+    [ -e "${path}" ] || continue
+    echo "a temp survived the chained exit: ${path}" >&2
+    return 1
+  done
+}
+
+@test "seam: the EXIT slot holds the seam's cleanup and stashes the caller's handler" {
+  source_lib
+  local script="${SCRATCH}/slot.sh"
+  cat >"${script}" <<EOS
+set -u
+# shellcheck source=/dev/null disable=SC1091
+source "${LIB}" >/dev/null 2>&1
+trap 'echo CALLER_TRAP_RAN' EXIT
+infisical_mktemp "${SCRATCH}/slot" || exit 3
+trap -p EXIT
+printf 'prior=[%s]\n' "\${INFISICAL_EXIT_TRAP_PRIOR}"
+( infisical_install_exit_trap
+  printf 'subprior=[%s]\n' "\${INFISICAL_EXIT_TRAP_PRIOR}" )
+exit 9
+EOS
+  run bash "${script}"
+  assert_eq "the child reached its own exit code" "9" "${status}"
+  assert_eq "the slot still holds the seam's cleanup alone, so the dump is never spared" \
+    "trap -- 'infisical_tmp_cleanup' EXIT" "$(printf '%s\n' "${output}" | grep '^trap ')"
+  assert_eq "the caller's handler is kept for the cleanup to run" \
+    "prior=[echo CALLER_TRAP_RAN]" "$(printf '%s\n' "${output}" | grep '^prior=')"
+  assert_eq "a forked subshell keeps no copy of it, so it cannot run twice" \
+    "subprior=[]" "$(printf '%s\n' "${output}" | grep '^subprior=')"
+  assert_eq "the caller's handler ran exactly once, not also while the shell lived" "1" \
+    "$(printf '%s\n' "${output}" | grep -c '^CALLER_TRAP_RAN$')"
+  assert_eq "and it ran last, at the exit, after the seam's own lines" "CALLER_TRAP_RAN" \
+    "$(printf '%s\n' "${output}" | tail -n 1)"
+}
+
 
 @test "seam: the seam owns the EXIT slot and still cleans the secret on a failure exit" {
   source_lib
