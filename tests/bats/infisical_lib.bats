@@ -876,8 +876,11 @@ EOS
   dockerfile="${src}/images/dev/Dockerfile"
   [ -r "${dockerfile}" ]
   whole="$(cat "${dockerfile}")"
-  layer="$(sed -n '/infisical-cli\.tgz/,/install -m 0755 \/tmp\/infisical-cli\.bin/p' \
+  layer="$(sed -n '/fetch \/tmp\/infisical-cli\.tgz/,/install -m 0755 \/tmp\/infisical-cli\.bin/p' \
     "${dockerfile}")"
+  # Anchored on the fetch so the range is the install step: an unanchored start pattern
+  # matches the rm line as well, and the second range it opens runs to end of file.
+  [ "$(printf '%s\n' "${layer}" | grep -c .)" -le 6 ]
   assert_match "the extract names the member" \
     'tar -xzf /tmp/infisical-cli\.tgz -O infisical' "${layer}"
   assert_not_match "and no step in the file unpacks the archive into a directory" \
