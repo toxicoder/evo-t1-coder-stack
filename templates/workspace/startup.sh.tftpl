@@ -61,6 +61,23 @@ if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
 fi
 export PATH="$HOME/.grok/bin:$PATH"
 
+# Vault-fed credentials, and the reason the boot fetch writes a file at all. The
+# infisical_secrets coder_script materialises the project's secrets into
+# ~/.infisical/agent.env at workspace start; without a reader here they would sit on
+# disk and reach nobody. Sourcing it from .bashrc is what puts them in the environment
+# every terminal, tmux pane and command this workspace then runs inherits from.
+#
+# The existence test lives *inside* the appended line, not around it: this script and
+# the fetch are two coder_scripts with no promised order, so a first boot that gets
+# here before the fetch still ends up with a working hook, and the grep keeps a later
+# start from appending the block twice. set -a around the dot is what makes each dotenv
+# line an exported variable rather than a shell-local one that dies with the shell.
+# The file itself is written mode 600 and holds only what the operator put in the
+# vault.
+if ! grep -qs 'infisical/agent.env' "$HOME/.bashrc"; then
+  printf '\n# Infisical vault secrets, fetched at workspace start by the infisical_secrets script\nif [ -f "$HOME/.infisical/agent.env" ]; then set -a; . "$HOME/.infisical/agent.env"; set +a; fi\n' >>"$HOME/.bashrc"
+fi
+
 # --- terminal-profile helpers -------------------------------------------------
 # docs/coder-templates.md#terminal-and-editor-defaults
 mkdir -p "$HOME/.grok/bin"
