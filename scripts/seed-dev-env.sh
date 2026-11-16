@@ -140,10 +140,12 @@ resolve_repo_root() {
 # Globals:
 #   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
 #   written as a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the
-#   context7 block), HOME (the home default when $3 is not given), and the five
+#   context7 block), HOME (the home default when $3 is not given), and the six
 #   fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
-#   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT (an unusable value falls
-#   back to its default and is noted)
+#   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT and GROK_SWARM_WIDTH. An
+#   unusable value falls back to its default and is noted; the width defaults to
+#   the fleet's 15 on every lane, so a contributor home is swarm-ready whatever
+#   lane it picked, because agent-swarm is ungated in the rendered config.
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write
@@ -160,21 +162,21 @@ seed_render_grok_config() {
   local home="${3:-${HOME:-/home/coder}}" keep_ctx7="${4:-0}" keep7="0"
   local proxy_lit="" proxy_path="" lane="" slots=""
   local explore_lane="" plan_lane="" review_lane=""
-  # The fan-out knobs, with the same derivation templates/workspace/main.tf
-  # uses: only the unpinned swarm lane spreads a fan-out across the fleet, so it
-  # gets the width that keeps three boxes busy. A value the sed could not take
+  # The fan-out knobs, with the same derivation templates/workspace/main.tf uses:
+  # the width is the fleet's ceiling (3 boxes x PARALLEL 5 = 15) on every lane,
+  # because agent-swarm is ungated in the rendered config and a session whose
+  # default lane is pinned can still name it on any spawn. An operator who pins
+  # every lane to one box lowers it here. A value the sed could not take
   # safely (a model id is a bare token, the width is a count) falls back.
   lane="${GROK_SUBAGENTS_LANE:-agent-swarm}"
   if [[ ! ${lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
     note "GROK_SUBAGENTS_LANE='${lane}' is not a model id - using agent-swarm"
     lane="agent-swarm"
   fi
-  slots="${GROK_SUBAGENT_MAX_CONCURRENT:-}"
-  if [[ -z ${slots} ]]; then
-    if [[ ${lane} == "agent-swarm" ]]; then slots="15"; else slots="4"; fi
-  elif [[ ! ${slots} =~ ^[1-9][0-9]*$ ]]; then
-    note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is not a count - deriving it from lane ${lane}"
-    if [[ ${lane} == "agent-swarm" ]]; then slots="15"; else slots="4"; fi
+  slots="${GROK_SUBAGENT_MAX_CONCURRENT:-${GROK_SWARM_WIDTH:-15}}"
+  if [[ ! ${slots} =~ ^[1-9][0-9]*$ ]]; then
+    note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is not a count - using the fleet width 15"
+    slots="15"
   elif ((slots > 32)); then
     note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is past the fleet's ceiling - using 32"
     slots="32"
