@@ -23,11 +23,12 @@
 #     (the CLI offers no stdin path), and the KEY=@<file> form for a single write,
 #     which names a file rather than the value.
 # Every temp this file makes is chmod 600 the instant mktemp returns it and is
-# removed by the EXIT trap infisical_mktemp installs. A caller that needs its own
-# EXIT cleanup should call infisical_tmp_cleanup from its trap rather than replacing
-# it, since the last trap set wins. infisical_mktemp hands its path back in a global
-# and must be called plainly for that reason: in a command substitution the
-# registration dies with the subshell and the secret outlives the run.
+# removed by the EXIT trap infisical_install_exit_trap installs, which the seam owns
+# outright: an entry script that sources this file installs no EXIT trap of its own,
+# because bash keeps one handler and taking the slot back would strand a file of
+# secrets on the failure path. The seam suite pins that rule. infisical_mktemp hands
+# its path back in a global and must be called plainly for that reason: in a command
+# substitution the registration dies with the subshell and the secret outlives the run.
 #
 # The flag: INFISICAL_ENABLED is read in exactly one place, infisical_enabled, and
 # only through truthy(). It defaults OFF, which is the deliberate opposite of
@@ -46,11 +47,40 @@ fi
 INFISICAL_TMP_FILES=""
 # The last path infisical_mktemp created; see that function for why it is a global.
 INFISICAL_MKTEMP=""
+# The pid whose shell already owns the EXIT slot for this lib. See
+# infisical_install_exit_trap.
+INFISICAL_EXIT_TRAP_SET=""
 
 # The release asset name is goreleaser's, pinned by .env.example's INFISICAL_CLI_VERSION.
 # The version token is substituted literally, not through a printf format string.
 INFISICAL_CLI_ASSET="cli_{version}_linux_amd64.tar.gz"
 INFISICAL_CLI_RELEASE_BASE="https://github.com/Infisical/cli/releases/download"
+
+# @function infisical_install_exit_trap
+# Install the seam's EXIT cleanup once per shell. bash keeps a single EXIT handler and
+# the last setter wins, so this file owns that slot: an entry script that sources the
+# seam must not install an EXIT trap of its own afterwards, because taking the slot
+# back would leave a mode-600 file of secrets behind on the failure path. The seam
+# suite pins that no script which sources this file does so.
+#
+# The guard is keyed on BASHPID rather than a yes/no because a command substitution is
+# a forked subshell that inherits the parent's environment and needs a handler of its
+# own to clean what it created.
+# Globals:
+#   INFISICAL_EXIT_TRAP_SET, BASHPID
+# Arguments:
+#   None
+# Outputs:
+#   None
+# Returns:
+#   0, always
+infisical_install_exit_trap() {
+  if [ "${INFISICAL_EXIT_TRAP_SET}" != "${BASHPID}" ]; then
+    INFISICAL_EXIT_TRAP_SET="${BASHPID}"
+    trap 'infisical_tmp_cleanup' EXIT
+  fi
+  return 0
+}
 
 # @function infisical_tmp_cleanup
 # Remove the temps this shell created, and only those. Each entry carries the pid of
@@ -73,7 +103,14 @@ infisical_tmp_cleanup() {
     [ -n "${entry}" ] || continue
     if [ "${entry%%:*}" = "${BASHPID}" ]; then
       own="${entry#*:}"
-      [ -e "${own}" ] && rm -rf -- "${own}"
+      if [ -d "${own}" ]; then
+        # A dir temp is this lib's own and nothing is ever written into it, so a plain
+        # rmdir removes it. rm -rf is not needed and has no business next to a path
+        # built from a caller-supplied template.
+        rmdir -- "${own}" 2>/dev/null || true
+      elif [ -e "${own}" ]; then
+        rm -f -- "${own}"
+      fi
     else
       mine="${mine} ${entry}"
     fi
@@ -112,7 +149,7 @@ infisical_mktemp() {
   INFISICAL_TMP_FILES="${INFISICAL_TMP_FILES} ${BASHPID}:${made}"
   # Set on every call rather than once per shell: a command substitution inherits the
   # parent's environment, and it needs a trap of its own to clean what it created.
-  trap 'infisical_tmp_cleanup' EXIT
+  infisical_install_exit_trap
   INFISICAL_MKTEMP="${made}"
 }
 
@@ -528,12 +565,16 @@ infisical_install_cli() {
     return 1
   fi
   # The member listing is the integrity check: a gzip or tar that will not open the
-  # archive fails here, before anything from it is run.
-  if ! member="$(tar -tzf "${tarball}" 2>/dev/null |
-    grep -E '(^|/)infisical$' | head -n 1)"; then
+  # archive fails here, before anything from it is run. tar's own status is kept in
+  # its own assignment rather than left to the pipeline's last command, because a
+  # caller that did not set pipefail would otherwise see head(1)'s exit 0 and read a
+  # corrupt download as an archive with no member in it.
+  local listing=""
+  if ! listing="$(tar -tzf "${tarball}" 2>/dev/null)"; then
     err "the download is not a readable tar.gz: ${url}"
     return 1
   fi
+  member="$(printf '%s\n' "${listing}" | grep -E '(^|/)infisical$' | head -n 1)" || member=""
   if [ -z "${member}" ] || [[ ${member} == *..* ]] || [[ ${member} == /* ]]; then
     err "the archive holds no plain infisical member"
     return 1
@@ -578,7 +619,9 @@ infisical_install_cli() {
 #   $1 - env file to read the pair from; empty means infisical_default_env_file's
 #     answer
 # Outputs:
-#   The access token alone on stdout; phase/err lines on stdout/stderr name no value
+#   The access token alone on stdout; every commentary line this function can print is
+#   written on stderr, so a caller that captures stdout gets the credential and nothing
+#   else, on every branch
 # Returns:
 #   0 with the token; 5 when the flag is off or the pair is unconfigured; the CLI's
 #   status otherwise
@@ -586,7 +629,7 @@ infisical_login() {
   local env_file="${1:-}" client_id="" client_secret=""
   [ -n "${env_file}" ] || env_file="$(infisical_default_env_file)"
   if ! infisical_enabled "${env_file}"; then
-    note "INFISICAL_ENABLED is off; not authenticating."
+    printf '%s\n' "note: INFISICAL_ENABLED is off; not authenticating." >&2
     return 5
   fi
   client_id="$(infisical_env_value INFISICAL_UNIVERSAL_AUTH_CLIENT_ID "${env_file}")"
@@ -595,7 +638,10 @@ infisical_login() {
     err "INFISICAL_UNIVERSAL_AUTH_CLIENT_ID or INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET is empty in ${env_file}; create the machine identity's Universal Auth credentials and paste both"
     return 5
   fi
-  phase "exchanging the machine identity credentials for an access token"
+  # The commentary goes to stderr, not through phase(): this function's stdout is the
+  # access token and nothing else, and a caller that captures it with $( ) would
+  # otherwise glue a "-> ..." line onto the front of the credential.
+  printf '%s\n' "-> exchanging the machine identity credentials for an access token" >&2
   infisical_run_cli login \
     --method=universal-auth \
     --client-id="${client_id}" \
@@ -919,8 +965,9 @@ infisical_push() {
 # Outputs:
 #   a phase line naming the count, and the CLI's own output
 # Returns:
-#   0 on success; 2 on a missing file; 5 when the flag is off, the project is unset
-#   or the login was refused; the CLI's status otherwise
+#   0 on success; 2 on a missing file or one that holds no KEY=value line; 5 when the
+#   flag is off, the project is unset or the login was refused; the CLI's status
+#   otherwise
 infisical_secrets_set_file() {
   local pushfile="${1:-}" env_file="${2:-}"
   local project_id="" environment="" lines=0
@@ -942,6 +989,12 @@ infisical_secrets_set_file() {
   [ -n "${environment}" ] || environment="prod"
   chmod 600 "${pushfile}"
   lines="$(grep -cE '^[A-Z0-9_]+=' "${pushfile}" 2>/dev/null)" || lines=0
+  if [ "${lines}" -eq 0 ]; then
+    # An empty batch is a caller bug, and sending it would report a successful push of
+    # nothing, which is how a vault silently stops holding any of the stack's secrets.
+    err "infisical_secrets_set_file: ${pushfile} holds no KEY=value line; nothing sent"
+    return 2
+  fi
   phase "sending ${lines} secret(s) to project ${project_id} as shared"
   infisical_ensure_auth "${env_file}" || return 5
   # --type is shared on set and personal on delete, so it is named on both rather than
@@ -969,10 +1022,11 @@ infisical_secrets_set_file() {
 #   phase/ok/note lines naming the domain, the organization id, the identity id and
 #   the env file. The password, the token, and the JSON itself are never printed
 # Returns:
-#   0 when the run landed and the ids were written; 0 with a note when the instance
-#   already looks bootstrapped; 5 when the flag is off or a prerequisite is missing,
-#   still a placeholder, or the CLI is absent; 1 when the CLI failed, the JSON was
-#   unparsable, or an id did not land
+#   0 when the run landed and the machine identity id was written; the organization id
+#   is reported on the ok line and deliberately not stored, since nothing in the stack
+#   reads it; 0 with a note when the instance already looks bootstrapped; 5 when the
+#   flag is off or a prerequisite is missing, still a placeholder, or the CLI is absent;
+#   1 when the CLI failed, the JSON was unparsable, or an id did not land
 infisical_bootstrap() {
   local env_file="${1:-}"
   local json="" domain="" email="" password="" organization=""
@@ -1075,6 +1129,8 @@ PY
   while IFS=$'\t' read -r field value; do
     case "${field}" in
       TOKEN) token_seen="${value}" ;;
+      # Report-only: nothing in the stack reads an organization id, so it names the ok
+      # line and never lands in .env, where an unconsumed key would outlive its use.
       INFISICAL_ORGANIZATION_ID) org_id="${value}" ;;
       INFISICAL_MACHINE_IDENTITY_ID)
         identity_id="${value}"

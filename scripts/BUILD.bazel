@@ -137,6 +137,7 @@ _SCRIPT_LIBS = {
         "lib/bootstrap.sh",
         "lib/common.sh",
         "lib/domain.sh",
+        "lib/infisical.sh",
         "lib/spark.sh",
     ],
     "build-dev-image": [
@@ -165,6 +166,7 @@ _SCRIPT_LIBS = {
         "lib/domain.sh",
         "lib/host_resolve.py",
         "lib/host_state.sh",
+        "lib/infisical.sh",
         "lib/pg-apply-password.sh",
     ],
     "github-auth": [
@@ -181,8 +183,9 @@ _SCRIPT_LIBS = {
     "hermes-shell": [
         "lib/common.sh",
     ],
-    # Every vault verb goes through the one seam lib, and rotate reaches gen_secret,
-    # which lives beside the bootstrap helpers.
+    # Every vault verb goes through the one seam lib, and rotate reaches
+    # gen_secret_for, which lives beside the bootstrap helpers because entropy is
+    # not Infisical knowledge.
     "infisical": [
         "lib/bootstrap.sh",
         "lib/common.sh",
@@ -219,6 +222,7 @@ _SCRIPT_LIBS = {
         "lib/domain.sh",
         "lib/host_resolve.py",
         "lib/host_state.sh",
+        "lib/infisical.sh",
         "lib/pg-apply-password.sh",
     ],
     "pull-models": [
@@ -286,6 +290,7 @@ _SCRIPT_LIBS = {
     ],
     "update-stack": [
         "lib/common.sh",
+        "lib/infisical.sh",
     ],
     "validate": [
         "lib/common.sh",
@@ -304,6 +309,7 @@ _SCRIPT_PAYLOAD = {
         "//:compose_file",
         "//:env_sample",
         "//:templates_payload",
+        "//infisical:payload",
         "//proxy:confs",
     ],
     "build-dev-image": [
@@ -326,6 +332,7 @@ _SCRIPT_PAYLOAD = {
     "dev-stack": [
         "//:compose_file",
         "//homepage:payload",
+        "//infisical:payload",
         "//proxy:confs",
     ],
     "github-auth": [
@@ -395,6 +402,7 @@ _SCRIPT_PAYLOAD = {
     "prod-stack": [
         "//:compose_file",
         "//homepage:payload",
+        "//infisical:payload",
         "//proxy:confs",
     ],
     "pull-models": [
@@ -444,6 +452,7 @@ _SCRIPT_PAYLOAD = {
     ],
     "update-stack": [
         "//:compose_file",
+        "//infisical:payload",
     ],
     "validate": [
         "//:compose_file",

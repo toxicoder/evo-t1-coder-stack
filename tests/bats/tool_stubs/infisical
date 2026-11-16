@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# shellcheck shell=bash
+#
+# ## infisical — deterministic Infisical CLI stub (test fixture; never ships)
+#
+# Purpose: stand in for the pinned Infisical CLI so the seam suite and the operator-CLI
+# suite can drive every vault path with no server, no network, and no credential. The
+# stub answers the argv shapes scripts/lib/infisical.sh actually sends and nothing else,
+# so a seam that drifts from the pinned contract meets an unhandled verb rather than a
+# silent success. Fixed behaviour, keyed off the leading words of argv:
+#   login                                  -> print STUB_INFISICAL_TOKEN (default
+#                                             "stub-access-token"), exit
+#                                             STUB_INFISICAL_LOGIN_RC (0)
+#   sm secrets export                      -> write STUB_INFISICAL_DUMP (a file path or
+#                                             a literal) to the --output-file= target,
+#                                             mode 600, exit STUB_INFISICAL_EXPORT_RC (0)
+#   sm secrets set                         -> copy the --file= target (or the file behind
+#                                             a KEY=@path word) to
+#                                             $STUB_LOG/infisical-set.txt when STUB_LOG
+#                                             is set, exit STUB_INFISICAL_SET_RC (0)
+#   sm secrets delete                      -> exit STUB_INFISICAL_DELETE_RC (0)
+#   sm run                                 -> exec whatever follows the bare `--`, so a
+#                                             suite can prove the secrets reached the
+#                                             child's environment
+#   bootstrap                              -> print STUB_INFISICAL_BOOTSTRAP (default is
+#                                             the real bootstrap JSON shape with the
+#                                             identity id, the identity token and the
+#                                             organization id the seam parses), exit
+#                                             STUB_INFISICAL_BOOTSTRAP_RC (0)
+#   --version | version                    -> print STUB_INFISICAL_VERSION (default
+#                                             "0.45.8"), exit 0
+#   anything else                          -> exit STUB_INFISICAL_RC (0)
+# Records the full argv, one call per line, to $STUB_LOG/infisical.log when STUB_LOG is
+# set. Suites assert on that log: it is how they prove `--format=dotenv` and
+# `--output-file=` were passed, that `--type=shared` was not omitted, and that no secret
+# VALUE ever rode argv (the seam writes values through a file, so a value appearing here
+# is the regression).
+#
+# Usage (in a .bats file): use_stubs infisical curl
+#   STUB_INFISICAL_DUMP="$scratch/dump.env"        # canned vault contents for a pull
+#   STUB_INFISICAL_EXPORT_RC=1                     # drive the export-failed path
+#   STUB_INFISICAL_SET_RC=1                        # drive the refused-write path
+# Safety: stub only — contacts no server, reads no real credential, and writes only inside
+# the caller's scratch tree and $STUB_LOG.
+set -u
+
+if [ -n "${STUB_LOG:-}" ]; then printf '%s\n' "infisical $*" >> "${STUB_LOG}/infisical.log"; fi
+
+case "$1 ${2:-} ${3:-}" in
+  "login "* | "login"*)
+    printf '%s\n' "${STUB_INFISICAL_TOKEN:-stub-access-token}"
+    exit "${STUB_INFISICAL_LOGIN_RC:-0}"
+    ;;
+esac
+
+if [ "${1:-}" = "sm" ] && [ "${2:-}" = "secrets" ]; then
+  case "${3:-}" in
+    export)
+      dest=""
+      for a in "$@"; do
+        case "${a}" in
+          --output-file=*) dest="${a#*=}" ;;
+        esac
+      done
+      if [ -z "${dest}" ]; then
+        printf 'stub: sm secrets export needs --output-file=\n' >&2
+        exit 2
+      fi
+      body="${STUB_INFISICAL_DUMP:-}"
+      if [ -f "${body}" ]; then
+        cat "${body}" > "${dest}"
+      elif [ -n "${body}" ]; then
+        printf '%s\n' "${body}" > "${dest}"
+      else
+        : > "${dest}"
+      fi
+      chmod 600 "${dest}"
+      exit "${STUB_INFISICAL_EXPORT_RC:-0}"
+      ;;
+    set)
+      src=""
+      for a in "$@"; do
+        case "${a}" in
+          --file=*) src="${a#*=}" ;;
+          *@/*) src="${a#*@}" ;;
+        esac
+      done
+      if [ -n "${STUB_LOG:-}" ] && [ -n "${src}" ] && [ -r "${src}" ]; then
+        cat "${src}" >> "${STUB_LOG}/infisical-set.txt"
+      fi
+      exit "${STUB_INFISICAL_SET_RC:-0}"
+      ;;
+    delete)
+      exit "${STUB_INFISICAL_DELETE_RC:-0}"
+      ;;
+  esac
+fi
+
+if [ "${1:-}" = "sm" ] && [ "${2:-}" = "run" ]; then
+  argv=("$@")
+  i=0
+  dash=-1
+  while [ "${i}" -lt "${#argv[@]}" ]; do
+    if [ "${argv[i]}" = "--" ]; then dash="${i}"; break; fi
+    i=$((i + 1))
+  done
+  if [ "${dash}" = -1 ] || [ "$((dash + 1))" -ge "${#argv[@]}" ]; then
+    printf 'stub: sm run needs a command after --\n' >&2
+    exit 2
+  fi
+  exec "${argv[@]:$((dash + 1))}"
+fi
+
+if [ "${1:-}" = "bootstrap" ]; then
+  # The canned answer is a single-quoted assignment rather than an inline ${VAR:-...}
+  # default: inside ${...} the braces and quotes have to survive one more round of
+  # expansion, and a nesting slip there silently files organization under identity,
+  # which the seam then reads as "no organization id" instead of as bad fixture data.
+  # Top-level keys mirror what the seam parses: identity.id, identity.credentials.token,
+  # organization.id, user.email.
+  stub_bootstrap_json='{"identity":{"id":"stub-identity-id","credentials":{"token":"stub-machine-identity-secret"}},"organization":{"id":"stub-org-id"},"user":{"email":"ops@example.test"}}'
+  printf '%s\n' "${STUB_INFISICAL_BOOTSTRAP-$stub_bootstrap_json}"
+  exit "${STUB_INFISICAL_BOOTSTRAP_RC:-0}"
+fi
+
+case "${1:-}" in
+  --version | version)
+    printf '%s\n' "${STUB_INFISICAL_VERSION:-0.45.8}"
+    exit 0
+    ;;
+esac
+
+exit "${STUB_INFISICAL_RC:-0}"
