@@ -493,7 +493,7 @@ summary_line() {
   # inside that image, so this branch has to be reached by removing the binary from the
   # PATH handed to the CLI rather than by skipping whenever one happens to be installed.
   local stripped
-  stripped="$(path_without infisical)" || {
+  stripped="$(path_without_exe infisical)" || {
     printf 'FAIL: every PATH directory carries an infisical, so the absent-binary branch cannot be driven\n' >&2
     return 1
   }

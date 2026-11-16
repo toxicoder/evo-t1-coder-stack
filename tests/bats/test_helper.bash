@@ -126,7 +126,7 @@ real_bin() {
   PATH="${stripped}" command -v "${tool}" 2>/dev/null
 }
 
-# path_without <tool> — print PATH with this test's stub bin/ and every other directory
+# path_without_exe <tool> - print PATH with this test's stub bin/ and every other directory
 # that holds an executable <tool> removed: the PATH of a machine that never installed it.
 # Removing only the stub bin stopped being enough the day the golden workspace image
 # started shipping the real Infisical CLI at /usr/local/bin, because this repo's gate
@@ -141,7 +141,10 @@ real_bin() {
 #   The stripped PATH on stdout
 # Returns:
 #   0 on success, 1 when only empty entries would survive
-path_without() {
+# The name is deliberately not path_without: tests/bats/pre-commit.bats defines a
+# file-local function of that name with a different empty-PATH contract, and a bats
+# file's own definition shadows the helper loaded above it.
+path_without_exe() {
   local tool="$1" dir
   local -a parts=() kept=()
   IFS=':' read -r -a parts <<<"${PATH}"

@@ -219,9 +219,9 @@ drive_vault() {
 # Outputs:
 #   The stripped PATH on stdout
 # Returns:
-#   0 on success, 1 when path_without finds nothing usable to leave on PATH
+#   0 on success, 1 when path_without_exe finds nothing usable to leave on PATH
 cli_free_path() {
-  path_without infisical
+  path_without_exe infisical
 }
 
 # install_export_stub - cover this test's bin/infisical with a stub that answers the one
