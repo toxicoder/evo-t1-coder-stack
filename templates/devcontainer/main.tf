@@ -687,10 +687,10 @@ resource "coder_agent" "main" {
     # sit in Coder's database in plain sight, while an agent-env value is rendered per
     # start and never written to disk.
     var.infisical_enabled ? {
-      INFISICAL_DOMAIN                   = var.infisical_url,
-      INFISICAL_PROJECT_ID               = var.infisical_project_id,
-      INFISICAL_MACHINE_IDENTITY_ID      = var.infisical_machine_identity_id,
-      INFISICAL_ENVIRONMENT              = var.infisical_environment,
+      INFISICAL_DOMAIN              = var.infisical_url,
+      INFISICAL_PROJECT_ID          = var.infisical_project_id,
+      INFISICAL_MACHINE_IDENTITY_ID = var.infisical_machine_identity_id,
+      INFISICAL_ENVIRONMENT         = var.infisical_environment,
       # The second gate, read by the boot body itself so the rendered script stays
       # one text for every workspace. Stringified because a coder_agent env value
       # has to be a string, and the body compares it against the literal "true".
