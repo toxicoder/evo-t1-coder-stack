@@ -971,6 +971,13 @@ STUBWRAP
   assert_match "and it still holds the old value" '^LITELLM_MASTER_KEY=old-master-value$' \
     "${output}"
   assert_match "the vault really was asked first" 'sm secrets set' "$(stub_log infisical)"
+  # The minted value reached disk before the vault said no, so this is the path where
+  # the EXIT trap earns its keep: a cleanup written only on the success path would
+  # leave a mode-600 file holding a live credential behind.
+  local leftover
+  leftover="$(find "${SCRATCH}" -maxdepth 1 -name 'infisical-rotate.*' | wc -l |
+    tr -d '[:space:]')"
+  assert_eq "the refused path cleans the minted value too" "0" "${leftover}"
 }
 
 @test "rotate: the auth secret keeps its 44-character base64 shape and stays unmanaged" {
