@@ -161,12 +161,6 @@ scan() {
   fi
 }
 
-scan_i() {
-  if printf '%s\n' "${raw}" | grep -qiE -- "$2"; then
-    deny "$1 matched; its text is not quoted here, so pass the credential through the environment instead of the file"
-  fi
-}
-
 # Assignment-shaped text, then a digit somewhere on the same line.
 scan_assign() {
   if printf '%s\n' "${haystack}" | grep -E -- "$2" | grep -q '[0-9]'; then
