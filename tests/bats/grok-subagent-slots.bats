@@ -6,8 +6,10 @@
 # three are text in a template someone can edit: every subagent type a session can
 # spawn has to ride a lane, each role on the alias that suits the work (a named type
 # with no entry inherits the parent's model, which is how a swarm wave ends up
-# queued behind one box anyway), the width has to be derived from the lane rather
-# than one number for both lanes, and the rulebook has to tell the parent to fill
+# queued behind one box anyway), the width has to come from the fleet's own
+# grok_swarm_width on every lane rather than follow the default lane, the operator
+# docs have to keep teaching that rule, and the rulebook has to tell the parent to
+# fill
 # the slots it was
 # given. Each is pinned for both template twins, and the seed body's own literals
 # are pinned so a re-hardcoded default cannot sneak back in.
@@ -24,6 +26,7 @@ REPO_ROOT=""
 CONFIG_TWINS=()
 CODER_TWINS=()
 MAIN_TWINS=()
+FANOUT_DOCS=()
 RULEBOOK=""
 
 setup() {
@@ -35,6 +38,11 @@ setup() {
   MAIN_TWINS=("${REPO_ROOT}/templates/workspace/main.tf"
     "${REPO_ROOT}/templates/devcontainer/main.tf")
   RULEBOOK="${REPO_ROOT}/templates/common/GROK_BUILD_AGENTS.md"
+  FANOUT_DOCS=("${REPO_ROOT}/README.md"
+    "${REPO_ROOT}/docs/coder-templates.md"
+    "${REPO_ROOT}/docs/grok-build-and-agents.md"
+    "${REPO_ROOT}/docs/litellm-routing.md"
+    "${REPO_ROOT}/docs/config-updates.md")
   local file
   for file in "${CONFIG_TWINS[@]}" "${CODER_TWINS[@]}" "${MAIN_TWINS[@]}" "${RULEBOOK}"; do
     [ -f "${file}" ] || skip "no ${file} in the checkout"
@@ -396,4 +404,53 @@ subagents_block() {
   [ "${status}" -eq 0 ]
   run grep -F 'ez-micro-plan v1' "${checker}"
   [ "${status}" -eq 0 ]
+}
+
+@test "fan-out docs: no operator doc re-ties the width to the default lane" {
+  # The width used to follow grok_subagents_lane: 15 on agent-swarm, 4 on a pinned
+  # one. main.tf has taken it from grok_swarm_width on every lane since, but four
+  # operator docs kept teaching the old rule because nothing read them -- the stale
+  # terraform ternary was still printed verbatim in the agents guide. This refuses
+  # the retired wording and requires the variable that actually supplies the width
+  # to be named, so the prose cannot drift from main.tf again unnoticed.
+  local file flat pattern
+  local -a banned=(
+    'width.{0,60}follows? the (lane|writers)'
+    'width.{0,60}(deriv[ey]|derived|derives|derivation|taken|comes|set).{0,15}(from|by|off) the lane'
+    'asks the lane'
+    '4 on a pinned (one|lane)'
+    '15 on the unpinned.{0,40}lane'
+    '15 : 4'
+    'stays at 4'
+    'where 4 comes from'
+  )
+  for file in "${FANOUT_DOCS[@]}"; do
+    # A missing page is a failure here, not a skip: the setup probe skips the
+    # whole file, and a suite that skips reads identical to one that passes.
+    [ -f "${file}" ] || {
+      echo "${file} is not in the runfiles: add its filegroup to this suite's _SUITE_PAYLOAD entry" >&2
+      return 1
+    }
+    # Match sentences, not lines. This prose is hard-wrapped, and the stale
+    # sentence this gate was written for ran across three source lines, so a
+    # per-line grep walked straight past it and reported the page clean.
+    flat="$(tr '\n' ' ' <"${file}" | tr -s ' ')"
+    # A sentence that calls itself history, or denies the retired rule, may keep
+    # the old wording. The gate exists to stop the current rule being wrong, not
+    # to forbid documenting what was retired or stating the negative.
+    flat="$(printf '%s' "${flat}" \
+      | sed -E "s/[^.]*\b(retired|used to|no longer|historical|formerly|does not|doesn't|never|independent of)\b[^.]*\.//Ig")"
+    for pattern in "${banned[@]}"; do
+      if printf '%s' "${flat}" | grep -qiE -- "${pattern}"; then
+        echo "${file} still teaches the retired width rule (${pattern})" >&2
+        printf '%s' "${flat}" | grep -oiE -- ".{0,50}${pattern}.{0,50}" | head -1 >&2
+        return 1
+      fi
+    done
+    run grep -F 'grok_swarm_width' "${file}"
+    [ "${status}" -eq 0 ] || {
+      echo "${file} never names grok_swarm_width, the variable that supplies the width" >&2
+      return 1
+    }
+  done
 }

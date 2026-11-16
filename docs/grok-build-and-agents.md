@@ -465,19 +465,21 @@ while the managed block is intact.
 - `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane each
   type rides, both rendered from template variables: `grok_subagents_lane` (default
   `agent-swarm`) for the writers, three more for the reader, planner and skeptic roles named
-  below, and `grok_subagent_max_concurrent` (default `null`, which means "derive it
-  from the lane"). The two keys are one calculation, and `main.tf` is where it is made:
-  `var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent :
-  (var.grok_subagents_lane == "agent-swarm" ? 15 : 4)`, so the shipped swarm default
-  yields 15 slots, `--var grok_subagents_lane=agent` is the rollback that puts the writers
-  back on the parent's pinned box for 4, and an explicit
+  below, and `grok_subagent_max_concurrent` (default `null`, which means "take
+  `grok_swarm_width`, the fleet's width"). The two keys are one calculation, and `main.tf` is where it is made:
+  `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
+  So the width is `grok_swarm_width` (default 15) whichever lane the writers ride;
+  `--var grok_subagents_lane=agent` is the rollback that puts the writers back on
+  the parent's pinned box and leaves that width alone, and an explicit
   `--var grok_subagent_max_concurrent=N` always wins. The variable's
   own validation accepts null or a whole number 1..32, because past the fleet's ceiling
   a bigger number is only a longer queue. A parent session and every subagent it spawns
   carry the same `x-litellm-session-id`, so on a pinned lane the whole fan-out resolves
   to one deployment and competes for that box's `PARALLEL` streams - 5 by default, set in
-  `scripts/spark-configure.sh` - and that is where 4 comes from: one box's `PARALLEL`
-  minus the parent's own stream. The `agent-swarm` default is where widening pays: that
+  `scripts/spark-configure.sh` - so the width that is useful on one box is about 4: that
+  box's `PARALLEL` minus the parent's own stream, which is why an operator who pins
+  everything to one box narrows the queue by setting `grok_subagent_max_concurrent`
+  rather than by switching lanes. The `agent-swarm` default is where widening pays: that
   group carries no pin, so each subagent request is placed on
   whichever reachable box has the fewest requests in flight and the ceiling becomes
   `PARALLEL` per box rather than per workspace - 3 boxes x 5 = 15, which asks the fleet
@@ -500,9 +502,10 @@ while the managed block is intact.
   two read-only types was the defect this block fixes: a spawn that names no type gets
   `general-purpose`, and that is the type every writer in a fan-out runs as, so those
   children inherited the parent's model and queued behind the one box a pinned parent
-  resolves to while the swarm-named readers spread over three. The width still follows the
-  writers' one variable, so `grok_subagents_lane` remains the knob a workspace turns on to
-  fan out.
+  resolves to while the swarm-named readers spread over three. What those four variables
+  decide is placement only: the width comes from `grok_swarm_width` (default 15) on every
+  lane, so `grok_subagents_lane` remains the knob a workspace turns on to fan out, and
+  narrowing the queue is the separate `grok_subagent_max_concurrent`.
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
@@ -612,10 +615,11 @@ silent and counting it stays the parent's job.
 `max_depth = 1` is what makes that true: a child cannot spawn a child, so the slot count
 describes one tree and orchestration cannot leak.
 
-**What the lane choice buys.** `grok_subagents_lane` is the knob for the writers, and the
-width follows it: 15 on `agent-swarm`, 4 on a pinned lane, and an explicit
-`grok_subagent_max_concurrent` overrules both (its validation accepts null or 1..32). Both
-defaults are the fleet's arithmetic rather than taste. A parent and every child it spawns
+**What the lane choice buys.** `grok_subagents_lane` is the knob for the writers and it
+decides placement, not size: the width comes from `grok_swarm_width` (default 15) on
+every lane, and an explicit
+`grok_subagent_max_concurrent` overrules it (its validation accepts null or 1..32). That
+15 is the fleet's arithmetic rather than taste. A parent and every child it spawns
 carry the same `x-litellm-session-id`, so a pinned lane places the whole fan-out on one
 box and the useful width is that box's `PARALLEL` - 5 by default, from
 `scripts/spark-configure.sh` - minus the parent's own stream; past that, extra slots are
@@ -648,7 +652,8 @@ GROK_SUBAGENTS_LANE=agent-swarm bazelisk run //scripts:seed-dev-env -- --home <d
 ```
 
 `GROK_SUBAGENTS_LANE` names the writers' lane and `GROK_SUBAGENT_MAX_CONCURRENT` the width,
-with the same derivation `main.tf` uses; `GROK_EXPLORE_LANE` (default `agent-explore`),
+with `GROK_SWARM_WIDTH` (default 15) behind it, the same fallback `main.tf` makes to
+`grok_swarm_width`; `GROK_EXPLORE_LANE` (default `agent-explore`),
 `GROK_PLAN_LANE` (default `agent`) and `GROK_REVIEW_LANE` (default `agent-review`) name the
 three role lanes the same way. A value the seeder cannot use is refused in place and
 the default goes in, so a typo is a line in the output rather than a broken key in

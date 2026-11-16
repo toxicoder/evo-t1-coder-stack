@@ -423,7 +423,7 @@ assert_contributor_home() {
     'SEARXNG_URL = "http://host.docker.internal:8181"'
 }
 
-@test "seed-dev-env: the fan-out width follows the lane unless the env says otherwise" {
+@test "seed-dev-env: the fan-out width takes the fleet width unless the env says otherwise" {
   load_seed_api
   local scratch out tpl notes
   scratch="$(make_scratch)"
@@ -445,7 +445,7 @@ assert_contributor_home() {
   assert_fixed "architect agent lane" "${out}" 'architect = "agent"'
   assert_fixed "reviewer lane" "${out}" 'reviewer = "agent-review"'
   assert_fixed "security-auditor lane" "${out}" 'security-auditor = "agent-review"'
-  assert_fixed "width derived from the default lane" "${out}" 'max_concurrent = 15'
+  assert_fixed "width takes the fleet width" "${out}" 'max_concurrent = 15'
   # Every token the template carries must be substituted here, or a contributor
   # home gets a literal ${...} where a model id belongs.
   assert_not_fixed "no unsubstituted template token" "${out}" '${grok_'
@@ -490,6 +490,12 @@ assert_contributor_home() {
   GROK_SUBAGENTS_LANE='agent' seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
   assert_fixed "pinned lane stays swarm-sized" "${out}" 'max_concurrent = 15'
+
+  # GROK_SWARM_WIDTH is where the 15 actually comes from, so a contributor on a
+  # smaller fleet narrows it here. Hard-coding 15 in the seeder passes every other
+  # case in this file, which is why the key needs a case of its own.
+  GROK_SWARM_WIDTH='7' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "the fleet width key supplies the width" "${out}" 'max_concurrent = 7'
 
   # A value sed could not substitute safely is refused out loud, and the width
   # still comes out of the lane rather than rendering a broken TOML integer.
