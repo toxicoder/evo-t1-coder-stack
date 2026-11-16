@@ -803,7 +803,12 @@ EOS
   for i in $(seq 1 4000); do
     printf '%s/share/doc/infisical/README-%s.md\n' "${i}" "${i}" >>"${listing}"
   done
-  printf 'infisical\n' >>"${listing}"
+  # The binary sits under a directory here, which the default stub listing (the bare
+  # `infisical` every other test in this file gets) never exercises. It is what makes
+  # the two assertions below non-vacuous against the scan itself: a replacement that
+  # never read the listing would have to guess the member name, and the guess this
+  # file could not be accused of seeding is the bare `infisical`.
+  printf 'usr/local/bin/infisical\n' >>"${listing}"
   # A file, not an export: execve caps one environment variable, and the size is the
   # point of the test.
   export STUB_TAR_LIST_FILE="${listing}"
@@ -818,8 +823,8 @@ EOS
     printf 'install status=%s\noutput: %s\n' "${status}" "${output}" >&2
     return 1
   fi
-  assert_match "the member it extracted is the bare binary" '-- infisical' \
-    "$(cat "${STUB_LOG}/tar.log")"
+  assert_match "the member it extracted is the one the listing named" \
+    '-- usr/local/bin/infisical' "$(cat "${STUB_LOG}/tar.log")"
   [ -x "${SCRATCH}/xdg/evo-t1/infisical/bin/infisical" ]
 }
 
@@ -833,23 +838,52 @@ EOS
   local src
   src="$(bats_source_repo_root)" || skip "no source tree to pin against"
   local pins="${src}/images/dev/tool-versions.env" envs="${src}/.env.example"
+  local sample="${src}/.env.sample"
   local lib="${src}/scripts/lib/infisical.sh" dockerfile="${src}/images/dev/Dockerfile"
   local f
-  for f in "${pins}" "${envs}" "${lib}" "${dockerfile}"; do
+  for f in "${pins}" "${envs}" "${sample}" "${lib}" "${dockerfile}"; do
     [ -r "${f}" ]
   done
   # Each reader drains its producer: this suite's runner runs under pipefail, and a
   # head(1) that leaves early would report 141 for a file that answered fine.
-  local image_pin env_pin lib_default dockerfile_arg
+  local image_pin env_pin sample_pin lib_default dockerfile_arg
   image_pin="$(sed -n 's/^INFISICAL_CLI_VERSION=//p' "${pins}" | tail -n 1)"
   env_pin="$(sed -n 's/^INFISICAL_CLI_VERSION=//p' "${envs}" | tail -n 1)"
+  sample_pin="$(sed -n 's/^INFISICAL_CLI_VERSION=//p' "${sample}" | tail -n 1)"
   lib_default="$(sed -n 's/.*version="\([0-9][0-9.]*\)".*/\1/p' "${lib}" | tail -n 1)"
   dockerfile_arg="$(sed -n 's/^[[:space:]]*INFISICAL_CLI_VERSION=\([0-9][0-9.]*\).*/\1/p' \
     "${dockerfile}" | tail -n 1)"
   assert_eq "the image pin is a bare version" "0.45.8" "${image_pin}"
   assert_eq "the Dockerfile's own default agrees" "${image_pin}" "${dockerfile_arg}"
   assert_eq "the operator default agrees" "${image_pin}" "${env_pin}"
+  # The two dotenv files are one document with two names -- bootstrap copies the
+  # sample to the live file (scripts/bootstrap.sh:211) and //scripts:pre-commit diffs
+  # them (scripts/pre-commit.sh:91) -- but that diff is a hook, so the pin this test
+  # exists to hold is read out of both here rather than trusted to the hook.
+  assert_eq "and the sample an operator boots from agrees" "${image_pin}" "${sample_pin}"
   assert_eq "and the installer's fallback agrees" "${image_pin}" "${lib_default}"
+}
+
+@test "seam: the image installs the CLI by naming the member it wants out of the archive" {
+  # The release asset also carries LICENSE, README, completions and a manpage, so an
+  # image step that unpacks the whole archive and then goes looking for a file named
+  # infisical lets whatever the release happens to ship choose what lands in
+  # /usr/local/bin. Naming the member is what the host installer does (its own extract
+  # is pinned above) and what the docker client layer beside it does; this pins that
+  # the image layer does too.
+  local src dockerfile whole layer
+  src="$(bats_source_repo_root)" || skip "no source tree to read"
+  dockerfile="${src}/images/dev/Dockerfile"
+  [ -r "${dockerfile}" ]
+  whole="$(cat "${dockerfile}")"
+  layer="$(sed -n '/infisical-cli\.tgz/,/install -m 0755 \/tmp\/infisical-cli\.bin/p' \
+    "${dockerfile}")"
+  assert_match "the extract names the member" \
+    'tar -xzf /tmp/infisical-cli\.tgz -O infisical' "${layer}"
+  assert_not_match "and no step in the file unpacks the archive into a directory" \
+    'tar -xzf /tmp/infisical-cli\.tgz -C ' "${whole}"
+  assert_match "the installed file is the one this step wrote" \
+    'install -m 0755 /tmp/infisical-cli\.bin /usr/local/bin/infisical' "${layer}"
 }
 
 @test "seam: infisical_install_cli fails on an empty download and never runs tar" {

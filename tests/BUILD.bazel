@@ -288,13 +288,14 @@ _SUITE_PAYLOAD = {
         "//:env_example",
         "//:env_sample",
     ],
-    # The same inventory, plus the four files the CLI-version pin compares: the host
-    # installer's fallback in the lib, the operator default in .env.example, and the
-    # two spellings the golden image bakes. A pin test that cannot open its files
+    # The same inventory, plus the five files the CLI-version pin compares: the host
+    # installer's fallback in the lib, the operator default in each dotenv twin, and
+    # the two spellings the golden image bakes. A pin test that cannot open its files
     # skips, and a skipped pin is the drift this test exists to catch.
     "infisical_lib.bats": [
         "//infisical:payload",
         "//:env_example",
+        "//:env_sample",
         "//images/dev:dockerfile",
         "//images/dev:tool_versions",
     ],
