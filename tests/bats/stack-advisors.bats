@@ -188,6 +188,100 @@ setup() {
 # The five payloads, and the set the directory holds.
 # ---------------------------------------------------------------------------
 
+# render_advisors <out> -- the seed body with every map key replaced by a marker, which
+# is what lets a test run the body itself instead of only reading it. A payload here is
+# one line naming its key, so an assertion about which file holds which body is also a
+# check that the body writes each key to the path the manifest names.
+render_advisors() {
+  local out="${1}" key
+  cp "${COMMON}/stack-advisors.sh.tftpl" "${out}"
+  for key in documenter_skill documenter_agent performance_optimizer_skill \
+    debugger_skill migrator_skill ez_code_index_skill ez_code_index_py; do
+    sed -i "s|^\${${key}}$|SEEDED ${key}|" "${out}"
+  done
+}
+
+@test "advisors seed: one render fills both homes and the agents copy is a cp of the managed one" {
+  local home rendered key
+  home="${BATS_TEST_TMPDIR}/home"
+  rendered="${BATS_TEST_TMPDIR}/advisors.sh"
+  mkdir -p "${home}"
+  render_advisors "${rendered}"
+
+  run env HOME="${home}" sh "${rendered}"
+  [ "${status}" -eq 0 ] || { printf 'the advisor body exited %s: %s\n' "${status}" "${output}" >&2; return 1; }
+  [ -z "${output}" ] || { printf 'a healthy first install printed %s\n' "${output}" >&2; return 1; }
+
+  for key in documenter performance-optimizer debugger migrator ez-code-index; do
+    assert_file_exists "the managed copy of ${key}" "${home}/.coder/skills/${key}/SKILL.md"
+    assert_file_exists "the CLI copy of ${key}" "${home}/.agents/skills/${key}/SKILL.md"
+    cmp -s "${home}/.coder/skills/${key}/SKILL.md" "${home}/.agents/skills/${key}/SKILL.md" || {
+      printf 'the two homes disagree about %s, so first-match-wins decides which one runs\n' "${key}" >&2
+      return 1; }
+  done
+  assert_file_exists "the role the skill dispatches" "${home}/.grok/agents/documenter.md"
+  assert_file_exists "the indexer helper beside its skill" \
+    "${home}/.coder/skills/ez-code-index/scripts/code_index.py"
+  assert_file_exists "the helper's twin" \
+    "${home}/.agents/skills/ez-code-index/scripts/code_index.py"
+  grep -q 'SEEDED ez_code_index_py' "${home}/.coder/skills/ez-code-index/scripts/code_index.py" || {
+    printf 'the helper landed somewhere other than the scripts/ subdir its skill names\n' >&2
+    return 1; }
+
+  # Second start: absent-only means nothing written and nothing printed.
+  local before after
+  before="$(find "${home}/.coder" "${home}/.agents" "${home}/.grok" -type f -exec cksum {} \; | sort)"
+  run env HOME="${home}" sh "${rendered}"
+  [ "${status}" -eq 0 ] || { printf 'the second start exited %s\n' "${status}" >&2; return 1; }
+  [ -z "${output}" ] || { printf 'the second start printed %s\n' "${output}" >&2; return 1; }
+  after="$(find "${home}/.coder" "${home}/.agents" "${home}/.grok" -type f -exec cksum {} \; | sort)"
+  [ "${before}" = "${after}" ] || { printf 'the second start rewrote files it does not own\n' >&2; return 1; }
+}
+
+@test "advisors seed: a planted symlink stops that one write, loudly, and the rest still install" {
+  # cat and cp both follow a link, so without the refusal in writable() a planted link at
+  # a payload path -- or at the directory above it -- would have the boot replace a file
+  # this body does not own. That is the failure this guards, and it has to be visible: a
+  # skill that quietly failed to install is invisible until someone asks it for advice.
+  local home rendered victim
+  home="${BATS_TEST_TMPDIR}/home"
+  rendered="${BATS_TEST_TMPDIR}/advisors.sh"
+  mkdir -p "${home}/victim" "${home}/victimdir"
+  render_advisors "${rendered}"
+
+  victim="${home}/victim/SKILL.md"
+  printf 'a file this body does not own\n' >"${victim}"
+  mkdir -p "${home}/.coder/skills/documenter" "${home}/.agents/skills/documenter"
+  ln -s "${victim}" "${home}/.agents/skills/documenter/SKILL.md"
+  ln -s "${home}/victimdir" "${home}/.coder/skills/debugger"
+
+  run env HOME="${home}" sh "${rendered}"
+  [ "${status}" -eq 0 ] || { printf 'a refused write must not fail the boot: exit %s %s\n' "${status}" "${output}" >&2; return 1; }
+  grep -q 'does not own' "${victim}" || {
+    printf 'a planted link was written through: %s\n' "$(cat "${victim}")" >&2
+    return 1; }
+  [ ! -e "${home}/victimdir/SKILL.md" ] || {
+    printf 'a linked skill directory was written through\n' >&2
+    return 1; }
+  printf '%s\n' "${output}" | grep -q 'warning:' || {
+    printf 'a refused write passed without a word: %s\n' "${output}" >&2
+    return 1; }
+  printf '%s\n' "${output}" | grep -q 'documenter/SKILL.md' || {
+    printf 'the warning did not name the path it refused: %s\n' "${output}" >&2
+    return 1; }
+  printf '%s\n' "${output}" | grep -q 'debugger/SKILL.md' || {
+    printf 'a write refused through its directory went unmentioned: %s\n' "${output}" >&2
+    return 1; }
+
+  # The refusal is one file deep, not the whole family.
+  local key
+  for key in performance-optimizer migrator ez-code-index; do
+    assert_file_exists "${key} still installed" "${home}/.coder/skills/${key}/SKILL.md"
+    assert_file_exists "${key} twin still installed" "${home}/.agents/skills/${key}/SKILL.md"
+  done
+  assert_file_exists "the documenter skill still installed" "${home}/.coder/skills/documenter/SKILL.md"
+}
+
 @test "advisors: all five payloads ship and none is empty" {
   # A payload that vanished leaves a slash command nobody can invoke and a role no
   # parent can spawn, while every sibling file still reads perfectly -- the only

@@ -184,7 +184,12 @@ assert_quiet() {
 }
 
 @test "secret-guard: denies a private key block" {
-  run_hook secret-guard.sh "$(event_json write new_string "-----BEGIN RSA PRIVATE KEY-----")"
+  # Assembled from fragments the way every other refused shape here is: this file is
+  # itself a write, and a guard that can deny the test which proves it would be a guard
+  # nobody can commit.
+  local block
+  block="-----BEGIN RSA $(printf 'PRIVATE KEY')-----"
+  run_hook secret-guard.sh "$(event_json write new_string "${block}")"
   assert_decision deny
 }
 
@@ -196,6 +201,47 @@ assert_quiet() {
 @test "secret-guard: denies a quoted password assignment" {
   run_hook secret-guard.sh "$(event_json write new_string 'password = "hunter2sup3rs3cret"')"
   assert_decision deny
+}
+
+@test "secret-guard: allows the environment indirection this repo's own litellm config writes" {
+  # LiteLLM points at the environment the way Python says it, and the value class in the
+  # assignment patterns only excludes a shell reference -- so the guard denied a write to
+  # litellm/config.yaml, the file the agent edits most in this repo. The line is read out
+  # of that file rather than quoted here, so the test moves when the spelling moves.
+  local line
+  line="$(grep -m1 'api_key: os\.environ/' "${REPO_ROOT}/litellm/config.yaml")"
+  [ -n "${line}" ] || {
+    printf 'litellm/config.yaml carries no os.environ api_key any more: re-measure this\n' >&2
+    return 1; }
+  run_hook secret-guard.sh "$(event_json write new_string "${line}")"
+  assert_decision || { printf 'the guard refuses its own repo config: %s -> %s\n' "${line}" "${hook_out}" >&2; return 1; }
+}
+
+@test "secret-guard: lets a value that is a reference or a call through" {
+  # The digit gate is what separates a secret from a name, and both the case-folded pass
+  # and the plain one have to carry it: an SDK sample assigns a credential from a getter,
+  # and a guard that denies those teaches everyone to delete the guard.
+  local sample
+  for sample in "api_key: os.environ/LITELLM_BASE?http://127.0.0.1:4000" \
+    "api_key: base64_environ/SPARK_MASTER_KEY" \
+    "const apiKey = getUserSuppliedValue();" \
+    "password = readFromVault()" \
+    "client_secret=getCredentialsFromStore()"; do
+    run_hook secret-guard.sh "$(event_json write new_string "${sample}")"
+    assert_decision || { printf 'a reference refused as a secret: %s -> %s\n' "${sample}" "${hook_out}" >&2; return 1; }
+  done
+}
+
+@test "secret-guard: the digit gate is what convicts, in either case" {
+  # Paired with the two tests above: the same names WITH entropy still deny, so widening
+  # the reference path cannot have widened these.
+  local sample
+  for sample in "apiKey = \"abc123def456ghi789jkl\"" \
+    "client_secret: s3cr3tvalue0987654321" \
+    "AWS_SECRET_ACCESS_KEY = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"; do
+    run_hook secret-guard.sh "$(event_json write new_string "${sample}")"
+    assert_decision deny || { printf 'an assignment with entropy was allowed: %s -> %s\n' "${sample}" "${hook_out}" >&2; return 1; }
+  done
 }
 
 @test "secret-guard: allows code, a config name, a bare sha, and a reference to the environment" {
@@ -259,8 +305,17 @@ assert_quiet() {
     "rm-rf-root:${RMR} ${RFOPT} /" \
     "kill-zero:${KILL} 0" \
     "kill-pgid:${KILL} -- -1234" \
+    "kill-pgid-named:${KILL} -TERM -1234" \
+    "kill-pgid-signum:${KILL} -9 -1234" \
+    "rm-rf-dot:${RMR} ${RFOPT} ." \
+    "rm-flags-split:${RMR} -f -r dist" \
+    "rm-quoted-glob:${RMR} ${RFOPT} 'my dir'/*" \
+    "rm-long-recursive:${RMR} --recursive build" \
+    "rm-recursive-upper:${RMR} -R build" \
     "pkill-uid:${PKILL} -u coder" \
     "pkill-pid:${PKILL} -P 4321" \
+    "pkill-long-user:${PKILL} --user root" \
+    "pkill-full-cmdline:${PKILL} -f grok" \
     "killall:${KALL} grok"; do
     cmd="${case_name#*:}"
     run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
@@ -297,42 +352,369 @@ assert_quiet() {
 }
 
 # ---------------------------------------------------------------------------
-# The two PostToolUse hooks must never obstruct the edit they follow.
+# The two PostToolUse hooks must never obstruct the edit they follow. Both bail on
+# their first environment check, so every test here sets CLAUDE_PROJECT_DIR and points
+# TMPDIR at scratch: an assertion made without those passes against a hook that never
+# got past line one, which is how both of these tests stayed green over a no-op.
 # ---------------------------------------------------------------------------
 
-@test "post-edit-format: leaves every refused path untouched and exits 0" {
-  local path
-  for path in ".git/config" "$HOME/.grok/config.toml" "$HOME/.agents/skills/x/SKILL.md" \
-    "$HOME/.coder/skills/x/SKILL.md" "bazel-out/stale.sh" "node_modules/pack/index.js"; do
+# One project tree, and one mis-indented shell file whose bytes a formatter has every
+# reason to change -- so "untouched" and "reformatted" are both observable.
+make_project() {
+  project="${BATS_TEST_TMPDIR}/proj"
+  mkdir -p "${project}/scripts/lib" "${project}/tests/bats"
+  CLAUDE_PROJECT_DIR="${project}"
+  export CLAUDE_PROJECT_DIR
+  TMPDIR="${BATS_TEST_TMPDIR}"
+  export TMPDIR
+}
+
+dirty_shell() {
+  printf '#!/bin/sh\nif true; then\n        echo    "hi"\nfi\n'
+}
+
+plant_dirty() {
+  mkdir -p "$(dirname "$1")"
+  dirty_shell >"$1"
+}
+
+# The runner's own bazelisk. It records each invocation, so "a test was started" is a
+# line this suite reads off a file rather than an adjective in a report: `run` answers
+# the tests-for lookup with one label and `test` is the backgrounded run.
+stub_bazelisk() {
+  local dir="${BATS_TEST_TMPDIR}/stubbin"
+  mkdir -p "${dir}"
+  cat >"${dir}/bazelisk" <<'STUB_EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"${EVO_T1_STUB_LOG}"
+if [ "$1" = "run" ]; then
+  printf '//tests:bats_demo_test\n'
+else
+  printf 'stub-bazelisk ran: %s\n' "$*"
+fi
+exit 0
+STUB_EOF
+  chmod 755 "${dir}/bazelisk"
+  printf '%s' "${dir}"
+}
+
+# The hook detaches its bazelisk, so the record lands after the hook returns. Bounded,
+# and it prints what did arrive when the wait runs out.
+wait_for_line() {
+  local path="$1" needle="$2" i=0
+  while [ "${i}" -lt 50 ]; do
+    [ -f "${path}" ] && grep -qF -- "${needle}" "${path}" && return 0
+    i=$((i + 1))
+    sleep 0.1
+  done
+  printf 'timed out waiting for "%s" in %s\n' "${needle}" "${path}" >&2
+  [ -f "${path}" ] && sed -n '1,10p' "${path}" >&2
+  return 1
+}
+
+@test "post-edit-format: reformats a file the project owns and says so on stdout" {
+  # The positive half, because a formatter that quietly became a no-op would have kept
+  # every other test in this file green. shfmt ships in the golden image, so its
+  # absence is a broken environment and not a reason to pass.
+  command -v shfmt >/dev/null 2>&1 || {
+    printf 'shfmt is not on PATH, so this test cannot see a format happen\n' >&2
+    return 1; }
+  make_project
+  local path before after
+  path="${project}/scripts/lib/demo.sh"
+  dirty_shell >"${path}"
+  before="$(cat "${path}")"
+  run_hook post-edit-format.sh "$(event_json write file_path "${path}")"
+  assert_quiet || { printf 'the formatter obstructed the edit it just made: %s\n' "${hook_out}" >&2; return 1; }
+  after="$(cat "${path}")"
+  [ "${before}" != "${after}" ] || { printf 'a mis-indented shell file came back unchanged\n' >&2; return 1; }
+  printf '%s\n' "${after}" | grep -q '^  echo "hi"$' || {
+    printf 'it changed bytes but not into the gate shape: %s\n' "${after}" >&2
+    return 1; }
+  # Verified with the gate's own flags, read out of both places rather than repeated
+  # here: the hook's whole claim is that it formats the way the lint gate formats, so a
+  # flag list that drifted from lints/run_shfmt.sh is exactly the drift to catch. Bare
+  # "shfmt -d" would ask for tabs and call a correct file wrong.
+  local gate_flags hook_flags
+  gate_flags="$(sed -nE 's/^shfmt -d (.*[^ ]) .*/\1/p' "${REPO_ROOT}/lints/run_shfmt.sh" | head -1)"
+  hook_flags="$(sed -nE 's/.*shfmt -w (.*) -- .*/\1/p' "${BINDIR}/post-edit-format.sh" | head -1)"
+  [ -n "${gate_flags}" ] && [ -n "${hook_flags}" ] || {
+    printf 'neither the gate nor the hook names its shfmt flags any more\n' >&2
+    return 1; }
+  assert_eq "the hook formats with the gate's flags" "${gate_flags}" "${hook_flags}"
+  local -a shfmt_flags
+  read -r -a shfmt_flags <<<"${gate_flags}"
+  run env shfmt -d "${shfmt_flags[@]}" -- "${path}"
+  [ "${status}" -eq 0 ] || { printf 'the file is still not clean under the gate flags: %s\n' "${output}" >&2; return 1; }
+  printf '%s' "${hook_out}" | grep -q 'additionalContext' || {
+    printf 'bytes changed without telling the model to re-read: %s\n' "${hook_out}" >&2
+    return 1; }
+}
+
+@test "post-edit-format: leaves every refused path byte-for-byte alone" {
+  # Each of these is a file a formatter would happily rewrite, planted inside the
+  # project so the containment test is what refuses it rather than the path simply
+  # being unresolvable, and compared by bytes rather than by exit status.
+  make_project
+  local path before after
+  for path in "${project}/.git/hooks/pre-commit.sh" "${project}/.grok/hooks/bin/x.sh" \
+    "${project}/.agents/skills/x/STYLE.sh" "${project}/.coder/skills/x/STYLE.sh" \
+    "${project}/bazel-out/stale.sh" "${project}/node_modules/pack/index.py" \
+    "${project}/.env.local.sh" "${BATS_TEST_TMPDIR}/outside/keep.sh"; do
+    plant_dirty "${path}"
+    before="$(cat "${path}")"
     run_hook post-edit-format.sh "$(event_json write file_path "${path}")"
     assert_quiet || { printf 'a formatter must not obstruct an edit: %s -> %s\n' "${path}" "${hook_out}" >&2; return 1; }
+    after="$(cat "${path}")"
+    [ "${before}" = "${after}" ] || { printf 'the formatter rewrote a path it refuses: %s\n' "${path}" >&2; return 1; }
   done
 }
 
 @test "selective-test-runner: stays off until the operator opts in" {
-  # No EVO_T1_HOOK_TESTS in the environment, so a test run is never started for a
-  # small edit: the hook's whole cost model depends on this being the default.
+  # The stub is on PATH and the project is set, so the only thing between this edit and
+  # a test run is the flag. Off by default is the hook's whole cost model, and the
+  # stub's empty record is what proves it, not the absence of a directory.
+  make_project
+  local stub; stub="$(stub_bazelisk)"
+  EVO_T1_STUB_LOG="${BATS_TEST_TMPDIR}/stub-off.log"
+  export EVO_T1_STUB_LOG
+  PATH="${stub}:${PATH}"
+  export PATH
   unset EVO_T1_HOOK_TESTS
-  run_hook selective-test-runner.sh "$(event_json write file_path "scripts/lib/config_seed.sh")"
+  local path="${project}/scripts/lib/config_seed.sh"
+  plant_dirty "${path}"
+  run_hook selective-test-runner.sh "$(event_json write file_path "${path}")"
   assert_quiet
-  [ ! -d "${TMPDIR:-/tmp}/evo-t1-hook-tests" ] || {
-    printf 'the runner wrote a log dir with the opt-in unset: %s\n' "${TMPDIR:-/tmp}/evo-t1-hook-tests" >&2
+  [ -z "${hook_out}" ] || { printf 'the opt-in hook spoke without being asked: %s\n' "${hook_out}" >&2; return 1; }
+  [ ! -s "${EVO_T1_STUB_LOG}" ] || {
+    printf 'bazelisk was called with the opt-in unset: %s\n' "$(cat "${EVO_T1_STUB_LOG}")" >&2
+    return 1; }
+  [ ! -d "${TMPDIR}/evo-t1-hook-tests" ] || {
+    printf 'the runner wrote a log dir with the opt-in unset: %s\n' "${TMPDIR}/evo-t1-hook-tests" >&2
     return 1; }
 }
 
-@test "selective-test-runner: ignores paths outside the project and under a refusal" {
-  unset EVO_T1_HOOK_TESTS
+@test "selective-test-runner: starts the target bazel-map derives for the edited file" {
+  make_project
+  local stub; stub="$(stub_bazelisk)"
+  EVO_T1_STUB_LOG="${BATS_TEST_TMPDIR}/stub-on.log"
+  export EVO_T1_STUB_LOG
+  PATH="${stub}:${PATH}"
+  export PATH
   EVO_T1_HOOK_TESTS=1
+  export EVO_T1_HOOK_TESTS
+  local path="${project}/scripts/lib/demo.sh" log
+  plant_dirty "${path}"
+  run_hook selective-test-runner.sh "$(event_json write file_path "${path}")"
+  assert_quiet || { printf 'the runner obstructed the edit: %s\n' "${hook_out}" >&2; return 1; }
+  wait_for_line "${EVO_T1_STUB_LOG}" "run //scripts:bazel-map -- tests-for scripts/lib/demo.sh" || return 1
+  wait_for_line "${EVO_T1_STUB_LOG}" "test //tests:bats_demo_test --test_output=errors" || return 1
+  log="${TMPDIR}/evo-t1-hook-tests/__tests_bats_demo_test.log"
+  wait_for_line "${log}" "stub-bazelisk ran: test" || return 1
+  printf '%s' "${hook_out}" | grep -qF -- "${log}" || {
+    printf 'the model was never handed the log path: %s\n' "${hook_out}" >&2
+    return 1; }
+  # The edit itself is the formatter's business, not this hook's: it formats nothing.
+  grep -qF -- '        echo    "hi"' "${path}" || {
+    printf 'the runner formatted a file it was only asked to test for\n' >&2
+    return 1; }
+}
+
+@test "selective-test-runner: derives the label from the suite naming for a .bats edit" {
+  # The one branch that needs no bazelisk to answer, which is also the one an agent
+  # edits most: the naming rule (dashes to underscores, //tests:bats_<stem>_test) is
+  # pinned here so a drift sends the run to a label that does not exist.
+  make_project
+  local stub; stub="$(stub_bazelisk)"
+  EVO_T1_STUB_LOG="${BATS_TEST_TMPDIR}/stub-bats.log"
+  export EVO_T1_STUB_LOG
+  PATH="${stub}:${PATH}"
+  export PATH
+  EVO_T1_HOOK_TESTS=1
+  export EVO_T1_HOOK_TESTS
+  local path="${project}/tests/bats/my-demo.bats"
+  printf '#!/usr/bin/env bats\n' >"${path}"
+  run_hook selective-test-runner.sh "$(event_json write file_path "${path}")"
+  assert_quiet
+  wait_for_line "${EVO_T1_STUB_LOG}" "test //tests:bats_my_demo_test --test_output=errors" || return 1
+  grep -qF -- 'bazel-map' "${EVO_T1_STUB_LOG}" && {
+    printf 'a .bats edit asked bazel-map for a label the naming rule already answers\n' >&2
+    return 1; }
+  return 0
+}
+
+@test "selective-test-runner: ignores paths outside the project and under a refusal" {
+  # With the opt-in set and the stub on PATH, a call reaching bazelisk is the failure.
+  make_project
+  local stub; stub="$(stub_bazelisk)"
+  EVO_T1_STUB_LOG="${BATS_TEST_TMPDIR}/stub-outside.log"
+  export EVO_T1_STUB_LOG
+  PATH="${stub}:${PATH}"
+  export PATH
+  EVO_T1_HOOK_TESTS=1
+  export EVO_T1_HOOK_TESTS
   local path
-  for path in ".git/hooks/commit-msg" "$HOME/.grok/config.toml" "$HOME/.agents/skills/x/SKILL.md"; do
+  for path in "${project}/.git/hooks/commit-msg.sh" "${project}/.grok/config.sh" \
+    "${project}/.agents/skills/x/SKILL.sh" "${project}/bazel-out/gen.sh" \
+    "${project}/.env.sh" "${BATS_TEST_TMPDIR}/outside/keep.sh"; do
+    plant_dirty "${path}"
     run_hook selective-test-runner.sh "$(event_json write file_path "${path}")"
     assert_quiet || { printf 'the runner obstructed an edit under %s: %s\n' "${path}" "${hook_out}" >&2; return 1; }
+  done
+  [ ! -s "${EVO_T1_STUB_LOG}" ] || {
+    printf 'bazelisk was called for a refused path: %s\n' "$(cat "${EVO_T1_STUB_LOG}")" >&2
+    return 1; }
+}
+
+@test "registration: the seed body installs the family, keeps a marker-free copy alone, and refuses a linked directory loudly" {
+  # Everything the registration greps above claim, run for real: terraform renders
+  # $${var} to ${var} and ${key} to the payload, so the same substitution here lets the
+  # body itself be the thing under test. Three things can go wrong quietly -- the mode,
+  # the marker contract, and a silent bail-out -- and each gets one assertion.
+  local home rendered script mode
+  home="${BATS_TEST_TMPDIR}/seedhome"
+  rendered="${BATS_TEST_TMPDIR}/hooks-seed.sh"
+  mkdir -p "${home}"
+  render_hooks_seed "${rendered}"
+
+  run env HOME="${home}" sh "${rendered}"
+  [ "${status}" -eq 0 ] || { printf 'the seed exited %s: %s\n' "${status}" "${output}" >&2; return 1; }
+  assert_file_exists "the manifest" "${home}/.grok/hooks/evo-t1-hooks.json"
+  assert_file_exists "the deny list" "${home}/.grok/hooks/bin/deny-patterns.txt"
+  for script in secret-guard dangerous-command-guard post-edit-format selective-test-runner; do
+    assert_file_exists "bin/${script}.sh" "${home}/.grok/hooks/bin/${script}.sh"
+    mode="$(stat -c '%a' "${home}/.grok/hooks/bin/${script}.sh")"
+    [ "${mode}" = "755" ] || { printf 'bin/%s.sh seeded mode %s; the runner execs it directly\n' "${script}" "${mode}" >&2; return 1; }
+    grep -q 'managed-by: evo-t1-coder-stack' "${home}/.grok/hooks/bin/${script}.sh" || {
+      printf 'bin/%s.sh carries no marker, so the next boot leaves it stale forever\n' "${script}" >&2
+      return 1; }
+  done
+  grep -q '"__evoT1Stack": true' "${home}/.grok/hooks/evo-t1-hooks.json" || {
+    printf 'the manifest marker is missing, which makes the next boot refuse to touch it\n' >&2
+    return 1; }
+
+  # A person deleted the marker: that copy is theirs now, drift and all.
+  printf '%s\n' '#!/bin/sh' >"${home}/.grok/hooks/bin/post-edit-format.sh"
+  run env HOME="${home}" sh "${rendered}"
+  [ "${status}" -eq 0 ] || { printf 'the reseed exited %s\n' "${status}" >&2; return 1; }
+  [ "$(wc -l <"${home}/.grok/hooks/bin/post-edit-format.sh")" -eq 1 ] || {
+    printf 'the seed rewrote a copy whose marker was deleted\n' >&2
+    return 1; }
+  grep -q 'managed-by: evo-t1-coder-stack' "${home}/.grok/hooks/bin/secret-guard.sh" || {
+    printf 'the reseed stopped refreshing the copies that kept their marker\n' >&2
+    return 1; }
+
+  # A symlinked hooks dir means zero guards. It has to say so.
+  local linkhome="${BATS_TEST_TMPDIR}/linkhome" elsewhere="${BATS_TEST_TMPDIR}/elsewhere"
+  mkdir -p "${linkhome}/.grok" "${elsewhere}"
+  ln -s "${elsewhere}" "${linkhome}/.grok/hooks"
+  run env HOME="${linkhome}" sh "${rendered}"
+  [ "${status}" -eq 0 ] || { printf 'a refused install must not fail the boot: %s\n' "${status}" >&2; return 1; }
+  printf '%s\n' "${output}" | grep -q 'warning:' || {
+    printf 'the whole family was declined without a word: %s\n' "${output}" >&2
+    return 1; }
+  printf '%s\n' "${output}" | grep -q 'hooks is a symlink' || {
+    printf 'the warning did not name what it refused: %s\n' "${output}" >&2
+    return 1; }
+  [ ! -e "${elsewhere}/evo-t1-hooks.json" ] || {
+    printf 'the bail-out wrote through the link anyway\n' >&2
+    return 1; }
+}
+
+# render_hooks_seed <out> -- the seed body the way terraform would render it: the $$
+# escapes collapse to shell vars and every map key becomes its payload.
+render_hooks_seed() {
+  local out="${1}" key
+  sed -e 's/\$\${/${/g' "${COMMON}/stack-hooks.sh.tftpl" >"${out}"
+  # The manifest carries its marker as a JSON key of its own, so the render hands it a
+  # minimal document that does; the shell payloads get theirs from the body.
+  sed -i "s|^\${evo_t1_hooks_json}$|{\"__evoT1Stack\": true}|" "${out}"
+  for key in secret_guard_sh dangerous_command_guard_sh \
+    post_edit_format_sh selective_test_runner_sh deny_patterns_txt; do
+    sed -i "s|^\${${key}}$|RENDERED ${key}|" "${out}"
   done
 }
 
 # ---------------------------------------------------------------------------
 # Registration.
 # ---------------------------------------------------------------------------
+
+@test "registration: seed_ensure_mode asserts the mode an exec payload needs and none other" {
+  # The unit under the integration test below: the runner starts a relative command out
+  # of the manifest, so the executable bit is part of the payload, while a data file
+  # that never gets exec'd must not acquire it.
+  # shellcheck source=/dev/null
+  source "${REPO_ROOT}/scripts/lib/config_seed.sh"
+  local dir="${BATS_TEST_TMPDIR}/modes" script data missing
+  mkdir -p "${dir}"
+  script="${dir}/secret-guard.sh"
+  data="${dir}/deny-patterns.txt"
+  missing="${dir}/gone.sh"
+  printf '#!/bin/sh\n' >"${script}"
+  printf '# comment\n' >"${data}"
+
+  chmod 644 "${script}"
+  run seed_ensure_mode exec "${script}" "" "secret-guard.sh"
+  [ "${status}" -eq 0 ] || { printf 'a chmod that works returned %s: %s\n' "${status}" "${output}" >&2; return 1; }
+  [ "$(stat -c '%a' "${script}")" = "755" ] || {
+    printf 'seed_ensure_mode left an exec: payload at mode %s\n' "$(stat -c '%a' "${script}")" >&2
+    return 1; }
+  # A mode it already has is not a report: refresh-configs counts one decision line per
+  # payload off the seeder's stdout, so a second line per hook is a second entry.
+  run seed_ensure_mode exec "${script}" "" "secret-guard.sh"
+  [ "${status}" -eq 0 ] && [ -z "${output}" ] || {
+    printf 'a hook already at 755 printed %s\n' "${output}" >&2
+    return 1; }
+
+  chmod 644 "${data}"
+  run seed_ensure_mode file "${data}" "" "deny-patterns.txt"
+  [ "${status}" -eq 0 ] || { printf 'a data payload should need nothing, got %s\n' "${status}" >&2; return 1; }
+  [ "$(stat -c '%a' "${data}")" = "644" ] || {
+    printf 'seed_ensure_mode made a file: payload executable\n' >&2
+    return 1; }
+
+  run seed_ensure_mode exec "${missing}" "" "gone.sh"
+  [ "${status}" -eq 0 ] || { printf 'a payload that is not there yet is the write'"'"'s business, not this one'"'"'\n' >&2; return 1; }
+}
+
+@test "registration: reseeding restores a hook's executable bit even when its bytes already match" {
+  # The byte compare is what makes a reseed cheap, and it is also what lets a guard stop
+  # running: a hook copied by hand or checked out by a tool that dropped the mode still
+  # "already matches this checkout", and the runner starts a relative command out of the
+  # manifest directly, so it never runs again. The seeder has to re-assert the mode on
+  # that path, and a data payload must not gain an executable bit it never needed.
+  # shellcheck source=/dev/null
+  source "${REPO_ROOT}/scripts/lib/config_seed.sh"
+  local home stage hook data mode
+  home="${BATS_TEST_TMPDIR}/seed-home"
+  stage="${BATS_TEST_TMPDIR}/seed-stage"
+  mkdir -p "${home}" "${stage}"
+
+  run --separate-stderr seed_container_seed "" "${home}" "${REPO_ROOT}" "${stage}" 0 0
+  [ "${status}" -eq 0 ] || { printf 'the first seed failed: %s\n' "${output}" >&2; return 1; }
+
+  hook="${home}/.grok/hooks/bin/secret-guard.sh"
+  data="${home}/.grok/hooks/bin/deny-patterns.txt"
+  assert_file_exists "the hook landed" "${hook}"
+  assert_file_exists "the deny list landed" "${data}"
+  mode="$(stat -c '%a' "${hook}")"
+  [ "${mode}" = "755" ] || { printf 'a fresh hook seeded mode %s; the runner execs it directly\n' "${mode}" >&2; return 1; }
+  mode="$(stat -c '%a' "${data}")"
+  [ "${mode}" != "755" ] || { printf 'the deny list, which nothing execs, seeded executable\n' >&2; return 1; }
+
+  # The mutation: same bytes, mode dropped, reseed. This is the path that prints
+  # "already matches this checkout".
+  chmod 644 "${hook}"
+  run --separate-stderr seed_container_seed "" "${home}" "${REPO_ROOT}" "${stage}" 0 0
+  [ "${status}" -eq 0 ] || { printf 'the reseed failed: %s\n' "${output}" >&2; return 1; }
+  printf '%s\n' "${output}" | grep -qF 'secret-guard.sh: already matches this checkout' || {
+    printf 'the reseed did not take the cheap path, so it proved nothing about the mode: %s\n' "${output}" >&2
+    return 1; }
+  mode="$(stat -c '%a' "${hook}")"
+  [ "${mode}" = "755" ] || {
+    printf 'a hook left at mode %s by a reseed that saw its bytes match never runs again\n' "${mode}" >&2
+    return 1; }
+}
 
 @test "registration: config_seed names all six hook targets, executable for the scripts" {
   local seed="${REPO_ROOT}/scripts/lib/config_seed.sh"

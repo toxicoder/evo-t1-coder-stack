@@ -470,6 +470,47 @@ seed_retire_renamed() {
   return "${rc}"
 }
 
+# @function seed_ensure_mode
+# Re-assert the executable bit on a payload the runner execs. The byte compare in
+# seed_container_seed answers "does the content match this checkout", which says
+# nothing about the mode, and a hook whose bit was cleared by a copy or an editor
+# still matches while failing at the first edit - so the mode is checked on the
+# already-matches path too, not only after a write. A kind other than exec has no
+# mode to assert, and a payload that is not there yet is the write's business.
+# Globals:
+#   none
+# Arguments:
+#   $1 - payload kind from seed_seed_targets ("exec" is the only one that matters)
+#   $2 - path the payload lands at
+#   $3 - container name ("" for a host directory tree)
+#   $4 - payload name, for the note
+# Outputs:
+#   Nothing on success - the caller's own verb line is the one record this target gets,
+#   and refresh-configs reads one decision line per payload off this function's stdout.
+#   A refused chmod is a note naming the payload, since a guard that never runs is the
+#   failure this prevents
+# Returns:
+#   0 when the mode is right or the kind needs none, 1 when a chmod was refused
+seed_ensure_mode() {
+  local kind="${1:-}" path="${2:-}" target="${3:-}" name="${4:-}"
+  local have=""
+
+  [[ ${kind} == "exec" ]] || return 0
+  if [[ -z ${target} ]]; then
+    [[ -f ${path} ]] || return 0
+    have="$(stat -c '%a' "${path}" 2>/dev/null)" || have=""
+    [[ ${have} == "755" ]] && return 0
+    if ! chmod 755 "${path}" 2>/dev/null; then
+      note "${name}: could not be made executable (mode ${have:-unknown}) - it will not run"
+      return 1
+    fi
+  elif ! seed_container_exec "${target}" 'chmod 755 "${1}"' sh "${path}"; then
+    note "${target}:${name}: the container refused chmod 755 - the hook will not run"
+    return 1
+  fi
+  return 0
+}
+
 # @function seed_container_seed
 # Re-materialize the whole reseed set into one target (a container name, a
 # container's home-relative paths under a host directory standing in for one,
@@ -553,6 +594,7 @@ seed_container_seed() {
 
     if [[ ${state} != "absent" ]] && cmp -s "${current}" "${staged}"; then
       printf '  %s: already matches this checkout\n' "${name}"
+      seed_ensure_mode "${kind}" "${path}" "${target}" "${name}" || true
       continue
     fi
 
@@ -571,16 +613,14 @@ seed_container_seed() {
     if [[ -z ${target} ]]; then
       mkdir -p "$(dirname "${path}")"
       cp "${staged}" "${path}"
-      # A hook is exec'd by the runner, not read as data, so the mode is part of the
-      # payload: a copied script that lost its executable bit fails at the first edit.
-      [[ ${kind} == "exec" ]] && chmod 755 "${path}"
     elif ! seed_container_exec --stdin "${target}" "$(cat "${_CONFIG_SEED_DIR}/probes/seed-write.sh")" \
       sh "${path}" <"${staged}"; then
       printf '  %s: skipped (nothing could be written there)\n' "${name}"
       continue
-    elif [[ ${kind} == "exec" ]]; then
-      seed_container_exec "${target}" 'chmod 755 "${1}"' sh "${path}" || true
     fi
+    # A hook is exec'd by the runner, not read as data, so the mode is part of the
+    # payload, and the container's chmod has to be able to say it was refused.
+    seed_ensure_mode "${kind}" "${path}" "${target}" "${name}" || true
     printf '  %s: %s\n' "${name}" "${verb}"
   done <<<"$(seed_seed_targets)"
 

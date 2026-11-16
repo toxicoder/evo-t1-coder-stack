@@ -100,6 +100,15 @@ if [ "${truncated}" != "false" ]; then
 fi
 [ -n "${haystack}" ] || allow
 
+# A LiteLLM secret source names the environment instead of carrying a value, and it is the
+# form this repo's own litellm/config.yaml writes: api_key: os.environ/SPARK_1_API_KEY. The
+# value class below excludes a leading dollar sign, which is the shell's reference, and this
+# indirection spells the same idea in Python, so it would be denied as a credential. Folding
+# every secret source to one fixed token keeps the line's shape for the rest of the scan and
+# takes the digits out of the name with it, which is what the assignment gate reads.
+haystack="$(printf '%s\n' "${haystack}" |
+  sed -E 's#(os\.environ|os\.env|base64_environ|base64_env)/[A-Za-z_][A-Za-z0-9_]*([?][^"[:space:]]*)?#ENVIRON_REF#g')"
+
 # One grep per class, so the reason can name the class that fired. The patterns are the
 # family's pinned list.
 #
@@ -164,7 +173,10 @@ scan_assign 'the generic api key / secret / token assignment pattern' \
 # The same shape under the names an SDK spells in upper case, which the pass above cannot see.
 scan_assign_i 'an upper-case credential assignment' \
   '(aws_secret_access_key|aws_session_token|azure_client_secret|google_api_key|db[_-]?password|database_url)[[:space:]]*[:=]?[[:space:]"'"'"']{0,4}[^$[:space:]"'"'"',;()<>]{8,}'
-scan_i 'a credential assignment in another case' \
+# The same shape case-folded, and under the same digit gate: a write that names a
+# credential the way a non-upper-case SDK does still has to carry the entropy a real
+# secret has, or it is a variable holding a value that lives somewhere else.
+scan_assign_i 'a credential assignment in another case' \
   "${KW}[[:space:]]*[:=]${GAP}${VAL}"
 
 allow

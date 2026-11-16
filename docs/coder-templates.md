@@ -282,8 +282,8 @@ it to `startup_script`. Measured again on 2026-11-16 with the same reader
 (`awk -f scripts/lib/startup_size.awk templates/workspace/main.tf`, bytes summed per body)
 after the advisor and guard families landed: `coder_script.stack_advisors`, carrying four
 advisor `SKILL.md` payloads, the `documenter` role, the code-index skill and its helper,
-composes to 70383 bytes, and `coder_script.stack_hooks`, carrying the manifest, four guards
-and the deny list, to 36470 - 52497 and 86410 clear of the bound respectively, with neither
+composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four guards
+and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively, with neither
 startup twin touched.
 
 When a body really does need to grow past the budget, the options are:

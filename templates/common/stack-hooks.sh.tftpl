@@ -30,13 +30,31 @@ set -u
 # operator reads when a hook is missing.
 
 # One symlinked root would aim every write below at a directory outside the home this body
-# owns, so bail before the first of them. Silent, like every other path here. The loop
-# variable below is a shell var, so every reference to it carries the double-dollar escape:
-# templatefile() reads a single-dollar brace reference anywhere in this file as an
-# interpolation, and the plan fails when main.tf does not pass that key.
+# owns, so bail before the first of them. The bail-out is not silent: a tree this body
+# declines to write installs zero guards, and a session whose guard never ran looks exactly
+# like a session that never needed one. The loop variable below is a shell var, so every
+# reference to it carries the double-dollar escape: templatefile() reads a single-dollar
+# brace reference anywhere in this file as an interpolation, and the plan fails when main.tf
+# does not pass that key.
 for evo_t1_root in "$HOME/.grok" "$HOME/.grok/hooks" "$HOME/.grok/hooks/bin"; do
   if [ -L "$${evo_t1_root}" ]; then
+    printf 'warning: %s is a symlink - the hook family is left alone\n' "$${evo_t1_root}" >&2
     exit 0
+  fi
+done
+
+# Same reason one level down: every guard below refuses to write through a link, so name
+# the file it refused. A guard that is not installed is a hole in the guard family, and the
+# only record of it is this line in the coder_script log.
+for evo_t1_path in \
+  "$HOME/.grok/hooks/evo-t1-hooks.json" \
+  "$HOME/.grok/hooks/bin/secret-guard.sh" \
+  "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" \
+  "$HOME/.grok/hooks/bin/post-edit-format.sh" \
+  "$HOME/.grok/hooks/bin/selective-test-runner.sh" \
+  "$HOME/.grok/hooks/bin/deny-patterns.txt"; do
+  if [ -L "$${evo_t1_path}" ]; then
+    printf 'warning: %s is a symlink - that hook is not installed\n' "$${evo_t1_path}" >&2
   fi
 done
 

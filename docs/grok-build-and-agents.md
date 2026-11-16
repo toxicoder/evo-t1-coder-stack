@@ -931,8 +931,10 @@ guard reads.
 Grok Build reads `~/.grok/hooks/*.json`, and a handler `command` that is a relative path
 resolves against the manifest's own directory and is started directly, so each script is seeded
 `0755` with the payload's `#!` line still on row 1. Every one reads one line of event JSON on
-stdin and always prints a parseable decision on stdout - a PreToolUse deny is that decision with
-`exit 2`, and a PostToolUse handler never exits 2 - so a broken guard cannot wedge a session.
+stdin. The two PreToolUse guards always print a parseable decision there - `{"decision":"allow"}`
+or `{"decision":"deny","reason":...}` - and a deny additionally exits 2; a PostToolUse handler
+cannot block at all, so it stays silent on stdout unless it has something to tell the model. No
+guard exits non-zero on its own account, so a broken one cannot wedge a session.
 
 - `PreToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/secret-guard.sh`: denies a
   write whose text carries an AWS access-key id, a GitHub token, a Slack token, a Google API
@@ -966,7 +968,12 @@ stdin and always prints a parseable decision on stdout - a PreToolUse deny is th
 The deny list is the extension point. `~/.grok/hooks/bin/deny-patterns.txt` holds one extended
 regex per line, `#` starts a comment and blank lines are ignored, so an operator forbids one
 more command by appending one line - and because there is no allow list, deleting a line is the
-only way to permit something again. A line that does not compile as an ERE is skipped with a
+only way to permit something again. That copy is stack-owned: the boot rewrites it from
+`templates/common/hooks.deny-patterns.txt` while its `managed-by:` marker stands, so a line
+appended in a workspace is gone at the next start. Land the rule in the seed (with the Bats case
+in `tests/bats/stack-hooks.bats` that denies it), or delete the marker from that one file to keep
+a copy of your own, which the boot then leaves alone. A line that does not compile as an ERE is
+skipped with a
 single note on stderr rather than blocking every shell call, which is why the file's own header
 carries the one-line compile check to run before you commit a rule:
 `LC_ALL=C grep -E -q -- '<pattern>' </dev/null`.

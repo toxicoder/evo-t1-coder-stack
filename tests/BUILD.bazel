@@ -546,6 +546,17 @@ _SUITE_PAYLOAD_ALLOW = {
     "ez-code-index.bats": [
         "//:bazel_files",
     ],
+    # Two names the scan charges but this suite never opens. The .bats path is a file
+    # the .bats-derivation case writes inside its own throwaway project to watch the
+    # hook turn tests/bats/<stem>.bats into //tests:bats_<stem>_test; no suite of this
+    # checkout is read. The runner is read for one thing: the formatter test holds the
+    # hook's shfmt flags against lints/run_shfmt.sh rather than against a copy written
+    # here, so the two cannot drift apart silently -- and a lint runner is not a group
+    # the token table knows, which is why it is declared here and not in the payload.
+    "stack-hooks.bats": [
+        "//tests:all_bats",
+        "//lints:runners",
+    ],
     # It reads back the .gitignore publish-pages-tree.sh commits onto gh-pages, out of
     # the scratch origin it builds, not out of this checkout. The README.md it stages is
     # the one the same case just wrote into that clone with printf.

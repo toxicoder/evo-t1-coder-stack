@@ -33,7 +33,8 @@ rm -rf[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*(~|\$\{?HOME\}?)([[:space:]]|/|$)
 # Requiring only the recursive flag is what catches the split forms in one ERE: an
 # ERE cannot AND two flags in either order, and the sanctioned cleanup here carries
 # no r at all (a per-path `rm -f`, or `find <dir> -type f -delete`).
-rm[[:space:]]+(-[a-zA-Z]+[[:space:]]+)*-[a-zA-Z]*r[a-zA-Z]*([[:space:]]|$)
+rm[[:space:]]+(-[[:alpha:]]+[[:space:]]+)*-[[:alpha:]]*[rR][[:alpha:]]*([[:space:]]|$)
+rm[[:space:]]+.*--recursive([[:space:]]|=)
 rm[[:space:]]+.*--no-preserve-root
 find[[:space:]]+/([[:space:]]|$).*-delete
 find[[:space:]]+(~|\$\{?HOME\}?)([[:space:]]|/|$).*-delete
@@ -53,6 +54,10 @@ wipefs
 kill[[:space:]]+0([[:space:]]|$)
 kill[[:space:]]+--+-[[:space:]]*[0-9]
 kill[[:space:]]+--+[[:space:]]+-[[:space:]]*[0-9]
+# The same group signal with a name or a number in front of it: kill -TERM -2507 reaches
+# every process in the group, which is the sweep the rules above exist for, and the two
+# plain rules only see a negative pid that comes first.
+kill[[:space:]]+(-[A-Za-z0-9]+[[:space:]]+)+-[0-9]+([[:space:]]|$)
 pkill[[:space:]]+(-[[:alnum:]]*[[:space:]]+)*-(u|U|P)[[:space:]]
 # The long forms of those same three flags, and -f, which is the sweep that matches the
 # wrapper the agent's own shell runs inside -- the reason the working rules tell you to

@@ -63,6 +63,19 @@ esac
 case "$edited" in
   */.git/* | */.grok/* | */.agents/* | */.coder/*) exit 0 ;;
 esac
+# The same three refusals bin/post-edit-format.sh keeps, so the family answers one way:
+# a path under a build artifact is generated output whose test is its source's, a
+# vendored tree is not this clone's to test, and a dotenv file is never opened here --
+# the agent's deny rules already say so, and running a lookup for it asks a question
+# that has no answer. Padded so a dot or deny-listed segment at either end still reads
+# between two slashes; /../ is refused because the containment test above is lexical.
+probe="/${edited}/"
+case "$probe" in
+  *"/../"* | *"/bazel-"* | *"/node_modules/"* | *"/__pycache__/"*) exit 0 ;;
+esac
+case "${edited##*/}" in
+  .env | .env.*) exit 0 ;;
+esac
 # bazel-map's tests-for takes a repo-relative path, which is also the shape a person
 # reads back.
 rel=${edited#"$project_dir/"}
