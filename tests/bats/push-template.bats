@@ -92,6 +92,7 @@ COMMON_PAYLOADS=(
   coder-agents.md
   mcp-cache-proxy.json
   gh-token-refresh.sh.tftpl
+  infisical-secrets.sh.tftpl
   agents-seed.sh.tftpl
   stack-skills.sh.tftpl
   stack-repo-skills.sh.tftpl
@@ -152,6 +153,7 @@ write_common_payloads() {
   printf '%s\n' '# agents' >"${dest}/coder-agents.md"
   printf '%s\n' '{}' >"${dest}/mcp-cache-proxy.json"
   printf '%s\n' '#!/bin/bash' >"${dest}/gh-token-refresh.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/infisical-secrets.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
@@ -783,6 +785,360 @@ logs_absent() {
   [[ ${output} != *"context7_api_key"* ]]
   grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
   logs_absent 'context7_api_key' "${STUB_LOG}/docker.log"
+}
+
+# --- the Infisical vault vars -----------------------------------------------
+#
+# Seven template variables (infisical_enabled plus the six values a workspace's boot
+# fetch dials the vault with) are declared in both coder.tf twins, so each is either
+# forwarded from .env or left to the template's own default. The flag defaults OFF -
+# the deliberate inverse of OBSERVABILITY_ENABLED - so the shipped state must hand
+# the word "infisical" to the CLI exactly zero times.
+
+# Real .env bodies for the six values, each distinctive enough that an assertion
+# about one cannot be satisfied by another word the script prints.
+VAULT_ENV=(
+  'INFISICAL_URL=http://vault.internal:18182'
+  'INFISICAL_PROJECT_ID=proj-aaaa-bbbb'
+  'INFISICAL_MACHINE_IDENTITY_ID=mach-cccc-dddd'
+  'INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=ci-eeee-ffff'
+  'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=cs-gggg-hhhh'
+  'INFISICAL_ENVIRONMENT=staging-vault'
+)
+
+# The same six still carrying their .env.example bodies.
+VAULT_PLACEHOLDER_ENV=(
+  'INFISICAL_URL=change-me-infisical-url'
+  'INFISICAL_PROJECT_ID=change-me-infisical-project'
+  'INFISICAL_MACHINE_IDENTITY_ID=change-me-infisical-machine'
+  'INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=change-me-infisical-client-id'
+  'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=change-me-infisical-client-secret'
+  'INFISICAL_ENVIRONMENT=change-me-infisical-environment'
+)
+
+@test "push-template: env_get_forwardable accepts a real value and refuses a blank or placeholder one" {
+  # The one rule the six vault values share, pinned at the seam itself rather than
+  # six times through the whole CLI: a real body is printed and the key accepted,
+  # while a blank line and a change-me* body print nothing and return non-zero,
+  # which is what leaves their --var unpushed instead of pushing over a template
+  # default. A key .env never carries reads the same as a blank one.
+  load_shell_function "${REPO_ROOT}/scripts/push-template.sh" env_get
+  load_shell_function "${REPO_ROOT}/scripts/push-template.sh" env_get_forwardable
+  local dir="${BATS_TEST_TMPDIR}/forwardable"
+  mkdir -p "${dir}"
+  printf '%s\n' 'REAL_KEY=http://vault.internal:18182' 'BLANK_KEY=' \
+    'PLACEHOLDER_KEY=change-me-infisical-machine' >"${dir}/.env"
+  cd "${dir}"
+
+  run --separate-stderr env_get_forwardable REAL_KEY
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "http://vault.internal:18182" ]
+
+  run --separate-stderr env_get_forwardable BLANK_KEY
+  [ "${status}" -eq 1 ]
+  [ "${output}" = "" ]
+
+  run --separate-stderr env_get_forwardable PLACEHOLDER_KEY
+  [ "${status}" -eq 1 ]
+  [ "${output}" = "" ]
+
+  run --separate-stderr env_get_forwardable ABSENT_KEY
+  [ "${status}" -eq 1 ]
+  [ "${output}" = "" ]
+
+  # A placeholder only reads as a placeholder from the front: a real value that
+  # happens to contain the word further along is still forwarded.
+  printf '%s\n' 'MIDDLE_KEY=https://change-me.vault.internal:18182' >"${dir}/.env"
+  run --separate-stderr env_get_forwardable MIDDLE_KEY
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "https://change-me.vault.internal:18182" ]
+}
+
+@test "push-template: no INFISICAL_ENABLED in .env pushes no infisical var at all" {
+  # Off is the shipped state: not one --var may name an infisical variable, so every
+  # template default (false, "", "prod") stands untouched.
+  root="$(fake_root push-template.sh)"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} != *"infisical"* ]]
+  # A push did happen, so the absence below proves the script passed nothing.
+  grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
+  logs_absent 'infisical' "${STUB_LOG}/docker.log"
+  logs_absent 'infisical' "${STUB_LOG}/coder.log"
+}
+
+@test "push-template: every INFISICAL_ENABLED spelling but a truthy one pushes nothing" {
+  # Default-OFF polarity: only what common.sh's truthy() accepts is worth saying, so
+  # false, 0, no, off, blank and garbage are all off and must push nothing rather
+  # than a redundant switch the template already carries as its default.
+  local spelling n=0
+  for spelling in false FALSE 0 no off '' 'not-a-flag'; do
+    n=$((n + 1))
+    rm -rf "${BATS_TEST_TMPDIR}/root"
+    root="$(fake_root push-template.sh "INFISICAL_ENABLED=${spelling}")"
+    running_stack
+    psql_token_variant
+    versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+    run --separate-stderr bash "${root}/scripts/push-template.sh" workspace
+    if [ "${status}" -ne 0 ]; then
+      printf 'FAIL: INFISICAL_ENABLED=%s exited %s: %s\n' \
+        "${spelling}" "${status}" "${stderr}" >&2
+      return 1
+    fi
+    if [[ ${output} == *"infisical"* ]]; then
+      printf 'FAIL: INFISICAL_ENABLED=%s was read as on\n' "${spelling}" >&2
+      return 1
+    fi
+    # A push ran every iteration, so the count below cannot be an empty log.
+    if [ "$(grep -cF -- 'coder templates push workspace' "${STUB_LOG}/docker.log")" -ne "${n}" ]; then
+      printf 'FAIL: INFISICAL_ENABLED=%s did not reach the push\n' "${spelling}" >&2
+      return 1
+    fi
+    if grep -qF -- 'infisical' "${STUB_LOG}/docker.log"; then
+      printf 'FAIL: INFISICAL_ENABLED=%s reached the push argv\n' "${spelling}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "push-template: a truthy INFISICAL_ENABLED pushes --var infisical_enabled=true on both templates" {
+  # One vars array serves both pushes, so the vault cannot be switched on for one
+  # template only. Every truthy spelling is normalised to the literal true, so
+  # Terraform is handed a bool and not whichever of them .env happened to carry.
+  local spelling n=0 both
+  for spelling in true TRUE on 1 yes; do
+    n=$((n + 1))
+    both=$((2 * n))
+    rm -rf "${BATS_TEST_TMPDIR}/root"
+    root="$(fake_root push-template.sh "INFISICAL_ENABLED=${spelling}")"
+    running_stack
+    psql_token_variant
+    versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+    run --separate-stderr bash "${root}/scripts/push-template.sh"
+    if [ "${status}" -ne 0 ]; then
+      printf 'FAIL: INFISICAL_ENABLED=%s exited %s: %s\n' \
+        "${spelling}" "${status}" "${stderr}" >&2
+      return 1
+    fi
+    [[ ${output} == *"infisical_enabled=true passed from INFISICAL_ENABLED"* ]] ||
+      fail "INFISICAL_ENABLED=${spelling} passed the var without saying so: ${output}"
+    # Two pushes per iteration, every one of them carrying the normalised bool and
+    # none carrying the raw spelling: equal counts, and both equal to 2n.
+    if [ "$(grep -cF -- '--var infisical_enabled=' "${STUB_LOG}/docker.log")" -ne "${both}" ]; then
+      printf 'FAIL: INFISICAL_ENABLED=%s did not push the toggle exactly twice\n' \
+        "${spelling}" >&2
+      return 1
+    fi
+    if [ "$(grep -cF -- '--var infisical_enabled=true' "${STUB_LOG}/docker.log")" -ne "${both}" ]; then
+      printf 'FAIL: INFISICAL_ENABLED=%s was pushed verbatim instead of as true\n' \
+        "${spelling}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "push-template: the pull-on-start gate is forwarded only under the vault flag" {
+  # Two gates, and the second is meaningless without the first: an off vault pushes
+  # neither word, an on vault with the gate off pushes only the first, and only an on
+  # vault with the gate on pushes both. A pushed --var infisical_pull_on_start=false
+  # would be the same shape as a pushed true once Terraform has it, so the off cases
+  # have to be *absent*, not present-and-false - that is what leaves each template's
+  # own `default = false` standing.
+  local case want_enabled want_pulled pulled enabled
+  for case in "off" "vault-only" "both"; do
+    rm -rf "${BATS_TEST_TMPDIR}/root"
+    case "${case}" in
+      off)
+        root="$(fake_root push-template.sh "INFISICAL_PULL_ON_START=true")"
+        want_enabled=0
+        want_pulled=0
+        ;;
+      vault-only)
+        root="$(fake_root push-template.sh "INFISICAL_ENABLED=true" "INFISICAL_PULL_ON_START=false")"
+        want_enabled=2
+        want_pulled=0
+        ;;
+      both)
+        root="$(fake_root push-template.sh "INFISICAL_ENABLED=true" "INFISICAL_PULL_ON_START=on")"
+        want_enabled=4
+        want_pulled=2
+        ;;
+    esac
+    running_stack
+    psql_token_variant
+    versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+    run --separate-stderr bash "${root}/scripts/push-template.sh"
+    [ "${status}" -eq 0 ] || fail "${case} exited ${status}: ${stderr}"
+    # The stub log is one file per test and fake_root does not clear it, so these
+    # counts are cumulative across the three cases: 0, then 2, then 4 pushes of the
+    # vault flag, and 2 pushes of the gate from the last case alone.
+    pulled="$(grep -oF -- '--var infisical_pull_on_start' "${STUB_LOG}/docker.log" | wc -l)"
+    [ "${pulled}" -eq "${want_pulled}" ] ||
+      fail "${case}: expected ${want_pulled} pushes of the gate, saw ${pulled}"
+    if [ "${case}" = "both" ]; then
+      # The truthy spelling normalises to the one literal Terraform wants.
+      [ "$(grep -oF -- '--var infisical_pull_on_start=true' "${STUB_LOG}/docker.log" | wc -l)" -eq 2 ] ||
+        fail "${case}: the spelling was pushed verbatim instead of as true"
+      [[ ${output} == *"infisical_pull_on_start=true passed from INFISICAL_PULL_ON_START"* ]] ||
+        fail "${case}: passed the gate without saying so: ${output}"
+    else
+      [[ ${output} != *"infisical_pull_on_start"* ]] ||
+        fail "${case}: talked about a gate it did not push: ${output}"
+    fi
+    # The primary flag keeps its own shape in every case: absent while the vault is
+    # off, the literal true once it is on.
+    enabled="$(grep -oF -- '--var infisical_enabled=true' "${STUB_LOG}/docker.log" | wc -l)"
+    [ "${enabled}" -eq "${want_enabled}" ] ||
+      fail "${case}: expected ${want_enabled} pushes of the vault flag, saw ${enabled}"
+  done
+}
+
+@test "push-template: the six vault values are forwarded when .env carries real ones" {
+  # The values travel whether or not the flag is on, so turning the vault on later is
+  # one more push rather than a re-config of six keys. Note the name shift on the
+  # Universal Auth pair: .env spells them the way the Infisical CLI reads them and
+  # the templates spell them the way the workspace sees them.
+  root="$(fake_root push-template.sh "${VAULT_ENV[@]}")"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  grep -Fq -- '--var infisical_url=http://vault.internal:18182' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var infisical_project_id=proj-aaaa-bbbb' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var infisical_machine_identity_id=mach-cccc-dddd' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var infisical_client_id=ci-eeee-ffff' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var infisical_client_secret=cs-gggg-hhhh' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var infisical_environment=staging-vault' "${STUB_LOG}/docker.log"
+  # Six values, one vars array, both templates: twelve --var words across the two
+  # recorded push lines (grep -o, not -c, because both words of a pair sit on one
+  # line and a line count would read 2 however many vars rode it).
+  [ "$(grep -oF -- '--var infisical_' "${STUB_LOG}/docker.log" | wc -l)" -eq 12 ]
+  # None of the six values is echoed: each forward names the .env key it came from
+  # and stops there, the way litellm_key and context7_api_key already do.
+  [[ ${output} == *"infisical_url passed from INFISICAL_URL in .env (value not shown)"* ]]
+  [[ ${output} == *"infisical_environment passed from INFISICAL_ENVIRONMENT in .env (value not shown)"* ]]
+  [[ ${output} != *"http://vault.internal:18182"* ]]
+  [[ ${output} != *"proj-aaaa-bbbb"* ]]
+  [[ ${output} != *"mach-cccc-dddd"* ]]
+  [[ ${output} != *"ci-eeee-ffff"* ]]
+  [[ ${output} != *"cs-gggg-hhhh"* ]]
+  [[ ${output} != *"staging-vault"* ]]
+  [[ ${stderr} != *"cs-gggg-hhhh"* ]]
+}
+
+@test "push-template: blank vault values are not forwarded" {
+  # A blank line in .env must not override a template default - above all the
+  # environment's "prod", which an empty INFISICAL_ENVIRONMENT= would otherwise
+  # replace with nothing at all.
+  root="$(fake_root push-template.sh 'INFISICAL_ENABLED=true' 'INFISICAL_URL=' \
+    'INFISICAL_PROJECT_ID=' 'INFISICAL_MACHINE_IDENTITY_ID=' \
+    'INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=' 'INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET=' \
+    'INFISICAL_ENVIRONMENT=')"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  # The flag is on, so exactly one infisical var may reach the CLI on each push.
+  [ "$(grep -oF -- '--var infisical_' "${STUB_LOG}/docker.log" | wc -l)" -eq 2 ]
+  grep -Fq -- '--var infisical_enabled=true' "${STUB_LOG}/docker.log"
+  logs_absent 'infisical_url|infisical_project_id|infisical_machine_identity_id' "${STUB_LOG}/docker.log"
+  logs_absent 'infisical_client_id|infisical_client_secret|infisical_environment' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: a change-me vault placeholder is never forwarded" {
+  # .env.example ships change-me* bodies; pushing one verbatim would put a public
+  # constant into every workspace, so it reads as unset and the default stands.
+  root="$(fake_root push-template.sh "${VAULT_PLACEHOLDER_ENV[@]}")"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
+  logs_absent 'infisical' "${STUB_LOG}/docker.log"
+  logs_absent 'change-me' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: the vault client secret is forwarded and its value is never printed" {
+  root="$(fake_root push-template.sh 'INFISICAL_ENABLED=true' "${VAULT_ENV[@]}")"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"infisical_client_secret passed from INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET in .env (value not shown)"* ]]
+  # The value is not in anything the CLI printed, in either stream.
+  [[ ${output} != *"cs-gggg-hhhh"* ]] || fail "the vault client secret was printed on stdout"
+  [[ ${stderr} != *"cs-gggg-hhhh"* ]] || fail "the vault client secret was printed on stderr"
+  # The secret is a --var by design: it reaches the CLI as an argument, so it is in
+  # that one process's argv (recorded on the docker line and the coder line, visible
+  # inside the container for the length of the push). Every log that carries no argv
+  # must hold nothing of it, and neither stream the CLI printed may name it.
+  grep -Fq -- '--var infisical_client_secret=cs-gggg-hhhh' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var infisical_client_secret=cs-gggg-hhhh' "${STUB_LOG}/coder.log"
+  logs_absent 'cs-gggg-hhhh' "${STUB_LOG}/psql.log" "${STUB_LOG}/curl.log"
+}
+
+@test "push-template: the vault vars ride the same --var bundle and each keeps its own value" {
+  # Every --var must be followed by its own name=value word: a value that reached the
+  # CLI as a bare word would let the flag after it (-f, --file, --directory) be read
+  # as that value and swallow the rest of the bundle. The stub records argv
+  # space-joined, so walking the words after the first --var is the whole proof.
+  root="$(fake_root push-template.sh 'INFISICAL_ENABLED=true' "${VAULT_ENV[@]}")"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh" workspace
+  [ "${status}" -eq 0 ]
+  local -a argv=()
+  read -r -a argv <<<"$(grep -F 'coder templates push workspace' <<<"$(stub_log docker)")"
+  [ "${#argv[@]}" -gt 0 ] || fail "no push argv was recorded"
+  local i first=-1 pairs=0 saw_vault=0 value_word
+  for ((i = 0; i < ${#argv[@]}; i++)); do
+    if [ "${argv[i]}" = "--var" ]; then
+      first=${i}
+      break
+    fi
+  done
+  [ "${first}" -ge 0 ] || fail "the push argv carries no --var at all"
+  # The bundle runs to the very end of argv, so it is one contiguous --var/word run
+  # and an odd length can only mean a value was dropped or split off its --var.
+  [ $(((${#argv[@]} - first) % 2)) -eq 0 ] ||
+    fail "the --var bundle is odd-length, so a value was dropped or split: ${argv[*]}"
+  for ((i = first; i < ${#argv[@]}; i += 2)); do
+    [ "${argv[i]}" = "--var" ] ||
+      fail "bundle word ${i} is '${argv[i]}' where --var belongs"
+    value_word="${argv[i + 1]}"
+    case "${value_word}" in
+      '' | -* | *=)
+        printf 'FAIL: bundle word %s is %s: --var must be followed by a name=value pair\n' \
+          "$((i + 1))" "'${value_word}'" >&2
+        return 1
+        ;;
+      *=*) ;;
+      *)
+        printf 'FAIL: bundle word %s is %s: no =, so a value reached the CLI bare\n' \
+          "$((i + 1))" "'${value_word}'" >&2
+        return 1
+        ;;
+    esac
+    case "${value_word}" in
+      infisical_*) saw_vault=1 ;;
+    esac
+    pairs=$((pairs + 1))
+  done
+  # image, github_auth_id and searxng_url are always passed; the seven vault vars
+  # joined them in the one array, so the bundle is exactly ten pairs.
+  [ "${pairs}" -eq 10 ] || fail "expected 10 --var pairs in one bundle, saw ${pairs}"
+  [ "${saw_vault}" -eq 1 ] || fail "no infisical_* pair rode the bundle"
+  # Contiguous from --yes onward: nothing but --var pairs follows it.
+  [[ ${argv[*]} == *'--yes --var image=evo-t1-dev:latest'* ]]
+  logs_absent '(^|[[:space:]])-f([[:space:]]|$)|--file' "${STUB_LOG}/docker.log"
 }
 
 # ── template-push.sh (moved from lib.bats; keep these assertions) ──────────
