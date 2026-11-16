@@ -181,6 +181,13 @@ _SCRIPT_LIBS = {
     "hermes-shell": [
         "lib/common.sh",
     ],
+    # Every vault verb goes through the one seam lib, and rotate reaches gen_secret,
+    # which lives beside the bootstrap helpers.
+    "infisical": [
+        "lib/bootstrap.sh",
+        "lib/common.sh",
+        "lib/infisical.sh",
+    ],
     "install-hooks": [
         "lib/common.sh",
     ],
@@ -341,6 +348,12 @@ _SCRIPT_PAYLOAD = {
     "hermes-doctor": [
         "//:compose_file",
         "//hermes:seed",
+    ],
+    # The compose file is the resolve_checkout marker, and the inventory of which keys
+    # the vault owns is the one payload file every verb reads.
+    "infisical": [
+        "//:compose_file",
+        "//infisical:payload",
     ],
     "install-hooks": [
         "//:compose_file",

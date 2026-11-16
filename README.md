@@ -14,6 +14,9 @@ One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra
   with approval prompts). LAN `:9119` stays; the public name is opt-in with the
   other public hosts.
 - **SearXNG** - the keyless metasearch lane.
+- **Infisical** - self-hosted secrets manager holding the stack's credentials, behind a
+  second Compose profile. Off by default; `INFISICAL_ENABLED=true` brings up the server
+  with its own Postgres and Redis. Compose keeps reading `.env`, which the vault feeds.
 - **Observability bundle** - Prometheus, Mimir, Loki, Tempo, Grafana and Alloy behind
   one Compose profile: metrics, container logs and traces, with Grafana as the single
   read path. On by default; `OBSERVABILITY_ENABLED=false` drops all six.
@@ -135,6 +138,12 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |               an answered one, and the probe names each engine the instance
   |               parked along with the reason its backend gave).
   |
+  +-- :8182 ----> Infisical secrets manager (UI + API on one port; `INFISICAL_ENABLED`
+  |               gates the whole bundle, and off is the shipped state). Published for the
+  |               same reason as :8181 - a workspace reaches the host through its gateway.
+  |               Compose itself never dials it: `bazelisk run //scripts:infisical -- pull`
+  |               writes `.env`, and compose reads that file as it always has.
+  |
   +-- :3005 ----> Grafana (the read path for metrics, logs and traces; one login from
   |               GRAFANA_ADMIN_USER / GRAFANA_ADMIN_PASSWORD). The only observability
   |               name that is published
@@ -201,6 +210,7 @@ port binds once, so two stacks on one box need two sets.
 | 4000 | 14000 | LiteLLM | OpenAI-compatible proxy (`LITELLM_PORT`) |
 | 9119 | 19119 | Hermes | Host-assistant Web Dashboard (`HERMES_DASHBOARD_PORT`) - Chat tab + approvals; LAN listener with HTTP basic auth. The public name is opt-in and reaches it through the router on 8080 |
 | 8181 | 18181 | SearXNG | Metasearch (`STACK_SEARCH_PORT`) - published, because a workspace reaches the host through its gateway, where the compose network does not help. `push-template.sh` reads this key and pushes `--var searxng_url=http://host.docker.internal:<that port>`, so a remapped port reaches each new workspace's config |
+| 8182 | 18182 | Infisical | Secrets manager UI and API on one port (`INFISICAL_PORT`) - a whole Compose profile, so nothing listens here until `INFISICAL_ENABLED=true`. Published rather than loopback-bound for the same host-gateway reason as 8181, and not a Prometheus target |
 | 3005 | 13005 | Grafana | The observability read path - metrics, logs and traces behind one login (`GRAFANA_PORT`; credentials are `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`). The only bundle UI that is published |
 | 9090 | 19090 | Prometheus | Scrape and `remote_write` (`PROMETHEUS_PORT`) - bound to 127.0.0.1, so the graph UI needs a shell on the stack host |
 | — | — | Mimir | `8080` on the compose network only - long-term metrics, queried through Grafana |
@@ -208,12 +218,16 @@ port binds once, so two stacks on one box need two sets.
 | — | — | Tempo | `3200` (query) and `4317` (OTLP/gRPC) on the compose network only - traces |
 | — | — | Alloy | `12345` on the compose network only - the collector's own UI |
 | — | — | Homepage app | `3000` on the compose network only - reached through the proxy |
+| — | — | Infisical Postgres | `5432` on the compose network only - the vault's own database; Infisical supports no other |
+| — | — | Infisical Redis | `6379` on the compose network only - the vault's job queue and locks, which is why it needs the `noeviction` policy |
 | — | — | Ollama | `11434` on the compose network only - deliberately not published |
 
 Change a port in `.env` for the stable stack and in `dev-stack.env` for the dev one. A
 dev stack still carrying the stable numbers cannot start beside it, and `.env` does not
 reach the dev stack when `dev-stack.env` exists. The Grafana and Prometheus rows bind
-only while `OBSERVABILITY_ENABLED` selects the `observability` profile.
+only while `OBSERVABILITY_ENABLED` selects the `observability` profile, and the Infisical
+row only while `INFISICAL_ENABLED` selects the `secrets` one - that profile is off as
+shipped, so `8182` answers nothing until a box opts in.
 
 ## Spin up the stack
 
