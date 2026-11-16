@@ -126,7 +126,10 @@ usage: bazelisk run //scripts:dev-stack -- [--project-name <name>] [--file <file
 
   up            docker compose up -d for the project, re-apply the Postgres
                 role password from .env, bounce coder if it was failing auth,
-                then the URL summary. When the env file asks for public mode
+                then the URL summary. With INFISICAL_ENABLED on, the env file
+                is refreshed from the vault before compose renders; a vault
+                that cannot be reached is one warning and the bring-up
+                continues. When the env file asks for public mode
                 (STACK_PUBLIC_HOSTS=auto, or STACK_PUBLIC_HOSTS_MODE=auto), the
                 composed public names and STACK_ENV_LABEL=dev are exported for
                 that compose run; an empty value or a hand-written list exports
@@ -550,7 +553,8 @@ run_compose() {
 # @function main
 # Parse argv, resolve the root, and dispatch one subcommand.
 # Globals:
-#   PROJECT, COMPOSE_FILE, ENV_FILE, LOG_TAIL, LOG_FOLLOW, CONFIRMED, JSON_MODE
+#   PROJECT, COMPOSE_FILE, ENV_FILE, LOG_TAIL, LOG_FOLLOW, CONFIRMED, JSON_MODE,
+#   INFISICAL_ENABLED (through infisical_enabled and infisical_pull, on `up` only)
 # Arguments:
 #   $* - optional flags, one subcommand, that subcommand's arguments, and the
 #     same flags again (a leading `-` is what makes a word an option)
@@ -561,7 +565,7 @@ run_compose() {
 main() {
   local -a rest=()
   local -a services=()
-  local root="" action=""
+  local root="" action="" vault_env=""
   while [ "$#" -gt 0 ]; do
     case "$1" in
       -h | --help)
@@ -662,6 +666,21 @@ main() {
       # compose call here, and status/logs must stay byte-identical on a host that
       # is configured for public mode.
       public_deploy_env "${ENV_FILE}"
+      # The vault is the source of record for the managed credentials when the flag
+      # is on, so refresh the very file compose is about to interpolate: a key
+      # rotated in Infisical then reaches coder, litellm, homepage, hermes, grafana
+      # and searxng on this bring-up instead of waiting for a human to run the pull
+      # verb. Off is the shipped default and the branch never runs, so a stack that
+      # never opted in reads and prints exactly what it did before. A vault that
+      # cannot be reached must not hold the stack down: one warning, and the env
+      # file keeps the credentials it already has.
+      vault_env="${ENV_FILE:-$(dirname "${COMPOSE_FILE}")/.env}"
+      if infisical_enabled "${vault_env}"; then
+        phase "vault: refreshing the env file from Infisical"
+        if ! infisical_pull "${vault_env}"; then
+          warn "the env file was not refreshed from Infisical; ${vault_env} keeps the credentials it already has - retry with bazelisk run //scripts:infisical -- pull"
+        fi
+      fi
       compose_up_or_diagnose_db
       restart_coder_if_pg_auth_failed
       start_coder_agents_wait "${root}"

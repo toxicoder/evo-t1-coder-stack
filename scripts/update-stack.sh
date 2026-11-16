@@ -17,8 +17,9 @@
 #   2. re-enter the updated checkout        (so the rest runs the new logic)
 #   3. recover the host for Bazel and DNS   (setup-host.sh --repair)
 #   4. reconcile the env files              (update-configs.sh env)
-#   5. converge the compose project         (compose up, after a down when
-#                                            compose or the env file changed)
+#   5. converge the compose project         (vault refresh, then compose up,
+#                                            after a down when compose or the
+#                                            env file changed)
 #   6. restart what a bind mount changed    (compose restart <services>)
 #   7. push the Coder templates             (push-template.sh)
 #   8. reseed the running workspaces        (refresh-configs.sh)
@@ -639,8 +640,13 @@ carry_deploy_state() {
 # docker-compose.yml or an env file, the project is stopped first: `up -d`
 # leaves a service that was deleted from the file running, and a changed
 # interpolation only lands in a recreated container.
+# With INFISICAL_ENABLED on, the env file the sibling's compose is about to
+# interpolate is refreshed from the vault first, so a rotated credential reaches
+# every service on this deploy; a failed fetch is a warning and the stack comes up
+# regardless.
 # Globals:
-#   STACK_FLAVOUR, RESTART_MODE, PULL_IMAGES, DRY_RUN
+#   STACK_FLAVOUR, RESTART_MODE, PULL_IMAGES, DRY_RUN, ROOT_DIR,
+#   INFISICAL_ENABLED (through infisical_enabled and infisical_pull)
 # Arguments:
 #   $1 - 1 when the pull changed compose or the env file, anything else for no
 # Outputs:
@@ -673,6 +679,27 @@ converge_stack() {
 
   if changed_paths_match 'litellm/*'; then
     note "litellm/config.yaml changed; the proxy restarts below to pick it up"
+  fi
+
+  # The vault is the source of record for the managed credentials when the flag is
+  # on, so the file the sibling's compose is about to interpolate is refreshed here,
+  # after the pull/plan phases and before any container is recreated: a key rotated
+  # in Infisical then lands in this deploy instead of waiting for a human to run the
+  # pull verb. A dry run plans the fetch and writes nothing. Off is the shipped
+  # default and the branch never runs. A vault that cannot be reached must not stop
+  # a deploy: one warning, and the env file keeps the credentials it already has.
+  local vault_env=""
+  vault_env="$(stack_env_file)"
+  vault_env="${vault_env:-${ROOT_DIR}/.env}"
+  if infisical_enabled "${vault_env}"; then
+    if [ "${DRY_RUN}" = "1" ]; then
+      note "dry run: would refresh ${vault_env} from Infisical"
+    else
+      phase "vault: refreshing the env file from Infisical"
+      if ! infisical_pull "${vault_env}"; then
+        warn "the env file was not refreshed from Infisical; ${vault_env} keeps the credentials it already has - retry with bazelisk run //scripts:infisical -- pull"
+      fi
+    fi
   fi
 
   run_sibling "compose up" "scripts/${STACK_FLAVOUR}-stack.sh" up || failed=1

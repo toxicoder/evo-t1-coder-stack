@@ -613,6 +613,125 @@ EOF
   assert_not_match "junk: treated as off" 'secrets' "$(stub_log docker)"
 }
 
+# --- the vault feeds the env file the deploy brings up from ---------------------
+# The deploy is the seam that makes the vault the source of record: after the
+# pull/plan phases and before the sibling recreates the containers, it refreshes
+# the env file compose interpolates, so a credential rotated in Infisical lands in
+# this deploy instead of waiting for a human to run the pull verb. What is pinned
+# here is the call the deploy makes - the fetch itself is pinned in
+# infisical_lib.bats - so the seam the fake checkout copies in is replaced by one
+# that records and cannot reach a vault.
+
+# vault_lib - rewrite the copied seam in the fake checkout so it sources the real
+# lib (which keeps infisical_enabled, the flag's one reader, and
+# compose_infisical_args) and redefines only infisical_pull. Each call appends
+# "pull | <env-file>" to $VAULT_PULL_LOG and answers $VAULT_RC.
+vault_lib() {
+  cat >"${ROOT_FAKE}/scripts/lib/infisical.sh" <<'SHIM'
+#!/usr/bin/env bash
+# shellcheck source=/dev/null
+source "${VAULT_REAL_LIB}"
+infisical_pull() {
+  printf 'pull | %s\n' "${1:-}" >>"${VAULT_PULL_LOG}"
+  return "${VAULT_RC:-0}"
+}
+SHIM
+}
+
+# vault_prepare [git-answers...] - the fake checkout, the git shim, and the vault
+# seam wired to a log of its own.
+vault_prepare() {
+  prepare "$@"
+  : >"${VAULT_PULL_LOG}"
+  vault_lib
+}
+
+@test "the deploy refreshes the env file from the vault before the bring-up" {
+  # The order is the requirement: compose resolves ${VAR} when it parses the file,
+  # so a fetch after `<flavour>-stack.sh up` is a fetch no container ever saw. The
+  # stable stack names no env file, so the file is the .env beside the compose file.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+  run_cli INFISICAL_ENABLED=true
+  [ "${status}" -eq 0 ]
+  assert_match "phase line" '^-> vault: refreshing the env file from Infisical$' "${output}"
+  assert_eq "exactly one pull" "1" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_eq "the file compose reads" "pull | ${ROOT_FAKE}/.env" \
+    "$(grep -e '^pull | ' "${VAULT_PULL_LOG}")"
+  local pull_line up_line
+  pull_line="$(grep -nF -e 'pull | ' "${VAULT_PULL_LOG}" | head -n1 | cut -d: -f1 || true)"
+  up_line="$(grep -nF -e 'prod-stack | up' "${SIBLING_LOG}" | head -n1 | cut -d: -f1 || true)"
+  [ -n "${pull_line}" ] && [ -n "${up_line}" ]
+  [ "${pull_line}" -lt "${up_line}" ]
+
+  # The dev flavour reads its own env file, and that is the one that gets refreshed.
+  : >"${ROOT_FAKE}/dev-stack.env"
+  : >"${VAULT_PULL_LOG}"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=true --stack dev
+  [ "${status}" -eq 0 ]
+  assert_eq "the dev flavour refreshes dev-stack.env" "pull | ${ROOT_FAKE}/dev-stack.env" \
+    "$(grep -e '^pull | ' "${VAULT_PULL_LOG}")"
+}
+
+@test "the deploy with the vault flag off fetches nothing and says nothing about it" {
+  # Off is the shipped default and the deploy is byte-identical to the one that
+  # predates the vault: no call, no phase line, no vault-named line at all. The
+  # endpoint rows of the status report are not this branch - they print whatever the
+  # flag says - so the assertions name the fetch.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+
+  unset INFISICAL_ENABLED
+  run_cli
+  [ "${status}" -eq 0 ]
+  assert_eq "unset: no pull" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "unset: no phase line" 'vault' "${output}"
+  assert_not_match "unset: no vault warning" 'not refreshed from Infisical' "${output}"
+  assert_match "unset: the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+
+  : >"${VAULT_PULL_LOG}"
+  rm -f "${BATS_TEST_TMPDIR?}/head.count"
+  run_cli INFISICAL_ENABLED=false
+  [ "${status}" -eq 0 ]
+  assert_eq "false: no pull" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_not_match "false: no phase line" 'vault' "${output}"
+  assert_match "false: the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+}
+
+@test "an unreachable vault is one warning and the deploy brings the stack up anyway" {
+  # A deploy that cannot reach its vault still deploys the code it pulled: the env
+  # file keeps the credentials it already has, and the warning names that file and
+  # the retry command - never a key name, and never a value.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+  run_cli INFISICAL_ENABLED=true VAULT_RC=1
+  [ "${status}" -eq 0 ]
+  assert_eq "still exactly one attempt" "1" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_match "one warning naming the file" \
+    '^warning: the env file was not refreshed from Infisical; .*/\.env keeps the credentials it already has' \
+    "${output}"
+  assert_eq "one such warning" "1" \
+    "$(grep -c -e 'not refreshed from Infisical' <<<"${output}" || true)"
+  assert_match "it names the retry" 'bazelisk run //scripts:infisical -- pull' "${output}"
+  assert_match "the bring-up still ran" 'prod-stack \| up' "$(cat "${SIBLING_LOG}")"
+}
+
+@test "a dry run plans the vault refresh and writes nothing" {
+  # --dry-run promises a plan, and the refresh writes the env file, so the flag
+  # alone must not let a planning run touch a live credential file.
+  export VAULT_REAL_LIB="${REPO_ROOT}/scripts/lib/infisical.sh"
+  export VAULT_PULL_LOG="${BATS_TEST_TMPDIR?}/pulls.log"
+  vault_prepare STUB_DIFF_OUT='README.md'
+  run_cli INFISICAL_ENABLED=true --dry-run
+  [ "${status}" -eq 0 ]
+  assert_eq "nothing pulled" "0" "$(grep -c -e '^pull | ' "${VAULT_PULL_LOG}" || true)"
+  assert_match "the plan names it" '^note: dry run: would refresh .*/\.env from Infisical$' "${output}"
+}
+
 @test "--litellm-url is forwarded to the workspace reseed" {
   prepare STUB_DIFF_OUT='README.md'
   run_cli --litellm-url 'http://host.docker.internal:4100/v1'
