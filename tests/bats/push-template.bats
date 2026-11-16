@@ -799,6 +799,7 @@ logs_absent() {
 # about one cannot be satisfied by another word the script prints.
 VAULT_ENV=(
   'INFISICAL_URL=http://vault.internal:18182'
+  'INFISICAL_PORT=18182'
   'INFISICAL_PROJECT_ID=proj-aaaa-bbbb'
   'INFISICAL_MACHINE_IDENTITY_ID=mach-cccc-dddd'
   'INFISICAL_UNIVERSAL_AUTH_CLIENT_ID=ci-eeee-ffff'
@@ -1007,19 +1008,20 @@ VAULT_PLACEHOLDER_ENV=(
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 0 ]
-  grep -Fq -- '--var infisical_url=http://vault.internal:18182' "${STUB_LOG}/docker.log"
   grep -Fq -- '--var infisical_project_id=proj-aaaa-bbbb' "${STUB_LOG}/docker.log"
   grep -Fq -- '--var infisical_machine_identity_id=mach-cccc-dddd' "${STUB_LOG}/docker.log"
   grep -Fq -- '--var infisical_client_id=ci-eeee-ffff' "${STUB_LOG}/docker.log"
   grep -Fq -- '--var infisical_client_secret=cs-gggg-hhhh' "${STUB_LOG}/docker.log"
   grep -Fq -- '--var infisical_environment=staging-vault' "${STUB_LOG}/docker.log"
-  # Six values, one vars array, both templates: twelve --var words across the two
+  # Five values, one vars array, both templates: ten --var words across the two
   # recorded push lines (grep -o, not -c, because both words of a pair sit on one
-  # line and a line count would read 2 however many vars rode it).
-  [ "$(grep -oF -- '--var infisical_' "${STUB_LOG}/docker.log" | wc -l)" -eq 12 ]
+  # line and a line count would read 2 however many vars rode it). The sixth,
+  # infisical_url, is composed inside the flag gate rather than forwarded here, so a
+  # stack that never opted in still pushes no vault word at all.
+  [ "$(grep -oF -- '--var infisical_' "${STUB_LOG}/docker.log" | wc -l)" -eq 10 ]
+  [[ $(grep -cF -- '--var infisical_url=' "${STUB_LOG}/docker.log" || true) -eq 0 ]]
   # None of the six values is echoed: each forward names the .env key it came from
   # and stops there, the way litellm_key and context7_api_key already do.
-  [[ ${output} == *"infisical_url passed from INFISICAL_URL in .env (value not shown)"* ]]
   [[ ${output} == *"infisical_environment passed from INFISICAL_ENVIRONMENT in .env (value not shown)"* ]]
   [[ ${output} != *"http://vault.internal:18182"* ]]
   [[ ${output} != *"proj-aaaa-bbbb"* ]]
@@ -1043,10 +1045,13 @@ VAULT_PLACEHOLDER_ENV=(
   versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
   run --separate-stderr bash "${root}/scripts/push-template.sh"
   [ "${status}" -eq 0 ]
-  # The flag is on, so exactly one infisical var may reach the CLI on each push.
-  [ "$(grep -oF -- '--var infisical_' "${STUB_LOG}/docker.log" | wc -l)" -eq 2 ]
+  # The flag is on and the URL is composed from a port this fixture never set, so two
+  # infisical vars reach the CLI on each push: the flag and the host-gateway URL at the
+  # published default. A blank INFISICAL_URL must not reach the CLI as an empty origin.
+  [ "$(grep -oF -- '--var infisical_' "${STUB_LOG}/docker.log" | wc -l)" -eq 4 ]
   grep -Fq -- '--var infisical_enabled=true' "${STUB_LOG}/docker.log"
-  logs_absent 'infisical_url|infisical_project_id|infisical_machine_identity_id' "${STUB_LOG}/docker.log"
+  grep -Fq -- '--var infisical_url=http://host.docker.internal:8182' "${STUB_LOG}/docker.log"
+  logs_absent 'infisical_url=http=$|infisical_project_id|infisical_machine_identity_id' "${STUB_LOG}/docker.log"
   logs_absent 'infisical_client_id|infisical_client_secret|infisical_environment' "${STUB_LOG}/docker.log"
 }
 
@@ -1062,6 +1067,26 @@ VAULT_PLACEHOLDER_ENV=(
   grep -Fq -- 'coder templates push workspace --directory - --yes' "${STUB_LOG}/docker.log"
   logs_absent 'infisical' "${STUB_LOG}/docker.log"
   logs_absent 'change-me' "${STUB_LOG}/docker.log"
+}
+
+@test "push-template: a workspace dials the vault through the host gateway, never the host's own origin" {
+  # INFISICAL_URL is the operator CLI's origin on the stack host, where
+  # 127.0.0.1:8182 reaches the published port. Handed to a workspace unchanged, the
+  # same spelling dials that container's own loopback and every Universal Auth login
+  # fails against a dead address - so the workspace gets the host gateway, with the
+  # port taken from INFISICAL_PORT so a stack on a non-default port still resolves.
+  root="$(fake_root push-template.sh 'INFISICAL_ENABLED=true' "${VAULT_ENV[@]}")"
+  running_stack
+  psql_token_variant
+  versions_answer "${BATS_TEST_TMPDIR}/versions.txt"
+  run --separate-stderr bash "${root}/scripts/push-template.sh"
+  [ "${status}" -eq 0 ]
+  grep -Fq -- '--var infisical_url=http://host.docker.internal:18182' "${STUB_LOG}/docker.log"
+  # The host's own origin never travels, in the argv or in what the run printed.
+  [[ $(grep -cF -- 'vault.internal' "${STUB_LOG}/docker.log" || true) -eq 0 ]]
+  [[ ${output} != *'vault.internal'* ]]
+  [[ ${stderr} != *'vault.internal'* ]]
+  [[ ${output} == *'infisical_url=http://host.docker.internal:18182 passed from INFISICAL_PORT in .env'* ]]
 }
 
 @test "push-template: the vault client secret is forwarded and its value is never printed" {

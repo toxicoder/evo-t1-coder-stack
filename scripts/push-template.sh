@@ -637,6 +637,29 @@ if truthy "$(env_get INFISICAL_ENABLED)"; then
   vars+=(--var "infisical_enabled=true")
   log "infisical_enabled=true passed from INFISICAL_ENABLED in .env (workspaces fetch their credentials from the vault)"
 
+  # The address a workspace dials is not the address the host dials, so this one
+  # value is composed rather than forwarded. INFISICAL_URL in .env is the operator
+  # CLI's origin: 127.0.0.1:8182 reaches the published port from the stack host, and
+  # the same spelling inside a workspace container reaches that container's own
+  # loopback, where nothing listens - every login would fail against a dead address.
+  # The workspace gets the host gateway composed from the published port instead,
+  # exactly as the search lane above composes its URL from STACK_SEARCH_PORT rather
+  # than forwarding SEARXNG_URL. The port is the one docker-compose.yml publishes
+  # (INFISICAL_PORT, default 8182); a missing or non-numeric value falls back to that
+  # same default rather than shipping a URL that cannot resolve. It rides the flag
+  # gate below rather than travelling with the other six: a stack that never opted in
+  # pushes no vault word of any kind.
+  infisical_port="$(env_get INFISICAL_PORT)"
+  case "${infisical_port}" in
+    '' | *[!0-9]*)
+      infisical_port=8182
+      infisical_port_from="the default (INFISICAL_PORT in .env is unset, empty or not a port)"
+      ;;
+    *) infisical_port_from="INFISICAL_PORT in .env" ;;
+  esac
+  vars+=(--var "infisical_url=http://host.docker.internal:${infisical_port}")
+  log "infisical_url=http://host.docker.internal:${infisical_port} passed from ${infisical_port_from} (a workspace dials the host gateway, so the port has to match the one the stack publishes)"
+
   # The second gate, and it is read only under the first: a stack that never adopted
   # the vault has no reason to carry a word about when to pull from it. Forwarded the
   # same one-way way - an absent or non-truthy INFISICAL_PULL_ON_START passes nothing
@@ -648,30 +671,27 @@ if truthy "$(env_get INFISICAL_ENABLED)"; then
   fi
 fi
 
-# The six values the workspace boot fetch dials the vault with. Each is forwarded
+# The five values the workspace boot fetch reads the vault with. Each is forwarded
 # only when .env carries something real, exactly as litellm_key and context7_api_key
 # are: a blank line must not override a template default, and a value still carrying
 # its .env.example placeholder would push a public constant into every workspace.
 # They travel whether or not the flag is on, so turning the vault on later is a
-# re-push of one word rather than a re-config of six, and a stack that never adopted
+# re-push of one word rather than a re-config of five, and a stack that never adopted
 # Infisical pushes none of them.
 #
-# None of the six values is echoed: an instance URL, a project id and a machine
-# identity id all end up transcribed into whoever's CI log this output lands in, and
-# printing only the key a value came from is what this file's credential-bearing
-# forwards already do.
+# None of the five is echoed: a project id and a machine identity id both end up
+# transcribed into whoever's CI log this output lands in, and printing only the key a
+# value came from is what this file's credential-bearing forwards already do.
 #
 # The Terraform name and the .env key differ for the Universal Auth pair on purpose:
 # the templates name the variables after what they are, .env names them after how the
 # Infisical CLI reads them, and scripts/infisical.sh check is the reader that keeps
-# the .env spelling honest. infisical_url is the one of the six a workspace cannot
-# do without: the Infisical CLI dials Infisical Cloud when it is handed no domain, so
-# a self-hosted instance that is never named is a wrong-server bug, not a no-op.
-infisical_url="$(env_get_forwardable INFISICAL_URL)" || infisical_url=""
-if [ -n "${infisical_url}" ]; then
-  vars+=(--var "infisical_url=${infisical_url}")
-  log "infisical_url passed from INFISICAL_URL in .env (value not shown)"
-fi
+# the .env spelling honest. infisical_url is the exception, and the one a workspace
+# cannot do without: the Infisical CLI dials Infisical Cloud when it is handed no
+# domain, so a self-hosted instance that is never named is a wrong-server bug rather
+# than a no-op. It is composed inside the flag gate above rather than read from
+# INFISICAL_URL here, because that key is the host's own origin and a workspace must
+# dial the host gateway instead.
 
 infisical_project_id="$(env_get_forwardable INFISICAL_PROJECT_ID)" || infisical_project_id=""
 if [ -n "${infisical_project_id}" ]; then
