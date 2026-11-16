@@ -33,6 +33,9 @@
 #   - The block runs from `^  (startup_script|script) = templatefile(` to the next line
 #     that is exactly `  })`. A coder_script body closes at two spaces, so a nested
 #     templatefile() inside the startup map, which closes at four, cannot end it early.
+#     A call that closes on its own line has no argument map and therefore no such
+#     terminator: it is billed as the one line it is, because scanning on to the next
+#     `  })` would bill the following resource's payloads to it.
 #   - A `key = local.NAME` entry credits the one file that local's own assignment reads,
 #     and stops there. Recursing into that file's block would count bytes the
 #     independent parser in tests/bats/startup-script-size.bats does not, and the two
@@ -73,6 +76,16 @@ END {
         print body "\tCLASH"
       }
       seenres[body] = res
+      # A call that closes on its own line carries no argument map, so there is no
+      # `  })` to stop at. Scanning on regardless would run past the resource and bill
+      # the *next* body's inlined payloads to this one, which under-counts the next
+      # body and over-counts this one, and neither number can be acted on.
+      if (L[i] ~ /\)[[:space:]]*$/) {
+        emit_paths(L[i], body)
+        emit_locals(L[i], body)
+        i++
+        continue
+      }
       j = i
       while (j <= NR && L[j] !~ /^  \}\)$/) {
         emit_paths(L[j], body)
