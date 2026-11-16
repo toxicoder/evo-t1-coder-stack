@@ -785,6 +785,44 @@ EOS
   [ "${status}" -eq 1 ]
 }
 
+@test "seam: infisical_install_cli finds its member in a listing long enough to outlive the pipe buffer" {
+  # The member scan is an in-shell loop over a here-string. The shape it replaced,
+  # `printf | grep -E | head -n 1`, ends in a reader that leaves as soon as it has its
+  # line, which under this repo's `set -o pipefail` callers is the SIGPIPE class: a
+  # producer still writing answers 141, and the `|| member=""` arm then refuses an
+  # archive that does hold the binary. Whether that race is won depends on how much
+  # head(1) drains first, so this test pins the behaviour at the size where the old
+  # shape could have raced rather than claiming to reproduce the 141 (measured: 0 of 18
+  # on listings to 900 KiB). A release archive carries its licence, README and
+  # completions beside the binary, so a listing this long is the ordinary case.
+  source_lib
+  export XDG_DATA_HOME="${SCRATCH}/xdg"
+  export STUB_CURL_OUT="non-empty body"
+  local listing="${SCRATCH}/listing.txt" i
+  : >"${listing}"
+  for i in $(seq 1 4000); do
+    printf '%s/share/doc/infisical/README-%s.md\n' "${i}" "${i}" >>"${listing}"
+  done
+  printf 'infisical\n' >>"${listing}"
+  # A file, not an export: execve caps one environment variable, and the size is the
+  # point of the test.
+  export STUB_TAR_LIST_FILE="${listing}"
+  # Non-vacuity: under the 64 KiB pipe buffer the writer finishes before any reader
+  # could go away, and the shape this scan replaced would pass the same assertions.
+  local size
+  size="$(wc -c <"${listing}")"
+  [ "${size}" -gt 65536 ]
+
+  run infisical_install_cli
+  if [ "${status}" -ne 0 ]; then
+    printf 'install status=%s\noutput: %s\n' "${status}" "${output}" >&2
+    return 1
+  fi
+  assert_match "the member it extracted is the bare binary" '-- infisical' \
+    "$(cat "${STUB_LOG}/tar.log")"
+  [ -x "${SCRATCH}/xdg/evo-t1/infisical/bin/infisical" ]
+}
+
 @test "seam: the CLI version the workspace image bakes is the version the host installer defaults to" {
   # The workspace half of the vault execs the Infisical CLI, so images/dev/ bakes it;
   # One file owns each spelling, and this test is what keeps them one version. The

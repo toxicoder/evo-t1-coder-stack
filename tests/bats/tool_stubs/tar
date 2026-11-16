@@ -18,6 +18,7 @@
 #
 # Usage (in a .bats file): use_stubs tar curl
 #   STUB_TAR_LIST='infisical'          # or 'evil/infisical', or '' for none
+#   STUB_TAR_LIST_FILE=/path/file      # a listing too big for the environment
 #   STUB_TAR_LIST_RC=2                 # drive the "not a readable tar.gz" path
 #   STUB_TAR_OUT='...'                 # the bytes the installer lands on disk
 # Safety: stub only — never reads or writes an archive, never creates a path
@@ -43,6 +44,14 @@ done
 if [ -n "${list_mode}" ]; then
   if [ -n "${STUB_TAR_LIST_RC:-}" ] && [ "${STUB_TAR_LIST_RC}" != "0" ]; then
     exit "${STUB_TAR_LIST_RC}"
+  fi
+  # A suite that needs a listing past the pipe buffer passes a file: an archive
+  # listing big enough to make the writer block is far too large to carry through
+  # the environment (execve caps one variable at 128 KiB), and the point of those
+  # tests is the size.
+  if [ -n "${STUB_TAR_LIST_FILE:-}" ]; then
+    cat "${STUB_TAR_LIST_FILE}"
+    exit 0
   fi
   printf '%s\n' "${STUB_TAR_LIST-infisical}"
   exit 0
