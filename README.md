@@ -741,18 +741,21 @@ fifth and, with the two after it, one of the three that carry no session pin - s
 same baked `xhigh`, each request placed on the box carrying the fewest in flight, which is
 the lane a parallel subagent fan-out wants, and the shipped default for the writers.
 Rolling them back to one box is `--var grok_subagents_lane=agent`. That one variable is
-the whole fan-out switch, because the width now follows the lane: it pins the writer
+the whole placement switch: it pins the writer
 types in `[subagents.models]` -
 `general-purpose`, which is the type a spawn gets when it names none and the one every
 writer in a fan-out runs as, plus the seeded `implementer` and `tester`, while the read-only
-`explore` and `plan` follow their own lane variables below - and it sets the default to 15
-subagents in flight, where a pinned lane stays at 4. That 4 is one box's `PARALLEL` (5 by
-default, `scripts/spark-configure.sh`) minus the parent's own stream, which is why a bigger
-number on a pinned lane buys queue depth and not capacity; the swarm lane spreads over all
-three boxes, so its ceiling is `PARALLEL` per box x 3 = 15, which asks every box for all of
-its streams.
-`--var grok_subagent_max_concurrent=N` overrules the derived width whenever one workspace
-wants a number of its own, and
+`explore` and `plan` follow their own lane variables below. The width is a separate knob and
+does not follow the lane: `grok_swarm_width` (default 15) is what `main.tf` renders into
+`[subagents] max_concurrent` on every lane, because `agent-swarm` stays selectable on any
+spawn even when the default lane is pinned. That 15 is the fleet ceiling - `PARALLEL` per
+box (`scripts/spark-configure.sh`, 5 by default) x 3 boxes = 15 - so it asks every box for
+all of its streams. On a pinned lane only one box is reachable, so what is usable there is
+that box's `PARALLEL` minus the parent's own stream: past about 4 in flight you deepen
+LiteLLM's queue rather than buying capacity, and an operator who pins every lane narrows
+the number by hand.
+`--var grok_subagent_max_concurrent=N` overrules the `grok_swarm_width` default whenever
+one workspace wants a number of its own, and
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
 seam and the `/ez-micro-plan` plan that fills the slots.
 

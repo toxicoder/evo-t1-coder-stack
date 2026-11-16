@@ -125,20 +125,22 @@ The two levers that actually move load off a shedding box:
    box whose `streams.max` drifts from the fleet's `PARALLEL`. Asserting the
    admit-reclaim setting itself is still open work: neither script names that key today.
 2. Keep what one workspace puts on one box at or under that box's `PARALLEL` (5). A
-   pinned lane sends the whole fan-out to the box its session key resolves to, which is
-   why the derived width there is 4: one box's streams, minus the parent's own request.
+   pinned lane sends the whole fan-out to the box its session key resolves to, so the
+   width worth asking for there is 4: one box's streams, minus the parent's own request.
    The unpinned `agent-swarm` lane is what the writers ride by default, and the one that
    can afford a wider wave - 15 subagents spread by `least-busy` over three boxes fill each
    box's `PARALLEL` exactly, which is the
    difference between buying wall-clock and buying queue depth. That default asks every box
    for all of its streams, and it reserves nothing for the parent's own request the way
-   the pinned derivation's minus-one does. That is a deliberate trade rather than an
+   the one-box width of 4 does. That is a deliberate trade rather than an
    oversight: the parent's conversation, the reader waves and the review pass all arrive
    on the same three boxes and share those `PARALLEL` streams, so at 15 a single busy
    workspace can have the fleet fully subscribed and the last arrivals wait. What makes
    that survivable is `limit_behavior = "queue"` holding the overflow instead of failing
-   the spawn, so the cost of overshoot is a subagent's latency. Drop
-   `grok_subagent_max_concurrent` below 15 when several workspaces share the fleet. The
+   the spawn, so the cost of overshoot is a subagent's latency. That 15 is
+   `grok_swarm_width` (3 boxes x `PARALLEL` 5), the default on every lane whatever the
+   operator picks there; drop it when several workspaces share the fleet, or set
+   `grok_subagent_max_concurrent` to hold a width outright. The
    two reader lanes
    spread the same way, and each group counts its own in-flight requests, but the box's
    `PARALLEL` streams are one pool that every alias arriving on it shares.
@@ -366,8 +368,12 @@ variable, so either rolls back alone without moving the other or the writers'
 
 The variables are declared in `templates/workspace/coder.tf:24-52` and its devcontainer
 twin, and they are what fills `[subagents.models]` in
-`templates/workspace/grok-config.toml.tftpl`. The workspace side of that seam, including how
-the fan-out width follows the lane, is
+`templates/workspace/grok-config.toml.tftpl`. The fan-out width rides a different variable
+and does not follow any of these three: `grok_swarm_width` (default 15) is the width on
+every lane, and `main.tf` renders it as exactly
+`grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`.
+The lane decides placement, not width - what a pinned lane changes is where those 15 land,
+and one box only ever admits `PARALLEL` (5) of them. The workspace side of that seam is
 [grok-build-and-agents.md](grok-build-and-agents.md#the-fan-out-seam). A contributor home
 names the same three lanes with `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and
 `GROK_REVIEW_LANE` for `//scripts:seed-dev-env`. Neither lane is registered as a Coder
