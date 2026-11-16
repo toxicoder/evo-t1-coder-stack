@@ -96,6 +96,10 @@
         "title": "Access and recovery",
         "pages": [
           {
+            "title": "Secrets with Infisical",
+            "path": "operate/secrets.md"
+          },
+          {
             "title": "Public access",
             "path": "public-access.md"
           },
