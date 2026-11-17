@@ -2,13 +2,21 @@
 
 `config.yaml` is the sole model-transport routing file: LiteLLM bind-mounts it read-only at
 `/app/config.yaml`, `scripts/validate.sh` parses it as YAML, and the LiteLLM routing docs
-describe it. It is its own package so a consumer names the one file it reads instead of
-taking the whole payload tree from `//:stack_data`.
+describe it. `compaction_router.py` is the one payload module the proxy imports — registered
+under `litellm_settings.callbacks` and bind-mounted beside the config at `/app`, the working
+directory the proxy CLI puts on `sys.path`. Both are mounted read-only by docker-compose.yml,
+so both belong to this filegroup: `//:stack_data` carries it and
+`//tests:bats_stack_data_test` checks every compose bind-mount source exists in that copy.
+It is its own package so a consumer names the payload it reads instead of taking the whole
+payload tree from `//:stack_data`.
 """
 
 package(default_visibility = ["//visibility:public"])
 
 filegroup(
     name = "config",
-    srcs = ["config.yaml"],
+    srcs = [
+        "compaction_router.py",
+        "config.yaml",
+    ],
 )

@@ -301,8 +301,25 @@ services:
       SPARK_1_API_KEY: ${SPARK_1_API_KEY:-local-spark}
       SPARK_2_API_KEY: ${SPARK_2_API_KEY:-local-spark}
       SPARK_3_API_KEY: ${SPARK_3_API_KEY:-local-spark}
+      # The fast-compaction hop (litellm/compaction_router.py, registered under
+      # litellm_settings.callbacks). On by default: the opt-in is a session picking
+      # agent-xhigh-fast or agent-swarm-fast, and these four knobs are the tuning and the
+      # kill switch. EVO_T1_FAST_COMPACTION=0 stops the hop; _LANES names which groups may
+      # hop; _TARGET names the group they hop to; and _INPUT_LIMIT is the guard that keeps a
+      # summary too big for the Arc's 32k model on its Spark lane instead of letting Ollama
+      # clamp it. All four are read in that one module and nowhere else, so this block is
+      # the whole policy and the module's own docstring is its reference.
+      EVO_T1_FAST_COMPACTION: ${EVO_T1_FAST_COMPACTION:-1}
+      EVO_T1_FAST_COMPACTION_LANES: ${EVO_T1_FAST_COMPACTION_LANES:-agent-xhigh-fast,agent-swarm-fast}
+      EVO_T1_FAST_COMPACTION_TARGET: ${EVO_T1_FAST_COMPACTION_TARGET:-compaction-fast}
+      EVO_T1_FAST_COMPACTION_INPUT_LIMIT: ${EVO_T1_FAST_COMPACTION_INPUT_LIMIT:-24000}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      # Mounted as a single file, not as a directory: a directory mount over /app would hide
+      # config.yaml. It has to sit beside the config because the proxy CLI puts the working
+      # directory (/app) on sys.path, which is what makes the bare `compaction_router` named
+      # in litellm_settings.callbacks importable at all.
+      - ./litellm/compaction_router.py:/app/compaction_router.py:ro
     depends_on:
       - ollama
 

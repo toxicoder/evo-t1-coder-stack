@@ -21,6 +21,15 @@
 # landed bakes xhigh. Neither is a conversation and neither carries a warm
 # prefix into a next turn, so neither wants the pin.
 #
+# The eighth and ninth, "agent-xhigh-fast" and "agent-swarm-fast", are the two
+# lanes a session picks when it wants its conversation summary answered cheaply.
+# Each is byte-for-byte the deployment shape of the lane it is named after; the
+# only difference is that litellm/compaction_router.py re-targets the Grok CLI's
+# summary call to the Arc Ollama group "compaction-fast" before the router picks a
+# box. The CLI has no compaction-model key, so the hop lives here rather than in
+# the client, and it is armed by the alias alone: a session on any other lane
+# compacts exactly as it always has.
+#
 # Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
 # network only). The spark-* aliases target optional NVIDIA Spark boxes;
 # set SPARK1_OLLAMA_URL / SPARK2_OLLAMA_URL in .env to real Ollama hosts.
@@ -465,6 +474,124 @@ model_list:
       supports_tool_choice: true
       max_input_tokens: 262144
 
+  # Fast-compaction lanes - the two lanes a Grok Build session picks when it wants its
+  # conversation summary served somewhere cheaper. Everything about them is the lane they
+  # are named after: `agent-xhigh-fast` is `agent-xhigh` (three equal Spark deployments,
+  # xhigh baked, the session pin kept) and `agent-swarm-fast` is `agent-swarm` (the same
+  # three boxes with the pin lifted). Not one deployment differs from its parent, because
+  # the turn is still meant to run on a Spark at extra-high thinking.
+  #
+  # What differs is what happens to ONE call of the conversation. The Grok Build CLI has no
+  # compaction-model key: the summary it asks for when a session nears its context window
+  # rides the session model and inherits that model's thinking level, so a summary of a
+  # 200k-token session is answered by Qwen3.8-Flash-Next at xhigh - measured at 107 s to
+  # 1915 s, and thinking is most of it. A summary needs no thinking. These two lanes ask
+  # litellm/compaction_router.py to move that one call to `compaction-fast` below, before
+  # the router picks a deployment; every other call of the same conversation stays here.
+  #
+  # The hop is a property of the alias, not of the proxy: a session on `agent`, `agent-xhigh`
+  # or `agent-swarm` compacts exactly as it always has. That is the opt-in, and
+  # EVO_T1_FAST_COMPACTION=0 is the kill switch beside it.
+  - model_name: agent-xhigh-fast
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK1_OPENAI_URL
+      api_key: os.environ/SPARK_1_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      # Unique per deployment for the same reason as every group above: health checks,
+      # cooldowns and the least-busy counters attribute per deployment.
+      id: agent-xhigh-fast-spark-1
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-xhigh-fast
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK2_OPENAI_URL
+      api_key: os.environ/SPARK_2_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-xhigh-fast-spark-2
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-xhigh-fast
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK3_OPENAI_URL
+      api_key: os.environ/SPARK_3_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-xhigh-fast-spark-3
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+
+  - model_name: agent-swarm-fast
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK1_OPENAI_URL
+      api_key: os.environ/SPARK_1_API_KEY
+      # Baked to match `agent-swarm`, so the two swarm aliases are interchangeable for a
+      # fan-out and only the compaction hop separates them.
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-swarm-fast-spark-1
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-swarm-fast
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK2_OPENAI_URL
+      api_key: os.environ/SPARK_2_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-swarm-fast-spark-2
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+  - model_name: agent-swarm-fast
+    litellm_params:
+      model: openai/Qwen3.8-Flash-Next
+      api_base: os.environ/SPARK3_OPENAI_URL
+      api_key: os.environ/SPARK_3_API_KEY
+      reasoning_effort: xhigh
+    model_info:
+      id: agent-swarm-fast-spark-3
+      supports_function_calling: true
+      supports_tool_choice: true
+      max_input_tokens: 262144
+
+  # The compaction target - the Arc's Ollama, reached the same way `coder-fast` is. One
+  # deployment because the Arc is one box, so no pin and no least-busy decision to make.
+  #
+  # Deliberately NOT `coder-fast` itself: giving the hop its own group keeps a session that
+  # picked the Arc coding weight as its model from sharing routing state with a summary call
+  # it never asked for, and it gives this group its own fallback below.
+  #
+  # No `reasoning_effort` line: a thinking level on a summarizer is the exact cost this lane
+  # exists to stop paying, and the Qwen2.5 weights on this runtime are not thinking models.
+  # No tool-calling flags either - the router strips `tools` and `tool_choice` from the call
+  # it moves, because the measured behaviour of these weights on this runtime is to answer a
+  # `tools` request as plain text anyway, and a summary wants the plain text.
+  #
+  # 32768 is the honest window of these weights, and it is why the router refuses to move a
+  # summary it estimates above EVO_T1_FAST_COMPACTION_INPUT_LIMIT: Ollama would clamp the
+  # input to its own context rather than fail, and a silently truncated summary is worse than
+  # the slow one it replaced. Raising the window is a per-request `num_ctx` away, and it is
+  # left alone because a window past what the weights were trained on degrades the answer
+  # without an error to notice.
+  - model_name: compaction-fast
+    litellm_params:
+      model: ollama_chat/qwen2.5-coder:14b
+      api_base: http://ollama:11434
+      api_key: local-arc
+    model_info:
+      id: compaction-fast-arc
+      max_input_tokens: 32768
+
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   # No DB-backed key management, virtual keys, or Admin UI on this box.
@@ -514,7 +641,14 @@ litellm_settings:
   # calls it dead.
   request_timeout: 1200
   # Exposes /metrics. Prometheus support is not gated on a premium licence.
-  callbacks: ["prometheus"]
+  # The second entry is the fast-compaction hop: a CustomLogger subclass in
+  # litellm/compaction_router.py, bind-mounted beside this file at /app by
+  # docker-compose.yml (the proxy CLI puts the working directory on sys.path, so the module
+  # has to be importable by bare name). LiteLLM dispatches async_pre_call_hook only to a
+  # callback that IS a CustomLogger and overrides the method in its own class dict, so the
+  # dotted path must name the instance, not the class - a class here boots clean and never
+  # runs, which is why the last entry is `proxy_handler_instance`.
+  callbacks: ["prometheus", "compaction_router.proxy_handler_instance"]
 
 # Fallbacks live in router_settings, which takes precedence over the
 # litellm_settings equivalent. `agent` degrades to `coder` (Arc, text-only —
@@ -584,6 +718,11 @@ router_settings:
     agent-swarm: []
     agent-explore: []
     agent-review: []
+    # The fast twin of the swarm lane asks for the same lift its parent asks for: a fan-out
+    # on this alias is placed by least-busy across every reachable box. `agent-xhigh-fast`
+    # is absent from this map on purpose - it is the pinned conversation lane, so it keeps
+    # falling back to the global ["session_affinity"] exactly like agent-xhigh does.
+    agent-swarm-fast: []
   allowed_fails: 40
   cooldown_time: 5
   # TensorFold on the Spark boxes answers an over-admitted stream with the Zig
@@ -594,10 +733,10 @@ router_settings:
   # is the only field that can reach this error, which is why it is set here; do
   # not "clean it up" into a status-coded field.
   #
-  # Scoped to the seven Spark lanes, so coder (Arc) and chat keep the plain
-  # num_retries path. The seven groups are independent: none inherits agent's
-  # entry, so each needs its own six keys. The three unpinned lanes need their own
-  # for the same reason the four pinned ones do - their NoRoom refusals arrive
+  # Scoped to the nine Spark lanes, so coder (Arc) and chat keep the plain
+  # num_retries path. The nine groups are independent: none inherits agent's
+  # entry, so each needs its own six keys. The four unpinned lanes need their own
+  # for the same reason the five pinned ones do - their NoRoom refusals arrive
   # status-less too, and an unpinned group relocates better than a pinned one only
   # because the retry lands on whichever box is now least busy, not on a box the pin
   # keeps naming.
@@ -697,6 +836,23 @@ router_settings:
       BadRequestErrorRetries: 0
       AuthenticationErrorRetries: 0
       ContentPolicyViolationErrorRetries: 0
+    # The two fast lanes ride the same TensorFold boxes as their parents, so they meet the
+    # same status-less NoRoom refusal and the same hung stream, and inherit neither policy:
+    # a group picks up nothing from its siblings here.
+    agent-xhigh-fast:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
+    agent-swarm-fast:
+      DefaultRetries: 2
+      InternalServerErrorRetries: 2
+      ServiceUnavailableErrorRetries: 0
+      BadRequestErrorRetries: 0
+      AuthenticationErrorRetries: 0
+      ContentPolicyViolationErrorRetries: 0
   fallbacks:
     - agent: ["coder"]
     - agent-low: ["coder"]
@@ -721,3 +877,13 @@ router_settings:
     # coder, and neither fallback lane names a lane that hops back here.
     - agent-explore: ["agent-low", "coder"]
     - agent-review: ["agent-xhigh", "coder"]
+    # Each fast lane hops to the lane it is the twin of: same boxes, same baked level, same
+    # pin behaviour, so a session that lost its own group keeps everything except the hop's
+    # own routing state. Acyclic both ways, and each chain ends at coder like every other.
+    - agent-xhigh-fast: ["agent-xhigh", "coder"]
+    - agent-swarm-fast: ["agent-swarm", "coder"]
+    # The summary lane degrades to a Spark rather than to another Arc alias. coder, coder-fast
+    # and chat are all the SAME box as this group, so a hop to them is a hop to whatever is
+    # already down; agent-low is the quickest answer the fleet has, which is what a summary
+    # was after here in the first place. Acyclic: compaction-fast -> agent-low -> coder.
+    - compaction-fast: ["agent-low", "coder"]
