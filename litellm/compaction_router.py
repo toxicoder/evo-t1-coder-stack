@@ -77,16 +77,25 @@ else:
 
 LOGGER: Final = logging.getLogger("LiteLLM")
 
-# The two instructions the Grok CLI appends when it asks for a summary: the
+# The clause that recognises each ask, with the wrapper that has to ride with it: the
 # auto-compaction ask (crates/codegen/xai-grok-shell/src/session/helpers/
-# session_summary.rs) and the manual `/compact` ask (.../session_compact.rs), which the
-# CLI wraps in a <summary_request> tag. Each is matched on a stable interior clause
-# rather than the whole sentence, so a reworded opening cannot unarm it. The second is
-# the shorter of the two and is not a substring of the first, so neither subsumes it and
-# a CLI that only ever sends one of the two still hops.
-COMPACTION_MARKERS: Final = (
-    "produce a faithful, concise summary of the conversation so far",
-    "summarize the conversation so far",
+# session_summary.rs) and the manual `/compact` ask (.../session_compact.rs). Each is
+# matched on a stable interior clause rather than the whole sentence, so a reworded
+# opening cannot unarm it. The auto ask is a sentence nobody types by hand, so its
+# clause alone is the ask. The
+# manual one is ordinary English -- "please summarize the conversation so far, then push"
+# is a user asking for work -- so it counts only inside the tag the CLI puts around it
+# (.../session_compact.rs). Matching that clause bare moved such a turn to the Arc with
+# its tools, tool_choice and thinking level popped, which is a turn that can no longer
+# call a tool at all, and the ceiling cannot help: the protection it gives is against
+# length, and the turn that bites is a short one. Neither clause is a substring of the
+# other, so a CLI that only ever sends one of the two still hops. Both are compared
+# case-folded, the way the role is, so the boundary does not depend on how the sentence
+# happened to start.
+SUMMARY_TAG: Final = "<summary_request>"
+COMPACTION_ASKS: Final = (
+    ("produce a faithful, concise summary of the conversation so far", ""),
+    ("summarize the conversation so far", SUMMARY_TAG),
 )
 
 # How long the trailing turn may be and still be an ask. Both instructions are the whole
@@ -465,16 +474,17 @@ def is_compaction_request(data: dict[str, object]) -> bool:
     """Whether this request is the CLI asking for a summary of the conversation.
 
     Two conditions, both about the trailing turn. It has to be a turn the CLI writes
-    asks from, and it has to *be* one of the two asks: the sentence has to sit in that
-    turn and the turn has to be about the size of the instruction. The system prompt is
+    asks from, and it has to *be* one of the two asks: the clause has to sit in that
+    turn, the wrapper the manual ask ships in has to sit there too, and the turn has to
+    be about the size of the instruction. The system prompt is
     deliberately not consulted. A summary request always carries the ask as its last
     turn, while the rulebook sitting at ``messages[0]`` is shared by every turn of the
     session, so matching there would move an entire conversation onto the summary target
     the moment an operator pasted the sentence printed in docs/litellm-routing.md into
-    a workspace AGENTS.md. The one residue the ceiling cannot cover is a user turn whose
-    entire content is the quoted instruction; that turn is answered by the summary
-    target, which is the pre-hop behaviour for any message a session sends on a
-    non-fast alias.
+    a workspace AGENTS.md. A turn that only quotes an ask is answered by its own lane,
+    with its tools intact: the ceiling rules a quoted ask out by length and the wrapper
+    rules the quotable one out by shape, because a hopped quote loses its tools, its
+    tool choice and its thinking level, which is a turn that can no longer act.
     """
     last = _asking_turn(data)
     if last is None:
@@ -482,7 +492,11 @@ def is_compaction_request(data: dict[str, object]) -> bool:
     text = _content_text(last.get("content"))
     if not text or len(text) > MAX_ASK_CHARS:
         return False
-    return any(marker in text for marker in COMPACTION_MARKERS)
+    folded = text.casefold()
+    return any(
+        clause in folded and (not wrapper or wrapper in folded)
+        for clause, wrapper in COMPACTION_ASKS
+    )
 
 
 def _extra_units(message: dict[str, object]) -> int:

@@ -323,6 +323,64 @@ class ShouldRetargetTest(RouterCase):
         body = summary_body("agent-swarm-fast")
         self.assertIs(True, should_retarget(body))
 
+    def test_a_user_turn_that_asks_for_a_summary_and_work_stays_put(self) -> None:
+        # The clause the manual ask is recognised by is ordinary English. Hopped, this
+        # turn loses its tools, its tool_choice and its thinking level on the way to the
+        # Arc, which is a user who asked for a commit and got a turn that cannot call a
+        # tool. Only the CLI's own tag makes the clause an ask.
+        body = summary_body("agent-xhigh-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        body["messages"] = messages[:-1] + [
+            {
+                "role": "user",
+                "content": "please %s, then git commit and push" % MANUAL_MARKER,
+            }
+        ]
+        self.assertIs(False, should_retarget(body))
+        self.assert_stays_put(body)
+
+    def test_a_short_quote_of_the_manual_clause_stays_put(self) -> None:
+        # The ceiling only protects the long quote. This is the short one, and it is a
+        # real question about this repo's own routing page.
+        body = summary_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        body["messages"] = messages[:-1] + [
+            {
+                "role": "user",
+                "content": "docs/litellm-routing.md says '%s'. change it?"
+                % MANUAL_MARKER,
+            }
+        ]
+        self.assertIs(False, should_retarget(body))
+        self.assert_stays_put(body)
+
+    def test_the_manual_ask_stripped_of_its_tag_stays_put(self) -> None:
+        # The whole ask minus the wrapper: without the tag this is a user paraphrasing
+        # the instruction back, and the tag is the only thing that said otherwise.
+        body = summary_body("agent-xhigh-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        body["messages"] = messages[:-1] + [
+            {
+                "role": "user",
+                "content": MANUAL_ASK.replace("<summary_request>", "").replace(
+                    "</summary_request>", ""
+                ),
+            }
+        ]
+        self.assertIs(False, should_retarget(body))
+        self.assert_stays_put(body)
+
+    def test_the_wrapped_ask_hops_whatever_case_it_arrives_in(self) -> None:
+        # The role is compared case-folded, so the clause has to be too, or the boundary
+        # between a hop and a stay-put depends on how the sentence happened to start.
+        body = summary_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        body["messages"] = messages[:-1] + [
+            {"role": "user", "content": MANUAL_ASK.upper()}
+        ]
+        self.assertIs(True, should_retarget(body))
+        self.assert_hops(body)
+
     def test_the_manual_compact_ask_hops(self) -> None:
         for lane in FAST_LANES:
             with self.subTest(model=lane):
