@@ -168,9 +168,17 @@ run_shell() {
   # setting, so both places the script states this are pinned.
   run bash "${SCRIPT}" --help
   [ "${status}" -eq 0 ]
-  assert_match "help names the route flag" 'provider <row>' "${output}"
-  assert_match "help names the row default" 'default_model' "${output}"
-  assert_match "help names the durable verb" 'config set model.default' "${output}"
+  # The usage heredoc wraps, so match against the flattened text: a grep over the raw
+  # output is line-based and would pass on whichever half of a split sentence happened
+  # to share a line with another mention.
+  local flat
+  flat="$(printf '%s' "${output}" | tr '\n' ' ' | tr -s '[:space:]' ' ')"
+  assert_match "help names the flag that carries the row default" \
+    '--provider <row> takes that row.s default_model' "${flat}"
+  assert_match "help keeps the route switch separate from the model" \
+    'model\.provider <row> moves the route alone' "${flat}"
+  assert_match "help names the durable verb" \
+    'config set model\.default <alias>' "${flat}"
   assert_contains_file "header states the same rule" "${SCRIPT}" 'default_model'
   run grep -E 'not the provider switch|do not choose the model' "${SCRIPT}"
   [ "${status}" -ne 0 ] ||
