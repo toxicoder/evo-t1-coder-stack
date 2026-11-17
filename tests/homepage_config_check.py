@@ -86,12 +86,12 @@ COMPOSE_SERVICES = frozenset(
     }
 )
 MAX_BLOCK_MAPPINGS = 4
-# The compose keys whose value is a URL for an off-stack Spark box: the two the
+# The compose keys whose value is a URL for an off-stack Spark box: the three the
 # LiteLLM deployments read, and the five the dashboard's Agent-backend and
 # per-box Spark cards read. Their host part is the operator's LAN, never this
 # file's business.
 SPARK_URL_KEY_RE = re.compile(
-    r"^[ \t]+(?:SPARK[123]_(?:OPENAI|OLLAMA)_URL|SPARK[123]_HEALTH_URL|AGENT_MODEL_URL"
+    r"^[ \t]+(?:SPARK[123]_OPENAI_URL|SPARK[123]_HEALTH_URL|AGENT_MODEL_URL"
     r"|HOMEPAGE_VAR_(?:SPARK[123]_HEALTH|AGENT_URL|AGENT_HEALTH)):"
 )
 # A `*.lan` name is the shape this stack's Spark placeholders ship in, and the

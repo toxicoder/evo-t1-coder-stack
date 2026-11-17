@@ -156,7 +156,7 @@ PY
   assert_match "box 1 agent deployment" 'SPARK1_OPENAI_URL: \$\{SPARK1_OPENAI_URL:-http://\$\{SPARK1_HOST' "${compose}"
   assert_match "box 1 health card" 'HOMEPAGE_VAR_SPARK1_HEALTH: \$\{SPARK1_HEALTH_URL:-http://\$\{SPARK1_HOST' "${compose}"
   assert_match "agent card rides box 2 host" 'HOMEPAGE_VAR_AGENT_HEALTH: \$\{AGENT_MODEL_URL:-http://\$\{SPARK2_HOST' "${compose}"
-  assert_match "the ollama alias reads the host too" 'SPARK1_OLLAMA_URL: \$\{SPARK1_OLLAMA_URL:-http://\$\{SPARK1_HOST' "${compose}"
+  assert_match "box 2 agent deployment reads box 2 host" 'SPARK2_OPENAI_URL: \$\{SPARK2_OPENAI_URL:-http://\$\{SPARK2_HOST' "${compose}"
   assert_not_match "no LAN hostname left in compose" 'spark-[123]\.lan' "${compose}"
 }
 

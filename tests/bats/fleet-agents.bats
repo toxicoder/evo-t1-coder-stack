@@ -81,7 +81,7 @@ SKILL_KEYS=(feature_implementation_skill skeptical_review_skill
 # for (docs/litellm-routing.md).
 LOCAL_ROSTER=(agent agent-low agent-medium agent-xhigh agent-xhigh-fast
   agent-swarm agent-swarm-fast agent-explore agent-review coder coder-fast
-  chat spark-coder spark-chat)
+  chat)
 
 # The definition parser: structure only. Reads the payload on stdin, its stem in
 # argv[1]. The six frontmatter keys are pinned as the exact set inside the parser:
