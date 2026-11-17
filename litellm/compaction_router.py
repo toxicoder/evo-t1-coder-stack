@@ -104,9 +104,7 @@ def fast_compaction_target() -> str:
 
 def max_compaction_input_tokens() -> int:
     """The largest summary input the target lane can actually hold."""
-    raw = _setting(
-        "EVO_T1_FAST_COMPACTION_INPUT_LIMIT", str(DEFAULT_INPUT_LIMIT)
-    )
+    raw = _setting("EVO_T1_FAST_COMPACTION_INPUT_LIMIT", str(DEFAULT_INPUT_LIMIT))
     try:
         return int(raw)
     except ValueError:
@@ -215,7 +213,7 @@ class FastCompactionRouter(CustomLogger):
         try:
             if not should_retarget(data):
                 return None
-        except Exception:  # noqa: BLE001 - a broken classifier must never cost a request
+        except Exception:  # a broken classifier must never cost a request
             LOGGER.exception(
                 "compaction router: decision failed; leaving the request on its lane"
             )
