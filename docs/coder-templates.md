@@ -592,8 +592,12 @@ its alias (`templates/workspace/coder.tf:19-22`).
 Notes on the two dropdowns that take a custom value:
 
 - The `grok_default_model` aliases are `agent`, `agent-low`, `agent-medium`,
-  `agent-xhigh`, `agent-swarm`, `coder`, `coder-fast` and `chat`, plus a **Custom** entry
-  when the variable names another one.
+  `agent-xhigh`, `agent-xhigh-fast`, `agent-swarm`, `agent-swarm-fast`, `coder`,
+  `coder-fast` and `chat`, plus a **Custom** entry when the variable names another one. The
+  two `-fast` entries are the Spark lane each is named after, unchanged, with one call
+  moved: the proxy re-serves that session's conversation summary from the Arc group
+  `compaction-fast`, which is the whole difference, because the CLI has no compaction-model
+  key of its own.
 - The provider requires a parameter default to be one of its options, which is why a
   custom `--var` value is injected as its own option instead of being dropped.
 - A `github_mcp` of `true` with no GitHub account connected gives that workspace a server

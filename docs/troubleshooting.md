@@ -385,10 +385,10 @@ What the fix changed, and how to land it:
 grep -n 'ServiceUnavailableErrorRetries\|DefaultRetries' litellm/config.yaml
 ```
 
-- `ServiceUnavailableErrorRetries` is 0, not 2, on each of the seven Spark lanes
+- `ServiceUnavailableErrorRetries` is 0, not 2, on each of the nine Spark lanes
   (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`, `agent-explore`,
-  `agent-review`): one attempt for a dead stream, so a hung request is bounded at 1200 s
-  instead of up to 3465 s.
+  `agent-review`, `agent-xhigh-fast`, `agent-swarm-fast`): one attempt for a dead stream,
+  so a hung request is bounded at 1200 s instead of up to 3465 s.
   `DefaultRetries: 2` is untouched on purpose - TensorFold's `NoRoom` refusal arrives as
   `APIConnectionError`, which is absent from `_RETRIES_BY_EXCEPTION_TYPE`, so that walk
   falls through to `DefaultRetries` and keeps its two attempts. The proxy reads the file
@@ -425,6 +425,58 @@ What it deliberately does not do:
   shows no size threshold separating failure from success - the successes reach the same
   197k-214k range - so this is a load reduction, not a proven cure. Re-run the first
   command above to measure whether the ratio moved.
+
+### A summary on `agent-xhigh-fast` or `agent-swarm-fast` still takes minutes -> the fast-compaction hop did not fire
+
+Cause: the hop is a proxy behaviour, not a client one, and it needs four things true in the
+same moment. With any one of them false the summary rides a Spark box exactly as it did
+before these two aliases existed - the 107 s to 1915 s measured above - and that is the slow
+path, not a fault. The Grok Build CLI has no compaction-model key, so there is nothing
+client-side to point elsewhere: the alias the session started on is the whole decision, and
+`[models] session_summary` is still not the compaction lane (see the entry above). The
+decision lives in `litellm/compaction_router.py`, and the four `EVO_T1_FAST_COMPACTION*`
+knobs named below are read there and nowhere else.
+
+Start with the proxy's own line for the call:
+
+```sh
+bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -m3 'compaction router:'
+```
+
+`compaction router: moved a summary call from agent-xhigh-fast to compaction-fast` is the
+hop firing, once per summary, onto the group `EVO_T1_FAST_COMPACTION_TARGET` names (default
+`compaction-fast`, which degrades to `agent-low` then `coder`). No line at all is one of
+these four:
+
+- **Not a fast lane.** The hop is armed by the alias alone, so a session on `agent`,
+  `agent-xhigh` or `agent-swarm` compacts on Spark by design. The groups allowed to hop are
+  `EVO_T1_FAST_COMPACTION_LANES`, default `agent-xhigh-fast,agent-swarm-fast`.
+- **The kill switch.** `EVO_T1_FAST_COMPACTION` ships on, and `0`, `false`, `off` or `no`
+  stops the hop on every lane at once. Compose gives each of the four keys its default in
+  `docker-compose.yml`, and the value in force is the one interpolated from the env file
+  when the container was created, so a stack that was already up when someone set the key is
+  still running the old one. Clear the key (or set it back to `1`) and recreate: a `restart`
+  keeps the old environment.
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+```
+
+- **Not the summary call.** The hook matches the CLI's own summary instruction on the
+  trailing message, with the system prompt beside it. A request that merely quotes that
+  sentence is not a compaction call and stays on its lane.
+- **Too big for the Arc.** The estimate covers the whole request, the tool schemas included,
+  and anything above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000) is left on the
+  Spark lane on purpose: the target group's weights answer inside a 32k window, and Ollama
+  would clamp such an input rather than fail it. The 197k-214k-token auto-compaction inputs
+  measured above sit far past that, so a long session summarising on its Spark is the
+  documented limit of the feature rather than a break in it.
+
+A summary that moved and still came back slowly is the fallback rather than the hop: each
+fast lane degrades to the lane it is the twin of (`agent-xhigh-fast` to `agent-xhigh`,
+`agent-swarm-fast` to `agent-swarm`), and a twin is not in the lane list, so a session that
+lost its own group to a cooldown takes its summary back to a Spark with it. That is the
+alias-health case further down this page.
 
 ### Coder Agents chat refuses every prompt, or its model dropdown is empty -> no model config
 
