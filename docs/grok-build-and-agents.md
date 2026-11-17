@@ -464,10 +464,12 @@ while the managed block is intact.
   `litellm/compaction_router.py` re-serves the CLI's conversation-summary call from the Arc
   group `compaction-fast` and leaves every other call of the session on its Spark box.
   Nothing in either `[model.*]` block names that target, because no client key could - the
-  hop is server-side - and it stops at `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 tokens
-  estimated), above which the summary stays on Spark rather than be truncated, since the
-  Arc weights answer inside a 32768-token window. Both are selectable as
-  `grok_default_model` and neither is a Coder Agents chat model. The mechanism, the four
+  hop is server-side, and it forks on `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 tokens
+  estimated): within it the summary goes to the Arc group, above it to the Spark group
+  `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default `agent-low`), because the Arc weights
+  answer inside a 32768-token window and a bigger input would be truncated into a useless
+  summary of the history the call exists to preserve. Both are selectable as
+  `grok_default_model` and neither is a Coder Agents chat model. The mechanism, the five
   `EVO_T1_FAST_COMPACTION*` knobs, and the 107 s to 1915 s Spark-side compactions that
   motivated it are in
   [litellm-routing.md](litellm-routing.md#the-fast-compaction-lanes-agent-xhigh-fast-and-agent-swarm-fast).
@@ -535,7 +537,7 @@ while the managed block is intact.
   `active_agent_messages = true`, the last of them giving the parent
   `send_subagent_message`: a child already running can be handed a new instruction and
   keep its context, which is cheaper than killing it and dispatching a replacement. All
-  three keys are static in `templates/workspace/grok-config.toml.tftpl:329-334` and none
+  three keys are static in `templates/workspace/grok-config.toml.tftpl:368-373` and none
   is rendered from a template variable.
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
@@ -644,7 +646,7 @@ wrong on both lanes - it leaves slots empty on a swarm session and overbooks a p
 one. Overflow is held, not failed (`limit_behavior = "queue"`), so an under-wide wave is
 silent and counting it stays the parent's job. The same grep prints the `max_depth` line
 beside `max_concurrent`, and that key is now rendered from `grok_subagent_max_depth`
-(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:371`. At the
+(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:408`. At the
 shipped 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
 `spawn_subagent` in their `tools`, so a skeptic can put a wave of read-only mappers under
 itself and get its evidence without a round trip through the parent. Each grandchild is its
@@ -1564,8 +1566,10 @@ server-side rather than a client setting: a session on `agent-xhigh-fast` or
 `compaction-fast` before the proxy picks a deployment. Nothing in `~/.grok/config.toml`
 asks for it, every other call of that session still rides the Spark lane, and a session on
 any other alias compacts as it always has. The limit is the Arc's own 32768-token window:
-above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 estimated tokens) the summary stays on
-Spark, because a slow summary beats one Ollama silently clamped.
+above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 estimated tokens) the summary goes to
+`agent-low` instead, which keeps the 262144-token window and drops the baked `xhigh`,
+because a slow summary beats one Ollama silently clamped. The key cannot raise that limit:
+the target group's declared `max_input_tokens` caps it and logs one line when it does.
 
 ### The delegation sketch
 

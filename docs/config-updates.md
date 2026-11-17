@@ -478,6 +478,10 @@ a tier is parked. A dotenv line overrides each one.
   picks a tier rather than ending the hop. The Arc weights are a 32768-token
   model and Ollama clamps an over-long input instead of refusing it, so a
   summary above that estimate is never handed over to be quietly truncated.
+  The guard is a ceiling the module may lower and never raise: the Arc target
+  group's own `max_input_tokens` in `litellm/config.yaml` caps it, and a value
+  set above that window forks there anyway with one warning line naming both
+  numbers.
 - `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default `agent-low`) is where a summary
   above the guard goes instead: a Spark group, so it carries the 262144-token
   window a full-size summary needs, at thinking baked `low` rather than `xhigh`.

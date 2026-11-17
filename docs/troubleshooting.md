@@ -371,7 +371,7 @@ Each link in the chain, measured:
 - Those re-dispatches came from this repo's own config. At the pinned tag
   `ghcr.io/berriai/litellm:v1.102.1` a stream that dies before its first chunk raises
   `MidStreamFallbackError`, which subclasses `ServiceUnavailableError`
-  (`litellm/exceptions.py:1114`), and `get_num_retries_from_retry_policy` walks the
+  (`litellm/exceptions.py:1114` at that tag), and `get_num_retries_from_retry_policy` walks the
   exception MRO most-specific first, so it lands on `ServiceUnavailableErrorRetries` and
   never reaches `DefaultRetries`. A hung request never cools the box either: cooldown
   hard-excludes any exception whose string contains `APIConnectionError`, and
@@ -478,10 +478,22 @@ bazelisk run //scripts:prod-stack -- up
   `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000) goes to
   `EVO_T1_FAST_COMPACTION_SPARK_TARGET` rather than to the Arc: the
   Arc weights answer inside a 32k window and Ollama would clamp such an input rather than
-  fail it. A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
+  fail it. Raising that key does not open the Arc tier: the fork takes the smaller of the
+  key and the `max_input_tokens` the target group declares in `litellm/config.yaml`, so
+  `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000` still forks at 32768 and logs one
+  `compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 is above the 32768 tokens
+  config.yaml declares for 'compaction-fast'; forking at the declared window instead`.
+  A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
   that answers it. Blank that key, or name the lane the call arrived on, and an oversized
   summary stays on its Spark lane at the lane's own thinking level - the pre-hop behaviour,
   and the one case where the 107 s to 1915 s above is the documented limit of the feature.
+  A summary that comes back short of the history it should cover has one remaining path
+  that explains it: with all three Sparks cooled, the fallback chains end at `coder` -
+  `agent-low: ["coder"]` for the oversized tier, and the same for the pair's own chains -
+  and that Arc group reads only the last 32k of the conversation. That is every Spark
+  lane's standing last resort rather than a defect of the hop, and
+  `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm` carries the health lines for
+  that window - the `fallbacks:` block of `litellm/config.yaml` is the map it followed.
   Blanking works only because compose passes that key as `${VAR-default}`: the colon form
   substitutes its default for an empty value too, and the parked tier comes back.
 - **The tier names a group nobody declared.** Neither target is validated by LiteLLM, so the

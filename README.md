@@ -789,7 +789,7 @@ thinking level. Neither is registered as a Coder Agents chat model, because neit
 meant to be typed into the Agents dropdown, and each degrades one step deeper than a pinned
 lane, hopping through the alias that bakes its own level before Arc - `agent-explore` ->
 `agent-low` -> `coder`, `agent-review` -> `agent-xhigh` -> `coder`
-(`litellm/config.yaml:878-879`) - so a parent that dispatched a mapper at `low` gets a
+(`litellm/config.yaml:882-883`) - so a parent that dispatched a mapper at `low` gets a
 `low` answer from the fallback rather than an `xhigh` it did not ask for.
 
 The eighth and ninth, `agent-xhigh-fast` and `agent-swarm-fast`, are not new
@@ -811,15 +811,17 @@ window: those weights answer inside 32768 tokens, so a summary estimated above
 `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) goes to `agent-low` instead - a Spark
 group with the 262144-token window a full-size summary needs, at thinking baked
 `low` - rather than be handed to Ollama to clamp, because a slow summary beats a
-truncated one. Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized
+truncated one. That window also caps the key: a guard set above the target
+group's own `max_input_tokens` is overruled and forks at the declared window,
+with one warning line naming both numbers. Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized
 summary stays on the lane it arrived on, which is the pre-hop behaviour.
 Nothing has been measured on the new lane yet, so no speed-up figure is quoted
 here; what changes without a stopwatch is who answers. Each fast lane degrades to
 the lane it is the twin of - `agent-xhigh-fast` -> `agent-xhigh` -> `coder`,
-`agent-swarm-fast` -> `agent-swarm` -> `coder` (`litellm/config.yaml:883-884`) -
+`agent-swarm-fast` -> `agent-swarm` -> `coder` (`litellm/config.yaml:887-888`) -
 keeping its baked level and its pin behaviour, while `compaction-fast` is the one
 chain nobody types: it hops to a Spark rather than to another Arc alias,
-`compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:889`), because
+`compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:893`), because
 `coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama
 container and a hop between them is a hop to whatever is already down. The other
 four `EVO_T1_FAST_COMPACTION*` keys - the kill switch, `EVO_T1_FAST_COMPACTION_LANES`

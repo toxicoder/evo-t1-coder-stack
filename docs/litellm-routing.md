@@ -392,7 +392,7 @@ unpinned traffic that `least-busy` can place on all three boxes at once.
 The baked level is the only thing that separates them. An explore child is a lookup, so it
 takes `low` and answers fast; a review child is the check that a landed claim is actually
 true, so it takes the `xhigh` `agent` itself carries. Each names itself with an empty flag
-list beside the swarm lane's (`litellm/config.yaml:718-725`) and declares its own six-key
+list beside the swarm lane's (`litellm/config.yaml:721-729`) and declares its own six-key
 `model_group_retry_policy` block, because a group inherits nothing from its siblings.
 
 What the lift costs is what it costs the swarm lane, said plainly: a second turn of the
@@ -479,7 +479,15 @@ it picks a tier rather than ending the hop. Below it the summary goes to `compac
 which is the right place for it, because those weights answer inside a 32768-token window
 and Ollama clamps an over-long input instead of refusing it - a summary pushed in over that
 comes back quietly truncated, and a truncated summary is worse than the slower one it would
-replace. Above it the summary goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default
+replace. That window is also the ceiling the guard cannot raise past: the fork happens at the
+smaller of `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` and the `max_input_tokens` `config.yaml`
+declares for the Arc target group, so `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000` forks at
+32768 and logs one `compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 is above
+the 32768 tokens config.yaml declares for 'compaction-fast'; forking at the declared window
+instead` line. The declared window is a fact about the weights and the pinned LiteLLM has no
+context-window check between the hook and Ollama, so a knob cannot reach past it; a target
+group that declares no window leaves the guard whole.
+Above it the summary goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default
 `agent-low`): the same three Spark boxes, the 262144-token window a real summary needs, and
 the thinking baked to `low` instead of `xhigh`. Blank that knob, or name the lane the call
 arrived on, and an oversized summary stays where it is, which is the pre-hop behaviour. The
@@ -502,6 +510,19 @@ covers a full-size summary even with the limit left alone, and it is a routing c
 its own trade, not a free win: the summary is still a Spark call, holding a stream on a box
 the writers want, at a thinking level turned down from the one the lane exists to bake.
 
+The known limit on that tier is its fallback, and it is the stack's standing one: every
+Spark group's last resort is the Arc, so `agent-low: ["coder"]`
+(`litellm/config.yaml:862`, and the same shape under `agent-xhigh-fast: ["agent-xhigh",
+"coder"]` and `agent-swarm-fast: ["agent-swarm", "coder"]`) means that when all three Sparks
+are cooled an oversized summary lands on `coder` - a 32768-token group - and is answered
+from a truncated reading, which is the outcome the fork exists to prevent. Nothing here
+makes that worse: the pair's own chains end at `coder` too, and so does
+`compaction-fast: ["agent-low", "coder"]`. The fork changes who tries first. What an operator
+holds is the choice of who tries second: blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` to leave
+the summary on the lane it arrived on, point it at another Spark group, or edit the fallback
+list beside it in the same routing file. When the Sparks are unreachable the answer is the
+one every agent lane already has - the working degraded mode is `chat`.
+
 What has been measured is the old path, not the new one. The 107 s to 1915 s spread and the
 18 abandoned successes above are both from the Spark lane before the hop existed, swept out
 of the session logs in [troubleshooting.md](troubleshooting.md). Neither tier has a timing
@@ -518,7 +539,7 @@ Everything a caller can tune is one of five environment variables, read in
 | `EVO_T1_FAST_COMPACTION` | on; `0`, `false`, `off` disable it | the kill switch - off, every call of every lane stays where its alias routes it |
 | `EVO_T1_FAST_COMPACTION_LANES` | `agent-xhigh-fast,agent-swarm-fast` | which groups may hop; name one to narrow the hop to it |
 | `EVO_T1_FAST_COMPACTION_TARGET` | `compaction-fast` | the model group a summary under the guard is moved to; a name that is no `model_name:` in `config.yaml` is refused and the call stays put |
-| `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` | `24000` | the token estimate that decides which of the two tiers takes the call |
+| `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` | `24000` | the token estimate that decides which of the two tiers takes the call; a ceiling this module may lower and never raise, because the Arc target group's own `max_input_tokens` caps it and logs one line when it does |
 | `EVO_T1_FAST_COMPACTION_SPARK_TARGET` | `agent-low` | where a summary above the guard goes, checked against `config.yaml` the same way; blank it, or name the lane it arrived on, and it stays there |
 
 Three ways to land this feature and get nothing. The first is caught for you at the pinned
@@ -592,7 +613,7 @@ traceparent and baggage, plus `metadata.session_id` in the body.
 - The two fan-out lanes degrade the way the swarm lane does, one step further than the
   pinned lanes, and each hops through the lane that bakes its own level:
   `agent-explore: ["agent-low", "coder"]` and `agent-review: ["agent-xhigh", "coder"]`
-  (`litellm/config.yaml:878-879`). The extra step is worth taking for the same reason -
+  (`litellm/config.yaml:882-883`). The extra step is worth taking for the same reason -
   these groups' own three deployments can all be cooling while the same boxes are healthy
   under the pinned alias, since health state and cooldowns are kept per group - and the
   hop is chosen so a parent that dispatched an explore child at `low` gets a `low` answer
@@ -602,13 +623,13 @@ traceparent and baggage, plus `metadata.session_id` in the body.
 - Each fast lane hops to the lane it is the twin of:
   `- agent-xhigh-fast: ["agent-xhigh", "coder"]` and
   `- agent-swarm-fast: ["agent-swarm", "coder"]`
-  (`litellm/config.yaml:883-884`). Same boxes, same baked level, same pin behaviour, so a
+  (`litellm/config.yaml:887-888`). Same boxes, same baked level, same pin behaviour, so a
   session that lost its own group keeps everything except that group's routing state. Both
   chains are acyclic and end at `coder` like every other here: agent-xhigh-fast ->
   agent-xhigh -> coder, agent-swarm-fast -> agent-swarm -> coder.
 - `compaction-fast` degrades to a Spark rather than to another Arc alias -
   `- compaction-fast: ["agent-low", "coder"]`
-  (`litellm/config.yaml:889`) - and that direction is the point. `coder`, `coder-fast` and
+  (`litellm/config.yaml:893`) - and that direction is the point. `coder`, `coder-fast` and
   `compaction-fast` all answer from the one Ollama container on the Arc, so a hop between
   them is a hop to whatever is already down. `agent-low` is the quickest answer the fleet
   has, which is what a summary was after on this lane in the first place. Acyclic:
