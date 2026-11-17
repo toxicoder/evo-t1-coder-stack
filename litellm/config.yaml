@@ -2,8 +2,8 @@
 #
 # Workspaces and desktops always talk to one OpenAI-compatible base URL
 # (http://host.docker.internal:4000/v1) and pick a model alias. Aliases are
-# the stable names: "coder" / "coder-fast" / "chat" / "spark-*" for the Arc and
-# Ollama paths, "agent" for the tool-capable Spark lane (ONE model group whose
+# the stable names: "coder" / "coder-fast" / "chat" for the Arc Ollama path,
+# "agent" for the tool-capable Spark lane (ONE model group whose
 # three deployments are one TensorFold-served inference backend per Spark box),
 # and "agent-low" / "agent-medium" / "agent-xhigh" for the same lane with a
 # thinking level baked in. `agent` itself already thinks at xhigh. The fifth
@@ -31,8 +31,7 @@
 # compacts exactly as it always has.
 #
 # Local models run on the IPEX-LLM Ollama container (Arc 140T, compose
-# network only). The spark-* aliases target optional NVIDIA Spark boxes;
-# set SPARK1_OLLAMA_URL / SPARK2_OLLAMA_URL in .env to real Ollama hosts.
+# network only). The optional NVIDIA Spark boxes run no Ollama of their own.
 # The agent alias targets the TensorFold /v1 endpoints those boxes run on
 # :8888 (SPARKn_OPENAI_URL, an OpenAI-compatible /v1 endpoint).
 #
@@ -74,22 +73,6 @@ model_list:
       model: ollama_chat/qwen2.5:7b
       api_base: http://ollama:11434
       api_key: local-arc
-    model_info:
-      max_input_tokens: 32768
-
-  # Arc-class models on the Spark boxes, still served over Ollama (optional).
-  - model_name: spark-coder
-    litellm_params:
-      model: ollama_chat/qwen2.5-coder:32b
-      api_base: os.environ/SPARK1_OLLAMA_URL
-      api_key: local-spark
-    model_info:
-      max_input_tokens: 32768
-  - model_name: spark-chat
-    litellm_params:
-      model: ollama_chat/qwen2.5:7b
-      api_base: os.environ/SPARK2_OLLAMA_URL
-      api_key: local-spark
     model_info:
       max_input_tokens: 32768
 

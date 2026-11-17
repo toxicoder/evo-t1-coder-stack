@@ -30,7 +30,7 @@ model:
 # `model` and `default_model`, exactly and case-insensitively - and a name no row
 # declares is left on the current provider as an unknown hidden model. The
 # client-selectable set is therefore the union of `models:` below and the three Arc
-# rows' `default_model`: the fourteen aliases in litellm/config.yaml a session may
+# rows' `default_model`: the twelve aliases in litellm/config.yaml a session may
 # pick, each declared by exactly one row. One id on two rows is not a harmless
 # duplicate - `switch_model` refuses the name outright with "declared by multiple
 # configured providers" - which is why `chat`, `coder` and `coder-fast` appear once,
@@ -72,11 +72,9 @@ model:
 providers:
   # The catalogue, and the first row on purpose (see the discovery note above). The
   # nine `agent-*` aliases are the tool-capable Spark lanes, one per thinking level
-  # and per fleet role. The two `spark-*` aliases are Ollama on a Spark box:
-  # declared so they are pickable, and off-box and usually powered off, so a cold
-  # box answers a connection error. The three Arc weights are declared by their own
-  # rows below and stay out of this list - a second declaration would make
-  # `/model chat` ambiguous, and Hermes answers that with a refused switch.
+  # and per fleet role. The three Arc weights are declared by their own rows below
+  # and stay out of this list - a second declaration would make `/model chat`
+  # ambiguous, and Hermes answers that with a refused switch.
   litellm:
     base_url: http://litellm:4000/v1
     api_key: ${LITELLM_MASTER_KEY}
@@ -92,8 +90,6 @@ providers:
       agent-review: {}
       agent-xhigh-fast: {}
       agent-swarm-fast: {}
-      spark-coder: {}
-      spark-chat: {}
   # The three models this stack runs on its own hardware, each also a named route
   # for one session: `hermes --provider arc-chat` sends `chat`. That
   # `default_model` is also the row's one declaration of the alias, which is what
