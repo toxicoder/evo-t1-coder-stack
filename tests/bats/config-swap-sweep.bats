@@ -21,18 +21,20 @@
 # (templates/workspace/coder.tf:272): a config that still carries the marker is one every
 # start replaces, whichever of the two bodies runs first.
 #
-# What makes this step safe is that it never destroys anything it cannot prove. Neither
-# of its two orphan tests proves a writer is gone: vim writes the swap once about four
-# seconds after a change and then stays quiet, so an idle live session is
-# indistinguishable from a crashed one, which is why the hour is courtesy toward another
-# container's session and not evidence; and each workspace has its own PID namespace, so
-# the descriptor scan sees this container's processes only. So a file the sweep judges
-# orphaned is moved into ~/.grok/stale-swaps and stays recoverable, and every path that
-# cannot decide - a probe that errors, a target it cannot move - leaves the swap exactly
-# where it is for a person to answer by hand. Pinned below: a holder's open descriptor,
-# an mtime inside the hour, a failing probe, an unwritable archive directory, and any
-# name that is not vim's own single-suffix `.sw?` on that one file all keep the file.
-# And a config.toml whose marker a person deleted is theirs, swap and all.
+# What makes the step safe is that it destroys nothing it cannot prove, and neither of its
+# two orphan tests proves a writer is gone. vim writes the swap once about four seconds
+# after a change and then stays quiet, so an idle live session is indistinguishable from a
+# crashed one, which makes the hour a courtesy toward another container's session rather
+# than evidence; and each workspace has its own PID namespace, so the descriptor scan sees
+# this container's processes only. So what the sweep judges orphaned is moved into
+# ~/.grok/stale-swaps under a name it gives itself, re-dated to the moment it was set down
+# so the month of recovery is real, and every path that cannot decide - a probe that
+# errors, a scan with nothing to read, a target it cannot move - leaves the swap exactly
+# where it is for a person to answer by hand. Pinned below: a holder's open descriptor, an
+# mtime inside the hour, a symlink, a missing or failing probe, an unreadable descriptor
+# tree, an unwritable archive directory, a refused move, an archive name already taken, and
+# any name that is not vim's own single-suffix `.sw?` on that one file all keep the file.
+# A config.toml that carries neither stack marker is the operator's, swap and all.
 #
 # These cases drive the .tftpl's own text, not a render, so the body stays free of braced
 # shell expansion: that is the one form whose meaning shifts across templatefile(), and
@@ -56,10 +58,27 @@ setup() {
   [ -f "${BODY}" ] || skip "the agents_seed body is absent"
 }
 
-# run_sweep <home> - run the real body with HOME pointed at a scratch tree. run keeps
+# run_sweep <home> [path_prefix] - run the real body with HOME pointed at a scratch tree.
+# An optional prefix goes on PATH first, which is how a probe is made to fail. run keeps
 # the function's own report in ${output}.
 run_sweep() {
-  run bash -c "HOME='${1}'; source <(python3 '${REPO_ROOT}/tests/extract_fn.py' '${BODY}' grok_sweep_config_swaps); grok_sweep_config_swaps"
+  local home="${1}" prefix=""
+  [ "$#" -gt 1 ] && prefix="${2}:"
+  run bash -c "HOME='${home}'; PATH='${prefix}${PATH}'; source <(python3 '${REPO_ROOT}/tests/extract_fn.py' '${BODY}' grok_sweep_config_swaps); grok_sweep_config_swaps"
+}
+
+# run_sweep_proc <home> <proc_dir> - same, with the descriptor scan pointed somewhere
+# else. The body names its scan root as one constant so a case can hand it a tree with no
+# descriptors in it; the assertion here is that the seam still exists.
+run_sweep_proc() {
+  local home="${1}" procdir="${2}" fn="${BATS_TEST_TMPDIR}/fn-proc.sh"
+  python3 "${REPO_ROOT}/tests/extract_fn.py" "${BODY}" grok_sweep_config_swaps \
+    | sed "s|grok_proc_dir=/proc|grok_proc_dir=${procdir}|" > "${fn}"
+  grep -qF "grok_proc_dir=${procdir}" "${fn}" || {
+    echo "the body no longer names grok_proc_dir=/proc, so this case tested nothing" >&2
+    return 1
+  }
+  run bash -c "HOME='${home}'; . '${fn}'; grok_sweep_config_swaps"
 }
 
 # new_swap <home> <name> [age] - one swap file in <home>/.grok, backdated by <age>.
@@ -70,14 +89,16 @@ new_swap() {
   touch -d "${age}" "${home}/.grok/${name}"
 }
 
-# manage <home> <stack|person> - what the config beside the swap claims to be.
+# manage <home> <stack|person|comment> - what the config beside the swap claims to be.
+# `comment` carries only the marker comment; `stack` only the TOML key. Either one on its
+# own is enough for the sweep to consider the file stack-owned.
 manage() {
   mkdir -p "${1}/.grok"
-  if [ "${2}" = "stack" ]; then
-    printf '__evoT1Stack = true\n' > "${1}/.grok/config.toml"
-  else
-    printf '# the operator wrote this one\n' > "${1}/.grok/config.toml"
-  fi
+  case "${2}" in
+    stack) printf '__evoT1Stack = true\n' > "${1}/.grok/config.toml" ;;
+    comment) printf '# managed-by: evo-t1-coder-stack\n' > "${1}/.grok/config.toml" ;;
+    *) printf '# the operator wrote this one\n' > "${1}/.grok/config.toml" ;;
+  esac
 }
 
 # names_in <home> - every name left in <home>/.grok, so a case proves the sweep took
@@ -86,8 +107,8 @@ names_in() {
   find "${1}/.grok" -maxdepth 1 -mindepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' '
 }
 
-# archived <home> - what landed in the recover directory, contents only. A sweep that
-# "cleared" the swap by deleting it would show an empty list here.
+# archived <home> - what landed in the recover directory, names only. A sweep that
+# "cleared" the swap by deleting it shows an empty list here.
 archived() {
   local dir="${1}/.grok/stale-swaps"
   [ -d "${dir}" ] || {
@@ -95,6 +116,12 @@ archived() {
     return
   }
   find "${dir}" -maxdepth 1 -mindepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' '
+}
+
+# archive_holding <home> <text> - is any archived byte sequence the one we seeded?
+archive_holding() {
+  local dir="${1}/.grok/stale-swaps"
+  [ -d "${dir}" ] && grep -rls -- "${2}" "${dir}" >/dev/null 2>&1
 }
 
 @test "swap sweep: both twins still consume the body that carries it" {
@@ -147,11 +174,10 @@ archived() {
 
 @test "swap sweep: the body stays in the subset that means the same thing rendered and raw" {
   # Every case here drives the body's own text through bash, which is what caught a
-  # `$${grok_swap##*/}` that only made sense after Terraform rendered it: raw, the shell
-  # got the pattern's own slash and the move silently failed. A braced shell expansion is
+  # braced shell expansion that only made sense after Terraform rendered it: raw, the
+  # shell got the pattern's own slash and the move silently failed. A braced expansion is
   # the one form whose meaning changes across the render, so this body uses none. The
-  # alternatives are the ones that mean the same thing both ways - basename, cut, or a
-  # loop over the candidates.
+  # alternatives are the ones that mean the same thing both ways - basename, or a loop.
   ! grep -q '\$\${' "${BODY}" || {
     echo "the body has a braced shell expansion again; the raw-text cases here would" >&2
     echo "disagree with what the boot runs. Use basename or a candidate loop instead." >&2
@@ -167,9 +193,6 @@ archived() {
   new_swap "${home}" .config.toml.swn
   new_swap "${home}" .config.toml.swm
   run_sweep "${home}"
-  # A boot that relocates a file the operator can see says so: a silent move here reads
-  # exactly like the stack eating someone's work.
-  assert_match "one report per move" 'Moved the stale editor swap' "${output}"
   assert_eq "the E325 prompt is clear of them" "config.toml stale-swaps " "$(names_in "${home}")"
   # Recoverable is the contract: the bytes still exist, so a wrong orphan call is undone
   # by an ls and a `vim -r`, and a step that had deleted them fails this line.
@@ -177,27 +200,41 @@ archived() {
   kept="$(archived "${home}")"
   for suffix in swp swo swn swm; do
     case " ${kept} " in
-      *" .config.toml.${suffix}.orphan."*) ;;
+      *" sweep-.config.toml.${suffix}.orphan."*) ;;
       *)
-        echo "stale-swaps holds '${kept}'; .config.toml.${suffix} is not in it" >&2
+        echo "stale-swaps holds '${kept}'; a sweep-named .config.toml.${suffix} is not in it" >&2
         return 1
         ;;
     esac
   done
-  grep -q 'VIM swap fixture' "${home}/.grok/stale-swaps/.config.toml.swp.orphan."* || {
+  archive_holding "${home}" 'VIM swap fixture' || {
     echo "the archived swap is not the file's own bytes" >&2
     return 1
   }
+  # A boot that relocates a file the operator can see says so, and says where to: the
+  # archived name carries a suffix nobody can guess, so the log has to print it.
+  assert_match "one report per move" 'Moved the stale editor swap' "${output}"
+  assert_match "and the report names the archived path" \
+    'vim -r ~/.grok/stale-swaps/sweep-\.config\.toml\.swp\.orphan\.' "${output}"
 }
 
-@test "swap sweep: a swap written in the last hour stays" {
-  local home="${BATS_TEST_TMPDIR}/fresh"
+@test "swap sweep: the hour is the boundary, on both sides of it" {
+  # Pinning the number itself: fixtures at now and two days ago alone let any threshold
+  # between one minute and two days pass, which would make the guard decorative.
+  local home="${BATS_TEST_TMPDIR}/hour"
   manage "${home}" stack
-  new_swap "${home}" .config.toml.swp "now"
+  new_swap "${home}" .config.toml.swp "30 minutes ago"
+  new_swap "${home}" .config.toml.swo "90 minutes ago"
   run_sweep "${home}"
-  assert_eq "a session that may be live keeps its swap" ".config.toml.swp config.toml " "$(names_in "${home}")"
-  assert_not_match "and the boot says nothing about it" 'Moved the stale editor swap' "${output}"
-  assert_eq "and nothing is archived" "(none)" "$(archived "${home}")"
+  assert_eq "inside the hour stays, outside it goes" \
+    ".config.toml.swp config.toml stale-swaps " "$(names_in "${home}")"
+  case " $(archived "${home}") " in
+    *" sweep-.config.toml.swo.orphan."*) ;;
+    *)
+      echo "the 90-minute swap should be archived; got '$(archived "${home}")'" >&2
+      return 1
+      ;;
+  esac
 }
 
 @test "swap sweep: a swap an open descriptor holds stays" {
@@ -230,6 +267,66 @@ archived() {
     ".config.toml.swp config.toml " "$(names_in "${home}")"
 }
 
+@test "swap sweep: a probe that errors is not an answer, and the swap stays" {
+  # readlink is the probe whose silence means "nobody holds this": an erroring one answers
+  # the empty string, and the compare reads that as no holder. The body therefore has to
+  # exercise readlink and check the result, not just look for the binary.
+  local stub="${BATS_TEST_TMPDIR}/readlink-fails"
+  mkdir -p "${stub}"
+  printf '#!/bin/sh\nexit 1\n' > "${stub}/readlink"
+  chmod 755 "${stub}/readlink"
+  local home="${BATS_TEST_TMPDIR}/readlink-errors"
+  manage "${home}" stack
+  new_swap "${home}" .config.toml.swp
+  run_sweep "${home}" "${stub}"
+  assert_eq "an unreadable answer keeps every swap in place" \
+    ".config.toml.swp config.toml " "$(names_in "${home}")"
+  assert_eq "and nothing reached the archive" "(none)" "$(archived "${home}")"
+
+  # A readlink that is simply not on PATH is the same undecided case.
+  local gone="${BATS_TEST_TMPDIR}/readlink-missing"
+  mkdir -p "${gone}"
+  for tool in find basename grep mv mkdir touch cat python3; do
+    ln -s "$(command -v "${tool}")" "${gone}/${tool}" 2>/dev/null || true
+  done
+  local home2="${BATS_TEST_TMPDIR}/readlink-absent"
+  manage "${home2}" stack
+  new_swap "${home2}" .config.toml.swp
+  run bash -c "HOME='${home2}'; PATH='${gone}'; source <(python3 '${REPO_ROOT}/tests/extract_fn.py' '${BODY}' grok_sweep_config_swaps); grok_sweep_config_swaps"
+  assert_eq "a missing probe keeps every swap in place" \
+    ".config.toml.swp config.toml " "$(names_in "${home2}")"
+}
+
+@test "swap sweep: a descriptor tree with nothing readable in it is not an answer either" {
+  # With the scan root gone the glob matches nothing, so every swap looks unheld and the
+  # sweep would move a file out from under a live editor. The guard has to fail closed.
+  local home="${BATS_TEST_TMPDIR}/no-proc"
+  manage "${home}" stack
+  new_swap "${home}" .config.toml.swp
+  run_sweep_proc "${home}" "${BATS_TEST_TMPDIR}/definitely-not-proc"
+  assert_eq "no descriptors to read keeps the swap where it is" \
+    ".config.toml.swp config.toml " "$(names_in "${home}")"
+  assert_not_match "and the boot claims no move" 'Moved the stale editor swap' "${output}"
+}
+
+@test "swap sweep: a swap that is a symlink is left alone" {
+  # Archiving a link would move the name, strand the bytes it points at, and then promise
+  # recovery of a dangling path.
+  local home="${BATS_TEST_TMPDIR}/symlink-swap"
+  manage "${home}" stack
+  mkdir -p "${home}/elsewhere"
+  printf 'REAL BYTES OUTSIDE THE HOME\n' > "${home}/elsewhere/real.bin"
+  ln -s "${home}/elsewhere/real.bin" "${home}/.grok/.config.toml.swp"
+  touch -h -d '2 days ago' "${home}/.grok/.config.toml.swp"
+  run_sweep "${home}"
+  assert_eq "the link stays put" ".config.toml.swp config.toml " "$(names_in "${home}")"
+  assert_eq "and nothing was archived" "(none)" "$(archived "${home}")"
+  grep -q 'REAL BYTES OUTSIDE THE HOME' "${home}/elsewhere/real.bin" || {
+    echo "the bytes behind the link moved" >&2
+    return 1
+  }
+}
+
 @test "swap sweep: a swap of any other file, or a non-vim suffix, is left alone" {
   local home="${BATS_TEST_TMPDIR}/others"
   manage "${home}" stack
@@ -247,6 +344,21 @@ archived() {
     "$(names_in "${home}")"
 }
 
+@test "swap sweep: either stack marker on its own makes the config ours to sweep" {
+  # The guard accepts the TOML key or the comment. A fixture that seeds only one of them
+  # leaves the other alternative untested, and dropping it from the grep would then be a
+  # silent change in which homes get swept.
+  local home
+  for spelling in stack comment; do
+    home="${BATS_TEST_TMPDIR}/marker-${spelling}"
+    manage "${home}" "${spelling}"
+    new_swap "${home}" .config.toml.swp
+    run_sweep "${home}"
+    assert_eq "a config marked by ${spelling} is swept" \
+      "config.toml stale-swaps " "$(names_in "${home}")"
+  done
+}
+
 @test "swap sweep: a config the stack does not own keeps its swap" {
   local home="${BATS_TEST_TMPDIR}/unmanaged"
   manage "${home}" person
@@ -257,23 +369,22 @@ archived() {
   assert_not_match "and nothing is announced" 'Moved the stale editor swap' "${output}"
 }
 
-@test "swap sweep: a failing probe leaves the swap in place" {
-  # The fail-closed half of the design: an age check that cannot answer is a reason to
-  # keep the file, never a reason to move it. Drop the `|| continue` after the find and
-  # this case turns red.
-  local home="${BATS_TEST_TMPDIR}/probe-fails"
-  manage "${home}" stack
-  new_swap "${home}" .config.toml.swp
-  local stub="${BATS_TEST_TMPDIR}/stub-bin"
+@test "swap sweep: every undecided path keeps the swap and stays quiet" {
+  # A find that cannot answer is not an answer: the age check has to keep the file.
+  local stub="${BATS_TEST_TMPDIR}/find-fails"
   mkdir -p "${stub}"
   printf '#!/bin/sh\nexit 1\n' > "${stub}/find"
   chmod 755 "${stub}/find"
-  run bash -c "HOME='${home}'; PATH='${stub}:${PATH}'; source <(python3 '${REPO_ROOT}/tests/extract_fn.py' '${BODY}' grok_sweep_config_swaps); grok_sweep_config_swaps"
-  assert_eq "a probe that errors costs the swap nothing" ".config.toml.swp config.toml " "$(names_in "${home}")"
+  local home="${BATS_TEST_TMPDIR}/probe-fails"
+  manage "${home}" stack
+  new_swap "${home}" .config.toml.swp
+  run_sweep "${home}" "${stub}"
+  assert_eq "a probe that errors costs the swap nothing" \
+    ".config.toml.swp config.toml " "$(names_in "${home}")"
   assert_eq "and nothing reached the archive" "(none)" "$(archived "${home}")"
 
-  # Same again with the age check answering and the move blocked: an archive directory
-  # that cannot be made is a reason to leave the file where the operator can find it.
+  # An archive directory that cannot be made is a reason to leave the file where the
+  # operator can find it, and no reason to overwrite what already owns that name.
   local blocked="${BATS_TEST_TMPDIR}/archive-blocked"
   manage "${blocked}" stack
   new_swap "${blocked}" .config.toml.swp
@@ -289,20 +400,101 @@ archived() {
   }
 }
 
-@test "swap sweep: the archive is kept, and only for a month" {
+@test "swap sweep: a move that cannot happen leaves the swap and stays quiet" {
+  # The report has to be earned: announcing a move that mv refused is the one outcome
+  # worse than silence, because the operator then looks in stale-swaps for a file that is
+  # still sitting in .grok. Stub mv and both halves are checked.
+  local home="${BATS_TEST_TMPDIR}/mv-fails"
+  manage "${home}" stack
+  new_swap "${home}" .config.toml.swp
+  local stub="${BATS_TEST_TMPDIR}/mv-stub"
+  mkdir -p "${stub}"
+  printf '#!/bin/sh\nexit 1\n' > "${stub}/mv"
+  chmod 755 "${stub}/mv"
+  run_sweep "${home}" "${stub}"
+  assert_eq "a refused move leaves the swap where it was" \
+    ".config.toml.swp config.toml stale-swaps " "$(names_in "${home}")"
+  assert_not_match "and the boot claims no move it did not make" \
+    'Moved the stale editor swap' "${output}"
+}
+
+@test "swap sweep: a swap that is already a month old still arrives in the archive" {
+  # The feature's own common case: a workspace sits stopped for six weeks, so the swap it
+  # leaves is older than the retention. mv carries the old mtime with it, so without
+  # re-dating the archived copy the prune in this same run deletes what it just moved and
+  # the month of recovery is a lie exactly when it is most needed.
+  local home="${BATS_TEST_TMPDIR}/ancient"
+  manage "${home}" stack
+  new_swap "${home}" .config.toml.swp "40 days ago"
+  run_sweep "${home}"
+  assert_eq "the swap left .grok" "config.toml stale-swaps " "$(names_in "${home}")"
+  case " $(archived "${home}") " in
+    *" sweep-.config.toml.swp.orphan."*) ;;
+    *)
+      echo "a 40-day-old swap was archived and pruned in one run; archive is '$(archived "${home}")'" >&2
+      return 1
+      ;;
+  esac
+  archive_holding "${home}" 'VIM swap fixture' || {
+    echo "the archived bytes are gone" >&2
+    return 1
+  }
+}
+
+@test "swap sweep: archiving never overwrites an archive already there" {
+  # Sibling containers share this volume and each starts its own PID sequence, so two
+  # sweeps can reach the same $$ and the second mv would eat the first one's evidence.
+  local home="${BATS_TEST_TMPDIR}/collision"
+  manage "${home}" stack
+  new_swap "${home}" .config.toml.swp
+  local fn="${BATS_TEST_TMPDIR}/fn-collision.sh"
+  python3 "${REPO_ROOT}/tests/extract_fn.py" "${BODY}" grok_sweep_config_swaps > "${fn}"
+  run bash -c "HOME='${home}'; mkdir -p \"\$HOME/.grok/stale-swaps\"; printf 'BOOT ONE PRECIOUS WORK\n' > \"\$HOME/.grok/stale-swaps/sweep-.config.toml.swp.orphan.\$\$-0\"; . '${fn}'; grok_sweep_config_swaps"
+  assert_eq "the swap still left .grok" "config.toml stale-swaps " "$(names_in "${home}")"
+  local count
+  count="$(find "${home}/.grok/stale-swaps" -maxdepth 1 -mindepth 1 | wc -l | tr -d ' ')"
+  [ "${count}" -eq 2 ] || {
+    echo "two sweeps should leave two archives, found ${count}: $(archived "${home}")" >&2
+    return 1
+  }
+  archive_holding "${home}" 'BOOT ONE PRECIOUS WORK' || {
+    echo "the earlier archive was overwritten" >&2
+    return 1
+  }
+}
+
+@test "swap sweep: the archive is kept for a month, and only the sweep's own files" {
   local home="${BATS_TEST_TMPDIR}/prune"
   manage "${home}" stack
-  mkdir -p "${home}/.grok/stale-swaps"
-  printf 'old\n' > "${home}/.grok/stale-swaps/.config.toml.swp.orphan.111"
-  printf 'new\n' > "${home}/.grok/stale-swaps/.config.toml.swo.orphan.222"
-  touch -d '40 days ago' "${home}/.grok/stale-swaps/.config.toml.swp.orphan.111"
-  touch -d '2 days ago' "${home}/.grok/stale-swaps/.config.toml.swo.orphan.222"
+  mkdir -p "${home}/.grok/stale-swaps/keepme"
+  printf 'old\n' > "${home}/.grok/stale-swaps/sweep-.config.toml.swp.orphan.111-0"
+  printf 'new\n' > "${home}/.grok/stale-swaps/sweep-.config.toml.swo.orphan.222-0"
+  # The docs send a person to this directory to recover work, so anything they park there
+  # is theirs. These three are the shapes that a looser prune filter eats: a name with
+  # `.orphan.` in it that the sweep never wrote, and a file one level down.
+  printf 'mine\n' > "${home}/.grok/stale-swaps/notes.orphan.txt"
+  printf 'backup\n' > "${home}/.grok/stale-swaps/config.toml.bak.orphan.keep"
+  printf 'deep\n' > "${home}/.grok/stale-swaps/keepme/sweep-.config.toml.swn.orphan.333-0"
+  local stale
+  for stale in sweep-.config.toml.swp.orphan.111-0 sweep-.config.toml.swo.orphan.222-0 \
+    notes.orphan.txt config.toml.bak.orphan.keep keepme/sweep-.config.toml.swn.orphan.333-0; do
+    touch -d '40 days ago' "${home}/.grok/stale-swaps/${stale}"
+  done
+  touch -d '2 days ago' "${home}/.grok/stale-swaps/sweep-.config.toml.swo.orphan.222-0"
   run_sweep "${home}"
-  assert_eq "a month-old orphan nobody claimed is junk; this month's is evidence" \
-    ".config.toml.swo.orphan.222 " "$(archived "${home}")"
+  assert_eq "a month-old sweep archive is junk; everything else is a person's" \
+    "config.toml.bak.orphan.keep keepme notes.orphan.txt sweep-.config.toml.swo.orphan.222-0 " \
+    "$(archived "${home}")"
+  grep -q 'mine' "${home}/.grok/stale-swaps/notes.orphan.txt" || {
+    echo "the prune ate a file the operator named" >&2
+    return 1
+  }
+  grep -q 'deep' "${home}/.grok/stale-swaps/keepme/sweep-.config.toml.swn.orphan.333-0" || {
+    echo "the prune walked past one level" >&2
+    return 1
+  }
 
-  # And the sweep still works with no archive yet: the prune must not turn a missing
-  # directory into a failing boot.
+  # And the prune must not turn a missing archive into a failing boot.
   local fresh="${BATS_TEST_TMPDIR}/prune-none"
   manage "${fresh}" stack
   run_sweep "${fresh}"
@@ -311,25 +503,6 @@ archived() {
     return 1
   }
   assert_eq "and it built nothing" "(none)" "$(archived "${fresh}")"
-}
-
-@test "swap sweep: a move that cannot happen leaves the swap and stays quiet" {
-  # The report has to be earned: an announcement of a move that mv refused is the one
-  # outcome worse than silence, because the operator then looks in stale-swaps for a
-  # file that is still sitting in .grok. Stub mv to fail and both halves of that are
-  # checked - the file stays, and no report is printed.
-  local home="${BATS_TEST_TMPDIR}/mv-fails"
-  manage "${home}" stack
-  new_swap "${home}" .config.toml.swp
-  local stub="${BATS_TEST_TMPDIR}/mv-stub"
-  mkdir -p "${stub}"
-  printf '#!/bin/sh\nexit 1\n' > "${stub}/mv"
-  chmod 755 "${stub}/mv"
-  run bash -c "HOME='${home}'; PATH='${stub}:${PATH}'; source <(python3 '${REPO_ROOT}/tests/extract_fn.py' '${BODY}' grok_sweep_config_swaps); grok_sweep_config_swaps"
-  assert_eq "a refused move leaves the swap where it was" \
-    ".config.toml.swp config.toml stale-swaps " "$(names_in "${home}")"
-  assert_not_match "and the boot claims no move it did not make" \
-    'Moved the stale editor swap' "${output}"
 }
 
 @test "swap sweep: a missing config.toml is not an error, and costs the boot nothing" {

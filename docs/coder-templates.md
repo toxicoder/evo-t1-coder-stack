@@ -1058,10 +1058,14 @@ a change and then stays quiet while you read, so a live session idling over the 
 like a crashed one; and each workspace runs in its own PID namespace, so the `/proc` scan
 sees this container's descriptors only, which leaves a sibling workspace holding the same
 file open on the shared volume invisible from here. So an orphan is moved into
-`~/.grok/stale-swaps/` and stays recoverable with `vim -r` for a month, after which the
-sweep treats it as junk. A wrong call is one `ls` from undone.
+`~/.grok/stale-swaps/` under a name the sweep gives itself, and stays recoverable with
+`vim -r` for a month. The archived copy is re-dated to the moment it was set down: `mv`
+carries the swap's own mtime, and a workspace stopped for six weeks leaves a swap older
+than the retention, which that same boot would otherwise archive and prune in one breath.
+A wrong call is one `ls` from undone.
 
-- It only runs when `config.toml` still carries a stack marker, by the same contract as
+- It only runs when `config.toml` still carries a stack marker, either spelling of it, by
+  the same contract as
   [Marker ownership of the seeded files](#marker-ownership-of-the-seeded-files). A config
   that lost its marker is the operator's file, swap and all. The usual way one loses the
   marker is `grok mcp add` rewriting the file, and the remedy there is
@@ -1071,19 +1075,28 @@ sweep treats it as junk. A wrong call is one `ls` from undone.
 - A swap some process in this container still holds open stays, read straight off
   `/proc/*/fd` and compared by exact path. Comparing it as a glob would let one bracket in
   `$HOME` hide a live holder.
-- Every path that cannot decide leaves the file where it is and says nothing: a `find`,
-  `readlink` or `basename` that is missing or errors, a `/proc` that is not there, an
-  archive directory that cannot be made, a `mv` that is refused. The E325 prompt then
-  waits for a person, which is a visible nuisance with no data behind it, while a wrong
-  deletion is quiet and has data behind it.
-- Only vim's own `.sw?` suffix on that one name is a candidate, so `.notes.md.swp` and a
-  `.config.toml.newswp` are never touched. Each move is announced on the body's log.
+- Every path that cannot decide leaves the file where it is and says nothing: a `find` or
+  `basename` that is missing or errors, a `readlink` that cannot answer (the body runs it
+  and checks the result instead of just looking for the binary, since an empty answer
+  reads exactly as "no descriptor points here"), a `/proc` with nothing to scan, an
+  archive directory that cannot be made, an archive name already taken, and a `mv` that is
+  refused. The E325 prompt then waits for a person, which is a visible nuisance with no
+  data behind it, while a wrong deletion is quiet and has data behind it.
+- Only vim's own `.sw?` suffix on that one name is a candidate, and a symlink at that name
+  is left alone, since archiving a link would move the name and strand the bytes behind it.
+  So `.notes.md.swp` and a `.config.toml.newswp` are never touched. Each move is announced
+  on the body's log with the archived path in it, because the name carries a suffix nobody
+  can guess.
+- The prune matches the `sweep-`-prefixed names this function gives itself, at one level of
+  `~/.grok/stale-swaps/` and no deeper, so a person who reads this page and parks a file in
+  that directory keeps it.
 
-The window the design accepts is a sibling workspace with vim open on that file, idle past
-the hour, holding changes it never wrote: its in-memory buffer survives and the bytes stay
-readable in the archive for a month, while `:recover` finds the name moved. It is narrow,
-it is on a file every start overwrites anyway, and it is the reason the sweep stops at one
-name rather than tidying `~/.grok` generally.
+The blind spot the design accepts is a holder this process cannot see in `/proc` at all: a
+sibling container's vim, which the PID namespace hides, or a process whose `/proc/<pid>/fd`
+is unreadable from here. Its buffer and the archived bytes both survive, and the move is
+reversible for a month; what goes missing is the E325 prompt that would have warned the
+next person to open the file. That window is narrow, it sits on a file every start
+overwrites anyway, and it is why the sweep stops at one name here.
 
 This is not an invitation to hand-edit the file. `config.toml` is re-rendered from
 `grok-config.toml.tftpl` on every start, so an edit a person makes there is overwritten by

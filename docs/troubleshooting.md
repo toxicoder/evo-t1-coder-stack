@@ -922,12 +922,15 @@ coder restart <workspace>
   the stack is going to replace regardless.
 - A current workspace clears these at boot by itself. `grok_sweep_config_swaps` in the
   `agents-seed.sh.tftpl` body moves a swap of that name into `~/.grok/stale-swaps/` once
-  nothing in the container holds it open and it is over an hour old, so `vim -r` on the
-  archived path still gets the bytes back. Two reasons it may stay silent, both worth
-  checking before you blame the sweep: the config lost its stack marker, and the sweep
-  deliberately stands down on an unmanaged config (`grep -c '__evoT1Stack' ~/.grok/config.toml`
-  answers it; `grok mcp add` rewriting the file is the usual cause, and
-  `bazelisk run //scripts:seed-dev-env -- --force` is the fix); or the workspace predates
+  nothing in the container holds it open and it is over an hour old. The boot log prints
+  the archived name, and `vim -r` on that path gets the bytes back for a month; the files
+  in there are named `sweep-...orphan...` and only those names are ever pruned, so a file
+  you put in that directory yourself stays. Two reasons the sweep may stay silent, both
+  worth checking before you blame it: the config lost its stack marker, since the sweep
+  deliberately stands down on an unmanaged config (`grep -cE
+  'managed-by: evo-t1-coder-stack|__evoT1Stack = true' ~/.grok/config.toml` answers it, and
+  either spelling is enough; `grok mcp add` rewriting the file is the usual cause, and
+  `bazelisk run //scripts:seed-dev-env -- --force` is the fix), or the workspace predates
   the body, which a `bazelisk run //scripts:push-template` and one restart settles.
 - The reason the prompt keeps coming back is that the file is being hand-edited at all.
   It is re-rendered on every start, and under a shared profile the boot that overwrites
