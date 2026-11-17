@@ -676,20 +676,39 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
   # spawner-heavy plan reach the fleet and take a NoRoom answer mid-run, which is the
   # failure the budget exists to turn into a refusal before wave 1.
   set_fleet 3
-  check
+  check --slots 6
   [[ ${status} -eq 1 ]] || report_status
   assert_match "the over-cost opening wave was refused before any dispatch" \
-    'wave 1 costs 7 streams against a fleet of 3' "${output}"
+    'wave 1 costs 6 streams against a fleet of 3' "${output}"
 
   LEDGER_DONE="T01"
   write_plan
   # write_plan rebuilds the document from the task table, so the Dispatch `fleet:`
   # it carries has to be re-put, the same way the first check put it.
   set_fleet 3
-  check
+  check --slots 6
   [[ ${status} -eq 1 ]] || report_status
   assert_match "one landed row did not lift the budget" \
-    'wave 1 costs 7 streams against a fleet of 3' "${output}"
+    'wave 1 costs 6 streams against a fleet of 3' "${output}"
+}
+
+@test "a plan that fills every slot with one-stream tasks stays dispatchable" {
+  # The opening wave is priced at what one parent can hold in flight, so a plan of
+  # one-stream tasks whose slot count equals the fleet is the shape the width gate
+  # asks for. Charging it for every declared task refused a plan the checker then
+  # dispatched at full width, and a parent handed that error re-cuts a good split.
+  local i
+  for i in 10 11 12 13 14 15 16 17; do
+    add_task "T${i}|map the search surface from angle ${i}|map|explore|-|L0, L1-map|none|7|ctx/L1-map.md names the angle|results/T${i}.md"
+  done
+  write_plan
+  set_fleet 15
+  check --ready --slots 15
+  [[ ${status} -eq 0 ]] || report_status
+  assert_match "the wave filled every slot at one stream each" \
+    'cost: 15 streams of 15' "${stderr}"
+  assert_not_match "the fleet was never asked to hold more than it owns" \
+    'streams against a fleet of 15' "${output}"
 }
 
 @test "a panel written with spaces instead of commas still reads as a panel" {
@@ -731,7 +750,7 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
   check --ready --slots 6
   [[ ${status} -eq 1 ]] || report_status
   assert_match "the wave-1 cost against the fleet was reported" \
-    'wave 1 costs 9 streams against a fleet of 5; a spawner pays for its children' "${output}"
+    'wave 1 costs 8 streams against a fleet of 5; a spawner pays for its children' "${output}"
   assert_eq "the cost cap cut the wave below the six slots" "T01,T02,T03" "$(ready_csv)"
   assert_match "the wave price went to stderr" 'cost: 5 streams of 5' "${stderr}"
   assert_not_match "stdout stayed the bare id list" 'cost: [0-9]+ streams' "${output}"

@@ -507,8 +507,10 @@ def main():
             report.error("wave 1 is %d tasks wide against %d slots; the fleet idles, so "
                          "split the coarse tasks further" % (len(initial_ready), slots))
     # The stream price of the opening wave is arithmetic over what the plan declares,
-    # so it stays true as the Ledger advances and is checked whatever the state.
-    wave1_streams = sum(task_streams(task) for task in initial_tasks)
+    # so it stays true as the Ledger advances and is checked whatever the state. One
+    # parent holds at most `slots` children in flight, so the tasks past that never
+    # share the fleet with the wave and are not charged to it.
+    wave1_streams = sum(task_streams(task) for task in initial_tasks[:slots])
     if tasks and wave1_streams > fleet:
         report.error("wave 1 costs %d streams against a fleet of %d; a spawner pays "
                      "for its children, so narrow the fan-out"

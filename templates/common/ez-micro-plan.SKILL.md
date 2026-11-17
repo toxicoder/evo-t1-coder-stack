@@ -245,11 +245,11 @@ Run the check before you dispatch, and fix what it names:
 It errors on a task missing a key, two ready tasks sharing a path, a dependency cycle or
 unknown id, a lane or context file that does not exist, a task with no `done` check, a
 `calls` budget over 25, a `spawns` that is not a number or that ships a file of its own, a
-spawner whose children do not fit `fleet`, a wave-1 fan-out that costs more streams than
-the fleet holds, a reviewer that owns a file or skips a producer, and a first wave narrower
-than `slots` (that last one is the point: if wave 1 cannot fill the fleet, the split is too
-coarse). It prints the ready set on `--ready`, which is the wave to spawn, and what that
-wave pays, on stderr: `cost: <n> streams of <fleet>`.
+spawner whose children do not fit `fleet`, an opening wave that cannot fit the fleet even
+with every `slots` position filled, a reviewer that owns a file or skips a producer, and a
+first wave narrower than `slots` (that last one is the point: if wave 1 cannot fill the
+fleet, the split is too coarse). It prints the ready set on `--ready`, which is the wave to
+spawn, and what that wave pays, on stderr: `cost: <n> streams of <fleet>`.
 
 ## Step 5 -- dispatch: keep every slot busy
 
