@@ -114,12 +114,11 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
   |                 +-- local:  http://ollama:11434 (compose network only)
-  |                 +-- remote: SPARKn_HOST + SPARK_OLLAMA_PORT/SPARK_HTTP_PORT
-  |                 |           compose every Spark URL from them - Ollama
-  |                 |           aliases on 11434, TensorFold on 8888 - one
-  |                 |           `agent` group, one deployment per Spark box,
-  |                 |           the only tool-capable path. SPARKn_OLLAMA_URL
-  |                 |           and SPARKn_OPENAI_URL override a whole URL
+  |                 +-- remote: SPARKn_HOST + SPARK_HTTP_PORT
+  |                 |           compose every Spark URL from them - TensorFold
+  |                 |           on 8888 - one `agent` group, one deployment per Spark
+  |                 |           box, the only tool-capable path. SPARKn_OPENAI_URL
+  |                 |           overrides a whole URL
   |
   +-- :9119 ----> Hermes Web Dashboard (host assistant; Chat tab + approvals;
   |               basic auth). LAN port stays; the public name is opt-in and
@@ -728,8 +727,6 @@ measured 30-request burst, the **Agent backend** card) are in
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `compaction-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama (Arc); the target of those two lanes' summary hop, and not a client choice - no `[model.*]` block in the templates and no `local.model_choices` entry names it | no (measured on these weights, as on `coder-fast`) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
-| `spark-coder` | `qwen2.5-coder:32b` | `SPARK1_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK1_OLLAMA_URL` overrides) | unverified |
-| `spark-chat` | `qwen2.5:7b` | `SPARK2_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK2_OLLAMA_URL` overrides) | unverified |
 
 One measured fact decides what you can actually run: the Qwen2.5-Coder weights do not
 emit structured tool calls on this box's IPEX-LLM Ollama, so agent mode needs the Spark

@@ -408,18 +408,16 @@ The `agent` model group is three deployments behind one LiteLLM alias, one per
 Spark box, and these are the keys that fill it:
 
 - `SPARKn_HOST` is where each box is named - once. docker-compose.yml composes
-  every Spark URL from it plus the two ports below, so a box that gets a new
+  every Spark URL from it plus the port below, so a box that gets a new
   DHCP name or a static IP is edited in this one place and the LiteLLM
   deployments, the dashboard's per-box cards, and the host list
   `//scripts:spark-verify` / `//scripts:spark-configure` probe all move
   together. The shipped placeholders do not resolve on purpose: leave a box you
   do not run empty and its alias and its card both report down.
-- `SPARK_OLLAMA_PORT` (default 11434) and `SPARK_HTTP_PORT` (default 8888) are
-  the ports every box of the recipe answers on - Ollama for the `spark-<n>`
-  aliases, TensorFold's `/v1` and `/health` for the `agent` lane and the cards.
-- `SPARKn_OLLAMA_URL` are the Ollama endpoints behind the `spark-<n>` aliases,
-  and `SPARKn_OPENAI_URL` the OpenAI-compatible `/v1` endpoints. Both are
-  overrides, kept commented in the twin: set one when that box answers somewhere
+- `SPARK_HTTP_PORT` (default 8888) is the port every box of the recipe answers
+  on - TensorFold's `/v1` and `/health`, for the `agent` lane and the cards.
+- `SPARKn_OPENAI_URL` is the OpenAI-compatible `/v1` endpoint. It is an
+  override, kept commented in the twin: set it when that box answers somewhere
   the host plus port cannot express (https behind a reverse proxy, two boxes on
   one host). A value set there wins outright, and that box's dashboard card does
   not follow it - name the same host in `SPARKn_HEALTH_URL` too. A workspace

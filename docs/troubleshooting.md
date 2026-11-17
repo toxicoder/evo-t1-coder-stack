@@ -226,10 +226,17 @@ curl -sS "${AGENT_MODEL_URL:-http://${SPARK2_HOST:-localhost}:${SPARK_HTTP_PORT:
 bazelisk run //scripts:spark-verify -- --no-tests
 ```
 
-- Its host list comes from the `SPARK*_URL` keys in `.env` (`SPARKn_OLLAMA_URL` and
-  `SPARKn_OPENAI_URL`), which is why the default run needs no arguments. Export
-  `SPARK_HOSTS="host1 host2 ..."` in the process environment only to check a fleet that
-  `.env` does not name. A host that does not answer is a skip, not a failure.
+- Its host list comes from `SPARK_HOSTS` in the process environment, then the
+  `SPARKn_HOST` keys in `.env`, then the host part of `SPARKn_OPENAI_URL` - in that
+  order, which is why the default run needs no arguments. With none of them set it
+  falls back to the placeholders `.env.sample` ships, `spark-1.lan spark-2.lan
+  spark-3.lan`, which do not resolve. Export `SPARK_HOSTS="host1 host2 ..."` only to
+  check a fleet that `.env` does not name. A `SPARKn_OLLAMA_URL` left over in `.env`
+  from the era when a Spark box served Ollama is no longer read, so the box it names is
+  simply absent from the fleet; the run reports that itself with a `warning:` line that
+  names the key and the host, and the fix is to name the box with `SPARKn_HOST` or
+  `SPARKn_OPENAI_URL`, or drop the key. A host that does not answer is a skip, not a
+  failure.
 
 Fix, one of these:
 
