@@ -134,6 +134,15 @@ BLOB_CHARS_PER_TOKEN: Final = 2
 GLYPH_CHARS_PER_TOKEN: Final = 1
 # The estimate is accumulated in whole-number fractions of a token, this many to one.
 TOKEN_UNIT: Final = PROSE_CHARS_PER_TOKEN
+# An unbroken run of this alphabet at least this long is a payload sitting in a plain
+# string: a data URL, a base64 dump, a minified asset. Below it the same characters are a
+# long word, a slug, or a path, and charging those the blob rate only costs the slower
+# target -- which is the cheap direction, so the floor sits where ordinary text cannot
+# reach. A run of nothing but lowercase is treated as prose anyway (see _text_units):
+# base64 and hex are mixed-case or digit-bearing by construction.
+BLOB_RUN_MIN_CHARS: Final = 64
+_BLOB_RUN: Final = re.compile(r"[A-Za-z0-9+/=_-]{%d,}" % BLOB_RUN_MIN_CHARS)
+_LOWERCASE_ONLY_RUN: Final = re.compile(r"[a-z]*\Z")
 # Request-level keys the backend prefills and no message carries: the schemas a call is
 # given, and the Responses API's system prompt under ``instructions``. Left unbilled they
 # read as nothing, and a 200 KB tool schema is the difference between the two tiers.
@@ -422,18 +431,48 @@ def _serialized_chars(value: object) -> int:
     return len(json.dumps(value, sort_keys=True, default=str, ensure_ascii=False))
 
 
-def _text_units(text: str) -> int:
-    """``text`` in TOKEN_UNIT fractions of a token, weighted by what it is made of.
+def _prose_and_glyph_units(text: str) -> int:
+    """``text`` in TOKEN_UNIT fractions, weighted by which character classes it holds.
 
-    ASCII is the only class that gets the prose rate: a token of CJK, of Cyrillic, or of
-    escaped JSON punctuation costs a whole token each, so those characters are charged
-    PROSE_CHARS_PER_TOKEN times their count.
+    ASCII is the class that gets the prose rate and everything else the glyph rate: a
+    token of CJK or of Cyrillic costs a whole token each, so those characters are charged
+    PROSE_CHARS_PER_TOKEN times their count. Escaped JSON punctuation is ASCII and so
+    takes the prose rate, which is this flattener's known under-read; the shape that
+    carries escaped JSON as payload rather than as text is a mapping or a tool argument,
+    and those are billed by their serialized size in ``_extra_units``, not here.
     """
     prose = sum(1 for char in text if char.isascii())
     glyphs = len(text) - prose
     return prose * (TOKEN_UNIT // PROSE_CHARS_PER_TOKEN) + glyphs * (
         TOKEN_UNIT // GLYPH_CHARS_PER_TOKEN
     )
+
+
+def _text_units(text: str) -> int:
+    """``text`` in TOKEN_UNIT fractions of a token, with payloads billed at their own rate.
+
+    A string is not automatically prose. An OpenAI ``role: "tool"`` turn carries its
+    result as a plain string, and so does every ordinary user and assistant turn, so a
+    pasted data URL or a base64 dump reaches here as text and would be read at four
+    characters to a token -- half the truth for that payload. The same bytes sitting in a
+    content *part* already bill at the blob rate, which makes the shape of the turn, and
+    not the payload, decide whether a summary is handed a window it cannot hold.
+    """
+    units = 0
+    cursor = 0
+    for run in _BLOB_RUN.finditer(text):
+        chunk = run.group(0)
+        if _LOWERCASE_ONLY_RUN.match(chunk):
+            # A long slug, not a payload: base64 and hex are mixed-case or digit-bearing
+            # by construction, and a run of nothing but lowercase is a word nobody will
+            # ever fill a turn with. Reading it as a blob costs a slower target; reading
+            # a real blob as prose costs the summary its tail, so only the second one is
+            # a mistake worth guarding.
+            continue
+        units += _prose_and_glyph_units(text[cursor : run.start()])
+        units += _blob_units(len(chunk))
+        cursor = run.end()
+    return units + _prose_and_glyph_units(text[cursor:])
 
 
 def _blob_units(chars: int) -> int:

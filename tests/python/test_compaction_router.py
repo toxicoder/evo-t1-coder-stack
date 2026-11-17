@@ -1017,6 +1017,79 @@ class EstimateCompletenessTest(RouterCase):
         self.assertGreater(estimate_input_tokens(body), 24000)
         self.assertEqual(SPARK_TARGET, retarget_target(body))
 
+    def test_a_base64_dump_in_a_plain_string_is_not_charged_the_prose_rate(
+        self,
+    ) -> None:
+        # The shape the content-part case above does not cover, and the common one: an
+        # OpenAI role:"tool" turn carries its result as a plain string, as does every
+        # ordinary user and assistant turn. 60,000 characters of base64 are ~30,000
+        # tokens, past the guard; at the prose rate the same bytes read as 15,000 and
+        # the summary stayed on the Arc.
+        body = summary_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.insert(
+            -1,
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "data:image/png;base64," + "A1b2C3d4" * 7_500,
+            },
+        )
+        self.assertGreater(estimate_input_tokens(body), 24000)
+        self.assertEqual(SPARK_TARGET, retarget_target(body))
+
+    def test_a_hex_dump_in_a_plain_string_is_charged_the_blob_rate(self) -> None:
+        # Hex is lowercase and digits, so the class test that keeps a long slug as prose
+        # has to let this through: a minified asset or a git blob packs like base64.
+        body = summary_body("agent-xhigh-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.insert(-1, {"role": "user", "content": "0123456789abcdef" * 3_750})
+        self.assertGreater(estimate_input_tokens(body), 24000)
+        self.assertEqual(SPARK_TARGET, retarget_target(body))
+
+    def test_a_long_lowercase_run_is_still_prose(self) -> None:
+        # The other side of the same rule, and the reason it is not a bare length test:
+        # nothing but lowercase is a word or a slug, and billing those as blobs would
+        # spend the Spark tier on ordinary talk for no reason.
+        body = summary_body("agent-xhigh-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.insert(-1, {"role": "user", "content": "a" * 60_000})
+        self.assertLessEqual(estimate_input_tokens(body), 24000)
+        self.assertEqual(TARGET, retarget_target(body))
+
+    def test_a_run_under_the_floor_is_no_payload(self) -> None:
+        # The floor is what keeps a long identifier out of the blob rate, so it has to be
+        # a floor rather than a preference: one character either side of it is the line.
+        base = "A1b2C3d4"
+        long_run = base * 8  # BLOB_RUN_MIN_CHARS
+        short_run = base * 7 + base[:-1]  # one character short of it
+        self.assertEqual(ROUTER.BLOB_RUN_MIN_CHARS, len(long_run))
+        self.assertEqual(ROUTER.BLOB_RUN_MIN_CHARS - 1, len(short_run))
+
+        def with_content(content: str) -> int:
+            case_body = summary_body("agent-xhigh-fast")
+            case_messages = cast("list[dict[str, object]]", case_body["messages"])
+            case_messages.insert(-1, {"role": "user", "content": content})
+            return estimate_input_tokens(case_body)
+
+        self.assertGreaterEqual(with_content(long_run) - with_content(short_run), 10)
+
+    def test_the_prose_around_a_payload_is_still_counted(self) -> None:
+        # The run is lifted out of the string, not used to decide how the whole string is
+        # billed: dropping the text either side of it would under-read a real turn.
+        payload = "A1b2C3d4" * 4_000
+        bare = summary_body("agent-xhigh-fast")
+        wrapped = summary_body("agent-xhigh-fast")
+        for body, content in (
+            (bare, payload),
+            (wrapped, "prose words " * 40 + payload),
+        ):
+            messages = cast("list[dict[str, object]]", body["messages"])
+            messages.insert(-1, {"role": "user", "content": content})
+        self.assertGreater(
+            estimate_input_tokens(wrapped), estimate_input_tokens(bare) + 100
+        )
+
     def test_a_non_ascii_reply_is_charged_one_character_to_a_token(self) -> None:
         # 30,000 CJK characters are 30,000 tokens to any tokenizer; the prose rate read
         # them as 7,500 and put a session that compacts in Chinese onto the Arc.
