@@ -643,8 +643,8 @@ litellm_settings:
   # Exposes /metrics. Prometheus support is not gated on a premium licence.
   # The second entry is the fast-compaction hop: a CustomLogger subclass in
   # litellm/compaction_router.py, bind-mounted beside this file at /app by
-  # docker-compose.yml (the proxy CLI puts the working directory on sys.path, so the module
-  # has to be importable by bare name). LiteLLM dispatches async_pre_call_hook only to a
+  # docker-compose.yml (the proxy resolves a callback's dotted name against the directory
+  # of the config file, so the module has to be a sibling of config.yaml). LiteLLM dispatches async_pre_call_hook only to a
   # callback that IS a CustomLogger and overrides the method in its own class dict, so the
   # dotted path must name the instance, not the class - a class here boots clean and never
   # runs, which is why the last entry is `proxy_handler_instance`.
