@@ -853,6 +853,31 @@ PROBE
   [[ "${output}" == *"unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN"* ]]
 }
 
+@test "auth: the container's own verdict decides, not the writer feeding it" {
+  # The install decided its verdict from `printf | docker exec`, and on a loaded
+  # runner the chain can exit before the write is ever scheduled: printf dies of
+  # SIGPIPE, `set -o pipefail` hands that 141 back as the pipeline's status, and a
+  # working install prints "gh refused the token" (issue #173). A token larger than
+  # the 64 KiB pipe buffer pins the same race deterministically, because the writer
+  # is guaranteed to still be blocked when the reader closes stdin.
+  local inner="token=\$(awk 'BEGIN{s=\"\";for(i=0;i<200000;i++)s=s\"a\";print s}'); printf '%s\n' \"\$token\" | bash '${SCRIPT}' auth coder-alice-ws1 -"
+  run env STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=0 bash -c "${inner}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"gh credential installed"* ]]
+  assert_not_match "no token in the reply" 'aaaa' "${output}"
+}
+
+@test "auth: a chain that really fails is still reported as a refusal" {
+  # The other half of the same seam: reading the container's status instead of the
+  # pipeline's must not swallow a genuine failure. Same oversized token, canned
+  # chain answering non-zero, and the operator still gets the refusal and a non-zero
+  # exit.
+  local inner="token=\$(awk 'BEGIN{s=\"\";for(i=0;i<200000;i++)s=s\"a\";print s}'); printf '%s\n' \"\$token\" | bash '${SCRIPT}' auth coder-alice-ws1 -"
+  run env STUB_DOCKER_EXEC_RUN=0 STUB_DOCKER_EXEC_RC=1 bash -c "${inner}"
+  [ "${status}" -ne 0 ]
+  [[ "${output}" == *"gh refused the token"* ]]
+}
+
 @test "auth: a bare container name still reads the piped token, and keeps it out of argv" {
   # Same `env`-pinned canned mode as the - form above: the outcome may not
   # depend on whether this runner can reach a real docker daemon or gh.
