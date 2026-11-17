@@ -363,13 +363,26 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   transport, it is where the aliases and the Arc's context window are defined, and
   11434 is deliberately unpublished.
 - Two parts of that list are deliberate. `compaction-fast` is served by the proxy and
-  held out on purpose: it is the Arc summariser the two `-fast` lanes hop to for one
-  conversation summary, it carries no tool support, and a session must not drive
-  itself with it. `discover_models: false` on the `litellm` row is what keeps it out -
-  left on, Hermes probes the proxy's `/v1/models` and adopts whatever it advertises.
+  kept out of the picker on purpose: it is the Arc summariser the two `-fast` lanes hop
+  to for one conversation summary, it carries no tool support, and a session must not
+  drive itself with it. `discover_models: false` on the `litellm` row is what keeps it
+  out of the list - left on, Hermes probes the proxy's `/v1/models` and adopts whatever
+  it advertises. Read that as a hide rather than a wall: no row declares the id, and a
+  name no row declares is *accepted* as an unknown hidden model on the current
+  provider, so a typed `/model compaction-fast` still puts a turn on it. Nothing
+  refuses it for you.
   And `spark-coder` / `spark-chat` are declared so they stay pickable even though they
   are Ollama on a Spark box that is usually powered off, so a cold box answers a
   connection error.
+- All of that lives in the seed, and the seed reaches the volume once:
+  `scripts/hermes-bootstrap.sh` copies `hermes/config.yaml` into the data volume only
+  when the file is absent. A box that ran an earlier seed therefore has no `litellm`
+  row at all - `--provider litellm` names a row its config does not have, the eleven
+  catalogue aliases are undeclared there, and with no row carrying
+  `discover_models: false` the picker adopts `compaction-fast` off the proxy. Check it
+  with `bazelisk run //scripts:hermes-doctor -- diff`, which names the file that
+  differs and prints the `hermes-bootstrap --data <mount> --force` line that re-seeds
+  it; a hand-edited volume copy is worth reading before you overwrite it.
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
 
