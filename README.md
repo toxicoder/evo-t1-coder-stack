@@ -808,8 +808,11 @@ a session on any other alias compacts exactly as it always has: the hop is a
 property of the alias, so picking one of these two is the opt-in, and
 `EVO_T1_FAST_COMPACTION=0` is the kill switch beside it. It stops at the Arc's
 window: those weights answer inside 32768 tokens, so a summary estimated above
-`EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) stays on its Spark lane rather than
-be handed to Ollama to clamp, because a slow summary beats a truncated one.
+`EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) goes to `agent-low` instead - a Spark
+group with the 262144-token window a full-size summary needs, at thinking baked
+`low` - rather than be handed to Ollama to clamp, because a slow summary beats a
+truncated one. Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized
+summary stays on the lane it arrived on, which is the pre-hop behaviour.
 Nothing has been measured on the new lane yet, so no speed-up figure is quoted
 here; what changes without a stopwatch is who answers. Each fast lane degrades to
 the lane it is the twin of - `agent-xhigh-fast` -> `agent-xhigh` -> `coder`,

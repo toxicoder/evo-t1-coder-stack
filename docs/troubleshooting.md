@@ -434,7 +434,7 @@ before these two aliases existed - the 107 s to 1915 s measured above - and that
 path, not a fault. The Grok Build CLI has no compaction-model key, so there is nothing
 client-side to point elsewhere: the alias the session started on is the whole decision, and
 `[models] session_summary` is still not the compaction lane (see the entry above). The
-decision lives in `litellm/compaction_router.py`, and the four `EVO_T1_FAST_COMPACTION*`
+decision lives in `litellm/compaction_router.py`, and the five `EVO_T1_FAST_COMPACTION*`
 knobs named below are read there and nowhere else.
 
 Start with the proxy's own line for the call:
@@ -444,15 +444,16 @@ bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -m3 'compact
 ```
 
 `compaction router: moved a summary call from agent-xhigh-fast to compaction-fast` is the
-hop firing, once per summary, onto the group `EVO_T1_FAST_COMPACTION_TARGET` names (default
-`compaction-fast`, which degrades to `agent-low` then `coder`). No line at all is one of
-these four:
+hop firing, once per summary, onto the tier it landed on: `EVO_T1_FAST_COMPACTION_TARGET`
+for a summary within the guard (default `compaction-fast`, which degrades to `agent-low`
+then `coder`) or `EVO_T1_FAST_COMPACTION_SPARK_TARGET` for one above it (default
+`agent-low`). No line at all is one of these four:
 
 - **Not a fast lane.** The hop is armed by the alias alone, so a session on `agent`,
   `agent-xhigh` or `agent-swarm` compacts on Spark by design. The groups allowed to hop are
   `EVO_T1_FAST_COMPACTION_LANES`, default `agent-xhigh-fast,agent-swarm-fast`.
 - **The kill switch.** `EVO_T1_FAST_COMPACTION` ships on, and `0`, `false`, `off` or `no`
-  stops the hop on every lane at once. Compose gives each of the four keys its default in
+  stops the hop on every lane at once. Compose gives each of the five keys its default in
   `docker-compose.yml`, and the value in force is the one interpolated from the env file
   when the container was created, so a stack that was already up when someone set the key is
   still running the old one. Clear the key (or set it back to `1`) and recreate: a `restart`
@@ -465,12 +466,20 @@ bazelisk run //scripts:prod-stack -- up
 - **Not the summary call.** The hook matches the CLI's own summary instruction on the
   trailing message, with the system prompt beside it. A request that merely quotes that
   sentence is not a compaction call and stays on its lane.
-- **Too big for the Arc.** The estimate covers the whole request, the tool schemas included,
-  and anything above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000) is left on the
-  Spark lane on purpose: the target group's weights answer inside a 32k window, and Ollama
-  would clamp such an input rather than fail it. The 197k-214k-token auto-compaction inputs
-  measured above sit far past that, so a long session summarising on its Spark is the
-  documented limit of the feature rather than a break in it.
+- **Too big for the Arc, and the Spark tier was blanked.** The estimate covers the whole
+  request, the tool schemas included, and anything above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT`
+  (default 24000) goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` rather than to the Arc: the
+  Arc weights answer inside a 32k window and Ollama would clamp such an input rather than
+  fail it. A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
+  that answers it. Blank that key, or name the lane the call arrived on, and an oversized
+  summary stays on its Spark lane at the lane's own thinking level - the pre-hop behaviour,
+  and the one case where the 107 s to 1915 s above is the documented limit of the feature.
+- **The tier names a group nobody declared.** Neither target is validated by LiteLLM, so the
+  hook checks both against the `model_name:` entries in `litellm/config.yaml` and refuses a
+  name that is not among them, with one `compaction router: target ... is no model group in
+  config.yaml` warning per call. A typo there therefore looks like a hop that never fires
+  rather than a summary that hard-fails. `grep -E '^  - model_name: ' litellm/config.yaml` is
+  the list of legal answers for both keys.
 
 A summary that moved and still came back slowly is the fallback rather than the hop: each
 fast lane degrades to the lane it is the twin of (`agent-xhigh-fast` to `agent-xhigh`,

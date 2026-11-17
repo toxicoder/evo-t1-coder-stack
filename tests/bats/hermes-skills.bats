@@ -449,15 +449,19 @@ PY
   [[ ${row} != *'no session pin'* ]] \
     || { printf 'FAIL: the agent-xhigh-fast row advertises a lifted pin the config keeps: %s\n' "${row}" >&2; return 1; }
   # The notes carry the three things the row cannot: who makes the hop, that the client
-  # has no knob for it, and that an oversized summary is not moved at all. Flattened,
-  # because this prose is hard-wrapped.
+  # has no knob for it, and that an oversized summary goes to the Spark tier rather than
+  # being truncated onto the Arc. Flattened, because this prose is hard-wrapped.
   flat="$(tr '\n' ' ' <"${SKILLS}/model-routing/SKILL.md" | tr -s '[:space:]' ' ')"
   [[ ${flat} == *'the LiteLLM proxy re-targets that one call to `compaction-fast`'* ]] \
     || { printf 'FAIL: the notes never say the proxy is what moves the summary call\n' >&2; return 1; }
   [[ ${flat} == *'the Grok CLI has no compaction-model setting'* ]] \
     || { printf 'FAIL: the notes do not say the CLI carries no compaction-model setting\n' >&2; return 1; }
-  [[ ${flat} == *'stays on its Spark lane'* ]] \
-    || { printf 'FAIL: the notes never say an oversized summary stays on the Spark lane\n' >&2; return 1; }
+  [[ ${flat} == *'goes to `agent-low`'* ]] \
+    || { printf 'FAIL: the notes never send an oversized summary to the Spark tier\n' >&2; return 1; }
+  [[ ${flat} == *'262144-token window'* ]] \
+    || { printf 'FAIL: the notes never say why the Spark tier is the one that can read it\n' >&2; return 1; }
+  [[ ${flat} != *'stays on its Spark lane'* ]] \
+    || { printf 'FAIL: the notes still describe the pre-tier stay-on-lane answer\n' >&2; return 1; }
   [[ ${flat} == *'`compaction-fast` -> `agent-low` -> `coder`'* ]] \
     || { printf 'FAIL: the notes never state the summary lane degradation hop\n' >&2; return 1; }
   python3 -c 'import yaml' >/dev/null 2>&1 || skip "PyYAML is not installed"

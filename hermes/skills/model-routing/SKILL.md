@@ -77,9 +77,12 @@ Notes that matter:
 - There is nothing to set beside it: the Grok CLI has no compaction-model setting, so
   picking one of those two aliases is the whole opt-in. A session on `agent`, `agent-xhigh`
   or `agent-swarm` compacts on its own Spark exactly as it always has.
-- The hop has one guard. The Arc weights are a 32768-token model, so a summary whose
-  estimated input is over that window stays on its Spark lane rather than being truncated
-  to fit it - a slow summary beats a summary of half the conversation.
+- The hop has one guard, and it picks a tier. The Arc weights are a 32768-token model, so a
+  summary whose estimated input is over that window goes to `agent-low` - a Spark group, so
+  it keeps the 262144-token window a full-size summary needs, at thinking baked `low` rather
+  than `xhigh` - instead of being truncated to fit the Arc. A slow summary beats a summary of
+  half the conversation. Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized summary
+  stays where it arrived, at the lane's own thinking level.
 - Their degradation hops follow their parents, and the target carries its own:
   `agent-xhigh-fast` -> `agent-xhigh` -> `coder`, `agent-swarm-fast` -> `agent-swarm` ->
   `coder`, and `compaction-fast` -> `agent-low` -> `coder`. That last chain is deliberate:

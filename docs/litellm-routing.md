@@ -16,7 +16,7 @@ tags: [litellm, models, routing, spark]
   `agent-explore`, `agent-review`, `agent-swarm-fast`), and the `agent` to `coder`
   fallback
 - The two fast-compaction lanes, and the proxy callback that moves one summary call of
-  a session onto the Arc
+  a session onto a cheaper tier
 - Reading the routing back, and editing an alias safely
 
 **What this enables**
@@ -220,9 +220,10 @@ key, so a config that looks correct silently does nothing, which is why
 - The two rows after those are not new lanes. `agent-xhigh-fast` is `agent-xhigh` and
   `agent-swarm-fast` is `agent-swarm`, deployment for deployment, and what differs is
   where one call of the conversation is answered - the CLI's summary request, which a
-  proxy callback re-serves from `compaction-fast` on the Arc. See
+  proxy callback re-serves from `compaction-fast` on the Arc when the summary fits that
+  window, and from a Spark group at thinking `low` when it does not. See
   [the fast-compaction lanes](#the-fast-compaction-lanes-agent-xhigh-fast-and-agent-swarm-fast).
-- `compaction-fast` is that hop's target, and a row no template offers a client: no
+- `compaction-fast` is that hop's small-summary target, and a row no template offers a client: no
   `reasoning_effort` line, no tool-calling flags, and `max_input_tokens: 32768` rather
   than the Spark rows' 262144, because a summary is prose and 32768 is the honest
   window of those weights.
@@ -433,10 +434,12 @@ pin lifted for it alone among the new lanes. The nine Spark lane groups are now
 agent-xhigh-fast agent-swarm-fast`, plus the Arc group `compaction-fast`.
 
 What the hop is: on those two aliases only, the proxy recognises the CLI's
-conversation-summary call and re-serves it from `compaction-fast`, the small Ollama-served
-coding weight on the Arc. That is where the speed comes from - the Spark lane answers at
-xhigh thinking and a summary does not need it. The CLI appends its summary instruction as
-the trailing message, and the callback matches a stable clause inside it,
+conversation-summary call and re-serves it from somewhere cheaper than the Spark box it
+arrived on - `compaction-fast`, the small Ollama-served coding weight on the Arc, when the
+summary fits that window, and a Spark group thinking at `low` when it does not. That is
+where the speed comes from - the Spark lane answers at xhigh thinking and a summary does
+not need it. The CLI appends its summary instruction as the trailing message, and the
+callback matches a stable clause inside it,
 `produce a faithful, concise summary of the conversation so far`, before rewriting the
 request's model to the target and dropping `tools`, `tool_choice` and `reasoning_effort`
 from it: a summary is prose, the schemas are dead weight to it, and a small model handed a
@@ -454,18 +457,45 @@ is the `compact failed: exceeded wall-clock budget 300s` section of
 
 Why the extra config is worth it: compactions that did succeed on the Spark lane took 107 s
 to 1915 s, and 18 of the 36 sampled successes ran past the CLI's 300 s wall-clock budget -
-they are the summaries that budget was discarding. No speed-up figure has been measured on
-`compaction-fast` yet, so none is quoted here. What the hop changes without a stopwatch is
-who answers: a 14B Arc weight with no thinking level and no schemas in the prompt, rather
-than a Spark box thinking at xhigh over the same request with its tool schemas attached.
+they are the summaries that budget was discarding. What the hop changes without a stopwatch
+is who answers: a 14B Arc weight with no thinking level and no schemas in the prompt, rather
+than a Spark box thinking at xhigh over the same request with its tool schemas attached. No
+timing has been measured on the hop yet, so no speed-up figure is quoted here for either
+tier; `docs/troubleshooting.md` names the one log line that shows it firing, and that line
+is where a measurement starts.
 
-Where it stops: the Arc weights answer inside a 32768-token window, so a summary whose
-input is estimated above the configured ceiling stays on its Spark lane rather than being
-handed to Ollama to clamp silently. A slow summary beats a truncated one. The estimate is
-characters over four, counted across the messages and the tool schemas beside them, so an
-estimate that is wrong errs toward leaving the call where it was.
+Which tier answers: the guard is `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000), and
+it picks a tier rather than ending the hop. Below it the summary goes to `compaction-fast`,
+which is the right place for it, because those weights answer inside a 32768-token window
+and Ollama clamps an over-long input instead of refusing it - a summary pushed in over that
+comes back quietly truncated, and a truncated summary is worse than the slower one it would
+replace. Above it the summary goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default
+`agent-low`): the same three Spark boxes, the 262144-token window a real summary needs, and
+the thinking baked to `low` instead of `xhigh`. Blank that knob, or name the lane the call
+arrived on, and an oversized summary stays where it is, which is the pre-hop behaviour. The
+estimate is characters over four, counted across the messages and the tool schemas beside
+them, so an estimate that is wrong errs toward the Spark tier.
 
-Everything a caller can tune is one of four environment variables, read in
+Where the guard sits against the client: the shipped `[session]` block sets
+`auto_compact_threshold_percent = 70` and both fast aliases declare a `context_window` of
+262144 (`templates/workspace/grok-config.toml.tftpl:387`, and `:284` and `:301` for the two
+aliases), so a session on either one reaches its auto-compaction at about 183,500 tokens -
+over seven times the guard. A summary that size cannot be read faithfully by a 32768-token
+model, so the Arc tier was never going to serve it and the guard is what stops it trying: on
+that estimate the call goes to `agent-low`, which keeps the window and drops the baked
+`xhigh` thinking. Pointing `EVO_T1_FAST_COMPACTION_TARGET` at `agent-low` is the lever that
+covers a full-size summary even with the limit left alone, and it is a routing choice with
+its own trade, not a free win: the summary is still a Spark call, holding a stream on a box
+the writers want, at a thinking level turned down from the one the lane exists to bake.
+
+What has been measured is the old path, not the new one. The 107 s to 1915 s spread and the
+18 abandoned successes above are both from the Spark lane before the hop existed, swept out
+of the session logs in [troubleshooting.md](troubleshooting.md). Neither tier has a timing
+of its own yet: the hop has not served a summary on a running stack, so no speed-up figure
+is claimed for either one. `tests/python/test_compaction_router.py` proves which group each
+request shape lands on; the operator's own log line is what will prove what it costs.
+
+Everything a caller can tune is one of five environment variables, read in
 `litellm/compaction_router.py` and nowhere else, which makes the litellm service's
 `environment:` block in `docker-compose.yml` the whole policy:
 
@@ -473,8 +503,9 @@ Everything a caller can tune is one of four environment variables, read in
 |---|---|---|
 | `EVO_T1_FAST_COMPACTION` | on; `0`, `false`, `off` disable it | the kill switch - off, every call of every lane stays where its alias routes it |
 | `EVO_T1_FAST_COMPACTION_LANES` | `agent-xhigh-fast,agent-swarm-fast` | which groups may hop; name one to narrow the hop to it |
-| `EVO_T1_FAST_COMPACTION_TARGET` | `compaction-fast` | the model group a recognised summary is moved to |
-| `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` | `24000` | the token estimate above which a summary stays on its Spark lane |
+| `EVO_T1_FAST_COMPACTION_TARGET` | `compaction-fast` | the model group a summary under the guard is moved to; a name that is no `model_name:` in `config.yaml` is refused and the call stays put |
+| `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` | `24000` | the token estimate that decides which of the two tiers takes the call |
+| `EVO_T1_FAST_COMPACTION_SPARK_TARGET` | `agent-low` | where a summary above the guard goes, checked against `config.yaml` the same way; blank it, or name the lane it arrived on, and it stays there |
 
 Three ways to land this feature and get nothing, each of which boots clean:
 
@@ -485,8 +516,9 @@ Three ways to land this feature and get nothing, each of which boots clean:
   never fires.
 - The module is mounted as a single file,
   `./litellm/compaction_router.py:/app/compaction_router.py:ro`. A directory mount over
-  `/app` hides `config.yaml` beside it, and it has to sit in the proxy's working directory
-  because that is what the proxy CLI puts on `sys.path` - the bare module name in
+  `/app` hides `config.yaml` beside it, and it has to sit in the same directory as the
+  config file because that is the directory the proxy resolves a callback's dotted name
+  against - the bare module name in
   `callbacks` resolves no other way.
 - A new group inherits neither the retry policy nor the affinity lift. Both fast lanes
   declare their own six-key `model_group_retry_policy` block, and only `agent-swarm-fast`
@@ -670,7 +702,7 @@ docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml rest
   instance rather than the class.
 - Both of those live in `docker-compose.yml` and `litellm/config.yaml` respectively, so
   they restart differently: `restart litellm` re-reads the config file, while a new mount
-  and the four `EVO_T1_FAST_COMPACTION*` keys need the container recreated with the same
+  and the five `EVO_T1_FAST_COMPACTION*` keys need the container recreated with the same
   compose invocation and `up -d litellm`.
 - So an alias edited or deleted in `litellm/config.yaml` moves in the Agents model
   dropdowns exactly as it does in the CLI.
