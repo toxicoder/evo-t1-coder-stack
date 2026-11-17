@@ -146,6 +146,16 @@ The two levers that actually move load off a shedding box:
    `PARALLEL` streams are one pool that every alias arriving on it shares.
    Past 15 across the fleet the boxes have no
    streams left to give, whatever the lane.
+   The same 15 is the budget of a whole tree, because `max_depth` (rendered from
+   `grok_subagent_max_depth`, default 2, validated 1..3) lets a child spawn. `reviewer`,
+   `security-auditor` and `tester` name `spawn_subagent` in their `tools`, and every mapper
+   such a child raises holds a stream the same way its parent does, so a parent sums the
+   in-flight `1 + spawns` over every task and keeps that total at or below the fleet's
+   stream count (`fleet:` in the plan, 15 by default,
+   `templates/common/ez-micro-plan.plan_check.py:42`). That checker refuses a wave whose
+   cost passes the fleet, and the sum is a separate figure from the session cap
+   `[subagents] max_concurrent` sets, because a grandchild opens its own session. The box
+   refuses an over-admitted stream the same way it refuses any other, with `NoRoom`.
 
 Two knobs that look right and do nothing here: `retry_after` is only a `min_timeout` and
 is never consulted while the group has healthy deployments, and `fallbacks_by_model`
@@ -344,6 +354,15 @@ protects is worth nothing here, while its cost is paid in full - the parent loop
 child it spawns carry that workspace's one `x-litellm-session-id`, so a pinned wave of six
 resolves to a single deployment and waits on that box's `PARALLEL` admission slots while
 the other two boxes sit reachable and under-offered.
+
+That check is a panel of three skeptics dispatched in one turn - the requirements angle,
+the proof angle that re-runs the producers' own `done:` commands, and the adversary angle -
+each riding `agent-review`, each owning no file, and each allowed up to three read-only
+mappers of its own under `max_depth` 2. Three spawners with three mappers each is twelve of
+the fifteen streams the fleet owns, which fits beside a parent still holding its own
+conversation, and the panel is cheap precisely because the writers have all landed by the
+time it runs: the fleet is then idle, and both the skeptics and the mappers they spawn are
+unpinned traffic that `least-busy` can place on all three boxes at once.
 
 The baked level is the only thing that separates them. An explore child is a lookup, so it
 takes `low` and answers fast; a review child is the check that a landed claim is actually
