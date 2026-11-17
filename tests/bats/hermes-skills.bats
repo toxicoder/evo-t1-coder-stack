@@ -140,6 +140,20 @@ hs_script_has_subcommand() {
   grep -Eq -- "^[[:space:]]*${2}\)" "$1" || grep -Eq -- "${pattern}" "$1"
 }
 
+# hs_skill_alias_row <alias> - print the model-routing table row whose first cell is
+# exactly <alias>, or nothing when the table carries no such row. The backtick filter
+# is what drops the header and the |---| separator row.
+hs_skill_alias_row() {
+  awk -v alias="${1}" '
+    /^\|[[:space:]]*`/ {
+      cell = $0
+      sub(/^\|[[:space:]]*`/, "", cell)
+      sub(/`.*$/, "", cell)
+      if (cell == alias) { print }
+    }
+  ' "${SKILLS}/model-routing/SKILL.md"
+}
+
 # --- 1. service names ------------------------------------------------------
 
 @test "hermes skills: the compose service list evo-stack-ops names is the compose file's own set" {
@@ -378,6 +392,10 @@ if affinity.get("agent-swarm") != []:
     sys.exit("FAIL: model_group_affinity_config gives agent-swarm %r, not the empty "
              "flag list the table promises for the fan-out lane"
              % (affinity.get("agent-swarm"),))
+if affinity.get("agent-swarm-fast") != []:
+    sys.exit("FAIL: model_group_affinity_config gives agent-swarm-fast %r, not the empty "
+             "flag list the table promises for its fan-out twin"
+             % (affinity.get("agent-swarm-fast"),))
 
 def hop(alias):
     for item in router.get("fallbacks") or []:
@@ -392,6 +410,104 @@ for sibling in ("agent", "agent-low", "agent-medium", "agent-xhigh"):
     if hop(sibling) != ["coder"]:
         sys.exit("FAIL: %s falls back to %r, so it is not the single hop the notes "
                  "contrast agent-swarm against" % (sibling, hop(sibling)))
+for alias, want in (("agent-xhigh-fast", ["agent-xhigh", "coder"]),
+                    ("agent-swarm-fast", ["agent-swarm", "coder"]),
+                    ("compaction-fast", ["agent-low", "coder"])):
+    if hop(alias) != want:
+        sys.exit("FAIL: %s falls back to %r, not the %s chain the notes state"
+                 % (alias, hop(alias), " -> ".join(want)))
+PY
+}
+
+@test "hermes skills: the two fast-compaction rows teach the hop the proxy makes" {
+  # The `*-fast` rows are the routing answer for a session that wants its conversation
+  # summary answered cheaply, and none of what makes that hop happen is a client setting:
+  # litellm/compaction_router.py moves the summary call before the router picks a box. So
+  # the rows are read as the claim (their own group of three Sparks, xhigh baked, real
+  # tool calls, the pin each parent has) and the notes plus the config as the truth. A
+  # skill that told the operator to point the CLI at a summary model would be naming a
+  # switch the Grok CLI does not have.
+  local alias_name row flat
+  for alias_name in agent-xhigh-fast agent-swarm-fast; do
+    row="$(hs_skill_alias_row "${alias_name}" || true)"
+    [[ -n ${row} ]] \
+      || { printf 'FAIL: model-routing table has no `%s` row, so the assistant never routes a session onto a fast lane\n' "${alias_name}" >&2; return 1; }
+    [[ "$(tr -cd '|' <<<"${row}" | wc -c)" -eq 5 ]] \
+      || { printf 'FAIL: the %s row is not a four-column row: %s\n' "${alias_name}" "${row}" >&2; return 1; }
+    [[ ${row} == *'real `tool_calls`'* ]] \
+      || { printf 'FAIL: the %s row does not promise real tool_calls: %s\n' "${alias_name}" "${row}" >&2; return 1; }
+    [[ ${row} == *'effort baked to `xhigh`'* ]] \
+      || { printf 'FAIL: the %s row does not name the thinking level it bakes: %s\n' "${alias_name}" "${row}" >&2; return 1; }
+    [[ ${row} == *'same 3 Spark boxes, own group'* ]] \
+      || { printf 'FAIL: the %s row does not say it is its own group on the three Sparks: %s\n' "${alias_name}" "${row}" >&2; return 1; }
+  done
+  # Only the swarm twin lifts the pin; the conversation twin keeps it, as its row says.
+  row="$(hs_skill_alias_row agent-swarm-fast || true)"
+  [[ ${row} == *'no session pin'* ]] \
+    || { printf 'FAIL: the agent-swarm-fast row does not name the pin being off: %s\n' "${row}" >&2; return 1; }
+  row="$(hs_skill_alias_row agent-xhigh-fast || true)"
+  [[ ${row} != *'no session pin'* ]] \
+    || { printf 'FAIL: the agent-xhigh-fast row advertises a lifted pin the config keeps: %s\n' "${row}" >&2; return 1; }
+  # The notes carry the three things the row cannot: who makes the hop, that the client
+  # has no knob for it, and that an oversized summary is not moved at all. Flattened,
+  # because this prose is hard-wrapped.
+  flat="$(tr '\n' ' ' <"${SKILLS}/model-routing/SKILL.md" | tr -s '[:space:]' ' ')"
+  [[ ${flat} == *'the LiteLLM proxy re-targets that one call to `compaction-fast`'* ]] \
+    || { printf 'FAIL: the notes never say the proxy is what moves the summary call\n' >&2; return 1; }
+  [[ ${flat} == *'the Grok CLI has no compaction-model setting'* ]] \
+    || { printf 'FAIL: the notes do not say the CLI carries no compaction-model setting\n' >&2; return 1; }
+  [[ ${flat} == *'stays on its Spark lane'* ]] \
+    || { printf 'FAIL: the notes never say an oversized summary stays on the Spark lane\n' >&2; return 1; }
+  [[ ${flat} == *'`compaction-fast` -> `agent-low` -> `coder`'* ]] \
+    || { printf 'FAIL: the notes never state the summary lane degradation hop\n' >&2; return 1; }
+  python3 -c 'import yaml' >/dev/null 2>&1 || skip "PyYAML is not installed"
+  python3 - "${LITELLM_CFG}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    cfg = yaml.safe_load(handle)
+
+deployments = cfg.get("model_list") or []
+router = cfg.get("router_settings") or {}
+
+# The pinned twin must stay absent from the affinity map: that is how it keeps falling
+# back to the global session pin, and what its row promises by not naming a lift.
+affinity = router.get("model_group_affinity_config") or {}
+if "agent-xhigh-fast" in affinity:
+    sys.exit("FAIL: model_group_affinity_config names agent-xhigh-fast (%r), so the "
+             "conversation twin lost the pin its row promises it keeps"
+             % (affinity["agent-xhigh-fast"],))
+
+for group in ("agent-xhigh-fast", "agent-swarm-fast"):
+    group_deps = [m for m in deployments if m.get("model_name") == group]
+    if len(group_deps) != 3:
+        sys.exit("FAIL: %s declares %d deployments, not the three Spark boxes the row "
+                 "names" % (group, len(group_deps)))
+    for dep in group_deps:
+        params = dep.get("litellm_params") or {}
+        if params.get("reasoning_effort") != "xhigh":
+            sys.exit("FAIL: %s is not baked to xhigh: %r" % (group, params.get("model")))
+
+# The target the notes hand the summary to: one Arc deployment, the same Ollama weights
+# coder-fast serves, and the 32768-token window the "leave it on the Spark" guard is
+# measured against.
+target = [m for m in deployments if m.get("model_name") == "compaction-fast"]
+if len(target) != 1:
+    sys.exit("FAIL: litellm/config.yaml declares %d compaction-fast deployments, not the "
+             "one Arc box the table names" % len(target))
+params = target[0].get("litellm_params") or {}
+info = target[0].get("model_info") or {}
+if params.get("model") != "ollama_chat/qwen2.5-coder:14b":
+    sys.exit("FAIL: compaction-fast serves %r, not the Arc coding weight the row names"
+             % (params.get("model"),))
+if params.get("api_base") != "http://ollama:11434":
+    sys.exit("FAIL: compaction-fast has api_base %r, so the summary does not reach the "
+             "Arc over the compose network" % (params.get("api_base"),))
+if info.get("max_input_tokens") != 32768:
+    sys.exit("FAIL: compaction-fast declares max_input_tokens %r, not the 32768 window "
+             "the notes quote for the guard" % (info.get("max_input_tokens"),))
 PY
 }
 

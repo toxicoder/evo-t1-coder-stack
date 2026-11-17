@@ -29,11 +29,14 @@ behind that one base URL — never bypass it.
 | `agent-medium` | same 3 Spark boxes, own group, effort baked to `medium` | real `tool_calls` | an explicit medium thinking level |
 | `agent-xhigh` | same 3 Spark boxes, own group, effort baked to `xhigh` | real `tool_calls` | an explicit xhigh level — what `agent` already bakes |
 | `agent-swarm` | same 3 Spark boxes, own group, effort baked to `xhigh`, no session pin | real `tool_calls` | a fan-out that should spread over all three boxes at once |
+| `agent-xhigh-fast` | same 3 Spark boxes, own group, effort baked to `xhigh` | real `tool_calls` | not this session: a Grok Build thread on xhigh whose summary the proxy answers on the Arc |
+| `agent-swarm-fast` | same 3 Spark boxes, own group, effort baked to `xhigh`, no session pin | real `tool_calls` | not this session: a Grok Build fan-out whose summary the proxy answers on the Arc |
 | `agent-explore` | same 3 Spark boxes, own group, effort baked to `low`, no session pin | real `tool_calls` | not this session: the read-only mapper lane of a Grok Build fleet |
 | `agent-review` | same 3 Spark boxes, own group, effort baked to `xhigh`, no session pin | real `tool_calls` | not this session: the independent-review lane of a Grok Build fleet |
 | `coder` | Arc, `qwen2.5-coder:32b` | **plain text** | chat about code, summarising diffs |
 | `coder-fast` | Arc, `qwen2.5-coder:14b` | **plain text** | cheap and quick, same limit |
 | `chat` | Arc, `qwen2.5:7b` | real `tool_calls` | agent work while the Sparks are down |
+| `compaction-fast` | Arc, `qwen2.5-coder:14b` | **plain text** | not this session: the group the two fast lanes hand their summary to |
 
 Notes that matter:
 
@@ -50,9 +53,9 @@ Notes that matter:
   group, so a chat on `agent-medium` can sit on the same box as one on `agent`. The
   box still serves 5 streams in total, which is why nothing here gets a cap.
 - `agent-swarm` is the same model on the same three boxes, `xhigh` baked: only its
-  routing state differs. It is one of the three groups the session pin does not cover (the
-  other two are the fleet lanes below), so every request goes to least-busy and lands on
-  whichever healthy box has the fewest requests in flight.
+  routing state differs. It is one of the four groups the session pin does not cover (the
+  other three are its fast twin below and the two fleet lanes), so every request goes to
+  least-busy and lands on whichever healthy box has the fewest requests in flight.
 - That is why a fan-out uses it and a long thread does not: independent parallel
   work reaches all 15 streams (5 on each of the three boxes), where a pinned
   session only ever reaches the 5 streams of the one box it was pinned to. The
@@ -63,6 +66,26 @@ Notes that matter:
   state is per group, so the swarm's own three deployments can all be cooled while
   the same boxes stay healthy under `agent`. The working degraded mode is still
   `chat`, for the same reason as above.
+- The two `*-fast` rows are each the lane it is named after: `agent-xhigh-fast` is
+  `agent-xhigh` and `agent-swarm-fast` is `agent-swarm` - same three boxes, same baked
+  `xhigh`, and each keeps the pin its parent has. The one thing either adds is what
+  happens to the conversation summary. When a session on one of those two aliases sends the Grok CLI's
+  summary request, the LiteLLM proxy re-targets that one call to `compaction-fast` before
+  the router picks a Spark box: the Arc's `qwen2.5-coder:14b`, the same weights
+  `coder-fast` serves, held as its own group so a summary shares no routing state with that
+  alias. Every other call of that conversation still runs on a Spark at `xhigh`.
+- There is nothing to set beside it: the Grok CLI has no compaction-model setting, so
+  picking one of those two aliases is the whole opt-in. A session on `agent`, `agent-xhigh`
+  or `agent-swarm` compacts on its own Spark exactly as it always has.
+- The hop has one guard. The Arc weights are a 32768-token model, so a summary whose
+  estimated input is over that window stays on its Spark lane rather than being truncated
+  to fit it - a slow summary beats a summary of half the conversation.
+- Their degradation hops follow their parents, and the target carries its own:
+  `agent-xhigh-fast` -> `agent-xhigh` -> `coder`, `agent-swarm-fast` -> `agent-swarm` ->
+  `coder`, and `compaction-fast` -> `agent-low` -> `coder`. That last chain is deliberate:
+  `coder`, `coder-fast` and `chat` all sit on the Arc box this group already shares, so a
+  hop to one of them is a hop to whatever is already down, and `agent-low` is the quickest
+  answer the fleet has.
 - The two fan-out rows above are for a Grok Build fleet, not for this session: Hermes
   itself stays on `agent`, because a chat is one long conversation and that is exactly what
   the pin is for. Each serves a child that answers once, so there is no warm prefix for a
