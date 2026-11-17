@@ -1027,6 +1027,87 @@ rules above.
 - The Coder Agents seeds under `~/.coder` and `~/.agents` are not on that mount: they live
   on the workspace's own home volume, and that stage neither needs nor disturbs it.
 
+### Stale editor swap files
+
+The same persistence that makes `config.toml` one file for every sibling turns a killed
+editor into a permanent nuisance. Open `vim ~/.grok/config.toml`, stop the workspace with
+the editor still up, and the agent's process tree dies while the swap file stays on the
+volume. The next `vim` on that name stops with `E325: ATTENTION` and a question about a
+session whose container has been gone for days, and because "(E)dit anyway" leaves the
+swap in place and mints `.swo`, `.swn`, `.swm` beside it, an operator who keeps answering
+the prompt ends up with four of them and a prompt that never goes away.
+
+The boot clears them, from `grok_sweep_config_swaps` in
+`templates/common/agents-seed.sh.tftpl`. It runs there rather than in `startup.sh.tftpl`
+because the startup argument sits under a byte gate that holds the composed body to 110592
+bytes (12288 of room under the 122880 budget this repo sets for itself, which is itself
+8 KiB under the kernel's measured 131072 one-argument ceiling; see
+[The one-argument ceiling](#the-one-argument-ceiling)), and the `devcontainer` twin already
+composes 110242 of those, leaving 350 bytes for everything else. It also runs there because
+that body is already where a stack-owned file under `~/.grok` is refreshed against its
+marker. It does not lean on running after
+the `startup_script`: a `coder_script` runs in no promised order with it
+(`templates/workspace/coder.tf:272`), so the argument is the marker itself. A
+`config.toml` that still carries the marker is one every start replaces from
+`grok-config.toml.tftpl`, whichever of the two runs first, so what an orphaned swap holds
+is doomed either way.
+
+What makes the step safe is that it destroys nothing it cannot prove. Neither of its two
+checks establishes that a writer is gone. vim writes the swap once about four seconds after
+a change and then stays quiet while you read, so a live session idling over the file looks
+like a crashed one; and each workspace runs in its own PID namespace, so the `/proc` scan
+sees this container's descriptors only, which leaves a sibling workspace holding the same
+file open on the shared volume invisible from here. So an orphan is moved into
+`~/.grok/stale-swaps/` under a name the sweep gives itself, and stays recoverable with
+`vim -r` for a month. The archived copy is re-dated to the moment it was set down: `mv`
+carries the swap's own mtime, and a workspace stopped for six weeks leaves a swap older
+than the retention, which that same boot would otherwise archive and prune in one breath.
+A wrong call is one `ls` from undone.
+
+- It only runs when `config.toml` still carries a stack marker, either spelling of it, by
+  the same contract as
+  [Marker ownership of the seeded files](#marker-ownership-of-the-seeded-files). A config
+  that lost its marker is the operator's file, swap and all. The usual way one loses the
+  marker is `grok mcp add` rewriting the file, and the remedy there is
+  `bazelisk run //scripts:seed-dev-env -- --force`.
+- A swap written within the last hour stays. The hour is a courtesy toward a session that
+  may still be open in a sibling container, which is exactly what the archive is for.
+- A swap some process in this container still holds open stays, read straight off
+  `/proc/*/fd` and compared by exact path. Comparing it as a glob would let one bracket in
+  `$HOME` hide a live holder.
+- Every path that cannot decide leaves the file where it is and says nothing: a `find` or
+  `basename` that is missing or errors, a `readlink` that cannot answer (the body runs it
+  and checks the result instead of just looking for the binary, since an empty answer
+  reads exactly as "no descriptor points here"), a `/proc` with nothing to scan, an
+  archive directory that cannot be made, an archive name already taken, and a `mv` that is
+  refused. The E325 prompt then waits for a person, which is a visible nuisance with no
+  data behind it, while a wrong deletion is quiet and has data behind it.
+- Only vim's own `.sw?` suffix on that one name is a candidate, and a symlink at that name
+  is left alone, since archiving a link would move the name and strand the bytes behind it.
+  So `.notes.md.swp` and a `.config.toml.newswp` are never touched. Each move is announced
+  on the body's log with the archived path in it, because the name carries a suffix nobody
+  can guess.
+- The prune matches the `sweep-`-prefixed names this function gives itself, at one level of
+  `~/.grok/stale-swaps/` and no deeper, so a person who reads this page and parks a file in
+  that directory keeps it.
+
+The blind spot the design accepts is a holder this process cannot see in `/proc` at all: a
+sibling container's vim, which the PID namespace hides, or a process whose `/proc/<pid>/fd`
+is unreadable from here. Its buffer and the archived bytes both survive, and the move is
+reversible for a month; what goes missing is the E325 prompt that would have warned the
+next person to open the file. That window is narrow, it sits on a file every start
+overwrites anyway, and it is why the sweep stops at one name here.
+
+This is not an invitation to hand-edit the file. `config.toml` is re-rendered from
+`grok-config.toml.tftpl` on every start, so an edit a person makes there is overwritten by
+the next boot, and under `shared` the boot that overwrites it may be a sibling's. The keys
+a person actually wants are template variables: `grok_subagent_max_concurrent` and
+`grok_subagents_lane` for the fan-out
+([the fan-out seam](grok-build-and-agents.md#the-fan-out-seam)), and `grok_config_extra`
+for anything the managed block does not set. Change the seed or push the variable, then
+restart; `bazelisk run //scripts:seed-dev-env -- --force` re-materializes the file from
+this checkout when the intent really is to rewrite it.
+
 ### The Coder Agents seeds and their agents-tree twins
 
 - The chat agent discovers its context through its *default* paths (verified against the

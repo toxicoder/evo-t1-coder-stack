@@ -19,3 +19,90 @@ if [ ! -f "$HOME/.grok/AGENTS.md" ] \
 ${grok_build_agents}
 GROK_AGENTS_EOF
 fi
+
+# The same marker contract, applied to the swap file left beside the other file this
+# boot owns. A workspace stop kills an open vim, and ~/.grok is one persistent
+# per-owner volume, so the swap outlives the container and the next
+# `vim ~/.grok/config.toml` stops on E325 asking about a session whose container is
+# gone - and answering it "(E)dit anyway" leaves that swap in place and mints another
+# beside it, so the home fills up with .swp/.swo/.swn/.swm and the prompt never goes
+# away. A config that still carries the stack marker is one every start replaces from
+# grok-config.toml.tftpl, so what a leftover swap holds is doomed either way - and the
+# marker test below is what this argues from, because a coder_script runs in no promised
+# order with the startup script (templates/workspace/coder.tf:272), so the sweep cannot
+# count on having seen that rewrite first.
+#
+# Two checks decide what counts as an orphan, and neither one proves a writer is dead.
+# vim writes the swap once about four seconds after a change and then goes quiet while
+# you read, so a live session idling over the file looks exactly like a crashed one: the
+# hour below is courtesy toward a session that may still be open in another container,
+# not evidence. And each workspace has its own PID namespace, so the /proc scan sees this
+# container's descriptors only - a sibling workspace holding the same file open on the
+# shared volume is invisible here. So the sweep moves what it judges orphaned rather than
+# deleting it: nothing this step cannot prove stays recoverable, and a wrong judgement is
+# an `ls ~/.grok/stale-swaps` away from undone. docs/coder-templates.md#stale-editor-swap-files
+grok_sweep_config_swaps() {
+  # The descriptor scan's root, named as one constant so the suite can point it at an
+  # empty tree and prove the fail-closed half. The boot calls this with no arguments.
+  grok_proc_dir=/proc
+  # Only a config the stack owns: an unmanaged one is the operator's file, swap and all.
+  grep -qFs -e 'managed-by: evo-t1-coder-stack' -e '__evoT1Stack = true' \
+    "$HOME/.grok/config.toml" 2>/dev/null || return 0
+  # Prove the one probe whose silence means "nobody holds this", rather than checking
+  # that it exists: a readlink that errors answers the empty string, and an empty answer
+  # is exactly what the compare below reads as no holder. That would move a swap out from
+  # under a live editor, the one thing this step promises never to do.
+  readlink -f / >/dev/null 2>&1 || return 0
+  # No descriptor tree to consult is the same undecided case and fails the same way: with
+  # the glob matching nothing, every swap would look unheld.
+  [ -d "$grok_proc_dir" ] || return 0
+  grok_stale_dir="$HOME/.grok/stale-swaps"
+  for grok_swap in "$HOME/.grok"/.config.toml.sw?; do
+    [ -f "$grok_swap" ] || continue
+    # A symlink is not a swap. Archiving one would move the name, strand the bytes it
+    # points at, and then promise recovery of a dangling path.
+    [ -L "$grok_swap" ] && continue
+    # A find that is missing or failing lands here on a non-zero status and keeps the file.
+    grok_recent="$(find "$grok_swap" -mmin -60 2>/dev/null)" || continue
+    [ -n "$grok_recent" ] && continue
+    # Exact string, never -lname's glob: one bracket in $HOME, or a $HOME that is itself
+    # a symlink, hides a live holder from a pattern match.
+    grok_target="$(readlink -f "$grok_swap" 2>/dev/null)" || grok_target="$grok_swap"
+    grok_held=0
+    for grok_fd in "$grok_proc_dir"/[0-9]*/fd/*; do
+      [ -e "$grok_fd" ] || continue
+      [ "$(readlink "$grok_fd" 2>/dev/null)" = "$grok_target" ] && { grok_held=1; break; }
+    done
+    [ "$grok_held" -eq 1 ] && continue
+    # basename over a brace expansion: a brace expansion here has to be escaped for
+    # Terraform to leave it alone, and the escaped form is not the shell the render
+    # produces, so the gate that drives this body as written would be testing something
+    # the boot never runs.
+    grok_base="$(basename "$grok_swap" 2>/dev/null)" || continue
+    [ -n "$grok_base" ] || continue
+    mkdir -p "$grok_stale_dir" 2>/dev/null || continue
+    # The suffix has to be unique across boots and not just within one: sibling containers
+    # share this volume and each starts its own PID sequence, so $$ alone can name two
+    # archives alike and the second mv would quietly eat the first.
+    grok_n=0
+    grok_name="sweep-$grok_base.orphan.$$-$grok_n"
+    while [ -e "$grok_stale_dir/$grok_name" ]; do
+      grok_n=$((grok_n + 1))
+      grok_name="sweep-$grok_base.orphan.$$-$grok_n"
+    done
+    mv -f "$grok_swap" "$grok_stale_dir/$grok_name" 2>/dev/null || continue
+    # mv carries the swap's old mtime with it, so a swap from a workspace stopped for six
+    # weeks would be archived and pruned in the same breath - the common case of the very
+    # situation this exists for. The archive dates from the day the stack set it down,
+    # which is the only clock that makes the month of recovery real.
+    touch "$grok_stale_dir/$grok_name" 2>/dev/null || true
+    echo "Moved the stale editor swap $grok_swap to ~/.grok/stale-swaps/$grok_name: the" \
+      "session that left it is not one this container can see, and this boot replaces the" \
+      "file it shadows either way. vim -r ~/.grok/stale-swaps/$grok_name recovers it."
+  done
+  # Prune only the names this function gives itself, at one level only: an operator who
+  # reads the recovery docs and parks a file in that directory keeps it.
+  find "$grok_stale_dir" -maxdepth 1 -type f -name 'sweep-*.orphan.*' -mtime +30 \
+    -exec rm -f {} + 2>/dev/null || true
+}
+grok_sweep_config_swaps || true

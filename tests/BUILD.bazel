@@ -479,6 +479,11 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//tests:coverage_tools",
     ],
+    # The suite drives one boot function out of the agents_seed body over scratch homes
+    # under BATS_TEST_TMPDIR, and reads both main.tf twins to prove they still run it.
+    "config-swap-sweep.bats": [
+        "//:templates_payload",
+    ],
     # The suite reads both startup twins for the vault hook and both main.tf twins for
     # the render-map key that gates it, which is every template tree at once.
     "startup-vault-hook.bats": [
