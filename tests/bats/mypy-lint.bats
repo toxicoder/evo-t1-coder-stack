@@ -153,7 +153,7 @@ runner_targets() {
 @test "the runner's array matches what //lints:mypy ships in runfiles" {
   # The BUILD comment says the list and the data edge are kept equal; this makes
   # the claim checkable instead of aspirational. Each array entry has to live
-  # under one of the four declared groups.
+  # under one of the five declared groups.
   local t covered
   while IFS= read -r t; do
     [ -n "${t}" ] || continue
@@ -162,6 +162,10 @@ runner_targets() {
       scripts/*) [ -d "${REPO_ROOT}/scripts/lib" ] && covered=1 ;;
       tests/*) covered=1 ;;
       docs-site/*) covered=1 ;;
+      # The proxy callback is typed by name and not by directory: //litellm:config
+      # is the payload pair the compose file bind-mounts, so the runner owes nobody
+      # the YAML beside the one module it opens.
+      litellm/*) covered=1 ;;
     esac
     [ "${covered}" -eq 1 ] || { printf 'FAIL: target %s is under no declared data group\n' "${t}" >&2; return 1; }
   done < <(runner_targets)

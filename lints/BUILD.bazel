@@ -107,6 +107,11 @@ sh_test(
 # which the runner names with `--config-file mypy.ini`. //tests:py_coverage carries the
 # same Python through a different set of groups, and the runner's header comment says
 # which side to edit when a new package starts shipping .py files.
+#
+# The litellm entry is that fourth edge, and it names a file rather than a group:
+# //litellm:config is a payload pair (the routing config and the proxy callback compose
+# bind-mounts beside it), so declaring it here would ship a YAML file the runner never
+# opens. The module is typed under the same profile as the rest, so it joins both lists.
 exec_shell(
     name = "mypy_exec",
     src = "run_mypy.sh",
@@ -120,6 +125,7 @@ sh_test(
     data = [
         "//:mypy_config",
         "//docs-site:python_sources",
+        "//litellm:compaction_router.py",
         "//scripts:py_programs",
         "//tests:python_sources",
     ],
