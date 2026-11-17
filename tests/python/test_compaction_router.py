@@ -137,6 +137,9 @@ should_retarget: Final = cast(
 estimate_input_tokens: Final = cast(
     "Callable[[dict[str, object]], int]", ROUTER.estimate_input_tokens
 )
+max_compaction_input_tokens: Final = cast(
+    "Callable[[], int]", ROUTER.max_compaction_input_tokens
+)
 
 
 def summary_body(model: str) -> dict[str, object]:
@@ -301,6 +304,19 @@ class ShouldRetargetTest(RouterCase):
             EVO_T1_FAST_COMPACTION_INPUT_LIMIT=str(estimate_input_tokens(body) - 1)
         )
         self.assertIs(False, should_retarget(body))
+
+    def test_a_ceiling_that_is_not_a_count_falls_back_and_warns_readably(self) -> None:
+        # The fallback has to be quiet about the request and loud about the knob: the
+        # operator who typed `24k` gets one line naming the variable, and that line has
+        # to survive the logger's own % formatting rather than arrive as a traceback.
+        self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="24k")
+        with self.assertLogs("LiteLLM", level="WARNING") as caught:
+            self.assertEqual(24000, max_compaction_input_tokens())
+        self.assertEqual(1, len(caught.records))
+        message = caught.records[0].getMessage()
+        self.assertIn("EVO_T1_FAST_COMPACTION_INPUT_LIMIT", message)
+        self.assertIn("24k", message)
+        self.assertIn("24000", message)
 
 
 class FastCompactionFlagTest(RouterCase):

@@ -109,7 +109,8 @@ def max_compaction_input_tokens() -> int:
         return int(raw)
     except ValueError:
         LOGGER.warning(
-            "compaction router: %s=%r is not a count; using %d",
+            "compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=%r is not a count;"
+            " using %d",
             raw,
             DEFAULT_INPUT_LIMIT,
         )
