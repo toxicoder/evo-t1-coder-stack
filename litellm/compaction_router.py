@@ -8,6 +8,8 @@ costs, because a summary needs no thinking at all. The two fast-compaction lanes
 (``agent-xhigh-fast`` and ``agent-swarm-fast``) therefore ask this callback to move that
 one call off the thinking level it was billed at, onto a target chosen by how much the
 summary has to read, and every other call of the same conversation stays where it was.
+Both of the CLI's two asks are recognised: the one it appends at the auto-compaction
+threshold and the one ``/compact`` appends inside a ``<summary_request>`` tag.
 
 Registered in litellm/config.yaml as ``litellm_settings.callbacks`` entry
 ``compaction_router.proxy_handler_instance``, and bind-mounted by docker-compose.yml at
@@ -71,17 +73,38 @@ else:
 
 LOGGER: Final = logging.getLogger("LiteLLM")
 
-# The instruction the Grok CLI appends when it asks for a summary. Matched on a stable
-# interior clause rather than the whole sentence, so a reworded opening cannot unarm it.
-COMPACTION_MARKER: Final = (
-    "produce a faithful, concise summary of the conversation so far"
+# The two instructions the Grok CLI appends when it asks for a summary: the
+# auto-compaction ask (crates/codegen/xai-grok-shell/src/session/helpers/
+# session_summary.rs) and the manual `/compact` ask (.../session_compact.rs), which the
+# CLI wraps in a <summary_request> tag. Each is matched on a stable interior clause
+# rather than the whole sentence, so a reworded opening cannot unarm it. The second is
+# the shorter of the two and is not a substring of the first, so neither subsumes it and
+# a CLI that only ever sends one of the two still hops.
+COMPACTION_MARKERS: Final = (
+    "produce a faithful, concise summary of the conversation so far",
+    "summarize the conversation so far",
 )
 
+# How long the trailing turn may be and still be an ask. Both instructions are the whole
+# message -- roughly 1,100 characters for the auto ask and 900 for the tagged manual one
+# -- so the CLI appends the ask with nothing else in the turn. The ceiling is what tells
+# an ask from a turn that merely quotes one: this repo prints both sentences in
+# docs/litellm-routing.md, and a message long enough to be carrying a thought around that
+# sentence is conversation, not the CLI asking.
+MAX_ASK_CHARS: Final = 4000
+
 DISABLED_VALUES: Final = frozenset({"0", "false", "off", "no"})
+ENABLED_VALUES: Final = frozenset({"1", "true", "on", "yes"})
 # The two roles the CLI writes the summary ask from. A trailing message in any other
 # role -- a tool result, an assistant turn -- is conversation content that quotes the
-# sentence rather than the CLI asking for a summary.
+# sentence rather than the CLI asking for a summary. Compared case-folded, because the
+# role a caller puts on the wire is not something this module can pin.
 ASKING_ROLES: Final = frozenset({"user", "system"})
+# The key each protocol carries its turns under: Chat Completions and Anthropic Messages
+# send ``messages``, the Responses API sends ``input``. The CLI picks with ``api_backend``
+# and defaults to chat_completions, so ``input`` is the arm that keeps the hop alive if
+# an operator ever points a fast alias at the Responses protocol.
+REQUEST_TURN_KEYS: Final = ("messages", "input")
 DEFAULT_LANES: Final = "agent-xhigh-fast,agent-swarm-fast"
 DEFAULT_TARGET: Final = "compaction-fast"
 DEFAULT_SPARK_TARGET: Final = "agent-low"
@@ -219,36 +242,56 @@ def _content_text(content: object) -> str:
 
 
 def _messages(data: dict[str, object]) -> list[object]:
-    raw = data.get("messages")
-    return list(raw) if isinstance(raw, list) else []
+    """The turns of a request body, under whichever key its protocol uses."""
+    for key in REQUEST_TURN_KEYS:
+        raw = data.get(key)
+        if isinstance(raw, list):
+            return list(raw)
+    return []
+
+
+def _asking_turn(data: dict[str, object]) -> dict[str, object] | None:
+    """The trailing turn, but only when its role is one the CLI asks from.
+
+    The ask is the last thing in the body, so a body whose trailing turn is a tool
+    result or an assistant turn is not a compaction no matter what it says: reading
+    those is how an agent that just cat-ed one of the pages quoting this sentence would
+    have its real turn answered from the summary target with its tools stripped.
+    """
+    messages = _messages(data)
+    if not messages:
+        return None
+    last = messages[-1]
+    if not isinstance(last, dict):
+        return None
+    role = last.get("role")
+    if not isinstance(role, str) or role.casefold() not in ASKING_ROLES:
+        return None
+    return last
 
 
 def is_compaction_request(data: dict[str, object]) -> bool:
     """Whether this request is the CLI asking for a summary of the conversation.
 
-    The instruction lands as the trailing message, with the system prompt beside it, so
-    both are read and nothing in between is. The trailing message also has to come from
-    one of the two roles the CLI writes that ask from: a ``tool`` result that happens to
-    carry the sentence is a file the agent just read, not a compaction, and the repo
-    quotes the marker verbatim in its own docs and tests, so reading one of those is an
-    everyday event on these lanes. Moving that turn would answer it from the summary
-    target with its tools stripped.
+    Two conditions, both about the trailing turn. It has to be a turn the CLI writes
+    asks from, and it has to *be* one of the two asks: the sentence has to sit in that
+    turn and the turn has to be about the size of the instruction. The system prompt is
+    deliberately not consulted. A summary request always carries the ask as its last
+    turn, while the rulebook sitting at ``messages[0]`` is shared by every turn of the
+    session, so matching there would move an entire conversation onto the summary target
+    the moment an operator pasted the sentence printed in docs/litellm-routing.md into
+    a workspace AGENTS.md. The one residue the ceiling cannot cover is a user turn whose
+    entire content is the quoted instruction; that turn is answered by the summary
+    target, which is the pre-hop behaviour for any message a session sends on a
+    non-fast alias.
     """
-    messages = _messages(data)
-    if not messages:
+    last = _asking_turn(data)
+    if last is None:
         return False
-    last = messages[-1]
-    if not isinstance(last, dict) or last.get("role") not in ASKING_ROLES:
+    text = _content_text(last.get("content"))
+    if not text or len(text) > MAX_ASK_CHARS:
         return False
-    candidates: list[object] = [last]
-    first = messages[0]
-    if isinstance(first, dict) and first.get("role") == "system":
-        candidates.append(first)
-    for message in candidates:
-        content = message.get("content") if isinstance(message, dict) else None
-        if COMPACTION_MARKER in _content_text(content):
-            return True
-    return False
+    return any(marker in text for marker in COMPACTION_MARKERS)
 
 
 def _extra_chars(message: dict[str, object]) -> int:

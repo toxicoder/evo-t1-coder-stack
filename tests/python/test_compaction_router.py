@@ -45,6 +45,25 @@ MODULE_PATH = REPO_ROOT / "litellm" / "compaction_router.py"
 # the sentence the shipped matcher matches is a fact about the CLI, so a reworded
 # constant has to fail a test rather than quietly unarm the hop.
 MARKER: Final = "produce a faithful, concise summary of the conversation so far"
+# The other ask the CLI appends, the one /compact wraps in a <summary_request> tag
+# (crates/codegen/xai-grok-shell/src/session/helpers/session_compact.rs). Pinned here in
+# full and in its own clause, so a matcher that only ever knew the first ask fails a
+# test rather than leaving manual compaction on the extra-high lane forever.
+MANUAL_ASK: Final = (
+    "<summary_request>\n"
+    "Please summarize the conversation so far. This summary (everything after your\n"
+    "thinking) will be provided to another AI assistant to continue working on the\n"
+    "task. The other assistant will only see the user's original query and your\n"
+    "summary, it will not have access to any tool calls or tool outputs from this\n"
+    "conversation. The purpose of the summary is to compress the conversation\n"
+    "context while preserving the essential information needed to seamlessly\n"
+    "continue. Useful things to include: the user's requests, what you've done so\n"
+    "far, relevant file paths and code details, any errors encountered and how\n"
+    "they were resolved, and what remains to be done. DO NOT call any tools in\n"
+    "your response.\n"
+    "</summary_request>"
+)
+MANUAL_MARKER: Final = "summarize the conversation so far"
 TARGET: Final = "compaction-fast"
 # The second tier: the Spark group an oversized summary goes to, so it keeps a window
 # wide enough to read the whole conversation and only loses the thinking level.
@@ -264,13 +283,73 @@ class ShouldRetargetTest(RouterCase):
             with self.subTest(model=lane):
                 self.assertIs(False, should_retarget(chat_body(lane)))
 
-    def test_the_ask_in_the_system_prompt_still_counts(self) -> None:
+    def test_a_rulebook_that_quotes_the_ask_moves_no_ordinary_turn(self) -> None:
+        # The system prompt is the same text on every turn of the session, so matching
+        # the ask there would move a whole conversation onto the summary target the
+        # moment an operator pasted the sentence docs/litellm-routing.md prints into a
+        # workspace rulebook. The ask has to be in the trailing turn.
         body = chat_body("agent-swarm-fast")
         body["messages"] = [
             {"role": "system", "content": "You must %s, in under 400 words." % MARKER},
-            {"role": "user", "content": "Summarise this session."},
+            {
+                "role": "user",
+                "content": "Rename build() to compile() and run the gate.",
+            },
         ]
+        self.assertIs(False, should_retarget(body))
+        self.assert_stays_put(body)
+
+    def test_the_ask_in_a_trailing_user_turn_hops(self) -> None:
+        body = summary_body("agent-swarm-fast")
         self.assertIs(True, should_retarget(body))
+
+    def test_the_manual_compact_ask_hops(self) -> None:
+        for lane in FAST_LANES:
+            with self.subTest(model=lane):
+                body = chat_body(lane)
+                messages = cast("list[dict[str, object]]", body["messages"])
+                messages.append({"role": "user", "content": MANUAL_ASK})
+                self.assertIs(True, should_retarget(body))
+                self.assertIn(MANUAL_MARKER, MANUAL_ASK)
+
+    def test_a_turn_longer_than_either_ask_is_the_talk_about_summaries(self) -> None:
+        # Both instructions are the whole turn, so a trailing turn that carries the
+        # sentence inside a wall of other text is conversation, not the CLI asking.
+        body = chat_body("agent-xhigh-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append(
+            {"role": "user", "content": "%s\n%s" % (MARKER, "filler " * 2000)}
+        )
+        self.assertGreater(len(MARKER) + len("filler " * 2000), ROUTER.MAX_ASK_CHARS)
+        self.assertIs(False, should_retarget(body))
+
+    def test_a_responses_api_body_hops(self) -> None:
+        # api_backend = "responses" puts the turns under `input` instead of `messages`.
+        # A classifier that only read `messages` would leave that session compacting on
+        # the extra-high lane with nothing in the log to say why.
+        body = {
+            "model": "agent-xhigh-fast",
+            "instructions": "You are the Grok Build coding agent.",
+            "input": [
+                {"role": "user", "content": "Read tests/python and add the suite."},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "%s, then stop." % MARKER}
+                    ],
+                },
+            ],
+            "tools": [{"type": "function", "function": {"name": "run"}}],
+            "tool_choice": "auto",
+            "reasoning_effort": "xhigh",
+            "stream": True,
+        }
+        self.assertIs(True, should_retarget(body))
+        handed, result = self.call(body)
+        self.assertIs(result, handed)
+        self.assertEqual(TARGET, handed.get("model"))
+        for key in DROPPED_KEYS:
+            self.assertNotIn(key, handed)
 
     def test_a_turn_that_only_quotes_the_ask_does_not_hop(self) -> None:
         body = chat_body("agent-xhigh-fast")
@@ -519,12 +598,23 @@ class RoleGateTest(RouterCase):
         self.assertIs(False, should_retarget(body))
         self.assert_stays_put(body)
 
-    def test_a_system_turn_asking_still_hops_from_a_user_turn(self) -> None:
+    def test_a_trailing_system_turn_that_asks_hops(self) -> None:
+        # The CLI's asks are user turns; the system role stays in the gate for a caller
+        # that writes the instruction there, which is only honoured when it is the
+        # trailing turn as well.
         body = chat_body("agent-swarm-fast")
         body["messages"] = [
+            {"role": "user", "content": "Read tests/python and add the suite."},
             {"role": "system", "content": "Task: %s." % MARKER},
-            {"role": "user", "content": "Go."},
         ]
+        self.assertEqual(TARGET, retarget_target(body))
+
+    def test_an_uppercase_role_still_asks(self) -> None:
+        # The role on the wire is caller-supplied, so the gate compares it folded rather
+        # than trusting one casing.
+        body = chat_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append({"role": "User", "content": "%s, then stop." % MARKER})
         self.assertEqual(TARGET, retarget_target(body))
 
     def test_the_marker_in_a_middle_turn_does_not_hop(self) -> None:
