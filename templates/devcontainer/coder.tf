@@ -88,6 +88,16 @@ variable "grok_subagent_max_concurrent" {
   }
 }
 
+variable "grok_subagent_max_depth" {
+  type        = number
+  description = "How deep a Grok Build subagent tree may go, rendered into [subagents] max_depth in the workspace's ~/.grok/config.toml. 1 is no nesting: only the top-level session spawns, which is the behaviour every workspace shipped before this knob and the rollback. 2 is the shipped default - a child may spawn read-only mappers of its own, so a reviewer scopes out its own evidence instead of handing the request back to the parent and waiting a round trip. 3 is the operator's experiment ceiling. Every depth-2 child holds one of the fleet's 15 streams (3 Spark boxes x PARALLEL 5, scripts/spark-configure.sh), so a spawner is not free, and the ez-micro-plan checker counts 1 + spawns for each task against that total."
+  default     = 2
+  validation {
+    condition     = var.grok_subagent_max_depth >= 1 && var.grok_subagent_max_depth <= 3
+    error_message = "grok_subagent_max_depth must be a whole number between 1 and 3; 1 keeps nesting off the way it was, and 3 is the operator's experiment ceiling."
+  }
+}
+
 variable "litellm_url" {
   type        = string
   description = "LiteLLM proxy base URL reachable from the workspace (via the Docker host gateway)."

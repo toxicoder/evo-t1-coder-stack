@@ -332,6 +332,8 @@ inference_idle_timeout_secs = 1800
 telemetry = false
 # Offline-first box: the tool stays available for the rare reachable docs site.
 web_fetch = true
+# Lets the parent steer a live child instead of killing and respawning it.
+active_agent_messages = true
 
 [toolset.web_fetch]
 # SSRF fail-closed: loopback only when explicitly enabled, private ranges and
@@ -361,10 +363,12 @@ auto_compact_threshold_percent = 70
 # streams to give. limit_behavior "queue" below holds
 # overflow instead of failing the spawn, and sampling_limit is deliberately unset
 # because it defaults to max_concurrent, which keeps the two caps from drifting.
+# Depth rides the same 15: a depth-2 child holds a stream too, so a parent counts
+# `1 + spawns` per task in flight; 1 keeps nesting off.
 [subagents]
 enabled = true
 max_concurrent = ${grok_subagent_max_concurrent}
-max_depth = 1
+max_depth = ${grok_subagent_max_depth}
 limit_behavior = "queue"
 
 # Pin every built-in subagent type to the fan-out lane. The three are general-purpose

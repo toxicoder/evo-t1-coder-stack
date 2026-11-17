@@ -138,12 +138,12 @@ resolve_repo_root() {
 # are sed, never eval; a doubled dollar unfolds first.
 # Globals:
 #   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
-#   written as a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the
-#   context7 block), HOME (the home default when $3 is not given), and the six
-#   fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
-#   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT and GROK_SWARM_WIDTH. An
-#   unusable value falls back and is noted; the width is the fleet's 15 on every
-#   lane, since agent-swarm is ungated in the render and always selectable.
+#   a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the context7
+#   block), HOME (the home default when $3 is not given), and the seven fan-out
+#   knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
+#   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT, GROK_SWARM_WIDTH and
+#   GROK_SUBAGENT_MAX_DEPTH (1 off, 2 the default, 3 the ceiling). An unusable
+#   value falls back and is noted; the width stays the fleet's 15.
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write
@@ -158,14 +158,17 @@ resolve_repo_root() {
 seed_render_grok_config() {
   local src="${1:-}" dest="${2:-}" rendered="" lbrace="" dollar='$' search=""
   local home="${3:-${HOME:-/home/coder}}" keep_ctx7="${4:-0}" keep7="0"
-  local proxy_lit="" proxy_path="" lane="" slots=""
+  local proxy_lit="" proxy_path="" lane="" slots="" depth=""
   local explore_lane="" plan_lane="" review_lane=""
   # The fan-out knobs, with the same derivation templates/workspace/main.tf uses:
   # the width is the fleet's ceiling (3 boxes x PARALLEL 5 = 15) on every lane,
   # because agent-swarm is ungated in the rendered config and a session whose
   # default lane is pinned can still name it on any spawn. An operator who pins
-  # every lane to one box lowers it here. A value the sed could not take
-  # safely (a model id is a bare token, the width is a count) falls back.
+  # every lane to one box lowers it here. The depth is how far below the parent a
+  # child may spawn, and a depth-2 child holds one of those 15 streams too, so a
+  # spawner is not free and the knob stops at 3. A value the sed could not take
+  # safely (a model id is a bare token, the width and the depth are counts)
+  # falls back.
   lane="${GROK_SUBAGENTS_LANE:-agent-swarm}"
   if [[ ! ${lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
     note "GROK_SUBAGENTS_LANE='${lane}' is not a model id - using agent-swarm"
@@ -178,6 +181,17 @@ seed_render_grok_config() {
   elif ((slots > 32)); then
     note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is past the fleet's ceiling - using 32"
     slots="32"
+  fi
+  depth="${GROK_SUBAGENT_MAX_DEPTH:-2}"
+  if [[ ! ${depth} =~ ^[0-9]+$ ]]; then
+    note "GROK_SUBAGENT_MAX_DEPTH='${depth}' is not a count - using the nesting default 2"
+    depth="2"
+  elif ((depth > 3)); then
+    note "GROK_SUBAGENT_MAX_DEPTH='${depth}' is past the nesting ceiling - using 3"
+    depth="3"
+  elif ((depth < 1)); then
+    note "GROK_SUBAGENT_MAX_DEPTH='${depth}' is below the nesting floor - using 1"
+    depth="1"
   fi
   # The three role knobs, same defaults as the template variables in
   # templates/workspace/coder.tf, so a contributor home routes a reader, a
@@ -235,6 +249,7 @@ seed_render_grok_config() {
     -e "s|\${grok_plan_lane}|${plan_lane}|g" \
     -e "s|\${grok_review_lane}|${review_lane}|g" \
     -e "s|\${grok_subagent_max_concurrent}|${slots}|g" \
+    -e "s|\${grok_subagent_max_depth}|${depth}|g" \
     -e "s|\${search_url}|${search}|g" \
     -e "s|${proxy_lit}|${proxy_path}|g" \
     >"${rendered}"; then
