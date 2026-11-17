@@ -567,6 +567,84 @@ class TierFlagTest(RouterCase):
         self.assert_hops(summary_body("agent-xhigh-fast"), TARGET)
 
 
+class SwitchValueTest(RouterCase):
+    """The kill switch means one thing per value, and an unparseable one means off."""
+
+    def test_each_enabled_value_arms_the_hop(self) -> None:
+        for value in sorted(ROUTER.ENABLED_VALUES):
+            with self.subTest(value=value):
+                self.set_knobs(EVO_T1_FAST_COMPACTION=value)
+                self.assertIs(True, should_retarget(summary_body("agent-xhigh-fast")))
+
+    def test_a_value_that_is_neither_leaves_it_off_and_says_so_once(self) -> None:
+        # A value the module cannot parse is an operator's own edit, and the safe reading
+        # of "meant something I cannot tell" is the request staying where it was sent.
+        for value in ("disabled", "yes-please", "TRUE-ish", "1x"):
+            with self.subTest(value=value):
+                self.set_knobs(EVO_T1_FAST_COMPACTION=value)
+                ROUTER._warn_unknown_switch.cache_clear()
+                with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                    self.assertIs(
+                        False, should_retarget(summary_body("agent-xhigh-fast"))
+                    )
+                    self.assertIs(
+                        False, should_retarget(summary_body("agent-swarm-fast"))
+                    )
+                self.assertEqual(
+                    1, len(caught.records), "the warning fired per request"
+                )
+                message = caught.records[0].getMessage()
+                self.assertIn("EVO_T1_FAST_COMPACTION", message)
+                self.assertIn(value, message)
+
+
+class ConfigGuardTest(RouterCase):
+    """The two target knobs are checked against the config beside the module."""
+
+    @staticmethod
+    def _config_text(*names: str) -> str:
+        return "model_groups:\n" + "".join(
+            "  - model_name: %s\n" % name for name in names
+        )
+
+    def test_a_quoted_model_name_is_the_same_group(self) -> None:
+        # YAML accepts a quoted group name and a bare one means the same thing, so the
+        # guard has to agree or every shipped target reads as undeclared and every
+        # summary parks on its lane behind one line nobody reads.
+        quoted = self._config_text('"compaction-fast"', "'agent-low'")
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=quoted):
+            self.assertEqual(frozenset({TARGET, SPARK_TARGET}), declared_model_groups())
+
+    def test_a_quoted_config_still_hops(self) -> None:
+        quoted = self._config_text(TARGET, SPARK_TARGET, *FAST_LANES)
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=quoted):
+            self.assert_hops(summary_body("agent-swarm-fast"))
+
+    def test_one_unreadable_config_does_not_disarm_the_guard_for_good(self) -> None:
+        # The read is cached on success. Caching the empty answer of one failed read
+        # would leave both knobs unchecked for the life of the proxy process, which is
+        # exactly the typo this guard is supposed to catch.
+        cached = ROUTER._read_config_text
+        cached.cache_clear()
+        self.addCleanup(cached.cache_clear)
+        with mock.patch.object(
+            ROUTER.pathlib.Path,
+            "read_text",
+            side_effect=OSError(13, "Permission denied"),
+        ):
+            with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                self.assertEqual(frozenset(), declared_model_groups())
+        self.assertIn("config", caught.records[0].getMessage())
+        self.assertIn(TARGET, declared_model_groups())
+
+    def test_an_unreadable_config_leaves_the_shipped_hop_armed(self) -> None:
+        # Nothing to check against is not a reason to disarm the hop the alias asked for.
+        with mock.patch.object(
+            ROUTER, "declared_model_groups", return_value=frozenset()
+        ):
+            self.assert_hops(summary_body("agent-xhigh-fast"))
+
+
 class RoleGateTest(RouterCase):
     """Only the roles the CLI asks from can arm the hop."""
 

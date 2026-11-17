@@ -23,12 +23,16 @@ one ``docker compose up`` view shows the whole policy:
 ===========================================  =========================================
 variable                                     default
 ===========================================  =========================================
-``EVO_T1_FAST_COMPACTION``                   on (``0``/``false``/``off`` disable it)
+``EVO_T1_FAST_COMPACTION``                   on (``0``/``false``/``off``/``no`` off)
 ``EVO_T1_FAST_COMPACTION_LANES``             ``agent-xhigh-fast,agent-swarm-fast``
 ``EVO_T1_FAST_COMPACTION_TARGET``            ``compaction-fast``
 ``EVO_T1_FAST_COMPACTION_SPARK_TARGET``      ``agent-low``
 ``EVO_T1_FAST_COMPACTION_INPUT_LIMIT``       ``24000``
 ===========================================  =========================================
+
+A switch value that is neither of those two sets leaves the hop off and says so once: an
+operator who wrote something the module cannot parse meant something, and the safe reading
+of "meant something I cannot tell" is the request staying where it was sent.
 
 Two targets, split by what the summary has to read. A summary within the ceiling goes to
 ``compaction-fast``, the small Ollama-served coding weight on the Arc, which is where the
@@ -139,25 +143,39 @@ PREFILLED_KEYS: Final = (
 # A ``model_name:`` entry at any indent in the config beside this module. Read as text
 # rather than parsed as YAML: the only question asked of the file is whether one string is
 # one of these values, and a parser would be a second way for the routing file to break
-# this module's boot.
+# this module's boot. The quotes come off because YAML accepts them and a quoted group is
+# the same group -- a matcher that kept them would report every shipped target undeclared
+# and park every summary on its lane behind one warning line nobody reads.
 _MODEL_NAME_LINE: Final = re.compile(r"^[ \t]*-[ \t]+model_name:[ \t]*([^ \t#]+)")
 
 
 @functools.lru_cache(maxsize=1)
+def _read_config_text() -> str:
+    """The routing config beside this module, read once per process.
+
+    Cached on the text rather than on the parsed set so that a failed read is not what
+    the cache remembers: caching an empty set would leave both target knobs unchecked for
+    the life of the proxy off one transient EIO, and an unchecked knob is the mistake
+    this guard exists to catch.
+    """
+    return (pathlib.Path(__file__).resolve().parent / "config.yaml").read_text(
+        encoding="utf-8"
+    )
+
+
 def declared_model_groups() -> frozenset[str]:
     """The model groups the routing config beside this module declares.
 
     The two target knobs are operator input and neither is validated by LiteLLM: point one
     at a group nobody declared and the summary call is moved onto a model that does not
     exist, where it fails instead of degrading -- and a mistyped knob looks exactly like a
-    working one until the next compaction. An unreadable file returns the empty set and the
-    caller treats that as "nothing to check against", because a missing config is a reason
-    to keep the hop the alias asked for, not to disarm it.
+    working one until the next compaction. An unreadable file returns the empty set and
+    the caller treats that as "nothing to check against", because a missing config is a
+    reason to keep the hop the alias asked for, not to disarm it. The read is retried on
+    the next call rather than remembered.
     """
     try:
-        text = (pathlib.Path(__file__).resolve().parent / "config.yaml").read_text(
-            encoding="utf-8"
-        )
+        text = _read_config_text()
     except OSError:
         LOGGER.warning(
             "compaction router: cannot read the config beside this module;"
@@ -165,7 +183,7 @@ def declared_model_groups() -> frozenset[str]:
         )
         return frozenset()
     return frozenset(
-        match.group(1)
+        match.group(1).strip("'\"")
         for line in text.splitlines()
         if (match := _MODEL_NAME_LINE.match(line))
     )
@@ -204,9 +222,38 @@ def _target_setting(name: str, default: str) -> str:
     return default if value is None else value.strip()
 
 
+@functools.lru_cache(maxsize=8)
+def _warn_unknown_switch(raw: str) -> None:
+    """One line per distinct unparseable switch value, not one per request.
+
+    A value that is neither on nor off is an operator who meant something, and the two
+    guesses are not equal: a hop that silently stays armed after ``EVO_T1_FAST_COMPACTION
+    =disabled`` is a knob that does not do what it was set to, while a hop that silently
+    stops is the documented stay-put. So the switch goes off and says why.
+    """
+    LOGGER.warning(
+        "compaction router: EVO_T1_FAST_COMPACTION=%r is neither on nor off; leaving the"
+        " hop off -- name one of %s to arm it",
+        raw,
+        ", ".join(sorted(ENABLED_VALUES)),
+    )
+
+
 def fast_compaction_enabled() -> bool:
-    """Whether the hop is armed at all; the default is on, and the alias choice is the opt-in."""
-    return _setting("EVO_T1_FAST_COMPACTION", "1").lower() not in DISABLED_VALUES
+    """Whether the hop is armed at all; the default is on, and the alias choice is the opt-in.
+
+    Anything that parses as neither an on nor an off value leaves it off: an unrecognised
+    spelling is an operator's own edit, and guessing "on" would keep a summary hopping
+    after the operator asked for it not to.
+    """
+    raw = _setting("EVO_T1_FAST_COMPACTION", "1")
+    value = raw.casefold()
+    if value in DISABLED_VALUES:
+        return False
+    if value not in ENABLED_VALUES:
+        _warn_unknown_switch(raw)
+        return False
+    return True
 
 
 def fast_compaction_lanes() -> frozenset[str]:
