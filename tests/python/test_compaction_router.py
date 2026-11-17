@@ -250,6 +250,21 @@ class RouterCase(unittest.TestCase):
         """Set compaction knobs for this case only; every other one reads its default."""
         os.environ.update(values)
 
+    def clear_warn_caches(self) -> None:
+        """Forget the warn-once lines, for the cases that assert on one of them.
+
+        Each of those warnings is deduped per distinct reason for the life of the
+        process, which is what an operator wants in the proxy log and what makes a
+        second case asking about the same reason see nothing.
+        """
+        for cached in (
+            ROUTER._warn_config_unreadable,
+            ROUTER._warn_unknown_switch,
+            ROUTER._warn_clamped_ceilings,
+        ):
+            cached.cache_clear()
+            self.addCleanup(cached.cache_clear)
+
     def call(
         self, body: dict[str, object]
     ) -> tuple[dict[str, object], dict[str, object] | None]:
@@ -702,6 +717,7 @@ class ConfigGuardTest(RouterCase):
         # The read is cached on success. Caching the empty answer of one failed read
         # would leave both knobs unchecked for the life of the proxy process, which is
         # exactly the typo this guard is supposed to catch.
+        self.clear_warn_caches()
         cached = ROUTER._read_config_text
         cached.cache_clear()
         self.addCleanup(cached.cache_clear)
@@ -714,6 +730,61 @@ class ConfigGuardTest(RouterCase):
                 self.assertEqual(frozenset(), declared_model_groups())
         self.assertIn("config", caught.records[0].getMessage())
         self.assertIn(TARGET, declared_model_groups())
+
+    def test_a_config_with_no_entry_at_all_is_not_kept_as_the_truth(self) -> None:
+        # A 0-byte config.yaml -- a truncated checkout, a bind mount racing the proxy
+        # start -- reads fine and yields no groups, which is the same blind spot a failed
+        # read has. It used to arrive by the success door and be memoised for the process,
+        # so every mistyped target was accepted in silence. It now warns and is retried.
+        real = (REPO_ROOT / "litellm" / "config.yaml").read_text(encoding="utf-8")
+        self.clear_warn_caches()
+        cached = ROUTER._read_config_text
+        cached.cache_clear()
+        self.addCleanup(cached.cache_clear)
+        with mock.patch.object(
+            ROUTER.pathlib.Path, "read_text", side_effect=["", real]
+        ):
+            with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                self.assertEqual(frozenset(), declared_model_groups())
+            self.assertEqual(0, cached.cache_info().currsize)
+            self.assertIn(TARGET, declared_model_groups())
+        message = caught.records[0].getMessage()
+        self.assertIn("config", message)
+        self.assertIn("model_name", message)
+
+    def test_an_undecodable_config_costs_the_hop_nothing(self) -> None:
+        # Invalid UTF-8 raises UnicodeDecodeError, not OSError, and an exception escaping
+        # here reaches the hook's blanket handler and kills the hop for the whole proxy.
+        self.clear_warn_caches()
+        cached = ROUTER._read_config_text
+        cached.cache_clear()
+        self.addCleanup(cached.cache_clear)
+        broken = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+        with mock.patch.object(ROUTER.pathlib.Path, "read_text", side_effect=broken):
+            with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                self.assertEqual(frozenset(), declared_model_groups())
+                self.assertIsNone(declared_input_window(TARGET))
+                self.assert_hops(summary_body("agent-xhigh-fast"))
+        self.assertIn("config", caught.records[0].getMessage())
+
+    def test_one_unusable_config_is_one_line_not_one_per_summary(self) -> None:
+        # The switch warning is deduped and this one has to be too: four compactions on
+        # a broken mount are four hop lines plus one diagnosis, not eight lines of the
+        # same sentence burying the four that matter.
+        self.clear_warn_caches()
+        cached = ROUTER._read_config_text
+        cached.cache_clear()
+        self.addCleanup(cached.cache_clear)
+        with mock.patch.object(
+            ROUTER.pathlib.Path,
+            "read_text",
+            side_effect=OSError(2, "No such file or directory"),
+        ):
+            with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                for _ in range(4):
+                    declared_model_groups()
+                    declared_input_window(TARGET)
+        self.assertEqual(1, len(caught.records))
 
     def test_an_unreadable_config_leaves_the_shipped_hop_armed(self) -> None:
         # Nothing to check against is not a reason to disarm the hop the alias asked for.
@@ -870,6 +941,7 @@ class ArcWindowTest(RouterCase):
     def test_an_unreadable_config_leaves_the_window_unchecked_and_says_so(self) -> None:
         # Same shape as the declared-group guard: no number is a reason to skip the
         # clamp, not a reason to fork every summary away from the Arc.
+        self.clear_warn_caches()
         cached = ROUTER._read_config_text
         cached.cache_clear()
         self.addCleanup(cached.cache_clear)

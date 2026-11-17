@@ -174,6 +174,26 @@ _MAX_INPUT_TOKENS_LINE: Final = re.compile(
 )
 
 
+@functools.lru_cache(maxsize=8)
+def _warn_config_unreadable(reason: str) -> None:
+    """One line per distinct reason the config beside the module is unusable.
+
+    An unusable config is a state of the box rather than of the request, so a line per
+    compaction would bury the hop lines it is supposed to sit beside. The reason is part
+    of the cache key, which is what keeps a file that changes shape mid-outage (missing,
+    then empty, then restored) from being muted behind the first verdict.
+    """
+    LOGGER.warning(
+        "compaction router: the config beside this module is unusable (%s);"
+        " the target knobs and the Arc window go unchecked",
+        reason,
+    )
+
+
+class ConfigUnusable(Exception):
+    """The file beside this module read fine but is no routing config to check against."""
+
+
 @functools.lru_cache(maxsize=1)
 def _read_config_text() -> str:
     """The routing config beside this module, read once per process.
@@ -181,11 +201,32 @@ def _read_config_text() -> str:
     Cached on the text rather than on the parsed set so that a failed read is not what
     the cache remembers: caching an empty set would leave both target knobs unchecked for
     the life of the proxy off one transient EIO, and an unchecked knob is the mistake
-    this guard exists to catch.
+    this guard exists to catch. A file that reads cleanly but holds not one entry is the
+    same blind spot arriving by the success door -- a 0-byte config.yaml from a truncated
+    checkout or a bind mount racing the proxy start yields no groups and no window, and
+    would be remembered for the process. Raising there costs the cache nothing, so the
+    next compaction re-reads and a restored file is back in service on its own.
     """
-    return (pathlib.Path(__file__).resolve().parent / "config.yaml").read_text(
+    text = (pathlib.Path(__file__).resolve().parent / "config.yaml").read_text(
         encoding="utf-8"
     )
+    if not any(_MODEL_NAME_LINE.match(line) for line in text.splitlines()):
+        raise ConfigUnusable("no model_name entry in it")
+    return text
+
+
+def _usable_config_text() -> str | None:
+    """The config beside this module, or None when it cannot be read or is no config.
+
+    One warning per distinct reason covers both readers, and the read is retried on every
+    call: ``_read_config_text`` caches only a text it accepted, so nothing here remembers
+    a failure.
+    """
+    try:
+        return _read_config_text()
+    except (OSError, UnicodeDecodeError, ConfigUnusable) as exc:
+        _warn_config_unreadable(str(exc) or exc.__class__.__name__)
+        return None
 
 
 def declared_model_groups() -> frozenset[str]:
@@ -194,18 +235,13 @@ def declared_model_groups() -> frozenset[str]:
     The two target knobs are operator input and neither is validated by LiteLLM: point one
     at a group nobody declared and the summary call is moved onto a model that does not
     exist, where it fails instead of degrading -- and a mistyped knob looks exactly like a
-    working one until the next compaction. An unreadable file returns the empty set and
+    working one until the next compaction. An unusable file returns the empty set and
     the caller treats that as "nothing to check against", because a missing config is a
     reason to keep the hop the alias asked for, not to disarm it. The read is retried on
     the next call rather than remembered.
     """
-    try:
-        text = _read_config_text()
-    except OSError:
-        LOGGER.warning(
-            "compaction router: cannot read the config beside this module;"
-            " the two target knobs go unchecked"
-        )
+    text = _usable_config_text()
+    if text is None:
         return frozenset()
     return frozenset(
         match.group(1).strip("'\"")
@@ -229,17 +265,12 @@ def declared_input_window(model: str) -> int | None:
     a top-level key) is the one that belongs to this group. A blank line or a comment
     inside the block neither ends the block nor supplies a window.
     """
-    try:
-        lines = _read_config_text().splitlines()
-    except OSError:
-        LOGGER.warning(
-            "compaction router: cannot read the config beside this module;"
-            " the Arc window goes unchecked"
-        )
+    text = _usable_config_text()
+    if text is None:
         return None
     inside = False
     window: int | None = None
-    for line in lines:
+    for line in text.splitlines():
         entry = _MODEL_NAME_LINE.match(line)
         if entry is not None:
             inside = entry.group(1).strip("'\"") == model
