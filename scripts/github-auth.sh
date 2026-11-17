@@ -454,8 +454,16 @@ auth_workspace() {
   # refuse ("The value of the GH_TOKEN environment variable is being used
   # for authentication") the same way gh_token_refresh used to.
   phase "installing a gh credential in ${container}"
-  if printf '%s\n' "${pat}" | docker exec -i "${container}" sh -c \
-    'umask 077; unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth logout --hostname github.com >/dev/null 2>&1 || true; gh auth login --hostname github.com --git-protocol https --with-token && gh auth setup-git && gh api /user >/dev/null'; then
+  # The token reaches the container on stdin through a redirect, not a pipeline.
+  # Under `set -o pipefail` the pipeline answered with the writer's death: the chain
+  # can exit before the write is ever scheduled, printf is killed by SIGPIPE, and its
+  # 141 was read here as a refusal (issue #173, measured on a loaded CI runner).
+  # bash reports the rightmost non-zero component, so that 141 arrived only when the
+  # chain itself had exited 0 - a working install called broken. A redirect leaves
+  # the container's own exit code as the single verdict.
+  if docker exec -i "${container}" sh -c \
+    'umask 077; unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; gh auth logout --hostname github.com >/dev/null 2>&1 || true; gh auth login --hostname github.com --git-protocol https --with-token && gh auth setup-git && gh api /user >/dev/null' \
+    < <(printf '%s\n' "${pat}"); then
     log "${container}: gh credential installed (rotate or remove it in GitHub -> Applications when work ends)"
     # setup-git installs the plain !gh auth git-credential helper, which echoes
     # the env pair, so the pasted token is shadowed again the moment the
