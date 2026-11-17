@@ -268,13 +268,11 @@ services:
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
       # Every Spark URL in this file is built from one hostname per box
-      # (SPARKn_HOST) plus the two shared ports, so a box that moved or got a
+      # (SPARKn_HOST) plus the one shared port, so a box that moved or got a
       # new DHCP name is a single .env edit. No LAN name is baked in here: the
       # fallback is STACK_LAN_HOST, which is at least a machine that exists.
       # The full-URL keys are the escape hatch and win outright when set - use
       # them for a box on a non-default port or behind a different scheme.
-      SPARK1_OLLAMA_URL: ${SPARK1_OLLAMA_URL:-http://${SPARK1_HOST:-${STACK_LAN_HOST:-localhost}}:${SPARK_OLLAMA_PORT:-11434}}
-      SPARK2_OLLAMA_URL: ${SPARK2_OLLAMA_URL:-http://${SPARK2_HOST:-${STACK_LAN_HOST:-localhost}}:${SPARK_OLLAMA_PORT:-11434}}
       # OpenAI-compatible /v1 endpoints for the ONE `agent` model group: its three
       # deployments are the three URLs below, one per Spark box. Routing is
       # session-pinned first — a request carrying a session id rides the box its
