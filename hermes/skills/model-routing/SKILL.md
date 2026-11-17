@@ -84,8 +84,9 @@ Notes that matter:
   it keeps the 262144-token window a full-size summary needs, at thinking baked `low` rather
   than `xhigh` - instead of being truncated to fit the Arc. A slow summary beats a summary of
   half the conversation. The guard is a ceiling the proxy may lower and never raise: the
-  target group's own `max_input_tokens` in `litellm/config.yaml` caps it, so raising that key
-  cannot park a summary inside a model too small to read it. Blank
+  target group's own `max_input_tokens` in `litellm/config.yaml` caps it - a group that
+  declares none leaves the key whole, and the proxy logs one line about it - so raising
+  that key cannot park a summary inside a model too small to read it. Blank
   `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized summary
   stays where it arrived, at the lane's own thinking level.
 - Their degradation hops follow their parents, and the target carries its own:

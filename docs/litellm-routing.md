@@ -486,7 +486,9 @@ declares for the Arc target group, so `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000
 the 32768 tokens config.yaml declares for 'compaction-fast'; forking at the declared window
 instead` line. The declared window is a fact about the weights and the pinned LiteLLM has no
 context-window check between the hook and Ollama, so a knob cannot reach past it; a target
-group that declares no window leaves the guard whole.
+group that declares no window leaves the guard whole, and prints one
+`compaction router: 'compaction-fast' declares no max_input_tokens in config.yaml; forking at
+EVO_T1_FAST_COMPACTION_INPUT_LIMIT alone` line rather than failing quietly.
 Above it the summary goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default
 `agent-low`): the same three Spark boxes, the 262144-token window a real summary needs, and
 the thinking baked to `low` instead of `xhigh`. Blank that knob, or name the lane the call

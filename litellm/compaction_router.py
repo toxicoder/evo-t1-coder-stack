@@ -168,9 +168,12 @@ _MODEL_NAME_LINE: Final = re.compile(r"^[ \t]*-[ \t]+model_name:[ \t]*([^ \t#]+)
 # The window one of those entries declares, read from the same text for the same reason.
 # Only a whole non-negative integer counts: a value this module cannot read is a value it
 # has no business clamping against, so it comes back as "no window declared" and the
-# operator's own guard stands.
+# operator's own guard stands -- loudly, via _warn_window_undeclared, because losing the
+# ceiling is the one state that lets an oversized summary reach a model too small for it.
+# A trailing comment is read the way YAML reads it and the way _MODEL_NAME_LINE already
+# does: dropping it would disarm the clamp for a config that loads fine.
 _MAX_INPUT_TOKENS_LINE: Final = re.compile(
-    r"^[ \t]+max_input_tokens:[ \t]*([0-9]+)[ \t]*$"
+    r"^[ \t]+max_input_tokens:[ \t]*([0-9]+)[ \t]*(?:#[^\n]*)?$"
 )
 
 
@@ -262,8 +265,9 @@ def declared_input_window(model: str) -> int | None:
 
     Scanned entry by entry rather than file-wide: ``max_input_tokens`` is per deployment,
     so the first number after the matching ``model_name:`` and before the next entry (or
-    a top-level key) is the one that belongs to this group. A blank line or a comment
-    inside the block neither ends the block nor supplies a window.
+    a top-level key) is the one that belongs to this group. A blank line or a comment-only
+    line inside the block neither ends the block nor supplies a window, and a comment
+    trailing a value is read as nothing, which is how YAML reads it.
     """
     text = _usable_config_text()
     if text is None:
@@ -413,6 +417,23 @@ def _warn_clamped_ceilings(target: str, guard: int, window: int) -> None:
     )
 
 
+@functools.lru_cache(maxsize=8)
+def _warn_window_undeclared(target: str) -> None:
+    """One line per target that declares no window, not one per summary.
+
+    The guard standing alone is a state the operator is entitled to hear about: it is what
+    a group with no ``max_input_tokens`` leaves behind, and it is the only shape in which an
+    oversized summary still reaches a model that answers it from a clamped reading. Every
+    shipped target declares a window, so this prints for an edited routing file and never
+    for the stack as shipped.
+    """
+    LOGGER.warning(
+        "compaction router: %r declares no max_input_tokens in config.yaml;"
+        " forking at EVO_T1_FAST_COMPACTION_INPUT_LIMIT alone",
+        target,
+    )
+
+
 def arc_input_ceiling(target: str) -> int:
     """The largest input the Arc tier may actually be handed.
 
@@ -423,13 +444,19 @@ def arc_input_ceiling(target: str) -> int:
     would go, come back answered from a truncated reading, and read as a success. That is
     the one outcome this fork exists to prevent, so a knob cannot reach past it.
 
-    A target with no declared window leaves the guard whole. Every shipped Arc target
-    declares one, and inventing a ceiling for a group the operator pointed the knob at
-    would refuse a hop that was deliberately asked for.
+    A target with no declared window leaves the guard whole, and says so once -- but only
+    about a group the routing file actually knows, since a name that is no group at all is
+    refused by _target_is_declared and has nothing to say about a window. Inventing a
+    ceiling for a group the operator pointed the knob at would refuse a hop that was
+    deliberately asked for, so the module declines to guess and prints instead.
     """
     guard = max_compaction_input_tokens()
     window = declared_input_window(target) if target else None
-    if window is None or window >= guard:
+    if window is None:
+        if target and target in declared_model_groups():
+            _warn_window_undeclared(target)
+        return guard
+    if window >= guard:
         return guard
     _warn_clamped_ceilings(target, guard, window)
     return window

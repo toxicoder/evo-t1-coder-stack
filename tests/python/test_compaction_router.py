@@ -261,6 +261,7 @@ class RouterCase(unittest.TestCase):
             ROUTER._warn_config_unreadable,
             ROUTER._warn_unknown_switch,
             ROUTER._warn_clamped_ceilings,
+            ROUTER._warn_window_undeclared,
         ):
             cached.cache_clear()
             self.addCleanup(cached.cache_clear)
@@ -854,14 +855,89 @@ class ArcWindowTest(RouterCase):
 
     def test_a_group_with_no_declared_window_keeps_the_operators_guard(self) -> None:
         # Inventing a ceiling for a target nobody declared one for would refuse the hop
-        # the operator asked for, so an absent window leaves the knob whole.
+        # the operator asked for, so an absent window leaves the knob whole -- and says so,
+        # because that is the one state where an oversized summary can still reach a model
+        # that answers it from a clamped reading.
+        self.clear_warn_caches()
         with mock.patch.object(
             ROUTER,
             "_read_config_text",
             return_value=self._config({TARGET: "", SPARK_TARGET: "262144"}),
         ):
             self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="100000")
-            self.assert_hops(padded_summary_body("agent-xhigh-fast", 200_000), TARGET)
+            with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                self.assert_hops(
+                    padded_summary_body("agent-xhigh-fast", 200_000), TARGET
+                )
+        message = caught.records[0].getMessage()
+        for fragment in (
+            "max_input_tokens",
+            TARGET,
+            "EVO_T1_FAST_COMPACTION_INPUT_LIMIT",
+        ):
+            self.assertIn(fragment, message)
+
+    def test_one_undeclared_window_is_one_line_not_one_per_summary(self) -> None:
+        # The fork runs on every summary of the session, and a state of the file earns one
+        # line, the way every other warning here does.
+        self.clear_warn_caches()
+        with mock.patch.object(
+            ROUTER, "_read_config_text", return_value=self._config({TARGET: ""})
+        ):
+            with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                for _ in range(8):
+                    self.assertEqual(24000, arc_input_ceiling(TARGET))
+        self.assertEqual(1, len(caught.records))
+
+    def test_a_blank_target_keeps_the_guard_and_says_nothing(self) -> None:
+        # The Arc knob can be blanked, and then there is no group to name in a line about
+        # its window; the answer is unused either way, so the log stays clean.
+        self.clear_warn_caches()
+        with self.assertNoLogs("LiteLLM", level="WARNING"):
+            self.assertEqual(24000, arc_input_ceiling(""))
+
+    def test_a_name_that_is_no_group_gets_no_window_line(self) -> None:
+        # The refusal line in _target_is_declared already names a typo'd target; claiming a
+        # group that the file does not contain declares nothing about its window, which
+        # would be a second and wronger line about the same mistake.
+        self.clear_warn_caches()
+        with mock.patch.object(
+            ROUTER,
+            "_read_config_text",
+            return_value=self._config({SPARK_TARGET: "262144"}),
+        ):
+            with self.assertNoLogs("LiteLLM", level="WARNING"):
+                self.assertEqual(24000, arc_input_ceiling(TARGET))
+
+    def test_a_comment_after_the_window_still_declares_it(self) -> None:
+        # YAML reads a trailing comment as nothing and LiteLLM loads the file with it, so a
+        # reader that demanded end of line after the digits would disarm the clamp for a
+        # config that boots fine: a 42,738-token summary would reach a 32,768-token model
+        # with no window read and no line printed.
+        text = (
+            "model_groups:\n"
+            "  - model_name: %s\n"
+            "    litellm_params:\n"
+            "      model: a/b\n"
+            "      max_input_tokens: 32768  # the Arc weights\n"
+        ) % TARGET
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=text):
+            self.assertEqual(32768, declared_input_window(TARGET))
+            self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="100000")
+            self.assertEqual(32768, arc_input_ceiling(TARGET))
+
+    def test_a_commented_out_window_is_still_no_window(self) -> None:
+        # The counterpart: a line someone commented out declares nothing, and must not be
+        # read back as a window by the tolerance above.
+        text = (
+            "model_groups:\n"
+            "  - model_name: %s\n"
+            "    litellm_params:\n"
+            "      model: a/b\n"
+            "      # max_input_tokens: 32768\n"
+        ) % TARGET
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=text):
+            self.assertIsNone(declared_input_window(TARGET))
 
     def test_a_window_above_the_guard_leaves_the_guard_deciding(self) -> None:
         with mock.patch.object(

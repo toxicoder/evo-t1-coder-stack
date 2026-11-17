@@ -483,6 +483,11 @@ bazelisk run //scripts:prod-stack -- up
   `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000` still forks at 32768 and logs one
   `compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 is above the 32768 tokens
   config.yaml declares for 'compaction-fast'; forking at the declared window instead`.
+  A target group that declares no `max_input_tokens` at all leaves the key whole, and says
+  so once with `compaction router: 'compaction-fast' declares no max_input_tokens in
+  config.yaml; forking at EVO_T1_FAST_COMPACTION_INPUT_LIMIT alone` - that line is the
+  signal to go declare the window, because it is the one state where the fork can still
+  hand an oversized summary to a model that reads it clamped.
   A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
   that answers it. Blank that key, or name the lane the call arrived on, and an oversized
   summary stays on its Spark lane at the lane's own thinking level - the pre-hop behaviour,
@@ -490,7 +495,7 @@ bazelisk run //scripts:prod-stack -- up
   A summary that comes back short of the history it should cover has one remaining path
   that explains it: with all three Sparks cooled, the fallback chains end at `coder` -
   `agent-low: ["coder"]` for the oversized tier, and the same for the pair's own chains -
-  and that Arc group reads only the last 32k of the conversation. That is every Spark
+  and that Arc group answers from an input Ollama clamps down to its 32k window. That is every Spark
   lane's standing last resort rather than a defect of the hop, and
   `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm` carries the health lines for
   that window - the `fallbacks:` block of `litellm/config.yaml` is the map it followed.
@@ -1038,7 +1043,7 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
   width there is about 4 no matter what the number above it says. The rest queue:
   `limit_behavior = "queue"` holds the overflow rather than failing the spawn.
 - Read those same four lines for the depth, because the block now prints `max_depth`
-  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:369`), rendered
+  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:407-408`), rendered
   from the `grok_subagent_max_depth` variable whose default is 2. At 2 a child spawns
   read-only mappers of its own, so a wave can be wider than the parent's own `slots`, and
   each in-flight child holds one of the fleet's 15 streams: a parent sums `1 + spawns` per
