@@ -234,6 +234,10 @@ if [ -f .env ]; then
     url="$(env_get .env "${key}" | tr -d ' \r' || true)"
     [ -n "${url}" ] || continue
     host="$(canonical_url "${url}")"
+    # Same guard derive_spark_hosts applies to its own keys: an unparseable value
+    # canonicalises to empty or to junk, and a warning that names no host tells the
+    # operator nothing. Say nothing rather than print a hole.
+    case "${host}" in '' | *[!A-Za-z0-9.-]*) continue ;; esac
     case "${fleet_hosts}" in *" ${host} "*) continue ;; esac
     warn "${key}=${url} in .env is no longer read, so ${host} is not in the fleet: name the box with SPARKn_HOST or SPARKn_OPENAI_URL, or drop the key"
   done

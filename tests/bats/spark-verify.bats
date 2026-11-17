@@ -197,3 +197,17 @@ transferred_assignments() {
   assert_match "the same box now rides the fleet" 'in \.env: 10\.9\.8\.6' "${output}"
   assert_not_match "a host the fleet already names is not warned about" 'SPARK2_OLLAMA_URL=' "${output}"
 }
+
+@test "spark-verify: an unparseable SPARKn_OLLAMA_URL warns about nothing" {
+  # canonical_url turns these into an empty or junk host, and a warning that names no
+  # host is noise the operator cannot act on. The same guard derive_spark_hosts applies
+  # to its own keys has to apply here too, so the run stays silent about the value.
+  local scratch
+  scratch="$(scratch_checkout)"
+
+  printf '%s\n' 'SPARK1_OLLAMA_URL=://' 'SPARK2_OLLAMA_URL=/foo' >"${scratch}/.env"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests
+  [ "${status}" -eq 0 ]
+  assert_not_match "no warning is printed for a host it cannot name" 'is no longer read' "${output}"
+}
