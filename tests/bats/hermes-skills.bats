@@ -334,7 +334,7 @@ hs_skill_alias_row() {
 
 @test "hermes skills: every alias in the model-routing table is a LiteLLM model_name" {
   # The table is the whole routing answer the assistant gives. `hermes config set
-  # model.model agent-xhigh` against an alias LiteLLM never registered is a
+  # model.default agent-xhigh` against an alias LiteLLM never registered is a
   # gateway that answers nothing until someone re-reads this file.
   local names offenders="" want_alias table
   names="$(grep -E '^[[:space:]]*-[[:space:]]*model_name:' "${LITELLM_CFG}" \

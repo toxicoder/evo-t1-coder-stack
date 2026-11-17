@@ -115,8 +115,8 @@ Three verbs change the model, and which one you have depends on whether a sessio
 already running:
 
 ```sh
-hermes config get model.model
-hermes config set model.model chat     # or: agent, agent-medium, agent-swarm
+hermes config get model.default
+hermes config set model.default chat    # or: agent, agent-medium, agent-swarm
 ```
 
 - A session already open: type `/model <alias>`. That is the switch for the rest of
@@ -124,9 +124,14 @@ hermes config set model.model chat     # or: agent, agent-medium, agent-swarm
 - No session yet: pass `--model <alias>` on the command line.
   `//scripts:hermes-shell -- -m <alias>` is the stack's form of it: the CLI forwards
   the value into the container as `HERMES_MODEL`.
-- Across every session: `hermes config set model.model <alias>`, the same key the
+- Across every session: `hermes config set model.default <alias>`, the same key the
   `get` above reads. Say the alias out loud before you set it, and read it back with
-  `hermes config get model.model`.
+  `hermes config get model.default`. `model.model` is the legacy spelling of that
+  value: the loader copies it to `default` only when `default` is absent, then drops
+  it, and a persisted `/model` writes `default:` - so after one in-session switch
+  `hermes config set model.model <alias>` prints a success line and changes nothing,
+  and `hermes config get model.model` answers "Config key not set" even when a model
+  is set.
 
 All three take a pickable alias from the table above - every row but
 `compaction-fast`, which no session can pick, for the reason given below. And the
@@ -138,12 +143,19 @@ model. So when an alias "does nothing", the declaration is the first thing to ch
 an alias the proxy serves that no row lists is routable at LiteLLM and invisible to the
 picker. The gate in `tests/bats/hermes-config.bats` fails when the two lists drift.
 
-The other switch is the route, and it is not the model. `--provider <row>` and
-`hermes config set model.provider <row>` choose which `providers:` row answers - its
-base URL, its key, its API mode - and a row's `default_model` does not pick the model
-for a turn: the request still carries what the `model:` block holds. So an operator who
-sees the wrong lane answering has two separate switches to move, and the one that
-changes which model replies is the one above, not the provider.
+The other switch is the route, and it is a separate setting from the model.
+`--provider <row>` and `hermes config set model.provider <row>` choose which
+`providers:` row answers - its base URL, its key, its API mode - and they differ in
+whether the model travels with it. The CLI flag takes the row's `default_model`
+along, so `--provider arc-chat` sends `chat`, `arc-coder` sends `coder`,
+`arc-coder-fast` sends `coder-fast` and `litellm` sends `agent`, with
+`-m/--model <alias>` overriding that. The config key is gated on no such flag:
+`hermes config set model.provider <row>` moves the route alone, and the request keeps
+sending what the `model:` block holds. Those rows all share one endpoint, so the
+picker folds them into a single `litellm` entry listing every alias they declare, and
+the Arc rows stay reachable as `--provider` routes and typed `/model` names rather
+than picker rows of their own. So a route move is not always a model move: with the
+flag it is both, and through the config key neither.
 
 `compaction-fast` is the one alias the proxy serves that a session cannot pick. It is
 the Arc summariser the two `*-fast` lanes hop to for a single conversation summary, it

@@ -306,28 +306,47 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
     turns silently lose their tools. See
     [litellm-routing.md](litellm-routing.md#tool-calls-the-measured-limitation).
 - The models come from a `providers:` block in `hermes/config.yaml`. Its `litellm` row
-  declares every client-selectable alias from `litellm/config.yaml` as a pickable
-  model, and that declaration is what makes an alias routable: Hermes matches a typed
-  `/model <alias>` against the ids each row declares and routes it to the row that
-  declares it, while a name no row declares is left on the current provider as an
-  unknown hidden model. That list is the sanctioned catalogue and
-  `litellm/config.yaml` owns it, so an alias is added there and the row follows; the
-  gate fails when the two drift apart.
+  declares the shared catalogue - the aliases that are not one of the Arc's own three
+  weights - and each Arc row declares its weight with its `default_model`. Between
+  them those declarations are every client-selectable alias in
+  `litellm/config.yaml`, and a declaration is what makes an alias routable: Hermes
+  matches a typed `/model <alias>` against the ids each row declares and routes it to
+  the row that declares it, while a name no row declares is left on the current
+  provider as an unknown hidden model. `litellm/config.yaml` owns the set, so an alias
+  is added there and a row follows; the gate fails when the two drift apart, or when
+  one alias ends up on two rows.
 - Route and model are two separate switches. A `providers:` row selects the route -
-  base URL, api key, api mode - and nothing else; the model for a turn is the value in
-  the `model:` block unless a request overrides it. A row's `default_model` is that
-  row's own active selection, not the thing that picks a turn's model. Measured on the
-  shipped image: `--provider litellm` alone sends `"model":"agent"`;
-  `--model agent-swarm` sends `"model":"agent-swarm"`; and
-  `--provider litellm --model chat` sends `"model":"chat"`. Both route verbs therefore
-  move the route and leave the model on `agent`.
+  base URL, api key, api mode - and the model for a turn is otherwise the value in
+  the `model:` block. Measured on the shipped image, `--provider <row>` moves the
+  route and takes that row's `default_model` with it: `--provider arc-chat` sends
+  `"model":"chat"`, `--provider arc-coder` sends `"model":"coder"`,
+  `--provider arc-coder-fast` sends `"model":"coder-fast"`, and `--provider litellm`
+  sends `"model":"agent"` - that row's `default_model` is `agent`, which is also what
+  the `model:` block holds. `-m/--model <alias>` overrides it: `--model agent-swarm`
+  sends `"model":"agent-swarm"`, and `--provider litellm --model chat` sends
+  `"model":"chat"`. A run with no flags sends the `model:` block's value (`agent`)
+  whatever rows exist, and `hermes config set model.provider <row>` changes the route
+  and leaves that value alone - the `default_model` pickup is gated on the CLI flag,
+  not on the config key.
 - The verbs that do change the model: `/model <alias>` inside a session,
   `bazelisk run //scripts:hermes-shell -- -m <alias>` from the host, which sets
-  `HERMES_MODEL` in the container, and `hermes config set model.model <alias>` to
-  persist it in the live config under `/opt/data`.
+  `HERMES_MODEL` in the container, and `hermes config set model.default <alias>` to
+  persist it in the live config under `/opt/data`. `model.model` is the legacy
+  spelling of that same value: the loader copies it to `default` only while the block
+  carries none, and drops it after that - which is the shape a persisted `/model`
+  writes. So after one in-session switch, `hermes config set model.model <alias>`
+  prints a success line and changes nothing, and `hermes config get model.model`
+  answers "Config key not set" for the same reason even when a model is set; read it
+  back with `hermes config get model.default`.
 - The Arc's own weights also ship as named rows beside that catalogue - `arc-chat`,
-  `arc-coder` and `arc-coder-fast` - each pointing at the same LiteLLM door, so the
-  local lane is something you pick rather than an alias you remember. These are the
+  `arc-coder` and `arc-coder-fast` - each pointing at the same LiteLLM door. The
+  picker does not show them beside it: Hermes folds rows that share an endpoint,
+  credential and wire protocol into one group, so a single `litellm` entry lists
+  every alias those rows declare, and the Arc rows stay reachable as `--provider`
+  routes and as a typed `/model <alias>`. Each row's `default_model` is its weight's
+  one declaration, and that declaration is what makes `/model chat` routable: two
+  rows declaring the same id makes `switch_model` refuse the name outright, so
+  `chat`, `coder` and `coder-fast` are declared only by their Arc rows. These are the
   route verbs, and `arc-chat` is the row to route through when a session wants the
   Arc's tool-capable model:
 
@@ -336,13 +355,13 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   hermes config set model.provider arc-chat   # make that row the default
   ```
 
-  Routing there and running there are two asks, so name the model with them:
-  `hermes --provider arc-chat --model chat` sends `chat` through the `arc-chat` row.
-  An entry is inert until something asks for it, so the default stays `agent` and a
-  healthy Spark box behaves exactly as before. They go through LiteLLM rather than
-  `http://ollama:11434` because the proxy is the stack's sole model transport, it is
-  where the aliases and the Arc's context window are defined, and 11434 is
-  deliberately unpublished.
+  `hermes --provider arc-chat` does not need the model named beside it - it sends
+  `chat` on its own, and `-m <alias>` is there only to send something else through
+  that row. A run that names no flag is untouched by any of this, so the default stays
+  `agent` and a healthy Spark box behaves exactly as before. The rows go through
+  LiteLLM rather than `http://ollama:11434` because the proxy is the stack's sole model
+  transport, it is where the aliases and the Arc's context window are defined, and
+  11434 is deliberately unpublished.
 - Two parts of that list are deliberate. `compaction-fast` is served by the proxy and
   held out on purpose: it is the Arc summariser the two `-fast` lanes hop to for one
   conversation summary, it carries no tool support, and a session must not drive

@@ -255,10 +255,20 @@ hermes_declared_aliases() {
 
 @test "hermes docs: the local providers and how to select one are written down" {
   local doc="${REPO_ROOT}/docs/hermes.md"
+  local readme="${REPO_ROOT}/README.md"
   assert_file_exists "hermes doc" "${doc}"
   assert_contains_file "names the local lane" "${doc}" 'arc-chat'
   assert_contains_file "shows the one-shot switch" "${doc}" 'hermes --provider arc-chat'
   assert_contains_file "shows the durable switch" "${doc}" 'hermes config set model.provider arc-chat'
+  # The skim page is the one an operator actually reads, so its verb is pinned too:
+  # `model.model` prints a success line and changes nothing once a persisted /model
+  # has written `default:`, which is why the seed and the docs name `model.default`.
+  assert_file_exists "readme" "${readme}"
+  assert_contains_file "readme durable model verb" "${readme}" \
+    'hermes config set model.default'
+  run grep -E 'config set model\.model' "${readme}"
+  [ "${status}" -ne 0 ] ||
+    { printf 'FAIL: README recommends the legacy model.model verb\n' >&2; return 1; }
 }
 
 @test "hermes config: cwd follows STACK_HOST_PATH and skills stay external" {

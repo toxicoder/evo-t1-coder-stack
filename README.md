@@ -1108,9 +1108,10 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
   alias in `litellm/config.yaml` ships declared as a pickable model in the seed's
   `providers:` block, and that file owns the list. Pick one for a session with
   `hermes ... --model <alias>` (or `//scripts:hermes-shell -- -m <alias>`),
-  switch in-session with `/model <alias>`, and keep it with
-  `hermes config set model.model <alias>`. The Arc rows `arc-chat`, `arc-coder`
-  and `arc-coder-fast` stay as named routes, and `chat` is the Arc alias that
+  switch in-session with `/model <alias>`, and keep it across restarts with
+  `hermes config set model.default <alias>`. The Arc rows `arc-chat`, `arc-coder`
+  and `arc-coder-fast` stay as named routes that take their row's alias with them
+  (`hermes --provider arc-coder` runs `coder`), and `chat` is the Arc alias that
   still emits real `tool_calls`.
 - **URL:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, basic auth
   (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`). The LAN

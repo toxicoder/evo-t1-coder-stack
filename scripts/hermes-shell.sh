@@ -62,10 +62,13 @@
 #   -m, --model ALIAS        LiteLLM alias for this session (agent, agent-medium,
 #                            chat, ...): litellm/config.yaml owns the alias set, and
 #                            the seed declares every alias it serves as a pickable
-#                            model. This sets the model for the session; it is not the
-#                            provider switch (--provider / model.provider route, they
-#                            do not choose the model). The seeded config stays on
-#                            `agent` and keeps it for every later session
+#                            model. This sets the model for this session alone; a run
+#                            with no flag sends the assistant's own model: block,
+#                            which the seed keeps on `agent` for every later session.
+#                            The route is picked elsewhere: the assistant's own
+#                            `--provider <row>` moves the route and takes that row's
+#                            default_model with it, while `hermes config set
+#                            model.provider <row>` moves the route alone
 #   -w, --writable DIR       let the assistant's file tools write under DIR. The
 #                            official image sets HERMES_WRITE_SAFE_ROOT=/opt/data, so
 #                            a write outside it is refused outright and no approval
@@ -137,7 +140,11 @@ Subcommands (words after them reach the assistant's own CLI verbatim):
 Options: -p/--project-name (default evo-t1-prod; the dev sandbox is evo-t1-dev),
 -f/--file, -e/--env-file, -m/--model ALIAS (agent, agent-medium, chat, ...; the
 aliases litellm/config.yaml serves, every one of them declared pickable by the
-seed - this sets the model for the session, it is not the provider switch),
+seed - this sets the model for this session alone, a run with no flag sends the
+assistant's own model: block, which the seed keeps on agent for every later
+session, and the route is picked elsewhere: the assistant's own --provider <row>
+takes that row's default_model with it, while hermes config set model.provider
+<row> moves the route alone),
 -w/--writable DIR (the image's write-safe root is /opt/data, so a write into the
 checkout needs this), --one-shot (a second container on a running assistant's data
 volume can corrupt its memory store), --dry-run, -h/--help.
