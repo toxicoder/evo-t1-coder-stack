@@ -705,8 +705,11 @@ router_settings:
   # "no affinity check of any kind for these groups": no session pin resolves, and
   # every request is placed by the least-busy picker above. Every group absent from
   # this map keeps falling back to the global ["session_affinity"], which is why the
-  # four lanes that a conversation rides stay pinned exactly as they were - this is
-  # the one place the pin is lifted, and it is lifted for the fan-out lanes alone.
+  # five lanes a conversation rides - agent, agent-low, agent-medium, agent-xhigh and
+  # agent-xhigh-fast - stay pinned exactly as they were. This is the one place the pin
+  # is lifted, and the lift follows what a lane is for rather than who calls it: the
+  # fan-out lanes lift it because a wave has to spread, and agent-swarm-fast lifts it
+  # although a person selects it, because selecting that alias is asking for a wave.
   #
   # This key is the opt-out; a client header is not. An empty or short
   # x-litellm-session-id does NOT skip the pin at this tag - that header and
