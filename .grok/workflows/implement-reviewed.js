@@ -1,12 +1,12 @@
 /**
  * ---
  * name: implement-reviewed
- * description: Map a change with parallel read-only explorers, implement it on the swarm lane, have an independent skeptic on agent-review try to disprove the result, then run one bounded fix round
+ * description: Map a change with parallel read-only explorers, implement it on the swarm lane, have a panel of three independent skeptics on agent-review try to disprove the result, then run one bounded fix round
  * when_to_use: When a change should land checked rather than trusted - survey, bounded diff, a skeptic that re-runs the producer's own proof command, one repair round. Without args.verify the writer names the proof and the skeptic challenges that choice.
  * phase: Map -- Two read-only explorers answer one question each, on agent-explore
  * phase: Implement -- One writer lands the change on the swarm lane
- * phase: Verify -- An independent skeptic re-runs the proof on agent-review and reports kept or broken
- * phase: Fix -- One writer repairs the broken findings and the skeptic runs once more, capped at one round
+ * phase: Verify -- A panel of three skeptics (requirements, proof, adversary) is dispatched together on agent-review and reports each claim kept or broken
+ * phase: Fix -- One writer repairs the broken findings and the panel runs once more, capped at one round
  * ---
  */
 
@@ -90,26 +90,53 @@ export default async function implementReviewed(args) {
     ? ""
     : "Nobody was given the proof command, so the producer chose it - challenge that choice and run a stronger one. ";
 
-  const askSkeptic = (text, extra, label) =>
-    host
-      .agent(
-        `Independent skeptical review. You wrote none of this. Try to disprove the result of: ${goal}\n\n` +
-          `The producer reported:\n\n${text}\n\nRe-run the command the producer says proves the change - ` +
-          `do not trust the report. Check the diff (` + "`git diff`" + `) for anything the request did not ` +
-          `ask for. ${extra}Default position: the claim is wrong until the artifact proves it. Report ` +
-          `each claim kept, broken, or unchecked with path:line and the command you ran. Write nothing.`,
-        { label, readonly: true, model: "agent-review", schema },
-      )
-      .wait();
+  // The independent pass is a panel: three angles dispatched in one turn and awaited
+  // together, so the wall-clock cost stays one skeptic while three attack surfaces get covered.
+  const skepticAngles = [
+    { name: "requirements", focus: "every acceptance check the request stated or implied, each one reported kept, broken, or unchecked" },
+    { name: "proof", focus: "the command the producer says proves the change - re-run it and report whether the artifact backs what the report claims" },
+    { name: "adversary", focus: "ways to break it: regressions, edge and error states, and the path a feature flag takes when it is off" },
+  ];
 
-  let checked = checkedOf(await askSkeptic(buildText, challenge, "Verify/skeptic"));
+  // One verdict for the panel: any member that breaks it breaks the run, a mixed member keeps it mixed.
+  const panelOf = (reports) => {
+    const panels = reports.map(checkedOf);
+    const verdict = panels.some((panel) => panel.verdict === "broken")
+      ? "broken"
+      : panels.some((panel) => panel.verdict === "mixed")
+        ? "mixed"
+        : panels.every((panel) => panel.verdict === "kept")
+          ? "kept"
+          : "unchecked";
+    return { verdict, findings: panels.flatMap((panel) => panel.findings) };
+  };
+
+  const askPanel = (text, extra, suffix) =>
+    Promise.all(
+      skepticAngles.map((skeptic) =>
+        host
+          .agent(
+            `Independent skeptical review. You wrote none of this. Try to disprove the result of: ${goal}\n\n` +
+              `The producer reported:\n\n${text}\n\nRe-run the command the producer says proves the change - ` +
+              `do not trust the report. Check the diff (` + "`git diff`" + `) for anything the request did not ` +
+              `ask for. ${extra}Your angle is ${skeptic.name}: ${skeptic.focus}. The other skeptics on this ` +
+              `panel cover the rest, so stay on yours. Default position: the claim is wrong until the ` +
+              `artifact proves it. Report each claim kept, broken, or unchecked with path:line and the ` +
+              `command you ran. Write nothing.`,
+            { label: `Verify/${skeptic.name}${suffix}`, readonly: true, model: "agent-review", schema },
+          )
+          .wait(),
+      ),
+    );
+
+  let checked = panelOf(await askPanel(buildText, challenge, ""));
   let fixNote = "not needed";
 
   if (checked.verdict === "broken") {
     const list = checked.findings.filter((f) => f.status !== "kept").map(findingLine).join("\n");
     const repair = await host
       .agent(
-        `An independent skeptic broke this change. Repair only what it lists, touching nothing else: ` +
+        `The skeptic panel broke this change. Repair only what it lists, touching nothing else: ` +
           `${goal}\n\nBroken findings:\n\n${list}\n\nRe-run the proof command and quote its output. ` +
           `Report the files you changed.`,
         { label: "Fix/broken-findings", model: "agent-swarm" },
@@ -117,7 +144,7 @@ export default async function implementReviewed(args) {
       .wait();
     fixNote = "used once, capped at one round";
     const repairText = said(repair, "fixer") ?? "(the fixer did not finish)";
-    checked = checkedOf(await askSkeptic(repairText, "", "Verify/skeptic-round-2"));
+    checked = panelOf(await askPanel(repairText, "", "-round-2"));
     if (checked.verdict === "broken") fixNote = "used once, still broken, capped at one round";
   }
 

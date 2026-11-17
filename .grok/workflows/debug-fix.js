@@ -1,12 +1,12 @@
 /**
  * ---
  * name: debug-fix
- * description: Reproduce a defect before anyone edits, localise it with two parallel explorers, fix it with a test that is red before the change and green after, then have an independent skeptic re-run both runs
+ * description: Reproduce a defect before anyone edits, localise it with two parallel explorers, fix it with a test that is red before the change and green after, then have a panel of three independent skeptics re-run both runs
  * when_to_use: When something fails and the report may or may not be real - a bug report, a failing command, or a regression between two refs - and you want the reproduction proven, the fix pinned by a test, and the result disproved on the review lane.
  * phase: Reproduce -- One read-only explorer runs the failing command and quotes it with its real output; no reproduction, no fix
  * phase: Localise -- Two read-only explorers work disjoint hypotheses on agent-explore, one bisecting when a known-good ref is given
  * phase: Fix -- One writer on the swarm lane lands the fix with the test that is red first and green after
- * phase: Prove -- An independent skeptic on agent-review re-runs both the red and the green run and confirms the test was really red before the change
+ * phase: Prove -- A panel of three skeptics (requirements, proof, adversary) runs together on agent-review, re-runs both the red and the green run, and confirms the test was really red before the change
  * ---
  */
 
@@ -106,52 +106,83 @@ export default async function debugFix(args) {
     )
     .wait();
 
-  const report = await host
-    .agent(
-      `Independent skeptical review. You wrote none of this and you change nothing. Defect: ${symptom}\n\n` +
-        `Reproduction:\n${reproBlock}\n\nThe fixer reported:\n\n` +
-        `${fix.status === "completed" ? fix.text : "(the fixer did not finish)"}\n\n` +
-        `Re-run both runs yourself; do not trust the report. (1) The new test against a pre-fix tree: ` +
-        `recreate it in a scratch copy outside the repository (` + "`git worktree add`" + ` at the commit ` +
-        `before the change), run it there, and confirm it fails for the reported reason. (2) The new test ` +
-        `against the current tree: confirm it passes and that the reproduction above no longer fails. ` +
-        `Confirm the test is new in ` + "`git diff`" + `, and that the diff holds nothing the request did not ` +
-        `ask for. Default position: the claim is wrong until the artifact proves it. Report one finding ` +
-        `each for the test being new, the red run, the green run, the reproduction no longer failing, and ` +
-        `the diff holding to the request` +
-        (acceptance ? `, plus one finding per acceptance criterion, its claim starting with "criterion: "` : "") +
-        `. Cite path:line and the command you ran for each, and write nothing.\n\n` +
-        (acceptance ? `Reporter's acceptance wording:\n${acceptance}\n` : ""),
-      {
-        label: "Prove/skeptic",
-        readonly: true,
-        model: "agent-review",
-        schema: {
-          type: "object",
-          required: ["verdict", "findings"],
-          properties: {
-            verdict: { type: "string", enum: ["fixed", "not-fixed", "mixed", "unchecked"] },
-            findings: {
-              type: "array",
-              items: {
-                type: "object",
-                required: ["claim", "status", "evidence"],
-                properties: {
-                  claim: { type: "string" },
-                  status: { type: "string", enum: ["kept", "broken", "unchecked"] },
-                  evidence: { type: "string" },
+  // The independent pass is a panel: three angles dispatched in one turn and awaited
+  // together, so the wall-clock cost stays one skeptic while three attack surfaces get covered.
+  const skepticAngles = [
+    {
+      name: "requirements",
+      focus: acceptance
+        ? 'every acceptance check this run answers to, each reported kept, broken, or unchecked, one finding per criterion with its claim starting with "criterion: "'
+        : "every acceptance check the defect report states, each reported kept, broken, or unchecked",
+    },
+    {
+      name: "proof",
+      focus: "both runs, re-run yourself rather than trusting the report: (1) the new test against a pre-fix tree, recreated in a scratch copy outside the repository (`git worktree add` at the commit before the change), run there, confirming it fails for the reported reason; (2) the new test against the current tree, confirming it passes and that the reproduction above no longer fails. Report one finding each for the test being new, the red run, the green run, and the reproduction no longer failing",
+    },
+    {
+      name: "adversary",
+      focus: "ways to break the fix: regressions in the callers, inputs and fixtures that reach the changed path, edge and error states around it, and the path a feature flag takes when it is off. Confirm the diff in `git diff` holds nothing the request did not ask for",
+    },
+  ];
+
+  const reports = await Promise.all(
+    skepticAngles.map((skeptic) =>
+      host
+        .agent(
+          `Independent skeptical review. You wrote none of this and you change nothing. Defect: ${symptom}\n\n` +
+            `Reproduction:\n${reproBlock}\n\nThe fixer reported:\n\n` +
+            `${fix.status === "completed" ? fix.text : "(the fixer did not finish)"}\n\n` +
+            `Your angle is ${skeptic.name}: ${skeptic.focus}. The other skeptics on this panel cover the ` +
+            `rest, so stay on yours. Default position: the claim is wrong until the artifact proves it. ` +
+            `Cite path:line and the command you ran for each finding, and write nothing.\n\n` +
+            (skeptic.name === "requirements" && acceptance
+              ? `Reporter's acceptance wording:\n${acceptance}\n`
+              : ""),
+          {
+            label: `Prove/${skeptic.name}`,
+            readonly: true,
+            model: "agent-review",
+            schema: {
+              type: "object",
+              required: ["verdict", "findings"],
+              properties: {
+                verdict: { type: "string", enum: ["fixed", "not-fixed", "mixed", "unchecked"] },
+                findings: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    required: ["claim", "status", "evidence"],
+                    properties: {
+                      claim: { type: "string" },
+                      status: { type: "string", enum: ["kept", "broken", "unchecked"] },
+                      evidence: { type: "string" },
+                    },
+                  },
                 },
               },
             },
           },
-        },
-      },
-    )
-    .wait();
+        )
+        .wait(),
+    ),
+  );
 
-  const checked = report.status === "completed" && report.structured
-    ? report.structured
-    : { verdict: "unchecked", findings: [{ claim: "the skeptic did not return a verdict", status: "unchecked", evidence: report.status }] };
+  // A panel member that did not finish is reported as unchecked, never dropped.
+  const panels = reports.map((report, i) =>
+    report.status === "completed" && report.structured
+      ? report.structured
+      : { verdict: "unchecked", findings: [{ claim: `the ${skepticAngles[i].name} skeptic did not return a verdict`, status: "unchecked", evidence: report.status }] },
+  );
+  const checked = {
+    verdict: panels.some((panel) => panel.verdict === "not-fixed")
+      ? "not-fixed"
+      : panels.some((panel) => panel.verdict === "mixed")
+        ? "mixed"
+        : panels.every((panel) => panel.verdict === "fixed")
+          ? "fixed"
+          : "unchecked",
+    findings: panels.flatMap((panel) => panel.findings),
+  };
   const keptRun = (re) => checked.findings.some((f) => f.status === "kept" && re.test(f.claim));
   const criteria = checked.findings.filter((f) => f.claim.startsWith("criterion:"));
   const problems = checked.findings.filter((f) => f.status !== "kept").concat(gaps);

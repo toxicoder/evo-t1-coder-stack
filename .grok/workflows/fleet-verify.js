@@ -1,11 +1,11 @@
 /**
  * ---
  * name: fleet-verify
- * description: Map a change with parallel read-only explorers, implement it on the swarm lane, then have an independent skeptic on agent-review try to disprove the result
+ * description: Map a change with parallel read-only explorers, implement it on the swarm lane, then have a panel of three independent skeptics on agent-review try to disprove the result
  * when_to_use: When one request needs a survey of the code, an edit, and an independent check that the edit actually holds - and you want the three phases placed on the local Spark lanes the stack pins rather than left on the session model.
  * phase: Map -- Two read-only explorers answer one question each, on agent-explore
  * phase: Implement -- One writer lands the change on the swarm lane
- * phase: Verify -- An independent skeptic re-runs the checks on agent-review and reports kept or broken
+ * phase: Verify -- A panel of three skeptics (requirements, proof, adversary) is dispatched together on agent-review and reports each claim kept or broken
  * ---
  */
 
@@ -48,47 +48,71 @@ export default async function fleetVerify(args) {
     )
     .wait();
 
-  const report = await host
-    .agent(
-      `Independent skeptical review. You wrote none of this. Try to disprove the result of: ${goal}\n\n` +
-        `The producer reported:\n\n${build.status === "completed" ? build.text : "(the implementer did not finish)"}\n\n` +
-        `Re-run the command the producer says proves the change - do not trust the report. Check the diff ` +
-        `(` + "`git diff`" + `) for anything the request did not ask for. Default position: the claim is ` +
-        `wrong until the artifact proves it. Report each claim kept or broken with path:line and the ` +
-        `command you ran. Write nothing.`,
-      {
-        label: "Verify/skeptic",
-        readonly: true,
-        model: "agent-review",
-        schema: {
-          type: "object",
-          properties: {
-            verdict: { type: "string", enum: ["kept", "broken", "mixed"] },
-            findings: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  claim: { type: "string" },
-                  status: { type: "string", enum: ["kept", "broken", "unchecked"] },
-                  evidence: { type: "string" },
+  // The independent pass is a panel: three angles dispatched in one turn and awaited
+  // together, so the wall-clock cost stays one skeptic while three attack surfaces get covered.
+  const skepticAngles = [
+    { name: "requirements", focus: "every acceptance check the request stated or implied, each one reported kept or broken" },
+    { name: "proof", focus: "the command the producer says proves the change - re-run it and report whether the artifact backs what the report claims" },
+    { name: "adversary", focus: "ways to break it: regressions, edge and error states, and the path a feature flag takes when it is off" },
+  ];
+
+  const reports = await Promise.all(
+    skepticAngles.map((skeptic) =>
+      host
+        .agent(
+          `Independent skeptical review. You wrote none of this. Try to disprove the result of: ${goal}\n\n` +
+            `The producer reported:\n\n${build.status === "completed" ? build.text : "(the implementer did not finish)"}\n\n` +
+            `Your angle is ${skeptic.name}: ${skeptic.focus}. The other skeptics on this panel cover the ` +
+            `rest, so stay on yours. Re-run the command the producer says proves the change - do not trust ` +
+            `the report. Check the diff (` + "`git diff`" + `) for anything the request did not ask for. ` +
+            `Default position: the claim is wrong until the artifact proves it. Report each claim kept or ` +
+            `broken with path:line and the command you ran. Write nothing.`,
+          {
+            label: `Verify/${skeptic.name}`,
+            readonly: true,
+            model: "agent-review",
+            schema: {
+              type: "object",
+              properties: {
+                verdict: { type: "string", enum: ["kept", "broken", "mixed"] },
+                findings: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      claim: { type: "string" },
+                      status: { type: "string", enum: ["kept", "broken", "unchecked"] },
+                      evidence: { type: "string" },
+                    },
+                    required: ["claim", "status", "evidence"],
+                  },
                 },
-                required: ["claim", "status", "evidence"],
               },
+              required: ["verdict", "findings"],
             },
           },
-          required: ["verdict", "findings"],
-        },
-      },
-    )
-    .wait();
+        )
+        .wait(),
+    ),
+  );
 
-  const checked = report.status === "completed" && report.structured
-    ? report.structured
-    : { verdict: "unchecked", findings: [{ claim: "the skeptic did not return a verdict", status: "unchecked", evidence: report.status }] };
+  // A panel member that did not finish is reported as unchecked, never dropped.
+  const panels = reports.map((report, i) =>
+    report.status === "completed" && report.structured
+      ? report.structured
+      : { verdict: "unchecked", findings: [{ claim: `the ${skepticAngles[i].name} skeptic did not return a verdict`, status: "unchecked", evidence: report.status }] },
+  );
+  const verdict = panels.some((panel) => panel.verdict === "broken")
+    ? "broken"
+    : panels.some((panel) => panel.verdict === "mixed")
+      ? "mixed"
+      : panels.every((panel) => panel.verdict === "kept")
+        ? "kept"
+        : "unchecked";
+  const findings = panels.flatMap((panel) => panel.findings);
 
-  const broken = checked.findings.filter((f) => f.status !== "kept");
-  const lines = [`verdict: ${checked.verdict}`, `broken or unchecked: ${broken.length}`];
+  const broken = findings.filter((f) => f.status !== "kept");
+  const lines = [`verdict: ${verdict}`, `broken or unchecked: ${broken.length}`];
   for (const f of broken) {
     lines.push(`- [${f.status}] ${f.claim} (${f.evidence})`);
   }
