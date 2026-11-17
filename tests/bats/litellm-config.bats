@@ -491,7 +491,7 @@ lane_param_lines() {
   [[ -f "${compose}" ]] || skip "docker-compose.yml is not reachable from ${REPO_ROOT}"
   [[ -f "${mod}" ]] || skip "litellm/compaction_router.py is not reachable from ${REPO_ROOT}"
   [[ -f "${sample}" ]] || skip ".env.example is not reachable from ${REPO_ROOT}"
-  local names name line arg shipped want
+  local names name line arg shipped want form
   names="$(grep -oE '_setting\("EVO_T1_FAST_COMPACTION[A-Z_]*"' "${mod}" \
     | sed -E 's/.*\("([^"]*)".*/\1/' | LC_ALL=C sort -u)"
   # Five, because a fourth tier would be a third target nobody declared, and because a
@@ -501,28 +501,49 @@ lane_param_lines() {
   for name in ${names}; do
     line="$(grep -E "^[[:space:]]+${name}: " "${compose}" || true)"
     [ -n "${line}" ] || { echo "compose passes no ${name}" >&2; return 1; }
-    want='${'"${name}"':-'
+    # Which reader a knob has decides the substitution it needs. _setting treats a blank
+    # as unset, so the colon form is right. _target_setting reads a blank as "this tier
+    # has nowhere to send the call" -- the one way an operator parks a tier -- and the
+    # colon form substitutes its default for an empty value too, which would undo that.
+    if grep -qE "_target_setting\(\"${name}\"" "${mod}"; then
+      form="-"
+      want='${'"${name}"'-'
+    else
+      form=":-"
+      want='${'"${name}"':-'
+    fi
     [[ "${line}" == *"${want}"* ]] || {
-      echo "${name} is passed without a :- default, so an unset dotenv blanks it" >&2
+      echo "${name} is not passed as \${${name}${form}<default>}" >&2
+      echo "  a target knob must let a blank reach the module as a blank; a knob that" >&2
+      echo "  reads blank as unset takes the colon form, which substitutes on empty" >&2
       return 1
     }
     # The module names its default as a literal or as a DEFAULT_* constant, and either
     # way compose has to ship the same value: a compose default that drifted is the
     # policy the container actually boots, and nobody reading the module would know.
-    arg="$(grep -oE "_setting\(\"${name}\", [^)]*\)" "${mod}" | head -n 1 \
-      | sed -E 's/\)$//; s/^.*, //; s/^str\(//; s/^"//; s/"$//' | head -n 1)"
+    arg="$(sed -n "s/.*_setting(\"${name}\", *\([^)]*\)).*/\1/p" "${mod}" | sed -n 1p)"
+    arg="${arg#str(}"
+    arg="${arg#\"}"
+    arg="${arg%\"}"
     if [[ "${arg}" == DEFAULT_* ]]; then
-      shipped="$(sed -n "s/^${arg}: *Final *= *\"\{0,1\}\([0-9A-Za-z,.:-]*\)\"\{0,1\}.*/\1/p" "${mod}" | head -n 1)"
+      shipped="$(sed -n "s/^${arg}: *Final *= *\"\{0,1\}\([0-9A-Za-z,.:-]*\)\"\{0,1\}.*/\1/p" \
+        "${mod}" | sed -n 1p)"
     else
       shipped="${arg}"
     fi
     [ -n "${shipped}" ] || { echo "the module gives ${name} no readable default" >&2; return 1; }
-    [[ "${line}" == *":-${shipped}}"* ]] || {
+    [[ "${line}" == *"${want}${shipped}}"* ]] || {
       echo "${name}: compose defaults away from the module's ${shipped}" >&2
       return 1
     }
-    run grep -E "^${name}=" "${sample}"
-    [ "${status}" -eq 0 ] || { echo ".env.example never shows ${name}" >&2; return 1; }
+    # The dotenv twin is billed for the value and not just for the key's existence: the
+    # line an operator copies is the policy they get, and a key sitting there with a
+    # stale value reads as the shipped default while booting something else.
+    run grep -E "^${name}=${shipped}[[:space:]]*$" "${sample}"
+    [ "${status}" -eq 0 ] || {
+      echo ".env.example does not show ${name}=${shipped}, the module's own default" >&2
+      return 1
+    }
   done
   # And nothing extra: a compose entry the module stopped reading reads as a live knob.
   local extra
