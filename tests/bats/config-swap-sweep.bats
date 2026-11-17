@@ -14,9 +14,10 @@
 # (//tests:bats_startup_script_size_test) that keeps 12 KiB free under the kernel's
 # one-argument ceiling, and this body has its own ceiling and room; and the seed body is
 # already the place where a stack-owned file under ~/.grok is refreshed against its
-# marker on every start. It runs after the blocking startup script, so by the time it
-# looks, the boot has already re-rendered config.toml and anything a leftover swap holds
-# describes bytes that no longer exist.
+# marker on every start. It argues from that marker rather than from ordering, because
+# a coder_script runs in no promised order with the startup script
+# (templates/workspace/coder.tf:272): a config that still carries the marker is one every
+# start replaces, whichever of the two bodies runs first.
 #
 # The two hazards are a swap still in use and a swap of some other file, so both are
 # pinned here: a holder's open descriptor and an mtime inside the hour keep the file,

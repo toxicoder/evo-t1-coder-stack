@@ -1037,14 +1037,17 @@ session whose container has been gone for days, and because "(E)dit anyway" leav
 swap in place and mints `.swo`, `.swn`, `.swm` beside it, an operator who keeps answering
 the prompt ends up with four of them and a prompt that never goes away.
 
-The boot clears them, from `grok_sweep_config_swaps` in the
-[`agents-seed.sh.tftpl`](../templates/common/agents-seed.sh.tftpl) body. It runs there
-rather than in `startup.sh.tftpl` because the startup argument is held 12 KiB clear of the
+The boot clears them, from `grok_sweep_config_swaps` in
+`templates/common/agents-seed.sh.tftpl`. It runs there rather than in `startup.sh.tftpl`
+because the startup argument is held 12 KiB clear of the
 one-argument ceiling (see [The one-argument ceiling](#the-one-argument-ceiling)) and this
 body has its own ceiling and room, and because that body is already where a stack-owned
-file under `~/.grok` is refreshed against its marker. It runs after the blocking startup
-script, so the boot has already re-rendered `config.toml` by the time the sweep looks, and
-what any leftover swap holds describes bytes that no longer exist.
+file under `~/.grok` is refreshed against its marker. It does not lean on running after
+the `startup_script`: a `coder_script` runs in no promised order with it
+(`templates/workspace/coder.tf:272`), so the argument is the marker itself. A
+`config.toml` that still carries the marker is one every start replaces from
+`grok-config.toml.tftpl`, whichever of the two runs first, so what an orphaned swap holds
+is doomed either way.
 
 Four things keep it from being a boot that quietly eats a file:
 
@@ -1056,6 +1059,12 @@ Four things keep it from being a boot that quietly eats a file:
 - A swap some process still holds open stays, read straight off `/proc/*/fd`.
 - Only vim's own `.sw?` suffix on that one name is a candidate, so `.notes.md.swp` and a
   `.config.toml.newswp` are never touched. Each removal is announced on the body's log.
+
+The residual risk is the one the hour cannot cover: a sibling workspace with vim open on
+that file, idle long enough for the swap to age out, holding changes it never wrote. Its
+in-memory buffer survives - the sweep takes the name, not the editor's work - but the
+recovery copy goes with it. It is a narrow window on a file every start overwrites anyway,
+and it is the reason the sweep stops at one name rather than tidying `~/.grok` generally.
 
 This is not an invitation to hand-edit the file. `config.toml` is re-rendered from
 `grok-config.toml.tftpl` on every start, so an edit a person makes there is overwritten by

@@ -917,9 +917,9 @@ coder restart <workspace>
 - Read the prompt's own lines before choosing. `modified: no` means it holds no
   unsaved work. The `host name` says which workspace's vim wrote it - a sibling
   workspace shares this volume, so the file can predate this container entirely.
-- `(D)elete it` is the right answer for an orphan. Do not pick `(R)ecover`: the boot
-  re-renders `config.toml` from `grok-config.toml.tftpl`, so recovery would restore
-  bytes the stack has already replaced.
+- `(D)elete it` is the right answer for an orphan. Do not pick `(R)ecover`: every start
+  re-renders `config.toml` from `grok-config.toml.tftpl`, so recovery would restore bytes
+  the stack is going to replace regardless.
 - A current workspace clears these at boot by itself. `grok_sweep_config_swaps` in the
   `agents-seed.sh.tftpl` body removes a swap of that name once nothing holds it open and
   it is over an hour old, and leaves a config without a stack marker alone. If you are

@@ -26,8 +26,11 @@ fi
 # `vim ~/.grok/config.toml` stops on E325 asking about a session whose container is
 # gone - and answering it "(E)dit anyway" leaves that swap in place and mints another
 # beside it, so the home fills up with .swp/.swo/.swn/.swm and the prompt never goes
-# away. The startup script re-rendered config.toml earlier in this same boot, so what
-# any leftover swap holds describes bytes that no longer exist. Orphans only: a swap
+# away. A config that still carries the stack marker is one every start replaces from
+# grok-config.toml.tftpl, so what a leftover swap holds is doomed either way - and the
+# marker test below is what this argues from, because a coder_script runs in no promised
+# order with the startup script (templates/workspace/coder.tf:272), so the sweep cannot
+# count on having seen that rewrite first. Orphans only: a swap
 # written in the last hour, or one some process still has open, stays. A sibling
 # workspace shares this volume and its editor is invisible from here, which is what
 # the age check is for. docs/coder-templates.md#stale-editor-swap-files
@@ -41,7 +44,7 @@ grok_sweep_config_swaps() {
     [ -n "$(find /proc/[0-9]*/fd -lname "$grok_swap" -print -quit 2>/dev/null)" ] && continue
     rm -f "$grok_swap"
     echo "Removed the stale editor swap $grok_swap: the session that left it died" \
-      "with an earlier container, and this boot already re-rendered the file."
+      "with an earlier container; this boot replaces the file it shadows either way."
   done
 }
 grok_sweep_config_swaps || true
