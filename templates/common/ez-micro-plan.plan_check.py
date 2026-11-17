@@ -482,15 +482,22 @@ def main():
                         not args.no_files)
 
     wave, wave_streams = ready_wave(tasks, states, slots, fleet)
-    initial_ready = [task for task in tasks if not task["_needs"]
-                     and states.get(task["id"], "ready") == "ready"]
-    if tasks and len(initial_ready) < min(slots, len(tasks)):
-        report.error("wave 1 is %d tasks wide against %d slots; the fleet idles, so split "
-                     "the coarse tasks further" % (len(initial_ready), slots))
-    wave1_streams = sum(task_streams(task) for task in initial_ready)
-    if wave1_streams > fleet:
-        report.error("wave 1 costs %d streams against a fleet of %d; a spawner pays for "
-                     "its children, so narrow the fan-out" % (wave1_streams, fleet))
+    # Wave 1 is only a design question while the plan is still unstarted. Once a
+    # task has been dispatched the opening wave has already filled the fleet, and a
+    # plan being driven late in the run has an empty initial wave by construction
+    # (its review task needs everything), so re-proving it then is a false error.
+    started = any(states.get(t["id"], "ready") != "ready" for t in tasks)
+    if tasks and not started:
+        initial_ready = [task for task in tasks if not task["_needs"]
+                         and states.get(task["id"], "ready") == "ready"]
+        if len(initial_ready) < min(slots, len(tasks)):
+            report.error("wave 1 is %d tasks wide against %d slots; the fleet idles, so "
+                         "split the coarse tasks further" % (len(initial_ready), slots))
+        wave1_streams = sum(task_streams(task) for task in initial_ready)
+        if wave1_streams > fleet:
+            report.error("wave 1 costs %d streams against a fleet of %d; a spawner pays "
+                         "for its children, so narrow the fan-out"
+                         % (wave1_streams, fleet))
     used_lanes = {task.get("lane") for task in tasks}
     for lane in sorted(lanes):
         if lane not in used_lanes:

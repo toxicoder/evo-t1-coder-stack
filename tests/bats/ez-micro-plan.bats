@@ -434,6 +434,21 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
     'wave 1 is 3 tasks wide against 8 slots; the fleet idles' "${output}"
 }
 
+@test "a plan mid-run is not asked to re-prove the opening wave it already ran" {
+  # The gate above fires at the one moment its answer changes what gets dispatched:
+  # before wave 1. A parent driving a run re-runs --ready after every landing, and by
+  # the review stage the only task left is the skeptic, which needs every producer,
+  # so an empty opening wave is the shape of a correct late dispatch. Refusing it
+  # there makes the dispatch tool report an error at the exact step that needs a
+  # clean answer, and teaches a parent to distrust or skip the gate.
+  LEDGER_DONE="T01 T02 T03 T04 T05 T06 T07 T08"
+  write_plan
+  check --ready
+  [[ ${status} -eq 0 ]] || report_status
+  assert_eq "the lone skeptic is the wave" "T09" "$(ready_csv)"
+  assert_not_match "the opening wave was left alone" 'wave 1 is' "${output}"
+}
+
 @test "a task naming a lane ## Lanes does not list is refused" {
   task_set T05 3 docs
   write_plan
