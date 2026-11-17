@@ -973,6 +973,25 @@ class ArcWindowTest(RouterCase):
             self.assertEqual(262144, declared_input_window(SPARK_TARGET))
             self.assertIsNone(declared_input_window("no-such-group"))
 
+    def test_two_windows_in_one_block_clamp_at_the_smaller(self) -> None:
+        # A block with two of them is a hand edit, and the readings are not equally safe:
+        # the smaller can only fork the summary to the Spark tier, while the larger puts it
+        # inside a model that answers from a clamped reading and prints nothing. This is the
+        # shape a review panel used to reach the Arc tier silently.
+        text = (
+            "model_groups:\n"
+            "  - model_name: %s\n"
+            "    litellm_params:\n"
+            "      model: a/b\n"
+            "      max_input_tokens: 262144\n"
+            "    model_info:\n"
+            "      max_input_tokens: 32768\n"
+        ) % TARGET
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=text):
+            self.assertEqual(32768, declared_input_window(TARGET))
+            self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="100000")
+            self.assertEqual(32768, arc_input_ceiling(TARGET))
+
     def test_comments_and_blank_lines_inside_an_entry_do_not_end_it(self) -> None:
         text = (
             "model_groups:\n"

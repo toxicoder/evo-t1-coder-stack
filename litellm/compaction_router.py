@@ -264,10 +264,12 @@ def declared_input_window(model: str) -> int | None:
     reads it.
 
     Scanned entry by entry rather than file-wide: ``max_input_tokens`` is per deployment,
-    so the first number after the matching ``model_name:`` and before the next entry (or
-    a top-level key) is the one that belongs to this group. A blank line or a comment-only
-    line inside the block neither ends the block nor supplies a window, and a comment
-    trailing a value is read as nothing, which is how YAML reads it.
+    so the smallest number after the matching ``model_name:`` and before the next entry (or
+    a top-level key) is the one that belongs to this group. Smallest rather than first,
+    because a block carrying two of them is a hand edit and the smaller is the only
+    reading that cannot put a summary inside a model too small for it. A blank line or a
+    comment-only line inside the block neither ends the block nor supplies a window, and a
+    comment trailing a value is read as nothing, which is how YAML reads it.
     """
     text = _usable_config_text()
     if text is None:
@@ -284,11 +286,19 @@ def declared_input_window(model: str) -> int | None:
         if line[:1] not in (" ", "\t"):
             inside = False
             continue
-        if inside and window is None and not line.lstrip().startswith("#"):
+        if inside and not line.lstrip().startswith("#"):
             declared = _MAX_INPUT_TOKENS_LINE.match(line)
             if declared is not None:
                 digits = int(declared.group(1))
-                if digits > 0:
+                # The smallest, not the first. Two numbers in one block means someone
+                # edited the routing file by hand, and the two readings cost different
+                # things: clamping at the smaller can only fork a summary to the Spark
+                # tier, which is slow, while clamping at the larger can hand it to a model
+                # that answers from a clamped reading with nothing printed -- the one
+                # outcome this fork exists to prevent. A deployment-level number that
+                # disagrees with the weights is the operator's, and the safe side of that
+                # disagreement is the tier with the bigger window.
+                if digits > 0 and (window is None or digits < window):
                     window = digits
     return window
 
