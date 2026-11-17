@@ -295,9 +295,10 @@ load_production_guard() {
     # refuses a single argument past 131072, and the earlier 16 KiB reserve was a taste
     # number set while the twin was far smaller. What has to stay true is that a whole
     # documentation-sized payload still fits - not that the reserve keeps a round size.
-    if [ "${total}" -gt "$((BOUND - 12288))" ]; then
+    if [ "${total}" -gt "$((ARG_LIMIT - 12288))" ]; then
       echo "templates/${dir}: the startup argument still weighs ${total} bytes" >&2
-      echo "against a ${BOUND} budget: the rulebook did not really leave it" >&2
+      echo "with only $((ARG_LIMIT - total)) bytes under the ${ARG_LIMIT}-byte wall:" >&2
+      echo "the rulebook did not really leave a documentation-sized payload of room" >&2
       return 1
     fi
   done
