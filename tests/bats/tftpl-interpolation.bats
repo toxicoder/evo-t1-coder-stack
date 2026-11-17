@@ -45,6 +45,32 @@ one_pair() {
   printf '%s\n' "${body}" >"${dir}/${body_name}"
 }
 
+# The whole set the create form offers for grok_default_model, in the order main.tf lists
+# it: every served alias a person picks, each -fast alias directly after the lane it
+# copies. The two role lanes stay out because [subagents.models] pins them rather than a
+# person choosing them, and compaction-fast stays out because no client names it - see
+# docs/coder-templates.md and the "Where an alias edit lands" list in
+# docs/litellm-routing.md.
+FORM_MODEL_CHOICES=(agent agent-low agent-medium agent-xhigh agent-xhigh-fast
+  agent-swarm agent-swarm-fast coder coder-fast chat)
+
+# The list's own region: model_options appends a synthetic Custom (<key>) entry to a
+# copy of this same list, so a slice that ran to the end of the block would bill that
+# entry too.
+model_choices_region() {
+  sed -n '/^  model_choices = \[$/,/^  \]$/p' "$1"
+}
+
+# model_choices_values <main.tf> - one value per dropdown entry, in file order.
+model_choices_values() {
+  model_choices_region "$1" | sed -n 's/^[[:space:]]*value[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p'
+}
+
+# model_choices_key_count <main.tf> <key> - how many entries carry that object key.
+model_choices_key_count() {
+  model_choices_region "$1" | sed -n "s/^[[:space:]]*$2[[:space:]]*=.*/x/p" | wc -l
+}
+
 @test "checker: the shipped twins interpolate only names their main.tf declares" {
   run python3 "${CHECKER}" "${REPO_ROOT}/templates"
   [ "${status}" -eq 0 ]
@@ -260,6 +286,38 @@ echo "${payload} $${shell_var}"'
   [ "${status}" -eq 0 ]
   [[ ${output} == *"1 call(s) checked"* ]]
   [[ ${output} != *"reaches it"* ]]
+}
+
+@test "form: both twins' local.model_choices offer every alias, in the served order" {
+  # The create form builds its Grok default model list out of local.model_choices and
+  # nothing in the gate had ever read that list: a change that dropped an entry, or put
+  # an alias ahead of the lane its -fast twin copies, left every target green while the
+  # form offered one lane fewer than litellm/config.yaml serves. The editor roster and
+  # the variable default are pinned in their own suites; the form was the copy nobody
+  # billed. Descriptions are deliberately not compared - the twins' wording for
+  # coder-fast differs by design - only the values, their order, and that each entry is
+  # the full {value, name, description} object the form renders.
+  local twin file got key n
+  for twin in workspace devcontainer; do
+    file="${REPO_ROOT}/templates/${twin}/main.tf"
+    got="$(model_choices_values "${file}")"
+    [ -n "${got}" ] || {
+      printf '%s: no local.model_choices list to read\n' "${file}" >&2
+      return 1
+    }
+    if ! diff <(printf '%s\n' "${FORM_MODEL_CHOICES[@]}") <(printf '%s\n' "${got}"); then
+      printf '%s: local.model_choices is not the served set in the served order\n' "${file}" >&2
+      return 1
+    fi
+    for key in value name description; do
+      n="$(model_choices_key_count "${file}" "${key}")"
+      [ "${n}" -eq "${#FORM_MODEL_CHOICES[@]}" ] || {
+        printf '%s: %s key appears %s times for %s entries\n' \
+          "${file}" "${key}" "${n}" "${#FORM_MODEL_CHOICES[@]}" >&2
+        return 1
+      }
+    done
+  done
 }
 
 @test "docs: the startup key list in coder-templates.md is the map main.tf declares" {
