@@ -19,3 +19,29 @@ if [ ! -f "$HOME/.grok/AGENTS.md" ] \
 ${grok_build_agents}
 GROK_AGENTS_EOF
 fi
+
+# The same marker contract, applied to the swap file left beside the other file this
+# boot owns. A workspace stop kills an open vim, and ~/.grok is one persistent
+# per-owner volume, so the swap outlives the container and the next
+# `vim ~/.grok/config.toml` stops on E325 asking about a session whose container is
+# gone - and answering it "(E)dit anyway" leaves that swap in place and mints another
+# beside it, so the home fills up with .swp/.swo/.swn/.swm and the prompt never goes
+# away. The startup script re-rendered config.toml earlier in this same boot, so what
+# any leftover swap holds describes bytes that no longer exist. Orphans only: a swap
+# written in the last hour, or one some process still has open, stays. A sibling
+# workspace shares this volume and its editor is invisible from here, which is what
+# the age check is for. docs/coder-templates.md#stale-editor-swap-files
+grok_sweep_config_swaps() {
+  # Only a config the stack owns: an unmanaged one is the operator's file, swap and all.
+  grep -qFs -e 'managed-by: evo-t1-coder-stack' -e '__evoT1Stack = true' \
+    "$HOME/.grok/config.toml" 2>/dev/null || return 0
+  for grok_swap in "$HOME/.grok"/.config.toml.sw?; do
+    [ -f "$grok_swap" ] || continue
+    [ -n "$(find "$grok_swap" -mmin -60 2>/dev/null)" ] && continue
+    [ -n "$(find /proc/[0-9]*/fd -lname "$grok_swap" -print -quit 2>/dev/null)" ] && continue
+    rm -f "$grok_swap"
+    echo "Removed the stale editor swap $grok_swap: the session that left it died" \
+      "with an earlier container, and this boot already re-rendered the file."
+  done
+}
+grok_sweep_config_swaps || true
