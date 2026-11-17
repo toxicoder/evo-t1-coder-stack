@@ -466,13 +466,17 @@ subagents_block() {
   # that spawns costs the fleet, so an agent filling its slots can still over-admit
   # streams. And the review phase has to read as a wave dispatched in one turn, or
   # the parent queues its skeptics one at a time. Both are arithmetic the parent can
-  # only obey if it can see it.
+  # only obey if it can see it. And the file has to say which layer enforces which
+  # half of the nesting rule: a parent that reads the tools list as the whole guard
+  # will let a spawner ship a file, since `tester` keeps `write` for its test.
   local phrase
   for phrase in \
     '1 + spawns' \
     'sum the in-flight' \
     'at or below the fleet' \
-    'panel of three angles sent in one turn'; do
+    'panel of three angles sent in one turn' \
+    'who may spawn at all' \
+    'holds a spawner to shipping nothing'; do
     run grep -F -- "${phrase}" "${RULEBOOK}"
     [ "${status}" -eq 0 ] || {
       echo "the seed dropped: ${phrase}" >&2

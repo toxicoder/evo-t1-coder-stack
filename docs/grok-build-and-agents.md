@@ -1080,14 +1080,16 @@ copy is yours, and the boot leaves it alone.
 
 ### The rule the suite exists to enforce
 
-Every multi-file change ends with an independent skeptic that wrote none of it, on
-`agent-review`, before anything is reported done. The rulebook states it as a requirement,
+Every multi-file change ends with an independent review panel that wrote none of it, on
+`agent-review`, before anything is reported done: three angles sent in one turn
+(requirements, proof, adversary), each owning no file, where one skeptic over all three
+angles is enough for a single-file fix. The rulebook states it as a requirement,
 not a suggestion (`templates/common/GROK_BUILD_AGENTS.md`, "Mandatory independent review"),
 and its reasoning is one sentence: a delegated result is a claim, and a review that trusts
-the claim rather than the artifact is not a review. The skeptic re-runs the producer's
-`done:` command rather than reading the producer's report of it, which is why `tester` and
-`reviewer` exist as separate definitions with read-only tool lists rather than as instructions
-tacked onto the writer.
+the claim rather than the artifact is not a review. Each panelist re-runs the producers'
+`done:` commands rather than reading their reports of them, which is why `tester`,
+`reviewer` and `security-auditor` exist as separate definitions whose spawn tool reaches
+read-only mappers, rather than as instructions tacked onto the writer.
 
 ### How a seeded file becomes yours
 
