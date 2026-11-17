@@ -59,9 +59,13 @@
 #   -f, --file FILE          compose file, default <root>/docker-compose.yml
 #   -e, --env-file FILE      env file to interpolate from, default none (compose then
 #                            reads the .env beside the compose file)
-#   -m, --model ALIAS        LiteLLM alias for this session (agent, agent-low,
-#                            agent-medium, agent-xhigh, chat); the seeded config stays
-#                            on `agent` and keeps it for every later session
+#   -m, --model ALIAS        LiteLLM alias for this session (agent, agent-medium,
+#                            chat, ...): litellm/config.yaml owns the alias set, and
+#                            the seed declares every alias it serves as a pickable
+#                            model. This sets the model for the session; it is not the
+#                            provider switch (--provider / model.provider route, they
+#                            do not choose the model). The seeded config stays on
+#                            `agent` and keeps it for every later session
 #   -w, --writable DIR       let the assistant's file tools write under DIR. The
 #                            official image sets HERMES_WRITE_SAFE_ROOT=/opt/data, so
 #                            a write outside it is refused outright and no approval
@@ -131,7 +135,9 @@ Subcommands (words after them reach the assistant's own CLI verbatim):
   commands   print the assistant CLI's help as this image version spells it
 
 Options: -p/--project-name (default evo-t1-prod; the dev sandbox is evo-t1-dev),
--f/--file, -e/--env-file, -m/--model ALIAS (agent, agent-medium, chat, ...),
+-f/--file, -e/--env-file, -m/--model ALIAS (agent, agent-medium, chat, ...; the
+aliases litellm/config.yaml serves, every one of them declared pickable by the
+seed - this sets the model for the session, it is not the provider switch),
 -w/--writable DIR (the image's write-safe root is /opt/data, so a write into the
 checkout needs this), --one-shot (a second container on a running assistant's data
 volume can corrupt its memory store), --dry-run, -h/--help.

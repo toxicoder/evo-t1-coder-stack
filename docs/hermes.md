@@ -351,9 +351,6 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   And `spark-coder` / `spark-chat` are declared so they stay pickable even though they
   are Ollama on a Spark box that is usually powered off, so a cold box answers a
   connection error.
-- Switch the alias alone inside the container with `hermes config set model.model chat`
-  (or `agent-medium` for a thinking level), which edits the live config under
-  `/opt/data`.
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
 

@@ -109,10 +109,44 @@ Notes that matter:
 
 ## Switching the model
 
+Three verbs change the model, and which one you have depends on whether a session is
+already running:
+
 ```sh
 hermes config get model.model
 hermes config set model.model chat     # or: agent, agent-medium, agent-swarm
 ```
+
+- A session already open: type `/model <alias>`. That is the switch for the rest of
+  that conversation.
+- No session yet: pass `--model <alias>` on the command line.
+  `//scripts:hermes-shell -- -m <alias>` is the stack's form of it: the CLI forwards
+  the value into the container as `HERMES_MODEL`.
+- Across every session: `hermes config set model.model <alias>`, the same key the
+  `get` above reads. Say the alias out loud before you set it, and read it back with
+  `hermes config get model.model`.
+
+All three take an alias from the table above, and the alias has to be *declared* for
+any of them to land. That is what the seed's `providers:` block in `hermes/config.yaml`
+is for: Hermes routes a typed `/model <alias>` to the provider row that declares that
+id, and leaves a name no row declares on the current provider as an unknown hidden
+model. So when an alias "does nothing", the declaration is the first thing to check -
+an alias the proxy serves that no row lists is routable at LiteLLM and invisible to the
+picker. The gate in `tests/bats/hermes-config.bats` fails when the two lists drift.
+
+The other switch is the route, and it is not the model. `--provider <row>` and
+`hermes config set model.provider <row>` choose which `providers:` row answers - its
+base URL, its key, its API mode - and a row's `default_model` does not pick the model
+for a turn: the request still carries what the `model:` block holds. So an operator who
+sees the wrong lane answering has two separate switches to move, and the one that
+changes which model replies is the one above, not the provider.
+
+`compaction-fast` is the one alias the proxy serves that a session cannot pick. It is
+the Arc summariser the two `*-fast` lanes hop to for a single conversation summary, it
+carries no tool support, and no `providers:` row declares it - the seed keeps
+`discover_models: false` so Hermes never adopts it off the proxy's own model list.
+Typing it lands in the unknown-hidden-model case above, and that is the behaviour the
+seed wants: a session should not drive itself with a summariser.
 
 Never write a key into `config.yaml` — `api_key` stays `${LITELLM_MASTER_KEY}`,
 expanded from the environment.

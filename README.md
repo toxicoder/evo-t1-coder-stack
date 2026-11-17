@@ -1100,15 +1100,18 @@ Full detail (mounts, `custom.css`, widget URLs, the wallpaper trick):
 [Hermes Agent](https://github.com/nousresearch/hermes-agent) is the on-device assistant
 for this host, and it has two doors: the official Web Dashboard on `:9119` (dev
 `:19119`), Chat tab with approval prompts, and this machine's own terminal. Both doors
-reach one agent, one memory store, and one approval gate, with models going through the
-existing LiteLLM `agent` alias. It mounts the stack checkout at `STACK_HOST_PATH` and
+reach one agent, one memory store, and one approval gate, with models going through
+LiteLLM. It mounts the stack checkout at `STACK_HOST_PATH` and
 the docker socket (root-equivalent, same standing as Coder), so approvals stay `manual`.
 
-- **Models:** the default is the LiteLLM `agent` alias. The three local IPEX-LLM
-  Ollama aliases ship beside it as the optional providers `arc-chat` (the
-  tool-capable one), `arc-coder` and `arc-coder-fast`, all routed through
-  LiteLLM. Pick one for a session with `hermes --provider arc-chat`, or keep it
-  with `hermes config set model.provider arc-chat`.
+- **Models:** the default is the LiteLLM `agent` alias. Every client-selectable
+  alias in `litellm/config.yaml` ships declared as a pickable model in the seed's
+  `providers:` block, and that file owns the list. Pick one for a session with
+  `hermes ... --model <alias>` (or `//scripts:hermes-shell -- -m <alias>`),
+  switch in-session with `/model <alias>`, and keep it with
+  `hermes config set model.model <alias>`. The Arc rows `arc-chat`, `arc-coder`
+  and `arc-coder-fast` stay as named routes, and `chat` is the Arc alias that
+  still emits real `tool_calls`.
 - **URL:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, basic auth
   (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`). The LAN
   port stays. The public name (`hermes-<suffix>.<base>`, so
