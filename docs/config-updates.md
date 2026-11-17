@@ -450,3 +450,56 @@ Roo need structured tool calls, which the Arc IPEX-LLM Ollama returns as plain t
 for the Qwen2.5-Coder weights. [litellm-routing.md](litellm-routing.md) owns the alias
 table, the picker, the pin, and the measured tool-call limitation (including which
 aliases do emit real calls).
+
+**The fast-compaction hop has five keys of its own.** On `agent-xhigh-fast` and
+`agent-swarm-fast` only, the proxy callback `litellm/compaction_router.py`
+recognises the CLI's conversation-summary call and re-serves it from somewhere
+cheaper than the Spark box it arrived on, in one of two tiers: the Arc group
+`compaction-fast` for a summary small enough for that window, or the Spark group
+`agent-low` for one too big for it. A summary needs no extra-high thinking, which is what
+the Spark lane charges for it. The Grok Build CLI has no compaction-model
+setting, so nothing in a client config points that call anywhere and the hop can
+only live in the proxy - with the flag off, both lanes behave exactly like their
+non-fast parents. All five are read in that one module and set in the compose
+litellm service, the three that read a blank as unset as `${KEY:-default}` and the
+two tier targets as `${KEY-default}` so a blanked target stays blank, which is how
+a tier is parked. A dotenv line overrides each one.
+[litellm-routing.md](litellm-routing.md) owns the mechanism.
+
+- `EVO_T1_FAST_COMPACTION` (default on) is the kill switch: `0`, `false`, `off` or
+  `no` stop the hop outright, and a value that is none of those nor `1`, `true`,
+  `on`, `yes` leaves it off too, with one warning line naming what was read.
+- `EVO_T1_FAST_COMPACTION_LANES` (default `agent-xhigh-fast,agent-swarm-fast`)
+  names the model groups that may hop - name one of them to narrow the hop to
+  that lane alone.
+- `EVO_T1_FAST_COMPACTION_TARGET` (default `compaction-fast`) is the tier a
+  summary under the guard is moved to.
+- `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default `24000`) is the guard, and it
+  picks a tier rather than ending the hop. The Arc weights are a 32768-token
+  model and Ollama clamps an over-long input instead of refusing it, so a
+  summary above that estimate is never handed over to be quietly truncated.
+  The guard is a ceiling the module may lower and never raise: the Arc target
+  group's own `max_input_tokens` in `litellm/config.yaml` caps it, and a value
+  set above that window forks there anyway with one warning line naming both
+  numbers. A group that declares no window leaves the guard whole, and the
+  module logs one line saying the fork runs on this key alone.
+- `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default `agent-low`) is where a summary
+  above the guard goes instead: a Spark group, so it carries the 262144-token
+  window a full-size summary needs, at thinking baked `low` rather than `xhigh`.
+  Blank it, or name the lane the call arrived on, and an oversized summary stays
+  where it is - the pre-hop behaviour.
+
+**Read the guard beside the client threshold: that pairing picks the tier.** Both fast
+aliases declare a `context_window` of 262144 and the shipped `[session]` block sets
+`auto_compact_threshold_percent` to 70, so a session on either one reaches its
+auto-compaction at about 183,500 tokens - over the guard, so the Arc was never going to read
+it and the call goes to the Spark tier instead. `agent-low` is what makes that work cheaper
+than its parent: the 262144-token window stays and the baked `xhigh` thinking goes, which is
+the cost the hop exists to stop paying. That is a routing choice with its own trade, not a
+free win - the summary still runs on a Spark box, at a thinking level turned down. Neither
+tier has a timing of its own yet: the hop has not served a summary on a running stack, so
+the only numbers attached to this feature are the 107 s to 1915 s and 18-of-36 figures for
+the Spark lane before it existed, both swept out of the session logs in
+[troubleshooting.md](troubleshooting.md). `bazelisk test //tests:bats_litellm_config_test`
+pins the config and the compose passthrough, and `docs/troubleshooting.md` names the one log
+line that shows the hop firing.

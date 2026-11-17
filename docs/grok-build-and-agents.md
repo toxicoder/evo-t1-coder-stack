@@ -444,20 +444,35 @@ while the managed block is intact.
   template variable or the create form's **Grok default model** dropdown names
   another. `[models] default_reasoning_effort = "xhigh"`. The Spark lane answers
   `low` / `medium` / `xhigh`; `high` is never advertised.
-- The ten aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`,
-  `agent-explore`, `agent-review`, `coder`, `coder-fast`, `chat`) are defined with
-  `base_url` set to `litellm_url` and
+- The twelve aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`,
+  `agent-explore`, `agent-review`, `agent-xhigh-fast`, `agent-swarm-fast`, `coder`,
+  `coder-fast`, `chat`) are defined with `base_url` set to `litellm_url` and
   `env_key = "LITELLM_API_KEY"`. The key is injected as an environment variable, so
   it never appears in a file. `agent` carries three
   `[[model."agent".reasoning_efforts]]` tables (`xhigh` is the default). The
   `agent-low` / `agent-medium` / `agent-xhigh` / `agent-swarm` / `agent-explore` /
-  `agent-review` aliases set
+  `agent-review` / `agent-xhigh-fast` / `agent-swarm-fast` aliases set
   `supports_reasoning_effort = false` because LiteLLM bakes the level for callers
-  that have no reasoning-effort field. The last two are the reader and the skeptic: the
-  `explore` type and the seeded `explorer` ride `agent-explore` (`low`), and the seeded
+  that have no reasoning-effort field. The `agent-explore` / `agent-review` pair is the
+  reader and the skeptic: the `explore` type and the seeded `explorer` ride
+  `agent-explore` (`low`), and the seeded
   `reviewer` and `security-auditor` ride `agent-review` (`xhigh`). What each lifts, what
   it costs, and the `--var` that rolls it back are in
   [litellm-routing.md](litellm-routing.md#the-fan-out-lanes-agent-explore-and-agent-review).
+  The `agent-xhigh-fast` / `agent-swarm-fast` pair is their parent lane with one call of the
+  conversation answered elsewhere: on those two aliases only, the proxy callback
+  `litellm/compaction_router.py` re-serves the CLI's conversation-summary call from the Arc
+  group `compaction-fast` and leaves every other call of the session on its Spark box.
+  Nothing in either `[model.*]` block names that target, because no client key could - the
+  hop is server-side, and it forks on `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 tokens
+  estimated): within it the summary goes to the Arc group, above it to the Spark group
+  `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default `agent-low`), because the Arc weights
+  answer inside a 32768-token window and a bigger input would be truncated into a useless
+  summary of the history the call exists to preserve. Both are selectable as
+  `grok_default_model` and neither is a Coder Agents chat model. The mechanism, the five
+  `EVO_T1_FAST_COMPACTION*` knobs, and the 107 s to 1915 s Spark-side compactions that
+  motivated it are in
+  [litellm-routing.md](litellm-routing.md#the-fast-compaction-lanes-agent-xhigh-fast-and-agent-swarm-fast).
 - `[models]` also carries `extra_headers` with
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
   workspace's traffic to one healthy Spark box. Under a shared profile the
@@ -522,7 +537,7 @@ while the managed block is intact.
   `active_agent_messages = true`, the last of them giving the parent
   `send_subagent_message`: a child already running can be handed a new instruction and
   keep its context, which is cheaper than killing it and dispatching a replacement. All
-  three keys are static in `templates/workspace/grok-config.toml.tftpl:329-334` and none
+  three keys are static in `templates/workspace/grok-config.toml.tftpl:368-373` and none
   is rendered from a template variable.
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
@@ -631,7 +646,7 @@ wrong on both lanes - it leaves slots empty on a swarm session and overbooks a p
 one. Overflow is held, not failed (`limit_behavior = "queue"`), so an under-wide wave is
 silent and counting it stays the parent's job. The same grep prints the `max_depth` line
 beside `max_concurrent`, and that key is now rendered from `grok_subagent_max_depth`
-(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:371`. At the
+(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:408`. At the
 shipped 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
 `spawn_subagent` in their `tools`, so a skeptic can put a wave of read-only mappers under
 itself and get its evidence without a round trip through the parent. Each grandchild is its
@@ -649,8 +664,8 @@ every lane, and an explicit
 carry the same `x-litellm-session-id`, so a pinned lane places the whole fan-out on one
 box and the useful width is that box's `PARALLEL` - 5 by default, from
 `scripts/spark-configure.sh` - minus the parent's own stream; past that, extra slots are
-LiteLLM queue depth. `agent-swarm` is one of three Spark groups with no session pin -
-`agent-explore` and `agent-review` lift it the same way, and
+LiteLLM queue depth. `agent-swarm` is one of four Spark groups with no session pin -
+`agent-explore`, `agent-review` and `agent-swarm-fast` lift it the same way, and
 [litellm-routing.md](litellm-routing.md#the-fan-out-lanes-agent-explore-and-agent-review)
 is where what each lane buys is worked out - so each child lands on whichever reachable
 box has the fewest requests in flight and the ceiling
@@ -1361,7 +1376,7 @@ clone is never asked to delete somebody else's committed file.
   confidence stated - and keeps the raw pages to itself.
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
   default `http://host.docker.internal:4000/v1`; model alias `agent`, with
-  `agent-low`/`agent-medium`/`agent-xhigh`/`agent-swarm`/`coder`/`coder-fast`/`chat`
+  `agent-low`/`agent-medium`/`agent-xhigh`/`agent-xhigh-fast`/`agent-swarm`/`agent-swarm-fast`/`coder`/`coder-fast`/`chat`
   listed in `__evoT1StackModels`). The seed is
   `settings.json.tftpl`, copied onto the per-owner volume
   `vscode-settings-<owner-id>` (mounted at `~/.shared/vscode/settings.json`) only
@@ -1480,7 +1495,11 @@ drives the server's experimental chat API:
   text with no `tool_calls`, and an agent turn without callable tools cannot browse or
   edit, so registering them would only add a silently broken model to the pickers.
   `context_limit` is the agent's own compaction budget (a 70 per cent default
-  compaction threshold applies), which is why it is pinned per alias.
+  compaction threshold applies), which is why it is pinned per alias. The
+  two fast-compaction lanes are absent too, for a mechanical reason rather than a measured
+  one: the hop keys on the summary instruction the Grok CLI appends, the aibridge behind
+  these pickers never sends one, and `compaction-fast` is no client alias at all, so an
+  Agents chat on `agent-xhigh-fast` would be a chat on `agent-xhigh` under a longer name.
   Before that sweep the script asks the proxy `GET /v1/model/info` and `GET /health`
   and joins them on `model_id`, so it knows which aliases still have a healthy
   deployment. An alias with none is not registered: `chat` goes unhealthy the moment
@@ -1539,6 +1558,18 @@ for the other:
 - The thresholds are separate as well. `context_limit` above is Coder's own compaction
   budget with its 70 per cent default, while the CLI fires at
   `[session] auto_compact_threshold_percent` (70) of its 262144-token window.
+
+That is still the shape on the two fast-compaction lanes, and it is why the remedy is
+server-side rather than a client setting: a session on `agent-xhigh-fast` or
+`agent-swarm-fast` sends the same in-session summary call on its session model, and
+`litellm/compaction_router.py` moves that one request onto the Arc group
+`compaction-fast` before the proxy picks a deployment. Nothing in `~/.grok/config.toml`
+asks for it, every other call of that session still rides the Spark lane, and a session on
+any other alias compacts as it always has. The limit is the Arc's own 32768-token window:
+above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 estimated tokens) the summary goes to
+`agent-low` instead, which keeps the 262144-token window and drops the baked `xhigh`,
+because a slow summary beats one Ollama silently clamped. The key cannot raise that limit:
+the target group's declared `max_input_tokens` caps it and logs one line when it does.
 
 ### The delegation sketch
 

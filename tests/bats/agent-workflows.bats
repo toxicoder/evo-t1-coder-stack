@@ -37,7 +37,7 @@ CONFIG=""
 
 # The aliases this repo declares. Anything outside it is a cloud id or a typo, and both
 # mean a call that cannot be served from this box.
-LANE_ROSTER='agent agent-low agent-medium agent-xhigh agent-swarm agent-explore agent-review coder coder-fast chat'
+LANE_ROSTER='agent agent-low agent-medium agent-xhigh agent-xhigh-fast agent-swarm agent-swarm-fast agent-explore agent-review coder coder-fast chat'
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || return 1

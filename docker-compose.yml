@@ -301,8 +301,32 @@ services:
       SPARK_1_API_KEY: ${SPARK_1_API_KEY:-local-spark}
       SPARK_2_API_KEY: ${SPARK_2_API_KEY:-local-spark}
       SPARK_3_API_KEY: ${SPARK_3_API_KEY:-local-spark}
+      # The fast-compaction hop (litellm/compaction_router.py, registered under
+      # litellm_settings.callbacks). On by default: the opt-in is a session picking
+      # agent-xhigh-fast or agent-swarm-fast, and these five knobs are the tuning and the
+      # kill switch. EVO_T1_FAST_COMPACTION=0 stops the hop; _LANES names which groups may
+      # hop; _TARGET and _SPARK_TARGET are the two tiers a summary can land on; and
+      # _INPUT_LIMIT is the line between them. A summary whose estimate fits the Arc's 32k
+      # model goes to _TARGET; a bigger one goes to _SPARK_TARGET, which is a Spark group and
+      # so has the window the summary needs, at thinking baked low instead of extra high.
+      # Blank _SPARK_TARGET and an oversized summary stays on the lane it arrived on, which
+      # is the pre-hop behaviour. That is why the two target lines use ${VAR-default} and
+      # not ${VAR:-default}: the colon form substitutes its default for an *empty* value
+      # too, so the one way an operator has of parking a tier would be undone here. All
+      # five are read in that one module and nowhere else, so this block is the whole
+      # policy and the module's own docstring is its reference.
+      EVO_T1_FAST_COMPACTION: ${EVO_T1_FAST_COMPACTION:-1}
+      EVO_T1_FAST_COMPACTION_LANES: ${EVO_T1_FAST_COMPACTION_LANES:-agent-xhigh-fast,agent-swarm-fast}
+      EVO_T1_FAST_COMPACTION_TARGET: ${EVO_T1_FAST_COMPACTION_TARGET-compaction-fast}
+      EVO_T1_FAST_COMPACTION_INPUT_LIMIT: ${EVO_T1_FAST_COMPACTION_INPUT_LIMIT:-24000}
+      EVO_T1_FAST_COMPACTION_SPARK_TARGET: ${EVO_T1_FAST_COMPACTION_SPARK_TARGET-agent-low}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml:ro
+      # Mounted as a single file, not as a directory: a directory mount over /app would hide
+      # config.yaml. It has to sit beside the config because the proxy resolves a callback's
+      # dotted name against the directory holding the config file, which is what makes the
+      # bare `compaction_router` named in litellm_settings.callbacks resolvable at all.
+      - ./litellm/compaction_router.py:/app/compaction_router.py:ro
     depends_on:
       - ollama
 

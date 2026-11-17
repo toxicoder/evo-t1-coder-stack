@@ -61,8 +61,12 @@ Local lanes only, every one of them an alias in `litellm/config.yaml` over the t
 boxes (or the Arc): `agent` (xhigh, session-pinned), `agent-low` / `agent-medium` /
 `agent-xhigh` (that group at a baked thinking level), `agent-swarm` (xhigh, pin lifted: the
 fan-out lane), plus the two role lanes `agent-explore` (low, pin lifted: mapping and evidence)
-and `agent-review` (xhigh, pin lifted: the mandatory independent-review phase). No cloud model
-id belongs anywhere in this repo. Alias detail and the routing arithmetic:
+and `agent-review` (xhigh, pin lifted: the mandatory independent-review phase). The two
+`-fast` aliases, `agent-xhigh-fast` and `agent-swarm-fast`, are their namesake lane deployment
+for deployment and differ in one call: the LiteLLM proxy answers that session's conversation
+summary from the Arc group `compaction-fast`, because the Grok CLI has no compaction-model key
+of its own. They are operator-selected session models, so nothing pins a subagent role to them.
+No cloud model id belongs anywhere in this repo. Alias detail and the routing arithmetic:
 `docs/litellm-routing.md`.
 
 The rulebook a workspace boots with is the seed `templates/common/GROK_BUILD_AGENTS.md`,

@@ -378,6 +378,7 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
     ],
     "litellm-config.bats": [
+        "//:env_example",
         "//:templates_payload",
         "//litellm:config",
     ],
@@ -400,6 +401,7 @@ _SUITE_PAYLOAD = {
         "//:mypy_config",
         "//docs-site:python_sources",
         "//lints:runners",
+        "//litellm:config",
         "//tests:all_bats",
         "//tests:coverage_tools",
         "//tests:python_sources",
@@ -810,6 +812,12 @@ exec_shell(
 # generator, and probes for docker-compose.yml as the repo-root marker. tests/bazel_deps.py
 # rides along because test_bazel_deps.py imports it by path; it stays out of py_report's
 # --expect list, which measures the shipped modules under scripts/lib and docs-site/scripts.
+# //litellm:compaction_router.py rides along for the same reason -- test_compaction_router.py
+# opens it by path -- and it stays out of --expect for the same reason too: it is stack
+# payload the proxy imports, not one of the two module trees this floor measures. A suite
+# that resolves its own __file__ reaches the checkout through the runfiles symlinks, so a
+# missing edge would pass rather than fail loudly: this list is the declaration, not the
+# mechanism that reads the file.
 sh_test(
     name = "py_coverage",
     size = "medium",
@@ -820,6 +828,12 @@ sh_test(
         "coverage/py_report.py",
         "//:compose_file",
         "//docs-site:python_sources",
+        # The group, not the single module: //tests:py_report.py builds its denominator by
+        # listing the *.py that actually arrive in runfiles, and nothing cross-reads this
+        # edge against the payload group. A per-file label here would let a second module
+        # join //litellm:config and be measured by nothing -- proven by mutation: a
+        # litellm/*.py added to that group left this gate printing ok at 7/7.
+        "//litellm:config",
         "//scripts:py_programs",
         # glob-policy: coverage/py_cov.sh discovers tests/python/test_*.py at runtime, so a new unittest module must arrive in runfiles or the suite silently measures less
     ] + glob(

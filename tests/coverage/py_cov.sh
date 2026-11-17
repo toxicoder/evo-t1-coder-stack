@@ -3,7 +3,8 @@
 # ## py_cov
 #
 # Measured coverage for the Python the stack ships: the scripts/lib helpers the
-# operator CLIs shell out to, and the docs-site nav generator.
+# operator CLIs shell out to, the docs-site nav generator, and the LiteLLM
+# callback that moves a conversation-summary call off its Spark lane.
 #
 # It runs every unittest suite under coverage.py and fails below the floor, so
 # "the helper has a test" means the interpreter reported the line executed.
@@ -125,7 +126,8 @@ main() {
   echo "-> report"
   (cd "${root}" && ${cov} json -q -o "${TEST_TMPDIR:-/tmp}/evo-python.json") || return 1
   python3 "${here}/py_report.py" --json "${TEST_TMPDIR:-/tmp}/evo-python.json" \
-    --root "${root}" --expect scripts/lib --expect docs-site/scripts --min "${min}"
+    --root "${root}" --expect scripts/lib --expect docs-site/scripts \
+    --expect litellm --min "${min}"
   echo "ok: python coverage meets ${min}%"
 }
 

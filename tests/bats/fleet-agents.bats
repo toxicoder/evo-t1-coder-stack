@@ -79,8 +79,9 @@ SKILL_KEYS=(feature_implementation_skill skeptical_review_skill
 # There is no cloud transport in this stack, so a value outside this list is
 # either a typo or a regression to a provider the routing arithmetic has no box
 # for (docs/litellm-routing.md).
-LOCAL_ROSTER=(agent agent-low agent-medium agent-xhigh agent-swarm
-  agent-explore agent-review coder coder-fast chat spark-coder spark-chat)
+LOCAL_ROSTER=(agent agent-low agent-medium agent-xhigh agent-xhigh-fast
+  agent-swarm agent-swarm-fast agent-explore agent-review coder coder-fast
+  chat spark-coder spark-chat)
 
 # The definition parser: structure only. Reads the payload on stdin, its stem in
 # argv[1]. The six frontmatter keys are pinned as the exact set inside the parser:

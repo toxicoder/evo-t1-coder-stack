@@ -69,6 +69,16 @@ def expected_modules(root: Path, expect_dirs: list[str]) -> list[str]:
 
     Symlinks are followed so the runfiles tree yields the same list as the
     checkout it points into. Files that read as tests are left out.
+
+    A directory that yields no module is an error rather than an empty stretch of the
+    floor. This list comes out of the runfiles tree, so it is only as wide as
+    ``//tests:py_coverage``'s data edge, and a directory that never joined that edge
+    would leave the gate measuring less and still printing ok. That edge takes each
+    payload *group* whole (``//litellm:config``, ``//scripts:py_programs``,
+    ``//docs-site:python_sources``), so a module joining the group joins the denominator
+    even though no check cross-reads the two maps; this lock is the one that fires when
+    the whole group is missing, which is the shape a new ``--expect`` leaves behind when
+    its edge was forgotten.
     """
     found: list[str] = []
     for rel_dir in expect_dirs:
@@ -76,12 +86,20 @@ def expected_modules(root: Path, expect_dirs: list[str]) -> list[str]:
         if not directory.is_dir():
             print(f"error: expected directory is missing: {rel_dir}", file=sys.stderr)
             raise SystemExit(2)
+        listed: list[str] = []
         for path in sorted(directory.rglob("*.py")):
             if not path.is_file():
                 continue
             if path.name.startswith(TEST_FILE_PREFIXES) or path.name == "__init__.py":
                 continue
-            found.append(path.relative_to(root).as_posix())
+            listed.append(path.relative_to(root).as_posix())
+        if not listed:
+            print(
+                f"error: expected directory ships no module: {rel_dir}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        found.extend(listed)
     return found
 
 
@@ -137,13 +155,16 @@ def main() -> int:
         shown = "100%" if percent >= 99.999 else f"{percent:.2f}%"
         print(f"{rel:<44} {statements:>6} {branches:>7} {shown:>7}")
         if percent + 1e-9 < args.min:
-            missing = sorted(set(entry.get("missing_lines", [])) | set(
-                pair[0] for pair in entry.get("missing_branches", [])
-            ))
+            missing = sorted(
+                set(entry.get("missing_lines", []))
+                | set(pair[0] for pair in entry.get("missing_branches", []))
+            )
             detail = ",".join(str(line) for line in missing) if missing else "no lines"
             failures.append(f"{rel}: {percent:.2f}% < {args.min}% (lines {detail})")
 
-    print(f"modules: {len(wanted) - len(failures)}/{len(wanted)} at or above {args.min}%")
+    print(
+        f"modules: {len(wanted) - len(failures)}/{len(wanted)} at or above {args.min}%"
+    )
     if failures:
         print(f"uncovered modules ({len(failures)}):", file=sys.stderr)
         for item in failures:

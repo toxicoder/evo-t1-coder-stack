@@ -371,7 +371,7 @@ Each link in the chain, measured:
 - Those re-dispatches came from this repo's own config. At the pinned tag
   `ghcr.io/berriai/litellm:v1.102.1` a stream that dies before its first chunk raises
   `MidStreamFallbackError`, which subclasses `ServiceUnavailableError`
-  (`litellm/exceptions.py:1114`), and `get_num_retries_from_retry_policy` walks the
+  (`litellm/exceptions.py:1114` at that tag), and `get_num_retries_from_retry_policy` walks the
   exception MRO most-specific first, so it lands on `ServiceUnavailableErrorRetries` and
   never reaches `DefaultRetries`. A hung request never cools the box either: cooldown
   hard-excludes any exception whose string contains `APIConnectionError`, and
@@ -385,10 +385,10 @@ What the fix changed, and how to land it:
 grep -n 'ServiceUnavailableErrorRetries\|DefaultRetries' litellm/config.yaml
 ```
 
-- `ServiceUnavailableErrorRetries` is 0, not 2, on each of the seven Spark lanes
+- `ServiceUnavailableErrorRetries` is 0, not 2, on each of the nine Spark lanes
   (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`, `agent-explore`,
-  `agent-review`): one attempt for a dead stream, so a hung request is bounded at 1200 s
-  instead of up to 3465 s.
+  `agent-review`, `agent-xhigh-fast`, `agent-swarm-fast`): one attempt for a dead stream,
+  so a hung request is bounded at 1200 s instead of up to 3465 s.
   `DefaultRetries: 2` is untouched on purpose - TensorFold's `NoRoom` refusal arrives as
   `APIConnectionError`, which is absent from `_RETRIES_BY_EXCEPTION_TYPE`, so that walk
   falls through to `DefaultRetries` and keeps its two attempts. The proxy reads the file
@@ -425,6 +425,94 @@ What it deliberately does not do:
   shows no size threshold separating failure from success - the successes reach the same
   197k-214k range - so this is a load reduction, not a proven cure. Re-run the first
   command above to measure whether the ratio moved.
+
+### A summary on `agent-xhigh-fast` or `agent-swarm-fast` still takes minutes -> the fast-compaction hop did not fire
+
+Cause: the hop is a proxy behaviour, not a client one, and it needs four things true in the
+same moment. With any one of them false the summary rides a Spark box exactly as it did
+before these two aliases existed - the 107 s to 1915 s measured above - and that is the slow
+path, not a fault. The Grok Build CLI has no compaction-model key, so there is nothing
+client-side to point elsewhere: the alias the session started on is the whole decision, and
+`[models] session_summary` is still not the compaction lane (see the entry above). The
+decision lives in `litellm/compaction_router.py`, and the five `EVO_T1_FAST_COMPACTION*`
+knobs named below are read there and nowhere else.
+
+Start with the proxy's own line for the call:
+
+```sh
+bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -m3 'compaction router:'
+```
+
+`compaction router: moved a summary call from agent-xhigh-fast to compaction-fast` is the
+hop firing, once per summary, onto the tier it landed on: `EVO_T1_FAST_COMPACTION_TARGET`
+for a summary within the guard (default `compaction-fast`, which degrades to `agent-low`
+then `coder`) or `EVO_T1_FAST_COMPACTION_SPARK_TARGET` for one above it (default
+`agent-low`). No line at all is one of these:
+
+- **Not a fast lane.** The hop is armed by the alias alone, so a session on `agent`,
+  `agent-xhigh` or `agent-swarm` compacts on Spark by design. The groups allowed to hop are
+  `EVO_T1_FAST_COMPACTION_LANES`, default `agent-xhigh-fast,agent-swarm-fast`.
+- **The kill switch.** `EVO_T1_FAST_COMPACTION` ships on, and `0`, `false`, `off` or `no`
+  stops the hop on every lane at once. A value that is none of those and none of `1`,
+  `true`, `on`, `yes` also leaves it off, with one
+  `compaction router: EVO_T1_FAST_COMPACTION=... is neither on nor off` warning per
+  distinct value: a typo'd off is read as off. Compose gives each of the five keys its
+  default in `docker-compose.yml`, and the value in force is the one interpolated from the
+  env file when the container was created, so a stack that was already up when someone set
+  the key is still running the old one. Clear the key (or set it back to `1`) and recreate:
+  a `restart` keeps the old environment.
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+```
+
+- **Not the summary call.** The CLI appends its instruction as the last turn, and the hook
+  reads it there: one of the two asks the CLI sends, from a `user` or `system` role, in a
+  turn no longer than the instruction itself. It does not read the system prompt, which
+  rides every turn of the session, so a rulebook that quotes the sentence cannot move an
+  ordinary turn. A request that merely mentions one of the two asks is not a compaction
+  call and stays on its lane.
+- **Too big for the Arc, and the Spark tier was blanked.** The estimate covers the whole
+  request, the tool schemas included, and charges a base64 payload and a non-ASCII reply at
+  their own denser rates rather than the prose rate; anything above
+  `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000) goes to
+  `EVO_T1_FAST_COMPACTION_SPARK_TARGET` rather than to the Arc: the
+  Arc weights answer inside a 32k window and Ollama would clamp such an input rather than
+  fail it. Raising that key does not open the Arc tier: the fork takes the smaller of the
+  key and the `max_input_tokens` the target group declares in `litellm/config.yaml`, so
+  `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000` still forks at 32768 and logs one
+  `compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 is above the 32768 tokens
+  config.yaml declares for 'compaction-fast'; forking at the declared window instead`.
+  A target group that declares no `max_input_tokens` at all leaves the key whole, and says
+  so once with `compaction router: 'compaction-fast' declares no max_input_tokens in
+  config.yaml; forking at EVO_T1_FAST_COMPACTION_INPUT_LIMIT alone` - that line is the
+  signal to go declare the window, because it is the one state where the fork can still
+  hand an oversized summary to a model that reads it clamped.
+  A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
+  that answers it. Blank that key, or name the lane the call arrived on, and an oversized
+  summary stays on its Spark lane at the lane's own thinking level - the pre-hop behaviour,
+  and the one case where the 107 s to 1915 s above is the documented limit of the feature.
+  A summary that comes back short of the history it should cover has one remaining path
+  that explains it: with all three Sparks cooled, the fallback chains end at `coder` -
+  `agent-low: ["coder"]` for the oversized tier, and the same for the pair's own chains -
+  and that Arc group answers from an input Ollama clamps down to its 32k window. That is every Spark
+  lane's standing last resort rather than a defect of the hop, and
+  `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm` carries the health lines for
+  that window - the `fallbacks:` block of `litellm/config.yaml` is the map it followed.
+  Blanking works only because compose passes that key as `${VAR-default}`: the colon form
+  substitutes its default for an empty value too, and the parked tier comes back.
+- **The tier names a group nobody declared.** Neither target is validated by LiteLLM, so the
+  hook checks both against the `model_name:` entries in `litellm/config.yaml` and refuses a
+  name that is not among them, with one `compaction router: target ... is no model group in
+  config.yaml` warning per call. A typo there therefore looks like a hop that never fires
+  rather than a summary that hard-fails. `grep -E '^  - model_name: ' litellm/config.yaml` is
+  the list of legal answers for both keys.
+
+A summary that moved and still came back slowly is the fallback rather than the hop: each
+fast lane degrades to the lane it is the twin of (`agent-xhigh-fast` to `agent-xhigh`,
+`agent-swarm-fast` to `agent-swarm`), and a twin is not in the lane list, so a session that
+lost its own group to a cooldown takes its summary back to a Spark with it. That is the
+alias-health case further down this page.
 
 ### Coder Agents chat refuses every prompt, or its model dropdown is empty -> no model config
 
@@ -955,7 +1043,7 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
   width there is about 4 no matter what the number above it says. The rest queue:
   `limit_behavior = "queue"` holds the overflow rather than failing the spawn.
 - Read those same four lines for the depth, because the block now prints `max_depth`
-  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:369`), rendered
+  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:407-408`), rendered
   from the `grok_subagent_max_depth` variable whose default is 2. At 2 a child spawns
   read-only mappers of its own, so a wave can be wider than the parent's own `slots`, and
   each in-flight child holds one of the fleet's 15 streams: a parent sums `1 + spawns` per

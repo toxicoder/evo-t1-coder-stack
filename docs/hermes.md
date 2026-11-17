@@ -281,15 +281,20 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   it - the same Qwen3.8-Flash-Next on the same three Spark boxes, with real
   `tool_calls` and that level baked into the alias instead. Use one when a run needs a
   different level; Qwen3.8-Flash-Next takes `low`, `medium` and `xhigh` and nothing else.
-- **`agent-swarm`** is one of the seven Spark aliases, and one of three - with
-  **`agent-explore`** and **`agent-review`** - that the LiteLLM session pin does not
-  cover: same model, same three boxes, same baked `xhigh`, but each request is placed on
-  the least-busy healthy box. It is the lane for a parallel fan-out, not for one long
-  Hermes session - a single thread would give up the pin's prefix-cache locality and
-  could be prefilled on a different box each turn. Hermes keeps `agent` as its default.
-  The other two pinless groups serve a Grok Build subagent fleet rather than a chat:
-  `agent-explore` bakes `low` for a wave of read-only mappers and `agent-review` bakes
-  `xhigh` for the skeptics that check what that fleet wrote. See
+- **`agent-swarm`** is one of the nine Spark aliases, and one of four - with
+  **`agent-explore`**, **`agent-review`** and **`agent-swarm-fast`** - that the LiteLLM
+  session pin does not cover: same model, same three boxes, same baked `xhigh`, but each
+  request is placed on the least-busy healthy box. It is the lane for a parallel fan-out,
+  not for one long Hermes session - a single thread would give up the pin's prefix-cache
+  locality and could be prefilled on a different box each turn. Hermes keeps `agent` as its
+  default.
+  The other three pinless groups serve a Grok Build subagent fleet rather than a chat:
+  `agent-explore` bakes `low` for a wave of read-only mappers, `agent-review` bakes `xhigh`
+  for the skeptics that check what that fleet wrote, and `agent-swarm-fast` is `agent-swarm`
+  again for a wave of writers. The two `-fast` aliases, that one and its pinned twin
+  **`agent-xhigh-fast`**, differ from their parents in one call only: the proxy, not the
+  client, re-serves that session's conversation summary from the Arc group
+  `compaction-fast`, and every other turn still runs on a Spark. See
   [litellm-routing.md](litellm-routing.md#the-swarm-lane-agent-swarm).
 - The key is `LITELLM_MASTER_KEY`, substituted from the environment into the seeded
   `config.yaml`. Do not copy the key into a Hermes file - one secret, one owner.

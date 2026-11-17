@@ -25,6 +25,11 @@
 # tests/bats/fixtures/ is excluded on purpose: those .py files are scaffold
 # payload that gets copied into a brand-new repository and are typed and tested
 # there, not here.
+#
+# litellm/compaction_router.py is named by file rather than by directory for the same
+# reason the two docs-site files are: litellm/ ships exactly one .py -- the proxy
+# callback compose bind-mounts beside the config -- and a directory entry would type
+# whatever a later change drops next to it without this list saying so.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=check_tool.sh disable=SC1091
@@ -45,6 +50,7 @@ targets=(
   tests/python
   docs-site/scripts/gen_nav.py
   docs-site/test_gen_nav.py
+  litellm/compaction_router.py
 )
 # The cache goes outside the checkout: a gate that leaves a cache directory
 # behind is one a developer then has to reason about when it is stale, and this

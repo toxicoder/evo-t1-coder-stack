@@ -269,6 +269,45 @@ stream_tool_calls = true
 max_retries = 1
 inference_idle_timeout_secs = 1800
 
+# The fast-compaction pair: [model."agent-xhigh"] and [model."agent-swarm"] again, same
+# pin and same spread, for the one call the CLI cannot route itself. Grok Build has no
+# compaction-model key, so litellm/config.yaml moves the conversation-summary call of
+# these two aliases onto the Arc's fast Ollama group and leaves every other call on the
+# Spark lane. Nothing here names the summary model.
+[model."agent-xhigh-fast"]
+model = "agent-xhigh-fast"
+base_url = "${litellm_url}"
+name = "Agent (DGX Spark vLLM, thinking extra high, fast compaction)"
+description = "Spark agent lane; thinking baked to xhigh, summary call served by the fast Arc lane"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1800
+
+[model."agent-swarm-fast"]
+model = "agent-swarm-fast"
+base_url = "${litellm_url}"
+name = "Agent swarm (all DGX Sparks, fast compaction)"
+description = "Spark agent lane; every request on the least-busy Spark, summary call on the fast Arc lane"
+api_backend = "chat_completions"
+env_key = "LITELLM_API_KEY"
+context_window = 262144
+max_completion_tokens = 32768
+temperature = 1.0
+top_p = 0.95
+supports_backend_search = false
+supports_reasoning_effort = false
+stream_tool_calls = true
+max_retries = 1
+inference_idle_timeout_secs = 1800
+
 # --- Arc 140T (IPEX-LLM Ollama): completion-style fallbacks -----------------
 # Measured against the running stack: these endpoints answer tool requests as
 # plain text with finish_reason "stop" and no tool_calls array, so Grok's
