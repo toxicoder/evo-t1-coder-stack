@@ -52,11 +52,12 @@ SKILL_SET=(bug-hunt debugger documenter ez-bazel-first ez-create-skill ez-learn
   feature-implementation grok-build-delegation migrator performance-optimizer
   security-audit skeptical-review)
 
-# The lanes this family routes over, and the only model ids this stack can serve:
-# the local alias table in litellm/config.yaml, with no cloud transport behind it
-# (docs/litellm-routing.md).
-LOCAL_ROSTER=(agent agent-explore agent-review agent-swarm agent-low agent-medium
-  agent-xhigh)
+# The only model ids this stack can serve: the local alias table in
+# litellm/config.yaml, with no cloud transport behind it (docs/litellm-routing.md).
+# The advisor family routes over three of them; the roster is the served set, so a
+# lane the config gains joins it here too.
+LOCAL_ROSTER=(agent agent-explore agent-review agent-swarm agent-swarm-fast
+  agent-low agent-medium agent-xhigh agent-xhigh-fast)
 
 # The id prefixes a cloud provider answers to. One of them anywhere in a payload
 # claims a box this stack cannot reach.
