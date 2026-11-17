@@ -670,6 +670,58 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
     'T06 and its 6 children need 7 streams; the fleet holds 6' "${output}"
 }
 
+@test "an advanced Ledger does not disarm the wave-1 stream budget" {
+  # The opening wave's stream price is arithmetic over what the plan DECLARES, so it
+  # stays true as the run advances. A gate that goes quiet once one row lands lets a
+  # spawner-heavy plan reach the fleet and take a NoRoom answer mid-run, which is the
+  # failure the budget exists to turn into a refusal before wave 1.
+  set_fleet 3
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the over-cost opening wave was refused before any dispatch" \
+    'wave 1 costs 7 streams against a fleet of 3' "${output}"
+
+  LEDGER_DONE="T01"
+  write_plan
+  # write_plan rebuilds the document from the task table, so the Dispatch `fleet:`
+  # it carries has to be re-put, the same way the first check put it.
+  set_fleet 3
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "one landed row did not lift the budget" \
+    'wave 1 costs 7 streams against a fleet of 3' "${output}"
+}
+
+@test "a panel written with spaces instead of commas still reads as a panel" {
+  # `review:` is documented as a comma or space separated list, and a checker that
+  # reads only one separator turns "T09 T10" into a single unknown id: the plan still
+  # looks like a review wave to the parent while the skeptic never got a panel.
+  add_task "T10|break the change from the adversary angle|review|explore|-|L0, L1-review|T01, T02, T03, T04, T05, T06, T07, T08|12|results/T10.md quotes each producer's own done command and its result|results/T10.md"
+  REVIEW="T09 T10"
+  write_plan
+  check
+  [[ ${status} -eq 0 ]] || report_status
+  assert_eq "both skeptics were taken as panel members" \
+    "summary: 10 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
+    "${lines[0]}"
+}
+
+@test "--ready lets a cheap task past one too heavy for the fleet" {
+  # The stream cap keeps a wave inside the fleet; it is not a stop sign for the tasks
+  # behind the heavy one. T06's fan-out will not fit beside five writers, and the doc
+  # task after it still fits the stream that stays free -- stopping there would idle
+  # it, which is the whole cost this change set out to remove.
+  set_fleet 6
+  set_spawns T06 4
+  check --ready --slots 7
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the declared opening wave was still priced over the fleet" \
+    'wave 1 costs 11 streams against a fleet of 6' "${output}"
+  assert_eq "the heavy mapper did not withhold the doc task behind it" \
+    "T01,T02,T03,T04,T05,T07" "$(ready_csv)"
+  assert_match "the admitted wave filled the fleet" 'cost: 6 streams of 6' "${stderr}"
+}
+
 @test "--ready holds a spawning wave back at the fleet total and prices it on stderr" {
   # Two budgets that are not the same number: six slots would hold six of the parent's
   # own children, but T01 pays three streams for itself plus two children, so against a

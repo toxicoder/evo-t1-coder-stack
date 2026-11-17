@@ -124,13 +124,20 @@ def parse_tasks(lines):
 
 
 def split_list(value):
-    """Split a comma list; `-`, empty, and `none` all mean nothing."""
+    """Split a comma or space separated list; `-`, empty, and `none` mean nothing.
+
+    Both separators are accepted because the plan prose writes both -- `reads: L0,
+    L1-src` beside `review: T14 T15 T16` -- and a checker that reads only one of
+    them turns a three-skeptic panel into one unknown id, which is how a review
+    phase silently stops being a panel. These keys hold ids and paths, which carry
+    no space here.
+    """
     if value is None:
         return []
     text = value.strip()
     if text in ("", "-", "none", "None", "n/a"):
         return []
-    return [item.strip().strip("`") for item in text.split(",") if item.strip()]
+    return [item.strip("`") for item in re.split(r"[,\s]+", text) if item.strip("`")]
 
 
 def spawn_count(task):
@@ -396,8 +403,13 @@ def ready_wave(tasks, states, slots, fleet):
         if states.get(task["id"], "ready") in ("running", "done", "failed", "skipped", "blocked"):
             continue
         if all(states.get(need, "ready") in done_states for need in task["_needs"]):
-            if len(wave) >= slots or streams + task_streams(task) > fleet:
+            if len(wave) >= slots:
                 break
+            if streams + task_streams(task) > fleet:
+                # Skip, do not stop. A spawner too heavy for the streams still
+                # free does not own the tasks behind it: the budget exists to
+                # fill the fleet, and a cheaper ready task still fits it.
+                continue
             wave.append(task["id"])
             streams += task_streams(task)
     return wave, streams
@@ -487,17 +499,20 @@ def main():
     # plan being driven late in the run has an empty initial wave by construction
     # (its review task needs everything), so re-proving it then is a false error.
     started = any(states.get(t["id"], "ready") != "ready" for t in tasks)
+    initial_tasks = [task for task in tasks if not task["_needs"]]
     if tasks and not started:
-        initial_ready = [task for task in tasks if not task["_needs"]
-                         and states.get(task["id"], "ready") == "ready"]
+        initial_ready = [task for task in initial_tasks
+                         if states.get(task["id"], "ready") == "ready"]
         if len(initial_ready) < min(slots, len(tasks)):
             report.error("wave 1 is %d tasks wide against %d slots; the fleet idles, so "
                          "split the coarse tasks further" % (len(initial_ready), slots))
-        wave1_streams = sum(task_streams(task) for task in initial_ready)
-        if wave1_streams > fleet:
-            report.error("wave 1 costs %d streams against a fleet of %d; a spawner pays "
-                         "for its children, so narrow the fan-out"
-                         % (wave1_streams, fleet))
+    # The stream price of the opening wave is arithmetic over what the plan declares,
+    # so it stays true as the Ledger advances and is checked whatever the state.
+    wave1_streams = sum(task_streams(task) for task in initial_tasks)
+    if tasks and wave1_streams > fleet:
+        report.error("wave 1 costs %d streams against a fleet of %d; a spawner pays "
+                     "for its children, so narrow the fan-out"
+                     % (wave1_streams, fleet))
     used_lanes = {task.get("lane") for task in tasks}
     for lane in sorted(lanes):
         if lane not in used_lanes:
