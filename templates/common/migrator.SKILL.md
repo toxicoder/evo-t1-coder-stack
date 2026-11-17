@@ -26,8 +26,8 @@ metadata:
 # Migrator
 
 One version moves per run, plus the proof that it moves; the rename you also wanted belongs on
-another branch. This is the parent's runbook -- a child has no `spawn_subagent`, so the fan-out is
-yours, and each block below runs only when you run it with `run_terminal_command` or `execute`.
+another branch. This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own,
+so the writer fan-out is still yours, and each block below runs only when you run it with `run_terminal_command` or `execute`.
 
 Models are the local aliases this run uses -- `agent`, `agent-explore`, `agent-swarm`,
 `agent-review` -- and no cloud id. Budget 20 to 35 of your own calls plus the migrate wave, and

@@ -26,8 +26,8 @@ metadata:
 # Performance optimizer
 
 One number before, one number after, one change between them: a speed-up nobody measured is an
-opinion with a commit attached, so no baseline means no run. This is the parent's runbook -- a child
-has no `spawn_subagent`, so the fan-out is yours; run each block with `run_terminal_command` or
+opinion with a commit attached, so no baseline means no run. This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own,
+so the writer fan-out is still yours; run each block with `run_terminal_command` or
 `execute`, since a block written inline here runs nothing on its own.
 
 Two consumers, one file: the CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under

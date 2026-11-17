@@ -26,8 +26,10 @@ metadata:
 
 Three rules, in this order: reproduce, localise, prove. A fix written before the symptom
 reproduced is a guess with a commit message attached, and a fix with no test that failed
-before it is unfalsifiable. This is the parent's runbook: a child has no `spawn_subagent`
-and cannot spawn the lanes below, so the fan-out is yours to run.
+before it is unfalsifiable. This is the parent's runbook. A depth-1 child may spawn
+`spawn_subagent` for read-only mappers only, and only when it ships no file of its own;
+the writer lanes below stay yours to run, and a mapper is a leaf by definition -- only the
+reviewer, security-auditor and tester definitions name the tool.
 
 Run every block below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent); a command written inline in this body runs nothing on its own.

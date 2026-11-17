@@ -28,7 +28,8 @@ metadata:
 The one hard rule: no fix is written before evidence exists. `/bug-hunt` is the runbook from
 symptom to shipped fix; this is the gate that stops a run where the fix comes first -- the patch
 typed before anything failed, the flake answered with a retry, the broad catch that hides the red.
-A child has no `spawn_subagent`, so this runbook's fan-out is yours to run, not a child's.
+A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it
+ships no file of its own, so the writer fan-out here is still yours to run.
 
 Two consumers, one file: the CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under
 `<repo_root>/.grok/skills/` is CLI-only because the chat agent reads only the other home.

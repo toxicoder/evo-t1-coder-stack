@@ -2,8 +2,9 @@
 name: feature-implementation
 description: "Take one feature request from Plan Mode to a verified, PR-ready change with a
   fleet of subagents: map the surface with read-only explorers, hand the split to
-  /ez-micro-plan, fan the writers out over the Spark boxes, then close with an independent
-  tester and reviewer who re-run the producers' own done commands before anything merges.
+  /ez-micro-plan, fan the writers out over the Spark boxes, then close with a panel wave:
+  testers and skeptics dispatched in one turn, each re-running the producers' own done
+  commands before anything merges.
   Use when asked to implement a feature or turn an issue into a pull request. Run as
   /feature-implementation <request-or-issue-number> [--slots N]."
 when-to-use: "Use when the request changes the tree rather than answering a question:
@@ -25,9 +26,11 @@ metadata:
 # Feature implementation
 
 The parent's runbook: you decompose, dispatch, merge, and verify, and the children do the
-bulk reads and the edits. A child has no `spawn_subagent` and cannot spawn anything, so no
-phase below happens unless you cause it. Planning is not restated here: the lanes, task
-blocks, context files, and the dispatcher check belong to `/ez-micro-plan`.
+bulk reads and the edits. Decomposition, dispatch, the merge, and every writer stay with
+you, so no phase below happens unless you cause it.
+A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own.
+Planning is not restated here: the lanes, task blocks, context files, and the dispatcher
+check belong to `/ez-micro-plan`.
 
 Run every block below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent); a command written inline in this body runs nothing on its own.
@@ -77,16 +80,25 @@ nothing else: the role line, the task id with its one-line summary, `owns`, the 
 paths, the pinned seams copied verbatim, the `done` command, the `report` path, and stop and
 report on any file outside `owns`.
 
-## Step 4 -- the tester and the reviewer are mandatory, not a courtesy (3 to 6 calls)
+## Step 4 -- the tester and the skeptic panel are mandatory, not a courtesy (1 call per member, the whole wave in one turn)
 
 A delegated result is a claim, not a fact: never merge on the producer's own report, and
-never let the producer review its own work. Spawn an independent tester and reviewer who did
-not write the diff -- the reviewer rides `agent-review`, the tester `agent-swarm` when
-several independent checks are pending and `agent` otherwise -- each handed the diff, the
-tests, and the acceptance list rather than the author's summary, and each re-runs the
-producer's own `done:` command rather than trusting its report. Every finding cites
-`path:line`; an uncited finding is an opinion and does not block a merge. Then run the gate
-in your own shell, so the green you quote is yours:
+never let the producer review its own work. Send the testers and the skeptics out together
+in one turn, so the phase costs the slowest check rather than the sum of them. The reviewers
+ride `agent-review`, the lane for the independent pass; a tester runs `agent-swarm` when
+several independent checks are pending and `agent` otherwise. Each member owns no file, gets
+the diff, the tests, and the acceptance list rather than the author's summary, and re-runs the
+producer's own `done:` command rather than trusting its report. The default panel is the three
+angles `/skeptical-review` runs -- requirements, proof, adversary -- and a single-file fix
+saves the streams by putting one skeptic over all three. Each skeptic scopes its own read-only
+mappers, up to 3, instead of returning to you for each read.
+
+Decide that width here, against the whole tree: sum the in-flight `1 + spawns` over every task
+and keep that total at or below the fleet's stream count (`fleet:` in the plan, 15 by default).
+That total is a separate number from `slots`, which caps your own children in flight. The panel
+is where nesting is cheapest -- the writers have all landed by review time, so those streams
+are free. Every finding cites `path:line`; an uncited finding is an opinion and does not block
+a merge. Then run the gate in your own shell, so the green you quote is yours:
 
     bazelisk test //:test-fast
     bazelisk test //:lint --test_tag_filters=manual

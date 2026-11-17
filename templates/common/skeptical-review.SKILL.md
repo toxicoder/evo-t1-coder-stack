@@ -1,16 +1,18 @@
 ---
 name: skeptical-review
-description: "Put one diff through an independent reviewer whose job is to break it, not to
-  bless it: take the author's claim as unverified, re-run the exact commands the producer
-  said proved it, attack the change from several independent angles, then report every
-  requirement as kept or broken with the path and line that decides it. Use when asked to
+description: "Put one diff through a panel of independent reviewers whose job is to break it,
+  not to bless it: take the author's claim as unverified, re-run the exact commands the
+  producer said proved it, attack the change from three angles dispatched in one turn
+  (requirements, proof, adversary), then report every requirement as kept or broken with the
+  path and line that decides it. Use when asked to
   review a diff or a pull request skeptically, or to verify that delegated work works. Run
   as /skeptical-review <diff-spec-or-pr> [--focus <risk>]."
 when-to-use: "Use before anything merges that someone else wrote, and always after a
   subagent reports its own work as done: a delegated result is a claim, not a fact."
 argument-hint: "<diff-spec|pr-number> [--focus <risk>] [--json]"
 compatibility: "Requires git and the repository's own gate. Uses Grok Build subagents
-  (spawn_subagent) for the parallel attack lanes; adds no dependency."
+  (spawn_subagent) for the skeptic panel and for each skeptic's read-only mappers; adds no
+  dependency."
 metadata:
   author: "operator"
   short-description: "Independent review that re-runs the producer's own proof"
@@ -24,11 +26,13 @@ metadata:
 
 # Skeptical review
 
-One reviewer, independent of the author, trying to make the diff fail. This phase is
-mandatory: nothing merges on the producer's word, and a review written by the person who
-wrote the change is not a review. This is the parent's runbook -- a child has no
-`spawn_subagent` and cannot spawn the lanes below, so the fan-out is yours to run. Budget
-12 to 25 of your own calls: the review's value is the commands it ran, not the prose.
+A panel of reviewers, each independent of the author, each trying to make the diff fail. This
+phase is mandatory: nothing merges on the producer's word, and a review written by the person
+who wrote the change is not a review. This is the parent's runbook -- decomposition, dispatch
+and the merge stay yours, and the writers you sent out have all landed by review time. A
+depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships
+no file of its own. Budget 12 to 25 of your own calls: the review's value is the commands it
+ran, not the prose.
 
 Run every block below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent); a command written inline in this body runs nothing on its own.
@@ -79,17 +83,33 @@ Quote the summary line you got. `Executed 0 out of N tests: N tests pass.` is a 
 over unchanged inputs, so re-run with `--nocache_test_results` before you accept a green you
 did not earn. A claim you did not run is a claim you did not check.
 
-## Step 3 -- attack it from independent angles (1 call per lane, one turn)
+## Step 3 -- dispatch the skeptic panel (1 call per skeptic, one turn)
 
-Spawn one child per independent attack surface: the requirement list, the error and
-boundary paths, the security-relevant sinks, the tests' real coverage, and the docs and
-flags the change owes. The lane rule: at or above three independent children goes on `agent-swarm`,
-which spreads them over every Spark box; below three, keep them on `agent` and launch them in
-one turn anyway. The reviewer that judges the merge rides `agent-review`.
+The review is a wave, not a tail: send the skeptics out together in one turn, so the phase
+costs the slowest angle rather than the sum of them. The default panel is three angles, each
+its own child on `agent-review` -- the lane for the independent pass, where a writer wave
+would ride `agent-swarm` and a mapper `agent-explore` -- and each owning no file, since a
+skeptic that edited the diff cannot judge it:
 
-Each lane gets the diff, the tests, and the acceptance list -- never the author's summary --
+- **requirements** -- every acceptance check of the change, each reported kept or broken.
+- **proof** -- re-runs each producer's own `done:` command rather than reading its report.
+- **adversary** -- tries to break it: regressions in surrounding flows, empty and error
+  states, flag-off paths.
+
+Each skeptic gets the diff, the tests, and the acceptance list -- never the author's summary --
 and one question, and returns kept or broken per criterion with `path:line` and the command
-that shows it. A delegated result is still a claim: you re-run what a lane reports broken.
+that shows it. A delegated result is still a claim: you re-run what a skeptic reports broken.
+
+Each skeptic may fan out up to 3 read-only mappers of its own, so an evidence request stops
+costing a round trip to you. Decide the panel's width at that point against the whole tree:
+sum the in-flight `1 + spawns` over every task and keep that total at or below the fleet's
+stream count (`fleet:` in the plan, 15 by default). Every depth-2 mapper holds one of the
+fleet's streams, and the writers have all landed by review time, which is what makes the panel
+cheap.
+
+One reviewer is enough, and cheaper, when the change is a single-file fix or small enough for
+one head to hold: dispatch a single skeptic over all three angles and spend the streams you
+saved where they pay.
 
 ## Step 4 -- report kept and broken, each with its proof (1 call)
 
@@ -107,4 +127,4 @@ edit in the same paths, and never merge your own review. The author fixes and re
 re-run the failed command on the new state and say whether it moved.
 
 If the review turns up real work across several files, that is `/ez-micro-plan` territory:
-the fix goes through a plan and a fleet, with this skill as its last wave.
+the fix goes through a plan and a fleet, with this panel as that plan's review wave.
