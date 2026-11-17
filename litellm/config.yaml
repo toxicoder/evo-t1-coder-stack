@@ -644,10 +644,11 @@ litellm_settings:
   # The second entry is the fast-compaction hop: a CustomLogger subclass in
   # litellm/compaction_router.py, bind-mounted beside this file at /app by
   # docker-compose.yml (the proxy resolves a callback's dotted name against the directory
-  # of the config file, so the module has to be a sibling of config.yaml). LiteLLM dispatches async_pre_call_hook only to a
-  # callback that IS a CustomLogger and overrides the method in its own class dict, so the
-  # dotted path must name the instance, not the class - a class here boots clean and never
-  # runs, which is why the last entry is `proxy_handler_instance`.
+  # of the config file, so the module has to be a sibling of config.yaml). LiteLLM
+  # dispatches async_pre_call_hook only to a callback that IS a CustomLogger and overrides
+  # the method in its own class dict, so the dotted path names the instance: at the pinned
+  # v1.102.1 an entry that resolves to a class is a ValueError at config load, from
+  # litellm/proxy/common_utils/callback_utils.py, naming proxy_handler_instance back at you.
   callbacks: ["prometheus", "compaction_router.proxy_handler_instance"]
 
 # Fallbacks live in router_settings, which takes precedence over the

@@ -438,15 +438,25 @@ conversation-summary call and re-serves it from somewhere cheaper than the Spark
 arrived on - `compaction-fast`, the small Ollama-served coding weight on the Arc, when the
 summary fits that window, and a Spark group thinking at `low` when it does not. That is
 where the speed comes from - the Spark lane answers at xhigh thinking and a summary does
-not need it. The CLI appends its summary instruction as the trailing message, and the
-callback matches a stable clause inside it,
-`produce a faithful, concise summary of the conversation so far`, before rewriting the
-request's model to the target and dropping `tools`, `tool_choice` and `reasoning_effort`
+not need it. The CLI appends its summary instruction as the last turn of the body - the
+auto-compaction ask, or the `/compact` one wrapped in a `<summary_request>` tag - and the
+callback matches a stable clause inside whichever one it sees,
+`produce a faithful, concise summary of the conversation so far` and
+`summarize the conversation so far`, in a turn short enough to be the instruction itself.
+It reads that ask nowhere else in the body: the system prompt rides every turn of the
+session, so matching there would move a whole conversation to the summary target the moment
+an operator pasted one of those sentences into a workspace rulebook. It reads it from
+whichever key the protocol carries the turns under - `messages` for Chat Completions and
+Anthropic Messages, `input` for a model whose `api_backend` is `responses` - so the hop does
+not quietly stop working on a protocol choice. A recognized ask is
+rewritten to the target model, with `tools`, `tool_choice` and `reasoning_effort` dropped
 from it: a summary is prose, the schemas are dead weight to it, and a small model handed a
 tool schema may answer with a call instead of a summary. Every other call of the same
 conversation stays on its Spark box, and a session on any other alias compacts exactly as
 it always has. The hop is a property of the alias, not of the proxy: picking one of these
-two aliases is the opt-in, and `EVO_T1_FAST_COMPACTION=0` is the kill switch beside it.
+two aliases is the opt-in, and `EVO_T1_FAST_COMPACTION=0` is the kill switch beside it. One
+residue is worth naming: a user turn whose entire content is a quoted ask looks like an ask,
+and gets the summary target's answer.
 
 What it is not: a client setting. The Grok Build CLI has no compaction-model key, so there
 is nothing in `~/.grok/config.toml` that points that call anywhere, and
@@ -473,8 +483,12 @@ replace. Above it the summary goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (def
 `agent-low`): the same three Spark boxes, the 262144-token window a real summary needs, and
 the thinking baked to `low` instead of `xhigh`. Blank that knob, or name the lane the call
 arrived on, and an oversized summary stays where it is, which is the pre-hop behaviour. The
-estimate is characters over four, counted across the messages and the tool schemas beside
-them, so an estimate that is wrong errs toward the Spark tier.
+estimate is counted over everything the backend prefills - each turn's text, the payloads
+the text flattener cannot see, and every request-level schema key - and it charges three
+classes of character separately: ASCII prose at four characters to a token, a base64 payload
+at two, and anything outside ASCII at one. Reading those denser classes at the prose rate was
+how a 90,000-character screenshot read as 22,500 tokens and went to a 32768-token model.
+Every one of them errs toward the larger number, and the larger number means the Spark tier.
 
 Where the guard sits against the client: the shipped `[session]` block sets
 `auto_compact_threshold_percent = 70` and both fast aliases declare a `context_window` of
@@ -507,13 +521,17 @@ Everything a caller can tune is one of five environment variables, read in
 | `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` | `24000` | the token estimate that decides which of the two tiers takes the call |
 | `EVO_T1_FAST_COMPACTION_SPARK_TARGET` | `agent-low` | where a summary above the guard goes, checked against `config.yaml` the same way; blank it, or name the lane it arrived on, and it stays there |
 
-Three ways to land this feature and get nothing, each of which boots clean:
+Three ways to land this feature and get nothing. The first is caught for you at the pinned
+LiteLLM and the other two are silent, which is why the silent two are what the gates check:
 
 - `litellm_settings.callbacks` must name the *instance*,
   `compaction_router.proxy_handler_instance`, never the class. `ProxyLogging` dispatches
   `async_pre_call_hook` only to a callback that IS a `CustomLogger` and overrides that hook
-  in its own class dict, so a class entry is accepted, the lanes keep working, and the hop
-  never fires.
+  in its own class dict. At the pinned `v1.102.1` a class entry fails loudly:
+  `litellm/proxy/common_utils/callback_utils.py` maps it to a `ValueError` that names
+  `proxy_handler_instance` and the config does not load. That check is recent, so the older
+  wording you may find in a comment - a class boots clean, the lanes keep working, the hop
+  never fires - describes what it used to do.
 - The module is mounted as a single file,
   `./litellm/compaction_router.py:/app/compaction_router.py:ro`. A directory mount over
   `/app` hides `config.yaml` beside it, and it has to sit in the same directory as the

@@ -70,7 +70,8 @@ Notes that matter:
   `agent-xhigh` and `agent-swarm-fast` is `agent-swarm` - same three boxes, same baked
   `xhigh`, and each keeps the pin its parent has. The one thing either adds is what
   happens to the conversation summary. When a session on one of those two aliases sends the Grok CLI's
-  summary request, the LiteLLM proxy re-targets that one call to `compaction-fast` before
+  summary request - either of the two asks the CLI appends, read in the turn that asks and
+  never in the rulebook that rides every turn - the LiteLLM proxy re-targets that one call to `compaction-fast` before
   the router picks a Spark box: the Arc's `qwen2.5-coder:14b`, the same weights
   `coder-fast` serves, held as its own group so a summary shares no routing state with that
   alias. Every other call of that conversation still runs on a Spark at `xhigh`.
@@ -78,7 +79,8 @@ Notes that matter:
   picking one of those two aliases is the whole opt-in. A session on `agent`, `agent-xhigh`
   or `agent-swarm` compacts on its own Spark exactly as it always has.
 - The hop has one guard, and it picks a tier. The Arc weights are a 32768-token model, so a
-  summary whose estimated input is over that window goes to `agent-low` - a Spark group, so
+  summary whose estimated input is over `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000,
+  kept under that window on purpose) goes to `agent-low` - a Spark group, so
   it keeps the 262144-token window a full-size summary needs, at thinking baked `low` rather
   than `xhigh` - instead of being truncated to fit the Arc. A slow summary beats a summary of
   half the conversation. Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized summary

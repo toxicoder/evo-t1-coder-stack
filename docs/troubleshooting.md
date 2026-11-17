@@ -447,33 +447,43 @@ bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -m3 'compact
 hop firing, once per summary, onto the tier it landed on: `EVO_T1_FAST_COMPACTION_TARGET`
 for a summary within the guard (default `compaction-fast`, which degrades to `agent-low`
 then `coder`) or `EVO_T1_FAST_COMPACTION_SPARK_TARGET` for one above it (default
-`agent-low`). No line at all is one of these four:
+`agent-low`). No line at all is one of these:
 
 - **Not a fast lane.** The hop is armed by the alias alone, so a session on `agent`,
   `agent-xhigh` or `agent-swarm` compacts on Spark by design. The groups allowed to hop are
   `EVO_T1_FAST_COMPACTION_LANES`, default `agent-xhigh-fast,agent-swarm-fast`.
 - **The kill switch.** `EVO_T1_FAST_COMPACTION` ships on, and `0`, `false`, `off` or `no`
-  stops the hop on every lane at once. Compose gives each of the five keys its default in
-  `docker-compose.yml`, and the value in force is the one interpolated from the env file
-  when the container was created, so a stack that was already up when someone set the key is
-  still running the old one. Clear the key (or set it back to `1`) and recreate: a `restart`
-  keeps the old environment.
+  stops the hop on every lane at once. A value that is none of those and none of `1`,
+  `true`, `on`, `yes` also leaves it off, with one
+  `compaction router: EVO_T1_FAST_COMPACTION=... is neither on nor off` warning per
+  distinct value: a typo'd off is read as off. Compose gives each of the five keys its
+  default in `docker-compose.yml`, and the value in force is the one interpolated from the
+  env file when the container was created, so a stack that was already up when someone set
+  the key is still running the old one. Clear the key (or set it back to `1`) and recreate:
+  a `restart` keeps the old environment.
 
 ```sh
 bazelisk run //scripts:prod-stack -- up
 ```
 
-- **Not the summary call.** The hook matches the CLI's own summary instruction on the
-  trailing message, with the system prompt beside it. A request that merely quotes that
-  sentence is not a compaction call and stays on its lane.
+- **Not the summary call.** The CLI appends its instruction as the last turn, and the hook
+  reads it there: one of the two asks the CLI sends, from a `user` or `system` role, in a
+  turn no longer than the instruction itself. It does not read the system prompt, which
+  rides every turn of the session, so a rulebook that quotes the sentence cannot move an
+  ordinary turn. A request that merely mentions one of the two asks is not a compaction
+  call and stays on its lane.
 - **Too big for the Arc, and the Spark tier was blanked.** The estimate covers the whole
-  request, the tool schemas included, and anything above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT`
-  (default 24000) goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` rather than to the Arc: the
+  request, the tool schemas included, and charges a base64 payload and a non-ASCII reply at
+  their own denser rates rather than the prose rate; anything above
+  `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000) goes to
+  `EVO_T1_FAST_COMPACTION_SPARK_TARGET` rather than to the Arc: the
   Arc weights answer inside a 32k window and Ollama would clamp such an input rather than
   fail it. A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
   that answers it. Blank that key, or name the lane the call arrived on, and an oversized
   summary stays on its Spark lane at the lane's own thinking level - the pre-hop behaviour,
   and the one case where the 107 s to 1915 s above is the documented limit of the feature.
+  Blanking works only because compose passes that key as `${VAR-default}`: the colon form
+  substitutes its default for an empty value too, and the parked tier comes back.
 - **The tier names a group nobody declared.** Neither target is validated by LiteLLM, so the
   hook checks both against the `model_name:` entries in `litellm/config.yaml` and refuses a
   name that is not among them, with one `compaction router: target ... is no model group in

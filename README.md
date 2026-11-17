@@ -821,8 +821,8 @@ keeping its baked level and its pin behaviour, while `compaction-fast` is the on
 chain nobody types: it hops to a Spark rather than to another Arc alias,
 `compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:889`), because
 `coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama
-container and a hop between them is a hop to whatever is already down. The four
-`EVO_T1_FAST_COMPACTION*` keys - the kill switch, `EVO_T1_FAST_COMPACTION_LANES`
+container and a hop between them is a hop to whatever is already down. The other
+four `EVO_T1_FAST_COMPACTION*` keys - the kill switch, `EVO_T1_FAST_COMPACTION_LANES`
 (default `agent-xhigh-fast,agent-swarm-fast`), `EVO_T1_FAST_COMPACTION_TARGET`
 (default `compaction-fast`) and the input limit above - are read in that module
 and nowhere else, which makes the litellm service's `environment:` block the whole

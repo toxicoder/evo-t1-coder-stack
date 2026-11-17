@@ -461,11 +461,14 @@ the Spark lane charges for it. The Grok Build CLI has no compaction-model
 setting, so nothing in a client config points that call anywhere and the hop can
 only live in the proxy - with the flag off, both lanes behave exactly like their
 non-fast parents. All five are read in that one module and set in the compose
-litellm service as `${KEY:-default}`, so a dotenv line overrides each one.
+litellm service, the three that read a blank as unset as `${KEY:-default}` and the
+two tier targets as `${KEY-default}` so a blanked target stays blank, which is how
+a tier is parked. A dotenv line overrides each one.
 [litellm-routing.md](litellm-routing.md) owns the mechanism.
 
-- `EVO_T1_FAST_COMPACTION` (default on) is the kill switch: `0`, `false` or
-  `off` stop the hop outright.
+- `EVO_T1_FAST_COMPACTION` (default on) is the kill switch: `0`, `false`, `off` or
+  `no` stop the hop outright, and a value that is none of those nor `1`, `true`,
+  `on`, `yes` leaves it off too, with one warning line naming what was read.
 - `EVO_T1_FAST_COMPACTION_LANES` (default `agent-xhigh-fast,agent-swarm-fast`)
   names the model groups that may hop - name one of them to narrow the hop to
   that lane alone.
