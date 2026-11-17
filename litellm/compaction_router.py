@@ -410,8 +410,16 @@ def _extra_units(message: dict[str, object]) -> int:
         units += _blob_units(_serialized_chars(content))
     elif isinstance(content, list):
         for part in content:
-            if isinstance(part, dict) and not isinstance(part.get("text"), str):
-                units += _blob_units(_serialized_chars(part))
+            # Anything in the list that contributed no prose is a payload: an image's
+            # data URL, a file reference, or a part shaped like neither of the two the
+            # protocol defines. All of them are prefilled, none of them is visible to
+            # the text flattener, and a 400,000-character image read as one token is
+            # exactly how an oversized summary reached a 32k model.
+            if isinstance(part, str):
+                continue
+            if isinstance(part, dict) and isinstance(part.get("text"), str):
+                continue
+            units += _blob_units(_serialized_chars(part))
     calls = message.get("tool_calls")
     if calls:
         units += _blob_units(_serialized_chars(calls))

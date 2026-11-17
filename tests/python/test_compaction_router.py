@@ -161,6 +161,9 @@ should_retarget: Final = cast(
 retarget_target: Final = cast(
     "Callable[[dict[str, object]], str]", ROUTER.retarget_target
 )
+is_compaction_request: Final = cast(
+    "Callable[[dict[str, object]], bool]", ROUTER.is_compaction_request
+)
 declared_model_groups: Final = cast(
     "Callable[[], frozenset[str]]", ROUTER.declared_model_groups
 )
@@ -884,6 +887,46 @@ class MalformedBodyTest(RouterCase):
         messages = cast("list[dict[str, object]]", body["messages"])
         messages.append({"role": "user", "content": 42})
         self.assert_stays_put(body)
+
+    def test_a_trailing_turn_that_is_not_a_mapping_returns_none(self) -> None:
+        body = summary_body("agent-swarm-fast")
+        turns: list[object] = list(cast("list[dict[str, object]]", body["messages"]))
+        turns[-1] = "just a string where the ask should be"
+        body["messages"] = turns
+        self.assertIs(False, is_compaction_request(body))
+        self.assert_stays_put(body)
+
+    def test_a_trailing_turn_without_a_role_returns_none(self) -> None:
+        body = summary_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages[-1] = {"content": "%s." % MARKER}
+        self.assertIs(False, is_compaction_request(body))
+        self.assert_stays_put(body)
+
+    def test_a_body_with_no_turns_at_all_is_not_an_ask(self) -> None:
+        # retarget_target refuses an empty body one step earlier, so this is the
+        # classifier's own answer, which is what the hook would call directly.
+        self.assertIs(
+            False, is_compaction_request({"model": "agent-xhigh-fast", "messages": []})
+        )
+
+    def test_a_message_that_is_not_a_mapping_costs_the_estimate_nothing(self) -> None:
+        # The estimate walks turns; a stray non-mapping in the list is skipped rather
+        # than raising, and the walk has to keep going to the turns that do count.
+        body = chat_body("agent-xhigh-fast")
+        turns: list[object] = ["not a turn at all"]
+        turns += cast("list[dict[str, object]]", body["messages"])
+        body["messages"] = turns
+        self.assertGreater(estimate_input_tokens(body), 20)
+
+    def test_a_content_part_that_is_neither_text_nor_a_mapping_is_counted(self) -> None:
+        # A part shaped like neither of the two the protocol defines still goes over the
+        # wire, so it is billed by what it serializes to rather than dropped.
+        body = chat_body("agent-xhigh-fast")
+        before = estimate_input_tokens(body)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append({"role": "user", "content": [None, 42, ["y" * 200_000]]})
+        self.assertGreater(estimate_input_tokens(body), before + 40_000)
 
     def test_a_content_of_parts_without_the_ask_returns_none(self) -> None:
         body = chat_body("agent-swarm-fast")
