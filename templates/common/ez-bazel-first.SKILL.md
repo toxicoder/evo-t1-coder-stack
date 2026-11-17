@@ -194,7 +194,7 @@ definition-of-done command.
 
 Writers on a shared checkout collide in time even when their file sets are disjoint.
 Either isolate them, or forbid `git stash` and `git checkout` for baselining and have
-them read `git show HEAD:<path>` into `/tmp`. Children cannot spawn children.
+them read `git show HEAD:<path>` into `/tmp`. A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own.
 
 ## Pitfalls, each with the fix
 

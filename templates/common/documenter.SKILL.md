@@ -27,8 +27,8 @@ metadata:
 
 The unit of work is a change, never a topic: the diff is the source and a document is a claim
 to check against it. Scope the change, map the docs against it, write, then let someone who
-wrote none of it run every command the prose now names. This is the parent's runbook -- a child
-has no `spawn_subagent`, so the fan-out is yours to run. Budget 12 to 25 of your own calls plus
+wrote none of it run every command the prose now names. This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own,
+so the writing fan-out is still yours to run. Budget 12 to 25 of your own calls plus
 the lanes, and run every block with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent): a command written inline in this body runs nothing on its own.
 

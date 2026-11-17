@@ -238,6 +238,32 @@ drop_section() {
   printf '%s\n' "${body}" >"${PLAN}"
 }
 
+# add_task <row> - append a row to the fixture task table, for a test that needs a
+# task the nine-row fixture does not carry, such as the second skeptic on the panel.
+add_task() {
+  TASK_ROWS+=("$1")
+}
+
+# set_fleet <n> - add a Dispatch `fleet:` to the written plan. The key is optional
+# and the fixture omits it, leaving the checker's own default of 15.
+set_fleet() {
+  local body
+  body="$(awk -v val="$1" '{ print } /^- slots: / { print "- fleet: " val }' "${PLAN}")"
+  printf '%s\n' "${body}" >"${PLAN}"
+}
+
+# set_spawns <id> <n> - add a `spawns:` key to one task block of the written plan.
+# It is optional, so the task table carries no column for it.
+set_spawns() {
+  local body
+  body="$(awk -v want="$1" -v val="$2" '
+    /^### T[0-9]+ / { hit = ($2 == want) }
+    { print }
+    hit && /^- lane: / { print "- spawns: " val; hit = 0 }
+  ' "${PLAN}")"
+  printf '%s\n' "${body}" >"${PLAN}"
+}
+
 # check <args...> - run the checker over the fixture plan, keeping stderr apart so a
 # usage error can be told from a finding.
 check() {
@@ -408,6 +434,21 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
     'wave 1 is 3 tasks wide against 8 slots; the fleet idles' "${output}"
 }
 
+@test "a plan mid-run is not asked to re-prove the opening wave it already ran" {
+  # The gate above fires at the one moment its answer changes what gets dispatched:
+  # before wave 1. A parent driving a run re-runs --ready after every landing, and by
+  # the review stage the only task left is the skeptic, which needs every producer,
+  # so an empty opening wave is the shape of a correct late dispatch. Refusing it
+  # there makes the dispatch tool report an error at the exact step that needs a
+  # clean answer, and teaches a parent to distrust or skip the gate.
+  LEDGER_DONE="T01 T02 T03 T04 T05 T06 T07 T08"
+  write_plan
+  check --ready
+  [[ ${status} -eq 0 ]] || report_status
+  assert_eq "the lone skeptic is the wave" "T09" "$(ready_csv)"
+  assert_not_match "the opening wave was left alone" 'wave 1 is' "${output}"
+}
+
 @test "a task naming a lane ## Lanes does not list is refused" {
   task_set T05 3 docs
   write_plan
@@ -559,4 +600,173 @@ print(",".join(d["ready"]) + "|" + ",".join(d["errors"]))' <<<"${output}")"
 
   check --strict
   [[ ${status} -eq 1 ]] || report_status
+}
+
+@test "a review panel of two skeptics that own nothing and need every producer is clean" {
+  # The review phase is a wave of skeptics dispatched in one turn, so `review:` takes
+  # a list and each named task is held to the reviewer rules on its own. T10 joins
+  # T09 in the review lane: read-only, and it waits on all eight producers too.
+  add_task "T10|break the change from the adversary angle|review|explore|-|L0, L1-review|T01, T02, T03, T04, T05, T06, T07, T08|12|results/T10.md quotes each producer's own done command and its result|results/T10.md"
+  REVIEW="T09, T10"
+  write_plan
+  check
+  [[ ${status} -eq 0 ]] || report_status
+  assert_eq "ten tasks over four lanes, both skeptics accepted" \
+    "summary: 10 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
+    "${lines[0]}"
+
+  check --ready
+  [[ ${status} -eq 0 ]] || report_status
+  assert_eq "the panel waits behind its producers, so the wave is what it was" \
+    "T01,T02,T03,T04" "$(ready_csv)"
+  assert_not_match "neither skeptic entered the wave" 'T09|T10' "${output}"
+}
+
+@test "a panel reviewer that skips a file-owning task is refused" {
+  # A skeptic is only as good as its needs list: T10 that never waits on T04 never
+  # re-runs T04's own done check, which leaves a hole in the panel.
+  add_task "T10|break the change from the adversary angle|review|explore|-|L0, L1-review|T01, T02, T03, T05, T06, T07, T08|12|results/T10.md quotes each producer's own done command and its result|results/T10.md"
+  REVIEW="T09, T10"
+  write_plan
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the panel gap and the file behind it were named" \
+    'T10 reviews but does not need T04, which owns tests/bats/search.bats' "${output}"
+  assert_not_match "the skeptic that waits on every producer was not blamed" \
+    'T09 reviews but does not need' "${output}"
+}
+
+@test "a task that spawns children while owning a file is refused" {
+  # A spawner hands its streams to its children, so it is not also a writer: T01 owns
+  # scripts/lib/search.sh and fans out three children on top of itself.
+  set_spawns T01 3
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the spawner and the file it also ships were named" \
+    'T01 spawns 3 children but owns scripts/lib/search.sh; a spawner ships nothing' "${output}"
+  assert_not_match "its own fan-out still fitted the fleet" 'the fleet holds' "${output}"
+}
+
+@test "a task with a non-numeric spawns value is refused" {
+  # `spawns:` is a bare count, because the tree budget adds it up; unreadable text
+  # cannot be priced, and it is not silently read as zero either.
+  set_spawns T01 many
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the task and the value it could not read were named" \
+    "T01 spawns 'many' is not a number" "${output}"
+  assert_not_match "an unreadable count is not also charged as a spawner" \
+    'a spawner ships nothing' "${output}"
+}
+
+@test "a task whose own fan-out exceeds the fleet is refused" {
+  # One task and its children have to fit the stream ceiling the Dispatch names, or a
+  # box answers NoRoom. T06 maps read-only and spawns as many children as the fleet.
+  set_fleet 6
+  set_spawns T06 6
+  check
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the single fan-out wider than the fleet was named" \
+    'T06 and its 6 children need 7 streams; the fleet holds 6' "${output}"
+}
+
+@test "an advanced Ledger does not disarm the wave-1 stream budget" {
+  # The opening wave's stream price is arithmetic over what the plan DECLARES, so it
+  # stays true as the run advances. A gate that goes quiet once one row lands lets a
+  # spawner-heavy plan reach the fleet and take a NoRoom answer mid-run, which is the
+  # failure the budget exists to turn into a refusal before wave 1.
+  set_fleet 3
+  check --slots 6
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the over-cost opening wave was refused before any dispatch" \
+    'wave 1 costs 6 streams against a fleet of 3' "${output}"
+
+  LEDGER_DONE="T01"
+  write_plan
+  # write_plan rebuilds the document from the task table, so the Dispatch `fleet:`
+  # it carries has to be re-put, the same way the first check put it.
+  set_fleet 3
+  check --slots 6
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "one landed row did not lift the budget" \
+    'wave 1 costs 6 streams against a fleet of 3' "${output}"
+}
+
+@test "a plan that fills every slot with one-stream tasks stays dispatchable" {
+  # The opening wave is priced at what one parent can hold in flight, so a plan of
+  # one-stream tasks whose slot count equals the fleet is the shape the width gate
+  # asks for. Charging it for every declared task refused a plan the checker then
+  # dispatched at full width, and a parent handed that error re-cuts a good split.
+  local i
+  for i in 10 11 12 13 14 15 16 17; do
+    add_task "T${i}|map the search surface from angle ${i}|map|explore|-|L0, L1-map|none|7|ctx/L1-map.md names the angle|results/T${i}.md"
+  done
+  write_plan
+  set_fleet 15
+  check --ready --slots 15
+  [[ ${status} -eq 0 ]] || report_status
+  assert_match "the wave filled every slot at one stream each" \
+    'cost: 15 streams of 15' "${stderr}"
+  assert_not_match "the fleet was never asked to hold more than it owns" \
+    'streams against a fleet of 15' "${output}"
+}
+
+@test "a panel written with spaces instead of commas still reads as a panel" {
+  # `review:` is documented as a comma or space separated list, and a checker that
+  # reads only one separator turns "T09 T10" into a single unknown id: the plan still
+  # looks like a review wave to the parent while the skeptic never got a panel.
+  add_task "T10|break the change from the adversary angle|review|explore|-|L0, L1-review|T01, T02, T03, T04, T05, T06, T07, T08|12|results/T10.md quotes each producer's own done command and its result|results/T10.md"
+  REVIEW="T09 T10"
+  write_plan
+  check
+  [[ ${status} -eq 0 ]] || report_status
+  assert_eq "both skeptics were taken as panel members" \
+    "summary: 10 tasks | 4 lanes | 4 slots | wave width 4 | 0 errors, 0 warnings" \
+    "${lines[0]}"
+}
+
+@test "--ready lets a cheap task past one too heavy for the fleet" {
+  # The stream cap keeps a wave inside the fleet; it is not a stop sign for the tasks
+  # behind the heavy one. T06's fan-out will not fit beside five writers, and the doc
+  # task after it still fits the stream that stays free -- stopping there would idle
+  # it, which is the whole cost this change set out to remove.
+  set_fleet 6
+  set_spawns T06 4
+  check --ready --slots 7
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the declared opening wave was still priced over the fleet" \
+    'wave 1 costs 11 streams against a fleet of 6' "${output}"
+  assert_eq "the heavy mapper did not withhold the doc task behind it" \
+    "T01,T02,T03,T04,T05,T07" "$(ready_csv)"
+  assert_match "the admitted wave filled the fleet" 'cost: 6 streams of 6' "${stderr}"
+}
+
+@test "--ready holds a spawning wave back at the fleet total and prices it on stderr" {
+  # Two budgets that are not the same number: six slots would hold six of the parent's
+  # own children, but T01 pays three streams for itself plus two children, so against a
+  # fleet of five the wave stops at three. Stdout stays the bare id list a parent pipes.
+  set_fleet 5
+  set_spawns T01 2
+  check --ready --slots 6
+  [[ ${status} -eq 1 ]] || report_status
+  assert_match "the wave-1 cost against the fleet was reported" \
+    'wave 1 costs 8 streams against a fleet of 5; a spawner pays for its children' "${output}"
+  assert_eq "the cost cap cut the wave below the six slots" "T01,T02,T03" "$(ready_csv)"
+  assert_match "the wave price went to stderr" 'cost: 5 streams of 5' "${stderr}"
+  assert_not_match "stdout stayed the bare id list" 'cost: [0-9]+ streams' "${output}"
+}
+
+@test "a plan with no spawns key anywhere still caps the wave at slots and prints no error" {
+  # The no-regression case: with no spawner in the plan every task costs one stream, so
+  # against the default fleet of 15 the count cap is what stops the wave, as it did
+  # before the cost cap existed.
+  check --ready --slots 6
+  [[ ${status} -eq 0 ]] || report_status
+  assert_eq "the wave stopped at the slot count, not the fleet" \
+    "T01,T02,T03,T04,T05,T06" "$(ready_csv)"
+  assert_eq "nine tasks, six in the wave, nothing to fix" \
+    "summary: 9 tasks | 4 lanes | 6 slots | wave width 6 | 0 errors, 0 warnings" \
+    "${lines[0]}"
+  assert_match "the wave was priced against the default fleet" 'cost: 6 streams of 15' "${stderr}"
+  assert_not_match "no finding was printed" '^error:' "${output}"
 }

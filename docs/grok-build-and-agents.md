@@ -466,7 +466,9 @@ while the managed block is intact.
   type rides, both rendered from template variables: `grok_subagents_lane` (default
   `agent-swarm`) for the writers, three more for the reader, planner and skeptic roles named
   below, and `grok_subagent_max_concurrent` (default `null`, which means "take
-  `grok_swarm_width`, the fleet's width"). The two keys are one calculation, and `main.tf` is where it is made:
+  `grok_swarm_width`, the fleet's width"), and `grok_subagent_max_depth` (default 2,
+  validated 1..3) sets how deep the tree of children may go. The two width keys are one
+  calculation, and `main.tf` is where it is made:
   `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
   So the width is `grok_swarm_width` (default 15) whichever lane the writers ride;
   `--var grok_subagents_lane=agent` is the rollback that puts the writers back on
@@ -487,7 +489,17 @@ while the managed block is intact.
   `sampling_limit` is deliberately left unset: it defaults to `max_concurrent`, so the
   two caps cannot drift apart. `limit_behavior = "queue"` below them holds the overflow
   instead of failing the spawn, so overshoot costs a subagent latency rather than its
-  life. `[subagents.models]` pins every subagent type a session can get to a lane of its
+  life. `max_depth` rides beside them, rendered from `grok_subagent_max_depth` and shipped
+  at 2, and at 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
+  `spawn_subagent` in their `tools` (`templates/common/reviewer.AGENT.md:5`), so a skeptic
+  or a tester can fan read-only mappers out one level under itself. Each of those
+  grandchildren is its own session with its own `max_concurrent`, and what it costs the
+  fleet is one model stream, so a tree is budgeted by summing the in-flight `1 + spawns`
+  over every task and keeping that total at or below the fleet's stream count (`fleet:` in
+  the plan, 15 by default, `templates/common/ez-micro-plan.plan_check.py:42`). That total
+  is a separate number from the session cap above, which counts one parent's own children.
+  `max_depth = 1` is the rollback to no nesting, and it restores the behaviour the fleet
+  shipped with before a child could spawn. `[subagents.models]` pins every subagent type a session can get to a lane of its
   own, and there are four variables behind those pins, not one: `grok_subagents_lane`
   (default `agent-swarm`) for the writers, `grok_explore_lane` (default `agent-explore`) for the
   mappers, `grok_plan_lane` (default `agent`) for the planner, and `grok_review_lane`
@@ -506,6 +518,12 @@ while the managed block is intact.
   decide is placement only: the width comes from `grok_swarm_width` (default 15) on every
   lane, so `grok_subagents_lane` remains the knob a workspace turns on to fan out, and
   narrowing the queue is the separate `grok_subagent_max_concurrent`.
+- `[features]` carries `telemetry = false`, `web_fetch = true` and
+  `active_agent_messages = true`, the last of them giving the parent
+  `send_subagent_message`: a child already running can be handed a new instruction and
+  keep its context, which is cheaper than killing it and dispatching a replacement. All
+  three keys are static in `templates/workspace/grok-config.toml.tftpl:329-334` and none
+  is rendered from a template variable.
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
@@ -611,9 +629,17 @@ number of its own: the prompt used to hardcode a smaller fleet and to tell the p
 run two or three children per wave, and both are gone, because a cap the prompt invents is
 wrong on both lanes - it leaves slots empty on a swarm session and overbooks a pinned
 one. Overflow is held, not failed (`limit_behavior = "queue"`), so an under-wide wave is
-silent and counting it stays the parent's job.
-`max_depth = 1` is what makes that true: a child cannot spawn a child, so the slot count
-describes one tree and orchestration cannot leak.
+silent and counting it stays the parent's job. The same grep prints the `max_depth` line
+beside `max_concurrent`, and that key is now rendered from `grok_subagent_max_depth`
+(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:371`. At the
+shipped 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
+`spawn_subagent` in their `tools`, so a skeptic can put a wave of read-only mappers under
+itself and get its evidence without a round trip through the parent. Each grandchild is its
+own session, so it is not charged to the slot count above; what it does cost is a model
+stream, which is why a tree is counted by summing the in-flight `1 + spawns` over every
+task and keeping that total at or below the fleet's stream count (`fleet:` in the plan, 15
+by default). `max_depth = 1` is the rollback: no child spawns, and one parent's slot count
+again describes the whole tree.
 
 **What the lane choice buys.** `grok_subagents_lane` is the knob for the writers and it
 decides placement, not size: the width comes from `grok_swarm_width` (default 15) on
@@ -643,6 +669,17 @@ therefore a config decision: the guide documents `[subagents.models]` as the per
 override that "applies for any parent", and documents the spawn call's own `model`
 argument as the agent's choice of one child's model, without saying which of the two wins
 when both name one. Set the pin when the lane matters.
+
+**The review pass is a panel.** The independent check that closes a fleet run is a wave of
+skeptics dispatched in one turn, each riding `agent-review` through the `grok_review_lane`
+pin above, each owning no file, and each re-running the producers' own `done:` commands
+rather than reading their reports. The default panel is three angles: requirements, which
+answers every acceptance check kept or broken; proof, which runs the `done:` commands and
+quotes what they printed; and adversary, which looks for the regression, the edge state and
+the flag-off path. Each may fan out up to three read-only mappers of its own under the
+depth above. `templates/common/ez-micro-plan.plan_check.py:227` accepts a `review:` key
+naming the whole panel, comma or space separated, and holds each reviewer to owning nothing
+while needing every task that ships a file.
 
 A contributor home gets the same seam from the environment of the seed, so a laptop
 matches what a template `--var` renders:
@@ -786,7 +823,13 @@ definition here that inherits the MCP catalog, because it is the one whose tools
 `search_tool` and `use_tool`; the other five set `mcpInheritance: none`,
 the frontmatter key the guide documents for that choice
 (`~/.grok/docs/user-guide/16-subagents.md:228`), on the seeds' own reasoning that an
-inherited catalog with no MCP tool in `tools:` would be empty anyway.
+inherited catalog with no MCP tool in `tools:` would be empty anyway. Three of the seven
+name `spawn_subagent`: `reviewer`, `security-auditor` and `tester`
+(`templates/common/reviewer.AGENT.md:5`, `templates/common/security-auditor.AGENT.md:5`,
+`templates/common/tester.AGENT.md:5`). `explorer`, `architect`, `implementer` and
+`documenter` name none of it, so a mapper cannot recurse and the wave a spawner raises one
+level down is made of read-only mappers. The `tools` list is what enforces that ceiling; the
+body prose of each seed only explains it.
 
 **How one is selected.** Four layers name an agent definition, and they are not the same
 knob:
@@ -798,7 +841,9 @@ knob:
   unless the client names one (`~/.grok/docs/user-guide/15-agent-mode.md:69`).
 - A child's type names its definition: `spawn_subagent` offers project and user agents in
   its `subagent_type` enum, which is how a parent asks for `reviewer` by name
-  (`~/.grok/docs/user-guide/16-subagents.md:69-71`).
+  (`~/.grok/docs/user-guide/16-subagents.md:69-71`). A depth-1 child that spawns resolves
+  its own children through these same layers, so a grandchild reaches the reader lane
+  through the one `grok_explore_lane` pin and needs nothing set on the spawner.
 - `[subagents.models]` pins the lane for that type, and it is what the workspace renders -
   see [The fan-out seam](#the-fan-out-seam).
 
@@ -1035,14 +1080,16 @@ copy is yours, and the boot leaves it alone.
 
 ### The rule the suite exists to enforce
 
-Every multi-file change ends with an independent skeptic that wrote none of it, on
-`agent-review`, before anything is reported done. The rulebook states it as a requirement,
+Every multi-file change ends with an independent review panel that wrote none of it, on
+`agent-review`, before anything is reported done: three angles sent in one turn
+(requirements, proof, adversary), each owning no file, where one skeptic over all three
+angles is enough for a single-file fix. The rulebook states it as a requirement,
 not a suggestion (`templates/common/GROK_BUILD_AGENTS.md`, "Mandatory independent review"),
 and its reasoning is one sentence: a delegated result is a claim, and a review that trusts
-the claim rather than the artifact is not a review. The skeptic re-runs the producer's
-`done:` command rather than reading the producer's report of it, which is why `tester` and
-`reviewer` exist as separate definitions with read-only tool lists rather than as instructions
-tacked onto the writer.
+the claim rather than the artifact is not a review. Each panelist re-runs the producers'
+`done:` commands rather than reading their reports of them, which is why `tester`,
+`reviewer` and `security-auditor` exist as separate definitions whose spawn tool reaches
+read-only mappers, rather than as instructions tacked onto the writer.
 
 ### How a seeded file becomes yours
 

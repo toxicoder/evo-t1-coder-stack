@@ -525,6 +525,37 @@ assert_contributor_home() {
   assert_fixed "clamped width" "${out}" 'max_concurrent = 32'
 }
 
+@test "seed-dev-env: the nesting depth takes the env unless the env says otherwise" {
+  load_seed_api
+  local scratch out tpl notes
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # The shipped default nests one level under the parent, which is what lets a
+  # child fan out read-only mappers of its own instead of paying a parent round
+  # trip. A home that never sets the env has to land there, not on 1.
+  seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "default depth" "${out}" 'max_depth = 2'
+
+  # 1 is the rollback, and the value deliberately differs from the default: an
+  # override asserted at the number it already renders proves nothing.
+  GROK_SUBAGENT_MAX_DEPTH='1' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "explicit depth wins" "${out}" 'max_depth = 1'
+
+  # The ceiling is where the knob is read, so a typo renders a tree the fleet can
+  # pay for rather than a runaway one. A depth-2 child holds a stream too.
+  notes="$(GROK_SUBAGENT_MAX_DEPTH='9' seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+  assert_match "depth clamped" 'GROK_SUBAGENT_MAX_DEPTH.*past the nesting ceiling' "${notes}"
+  assert_fixed "clamped depth" "${out}" 'max_depth = 3'
+
+  # A value sed could not substitute safely is refused out loud, and the render
+  # keeps the shipped depth rather than emitting a broken TOML integer.
+  notes="$(GROK_SUBAGENT_MAX_DEPTH='many' seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+  assert_match "depth refused" 'GROK_SUBAGENT_MAX_DEPTH.*is not a count' "${notes}"
+  assert_fixed "depth fell back with the note" "${out}" 'max_depth = 2'
+}
+
 @test "seed-dev-env: the context7 lane is kept when a key or --context7-mcp says so" {
   load_seed_api
   local scratch home out tpl

@@ -674,15 +674,16 @@ main_block() {
 # The quartet's own seam: how four more payloads reach the two homes.
 # ---------------------------------------------------------------------------
 
-@test "fleet payloads: the quartet names the local lanes, its own slash form, and the parent-only spawn rule" {
+@test "fleet payloads: the quartet names the local lanes, its own slash form, and the depth-1 spawn rule" {
   # These four are parent-side runbooks: they tell the reader to fan children
   # out, so the three lanes that decide WHERE a fan-out lands (agent-swarm for
   # independent writers, agent-explore for pure mapping, agent-review for the
   # mandatory independent pass) have to be named by every one of them, and no
   # cloud id may appear anywhere - the aliases in litellm/config.yaml are the
-  # only transport this stack has. And a child has no spawn_subagent, so a
-  # payload that told a child to fan out would teach a call that does not exist
-  # in a child's toolset.
+  # only transport this stack has. And a depth-1 child may spawn spawn_subagent
+  # for read-only mappers only, and only when it ships no file of its own, so a
+  # payload that let a child fan out writers would teach a call the tools lists
+  # never grant it.
   local i f name prose n
   for i in "${!FLEET_SKILLS[@]}"; do
     name="${FLEET_SKILLS[i]}"
@@ -694,8 +695,8 @@ main_block() {
     assert_contains_file "${name} names the fan-out lane" "${f}" 'agent-swarm'
     assert_contains_file "${name} names the mapping lane" "${f}" 'agent-explore'
     assert_contains_file "${name} names the review lane" "${f}" 'agent-review'
-    assert_match "${name} says a child cannot spawn the lanes" \
-      'child has no .spawn_subagent.' "${prose}"
+    assert_match "${name} says a depth-1 child may spawn the read-only mappers" \
+      'depth-1 child may spawn .spawn_subagent.' "${prose}"
     assert_match "${name} states its own slash form with its argument" \
       "/${name} <" "${prose}"
     assert_match "${name} hands the split to /ez-micro-plan" '/ez-micro-plan' "${prose}"

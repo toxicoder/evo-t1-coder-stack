@@ -221,14 +221,19 @@ host home rather than a container:
 `bazelisk run //scripts:seed-dev-env -- --home <dir>` materialises it into a
 laptop or CI home, and it takes the fan-out knobs from the environment
 while it renders the config - `GROK_SUBAGENTS_LANE` names the lane the
-writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width, and
+writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width,
+`GROK_SUBAGENT_MAX_DEPTH` the nesting depth (the `grok_subagent_max_depth` template
+variable), and
 `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
 reader, the planner and the skeptic ride. The width default is the fleet's
 own `GROK_SWARM_WIDTH` (15: three Spark boxes at `PARALLEL` 5), which is the same
 `grok_swarm_width` the templates take, on every lane rather than one number per lane;
 a pinned lane only ever keeps one box's streams busy, so an operator who pins
-everything sets `GROK_SUBAGENT_MAX_CONCURRENT` by hand. A value the seeder cannot use - a lane that is not a bare model id, a
-width that is not a count or sits past 32 - is refused with
+everything sets `GROK_SUBAGENT_MAX_CONCURRENT` by hand. The depth default is 2, which
+lets a child spawn read-only mappers of its own, and the seeder holds the value to 1..3,
+with 1 putting nesting back off (`scripts/seed-dev-env.sh:187-197`). A value the seeder
+cannot use - a lane that is not a bare model id, a width that is not a count or sits past
+32, a depth that is not a count or sits past 3 - is refused with
 a `note:` line naming the key, and the derived default goes in, so a typo lands as output
 you read rather than as an unusable key in the rendered `~/.grok/config.toml`.
 [grok-build-and-agents.md](grok-build-and-agents.md) covers the profile

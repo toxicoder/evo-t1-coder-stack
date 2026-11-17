@@ -131,6 +131,57 @@ subagents_block() {
   assert_eq "twins agree on [subagents]" "${left}" "${right}"
 }
 
+@test "subagents config: both twins take the nesting depth from the template variable" {
+  # The width caps one parent's own children; the depth says how far below it the
+  # tree may grow. Both are rendered numbers, so neither may be a literal here:
+  # a hardcoded depth is a knob the operator cannot turn back to 1.
+  local file
+  for file in "${CONFIG_TWINS[@]}"; do
+    run grep -F 'max_depth = ${grok_subagent_max_depth}' "${file}"
+    [ "${status}" -eq 0 ] || {
+      echo "${file} hardcodes the nesting depth" >&2
+      return 1
+    }
+  done
+}
+
+@test "subagents config: both twins let the parent steer a live child" {
+  # Without this the only way to redirect a running child is to kill it and
+  # respawn it, which throws away everything it had already gathered. Assert it
+  # inside [features], where a dropped key would silently render as false.
+  local file block
+  for file in "${CONFIG_TWINS[@]}"; do
+    block="$(awk '/^\[features\]/{f=1;next} /^\[/{f=0} f' "${file}")"
+    [[ "${block}" == *'active_agent_messages = true'* ]] || {
+      echo "${file} does not set active_agent_messages = true in [features]" >&2
+      return 1
+    }
+  done
+}
+
+@test "subagent depth: both coder.tf twins declare it and bound it at 1..3" {
+  # 1 is the no-nesting rollback, 2 is the shipped default that lets a child spawn
+  # read-only mappers, 3 the operator's experiment ceiling - the same bounded-knob
+  # shape the width variable uses. Assert inside the variable block: each twin
+  # carries other default     = 2 lines a file-wide grep cannot tell apart.
+  local file block
+  for file in "${CODER_TWINS[@]}"; do
+    block="$(awk '/^variable "grok_subagent_max_depth" \{/,/^\}/' "${file}")"
+    [[ -n "${block}" ]] || {
+      echo "${file} has no grok_subagent_max_depth variable, so the depth is a literal" >&2
+      return 1
+    }
+    [[ "${block}" == *'default     = 2'* ]] || {
+      echo "${file} does not ship depth 2, the depth that lets a child spawn mappers" >&2
+      return 1
+    }
+    [[ "${block}" == *'var.grok_subagent_max_depth >= 1 && var.grok_subagent_max_depth <= 3'* ]] || {
+      echo "${file} renders the depth without bounding it at 1..3" >&2
+      return 1
+    }
+  done
+}
+
 @test "subagent width: both coder.tf twins derive it and validate the override" {
   local file
   for file in "${CODER_TWINS[@]}"; do
@@ -247,6 +298,20 @@ subagents_block() {
   done
 }
 
+@test "subagent depth: both main.tf twins pass it into the render" {
+  # The variable is dead unless it reaches the same templatefile() vars map that
+  # carries the width, so an operator --var that renders nothing is worse than no
+  # knob at all.
+  local file
+  for file in "${MAIN_TWINS[@]}"; do
+    run grep -F 'grok_subagent_max_depth = var.grok_subagent_max_depth' "${file}"
+    [ "${status}" -eq 0 ] || {
+      echo "${file} renders the config without the operator's depth" >&2
+      return 1
+    }
+  done
+}
+
 @test "subagent width: both coder.tf twins declare the fleet width as a validated variable" {
   local file block
   for file in "${CODER_TWINS[@]}"; do
@@ -347,6 +412,25 @@ subagents_block() {
   done
 }
 
+@test "contributor seed: the nesting depth is a variable, not a literal" {
+  local seed="${REPO_ROOT}/scripts/seed-dev-env.sh"
+  [ -f "${seed}" ] || skip "no scripts/seed-dev-env.sh in the checkout"
+  # The seed's own fallback is the shipped default, so a contributor home that
+  # passes no env nests the way a workspace that passes no --var does.
+  run grep -F 'GROK_SUBAGENT_MAX_DEPTH:-2' "${seed}"
+  [ "${status}" -eq 0 ] || {
+    echo "seed-dev-env.sh no longer defaults a contributor home to depth 2" >&2
+    return 1
+  }
+  # And the token is substituted from that read, the way the width token is: a
+  # re-hardcoded literal here is how a contributor home drifts from a render.
+  run grep -F "s|\\\${grok_subagent_max_depth}|\${depth}|g" "${seed}"
+  [ "${status}" -eq 0 ] || {
+    echo "seed-dev-env.sh no longer substitutes the depth from a variable" >&2
+    return 1
+  }
+}
+
 @test "rulebook: the parent is told to fill the slots and to prove the wave" {
   local phrase
   for phrase in \
@@ -375,6 +459,30 @@ subagents_block() {
     echo "the seed re-adopted a hard-coded in-flight cap" >&2
     return 1
   }
+}
+
+@test "rulebook: the parent is taught the tree budget and the review panel" {
+  # The width caps one parent's own children; nothing in the file says what a child
+  # that spawns costs the fleet, so an agent filling its slots can still over-admit
+  # streams. And the review phase has to read as a wave dispatched in one turn, or
+  # the parent queues its skeptics one at a time. Both are arithmetic the parent can
+  # only obey if it can see it. And the file has to say which layer enforces which
+  # half of the nesting rule: a parent that reads the tools list as the whole guard
+  # will let a spawner ship a file, since `tester` keeps `write` for its test.
+  local phrase
+  for phrase in \
+    '1 + spawns' \
+    'sum the in-flight' \
+    'at or below the fleet' \
+    'panel of three angles sent in one turn' \
+    'who may spawn at all' \
+    'holds a spawner to shipping nothing'; do
+    run grep -F -- "${phrase}" "${RULEBOOK}"
+    [ "${status}" -eq 0 ] || {
+      echo "the seed dropped: ${phrase}" >&2
+      return 1
+    }
+  done
 }
 
 @test "micro-plan skill: the seed names a checker that exists in the payload" {

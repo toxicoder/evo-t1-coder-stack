@@ -112,7 +112,8 @@ Skeleton (keep the headings; the check keys on them):
     - lane: agent-swarm
     - slots: 8
     - cap source: [subagents] max_concurrent
-    - review: T09
+    - fleet: 15
+    - review: T09, T10
     - parent keeps: BUILD.bazel, docs/index.ts, package-lock.json
     - between waves: run the lane's own test target; keep the tree buildable
 
@@ -121,7 +122,7 @@ Skeleton (keep the headings; the check keys on them):
     |---|---|---|---|---|
     | src-core | scripts/lib/search.sh | general-purpose | ctx/L1-src-core.md | |
     | tests | tests/bats/search.bats | general-purpose | ctx/L1-tests.md | |
-    | map | - | explore | ctx/L1-map.md | context only |
+    | map | - | general-purpose | ctx/L1-map.md | a spawner; its children are explore |
 
     ## Tasks
     ### T01 -- add the lane resolver to scripts/lib/search.sh
@@ -134,23 +135,44 @@ Skeleton (keep the headings; the check keys on them):
     - done: `bazelisk test //tests:bats_search_test`
     - report: results/T01.md
 
+    ### T02 -- map the search surface with three read-only mappers
+    - lane: map
+    - role: general-purpose
+    - owns: -
+    - spawns: 3
+    - reads: L0, L1-map
+    - needs: none
+    - calls: 6
+    - done: ctx/L1-map.md names every file the src-core lane owns
+    - report: results/T02.md
+
     ## Ledger
     | task | state | wave | slot | result | verified |
     |---|---|---|---|---|---|
     | T01 | ready | - | - | - | no |
+    | T02 | ready | - | - | - | no |
 
     ## Not doing
     - <what a reviewer might expect and will not find>
 
-Every task block carries all nine lines, exactly those keys. `owns` is a comma list or
+Every task block carries all nine lines, exactly those keys, and may add a tenth, the
+optional `spawns:`, naming how many read-only mappers that child fans out itself. A task
+that spawns owns `-`: a spawner ships nothing and pays a stream for each child, so the
+checker refuses a spawner that also lists files. `owns` is a comma list or
 `-` for a read-only task. `reads` names context files (`L0`, `L1-<lane>`, `L2-T<nn>`) and
 nothing else; the repo files a task edits are in `owns`, and any file it reads to copy a
 pattern is named in `reads` with a line range (`src/lib/spark.sh:40-75`). `needs` is
 `none` or a comma list of task ids that must be done first. `done` is one command or one
 inspectable artifact. `report` is that task's own result path. In `## Dispatch`, `review:`
-is optional and names the skeptic that reviews the rest of the plan: it must own nothing
-and need every task that owns a file, which the check enforces once you write the key and
-warns about when you leave it out.
+is optional and names the review panel: a comma list of skeptics (`review: T09, T10`)
+dispatched together in one turn once every producer has landed. The check enforces the
+same contract on each id once you write the key, and warns about the whole key when you
+leave it out: every reviewer owns nothing and needs every task that owns a file. Give each
+one its own attack angle, so the panel covers requirements (every acceptance check kept or
+broken), proof (re-runs the producers' own `done:` commands), and adversary (regressions,
+edge states, flag-off paths). `fleet:` in the same block is the tree's model-stream
+ceiling, 15 by default: the `3 boxes x PARALLEL 5` ceiling in
+`scripts/spark-configure.sh`, which `slots:` does not cover.
 
 ## Step 3 -- layer the context, and keep it thin
 
@@ -222,13 +244,20 @@ Run the check before you dispatch, and fix what it names:
 
 It errors on a task missing a key, two ready tasks sharing a path, a dependency cycle or
 unknown id, a lane or context file that does not exist, a task with no `done` check, a
-`calls` budget over 25, and a first wave narrower than `slots` (that last one is the
-point: if wave 1 cannot fill the fleet, the split is too coarse). It prints the ready set
-on `--ready`, which is the wave to spawn.
+`calls` budget over 25, a `spawns` that is not a number or that ships a file of its own, a
+spawner whose children do not fit `fleet`, an opening wave that cannot fit the fleet even
+with every `slots` position filled, a reviewer that owns a file or skips a producer, and a
+first wave narrower than `slots` (that last one is the point: if wave 1 cannot fill the
+fleet, the split is too coarse). It prints the ready set on `--ready`, which is the wave to
+spawn, and what that wave pays, on stderr: `cost: <n> streams of <fleet>`.
 
 ## Step 5 -- dispatch: keep every slot busy
 
-1. Take the ready set from `--ready`, capped at `slots`.
+1. Take the ready set from `--ready`, capped at `slots`, and price it in streams before
+   you spawn: Sum the in-flight `1 + spawns` over every task and keep that total at or
+   below the fleet's stream count (`fleet:` in the plan, 15 by default) -- separate from
+   `slots`, which caps one parent's own children. A depth-2 grandchild opens its own
+   session, so it escapes `slots` and still holds one of the fleet's streams.
 2. Spawn the whole wave in one turn: several `spawn_subagent` calls in a single message,
    each with `background = true`. One wave per turn, or the fleet idles while you type.
 3. As each child lands, in that same turn: read its six report lines, run its `done`
@@ -239,8 +268,9 @@ on `--ready`, which is the wave to spawn.
    leaves the tree broken costs every later child its `done` check.
 6. Re-run the check when the Ledger changes; states move, and a task unblocked is a task
    to dispatch.
-7. The `review:` task is dispatched last, once every producer has landed, and it re-runs
-   each producer's own `done` command itself instead of trusting `results/T<nn>.md`.
+7. The `review:` panel is the last wave: dispatch every skeptic it names in one turn, once
+   each producer has landed, and each one re-runs every producer's own `done` command
+   itself instead of trusting `results/T<nn>.md`.
 
 A wave is not a phase: it is whatever fits in the slots. Prefer many small waves over two
 big ones. A child that fails twice with the same error is a layer problem, not a retry
@@ -249,7 +279,7 @@ is a reslice, not a rule violation.
 
 When the plan outgrows a manual loop -- more than about 40 tasks -- the same file drives
 the `workflow` tool with an `agent_budget`; the task blocks are the round list. That is
-still parent-owned orchestration, and children still cannot spawn children.
+still parent-owned orchestration. A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own.
 
 ## Step 6 -- close it out
 
@@ -257,8 +287,9 @@ still parent-owned orchestration, and children still cannot spawn children.
   child.
 - The Ledger holds no `ready` or `running` row, and every `verified` row was checked by
   you.
-- The `review:` task ran last, after every producer, and re-ran each producer's own
-  `done` command itself rather than trusting what `results/T<nn>.md` claimed.
+- The `review:` panel ran as one wave, after every producer, and each skeptic in it
+  re-ran each producer's own `done` command itself rather than trusting what
+  `results/T<nn>.md` claimed.
 - Anything the next session should know goes to the notes file
   (`~/.grok/notes/<host>/<owner>/<repo>/notes.md`, the `ez-learn` skill), not into the
   plan.

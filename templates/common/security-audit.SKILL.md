@@ -26,7 +26,8 @@ metadata:
 
 Sources first, sinks second, traces third, verdicts last. A finding is one line of proof
 someone else can re-run -- `path:line`, the command, and what it printed. This is the
-parent's runbook: a child has no `spawn_subagent`, so every fan-out here is yours to launch.
+parent's runbook. A depth-1 child may spawn `spawn_subagent` for read-only mappers only,
+and only when it ships no file of its own; every writer here is still yours to launch.
 
 Run every block below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent); a command written inline in this body runs nothing on its own.

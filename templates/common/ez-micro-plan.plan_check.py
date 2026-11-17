@@ -10,10 +10,11 @@ two ready tasks that share a file collide the moment both are spawned, so both
 are refused here rather than discovered at wave 3.
 
 Parsed shape (see the skill body for the format): a `## Dispatch` block with
-`slots:`, `lane:` and the optional `review:` skeptic, a `## Lanes` table,
+`slots:`, the optional `fleet:` stream ceiling, `lane:` and the optional `review:`
+skeptic panel, a `## Lanes` table,
 `### T<nn> -- <summary>` task blocks each carrying
-lane/role/owns/reads/needs/calls/done/report, and a `## Ledger` table with one
-row per task.
+lane/role/owns/reads/needs/calls/done/report and the optional `spawns:`, and a
+`## Ledger` table with one row per task.
 
 Usage:
     ez-micro-plan.plan_check.py PLAN [--slots N] [--ready] [--json]
@@ -37,6 +38,8 @@ LEDGER_STATES = ("ready", "running", "done", "failed", "blocked", "skipped")
 CALLS_HARD_MAX = 25
 CALLS_SOFT_MAX = 15
 OWNS_SOFT_MAX = 3
+# The tree-wide stream ceiling: 3 Spark boxes x PARALLEL 5, scripts/spark-configure.sh.
+FLEET_DEFAULT = 15
 
 TASK_RE = re.compile(r"^###\s+(T\d+)\s+(?:--|-{1,2})\s+(.*)$")
 KEY_RE = re.compile(r"^-\s+([a-z]+)\s*:\s*(.*)$")
@@ -121,13 +124,31 @@ def parse_tasks(lines):
 
 
 def split_list(value):
-    """Split a comma list; `-`, empty, and `none` all mean nothing."""
+    """Split a comma or space separated list; `-`, empty, and `none` mean nothing.
+
+    Both separators are accepted because the plan prose writes both -- `reads: L0,
+    L1-src` beside `review: T14 T15 T16` -- and a checker that reads only one of
+    them turns a three-skeptic panel into one unknown id, which is how a review
+    phase silently stops being a panel. These keys hold ids and paths, which carry
+    no space here.
+    """
     if value is None:
         return []
     text = value.strip()
     if text in ("", "-", "none", "None", "n/a"):
         return []
-    return [item.strip().strip("`") for item in text.split(",") if item.strip()]
+    return [item.strip("`") for item in re.split(r"[,\s]+", text) if item.strip("`")]
+
+
+def spawn_count(task):
+    """How many children the task spawns itself; absent or unreadable is none."""
+    spawns = task.get("spawns", "")
+    return int(spawns) if re.match(r"^\d+$", spawns) else 0
+
+
+def task_streams(task):
+    """The model streams one task holds: itself plus every child it spawns."""
+    return 1 + task.get("_spawns", 0)
 
 
 def strip_line_range(path):
@@ -187,18 +208,48 @@ def check_collisions(tasks, report):
                         % (first, second, path))
 
 
+def check_spawns(tasks, fleet, report):
+    """A spawner pays for every child it fans out, and ships nothing itself.
+
+    `spawns` is optional and a task without it holds the single stream it always
+    did. Each child is a session of its own holding a stream too, so a task plus
+    its children has to fit the fleet, and a task that spawns is not also a writer.
+    """
+    for task in tasks:
+        raw = task.get("spawns", "")
+        if raw and not re.match(r"^\d+$", raw):
+            report.error("%s spawns %r is not a number" % (task["id"], raw))
+        task["_spawns"] = spawn_count(task)
+        if not task["_spawns"]:
+            continue
+        owned = split_list(task.get("owns"))
+        if owned:
+            report.error("%s spawns %d children but owns %s; a spawner ships nothing"
+                         % (task["id"], task["_spawns"], ", ".join(owned)))
+        if task_streams(task) > fleet:
+            report.error("%s and its %d children need %d streams; the fleet holds %d"
+                         % (task["id"], task["_spawns"], task_streams(task), fleet))
+
+
 def check_review_task(dispatch, tasks, report):
-    """The named skeptic waits on every producer and ships nothing itself.
+    """Every named skeptic waits on every producer and ships nothing itself.
 
     A plan with no `review:` is legal but incomplete, so its absence warns. Once
     one is named it is a contract: a reviewer that owns a file is its own producer,
-    and one that skips a producer never re-runs that producer's `done` check.
+    and one that skips a producer never re-runs that producer's `done` check. The
+    key takes a comma list, and each rule below runs once per named skeptic.
     """
-    review_id = (dispatch.get("review") or "").strip().strip("`")
-    if not review_id:
+    reviewers = split_list(dispatch.get("review"))
+    if not reviewers:
         report.warn("Dispatch names no `review:` task, so nothing re-runs the "
                     "producers' own done checks but their own reports")
         return
+    for review_id in reviewers:
+        check_reviewer(review_id, tasks, report)
+
+
+def check_reviewer(review_id, tasks, report):
+    """The rules one named skeptic is held to, run once per reviewer in the panel."""
     by_id = {task["id"]: task for task in tasks}
     if review_id not in by_id:
         report.error("Dispatch reviews with %s, which ## Tasks does not define" % review_id)
@@ -286,7 +337,7 @@ def check_tasks(tasks, lanes, report):
         owns = split_list(task.get("owns"))
         if role in READ_ONLY_ROLES and owns:
             report.error("%s is %s but owns %s" % (task["id"], role, ", ".join(owns)))
-        if role == "general-purpose" and not owns:
+        if role == "general-purpose" and not owns and not spawn_count(task):
             report.warn("%s writes nothing and is not read-only" % task["id"])
         if len(owns) > OWNS_SOFT_MAX:
             report.warn("%s owns %d files; a micro task carries %d or fewer"
@@ -338,16 +389,30 @@ def check_ledger(tasks, rows, report, section_present):
     return states
 
 
-def ready_wave(tasks, states, slots):
-    """Tasks whose needs are all done and which are not already running."""
+def ready_wave(tasks, states, slots, fleet):
+    """Tasks whose needs are all done and which are not already running.
+
+    Two budgets, and they are not the same number: `slots` caps how many children
+    one parent holds in flight, and the wave also stops once the tree would hold
+    more than `fleet` model streams, a spawner paying for each child it fans out.
+    """
     done_states = ("done", "skipped")
     wave = []
+    streams = 0
     for task in tasks:
         if states.get(task["id"], "ready") in ("running", "done", "failed", "skipped", "blocked"):
             continue
         if all(states.get(need, "ready") in done_states for need in task["_needs"]):
+            if len(wave) >= slots:
+                break
+            if streams + task_streams(task) > fleet:
+                # Skip, do not stop. A spawner too heavy for the streams still
+                # free does not own the tasks behind it: the budget exists to
+                # fill the fleet, and a cheaper ready task still fits it.
+                continue
             wave.append(task["id"])
-    return wave[:slots]
+            streams += task_streams(task)
+    return wave, streams
 
 
 def main():
@@ -396,6 +461,14 @@ def main():
     if slots < 1:
         report.error("slots must be at least 1")
         slots = 1
+    fleet_value = (dispatch.get("fleet") or "").strip()
+    fleet = FLEET_DEFAULT
+    if fleet_value:
+        if re.match(r"^\d+$", fleet_value) and int(fleet_value) >= 1:
+            fleet = int(fleet_value)
+        else:
+            report.warn("Dispatch fleet %r is not a stream count; using %d"
+                        % (fleet_value, FLEET_DEFAULT))
     if not dispatch.get("lane"):
         report.error("Dispatch names no `lane:` the fleet rides")
     if not dispatch.get("parent keeps"):
@@ -412,6 +485,7 @@ def main():
     parse_needs(tasks, report)
     check_acyclic(tasks, report)
     check_tasks(tasks, lanes, report)
+    check_spawns(tasks, fleet, report)
     check_collisions(tasks, report)
     check_review_task(dispatch, tasks, report)
     states = check_ledger(tasks, parse_table(sections.get("Ledger", [])), report,
@@ -419,12 +493,28 @@ def main():
     check_context_files(os.path.dirname(os.path.abspath(args.plan)), tasks, lanes, report,
                         not args.no_files)
 
-    wave = ready_wave(tasks, states, slots)
-    initial_ready = [task["id"] for task in tasks if not task["_needs"]
-                     and states.get(task["id"], "ready") == "ready"]
-    if tasks and len(initial_ready) < min(slots, len(tasks)):
-        report.error("wave 1 is %d tasks wide against %d slots; the fleet idles, so split "
-                     "the coarse tasks further" % (len(initial_ready), slots))
+    wave, wave_streams = ready_wave(tasks, states, slots, fleet)
+    # Wave 1 is only a design question while the plan is still unstarted. Once a
+    # task has been dispatched the opening wave has already filled the fleet, and a
+    # plan being driven late in the run has an empty initial wave by construction
+    # (its review task needs everything), so re-proving it then is a false error.
+    started = any(states.get(t["id"], "ready") != "ready" for t in tasks)
+    initial_tasks = [task for task in tasks if not task["_needs"]]
+    if tasks and not started:
+        initial_ready = [task for task in initial_tasks
+                         if states.get(task["id"], "ready") == "ready"]
+        if len(initial_ready) < min(slots, len(tasks)):
+            report.error("wave 1 is %d tasks wide against %d slots; the fleet idles, so "
+                         "split the coarse tasks further" % (len(initial_ready), slots))
+    # The stream price of the opening wave is arithmetic over what the plan declares,
+    # so it stays true as the Ledger advances and is checked whatever the state. One
+    # parent holds at most `slots` children in flight, so the tasks past that never
+    # share the fleet with the wave and are not charged to it.
+    wave1_streams = sum(task_streams(task) for task in initial_tasks[:slots])
+    if tasks and wave1_streams > fleet:
+        report.error("wave 1 costs %d streams against a fleet of %d; a spawner pays "
+                     "for its children, so narrow the fan-out"
+                     % (wave1_streams, fleet))
     used_lanes = {task.get("lane") for task in tasks}
     for lane in sorted(lanes):
         if lane not in used_lanes:
@@ -446,6 +536,7 @@ def main():
         if args.ready:
             for task_id in wave:
                 print(task_id)
+            sys.stderr.write("cost: %d streams of %d\n" % (wave_streams, fleet))
     return 1 if failed else 0
 
 

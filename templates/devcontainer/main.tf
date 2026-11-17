@@ -536,6 +536,8 @@ resource "coder_agent" "main" {
       grok_explore_lane            = var.grok_explore_lane
       grok_plan_lane               = var.grok_plan_lane
       grok_review_lane             = var.grok_review_lane
+      # How deep a subagent tree may nest; rendered into [subagents] max_depth.
+      grok_subagent_max_depth = var.grok_subagent_max_depth
     })
     # The per-repo notes library, interpolated verbatim into the quoted heredoc
     # that writes ~/.grok/notes-setup.sh in startup.sh.tftpl. One copy under

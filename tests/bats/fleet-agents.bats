@@ -174,6 +174,34 @@ if mcp and inherit == "none":
              "resolve" % (path, ", ".join(mcp)))
 '
 
+# The spawn parser: which side of the leaf/spawner split a definition sits on.
+# The tools list is the enforcement -- the prose in the rulebook only explains it
+# -- so membership of spawn_subagent is read here rather than guessed from a
+# sentence in the body.
+AGENT_SPAWN_PROG='
+import sys, yaml
+stem = sys.argv[1]
+path = "%s.AGENT.md" % stem
+want = sys.argv[2] == "yes"
+lines = sys.stdin.read().splitlines()
+close = 0
+for i in range(1, len(lines)):
+    if lines[i].strip() == "---":
+        close = i
+        break
+if close == 0:
+    sys.exit("FAIL: %s has no closing frontmatter fence" % path)
+data = yaml.safe_load("\n".join(lines[1:close]))
+tools = [t.strip() for t in str(data.get("tools")).split(",") if t.strip()]
+have = "spawn_subagent" in tools
+if have and not want:
+    sys.exit("FAIL: %s: tools names spawn_subagent, so this leaf role could recurse "
+             "into a depth-2 wave" % path)
+if want and not have:
+    sys.exit("FAIL: %s: tools omits spawn_subagent, so this skeptic role cannot fan "
+             "out read-only mappers" % path)
+'
+
 # The model parser: the definition's model: has to be both a local alias and a
 # group the proxy actually serves. A typo here is not a boot failure -- the child
 # simply never spawns, with the error surfacing in whoever tried to fan out.
@@ -418,6 +446,28 @@ count_suffix() {
   local i
   for i in "${!AGENTS[@]}"; do
     python3 -c "${AGENT_VALUES_PROG}" "${AGENTS[i]}" <"$(definition_path "${AGENTS[i]}")"
+  done
+}
+
+@test "definitions: only the three skeptic roles name spawn_subagent, and the four leaf roles do not" {
+  # This split is what makes a depth-2 wave safe: a mapper or a writer that
+  # cannot spawn cannot recurse, so everything below the parent stays read-only
+  # and the tree budget is the only thing a spawner pays for. The tools list is
+  # the enforcement, so the claim is read from the frontmatter rather than from a
+  # sentence in the body, and the four leaves are checked over the seven payloads
+  # the template directory holds -- the documenter beside the six the seed
+  # registers, because a writer that could spawn is the recursion this pins out.
+  python3 -c 'import yaml' >/dev/null 2>&1 || skip "PyYAML is not installed"
+  local spawners=(tester reviewer security-auditor)
+  local leaves=(explorer architect implementer documenter)
+  local i
+  for i in "${!spawners[@]}"; do
+    python3 -c "${AGENT_SPAWN_PROG}" "${spawners[i]}" yes \
+      <"$(definition_path "${spawners[i]}")"
+  done
+  for i in "${!leaves[@]}"; do
+    python3 -c "${AGENT_SPAWN_PROG}" "${leaves[i]}" no \
+      <"$(definition_path "${leaves[i]}")"
   done
 }
 
