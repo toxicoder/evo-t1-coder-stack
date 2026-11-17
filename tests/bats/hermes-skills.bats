@@ -334,7 +334,7 @@ hs_skill_alias_row() {
 
 @test "hermes skills: every alias in the model-routing table is a LiteLLM model_name" {
   # The table is the whole routing answer the assistant gives. `hermes config set
-  # model.model agent-xhigh` against an alias LiteLLM never registered is a
+  # model.default agent-xhigh` against an alias LiteLLM never registered is a
   # gateway that answers nothing until someone re-reads this file.
   local names offenders="" want_alias table
   names="$(grep -E '^[[:space:]]*-[[:space:]]*model_name:' "${LITELLM_CFG}" \
@@ -350,6 +350,28 @@ hs_skill_alias_row() {
   [[ -z ${offenders} ]] \
     || { printf 'FAIL: model-routing advertises aliases LiteLLM does not serve:\n%s  served: %s\n' \
       "${offenders}" "$(tr '\n' ' ' <<<"${names}")" >&2; return 1; }
+}
+
+@test "hermes skills: the model-routing verbs are the ones the image honours" {
+  # Both claims here were wrong once. `model.model` is dropped at load the moment the
+  # block carries `default:` (hermes_cli/config.py:1797-1802), which is what a
+  # persisted /model writes, so a skill that recommends it sends the assistant to a
+  # verb that prints success and changes nothing. And `--provider <row>` does take its
+  # row's `default_model` (hermes_cli/cli_init_mixin.py:263), so the old blanket "the
+  # provider never picks the model" was wrong too, as was "no session can pick" a name
+  # Hermes in fact soft-accepts. Measured on v0.22.5.
+  local flat
+  flat="$(tr '\n' ' ' <"${SKILLS}/model-routing/SKILL.md" | tr -s '[:space:]' ' ')"
+  [[ ${flat} == *'hermes config set model.default'* ]] \
+    || { printf 'FAIL: the skill names no durable model verb that survives a /model write\n' >&2; return 1; }
+  [[ ${flat} == *'default_model'* ]] \
+    || { printf 'FAIL: the skill never says --provider carries its row default_model\n' >&2; return 1; }
+  local stale
+  stale="$(grep -nE 'does not pick the model|no session can pick|a session cannot pick' \
+    "${SKILLS}/model-routing/SKILL.md" || true)"
+  [[ -z ${stale} ]] \
+    || { printf 'FAIL: the skill states a model-selection claim the image disproves: %s\n' \
+      "${stale}" >&2; return 1; }
 }
 
 @test "hermes skills: the agent-swarm row is a real row and the config routes it that way" {

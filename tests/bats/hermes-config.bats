@@ -5,9 +5,12 @@
 #
 # Pins the seams the host-assistant feature rests on: approvals stay manual,
 # the terminal backend stays local (so dangerous-command checks stay on),
-# models go through LiteLLM's `agent` alias, the Arc's own Ollama models ship as
-# opt-in `providers:` entries reached through the same door with no key byte in
-# the seed, the git-tracked skills exist
+# models go through LiteLLM's `agent` alias, every alias the proxy serves is declared
+# exactly once as a pickable Hermes model option (derived from litellm/config.yaml,
+# with the summariser lane held out of the picker and the row that pins discovery kept
+# first), the Arc's own Ollama models ship as named
+# `providers:` entries reached through the same door with no key byte
+# in the seed, the git-tracked skills exist
 # beside the seed with matching frontmatter, SOUL.md teaches both doors,
 # compose interpolation defaults for dashboard
 # basic-auth stay non-empty (v0.22.5 refuses 0.0.0.0 with no provider),
@@ -23,8 +26,8 @@
 # only.
 #
 # Usage: bazelisk test //tests:bats_hermes_config_test   (from any cwd)
-# Safety: reads hermes/, docker-compose.yml, .env.sample, docs/hermes.md,
-# scripts/bootstrap.sh and proxy/router.conf; writes nothing.
+# Safety: reads hermes/, litellm/config.yaml, docker-compose.yml, .env.sample,
+# docs/hermes.md, scripts/bootstrap.sh and proxy/router.conf; writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -40,6 +43,62 @@ setup() {
   CONFIG="${REPO_ROOT}/hermes/config.yaml"
   SOUL="${REPO_ROOT}/hermes/SOUL.md"
   [[ -f "${CONFIG}" ]] || skip "hermes/config.yaml is not reachable from ${REPO_ROOT}"
+}
+
+# Distinct `model_name:` values the proxy actually serves. The deployment entries are
+# the `- model_name:` list items, so the anchor excludes the two prose mentions of
+# the word inside litellm/config.yaml's comments.
+litellm_served_aliases() {
+  grep -E '^[[:space:]]*-[[:space:]]+model_name:' "${REPO_ROOT}/litellm/config.yaml" |
+    sed -E 's/^[[:space:]]*-[[:space:]]+model_name:[[:space:]]*//; s/[[:space:]]*$//' |
+    sort -u
+}
+
+# How many rows the providers: block declares - the two-space keys between
+# `providers:` and the next top-level key. Derived, so adding a row is not a test
+# edit and dropping a row's credential is.
+hermes_provider_rows() {
+  awk '
+    /^providers:[[:space:]]*$/            { in_prov = 1; next }
+    in_prov && /^[^[:space:]#]/           { in_prov = 0 }
+    in_prov && /^  [A-Za-z0-9._-]+:[[:space:]]*$/ { n++ }
+    END                                   { print n + 0 }
+  ' "${CONFIG}"
+}
+
+# Every pickable model id the seed declares, as `alias<TAB>row` lines. Hermes matches a
+# typed `/model <alias>` against each row's `models`, `model` AND `default_model`
+# (hermes_cli/model_switch.py:_configured_provider_matches), so an Arc row declares its
+# alias with the one `default_model` key and the catalogue row declares its ids under
+# `models:`. Read positionally rather than through a YAML parser so the gate keeps
+# working in a bare bats sandbox, and so it proves the shape the loader expects
+# (two-space row, four-space keys, six-space model ids).
+hermes_alias_rows() {
+  awk '
+    /^providers:[[:space:]]*$/                { in_prov = 1; next }
+    in_prov && /^[^[:space:]#]/               { in_prov = 0 }
+    in_prov && /^  [A-Za-z0-9._-]+:[[:space:]]*$/ {
+      row = $0; sub(/^  /, "", row); sub(/:.*$/, "", row); in_models = 0; next
+    }
+    in_prov && row != "" && /^    default_model:/ {
+      v = $0; sub(/^    default_model:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v)
+      if (v != "") print v "\t" row
+      next
+    }
+    in_prov && /^    models:[[:space:]]*$/    { in_models = 1; next }
+    in_prov && in_models && /^      [A-Za-z0-9._-]+:[[:space:]]*\{\}[[:space:]]*$/ {
+      v = $0; sub(/^      /, "", v); sub(/:.*$/, "", v); print v "\t" row; next
+    }
+    in_prov && in_models && !/^      /        { in_models = 0 }
+  ' "${CONFIG}"
+}
+
+# Everything a session can type. This set, not the catalogue row alone, is the one
+# that has to equal what LiteLLM serves. A row listing its own `default_model` in its
+# `models:` too is one declarer, so the pair list is deduplicated before the alias
+# column is.
+hermes_declared_aliases() {
+  hermes_alias_rows | cut -f1 | sort -u
 }
 
 @test "hermes config: approvals stay manual and cron/unattended stay deny" {
@@ -63,11 +122,11 @@ setup() {
   assert_contains_file "env-expanded key" "${CONFIG}" 'api_key: \$\{LITELLM_MASTER_KEY\}'
 }
 
-# The Arc's own Ollama weights are the only models this stack runs on its own
-# hardware, so they ship as opt-in providers: inert until selected, which keeps
-# `agent` the default, and reached through LiteLLM because the proxy is the only
-# model transport here and 11434 is deliberately unpublished.
-@test "hermes config: the Arc Ollama models ship as optional providers" {
+# The Arc's own Ollama weights ship as named routes beside the catalogue, and every
+# alias the proxy serves has to be declared as a Hermes model option or the assistant
+# cannot pick it. The expected set is derived from litellm/config.yaml, so a new
+# alias fails this gate rather than going unnoticed.
+@test "hermes config: the Arc Ollama models ship as named providers" {
   assert_contains_file "providers block" "${CONFIG}" 'providers:'
   assert_contains_file "tool-capable local lane" "${CONFIG}" 'arc-chat:'
   assert_contains_file "coder lane" "${CONFIG}" 'arc-coder:'
@@ -75,25 +134,141 @@ setup() {
   assert_contains_file "chat alias travels" "${CONFIG}" 'default_model: chat'
   assert_contains_file "coder alias travels" "${CONFIG}" 'default_model: coder'
   assert_contains_file "coder-fast alias travels" "${CONFIG}" 'default_model: coder-fast'
-  # One entry per Arc alias, each with its own credential line: model plus three.
-  run grep -E '^[[:space:]]*api_key:' "${CONFIG}"
-  [ "${#lines[@]}" -eq 4 ]
+  # One credential line per row: the model block plus every providers: entry, and
+  # the count is derived from the file rather than pinned to a literal so a new row
+  # is not a test edit.
+  local rows keys
+  rows="$(hermes_provider_rows)"
+  keys="$(grep -Ec '^[[:space:]]*api_key:' "${CONFIG}" || true)"
+  [ "${keys}" -eq $((rows + 1)) ] ||
+    { printf 'FAIL: %d api_key lines for %d provider rows (want rows + the model block)\n' \
+        "${keys}" "${rows}" >&2; return 1; }
   # And no credential byte anywhere: every one is an ${...} env ref.
   run grep -E '^[[:space:]]*api_key:[[:space:]]*[^[:space:]$]' "${CONFIG}"
   [ "${status}" -ne 0 ]
   # Local means the LiteLLM door, never the unpublished Ollama port.
   run grep -E 'base_url:[[:space:]]*http://ollama' "${CONFIG}"
   [ "${status}" -ne 0 ]
-  # Opt-in: selecting a provider is what changes the model, never the seed.
+  # Opt-in: a row is inert until something names it, so a plain `hermes` run still
+  # takes the Spark lane. (Naming a row with --provider does move its default_model
+  # along with the route; hermes_cli/cli_init_mixin.py:263.)
   assert_contains_file "default stays the Spark lane" "${CONFIG}" 'model: agent'
 }
 
+# Hermes routes a typed `/model <alias>` (and `--model <alias>`) to the provider row
+# that *declares* that id: hermes_cli/model_switch.py matches the typed name against
+# each entry's `models` / `model` / `default_model`, exactly, and a name no row
+# declares is left on the current provider as an unknown hidden model. So the seed's
+# declarations, not LiteLLM, are what make an alias a choice the assistant offers -
+# and a LiteLLM alias missing from them is a lane nobody can run Hermes on. Measured
+# against nousresearch/hermes-agent:v0.22.5.
+@test "hermes config: every LiteLLM alias is a declared Hermes model option" {
+  local served declared alias
+  served="$(litellm_served_aliases)"
+  [ -n "${served}" ] ||
+    { printf 'FAIL: parsed no aliases out of litellm/config.yaml\n' >&2; return 1; }
+  declared="$(hermes_declared_aliases)"
+  [ -n "${declared}" ] ||
+    { printf 'FAIL: hermes/config.yaml declares no pickable model at all\n' >&2; return 1; }
+
+  local missing=()
+  while IFS= read -r alias; do
+    # The summariser is the one served alias a session must not be able to pick.
+    [[ "${alias}" == "compaction-fast" ]] && continue
+    printf '%s\n' "${declared}" | grep -Fxq -- "${alias}" || missing+=("${alias}")
+  done <<< "${served}"
+  if [ "${#missing[@]}" -gt 0 ]; then
+    printf 'FAIL: LiteLLM aliases no Hermes row declares: %s\n' "${missing[*]}" >&2
+    return 1
+  fi
+
+  # And nothing declared is a name the proxy does not serve: a typo or a retired
+  # alias would show as a pickable model that 400s on every turn.
+  local stale=()
+  while IFS= read -r alias; do
+    printf '%s\n' "${served}" | grep -Fxq -- "${alias}" || stale+=("${alias}")
+  done <<< "${declared}"
+  if [ "${#stale[@]}" -gt 0 ]; then
+    printf 'FAIL: Hermes declares aliases LiteLLM does not serve: %s\n' "${stale[*]}" >&2
+    return 1
+  fi
+}
+
+# One alias on two rows is not a harmless duplicate. `_route_configured_provider`
+# collects every row that declares the typed name and, when the session is not already
+# on one of them, refuses the switch outright with "declared by multiple configured
+# providers" (hermes_cli/model_switch.py:1338). Measured on v0.22.5: with `chat` in the
+# catalogue row's `models:` as well as in arc-chat's `default_model`, a fresh session's
+# `/model chat` fails, where it routed fine before the catalogue row existed. So each
+# alias is declared in exactly one place.
+@test "hermes config: no alias is declared by two provider rows" {
+  local dupes
+  dupes="$(hermes_alias_rows | sort -u | cut -f1 | uniq -d)"
+  [ -z "${dupes}" ] ||
+    { printf 'FAIL: alias declared by more than one row, so /model refuses it: %s\n' \
+        "$(printf '%s' "${dupes}" | tr '\n' ' ')" >&2; return 1; }
+}
+
+# The four rows share one endpoint, credential and wire protocol, so Hermes folds them
+# into a single picker group and reads `discover_models` from the group's first member
+# alone (hermes_cli/model_switch_providers.py:1010-1018). Measured: litellm first
+# answers discovery_allowed=False, arc-chat first answers True - and a group with
+# discovery on adopts `compaction-fast` off /v1/models. So the row that carries the
+# pin has to stay first, not merely be present somewhere in the block.
+@test "hermes config: the row that pins discovery stays first" {
+  local first
+  first="$(awk '
+    /^providers:[[:space:]]*$/                { in_prov = 1; next }
+    in_prov && /^[^[:space:]#]/               { in_prov = 0 }
+    in_prov && /^  [A-Za-z0-9._-]+:[[:space:]]*$/ {
+      sub(/^  /, ""); sub(/:.*$/, ""); print; exit
+    }
+  ' "${CONFIG}")"
+  [ "${first}" = "litellm" ] ||
+    { printf 'FAIL: first providers: row is %s; the fold takes discover_models from it\n' \
+        "${first:-<none>}" >&2; return 1; }
+  awk '
+    /^  litellm:[[:space:]]*$/          { in_row = 1; next }
+    in_row && /^  [A-Za-z0-9._-]+:/     { in_row = 0 }
+    in_row && /^    discover_models:[[:space:]]*false[[:space:]]*$/ { found = 1 }
+    END                                 { exit found ? 0 : 1 }
+  ' "${CONFIG}" ||
+    { printf 'FAIL: the litellm row lost its own discover_models: false\n' >&2; return 1; }
+}
+
+# `compaction-fast` is the Arc group the two `-fast` lanes hop to for one
+# conversation summary, and litellm/compaction_router.py owns that hop. It carries no
+# tool support and no reasoning effort by design, so the assistant must never be able
+# to drive a session with it. Hermes' own /v1/models probe would otherwise adopt it
+# (the reason the row pins discover_models: false), so the pin is pinned here too.
+@test "hermes config: the summariser lane stays out of the picker" {
+  # This is the only guard: the derived coverage test skips `compaction-fast` by name
+  # in its missing loop, and its stale loop accepts it because the proxy really does
+  # serve it. So report the offending line rather than failing on a bare status.
+  local leaked
+  leaked="$(grep -E '^[[:space:]]*compaction-fast:' "${CONFIG}" || true)"
+  [ -z "${leaked}" ] ||
+    { printf 'FAIL: compaction-fast is declared pickable: %s\n' "${leaked}" >&2; return 1; }
+  assert_contains_file "no unsanctioned discovery" "${CONFIG}" 'discover_models: false'
+}
+
+
 @test "hermes docs: the local providers and how to select one are written down" {
   local doc="${REPO_ROOT}/docs/hermes.md"
+  local readme="${REPO_ROOT}/README.md"
   assert_file_exists "hermes doc" "${doc}"
   assert_contains_file "names the local lane" "${doc}" 'arc-chat'
   assert_contains_file "shows the one-shot switch" "${doc}" 'hermes --provider arc-chat'
   assert_contains_file "shows the durable switch" "${doc}" 'hermes config set model.provider arc-chat'
+  # The skim page is the one an operator actually reads, so its verb is pinned too:
+  # `model.model` prints a success line and changes nothing once a persisted /model
+  # has written `default:`, which is why the seed and the docs name `model.default`.
+  assert_file_exists "readme" "${readme}"
+  assert_contains_file "readme durable model verb" "${readme}" \
+    'hermes config set model.default'
+  run grep -E 'config set model\.model' "${readme}"
+  [ "${status}" -ne 0 ] ||
+    { printf 'FAIL: README recommends the legacy model.model verb\n' >&2; return 1; }
 }
 
 @test "hermes config: cwd follows STACK_HOST_PATH and skills stay external" {

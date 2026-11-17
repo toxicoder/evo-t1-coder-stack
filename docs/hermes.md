@@ -305,27 +305,84 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
     those weights write the tool call into the message body as plain text, so agent
     turns silently lose their tools. See
     [litellm-routing.md](litellm-routing.md#tool-calls-the-measured-limitation).
-- The Arc models above are also seeded as named **providers**, so the local lane is
-  something you can pick rather than remember an alias for. `hermes/config.yaml`
-  carries a `providers:` block with `arc-chat`, `arc-coder` and `arc-coder-fast`,
-  each pointing at the same LiteLLM door with its `default_model` set, so the alias
-  travels with the provider:
+- The models come from a `providers:` block in `hermes/config.yaml`. Its `litellm` row
+  declares the shared catalogue - the aliases that are not one of the Arc's own three
+  weights - and each Arc row declares its weight with its `default_model`. Between
+  them those declarations are every client-selectable alias in
+  `litellm/config.yaml`, and a declaration is what makes an alias routable: Hermes
+  matches a typed `/model <alias>` against the ids each row declares and routes it to
+  the row that declares it, while a name no row declares is left on the current
+  provider as an unknown hidden model. `litellm/config.yaml` owns the set, so an alias
+  is added there and a row follows; the gate fails when the two drift apart, or when
+  one alias ends up on two rows.
+- Route and model are two separate switches. A `providers:` row selects the route -
+  base URL, api key, api mode - and the model for a turn is otherwise the value in
+  the `model:` block. Measured on the shipped image, `--provider <row>` moves the
+  route and takes that row's `default_model` with it: `--provider arc-chat` sends
+  `"model":"chat"`, `--provider arc-coder` sends `"model":"coder"`,
+  `--provider arc-coder-fast` sends `"model":"coder-fast"`, and `--provider litellm`
+  sends `"model":"agent"` - that row's `default_model` is `agent`, which is also what
+  the `model:` block holds. `-m/--model <alias>` overrides it: `--model agent-swarm`
+  sends `"model":"agent-swarm"`, and `--provider litellm --model chat` sends
+  `"model":"chat"`. A run with no flags sends the `model:` block's value (`agent`)
+  whatever rows exist, and `hermes config set model.provider <row>` changes the route
+  and leaves that value alone - the `default_model` pickup is gated on the CLI flag,
+  not on the config key.
+- The verbs that do change the model: `/model <alias>` inside a session,
+  `bazelisk run //scripts:hermes-shell -- -m <alias>` from the host, which sets
+  `HERMES_MODEL` in the container, and `hermes config set model.default <alias>` to
+  persist it in the live config under `/opt/data`. `model.model` is the legacy
+  spelling of that same value: the loader copies it to `default` only while the block
+  carries none, and drops it after that - which is the shape a persisted `/model`
+  writes. So after one in-session switch, `hermes config set model.model <alias>`
+  prints a success line and changes nothing, and `hermes config get model.model`
+  answers "Config key not set" for the same reason even when a model is set; read it
+  back with `hermes config get model.default`.
+- The Arc's own weights also ship as named rows beside that catalogue - `arc-chat`,
+  `arc-coder` and `arc-coder-fast` - each pointing at the same LiteLLM door. The
+  picker does not show them beside it: Hermes folds rows that share an endpoint,
+  credential and wire protocol into one group, so a single `litellm` entry lists
+  every alias those rows declare, and the Arc rows stay reachable as `--provider`
+  routes and as a typed `/model <alias>`. Each row's `default_model` is its weight's
+  one declaration, and that declaration is what makes `/model chat` routable: two
+  rows declaring the same id makes `switch_model` refuse the name outright, so
+  `chat`, `coder` and `coder-fast` are declared only by their Arc rows. These are the
+  route verbs, and `arc-chat` is the row to route through when a session wants the
+  Arc's tool-capable model:
 
   ```sh
-  hermes --provider arc-chat              # one session on the Arc's tool-capable model
-  hermes config set model.provider arc-chat   # make it the default
+  hermes --provider arc-chat                  # route one session through arc-chat
+  hermes config set model.provider arc-chat   # make that row the default
   ```
 
-  An entry is inert until something asks for it, so the default stays `agent` and a
-  healthy Spark box behaves exactly as before. They go through LiteLLM rather than
-  `http://ollama:11434` because the proxy is the stack's sole model transport, it is
-  where the aliases and the Arc's context window are defined, and 11434 is
-  deliberately unpublished. `spark-coder` / `spark-chat` answer on that endpoint too
-  when a Spark box is up; no entry ships for them because they are off-box, optional,
-  and usually powered off - copy the three keys of any entry to add one.
-- Switch the alias alone inside the container with `hermes config set model.model chat`
-  (or `agent-medium` for a thinking level), which edits the live config under
-  `/opt/data`.
+  `hermes --provider arc-chat` does not need the model named beside it - it sends
+  `chat` on its own, and `-m <alias>` is there only to send something else through
+  that row. A run that names no flag is untouched by any of this, so the default stays
+  `agent` and a healthy Spark box behaves exactly as before. The rows go through
+  LiteLLM rather than `http://ollama:11434` because the proxy is the stack's sole model
+  transport, it is where the aliases and the Arc's context window are defined, and
+  11434 is deliberately unpublished.
+- Two parts of that list are deliberate. `compaction-fast` is served by the proxy and
+  kept out of the picker on purpose: it is the Arc summariser the two `-fast` lanes hop
+  to for one conversation summary, it carries no tool support, and a session must not
+  drive itself with it. `discover_models: false` on the `litellm` row is what keeps it
+  out of the list - left on, Hermes probes the proxy's `/v1/models` and adopts whatever
+  it advertises. Read that as a hide rather than a wall: no row declares the id, and a
+  name no row declares is *accepted* as an unknown hidden model on the current
+  provider, so a typed `/model compaction-fast` still puts a turn on it. Nothing
+  refuses it for you.
+  And `spark-coder` / `spark-chat` are declared so they stay pickable even though they
+  are Ollama on a Spark box that is usually powered off, so a cold box answers a
+  connection error.
+- All of that lives in the seed, and the seed reaches the volume once:
+  `scripts/hermes-bootstrap.sh` copies `hermes/config.yaml` into the data volume only
+  when the file is absent. A box that ran an earlier seed therefore has no `litellm`
+  row at all - `--provider litellm` names a row its config does not have, the eleven
+  catalogue aliases are undeclared there, and with no row carrying
+  `discover_models: false` the picker adopts `compaction-fast` off the proxy. Check it
+  with `bazelisk run //scripts:hermes-doctor -- diff`, which names the file that
+  differs and prints the `hermes-bootstrap --data <mount> --force` line that re-seeds
+  it; a hand-edited volume copy is worth reading before you overwrite it.
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
 

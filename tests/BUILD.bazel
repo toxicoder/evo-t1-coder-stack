@@ -276,8 +276,14 @@ _SUITE_PAYLOAD = {
     ],
     "hermes-config.bats": [
         "//:env_sample",
+        # The docs gate also pins the Hermes model verbs the operator reads on the
+        # skim page, so the root README is this suite's read.
+        "//:entry_docs",
         "//docs:content",
         "//hermes:payload",
+        # The alias-coverage gate derives the pickable set from the proxy's own
+        # model_list, so that file is this suite's read.
+        "//litellm:config",
         "//infisical:payload",
         "//proxy:confs",
     ],

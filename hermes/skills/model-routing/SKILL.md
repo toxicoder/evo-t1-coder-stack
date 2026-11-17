@@ -36,6 +36,8 @@ behind that one base URL — never bypass it.
 | `coder` | Arc, `qwen2.5-coder:32b` | **plain text** | chat about code, summarising diffs |
 | `coder-fast` | Arc, `qwen2.5-coder:14b` | **plain text** | cheap and quick, same limit |
 | `chat` | Arc, `qwen2.5:7b` | real `tool_calls` | agent work while the Sparks are down |
+| `spark-coder` | Spark box, its own Ollama | unverified | the Arc-class coding weight, served on a Spark; usually powered off |
+| `spark-chat` | Spark box, its own Ollama | unverified | same, at 7b; usually powered off |
 | `compaction-fast` | Arc, `qwen2.5-coder:14b` | **plain text** | not this session: the group the two fast lanes hand their summary to |
 
 Notes that matter:
@@ -109,10 +111,65 @@ Notes that matter:
 
 ## Switching the model
 
+Three verbs change the model, and which one you have depends on whether a session is
+already running:
+
 ```sh
-hermes config get model.model
-hermes config set model.model chat     # or: agent, agent-medium, agent-swarm
+hermes config get model.default
+hermes config set model.default chat    # or: agent, agent-medium, agent-swarm
 ```
+
+- A session already open: type `/model <alias>`. That is the switch for the rest of
+  that conversation.
+- No session yet: pass `--model <alias>` on the command line.
+  `//scripts:hermes-shell -- -m <alias>` is the stack's form of it: the CLI forwards
+  the value into the container as `HERMES_MODEL`.
+- Across every session: `hermes config set model.default <alias>`, the same key the
+  `get` above reads. Say the alias out loud before you set it, and read it back with
+  `hermes config get model.default`. `model.model` is the legacy spelling of that
+  value: the loader copies it to `default` only when `default` is absent, then drops
+  it, and a persisted `/model` writes `default:` - so after one in-session switch
+  `hermes config set model.model <alias>` prints a success line and changes nothing,
+  and `hermes config get model.model` answers "Config key not set" even when a model
+  is set.
+
+All three take a pickable alias from the table above - every row but
+`compaction-fast`, which no row declares and the picker never offers, for the reason
+given below. And the alias has to be *declared* for any of them to land. That is what
+the seed's `providers:` block in `hermes/config.yaml`
+is for: Hermes routes a typed `/model <alias>` to the provider row that declares that
+id, and leaves a name no row declares on the current provider as an unknown hidden
+model. So when an alias "does nothing", the declaration is the first thing to check -
+an alias the proxy serves that no row lists is routable at LiteLLM and invisible to the
+picker. The gate in `tests/bats/hermes-config.bats` fails when the two lists drift.
+That block arrives with the volume, though: the seeder copies the seed only when the
+file is absent, so a container seeded before it existed has no rows at all and every
+alias lands in that hidden case. Re-seeding is a host action, not one you can take from
+in here: hand the operator the `hermes-doctor` `diff` check, which names that drift and
+prints the `hermes-bootstrap --force` line that fixes it.
+
+The other switch is the route, and it is a separate setting from the model.
+`--provider <row>` and `hermes config set model.provider <row>` choose which
+`providers:` row answers - its base URL, its key, its API mode - and they differ in
+whether the model travels with it. The CLI flag takes the row's `default_model`
+along, so `--provider arc-chat` sends `chat`, `arc-coder` sends `coder`,
+`arc-coder-fast` sends `coder-fast` and `litellm` sends `agent`, with
+`-m/--model <alias>` overriding that. The config key is gated on no such flag:
+`hermes config set model.provider <row>` moves the route alone, and the request keeps
+sending what the `model:` block holds. Those rows all share one endpoint, so the
+picker folds them into a single `litellm` entry listing every alias they declare, and
+the Arc rows stay reachable as `--provider` routes and typed `/model` names rather
+than picker rows of their own. So a route move is not always a model move: with the
+flag it is both, and through the config key neither.
+
+`compaction-fast` is the one alias the proxy serves that no row declares, so the picker
+never offers it. It is the Arc summariser the two `*-fast` lanes hop to for a single
+conversation summary, and it carries no tool support; the seed keeps
+`discover_models: false` so Hermes never adopts it off the proxy's own model list.
+That is a hide rather than a wall. Typing it lands in the unknown-hidden-model case
+above, which Hermes *accepts*: the turn goes out with `model: compaction-fast` and the
+proxy serves that alias like any other. So keep the name out of what you type and out
+of what you tell an agent to reach for - nothing blocks it for you.
 
 Never write a key into `config.yaml` — `api_key` stays `${LITELLM_MASTER_KEY}`,
 expanded from the environment.
