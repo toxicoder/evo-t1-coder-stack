@@ -450,3 +450,26 @@ Roo need structured tool calls, which the Arc IPEX-LLM Ollama returns as plain t
 for the Qwen2.5-Coder weights. [litellm-routing.md](litellm-routing.md) owns the alias
 table, the picker, the pin, and the measured tool-call limitation (including which
 aliases do emit real calls).
+
+**The fast-compaction hop has four keys of its own.** On `agent-xhigh-fast` and
+`agent-swarm-fast` only, the proxy callback `litellm/compaction_router.py`
+recognises the CLI's conversation-summary call and re-serves it from the Arc
+group `compaction-fast`: a summary needs no extra-high thinking, which is what
+the Spark lane charges for it. The Grok Build CLI has no compaction-model
+setting, so nothing in a client config points that call anywhere and the hop can
+only live in the proxy - with the flag off, both lanes behave exactly like their
+non-fast parents. All four are read in that one module and set in the compose
+litellm service as `${KEY:-default}`, so a dotenv line overrides each one.
+[litellm-routing.md](litellm-routing.md) owns the mechanism.
+
+- `EVO_T1_FAST_COMPACTION` (default on) is the kill switch: `0`, `false` or
+  `off` stop the hop outright.
+- `EVO_T1_FAST_COMPACTION_LANES` (default `agent-xhigh-fast,agent-swarm-fast`)
+  names the model groups that may hop - name one of them to narrow the hop to
+  that lane alone.
+- `EVO_T1_FAST_COMPACTION_TARGET` (default `compaction-fast`) is the model group
+  a recognised summary is moved to.
+- `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default `24000`) is the guard. Above
+  that token estimate the call stays on its Spark lane, because the Arc weights
+  are a 32768-token model and Ollama would clamp the input rather than refuse
+  it - a silently truncated summary is worse than the slow one it replaced.
