@@ -701,7 +701,7 @@ router_settings:
   # setting it also self-arms the affinity callback. The valid flag names are
   # deployment_affinity, responses_api_deployment_check, session_affinity and
   # encrypted_content_affinity; an entry here REPLACES the global flag list for the
-  # group it names instead of adding to it. So the three `[]` entries below mean
+  # group it names instead of adding to it. So the four `[]` entries below mean
   # "no affinity check of any kind for these groups": no session pin resolves, and
   # every request is placed by the least-busy picker above. Every group absent from
   # this map keeps falling back to the global ["session_affinity"], which is why the
