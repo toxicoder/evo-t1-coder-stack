@@ -178,8 +178,13 @@ hermes_catalogue_aliases() {
 # to drive a session with it. Hermes' own /v1/models probe would otherwise adopt it
 # (the reason the row pins discover_models: false), so the pin is pinned here too.
 @test "hermes config: the summariser lane stays out of the picker" {
-  run grep -E '^[[:space:]]*compaction-fast:' "${CONFIG}"
-  [ "${status}" -ne 0 ]
+  # This is the only guard: the derived coverage test skips `compaction-fast` by name
+  # in its missing loop, and its stale loop accepts it because the proxy really does
+  # serve it. So report the offending line rather than failing on a bare status.
+  local leaked
+  leaked="$(grep -E '^[[:space:]]*compaction-fast:' "${CONFIG}" || true)"
+  [ -z "${leaked}" ] ||
+    { printf 'FAIL: compaction-fast is declared pickable: %s\n' "${leaked}" >&2; return 1; }
   assert_contains_file "no unsanctioned discovery" "${CONFIG}" 'discover_models: false'
 }
 

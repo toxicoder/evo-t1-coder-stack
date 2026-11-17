@@ -26,11 +26,11 @@ model:
 # own proxy plus one row per Arc weight. The row is what makes an alias a choice:
 # Hermes routes a typed `/model <alias>` (and `--model <alias>`) to the provider
 # that *declares* that id - hermes_cli/model_switch.py matches the typed name
-# against each entry's `models`, `model` and `default_model`, exactly and case
-# first - and a name no row declares is left on the current provider as an unknown
-# hidden model. `models:` below is therefore the whole client-selectable set from
-# litellm/config.yaml, and the gate in tests/bats/hermes-config.bats fails when the
-# two lists drift apart.
+# against each entry's `models`, `model` and `default_model`, exactly and
+# case-insensitively - and a name no row declares is left on the current provider as
+# an unknown hidden model. `models:` below is therefore the whole client-selectable
+# set from litellm/config.yaml, and the gate in tests/bats/hermes-config.bats fails
+# when the two lists drift apart.
 #
 # `default_model` is a row's own active selection, and it is not the switch that
 # picks the model for a turn. Measured against the shipped image: `hermes --provider
