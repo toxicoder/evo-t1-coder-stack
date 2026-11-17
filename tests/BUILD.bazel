@@ -378,6 +378,7 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
     ],
     "litellm-config.bats": [
+        "//:env_example",
         "//:templates_payload",
         "//litellm:config",
     ],

@@ -467,7 +467,8 @@ lane_param_lines() {
 }
 
 @test "compaction: compose mounts the hook beside the config, read-only" {
-  # The proxy CLI puts /app on sys.path, so the module has to sit beside the config for
+  # The proxy resolves a callback's dotted name against the directory holding the config
+  # file, so the module has to sit beside the config for
   # the dotted callback path to import at all. Both mounts are read-only: the container
   # gets no route to rewriting the routing file or the hook that gates it.
   local compose="${REPO_ROOT}/docker-compose.yml"
@@ -476,6 +477,58 @@ lane_param_lines() {
   [ "${status}" -eq 0 ] || { echo "the config is not mounted read-only at /app/config.yaml" >&2; return 1; }
   run grep -F -- './litellm/compaction_router.py:/app/compaction_router.py:ro' "${compose}"
   [ "${status}" -eq 0 ] || { echo "the hook is not mounted read-only at /app/compaction_router.py" >&2; return 1; }
+}
+
+@test "compaction: every knob the module reads is passed through with its default" {
+  # The module is the only reader and compose the only place an operator can set these,
+  # so a knob that exists in one file and not the other is a policy nobody can change --
+  # or, the other way round, a compose entry the proxy never looks at. Both directions are
+  # checked, and each passthrough has to carry the module's own default so an unset dotenv
+  # boots the shipped policy rather than an empty one.
+  local compose="${REPO_ROOT}/docker-compose.yml"
+  local mod="${REPO_ROOT}/litellm/compaction_router.py"
+  local sample="${REPO_ROOT}/.env.example"
+  [[ -f "${compose}" ]] || skip "docker-compose.yml is not reachable from ${REPO_ROOT}"
+  [[ -f "${mod}" ]] || skip "litellm/compaction_router.py is not reachable from ${REPO_ROOT}"
+  [[ -f "${sample}" ]] || skip ".env.example is not reachable from ${REPO_ROOT}"
+  local names name line arg shipped want
+  names="$(grep -oE '_setting\("EVO_T1_FAST_COMPACTION[A-Z_]*"' "${mod}" \
+    | sed -E 's/.*\("([^"]*)".*/\1/' | LC_ALL=C sort -u)"
+  # Five, because a fourth tier would be a third target nobody declared, and because a
+  # knob quietly dropped from this list is the same silent gap the loop below refuses.
+  assert_eq "the module reads exactly five compaction knobs" "5" \
+    "$(printf '%s\n' "${names}" | grep -c . || true)"
+  for name in ${names}; do
+    line="$(grep -E "^[[:space:]]+${name}: " "${compose}" || true)"
+    [ -n "${line}" ] || { echo "compose passes no ${name}" >&2; return 1; }
+    want='${'"${name}"':-'
+    [[ "${line}" == *"${want}"* ]] || {
+      echo "${name} is passed without a :- default, so an unset dotenv blanks it" >&2
+      return 1
+    }
+    # The module names its default as a literal or as a DEFAULT_* constant, and either
+    # way compose has to ship the same value: a compose default that drifted is the
+    # policy the container actually boots, and nobody reading the module would know.
+    arg="$(grep -oE "_setting\(\"${name}\", [^)]*\)" "${mod}" | head -n 1 \
+      | sed -E 's/\)$//; s/^.*, //; s/^str\(//; s/^"//; s/"$//' | head -n 1)"
+    if [[ "${arg}" == DEFAULT_* ]]; then
+      shipped="$(sed -n "s/^${arg}: *Final *= *\"\{0,1\}\([0-9A-Za-z,.:-]*\)\"\{0,1\}.*/\1/p" "${mod}" | head -n 1)"
+    else
+      shipped="${arg}"
+    fi
+    [ -n "${shipped}" ] || { echo "the module gives ${name} no readable default" >&2; return 1; }
+    [[ "${line}" == *":-${shipped}}"* ]] || {
+      echo "${name}: compose defaults away from the module's ${shipped}" >&2
+      return 1
+    }
+    run grep -E "^${name}=" "${sample}"
+    [ "${status}" -eq 0 ] || { echo ".env.example never shows ${name}" >&2; return 1; }
+  done
+  # And nothing extra: a compose entry the module stopped reading reads as a live knob.
+  local extra
+  extra="$(grep -oE '^[[:space:]]+EVO_T1_FAST_COMPACTION[A-Z_]*:' "${compose}" \
+    | tr -d ' :' | LC_ALL=C sort -u | comm -23 - <(printf '%s\n' "${names}"))"
+  [ -z "${extra}" ] || { echo "compose passes knobs the module never reads: ${extra}" >&2; return 1; }
 }
 
 @test "compaction: the hop is armed by default and its kill switch names every off value" {

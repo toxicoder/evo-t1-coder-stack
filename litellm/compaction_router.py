@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
-"""Move the Grok CLI's conversation-summary call onto the stack's fast Arc lane.
+"""Move the Grok CLI's conversation-summary call off its extra-high Spark lane.
 
 The Grok Build CLI has no compaction-model setting. The summary call it makes when a
 session nears its context window rides the session model, and on a Spark lane that means
 Qwen3.8-Flash-Next answering at extra-high thinking -- which is most of what a summary
 costs, because a summary needs no thinking at all. The two fast-compaction lanes
 (``agent-xhigh-fast`` and ``agent-swarm-fast``) therefore ask this callback to move that
-one call onto ``compaction-fast``, the small Ollama-served coding weight on the Arc, and
-every other call of the same conversation stays on its Spark box.
+one call off the thinking level it was billed at, onto a target chosen by how much the
+summary has to read, and every other call of the same conversation stays where it was.
 
 Registered in litellm/config.yaml as ``litellm_settings.callbacks`` entry
 ``compaction_router.proxy_handler_instance``, and bind-mounted by docker-compose.yml at
-``/app/compaction_router.py``: the proxy CLI puts the working directory on ``sys.path``,
-so the file has to sit beside the config rather than in a subdirectory.
+``/app/compaction_router.py``: the proxy resolves a callback's dotted name against the
+directory holding the config file, so the file has to sit beside the config rather than
+in a subdirectory.
 
 Everything a caller can tune is an environment variable read here and nowhere else, so
 one ``docker compose up`` view shows the whole policy:
@@ -23,21 +24,36 @@ variable                                     default
 ``EVO_T1_FAST_COMPACTION``                   on (``0``/``false``/``off`` disable it)
 ``EVO_T1_FAST_COMPACTION_LANES``             ``agent-xhigh-fast,agent-swarm-fast``
 ``EVO_T1_FAST_COMPACTION_TARGET``            ``compaction-fast``
+``EVO_T1_FAST_COMPACTION_SPARK_TARGET``      ``agent-low``
 ``EVO_T1_FAST_COMPACTION_INPUT_LIMIT``       ``24000``
 ===========================================  =========================================
 
-The token ceiling is the safety half of the design. The Arc weights answer inside a 32k
-window, so a summary whose input is estimated above the ceiling is left on the Spark lane
-rather than truncated into a useless summary: the slow path is a worse day than a bad
-memory. Ollama accepts a per-request ``num_ctx``; it is deliberately not raised here,
-because a window above what the weights were trained on silently degrades the answer.
+Two targets, split by what the summary has to read. A summary within the ceiling goes to
+``compaction-fast``, the small Ollama-served coding weight on the Arc, which is where the
+speed comes from. One above it cannot go there: the Arc weights answer inside a 32k
+window, so a bigger input would be truncated into a useless summary of the very history it
+exists to preserve. That one goes to ``EVO_T1_FAST_COMPACTION_SPARK_TARGET`` instead --
+the same three Spark boxes, the same warm prefix cache, ``low`` baked into its thinking
+level rather than ``xhigh``, because a summary is prose and needs no reasoning at all.
+Ollama accepts a per-request ``num_ctx``; it is deliberately not raised here, because a
+window above what the weights were trained on silently degrades the answer.
+
+A tier whose target reads blank, or names the group the call arrived on, has nowhere to
+send the call, and the call stays exactly where its caller put it. A tier whose target names
+no group ``config.yaml`` declares is refused the same way, with one warning line: LiteLLM
+validates neither knob, so a typo there would move the summary onto a model that does not
+exist and fail the call that this module exists to speed up. Staying put is the safe
+position rather than a failure: the request still answers, only slowly.
 """
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
+import pathlib
+import re
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
@@ -62,12 +78,66 @@ COMPACTION_MARKER: Final = (
 )
 
 DISABLED_VALUES: Final = frozenset({"0", "false", "off", "no"})
+# The two roles the CLI writes the summary ask from. A trailing message in any other
+# role -- a tool result, an assistant turn -- is conversation content that quotes the
+# sentence rather than the CLI asking for a summary.
+ASKING_ROLES: Final = frozenset({"user", "system"})
 DEFAULT_LANES: Final = "agent-xhigh-fast,agent-swarm-fast"
 DEFAULT_TARGET: Final = "compaction-fast"
+DEFAULT_SPARK_TARGET: Final = "agent-low"
 DEFAULT_INPUT_LIMIT: Final = 24000
-# Four characters per token is the usual rough fit for English prose and it is the wrong
-# direction to be wrong in here: an underestimate only leaves a call on the Spark lane.
+# Four characters per token is the usual rough fit for English prose. An underestimate
+# now costs more than a slow answer -- it sends a summary the Arc cannot read to the Arc
+# -- so the count below leans generous and takes the structural characters with it.
 CHARS_PER_TOKEN: Final = 4
+
+# A ``model_name:`` entry at any indent in the config beside this module. Read as text
+# rather than parsed as YAML: the only question asked of the file is whether one string is
+# one of these values, and a parser would be a second way for the routing file to break
+# this module's boot.
+_MODEL_NAME_LINE: Final = re.compile(r"^[ \t]*-[ \t]+model_name:[ \t]*([^ \t#]+)")
+
+
+@functools.lru_cache(maxsize=1)
+def declared_model_groups() -> frozenset[str]:
+    """The model groups the routing config beside this module declares.
+
+    The two target knobs are operator input and neither is validated by LiteLLM: point one
+    at a group nobody declared and the summary call is moved onto a model that does not
+    exist, where it fails instead of degrading -- and a mistyped knob looks exactly like a
+    working one until the next compaction. An unreadable file returns the empty set and the
+    caller treats that as "nothing to check against", because a missing config is a reason
+    to keep the hop the alias asked for, not to disarm it.
+    """
+    try:
+        text = (pathlib.Path(__file__).resolve().parent / "config.yaml").read_text(
+            encoding="utf-8"
+        )
+    except OSError:
+        LOGGER.warning(
+            "compaction router: cannot read the config beside this module;"
+            " the two target knobs go unchecked"
+        )
+        return frozenset()
+    return frozenset(
+        match.group(1)
+        for line in text.splitlines()
+        if (match := _MODEL_NAME_LINE.match(line))
+    )
+
+
+def _target_is_declared(target: str, declared: frozenset[str]) -> bool:
+    """Whether a tier may be used, with an unreadable config read as no objection."""
+    if not declared:
+        return True
+    if target in declared:
+        return True
+    LOGGER.warning(
+        "compaction router: target %r is no model group in config.yaml;"
+        " leaving the summary on its lane",
+        target,
+    )
+    return False
 
 
 def _setting(name: str, default: str) -> str:
@@ -76,6 +146,17 @@ def _setting(name: str, default: str) -> str:
     if value is None or not value.strip():
         return default
     return value.strip()
+
+
+def _target_setting(name: str, default: str) -> str:
+    """Read one target knob, keeping a blank blank.
+
+    An unset destination means the shipped one; a destination the operator cleared means
+    this tier has nowhere to send the call. Reading either as the default would move the
+    call they were parking, and a rewritten ``model`` cannot be undone from here.
+    """
+    value = os.environ.get(name)
+    return default if value is None else value.strip()
 
 
 def fast_compaction_enabled() -> bool:
@@ -98,12 +179,17 @@ def fast_compaction_lanes() -> frozenset[str]:
 
 
 def fast_compaction_target() -> str:
-    """The model group a recognised compaction call is moved to."""
-    return _setting("EVO_T1_FAST_COMPACTION_TARGET", DEFAULT_TARGET)
+    """The Arc model group a summary small enough to read whole is moved to."""
+    return _target_setting("EVO_T1_FAST_COMPACTION_TARGET", DEFAULT_TARGET)
+
+
+def fast_compaction_spark_target() -> str:
+    """The Spark model group a summary too big for the Arc is moved to."""
+    return _target_setting("EVO_T1_FAST_COMPACTION_SPARK_TARGET", DEFAULT_SPARK_TARGET)
 
 
 def max_compaction_input_tokens() -> int:
-    """The largest summary input the target lane can actually hold."""
+    """The largest summary input the Arc target can actually hold."""
     raw = _setting("EVO_T1_FAST_COMPACTION_INPUT_LIMIT", str(DEFAULT_INPUT_LIMIT))
     try:
         return int(raw)
@@ -141,13 +227,20 @@ def is_compaction_request(data: dict[str, object]) -> bool:
     """Whether this request is the CLI asking for a summary of the conversation.
 
     The instruction lands as the trailing message, with the system prompt beside it, so
-    both are read and nothing in between is: a conversation that merely quotes the
-    sentence is not a compaction call, and the newest message is where the CLI puts it.
+    both are read and nothing in between is. The trailing message also has to come from
+    one of the two roles the CLI writes that ask from: a ``tool`` result that happens to
+    carry the sentence is a file the agent just read, not a compaction, and the repo
+    quotes the marker verbatim in its own docs and tests, so reading one of those is an
+    everyday event on these lanes. Moving that turn would answer it from the summary
+    target with its tools stripped.
     """
     messages = _messages(data)
     if not messages:
         return False
-    candidates: list[object] = [messages[-1]]
+    last = messages[-1]
+    if not isinstance(last, dict) or last.get("role") not in ASKING_ROLES:
+        return False
+    candidates: list[object] = [last]
     first = messages[0]
     if isinstance(first, dict) and first.get("role") == "system":
         candidates.append(first)
@@ -158,17 +251,39 @@ def is_compaction_request(data: dict[str, object]) -> bool:
     return False
 
 
+def _extra_chars(message: dict[str, object]) -> int:
+    """Characters this turn makes the backend prefill that ``_content_text`` drops.
+
+    A content part with no ``text`` -- an image's base64 payload is the case that
+    matters -- and an assistant's ``tool_calls`` arguments are both prefilled and both
+    invisible to the text flatteners, which read a 400,000-character image as one token.
+    The estimate's only job is keeping an oversized summary off a 32k model, so it counts
+    what goes over the wire rather than what a human would call prose.
+    """
+    chars = 0
+    content = message.get("content")
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict) and not isinstance(part.get("text"), str):
+                chars += len(json.dumps(part, sort_keys=True, default=str))
+    calls = message.get("tool_calls")
+    if isinstance(calls, list):
+        chars += len(json.dumps(calls, sort_keys=True, default=str))
+    return chars
+
+
 def estimate_input_tokens(data: dict[str, object]) -> int:
     """Rough input size of the request, counting the schemas riding along with it.
 
     The proxy has no tokenizer here and the Arc lane has no headroom to guess about, so
     this counts characters over everything the backend will actually prefill. It is an
-    estimate with one job: keep an oversized summary off a 32k model.
+    estimate with one job: pick the tier that can read the whole conversation.
     """
     chars = 0
     for message in _messages(data):
         if isinstance(message, dict):
             chars += len(_content_text(message.get("content")))
+            chars += _extra_chars(message)
             name = message.get("name")
             if isinstance(name, str):
                 chars += len(name)
@@ -178,18 +293,38 @@ def estimate_input_tokens(data: dict[str, object]) -> int:
     return chars // CHARS_PER_TOKEN
 
 
-def should_retarget(data: dict[str, object]) -> bool:
-    """The whole decision, kept apart from the mutation so a test can ask it alone."""
+def retarget_target(data: dict[str, object]) -> str:
+    """The group a recognised summary moves to, or "" when it stays where it is.
+
+    The ceiling is a fork rather than a wall. Within it the Arc reads the conversation
+    whole and answers fastest; above it no 32k model can, so the summary goes to a Spark
+    group that keeps the window and drops the thinking level. A tier whose target is
+    blank, or is the group the call already arrived on, has nowhere to send the call, and
+    the "" answer leaves the request exactly as its caller sent it.
+    """
     if not fast_compaction_enabled():
-        return False
+        return ""
     model = data.get("model")
     if not isinstance(model, str) or model not in fast_compaction_lanes():
-        return False
+        return ""
     if not _messages(data):
-        return False
+        return ""
     if not is_compaction_request(data):
-        return False
-    return estimate_input_tokens(data) <= max_compaction_input_tokens()
+        return ""
+    if estimate_input_tokens(data) <= max_compaction_input_tokens():
+        target = fast_compaction_target()
+    else:
+        target = fast_compaction_spark_target()
+    if not target or target == model:
+        return ""
+    if not _target_is_declared(target, declared_model_groups()):
+        return ""
+    return target
+
+
+def should_retarget(data: dict[str, object]) -> bool:
+    """The whole decision as a yes or no, for a caller that only asks that."""
+    return bool(retarget_target(data))
 
 
 class FastCompactionRouter(CustomLogger):
@@ -212,14 +347,14 @@ class FastCompactionRouter(CustomLogger):
         request continues exactly as its caller sent it.
         """
         try:
-            if not should_retarget(data):
-                return None
+            target = retarget_target(data)
         except Exception:  # a broken classifier must never cost a request
             LOGGER.exception(
                 "compaction router: decision failed; leaving the request on its lane"
             )
             return None
-        target = fast_compaction_target()
+        if not target:
+            return None
         original = data.get("model")
         data["model"] = target
         # A summary is prose: the tool schemas are dead weight to it, the tool-choice hint

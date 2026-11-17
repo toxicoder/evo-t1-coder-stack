@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import os
 import pathlib
 import sys
@@ -45,6 +46,9 @@ MODULE_PATH = REPO_ROOT / "litellm" / "compaction_router.py"
 # constant has to fail a test rather than quietly unarm the hop.
 MARKER: Final = "produce a faithful, concise summary of the conversation so far"
 TARGET: Final = "compaction-fast"
+# The second tier: the Spark group an oversized summary goes to, so it keeps a window
+# wide enough to read the whole conversation and only loses the thinking level.
+SPARK_TARGET: Final = "agent-low"
 DROPPED_KEYS: Final = ("tools", "tool_choice", "reasoning_effort")
 FAST_LANES: Final = ("agent-xhigh-fast", "agent-swarm-fast")
 ORDINARY_LANES: Final = ("agent-xhigh", "agent-swarm", "agent", "coder", "chat")
@@ -55,6 +59,7 @@ KNOBS: Final = (
     "EVO_T1_FAST_COMPACTION",
     "EVO_T1_FAST_COMPACTION_LANES",
     "EVO_T1_FAST_COMPACTION_TARGET",
+    "EVO_T1_FAST_COMPACTION_SPARK_TARGET",
     "EVO_T1_FAST_COMPACTION_INPUT_LIMIT",
 )
 
@@ -134,6 +139,12 @@ HOOK: Final = cast(PreCallHook, HANDLER)
 should_retarget: Final = cast(
     "Callable[[dict[str, object]], bool]", ROUTER.should_retarget
 )
+retarget_target: Final = cast(
+    "Callable[[dict[str, object]], str]", ROUTER.retarget_target
+)
+declared_model_groups: Final = cast(
+    "Callable[[], frozenset[str]]", ROUTER.declared_model_groups
+)
 estimate_input_tokens: Final = cast(
     "Callable[[dict[str, object]], int]", ROUTER.estimate_input_tokens
 )
@@ -209,14 +220,16 @@ class RouterCase(unittest.TestCase):
             HOOK.async_pre_call_hook(None, None, handed, "completion")
         )
 
-    def assert_hops(self, body: dict[str, object]) -> dict[str, object]:
+    def assert_hops(
+        self, body: dict[str, object], target: str = TARGET
+    ) -> dict[str, object]:
         """The call must move: the same dict back, retargeted, with the extras dropped."""
         for key in DROPPED_KEYS:
             self.assertIn(key, body, "the case must send what a hop is meant to drop")
         messages = body["messages"]
         handed, result = self.call(body)
         self.assertIs(result, handed, "the hook must return the dict it mutated")
-        self.assertEqual(TARGET, handed.get("model"))
+        self.assertEqual(target, handed.get("model"))
         for key in DROPPED_KEYS:
             self.assertNotIn(key, handed)
         # Everything the summary itself needs still rides along.
@@ -276,34 +289,44 @@ class ShouldRetargetTest(RouterCase):
         body["messages"] = []
         self.assertIs(False, should_retarget(body))
 
-    def test_an_estimate_above_the_ceiling_stays_on_the_lane(self) -> None:
+    def test_an_estimate_above_the_ceiling_still_hops(self) -> None:
+        # The ceiling is a fork, not a wall: past it the summary loses the Arc and gains
+        # the Spark group that has the window, and a request that stopped hopping here
+        # would be the bug this tier exists to prevent.
         body = summary_body("agent-xhigh-fast")
         self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="10")
         self.assertGreater(estimate_input_tokens(body), 10)
-        self.assertIs(False, should_retarget(body))
+        self.assertIs(True, should_retarget(body))
 
-    def test_the_shipped_ceiling_keeps_an_oversized_summary_on_the_lane(self) -> None:
+    def test_the_shipped_ceiling_sends_an_oversized_summary_to_the_spark_tier(
+        self,
+    ) -> None:
+        # A real auto-compaction arrives near 70% of the 262144-token window, which is
+        # far past the Arc model's 32k, so the shipped default has to answer it on a
+        # Spark group. An empty tier target would be the inert feature.
         body = summary_body("agent-swarm-fast")
         messages = cast("list[dict[str, object]]", body["messages"])
         messages.insert(
             -1, {"role": "user", "content": "the session, line after line\n" * 4000}
         )
         self.assertGreater(estimate_input_tokens(body), 24000)
-        self.assertIs(False, should_retarget(body))
+        self.assertEqual(SPARK_TARGET, retarget_target(body))
 
-    def test_an_estimate_exactly_at_the_ceiling_still_hops(self) -> None:
+    def test_an_estimate_exactly_at_the_ceiling_stays_on_the_arc_tier(self) -> None:
         body = summary_body("agent-swarm-fast")
         self.set_knobs(
             EVO_T1_FAST_COMPACTION_INPUT_LIMIT=str(estimate_input_tokens(body))
         )
-        self.assertIs(True, should_retarget(body))
+        self.assertEqual(TARGET, retarget_target(body))
 
-    def test_an_estimate_one_above_the_ceiling_does_not(self) -> None:
+    def test_an_estimate_one_above_the_ceiling_crosses_to_the_spark_tier(
+        self,
+    ) -> None:
         body = summary_body("agent-swarm-fast")
         self.set_knobs(
             EVO_T1_FAST_COMPACTION_INPUT_LIMIT=str(estimate_input_tokens(body) - 1)
         )
-        self.assertIs(False, should_retarget(body))
+        self.assertEqual(SPARK_TARGET, retarget_target(body))
 
     def test_a_ceiling_that_is_not_a_count_falls_back_and_warns_readably(self) -> None:
         # The fallback has to be quiet about the request and loud about the knob: the
@@ -367,10 +390,223 @@ class HookRetargetTest(RouterCase):
             with self.subTest(model=lane):
                 self.assert_stays_put(chat_body(lane))
 
-    def test_an_oversized_summary_comes_back_untouched(self) -> None:
+    def test_an_oversized_summary_moves_to_the_spark_tier(self) -> None:
+        # assert_hops already proves the thinking hint comes off on this tier too, which
+        # is the point: agent-low is an ordinary group and would otherwise inherit the
+        # caller's xhigh.
         body = summary_body("agent-xhigh-fast")
         self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="10")
+        self.assert_hops(body, SPARK_TARGET)
+
+
+class TierFlagTest(RouterCase):
+    """Each tier's target is an operator knob, and a tier with nowhere to go is off."""
+
+    def test_a_custom_arc_target_moves_the_small_summary_there(self) -> None:
+        self.set_knobs(EVO_T1_FAST_COMPACTION_TARGET="chat")
+        self.assert_hops(summary_body("agent-xhigh-fast"), "chat")
+
+    def test_a_custom_spark_target_moves_the_oversized_summary_there(self) -> None:
+        self.set_knobs(EVO_T1_FAST_COMPACTION_SPARK_TARGET="agent-medium")
+        body = summary_body("agent-swarm-fast")
+        self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="10")
+        self.assert_hops(body, "agent-medium")
+
+    def test_a_blank_arc_target_leaves_a_small_summary_on_its_lane(self) -> None:
+        # Blank is a position an operator can choose, not a mistake: it means "the Arc
+        # never answers a summary", and the safe answer is to keep the caller's own lane.
+        self.set_knobs(EVO_T1_FAST_COMPACTION_TARGET="")
+        body = summary_body("agent-xhigh-fast")
+        self.assertIs("", retarget_target(body))
         self.assert_stays_put(body)
+
+    def test_a_blank_spark_target_leaves_an_oversized_summary_on_its_lane(self) -> None:
+        self.set_knobs(
+            EVO_T1_FAST_COMPACTION_SPARK_TARGET="",
+            EVO_T1_FAST_COMPACTION_INPUT_LIMIT="10",
+        )
+        body = summary_body("agent-xhigh-fast")
+        self.assertIs("", retarget_target(body))
+        self.assert_stays_put(body)
+
+    def test_a_target_named_after_the_arriving_lane_sends_nowhere(self) -> None:
+        # agent-low is a lane the operator can pick as a session model, so a summary can
+        # legitimately arrive on the group its spark tier points at. Moving it there is a
+        # no-op that still costs a rewrite and drops the tool schemas, so the answer is no.
+        self.set_knobs(
+            EVO_T1_FAST_COMPACTION_LANES="agent-low",
+            EVO_T1_FAST_COMPACTION_INPUT_LIMIT="10",
+        )
+        body = summary_body("agent-low")
+        self.assertIs("", retarget_target(body))
+        self.assert_stays_put(body)
+
+    def test_a_target_that_names_no_declared_group_sends_nowhere(self) -> None:
+        # The two target knobs are operator input and LiteLLM validates neither, so a
+        # mistyped group name would move the summary onto a model that does not exist and
+        # the call would fail rather than degrade. The value is also taken whole, so a
+        # comma-padded typo cannot quietly resolve to the one name that was meant.
+        for typo in ("compaction-fas", "Compaction-Fast", "compaction-fast, agent-low"):
+            with self.subTest(target=typo):
+                self.set_knobs(EVO_T1_FAST_COMPACTION_TARGET=typo)
+                body = summary_body("agent-xhigh-fast")
+                self.assertIs("", retarget_target(body))
+                self.assert_stays_put(body)
+
+    def test_an_undeclared_spark_target_sends_an_oversized_summary_nowhere(
+        self,
+    ) -> None:
+        self.set_knobs(
+            EVO_T1_FAST_COMPACTION_SPARK_TARGET="agent-xhigh-fastest",
+            EVO_T1_FAST_COMPACTION_INPUT_LIMIT="10",
+        )
+        body = summary_body("agent-swarm-fast")
+        self.assertIs("", retarget_target(body))
+        self.assert_stays_put(body)
+
+    def test_an_undeclared_target_is_refused_loudly(self) -> None:
+        # A knob that silently does nothing is how a typo survives a quarter.
+        self.set_knobs(EVO_T1_FAST_COMPACTION_TARGET="compaction-fas")
+        with self.assertLogs("LiteLLM", level="WARNING") as caught:
+            self.assertIs("", retarget_target(summary_body("agent-xhigh-fast")))
+        self.assertEqual(1, len(caught.records))
+        message = caught.records[0].getMessage()
+        self.assertIn("compaction-fas", message)
+        self.assertIn("config.yaml", message)
+
+    def test_every_shipped_target_lane_and_parent_is_a_declared_group(self) -> None:
+        # The guard the typo case leans on has to agree with the shipped config, or the
+        # default policy would be refusing its own tiers.
+        declared = declared_model_groups()
+        self.assertTrue(declared, "the guard read no groups at all from config.yaml")
+        for name in (TARGET, SPARK_TARGET, *FAST_LANES, *ORDINARY_LANES):
+            self.assertIn(name, declared)
+
+    def test_the_shipped_arc_target_still_moves(self) -> None:
+        # A declared group moves, which is what makes the typo cases above about the name
+        # rather than about the hook refusing to run at all.
+        self.assert_hops(summary_body("agent-xhigh-fast"), TARGET)
+
+
+class RoleGateTest(RouterCase):
+    """Only the roles the CLI asks from can arm the hop."""
+
+    def test_a_tool_result_that_quotes_the_ask_does_not_hop(self) -> None:
+        # The repo quotes the marker verbatim in its docs and in this suite, so reading
+        # one of those files back is an everyday turn on these lanes. Hopping it would
+        # answer a real tool result from the summary model with its tools stripped.
+        body = summary_body("agent-xhigh-fast")
+        body["messages"] = [
+            {"role": "system", "content": "You are the Grok Build coding agent."},
+            {"role": "user", "content": "Read docs/litellm-routing.md."},
+            {
+                "role": "tool",
+                "tool_call_id": "call_1",
+                "content": "The page says: %s." % MARKER,
+            },
+        ]
+        self.assertIs(False, should_retarget(body))
+        self.assert_stays_put(body)
+
+    def test_an_asking_role_behind_a_trailing_tool_result_does_not_hop(self) -> None:
+        # The gate reads the trailing message, not any message: an earlier ask with a
+        # tool result after it is a turn the agent is still working on.
+        body = summary_body("agent-xhigh-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append(
+            {"role": "tool", "tool_call_id": "call_1", "content": "suite passed"}
+        )
+        self.assertIs(False, should_retarget(body))
+        self.assert_stays_put(body)
+
+    def test_a_system_turn_asking_still_hops_from_a_user_turn(self) -> None:
+        body = chat_body("agent-swarm-fast")
+        body["messages"] = [
+            {"role": "system", "content": "Task: %s." % MARKER},
+            {"role": "user", "content": "Go."},
+        ]
+        self.assertEqual(TARGET, retarget_target(body))
+
+    def test_the_marker_in_a_middle_turn_does_not_hop(self) -> None:
+        body = chat_body("agent-xhigh-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.insert(
+            1, {"role": "user", "content": "Earlier you were asked to %s." % MARKER}
+        )
+        self.assertIs(False, should_retarget(body))
+
+
+class EstimateCompletenessTest(RouterCase):
+    """The estimate has to see everything the backend will prefill."""
+
+    def test_an_image_part_is_counted_by_its_payload(self) -> None:
+        # 400,000 characters of base64 are one token to a text-only flattener, and are
+        # the difference between "the Arc can read this" and "it cannot".
+        body = chat_body("agent-swarm-fast")
+        self.assertLess(estimate_input_tokens(body), 24000)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append(
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64," + "A" * 400_000},
+                    },
+                ],
+            }
+        )
+        self.assertGreater(estimate_input_tokens(body), 24000)
+
+    def test_tool_call_arguments_are_counted(self) -> None:
+        body = chat_body("agent-swarm-fast")
+        before = estimate_input_tokens(body)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "run_terminal_command",
+                            "arguments": json.dumps({"command": "ls -la" * 20000}),
+                        },
+                    }
+                ],
+            }
+        )
+        self.assertGreater(estimate_input_tokens(body), before + 1000)
+
+    def test_a_text_part_is_not_counted_twice(self) -> None:
+        body = chat_body("agent-swarm-fast")
+        before = estimate_input_tokens(body)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append(
+            {"role": "user", "content": [{"type": "text", "text": "a" * 4000}]}
+        )
+        self.assertLess(estimate_input_tokens(body) - before, 1200)
+
+    def test_an_image_that_crosses_the_ceiling_picks_the_spark_tier(self) -> None:
+        # The shape a real screenshot-heavy session compacts as: the prose is short, so
+        # only a complete estimate keeps it off the 32k Arc model.
+        body = summary_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.insert(
+            -1,
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64," + "A" * 200_000},
+                    },
+                ],
+            },
+        )
+        self.assertEqual(SPARK_TARGET, retarget_target(body))
 
 
 class MalformedBodyTest(RouterCase):
@@ -436,7 +672,7 @@ class MalformedBodyTest(RouterCase):
         body = summary_body("agent-xhigh-fast")
         with (
             mock.patch.object(
-                ROUTER, "should_retarget", side_effect=RuntimeError("classifier")
+                ROUTER, "retarget_target", side_effect=RuntimeError("classifier")
             ) as decision,
             mock.patch.object(ROUTER.LOGGER, "exception") as logged,
         ):
