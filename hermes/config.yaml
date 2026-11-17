@@ -22,31 +22,70 @@ model:
   # assistant holds; there is no GitHub token here by design.
   api_key: ${LITELLM_MASTER_KEY}
 
-# Optional local providers, reachable through the same LiteLLM door as the model
-# above. These three name the models this stack runs on its own hardware: the
-# Arc 140T's IPEX-LLM Ollama weights, behind the `coder` / `coder-fast` / `chat`
-# aliases. A `providers:` entry is inert until something asks for it, so the
-# default above stays `agent` and nothing about a healthy Spark box changes;
-# reach one with `hermes --provider arc-chat`, or make it the default with
-# `hermes config set model.provider arc-chat`. `default_model` travels with the
-# entry, which is why there is one entry per alias rather than one shared
-# endpoint: LiteLLM owns the choice of what that alias means.
+# Every model this assistant can run, declared on one row that names the stack's
+# own proxy plus one row per Arc weight. The row is what makes an alias a choice:
+# Hermes routes a typed `/model <alias>` (and `--model <alias>`) to the provider
+# that *declares* that id - hermes_cli/model_switch.py matches the typed name
+# against each entry's `models`, `model` and `default_model`, exactly and case
+# first - and a name no row declares is left on the current provider as an unknown
+# hidden model. `models:` below is therefore the whole client-selectable set from
+# litellm/config.yaml, and the gate in tests/bats/hermes-config.bats fails when the
+# two lists drift apart.
+#
+# `default_model` is a row's own active selection, and it is not the switch that
+# picks the model for a turn. Measured against the shipped image: `hermes --provider
+# <row>` with no model still sends the value from the `model:` block above, and only
+# `--model <alias>`, `hermes-shell --model <alias>`, or `hermes config set
+# model.model <alias>` changes the request. Route and model are two separate
+# switches, and a row is inert until something names it, so the default stays
+# `agent` and a healthy Spark box behaves exactly as it did before this block.
+#
+# `discover_models: false` keeps the picker to this list. Left on, Hermes probes the
+# endpoint's /v1/models and adopts whatever the proxy advertises, which includes
+# `compaction-fast` - the Arc summariser the two `-fast` lanes hop to for a
+# conversation summary. It carries no tool support and no business driving a
+# session, so it stays out of the catalogue and litellm/config.yaml remains the one
+# owner of that lane.
 #
 # Why through LiteLLM and not at http://ollama:11434 directly: the proxy is the
 # stack's sole model transport, it is where the aliases and the Arc's context
 # window are defined, and 11434 is deliberately unpublished. The same door also
-# means these entries carry the same key the default one does, expanded from the
-# container's environment at load. No context_length is set here: 32768 is the
-# Arc weights' window, litellm/config.yaml owns that number, and a second copy
-# would be a second owner of it.
-#
-# The `spark-coder` / `spark-chat` aliases (Ollama on a Spark box) answer on this
-# endpoint too; no entry is shipped for them because they are off-box, optional,
-# and usually powered off. Add one with the same three keys when a box is there.
+# means every entry here carries the same key the default one does, expanded from
+# the container's environment at load. No context_length is set anywhere in this
+# file: litellm/config.yaml owns those numbers, and a second copy would be a second
+# owner of them.
 providers:
-  # The one Arc model that can drive an agent loop: qwen2.5:7b returns a real
-  # tool_calls array on this runtime (measured), so this is the local lane to
-  # pick when every Spark box is down and a Chat tab session still needs tools.
+  # The catalogue. The nine `agent-*` aliases are the tool-capable Spark lanes, one
+  # per thinking level and per fleet role. `chat` is the Arc weight that still
+  # returns a real tool_calls array when every Spark box is down. `coder` and
+  # `coder-fast` are chat-only on this runtime - see the arc-coder note. The two
+  # `spark-*` aliases are Ollama on a Spark box: declared so they are pickable, and
+  # off-box and usually powered off, so a cold box answers a connection error.
+  litellm:
+    base_url: http://litellm:4000/v1
+    api_key: ${LITELLM_MASTER_KEY}
+    default_model: agent
+    discover_models: false
+    models:
+      agent: {}
+      agent-low: {}
+      agent-medium: {}
+      agent-xhigh: {}
+      agent-swarm: {}
+      agent-explore: {}
+      agent-review: {}
+      agent-xhigh-fast: {}
+      agent-swarm-fast: {}
+      coder: {}
+      coder-fast: {}
+      chat: {}
+      spark-coder: {}
+      spark-chat: {}
+  # The three models this stack runs on its own hardware, each also a named route
+  # for one session: `hermes --provider arc-chat`. The one Arc model that can drive
+  # an agent loop is chat - qwen2.5:7b returns a real tool_calls array on this
+  # runtime (measured), so it is the local lane to pick when every Spark box is down
+  # and a Chat tab session still needs tools.
   arc-chat:
     base_url: http://litellm:4000/v1
     api_key: ${LITELLM_MASTER_KEY}

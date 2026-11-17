@@ -278,6 +278,9 @@ _SUITE_PAYLOAD = {
         "//:env_sample",
         "//docs:content",
         "//hermes:payload",
+        # The alias-coverage gate derives the pickable set from the proxy's own
+        # model_list, so that file is this suite's read.
+        "//litellm:config",
         "//infisical:payload",
         "//proxy:confs",
     ],
