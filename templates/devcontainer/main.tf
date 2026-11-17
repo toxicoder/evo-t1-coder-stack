@@ -279,12 +279,24 @@ locals {
       name        = "agent-xhigh (Spark, thinking extra high)"
       description = "Spark agent lane; thinking baked to xhigh in LiteLLM"
     },
+    # Same Spark lane and the same baked xhigh thinking; only the CLI's
+    # conversation-summary call moves, and the proxy moves it, not the client.
+    {
+      value       = "agent-xhigh-fast"
+      name        = "Agent (DGX Spark vLLM, thinking extra high, fast compaction)"
+      description = "Spark agent lane; thinking baked to xhigh, summary call served by the fast Arc lane"
+    },
     # Same three Spark boxes, minus the session pin: the proxy places each
     # request on the least-busy box, so this is the lane a fan-out spreads over.
     {
       value       = "agent-swarm"
       name        = "agent-swarm (Spark, spread across all boxes)"
       description = "Spark agent lane; every request placed on the least-busy Spark"
+    },
+    {
+      value       = "agent-swarm-fast"
+      name        = "Agent swarm (all DGX Sparks, fast compaction)"
+      description = "Spark agent lane; every request on the least-busy Spark, summary call on the fast Arc lane"
     },
     {
       value       = "coder"
