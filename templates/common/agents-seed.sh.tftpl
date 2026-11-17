@@ -30,21 +30,54 @@ fi
 # grok-config.toml.tftpl, so what a leftover swap holds is doomed either way - and the
 # marker test below is what this argues from, because a coder_script runs in no promised
 # order with the startup script (templates/workspace/coder.tf:272), so the sweep cannot
-# count on having seen that rewrite first. Orphans only: a swap
-# written in the last hour, or one some process still has open, stays. A sibling
-# workspace shares this volume and its editor is invisible from here, which is what
-# the age check is for. docs/coder-templates.md#stale-editor-swap-files
+# count on having seen that rewrite first.
+#
+# Two checks decide what counts as an orphan, and neither one proves a writer is dead.
+# vim writes the swap once about four seconds after a change and then goes quiet while
+# you read, so a live session idling over the file looks exactly like a crashed one: the
+# hour below is courtesy toward a session that may still be open in another container,
+# not evidence. And each workspace has its own PID namespace, so the /proc scan sees this
+# container's descriptors only - a sibling workspace holding the same file open on the
+# shared volume is invisible here. So the sweep moves what it judges orphaned rather than
+# deleting it: nothing this step cannot prove stays recoverable, and a wrong judgement is
+# an `ls ~/.grok/stale-swaps` away from undone. docs/coder-templates.md#stale-editor-swap-files
 grok_sweep_config_swaps() {
   # Only a config the stack owns: an unmanaged one is the operator's file, swap and all.
   grep -qFs -e 'managed-by: evo-t1-coder-stack' -e '__evoT1Stack = true' \
     "$HOME/.grok/config.toml" 2>/dev/null || return 0
+  # Fail closed: with no way to tell orphan from live, leave every swap for the operator
+  # to answer by hand. A blocked `vim` is a visible nuisance; a wrong deletion is not.
+  command -v find >/dev/null 2>&1 || return 0
+  command -v readlink >/dev/null 2>&1 || return 0
+  command -v basename >/dev/null 2>&1 || return 0
+  [ -d /proc ] || return 0
+  grok_stale_dir="$HOME/.grok/stale-swaps"
   for grok_swap in "$HOME/.grok"/.config.toml.sw?; do
     [ -f "$grok_swap" ] || continue
-    [ -n "$(find "$grok_swap" -mmin -60 2>/dev/null)" ] && continue
-    [ -n "$(find /proc/[0-9]*/fd -lname "$grok_swap" -print -quit 2>/dev/null)" ] && continue
-    rm -f "$grok_swap"
-    echo "Removed the stale editor swap $grok_swap: the session that left it died" \
-      "with an earlier container; this boot replaces the file it shadows either way."
+    grok_recent="$(find "$grok_swap" -mmin -60 2>/dev/null)" || continue
+    [ -n "$grok_recent" ] && continue
+    # Compare resolved targets by exact string: -lname would glob-match the path, so a
+    # bracket in $HOME, or a $HOME that is itself a symlink, would hide a live holder.
+    grok_target="$(readlink -f "$grok_swap" 2>/dev/null)" || grok_target="$grok_swap"
+    for grok_fd in /proc/[0-9]*/fd/*; do
+      [ -e "$grok_fd" ] || continue
+      [ "$(readlink "$grok_fd" 2>/dev/null)" = "$grok_target" ] && continue 2
+    done
+    # basename over a brace expansion: a brace expansion in this file has to be escaped
+    # for Terraform to leave it alone, and the escaped form is not the shell the render
+    # produces, so the gate that drives this body as written would be testing something
+    # the boot never runs.
+    grok_base="$(basename "$grok_swap" 2>/dev/null)" || continue
+    [ -n "$grok_base" ] || continue
+    mkdir -p "$grok_stale_dir" 2>/dev/null || continue
+    mv -f "$grok_swap" "$grok_stale_dir/$grok_base.orphan.$$" 2>/dev/null || continue
+    echo "Moved the stale editor swap $grok_swap aside into ~/.grok/stale-swaps: the" \
+      "session that left it is not one this container can see, and this boot replaces" \
+      "the file it shadows either way. vim -r that path recovers it."
   done
+  # An archive nobody claimed in a month is junk; the sweep keeps at most one boot's
+  # worth of second guesses.
+  find "$grok_stale_dir" -maxdepth 1 -type f -name '*.orphan.*' -mtime +30 \
+    -exec rm -f {} + 2>/dev/null || true
 }
 grok_sweep_config_swaps || true

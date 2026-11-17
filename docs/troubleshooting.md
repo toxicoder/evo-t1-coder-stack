@@ -921,10 +921,14 @@ coder restart <workspace>
   re-renders `config.toml` from `grok-config.toml.tftpl`, so recovery would restore bytes
   the stack is going to replace regardless.
 - A current workspace clears these at boot by itself. `grok_sweep_config_swaps` in the
-  `agents-seed.sh.tftpl` body removes a swap of that name once nothing holds it open and
-  it is over an hour old, and leaves a config without a stack marker alone. If you are
-  still meeting the prompt, the workspace predates that body, so restart it once after
-  `bazelisk run //scripts:push-template`.
+  `agents-seed.sh.tftpl` body moves a swap of that name into `~/.grok/stale-swaps/` once
+  nothing in the container holds it open and it is over an hour old, so `vim -r` on the
+  archived path still gets the bytes back. Two reasons it may stay silent, both worth
+  checking before you blame the sweep: the config lost its stack marker, and the sweep
+  deliberately stands down on an unmanaged config (`grep -c '__evoT1Stack' ~/.grok/config.toml`
+  answers it; `grok mcp add` rewriting the file is the usual cause, and
+  `bazelisk run //scripts:seed-dev-env -- --force` is the fix); or the workspace predates
+  the body, which a `bazelisk run //scripts:push-template` and one restart settles.
 - The reason the prompt keeps coming back is that the file is being hand-edited at all.
   It is re-rendered on every start, and under a shared profile the boot that overwrites
   it can be a sibling's, so an edit made there survives until someone restarts. The keys
@@ -952,10 +956,21 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
   (3 boxes x `PARALLEL` 5). Four keys come from that one variable: `general-purpose`,
   `implementer`, `documenter`, `tester`. If those read `agent`, the template was pushed
   with `--var grok_subagents_lane=agent`, which is the documented rollback to one box.
-- Nothing in this repo sets it: no dotenv key and no CLI flag names it, and
-  `//scripts:push-template` has no passthrough. So it was set by a raw
-  `coder templates push --var grok_subagents_lane=...`, and it is undone the same way
-  from the stack host, or by re-pushing once the default in `templates/*/coder.tf` is
+- First work out which producer wrote the file, because there are two and they take the
+  lane from different places:
+
+```bash
+grep -m1 'x-litellm-session-id' ~/.grok/config.toml
+```
+
+  A `ws-...` value means Terraform rendered it; `contributor` means
+  `bazelisk run //scripts:seed-dev-env` did, and that path takes the lane from the
+  `GROK_SUBAGENTS_LANE` environment variable (`scripts/seed-dev-env.sh`), defaulting to
+  `agent-swarm`.
+- On the Terraform path, no dotenv key, no CLI flag, and no `//scripts:push-template`
+  passthrough names that variable, so it was set by a raw
+  `coder templates push --var grok_subagents_lane=...`. Undo it the same way from the
+  stack host, or by re-pushing once the default in `templates/*/coder.tf` is
   `agent-swarm`:
 
 ```bash
