@@ -1027,6 +1027,46 @@ rules above.
 - The Coder Agents seeds under `~/.coder` and `~/.agents` are not on that mount: they live
   on the workspace's own home volume, and that stage neither needs nor disturbs it.
 
+### Stale editor swap files
+
+The same persistence that makes `config.toml` one file for every sibling turns a killed
+editor into a permanent nuisance. Open `vim ~/.grok/config.toml`, stop the workspace with
+the editor still up, and the agent's process tree dies while the swap file stays on the
+volume. The next `vim` on that name stops with `E325: ATTENTION` and a question about a
+session whose container has been gone for days, and because "(E)dit anyway" leaves the
+swap in place and mints `.swo`, `.swn`, `.swm` beside it, an operator who keeps answering
+the prompt ends up with four of them and a prompt that never goes away.
+
+The boot clears them, from `grok_sweep_config_swaps` in the
+[`agents-seed.sh.tftpl`](../templates/common/agents-seed.sh.tftpl) body. It runs there
+rather than in `startup.sh.tftpl` because the startup argument is held 12 KiB clear of the
+one-argument ceiling (see [The one-argument ceiling](#the-one-argument-ceiling)) and this
+body has its own ceiling and room, and because that body is already where a stack-owned
+file under `~/.grok` is refreshed against its marker. It runs after the blocking startup
+script, so the boot has already re-rendered `config.toml` by the time the sweep looks, and
+what any leftover swap holds describes bytes that no longer exist.
+
+Four things keep it from being a boot that quietly eats a file:
+
+- It only runs when `config.toml` still carries a stack marker, by the same contract as
+  [Marker ownership of the seeded files](#marker-ownership-of-the-seeded-files). A config
+  whose marker a person deleted is theirs, swap and all.
+- A swap written within the last hour stays. The descriptor check below only sees this
+  container, and a sibling workspace sharing the volume can have that file open right now.
+- A swap some process still holds open stays, read straight off `/proc/*/fd`.
+- Only vim's own `.sw?` suffix on that one name is a candidate, so `.notes.md.swp` and a
+  `.config.toml.newswp` are never touched. Each removal is announced on the body's log.
+
+This is not an invitation to hand-edit the file. `config.toml` is re-rendered from
+`grok-config.toml.tftpl` on every start, so an edit a person makes there is overwritten by
+the next boot, and under `shared` the boot that overwrites it may be a sibling's. The keys
+a person actually wants are template variables: `grok_subagent_max_concurrent` and
+`grok_subagents_lane` for the fan-out
+([the fan-out seam](grok-build-and-agents.md#the-fan-out-seam)), and `grok_config_extra`
+for anything the managed block does not set. Change the seed or push the variable, then
+restart; `bazelisk run //scripts:seed-dev-env -- --force` re-materializes the file from
+this checkout when the intent really is to rewrite it.
+
 ### The Coder Agents seeds and their agents-tree twins
 
 - The chat agent discovers its context through its *default* paths (verified against the

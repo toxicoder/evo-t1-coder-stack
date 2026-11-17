@@ -908,6 +908,65 @@ coder restart <workspace>
 - Then run `bash -lc 'command -v grok'`. A workspace on a current image answers
   `/usr/local/bin/grok`, so an empty answer means the CLI is missing, not the profile.
 
+### `E325: ATTENTION / Found a swap file by the name "~/.grok/.config.toml.swp"` -> a vim the last workspace stop killed
+
+- `~/.grok` is the owner's persistent profile volume, so a swap file outlives the
+  container that produced it. The usual history is: someone opened the config in vim,
+  the workspace was stopped with the editor still up, and the swap is now asking about a
+  session whose container no longer exists.
+- Read the prompt's own lines before choosing. `modified: no` means it holds no
+  unsaved work. The `host name` says which workspace's vim wrote it - a sibling
+  workspace shares this volume, so the file can predate this container entirely.
+- `(D)elete it` is the right answer for an orphan. Do not pick `(R)ecover`: the boot
+  re-renders `config.toml` from `grok-config.toml.tftpl`, so recovery would restore
+  bytes the stack has already replaced.
+- A current workspace clears these at boot by itself. `grok_sweep_config_swaps` in the
+  `agents-seed.sh.tftpl` body removes a swap of that name once nothing holds it open and
+  it is over an hour old, and leaves a config without a stack marker alone. If you are
+  still meeting the prompt, the workspace predates that body, so restart it once after
+  `bazelisk run //scripts:push-template`.
+- The reason the prompt keeps coming back is that the file is being hand-edited at all.
+  It is re-rendered on every start, and under a shared profile the boot that overwrites
+  it can be a sibling's, so an edit made there survives until someone restarts. The keys
+  live in the template instead: `grok_subagent_max_concurrent`, `grok_subagents_lane`,
+  and `grok_config_extra`. docs/coder-templates.md#stale-editor-swap-files.
+
+### Only about 4 subagents run at once though `[subagents] max_concurrent` says 15 -> the writers are on a pinned lane
+
+- Read both halves of the rendered config, not just the width:
+
+```bash
+grep -A4 '^\[subagents\]' ~/.grok/config.toml
+grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
+```
+
+- `max_concurrent` is how many a session may have in flight. `[subagents.models]` is
+  where each type's traffic goes, and a writer pinned to `agent` carries the workspace's
+  own `x-litellm-session-id`, so the whole fan-out lands on the one Spark box that key
+  resolves to. That box admits `PARALLEL` (5 by default, `scripts/spark-configure.sh`)
+  full-length streams and the parent session holds one of them, which is why the useful
+  width there is about 4 no matter what the number above it says. The rest queue:
+  `limit_behavior = "queue"` holds the overflow rather than failing the spawn.
+- The shipped default puts the writers on the unpinned `agent-swarm` lane, where the
+  least-busy picker spreads them over every box and the 15 is the fleet's real width
+  (3 boxes x `PARALLEL` 5). Four keys come from that one variable: `general-purpose`,
+  `implementer`, `documenter`, `tester`. If those read `agent`, the template was pushed
+  with `--var grok_subagents_lane=agent`, which is the documented rollback to one box.
+- Nothing in this repo sets it: no dotenv key and no CLI flag names it, and
+  `//scripts:push-template` has no passthrough. So it was set by a raw
+  `coder templates push --var grok_subagents_lane=...`, and it is undone the same way
+  from the stack host, or by re-pushing once the default in `templates/*/coder.tf` is
+  `agent-swarm`:
+
+```bash
+bazelisk run //scripts:push-template    # stack host; takes the coder.tf defaults
+coder restart <workspace>
+```
+
+- Restarting is not optional: the value is baked into the agent's startup script at push
+  time, and `update-configs` deliberately never re-copies `config.toml`.
+  docs/litellm-routing.md and docs/grok-build-and-agents.md#the-fan-out-seam.
+
 ## Docker-in-docker
 
 ### `Cannot connect to the Docker daemon at tcp://dind:2375` -> the sidecar, or DinD off
