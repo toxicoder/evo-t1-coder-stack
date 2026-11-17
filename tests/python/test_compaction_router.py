@@ -679,6 +679,86 @@ class EstimateCompletenessTest(RouterCase):
         )
         self.assertLess(estimate_input_tokens(body) - before, 1200)
 
+    def test_a_base64_payload_is_not_charged_the_prose_rate(self) -> None:
+        # About 45,000 tokens of data URL will not fit a 32,768-token window. At four
+        # characters to a token this read as 22,500 and the summary stayed on the Arc,
+        # where Ollama clamps the input and the tail of the conversation is quietly gone.
+        body = summary_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.insert(
+            -1,
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64," + "A" * 90_000},
+                    },
+                ],
+            },
+        )
+        self.assertGreater(estimate_input_tokens(body), 24000)
+        self.assertEqual(SPARK_TARGET, retarget_target(body))
+
+    def test_a_non_ascii_reply_is_charged_one_character_to_a_token(self) -> None:
+        # 30,000 CJK characters are 30,000 tokens to any tokenizer; the prose rate read
+        # them as 7,500 and put a session that compacts in Chinese onto the Arc.
+        body = summary_body("agent-swarm-fast")
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.insert(-1, {"role": "user", "content": "文" * 30_000})
+        self.assertGreater(estimate_input_tokens(body), 24000)
+        self.assertEqual(SPARK_TARGET, retarget_target(body))
+
+    def test_a_request_level_schema_is_counted(self) -> None:
+        # The tool and response schemas ride with every turn and no message carries them.
+        for key in ROUTER.PREFILLED_KEYS:
+            with self.subTest(key=key):
+                body = chat_body("agent-xhigh-fast")
+                before = estimate_input_tokens(body)
+                body[key] = {"name": "schema", "body": "y" * 200_000}
+                self.assertGreater(estimate_input_tokens(body), before + 40_000)
+
+    def test_content_that_is_a_mapping_is_counted(self) -> None:
+        body = chat_body("agent-xhigh-fast")
+        before = estimate_input_tokens(body)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append(
+            {
+                "role": "user",
+                "content": {"type": "text", "value": "z" * 200_000},
+            }
+        )
+        self.assertGreater(estimate_input_tokens(body), before + 40_000)
+
+    def test_a_content_part_that_is_a_plain_string_is_counted(self) -> None:
+        # Some callers send the parts list as bare strings; a flattener that only reads
+        # mappings would report the turn as empty.
+        body = chat_body("agent-xhigh-fast")
+        before = estimate_input_tokens(body)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append({"role": "user", "content": ["a" * 4000, "b" * 4000]})
+        self.assertGreaterEqual(estimate_input_tokens(body) - before, 1900)
+
+    def test_tool_calls_that_is_not_a_list_is_still_counted(self) -> None:
+        body = chat_body("agent-xhigh-fast")
+        before = estimate_input_tokens(body)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append(
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": {"function": {"arguments": "q" * 200_000}},
+            }
+        )
+        self.assertGreater(estimate_input_tokens(body), before + 40_000)
+
+    def test_a_message_name_is_counted(self) -> None:
+        body = chat_body("agent-xhigh-fast")
+        before = estimate_input_tokens(body)
+        messages = cast("list[dict[str, object]]", body["messages"])
+        messages.append({"role": "user", "content": "hi", "name": "n" * 4000})
+        self.assertGreaterEqual(estimate_input_tokens(body) - before, 1000)
+
     def test_an_image_that_crosses_the_ceiling_picks_the_spark_tier(self) -> None:
         # The shape a real screenshot-heavy session compacts as: the prose is short, so
         # only a complete estimate keeps it off the 32k Arc model.

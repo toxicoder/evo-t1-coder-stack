@@ -109,10 +109,32 @@ DEFAULT_LANES: Final = "agent-xhigh-fast,agent-swarm-fast"
 DEFAULT_TARGET: Final = "compaction-fast"
 DEFAULT_SPARK_TARGET: Final = "agent-low"
 DEFAULT_INPUT_LIMIT: Final = 24000
-# Four characters per token is the usual rough fit for English prose. An underestimate
-# now costs more than a slow answer -- it sends a summary the Arc cannot read to the Arc
-# -- so the count below leans generous and takes the structural characters with it.
-CHARS_PER_TOKEN: Final = 4
+# Characters per token, per class of character. English prose fits about four; a base64
+# payload fits about two and a CJK reply about one, and a real conversation is full of
+# the first and regularly full of the second. Charging all three the prose rate read a
+# 90,000-character image as 22,500 tokens and handed it to a model with a 32,768-token
+# window, which truncates the very history the summary exists to preserve. The guesses
+# are not symmetric -- reading high only costs a slower target, reading low costs the
+# summary itself -- so every class gets its own rate.
+PROSE_CHARS_PER_TOKEN: Final = 4
+BLOB_CHARS_PER_TOKEN: Final = 2
+GLYPH_CHARS_PER_TOKEN: Final = 1
+# The estimate is accumulated in whole-number fractions of a token, this many to one.
+TOKEN_UNIT: Final = PROSE_CHARS_PER_TOKEN
+# Request-level keys the backend prefills and no message carries: the schemas a call is
+# given, and the Responses API's system prompt under ``instructions``. Left unbilled they
+# read as nothing, and a 200 KB tool schema is the difference between the two tiers.
+PREFILLED_KEYS: Final = (
+    "instructions",
+    "tools",
+    "tool_choice",
+    "functions",
+    "function_call",
+    "response_format",
+    "audio",
+    "prediction",
+    "web_search_options",
+)
 
 # A ``model_name:`` entry at any indent in the config beside this module. Read as text
 # rather than parsed as YAML: the only question asked of the file is whether one string is
@@ -227,18 +249,49 @@ def max_compaction_input_tokens() -> int:
 
 
 def _content_text(content: object) -> str:
-    """Flatten one message's content, which is a string or a list of typed parts."""
+    """Flatten one message's content, which is a string or a list of typed parts.
+
+    A list holds dicts for the Chat Completions shape and bare strings for the shapes
+    some callers send; both are prose here, and anything else in the list is a payload
+    the caller below bills by its serialized size.
+    """
     if isinstance(content, str):
         return content
     if isinstance(content, list):
         parts: list[str] = []
         for part in content:
-            if isinstance(part, dict):
+            if isinstance(part, str):
+                parts.append(part)
+            elif isinstance(part, dict):
                 text = part.get("text")
                 if isinstance(text, str):
                     parts.append(text)
         return "\n".join(parts)
     return ""
+
+
+def _serialized_chars(value: object) -> int:
+    """Size of ``value`` once it is on the wire, which is what a backend prefills."""
+    return len(json.dumps(value, sort_keys=True, default=str, ensure_ascii=False))
+
+
+def _text_units(text: str) -> int:
+    """``text`` in TOKEN_UNIT fractions of a token, weighted by what it is made of.
+
+    ASCII is the only class that gets the prose rate: a token of CJK, of Cyrillic, or of
+    escaped JSON punctuation costs a whole token each, so those characters are charged
+    PROSE_CHARS_PER_TOKEN times their count.
+    """
+    prose = sum(1 for char in text if char.isascii())
+    glyphs = len(text) - prose
+    return prose * (TOKEN_UNIT // PROSE_CHARS_PER_TOKEN) + glyphs * (
+        TOKEN_UNIT // GLYPH_CHARS_PER_TOKEN
+    )
+
+
+def _blob_units(chars: int) -> int:
+    """``chars`` of opaque payload, which packs denser than prose."""
+    return chars * (TOKEN_UNIT // BLOB_CHARS_PER_TOKEN)
 
 
 def _messages(data: dict[str, object]) -> list[object]:
@@ -294,46 +347,52 @@ def is_compaction_request(data: dict[str, object]) -> bool:
     return any(marker in text for marker in COMPACTION_MARKERS)
 
 
-def _extra_chars(message: dict[str, object]) -> int:
-    """Characters this turn makes the backend prefill that ``_content_text`` drops.
+def _extra_units(message: dict[str, object]) -> int:
+    """What this turn makes the backend prefill that ``_content_text`` drops.
 
-    A content part with no ``text`` -- an image's base64 payload is the case that
-    matters -- and an assistant's ``tool_calls`` arguments are both prefilled and both
-    invisible to the text flatteners, which read a 400,000-character image as one token.
-    The estimate's only job is keeping an oversized summary off a 32k model, so it counts
-    what goes over the wire rather than what a human would call prose.
+    Three shapes are invisible to the text flatteners and each is a real payload: a
+    content part with no ``text`` (an image's base64 data URL is the case that matters),
+    a ``content`` that is a mapping rather than a string or a list, and an assistant's
+    ``tool_calls`` arguments, whose serialized size is not a list at all when a caller
+    sends a single call as a dict. A text-only flattener reads a 400,000-character image
+    as one token, which is the whole failure this function exists to close.
     """
-    chars = 0
+    units = 0
     content = message.get("content")
-    if isinstance(content, list):
+    if isinstance(content, dict):
+        units += _blob_units(_serialized_chars(content))
+    elif isinstance(content, list):
         for part in content:
             if isinstance(part, dict) and not isinstance(part.get("text"), str):
-                chars += len(json.dumps(part, sort_keys=True, default=str))
+                units += _blob_units(_serialized_chars(part))
     calls = message.get("tool_calls")
-    if isinstance(calls, list):
-        chars += len(json.dumps(calls, sort_keys=True, default=str))
-    return chars
+    if calls:
+        units += _blob_units(_serialized_chars(calls))
+    return units
 
 
 def estimate_input_tokens(data: dict[str, object]) -> int:
     """Rough input size of the request, counting the schemas riding along with it.
 
     The proxy has no tokenizer here and the Arc lane has no headroom to guess about, so
-    this counts characters over everything the backend will actually prefill. It is an
-    estimate with one job: pick the tier that can read the whole conversation.
+    this counts what the backend will actually prefill: every turn's text at its own
+    character rates, the payloads those rates cannot see at the blob rate, and each
+    request-level schema key. It is an estimate with one job, and it errs toward the
+    larger number, because the tier it would rather not use still answers correctly.
     """
-    chars = 0
+    units = 0
     for message in _messages(data):
         if isinstance(message, dict):
-            chars += len(_content_text(message.get("content")))
-            chars += _extra_chars(message)
+            units += _text_units(_content_text(message.get("content")))
+            units += _extra_units(message)
             name = message.get("name")
             if isinstance(name, str):
-                chars += len(name)
-    tools = data.get("tools")
-    if tools:
-        chars += len(json.dumps(tools, sort_keys=True, default=str))
-    return chars // CHARS_PER_TOKEN
+                units += _text_units(name)
+    for key in PREFILLED_KEYS:
+        value = data.get(key)
+        if value:
+            units += _blob_units(_serialized_chars(value))
+    return units // TOKEN_UNIT
 
 
 def retarget_target(data: dict[str, object]) -> str:
