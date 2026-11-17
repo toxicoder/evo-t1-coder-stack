@@ -170,6 +170,7 @@ run_shell() {
   [ "${status}" -eq 0 ]
   assert_match "help names the route flag" 'provider <row>' "${output}"
   assert_match "help names the row default" 'default_model' "${output}"
+  assert_match "help names the durable verb" 'config set model.default' "${output}"
   assert_contains_file "header states the same rule" "${SCRIPT}" 'default_model'
   run grep -E 'not the provider switch|do not choose the model' "${SCRIPT}"
   [ "${status}" -ne 0 ] ||

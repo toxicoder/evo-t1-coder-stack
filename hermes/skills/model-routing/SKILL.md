@@ -142,10 +142,11 @@ id, and leaves a name no row declares on the current provider as an unknown hidd
 model. So when an alias "does nothing", the declaration is the first thing to check -
 an alias the proxy serves that no row lists is routable at LiteLLM and invisible to the
 picker. The gate in `tests/bats/hermes-config.bats` fails when the two lists drift.
-That block arrives with the volume, though: `scripts/hermes-bootstrap.sh` copies the
-seed only when the file is absent, so a container seeded before it existed has no rows
-at all and every alias lands in that hidden case. `bazelisk run
-//scripts:hermes-doctor -- diff` names that drift and prints the re-seed line.
+That block arrives with the volume, though: the seeder copies the seed only when the
+file is absent, so a container seeded before it existed has no rows at all and every
+alias lands in that hidden case. Re-seeding is a host action, not one you can take from
+in here: hand the operator the `hermes-doctor` `diff` check, which names that drift and
+prints the `hermes-bootstrap --force` line that fixes it.
 
 The other switch is the route, and it is a separate setting from the model.
 `--provider <row>` and `hermes config set model.provider <row>` choose which
