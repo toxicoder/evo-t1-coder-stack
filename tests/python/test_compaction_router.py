@@ -173,6 +173,10 @@ estimate_input_tokens: Final = cast(
 max_compaction_input_tokens: Final = cast(
     "Callable[[], int]", ROUTER.max_compaction_input_tokens
 )
+declared_input_window: Final = cast(
+    "Callable[[str], int | None]", ROUTER.declared_input_window
+)
+arc_input_ceiling: Final = cast("Callable[[str], int]", ROUTER.arc_input_ceiling)
 
 
 def summary_body(model: str) -> dict[str, object]:
@@ -209,6 +213,19 @@ def chat_body(model: str) -> dict[str, object]:
     body = summary_body(model)
     messages = cast("list[dict[str, object]]", body["messages"])
     body["messages"] = messages[:-1]
+    return body
+
+
+def padded_summary_body(model: str, prose_chars: int) -> dict[str, object]:
+    """A summary whose size the case controls: *prose_chars* of prose ride one turn.
+
+    Prose bills at four characters to a token, so 40,000 here is the ~10,000-token body
+    the tier fork has to see, without the case depending on how the other turns happen to
+    add up.
+    """
+    body = summary_body(model)
+    messages = cast("list[dict[str, object]]", body["messages"])
+    messages[1]["content"] = "a" * prose_chars
     return body
 
 
@@ -646,6 +663,167 @@ class ConfigGuardTest(RouterCase):
             ROUTER, "declared_model_groups", return_value=frozenset()
         ):
             self.assert_hops(summary_body("agent-xhigh-fast"))
+
+
+class ArcWindowTest(RouterCase):
+    """The Arc tier forks at the window the group declares, the guard or the smaller.
+
+    LiteLLM validates neither target knob and, at the pinned tag, checks no request
+    against the ``max_input_tokens`` of the deployment it picks -- so the number that
+    says how much a summary model can read lives only in config.yaml. These cases pin
+    that the module reads it and is bounded by it.
+    """
+
+    @staticmethod
+    def _config(windows: dict[str, str]) -> str:
+        """A routing file whose entries declare exactly these windows.
+
+        An empty string declares none, which is the shape a group the operator pointed a
+        knob at can legitimately have.
+        """
+        text = "model_groups:\n"
+        for name, window in windows.items():
+            text += "  - model_name: %s\n    litellm_params:\n      model: a/b\n" % name
+            if window:
+                text += "      max_input_tokens: %s\n" % window
+        return text
+
+    def test_the_shipped_targets_declare_the_windows_the_fork_reads(self) -> None:
+        # The clamp is only as good as the numbers beside it: if a deploy ever drops the
+        # Arc group's declaration, the guard below stops being clamped and nobody is told.
+        self.assertEqual(32768, declared_input_window(TARGET))
+        self.assertEqual(262144, declared_input_window(SPARK_TARGET))
+
+    def test_a_guard_raised_past_the_declared_window_forks_to_the_spark_tier(
+        self,
+    ) -> None:
+        # The hole: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 alone would hand a ~50k
+        # token summary to a 32,768-token model, and Ollama answers a too-long input from
+        # a truncated reading rather than failing. The declared window closes it.
+        self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="100000")
+        self.assert_hops(padded_summary_body("agent-xhigh-fast", 200_000), SPARK_TARGET)
+
+    def test_the_clamp_says_which_two_numbers_it_compared(self) -> None:
+        cached = ROUTER._warn_clamped_ceilings
+        cached.cache_clear()
+        self.addCleanup(cached.cache_clear)
+        self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="100000")
+        with self.assertLogs("LiteLLM", level="WARNING") as caught:
+            retarget_target(padded_summary_body("agent-xhigh-fast", 200_000))
+        message = caught.records[0].getMessage()
+        for fragment in ("100000", "32768", TARGET):
+            self.assertIn(fragment, message)
+
+    def test_a_guard_inside_the_declared_window_hops_and_says_nothing(self) -> None:
+        # A raised knob that stays inside the window is an operator who measured
+        # something: the clamp has no business second-guessing it or filling the log, and
+        # this body (~26,100 tokens) only reaches the Arc because the knob did its job --
+        # the shipped 24,000 guard would have forked it to the Spark tier.
+        self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="30000")
+        with self.assertNoLogs("LiteLLM", level="WARNING"):
+            self.assert_hops(padded_summary_body("agent-swarm-fast", 104_000), TARGET)
+
+    def test_a_group_with_no_declared_window_keeps_the_operators_guard(self) -> None:
+        # Inventing a ceiling for a target nobody declared one for would refuse the hop
+        # the operator asked for, so an absent window leaves the knob whole.
+        with mock.patch.object(
+            ROUTER,
+            "_read_config_text",
+            return_value=self._config({TARGET: "", SPARK_TARGET: "262144"}),
+        ):
+            self.set_knobs(EVO_T1_FAST_COMPACTION_INPUT_LIMIT="100000")
+            self.assert_hops(padded_summary_body("agent-xhigh-fast", 200_000), TARGET)
+
+    def test_a_window_above_the_guard_leaves_the_guard_deciding(self) -> None:
+        with mock.patch.object(
+            ROUTER,
+            "_read_config_text",
+            return_value=self._config({TARGET: "262144", SPARK_TARGET: "262144"}),
+        ):
+            with self.assertNoLogs("LiteLLM", level="WARNING"):
+                self.assert_hops(
+                    padded_summary_body("agent-xhigh-fast", 200_000), SPARK_TARGET
+                )
+
+    def test_a_window_this_module_cannot_read_is_no_window(self) -> None:
+        # A value the reader cannot turn into a count is not a licence to clamp at zero,
+        # which would park every summary on the Spark tier and cost the speed the whole
+        # change is for.
+        for junk in ("32k", "-1", "0", "0x10", "32768 tokens", '"32768"'):
+            with self.subTest(window=junk):
+                with mock.patch.object(
+                    ROUTER,
+                    "_read_config_text",
+                    return_value=self._config({TARGET: junk}),
+                ):
+                    self.assertIsNone(declared_input_window(TARGET))
+                    self.assertEqual(24000, arc_input_ceiling(TARGET))
+
+    def test_the_window_belongs_to_the_entry_it_sits_under(self) -> None:
+        # Per deployment, not per file: a file-wide first match would read the Spark
+        # group's 262144 as the Arc's and clamp nothing at all.
+        text = self._config({TARGET: "8000", SPARK_TARGET: "262144"})
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=text):
+            self.assertEqual(8000, declared_input_window(TARGET))
+            self.assertEqual(262144, declared_input_window(SPARK_TARGET))
+            self.assertIsNone(declared_input_window("no-such-group"))
+
+    def test_comments_and_blank_lines_inside_an_entry_do_not_end_it(self) -> None:
+        text = (
+            "model_groups:\n"
+            "  - model_name: %s\n"
+            "\n"
+            "    # the Arc tier, served by Ollama on the Arc\n"
+            "    litellm_params:\n"
+            "      model: ollama_chat/qwen2.5-coder:14b\n"
+            "      max_input_tokens: 1234\n"
+            "  - model_name: %s\n"
+            "    litellm_params:\n"
+            "      max_input_tokens: 5678\n"
+        ) % (TARGET, SPARK_TARGET)
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=text):
+            self.assertEqual(1234, declared_input_window(TARGET))
+            self.assertEqual(5678, declared_input_window(SPARK_TARGET))
+
+    def test_a_top_level_key_ends_the_block_it_follows(self) -> None:
+        # Without that rule a stray number under litellm_settings would be read as the
+        # last entry's window, and a wrong window is a wrong fork.
+        text = (
+            "model_groups:\n"
+            "  - model_name: %s\n"
+            "    litellm_params:\n"
+            "      model: a/b\n"
+            "litellm_settings:\n"
+            "  max_input_tokens: 99\n"
+        ) % TARGET
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=text):
+            self.assertIsNone(declared_input_window(TARGET))
+
+    def test_a_quoted_entry_owns_the_window_beside_it(self) -> None:
+        text = (
+            "model_groups:\n"
+            '  - model_name: "%s"\n'
+            "    litellm_params:\n"
+            "      max_input_tokens: 4321\n"
+        ) % TARGET
+        with mock.patch.object(ROUTER, "_read_config_text", return_value=text):
+            self.assertEqual(4321, declared_input_window(TARGET))
+
+    def test_an_unreadable_config_leaves_the_window_unchecked_and_says_so(self) -> None:
+        # Same shape as the declared-group guard: no number is a reason to skip the
+        # clamp, not a reason to fork every summary away from the Arc.
+        cached = ROUTER._read_config_text
+        cached.cache_clear()
+        self.addCleanup(cached.cache_clear)
+        with mock.patch.object(
+            ROUTER.pathlib.Path,
+            "read_text",
+            side_effect=OSError(13, "Permission denied"),
+        ):
+            with self.assertLogs("LiteLLM", level="WARNING") as caught:
+                self.assertIsNone(declared_input_window(TARGET))
+            self.assertIn("config", caught.records[0].getMessage())
+            self.assertEqual(24000, arc_input_ceiling(TARGET))
 
 
 class RoleGateTest(RouterCase):

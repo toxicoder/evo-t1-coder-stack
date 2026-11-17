@@ -147,6 +147,13 @@ PREFILLED_KEYS: Final = (
 # the same group -- a matcher that kept them would report every shipped target undeclared
 # and park every summary on its lane behind one warning line nobody reads.
 _MODEL_NAME_LINE: Final = re.compile(r"^[ \t]*-[ \t]+model_name:[ \t]*([^ \t#]+)")
+# The window one of those entries declares, read from the same text for the same reason.
+# Only a whole non-negative integer counts: a value this module cannot read is a value it
+# has no business clamping against, so it comes back as "no window declared" and the
+# operator's own guard stands.
+_MAX_INPUT_TOKENS_LINE: Final = re.compile(
+    r"^[ \t]+max_input_tokens:[ \t]*([0-9]+)[ \t]*$"
+)
 
 
 @functools.lru_cache(maxsize=1)
@@ -187,6 +194,50 @@ def declared_model_groups() -> frozenset[str]:
         for line in text.splitlines()
         if (match := _MODEL_NAME_LINE.match(line))
     )
+
+
+def declared_input_window(model: str) -> int | None:
+    """The window ``config.yaml`` declares for *model*, or None when it declares none.
+
+    This is the second half of the guard: LiteLLM validates neither target knob, and it
+    does not check a request against the ``max_input_tokens`` of the deployment it picks
+    either -- at the pinned tag the router has no context-window pre-call check, so an
+    input past the window goes to Ollama and comes back truncated rather than raising.
+    The number is therefore only in the routing file, and this is the only place that
+    reads it.
+
+    Scanned entry by entry rather than file-wide: ``max_input_tokens`` is per deployment,
+    so the first number after the matching ``model_name:`` and before the next entry (or
+    a top-level key) is the one that belongs to this group. A blank line or a comment
+    inside the block neither ends the block nor supplies a window.
+    """
+    try:
+        lines = _read_config_text().splitlines()
+    except OSError:
+        LOGGER.warning(
+            "compaction router: cannot read the config beside this module;"
+            " the Arc window goes unchecked"
+        )
+        return None
+    inside = False
+    window: int | None = None
+    for line in lines:
+        entry = _MODEL_NAME_LINE.match(line)
+        if entry is not None:
+            inside = entry.group(1).strip("'\"") == model
+            continue
+        if not line.strip():
+            continue
+        if line[:1] not in (" ", "\t"):
+            inside = False
+            continue
+        if inside and window is None and not line.lstrip().startswith("#"):
+            declared = _MAX_INPUT_TOKENS_LINE.match(line)
+            if declared is not None:
+                digits = int(declared.group(1))
+                if digits > 0:
+                    window = digits
+    return window
 
 
 def _target_is_declared(target: str, declared: frozenset[str]) -> bool:
@@ -293,6 +344,46 @@ def max_compaction_input_tokens() -> int:
             DEFAULT_INPUT_LIMIT,
         )
         return DEFAULT_INPUT_LIMIT
+
+
+@functools.lru_cache(maxsize=8)
+def _warn_clamped_ceilings(target: str, guard: int, window: int) -> None:
+    """One line per distinct clamp, not one per summary.
+
+    Raising ``EVO_T1_FAST_COMPACTION_INPUT_LIMIT`` is an operator decision this module
+    must not silently overrule, so the override says what it did and why: the group's own
+    declared window is a fact about the weights, and a guard above it would park a summary
+    inside a model that answers from a truncated reading of the history.
+    """
+    LOGGER.warning(
+        "compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=%d is above the %d tokens"
+        " config.yaml declares for %r; forking at the declared window instead",
+        guard,
+        window,
+        target,
+    )
+
+
+def arc_input_ceiling(target: str) -> int:
+    """The largest input the Arc tier may actually be handed.
+
+    The operator's guard is the policy and the group's declared ``max_input_tokens`` is
+    the physics, so the smaller of the two forks the tier. Reading the guard alone let
+    ``EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000`` park a summary inside a 32k model, and
+    the pinned LiteLLM has no context-window check between here and Ollama: the request
+    would go, come back answered from a truncated reading, and read as a success. That is
+    the one outcome this fork exists to prevent, so a knob cannot reach past it.
+
+    A target with no declared window leaves the guard whole. Every shipped Arc target
+    declares one, and inventing a ceiling for a group the operator pointed the knob at
+    would refuse a hop that was deliberately asked for.
+    """
+    guard = max_compaction_input_tokens()
+    window = declared_input_window(target) if target else None
+    if window is None or window >= guard:
+        return guard
+    _warn_clamped_ceilings(target, guard, window)
+    return window
 
 
 def _content_text(content: object) -> str:
@@ -455,7 +546,10 @@ def retarget_target(data: dict[str, object]) -> str:
 
     The ceiling is a fork rather than a wall. Within it the Arc reads the conversation
     whole and answers fastest; above it no 32k model can, so the summary goes to a Spark
-    group that keeps the window and drops the thinking level. A tier whose target is
+    group that keeps the window and drops the thinking level. The Arc side of that fork
+    is the operator's guard clamped to the window the Arc group itself declares, so no
+    value of ``EVO_T1_FAST_COMPACTION_INPUT_LIMIT`` can park a summary inside a model too
+    small to read it. A tier whose target is
     blank, or is the group the call already arrived on, has nowhere to send the call, and
     the "" answer leaves the request exactly as its caller sent it.
     """
@@ -468,8 +562,9 @@ def retarget_target(data: dict[str, object]) -> str:
         return ""
     if not is_compaction_request(data):
         return ""
-    if estimate_input_tokens(data) <= max_compaction_input_tokens():
-        target = fast_compaction_target()
+    arc_target = fast_compaction_target()
+    if estimate_input_tokens(data) <= arc_input_ceiling(arc_target):
+        target = arc_target
     else:
         target = fast_compaction_spark_target()
     if not target or target == model:
