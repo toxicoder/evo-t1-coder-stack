@@ -305,24 +305,52 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
     those weights write the tool call into the message body as plain text, so agent
     turns silently lose their tools. See
     [litellm-routing.md](litellm-routing.md#tool-calls-the-measured-limitation).
-- The Arc models above are also seeded as named **providers**, so the local lane is
-  something you can pick rather than remember an alias for. `hermes/config.yaml`
-  carries a `providers:` block with `arc-chat`, `arc-coder` and `arc-coder-fast`,
-  each pointing at the same LiteLLM door with its `default_model` set, so the alias
-  travels with the provider:
+- The models come from a `providers:` block in `hermes/config.yaml`. Its `litellm` row
+  declares every client-selectable alias from `litellm/config.yaml` as a pickable
+  model, and that declaration is what makes an alias routable: Hermes matches a typed
+  `/model <alias>` against the ids each row declares and routes it to the row that
+  declares it, while a name no row declares is left on the current provider as an
+  unknown hidden model. That list is the sanctioned catalogue and
+  `litellm/config.yaml` owns it, so an alias is added there and the row follows; the
+  gate fails when the two drift apart.
+- Route and model are two separate switches. A `providers:` row selects the route -
+  base URL, api key, api mode - and nothing else; the model for a turn is the value in
+  the `model:` block unless a request overrides it. A row's `default_model` is that
+  row's own active selection, not the thing that picks a turn's model. Measured on the
+  shipped image: `--provider litellm` alone sends `"model":"agent"`;
+  `--model agent-swarm` sends `"model":"agent-swarm"`; and
+  `--provider litellm --model chat` sends `"model":"chat"`. Both route verbs therefore
+  move the route and leave the model on `agent`.
+- The verbs that do change the model: `/model <alias>` inside a session,
+  `bazelisk run //scripts:hermes-shell -- -m <alias>` from the host, which sets
+  `HERMES_MODEL` in the container, and `hermes config set model.model <alias>` to
+  persist it in the live config under `/opt/data`.
+- The Arc's own weights also ship as named rows beside that catalogue - `arc-chat`,
+  `arc-coder` and `arc-coder-fast` - each pointing at the same LiteLLM door, so the
+  local lane is something you pick rather than an alias you remember. These are the
+  route verbs, and `arc-chat` is the row to route through when a session wants the
+  Arc's tool-capable model:
 
   ```sh
-  hermes --provider arc-chat              # one session on the Arc's tool-capable model
-  hermes config set model.provider arc-chat   # make it the default
+  hermes --provider arc-chat                  # route one session through arc-chat
+  hermes config set model.provider arc-chat   # make that row the default
   ```
 
+  Routing there and running there are two asks, so name the model with them:
+  `hermes --provider arc-chat --model chat` sends `chat` through the `arc-chat` row.
   An entry is inert until something asks for it, so the default stays `agent` and a
   healthy Spark box behaves exactly as before. They go through LiteLLM rather than
   `http://ollama:11434` because the proxy is the stack's sole model transport, it is
   where the aliases and the Arc's context window are defined, and 11434 is
-  deliberately unpublished. `spark-coder` / `spark-chat` answer on that endpoint too
-  when a Spark box is up; no entry ships for them because they are off-box, optional,
-  and usually powered off - copy the three keys of any entry to add one.
+  deliberately unpublished.
+- Two parts of that list are deliberate. `compaction-fast` is served by the proxy and
+  held out on purpose: it is the Arc summariser the two `-fast` lanes hop to for one
+  conversation summary, it carries no tool support, and a session must not drive
+  itself with it. `discover_models: false` on the `litellm` row is what keeps it out -
+  left on, Hermes probes the proxy's `/v1/models` and adopts whatever it advertises.
+  And `spark-coder` / `spark-chat` are declared so they stay pickable even though they
+  are Ollama on a Spark box that is usually powered off, so a cold box answers a
+  connection error.
 - Switch the alias alone inside the container with `hermes config set model.model chat`
   (or `agent-medium` for a thinking level), which edits the live config under
   `/opt/data`.
