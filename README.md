@@ -755,9 +755,20 @@ that box's `PARALLEL` minus the parent's own stream: past about 4 in flight you 
 LiteLLM's queue rather than buying capacity, and an operator who pins every lane narrows
 the number by hand.
 `--var grok_subagent_max_concurrent=N` overrules the `grok_swarm_width` default whenever
-one workspace wants a number of its own, and
+one workspace wants a number of its own, `--var grok_subagent_max_depth=N` sets how deep
+the tree may go, and
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
-seam and the `/ez-micro-plan` plan that fills the slots.
+seam and the `/ez-micro-plan` plan that fills the slots. Depth 2, the shipped default,
+lets a child spawn read-only mappers of its own, so a skeptic scopes out its own evidence
+and the parent skips a round trip; 1 keeps nesting off, which is the rollback, and 3 is
+the operator's experiment ceiling. Only `reviewer`, `security-auditor` and `tester` name
+`spawn_subagent` in their `tools`, so a deeper wave is read-only work. Every in-flight
+child holds one of the fleet's 15 streams, so a parent sums `1 + spawns` per task and
+keeps that total at or below the fleet's stream count (the `fleet:` figure in a
+micro-plan), a separate figure from the session's `slots`. The mandatory review that ends
+a multi-file change is a panel of skeptics dispatched in one turn - requirements, proof,
+adversary - each on `agent-review`, each owning no file, each allowed up to 3 read-only
+mappers of its own.
 
 The sixth and seventh, `agent-explore` and `agent-review`, are that same pin lift cut for
 the two one-shot roles a fleet dispatches rather than for a conversation: a child that

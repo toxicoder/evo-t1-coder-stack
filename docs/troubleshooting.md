@@ -954,6 +954,21 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
   full-length streams and the parent session holds one of them, which is why the useful
   width there is about 4 no matter what the number above it says. The rest queue:
   `limit_behavior = "queue"` holds the overflow rather than failing the spawn.
+- Read those same four lines for the depth, because the block now prints `max_depth`
+  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:369`), rendered
+  from the `grok_subagent_max_depth` variable whose default is 2. At 2 a child spawns
+  read-only mappers of its own, so a wave can be wider than the parent's own `slots`, and
+  each in-flight child holds one of the fleet's 15 streams: a parent sums `1 + spawns` per
+  task and keeps that total at or below the fleet's stream count, because a stream past 15
+  is refused by the box. At 1 nothing nests, which is the rollback.
+- A review panel that arrives one at a time is the same queueing. The panel is three
+  skeptics dispatched in one turn - requirements, proof, adversary - each on
+  `agent-review`, each owning no file, each allowed up to 3 read-only mappers of its own,
+  and all of them want the fleet's streams at once. While writers are still in flight the
+  panel waits behind them, so dispatch it once the writers have landed.
+- `GROK_SUBAGENTS_MAX_DEPTH` in the agent environment outranks what `config.toml` says, so
+  a workspace that nests differently from its rendered config is carrying that key;
+  `env | grep GROK_SUBAGENTS` names it.
 - The shipped default puts the writers on the unpinned `agent-swarm` lane, where the
   least-busy picker spreads them over every box and the 15 is the fleet's real width
   (3 boxes x `PARALLEL` 5). Four keys come from that one variable: `general-purpose`,
