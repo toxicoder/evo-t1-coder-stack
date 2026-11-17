@@ -6,8 +6,9 @@
 # Pins the seams the host-assistant feature rests on: approvals stay manual,
 # the terminal backend stays local (so dangerous-command checks stay on),
 # models go through LiteLLM's `agent` alias, every alias the proxy serves is declared
-# as a pickable Hermes model option (derived from litellm/config.yaml, with the
-# summariser lane held out of the picker), the Arc's own Ollama models ship as named
+# exactly once as a pickable Hermes model option (derived from litellm/config.yaml,
+# with the summariser lane held out of the picker and the row that pins discovery kept
+# first), the Arc's own Ollama models ship as named
 # `providers:` entries reached through the same door with no key byte
 # in the seed, the git-tracked skills exist
 # beside the seed with matching frontmatter, SOUL.md teaches both doors,
@@ -65,20 +66,39 @@ hermes_provider_rows() {
   ' "${CONFIG}"
 }
 
-# The model ids the seed declares as pickable: the keys of providers.litellm.models.
-# Read positionally rather than through a YAML parser so the gate keeps working in a
-# bare bats sandbox, and so it proves the shape the loader expects (two-space row,
-# four-space keys, four-space models:, six-space model ids).
-hermes_catalogue_aliases() {
+# Every pickable model id the seed declares, as `alias<TAB>row` lines. Hermes matches a
+# typed `/model <alias>` against each row's `models`, `model` AND `default_model`
+# (hermes_cli/model_switch.py:_configured_provider_matches), so an Arc row declares its
+# alias with the one `default_model` key and the catalogue row declares its ids under
+# `models:`. Read positionally rather than through a YAML parser so the gate keeps
+# working in a bare bats sandbox, and so it proves the shape the loader expects
+# (two-space row, four-space keys, six-space model ids).
+hermes_alias_rows() {
   awk '
-    /^providers:[[:space:]]*$/                          { in_prov = 1; next }
-    in_prov && /^  litellm:[[:space:]]*$/               { in_row = 1; next }
-    in_row && /^    models:[[:space:]]*$/               { in_models = 1; next }
-    in_models && /^      [A-Za-z0-9._-]+:[[:space:]]*\{\}[[:space:]]*$/ {
-      sub(/^      /, ""); sub(/:.*$/, ""); print; next
+    /^providers:[[:space:]]*$/                { in_prov = 1; next }
+    in_prov && /^[^[:space:]#]/               { in_prov = 0 }
+    in_prov && /^  [A-Za-z0-9._-]+:[[:space:]]*$/ {
+      row = $0; sub(/^  /, "", row); sub(/:.*$/, "", row); in_models = 0; next
     }
-    in_models && !/^      /                             { in_models = 0 }
+    in_prov && row != "" && /^    default_model:/ {
+      v = $0; sub(/^    default_model:[[:space:]]*/, "", v); sub(/[[:space:]]*$/, "", v)
+      if (v != "") print v "\t" row
+      next
+    }
+    in_prov && /^    models:[[:space:]]*$/    { in_models = 1; next }
+    in_prov && in_models && /^      [A-Za-z0-9._-]+:[[:space:]]*\{\}[[:space:]]*$/ {
+      v = $0; sub(/^      /, "", v); sub(/:.*$/, "", v); print v "\t" row; next
+    }
+    in_prov && in_models && !/^      /        { in_models = 0 }
   ' "${CONFIG}"
+}
+
+# Everything a session can type. This set, not the catalogue row alone, is the one
+# that has to equal what LiteLLM serves. A row listing its own `default_model` in its
+# `models:` too is one declarer, so the pair list is deduplicated before the alias
+# column is.
+hermes_declared_aliases() {
+  hermes_alias_rows | cut -f1 | sort -u
 }
 
 @test "hermes config: approvals stay manual and cron/unattended stay deny" {
@@ -129,7 +149,9 @@ hermes_catalogue_aliases() {
   # Local means the LiteLLM door, never the unpublished Ollama port.
   run grep -E 'base_url:[[:space:]]*http://ollama' "${CONFIG}"
   [ "${status}" -ne 0 ]
-  # Opt-in: selecting a provider is what changes the route, never the seed.
+  # Opt-in: a row is inert until something names it, so a plain `hermes` run still
+  # takes the Spark lane. (Naming a row with --provider does move its default_model
+  # along with the route; hermes_cli/cli_init_mixin.py:263.)
   assert_contains_file "default stays the Spark lane" "${CONFIG}" 'model: agent'
 }
 
@@ -137,39 +159,81 @@ hermes_catalogue_aliases() {
 # that *declares* that id: hermes_cli/model_switch.py matches the typed name against
 # each entry's `models` / `model` / `default_model`, exactly, and a name no row
 # declares is left on the current provider as an unknown hidden model. So the seed's
-# catalogue, not LiteLLM, is what makes an alias a choice the assistant offers - and
-# a LiteLLM alias missing from it is a lane nobody can run Hermes on. Measured
+# declarations, not LiteLLM, are what make an alias a choice the assistant offers -
+# and a LiteLLM alias missing from them is a lane nobody can run Hermes on. Measured
 # against nousresearch/hermes-agent:v0.22.5.
 @test "hermes config: every LiteLLM alias is a declared Hermes model option" {
-  local served catalogue alias
+  local served declared alias
   served="$(litellm_served_aliases)"
   [ -n "${served}" ] ||
     { printf 'FAIL: parsed no aliases out of litellm/config.yaml\n' >&2; return 1; }
-  catalogue="$(hermes_catalogue_aliases)"
-  [ -n "${catalogue}" ] ||
-    { printf 'FAIL: hermes/config.yaml declares no providers.litellm.models catalogue\n' >&2; return 1; }
+  declared="$(hermes_declared_aliases)"
+  [ -n "${declared}" ] ||
+    { printf 'FAIL: hermes/config.yaml declares no pickable model at all\n' >&2; return 1; }
 
   local missing=()
   while IFS= read -r alias; do
     # The summariser is the one served alias a session must not be able to pick.
     [[ "${alias}" == "compaction-fast" ]] && continue
-    printf '%s\n' "${catalogue}" | grep -Fxq -- "${alias}" || missing+=("${alias}")
+    printf '%s\n' "${declared}" | grep -Fxq -- "${alias}" || missing+=("${alias}")
   done <<< "${served}"
   if [ "${#missing[@]}" -gt 0 ]; then
-    printf 'FAIL: LiteLLM aliases with no Hermes catalogue entry: %s\n' "${missing[*]}" >&2
+    printf 'FAIL: LiteLLM aliases no Hermes row declares: %s\n' "${missing[*]}" >&2
     return 1
   fi
 
-  # And nothing in the catalogue is a name the proxy does not serve: a typo or a
-  # retired alias would show as a pickable model that 400s on every turn.
+  # And nothing declared is a name the proxy does not serve: a typo or a retired
+  # alias would show as a pickable model that 400s on every turn.
   local stale=()
   while IFS= read -r alias; do
     printf '%s\n' "${served}" | grep -Fxq -- "${alias}" || stale+=("${alias}")
-  done <<< "${catalogue}"
+  done <<< "${declared}"
   if [ "${#stale[@]}" -gt 0 ]; then
-    printf 'FAIL: Hermes catalogue names aliases LiteLLM does not serve: %s\n' "${stale[*]}" >&2
+    printf 'FAIL: Hermes declares aliases LiteLLM does not serve: %s\n' "${stale[*]}" >&2
     return 1
   fi
+}
+
+# One alias on two rows is not a harmless duplicate. `_route_configured_provider`
+# collects every row that declares the typed name and, when the session is not already
+# on one of them, refuses the switch outright with "declared by multiple configured
+# providers" (hermes_cli/model_switch.py:1338). Measured on v0.22.5: with `chat` in the
+# catalogue row's `models:` as well as in arc-chat's `default_model`, a fresh session's
+# `/model chat` fails, where it routed fine before the catalogue row existed. So each
+# alias is declared in exactly one place.
+@test "hermes config: no alias is declared by two provider rows" {
+  local dupes
+  dupes="$(hermes_alias_rows | sort -u | cut -f1 | uniq -d)"
+  [ -z "${dupes}" ] ||
+    { printf 'FAIL: alias declared by more than one row, so /model refuses it: %s\n' \
+        "$(printf '%s' "${dupes}" | tr '\n' ' ')" >&2; return 1; }
+}
+
+# The four rows share one endpoint, credential and wire protocol, so Hermes folds them
+# into a single picker group and reads `discover_models` from the group's first member
+# alone (hermes_cli/model_switch_providers.py:1010-1018). Measured: litellm first
+# answers discovery_allowed=False, arc-chat first answers True - and a group with
+# discovery on adopts `compaction-fast` off /v1/models. So the row that carries the
+# pin has to stay first, not merely be present somewhere in the block.
+@test "hermes config: the row that pins discovery stays first" {
+  local first
+  first="$(awk '
+    /^providers:[[:space:]]*$/                { in_prov = 1; next }
+    in_prov && /^[^[:space:]#]/               { in_prov = 0 }
+    in_prov && /^  [A-Za-z0-9._-]+:[[:space:]]*$/ {
+      sub(/^  /, ""); sub(/:.*$/, ""); print; exit
+    }
+  ' "${CONFIG}")"
+  [ "${first}" = "litellm" ] ||
+    { printf 'FAIL: first providers: row is %s; the fold takes discover_models from it\n' \
+        "${first:-<none>}" >&2; return 1; }
+  awk '
+    /^  litellm:[[:space:]]*$/          { in_row = 1; next }
+    in_row && /^  [A-Za-z0-9._-]+:/     { in_row = 0 }
+    in_row && /^    discover_models:[[:space:]]*false[[:space:]]*$/ { found = 1 }
+    END                                 { exit found ? 0 : 1 }
+  ' "${CONFIG}" ||
+    { printf 'FAIL: the litellm row lost its own discover_models: false\n' >&2; return 1; }
 }
 
 # `compaction-fast` is the Arc group the two `-fast` lanes hop to for one
