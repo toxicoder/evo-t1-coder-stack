@@ -722,8 +722,11 @@ measured 30-request burst, the **Agent backend** card) are in
 | `agent-swarm` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and this group carries no session pin, so every request lands on the least-busy healthy box; the default `grok_subagents_lane`, so the writer types fan out over all three boxes with 15 in flight by default | yes (same as `agent`) |
 | `agent-explore` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `low`, and no session pin either, so a wave of read-only fleet children is placed across all three boxes; the default `grok_explore_lane`, and not a Coder Agents chat model | yes (same as `agent`) |
 | `agent-review` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and no session pin like `agent-explore`; the default `grok_review_lane` for the skeptical roles, and not a Coder Agents chat model | yes (same as `agent`) |
+| `agent-xhigh-fast` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh` and the session pin kept, so deployment for deployment it is `agent-xhigh` - the one difference is the CLI's conversation-summary call, which the proxy re-serves from `compaction-fast` | yes (same as `agent`) |
+| `agent-swarm-fast` | `Qwen3.8-Flash-Next` | same three Spark boxes as `agent`; thinking baked to `xhigh`, and no session pin like `agent-swarm`, so the same fan-out placement - with the same summary hop to `compaction-fast` | yes (same as `agent`) |
 | `coder` | `qwen2.5-coder:32b` | local IPEX-LLM Ollama (Arc 140T) | no (measured) |
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
+| `compaction-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama (Arc); the target of those two lanes' summary hop, and not a client choice - no `[model.*]` block in the templates and no `local.model_choices` entry names it | no (measured on these weights, as on `coder-fast`) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
 | `spark-coder` | `qwen2.5-coder:32b` | `SPARK1_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK1_OLLAMA_URL` overrides) | unverified |
 | `spark-chat` | `qwen2.5:7b` | `SPARK2_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK2_OLLAMA_URL` overrides) | unverified |
@@ -736,10 +739,11 @@ routing, the `agent` -> `coder` fallback, the burst that produced it, and the tw
 [docs/litellm-routing.md](docs/litellm-routing.md). `scripts/coder-agents.sh` registers
 `agent` (default), the three thinking aliases, `agent-swarm`, and `chat` as the Coder
 Agents chat models, so an alias edited here moves in the Agents dropdowns too. There is
-no `high` level on this runtime. There are seven Spark aliases in all: `agent-swarm` is the
-fifth and, with the two after it, one of the three that carry no session pin - same boxes,
-same baked `xhigh`, each request placed on the box carrying the fewest in flight, which is
-the lane a parallel subagent fan-out wants, and the shipped default for the writers.
+no `high` level on this runtime. There are nine Spark aliases in all: `agent-swarm` is the
+fifth and, with the two after it and `agent-swarm-fast`, one of the four that carry no
+session pin - same boxes, same baked `xhigh`, each request placed on the box carrying the
+fewest in flight, which is the lane a parallel subagent fan-out wants, and the shipped
+default for the writers.
 Rolling them back to one box is `--var grok_subagents_lane=agent`. That one variable is
 the whole placement switch: it pins the writer
 types in `[subagents.models]` -
@@ -785,8 +789,43 @@ thinking level. Neither is registered as a Coder Agents chat model, because neit
 meant to be typed into the Agents dropdown, and each degrades one step deeper than a pinned
 lane, hopping through the alias that bakes its own level before Arc - `agent-explore` ->
 `agent-low` -> `coder`, `agent-review` -> `agent-xhigh` -> `coder`
-(`litellm/config.yaml:722-723`) - so a parent that dispatched a mapper at `low` gets a
+(`litellm/config.yaml:878-879`) - so a parent that dispatched a mapper at `low` gets a
 `low` answer from the fallback rather than an `xhigh` it did not ask for.
+
+The eighth and ninth, `agent-xhigh-fast` and `agent-swarm-fast`, are not new
+lanes: each is its parent deployment for deployment - `agent-xhigh` with the
+session pin kept, `agent-swarm` with the pin lifted for it alone - and what
+differs is where one call of the conversation is answered. The Grok Build CLI has
+no compaction-model key, so the summary it asks for when a session nears its
+context window rides the session model and inherits that model's thinking level: a
+long session's summary is Qwen3.8-Flash-Next answering at `xhigh`, measured at 107
+s to 1915 s, with 18 of the 36 sampled successes running past the CLI's 300 s
+wall-clock budget. A summary needs no thinking, so these two aliases ask the proxy
+callback `litellm/compaction_router.py` to move that one call to `compaction-fast`
+- the small Ollama-served coding weight on the Arc - before the router picks a
+deployment. Every other call of the same conversation stays on its Spark box, and
+a session on any other alias compacts exactly as it always has: the hop is a
+property of the alias, so picking one of these two is the opt-in, and
+`EVO_T1_FAST_COMPACTION=0` is the kill switch beside it. It stops at the Arc's
+window: those weights answer inside 32768 tokens, so a summary estimated above
+`EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) stays on its Spark lane rather than
+be handed to Ollama to clamp, because a slow summary beats a truncated one.
+Nothing has been measured on the new lane yet, so no speed-up figure is quoted
+here; what changes without a stopwatch is who answers. Each fast lane degrades to
+the lane it is the twin of - `agent-xhigh-fast` -> `agent-xhigh` -> `coder`,
+`agent-swarm-fast` -> `agent-swarm` -> `coder` (`litellm/config.yaml:883-884`) -
+keeping its baked level and its pin behaviour, while `compaction-fast` is the one
+chain nobody types: it hops to a Spark rather than to another Arc alias,
+`compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:889`), because
+`coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama
+container and a hop between them is a hop to whatever is already down. The four
+`EVO_T1_FAST_COMPACTION*` keys - the kill switch, `EVO_T1_FAST_COMPACTION_LANES`
+(default `agent-xhigh-fast,agent-swarm-fast`), `EVO_T1_FAST_COMPACTION_TARGET`
+(default `compaction-fast`) and the input limit above - are read in that module
+and nowhere else, which makes the litellm service's `environment:` block the whole
+policy. Neither fast lane is registered as a Coder Agents chat model: the hop keys
+on the summary instruction the CLI appends, that dropdown's aibridge never sends
+one, and an Agents chat there would be its parent lane under a longer name.
 
 ## Coder workspace templates
 
