@@ -828,7 +828,12 @@ sh_test(
         "coverage/py_report.py",
         "//:compose_file",
         "//docs-site:python_sources",
-        "//litellm:compaction_router.py",
+        # The group, not the single module: //tests:py_report.py builds its denominator by
+        # listing the *.py that actually arrive in runfiles, and nothing cross-reads this
+        # edge against the payload group. A per-file label here would let a second module
+        # join //litellm:config and be measured by nothing -- proven by mutation: a
+        # litellm/*.py added to that group left this gate printing ok at 7/7.
+        "//litellm:config",
         "//scripts:py_programs",
         # glob-policy: coverage/py_cov.sh discovers tests/python/test_*.py at runtime, so a new unittest module must arrive in runfiles or the suite silently measures less
     ] + glob(

@@ -78,7 +78,13 @@ CONFIG=""
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   CONFIG="${REPO_ROOT}/litellm/config.yaml"
-  [[ -f "${CONFIG}" ]] || skip "litellm/config.yaml is not reachable from ${REPO_ROOT}"
+  # Not a skip: this file's whole subject is the shipped routing file, it arrives on the
+  # suite's data edge as //litellm:config, and a run that could not see it would report
+  # every assertion below as green.
+  [[ -f "${CONFIG}" ]] || {
+    echo "litellm/config.yaml is not reachable from ${REPO_ROOT}" >&2
+    return 1
+  }
 }
 
 # Print the model_list entries of one alias — from its `- model_name: <alias>`
@@ -472,7 +478,10 @@ lane_param_lines() {
   # the dotted callback path to import at all. Both mounts are read-only: the container
   # gets no route to rewriting the routing file or the hook that gates it.
   local compose="${REPO_ROOT}/docker-compose.yml"
-  [[ -f "${compose}" ]] || skip "docker-compose.yml is not reachable from ${REPO_ROOT}"
+  [[ -f "${compose}" ]] || {
+    echo "docker-compose.yml is not reachable from ${REPO_ROOT}" >&2
+    return 1
+  }
   run grep -F -- './litellm/config.yaml:/app/config.yaml:ro' "${compose}"
   [ "${status}" -eq 0 ] || { echo "the config is not mounted read-only at /app/config.yaml" >&2; return 1; }
   run grep -F -- './litellm/compaction_router.py:/app/compaction_router.py:ro' "${compose}"
@@ -488,9 +497,18 @@ lane_param_lines() {
   local compose="${REPO_ROOT}/docker-compose.yml"
   local mod="${REPO_ROOT}/litellm/compaction_router.py"
   local sample="${REPO_ROOT}/.env.example"
-  [[ -f "${compose}" ]] || skip "docker-compose.yml is not reachable from ${REPO_ROOT}"
-  [[ -f "${mod}" ]] || skip "litellm/compaction_router.py is not reachable from ${REPO_ROOT}"
-  [[ -f "${sample}" ]] || skip ".env.example is not reachable from ${REPO_ROOT}"
+  [[ -f "${compose}" ]] || {
+    echo "docker-compose.yml is not reachable from ${REPO_ROOT}" >&2
+    return 1
+  }
+  [[ -f "${mod}" ]] || {
+    echo "litellm/compaction_router.py is not reachable from ${REPO_ROOT}" >&2
+    return 1
+  }
+  [[ -f "${sample}" ]] || {
+    echo ".env.example is not reachable from ${REPO_ROOT}" >&2
+    return 1
+  }
   local names name line arg shipped want form
   names="$(grep -oE '_setting\("EVO_T1_FAST_COMPACTION[A-Z_]*"' "${mod}" \
     | sed -E 's/.*\("([^"]*)".*/\1/' | LC_ALL=C sort -u)"
@@ -559,7 +577,10 @@ lane_param_lines() {
   # they can be pinned is the module's own set.
   local mod default value disabled_line
   mod="${REPO_ROOT}/litellm/compaction_router.py"
-  [[ -f "${mod}" ]] || skip "litellm/compaction_router.py is not reachable from ${REPO_ROOT}"
+  [[ -f "${mod}" ]] || {
+    echo "litellm/compaction_router.py is not reachable from ${REPO_ROOT}" >&2
+    return 1
+  }
   default="$(sed -n 's/.*_setting("EVO_T1_FAST_COMPACTION", "\([^"]*\)".*/\1/p' "${mod}" | head -n 1)"
   [ -n "${default}" ] || { echo "the module never reads EVO_T1_FAST_COMPACTION with a default" >&2; return 1; }
   case "${default}" in
@@ -584,7 +605,10 @@ lane_param_lines() {
     run grep -F '"x-litellm-session-id" = "${workspace_affinity_key}"' "${tpl}"
     [ "${status}" -eq 0 ] || { echo "no session-affinity header in ${tpl}" >&2; return 1; }
   done
-  [[ "${checked}" -gt 0 ]] || skip "no grok-config.toml.tftpl under ${REPO_ROOT}/templates"
+  [[ "${checked}" -gt 0 ]] || {
+    echo "no grok-config.toml.tftpl under ${REPO_ROOT}/templates" >&2
+    return 1
+  }
 }
 
 @test "affinity: every main.tf twin feeds workspace_affinity_key to the template" {
@@ -594,7 +618,10 @@ lane_param_lines() {
     run grep -F 'workspace_affinity_key = "ws-${data.coder_workspace.me.id}"' "${tf}"
     [ "${status}" -eq 0 ] || { echo "main.tf does not pass workspace_affinity_key: ${tf}" >&2; return 1; }
   done
-  [[ "${checked}" -gt 0 ]] || skip "no main.tf under ${REPO_ROOT}/templates"
+  [[ "${checked}" -gt 0 ]] || {
+    echo "no main.tf under ${REPO_ROOT}/templates" >&2
+    return 1
+  }
 }
 
 @test "compaction: every main.tf twin raises the CLI's 300 s budget to the proxy's 1200 s" {
@@ -609,7 +636,10 @@ lane_param_lines() {
     run grep -Eq '^[[:space:]]*GROK_COMPACTION_WALL_CLOCK_SECS = "1200"$' "${tf}"
     [ "${status}" -eq 0 ] || { echo "main.tf does not raise the compaction budget: ${tf}" >&2; return 1; }
   done
-  [[ "${checked}" -gt 0 ]] || skip "no main.tf under ${REPO_ROOT}/templates"
+  [[ "${checked}" -gt 0 ]] || {
+    echo "no main.tf under ${REPO_ROOT}/templates" >&2
+    return 1
+  }
 }
 
 @test "compaction: the budget stays out of the TOML twins" {
@@ -623,7 +653,10 @@ lane_param_lines() {
     run grep -Eq 'compaction_wall_clock_budget_secs|GROK_COMPACTION_WALL_CLOCK_SECS[[:space:]]*=' "${tpl}"
     [ "${status}" -ne 0 ] || { echo "the budget was pasted into TOML, where nothing reads it: ${tpl}" >&2; return 1; }
   done
-  [[ "${checked}" -gt 0 ]] || skip "no grok-config.toml.tftpl under ${REPO_ROOT}/templates"
+  [[ "${checked}" -gt 0 ]] || {
+    echo "no grok-config.toml.tftpl under ${REPO_ROOT}/templates" >&2
+    return 1
+  }
 }
 
 @test "timeouts: every grok-config twin ships the 1800 s idle deadline and the 70 per cent threshold" {
@@ -654,7 +687,10 @@ lane_param_lines() {
     run grep -Eq '^[[:space:]]*auto_compact_threshold_percent = 70$' "${tpl}"
     [ "${status}" -eq 0 ] || { echo "auto-compaction threshold is not 70 in ${tpl}" >&2; return 1; }
   done
-  [[ "${checked}" -gt 0 ]] || skip "no grok-config.toml.tftpl under ${REPO_ROOT}/templates"
+  [[ "${checked}" -gt 0 ]] || {
+    echo "no grok-config.toml.tftpl under ${REPO_ROOT}/templates" >&2
+    return 1
+  }
   # The asymmetry is the point: raising the client must not have raised the proxy.
   run grep -Eq '^[[:space:]]*request_timeout: 1200$' "${CONFIG}"
   [ "${status}" -eq 0 ] || { echo "request_timeout no longer bounds the chain at 1200 s" >&2; return 1; }
