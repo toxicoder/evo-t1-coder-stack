@@ -396,8 +396,8 @@
     },
     {
       "type": "timeseries",
-      "title": "Pressure stall (not filtered to this box)",
-      "description": "PSI some and full stall per subsystem. The node_exporter PSI series carry no labels at all, so no selector can reach this box's own PSI from here: this panel reads the host the exporter sits on and is context, not this Spark's number. A rising line is time spent waiting for CPU, memory or IO, not time spent using them.",
+      "title": "Pressure stall",
+      "description": "PSI some and full stall per subsystem, for this box only. A PSI series carries no resource label of its own, so the scrape labels are what bind it to a machine: the same instance selector the rest of the Host row uses. A rising line is time the box spent waiting for CPU, memory or IO, not time spent using them.",
       "id": 14,
       "gridPos": { "h": 7, "w": 12, "x": 12, "y": 29 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -406,31 +406,31 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(node_pressure_cpu_waiting_seconds_total[5m])",
+          "expr": "rate(node_pressure_cpu_waiting_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
           "legendFormat": "cpu some"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(node_memory_waiting_seconds_total[5m])",
+          "expr": "rate(node_memory_waiting_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
           "legendFormat": "memory some"
         },
         {
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(node_io_waiting_seconds_total[5m])",
+          "expr": "rate(node_io_waiting_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
           "legendFormat": "io some"
         },
         {
           "refId": "D",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(node_memory_stalled_seconds_total[5m])",
+          "expr": "rate(node_memory_stalled_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
           "legendFormat": "memory full"
         },
         {
           "refId": "E",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "rate(node_io_stalled_seconds_total[5m])",
+          "expr": "rate(node_io_stalled_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
           "legendFormat": "io full"
         }
       ]
@@ -906,13 +906,13 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "probe_success{module=\"spark_health\", instance=~\".*$host.*\"}",
+          "expr": "probe_success{module=\"spark_health\", hostname=\"$host\"}",
           "legendFormat": "health {{instance}}"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "probe_success{module=\"spark_models\", instance=~\".*$host.*\"}",
+          "expr": "probe_success{module=\"spark_models\", hostname=\"$host\"}",
           "legendFormat": "models {{instance}}"
         }
       ]
@@ -929,13 +929,13 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "probe_duration_seconds{module=\"spark_health\", instance=~\".*$host.*\"}",
+          "expr": "probe_duration_seconds{module=\"spark_health\", hostname=\"$host\"}",
           "legendFormat": "health {{instance}}"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "probe_duration_seconds{module=\"spark_models\", instance=~\".*$host.*\"}",
+          "expr": "probe_duration_seconds{module=\"spark_models\", hostname=\"$host\"}",
           "legendFormat": "models {{instance}}"
         }
       ]
@@ -952,13 +952,13 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "probe_http_status_code{module=\"spark_health\", instance=~\".*$host.*\"}",
+          "expr": "probe_http_status_code{module=\"spark_health\", hostname=\"$host\"}",
           "legendFormat": "health {{instance}}"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "probe_http_status_code{module=\"spark_models\", instance=~\".*$host.*\"}",
+          "expr": "probe_http_status_code{module=\"spark_models\", hostname=\"$host\"}",
           "legendFormat": "models {{instance}}"
         }
       ]
