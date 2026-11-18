@@ -112,6 +112,19 @@
             "path": "troubleshooting.md"
           }
         ]
+      },
+      {
+        "title": "Metrics and alerts",
+        "pages": [
+          {
+            "title": "Alerts and the metrics bundle",
+            "path": "operate/monitoring.md"
+          },
+          {
+            "title": "Spark monitoring",
+            "path": "spark-monitoring.md"
+          }
+        ]
       }
     ]
   },

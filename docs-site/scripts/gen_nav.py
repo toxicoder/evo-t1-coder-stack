@@ -126,7 +126,10 @@ NAV: list[tuple[str, list[DeclaredNode]]] = [
                 [
                     ("Project conventions", "project-conventions.md"),
                     ("Branching", "branching.md"),
-                    ("Trunk-based + flags refactor", "workflows/trunk-feature-flags-refactor.md"),
+                    (
+                        "Trunk-based + flags refactor",
+                        "workflows/trunk-feature-flags-refactor.md",
+                    ),
                 ],
             ),
         ],
@@ -153,6 +156,13 @@ NAV: list[tuple[str, list[DeclaredNode]]] = [
                     ("Troubleshooting", "troubleshooting.md"),
                 ],
             ),
+            (
+                "Metrics and alerts",
+                [
+                    ("Alerts and the metrics bundle", "operate/monitoring.md"),
+                    ("Spark monitoring", "spark-monitoring.md"),
+                ],
+            ),
         ],
     ),
     (
@@ -175,7 +185,10 @@ NAV: list[tuple[str, list[DeclaredNode]]] = [
                     ("Testing with Bazel", "contribute/test-with-bazel.md"),
                     # Graph navigation closes the tab: it is how a contributor finds their
                     # way around once the build and test rules above are second nature.
-                    ("Navigating the codebase with Bazel", "contribute/navigate-with-bazel.md"),
+                    (
+                        "Navigating the codebase with Bazel",
+                        "contribute/navigate-with-bazel.md",
+                    ),
                 ],
             ),
         ],
@@ -221,7 +234,10 @@ def to_tree(declared: list[tuple[str, list[DeclaredNode]]]) -> list[NavTab]:
         One entry per section: ``{"title", "pages"}`` with ``pages`` holding ordered leaves
         and folders.
     """
-    return [{"title": tab_title, "pages": [to_node(entry) for entry in pages]} for tab_title, pages in declared]
+    return [
+        {"title": tab_title, "pages": [to_node(entry) for entry in pages]}
+        for tab_title, pages in declared
+    ]
 
 
 def count_pages(tabs: list[NavTab]) -> int:
@@ -304,8 +320,12 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         ``0`` on success, ``1`` on a validation problem or ``--check`` drift.
     """
-    parser = argparse.ArgumentParser(description="Generate or verify docs-site/lib/nav.json.")
-    parser.add_argument("--check", action="store_true", help="fail if the committed file is stale")
+    parser = argparse.ArgumentParser(
+        description="Generate or verify docs-site/lib/nav.json."
+    )
+    parser.add_argument(
+        "--check", action="store_true", help="fail if the committed file is stale"
+    )
     args = parser.parse_args(argv)
 
     tabs = to_tree(NAV)
@@ -329,7 +349,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUT_JSON.write_text(payload, encoding="utf-8")
-    print(f"wrote {OUT_JSON.relative_to(REPO_ROOT)} ({len(tabs)} tabs, {count_pages(tabs)} pages)")
+    print(
+        f"wrote {OUT_JSON.relative_to(REPO_ROOT)} ({len(tabs)} tabs, {count_pages(tabs)} pages)"
+    )
     return 0
 
 
