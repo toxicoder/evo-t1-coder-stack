@@ -217,7 +217,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "spark:gpu_util_pct:box",
-          "legendFormat": "GPU util",
+          "legendFormat": "{{hostname}} GPU util",
           "instant": true,
           "format": "table"
         },
@@ -225,7 +225,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "spark:gpu_fb_fill_ratio:box",
-          "legendFormat": "Framebuffer fill",
+          "legendFormat": "{{hostname}} framebuffer fill",
           "instant": true,
           "format": "table"
         },
@@ -233,7 +233,7 @@
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "max by (hostname) (spark:gpu_temp_c:gpu)",
-          "legendFormat": "Hottest core",
+          "legendFormat": "{{hostname}} hottest core",
           "instant": true,
           "format": "table"
         },
@@ -241,7 +241,7 @@
           "refId": "D",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "spark:gpu_power_watts:box",
-          "legendFormat": "GPU power",
+          "legendFormat": "{{hostname}} GPU power",
           "instant": true,
           "format": "table"
         }
@@ -270,7 +270,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "100 - 100 * avg by (box) (rate(node_cpu_seconds_total{box!=\"\",mode=\"idle\"}[5m]))",
-          "legendFormat": "CPU busy",
+          "legendFormat": "{{box}} CPU busy",
           "instant": true,
           "format": "table"
         },
@@ -278,7 +278,7 @@
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "100 * (1 - sum by (box) (node_memory_MemAvailable_bytes{box!=\"\"}) / sum by (box) (node_memory_MemTotal_bytes{box!=\"\"}))",
-          "legendFormat": "Memory used",
+          "legendFormat": "{{box}} memory used",
           "instant": true,
           "format": "table"
         },
@@ -286,7 +286,7 @@
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "avg by (box) (node_load5{box!=\"\"})",
-          "legendFormat": "Load 5m",
+          "legendFormat": "{{box}} load 5m",
           "instant": true,
           "format": "table"
         }
