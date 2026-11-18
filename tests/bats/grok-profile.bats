@@ -13,13 +13,16 @@
 # writes, not a symlink onto the shared editor overlay.
 #
 # Every assertion loops over BOTH twins, because the two trees are independent payload
-# copies and a fix that lands in one of them alone has to go red. The whole suite
+# copies and a fix that lands in one of them alone has to go red. The [ui] carry-over
+# fold is not read as text but lifted out of the twin and EXECUTED over a render, so a
+# fold that emits a second [ui] table is caught rather than grepped for. The whole suite
 # skips while any template it reads is absent: a suite for a topology the tree does
 # not ship has no right to fail the gate.
 #
 # Usage: bazelisk test //tests:bats_grok_profile_test   (from any cwd)
-# Safety: reads the two template trees as data only; no terraform, no docker daemon,
-# no network; writes nothing outside the per-test scratch tree.
+# Safety: reads the two template trees as data; runs awk and python3 over fixtures it
+# builds itself; no terraform, no docker daemon, no network; writes nothing outside the
+# per-test scratch tree.
 
 bats_require_minimum_version 1.5.0
 
@@ -205,6 +208,81 @@ hcl_block() {
       'cat >"$user_settings_new" <<'"'"'VSCODE_USER_SETTINGS_EOF'"'"'' "${sf}" || return 1
     require_fixed "atomic real-file publish" 'mv -f "$user_settings_new" "$user_settings"' "${sf}" || return 1
     require_fixed "an operator symlink is left alone" '[ -L "$user_settings" ]' "${sf}" || return 1
+  done
+}
+
+# lift_ui_fold <startup> <out> - write the [ui] carry-over awk PROGRAM out of the
+# shipped twin into <out>. It is the single-quoted argument of the `awk -v ui=`
+# call, whose shell line continuations end at the heredoc opener, so the joined
+# text between the outer quotes is the program. Lifting it rather than retyping it
+# is the point: rewrite the twin's fold and this is the text that gets executed.
+lift_ui_fold() {
+  awk '
+    !s && /^[[:space:]]*awk -v ui=/ { s = 1; next }
+    s {
+      t = $0
+      if (match(t, /<<.GROK_CONFIG_EOF./)) { t = substr(t, 1, RSTART - 1) }
+      if (t ~ /[\\][[:space:]]*$/) { sub(/[[:space:]]*\\[[:space:]]*$/, "", t); buf = buf t }
+      else { buf = buf t; fin = 1; exit }
+    }
+    END { if (!fin) exit 1; print buf }
+  ' "$1" | sed -e "s/^[^']*'//" -e "s/'[^']*\$//" >"$2"
+  [ -s "$2" ]
+}
+
+@test "grok_profile: the [ui] carry-over folds the operator keys into the render's own table" {
+  # The render already opens one [ui] table, so the carry-over must fold the
+  # operator's other [ui] keys INTO it. A fold that emits a table of its own is a
+  # duplicate TOML table (tomllib: Cannot declare ('ui',) twice), which is the bug
+  # this executes for. Both twins carry the same awk, so both are run.
+  local twin sf dir keys render bare
+  for twin in workspace devcontainer; do
+    sf="$(twin_file "${twin}" startup.sh.tftpl)"
+    dir="$(make_scratch)"
+    if ! lift_ui_fold "${sf}" "${dir}/fold.awk"; then
+      printf 'FAIL: %s: no [ui] carry-over awk to lift\n' "${sf}" >&2
+      return 1
+    fi
+    keys="${dir}/keys"
+    printf '%s\n' 'permission_mode = "acceptEdits"' 'banner = "keep me"' >"${keys}"
+    # Case 1: the render owns [ui] with the theme, and a model table follows it.
+    render="${dir}/render"
+    printf '%s\n' '[ui]' 'theme = "grokbuild"' '' '[model."agent"]' \
+      'reasoning_effort = "high"' >"${render}"
+    awk -f "${dir}/fold.awk" -v ui="${keys}" <"${render}" >"${dir}/out"
+    python3 -c 'import tomllib,sys; tomllib.load(open(sys.argv[1],"rb"))' "${dir}/out" || {
+      printf 'FAIL: %s: the folded config is not valid TOML:\n%s\n' "${sf}" \
+        "$(cat "${dir}/out")" >&2
+      return 1
+    }
+    require_count "one [ui] table after the fold" 1 '^\[ui\][[:space:]]*$' "${dir}/out" || return 1
+    require_fixed "the carried permission_mode survives a re-render" \
+      'permission_mode = "acceptEdits"' "${dir}/out" || return 1
+    require_fixed "the carried banner survives a re-render" \
+      'banner = "keep me"' "${dir}/out" || return 1
+    require_fixed "the render keeps its own theme" \
+      'theme = "grokbuild"' "${dir}/out" || return 1
+    require_fixed "the model table the render carried is intact" \
+      '[model."agent"]' "${dir}/out" || return 1
+    # Case 2: a render with no [ui] at all - the carried keys need a table of
+    # their own, appended below what the render did emit, and still one only.
+    bare="${dir}/render-bare"
+    printf '%s\n' '[model."agent"]' 'reasoning_effort = "high"' >"${bare}"
+    awk -f "${dir}/fold.awk" -v ui="${keys}" <"${bare}" >"${dir}/out-bare"
+    python3 -c 'import tomllib,sys; tomllib.load(open(sys.argv[1],"rb"))' "${dir}/out-bare" || {
+      printf 'FAIL: %s: the appended [ui] table is not valid TOML:\n%s\n' "${sf}" \
+        "$(cat "${dir}/out-bare")" >&2
+      return 1
+    }
+    require_count "one [ui] table appended" 1 '^\[ui\][[:space:]]*$' "${dir}/out-bare" || return 1
+    require_fixed "the appended table carries permission_mode" \
+      'permission_mode = "acceptEdits"' "${dir}/out-bare" || return 1
+    # Appended, not prepended: the [ui] table sits below the render's own table.
+    if [[ "$(grep -n '^\[ui\][[:space:]]*$' "${dir}/out-bare" | cut -d: -f1)" -lt \
+      "$(grep -n '^\[model\."agent"\]' "${dir}/out-bare" | cut -d: -f1)" ]]; then
+      printf 'FAIL: %s: the [ui] table was prepended, not appended\n' "${sf}" >&2
+      return 1
+    fi
   done
 }
 

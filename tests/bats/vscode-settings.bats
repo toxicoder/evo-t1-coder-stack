@@ -7,9 +7,13 @@
 # stay byte-identical, and the startup twins each copy it once onto the
 # per-owner volume, while the dev-container template's code-server fork
 # merges it into the dev container's private copy only while the toggle is on.
+# The startup script's two merge branches (jq, then the python3 fallback) are
+# lifted out of the shipped twin and executed over one fixture, so the two
+# implementations of the precedence are held to the same result.
 #
 # Usage: bazelisk test //tests:bats_vscode_settings_test   (from any cwd)
-# Safety: reads the two template dirs; writes nothing.
+# Safety: reads the two template dirs; writes only inside the per-test scratch
+# tree, which is where the two merge branches are executed.
 
 bats_require_minimum_version 1.5.0
 
@@ -20,6 +24,36 @@ REPO_ROOT=""
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
+}
+
+# lift_jq_merge <startup> - print the jq program of the shipped merge branch,
+# which is the single-quoted argument on the line running `jq -s`. Lifting it
+# instead of retyping it is the point: a rewrite of the twin is what runs here.
+lift_jq_merge() {
+  local line q
+  q="'"
+  line="$(grep -F '(.[0] * .[1])' "$1" | head -n 1)"
+  [ -n "${line}" ] || return 1
+  line="${line#*"$q"}"
+  line="${line%%"$q"*}"
+  [ -n "${line}" ] || return 1
+  printf '%s' "${line}"
+}
+
+# lift_python_merge <startup> - print the source of the shipped python3 fallback,
+# which is the single-quoted -c argument of the SETTINGS_OUT= line. That line is
+# the merge, not the SETTINGS_PATH seed check further up the script. The program
+# carries no single quote of its own, so the outer pair is unambiguous.
+lift_python_merge() {
+  local line q
+  q="'"
+  line="$(grep -F 'SETTINGS_OUT=' "$1" | grep -F "python3 -c '" | head -n 1)"
+  [ -n "${line}" ] || return 1
+  line="${line#*python3 -c }"
+  line="${line#*"$q"}"
+  line="${line%%"$q"*}"
+  [ -n "${line}" ] || return 1
+  printf '%s' "${line}"
 }
 
 @test "settings: the two settings.json.tftpl copies are byte-identical" {
@@ -148,17 +182,15 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'mv -f "$user_settings_new" "$user_settings"' "${startup}"
     [ "${status}" -eq 0 ]
-    # Every key the operator left in the shared overlay wins over the render,
-    # both on the jq path and on the python3 fallback...
-    run grep -F '(.[0] * .[1])' "${startup}"
-    [ "${status}" -eq 0 ]
+    # The python3 fallback is reached only when jq is absent, so its seam is
+    # pinned here and its behaviour is executed by the merge test below.
     run grep -F 'SETTINGS_BASE="$user_settings_new" SETTINGS_OVERLAY="$shared_settings"' "${startup}"
     [ "${status}" -eq 0 ]
-    # ...except the theme, which the template re-asserts last so an overlay that
-    # sets workbench.colorTheme cannot veto this workspace's own theme.
-    run grep -F '"workbench.colorTheme": (.[0]["workbench.colorTheme"]' "${startup}"
+    run grep -F 'SETTINGS_OUT="$${user_settings_new}.m"' "${startup}"
     [ "${status}" -eq 0 ]
-    run grep -F '**({"workbench.colorTheme":b["workbench.colorTheme"]}' "${startup}"
+    # The theme re-assert on the jq path; the python path's own re-assert is
+    # proved behaviourally, so a rewrite of that lambda cannot slip past.
+    run grep -F '"workbench.colorTheme": (.[0]["workbench.colorTheme"]' "${startup}"
     [ "${status}" -eq 0 ]
     run grep -F '$${LITELLM_API_KEY:-}' "${startup}"
     [ "${status}" -eq 0 ]
@@ -172,6 +204,73 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'litellm_key = var.litellm_key' "${main}"
     [ "${status}" -ne 0 ]
+  done
+}
+
+@test "settings: both merge branches execute to one deep merge with the render's theme last" {
+  # The jq path and the python3 fallback are two independent implementations of
+  # one precedence, and only one of them runs on any given boot. So both programs
+  # are lifted out of the shipped workspace twin and EXECUTED over the same
+  # fixture, then held to the same object: the render's theme wins over the
+  # overlay's, the overlay wins inside a nested object, a key either side holds
+  # alone survives, and neither path may flatten the nested object.
+  local startup dir jq_prog py_prog base overlay jq_out py_out jq_canon py_canon f
+  startup="${REPO_ROOT}/templates/workspace/startup.sh.tftpl"
+  dir="$(make_scratch)"
+  if ! jq_prog="$(lift_jq_merge "${startup}")"; then
+    echo "no jq merge branch to lift out of ${startup}" >&2
+    return 1
+  fi
+  if ! py_prog="$(lift_python_merge "${startup}")"; then
+    echo "no python3 merge branch to lift out of ${startup}" >&2
+    return 1
+  fi
+  base="${dir}/base.json"
+  overlay="${dir}/overlay.json"
+  cat >"${base}" <<'SETTINGS_BASE_JSON'
+{"workbench.colorTheme": "Grokked", "workbench.colorCustomizations": {"editor.background": "#111111", "statusBar.background": "#222222"}, "operator.kept": 1}
+SETTINGS_BASE_JSON
+  cat >"${overlay}" <<'SETTINGS_OVERLAY_JSON'
+{"workbench.colorTheme": "Monokai", "workbench.colorCustomizations": {"editor.background": "#999999"}, "operator.added": 2}
+SETTINGS_OVERLAY_JSON
+  jq_out="${dir}/jq.json"
+  py_out="${dir}/python.json"
+  jq -s "${jq_prog}" "${base}" "${overlay}" >"${jq_out}"
+  SETTINGS_BASE="${base}" SETTINGS_OVERLAY="${overlay}" SETTINGS_OUT="${py_out}" \
+    python3 -c "${py_prog}"
+  [ -s "${py_out}" ] || { echo "the python3 branch wrote nothing to ${py_out}" >&2; return 1; }
+  # One object from both paths. A shallow {**b,**o} fallback fails here first.
+  jq_canon="$(jq -S -c . "${jq_out}")"
+  py_canon="$(jq -S -c . "${py_out}")"
+  [ "${jq_canon}" = "${py_canon}" ] || {
+    echo "the two merge branches disagree:"
+    echo "  jq     ${jq_canon}" >&2
+    echo "  python ${py_canon}" >&2
+    return 1
+  }
+  # Each precedence rule, checked on both paths. jq reads a dotted key as a path,
+  # so every one of these is quoted as a single key.
+  for f in "${jq_out}" "${py_out}"; do
+    [ "$(jq -r '."workbench.colorTheme"' "${f}")" = "Grokked" ] || {
+      echo "${f}: the shared overlay vetoed this workspace's own theme" >&2
+      return 1
+    }
+    [ "$(jq -r '."workbench.colorCustomizations"."editor.background"' "${f}")" = "#999999" ] || {
+      echo "${f}: the overlay did not win inside workbench.colorCustomizations" >&2
+      return 1
+    }
+    [ "$(jq -r '."workbench.colorCustomizations"."statusBar.background"' "${f}")" = "#222222" ] || {
+      echo "${f}: the merge flattened the nested object" >&2
+      return 1
+    }
+    [ "$(jq -r '."operator.added"' "${f}")" = "2" ] || {
+      echo "${f}: an overlay-only key was dropped" >&2
+      return 1
+    }
+    [ "$(jq -r '."operator.kept"' "${f}")" = "1" ] || {
+      echo "${f}: a render-only key was dropped" >&2
+      return 1
+    }
   done
 }
 

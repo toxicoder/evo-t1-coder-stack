@@ -307,12 +307,11 @@ notes_hoist_legacy() {
     mkdir -p "${dest}" 2>/dev/null || continue
     # Content and mtimes only. cp -a would also carry the old volume's owner and
     # mode across, and the legacy mount holds whatever a past boot or a root
-    # coder_script left behind: a write-bit-stripped or root-created entry then
-    # landed unreadable in the clone, with nothing later in the boot to repair it
-    # (the boot chowns $HOME/.grok BEFORE this runs, never after). u+rwX makes the
-    # hoisted tree behave like the tree the boot writes itself.
-    if hoist_err="$(cp -R --preserve=timestamps "${src}/." "${dest}/" 2>&1)"; then
-      chmod -R u+rwX "${dest}" 2>/dev/null || true
+    # coder_script left behind, so an entry could land unreadable in the clone.
+    hoist_err="$(cp -R --preserve=timestamps "${src}/." "${dest}/" 2>&1)" || :
+    # After the branch: a copy that died halfway still made its leading entries.
+    chmod -R u+rwX "${dest}" 2>/dev/null || true
+    if [ -z "${hoist_err}" ]; then
       printf 'note: hoisted %s from the legacy profile volume into %s\n' \
         "${concern}" "${dest}"
     else

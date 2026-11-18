@@ -192,7 +192,7 @@ VSCODE_USER_SETTINGS_EOF
         mv -f "$${user_settings_new}.m" "$user_settings_new"
       elif command -v python3 >/dev/null 2>&1; then
         SETTINGS_BASE="$user_settings_new" SETTINGS_OVERLAY="$shared_settings" \
-          SETTINGS_OUT="$${user_settings_new}.m" python3 -c 'import json,os; b=json.load(open(os.environ["SETTINGS_BASE"])); o=json.load(open(os.environ["SETTINGS_OVERLAY"])); m={**b,**o,**({"workbench.colorTheme":b["workbench.colorTheme"]} if "workbench.colorTheme" in b else ({"workbench.colorTheme":o["workbench.colorTheme"]} if "workbench.colorTheme" in o else {}))}; json.dump(m,open(os.environ["SETTINGS_OUT"],"w"),indent=2); open(os.environ["SETTINGS_OUT"],"a").write("\n")'
+          SETTINGS_OUT="$${user_settings_new}.m" python3 -c 'import json,os; deep=lambda a,b:{**a,**{k:(deep(a[k],v) if isinstance(v,dict) and isinstance(a.get(k),dict) else v) for k,v in b.items()}}; b=json.load(open(os.environ["SETTINGS_BASE"])); o=json.load(open(os.environ["SETTINGS_OVERLAY"])); m=deep(b,o); m.update(({"workbench.colorTheme":b["workbench.colorTheme"]} if "workbench.colorTheme" in b else ({"workbench.colorTheme":o["workbench.colorTheme"]} if "workbench.colorTheme" in o else {}))); json.dump(m,open(os.environ["SETTINGS_OUT"],"w"),indent=2); open(os.environ["SETTINGS_OUT"],"a").write("\n")'
         mv -f "$${user_settings_new}.m" "$user_settings_new" 2>/dev/null || true
       fi
       rm -f "$${user_settings_new}.m" 2>/dev/null || true
@@ -282,6 +282,10 @@ fi
 if [ -n "$home_owner" ]; then
   $SUDO chown -R "$home_owner" "$HOME/.grok" "$HOME/.shared" 2>/dev/null || true
 fi
+
+# run_notes below can run under the clone container's HOME, where the read-only
+# ~/.grok-legacy mount is not, so hoist with the HOME that actually has it.
+notes_hoist_legacy || true
 
 # --- GitHub credential plumbing (best effort) ---------------------------------
 # docs/coder-templates.md#github-credentials-for-a-workspace

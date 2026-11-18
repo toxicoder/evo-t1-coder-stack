@@ -231,6 +231,49 @@ age_live() {
   [ -w "${HOME}/.grok/memory" ]
 }
 
+@test "notes_hoist_legacy: a copy that dies partway leaves its destination writable" {
+  # cp -R --preserve=timestamps carries the source's MODE across, so an entry the
+  # old volume left at 0444 lands unwritable in the clone, and the entry that
+  # kills the copy does not stop the entries before it from already having been
+  # made. That is why the u+rwX repair sits AFTER the copy branch rather than in
+  # its success arm: a half-done hoist still has to leave a tree the back-sync can
+  # write into, and the boot chowns ~/.grok long before this runs.
+  local legacy="${HOME}/.grok-legacy"
+  HOIST_DEST="${HOME}/.grok"
+  mkdir -p "${legacy}/memory"
+  printf '%s\n' 'kept bytes' >"${legacy}/memory/kept.md"
+  printf '%s\n' 'locked bytes' >"${legacy}/memory/locked.md"
+  chmod 444 "${legacy}/memory/kept.md"
+  chmod 000 "${legacy}/memory/locked.md"
+  run --separate-stderr notes_hoist_legacy
+  # Restore the source's write bit at once, so a failing assertion below cannot
+  # strand a mode-000 file in this test's scratch tree.
+  chmod u+w "${legacy}/memory/locked.md"
+  [ "${status}" -eq 0 ]
+  # What cp did manage to read crossed over with its bytes intact.
+  [ -f "${HOME}/.grok/memory/kept.md" ]
+  [ "$(cat "${HOME}/.grok/memory/kept.md")" = "kept bytes" ]
+  # The repair: nothing the half-copy created is left unwritable. Without the
+  # chmod after the branch, kept.md is still 0444 here and this line names it.
+  [ -z "$(find "${HOME}/.grok" -mindepth 1 ! -writable 2>/dev/null)" ] || {
+    echo "unwritable entries left by the hoist:" >&2
+    find "${HOME}/.grok" -mindepth 1 ! -writable >&2
+    return 1
+  }
+  # The read-only source keeps everything it was given, failed copy and all.
+  [ -f "${legacy}/memory/kept.md" ]
+  [ -f "${legacy}/memory/locked.md" ]
+  # And the boot quotes cp's own complaint instead of swallowing it.
+  [[ "${stderr}" == *"could not hoist"* ]] || {
+    echo "stderr did not name the failed hoist: ${stderr}" >&2
+    return 1
+  }
+  [[ "${stderr}" == *"Permission denied"* ]] || {
+    echo "stderr did not carry cp's own error: ${stderr}" >&2
+    return 1
+  }
+}
+
 @test "notes_hoist_legacy: no legacy mount at all is silence, not a warning" {
   # A private-mode workspace gets no ~/.grok-legacy, and the stage that calls
   # this runs on every boot, so an absent mount must neither print nor fail.
