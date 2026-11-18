@@ -1,6 +1,6 @@
 ---
 title: Monitoring and alerts
-description: "Running the observability bundle day to day: where the 28 alerts live, what Alertmanager pages on and off, why its UI stays on loopback, where a silence belongs, and how the three DGX Sparks become Prometheus targets."
+description: "Running the observability bundle day to day: where the 30 alerts live, what Alertmanager pages on and off, why its UI stays on loopback, where a silence belongs, and how the three DGX Sparks become Prometheus targets."
 tags: [operate, observability, prometheus, alertmanager, spark]
 ---
 
@@ -25,18 +25,30 @@ stack's own containers has to be run where the stack lives.
 ## Alerts
 
 Three rule files arrive with Prometheus and need no second registration:
-`observability/prometheus/rules/stack.rules.yml` carries the eleven host alerts,
-`spark.rules.yml` the seven Spark alerts, and `inference.rules.yml` the ten inference
-alerts - 28 in all. Prometheus evaluates them. The bundle now also runs Alertmanager
+`observability/prometheus/rules/stack.rules.yml` carries the twelve host alerts,
+`spark.rules.yml` the eight Spark alerts, and `inference.rules.yml` the ten inference
+alerts - 30 in all. Prometheus evaluates them. The bundle now also runs Alertmanager
 (`prom/alertmanager:v0.35.0`) to group them, hold them, and decide who hears about them.
 
-Two of the host alerts exist because the obvious design has a blind spot. The two
+Three of the host alerts exist because the obvious design has a blind spot. The two
 single-exporter gap alerts each wait for the *other* exporter to vouch for the box, so
 both exporters dying at once - a powered-off host, a restarted Docker - was silent;
-`HostExportersSilent` asks no second opinion and fires on the double absence. And a dead
+`HostExportersSilent` asks no second opinion and fires on the double absence. A dead
 blackbox prober produces no probe series at all, so nothing it probes can report it;
 `BlackboxProbeGap` reads `up{job="blackbox"}`, which is why Prometheus scrapes the prober
-as a service of its own.
+as a service of its own. And the same argument one layer up: every rule pages *through*
+Alertmanager, and an Alertmanager that is gone loses no series that any other rule reads,
+so the bundle keeps evaluating and firing into nothing. `AlertmanagerGap` is critical
+where those two are warning, and asks both shapes of the fault - `absent()` for the
+service being gone and `up == 0` for a container that runs without answering.
+
+One Spark alert closes the same shape on the other side. `SparkDown` needs the probe to
+fail as well as the scrape, so a box that is genuinely up and simply not reporting host
+metrics pages nothing, and `SparkGpuSeriesSilent` asks only the DCGM family.
+`SparkHostMetricsSilent` is the one that reads a box whose health probe succeeds while
+`spark:box_up` has never been 1 - the usual cause being a hand-edited file where the
+stamped `exporter` label lost its exact spelling, which drops that box's group out of
+every job's keep filter.
 
 What that means day to day:
 

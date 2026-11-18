@@ -1244,7 +1244,7 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │                          #   (one KEY per line; read via infisical_managed_keys)
 ├── litellm/config.yaml    # model aliases
 ├── observability/         # the monitoring bundle, behind profiles: ["observability"]:
-│   ├── prometheus/        #   prometheus.yml + rules/ (28 alerts: 11 host, 7 spark, 10 inference, across
+│   ├── prometheus/        #   prometheus.yml + rules/ (30 alerts: 12 host, 8 spark, 10 inference, across
 │   │                      #     three *.rules.yml files)
 │   ├── alertmanager/      #   the alert route - grouping,
 │   │                      #     silences, the optional webhook

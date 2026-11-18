@@ -335,3 +335,32 @@ groups:
             still answers, so every Spark reachability and model-list answer on the
             Spark pages is frozen. Restart the blackbox_exporter service in the
             observability profile.
+
+      # Everything above pages through this one process, and nothing above it can say
+      # it died: an Alertmanager that is gone loses no series of its own that any other
+      # rule reads, so the bundle keeps evaluating rules and firing them into nothing.
+      # It is the one component whose failure is invisible from the inside, which is why
+      # it is critical while the two above it are warning. Both halves are needed: up
+      # == 0 is a container that is running and not answering, and absent() is the
+      # service being gone from the compose project or the scrape job being deleted,
+      # after which there is no up series at all to compare against zero.
+      - alert: AlertmanagerGap
+        expr: |
+          (
+            absent(up{job="alertmanager"})
+              or
+            (up{job="alertmanager"} == 0)
+          )
+            and on()
+          max by () (up{job="node_exporter"} == 1)
+        for: 10m
+        labels:
+          severity: critical
+          tier: host
+        annotations:
+          summary: "Alertmanager is unreachable: alerts are evaluating with nowhere to go"
+          description: >-
+            Prometheus cannot scrape job="alertmanager" for 10m while the host itself
+            still answers, so every rule that fires now lands on the /alerts page and
+            nowhere else - no webhook, no receiver. Check the alertmanager service in
+            the observability profile, then read its /-/ready on the loopback port.

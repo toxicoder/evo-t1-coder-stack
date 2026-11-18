@@ -221,6 +221,35 @@ groups:
           description: No node_exporter scrape has succeeded for {{ $labels.hostname }} and the probe against it is failing too, so this is the box, not one exporter.
           runbook: bazelisk run //scripts:spark-monitor -- --status --box <n>
 
+      - alert: SparkHostMetricsSilent
+        # The box answers its health probe, so it is up, yet no node_exporter series
+        # exists for it. Two shapes reach this state and neither of the other rules
+        # can see it: a hand-edited file that typed the stamped label as node-exporter
+        # is dropped by every job's keep filter, and a container that died after its
+        # first scrape leaves the same hole. SparkDown needs the probe to fail too, so
+        # a box that is healthy apart from its exporter never pages, and
+        # SparkGpuSeriesSilent asks only the DCGM family. Both read as a box that is
+        # simply not enrolled. `== 1` on the right is the point: a box whose scrape is
+        # failing has box_up == 0, which is this same finding, not an exemption.
+        expr: |
+          (spark:probe_up == 1)
+            unless on (hostname)
+          (spark:box_up == 1)
+        for: 15m
+        labels:
+          severity: warning
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} answers its probe but reports no host metrics
+          description: >-
+            The health probe has succeeded for 15m while spark:box_up has never been 1
+            for this hostname, so the box's CPU, memory, disk and load panels are empty
+            even though the box is up. Read bazelisk run //scripts:spark-monitor --
+            --targets and check the exporter label on its group against the keep filter
+            in the spark-node job.
+          runbook: bazelisk run //scripts:spark-monitor -- --status --box <n>
+
       - alert: SparkGpuTempNearSlowdown
         # Core or VRAM temperature: both throttle the card, and the two sensors trip
         # at different loads. 8 C of margin is where these cards start holding clocks.

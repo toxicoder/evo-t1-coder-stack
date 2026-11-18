@@ -364,10 +364,11 @@ assert_file_namespace() {
   local facts alerts missing
   facts="$(rules_facts "${STACK_RULES}")"
   alerts="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="alert"')"
-  # 11, not 9: the two single-exporter gap alerts are joined by HostExportersSilent
-  # (both host exporters gone, which neither of them can see) and BlackboxProbeGap (a
-  # dead prober produces no probe series at all, so nothing it probes can report it).
-  assert_eq "stack.rules.yml ships 11 alerts" "11" "$(printf '%s\n' "${alerts}" | wc -l | tr -d ' ')"
+  # 12, not 9: the two single-exporter gap alerts are joined by HostExportersSilent
+  # (both host exporters gone, which neither of them can see), BlackboxProbeGap (a
+  # dead prober produces no probe series at all, so nothing it probes can report it),
+  # and AlertmanagerGap (the one component whose death no other rule reads).
+  assert_eq "stack.rules.yml ships 12 alerts" "12" "$(printf '%s\n' "${alerts}" | wc -l | tr -d ' ')"
   assert_eq "every one carries tier: host" "" \
     "$(printf '%s\n' "${alerts}" | awk -F'|' '$3!="host"{print $2}')"
   missing="$(printf '%s\n' "${facts}" | awk -F'|' '$5!="1"{print $1" "$2}')"
@@ -378,7 +379,9 @@ assert_file_namespace() {
   local facts alerts
   facts="$(rules_facts "${SPARK_RULES}")"
   alerts="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="alert"')"
-  assert_eq "spark.rules.yml ships 7 alerts" "7" "$(printf '%s\n' "${alerts}" | wc -l | tr -d ' ')"
+  # 8: the seven GPU and box alerts, plus SparkHostMetricsSilent for the box that
+  # answers its probe and reports no host metrics at all.
+  assert_eq "spark.rules.yml ships 8 alerts" "8" "$(printf '%s\n' "${alerts}" | wc -l | tr -d ' ')"
   # Both labels are what the tree and the inhibit rules match on; the Alertmanager
   # comment says it plainly - two alerts that both lack `spark` compare equal, so a
   # dropped spark label lets one box silence another.
@@ -618,6 +621,34 @@ PY
   body="$(awk '/record: spark:probe_up/{f=1} f{print} f&&/^$/{exit}' "${SPARK_RULES}")"
   assert_match "the model-list probe stays out of the down verdict" \
     'probe_success\{job="blackbox-spark"\}' "${body}"
+}
+
+@test "AlertmanagerGap asks both shapes of an unreachable notifier" {
+  # up == 0 alone goes quiet when the service is deleted, because the up series
+  # disappears with it; absent() alone goes quiet when the container runs and does
+  # not answer. Neither half is enough, and the host gate keeps a bundle that is
+  # deliberately down from paging.
+  local body
+  body="$(awk '/alert: AlertmanagerGap/{f=1} f{print} f&&/^$/{exit}' "${STACK_RULES}")"
+  assert_match "it asks for the series to exist at all" \
+    'absent\(up\{job="alertmanager"\}\)' "${body}"
+  assert_match "and for the scrape to be failing" 'up\{job="alertmanager"\} == 0' "${body}"
+  assert_match "and stays quiet while the host itself is down" \
+    'max by \(\) \(up\{job="node_exporter"\} == 1\)' "${body}"
+}
+
+@test "SparkHostMetricsSilent pages a probed box with no host metrics" {
+  # The orphan case no other Spark rule reaches: the probe says the box is up, so
+  # SparkDown cannot fire, and the GPU family has its own rule. The right side has
+  # to be `== 1` - a box whose scrape is failing carries box_up == 0, which is the
+  # same finding rather than an exemption from it.
+  local body
+  body="$(awk '/alert: SparkHostMetricsSilent/{f=1} f{print} f&&/^$/{exit}' "${SPARK_RULES}")"
+  assert_match "it starts from a box whose health probe succeeds" \
+    'spark:probe_up == 1' "${body}"
+  assert_match "and keeps only the boxes with no successful node_exporter scrape" \
+    'unless on \(hostname\)' "${body}"
+  assert_match "by way of the recorded box rule compared to 1" 'spark:box_up == 1' "${body}"
 }
 
 @test "prometheus.yml's job names are exactly the pinned set" {
