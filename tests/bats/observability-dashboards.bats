@@ -67,16 +67,20 @@ setup() {
   PARSE_JSON="${REPO_ROOT}/scripts/lib/parse_json.py"
   LITELLM_JSON="${DASH_DIR}/litellm.json"
 
-  [[ -d ${DASH_DIR} ]] || skip "${DASH_DIR} is not in the tree"
-  [[ -f ${PARSE_JSON} ]] || skip "${PARSE_JSON} is not in the tree"
-  [[ -f ${LITELLM_JSON} ]] || skip "${LITELLM_JSON} is not in the tree"
+  # A missing payload is a broken tree, not a reason to skip: every one of these four
+  # conditions used to `skip`, which meant an emptied folder reported sixteen skips and
+  # exit 0, and the floor in the first test below never ran. Environmental gaps (no repo
+  # marker, no PyYAML) still skip; a missing artifact fails.
+  [[ -d ${DASH_DIR} ]] || fail "${DASH_DIR} is not in the tree"
+  [[ -f ${PARSE_JSON} ]] || fail "${PARSE_JSON} is not in the tree"
+  [[ -f ${LITELLM_JSON} ]] || fail "${LITELLM_JSON} is not in the tree"
 
   DASH_FILES=()
   local candidate
   for candidate in "${DASH_DIR}"/*.json; do
     [[ -f ${candidate} ]] && DASH_FILES+=("${candidate}")
   done
-  [[ ${#DASH_FILES[@]} -gt 0 ]] || skip "no dashboard JSON under ${DASH_DIR}"
+  [[ ${#DASH_FILES[@]} -gt 0 ]] || fail "no dashboard JSON under ${DASH_DIR}"
 }
 
 # --- fact emitter ----------------------------------------------------------
@@ -454,6 +458,14 @@ DCGM_FI_PROF_PCIE_TX_BYTES DCGM_FI_PROF_PCIE_RX_BYTES
 DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS
 DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS DCGM_FI_DEV_ROW_REMAP_FAILURE
 """
+# The LiteLLM surface this stack is pinned to (v1.102.1), read off LiteLLM's own
+# Prometheus exposition docs rather than off a page in this folder. That is deliberate:
+# these names used to be lifted from litellm.json's own expressions, which let a page
+# audit itself - a family invented there became legal there and on every page that
+# copied it, and the queue-wait panel on the models page was the result, titled away
+# from a first-token series it could not have named. Every name is now here or nowhere,
+# so adding one is a decision with a source behind it and the reference page is held to
+# the same list as the pages that copy it.
 LITELLM = """
 litellm_input_tokens_metric_total litellm_output_tokens_metric_total
 litellm_total_tokens_metric_total litellm_request_total_latency_metric_bucket
@@ -471,6 +483,10 @@ litellm_deployment_rpm_limit litellm_deployment_tpm_limit
 litellm_deployment_successful_fallbacks_total
 litellm_deployment_failed_fallbacks_total litellm_deployment_state
 litellm_deployment_cooled_down_total
+litellm_llm_api_time_to_first_token_metric
+litellm_proxy_total_requests_metric_total litellm_proxy_failed_requests_metric_total
+litellm_deployment_total_requests_total litellm_deployment_failure_responses_total
+litellm_spend_metric_total
 """
 BUNDLE = """
 up scrape_samples_scraped prometheus_rule_group_last_duration_seconds
@@ -519,15 +535,11 @@ for path in sorted(glob.glob(os.path.join(rules_dir, "*.rules.yml"))):
 with open(litellm_json, encoding="utf-8") as handle:
     shipped = json.load(handle)  # noqa: F841  (presence is checked in setup)
 
-# The families litellm.json already charts are pinned against LiteLLM v1.102.1 by L0,
-# so they join the allow-list. They are read from this run's own facts rather than
-# re-extracted here: one extractor, one answer.
-shipped_facts = os.path.join(facts_dir, os.path.basename(litellm_json) + ".facts")
-with open(shipped_facts, encoding="utf-8") as handle:
-    for line in handle:
-        fields = line.rstrip("\n").split("|")
-        if fields[0] == "metric":
-            allowed.add(fields[3])
+# The reference page used to seed this list with whatever it happened to chart, which
+# made it its own oracle: a family written there was legal there and on every page that
+# copied it. It is now audited as a page like any other, so a name enters through the
+# curated block above and nothing else.
+_ = shipped
 
 # A histogram family publishes _bucket, _sum and _count beside the name the contract
 # lists, and L0 itself tells a panel to derive rates off the bare
