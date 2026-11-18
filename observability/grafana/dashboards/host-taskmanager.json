@@ -1,0 +1,1368 @@
+{
+  "uid": "evo-host-taskmanager",
+  "title": "Stack host task manager",
+  "tags": ["evo-t1", "stack", "host"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": false,
+      "keepTime": true,
+      "tags": ["evo-t1"],
+      "title": "EVO-T1 dashboards",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "type": "row",
+      "id": 1,
+      "title": "Overview",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Uptime",
+      "description": "Seconds since the box last booted, so a value that snaps back to near zero is a reboot and every counter on this page starts over.",
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "time() - max(node_boot_time_seconds{evo_t1_host=\"stack-host\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "CPU utilisation",
+      "description": "Share of all core-seconds spent outside idle; a line past 0.90 for 10m is the HostCpuPegged alert and starves every container on the box.",
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "1 - avg(rate(node_cpu_seconds_total{evo_t1_host=\"stack-host\",mode=\"idle\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "red",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 0.75
+          },
+          {
+            "color": "green",
+            "value": 0.9
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "CPU cores",
+      "description": "Cores node_exporter reports, which is the denominator behind the utilisation and load figures; a drop here means the scrape lost cores rather than the box shrinking.",
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(count by (cpu) (node_cpu_seconds_total{evo_t1_host=\"stack-host\"}))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Memory used",
+      "description": "MemTotal minus MemAvailable, the headroom the OOM killer reads; this is the box holding model weights resident, so past 0.95 for 5m something gets killed.",
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "1 - (max(node_memory_MemAvailable_bytes{evo_t1_host=\"stack-host\"}) / max(node_memory_MemTotal_bytes{evo_t1_host=\"stack-host\"}))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "red",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 0.85
+          },
+          {
+            "color": "green",
+            "value": 0.95
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Load1 per core",
+      "description": "Runnable plus uninterruptible tasks per core; above 1.0 the queue is longer than the machine, and it rises on blocked tasks even when CPU looks idle.",
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_load1{evo_t1_host=\"stack-host\"}) / count(count by (cpu) (node_cpu_seconds_total{evo_t1_host=\"stack-host\"}))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "red",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 0.75
+          },
+          {
+            "color": "green",
+            "value": 1.0
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": 7,
+      "title": "Host alerts firing",
+      "description": "Host-tier alerts firing now, the same rules stack.rules.yml stamps tier=host; anything above zero names which row of this page to read first.",
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(ALERTS{alertstate=\"firing\",tier=\"host\"}) or vector(0)",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 3
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "id": 8,
+      "title": "CPU",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 }
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "CPU by mode",
+      "description": "Seconds per second spent in each mode summed over all cores, so the lines add up to cores in use; a rise in iowait means the CPU is idle because a device is slow, and a rise in steal means a hypervisor neighbour took the box.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (mode) (rate(node_cpu_seconds_total{evo_t1_host=\"stack-host\"}[5m]))",
+          "legendFormat": "{{mode}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Per-core utilisation",
+      "description": "Utilisation of every core, stacked; one tall bar among flat ones is a single-threaded build or agent pinning a core, while all bars climbing together is real load on the machine.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            }
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "1 - avg by (cpu) (rate(node_cpu_seconds_total{evo_t1_host=\"stack-host\",mode=\"idle\"}[5m]))",
+          "legendFormat": "{{cpu}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 11,
+      "title": "Tasks running",
+      "description": "Tasks in R state at the scrape instant; a number well above the core count is a runnable queue, which is a busy box rather than a wedged one.",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_procs_running{evo_t1_host=\"stack-host\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "type": "stat",
+      "id": 12,
+      "title": "Tasks blocked",
+      "description": "Tasks stuck in uninterruptible D state; a sustained rise means tasks are wedged on a device, and they inflate load1 without using any CPU at all.",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_procs_blocked{evo_t1_host=\"stack-host\"})",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 10
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "id": 13,
+      "title": "Pressure (PSI)",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 }
+    },
+    {
+      "type": "stat",
+      "id": 14,
+      "title": "CPU pressure (some)",
+      "description": "Wall-clock fraction of the last 5m with at least one task runnable but unscheduled, which is the some/ line and not the full/ one; the series carries no labels beyond the scrape, so a rising line means the box as a whole has run out of cores.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(rate(node_pressure_cpu_waiting_seconds_total{evo_t1_host=\"stack-host\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 0.25
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": 15,
+      "title": "Memory pressure (some)",
+      "description": "Wall-clock fraction with at least one task stalled on memory reclaim, the some/ line and the earlier memory signal than the utilisation gauge above; the series carries no labels beyond the scrape, and past 0.20 for 10m the HostMemoryPressureStall alert fires.",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(rate(node_memory_waiting_seconds_total{evo_t1_host=\"stack-host\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 0.2
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": 16,
+      "title": "Memory stalled (full)",
+      "description": "Wall-clock fraction with every task stalled on memory at once, the full/ line, so unlike the waiting series any nonzero value means the whole box was frozen; the series carries no labels beyond the scrape and this is the number that precedes an OOM kill.",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(rate(node_memory_stalled_seconds_total{evo_t1_host=\"stack-host\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 0.05
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": 17,
+      "title": "IO pressure (some)",
+      "description": "Wall-clock fraction with at least one task stalled on a block device, the some/ line; the series carries no labels beyond the scrape, and a rise that tracks the iowait line above points at the Disk row below.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(rate(node_io_waiting_seconds_total{evo_t1_host=\"stack-host\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 0.25
+          }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "id": 18,
+      "title": "IO stalled (full)",
+      "description": "Wall-clock fraction with every task stalled on IO at once, the full/ line, so any rise means the entire box waited on one device; the series carries no labels beyond the scrape, and on this host the usual cause is an image pull or a compaction.",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(rate(node_io_stalled_seconds_total{evo_t1_host=\"stack-host\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 0.05
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "id": 19,
+      "title": "Memory",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 }
+    },
+    {
+      "type": "timeseries",
+      "id": 20,
+      "title": "Used versus available",
+      "description": "Bytes committed against the MemAvailable headroom left, which is the only figure worth watching because MemFree alone counts reclaimable page cache as lost; when the available line flattens near zero the OOM killer picks the victim next.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_memory_MemTotal_bytes{evo_t1_host=\"stack-host\"}) - max(node_memory_MemAvailable_bytes{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "used"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_memory_MemAvailable_bytes{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "available"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_memory_MemTotal_bytes{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "Swap used",
+      "description": "Bytes of swap committed; a rising line means the box has started backing pages with disk, so everything resident, model weights included, is about to pay for it in latency.",
+      "gridPos": { "h": 8, "w": 8, "x": 12, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_memory_SwapTotal_bytes{evo_t1_host=\"stack-host\"}) - max(node_memory_SwapFree_bytes{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "swap used"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 22,
+      "title": "Memory pressure",
+      "description": "The PSI memory some/ ratio restated next to the memory it explains, since a box can look survivable on bytes and still be stalling tasks; the series carries no labels beyond the scrape, so this line is the whole machine waiting on reclaim.",
+      "gridPos": { "h": 8, "w": 4, "x": 20, "y": 34 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(rate(node_memory_waiting_seconds_total{evo_t1_host=\"stack-host\"}[5m]))",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          {
+            "color": "green",
+            "value": null
+          },
+          {
+            "color": "yellow",
+            "value": 1
+          },
+          {
+            "color": "red",
+            "value": 0.2
+          }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "id": 23,
+      "title": "Disk",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 }
+    },
+    {
+      "type": "timeseries",
+      "id": 24,
+      "title": "IOPS per device",
+      "description": "Completions per second per device, loop and ram devices excluded; completions climbing while throughput stays flat is small random IO, which is what a Loki or Mimir compaction looks like.",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_disk_reads_completed_total{evo_t1_host=\"stack-host\",device!~\"lo|loop.*|ram.*\"}[5m]))",
+          "legendFormat": "read {{device}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_disk_writes_completed_total{evo_t1_host=\"stack-host\",device!~\"lo|loop.*|ram.*\"}[5m]))",
+          "legendFormat": "write {{device}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 25,
+      "title": "Throughput per device",
+      "description": "Bytes per second per device; throughput rising while the utilisation panel stays low is a healthy disk, and both at the ceiling together is the device being the bottleneck.",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "Bs",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_disk_read_bytes_total{evo_t1_host=\"stack-host\",device!~\"lo|loop.*|ram.*\"}[5m]))",
+          "legendFormat": "read {{device}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_disk_written_bytes_total{evo_t1_host=\"stack-host\",device!~\"lo|loop.*|ram.*\"}[5m]))",
+          "legendFormat": "write {{device}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 26,
+      "title": "Disk utilisation",
+      "description": "Device-busy seconds per second, the is-this-disk-the-bottleneck panel; a line pinned near 1 for 15m is the HostDiskIoSaturated alert and everything queued on that device is paying for it.",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 43 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          },
+          "max": 1
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max by (device) (rate(node_disk_io_time_seconds_total{evo_t1_host=\"stack-host\",device!~\"lo|loop.*|ram.*\"}[5m]))",
+          "legendFormat": "{{device}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 27,
+      "title": "Filesystems",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 51 }
+    },
+    {
+      "type": "table",
+      "id": 28,
+      "title": "Space and inode headroom per mount",
+      "description": "Free space and free inodes as a fraction of each mount, tmpfs, overlay and squashfs excluded; a space column near zero is how the Loki, Mimir and image stores fail, and the inode column fills with many small files long before the space column does.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "align": "auto"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0.1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "mountpoint": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Value #A": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value #B": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_filesystem_avail_bytes{evo_t1_host=\"stack-host\",fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{evo_t1_host=\"stack-host\",fstype!~\"tmpfs|overlay|squashfs\"}",
+          "legendFormat": "space",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_filesystem_files_free{evo_t1_host=\"stack-host\",fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_files{evo_t1_host=\"stack-host\",fstype!~\"tmpfs|overlay|squashfs\"}",
+          "legendFormat": "inodes",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 29,
+      "title": "Network",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 60 }
+    },
+    {
+      "type": "timeseries",
+      "id": 30,
+      "title": "Traffic per device",
+      "description": "Bytes per second in and out of every real link, loopback, veth and bridge devices excluded; a tx line that flattens at the link rate is what makes every remote write to Mimir and every container egress slow.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 61 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "Bs",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_receive_bytes_total{evo_t1_host=\"stack-host\",device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "rx {{device}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_transmit_bytes_total{evo_t1_host=\"stack-host\",device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "tx {{device}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 31,
+      "title": "Dropped packets per device",
+      "description": "Dropped packets per second per real link, the panel that catches a saturated NIC; any line off zero means the interface or its queue is shedding, which reads to the other end as a dead service rather than a slow one.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 61 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_receive_drop_total{evo_t1_host=\"stack-host\",device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "rx drops {{device}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_transmit_drop_total{evo_t1_host=\"stack-host\",device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "tx drops {{device}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 32,
+      "title": "File descriptors and conntrack",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 69 }
+    },
+    {
+      "type": "timeseries",
+      "id": 33,
+      "title": "File descriptors",
+      "description": "Kernel file descriptors allocated against the system maximum, the silently exhausted table panel; the allocated line creeping toward the ceiling is a leaked socket pool across the bundle, and past it every new open fails with EMFILE.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 70 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_filefd_allocated{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "allocated"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_filefd_maximum{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "maximum"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 34,
+      "title": "Conntrack entries",
+      "description": "Conntrack entries in use against nf_conntrack_max, which every container flow on this box crosses; entries reaching the limit drops new connections outright rather than slowing them, and the alert pages at 80%.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 70 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 12,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "none"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_nf_conntrack_entries{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "entries"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(node_nf_conntrack_entries_limit{evo_t1_host=\"stack-host\"})",
+          "legendFormat": "limit"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 35,
+      "title": "Containers",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 78 }
+    },
+    {
+      "type": "table",
+      "id": 36,
+      "title": "Top containers by CPU",
+      "description": "The 20 containers taking the most CPU, sorted descending, with working set, process count, OOM events in the last hour, age since start, and the bytes per second each container moves on the network and on block storage; a working set climbing toward its limit is the OOM event the OOM column shows next. container_processes is only present because cAdvisor runs privileged with --pid=host in this stack, and the two throughput columns read the container's own cgroup, so a container that talks through a peer namespace shows its traffic on that peer instead.",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 79 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #A (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "CPU cores"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #B (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Memory working set"
+              },
+              {
+                "id": "unit",
+                "value": "bytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #C (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Processes"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #D (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "OOM events 1h"
+              },
+              {
+                "id": "unit",
+                "value": "short"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #E (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Age"
+              },
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #F (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Network"
+              },
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #G (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Block I/O"
+              },
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "sortBy": [
+          {
+            "displayName": "Value #A (lastNotNull)",
+            "desc": true
+          }
+        ]
+      },
+      "transformations": [
+        {
+          "id": "groupBy",
+          "options": {
+            "fields": {
+              "name": {
+                "aggregations": [],
+                "operation": "groupby"
+              },
+              "Value #A": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value #B": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value #C": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value #D": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              },
+              "Value #E": {
+                "aggregations": [
+                  "lastNotNull"
+                ],
+                "operation": "aggregate"
+              }
+            }
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "topk(20, sum by (name) (rate(container_cpu_usage_seconds_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m])))",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (container_memory_working_set_bytes{evo_t1_host=\"stack-host\",name!=\"\"})",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (container_processes{evo_t1_host=\"stack-host\",name!=\"\"})",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (increase(container_oom_events_total{evo_t1_host=\"stack-host\",name!=\"\"}[1h]))",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "time() - max by (name) (container_start_time_seconds{evo_t1_host=\"stack-host\",name!=\"\"})",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "F",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m])) + sum by (name) (rate(container_network_transmit_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m]))",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "G",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m])) + sum by (name) (rate(container_fs_writes_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m]))",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    }
+  ]
+}

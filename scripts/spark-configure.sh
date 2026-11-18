@@ -10,8 +10,8 @@
 #   bazelisk run //scripts:spark-configure -- --apply --restart <host> # and restart a RUNNING server
 #   SPARK_CFG_PARALLEL=4 bazelisk run //scripts:spark-configure -- --apply <host>
 #
-# With no host arguments the fleet named in .env is used — the host parts of the
-# SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL keys — falling back to the placeholder trio
+# With no host arguments the fleet named in .env is used — the SPARKn_HOST keys and the
+# host parts of the SPARKn_OPENAI_URL keys — falling back to the placeholder trio
 # spark-1.lan spark-2.lan spark-3.lan, whose names do not resolve. Pass real hostnames
 # or IPs, or set SPARK_HOSTS="host1 host2 ..." in the process environment, to override.
 #
@@ -180,16 +180,16 @@ if [ "${#hosts[@]}" -eq 0 ]; then
     # The SPARKn_HOST keys in .env name its addresses as far as the stack is
     # concerned — docker-compose.yml composes every Spark URL from them, so the
     # LiteLLM deployments, the dashboard cards and these probes all read the
-    # same three names. The host part of each SPARKn_OLLAMA_URL /
-    # SPARKn_OPENAI_URL key (scheme and port stripped, deduplicated) joins them,
-    # which is how a .env that names a box only in a URL still gets it checked.
+    # same three names. The host part of each SPARKn_OPENAI_URL key (scheme and port
+    # stripped, deduplicated) joins them, which is how a .env that names a box only in
+    # a URL still gets it checked.
     # A .env left on the shipped spark-<n>.lan placeholders still checks the
     # placeholder trio, whose names do not resolve — checked and skipped as a
     # "not yet" state, exactly as before.
     derived_hosts=""
     if [ -f .env ]; then
       for key in SPARK1_HOST SPARK2_HOST SPARK3_HOST \
-        SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
+        SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
         url="$(sed -n "s|^${key}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' | tr -d ' \r' || true)"
         [ -n "${url}" ] || continue
         host="$(printf '%s' "${url}" | sed -E 's|^https?://||; s|[:/].*$||')"
@@ -199,12 +199,12 @@ if [ "${#hosts[@]}" -eq 0 ]; then
       done
     fi
     if [ -n "${derived_hosts}" ]; then
-      log "note: no host given and SPARK_HOSTS is not set — checking the hosts named by the SPARKn_HOST keys (and any SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL) in .env:${derived_hosts}"
+      log "note: no host given and SPARK_HOSTS is not set — checking the hosts named by the SPARKn_HOST keys (and any SPARKn_OPENAI_URL) in .env:${derived_hosts}"
       for host in ${derived_hosts}; do
         hosts+=("${host}")
       done
     else
-      log 'note: no host given and SPARK_HOSTS is not set, and no SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample ships as the value of SPARKn_HOST. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
+      log 'note: no host given and SPARK_HOSTS is not set, and no SPARKn_OPENAI_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample ships as the value of SPARKn_HOST. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
       hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
     fi
   fi

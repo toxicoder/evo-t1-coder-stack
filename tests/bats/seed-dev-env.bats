@@ -556,6 +556,43 @@ assert_contributor_home() {
   assert_fixed "depth fell back with the note" "${out}" 'max_depth = 2'
 }
 
+@test "seed-dev-env: the ui theme takes the env and auto renders the CLI's pair" {
+  load_seed_api
+  local scratch out tpl notes
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # The template gates the CLI's dark/light pair behind the literal auto, so the
+  # seed resolves that gate with its own two-branch sed. A fixed name is one line
+  # and nothing else, so the gated body has to leave with both directives; the
+  # name asserted is one the default is not, so this cannot pass by ignoring env.
+  GROK_THEME='nord' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "fixed theme" "${out}" 'theme = "nord"'
+  assert_not_fixed "gated pair dropped" "${out}" 'auto_dark_theme'
+  assert_not_fixed "no directive left by the fixed branch" "${out}" '%{'
+
+  # auto is the CLI's follow-the-appearance value and the pair only works
+  # alongside it, so there the body stays and only the gate lines go.
+  GROK_THEME='auto' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "auto theme" "${out}" 'theme = "auto"'
+  assert_fixed "the dark half of the pair" "${out}" 'auto_dark_theme = "groknight"'
+  assert_fixed "the light half of the pair" "${out}" 'auto_light_theme = "grokday"'
+  assert_not_fixed "no directive left by the auto branch" "${out}" '%{'
+
+  # The no-env render has to land on the coder_parameter default, so a laptop
+  # with nothing set agrees with a workspace created off the form's default.
+  seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "default theme" "${out}" 'theme = "grokbuild"'
+
+  # A value sed could not substitute safely is refused out loud, and the render
+  # keeps the shipped theme rather than writing prose into the TOML.
+  notes="$(GROK_THEME='two words' seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+  assert_match "theme refused" "GROK_THEME='two words' is not a theme name" "${notes}"
+  assert_fixed "theme fell back with the note" "${out}" 'theme = "grokbuild"'
+  assert_not_fixed "refused value never reaches the file" "${out}" 'two words'
+}
+
 @test "seed-dev-env: the context7 lane is kept when a key or --context7-mcp says so" {
   load_seed_api
   local scratch home out tpl

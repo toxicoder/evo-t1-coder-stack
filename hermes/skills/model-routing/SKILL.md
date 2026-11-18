@@ -36,8 +36,6 @@ behind that one base URL — never bypass it.
 | `coder` | Arc, `qwen2.5-coder:32b` | **plain text** | chat about code, summarising diffs |
 | `coder-fast` | Arc, `qwen2.5-coder:14b` | **plain text** | cheap and quick, same limit |
 | `chat` | Arc, `qwen2.5:7b` | real `tool_calls` | agent work while the Sparks are down |
-| `spark-coder` | Spark box, its own Ollama | unverified | the Arc-class coding weight, served on a Spark; usually powered off |
-| `spark-chat` | Spark box, its own Ollama | unverified | same, at 7b; usually powered off |
 | `compaction-fast` | Arc, `qwen2.5-coder:14b` | **plain text** | not this session: the group the two fast lanes hand their summary to |
 
 Notes that matter:

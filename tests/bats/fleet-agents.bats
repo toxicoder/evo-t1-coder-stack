@@ -81,7 +81,7 @@ SKILL_KEYS=(feature_implementation_skill skeptical_review_skill
 # for (docs/litellm-routing.md).
 LOCAL_ROSTER=(agent agent-low agent-medium agent-xhigh agent-xhigh-fast
   agent-swarm agent-swarm-fast agent-explore agent-review coder coder-fast
-  chat spark-coder spark-chat)
+  chat)
 
 # The definition parser: structure only. Reads the payload on stdin, its stem in
 # argv[1]. The six frontmatter keys are pinned as the exact set inside the parser:
@@ -339,6 +339,20 @@ push_payload_list() {
       if (last) { exit }
     }
   ' "${PUSH}"
+}
+
+# fleet_body_keys -- the payload keys the workspace twin passes to the fleet body, read
+# out of the coder_script "stack_fleet" block itself rather than restated here. The
+# boot_log_lib key is dropped: filling it is bats_render_tftpl's job, and it refuses a
+# caller that names it. Derived from the block because a key renamed on one side of the
+# seam has to be a red render, not a body that seeds a file with a hole where its payload
+# was -- which is why the caller below still compares this against a spelled-out set.
+fleet_body_keys() {
+  main_block "${REPO_ROOT}/templates/workspace/main.tf" coder_script stack_fleet |
+    awk '/^[[:space:]]*[a-z_][a-z0-9_]*[[:space:]]*=[[:space:]]*chomp\(file\(/ {
+           if ($1 != "boot_log_lib") { print $1 }
+         }' |
+    sort -u
 }
 
 # count_suffix <ext> -- how many payload files of one extension the shared
@@ -800,26 +814,58 @@ assert_link_to() {
   home="$(mktemp -d "${BATS_TEST_TMPDIR}/symlink-home.XXXXXX")"
   rendered="${BATS_TEST_TMPDIR}/rendered-fleet.sh"
 
-  # Each map key becomes one inert line: the guards are what is under test, and the
-  # payload bytes only have to be non-empty for the here-docs to close.
-  python3 - "$SEED" "$rendered" <<'PY'
-import re, sys
-text = open(sys.argv[1], encoding="ascii").read()
-# One pass, the way templatefile() reads the body: $${ is a literal ${ and %%{ is a
-# literal %{, so a shell variable survives into the script; anything else braced is a
-# declared key and becomes seed text. A renderer that skips the fold leaves "$${name}"
-# in the file, the shell reads it as the PID plus a literal word, and every guard that
-# tests that variable silently stops testing anything.
-pattern = re.compile(r"(\$\$\{)|(%%\{)|\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
-def emit(match):
-    if match.group(1):
-        return "${"
-    if match.group(2):
-        return "%{"
-    return "seeded by the fleet body for " + match.group(3)
-text = pattern.sub(emit, text)
-open(sys.argv[2], "w", encoding="ascii").write(text)
-PY
+  # Rendered by the shared seam, over the twin's own key list. A catch-all that turns
+  # every ${name} into filler text is what made this test green while proving nothing:
+  # it named no key, so a rename on either side of the seam went unnoticed, and the
+  # helper splices the shipped boot logger, so the verbs below are the real ones and a
+  # boot that narrated nothing at all cannot pass.
+  #
+  # The thirteen are spelled out on purpose and compared against what the block carries:
+  # deriving the expected set from the same block the render reads would let a dropped
+  # key drop out of the assertion too. The values stay inert single tokens -- the guards
+  # are what is under test, and the payload bytes only have to be non-empty for the
+  # here-docs to close.
+  local key i want have n log quiet rootlog rootquiet stage
+  want="$(printf '%s\n' "${AGENT_KEYS[@]}" "${PERSONA_KEYS[@]}" "${SKILL_KEYS[@]}" | sort -u)"
+  have="$(fleet_body_keys)"
+  [ "${have}" = "${want}" ] || {
+    printf 'FAIL: templates/workspace/main.tf and this suite disagree on the fleet body keys: the block passes [%s], the thirteen payloads are [%s]\n' \
+      "$(printf '%s' "${have}" | tr '\n' ' ')" "$(printf '%s' "${want}" | tr '\n' ' ')" >&2
+    return 1; }
+  n="$(printf '%s\n' "${have}" | grep -c . || true)"
+  assert_eq "the workspace twin passes thirteen payload keys beside the boot logger" "13" "${n}"
+  main_block "${REPO_ROOT}/templates/workspace/main.tf" coder_script stack_fleet |
+    grep -q '^[[:space:]]*boot_log_lib[[:space:]]*=[[:space:]]*chomp(file(' || {
+    printf 'FAIL: %s no longer feeds boot_log_lib to the fleet body, so the render cannot splice the shipped logger into it\n' \
+      "${REPO_ROOT}/templates/workspace/main.tf" >&2
+    return 1; }
+
+  local -a pairs=()
+  for i in "${!AGENT_KEYS[@]}"; do
+    key="${AGENT_KEYS[i]}"
+    pairs+=("${key}=fleet-payload-${key}")
+  done
+  for i in "${!PERSONA_KEYS[@]}"; do
+    key="${PERSONA_KEYS[i]}"
+    pairs+=("${key}=fleet-payload-${key}")
+  done
+  for i in "${!SKILL_KEYS[@]}"; do
+    key="${SKILL_KEYS[i]}"
+    pairs+=("${key}=fleet-payload-${key}")
+  done
+  bats_render_tftpl "${SEED}" "${rendered}" "${pairs[@]}" || {
+    printf 'FAIL: the fleet body did not render from the keys the twin passes\n' >&2
+    return 1; }
+  # The loop variable has to come back as shell text. A fold that leaves $${, or leaves
+  # anything beside it, makes the test read a path that can never exist, so every symlink
+  # guard in the body stops guarding while the run still exits 0.
+  assert_contains_file "the planted-root guard renders as a real shell expansion" "${rendered}" \
+    '^  if \[ -L "\$\{evo_t1_root\}" \]; then$'
+  if grep -qF -- '$${' "${rendered}"; then
+    printf 'FAIL: %s still carries a double-dollar escape, so the guard tests the wrong path\n' \
+      "${rendered}" >&2
+    return 1
+  fi
   [ -s "${rendered}" ] || {
     printf 'FAIL: the fleet body rendered to nothing at %s\n' "${rendered}" >&2
     return 1; }
@@ -831,7 +877,36 @@ PY
   # A dangling link passes a bare [ ! -f ], so cat would create the target instead.
   ln -s "${home}/outside/SKILL.md" "${home}/.coder/skills/bug-hunt/SKILL.md"
 
-  HOME="${home}" sh "${rendered}"
+  # Captured, not discarded: the body ends in an exit 0 of its own, so the log is the
+  # only place the suite can see whether the boot narrated itself and how far it got.
+  log="$(HOME="${home}" sh "${rendered}" 2>&1)" || {
+    printf 'FAIL: the fleet body failed a home with two planted links: %s\n' "${log}" >&2
+    return 1; }
+  printf '%s\n' "${log}" | grep -q '^== stack fleet: start ==$' || {
+    printf 'FAIL: the fleet body never opened its log, so a boot that stalled is indistinguishable from a clean one\n' >&2
+    return 1; }
+  # Four stages, because this home plants two links and stops nothing: a body that bailed
+  # at the first guard would still print the start line and still exit 0.
+  stage="$(printf '%s\n' "${log}" | grep -c '^== stack fleet: stage [0-9]*/4: ' || true)"
+  assert_eq "the run opened every stage the fleet body declares" "4" "${stage}"
+
+  # Sixteen is the claim, not a count read back off the log: one for the four roots, five
+  # role definitions (the planted link at explorer.md is refused), three overlays, and
+  # seven of the eight skill writes -- the ~/.coder bug-hunt copy is the dangling link
+  # this home plants, and its ~/.agents twin is the cp that runs from a source the body
+  # never created. Zero warnings and zero failed is the half a presence check cannot see:
+  # a soft failure anywhere in the run lands in these three numbers and nowhere else.
+  printf '%s\n' "${log}" | grep -q '^summary: 16 ok, 0 warnings, 0 failed ' || {
+    printf 'FAIL: the fleet body did not close with the sixteen writes this home expects: %s\n' \
+      "$(printf '%s\n' "${log}" | grep '^summary:' || true)" >&2
+    return 1; }
+  # And the logger is the only thing that spoke: mkdir and cp keep their stderr to
+  # themselves, so anything the verbs did not print is the shell complaining beside the
+  # narration, which is how a write that failed for the wrong reason used to look clean.
+  quiet="$(printf '%s\n' "${log}" | bats_strip_boot_lines || true)"
+  [ -z "${quiet}" ] || {
+    printf 'FAIL: the fleet body printed beside its own narration: %s\n' "${quiet}" >&2
+    return 1; }
 
   assert_contains_file "the rulebook the link aimed at is untouched" \
     "${home}/.grok/AGENTS.md" 'the operator wrote this rulebook'
@@ -858,7 +933,31 @@ PY
   mkdir -p "${rooty}/.grok" "${rooty}/elsewhere" "${rooty}/.coder/skills" \
     "${rooty}/.agents/skills"
   ln -s "${rooty}/elsewhere" "${rooty}/.grok/agents"
-  HOME="${rooty}" sh "${rendered}"
+  rootlog="$(HOME="${rooty}" sh "${rendered}" 2>&1)" || {
+    printf 'FAIL: a symlinked root is refused and the boot continues; it exited non-zero: %s\n' \
+      "${rootlog}" >&2
+    return 1; }
+  # The refusal has to be visible. A guard that stops the writes and says nothing leaves
+  # the operator with four empty homes and a start log that reports success.
+  printf '%s\n' "${rootlog}" | grep -q 'refusing to write: .* is a symlink' || {
+    printf 'FAIL: the symlinked agents root was refused in silence: %s\n' "${rootlog}" >&2
+    return 1; }
+  # The bail is the other half of that claim, and the log is where it shows: one stage
+  # opened, and a summary that counts nothing written. A guard that complained and then
+  # carried on seeding the other three homes would read the same in the file system only
+  # after this run, and would have said nothing here.
+  stage="$(printf '%s\n' "${rootlog}" | grep -c '^== stack fleet: stage [0-9]*/4: ' || true)"
+  assert_eq "the symlinked root stops the run in its first stage" "1" "${stage}"
+  printf '%s\n' "${rootlog}" | grep -q '^summary: 0 ok, 1 warnings, 0 failed ' || {
+    printf 'FAIL: the symlinked-root run did not close with the one refusal and no writes it owes: %s\n' \
+      "$(printf '%s\n' "${rootlog}" | grep '^summary:' || true)" >&2
+    return 1; }
+  # Stripped of the narration, the refusal is all the body said -- warning: is the one
+  # verb this helper suite lets through the strip, so a silent-refusal path that starts
+  # complaining, or one that stops complaining, is a red test either way.
+  rootquiet="$(printf '%s\n' "${rootlog}" | bats_strip_boot_lines || true)"
+  assert_eq "the symlinked-root run said nothing but its refusal" \
+    "warning: refusing to write: ${rooty}/.grok/agents is a symlink" "${rootquiet}"
   [ -z "$(ls -A "${rooty}/elsewhere")" ] || {
     printf 'FAIL: a symlinked agents root let writes into %s: %s\n' \
       "${rooty}/elsewhere" "$(ls -A "${rooty}/elsewhere")" >&2

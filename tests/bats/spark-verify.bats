@@ -174,3 +174,40 @@ transferred_assignments() {
   assert_not_match "the flag was not refused" 'unknown option' "${stderr}"
   assert_match "the operator's word wins over the busy gate" 'NEEDLE_WANTED="yes"' "${assignments}"
 }
+
+@test "spark-verify: a .env that names a box only by SPARKn_OLLAMA_URL warns and still exits 0" {
+  # The key stopped feeding the host list, so a box named only there left the fleet in
+  # silence. The advisory names the key and the host it lost; the fleet, the verdict and
+  # the exit code stay the ones the surviving keys give, which is what the two runs
+  # below differ on.
+  local scratch
+  scratch="$(scratch_checkout)"
+
+  printf '%s\n' 'SPARK2_OLLAMA_URL=http://10.9.8.6:11434' >"${scratch}/.env"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests
+  [ "${status}" -eq 0 ]
+  assert_match "the stale key and its host are named" 'warning: SPARK2_OLLAMA_URL=http://10\.9\.8\.6:11434 in \.env is no longer read, so 10\.9\.8\.6 is not in the fleet' "${output}"
+  assert_match "that box is not among the hosts it checks" 'checking the placeholder trio spark-1\.lan spark-2\.lan spark-3\.lan' "${output}"
+
+  printf '%s\n' 'SPARK2_OLLAMA_URL=http://10.9.8.6:11434' 'SPARK2_HOST=10.9.8.6' >"${scratch}/.env"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests
+  [ "${status}" -eq 0 ]
+  assert_match "the same box now rides the fleet" 'in \.env: 10\.9\.8\.6' "${output}"
+  assert_not_match "a host the fleet already names is not warned about" 'SPARK2_OLLAMA_URL=' "${output}"
+}
+
+@test "spark-verify: an unparseable SPARKn_OLLAMA_URL warns about nothing" {
+  # canonical_url turns these into an empty or junk host, and a warning that names no
+  # host is noise the operator cannot act on. The same guard derive_spark_hosts applies
+  # to its own keys has to apply here too, so the run stays silent about the value.
+  local scratch
+  scratch="$(scratch_checkout)"
+
+  printf '%s\n' 'SPARK1_OLLAMA_URL=://' 'SPARK2_OLLAMA_URL=/foo' >"${scratch}/.env"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests
+  [ "${status}" -eq 0 ]
+  assert_not_match "no warning is printed for a host it cannot name" 'is no longer read' "${output}"
+}

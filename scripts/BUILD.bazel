@@ -264,6 +264,11 @@ _SCRIPT_LIBS = {
         "lib/probes/spark-configure.sh",
         "lib/spark.sh",
     ],
+    "spark-monitor": [
+        "lib/common.sh",
+        "lib/probes/spark-monitor.sh",
+        "lib/spark.sh",
+    ],
     "spark-verify": [
         "lib/common.sh",
         "lib/probes/spark-verify.sh",
@@ -294,6 +299,7 @@ _SCRIPT_LIBS = {
     ],
     "validate": [
         "lib/common.sh",
+        "lib/parse_json.py",
         "lib/parse_yaml.py",
         "lib/tf_types.awk",
     ],
@@ -390,9 +396,14 @@ _SCRIPT_PAYLOAD = {
     ],
     # The prober reads no payload of its own: it asks the daemon and the loopback.
     # What remains is what the sourced lib names - the docker-compose.yml marker
-    # resolve_repo_root probes and compose_cmd addresses with -f.
+    # resolve_repo_root probes and compose_cmd addresses with -f. The two checks the
+    # bundle grew changed that: the rules check names the three files under
+    # prometheus/rules/ it expects Prometheus to have loaded, and the dashboard check
+    # walks observability/grafana/dashboards/ and parses every file it finds, so both
+    # trees have to be in the runfiles for the suite that drives them to read them.
     "observability-check": [
         "//:compose_file",
+        "//observability:payload",
     ],
     "pre-commit": [
         "//:compose_file",
@@ -429,6 +440,17 @@ _SCRIPT_PAYLOAD = {
         "//proxy:confs",
     ],
     "spark-configure": [
+        "//:compose_file",
+    ],
+    "spark-monitor": [
+        # The bundle's payload tree, which is the group the gate's token map accepts
+        # for an `observability/` mention. This CLI reads one file out of it -
+        # observability/dcgm/custom-counters.csv, the counter list it ferries to each
+        # box and mounts into that box's DCGM exporter. Naming the narrow
+        # :dcgm_counters filegroup here instead would be a declaration the scan can
+        # never satisfy, because no token maps to it. The probe is a lib, not a
+        # payload, so it is declared in _SCRIPT_LIBS above.
+        "//observability:payload",
         "//:compose_file",
     ],
     "spark-verify": [

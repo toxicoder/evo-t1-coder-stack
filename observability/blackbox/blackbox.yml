@@ -1,0 +1,130 @@
+# blackbox_exporter modules for the EVO-T1 stack, image pin v0.29.1.
+#
+# This is the only component in the bundle that probes something it cannot
+# scrape: Prometheus passes each probe's URL to it as `__param_target` and the
+# module name as `__param_module`, which is how the stack reaches the remote
+# Spark boxes and any URL that publishes no /metrics at all. So nothing in this
+# file names a host or a port -- both arrive per scrape, composed from
+# SPARK_HTTP_PORT by whoever owns the scrape configs (scripts/lib/spark.sh).
+#
+# v0.29.1 has no `json:` body matcher, so a body is gated by regex and the
+# built-in series (probe_success, probe_duration_seconds,
+# probe_http_status_code) carry the verdict. The two module names below are
+# the seam a scrape config passes verbatim, so renaming one is a two-file
+# change.
+#
+# `keep_alive: false` is on in all three, deliberately: the probe is one request
+# per scrape, and a pooled connection left idle for a whole scrape interval gets
+# closed by the peer's own idle timeout, so the next probe trips on the stale
+# socket and reads as an outage. On a LAN that handshake is well under a
+# millisecond; a trustworthy red/green is worth it.
+#
+# No Authorization header anywhere. Both Spark endpoints are keyless
+# (docker-compose.yml:536) and a committed file here must never carry a
+# credential; blackbox also takes no header from query params, so a probe that
+# ever needs a key is a parent decision about how the key is mounted, not an
+# edit to this file.
+
+modules:
+  # TensorFold's /health on a Spark box. Success means the inference engine
+  # itself answered with its own JSON, not that a socket opened: the body has to
+  # carry `requests_running`, the figure the fleet contract is written in
+  # (scripts/spark-verify.sh:490 parses its neighbours out of the same body).
+  #
+  # A red probe means: the box is powered off, TensorFold is not listening on
+  # the inference port, or the engine's health loop stopped answering. Read it
+  # on the box with `docker logs` on the TensorFold container, then
+  # `bazelisk run //scripts:spark-verify` for the fleet view. The same matcher
+  # also rejects a 200 whose body is a proxy error page or a captive portal,
+  # which a bare `up` would have called green.
+  #
+  # It does not go red on {"ok":false,"requests_running":0}: that box is up but
+  # serving no model, which is a different outage and is
+  # `bazelisk run //scripts:spark-verify -- --no-tests`'s finding (see
+  # homepage/config/services.yaml:153). Folding it into probe_success would give
+  # one series two meanings.
+  spark_health:
+    prober: http
+    # Under the 10s global scrape_timeout (prometheus/prometheus.yml:14), so a
+    # slow engine is reported by blackbox as probe_success 0 rather than dropped
+    # by Prometheus as a failed scrape, which yields no series to alert on.
+    # Five full-length streams do not make /health cross this: it is read off
+    # the API server's state, not off a generation slot.
+    timeout: 5s
+    http:
+      # LAN names carry A records only; a v6 attempt buys a false red.
+      preferred_ip_protocol: ip4
+      keep_alive: false
+      # TensorFold does not redirect /health, so a 30x here means something in
+      # front of it answered -- a finding, not a success.
+      follow_redirects: false
+      fail_if_body_not_matches_regexp:
+        # A JSON object that reports its running stream count. One entry per
+        # list, because AND-versus-OR across several entries is blackbox
+        # behaviour this file does not want to depend on.
+        - '(?s)^\s*\{.*"requests_running"\s*:\s*[0-9]+'
+      fail_if_body_matches_regexp:
+        # The engine's own red words, the same set scripts/spark-verify.sh:481
+        # calls health_state=red. Kept as a failure even though the matcher
+        # above would pass them: an engine that says "degraded" while still
+        # counting streams is not a box to route an agent to.
+        - '"(status|error)"\s*:\s*"(unhealthy|degraded|error)"'
+
+  # TensorFold's /v1/models on a Spark box. Success means the box advertises at
+  # least one served model id, which is the "will agent mode work right now"
+  # question the Agent backend card asks (homepage/config/services.yaml:128):
+  # this endpoint answers 200 with an empty data array on a box that loaded no
+  # weights, and a probe that accepted that would be green on a box that can
+  # only answer text.
+  #
+  # A red probe means: nothing reachable on the inference port, or the engine is
+  # up with no model loaded -- check the model path and the container's logs on
+  # the box, and compare the served id across the fleet with
+  # `bazelisk run //scripts:spark-verify`, which fails a box whose id is spelled
+  # differently from its peers.
+  spark_models:
+    prober: http
+    # Same budget as spark_health, same reason. /v1/models is served by the API
+    # server and is not queued behind a generation, so 5s is generous.
+    timeout: 5s
+    http:
+      preferred_ip_protocol: ip4
+      keep_alive: false
+      follow_redirects: false
+      fail_if_body_not_matches_regexp:
+        # The body is {"object":"list","data":[...]} (the shape
+        # homepage/config/services.yaml:149 maps), and the array must hold an
+        # object with a non-empty "id". Top-level key order is not assumed --
+        # (?s) plus .* past the opening brace -- and [^{}]* keeps the id search
+        # inside the first element, so an "id" elsewhere in the body cannot
+        # satisfy it. That also assumes the first element is flat, which an
+        # OpenAI model card is (id, object, created, owned_by). "object":"list"
+        # is not asserted: it is decoration, and naming it here would pin the
+        # matcher to one serializer's key order.
+        - '(?s)^\s*\{.*"data"\s*:\s*\[\s*\{[^{}]*"id"\s*:\s*"[^"]+"'
+
+  # Generic reachability for anything that publishes no /metrics: a public
+  # URL, a UI, a reverse-proxied route. It never carries a body matcher, so it
+  # asks one question only -- did that URL answer 2xx.
+  #
+  # A red probe means the URL is down or answering an error, and
+  # probe_http_status_code says which: a 4xx/5xx is the app refusing, while 0
+  # beside probe_success 0 is nothing answering at all (DNS, or a refused
+  # connection). follow_redirects below is what makes the ordinary
+  # http-to-https hop green; the cost of following it is that a chain landing
+  # on a login page which itself answers 200 is green too. This module asks one
+  # question, so it carries no body matcher: a target that needs a content
+  # check wants its own module, in the shape of the two Spark ones above.
+  http_2xx:
+    prober: http
+    # Roomier than the Spark modules: this one may cross the router and the
+    # public name, and still sits under the 10s scrape_timeout so a timeout
+    # stays a probe result rather than a dropped scrape.
+    timeout: 8s
+    http:
+      preferred_ip_protocol: ip4
+      keep_alive: false
+      follow_redirects: true
+      # valid_status_codes is left unset on purpose: empty means 2xx only, and
+      # widening it (3xx, or 401 for an auth-walled UI) would make this module
+      # mean "a TCP listener exists" instead of "this page works".

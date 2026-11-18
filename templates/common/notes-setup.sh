@@ -6,10 +6,13 @@
 #
 # A developer's own notes.md sits at each clone root, so the editor, the web
 # terminal and a nested dev container all open on the same regular file, and the
-# copy that survives lives on the shared grok-profile-<owner-id> volume under
+# copy that survives lives on the shared grok-notes-<owner-id> volume under
 # ~/.grok/notes/<host>/<owner>/<repo>/. Keyed per git remote, so every clone in a
 # workspace — the primary and each additional_repos entry — gets its own file, and
-# the per-owner volume is what keeps one developer's notes out of another's.
+# the per-owner volume is what keeps one developer's notes out of another's. An
+# owner whose notes predate that volume still has them on the old
+# grok-profile-<owner-id>, mounted read-only at ~/.grok-legacy; notes_hoist_legacy
+# copies them across once, on the first start after the switch.
 #
 # Invariants:
 #   - Best-effort throughout: every function returns 0 after putting its complaint
@@ -250,6 +253,75 @@ notes_ensure_excludes() {
   return 0
 }
 
+# notes_hoist_legacy - carry the pre-split state out of the legacy mount.
+# @function notes_hoist_legacy
+# Copy the three state directories that used to ride the whole-profile owner
+# volume (notes, memory, sessions) out of the read-only legacy mount at
+# $HOME/.grok-legacy into $HOME/.grok, so a workspace recreated after the split
+# still finds what was written before it. The legacy layout is its own root, so
+# the old notes sit at $HOME/.grok-legacy/notes/<host>/<owner>/<repo>/notes.md.
+# Globals:
+#   HOME
+# Arguments:
+#   None
+# Outputs:
+#   One 'note:' line per concern it copied, on stdout; one 'notes:' line naming
+#   the copy's own error per concern it could not read, on stderr
+# Returns:
+#   0 always - no legacy mount at all (a private-mode workspace) is silence
+#   rather than a warning, and an unwritable destination is a complaint the
+#   caller cannot act on
+notes_hoist_legacy() {
+  local home="${HOME:-}" src="" dest="" concern="" f="" substantive="" hoist_err=""
+  if [ -z "${home}" ]; then
+    return 0
+  fi
+  for concern in notes memory sessions; do
+    src="${home}/.grok-legacy/${concern}"
+    # Guarded read: a private-mode workspace gets no legacy mount, and an owner
+    # who never wrote anything gets an empty one. Both answer with no line.
+    [ -d "${src}" ] || continue
+    [ -n "$(find "${src}" -mindepth 1 -print -quit 2>/dev/null)" ] || continue
+    dest="${home}/.grok/${concern}"
+    # "Empty" is read as "holds nothing anyone wrote": the boot mkdir -p's the
+    # repo key directories and notes_ensure_excludes writes notes/exclude
+    # before this runs, and notes_materialize may have seeded a stub notes.md.
+    # notes_is_stub is the same test the guarded back-sync uses, so a hoist is
+    # never blocked by a stub the boot just wrote, and a destination that does
+    # carry notes of its own is left alone, which is what makes this idempotent.
+    substantive=""
+    if [ -d "${dest}" ]; then
+      while IFS= read -r f; do
+        # The stack's own global excludes file sits in notes/ and is written on
+        # every start, so it says nothing about whether anyone has notes.
+        if [ "${f}" = "${dest}/exclude" ]; then
+          continue
+        fi
+        if [ -s "${f}" ] && ! notes_is_stub "${f}"; then
+          substantive=1
+          break
+        fi
+      done < <(find "${dest}" -type f 2>/dev/null)
+    fi
+    [ -z "${substantive}" ] || continue
+    mkdir -p "${dest}" 2>/dev/null || continue
+    # Content and mtimes only. cp -a would also carry the old volume's owner and
+    # mode across, and the legacy mount holds whatever a past boot or a root
+    # coder_script left behind, so an entry could land unreadable in the clone.
+    hoist_err="$(cp -R --preserve=timestamps "${src}/." "${dest}/" 2>&1)" || :
+    # After the branch: a copy that died halfway still made its leading entries.
+    chmod -R u+rwX "${dest}" 2>/dev/null || true
+    if [ -z "${hoist_err}" ]; then
+      printf 'note: hoisted %s from the legacy profile volume into %s\n' \
+        "${concern}" "${dest}"
+    else
+      printf 'notes: could not hoist %s into %s: %s\n' \
+        "${src}" "${dest}" "${hoist_err}" >&2
+    fi
+  done
+  return 0
+}
+
 # notes_materialize <clone-root> [fallback-url] — put the clone's notes in place.
 # @function notes_materialize
 # Restore the canonical copy into a clone, seed a stub when there is none, and
@@ -276,6 +348,11 @@ notes_materialize() {
   live="${root}/$(notes_live_name "${root}")"
   canon="$(notes_canonical_path "${key}")" || return 0
   mkdir -p "$(dirname "${canon}")" 2>/dev/null || true
+  # Carry anything the pre-split whole-profile volume holds into the notes volume
+  # first, so the restore below reads the hoisted copy rather than seeding a stub
+  # over notes that exist one mount away. Idempotent, so it costs the second and
+  # later clones a directory test and nothing else.
+  notes_hoist_legacy
   # Restore runs when the clone has no notes yet and also when its only notes
   # are a stale stub: a workspace recreated after a lost volume would otherwise
   # sit on the stub forever, because the guarded back-sync below rightly refuses

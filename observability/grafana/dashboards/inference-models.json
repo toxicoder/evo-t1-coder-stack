@@ -1,0 +1,565 @@
+{
+  "uid": "evo-inference-models",
+  "title": "Models",
+  "tags": ["evo-t1", "litellm", "inference"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "links": [
+    {
+      "title": "Inference backends",
+      "type": "link",
+      "url": "/d/evo-inference-backends/inference-backends",
+      "targetBlank": false
+    },
+    {
+      "title": "LiteLLM proxy",
+      "type": "link",
+      "url": "/d/evo-litellm/litellm-proxy",
+      "targetBlank": false
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "model",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "query": "label_values(litellm_proxy_total_requests_metric_total, requested_model)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "allValue": ".*",
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "status_code",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "query": "label_values(litellm_proxy_total_requests_metric_total, status_code)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "text",
+      "title": "How to read this page",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
+      "targets": [],
+      "options": {
+        "mode": "markdown",
+        "content": "This page is per model, as a caller experiences it: the alias asked for on the request (`requested_model`, one of the `model_name:` entries in `litellm/config.yaml`), not the box that served it. The box is the `Inference backends` page. Two keys are used below and they are not interchangeable: `requested_model` sits on the proxy request counters and the latency histograms, `model_id` sits on the token and deployment families and is the `model_info.id` of one deployment, so the `agent` alias is three lines there, one per Spark box. The token counters carry `model_id` and no `api_base`, and the only series that carries `api_base` is the deployment state family, so nothing here claims a per-host attribution: a joining multiply would drop the token series of exactly the deployment whose state series is missing. `litellm_in_flight_requests` is unlabeled and counted per uvicorn worker, so it is charted `sum`-ed and nothing finer. LiteLLM v1.102.1 publishes no time-to-last-token series, so the generation panel below is derived and titled for what it measures; there is no router retry counter either, and no budget-limit panel, because `prometheus_initialize_budget_metrics` is off at this tag."
+      }
+    },
+    {
+      "type": "row",
+      "title": "Traffic",
+      "id": 2,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 4 },
+      "collapsed": false,
+      "panels": [],
+      "targets": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate by model",
+      "description": "One line per alias: coder and chat ride the Arc, the agent lanes ride the Spark boxes, so a lane that goes quiet while the proxy stays busy is a routing or a client change rather than an outage.",
+      "id": 3,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model) (rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\", status_code=~\"$status_code\"}[5m]))",
+          "legendFormat": "{{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error ratio by model, 4xx vs 5xx",
+      "description": "Failed responses over all responses for the same alias, split by class so a caller sending bad requests (4xx) is told apart from a serving box that stopped answering (5xx); the status filter above is deliberately not applied here because the split is the panel.",
+      "id": 4,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model) (rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\", status_code=~\"5..\"}[5m])) / (sum by (requested_model) (rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\"}[5m])) > 0)",
+          "legendFormat": "5xx {{requested_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model) (rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\", status_code=~\"4..\"}[5m])) / (sum by (requested_model) (rate(litellm_proxy_total_requests_metric_total{requested_model=~\"$model\"}[5m])) > 0)",
+          "legendFormat": "4xx {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests in flight, proxy-wide total",
+      "description": "The one honest shape for this gauge: it carries no labels and is counted per uvicorn worker, so it is summed across workers and never split, and a step down is a worker restart rather than a drain. It counts every route, /health and /metrics included, so a small non-zero floor is the scrape itself.",
+      "id": 5,
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(litellm_in_flight_requests)",
+          "legendFormat": "proxy-wide, all uvicorn workers"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Latency",
+      "id": 6,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "collapsed": false,
+      "panels": [],
+      "targets": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Total latency by model (p50/p95/p99)",
+      "description": "Request arrival at the proxy through the end of processing, so what the caller waits for. Quantiles far apart mean the serving boxes are slow, quantiles locked together mean the proxy or its queue is.",
+      "id": 7,
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (requested_model, le) (rate(litellm_request_total_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 {{requested_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (requested_model, le) (rate(litellm_request_total_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 {{requested_model}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (requested_model, le) (rate(litellm_request_total_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p99 {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "LLM API latency by model (p50/p95/p99)",
+      "description": "The upstream call alone, so the part a serving box owns. Read against the panel beside it: this line climbing with total latency climbing is the box, this line flat while total climbs is the proxy.",
+      "id": 8,
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (requested_model, le) (rate(litellm_llm_api_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 {{requested_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (requested_model, le) (rate(litellm_llm_api_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 {{requested_model}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (requested_model, le) (rate(litellm_llm_api_latency_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p99 {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Proxy overhead latency (p50/p95/p99)",
+      "description": "What the proxy itself adds, in seconds. This family is not split by model or deployment on the surface the rule file is pinned to, so it is proxy-wide; a p99 that climbs while the LLM API panel beside it stays flat is this stack's problem, not the serving box's.",
+      "id": 9,
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(litellm_overhead_latency_metric_bucket[5m])))",
+          "legendFormat": "p50 overhead"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(litellm_overhead_latency_metric_bucket[5m])))",
+          "legendFormat": "p95 overhead"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(litellm_overhead_latency_metric_bucket[5m])))",
+          "legendFormat": "p99 overhead"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Proxy overhead share of caller latency",
+      "description": "The recorded ratio of overhead seconds to total latency seconds, proxy-wide: a share that climbs while LLM API latency is flat is work happening inside LiteLLM, which is the difference between tuning this stack and tuning a Spark box.",
+      "id": 10,
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:overhead_share:5m",
+          "legendFormat": "overhead share"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Time to first token",
+      "id": 11,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "collapsed": false,
+      "panels": [],
+      "targets": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Time to first token by model (p50/p95/p99)",
+      "description": "Seconds from the request reaching the upstream to the first token coming back, which is the wait a person watching a completion actually feels. LiteLLM records this family when a stream produces its first chunk, so a model served without streaming has no line here rather than a zero, and a line that is missing while the latency panels beside it are full means that model is not streaming. Per requested_model, so a slow box shows up at the model level here and at the deployment level on the backends page.",
+      "id": 24,
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 {{requested_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 {{requested_model}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p99 {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue wait before dispatch (p50/p95/p99)",
+      "description": "Time between the request arriving at the proxy and the upstream call starting, so everything the router holds rather than the box serving. Per requested_model like the panels beside it: this family keys on the model and the deployment. A rising p95 with in-flight requests flat means the router is holding work while every deployment stays busy.",
+      "id": 12,
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(litellm_request_queue_time_seconds_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 queue wait"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(litellm_request_queue_time_seconds_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 queue wait"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(litellm_request_queue_time_seconds_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p99 queue wait"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Generation rate, tokens per second (derived)",
+      "description": "There is no time-to-last-token series at this tag, so decode speed is derived twice rather than read. The recorded rule is the reciprocal of the seconds-per-output-token histogram. The second line divides the completion-token rate by the seconds the upstream actually spent decoding, which is the LLM API seconds minus the first-token wait, filtered to the same models as the numerator so a selected model is not divided by the whole fleet's time; before any stream has been served the subtraction has no first-token series to take away and falls back to the full upstream seconds. Neither line counts first-token wait, so a line that falls while queue wait is flat is the box decoding slower.",
+      "id": 13,
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:decode_tokens_per_second:5m",
+          "legendFormat": "tokens per decode second (recorded)"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(rate(litellm_output_tokens_metric_total{requested_model=~\"$model\"}[5m])) / ((sum(rate(litellm_llm_api_latency_metric_sum{requested_model=~\"$model\"}[5m])) - sum(rate(litellm_llm_api_time_to_first_token_metric_sum{requested_model=~\"$model\"}[5m]))) or sum(rate(litellm_llm_api_latency_metric_sum{requested_model=~\"$model\"}[5m])) > 0)",
+          "legendFormat": "tokens per upstream second (first-token wait removed)"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Throughput",
+      "id": 14,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 46 },
+      "collapsed": false,
+      "panels": [],
+      "targets": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Prompt vs completion tokens per second",
+      "description": "The two counters that split one request, so prompt tokens climbing while completion stays flat is prefill load rather than generation. They key on `model_id` and carry no `api_base`, so the finest honest key is the deployment: one line each per `model_info.id`, which is why the agent aliases show three.",
+      "id": 15,
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 47 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_input_tokens_metric_total[5m]))",
+          "legendFormat": "{{model_id}} prompt"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_output_tokens_metric_total[5m]))",
+          "legendFormat": "{{model_id}} completion"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Total tokens per second",
+      "description": "Prompt and completion counted together by the proxy, per deployment. Charted per deployment rather than per host on purpose: the token family has no host label, and the only series carrying `api_base` is the deployment state family, so a join through `model_id` would silently drop the token stream of a deployment whose state series is missing.",
+      "id": 16,
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 47 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_total_tokens_metric_total[5m]))",
+          "legendFormat": "{{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens per second per deployment (recorded, 1m)",
+      "description": "The same two counters at the 1m window the recording rules in observability/prometheus/rules/inference.rules.yml use, which is the sharper view the alerts read, so a disagreement between this panel and the 5m one beside it is a burst rather than a trend.",
+      "id": 17,
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 47 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:input_tokens_per_second:1m",
+          "legendFormat": "{{model_id}} prompt"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:output_tokens_per_second:1m",
+          "legendFormat": "{{model_id}} completion"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Cache and reasoning",
+      "id": 18,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+      "collapsed": false,
+      "panels": [],
+      "targets": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Cache hit ratio",
+      "description": "Hits over hits plus misses: the recorded line is the proxy-wide ratio the rule file computes, the per-deployment line is the same split keyed on the deployment that served it. A ratio falling while prompt tokens climb is the prefix cache missing, which on a 32B prefill is the cheapest explanation for a latency climb.",
+      "id": 19,
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 57 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:cache_hit_ratio:5m",
+          "legendFormat": "proxy-wide"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_cache_hits_metric_total[5m])) / (sum by (model_id) (rate(litellm_cache_hits_metric_total[5m])) + sum by (model_id) (rate(litellm_cache_misses_metric_total[5m])) > 0)",
+          "legendFormat": "{{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cached token volume",
+      "description": "The same saved prefill counted from three vantage points: what LiteLLM marked cached, what the provider billed as cache-read input, and what the request carried as cached input. Provider cache-read climbing while the hit ratio beside it stays flat means the serving box is caching without the router seeing it.",
+      "id": 20,
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 57 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_cached_tokens_metric_total[5m]))",
+          "legendFormat": "{{model_id}} cached"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_provider_cache_read_input_tokens_metric_total[5m]))",
+          "legendFormat": "{{model_id}} provider cache-read"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_input_cached_tokens_metric_total[5m]))",
+          "legendFormat": "{{model_id}} input cached"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Reasoning tokens as a share of output",
+      "description": "Reasoning tokens over completion tokens per deployment: a rising share is the answer to why a model got slower without getting louder, since those tokens are generated and counted as output but never reach the caller as content.",
+      "id": 21,
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 57 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_output_reasoning_tokens_metric_total[5m])) / (sum by (model_id) (rate(litellm_output_tokens_metric_total[5m])) > 0)",
+          "legendFormat": "{{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Served model inventory",
+      "id": 22,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 66 },
+      "collapsed": false,
+      "panels": [],
+      "targets": []
+    },
+    {
+      "type": "table",
+      "title": "Served models, one row per deployment",
+      "description": "One row per `model_id` (the `model_info.id` written into litellm/config.yaml, so the agent aliases show three rows each, one per Spark box), with the same four series the panels above chart. It keys on `model_id` because that is the only label the four columns share: the token and deployment families carry no `requested_model`, so a join onto the alias would drop a row rather than show it wrong. A row whose rate is 0 while its state stays listed is the deployment to look at.",
+      "id": 23,
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 67 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "requests/s" }, "properties": [ { "id": "unit", "value": "reqps" }, { "id": "custom.align", "value": "right" } ] },
+          { "matcher": { "id": "byName", "options": "error ratio" }, "properties": [ { "id": "unit", "value": "percentunit" }, { "id": "custom.align", "value": "right" }, { "id": "custom.cellOptions", "value": "color-text" } ] },
+          { "matcher": { "id": "byName", "options": "p95 latency" }, "properties": [ { "id": "unit", "value": "s" }, { "id": "custom.align", "value": "right" } ] },
+          { "matcher": { "id": "byName", "options": "tokens/s" }, "properties": [ { "id": "unit", "value": "short" }, { "id": "custom.align", "value": "right" } ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:requests_per_second:5m",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "requests/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_deployment_failure_responses_total{requested_model=~\"$model\"}[5m])) / (sum by (model_id) (rate(litellm_deployment_total_requests_total{requested_model=~\"$model\"}[5m])) > 0)",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "error ratio"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:request_latency_p95:5m",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "p95 latency"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_total_tokens_metric_total[5m]))",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "tokens/s"
+        }
+      ],
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "model_id", "mode": "outer" } },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "indexByName": { "model_id": 0 },
+            "renameByName": { "Value #A": "requests/s", "Value #B": "error ratio", "Value #C": "p95 latency", "Value #D": "tokens/s" }
+          }
+        }
+      ],
+      "options": { "showHeader": true, "cellHeight": "sm", "footer": { "show": false } }
+    }
+  ]
+}

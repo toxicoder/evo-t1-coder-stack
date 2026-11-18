@@ -50,7 +50,22 @@ docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" logs --tail 100 code
 
 Services: `coder`, `db`, `litellm`, `ollama`, `searxng`, `kasm`, `homepage`,
 `homepage-proxy`, `router`, `hermes`, `hermes-init`, `prometheus`, `mimir`, `loki`,
-`tempo`, `grafana`, `alloy`, `infisical`, `infisical-db`, `infisical-redis`.
+`tempo`, `grafana`, `alloy`, `node_exporter` (host CPU, memory, disk and process
+metrics), `cadvisor` (per-container CPU, memory and the process table; the one
+privileged container in this stack), `blackbox_exporter` (outbound HTTP prober,
+called by Prometheus on the compose network), `alertmanager` (deduplication,
+grouping and silencing of the alerts the rule files define), `infisical`,
+`infisical-db`, `infisical-redis`. `node_exporter`, `cadvisor`,
+`blackbox_exporter` and `alertmanager` sit behind the observability compose profile
+and publish on the host's loopback only, so reaching them is a host-shell act, not
+a workspace one.
+
+The Sparks run their own node_exporter on 9100 and DCGM exporter on 9400, and
+`bazelisk run //scripts:spark-monitor -- --apply` is the only thing that installs
+them. Same CLI: no flag or `--dry-run` plans only, `--status` prints the per-box
+probe table, `--targets` the sparks.json it expects, `--restart` restarts both
+containers, `--box <n>` narrows it to one box. Detail in docs/spark-monitoring.md;
+the metrics themselves are `host-diagnostics`.
 
 The stack's own health, from the host: `bazelisk run //scripts:hermes-shell -- check`
 reports this container's state, its seed, and the model lane.

@@ -83,6 +83,11 @@ with neither the lane is dropped, which is the keyless-laptop default),
 environment and gh is on PATH; never writes the token), --force (overwrite
 user-owned files too), --dry-run (report only; do not call gh), -h/--help.
 
+Environment: GROK_THEME (default grokbuild) is the theme name written to
+[ui] theme in ~/.grok/config.toml; the literal auto also emits
+auto_dark_theme and auto_light_theme, the same rule the workspace template
+renders.
+
 Examples (each line is the whole command, run from the repo root):
   bazelisk run //scripts:seed-dev-env -- --dry-run --home /tmp/contributor-home
   bazelisk run //scripts:seed-dev-env -- --home "${HOME}"
@@ -129,21 +134,21 @@ resolve_repo_root() {
 # Render grok-config.toml.tftpl for a contributor home with the contributor
 # defaults fixed here (no Coder Terraform variables): github and
 # grok_config_extra blocks dropped, the search block kept, the context7 block
-# kept only with CONTEXT7_API_KEY set or the --context7-mcp verdict (that lane
-# handshakes and answers keyless at the public rate limits). ${litellm_url}
-# becomes STACK_LITELLM_URL, the affinity key is contributor, the cache-proxy
-# path re-roots under the seed home, and each fan-out role ships on the alias
-# its template variable defaults to: writers on agent-swarm, the planner on
-# agent, readers on agent-explore, the skeptic on agent-review. Substitutions
-# are sed, never eval; a doubled dollar unfolds first.
+# kept only with CONTEXT7_API_KEY set or the --context7-mcp verdict.
+# ${litellm_url} becomes STACK_LITELLM_URL, the affinity key is contributor, the
+# cache-proxy path re-roots under the seed home, and each fan-out role ships on
+# the alias its template variable defaults to: writers on agent-swarm, the
+# planner on agent, readers on agent-explore, the skeptic on agent-review.
 # Globals:
 #   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
 #   a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the context7
-#   block), HOME (the home default when $3 is not given), and the seven fan-out
-#   knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
+#   block), HOME (the home default when $3 is not given), GROK_THEME (the [ui]
+#   theme name, default grokbuild; the literal auto also emits the
+#   auto_dark_theme/auto_light_theme pair, as the template's gate does), and the
+#   seven fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
 #   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT, GROK_SWARM_WIDTH and
 #   GROK_SUBAGENT_MAX_DEPTH (1 off, 2 the default, 3 the ceiling). An unusable
-#   value falls back and is noted; the width stays the fleet's 15.
+#   value falls back to its default and is noted on stderr.
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write
@@ -159,7 +164,8 @@ seed_render_grok_config() {
   local src="${1:-}" dest="${2:-}" rendered="" lbrace="" dollar='$' search=""
   local home="${3:-${HOME:-/home/coder}}" keep_ctx7="${4:-0}" keep7="0"
   local proxy_lit="" proxy_path="" lane="" slots="" depth=""
-  local explore_lane="" plan_lane="" review_lane=""
+  local explore_lane="" plan_lane="" review_lane="" theme=""
+  local -a theme_sed=()
   # The fan-out knobs, with the same derivation templates/workspace/main.tf uses:
   # the width is the fleet's ceiling (3 boxes x PARALLEL 5 = 15) on every lane,
   # because agent-swarm is ungated in the rendered config and a session whose
@@ -212,6 +218,23 @@ seed_render_grok_config() {
     note "GROK_REVIEW_LANE='${review_lane}' is not a model id - using agent-review"
     review_lane="agent-review"
   fi
+  # The Grok UI theme: the same [ui] theme key and the same default the
+  # workspace template renders, so a laptop and a workspace agree by default.
+  # The literal auto is the CLI's follow-the-system value, and the template
+  # gates that CLI's own dark/light pair (groknight / grokday) behind it, so
+  # the two rules below resolve the gate the way Terraform would: a fixed
+  # theme drops the gated branch whole, auto keeps its body and drops both
+  # directives with the empty else.
+  theme="${GROK_THEME:-grokbuild}"
+  if [[ ! ${theme} =~ ^[A-Za-z0-9._-]+$ ]]; then
+    note "GROK_THEME='${theme}' is not a theme name - using grokbuild"
+    theme="grokbuild"
+  fi
+  if [[ ${theme} == "auto" ]]; then
+    theme_sed=(-e '/^%{if grok_theme == "auto"~}$/d' -e '/^%{else~}$/,/^$/d')
+  else
+    theme_sed=(-e '/^%{if grok_theme == "auto"~}$/,/^%{else~}$/d')
+  fi
   # Octal keeps a literal brace out of this file so extract_fn's brace scan
   # stays balanced. The sed below unfolds a doubled dollar into one.
   lbrace="$(printf '\173')"
@@ -236,8 +259,9 @@ seed_render_grok_config() {
   # Drop the gated blocks a contributor seed does not turn on. A kept block
   # (always search, and context7 when keep7 is 1) loses its own if/endif lines
   # but keeps its body. Every endif is consumed so a kept block does not leave
-  # a directive behind. The sed re-roots the cache-proxy config path and
-  # unfolds the doubled dollar the kept context7 env line carries.
+  # a directive behind. The sed re-roots the cache-proxy config path, unfolds
+  # the doubled dollar the kept context7 env line carries, and resolves the
+  # theme if/else to the branch GROK_THEME names.
   # SELF_DIR is the entry's scripts/ dir; extracted-function tests set it too.
   if ! awk -v keep_context7="${keep7}" -f "${SELF_DIR:-${REPO_ROOT}/scripts}/lib/tftpl_strip_gates.awk" "${src}" | sed \
     -e "s|\\\$\\\$${lbrace}|${dollar}${lbrace}|g" \
@@ -250,6 +274,8 @@ seed_render_grok_config() {
     -e "s|\${grok_review_lane}|${review_lane}|g" \
     -e "s|\${grok_subagent_max_concurrent}|${slots}|g" \
     -e "s|\${grok_subagent_max_depth}|${depth}|g" \
+    -e "s|\${grok_theme}|${theme}|g" \
+    "${theme_sed[@]}" \
     -e "s|\${search_url}|${search}|g" \
     -e "s|${proxy_lit}|${proxy_path}|g" \
     >"${rendered}"; then

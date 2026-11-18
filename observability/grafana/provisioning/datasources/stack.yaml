@@ -17,6 +17,13 @@ datasources:
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+    # Without this the alert rules in observability/prometheus/rules/ are visible
+    # only on Prometheus's own /alerts page: Grafana lists a datasource's rules in
+    # Alerting -> Rules only when it is registered as an alerting source, and an
+    # operator looking for "what is the stack configured to complain about" looks
+    # here. Delivery still belongs to Alertmanager (its own service, and the
+    # alerting block in prometheus.yml), not to Grafana.
+    alerting: true
     jsonData:
       httpMethod: POST
       timeInterval: 15s

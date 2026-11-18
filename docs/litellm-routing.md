@@ -185,8 +185,6 @@ key, so a config that looks correct silently does nothing, which is why
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `compaction-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama (Arc); the one deployment the two fast lanes' summary call hops to, and not a client choice - no `[model.*]` block and no `local.model_choices` entry names it | no (measured on these weights, as on `coder-fast`) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
-| `spark-coder` | `qwen2.5-coder:32b` | `SPARK1_OLLAMA_URL` (NVIDIA Spark, optional) | unverified |
-| `spark-chat` | `qwen2.5:7b` | `SPARK2_OLLAMA_URL` (NVIDIA Spark, optional) | unverified |
 
 ### Reading the table
 
@@ -227,11 +225,8 @@ key, so a config that looks correct silently does nothing, which is why
   `reasoning_effort` line, no tool-calling flags, and `max_input_tokens: 32768` rather
   than the Spark rows' 262144, because a summary is prose and 32768 is the honest
   window of those weights.
-- The `spark-*` rows are a different thing: the same Qwen2.5-Coder and Qwen2.5
-  weights, served over Ollama on the Spark boxes instead of on the Arc.
-- `unverified` on the `spark-*` rows means exactly that: this box never ran them
-  against a live Spark, so the column records the absence of a measurement, not a
-  "no".
+- The Spark boxes serve TensorFold's OpenAI-compatible `/v1` and nothing else: Ollama
+  runs on the Arc, so a Spark box never sees the Ollama protocol.
 - `model:` is sent to the backend verbatim, so `Qwen3.8-Flash-Next` has to match the
   served id byte-for-byte, case and hyphens included.
 - The `agent` lane deliberately carries the `openai/` provider prefix. `ollama_chat/`
@@ -580,8 +575,8 @@ traceparent and baggage, plus `metadata.session_id` in the body.
 - Both workspace templates render `x-litellm-session-id = "ws-<workspace-uuid>"` under
   `[models]` in `~/.grok/config.toml`, so one key covers every conversation of a
   workspace, subagent calls included.
-- In `shared` profile mode that is one file per user, re-rendered by the last-booted
-  workspace, which then shares that key across that user's workspaces.
+- In `shared` profile mode that is one file per workspace, re-rendered on that workspace's own
+  start, so two workspaces of one owner can carry different renders of that key.
 
 ### What floats freely
 

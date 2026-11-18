@@ -2,7 +2,7 @@
 name: ez-code-index
 description: "Build one small local map of a clone -- its top-level symbols and the spread of
   files over the tree -- as JSON for a program and a Markdown page a person reads, filed beside
-  that repository's notes file on the shared profile volume, so the next session loads a map
+  that repository's notes file on the per-owner notes volume, so the next session loads a map
   instead of grepping the tree again. Use when asked to build a code index, to say where a
   symbol lives without re-searching, or to hand a fleet a cheap map before it fans out. Run as
   /ez-code-index [repo-path]."
@@ -35,8 +35,9 @@ path the CLI reads and the seeder keeps a `cp` twin under `~/.coder/skills` for 
     ~/.grok/notes/<host>/<owner>/<repo>/code-index.md     # for a person
 
 The key is the one `notes_repo_key` in `~/.grok/notes-setup.sh` files the notes file under, so the
-index lands beside it on the shared workspace profile volume (`grok-profile-<owner-id>`) that every
-one of that owner's workspaces mounts -- one build serves all of them. Nothing is copied into the
+index lands beside it on the per-owner notes volume (`grok-notes-<owner-id>`) that `shared`
+mode mounts into every one of that owner's workspaces -- one build serves all of them.
+Nothing is copied into the
 clone, so `git status` stays clean and no git-ignore change is needed anywhere.
 
 ## Build it

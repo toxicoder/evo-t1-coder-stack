@@ -95,7 +95,7 @@ scratch_home() {
   # then ez-trunk-based-repo as one SKILL.md per home (2) with no helper of its
   # own, then ez-micro-plan as a SKILL.md per home plus one helper per home (4),
   # then the seeded fleet: six agent definitions and three persona overlays into the
-  # one shared ~/.grok profile (9), and the four fleet skills as one SKILL.md per
+  # workspace's own ~/.grok profile (9), and the four fleet skills as one SKILL.md per
   # home (8). The fleet family carries no helper of its own, so nothing nests under it.
   # Then the two families this change adds: the four advisor skills as one SKILL.md
   # per home (8), ez-code-index as a SKILL.md per home plus its helper per home (4),
@@ -105,6 +105,16 @@ scratch_home() {
   # The count is a claim about the manifest, so a target that quietly
   # disappears from config_seed.sh fails here before anything else notices.
   [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 65 ]
+  # ~/.grok is per workspace now, so config.toml (the model list, the
+  # session-affinity key, the Grok theme) is rendered by the workspace itself and
+  # has no row here: a shared reseed of it is precisely what the per-workspace
+  # profile removes. scripts/lib/config_seed.sh:85 states the same.
+  assert_not_match "config.toml is not a reseed target" '\.grok/config\.toml' "${lines}"
+  # The rendered payload the reseed does carry is the editor settings, and the
+  # only rendered target is workspace's settings.json.tftpl.
+  assert_match "settings.json is a reseed target" '~/.shared/vscode/settings\.json' "${lines}"
+  assert_match "the rendered payload is the editor settings" \
+    'render:templates/workspace/settings\.json\.tftpl' "${lines}"
   # Home-relative targets keep dev-only paths (scripts/, tests/) out of any
   # workspace volume: an absolute target would put this script's trust
   # boundary in the wrong place.
@@ -308,6 +318,10 @@ scratch_home() {
   printf '%s\n' '{"cline.apiKey": "sk-from-boot", "roo.openaiApiKey": "sk-from-boot"}' >"${scratch}/current.json"
   seed_render_settings "${REPO_ROOT}/templates/workspace/settings.json.tftpl" "${out}" "${scratch}/current.json"
   assert_contains_file "url rendered" "${out}" 'host.docker.internal:4000/v1'
+  # The theme is the second render seam: a reseed has no coder_parameter to read,
+  # so it lands that parameter's own default rather than a token left in the file.
+  assert_contains_file "theme rendered" "${out}" '"workbench.colorTheme": "Default Dark Modern"'
+  assert_not_match "theme token substituted" 'vscode_color_theme' "$(cat "${out}")"
   assert_contains_file "key carried" "${out}" 'sk-from-boot'
   assert_not_match "dollar-brace unfolded" '\$\$\{' "$(cat "${out}")"
   python3 -c 'import json,sys; json.load(sys.stdin)' <"${out}"

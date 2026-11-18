@@ -66,16 +66,26 @@ STACK_MARKER_TOML='__evoT1Stack = true'
 # LITELLM_PORT overrides it here (or with refresh-configs --litellm-url).
 STACK_LITELLM_URL="${STACK_LITELLM_URL:-http://host.docker.internal:4000/v1}"
 
+# STACK_VSCODE_COLOR_THEME - the editor color theme rendered into a reseeded
+# settings.json. On a workspace boot that value is a per-workspace parameter; a
+# reseed has no parameter to read, so it lands the parameter's own default and
+# an operator exports this name to reseed a different one.
+STACK_VSCODE_COLOR_THEME="${STACK_VSCODE_COLOR_THEME:-Default Dark Modern}"
+
 # @function seed_seed_targets
 # Print the reseed set, one "<target path>\t<payload kind>:<source>" line per
 # stack-owned target. Kinds: file (copy this repo file), exec (copy it and set
 # mode 755, for a payload the runner starts rather than reads), render (render
-# this repo file, substituting ${litellm_url}, $${...} unfolds to ${...}, and
-# carrying each target's own cline.apiKey / roo.openaiApiKey forward). Targets
-# are home-relative (~/...) so --container-root can repoint them in a test.
+# this repo file, substituting ${litellm_url} and ${vscode_color_theme},
+# $${...} unfolds to ${...}, and carrying each target's own cline.apiKey /
+# roo.openaiApiKey forward). Targets are home-relative (~/...) so
+# --container-root can repoint them in a test.
 # A twin pair is listed twice on purpose: the Coder Agents chat reads the
 # ~/.coder copy, the Grok Build CLI reads the ~/.agents copy, and the two
-# never dedupe each other.
+# never dedupe each other. ~/.grok/config.toml is absent from this set by
+# design: it renders per workspace (the model list, the session-affinity key
+# and the Grok theme are each that workspace's own), so re-seeding it from a
+# shared seed here is what the per-workspace profile removes.
 # Globals:
 #   None
 # Arguments:
@@ -289,11 +299,13 @@ seed_key_value() {
 # @function seed_render_settings
 # Render a settings.json.tftpl into a staging file a workspace may receive:
 # $${...} unfolds back to ${...}, ${litellm_url} becomes STACK_LITELLM_URL,
-# and a cline.apiKey / roo.openaiApiKey the target already carries is copied
+# ${vscode_color_theme} becomes STACK_VSCODE_COLOR_THEME (a reseed has no
+# per-workspace theme parameter, so it lands that parameter's default), and a
+# cline.apiKey / roo.openaiApiKey the target already carries is copied
 # forward (the seed in git carries no key; a workspace that was handed one on
 # its first boot keeps it through a reseed).
 # Globals:
-#   STACK_LITELLM_URL
+#   STACK_LITELLM_URL, STACK_VSCODE_COLOR_THEME
 # Arguments:
 #   $1 - the .tftpl source to render
 #   $2 - the staging file to write
@@ -313,7 +325,9 @@ seed_render_settings() {
     note "${src}: nowhere to stage the rendered copy - skipped"
     return 1
   }
-  if ! sed -e 's/\$\${/${/g' -e "s|\${litellm_url}|${STACK_LITELLM_URL}|g" "${src}" \
+  if ! sed -e 's/\$\${/${/g' \
+    -e "s|\${litellm_url}|${STACK_LITELLM_URL}|g" \
+    -e "s|\${vscode_color_theme}|${STACK_VSCODE_COLOR_THEME}|g" "${src}" \
     >"${rendered}"; then
     rm -f "${rendered}"
     note "${src}: rendering failed - skipped"
@@ -346,12 +360,18 @@ seed_render_settings() {
 # Arguments:
 #   $1 - volume name
 # Outputs:
-#   One word on stdout: grok-config, shared-config, home, docker-lib or nothing
+#   One word on stdout: grok-state, grok-legacy, shared-config, home,
+#   docker-lib or nothing
 # Returns:
 #   0 when the kind is known, 1 when it is not
 seed_volume_kind() {
   case "${1:-}" in
-    grok-profile-*) printf 'grok-config\n' ;;
+    # The three live per-owner mounts: state that is shared deliberately, while
+    # config.toml stays on each workspace's own home volume.
+    grok-notes-* | grok-memory-* | grok-sessions-*) printf 'grok-state\n' ;;
+    # The pre-split whole-profile volume. Not the live mount any more: it comes
+    # back read-only at ~/.grok-legacy for the one-time hoist only.
+    grok-profile-*) printf 'grok-legacy\n' ;;
     vscode-settings-*) printf 'shared-config\n' ;;
     *-home) printf 'home\n' ;;
     *-dind-lib) printf 'docker-lib\n' ;;

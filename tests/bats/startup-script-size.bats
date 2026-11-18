@@ -59,13 +59,19 @@ setup() {
   }
 }
 
-# The payload files main.tf inlines into one twin's startup_script, one path per line,
-# resolved the way push-template resolves them: a name the template reads through
-# ${path.module} is the twin's own file if it keeps one, and the templates/common/
-# canonical copy otherwise. A local passed into the block is followed to the file it
-# renders, which is how the rendered VS Code settings join the total.
-startup_script_sources() {
-  local dir="$1"
+# The payload files main.tf inlines into one exec'd body, one path per line, resolved
+# the way push-template resolves them: a name the template reads through ${path.module}
+# is the twin's own file if it keeps one, and the templates/common/ canonical copy
+# otherwise. A local passed into the block is followed to the file it renders, which is
+# how the rendered VS Code settings join the total.
+#
+# The block is located by the attribute line the agent execs, the same two attributes
+# scripts/lib/startup_size.awk reads, with the body's own name as the render target.
+# Every exec'd body needs this, not just the startup script: the guard weighs each body
+# against one bound, so a bound proved only against startup.sh.tftpl proves nothing
+# about a coder_script body that grew past it.
+body_sources() {
+  local dir="$1" body="$2"
   local main="${MEASURE_ROOT}/templates/${dir}/main.tf"
   local block names f resolved
 
@@ -73,9 +79,10 @@ startup_script_sources() {
     echo "templates/${dir}/main.tf is gone" >&2
     return 1
   }
-  block="$(sed -n '/^  startup_script = templatefile(/,/^  })$/p' "${main}")"
+  block="$(sed -n "/^  \(startup_script\|script\) = templatefile(\"[^\"]*\/${body}\", {/,/^  })$/p" "${main}")"
   [ -n "${block}" ] || {
-    echo "no startup_script = templatefile(...) block found in templates/${dir}/main.tf" >&2
+    echo "no startup_script/script = templatefile(...) block rendering ${body}" >&2
+    echo "found in templates/${dir}/main.tf" >&2
     return 1
   }
 
@@ -105,19 +112,30 @@ startup_script_sources() {
   done < <(printf '%s\n' "${names}" | sort -u)
 }
 
-# Total bytes main.tf would hand to bash for one twin, with the per-file table on
-# stdout so a failure explains itself instead of just going red.
+# Every body the agent execs for one twin, one name per line, derived by this suite
+# from the two attributes main.tf writes them on. scripts/lib/startup_size.awk
+# discovers the same set its own way, and the bracketing test below is where the two
+# derivations are held against each other.
+exec_bodies() {
+  local dir="$1"
+  local main="${MEASURE_ROOT}/templates/${dir}/main.tf"
+  grep -oE '^  (startup_script|script) = templatefile\("[^"]*"' "${main}" |
+    sed -e 's|.*/||' -e 's|"||' | sort -u
+}
+
+# Total bytes main.tf would hand to bash for one exec'd body of one twin, with the
+# per-file table on stdout so a failure explains itself instead of just going red.
 composed_bytes() {
-  local dir="$1" total=0 f
+  local dir="$1" body="${2:-startup.sh.tftpl}" total=0 f
   while read -r f; do
     [ -n "${f}" ] || continue
     local size
     size="$(wc -c < "${f}")"
     printf '  %7d %s\n' "${size}" "${f#"${MEASURE_ROOT}/"}"
     total=$((total + size))
-  done < <(startup_script_sources "${dir}")
-  printf '  %7d TOTAL\n' "${total}"
-  printf '%s\n' "${total}" > "${BATS_TEST_TMPDIR}/total-${dir}"
+  done < <(body_sources "${dir}" "${body}")
+  printf '  %7d TOTAL %s\n' "${total}" "${body}"
+  printf '%s\n' "${total}" > "${BATS_TEST_TMPDIR}/total-${dir}-${body}"
 }
 
 @test "startup budget: the ceiling is the kernel's own single-argument limit" {
@@ -144,7 +162,7 @@ composed_bytes() {
 @test "startup budget: the workspace twin fits in one execve argument" {
   composed_bytes workspace
   local total
-  total="$(cat "${BATS_TEST_TMPDIR}/total-workspace")"
+  total="$(cat "${BATS_TEST_TMPDIR}/total-workspace-startup.sh.tftpl")"
   [ -n "${total}" ] || return 1
   if [ "${total}" -gt "${BOUND}" ]; then
     echo "templates/workspace startup_script composes to ${total} bytes; the budget is ${BOUND}" >&2
@@ -159,7 +177,7 @@ composed_bytes() {
 @test "startup budget: the devcontainer twin fits in one execve argument" {
   composed_bytes devcontainer
   local total
-  total="$(cat "${BATS_TEST_TMPDIR}/total-devcontainer")"
+  total="$(cat "${BATS_TEST_TMPDIR}/total-devcontainer-startup.sh.tftpl")"
   [ -n "${total}" ] || return 1
   if [ "${total}" -gt "${BOUND}" ]; then
     echo "templates/devcontainer startup_script composes to ${total} bytes; the budget is ${BOUND}" >&2
@@ -203,6 +221,7 @@ composed_bytes() {
 load_production_guard() {
   load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" log
   load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" err
+  load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" warn
   load_shell_function "${REPO_ROOT}/scripts/lib/common.sh" die
   # The guard reads its awk parser from SELF_DIR and the canonical seed tree from the
   # root the script resolved, because that is all the production script has: nothing in
@@ -218,26 +237,52 @@ load_production_guard() {
 
 @test "startup budget: the push guard counts the bytes this suite counts" {
   load_production_guard
-  local dir total
+  local dir body n biggest suite_bodies guard_bodies
   for dir in workspace devcontainer; do
-    composed_bytes "${dir}"
-    total="$(cat "${BATS_TEST_TMPDIR}/total-${dir}")"
-    [ -n "${total}" ] || return 1
+    # Both parsers have to agree on WHICH bodies exist before their byte counts mean
+    # anything: a guard that quietly stopped reading one resource would still pass a
+    # bracket placed on the bodies it happens to look at.
+    suite_bodies="$(exec_bodies "${dir}" | sort -u)"
+    guard_bodies="$(awk -f "${REPO_ROOT}/scripts/lib/startup_size.awk" \
+      "${MEASURE_ROOT}/templates/${dir}/main.tf" | cut -f1 | sort -u)"
+    [ "${suite_bodies}" = "${guard_bodies}" ] || {
+      echo "${dir}: this suite and scripts/lib/startup_size.awk disagree on the exec'd bodies" >&2
+      diff <(printf '%s\n' "${suite_bodies}") <(printf '%s\n' "${guard_bodies}") >&2
+      return 1
+    }
+
+    # The bracket sits on the largest body, which no longer has to be the startup
+    # script: every coder_script body is its own execve, one bound is weighed against
+    # all of them, and a bound taken from a body that is not the biggest is refused for
+    # bytes this suite never measured. Measuring all of them is also what keeps a
+    # payload that only one parser can see from hiding in a body nobody bracketed.
+    biggest=0
+    while read -r body; do
+      [ -n "${body}" ] || continue
+      composed_bytes "${dir}" "${body}" >/dev/null
+      n="$(cat "${BATS_TEST_TMPDIR}/total-${dir}-${body}")"
+      [ -n "${n}" ] || return 1
+      [ "${n}" -le "${biggest}" ] || biggest="${n}"
+    done <<<"${suite_bodies}"
+
     # Two probes bracket the guard's own number exactly: a budget equal to this suite's
-    # total has to pass, and one byte lower has to fail. Together they say both parsers
-    # counted the same bytes, without the guard needing a mode that prints its total.
-    export STARTUP_SIZE_BOUND="${total}"
+    # largest total has to pass, and one byte lower has to fail. Together they say both
+    # parsers counted the same bytes, without the guard needing a mode that prints its
+    # total. The upper probe runs at zero distance from the bound, which is also the
+    # distance at which the guard warns instead of refusing: warn is loaded above so
+    # this exercises that branch with the real helper instead of a missing command.
+    export STARTUP_SIZE_BOUND="${biggest}"
     run startup_size_guard "${MEASURE_ROOT}/templates/${dir}"
     [ "${status}" -eq 0 ] || {
-      echo "${dir}: the guard refused what this suite measured at ${total} bytes" >&2
+      echo "${dir}: the guard refused what this suite measured at ${biggest} bytes" >&2
       printf '%s\n' "${output}" >&2
       return 1
     }
-    export STARTUP_SIZE_BOUND=$((total - 1))
+    export STARTUP_SIZE_BOUND=$((biggest - 1))
     run startup_size_guard "${MEASURE_ROOT}/templates/${dir}"
     unset STARTUP_SIZE_BOUND
     [ "${status}" -eq 1 ] || {
-      echo "${dir}: the guard accepted ${total} bytes under a budget of $((total - 1))," >&2
+      echo "${dir}: the guard accepted ${biggest} bytes under a budget of $((biggest - 1))," >&2
       echo "so its parser counts fewer bytes than this suite's" >&2
       return 1
     }
@@ -288,7 +333,7 @@ load_production_guard() {
   done
   for dir in workspace devcontainer; do
     composed_bytes "${dir}"
-    total="$(cat "${BATS_TEST_TMPDIR}/total-${dir}")"
+    total="$(cat "${BATS_TEST_TMPDIR}/total-${dir}-startup.sh.tftpl")"
     [ -n "${total}" ] || return 1
     # 12 KiB of room, measured against the wall test 1 measures rather than against
     # this file's own budget: the devcontainer twin composed 108573 bytes, the kernel
@@ -454,7 +499,7 @@ TF
     return 1
   }
   composed_bytes workspace
-  total="$(cat "${BATS_TEST_TMPDIR}/total-workspace")"
+  total="$(cat "${BATS_TEST_TMPDIR}/total-workspace-startup.sh.tftpl")"
   want=$(( $(wc -c <"${repo}/templates/workspace/startup.sh.tftpl") +
     $(wc -c <"${repo}/templates/common/notes.sh") ))
   [ "${total}" -eq "${want}" ] || {
@@ -466,7 +511,7 @@ TF
   # handoff exists.
   MEASURE_ROOT="${mirror}"
   composed_bytes workspace
-  mirror_total="$(cat "${BATS_TEST_TMPDIR}/total-workspace")"
+  mirror_total="$(cat "${BATS_TEST_TMPDIR}/total-workspace-startup.sh.tftpl")"
   [ "${mirror_total}" -gt "${total}" ] || {
     echo "the mirror measured ${mirror_total} against the shipping ${total};" >&2
     echo "the gate would have budgeted instrumented bytes" >&2

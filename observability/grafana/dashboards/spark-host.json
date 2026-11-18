@@ -1,0 +1,1030 @@
+{
+  "uid": "evo-spark-host",
+  "title": "One DGX Spark",
+  "tags": ["evo-t1", "spark"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "annotations": { "list": [] },
+  "description": "The deep dive for a single Spark: host detail and GPU detail on one page. Reach it from a card on DGX Sparks overview, which presets $host to the box you clicked, or pick the box here. Box-side panels filter on instance and GPU-side panels on hostname, because those are the labels each exporter actually carries.",
+  "templating": {
+    "list": [
+      {
+        "name": "host",
+        "label": "Spark",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(spark:box_up, hostname)",
+        "query": "label_values(spark:box_up, hostname)",
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "includeAll": false,
+        "multi": false,
+        "current": {},
+        "options": [],
+        "hide": 0
+      }
+    ]
+  },
+  "links": [
+    {
+      "asDropdown": false,
+      "icon": "external link",
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [],
+      "targetBlank": false,
+      "title": "Back to DGX Sparks overview",
+      "type": "dashboards",
+      "url": "/d/evo-sparks-overview/dgx-sparks-overview"
+    }
+  ],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Box up",
+      "description": "spark:box_up, which is 1 only while this box's own node_exporter scrape succeeds; it filters on hostname because the recording rule normalises the box-side instance label to hostname. Read it together with the probe stat beside it: the pair disagreeing is an exporter problem, both at 0 is the box.",
+      "id": 1,
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:box_up{hostname=\"$host\"}",
+          "legendFormat": "node_exporter scrape",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "noValue": "no data",
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "red", "value": null },
+          { "color": "green", "value": 1 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Worst probe result",
+      "description": "spark:probe_up, the worst blackbox result across both modules for this host (observability/prometheus/rules/spark.rules.yml), filtered on the normalised hostname. It goes to 0 before the box does, so a 0 beside a green Box up means a serving port stopped answering while the OS stayed alive.",
+      "id": 2,
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:probe_up{hostname=\"$host\"}",
+          "legendFormat": "blackbox probes",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": { "text": "probes pass", "color": "green" },
+                "0": { "text": "probe failing", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "noValue": "no data",
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "red", "value": null },
+          { "color": "green", "value": 1 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "GPUs reporting in the last 6h",
+      "description": "Count of spark:gpu_reported_recently:gpu rows for this box. The rule keeps a card counted for 6h after it goes silent on purpose, so a number here that is higher than the GPU lines below is a card that fell off the bus rather than a card that is idle.",
+      "id": 3,
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "noValue": "no data" }, "overrides": [] },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(spark:gpu_reported_recently:gpu{hostname=\"$host\"}) or vector(0)",
+          "legendFormat": "gpus seen",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "noValue": "no data",
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "red", "value": null },
+          { "color": "green", "value": 1 }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "Host",
+      "description": "node_exporter for this box only. A Spark's box-side series carry box and instance but no hostname label (observability/prometheus/rules/spark.rules.yml:14), and box is the positional token from the generated target file, so every panel in this row filters on instance and names the host token from $host.",
+      "collapsed": false,
+      "id": 4,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 4 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "CPU utilisation by mode",
+      "description": "Busy core-seconds per mode divided by this box's core count, so the lines read as a share of the machine. A steady user line is inference work on the CPU; a rising iowait line is the disk row below, not the compute.",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (mode) (rate(node_cpu_seconds_total{instance=~\"$host(:[0-9]+)?\", mode!=\"idle\"}[5m])) / count(node_cpu_seconds_total{instance=~\"$host(:[0-9]+)?\", mode=\"idle\"})",
+          "legendFormat": "{{mode}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Load average, runnable and blocked",
+      "description": "The three load averages plus the instantaneous process counts, all filtered on instance. Load climbing while the GPU panels stay flat means something on the box is waiting, and the blocked line says whether it is waiting on the filesystem.",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 8, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_load1{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "load1"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_load5{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "load5"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_load15{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "load15"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_procs_running{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "procs running"
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_procs_blocked{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "procs blocked"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory",
+      "description": "Total and used, where used is MemTotal minus MemAvailable, so page cache is not counted against the box. A used line that only ever climbs is the usual prelude to the swap panel filling and a stalled inference container.",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_memory_MemTotal_bytes{instance=~\"$host(:[0-9]+)?\"} - node_memory_MemAvailable_bytes{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "used"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_memory_MemTotal_bytes{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Swap",
+      "description": "Swap in use against the swap total, filtered on instance. Any sustained line above zero on a box serving a model means the host is paging model state, which the GPU side will show as a card that looks starved.",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_memory_SwapTotal_bytes{instance=~\"$host(:[0-9]+)?\"} - node_memory_SwapFree_bytes{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "used"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_memory_SwapTotal_bytes{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk IOPS per device",
+      "description": "Completed reads and writes per second per device. A burst that starts when a model loads is normal; one that continues while GPU util is flat is a cache or log path on the wrong disk.",
+      "id": 9,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_disk_reads_completed_total{instance=~\"$host(:[0-9]+)?\"}[5m]))",
+          "legendFormat": "{{device}} read"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_disk_writes_completed_total{instance=~\"$host(:[0-9]+)?\"}[5m]))",
+          "legendFormat": "{{device}} write"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Disk utilisation",
+      "description": "Fraction of wall time each device had at least one request in flight. A device pinned at 1.0 is saturated, and every line above it in this row is waiting on it.",
+      "id": 10,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(node_disk_io_time_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
+          "legendFormat": "{{device}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Filesystems and inodes",
+      "description": "One row per mount: the share of space used and the share of inodes used, tmpfs, overlay and squashfs mounts excluded. A full filesystem and a full inode table look identical to the workload, so both fractions are shown; either one at 1.0 stops the model from loading.",
+      "id": 11,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_filesystem_avail_bytes{instance=~\"$host(:[0-9]+)?\", fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_size_bytes{instance=~\"$host(:[0-9]+)?\", fstype!~\"tmpfs|overlay|squashfs\"}",
+          "legendFormat": "{{mountpoint}} space used",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "1 - node_filesystem_files_free{instance=~\"$host(:[0-9]+)?\", fstype!~\"tmpfs|overlay|squashfs\"} / node_filesystem_files{instance=~\"$host(:[0-9]+)?\", fstype!~\"tmpfs|overlay|squashfs\"}",
+          "legendFormat": "{{mountpoint}} inodes used",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "options": { "showHeader": true },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "max": 1,
+          "min": 0,
+          "custom": { "align": "auto" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.8 },
+              { "color": "red", "value": 0.95 }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Network throughput",
+      "description": "Bytes per second in and out per physical interface, loopback, veth, bridge and docker interfaces excluded. A box that is not pulling its share of traffic shows up here as a flat line while the fleet is busy.",
+      "id": 12,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_receive_bytes_total{instance=~\"$host(:[0-9]+)?\", device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "{{device}} rx"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_transmit_bytes_total{instance=~\"$host(:[0-9]+)?\", device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "{{device}} tx"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Network drops",
+      "description": "Dropped receive and transmit packets per second per interface. Any sustained non-zero line is the NIC or the queue depth giving up, which reads at the serving layer as slow requests rather than as errors.",
+      "id": 13,
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "pps", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_receive_drop_total{instance=~\"$host(:[0-9]+)?\", device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "{{device}} rx drops"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (device) (rate(node_network_transmit_drop_total{instance=~\"$host(:[0-9]+)?\", device!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "{{device}} tx drops"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Pressure stall",
+      "description": "PSI some and full stall per subsystem, for this box only. A PSI series carries no resource label of its own, so the scrape labels are what bind it to a machine: the same instance selector the rest of the Host row uses. A rising line is time the box spent waiting for CPU, memory or IO, not time spent using them.",
+      "id": 14,
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(node_pressure_cpu_waiting_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
+          "legendFormat": "cpu some"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(node_memory_waiting_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
+          "legendFormat": "memory some"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(node_io_waiting_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
+          "legendFormat": "io some"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(node_memory_stalled_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
+          "legendFormat": "memory full"
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "rate(node_io_stalled_seconds_total{instance=~\"$host(:[0-9]+)?\"}[5m])",
+          "legendFormat": "io full"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Conntrack table",
+      "description": "Entries in use against the kernel limit. A table that rides its limit drops new flows silently, which looks like a serving port that sometimes refuses to answer.",
+      "id": 15,
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_nf_conntrack_entries{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "entries"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_nf_conntrack_entries_limit{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "limit"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "File descriptors",
+      "description": "Allocated descriptors against the system maximum. A line that only climbs is a process leaking sockets or files, and it fails at the maximum with the worst possible timing.",
+      "id": 16,
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_filefd_allocated{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "allocated"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "node_filefd_maximum{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "maximum"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "description": "time() minus node_boot_time_seconds for this box. A short uptime beside ECC or remap numbers that predate it means the card has already been rebooted once since they were logged.",
+      "id": 17,
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 36 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "noValue": "no data", "unit": "dtdurations" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "time() - node_boot_time_seconds{instance=~\"$host(:[0-9]+)?\"}",
+          "legendFormat": "since boot",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "noValue": "no data"
+    },
+    {
+      "type": "row",
+      "title": "GPU",
+      "description": "The DCGM side of this box. DCGM series and every spark: GPU recording rule carry hostname, so every panel in this row filters on hostname=\"$host\" and is one line per gpu. Temperatures are read against the 95 C slowdown point these cards hold (observability/prometheus/rules/spark.rules.yml:30).",
+      "collapsed": false,
+      "id": 18,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 43 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU utilisation",
+      "description": "spark:gpu_util_pct:gpu, one line per card, filtered on hostname. This is kernel-active time, not work done: a card at 100 with a low SM clock below is busy being throttled rather than busy computing.",
+      "id": 19,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_util_pct:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory copy utilisation",
+      "description": "spark:gpu_mem_copy_util_pct:gpu per card, filtered on hostname. This is the framebuffer bandwidth meter: high here with low GPU util is a workload that is memory bound rather than compute bound.",
+      "id": 20,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_mem_copy_util_pct:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Framebuffer used and free",
+      "description": "Both halves of the framebuffer on one axis, in MiB as DCGM reports them, filtered on hostname. A card whose used line reaches its total has no room left for the next model, and that fails as a load error rather than as slow serving.",
+      "id": 21,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "mbytes", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "DCGM_FI_DEV_FB_USED{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} used"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "DCGM_FI_DEV_FB_FREE{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} free"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Framebuffer fill (busiest card)",
+      "description": "max of spark:gpu_fb_fill_ratio:gpu for this box, which is used / (used + free). Above 0.95 held for 15m is what pages SparkGpuVramPressure; a box with no card reporting reads as no data rather than as empty.",
+      "id": 22,
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "noValue": "no data", "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(spark:gpu_fb_fill_ratio:gpu{hostname=\"$host\"})",
+          "legendFormat": "busiest card",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "noValue": "no data",
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 0.9 },
+          { "color": "red", "value": 0.95 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Temp headroom (hottest card)",
+      "description": "min of spark:gpu_temp_headroom_c:gpu: degrees of margin left before the 95 C slowdown point the rule measures from. Below 8 C held for 5m is the SparkGpuTempNearSlowdown alert, and that is a room-airflow problem before it is a workload problem.",
+      "id": 23,
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 52 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "noValue": "no data", "unit": "celsius" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "min(spark:gpu_temp_headroom_c:gpu{hostname=\"$host\"})",
+          "legendFormat": "hottest card",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "noValue": "no data",
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "red", "value": null },
+          { "color": "yellow", "value": 8 },
+          { "color": "green", "value": 20 }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU and memory temperature against the slowdown point",
+      "description": "Core and VRAM temperature per card, with the line at 95 C drawn as the slowdown point these cards hold clocks from. The memory sensor runs hotter and throttles at a different load than the core, so read the two together rather than trusting whichever is higher.",
+      "id": 24,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 60 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius",
+          "min": 0,
+          "custom": { "fillOpacity": 8, "lineWidth": 1, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 95 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_temp_c:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} core"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_mem_temp_c:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} memory"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Power draw per card",
+      "description": "spark:gpu_power_watts:gpu, filtered on hostname. A card pinned at the same watts as its neighbour across the whole window is being held by the cap rather than by the workload; compare with the share-of-limit panel beside it.",
+      "id": 25,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 60 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "watt", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_power_watts:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Power as a share of the limit",
+      "description": "spark:gpu_power_share_of_limit:gpu, the rule that divides power draw by DCGM_FI_DEV_POWER_MGMT_LIMIT. A box that does not expose that field records nothing, so an empty panel is the field being absent rather than the card being idle - the watts panel above is the one that always carries data.",
+      "id": 26,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 68 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": { "fillOpacity": 12, "lineWidth": 1, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_power_share_of_limit:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "SM clock against the card's own ceiling",
+      "description": "spark:gpu_sm_clock_deficit:gpu: current SM clock over the card's own 6h peak. No nominal maximum-clock field is collected by observability/dcgm/custom-counters.csv, so the card is compared with itself; below 0.6 while busy is the SparkGpuThrottling alert.",
+      "id": 27,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 68 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_sm_clock_deficit:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "SM and memory clock",
+      "description": "The raw MHz of both clocks per card, filtered on hostname. A memory clock that sits far under its own ceiling while copy utilisation is high is the same thermal hold the deficit panel infers, read directly.",
+      "id": 28,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 68 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 8, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "DCGM_FI_DEV_SM_CLOCK{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} sm MHz"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "DCGM_FI_DEV_MEM_CLOCK{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} mem MHz"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Encoder and decoder utilisation",
+      "description": "NVENC and NVDEC utilisation per card, filtered on hostname. On a box that only serves text inference these stay at 0; a line that climbs belongs to a workload nobody declared.",
+      "id": 29,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 76 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "DCGM_FI_DEV_ENC_UTIL{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} encoder"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "DCGM_FI_DEV_DEC_UTIL{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} decoder"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "PCIe replays in the last hour",
+      "description": "spark:gpu_pcie_replays_increase_1h:gpu, the per-hour delta of the replay counter rather than its lifetime total. Replays are the default-on sign of a link renegotiating downwards, so a climbing line usually means a seating or riser problem before it means a driver one.",
+      "id": 30,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 76 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_pcie_replays_increase_1h:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "PCIe throughput",
+      "description": "spark:gpu_pcie_bytes_per_second:gpu, which sums DCGM_FI_PROF_PCIE_TX_BYTES and DCGM_FI_PROF_PCIE_RX_BYTES. Those profiling fields need the exporter container started with --cap-add SYS_ADMIN, so on a box without it this panel is empty by design and that is not a dead link - use the replay counter beside it instead.",
+      "id": 31,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 76 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_pcie_bytes_per_second:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "NVLink bandwidth",
+      "description": "spark:gpu_nvlink_bytes_per_second:box, a gauge rather than a rate. A DGX Spark carries no NVLink, so a single module reads 0 or nothing and this panel only means something on a bridged pair.",
+      "id": 32,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 84 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bps", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_nvlink_bytes_per_second:box{hostname=\"$host\"}",
+          "legendFormat": "nvlink total"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "ECC row remaps in the last hour",
+      "description": "Correctable against uncorrectable row remaps per card, both as the hourly delta the rules record. Correctable remaps are a wear signal you schedule around; any uncorrectable line is the SparkGpuEccUncorrectable page and means data was lost.",
+      "id": 33,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 84 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_ecc_correctable_rows_increase_1h:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} correctable"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_ecc_uncorrectable_rows_increase_1h:gpu{hostname=\"$host\"}",
+          "legendFormat": "{{gpu}} uncorrectable"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Row remap failure",
+      "description": "max of spark:gpu_row_remap_failure:gpu for this box. It latches until the card reboots, so a 1 here is not a blip to wait out: the spare rows are exhausted and the card is at end of service for anything that cares about memory integrity.",
+      "id": 34,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 84 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+              "noValue": "no data",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "clean", "color": "green" },
+                "1": { "text": "remap failed", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(spark:gpu_row_remap_failure:gpu{hostname=\"$host\"})",
+          "legendFormat": "this box",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "noValue": "no data",
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "red", "value": 1 }
+        ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "Probe",
+      "description": "What the stack host sees from outside the box. The blackbox series carry no hostname label, so these panels filter on instance, which holds the probed URL, and split by the module label the two scrape jobs set.",
+      "collapsed": false,
+      "id": 35,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 92 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Probe success",
+      "description": "probe_success for the spark_health and spark_models modules, filtered on the probed URL in instance. The two are separate on purpose: a box can answer health and still not be serving the model its deployment says it is.",
+      "id": 36,
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 93 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1, "custom": { "fillOpacity": 20, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_success{module=\"spark_health\", hostname=\"$host\"}",
+          "legendFormat": "health {{instance}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_success{module=\"spark_models\", hostname=\"$host\"}",
+          "legendFormat": "models {{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Probe duration",
+      "description": "Seconds the probe took to answer, per module. This is the panel that sees a serving port going sick before it fails: the duration climbs first and only then does the success line drop.",
+      "id": 37,
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 93 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_duration_seconds{module=\"spark_health\", hostname=\"$host\"}",
+          "legendFormat": "health {{instance}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_duration_seconds{module=\"spark_models\", hostname=\"$host\"}",
+          "legendFormat": "models {{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Probe HTTP status",
+      "description": "The status code each probe last got back. Anything that is not 200 while probe_success still reads 1 means the module considers the code acceptable, so read this one rather than trusting the success line alone.",
+      "id": 38,
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 93 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1, "spanNulls": true } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_http_status_code{module=\"spark_health\", hostname=\"$host\"}",
+          "legendFormat": "health {{instance}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_http_status_code{module=\"spark_models\", hostname=\"$host\"}",
+          "legendFormat": "models {{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "This box as a backend",
+      "description": "The router's view of the deployments this box might be serving. Host attribution is not possible from the metric labels: the deployment series carry model_id and api_base and no hostname, and nothing committed here maps this box's token to the api_base written into litellm/config.yaml, so no join is invented. Read the row whose api_base names this box.",
+      "collapsed": false,
+      "id": 39,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 100 },
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Deployment state, all deployments",
+      "description": "litellm_deployment_state per deployment as the router's background health checks last saw it, re-probed every 300 s. Not filtered on $host: there is no host label to filter on, so read the line whose api_base is this box. A deployment legitimately off reads 2; the one stuck at 1 is the line to chase.",
+      "id": 40,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 101 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 2,
+          "custom": { "fillOpacity": 0, "lineWidth": 1, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm_deployment_state",
+          "legendFormat": "{{model_id}} {{api_base}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cooldown events per deployment, last 15m",
+      "description": "litellm_deployment_cooled_down_total per model_id and api_base: how often the router pulled a deployment out of rotation. A box whose GPU and probe panels above look healthy while this line climbs is being cooled by timeouts rather than by an outage.",
+      "id": 41,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 101 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id, api_base) (increase(litellm_deployment_cooled_down_total[15m]))",
+          "legendFormat": "{{model_id}} {{api_base}}"
+        }
+      ]
+    }
+  ]
+}

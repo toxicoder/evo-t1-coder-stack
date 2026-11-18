@@ -371,9 +371,6 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   name no row declares is *accepted* as an unknown hidden model on the current
   provider, so a typed `/model compaction-fast` still puts a turn on it. Nothing
   refuses it for you.
-  And `spark-coder` / `spark-chat` are declared so they stay pickable even though they
-  are Ollama on a Spark box that is usually powered off, so a cold box answers a
-  connection error.
 - All of that lives in the seed, and the seed reaches the volume once:
   `scripts/hermes-bootstrap.sh` copies `hermes/config.yaml` into the data volume only
   when the file is absent. A box that ran an earlier seed therefore has no `litellm`

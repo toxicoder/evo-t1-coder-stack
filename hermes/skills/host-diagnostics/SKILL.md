@@ -1,12 +1,12 @@
 ---
 name: host-diagnostics
-description: Triage what is broken on this host - slow box, full disk, thermal throttle, failing service, docker daemon, DNS or TLS, model lane down - with read-only playbooks in order.
+description: Triage what is broken on this host - slow box, full disk, thermal throttle, failing service, docker daemon, DNS or TLS, model lane down - with read-only playbooks in order, and what the host exporters and the Spark boxes answer.
 version: 1.0.0
 license: MIT
 platforms: [linux]
 metadata:
   hermes:
-    tags: [linux, triage, diagnostics, docker, systemd, observability]
+    tags: [linux, triage, diagnostics, docker, systemd, observability, metrics, spark]
 ---
 
 # host-diagnostics
@@ -130,6 +130,69 @@ credential chain (host command: it enumerates the labeled workspace containers
 through the daemon), `docker logs --tail 100 coder-<owner>-<ws>` for the agent
 tunnel, and remember the `dind` sidecar inside it is not a workspace.
 
+## The host and Spark metrics surface
+
+The `observability` profile carries four exporters, all compose services in
+`evo-t1-prod`, all published on the host's loopback only - so each is the operator's
+host command, never a `host.docker.internal` dial from here. Ask
+`bazelisk run //scripts:prod-stack -- status` for the live mapping, not the dotenv file.
+
+| service | published under | ask it |
+|---|---|---|
+| `node_exporter` | `OBS_NODE_EXPORTER_PORT` (9101) | `/metrics` - host cpu, memory, disk, network |
+| `cadvisor` | `OBS_CADVISOR_PORT` (9290) | `/metrics` per container, `/healthz` |
+| `blackbox_exporter` | `OBS_BLACKBOX_PORT` (9115) | `/metrics`, `/probe?target=<url>&module=<name>` |
+| `alertmanager` | `OBS_ALERTMANAGER_PORT` (9093) | `/-/healthy`, `/api/v2/status` |
+
+Dead exporter and empty query need different fixes. Connection refused (curl exit 7)
+means nothing is bound - and with all four behind `profiles: ["observability"]` the
+usual cause is a stack that never enabled the profile, not a crashed container. HTTP
+200 with no matching line means the exporter is healthy and the name or collector is
+wrong (`node_processes_*` needs `--collector.processes`). A 404 is the wrong path:
+`/metrics` is the only endpoint all four answer, and blackbox's `/probe` needs both
+`target` and `module`.
+
+**Which of the four is the bottleneck.** The PSI counters answer it in one read and
+carry no labels at all, so a selector with `operation=` or `pressure=` matches
+nothing: `node_pressure_cpu_waiting_seconds_total`,
+`node_memory_waiting_seconds_total`, `node_io_waiting_seconds_total` are the cpu,
+memory and disk queues. Above a 5-minute rate near 0.10, tasks waited that share of
+the wall clock and the largest is the bottleneck. Cross-check it:
+`node_memory_MemAvailable_bytes` against total, `node_cpu_seconds_total{mode="iowait"}`
+for disk arriving as CPU, and `node_network_receive_bytes_total` with
+`device!~"lo|veth.*|br.*|docker.*|virbr.*"` for the wire - there is no PSI series for
+network, so that one is `si` and retransmits. Memory and IO both hot means memory is
+the cause and IO the symptom.
+
+**The Spark boxes.** All host commands; this image has no bazelisk.
+
+```sh
+bazelisk run //scripts:spark-monitor                 # plan only, and the default
+bazelisk run //scripts:spark-monitor -- --status     # per-box probe table
+bazelisk run //scripts:spark-monitor -- --targets    # the sparks.json it expects
+bazelisk run //scripts:spark-monitor -- --restart    # restart both exporters
+bazelisk run //scripts:spark-monitor -- --apply      # the only flag that changes a box
+```
+
+Plan is the default (`--dry-run` says it out loud), so "how is the fleet doing" is a
+`--status` question. `--box <n>` narrows to one box; `--json` prints one object and
+this image has no `jq`; a box with nothing installed is a `warning:` line, not a
+failure.
+
+**GPU series, when you are reading a Spark.** The prefix is `DCGM_FI_*`, never
+`dcgm_*`: utilisation `DCGM_FI_DEV_GPU_UTIL`, copy engine `DCGM_FI_DEV_MEM_COPY_UTIL`,
+framebuffer fill `DCGM_FI_DEV_FB_USED` / `DCGM_FI_DEV_FB_FREE`, temperature
+`DCGM_FI_DEV_GPU_TEMP` / `DCGM_FI_DEV_MEMORY_TEMP`, power `DCGM_FI_DEV_POWER_USAGE`,
+ECC and row remap `DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS` /
+`DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS` / `DCGM_FI_DEV_ROW_REMAP_FAILURE`. The
+profiling family (`DCGM_FI_PROF_*`) needs the exporter container to carry
+`--cap-add SYS_ADMIN`: a box without it returns **no** `DCGM_FI_PROF_*` rows at all,
+so an empty result is a privilege gap - say "that exporter is not running with what
+it needs", never "the GPU is idle", and `--status` prints `dcgm_counter_count` and
+`gpu_count` to tell them apart. The same privilege honesty applies to the host:
+`cadvisor` only means anything because it runs `privileged: true` with `pid: host`,
+and `node_exporter` needs `pid: host` to see the host's processes at all.
+
 ## Do not
 
 - Do not restart, prune, recreate, or `reset` as a way of "seeing if that fixes
@@ -140,3 +203,10 @@ tunnel, and remember the `dind` sidecar inside it is not a workspace.
   have not identified. LiteLLM owns routing; nothing in this stack gets a cap.
 - Do not run every probe at once. Print the one you ran and what it said, then
   decide. The operator is reading your transcript, not your command history.
+- Do not answer a question about the Spark fleet with
+  `bazelisk run //scripts:spark-monitor -- --apply`. It installs and starts
+  containers, it is the only flag that does, and `--status` answers the question
+  without changing anything.
+- Do not put a Spark hostname in a log, a file, or your reply. The boxes come from
+  `SPARK1_HOST` / `SPARK2_HOST` / `SPARK3_HOST`, `--targets` prints them into a
+  generated gitignored file, and the count is the part anyone needs.

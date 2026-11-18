@@ -1,0 +1,827 @@
+{
+  "uid": "evo-home",
+  "title": "EVO-T1 stack",
+  "description": "Landing page for the observability bundle: what the stack is, whether each part is answering, and where to go next. Every panel here reads the short-window Prometheus datasource; the pages linked below hold the detail.",
+  "tags": ["evo-t1", "home"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Dashboards",
+      "id": 1,
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "panels": []
+    },
+    {
+      "type": "dashlist",
+      "title": "EVO-T1 dashboards",
+      "description": "Everything the file provider has loaded from the provisioned dashboards path, listed live so this page and the folder cannot drift apart.",
+      "id": 2,
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 1 },
+      "query": "",
+      "headings": false,
+      "recent": false,
+      "search": false,
+      "starred": false,
+      "maxItems": 20,
+      "sort": "alphabeticalasc"
+    },
+    {
+      "type": "link",
+      "title": "Host",
+      "description": "CPU, memory, disk, and network on the box the bundle itself runs on.",
+      "id": 3,
+      "gridPos": { "h": 3, "w": 4, "x": 8, "y": 1 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Stack host task manager",
+          "url": "/d/evo-host-taskmanager/stack-host-task-manager",
+          "targetBlank": false,
+          "tooltip": "Load, memory, filesystem, and disk pressure on the stack host"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Containers",
+      "description": "Per-container CPU, memory, throttle, OOM, and network for the compose services.",
+      "id": 4,
+      "gridPos": { "h": 3, "w": 4, "x": 12, "y": 1 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Containers",
+          "url": "/d/evo-containers/containers",
+          "targetBlank": false,
+          "tooltip": "cAdvisor view of every container on the stack host"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Sparks",
+      "description": "The GPU boxes: the fleet-wide view, then one box at a time with its GPUs.",
+      "id": 5,
+      "gridPos": { "h": 3, "w": 4, "x": 16, "y": 1 },
+      "targets": [],
+      "links": [
+        {
+          "title": "DGX Sparks overview",
+          "url": "/d/evo-sparks-overview/dgx-sparks-overview",
+          "targetBlank": false,
+          "tooltip": "Every Spark side by side"
+        },
+        {
+          "title": "One DGX Spark",
+          "url": "/d/evo-spark-host/one-dgx-spark",
+          "targetBlank": false,
+          "tooltip": "One box: host, GPUs, thermals, power"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Spark fleet",
+      "description": "Cross-Spark comparison, which is where an outlier box shows up.",
+      "id": 6,
+      "gridPos": { "h": 3, "w": 4, "x": 20, "y": 1 },
+      "targets": [],
+      "links": [
+        {
+          "title": "DGX Spark fleet",
+          "url": "/d/evo-sparks-fleet/dgx-spark-fleet",
+          "targetBlank": false,
+          "tooltip": "Rank the Sparks against each other"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Models",
+      "description": "What is loaded where, and what it is doing to the GPUs.",
+      "id": 7,
+      "gridPos": { "h": 3, "w": 4, "x": 8, "y": 4 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Models",
+          "url": "/d/evo-inference-models/models",
+          "targetBlank": false,
+          "tooltip": "Model-level load and GPU occupancy"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Backends",
+      "description": "The serving backends themselves, rather than the models they hold.",
+      "id": 8,
+      "gridPos": { "h": 3, "w": 4, "x": 12, "y": 4 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Inference backends",
+          "url": "/d/evo-inference-backends/inference-backends",
+          "targetBlank": false,
+          "tooltip": "Backend processes and their queues"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "LiteLLM proxy",
+      "description": "Token throughput, latency, fallbacks, and admission for the single model transport.",
+      "id": 9,
+      "gridPos": { "h": 3, "w": 4, "x": 16, "y": 4 },
+      "targets": [],
+      "links": [
+        {
+          "title": "LiteLLM proxy",
+          "url": "/d/evo-litellm/litellm-proxy",
+          "targetBlank": false,
+          "tooltip": "Every request to every model goes through this"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Stack overview",
+      "description": "The observability stack's own health: scrape coverage, TSDB size, and the write to Mimir.",
+      "id": 10,
+      "gridPos": { "h": 3, "w": 4, "x": 20, "y": 4 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Stack overview",
+          "url": "/d/evo-stack-overview/stack-overview",
+          "targetBlank": false,
+          "tooltip": "Prometheus, Mimir, Loki, Tempo, and Grafana themselves"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Alerts",
+      "description": "What is firing now, for how long, and whether Alertmanager is still delivering it.",
+      "id": 11,
+      "gridPos": { "h": 3, "w": 4, "x": 8, "y": 7 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Alerts",
+          "url": "/d/evo-alerts/alerts",
+          "targetBlank": false,
+          "tooltip": "Firing alerts, severity counts, and alerting pipeline health"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Logs",
+      "description": "Loki lines per container, with the volume graph that says which one to read.",
+      "id": 12,
+      "gridPos": { "h": 3, "w": 4, "x": 12, "y": 7 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Container logs",
+          "url": "/d/evo-stack-logs/container-logs",
+          "targetBlank": false,
+          "tooltip": "Log volume and the log browser"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "title": "Traces",
+      "description": "Span rate by service and the service map, with the hop into Explore for the spans themselves.",
+      "id": 13,
+      "gridPos": { "h": 3, "w": 4, "x": 16, "y": 7 },
+      "targets": [],
+      "links": [
+        {
+          "title": "Traces and service map",
+          "url": "/d/evo-stack-traces/traces-and-service-map",
+          "targetBlank": false,
+          "tooltip": "Tempo span metrics and the service graph"
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Stack health at a glance",
+      "id": 14,
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 10 },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "node_exporter",
+      "description": "0 while the host exporter answers its scrape, 1 when it has no series at all. That is the difference between a box that is down and a box that stopped being scraped, and every host number in the bundle comes from this exporter, so a 1 here is why the host pages read empty rather than red.",
+      "id": 15,
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 11 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(absent(node_exporter_build_info{job=\"node_exporter\"}) or vector(0))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "missing",
+          "mappings": [
+            {
+              "id": "liveness",
+              "type": "value",
+              "options": {
+                "0": { "text": "ok", "color": "green" },
+                "1": { "text": "missing", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "cAdvisor",
+      "description": "0 while cAdvisor publishes its version series, 1 when it publishes nothing. A 1 means every per-container number in the bundle is missing rather than idle, so this is the first tile to rule out when the Containers page goes blank.",
+      "id": 16,
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 11 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "(absent(cadvisor_version_info{job=\"cadvisor\"}) or vector(0))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "missing",
+          "mappings": [
+            {
+              "id": "liveness",
+              "type": "value",
+              "options": {
+                "0": { "text": "ok", "color": "green" },
+                "1": { "text": "missing", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "blackbox (Sparks)",
+      "description": "The health probe over each Spark's health endpoint, held at 0 while no Spark is enrolled, which is what ships: no target groups, nothing to probe, nothing to alarm on. A 1 means the generated target file does have boxes enrolled while the prober answers nothing, so read it as the probe layer being wrong rather than the boxes being offline.",
+      "id": 17,
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 11 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "((absent(probe_success{job=\"blackbox-spark\"}) and on() (count(up{job=\"spark-node\"}) > 0)) or vector(0))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "missing",
+          "mappings": [
+            {
+              "id": "liveness",
+              "type": "value",
+              "options": {
+                "0": { "text": "ok", "color": "green" },
+                "1": { "text": "missing", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "blackbox (models)",
+      "description": "The HTTP probe against each Spark's model-serving port, gated the same way so an unenrolled fleet reads 0. A 0 with every model panel empty means the probes are fine and the backends are the ones not answering; a 1 means the probe layer itself is silent.",
+      "id": 18,
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 11 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "((absent(probe_success{job=\"blackbox-spark-models\"}) and on() (count(up{job=\"spark-node\"}) > 0)) or vector(0))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "missing",
+          "mappings": [
+            {
+              "id": "liveness",
+              "type": "value",
+              "options": {
+                "0": { "text": "ok", "color": "green" },
+                "1": { "text": "missing", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Alerts firing",
+      "description": "Series Prometheus currently holds in state firing. Anything above 0 should have a reason written down somewhere, and the Alerts page names them.",
+      "id": 19,
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 11 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(ALERTS{alertstate=\"firing\"})",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "noValue": "0", "mappings": [] }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Containers",
+      "description": "Distinct container names cAdvisor has reported, so a compose service that was never started is simply absent from this count rather than reading zero.",
+      "id": 20,
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 11 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(count by (name) (container_last_seen))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "noValue": "0", "mappings": [] }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Targets up",
+      "description": "Scrape targets answering out of the total below. The count, not the ratio, is what to read: this stack's target list grows with the Spark fleet.",
+      "id": 21,
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(up == 1)",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "noValue": "0", "mappings": [] }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Targets configured",
+      "description": "Every target Prometheus believes it should be scraping. If this number moves without a Spark joining or leaving, someone edited a scrape config or a file-SD document.",
+      "id": 22,
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(up)",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "none", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "noValue": "0", "mappings": [] }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Scrape freshness",
+      "description": "Seconds since the most recent successful scrape of any target, against the 15s scrape_interval in observability/prometheus/prometheus.yml: past a couple of intervals, Prometheus is behind rather than the exporters being quiet.",
+      "id": 23,
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(time() - timestamp(up))",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": { "defaults": { "unit": "s", "noValue": "n/a", "mappings": [] }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 30 }, { "color": "red", "value": 90 } ]
+      }
+    },
+    {
+      "type": "row",
+      "title": "Bundle",
+      "id": 24,
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 19 },
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Prometheus",
+      "description": "The scrape and rule engine. Down here means every panel on every page is showing a stale truth, including this one.",
+      "id": 25,
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"prometheus\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Mimir",
+      "description": "The long-term archive Prometheus remote-writes to. Down costs long-range queries, not the 15d local window.",
+      "id": 26,
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"mimir\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Loki",
+      "description": "The log store. Down means the Containers logs page stops gaining lines while every metric page keeps looking healthy.",
+      "id": 27,
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"loki\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Tempo",
+      "description": "The trace store. Down costs the service map and the span-to-log hop; span metrics already written to Prometheus stay plotted.",
+      "id": 28,
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"tempo\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Grafana",
+      "description": "This UI. A down here with the page still rendering means the scrape of Grafana broke, not Grafana itself, since the page is being served.",
+      "id": 29,
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"grafana\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Alertmanager",
+      "description": "The one place silences and repeat intervals live. Down means alerts still fire in Prometheus but nobody is told, which is the failure this page exists to make loud.",
+      "id": 30,
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 24 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"alertmanager\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Alloy",
+      "description": "The collector that ships container logs to Loki and OTLP to Tempo. Down is a silent gap in logs and traces while every metric page stays green.",
+      "id": 31,
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"alloy\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Coder",
+      "description": "The workspace host. Down here means the agent fleet and every workspace container are affected, not just this dashboard.",
+      "id": 32,
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"coder\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "LiteLLM",
+      "description": "The sole model transport: every agent session and every inference request routes through it, so a down here is the outage notice, not a panel artefact.",
+      "id": 33,
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"litellm\"}",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "auto", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "down",
+          "mappings": [
+            {
+              "id": "updown",
+              "type": "value",
+              "options": {
+                "1": { "text": "up", "color": "green" },
+                "0": { "text": "down", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+      }
+    }
+  ]
+}

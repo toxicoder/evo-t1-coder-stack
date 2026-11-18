@@ -4,9 +4,9 @@
 # ## refresh-configs.sh - re-materialize the stack's managed workspace configs.
 #
 # Every workspace keeps live copies of the stack-owned config files (the
-# shared ~/.grok/AGENTS.md and ~/.grok/config.toml family, the Coder Agents
+# verbatim ~/.grok/AGENTS.md, not the per-workspace ~/.grok/config.toml, the
 # and Grok CLI copies under ~/.coder and ~/.agents, ~/.tmux.conf and the
-# per-owner code-server settings.json). This script rewrites that set from
+# per-workspace code-server settings.json). This script seeds that set from
 # the payload copies in THIS checkout into one or more running workspace
 # containers, so an operator who changed the stack does not have to restart
 # every workspace for the change to land. scripts/lib/config_seed.sh owns

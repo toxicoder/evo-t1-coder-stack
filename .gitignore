@@ -69,3 +69,11 @@ __pycache__/
 .mypy_cache/
 # Assembly directory a local replay of the deploy job leaves behind.
 /_site/
+
+# Generated on the stack host by //scripts:spark-monitor --targets; it names the
+# Spark boxes, so it is never committed. Prometheus reads it through file_sd_configs
+# and treats its absence as an unenrolled fleet. The directory itself stays tracked
+# with its README, because compose bind-mounts it and a missing bind source is a
+# gate failure.
+observability/spark-targets/*
+!observability/spark-targets/README.md

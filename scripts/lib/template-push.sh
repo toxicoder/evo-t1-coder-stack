@@ -83,7 +83,7 @@ fi
 # thorough-researcher.PERSONA.toml, senior-implementer.PERSONA.toml,
 # skeptical-reviewer.PERSONA.toml, feature-implementation.SKILL.md,
 # skeptical-review.SKILL.md, security-audit.SKILL.md, bug-hunt.SKILL.md,
-# stack-repo-skills.sh.tftpl, stack-fleet.sh.tftpl,
+# stack-repo-skills.sh.tftpl, terminal-launchers.sh.tftpl, stack-fleet.sh.tftpl,
 # coder-agents.md,
 # mcp-cache-proxy.json, agents-seed.sh.tftpl (the coder_script "agents_seed" body) and
 # gh-token-refresh.sh.tftpl and infisical-secrets.sh.tftpl (the
@@ -188,6 +188,8 @@ template_push_one() {
     infisical-secrets.sh.tftpl \
     agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
+    boot-log.lib.sh \
+    terminal-launchers.sh.tftpl \
     stack-repo-skills.sh.tftpl \
     stack-advisors.sh.tftpl \
     stack-hooks.sh.tftpl \

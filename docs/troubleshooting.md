@@ -226,10 +226,17 @@ curl -sS "${AGENT_MODEL_URL:-http://${SPARK2_HOST:-localhost}:${SPARK_HTTP_PORT:
 bazelisk run //scripts:spark-verify -- --no-tests
 ```
 
-- Its host list comes from the `SPARK*_URL` keys in `.env` (`SPARKn_OLLAMA_URL` and
-  `SPARKn_OPENAI_URL`), which is why the default run needs no arguments. Export
-  `SPARK_HOSTS="host1 host2 ..."` in the process environment only to check a fleet that
-  `.env` does not name. A host that does not answer is a skip, not a failure.
+- Its host list comes from `SPARK_HOSTS` in the process environment, then the
+  `SPARKn_HOST` keys in `.env`, then the host part of `SPARKn_OPENAI_URL` - in that
+  order, which is why the default run needs no arguments. With none of them set it
+  falls back to the placeholders `.env.sample` ships, `spark-1.lan spark-2.lan
+  spark-3.lan`, which do not resolve. Export `SPARK_HOSTS="host1 host2 ..."` only to
+  check a fleet that `.env` does not name. A `SPARKn_OLLAMA_URL` left over in `.env`
+  from the era when a Spark box served Ollama is no longer read, so the box it names is
+  simply absent from the fleet; the run reports that itself with a `warning:` line that
+  names the key and the host, and the fix is to name the box with `SPARKn_HOST` or
+  `SPARKn_OPENAI_URL`, or drop the key. A host that does not answer is a skip, not a
+  failure.
 
 Fix, one of these:
 
@@ -321,8 +328,9 @@ up to three `request_timeout` periods. Both halves are fixed here.
 
 - Prove recurrence before you touch anything. The events are in each session's
   `updates.jsonl`, so one pass over the store counts attempts against outcomes. The
-  store is the shared profile volume, so run it where the sessions are (inside a
-  workspace), and leave the `~/.grok/sessions` path %-escaped as the CLI wrote it:
+  store rides the owner's `grok-sessions-<owner-id>` volume (`shared` mode), so run
+  it where the sessions are (inside a workspace), and leave the `~/.grok/sessions`
+  path %-escaped as the CLI wrote it:
 
 ```sh
 grep -rho --include=updates.jsonl \
@@ -664,8 +672,10 @@ template push. With none of those set, a missing block is a defect, not a park.
 - A missing `[mcp_servers.github]` or `[mcp_servers.context7]` in
   `~/.grok/config.toml` means the last push passed `--var ...=false`, or the
   workspace started from an older template, or the file carries no stack marker at all
-  (next bullet). Clear the gate and re-push, then re-materialize the file and restart
-  the workspace so the managed `config.toml` re-renders. Two routes re-materialize it:
+  (next bullet). No sibling can blank it: `~/.grok/config.toml` is this workspace's own
+  file, so an absent block is this workspace's own render, not another workspace's.
+  Clear the gate and re-push, then re-materialize the file and restart the workspace so
+  the managed `config.toml` re-renders. Two routes re-materialize it:
   `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>` from the
   stack host, for a running workspace container, and
   `bazelisk run //scripts:seed-dev-env -- --home <dir>` for a host home (a laptop, CI,
@@ -777,6 +787,65 @@ proxy instead of resolving it, and `000` or a 5xx then describes the proxy.
 ```sh
 coder logs <workspace>
 ```
+
+### How do I read the workspace start log? -> the body header, the last stage line, and the truncated tail
+
+- Where it is: open the workspace in the Coder UI and read its start log, and from a host
+  shell the same text is `coder logs <workspace>`. The agent's `startup_script` output is the
+  body of that log, and each `coder_script` prints under the name Coder labels it with -
+  **Seed the Grok Build rulebook**, **Seed the fleet agents, personas and skills**, **Fetch
+  stack secrets from Infisical**, and the rest, which are the `display_name` values at
+  `templates/workspace/main.tf:726-1010`.
+- Every body speaks the same shapes (`templates/common/boot-log.lib.sh`, handed to each body
+  as the `boot_log_lib` key of its `templatefile()` map):
+
+```text
+== <body>: start ==
+== <body>: stage i/N: <title> == (+Ns)
+-> <phase> (+Ns)
+ok: <what landed>
+warning: <what did not, and what the boot did instead>
+note: <commentary that decides nothing>
+error: <what failed>                                          (stderr)
+summary: N ok, W warnings, F failed (+Ns, <body>)
+```
+
+- Which body failed: the `== <body>: start ==` header names it, and that name is
+  `boot_begin`'s first argument rather than the file's. The eleven in the shipped `workspace`
+  twin are `workspace startup` (`templates/workspace/startup.sh.tftpl:19`), `code-server`,
+  `agents seed`, `stack skills`, `repo skills`, `stack fleet`, `stack advisors`,
+  `stack hooks`, `terminal launchers`, `github token refresh`, and `infisical secrets`;
+  `devcontainer` adds `dind bootstrap`.
+- Which stage it died in: the last `== <body>: stage i/N: <title> ==` line above the failure.
+  On every path that got past its header a body's final act is `boot_summary`, so a body that
+  printed a header and no closing `summary:` never reached the end of its own script - it died
+  in the stage that line names, or Coder stopped it at the script's `timeout`. The startup
+  body's eight stage titles (`workspace startup`
+  stages 1-8, `templates/workspace/startup.sh.tftpl:37-321`) are the map for anything about
+  tmux, the CLI, the shell profile, the skills and the notes library, the editor settings,
+  the Grok profile, ownership and the git credentials, or the repositories.
+- The one case where a body prints nothing at all and nothing is wrong: the vault body leaves
+  before it opens its run when the image carries no `infisical` binary
+  (`templates/common/infisical-secrets.sh.tftpl:15`), which is silent by design because the
+  vault is optional.
+- A log that stops mid-boot is a spent budget, not lost scrollback. One agent's whole stream -
+  `startup_script` plus every `coder_script` on it - is 1 MiB, a Postgres check on
+  `workspace_agents.logs_length`
+  ([dump.sql, v2.36.6](https://github.com/coder/coder/blob/v2.36.6/coderd/database/dump.sql#L2996)).
+  When it fills the agent's uploader drops the NEWEST lines
+  ([`codersdk/agentsdk/logs.go`](https://github.com/coder/coder/blob/v2.36.6/codersdk/agentsdk/logs.go),
+  `maxBytesQueued = 1048576`, the `log queue full; truncating new logs` path), and once the
+  server answers `LogLimitExceeded: true` nothing further is uploaded. So the head of the boot
+  survives and the tail is what you lost: read from the top, and treat a body whose `summary:`
+  is missing at the bottom of the log as unproven rather than as a failure - it may have
+  finished after the budget ran out.
+- Nothing raises that budget from here, and the loud fix is the wrong one: `coder_agent` in the
+  provider this stack pins (`~> 2.18`, locked 2.18.0 in
+  `templates/workspace/.terraform.lock.hcl`) takes no log-size argument, `terraform plan`
+  answering `An argument named "log_buffer_size" is not expected here.`, and the agent-side
+  constant is not read from the environment. The bound and the about-40-lines-per-body writing
+  rule it forces are in
+  [coder-templates.md](coder-templates.md#the-boot-log-each-body-prints).
 
 ### Image missing tools, or the build aborts mid-layer -> `curl: (22)`
 
@@ -980,9 +1049,10 @@ files there to copy in), so `coder` cannot write `settings.json`. `jq` and
 `python` then fail because the file was never created. `already cloned, skipping`
 on the next line is informational: the clone already exists.
 
-Fix: the template chowns that volume (and the shared `~/.grok` profile volume)
-to the home owner before the seed, and skips `jq`/`python` when the write
-fails. Push the templates and restart the workspace; there is nothing to delete.
+Fix: the template chowns that volume (and the three per-owner state volumes `shared`
+mode mounts under `~/.grok`) to the home owner before the seed, and skips
+`jq`/`python` when the write fails. Push the templates and restart the workspace;
+there is nothing to delete.
 
 ```sh
 bazelisk run //scripts:push-template
@@ -998,13 +1068,18 @@ coder restart <workspace>
 
 ### `E325: ATTENTION / Found a swap file by the name "~/.grok/.config.toml.swp"` -> a vim the last workspace stop killed
 
-- `~/.grok` is the owner's persistent profile volume, so a swap file outlives the
-  container that produced it. The usual history is: someone opened the config in vim,
-  the workspace was stopped with the editor still up, and the swap is now asking about a
-  session whose container no longer exists.
+- `~/.grok/config.toml` is a real file on this workspace's own home volume, so a swap
+  file outlives a stop of that workspace and nothing else. The usual history is:
+  someone opened the config in vim, the workspace was stopped with the editor still
+  up, and the swap is now asking about a session whose container no longer exists.
 - Read the prompt's own lines before choosing. `modified: no` means it holds no
-  unsaved work. The `host name` says which workspace's vim wrote it - a sibling
-  workspace shares this volume, so the file can predate this container entirely.
+  unsaved work. The `host name` names the container whose vim wrote it, and each
+  workspace renders its own `config.toml` now, so a name that is not this
+  workspace's means the swap predates that split - it is left over from when
+  `~/.grok` was one whole-profile per-owner volume, which a current boot mounts
+  read-only at `~/.grok-legacy` for the one-time state copy and reads nowhere else.
+  A name that is this workspace's own is the ordinary case: the home volume outlives
+  every stop and recreate.
 - `(D)elete it` is the right answer for an orphan. Do not pick `(R)ecover`: every start
   re-renders `config.toml` from `grok-config.toml.tftpl`, so recovery would restore bytes
   the stack is going to replace regardless.
@@ -1021,10 +1096,11 @@ coder restart <workspace>
   `bazelisk run //scripts:seed-dev-env -- --force` is the fix), or the workspace predates
   the body, which a `bazelisk run //scripts:push-template` and one restart settles.
 - The reason the prompt keeps coming back is that the file is being hand-edited at all.
-  It is re-rendered on every start, and under a shared profile the boot that overwrites
-  it can be a sibling's, so an edit made there survives until someone restarts. The keys
-  live in the template instead: `grok_subagent_max_concurrent`, `grok_subagents_lane`,
-  and `grok_config_extra`. docs/coder-templates.md#stale-editor-swap-files.
+  This workspace re-renders its own copy on every start, so an edit made there survives
+  until that workspace restarts and touches no other workspace - no sibling's boot
+  overwrites it any more. The keys live in the template instead:
+  `grok_subagent_max_concurrent`, `grok_subagents_lane`, and `grok_config_extra`.
+  docs/coder-templates.md#stale-editor-swap-files.
 
 ### Only about 4 subagents run at once though `[subagents] max_concurrent` says 15 -> the writers are on a pinned lane
 
@@ -2143,8 +2219,9 @@ not this public path. Full notes: [hermes.md](hermes.md).
 
 ## Observability
 
-The six profile-gated services (`prometheus`, `mimir`, `loki`, `tempo`, `grafana`,
-`alloy`) fail quietly, because a monitoring stack that stopped collecting still answers
+The ten profile-gated services (`prometheus`, `mimir`, `loki`, `tempo`, `grafana`,
+`alloy`, `node_exporter`, `cadvisor`, `blackbox_exporter`, `alertmanager`) fail quietly,
+because a monitoring stack that stopped collecting still answers
 `/ready`. The shape of every entry below is the same: the read path (Grafana) and the
 write path (Prometheus -> Mimir, Alloy -> Loki) are separate, so decide which side is
 empty before you touch either. What each piece is for and where its config lives is in
@@ -2349,7 +2426,7 @@ bazelisk run //scripts:dev-stack -- status
 bazelisk run //scripts:prod-stack -- status
 ```
 
-Six rows when the profile is selected, none when it is not. With the flag off the five
+Ten rows when the profile is selected, none when it is not. With the flag off the five
 **Observability** cards on the dashboard read `down` together, which is the honest signal
 rather than a card bug: the badge reports what each endpoint answers, and the flag is the
 reason none of them answer. Then:

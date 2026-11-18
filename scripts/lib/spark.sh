@@ -50,7 +50,7 @@ SPARK_HTTP_PORT="${SPARK_HTTP_PORT:-8888}"
 #   SPARK_HOSTS_SOURCE   — how it was resolved: env | derived | default
 # Order of precedence (identical in both entry scripts): a non-empty
 # SPARK_HOSTS from the process environment wins; otherwise the SPARKn_HOST keys
-# in <env-file>, then the host part of the SPARKn_OLLAMA_URL / SPARKn_OPENAI_URL
+# in <env-file>, then the host part of the SPARKn_OPENAI_URL
 # keys (stripped of scheme and port), all deduplicated and malformed hosts
 # dropped; when that yields nothing, the placeholder trio from
 # SPARK_DEFAULT_HOSTS.
@@ -82,7 +82,7 @@ derive_spark_hosts() {
     # checkout points at is the fleet these probes check. The URL keys stay in
     # the list for a .env that names a box only there.
     for key in SPARK1_HOST SPARK2_HOST SPARK3_HOST \
-      SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
+      SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
       url="$(env_get "${file}" "${key}" | tr -d ' \r' || true)"
       [ -n "${url}" ] || continue
       host="$(canonical_url "${url}")"

@@ -1,0 +1,286 @@
+# Recording and alerting rules for the INFERENCE tier: LiteLLM and the serving
+# boxes behind it. The host and GPU rules sit beside this file and share nothing
+# with it but the directory.
+#
+# Every litellm_* name here is one LiteLLM v1.102.1's own prometheus logger
+# emits (checked against that tag's source, not the docs). Two properties decide
+# the shape of everything below:
+#
+#   - the token counters carry model_id and no api_base, so model_id is the
+#     per-backend key this file groups on;
+#   - litellm_in_flight_requests and the admission gauges carry no labels and are
+#     counted per uvicorn worker, so they are summed to a proxy-wide total and
+#     never split any finer than that.
+#
+# There is NO remaining-cooldown gauge at this tag. The only cooldown signal is
+# litellm_deployment_state leaving its healthy value plus
+# litellm_deployment_cooled_down_total, which is why the two deployment alerts
+# below read those two series and nothing else. Do not build a panel against a
+# "seconds of cooldown left" series: the query returns an empty graph rather than
+# an error, so the gap stays invisible until someone trusts the panel.
+#
+# The latency rules aggregate a histogram's own _bucket / _sum / _count members.
+# Those are the three series every histogram family publishes under one name, not
+# metrics the tag has to expose separately.
+#
+# Loaded through the rule_files: block in ../prometheus.yml; the whole directory
+# is bind-mounted at /etc/prometheus, so the path Prometheus reads is
+# rules/inference.rules.yml.
+
+groups:
+  - name: inference.recording
+    interval: 15s
+    rules:
+      # ---- throughput per backend ------------------------------------------
+      # model_id is the deployment, so one series here is one serving backend.
+      - record: litellm:input_tokens_per_second:1m
+        expr: sum by (model_id) (rate(litellm_input_tokens_metric_total[1m]))
+
+      - record: litellm:output_tokens_per_second:1m
+        expr: sum by (model_id) (rate(litellm_output_tokens_metric_total[1m]))
+
+      # Request rate from the total-latency histogram's own _count member: this
+      # tag exposes no request counter that is not keyed on a status_code label it
+      # does not emit.
+      - record: litellm:requests_per_second:5m
+        expr: sum by (model_id) (rate(litellm_request_total_latency_metric_count[5m]))
+
+      # ---- latency per backend ---------------------------------------------
+      # Total latency is what the caller waits for; upstream latency is the part
+      # the serving box owns. Reading the two apart is how a slow completion is
+      # told from a slow proxy.
+      - record: litellm:request_latency_p50:5m
+        expr: histogram_quantile(0.50, sum by (model_id, le) (rate(litellm_request_total_latency_metric_bucket[5m])))
+
+      - record: litellm:request_latency_p95:5m
+        expr: histogram_quantile(0.95, sum by (model_id, le) (rate(litellm_request_total_latency_metric_bucket[5m])))
+
+      - record: litellm:request_latency_p99:5m
+        expr: histogram_quantile(0.99, sum by (model_id, le) (rate(litellm_request_total_latency_metric_bucket[5m])))
+
+      - record: litellm:upstream_latency_p50:5m
+        expr: histogram_quantile(0.50, sum by (model_id, le) (rate(litellm_llm_api_latency_metric_bucket[5m])))
+
+      - record: litellm:upstream_latency_p95:5m
+        expr: histogram_quantile(0.95, sum by (model_id, le) (rate(litellm_llm_api_latency_metric_bucket[5m])))
+
+      - record: litellm:upstream_latency_p99:5m
+        expr: histogram_quantile(0.99, sum by (model_id, le) (rate(litellm_llm_api_latency_metric_bucket[5m])))
+
+      # What the proxy itself costs, as a share of what the caller waits for. A
+      # ratio that climbs while upstream_latency_p95 is flat is this stack's
+      # problem, not the serving box's. Proxy-wide because the overhead histogram
+      # is not split by backend on the surface this file is pinned to.
+      - record: litellm:overhead_share:5m
+        expr: |
+          sum(rate(litellm_overhead_latency_metric_sum[5m]))
+            /
+          (sum(rate(litellm_request_total_latency_metric_sum[5m])) > 0)
+
+      # Queue wait: time between admission and dispatch. Proxy-wide for the same
+      # reason, and the p95 rather than the mean because one queued model group
+      # moves the mean without telling anyone which one.
+      - record: litellm:queue_wait_p50:5m
+        expr: histogram_quantile(0.50, sum by (le) (rate(litellm_request_queue_time_seconds_bucket[5m])))
+
+      - record: litellm:queue_wait_p95:5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(litellm_request_queue_time_seconds_bucket[5m])))
+
+      # ---- decode speed ------------------------------------------------------
+      # The histogram measures seconds per output token, so tokens per second is
+      # its count over its sum - the reciprocal, not a separate metric.
+      - record: litellm:decode_tokens_per_second:5m
+        expr: |
+          sum(rate(litellm_deployment_latency_per_output_token_count[5m]))
+            /
+          (sum(rate(litellm_deployment_latency_per_output_token_sum[5m])) > 0)
+
+      - record: litellm:latency_per_output_token_p95:5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(litellm_deployment_latency_per_output_token_bucket[5m])))
+
+      # ---- cache -------------------------------------------------------------
+      - record: litellm:cache_hit_ratio:5m
+        expr: |
+          sum(rate(litellm_cache_hits_metric_total[5m]))
+            /
+          (sum(rate(litellm_cache_hits_metric_total[5m])) + sum(rate(litellm_cache_misses_metric_total[5m])) > 0)
+
+      # ---- fallbacks and errors ---------------------------------------------
+      # The fallback counters are keyed requested_model / fallback_model /
+      # exception_class, which is the model group rather than the deployment, so
+      # they are recorded on their own labels and never joined to the model_id
+      # stream above.
+      - record: litellm:fallback_successes_per_second:5m
+        expr: sum by (requested_model, fallback_model) (rate(litellm_deployment_successful_fallbacks_total[5m]))
+
+      # exception_class stays in the key: the alert that names the class answers
+      # without opening Prometheus.
+      - record: litellm:fallback_failures_per_second:5m
+        expr: sum by (requested_model, fallback_model, exception_class) (rate(litellm_deployment_failed_fallbacks_total[5m]))
+
+      # Share of the fallbacks aimed at one deployment that also failed. Both
+      # sides come from the two counters above, which carry the same labels, so
+      # the match is exact.
+      - record: litellm:fallback_failure_ratio:5m
+        expr: |
+          sum by (requested_model, fallback_model) (rate(litellm_deployment_failed_fallbacks_total[5m]))
+            /
+          (
+            (
+              sum by (requested_model, fallback_model) (rate(litellm_deployment_failed_fallbacks_total[5m]))
+                +
+              sum by (requested_model, fallback_model) (rate(litellm_deployment_successful_fallbacks_total[5m]))
+            ) > 0
+          )
+
+      # The model-level error ratio. This tag exposes no per-deployment failure
+      # counter, so the numerator is failed fallbacks per model group and the
+      # denominator is the proxy-wide request rate (many-to-one on an empty label
+      # set): the reading is "this model group cost this much of all traffic".
+      - record: litellm:model_error_ratio:5m
+        expr: |
+          sum by (requested_model) (rate(litellm_deployment_failed_fallbacks_total[5m]))
+            /
+          ignoring(requested_model) group_left
+          sum(rate(litellm_request_total_latency_metric_count[5m]))
+
+      # ---- router and admission ---------------------------------------------
+      # Unlabeled and per uvicorn worker: the proxy-wide sum is the only honest
+      # aggregate, so a worker restart costs a series and not a fleet of them.
+      - record: litellm:in_flight_requests
+        expr: sum(litellm_in_flight_requests)
+
+      - record: litellm:admission_queued_requests
+        expr: sum(litellm_admission_queued_requests)
+
+      - record: litellm:admission_rejections_per_second:5m
+        expr: sum by (reason) (rate(litellm_admission_rejected_requests_total[5m]))
+
+      # ---- deployment health -------------------------------------------------
+      # 0 is the healthy value; the alert filters on != 0 rather than naming the
+      # non-zero codes, so it does not depend on which of suspect / cooldown a
+      # given tag assigns to which number.
+      - record: litellm:deployments_not_ready
+        expr: count(litellm_deployment_state != 0)
+
+      # increase(), not rate(): a deployment cooled down once in a 15 minute
+      # window is the event worth seeing, and rate() would bury it.
+      - record: litellm:cooldown_events:15m
+        expr: sum by (model_id) (increase(litellm_deployment_cooled_down_total[15m]))
+
+  - name: inference.alerts
+    interval: 15s
+    rules:
+      - alert: LiteLLMModelErrorRatioSustained
+        expr: litellm:model_error_ratio:5m > 0.10
+        for: 15m
+        labels:
+          severity: critical
+          tier: inference
+        annotations:
+          summary: "model group {{ $labels.requested_model }} is losing traffic to failed fallbacks"
+          description: "{{ $value | humanize }} of all proxy requests are ending in a failed fallback for {{ $labels.requested_model }}, sustained 15m. Both the primary and its fallback are failing; check the serving box behind it before the model alias itself."
+
+      - alert: LiteLLMFallbacksFailing
+        expr: litellm:fallback_failure_ratio:5m > 0.50
+        for: 10m
+        labels:
+          severity: warning
+          tier: inference
+        annotations:
+          summary: "fallback to {{ $labels.fallback_model }} for {{ $labels.requested_model }} is failing"
+          description: "{{ $value | humanize }} of fallbacks aimed at {{ $labels.fallback_model }} failed (last class {{ $labels.exception_class }}). There is no working path for {{ $labels.requested_model }} while this holds."
+
+      # A deployment the router no longer lists as healthy. No cooldown gauge
+      # exists at this tag (see the header), so the state series plus the
+      # transition counter below are the whole of it.
+      - alert: LiteLLMDeploymentUnhealthy
+        expr: litellm_deployment_state != 0
+        for: 10m
+        labels:
+          severity: critical
+          tier: inference
+        annotations:
+          summary: "deployment {{ $labels.model_id }} left the healthy state"
+          description: "litellm_deployment_state has been off 0 for 10m. The router is not sending it traffic; with one deployment per model group that model has no backend at all."
+
+      - alert: LiteLLMDeploymentCoolingDownRepeatedly
+        expr: litellm:cooldown_events:15m >= 3
+        for: 5m
+        labels:
+          severity: critical
+          tier: inference
+        annotations:
+          summary: "deployment {{ $labels.model_id }} keeps getting cooled down"
+          description: "{{ $value | humanize }} cooldown transitions in 15m. The deployment recovers and fails again, so each recovery costs a router cooldown window; look at the upstream's own log rather than at LiteLLM."
+
+      - alert: LiteLLMQueueWaitGrowing
+        expr: (litellm:queue_wait_p95:5m > (litellm:queue_wait_p95:5m offset 1h) * 3) and (litellm:queue_wait_p95:5m > 0.1)
+        for: 10m
+        labels:
+          severity: warning
+          tier: inference
+        annotations:
+          summary: "proxy queue wait is tripling hour over hour"
+          description: "p95 queue wait {{ $value | humanize }}s, over 3x the same time one hour ago and above 0.1s. Requests are waiting for a free deployment slot rather than for tokens, which is the signal to add capacity, not to raise a timeout."
+
+      - alert: LiteLLMQueueWaitHigh
+        expr: litellm:queue_wait_p95:5m > 0.5
+        for: 10m
+        labels:
+          severity: warning
+          tier: inference
+        annotations:
+          summary: "proxy queue wait is above 0.5s"
+          description: "p95 queue wait {{ $value | humanize }}s sustained 10m. Admission is holding requests while every deployment stays busy."
+
+      - alert: LiteLLMAdmissionRejections
+        expr: litellm:admission_rejections_per_second:5m > 0
+        for: 5m
+        labels:
+          severity: warning
+          tier: inference
+        annotations:
+          summary: "admission is rejecting requests (reason {{ $labels.reason }})"
+          description: "{{ $value | humanize }} req/s rejected for reason={{ $labels.reason }}. The reason is the finding: a budget reason means the rpm/token limits are the binding constraint, anything else is the admission logic refusing work it should queue."
+
+      - alert: LiteLLMAdmissionQueueSaturated
+        expr: litellm:admission_queued_requests > 20
+        for: 10m
+        labels:
+          severity: warning
+          tier: inference
+        annotations:
+          summary: "the admission queue is holding {{ $value | humanize }} requests"
+          description: "Summed over every uvicorn worker, sustained 10m. Past this depth the queue, not the serving box, sets the latency the caller sees."
+
+      # A deployment the router still lists, whose request stream has stopped:
+      # the serving box behind it stopped answering, so no completion is ever
+      # recorded against it. Reads the recorded request rate, so a scrape that is
+      # merely slow does not page.
+      - alert: LiteLLMBackendSeriesGone
+        expr: |
+          litellm_deployment_state
+            unless on (model_id)
+          (last_over_time(litellm:requests_per_second:5m[10m]) > 0)
+        for: 15m
+        labels:
+          severity: critical
+          tier: inference
+        annotations:
+          summary: "backend {{ $labels.model_id }} has produced no request series for 10m"
+          description: "The router still lists the deployment, but it has recorded no request in 10m. Either the serving box stopped answering or it was removed from the model group without the router noticing."
+
+      # The whole proxy going silent, kept separate from the per-backend gap
+      # above: a missing LITELLM_MASTER_KEY in the scrape's environment 401s this
+      # target (see the litellm job in prometheus.yml) and lands here, not on the
+      # backend alert.
+      - alert: LiteLLMMetricsAbsent
+        expr: absent(litellm_request_total_latency_metric_count)
+        for: 5m
+        labels:
+          severity: critical
+          tier: inference
+        annotations:
+          summary: "LiteLLM is publishing no metrics"
+          description: "No total-latency series at all, so every inference recording rule above is graphing nothing. Check the scrape target and its bearer credential before anything else."

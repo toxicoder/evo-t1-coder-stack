@@ -70,7 +70,10 @@ Its five cards - Grafana, Prometheus, Loki, Tempo, Mimir - carry a `siteMonitor`
 compose DNS (`http://grafana:3000/api/health`, `http://prometheus:9090/-/healthy`,
 `http://loki:3100/ready`, `http://tempo:3200/ready`, `http://mimir:8080/ready`), which is
 what proves the bundle is wired up: four of those six containers ship no healthcheck at
-all (distroless image, no shell), so the badge is the only automatic signal they have.
+all (distroless image, no shell), so the badge is the only automatic signal they have. The
+bundle's four other services - `node_exporter`, `cadvisor`, `blackbox_exporter` and
+`alertmanager` - carry no card and publish nothing beyond the stack host's loopback, so
+their liveness is read there, not here.
 The hrefs go through `HOMEPAGE_VAR_GRAFANA_URL` and `HOMEPAGE_VAR_PROMETHEUS_URL`, which
 default to the LAN URLs built from `STACK_LAN_HOST`, `GRAFANA_PORT` and
 `PROMETHEUS_PORT`, and follow `STACK_GRAFANA_URL` once bootstrap composes the public name
@@ -181,6 +184,19 @@ CPU, memory, CPU temperature and disk are host-wide through `/proc`. A network w
 only sees the container's own netns (`lo`/`eth0`) - `/sys/class/net` is namespaced, so
 the host Wi-Fi NIC stays invisible even with `/sys` mounted. That tile reads `eth0`.
 
+Those numbers are also series now: `node_exporter` reads the same `/proc` and `/sys`
+read-only and `cadvisor` covers the containers, so the tile answers "what is the box doing
+now, as the dashboard sees it" and the Grafana board answers "and what was it at 03:00".
+The tile survives the bundle being off; the board does not.
+
+Which board, exactly, is catalogued in [observability.md](observability.md) under
+`## The dashboards` - four families of them: the stack host (`evo-host-taskmanager`,
+`evo-containers`), the DGX Sparks (`evo-sparks-overview`, `evo-spark-host`,
+`evo-sparks-fleet`), the inference backends (`evo-inference-models`,
+`evo-inference-backends`), and the bundle itself (`evo-home`, `evo-stack-overview`,
+`evo-alerts`, `evo-stack-logs`, `evo-stack-traces`, `evo-litellm`). The question-to-page
+table lives there; this page stays about the dashboard and the desktops.
+
 The docker socket stays unmounted: service status comes from each service's API, which
 avoids handing the dashboard a root-equivalent host credential. The Hermes card in the
 **Host** group is the same pattern (`siteMonitor` of `http://hermes:9119/api/status`);
@@ -213,9 +229,11 @@ either.
   listener listens on that number, so the mapping is `4443:4443`.
 - The image ships default users (`admin@kasm.local` / `user@kasm.local`); change them
   during the wizard.
-- Kasm is a privileged Docker-in-Docker container and the only **always-on** privileged
-  service in this stack - the other privileged container is the opt-in workspace DinD
-  sidecar. Keep Kasm LAN-only unless you have decided who may reach the public name
+- Kasm is a privileged Docker-in-Docker container, and privileged whether or not the
+  observability bundle is on. The other privileged containers are `cadvisor`, which comes
+  up only with the `observability` profile
+  ([observability.md](observability.md)), and the opt-in workspace DinD sidecar. Keep Kasm
+  LAN-only unless you have decided who may reach the public name
   (see [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md)).
 - Losing the wizard after install is expected: use `:4443`. Resetting Kasm means
   removing the `kasm-data` volume, which destroys all Kasm config.

@@ -9,6 +9,7 @@
 # inlines six payloads on top of the three families already at their own ceiling;
 # docs/coder-templates.md#the-one-argument-ceiling.
 set -u
+${boot_log_lib}
 
 # The contract is marker-aware all the way down, the way ~/.grok/agents/ is: a copy that
 # carries the stack marker is stack-owned and gets the current text on every start, while a
@@ -26,8 +27,9 @@ set -u
 # the executable bit, which is why every .sh write ends on its own chmod and why the marker
 # below is appended rather than prepended.
 #
-# Silent on a healthy workspace either way: no echo, no progress. This body's log is what an
-# operator reads when a hook is missing.
+# Beyond the boot verbs this body stays quiet on a healthy workspace: no echo, no progress
+# of its own. Its log is what an operator reads when a hook is missing.
+boot_begin "stack hooks" 3
 
 # One symlinked root would aim every write below at a directory outside the home this body
 # owns, so bail before the first of them. The bail-out is not silent: a tree this body
@@ -36,9 +38,11 @@ set -u
 # reference to it carries the double-dollar escape: templatefile() reads a single-dollar
 # brace reference anywhere in this file as an interpolation, and the plan fails when main.tf
 # does not pass that key.
+boot_stage 1 "the symlink guard"
 for evo_t1_root in "$HOME/.grok" "$HOME/.grok/hooks" "$HOME/.grok/hooks/bin"; do
   if [ -L "$${evo_t1_root}" ]; then
-    printf 'warning: %s is a symlink - the hook family is left alone\n' "$${evo_t1_root}" >&2
+    boot_warn "$${evo_t1_root} is a symlink - the hook family is left alone"
+    boot_summary
     exit 0
   fi
 done
@@ -54,7 +58,7 @@ for evo_t1_path in \
   "$HOME/.grok/hooks/bin/selective-test-runner.sh" \
   "$HOME/.grok/hooks/bin/deny-patterns.txt"; do
   if [ -L "$${evo_t1_path}" ]; then
-    printf 'warning: %s is a symlink - that hook is not installed\n' "$${evo_t1_path}" >&2
+    boot_warn "$${evo_t1_path} is a symlink - that hook is not installed"
   fi
 done
 
@@ -63,6 +67,8 @@ done
 # this body does not own. notes-setup.sh:19-21 keeps that discipline for the live notes
 # file, and a link a person left in place stays theirs.
 
+boot_stage 2 "the manifest"
+
 if ! [ -L "$HOME/.grok/hooks/evo-t1-hooks.json" ] \
    && { [ ! -f "$HOME/.grok/hooks/evo-t1-hooks.json" ] \
         || grep -qs '"__evoT1Stack": true' "$HOME/.grok/hooks/evo-t1-hooks.json"; }; then
@@ -70,12 +76,17 @@ if ! [ -L "$HOME/.grok/hooks/evo-t1-hooks.json" ] \
   cat >"$HOME/.grok/hooks/evo-t1-hooks.json" <<'EVO_T1_HOOKS_JSON_EOF'
 ${evo_t1_hooks_json}
 EVO_T1_HOOKS_JSON_EOF
+  boot_ok "evo-t1-hooks.json is in place"
+else
+  boot_note "evo-t1-hooks.json left alone - a link, or the operator deleted its marker"
 fi
 
 # The marker printf under each here-doc is the backstop for a payload that lost its own
 # marker line: without it the guard above would treat the rewritten file as a person's and
 # never seed it again. It runs after the write, never before, because the runner execs these
 # files and execve reads row 1 for the interpreter.
+
+boot_stage 3 "the four guards and the deny list"
 
 if ! [ -L "$HOME/.grok/hooks/bin/secret-guard.sh" ] \
    && { [ ! -f "$HOME/.grok/hooks/bin/secret-guard.sh" ] \
@@ -89,6 +100,9 @@ SECRET_GUARD_EOF
       >>"$HOME/.grok/hooks/bin/secret-guard.sh"
   fi
   chmod 0755 "$HOME/.grok/hooks/bin/secret-guard.sh" 2>/dev/null
+  boot_ok "bin/secret-guard.sh is in place"
+else
+  boot_note "bin/secret-guard.sh left alone - a link, or the operator deleted its marker"
 fi
 
 if ! [ -L "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" ] \
@@ -103,6 +117,9 @@ DANGEROUS_COMMAND_GUARD_EOF
       >>"$HOME/.grok/hooks/bin/dangerous-command-guard.sh"
   fi
   chmod 0755 "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" 2>/dev/null
+  boot_ok "bin/dangerous-command-guard.sh is in place"
+else
+  boot_note "bin/dangerous-command-guard.sh left alone - a link, or the operator deleted its marker"
 fi
 
 if ! [ -L "$HOME/.grok/hooks/bin/post-edit-format.sh" ] \
@@ -117,6 +134,9 @@ POST_EDIT_FORMAT_EOF
       >>"$HOME/.grok/hooks/bin/post-edit-format.sh"
   fi
   chmod 0755 "$HOME/.grok/hooks/bin/post-edit-format.sh" 2>/dev/null
+  boot_ok "bin/post-edit-format.sh is in place"
+else
+  boot_note "bin/post-edit-format.sh left alone - a link, or the operator deleted its marker"
 fi
 
 if ! [ -L "$HOME/.grok/hooks/bin/selective-test-runner.sh" ] \
@@ -131,6 +151,9 @@ SELECTIVE_TEST_RUNNER_EOF
       >>"$HOME/.grok/hooks/bin/selective-test-runner.sh"
   fi
   chmod 0755 "$HOME/.grok/hooks/bin/selective-test-runner.sh" 2>/dev/null
+  boot_ok "bin/selective-test-runner.sh is in place"
+else
+  boot_note "bin/selective-test-runner.sh left alone - a link, or the operator deleted its marker"
 fi
 
 # The deny list is data the guard reads line by line, so it is seeded 0644 like the
@@ -148,6 +171,10 @@ DENY_PATTERNS_EOF
     printf '# %s\n' 'managed-by: evo-t1-coder-stack' \
       >>"$HOME/.grok/hooks/bin/deny-patterns.txt"
   fi
+  boot_ok "bin/deny-patterns.txt is in place"
+else
+  boot_note "bin/deny-patterns.txt left alone - a link, or the operator deleted its marker"
 fi
 
+boot_summary
 exit 0

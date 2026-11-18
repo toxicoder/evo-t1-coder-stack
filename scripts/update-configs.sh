@@ -11,10 +11,12 @@
 # the stack runs on. The env pass always rewrites those comment lines from
 # the twin, even when every value stays as you set it, so a pull that only
 # clarified an explanation still lands in .env. The other is the stack-owned config that lives INSIDE the
-# running workspaces (~/.grok/AGENTS.md, ~/.grok/config.toml,
-# ~/.shared/vscode/settings.json, ~/.tmux.conf, ~/.coder/..., ~/.agents/...),
-# which the templates seed on first boot and never revisit. This script is the
-# one command that refreshes both, and -i/--interactive is what makes the env
+# running workspaces (~/.grok/AGENTS.md, ~/.shared/vscode/settings.json,
+# ~/.tmux.conf, ~/.coder/..., ~/.agents/...), which the templates seed on first
+# boot and never revisit; ~/.grok/config.toml lives there too, but each
+# workspace renders it from the template on every start, so this tool leaves it
+# alone by design. This script is the one command that refreshes both, and
+# -i/--interactive is what makes the env
 # pass safe to run unattended: it explains every key that still needs a value,
 # and prompts for it, instead of quietly accepting a placeholder.
 #
@@ -25,13 +27,13 @@
 #   - drop a key your env file still sets. A key the new twin no longer
 #     declares is reported and moved to a commented trailer at the end of the
 #     file, where it stays readable and costs nothing, rather than deleted;
-#   - re-copy ~/.grok/config.toml or ~/.shared/vscode/settings.json over a
-#     workspace's copy. Both are RENDERED per workspace (the model list, the
-#     session-affinity key and an editor API key are all per-workspace), so a
-#     copy from the host would move that workspace's own settings. The
-#     workspace pass reseeds the verbatim payloads and reports the rendered
-#     ones instead: restarting the workspace re-renders them from this
-#     checkout, which is the only place those per-workspace values are known;
+#   - touch ~/.grok/config.toml. It renders PER WORKSPACE (the model list, the
+#     session-affinity key and the Grok theme are all per-workspace), so a copy
+#     from the shared seed would move that workspace's own config; restarting
+#     the workspace re-renders it from this checkout, which is the only place
+#     those per-workspace values are known. The workspace pass reseeds the
+#     verbatim payloads and the rendered settings.json instead, filling
+#     ${litellm_url} and ${vscode_color_theme} and keeping each target's key;
 #   - run a docker, ssh or curl command of its own. `workspace` hands each
 #     target to seed_container_seed, which addresses one docker exec at a time.
 #
@@ -931,7 +933,7 @@ main() {
       esac
     done
     log ""
-    log "summary: workspace: ${ws_targets} target(s) addressed, ${ws_skipped} skipped; ~/.grok/config.toml re-renders on start/restart"
+    log "summary: workspace: ${ws_targets} target(s) addressed, ${ws_skipped} skipped; ~/.grok/config.toml renders per workspace on start/restart"
     rm -rf "${stage}"
   fi
 

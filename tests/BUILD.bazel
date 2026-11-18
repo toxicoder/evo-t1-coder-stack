@@ -187,6 +187,16 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//hermes:skills",
     ],
+    # The suite drives the boot logger itself: it sources the shipped library by path
+    # and runs every verb under sh/bash/dash, so the only repo payload it opens is that
+    # one file. The clock it stubs and every fixture it writes live under
+    # BATS_TEST_TMPDIR, which is why this owes no stub and no fixture group.
+    "boot-log.bats": [
+        # The library itself, plus both main.tf twins: the wiring tests derive the list of
+        # narrating bodies out of the two coder_script maps rather than a hard-coded one,
+        # and they open every body that map names.
+        "//:templates_payload",
+    ],
     "bootstrap.bats": [
         "//infisical:payload",
         "//proxy:confs",
@@ -265,6 +275,11 @@ _SUITE_PAYLOAD = {
     # payload. The suite also reads the five operator pages that teach the same
     # width rule, so they ride in too: without them every test in the file skips
     # on the setup probe and the whole seam reads green while asserting nothing.
+    # The volumes seam and the theme seam, read out of the two main.tf twins, the two
+    # coder.tf twins, and the startup and grok-config bodies: all of it template payload.
+    "grok-profile.bats": [
+        "//:templates_payload",
+    ],
     "grok-subagent-slots.bats": [
         "//:templates_payload",
         "//:entry_docs",
@@ -427,9 +442,31 @@ _SUITE_PAYLOAD = {
     ],
     "pg-apply-password.bats": [],
     # Stubs are written into the test's own tmpdir and the fixture env file, the
-    # compose project and the log tree all live under its scratch dir, so this
-    # suite reads nothing the common set does not already carry.
-    "observability-check.bats": [],
+    # compose project and the log tree all live under its scratch dir. The two checks
+    # the bundle grew add one group: the rules check names the three files under
+    # prometheus/rules/ it expects Prometheus to have loaded, and the dashboard check
+    # walks the provisioned dashboard tree and parses each file it finds.
+    "observability-check.bats": [
+        "//observability:payload",
+    ],
+    # Every fact this suite pins comes out of the bundle's own config tree: the three
+    # rule files, alertmanager.yml and its entrypoint, blackbox.yml, the DCGM counter
+    # list, and prometheus.yml's job list. One group covers all of them.
+    "observability-exporters.bats": [
+        "//observability:payload",
+    ],
+    # Every fact here is read out of the provisioned dashboard tree, and the metric
+    # allow-list reads the recording rules this repo ships so a new rule never needs
+    # an edit in this file. Both ride the bundle's payload group, which already
+    # carries :grafana_dashboards and :prometheus_config; the parser the suite shells
+    # out to, scripts/lib/parse_json.py, arrives for every suite in _BATS_COMMON.
+    "observability-dashboards.bats": [
+        "//observability:payload",
+    ],
+    # The CLI and its probe are both shell under scripts/, which every suite already
+    # carries; the fixtures this suite feeds them (docker ps output, a probe report, a
+    # dotenv file) are written into the test's own tmpdir.
+    "spark-monitor.bats": [],
     "pre-commit.bats": [
         "//:env_example",
         "//:env_sample",

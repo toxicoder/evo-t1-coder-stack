@@ -4,9 +4,12 @@
 # ## storage-clean.sh - sweep stale files and re-sync configs in workspace storage.
 #
 # The persistent layer of this stack is not the compose project but the
-# volumes that survive it: one shared ~/.grok profile per owner, one
-# code-server settings.json per owner, and each workspace's home volume.
-# This script is the interactive janitor for that layer. Three sections:
+# volumes that survive it: the three per-owner Grok state volumes (notes,
+# memory and sessions), one code-server settings overlay per owner, and each
+# workspace's home volume. Each workspace's ~/.grok/config.toml rides its own
+# home volume, so a re-created workspace renders a fresh one; the old
+# whole-profile volume comes back only read-only, for the boot's one-time
+# hoist. This script is the interactive janitor for that layer. Three sections:
 #
 #   1. a read-only disk report (docker system df + the dev project's and the
 #      workspaces' named volumes);

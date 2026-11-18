@@ -19,7 +19,15 @@ One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra
   with its own Postgres and Redis. Compose keeps reading `.env`, which the vault feeds.
 - **Observability bundle** - Prometheus, Mimir, Loki, Tempo, Grafana and Alloy behind
   one Compose profile: metrics, container logs and traces, with Grafana as the single
-  read path. On by default; `OBSERVABILITY_ENABLED=false` drops all six.
+  read path, plus the four exporters that feed them - node_exporter, cAdvisor,
+  blackbox_exporter and Alertmanager. On by default; `OBSERVABILITY_ENABLED=false`
+  drops all ten. The four new ones publish on loopback only, on
+  `OBS_NODE_EXPORTER_PORT` (9101), `OBS_CADVISOR_PORT` (9290), `OBS_BLACKBOX_PORT`
+  (9115) and `OBS_ALERTMANAGER_PORT` (9093), and with `ALERTMANAGER_WEBHOOK_URL`
+  empty nothing is paged. The three DGX Sparks are a second, separate opt-in:
+  `SPARK_MONITOR_ENABLED` ships false, and `bazelisk run //scripts:spark-monitor` is
+  what makes a box a target with node_exporter on 9100 and the DCGM exporter from
+  `SPARK_DCGM_EXPORTER_IMAGE` on 9400.
 
 The box runs **two isolated copies** of the stack on purpose: a *stable* one you work
 in and a *dev* one you break. [Spin up the stack](#spin-up-the-stack) has the
@@ -62,6 +70,8 @@ and kept in `docs/` beside this file:
 [operate/secrets.md](docs/operate/secrets.md),
 [public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
 [observability.md](docs/observability.md),
+[operate/monitoring.md](docs/operate/monitoring.md),
+[spark-monitoring.md](docs/spark-monitoring.md),
 [troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
 what reading it lets you do.
 
@@ -114,12 +124,11 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |
   +-- :4000 ----> LiteLLM proxy (master key, model aliases)
   |                 +-- local:  http://ollama:11434 (compose network only)
-  |                 +-- remote: SPARKn_HOST + SPARK_OLLAMA_PORT/SPARK_HTTP_PORT
-  |                 |           compose every Spark URL from them - Ollama
-  |                 |           aliases on 11434, TensorFold on 8888 - one
-  |                 |           `agent` group, one deployment per Spark box,
-  |                 |           the only tool-capable path. SPARKn_OLLAMA_URL
-  |                 |           and SPARKn_OPENAI_URL override a whole URL
+  |                 +-- remote: SPARKn_HOST + SPARK_HTTP_PORT
+  |                 |           compose every Spark URL from them - TensorFold
+  |                 |           on 8888 - one `agent` group, one deployment per Spark
+  |                 |           box, the only tool-capable path. SPARKn_OPENAI_URL
+  |                 |           overrides a whole URL
   |
   +-- :9119 ----> Hermes Web Dashboard (host assistant; Chat tab + approvals;
   |               basic auth). LAN port stays; the public name is opt-in and
@@ -155,7 +164,9 @@ LAN clients (laptops, phones, the EVO-T1 itself)
   |
   +-- (no host port) the rest of the observability bundle - Mimir :8080 (long-term
   |               metrics), Loki :3100 (logs), Tempo :3200 query and :4317 OTLP,
-  |               Alloy :12345 (tails the host's Docker json-file logs). All six sit
+  |               Alloy :12345 (tails the host's Docker json-file logs), plus the four
+  |               exporters that feed them - node_exporter, cAdvisor, blackbox_exporter
+  |               and Alertmanager, every one published on 127.0.0.1 only. All ten sit
   |               behind profiles: ["observability"] and OBSERVABILITY_ENABLED
   |               (default true), so the flag is what adds or drops the whole group
   |
@@ -186,13 +197,20 @@ LAN clients (laptops, phones, the EVO-T1 itself)
    the supported opt-in in that same list: Authelia in front, basic auth still on
    (LAN `:9119` and a matching Host on `:8080` never see Authelia), and the docker
    socket still root-equivalent. Traefik aims at `:8080`, not at `:9119`.
-8. **The observability bundle is one profile, not six switches.** The only key it reads
-   is `OBSERVABILITY_ENABLED`, and one helper - `compose_observability_args` in
-   `scripts/lib/common.sh` - turns it into `--profile observability` for all six
-   services. Grafana is the only UI the bundle publishes and the only one with a public
-   name; Mimir, Loki, Tempo and Alloy publish no port at all, and Prometheus keeps the
-   loopback rule the Coder `:2112` metrics port follows. Full page:
-   [docs/observability.md](docs/observability.md).
+8. **The observability bundle is one profile, not ten switches.** The flag it reads is
+   `OBSERVABILITY_ENABLED`, and one helper - `compose_observability_args` in
+   `scripts/lib/common.sh` - turns it into `--profile observability` for all ten
+   services; the host ports behind them are the `OBS_*_PORT` keys beside
+   `PROMETHEUS_PORT` and `GRAFANA_PORT`. Grafana is the only UI the bundle publishes
+   beyond loopback and the only one with a public name; Mimir, Loki, Tempo and Alloy
+   publish no port at all, and Prometheus, the three exporters and Alertmanager keep the
+   loopback rule the Coder `:2112` metrics port follows - Alertmanager included, because
+   that UI can silence a firing alert, and nothing is paged while
+   `ALERTMANAGER_WEBHOOK_URL` is empty. The Sparks' own two exporters are a second
+   opt-in (`SPARK_MONITOR_ENABLED`, off as shipped) that compose does not install:
+   `bazelisk run //scripts:spark-monitor -- --apply` does. Full pages:
+   [docs/observability.md](docs/observability.md) and
+   [docs/operate/monitoring.md](docs/operate/monitoring.md).
 
 ## Ports
 
@@ -214,6 +232,8 @@ port binds once, so two stacks on one box need two sets.
 | 8182 | 18182 | Infisical | Secrets manager UI and API on one port (`INFISICAL_PORT`) - a whole Compose profile, so nothing listens here until `INFISICAL_ENABLED=true`. Published rather than loopback-bound for the same host-gateway reason as 8181, and not a Prometheus target |
 | 3005 | 13005 | Grafana | The observability read path - metrics, logs and traces behind one login (`GRAFANA_PORT`; credentials are `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`). The only bundle UI that is published |
 | 9090 | 19090 | Prometheus | Scrape and `remote_write` (`PROMETHEUS_PORT`) - bound to 127.0.0.1, so the graph UI needs a shell on the stack host |
+| 9093 | 19093 | Alertmanager | Grouping, silences and the notification route (`OBS_ALERTMANAGER_PORT`) - bound to 127.0.0.1, because that UI can silence a firing alert, and nothing leaves the box while `ALERTMANAGER_WEBHOOK_URL` is empty |
+| 9101 / 9290 / 9115 | 19101 / 19290 / 19115 | Stack exporters | node_exporter, cAdvisor and blackbox_exporter (`OBS_NODE_EXPORTER_PORT` / `OBS_CADVISOR_PORT` / `OBS_BLACKBOX_PORT`) - all three bound to 127.0.0.1 and scraped by the Prometheus above |
 | — | — | Mimir | `8080` on the compose network only - long-term metrics, queried through Grafana |
 | — | — | Loki | `3100` on the compose network only - logs, queried through Grafana |
 | — | — | Tempo | `3200` (query) and `4317` (OTLP/gRPC) on the compose network only - traces |
@@ -225,8 +245,9 @@ port binds once, so two stacks on one box need two sets.
 
 Change a port in `.env` for the stable stack and in `dev-stack.env` for the dev one. A
 dev stack still carrying the stable numbers cannot start beside it, and `.env` does not
-reach the dev stack when `dev-stack.env` exists. The Grafana and Prometheus rows bind
-only while `OBSERVABILITY_ENABLED` selects the `observability` profile, and the Infisical
+reach the dev stack when `dev-stack.env` exists. The Grafana, Prometheus, Alertmanager
+and exporter rows bind only while `OBSERVABILITY_ENABLED` selects the `observability`
+profile, and the Infisical
 row only while `INFISICAL_ENABLED` selects the `secrets` one - that profile is off as
 shipped, so `8182` answers nothing until a box opts in.
 
@@ -728,8 +749,6 @@ measured 30-request burst, the **Agent backend** card) are in
 | `coder-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama | no (measured) |
 | `compaction-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama (Arc); the target of those two lanes' summary hop, and not a client choice - no `[model.*]` block in the templates and no `local.model_choices` entry names it | no (measured on these weights, as on `coder-fast`) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
-| `spark-coder` | `qwen2.5-coder:32b` | `SPARK1_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK1_OLLAMA_URL` overrides) | unverified |
-| `spark-chat` | `qwen2.5:7b` | `SPARK2_HOST` on `SPARK_OLLAMA_PORT` (NVIDIA Spark, optional; `SPARK2_OLLAMA_URL` overrides) | unverified |
 
 One measured fact decides what you can actually run: the Qwen2.5-Coder weights do not
 emit structured tool calls on this box's IPEX-LLM Ollama, so agent mode needs the Spark
@@ -868,7 +887,8 @@ as a tar on stdin:
   `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline),
   `vscode-alt.svg` (the editor icon) and `notes-setup.sh` (the library behind each
   clone's private `notes.md`, which also leaves one background watcher per container
-  copying those files to the owner's profile volume between boots), staged beside
+  copying those files to the owner's notes volume (`grok-notes-<owner-id>`, mounted
+  at `~/.grok/notes`) between boots), staged beside
   each staged `main.tf` and read
   there with `file()` / `filebase64()`. The SVG stays small enough that the
   inlined data URL fits Coder v2.36's 256-character `workspace_apps.icon` column.
@@ -974,8 +994,10 @@ The list format, the two clone paths, and what `--dry-run` prints:
 ### Terminals, Grok Build state and Coder Agents
 
 The `tmux` terminal profiles and the app-bar buttons, what `grok doctor` should report
-inside a workspace and which findings are expected there, the one `~/.grok` volume shared
-per owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP
+inside a workspace and which findings are expected there, the three per-owner state
+volumes `shared` mode mounts under `~/.grok` (notes, memory, sessions) beside that
+workspace's own `config.toml` (and what `shared` vs `private` costs on a rebuild), the
+pre-installed MCP
 servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
 control-plane Coder Agents chat that needs nothing enabled:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). The seven stack-seeded skill commands at the
@@ -1222,7 +1244,10 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │                          #   (one KEY per line; read via infisical_managed_keys)
 ├── litellm/config.yaml    # model aliases
 ├── observability/         # the monitoring bundle, behind profiles: ["observability"]:
-│   ├── prometheus/        #   prometheus.yml (no rules dir: nothing alerts here)
+│   ├── prometheus/        #   prometheus.yml + rules/ (30 alerts: 12 host, 8 spark, 10 inference, across
+│   │                      #     three *.rules.yml files)
+│   ├── alertmanager/      #   the alert route - grouping,
+│   │                      #     silences, the optional webhook
 │   ├── mimir/ loki/ tempo/#   one config file each
 │   ├── grafana/           #   provisioning/ (datasources, dashboards) + dashboards/*.json
 │   └── alloy/             #   config.alloy - the only service that reads the host's
@@ -1266,6 +1291,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── seed-dev-env.sh      # materialize grok/settings/notes into a laptop or CI home
 │   ├── setup-host.sh        # stack-host bootstrap; the one script run straight from a shell
 │   ├── spark-configure.sh   # assert the per-Spark setup; --apply writes the override file
+│   ├── spark-monitor.sh     # make the three DGX Sparks Prometheus targets: plan, prove
+│   │                        #   with --status, install with --apply
 │   ├── spark-verify.sh      # read-only fleet check
 │   ├── storage-clean.sh     # interactive janitor for the persistent layer
 │   ├── test-in-image.sh     # run the Bazel gates inside evo-t1-dev:latest
@@ -1298,7 +1325,9 @@ operator hits most:
   the dashboard's **Agent backend** card, or probe the fleet with
   `bazelisk run //scripts:spark-verify -- --no-tests`.
 - **Workspace stuck in *starting*** - startup is blocking by design, so the reason is in
-  the workspace startup log (`coder logs <workspace>`).
+  the workspace startup log (`coder logs <workspace>`), where each boot body narrates
+  itself; which body failed, which stage it died in, and what a truncated log means is
+  [How do I read the workspace start log?](docs/troubleshooting.md#how-do-i-read-the-workspace-start-log--the-body-header-the-last-stage-line-and-the-truncated-tail).
 - **Any `git push` or `gh` failure inside a workspace** - start with
   `bazelisk run //scripts:github-auth -- check <repo-url>`, once, and read its last line.
   `push would FAIL` means one command: `bazelisk run //scripts:github-auth -- fix <repo-url>`,

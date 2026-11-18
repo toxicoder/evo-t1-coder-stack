@@ -343,11 +343,17 @@ subagents_block() {
       echo "${file} has no agent-swarm alias block at all" >&2
       return 1
     }
-    # Ungated: no %{if ...} may open between the file start and that header
-    # without a matching endif before it.
-    block="$(sed -n '1,/\[model\."agent-swarm"\]/p' "${file}" | grep -c '^%{if' || true)"
-    [ "${block}" -eq 0 ] || {
-      echo "${file} opens ${block} gate(s) before [model.\"agent-swarm\"]; the swarm lane must always render" >&2
+    # Ungated: no %{if ...} may be OPEN at that header. Counting opens alone was
+    # the first version of this check, and it failed any file whose leading tables
+    # carry a balanced gate -- the [ui] theme block is one, and [ui] has to be the
+    # first table in the file. The rule the comment states is "no %{if may open ...
+    # without a matching endif before it", so the honest measure is opens minus
+    # closes, and a file that opens the gate and never closes it is still caught.
+    local opens closes
+    opens="$(sed -n '1,/\[model\."agent-swarm"\]/p' "${file}" | grep -c '^%{if' || true)"
+    closes="$(sed -n '1,/\[model\."agent-swarm"\]/p' "${file}" | grep -c '^%{endif' || true)"
+    [ "$((opens - closes))" -eq 0 ] || {
+      echo "${file} leaves $((opens - closes)) gate(s) open before [model.\"agent-swarm\"]; the swarm lane must always render" >&2
       return 1
     }
     run grep -F 'enabled = true' "${file}"

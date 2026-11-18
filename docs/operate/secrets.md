@@ -94,11 +94,15 @@ workspace starts, under `set -a`, from the line the startup script appends to `~
 not a config file one process reads; it is an `export` line per key in the environment of every
 terminal, tmux pane and command from then on, and it outlives the start that wrote it.
 
-Two volumes meet in that path and they are not the same size. `~/.grok` is one profile volume per
-owner, shared with that owner's other workspaces. `~/.infisical` is not on it - the per-owner
-mounts are `~/.grok` and `~/.shared/vscode` - so `agent.env` sits on this workspace's own home and
-only this workspace reads it. That asymmetry is why the body filters rather than trusting a share
-boundary: a file a workspace can read is a file anything running inside it can read.
+Two kinds of volume meet in that path and they are not the same thing. What rides per owner is
+state only: `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions` on `grok-notes-<owner-id>`,
+`grok-memory-<owner-id>` and `grok-sessions-<owner-id>`, plus the `vscode-settings-<owner-id>`
+overlay at `~/.shared/vscode`. Everything else under `~/.grok` is a real file on that workspace's
+own home volume, `config.toml` above all - it carries this workspace's own model lanes, its
+session-affinity key and its Grok theme. `~/.infisical` rides no per-owner mount at all, so
+`agent.env` sits on this workspace's own home and only this workspace reads it. That asymmetry is
+why the body filters rather than trusting a share boundary: a file a workspace can read is a file
+anything running inside it can read.
 
 The body gates itself twice before it dials anything. First the **six configured names**:
 `INFISICAL_DOMAIN`, `INFISICAL_PROJECT_ID`, `INFISICAL_MACHINE_IDENTITY_ID`,
@@ -155,8 +159,8 @@ thing for each:
 - **A key the shell could not use as an identifier** - empty, starting with a digit, or holding a
   character outside `[A-Za-z0-9_]`, which is also where blank and comment lines fall out - is
   skipped silently. Nothing is printed for it; the only line that says how many keys landed is the
-  success line, `infisical: loaded N secret keys into <home>/.infisical/agent.env`, and it counts
-  what the publish loop actually wrote.
+  success line, `ok: infisical: loaded N secret keys into <home>/.infisical/agent.env`, and it
+  counts what the publish loop actually wrote.
 
 **The security boundary**, stated so no operator has to guess at it: because `agent.env` is
 sourced by every shell a workspace starts, a vault key that the shell, the dynamic loader, an

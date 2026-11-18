@@ -158,6 +158,40 @@ checksum_tree() {
   assert_contains_file "user file untouched" "${scratch}/home/.tmux.conf" 'set -g mouse off'
 }
 
+@test "storage-clean: the sweep leaves the shared grok state dirs and the legacy mount alone" {
+  local scratch f
+  scratch="$(make_scratch)"
+  seed_cache "${scratch}/home" old.log '2000-01-01'
+  # Three per-owner volumes mount inside ~/.grok (notes, memory, sessions) and a
+  # fourth comes back read-only at ~/.grok-legacy, so ~/.grok now holds an owner's
+  # history as well as its logs. Every file here is older than the cutoff, so a
+  # sweep root widened past .grok/logs deletes real state rather than a cache.
+  mkdir -p "${scratch}/home/.grok/notes/host/owner/repo" "${scratch}/home/.grok/memory" \
+    "${scratch}/home/.grok/sessions" "${scratch}/home/.grok-legacy/notes/host/owner/repo"
+  printf 'the owner\n' >"${scratch}/home/.grok/notes/host/owner/repo/notes.md"
+  printf 'remembered\n' >"${scratch}/home/.grok/memory/MEMORY.md"
+  printf '{"id": "s1"}\n' >"${scratch}/home/.grok/sessions/session.json"
+  printf 'from the legacy volume\n' >"${scratch}/home/.grok-legacy/notes/host/owner/repo/notes.md"
+  for f in "${scratch}/home/.grok/notes/host/owner/repo/notes.md" \
+    "${scratch}/home/.grok/memory/MEMORY.md" \
+    "${scratch}/home/.grok/sessions/session.json" \
+    "${scratch}/home/.grok-legacy/notes/host/owner/repo/notes.md"; do
+    if ! touch -d '2000-01-01T00:00:00' "${f}" 2>/dev/null; then
+      touch -t '200001010000' "${f}"
+    fi
+  done
+
+  run bash "${CLEAN}" --yes --older-than 14 --home "${scratch}/home"
+  [ "${status}" -eq 0 ]
+  # The stale log went; none of the state above did.
+  [ ! -e "${scratch}/home/.grok/logs/old.log" ]
+  assert_contains_file "notes kept" "${scratch}/home/.grok/notes/host/owner/repo/notes.md" 'the owner'
+  assert_contains_file "memory kept" "${scratch}/home/.grok/memory/MEMORY.md" 'remembered'
+  assert_contains_file "sessions kept" "${scratch}/home/.grok/sessions/session.json" '"id": "s1"'
+  assert_contains_file "legacy hoist source kept" \
+    "${scratch}/home/.grok-legacy/notes/host/owner/repo/notes.md" 'from the legacy volume'
+}
+
 @test "storage-clean: the dev project is reported by name and can be renamed" {
   local scratch
   scratch="$(make_scratch)"
@@ -175,7 +209,17 @@ checksum_tree() {
 @test "config_seed: seed_volume_kind classifies exactly the kinds the stack keeps" {
   # shellcheck source=/dev/null
   source "${LIB}"
-  [ "$(seed_volume_kind grok-profile-coder)" = "grok-config" ]
+  # grok-profile-* is no longer the live ~/.grok mount: it is the one-time hoist
+  # source at ~/.grok-legacy (templates/workspace/main.tf:1483), and it keeps the
+  # name so an existing owner's history still comes back. So its kind reads
+  # grok-legacy, not grok-config: nothing reads a config out of it any more.
+  [ "$(seed_volume_kind grok-profile-coder)" = "grok-legacy" ]
+  # The three that replaced it. Each is shared per owner and holds live state, so
+  # an unclassified one would print bare in the report and read like junk a janitor
+  # could sweep -- which is exactly why the classifier has to know them.
+  [ "$(seed_volume_kind grok-notes-coder)" = "grok-state" ]
+  [ "$(seed_volume_kind grok-memory-coder)" = "grok-state" ]
+  [ "$(seed_volume_kind grok-sessions-coder)" = "grok-state" ]
   [ "$(seed_volume_kind vscode-settings-coder)" = "shared-config" ]
   [ "$(seed_volume_kind ws-demo-home)" = "home" ]
   [ "$(seed_volume_kind ws-demo-dind-lib)" = "docker-lib" ]

@@ -87,8 +87,8 @@ source "${SELF_DIR}/lib/spark.sh" # sources scripts/lib/common.sh
 # --json is ever parsed; --json below is the only thing that sets it.
 unset JSON_MODE
 
-# The SPARKn_OLLAMA_URL fleet keys come from the checkout's .env and the model id
-# from litellm/config.yaml, and the per-host facts land in sparks/<host>.jsonl, so
+# The SPARKn_HOST / SPARKn_OPENAI_URL fleet keys come from the checkout's .env and the
+# model id from litellm/config.yaml, and the per-host facts land in sparks/<host>.jsonl, so
 # the checkout is resolved before any of that is read or written: `bazelisk run`
 # runs this from the runfiles tree, where .env is absent (the fleet would fall back
 # to the placeholder trio) and a sparks/ write would vanish with the tree.
@@ -193,16 +193,16 @@ if [ "${#hosts[@]}" -eq 0 ]; then
     # The SPARKn_HOST keys in .env name its addresses as far as the stack is
     # concerned — docker-compose.yml composes every Spark URL from them, so the
     # LiteLLM deployments, the dashboard cards and these probes all read the
-    # same three names. The host part of each SPARKn_OLLAMA_URL /
-    # SPARKn_OPENAI_URL key (scheme and port stripped, deduplicated) joins them,
-    # which is how a .env that names a box only in a URL still gets it checked.
+    # same three names. The host part of each SPARKn_OPENAI_URL key (scheme and port
+    # stripped, deduplicated) joins them, which is how a .env that names a box only in
+    # a URL still gets it checked.
     # A .env left on the shipped spark-<n>.lan placeholders still checks the
     # placeholder trio, whose names do not resolve — checked and skipped as a
     # "not yet" state, exactly as before.
     derived_hosts=""
     if [ -f .env ]; then
       for key in SPARK1_HOST SPARK2_HOST SPARK3_HOST \
-        SPARK1_OLLAMA_URL SPARK2_OLLAMA_URL SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
+        SPARK1_OPENAI_URL SPARK2_OPENAI_URL SPARK3_OPENAI_URL; do
         url="$(sed -n "s|^${key}=||p" .env 2>/dev/null | tail -n 1 | sed -E 's|^"(.*)"$|\1|; s|^'\''(.*)'\''$|\1|' | tr -d ' \r' || true)"
         [ -n "${url}" ] || continue
         host="$(printf '%s' "${url}" | sed -E 's|^https?://||; s|[:/].*$||')"
@@ -212,15 +212,35 @@ if [ "${#hosts[@]}" -eq 0 ]; then
       done
     fi
     if [ -n "${derived_hosts}" ]; then
-      log "note: no host given and SPARK_HOSTS is not set or empty — checking the hosts named by the SPARKn_HOST keys (and any SPARKn_OLLAMA_URL/SPARKn_OPENAI_URL) in .env:${derived_hosts}"
+      log "note: no host given and SPARK_HOSTS is not set or empty — checking the hosts named by the SPARKn_HOST keys (and any SPARKn_OPENAI_URL) in .env:${derived_hosts}"
       for host in ${derived_hosts}; do
         hosts+=("${host}")
       done
     else
-      log 'note: no host given and SPARK_HOSTS is not set or empty, and no SPARKn_HOST or SPARK*_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample ships as the value of SPARKn_HOST. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
+      log 'note: no host given and SPARK_HOSTS is not set or empty, and no SPARKn_HOST or SPARKn_OPENAI_URL key in .env names a host — checking the placeholder trio spark-1.lan spark-2.lan spark-3.lan, which .env.sample ships as the value of SPARKn_HOST. Those names do not resolve: pass your real Spark hostnames or IPs, or set SPARK_HOSTS="host1 host2 ..." in the environment.'
       hosts=("spark-1.lan" "spark-2.lan" "spark-3.lan")
     fi
   fi
+fi
+
+# A SPARKn_OLLAMA_URL left in .env from the Spark-Ollama era names a box that nothing
+# reads any more: the key stopped feeding the host list, so that box quietly left the
+# fleet. Say so rather than let it vanish. Advisory only: neither the host list below
+# nor the run's exit code changes either way.
+if [ -f .env ]; then
+  fleet_hosts=" ${hosts[*]+"${hosts[*]}"} "
+  for box in 1 2; do
+    key="SPARK${box}_OLLAMA_URL"
+    url="$(env_get .env "${key}" | tr -d ' \r' || true)"
+    [ -n "${url}" ] || continue
+    host="$(canonical_url "${url}")"
+    # Same guard derive_spark_hosts applies to its own keys: an unparseable value
+    # canonicalises to empty or to junk, and a warning that names no host tells the
+    # operator nothing. Say nothing rather than print a hole.
+    case "${host}" in '' | *[!A-Za-z0-9.-]*) continue ;; esac
+    case "${fleet_hosts}" in *" ${host} "*) continue ;; esac
+    warn "${key}=${url} in .env is no longer read, so ${host} is not in the fleet: name the box with SPARKn_HOST or SPARKn_OPENAI_URL, or drop the key"
+  done
 fi
 
 # VISION decides whether visioncheck.py runs, not whether the box has a GPU: it is read

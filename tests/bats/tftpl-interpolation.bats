@@ -439,7 +439,8 @@ echo "${payload} $${shell_var}"'
       '    feature_implementation_skill = "FEATURE"' \
       '    skeptical_review_skill       = "SKEPTICAL"' \
       '    security_audit_skill         = "AUDIT"' \
-      '    bug_hunt_skill               = "BUGHUNT"'
+      '    bug_hunt_skill               = "BUGHUNT"' \
+      '    boot_log_lib                 = "BOOTLIB"'
     printf '%s\n' '  })'
     printf '%s\n' '}'
     printf '%s\n' 'output "fleet" { value = local.fleet }'

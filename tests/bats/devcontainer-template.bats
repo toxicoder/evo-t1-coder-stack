@@ -866,8 +866,19 @@ setup() {
   local st
   for st in "${DC_STARTUP}" "${WS_STARTUP}"; do
     [[ -f "${st}" ]] || skip "startup template not reachable from ${REPO_ROOT}"
-    grep -qF '(cli|ui|marketplace)' "${st}" || {
-      echo "${st}: the re-render carries over fewer than [cli], [ui] and [marketplace]" >&2
+    # Two passes, not one: [cli] and [marketplace] come across whole, and [ui]
+    # comes across only in a pass that drops the four keys the render owns, since
+    # carrying that table whole would render a second [ui].
+    grep -qF '/^\[(cli|marketplace)\][[:space:]]*$/{f=1;print;next}' "${st}" || {
+      echo "${st}: the re-render no longer carries [cli] and [marketplace] across whole" >&2
+      return 1
+    }
+    grep -qF '/^\[ui\][[:space:]]*$/{f=1;next}' "${st}" || {
+      echo "${st}: the re-render has no separate [ui] carry-over pass" >&2
+      return 1
+    }
+    grep -qF '(theme|auto_dark_theme|auto_light_theme|ui_theme)[[:space:]]*=' "${st}" || {
+      echo "${st}: the [ui] pass does not drop the four template-owned theme keys" >&2
       return 1
     }
   done

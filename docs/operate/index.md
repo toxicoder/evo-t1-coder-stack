@@ -46,6 +46,8 @@ files that go stale are not tracked — see
 | The box will not finish booting and nobody is at the console | [luks-unlock.md](../luks-unlock.md) |
 | The assistant will not sign in | [hermes.md](../hermes.md) |
 | A credential needs rotating, or the vault is unreachable | [operate/secrets.md](secrets.md) |
+| Something is firing, or you want to know what the bundle watches | [operate/monitoring.md](monitoring.md) |
+| A Spark is not showing up in Prometheus | [spark-monitoring.md](../spark-monitoring.md) |
 
 ## Before you reach for a hammer
 

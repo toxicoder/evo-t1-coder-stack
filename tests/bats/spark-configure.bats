@@ -38,10 +38,25 @@ source_libs() {
 
 @test "spark: derive_spark_hosts derives and dedupes hosts from .env" {
   source_libs
-  printf '%s\n' 'SPARK1_OLLAMA_URL="http://10.9.8.7:11434"' 'SPARK2_OLLAMA_URL=http://10.9.8.7:11434' 'SPARK1_OPENAI_URL=http://10.9.8.6:4000/v1' > "${BATS_TEST_TMPDIR}/.env"
+  # One box spelled two ways (its host key and its full /v1 URL) has to yield one
+  # entry; the second box is named only in a URL, which is the other half of the list.
+  printf '%s\n' 'SPARK1_HOST=10.9.8.7' 'SPARK1_OPENAI_URL="http://10.9.8.7:8888/v1"' 'SPARK2_OPENAI_URL=http://10.9.8.6:8888/v1' > "${BATS_TEST_TMPDIR}/.env"
   derive_spark_hosts "${BATS_TEST_TMPDIR}/.env"
   [ "${SPARK_HOSTS_SOURCE}" = "derived" ]
   [ "${SPARK_HOSTS_RESOLVED}" = "10.9.8.7 10.9.8.6" ]
+}
+
+# The dedup test above still reads the same whether or not the retired keys sit in the
+# derivation list, because every host it names is reachable another way. This is the
+# falsifying half: a .env whose ONLY Spark keys are the retired SPARKn_OLLAMA_URL pair has
+# to fall through to the placeholder trio. Put either key back into derive_spark_hosts'
+# list and this fails with "10.9.8.7 10.9.8.6" from source "derived".
+@test "spark: the retired SPARKn_OLLAMA_URL keys do not feed the host list" {
+  source_libs
+  printf '%s\n' 'SPARK1_OLLAMA_URL=http://10.9.8.7:11434' 'SPARK2_OLLAMA_URL=http://10.9.8.6:11434' > "${BATS_TEST_TMPDIR}/stale.env"
+  derive_spark_hosts "${BATS_TEST_TMPDIR}/stale.env"
+  [ "${SPARK_HOSTS_SOURCE}" = "default" ]
+  [ "${SPARK_HOSTS_RESOLVED}" = "spark-1.lan spark-2.lan spark-3.lan" ]
 }
 
 @test "spark: derive_spark_hosts falls back to the placeholder trio" {

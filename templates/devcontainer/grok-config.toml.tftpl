@@ -15,13 +15,13 @@
 # Inference goes through the LiteLLM proxy; the key is never stored here, it
 # arrives as the LITELLM_API_KEY environment variable set by coder_agent.env.
 #
-# Two of the create form's per-workspace knobs reach this file: the default model
-# (the "Grok default model" dropdown) fills [models] default below, and anything
-# typed into "Grok config extras" is appended verbatim under the comment header at
-# the very end of the file. Both are per-workspace, so with the Grok profile set to
-# "private" two workspaces can legitimately disagree about either one — on a
-# "shared" profile this single file serves every workspace its owner owns, and the
-# one started last re-renders it for all of them.
+# Three of the create form's per-workspace knobs reach this file: the default
+# model (the "Grok default model" dropdown) fills [models] default below, the
+# "Grok theme" field fills [ui] theme below, and anything typed into "Grok
+# config extras" is appended verbatim under the comment header at the very end
+# of the file. All three are per-workspace, so with the Grok profile set to
+# "private" two workspaces can legitimately disagree about any of them, and so
+# they can on a "shared" profile: this file is this workspace's own either way.
 
 # Ownership marker: the stack owns this file while either this key or the
 # managed-by comment above is present. Unlike that comment, this top-level key
@@ -43,6 +43,21 @@ __evoT1Stack = true
 # really serves the tool.
 disable_web_search = true
 
+# The create form's "Grok theme" for this workspace. Any value but "auto" is a
+# fixed theme; "auto" follows the terminal's dark/light appearance, and the CLI
+# honours the per-appearance pair only alongside it, so both sides are named
+# here (the pair the CLI itself maps to). These are the only [ui] keys the
+# template writes; the rest of [ui] is the operator's, and the startup render
+# carries it over.
+[ui]
+theme = "${grok_theme}"
+%{if grok_theme == "auto"~}
+auto_dark_theme = "groknight"
+auto_light_theme = "grokday"
+
+%{else~}
+
+%{endif~}
 [models]
 # `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
 # tool_calls array on this runtime. The Arc (IPEX-LLM Ollama) aliases below
@@ -599,8 +614,9 @@ SEARXNG_DEFAULT_LANGUAGE = "all"
 # Conservative defaults on purpose: no always-approve / yolo here — that is a
 # per-user decision (`/settings`, or [ui] permission_mode). These denies only
 # keep secrets and destructive rm out of the easy path. The startup render
-# carries the CLI-owned tables ([cli], [ui], [marketplace]) over from the file
-# it replaces, so an approval mode set in [ui] survives a re-render.
+# carries the CLI-owned tables ([cli], [marketplace]) over from the file it
+# replaces, and the operator's other [ui] keys with it, so an approval mode set
+# in [ui] survives a re-render while the theme keys above stay the template's.
 #
 # The dotenv family is split by what the file holds. The live `.env` and the
 # suffixed shapes that carry real values are denied for Read and Edit; the

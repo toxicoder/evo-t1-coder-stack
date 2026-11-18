@@ -9,6 +9,13 @@
 # docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 
+# The library arrives as one map value main.tf passes. Terraform does not re-interpolate
+# a map value, so its own dollar-brace text lands here verbatim: no here-doc, no temp
+# file, and every comment in this file spells that token out instead of writing it.
+${boot_log_lib}
+
+boot_begin "stack fleet" 4
+
 # The contract splits by home, and the split is deliberate.
 #
 # Agents and personas are marker-aware, the way ~/.grok/AGENTS.md is: a copy carrying
@@ -23,25 +30,33 @@ set -u
 # copy what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder
 # copy, never a second inline body.
 #
-# Silent on a healthy workspace either way: this body's log is what an operator reads
-# when a role or a skill is missing.
+# Four stages, then one line per file this body writes or deliberately leaves alone:
+# this body's log is what an operator reads when a role or a skill is missing.
 
 # One symlinked root would aim every write below at a directory outside the four homes
-# this body owns, so bail before the first of them. Silent, like every other path here.
+# this body owns, so bail before the first of them, naming the one that is a link.
 # The loop variable below is a shell var, so every reference to it carries the
 # double-dollar escape: templatefile() reads a single-dollar brace reference anywhere in
 # this file as an interpolation, and the plan fails when main.tf does not pass that key.
+boot_stage 1 "the four stack roots"
+boot_phase "checking the 4 stack roots for planted symlinks"
 for evo_t1_root in "$HOME/.grok/agents" "$HOME/.grok/personas" \
                    "$HOME/.coder/skills" "$HOME/.agents/skills"; do
   if [ -L "$${evo_t1_root}" ]; then
+    boot_warn "refusing to write: $${evo_t1_root} is a symlink"
+    boot_summary
     exit 0
   fi
 done
+boot_ok "none of the 4 stack roots is a symlink"
+
 
 # Every guard below starts with a symlink refusal for the same reason: the marker test
 # reads the file a managed path points at, so writing through a planted link would
 # replace a file this body does not own. notes-setup.sh:19-21 keeps that discipline for
 # the live notes file, and a link a person left in place stays theirs.
+boot_stage 2 "the six role definitions"
+
 if ! [ -L "$HOME/.grok/agents/explorer.md" ] \
    && { [ ! -f "$HOME/.grok/agents/explorer.md" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/explorer.md"; }; then
@@ -49,6 +64,9 @@ if ! [ -L "$HOME/.grok/agents/explorer.md" ] \
   cat >"$HOME/.grok/agents/explorer.md" <<'EXPLORER_AGENT_EOF'
 ${explorer_agent}
 EXPLORER_AGENT_EOF
+  boot_ok ".grok/agents/explorer.md refreshed"
+else
+  boot_note ".grok/agents/explorer.md left alone (a link, or the operator's own)"
 fi
 
 if ! [ -L "$HOME/.grok/agents/architect.md" ] \
@@ -58,6 +76,9 @@ if ! [ -L "$HOME/.grok/agents/architect.md" ] \
   cat >"$HOME/.grok/agents/architect.md" <<'ARCHITECT_AGENT_EOF'
 ${architect_agent}
 ARCHITECT_AGENT_EOF
+  boot_ok ".grok/agents/architect.md refreshed"
+else
+  boot_note ".grok/agents/architect.md left alone (a link, or the operator's own)"
 fi
 
 if ! [ -L "$HOME/.grok/agents/implementer.md" ] \
@@ -67,6 +88,9 @@ if ! [ -L "$HOME/.grok/agents/implementer.md" ] \
   cat >"$HOME/.grok/agents/implementer.md" <<'IMPLEMENTER_AGENT_EOF'
 ${implementer_agent}
 IMPLEMENTER_AGENT_EOF
+  boot_ok ".grok/agents/implementer.md refreshed"
+else
+  boot_note ".grok/agents/implementer.md left alone (a link, or the operator's own)"
 fi
 
 if ! [ -L "$HOME/.grok/agents/tester.md" ] \
@@ -76,6 +100,9 @@ if ! [ -L "$HOME/.grok/agents/tester.md" ] \
   cat >"$HOME/.grok/agents/tester.md" <<'TESTER_AGENT_EOF'
 ${tester_agent}
 TESTER_AGENT_EOF
+  boot_ok ".grok/agents/tester.md refreshed"
+else
+  boot_note ".grok/agents/tester.md left alone (a link, or the operator's own)"
 fi
 
 if ! [ -L "$HOME/.grok/agents/reviewer.md" ] \
@@ -85,6 +112,9 @@ if ! [ -L "$HOME/.grok/agents/reviewer.md" ] \
   cat >"$HOME/.grok/agents/reviewer.md" <<'REVIEWER_AGENT_EOF'
 ${reviewer_agent}
 REVIEWER_AGENT_EOF
+  boot_ok ".grok/agents/reviewer.md refreshed"
+else
+  boot_note ".grok/agents/reviewer.md left alone (a link, or the operator's own)"
 fi
 
 # The hyphen stays in the file name: the definition's own name: field says
@@ -96,7 +126,12 @@ if ! [ -L "$HOME/.grok/agents/security-auditor.md" ] \
   cat >"$HOME/.grok/agents/security-auditor.md" <<'SECURITY_AUDITOR_AGENT_EOF'
 ${security_auditor_agent}
 SECURITY_AUDITOR_AGENT_EOF
+  boot_ok ".grok/agents/security-auditor.md refreshed"
+else
+  boot_note ".grok/agents/security-auditor.md left alone (a link, or the operator's own)"
 fi
+
+boot_stage 3 "the three persona overlays"
 
 if ! [ -L "$HOME/.grok/personas/thorough-researcher.toml" ] \
    && { [ ! -f "$HOME/.grok/personas/thorough-researcher.toml" ] \
@@ -105,6 +140,9 @@ if ! [ -L "$HOME/.grok/personas/thorough-researcher.toml" ] \
   cat >"$HOME/.grok/personas/thorough-researcher.toml" <<'THOROUGH_RESEARCHER_PERSONA_EOF'
 ${thorough_researcher_persona}
 THOROUGH_RESEARCHER_PERSONA_EOF
+  boot_ok ".grok/personas/thorough-researcher.toml refreshed"
+else
+  boot_note ".grok/personas/thorough-researcher.toml left alone (a link, or the operator's own)"
 fi
 
 if ! [ -L "$HOME/.grok/personas/senior-implementer.toml" ] \
@@ -114,6 +152,9 @@ if ! [ -L "$HOME/.grok/personas/senior-implementer.toml" ] \
   cat >"$HOME/.grok/personas/senior-implementer.toml" <<'SENIOR_IMPLEMENTER_PERSONA_EOF'
 ${senior_implementer_persona}
 SENIOR_IMPLEMENTER_PERSONA_EOF
+  boot_ok ".grok/personas/senior-implementer.toml refreshed"
+else
+  boot_note ".grok/personas/senior-implementer.toml left alone (a link, or the operator's own)"
 fi
 
 if ! [ -L "$HOME/.grok/personas/skeptical-reviewer.toml" ] \
@@ -123,7 +164,12 @@ if ! [ -L "$HOME/.grok/personas/skeptical-reviewer.toml" ] \
   cat >"$HOME/.grok/personas/skeptical-reviewer.toml" <<'SKEPTICAL_REVIEWER_PERSONA_EOF'
 ${skeptical_reviewer_persona}
 SKEPTICAL_REVIEWER_PERSONA_EOF
+  boot_ok ".grok/personas/skeptical-reviewer.toml refreshed"
+else
+  boot_note ".grok/personas/skeptical-reviewer.toml left alone (a link, or the operator's own)"
 fi
+
+boot_stage 4 "the four skill families"
 
 if ! [ -L "$HOME/.coder/skills/feature-implementation/SKILL.md" ] \
    && [ ! -f "$HOME/.coder/skills/feature-implementation/SKILL.md" ]; then
@@ -131,6 +177,7 @@ if ! [ -L "$HOME/.coder/skills/feature-implementation/SKILL.md" ] \
   cat >"$HOME/.coder/skills/feature-implementation/SKILL.md" <<'FEATURE_IMPLEMENTATION_SKILL_MD_EOF'
 ${feature_implementation_skill}
 FEATURE_IMPLEMENTATION_SKILL_MD_EOF
+  boot_ok ".coder/skills/feature-implementation/SKILL.md written"
 fi
 
 if ! [ -L "$HOME/.agents/skills/feature-implementation/SKILL.md" ] \
@@ -138,6 +185,7 @@ if ! [ -L "$HOME/.agents/skills/feature-implementation/SKILL.md" ] \
   mkdir -p "$HOME/.agents/skills/feature-implementation" 2>/dev/null
   cp "$HOME/.coder/skills/feature-implementation/SKILL.md" \
     "$HOME/.agents/skills/feature-implementation/SKILL.md" 2>/dev/null
+  boot_ok ".agents/skills/feature-implementation/SKILL.md twin written"
 fi
 
 if ! [ -L "$HOME/.coder/skills/skeptical-review/SKILL.md" ] \
@@ -146,6 +194,7 @@ if ! [ -L "$HOME/.coder/skills/skeptical-review/SKILL.md" ] \
   cat >"$HOME/.coder/skills/skeptical-review/SKILL.md" <<'SKEPTICAL_REVIEW_SKILL_MD_EOF'
 ${skeptical_review_skill}
 SKEPTICAL_REVIEW_SKILL_MD_EOF
+  boot_ok ".coder/skills/skeptical-review/SKILL.md written"
 fi
 
 if ! [ -L "$HOME/.agents/skills/skeptical-review/SKILL.md" ] \
@@ -153,6 +202,7 @@ if ! [ -L "$HOME/.agents/skills/skeptical-review/SKILL.md" ] \
   mkdir -p "$HOME/.agents/skills/skeptical-review" 2>/dev/null
   cp "$HOME/.coder/skills/skeptical-review/SKILL.md" \
     "$HOME/.agents/skills/skeptical-review/SKILL.md" 2>/dev/null
+  boot_ok ".agents/skills/skeptical-review/SKILL.md twin written"
 fi
 
 if ! [ -L "$HOME/.coder/skills/security-audit/SKILL.md" ] \
@@ -161,6 +211,7 @@ if ! [ -L "$HOME/.coder/skills/security-audit/SKILL.md" ] \
   cat >"$HOME/.coder/skills/security-audit/SKILL.md" <<'SECURITY_AUDIT_SKILL_MD_EOF'
 ${security_audit_skill}
 SECURITY_AUDIT_SKILL_MD_EOF
+  boot_ok ".coder/skills/security-audit/SKILL.md written"
 fi
 
 if ! [ -L "$HOME/.agents/skills/security-audit/SKILL.md" ] \
@@ -168,6 +219,7 @@ if ! [ -L "$HOME/.agents/skills/security-audit/SKILL.md" ] \
   mkdir -p "$HOME/.agents/skills/security-audit" 2>/dev/null
   cp "$HOME/.coder/skills/security-audit/SKILL.md" \
     "$HOME/.agents/skills/security-audit/SKILL.md" 2>/dev/null
+  boot_ok ".agents/skills/security-audit/SKILL.md twin written"
 fi
 
 if ! [ -L "$HOME/.coder/skills/bug-hunt/SKILL.md" ] \
@@ -176,6 +228,7 @@ if ! [ -L "$HOME/.coder/skills/bug-hunt/SKILL.md" ] \
   cat >"$HOME/.coder/skills/bug-hunt/SKILL.md" <<'BUG_HUNT_SKILL_MD_EOF'
 ${bug_hunt_skill}
 BUG_HUNT_SKILL_MD_EOF
+  boot_ok ".coder/skills/bug-hunt/SKILL.md written"
 fi
 
 if ! [ -L "$HOME/.agents/skills/bug-hunt/SKILL.md" ] \
@@ -183,6 +236,9 @@ if ! [ -L "$HOME/.agents/skills/bug-hunt/SKILL.md" ] \
   mkdir -p "$HOME/.agents/skills/bug-hunt" 2>/dev/null
   cp "$HOME/.coder/skills/bug-hunt/SKILL.md" \
     "$HOME/.agents/skills/bug-hunt/SKILL.md" 2>/dev/null
+  boot_ok ".agents/skills/bug-hunt/SKILL.md twin written"
 fi
+
+boot_summary
 
 exit 0
