@@ -137,8 +137,23 @@ variable "stack_repo_url" {
 # create-form dropdown can only offer options the pushed default actually has.
 variable "grok_profile_mode" {
   type        = string
-  description = "How a workspace gets its ~/.grok. 'shared' = one per-user Docker volume (grok-profile-<owner-id>) mounted at /home/coder/.grok, nested inside that workspace's own home volume — exactly what the old grok_profile_share = true did: everything the CLI keeps there (config.toml, MCP caches, memory-v2, skills, a self-installed CLI) is written once and read by every workspace this user owns, and survives a rebuild. 'private' = no nested mount, so each workspace gets its own private ~/.grok on its own home volume, and that workspace's config.toml, MCP caches, memory and skills die with it. Per-user, not host-wide, in shared mode: the volume name is keyed by owner id, so another user's workspaces never see it. Changing the mode changes the mount topology, so it needs a workspace rebuild."
+  description = "How a workspace gets its ~/.grok. 'shared' = the three per-user Grok state volumes (grok-notes-<owner-id>, grok-memory-<owner-id>, grok-sessions-<owner-id>) mount at ~/.grok/notes, ~/.grok/memory and ~/.grok/sessions inside this workspace's own home volume, so notes, memory and session logs are written once per user and read by every workspace this user owns. Everything else the CLI keeps in ~/.grok (config.toml, the MCP caches, skills, a self-installed CLI) belongs to this workspace alone and survives a rebuild of it. The pre-split whole-profile volume grok-profile-<owner-id> comes back read-only at ~/.grok-legacy so the first start after the split can copy out what it held. 'private' = none of those mounts, so this workspace starts with an empty ~/.grok and its notes, memory and session logs die with it. Per-user, not host-wide, in shared mode: the volume names are keyed by owner id, so another user's workspaces never see them. The mount covers the workspace container only - a dev container built on the DinD sidecar keeps its own home either way. Changing the mode changes the mount topology, so it needs a workspace rebuild."
   default     = "shared"
+}
+
+# Both themes are a per-workspace create-form choice, so two workspaces this
+# user owns may look different: each value lands in that workspace's own
+# ~/.grok/config.toml and its own editor settings.
+variable "grok_theme" {
+  type        = string
+  description = "Grok Build theme name, rendered as [ui] theme in this workspace's ~/.grok/config.toml. Free text: the create form offers no list and the CLI resolves the name when it starts. The literal value auto is the one the render treats specially, emitting the CLI's auto_dark_theme and auto_light_theme pair instead of a fixed theme."
+  default     = "grokbuild"
+}
+
+variable "vscode_color_theme" {
+  type        = string
+  description = "workbench.colorTheme written into this workspace's code-server user settings. Free text: the name has to match a theme the editor actually has installed, and the create form offers no list."
+  default     = "Default Dark Modern"
 }
 
 # There is deliberately no GitHub *token* variable in this file. A workspace's

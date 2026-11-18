@@ -20,6 +20,12 @@
 #     kept context7_mcp block is handled exactly the same way.
 #   - Every %{endif~} is consumed, so a kept block never leaves a directive
 #     behind.
+#   - The [ui] theme gate is NOT one of the gates this program knows. Its value
+#     is a caller's choice, not a capability probe, so the caller resolves it:
+#     seed_render_grok_config in scripts/seed-dev-env.sh pairs this program with
+#     a two-branch sed that keeps whichever branch GROK_THEME names and deletes
+#     the other along with its gate lines. That is why the theme gate survives
+#     this pass with its %{if~} and %{else~} lines still in place.
 
 BEGIN { skip = 0 }
 /%\{if github_mcp~\}/ { skip = 1; next }

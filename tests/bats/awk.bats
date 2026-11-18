@@ -493,6 +493,29 @@ strip_gates_fixture() {
   [ "${output}" = $'%{if other_mcp~}\nbody\ntail' ]
 }
 
+@test "tftpl_strip_gates: the ui theme gate is left for the caller to resolve" {
+  local src="${BATS_TEST_TMPDIR}/theme.tftpl"
+  printf '%s\n' \
+    '[ui]' \
+    'theme = "${grok_theme}"' \
+    '%{if grok_theme == "auto"~}' \
+    'auto_dark_theme = "groknight"' \
+    'auto_light_theme = "grokday"' \
+    '' \
+    '%{else~}' \
+    '' \
+    '%{endif~}' \
+    '[models]' >"${src}"
+
+  # The theme is a per-workspace parameter, not a capability probe, so no -v here
+  # could name the right branch: this program has to leave both gate lines in
+  # place for seed_render_grok_config's two-branch sed to resolve. Teaching it one
+  # branch is the drift that would silently ship the other theme to every home.
+  run awk -f "${AWK_LIB}/tftpl_strip_gates.awk" "${src}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = $'[ui]\ntheme = "${grok_theme}"\n%{if grok_theme == "auto"~}\nauto_dark_theme = "groknight"\nauto_light_theme = "grokday"\n\n%{else~}\n\n[models]' ]
+}
+
 @test "tftpl_strip_gates: an endif with no open gate is consumed silently" {
   local src="${BATS_TEST_TMPDIR}/orphan.tftpl"
   printf '%s\n' '%{endif~}' 'only' >"${src}"

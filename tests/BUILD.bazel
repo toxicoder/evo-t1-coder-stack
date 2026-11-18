@@ -265,6 +265,11 @@ _SUITE_PAYLOAD = {
     # payload. The suite also reads the five operator pages that teach the same
     # width rule, so they ride in too: without them every test in the file skips
     # on the setup probe and the whole seam reads green while asserting nothing.
+    # The volumes seam and the theme seam, read out of the two main.tf twins, the two
+    # coder.tf twins, and the startup and grok-config bodies: all of it template payload.
+    "grok-profile.bats": [
+        "//:templates_payload",
+    ],
     "grok-subagent-slots.bats": [
         "//:templates_payload",
         "//:entry_docs",

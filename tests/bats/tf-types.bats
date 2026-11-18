@@ -285,6 +285,9 @@ tf_scan() {
 @test "tf_types: a validation block does not contribute findings" {
   local f
   f="$(tf_fixture validation.tf)"
+  # The HCL below is fixture text this test writes itself: neither twin carries a
+  # validation block on grok_profile_mode, so this pins the awk program and not
+  # the shipped templates.
   printf '%s\n' \
     'variable "grok_profile_mode" {' \
     '  type        = string' \

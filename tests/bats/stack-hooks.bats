@@ -462,10 +462,10 @@ assert_quiet() {
 
 @test "dangerous-command-guard: denies what the first list missed" {
   # Each of these was measured walking through the guard: discarding the working tree the
-  # rulebook names as how a day of work is destroyed, zeroing a file on the shared profile
-  # volume, and the three docker forms that take out a named volume there is no image to
-  # rebuild. They live in this file rather than in a shell command so the tool that runs
-  # this suite never carries one in its own command text.
+  # rulebook names as how a day of work is destroyed, zeroing a file the seed materializes
+  # under the profile, and the docker forms that take out one of the grok volumes there is
+  # no image to rebuild. They live in this file rather than in a shell command so the tool
+  # that runs this suite never carries one in its own command text.
   local case_name cmd
   for case_name in \
     "find-dot-delete:find . -type f -delete" \
@@ -480,6 +480,9 @@ assert_quiet() {
     "rm-hooks-dir:rm -f ~/.grok/hooks/evo-t1-hooks.json" \
     "chmod-777-root:chmod -R 777 /" \
     "docker-volume-rm:docker volume rm grok-profile-me" \
+    "docker-volume-rm-notes:docker volume rm grok-notes-me" \
+    "docker-volume-rm-memory:docker volume rm grok-memory-me" \
+    "docker-volume-rm-sessions:docker volume rm grok-sessions-me" \
     "docker-volume-prune:docker volume prune -f" \
     "docker-system-prune:docker system prune -a --volumes" \
     "compose-down-volumes:docker compose -p evo-t1 down -v" \

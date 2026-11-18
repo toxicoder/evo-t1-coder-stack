@@ -69,6 +69,7 @@ setup() {
     '"terminal.integrated.defaultProfile.linux": "tmux"' \
     '"python.defaultInterpreterPath": "/usr/bin/python3"' \
     '"chat.disableAIFeatures": true' \
+    '"workbench.colorTheme": "${vscode_color_theme}"' \
     '$${workspaceFolder}'; do
     run grep -F "${need}" "${seed}"
     [ "${status}" -eq 0 ] || { echo "missing ${need} in the seed" >&2; return 1; }
@@ -133,9 +134,31 @@ setup() {
     [ "${status}" -eq 0 ]
     run grep -F 'the vscode-settings volume is not writable' "${startup}"
     [ "${status}" -eq 0 ]
+    # The stack creates no symlink any more: settings.json is a real per-workspace
+    # file written to a .tmp and moved, and a symlink the operator made is left be.
     run grep -F 'ln -sfn "$shared_settings" "$user_settings"' "${startup}"
-    [ "${status}" -eq 0 ]
+    [ "${status}" -ne 0 ] || { echo "${startup} still symlinks settings.json onto the shared volume" >&2; return 1; }
     run grep -F '$${user_settings}.pre-shared' "${startup}"
+    [ "${status}" -ne 0 ] || { echo "${startup} still archives the real file on every boot" >&2; return 1; }
+    run grep -F 'if [ -L "$user_settings" ]; then' "${startup}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'the stack leaves it alone' "${startup}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'user_settings_new="$${user_settings}.tmp"' "${startup}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'mv -f "$user_settings_new" "$user_settings"' "${startup}"
+    [ "${status}" -eq 0 ]
+    # Every key the operator left in the shared overlay wins over the render,
+    # both on the jq path and on the python3 fallback...
+    run grep -F '(.[0] * .[1])' "${startup}"
+    [ "${status}" -eq 0 ]
+    run grep -F 'SETTINGS_BASE="$user_settings_new" SETTINGS_OVERLAY="$shared_settings"' "${startup}"
+    [ "${status}" -eq 0 ]
+    # ...except the theme, which the template re-asserts last so an overlay that
+    # sets workbench.colorTheme cannot veto this workspace's own theme.
+    run grep -F '"workbench.colorTheme": (.[0]["workbench.colorTheme"]' "${startup}"
+    [ "${status}" -eq 0 ]
+    run grep -F '**({"workbench.colorTheme":b["workbench.colorTheme"]}' "${startup}"
     [ "${status}" -eq 0 ]
     run grep -F '$${LITELLM_API_KEY:-}' "${startup}"
     [ "${status}" -eq 0 ]
@@ -155,8 +178,8 @@ setup() {
 @test "settings: workspace template does not hand the seed to the inlined code-server fork" {
   local main="${REPO_ROOT}/templates/workspace/main.tf"
   # The fork carries a seed (if any) in its script's SETTINGS_B64 line;
-  # the workspace fork has none, because the startup script's shared-volume
-  # symlink owns settings.json there.
+  # the workspace fork has none, because the startup script writes the real
+  # settings.json there (render, then overlay, then the template's theme).
   run grep -F 'SETTINGS_B64' "${main}"
   [ "${status}" -ne 0 ]
   run grep -F 'machine_settings' "${main}"

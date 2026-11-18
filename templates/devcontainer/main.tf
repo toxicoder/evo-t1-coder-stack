@@ -133,7 +133,7 @@ data "coder_parameter" "use_devcontainer" {
 data "coder_parameter" "grok_profile_mode" {
   name         = "grok_profile_mode"
   display_name = "Grok profile"
-  description  = "Where this workspace's ~/.grok lives. Shared = one per-user profile volume, shared by every workspace this owner owns: config.toml, the MCP caches, memory and skills are shared between them, and the last workspace started re-renders that one shared config.toml. Private = this workspace gets its own private ~/.grok on its own home volume, so its config.toml (and its memory and skills) are independent of the owner's other workspaces and die with the workspace. Changing this needs a rebuild: the nested mount either exists or it does not."
+  description  = "Which parts of this workspace's ~/.grok are shared with the owner's other workspaces. Shared = notes, memory and sessions ride one per-user volume each, so they survive a rebuild and are the same in every workspace this owner owns, while config.toml stays a per-workspace file rendered from the template (a hand edit to it lasts until this workspace restarts, and touches no other workspace). Private = no per-user volume at all, so the notes, the memory and the sessions are this workspace's alone and die with it. Changing this needs a rebuild: the nested mounts either exist or they do not."
   type         = "string"
   # "dropdown", not a text field, because only these two spellings mean anything;
   # anything else reads as private, which is the safe half of the mistake (it
@@ -146,22 +146,22 @@ data "coder_parameter" "grok_profile_mode" {
   option {
     name        = "Shared (one profile per user)"
     value       = "shared"
-    description = "One per-user profile volume, shared by every workspace this owner owns: config.toml, MCP caches, memory and skills are shared, and the last workspace started re-renders that one shared config.toml."
+    description = "Notes, memory and sessions ride one per-user volume each, so they survive a rebuild and match across this owner's workspaces. config.toml is per workspace: each render writes its own file, so no workspace re-renders another's."
   }
 
   option {
     name        = "Private (this workspace only)"
     value       = "private"
-    description = "This workspace gets its own private ~/.grok on its own home volume, so its config.toml (and its memory and skills) are independent of the owner's other workspaces and die with the workspace."
+    description = "No per-user volume at all: the notes, the memory and the sessions are this workspace's alone, independent of the owner's other workspaces, and die with the workspace."
   }
 }
 
 # The model alias, which the create form could not express before (it was a
 # stack-wide variable, and a per-workspace one only made sense once the profile
-# could be private). It differs observably per workspace only while the profile
-# is private, or while config.toml is unmanaged: on a shared profile volume one
-# file serves all of the owner's workspaces and whoever starts last re-renders it
-# for everyone. The options are the aliases grok-config.toml.tftpl declares, and
+# could be private). It differs observably per workspace now that config.toml is
+# rendered onto the workspace's own home volume; before, a shared profile volume
+# meant one file served all of the owner's workspaces and whoever started last
+# re-rendered it for everyone. The options are the aliases grok-config.toml.tftpl declares, and
 # local.model_options below keeps the provider's default-must-be-an-option rule
 # true for a custom `--var grok_default_model`.
 data "coder_parameter" "grok_default_model" {
@@ -201,6 +201,33 @@ data "coder_parameter" "grok_config_extra" {
   mutable   = true
   default   = ""
   order     = 6
+}
+
+# Both themes are per workspace, which is the point of rendering config.toml onto
+# the workspace's own home volume: two workspaces can now disagree about the one
+# setting a person changes on a whim. Mutable because each writes one text file
+# and nothing about topology, so a restart re-renders it with no rebuild. Same
+# pair as templates/workspace's, so the two templates offer the same form.
+data "coder_parameter" "grok_theme" {
+  name         = "grok_theme"
+  display_name = "Grok theme"
+  description  = "The Grok Build CLI colour theme for this workspace, written into the rendered ~/.grok/config.toml as [ui] theme. Free-form: any theme name the CLI accepts, or 'auto' to follow the terminal and render the light and dark pair below. Applies on the next start, and it is this workspace's own setting - the owner's other workspaces keep theirs."
+  type         = "string"
+  form_type    = "textarea"
+  mutable      = true
+  default      = var.grok_theme
+  order        = 7
+}
+
+data "coder_parameter" "vscode_color_theme" {
+  name         = "vscode_color_theme"
+  display_name = "Editor colour theme"
+  description  = "The workbench colour theme for this workspace's code-server, written into its User settings.json as workbench.colorTheme. Free-form: any theme label the editor has installed, 'Default Dark Modern' included. The per-workspace value wins over the shared editor-settings overlay, so a key entered in another workspace cannot veto it. Applies on the next start, and it is this workspace's own setting."
+  type         = "string"
+  form_type    = "textarea"
+  mutable      = true
+  default      = var.vscode_color_theme
+  order        = 8
 }
 
 # One preset per answer to the second question, so the default repository never
@@ -396,7 +423,8 @@ locals {
   # dev-container editor — so a template render of the file never contains the
   # key. code-server never reads ~/.config/Code.
   vscode_settings = templatefile("${path.module}/settings.json.tftpl", {
-    litellm_url = var.litellm_url
+    litellm_url        = var.litellm_url
+    vscode_color_theme = data.coder_parameter.vscode_color_theme.value
   })
   # Key added only when one was supplied, so an empty variable does not write
   # a blank secret into the dev-container editor. The conditional stays on
@@ -521,9 +549,14 @@ resource "coder_agent" "main" {
     # stack) reaches the rendered config. context7_mcp gates the cached context7
     # stdio block; its key travels only through the agent environment below.
     grok_config = templatefile("${path.module}/grok-config.toml.tftpl", {
-      litellm_url            = var.litellm_url
-      grok_default_model     = data.coder_parameter.grok_default_model.value
-      grok_config_extra      = data.coder_parameter.grok_config_extra.value
+      litellm_url        = var.litellm_url
+      grok_default_model = data.coder_parameter.grok_default_model.value
+      grok_config_extra  = data.coder_parameter.grok_config_extra.value
+      # The per-workspace theme, rendered as the one [ui] table the template
+      # owns. A coder_parameter rather than a --var for the same reason the
+      # editor theme is one: a person changes a theme on a whim, per workspace,
+      # and the file it lands in is re-rendered on every start.
+      grok_theme             = data.coder_parameter.grok_theme.value
       github_mcp             = var.github_mcp
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
       search_mcp             = var.search_mcp
@@ -1215,21 +1248,33 @@ resource "coder_metadata" "workspace_info" {
     value = var.litellm_url
   }
 
-  # Which profile shape this workspace got: the shared per-user volume or a
-  # private ~/.grok. Named on the page because the two are otherwise
-  # indistinguishable from the outside.
+  # Which state shape this workspace got: the three per-owner state volumes, or
+  # none of them and a ~/.grok that dies with the workspace. config.toml is per
+  # workspace either way, so this names the state directories, not the config.
+  # Named on the page because the two are otherwise indistinguishable outside.
   item {
     key   = "grok profile"
     value = data.coder_parameter.grok_profile_mode.value
   }
 
-  # The alias this workspace's config.toml is rendered with. On a shared profile
-  # volume the file itself may carry another workspace's answer, because whoever
-  # starts last re-renders the one shared file — so this tile states what THIS
-  # workspace asked for, which is the closest thing to a per-workspace answer.
+  # The alias this workspace's config.toml is rendered with. The render is this
+  # workspace's own now, so the tile states what the file actually carries.
   item {
     key   = "grok default model"
     value = data.coder_parameter.grok_default_model.value
+  }
+
+  # The two themes, both this workspace's own. The page is the only place to read
+  # what a workspace was started with, since neither lands anywhere the console
+  # can already show.
+  item {
+    key   = "grok theme"
+    value = data.coder_parameter.grok_theme.value
+  }
+
+  item {
+    key   = "editor theme"
+    value = data.coder_parameter.vscode_color_theme.value
   }
 
   # Same redaction stance as the litellm key item below: this says only whether a
@@ -1461,16 +1506,24 @@ resource "docker_container" "dind" {
   }
 }
 
-# One Grok Build profile per *user*, mounted into every workspace that user owns,
-# instead of one ~/.grok per workspace that dies on a rebuild — but only in
-# `shared` mode, which the grok_profile_mode parameter above decides. `private`
-# gives that workspace a private ~/.grok on its own home volume, which dies with
-# it, and renders a container that is byte-for-byte the shape this template had
-# before the profile volume existed. Same shape as templates/workspace's either way: the
-# volume is referenced by plain string name and never declared as a docker_volume
-# resource, so Docker creates it on the first container start that names it, and a
-# workspace stop never has to unmount a volume another of the same user's
-# workspaces still holds open.
+# Three state directories of the Grok Build profile per *user*, mounted into every
+# workspace that user owns, instead of one ~/.grok per workspace that dies on a
+# rebuild - but only in `shared` mode, which the grok_profile_mode parameter above
+# decides. `private` gives that workspace no per-user mount at all, so its whole
+# ~/.grok is a plain folder on its own home volume and dies with it, and renders a
+# container that is byte-for-byte the shape this template had before the profile
+# volume existed.
+#
+# `shared` shares state, not configuration. Notes, memory and sessions are work
+# product a person wants visible from whichever workspace they are in, so each
+# rides its own per-owner volume. config.toml is the opposite: it is rendered per
+# workspace from the template, so a workspace that rewrites it must not rewrite its
+# siblings', and ~/.grok itself is deliberately not mounted.
+#
+# Same shape as templates/workspace's either way: each volume is referenced by plain
+# string name and never declared as a docker_volume resource, so Docker creates it on
+# the first container start that names it, and a workspace stop never has to unmount
+# a volume another of the same user's workspaces still holds open.
 locals {
   # Anything but "shared" — "private" included — means no extra volumes entry at
   # all, so the planned container is byte-identical to the pre-profile-volume
@@ -1478,6 +1531,18 @@ locals {
   # shared instead of quietly provisioning private.
   grok_profile_shared = lower(trimspace(data.coder_parameter.grok_profile_mode.value)) == "shared"
   # Keyed by owner id, not by workspace id: that is the whole privacy boundary.
+  # One volume per concern rather than one over all of ~/.grok, so a workspace
+  # that overwrites its own config.toml cannot reach another workspace's.
+  grok_notes_volume    = "grok-notes-${data.coder_workspace_owner.me.id}"
+  grok_memory_volume   = "grok-memory-${data.coder_workspace_owner.me.id}"
+  grok_sessions_volume = "grok-sessions-${data.coder_workspace_owner.me.id}"
+  # The name of the mount this template used to put over all of ~/.grok. It is
+  # no longer mounted read-write: it is the one-time source the notes hoist
+  # reads (see notes_hoist_legacy in templates/common/notes-setup.sh), mounted
+  # read-only at /home/coder/.grok-legacy. Existing owners therefore keep their
+  # notes, memory and sessions across the upgrade instead of finding an empty
+  # directory. A later `chore:` drops this name and the legacy mount with it,
+  # once no workspace in the field still has state only in the old volume.
   grok_profile_volume = "grok-profile-${data.coder_workspace_owner.me.id}"
   # Editor settings, same sharing rule and the same reason this is not a
   # docker_volume resource: one volume per owner, created on first use, and a
@@ -1536,33 +1601,47 @@ resource "docker_container" "workspace" {
     read_only      = false
   }
 
-  # Rides alongside the two above rather than replacing either: /home/coder/.grok
-  # is resolved *inside* the home volume's mount, so Docker covers it with the
-  # owner's shared profile volume and the CLI's state tree is one directory tree
-  # shared live by every workspace this user owns. Only in `shared` mode: in
-  # `private` mode .grok stays a plain folder on this workspace's own home volume,
-  # and either way the mount is on the workspace container, never on a dev
-  # container built on the sidecar, which has always had its own home. Gated on
-  # local.grok_profile_shared because an empty for_each emits no volumes entry at
-  # all — in private mode the planned container is exactly the pre-profile shape.
+  # Rides alongside the two above rather than replacing either: each path below
+  # is resolved *inside* the home volume's mount, so Docker covers just those
+  # three with the owner's per-concern volumes and the CLI's state directories
+  # are shared live by every workspace this user owns, while everything else
+  # under .grok - config.toml above all - stays on this workspace's own home
+  # volume. Only in `shared` mode: in `private` mode .grok is entirely a plain
+  # folder on the home volume, and either way the mounts are on the workspace
+  # container, never on a dev container built on the sidecar, which has always
+  # had its own home. Gated on local.grok_profile_shared because an empty
+  # for_each emits no volumes entry at all - in private mode the planned
+  # container is exactly the pre-profile shape.
+  #
+  # The fourth entry is the upgrade path, not a live mount: the volume that used
+  # to cover all of .grok comes back read-only at .grok-legacy so the boot's
+  # one-time hoist can read what an owner already had. A read-only mount cannot
+  # write back, so the hoist copies out and never in. A later `chore:` deletes
+  # this entry once no workspace in the field holds state only in that volume.
   dynamic "volumes" {
-    for_each = local.grok_profile_shared ? [1] : []
+    for_each = local.grok_profile_shared ? [
+      { path = "/home/coder/.grok/notes", name = local.grok_notes_volume, ro = false },
+      { path = "/home/coder/.grok/memory", name = local.grok_memory_volume, ro = false },
+      { path = "/home/coder/.grok/sessions", name = local.grok_sessions_volume, ro = false },
+      { path = "/home/coder/.grok-legacy", name = local.grok_profile_volume, ro = true },
+    ] : []
     content {
-      container_path = "/home/coder/.grok"
-      volume_name    = local.grok_profile_volume
-      read_only      = false
+      container_path = volumes.value.path
+      volume_name    = volumes.value.name
+      read_only      = volumes.value.ro
     }
   }
 
-  # Nested the same way as .grok above: the home volume is mounted first, then
-  # this covers /home/coder/.shared/vscode with the owner's one settings
-  # volume. startup.sh.tftpl copies the seed in only while settings.json is
-  # absent and symlinks code-server's User settings at it. The symlink is what
-  # plain mode's editor reads. A dev container built on the sidecar does not
-  # get this mount — named volumes do not cross to that daemon — so its editor
-  # is seeded by the code-server module instead. Read-write on purpose: an
-  # edit here, or from the host by mounting vscode-settings-<owner-id>, is the
-  # file every workspace container opens.
+  # Nested the same way as the .grok paths above: the home volume is mounted
+  # first, then this covers /home/coder/.shared/vscode with the owner's one
+  # settings volume. It is now the shared OVERLAY, not the file the editor
+  # opens: startup.sh.tftpl seeds it once, then renders code-server's User
+  # settings.json as a real per-workspace file and layers this overlay on top of
+  # that render, so an API key entered in any workspace reaches every one of
+  # them while a per-workspace setting stays put. A dev container built on the
+  # sidecar does not get this mount - named volumes do not cross to that daemon
+  # - so its editor is seeded by the code-server module instead. Read-write on
+  # purpose: that is where the editor writes operator-entered keys.
   volumes {
     container_path = "/home/coder/.shared/vscode"
     volume_name    = local.vscode_settings_volume

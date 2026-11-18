@@ -63,6 +63,14 @@ setup() {
 # would keep writing into a directory that has just been deleted.
 teardown() {
   local tries=0
+  # notes_hoist_legacy copies content only and hands the write bit back on the
+  # copy, so a healthy run leaves this tree writable. The chmod stays as the
+  # guard for the failure path: if a hoist ever does carry a mode across, a
+  # failing assertion must still hand the scratch tree back writable or the sweep
+  # under HOME cannot remove it.
+  if [ -n "${HOIST_DEST:-}" ]; then
+    chmod -R u+w "${HOIST_DEST}" 2>/dev/null || true
+  fi
   if [ -n "${WATCH_ROOT}" ]; then
     pkill -f -- "${PROFILE_HOME}/[.]notes-sync[.]lock" 2>/dev/null || true
     pkill -f -- "${WATCH_ROOT} " 2>/dev/null || true
@@ -186,6 +194,49 @@ age_live() {
   run notes_live_name "$(make_scratch)/not-a-repo"
   [ "${status}" -eq 0 ]
   [ "${lines[0]}" = "notes.md" ]
+}
+
+@test "notes_hoist_legacy: the pre-split copy crosses over once and the legacy mount is never written" {
+  # ~/.grok is no longer one shared volume: notes, memory and sessions are three
+  # per-workspace mounts, and the old whole-profile volume rides READ-ONLY at
+  # ~/.grok-legacy for one boot. So the hoist copies, copies nothing twice, and
+  # leaves the source byte-intact.
+  local legacy="${HOME}/.grok-legacy" before after
+  HOIST_DEST="${HOME}/.grok"
+  mkdir -p "${legacy}/notes/github.com/acme/hoist" "${legacy}/memory"
+  printf '%s\n' 'written before the split' >"${legacy}/notes/github.com/acme/hoist/notes.md"
+  printf '%s\n' 'a remembered session' >"${legacy}/memory/session.md"
+  before="$(find "${legacy}" -print | sort)"
+  chmod -R a-w "${legacy}"
+  run notes_hoist_legacy
+  chmod -R u+w "${legacy}"
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${HOME}/.grok/notes/github.com/acme/hoist/notes.md")" = "written before the split" ]
+  [ "$(cat "${HOME}/.grok/memory/session.md")" = "a remembered session" ]
+  [[ "${output}" == *"note: hoisted notes from the legacy profile volume"* ]]
+  # Idempotent: the destination now holds what someone wrote, so a second boot
+  # copies nothing and says nothing.
+  run notes_hoist_legacy
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
+  # The read-only source keeps everything it was given.
+  after="$(find "${legacy}" -print | sort)"
+  [ "${before}" = "${after}" ]
+  [ "$(cat "${legacy}/notes/github.com/acme/hoist/notes.md")" = "written before the split" ]
+  # The copy owns its own permissions. The fixture took the write bit off the
+  # source, so a copy that carried the source's mode would land here unreadable
+  # and unwritable, and the back-sync could never write the file back.
+  [ -w "${HOME}/.grok/notes/github.com/acme/hoist/notes.md" ]
+  [ -w "${HOME}/.grok/notes/github.com/acme" ]
+  [ -w "${HOME}/.grok/memory" ]
+}
+
+@test "notes_hoist_legacy: no legacy mount at all is silence, not a warning" {
+  # A private-mode workspace gets no ~/.grok-legacy, and the stage that calls
+  # this runs on every boot, so an absent mount must neither print nor fail.
+  run notes_hoist_legacy
+  [ "${status}" -eq 0 ]
+  [ -z "${output}" ]
 }
 
 @test "notes_materialize: a workspace recreate restores the canonical copy" {

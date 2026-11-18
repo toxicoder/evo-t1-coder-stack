@@ -175,12 +175,35 @@ VSCODE_SETTINGS_EOF
     echo "WARNING: could not write $shared_settings — the vscode-settings volume is not writable. Editor settings were not seeded." >&2
   fi
 fi
-# A regular file here is the old per-workspace copy: keep it beside the link once,
-# then point the editor at the shared file on every start. ln -sfn replaces a symlink.
-if [ -e "$user_settings" ] && [ ! -L "$user_settings" ]; then
-  mv "$user_settings" "$${user_settings}.pre-shared"
+# A real file, rewritten each start: render, then the shared overlay wins, then the
+# theme, so the overlay cannot veto it. Your own symlink here is left alone.
+if [ -L "$user_settings" ]; then
+  echo "note: $user_settings is your own symlink - the stack leaves it alone."
+else
+  user_settings_new="$${user_settings}.tmp"
+  if cat >"$user_settings_new" <<'VSCODE_USER_SETTINGS_EOF'
+${vscode_settings}
+VSCODE_USER_SETTINGS_EOF
+  then
+    if [ -f "$shared_settings" ]; then
+      if command -v jq >/dev/null 2>&1 && jq -s \
+        '(.[0] * .[1]) + {"workbench.colorTheme": (.[0]["workbench.colorTheme"] // .[1]["workbench.colorTheme"] // empty)}' \
+        "$user_settings_new" "$shared_settings" >"$${user_settings_new}.m" 2>/dev/null; then
+        mv -f "$${user_settings_new}.m" "$user_settings_new"
+      elif command -v python3 >/dev/null 2>&1; then
+        SETTINGS_BASE="$user_settings_new" SETTINGS_OVERLAY="$shared_settings" \
+          SETTINGS_OUT="$${user_settings_new}.m" python3 -c 'import json,os; b=json.load(open(os.environ["SETTINGS_BASE"])); o=json.load(open(os.environ["SETTINGS_OVERLAY"])); m={**b,**o,**({"workbench.colorTheme":b["workbench.colorTheme"]} if "workbench.colorTheme" in b else ({"workbench.colorTheme":o["workbench.colorTheme"]} if "workbench.colorTheme" in o else {}))}; json.dump(m,open(os.environ["SETTINGS_OUT"],"w"),indent=2); open(os.environ["SETTINGS_OUT"],"a").write("\n")'
+        mv -f "$${user_settings_new}.m" "$user_settings_new" 2>/dev/null || true
+      fi
+      rm -f "$${user_settings_new}.m" 2>/dev/null || true
+    fi
+    mv -f "$user_settings_new" "$user_settings"
+    chmod 600 "$user_settings" 2>/dev/null || true
+  else
+    echo "WARNING: could not write $user_settings_new - the editor settings were not refreshed." >&2
+    rm -f "$user_settings_new" 2>/dev/null || true
+  fi
 fi
-ln -sfn "$shared_settings" "$user_settings"
 
 # --- Grok Build config --------------------------------------------------------
 # docs/coder-templates.md#marker-ownership-of-the-seeded-files
@@ -190,17 +213,24 @@ if [ ! -f "$HOME/.grok/config.toml" ] \
    || [ "$GROK_FRESH_INSTALL" = "1" ] \
    || grep -qFs -e 'managed-by: evo-t1-coder-stack' -e '__evoT1Stack = true' \
      "$HOME/.grok/config.toml"; then
-  # Carried over instead of wiped: the tables the CLI owns are [cli] (cli.installer),
-  # [ui] (permission_mode) and [marketplace].
-  cli_block="$(mktemp 2>/dev/null || printf '/tmp/grok-cli-block.%s.toml' "$$")"
+  # [ui] comes across minus the keys the render owns: a second [ui] is bad TOML.
+  cli_block="$(mktemp)"
+  ui_keys="$(mktemp)"
   if [ -f "$HOME/.grok/config.toml" ]; then
-    awk '/^\[(cli|ui|marketplace)\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
+    awk '/^\[(cli|marketplace)\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
       "$HOME/.grok/config.toml" >"$cli_block" 2>/dev/null || : >"$cli_block"
+    awk '/^\[ui\][[:space:]]*$/{f=1;next} /^\[/{f=0} \
+      f && $0 !~ /^[[:space:]]*(theme|auto_dark_theme|auto_light_theme|ui_theme)[[:space:]]*=/' \
+      "$HOME/.grok/config.toml" >"$ui_keys" 2>/dev/null || : >"$ui_keys"
   else
     : >"$cli_block"
+    : >"$ui_keys"
   fi
   {
-    cat <<'GROK_CONFIG_EOF'
+    awk -v ui="$ui_keys" \
+      'BEGIN{while ((getline l < ui) > 0) k[n++] = l; close(ui)} \
+       {print; if (/^\[ui\][[:space:]]*$/) {u = 1; for (i = 0; i < n; i++) print k[i]}} \
+       END{if (!u && n) {printf "\n[ui]\n"; for (i = 0; i < n; i++) print k[i]}}' <<'GROK_CONFIG_EOF'
 ${grok_config}
 GROK_CONFIG_EOF
     if [ -s "$cli_block" ]; then
@@ -208,11 +238,10 @@ GROK_CONFIG_EOF
       cat "$cli_block"
     fi
   } >"$HOME/.grok/config.toml" || true
-  rm -f "$cli_block"
+  rm -f "$cli_block" "$ui_keys"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
 else
-  # Same marker contract as ~/.tmux.conf above. Say what the loss costs: the render
-  # above is the only place this workspace's model catalog and MCP lanes are written.
+  # Same marker contract as ~/.tmux.conf above; the loss costs this model catalog.
   echo "WARNING: $HOME/.grok/config.toml carries neither stack marker (no" \
     "managed-by comment, no __evoT1Stack key) - this workspace is" \
     "running a config the stack does not manage, so the default MCP lanes and" \
@@ -240,8 +269,8 @@ check_mcp_commands() {
 check_mcp_commands || true
 
 # --- Context7 cache-proxy config ---------------------------------------------
-# Seeded only while absent, so a hand-edited copy survives. Under ~/.grok so a shared
-# grok-profile volume reuses the SQLite cache. The JSON names no secret.
+# Seeded only while absent, so a hand-edited copy survives. Under ~/.grok, which is
+# this workspace's own. The JSON names no secret.
 mkdir -p "$HOME/.grok/mcp-cache-proxy" 2>/dev/null || true
 if [ ! -f "$HOME/.grok/mcp-cache-proxy/config.json" ]; then
   cat >"$HOME/.grok/mcp-cache-proxy/config.json" <<'MCP_CACHE_PROXY_EOF'
