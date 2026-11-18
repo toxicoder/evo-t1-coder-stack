@@ -1,0 +1,439 @@
+{
+  "uid": "evo-sparks-fleet",
+  "title": "DGX Spark fleet",
+  "tags": ["evo-t1", "spark", "fleet"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "description": "The aggregate view of the three DGX Sparks: is the fleet uniform. There is no box picker on this page by design - every panel reads the spark: fleet-level recording rules, so it answers for all boxes at once. To work on one box, open it from the DGX Sparks overview.",
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Total GPU utilisation",
+      "description": "Mean GPU utilisation across every box the fleet is reporting; a fleet-wide line that sags while LiteLLM keeps dispatching means the proxy is sending work to boxes that are not picking it up.",
+      "id": 1,
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "avg(spark:gpu_util_pct:fleet_mean)",
+          "legendFormat": "fleet mean",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "none", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100 }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Total GPU power draw",
+      "description": "Watts drawn by every GPU the fleet can see; a rising number with a flat utilisation line is a box spinning without work, and a number that sits far under the three-box idle floor means a card stopped reporting.",
+      "id": 2,
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_power_watts:fleet_sum",
+          "legendFormat": "fleet total",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "none", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "watts", "min": 0 }, "overrides": [] }
+    },
+    {
+      "type": "stat",
+      "title": "Hottest GPU core",
+      "description": "The single hottest GPU core anywhere in the fleet, against the 95 C slowdown point these cards hold clocks from; a rising number here is the room's airflow, not one bad workload. Aggregated here because spark.rules.yml records spark:gpu_temp_c:gpu and no fleet-level variant.",
+      "id": 3,
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(spark:gpu_temp_c:gpu)",
+          "legendFormat": "hottest core",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0 }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 80 },
+          { "color": "red", "value": 87 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Fullest framebuffer",
+      "description": "The worst used/(used+free) ratio on any card in the fleet; past the 95% line a model that needs more memory fails to load rather than slowing down, which is where SparkGpuVramPressure fires.",
+      "id": 4,
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_fb_fill_ratio:fleet_max",
+          "legendFormat": "fullest card",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 0.9 },
+          { "color": "red", "value": 0.95 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Boxes up, of those enrolled",
+      "description": "Sparks whose node_exporter answers, out of how many the Prometheus target set currently names. There is no committed expected count - the target file is generated on the host by //scripts:spark-monitor -- --targets - so enrolled is the honest denominator, and enrolled 0 is the shipped fresh-stack state with SPARK_MONITOR_ENABLED off.",
+      "id": 5,
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:boxes_answering",
+          "legendFormat": "up",
+          "instant": true
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(spark:box_up) or vector(0)",
+          "legendFormat": "enrolled",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "red", "value": null },
+          { "color": "green", "value": 1 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Uncorrectable ECC rows, last hour",
+      "description": "Row remaps across the whole fleet that ECC could not correct; these are counters that only go up, so any number above zero is data loss on a card and the SparkGpuEccUncorrectable alert pages on it.",
+      "id": 6,
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(spark:gpu_ecc_uncorrectable_rows_increase_1h:box)",
+          "legendFormat": "fleet total",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "red", "value": 1 }
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU utilisation, one line per box",
+      "description": "Per-box mean GPU utilisation from the spark:gpu_util_pct:box rule, grouped on the hostname the recording rule carries. Read it for shape rather than level: three lines that track each other are a uniform fleet, and the line that peels off is the box not pulling its weight.",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 10, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_util_pct:box",
+          "legendFormat": "{{hostname}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "GPU utilisation spread (max - min)",
+      "description": "The busiest box minus the idlest box, in utilisation points; a fleet under load should sit near zero, and a spread that opens while LiteLLM keeps dispatching is the one-box-is-not-pulling-its-weight signal. Aggregated inline because spark.rules.yml has no :fleet_max or :fleet_min variant of the per-box util rule.",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "fillOpacity": 25, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max(spark:gpu_util_pct:box) - min(spark:gpu_util_pct:box)",
+          "legendFormat": "spread"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Fleet GPU comparison, one row per box",
+      "description": "The whole fleet as one number per box per column, so a card that runs hotter, fuller, or lazier than its neighbours is visible without a box picker. Grouped on hostname: every series here comes from a spark: recording rule, which spark.rules.yml records with that label.",
+      "id": 9,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Framebuffer fill" }, "properties": [ { "id": "unit", "value": "percentunit" } ] },
+          { "matcher": { "id": "byName", "options": "Hottest core" }, "properties": [ { "id": "unit", "value": "celsius" } ] },
+          { "matcher": { "id": "byName", "options": "GPU power" }, "properties": [ { "id": "unit", "value": "watts" } ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_util_pct:box",
+          "legendFormat": "GPU util",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_fb_fill_ratio:box",
+          "legendFormat": "Framebuffer fill",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max by (hostname) (spark:gpu_temp_c:gpu)",
+          "legendFormat": "Hottest core",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_power_watts:box",
+          "legendFormat": "GPU power",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true } } },
+        { "id": "joinByField", "options": { "byField": "hostname", "mode": "outer" } }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Box CPU and memory, one row per box",
+      "description": "The host side of each Spark: busy CPU, memory under pressure, and 5-minute load. Grouped on box, because these rows come from each Spark's own node_exporter, whose series carry box and instance and not the hostname the GPU rules use; the two tables are therefore deliberately not joined.",
+      "id": 10,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "CPU busy" }, "properties": [ { "id": "unit", "value": "percent" }, { "id": "max", "value": 100 }, { "id": "min", "value": 0 } ] },
+          { "matcher": { "id": "byName", "options": "Memory used" }, "properties": [ { "id": "unit", "value": "percent" }, { "id": "max", "value": 100 }, { "id": "min", "value": 0 } ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 - 100 * avg by (box) (rate(node_cpu_seconds_total{box!=\"\",mode=\"idle\"}[5m]))",
+          "legendFormat": "CPU busy",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "100 * (1 - sum by (box) (node_memory_MemAvailable_bytes{box!=\"\"}) / sum by (box) (node_memory_MemTotal_bytes{box!=\"\"}))",
+          "legendFormat": "Memory used",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "avg by (box) (node_load5{box!=\"\"})",
+          "legendFormat": "Load 5m",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true } } },
+        { "id": "joinByField", "options": { "byField": "box", "mode": "outer" } }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Uncorrectable ECC row remaps, per box and GPU",
+      "description": "One row per card that DCGM has seen, so a degrading card is found across the fleet rather than per box; correctable remaps are wear, these are faults, and the SparkGpuEccUncorrectable alert fires on any row above zero. Grouped on hostname and gpu, the identity labels the spark: ECC rule carries.",
+      "id": 11,
+      "gridPos": { "h": 9, "w": 10, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "custom": { "align": "auto", "cellOptions": { "type": "auto" } } },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "spark:gpu_ecc_uncorrectable_rows_increase_1h:gpu",
+          "legendFormat": "Uncorrectable rows in 1h",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true } } }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Fleet queue and admission",
+      "description": "Requests queued for admission, requests per second the admission controller turned away, and requests in flight, all summed proxy-wide because these gauges carry no labels and are per uvicorn worker. Queue depth climbing with rejections is the fleet saturated, not one box; queue depth climbing while the GPU lines stay flat is the dispatcher.",
+      "id": 12,
+      "gridPos": { "h": 9, "w": 14, "x": 10, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 10, "lineWidth": 1 } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "rejected/s" }, "properties": [ { "id": "unit", "value": "reqps" } ] }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:admission_queued_requests",
+          "legendFormat": "queued"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(litellm:admission_rejections_per_second:5m)",
+          "legendFormat": "rejected/s"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:in_flight_requests",
+          "legendFormat": "in flight"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Requests queued for admission",
+      "description": "How many requests are waiting at the admission controller right now across every uvicorn worker; a rising number here means the fleet is the bottleneck, which is the question this page answers.",
+      "id": 13,
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:admission_queued_requests",
+          "legendFormat": "queued",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 1 },
+          { "color": "red", "value": 10 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Admission rejections per second",
+      "description": "Requests the admission controller has refused, summed over every reason and every worker; any rate above zero is this stack shedding work that a healthy three-box fleet should have absorbed.",
+      "id": 14,
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(litellm:admission_rejections_per_second:5m)",
+          "legendFormat": "rejected/s",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "red", "value": 0.01 }
+        ]
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Queue wait p95",
+      "description": "The 95th percentile of time between admission and dispatch, proxy-wide; seconds of wait with idle GPUs somewhere in the fleet is a dispatch problem, and seconds of wait with every GPU pegged is capacity you have to buy.",
+      "id": 15,
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 31 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:queue_wait_p95:5m",
+          "legendFormat": "queue wait p95",
+          "instant": true
+        }
+      ],
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "auto", "noValue": "no data" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 0.5 },
+          { "color": "red", "value": 2 }
+        ]
+      }
+    }
+  ]
+}
