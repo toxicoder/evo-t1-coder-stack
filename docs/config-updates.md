@@ -55,10 +55,16 @@ stack, `dev-stack.env` for the dev one - and each has a checked-in twin beside
 it that carries the keys and explains them in the comment lines above. A pull
 that renames, adds or retires a key silently changes what the stack runs on.
 
-**The workspace config.** `~/.grok/AGENTS.md`, `~/.grok/config.toml`,
-`~/.shared/vscode/settings.json`, `~/.tmux.conf` and the `~/.coder` and
-`~/.agents` seeds are materialised inside each workspace when it first boots and
-are never revisited after that. A re-pushed template only reaches workspaces
+**The workspace config.** `~/.grok/AGENTS.md`, `~/.tmux.conf` and the `~/.coder`
+and `~/.agents` seeds are materialised inside each workspace when it first boots
+and are never revisited after that. `~/.grok/config.toml` and the code-server
+`~/.local/share/code-server/User/settings.json` are the two rendered files: each
+is that workspace's own, written from the template on every start, so a temporary
+hand-edit there survives until that workspace restarts and reaches no other
+workspace, while a re-push plus a restart re-renders it from the latest template.
+The shared overlay `~/.shared/vscode/settings.json` is a rendered file too, but
+the boot writes it only while absent, so the API keys an operator put there
+survive every restart. A re-pushed template only reaches workspaces
 that have been **start**ed or **restart**ed since the push - **stop** and
 **start** is what re-runs the provisioning script and therefore re-runs
 `before_config`.
@@ -97,7 +103,8 @@ bring-up runs on the credentials it already has. With the flag off - the shipped
 [operate/secrets.md](operate/secrets.md) owns the vault, its inventory and its verbs.
 
 `workspace` re-materialises the stack-owned config inside the targets you name.
-The reseed set is the twenty-nine home-relative targets the templates seed -
+The reseed set is the home-relative targets the templates seed, listed by
+`seed_seed_targets` in `scripts/lib/config_seed.sh` -
 `~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
 `~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the six
 `ez-learn`, `ez-skillify` and `ez-create-skill` `SKILL.md` copies (two homes each), the
@@ -202,18 +209,18 @@ you try a change on a scratch tree before pointing a live stack at it. See
 - It never drops a key your env file still sets; retired keys are commented out
   in place.
 - It does not touch `~/.grok/config.toml`. That file is rendered *inside* the
-  workspace, and `~/.grok` is one profile volume per owner, so a copy from the
-  host would move the model list, the session-affinity key and the editor keys
-  of every workspace sharing the profile. A **start/restart** re-renders it from
-  this checkout, which is the only way a per-workspace value gets in, and the
-  pass says so after it reseeds.
+  workspace, and it is a per-workspace file on that workspace's own home volume:
+  the model list, the session-affinity key and the `[ui]` theme belong to one
+  workspace, so a copy pushed from the host would stamp this checkout's defaults
+  over what that workspace's own create-form answers rendered. A
+  **start/restart** re-renders it from this checkout, which is the only way a
+  per-workspace value gets in, and the pass says so after it reseeds.
 - `~/.shared/vscode/settings.json` is the one rendered target it does reseed, and
   it re-*renders* rather than copies: `${litellm_url}` and the `$${...}`
   dollar-brace unfoldings are rewritten, and that workspace's own `cline.apiKey`
   and `roo.openaiApiKey` are carried forward.
 
-Inside a running container the same twenty-nine targets are `refresh-configs`'s job
-too: same reseed set, same marker rule, `--json` for a machine-readable
+Inside a running container the same targets are `refresh-configs`'s job too: same reseed set, same marker rule, `--json` for a machine-readable
 answer, and `--litellm-url <url>` for a stack environment that publishes
 LiteLLM on a port other than 4000 (the reseeded `settings.json` then still
 names that stack's own model transport). A third tool covers the same set on a
@@ -225,7 +232,8 @@ writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width,
 `GROK_SUBAGENT_MAX_DEPTH` the nesting depth (the `grok_subagent_max_depth` template
 variable), and
 `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
-reader, the planner and the skeptic ride. The width default is the fleet's
+reader, the planner and the skeptic ride, and `GROK_THEME` (default `grokbuild`)
+the `[ui]` theme name. The width default is the fleet's
 own `GROK_SWARM_WIDTH` (15: three Spark boxes at `PARALLEL` 5), which is the same
 `grok_swarm_width` the templates take, on every lane rather than one number per lane;
 a pinned lane only ever keeps one box's streams busy, so an operator who pins
@@ -333,21 +341,25 @@ profile** dropdown. Read once per push, so changing the default here needs
 `bazelisk run //scripts:push-template`. Overriding it for one workspace happens on
 that dropdown and needs a rebuild, like `dind`.
 
-- `shared` (the default): every workspace of a user mounts that user's shared
-  grok-profile volume nested inside `/home/coder`, so `config.toml`, the MCP warm
-  caches, `memory-v2`, skills and a self-installed CLI are one profile shared by
-  that account's workspaces. It is re-rendered on every start and the
-  **last-started workspace wins** for all of them.
-- `private`: no nested mount. Each workspace gets a private `~/.grok` on its own
-  home volume, so its `config.toml` - plus memory, skills and logs - differs per
-  workspace and dies with the workspace.
-- A workspace moving `shared` -> `private` starts on an empty profile: nothing is
-  copied and the shared volume is left alone.
+- `shared` (the default): every workspace of a user mounts three of that user's
+  volumes nested inside `/home/coder` - `grok-notes-<owner-id>` at `~/.grok/notes`,
+  `grok-memory-<owner-id>` at `~/.grok/memory`, `grok-sessions-<owner-id>` at
+  `~/.grok/sessions` - so the notes, the memory and the sessions are one set of state
+  that account's workspaces share, and they survive a rebuild. `config.toml` is not
+  part of the share: each workspace renders its own on every start, so this
+  workspace's model, theme and extras are its own and no sibling's boot overwrites
+  them.
+- `private`: no per-owner volume at all. Notes, memory and sessions then live on that
+  workspace's own home volume, differ per workspace, and die with the workspace;
+  `config.toml` is per workspace either way.
+- A workspace moving `shared` -> `private` starts on whatever those three directories
+  already hold on its own home volume: nothing is copied and the owner's volumes are
+  left alone.
 
 Switching either way is a **rebuild**, not a stop/start, because the nested mount
 is decided when the workspace is built.
-[grok-build-and-agents.md](grok-build-and-agents.md) covers what the shared
-profile holds and what seeds on first boot; the `workspace` pass above never
+[grok-build-and-agents.md](grok-build-and-agents.md) covers what the state volumes
+hold and what seeds on first boot; the `workspace` pass above never
 reseeds `~/.grok/config.toml` for exactly that reason.
 
 ## Public hosts and the dashboard

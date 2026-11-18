@@ -15,7 +15,7 @@ tags: [grok, agents, workspace, mcp]
 - How a subagent fan-out is sized, laned, and dispatched from a micro-plan
 - The seeded fleet suite: six definitions, three personas, four skills, the five advisor
   commands, the seeded guard hooks, and the skeptic that closes every multi-file change
-- One shared profile volume per user, and what last-booted rewrites
+- The per-user state volumes, the per-workspace `config.toml`, and what each boot rewrites
 - The search lane and the MCP servers behind it
 - Coder Agents on the control plane and the model config it needs
 
@@ -475,8 +475,8 @@ while the managed block is intact.
   [litellm-routing.md](litellm-routing.md#the-fast-compaction-lanes-agent-xhigh-fast-and-agent-swarm-fast).
 - `[models]` also carries `extra_headers` with
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
-  workspace's traffic to one healthy Spark box. Under a shared profile the
-  last-booted workspace's key wins for the whole fleet.
+  workspace's traffic to one healthy Spark box. Each workspace renders its own
+  key: `config.toml` is that workspace's own file.
 - `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane each
   type rides, both rendered from template variables: `grok_subagents_lane` (default
   `agent-swarm`) for the writers, three more for the reader, planner and skeptic roles named
@@ -956,7 +956,8 @@ python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo <clone>
 
 It writes `code-index.json` for a program and `code-index.md` for a person under
 `~/.grok/notes/<host>/<owner>/<repo>/` - the same notes directory `ez-learn` owns, outside the
-clone, carried by the shared profile volume, so nothing new runs and nothing is committed.
+clone, carried by the owner's `grok-notes-<owner-id>` volume, so nothing new runs and
+nothing is committed.
 `--home DIR` points it at another profile home instead of `$HOME`, and `--json` prints
 the whole record instead of the one `ok: N files, M symbols -> ...` line. The helper is
 `templates/common/ez-code-index.code_index.py`, seeded into a `scripts/` subdir of the same
@@ -1139,38 +1140,52 @@ Either way the fix is the seed under `templates/common/` and a re-materialize, n
 to the copy that is running - the same rule the two skill families above live by
 ([the three stack-seeded skill commands](#the-three-stack-seeded-skill-commands)).
 
-## Grok Build state: one shared profile per user
+## Grok Build state: shared state, per-workspace config
 
-Every workspace gets its own `/home/coder` volume, and `~/.grok` is a **second,
-nested** mount inside it: a Docker volume named `grok-profile-<owner-id>`,
-referenced by name rather than declared as a Terraform resource, which every
-workspace of that owner mounts read-write at the same path **while that workspace is
-in `shared` mode**.
+Every workspace gets its own `/home/coder` volume, and `~/.grok` sits on it as an
+ordinary directory, `config.toml` included. What is shared is **state**: three nested
+mounts inside that home volume, one per concern, each a Docker volume named for the
+owner (`grok-notes-<owner-id>`, `grok-memory-<owner-id>`, `grok-sessions-<owner-id>`),
+referenced by name rather than declared as a Terraform resource, which every workspace
+of that owner mounts read-write at its own path **while that workspace is in `shared`
+mode**.
 
 ### The two modes
 
-- `shared` (the default here, so a workspace gets the profile unless you turn the
-  mode off): configure the CLI once and the rest of that account's workspaces
-  inherit it.
-- `private`: that workspace's `~/.grok` - `config.toml` included - lives on its own
-  home volume, differs from its siblings, and dies with the workspace (or survives a
-  rebuild on the same volume).
+- `shared` (the default here): the three state directories ride their owner's
+  volumes, so the notes, the memory and the sessions are the same files in every
+  workspace that account owns, and they survive a rebuild. `config.toml` is not part
+  of that share - each workspace renders its own.
+- `private`: no per-owner volume at all. The notes, the memory and the sessions live
+  on that workspace's own home volume, differ from its siblings, and die with the
+  workspace. `config.toml` is per workspace either way.
 - Set in two places: the template variable `grok_profile_mode`
   (`GROK_PROFILE_MODE=shared|private` in `.env`, forwarded by `push-template.sh` as
   `--var grok_profile_mode`), and the create form's per-workspace **Grok profile**
   field, which defaults to the variable. One workspace can therefore sit outside the
-  shared profile while its siblings stay inside it.
-- Changing the mode needs a **rebuild** - the nested mount either exists or it does
-  not. A workspace that goes from `shared` to `private` starts on an empty profile:
-  nothing is copied, and the shared volume is left alone.
+  shared state while its siblings stay inside it.
+- Changing the mode needs a **rebuild** - the three nested mounts either exist or they
+  do not. A workspace that goes from `shared` to `private` starts on whatever those
+  three directories already hold on its own home volume: nothing is copied, and the
+  owner's volumes are left alone.
 
 ### What is shared
 
-In `shared` mode: `config.toml`, `skills/`, `memory-v2/`, `sessions/`, `notes/` (the
-canonical copy of each repository's private scratch `notes.md`), and a CLI you
-installed yourself under `~/.grok/bin`. The CLI's own skill directories, `skills/` and
-`bundled/`, are never created here without an x.ai sign-in; the stack's skill seeds
-live under `~/.coder/skills` and `~/.agents/skills`, outside this volume.
+In `shared` mode, three directories: `notes/` (the canonical copy of each
+repository's private scratch `notes.md`), `memory/`, and `sessions/` - one volume
+each, mounted at `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions`. Nothing
+else under `~/.grok` is shared: `config.toml`, `skills/`, the MCP warm caches and a CLI
+you installed yourself under `~/.grok/bin` are regular files on this workspace's own
+home volume, and those die with the workspace. The CLI's own skill directories,
+`skills/` and `bundled/`, are never created here without an x.ai sign-in; the stack's
+skill seeds live under `~/.coder/skills` and `~/.agents/skills`, outside this tree.
+
+The whole-profile volume this template used to mount over all of `~/.grok`,
+`grok-profile-<owner-id>`, is still mounted in `shared` mode, but **read-only** and at
+`~/.grok-legacy`, purely so the first start after that split can copy its `notes/`,
+`memory/` and `sessions/` across once: `notes_hoist_legacy` in
+`templates/common/notes-setup.sh` takes a concern only when the destination is missing
+or empty, and nothing reads that mount afterwards. A later `chore:` removes it.
 
 `notes/<host>/<owner>/<repo>/notes.md` is keyed per git remote, so every clone a
 workspace holds — the primary and each additional repository — has its own file. What you
@@ -1197,7 +1212,7 @@ in a clone. Before any substantive canonical copy is replaced it is archived as
 `notes/<host>/<owner>/<repo>/backups/notes-YYYYmmdd-HHMMSS.md`, keeping the newest
 `NOTES_BACKUP_KEEP` (10 by default), and that directory is where an operator recovers notes
 after an accident. `grok_profile_mode=private` mounts no shared volume, so those notes die
-with that workspace; `shared` is the default. Like `config.toml`, the last workspace
+with that workspace; `shared` is the default. Like the memory tree, the last workspace
 started for a given user and repository wins.
 
 Two things about that start are worth knowing before you go looking for a vanished
@@ -1223,9 +1238,10 @@ clone is never asked to delete somebody else's committed file.
   notes watcher over the same canonical path, so there too the last write wins, tick by
   tick. The stub and empty guards and the `backups/` archive are what bound the damage a
   losing tick can do; they do not merge two diverging files.
-- One shared profile is one `config.toml` for every workspace that owner owns, and
-  the last boot to re-render it wins - for the default model, the affinity key and
-  the config extras alike.
+- There is no longer one `config.toml` to set once for a whole account: each
+  workspace renders its own from the template on start. A hand edit there lasts until
+  **that** workspace restarts and touches no other workspace, and the next start after
+  a template re-push brings the file back from the new template.
 
 ## Search lane and MCP servers
 
@@ -1318,8 +1334,8 @@ clone is never asked to delete somebody else's committed file.
   pinned in `images/dev/tool-versions.env` and baked into the golden image, so parking
   or restoring it is a flag plus a template push, while changing the packages
   themselves takes an image rebuild. The proxy keeps its SQLite cache under
-  `~/.grok/mcp-cache-proxy/`, which rides the owner's shared
-  profile volume in `shared` mode, and the cache TTL is 12 h: the first lookup of a
+  `~/.grok/mcp-cache-proxy/`, which sits on this workspace's own
+  home volume, so each workspace warms its own cache, and the cache TTL is 12 h: the first lookup of a
   library reaches the Context7 API and needs network, while an identical lookup inside
   the TTL is answered locally. `CONTEXT7_API_KEY` is optional and the lane does not
   depend on it: an empty value sends no `Authorization` header at all, so the server
@@ -1380,19 +1396,26 @@ clone is never asked to delete somebody else's committed file.
   listed in `__evoT1StackModels`). The seed is
   `settings.json.tftpl`, copied onto the per-owner volume
   `vscode-settings-<owner-id>` (mounted at `~/.shared/vscode/settings.json`) only
-  while that file is absent, and symlinked from
-  `~/.local/share/code-server/User/settings.json`. Startup chowns that volume to
+  while that file is absent, where it stays as the shared overlay. What code-server
+  actually reads, `~/.local/share/code-server/User/settings.json`, is a real file on
+  this workspace's own home volume, which `templates/workspace/startup.sh.tftpl`
+  rewrites on every start in three passes: the per-workspace render as the base, then
+  every key of that overlay on top so an API key entered once still wins, then
+  `workbench.colorTheme` re-asserted from the render last, so a theme put in the shared
+  overlay loses to this workspace's own theme (the **Editor colour theme** field,
+  `vscode_color_theme`, default `Default Dark Modern`). Startup chowns that volume to
   the home owner before the first write (empty named volumes are `root:root`
-  755). Edits stick, and every workspace
-  that owner has shares the file; delete it to copy the template in again. From the
+  755). Edits to the overlay stick, and every workspace
+  that owner has gets them layered over its own render; delete it to copy the template
+  in again. From the
   host it is the volume's `settings.json`:
 
   ```sh
   docker run --rm -it -v vscode-settings-<owner-id>:/vscode alpine vi /vscode/settings.json
   ```
 
-- A built dev container mounts neither the volume nor the symlink, so it is the one
-  place the seed is **merged** instead of linked: the inlined
+- A built dev container sees neither the volume nor that overlay, so it is the one
+  place the seed is **baked** rather than layered: the inlined
   `coder_script.code_server` fork bakes a base64 copy of it and writes it over the
   dev container's private `User/settings.json` (or merges over a copy that survived a
   rebuild, when `jq` is on PATH; without `jq` the existing file is kept). Edits
@@ -1693,9 +1716,8 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   [The rendered `~/.grok` config](#the-rendered-grok-config). Either way the marker
   never reaches the model: the agent strips HTML comments from injected instruction
   text.
-- The seeds live per workspace, on that workspace's own home volume. They are *not*
-  on the shared `~/.grok` profile volume above, and seeding does not care whether
-  that mount exists.
+- The seeds live per workspace, on that workspace's own home volume, and seeding
+  does not care whether the three shared state mounts exist.
 
 ### The three stack-seeded skill commands
 

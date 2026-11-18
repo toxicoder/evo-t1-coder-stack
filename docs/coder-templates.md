@@ -66,7 +66,7 @@ missing one fails the push before the CLI runs.
   reaches `notes_sync_start` on the home owner's uid and leaves the container with one
   background watcher (`NOTES_SYNC_INTERVAL` seconds, 30 by default; one instance per
   container behind a `flock` on `$HOME/.notes-sync.lock`) copying each clone's notes back
-  to the owner's profile volume between boots. The workspace twin watches
+  to the owner's notes volume between boots. The workspace twin watches
   `$HOME/workspace`; the devcontainer twin passes its `$dc_dir`, because those clones sit
   on the `/srv/coder-devcontainers` bind.
 - `tmux.conf`, `grok-build-terminal.sh`, and `vscode-terminal-tmux.sh` are the
@@ -154,7 +154,7 @@ missing one fails the push before the CLI runs.
   [grok-build-and-agents.md](grok-build-and-agents.md#hooks).
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
   writes, into `~/.grok/mcp-cache-proxy/config.json` and only while that file is absent
-  (so a shared profile volume reuses one SQLite cache across that owner's workspaces). It
+  (that path is per workspace, so each workspace warms its own SQLite cache). It
   names no secret: the empty `CONTEXT7_API_KEY` value is what tells `mcp-cache-proxy` to
   inherit `process.env`.
 - `gh-token-refresh.sh.tftpl` is the shared GitHub-token refresh `coder_script`,
@@ -536,18 +536,24 @@ What a create form shows, in `workspace` order.
 4. **Git repositories (additional)** (`additional_repos`, textarea, mutable, default
    empty).
 5. **Grok profile** (`grok_profile_mode`, dropdown, immutable, default `shared`).
-   `private` gives that one workspace a private `~/.grok` on its own home volume, so one
-   workspace can sit outside the shared profile while its siblings stay inside it.
-   Switching needs a rebuild.
+   `shared` puts that workspace's notes, memory and sessions on one per-owner volume
+   each; `private` mounts no per-owner volume, so all three live on that workspace's
+   own home volume and die with it. `config.toml` is that workspace's own file in both
+   modes. Switching needs a rebuild.
 6. **Grok default model** (`grok_default_model`, dropdown, immutable, default `agent`).
 7. **Grok config extras** (`grok_config_extra`, textarea, mutable, default empty).
    Whatever you type is appended verbatim, under a comment header, to that workspace's
-   rendered `~/.grok/config.toml`. That file is only observably per-workspace while the
-   profile mode is `private`: one shared profile is one file for every workspace that
-   owner owns, and the last boot to re-render it wins.
+   rendered `~/.grok/config.toml`. That file is this workspace's own in either profile
+   mode, so the extras reach it alone.
+8. **Grok theme** (`grok_theme`, free-form, mutable, default `grokbuild`). Rendered as
+   `[ui] theme` in that workspace's `~/.grok/config.toml`; the literal `auto` renders the
+   CLI's `groknight`/`grokday` pair instead of a fixed theme. Each workspace keeps its own.
+9. **Editor colour theme** (`vscode_color_theme`, free-form, mutable, default
+   `Default Dark Modern`). Written as `workbench.colorTheme` in that workspace's
+   code-server User settings, where it wins over the shared editor-settings overlay.
 
 `devcontainer` asks two questions instead: **Git repository** and **Build repo's dev
-container** (`use_devcontainer`, Yes/No, immutable), plus the same three Grok fields.
+container** (`use_devcontainer`, Yes/No, immutable), plus the same Grok and theme fields.
 
 ## Template variables
 
@@ -575,7 +581,7 @@ its alias (`templates/workspace/coder.tf:19-22`).
 | `dind` | `false` | Turns on the per-workspace privileged daemon described below. Does not exist in `devcontainer`. |
 | `repo_url` | `""` in `workspace`, `https://github.com/coder/coder` in `devcontainer` (Terraform); `.env.sample` `REPO_URL` overrides both to this stack's GitHub URL | Prefills the **Git repository** field. Both templates clone that URL on the first start; a later start leaves a folder that already holds a `.git` alone. `REPO_URL` in `.env` overrides the default. The sample value is this stack's own repo so **VS Code Web** opens `~/workspace/evo-t1-coder-stack`. |
 | `additional_repos` | `""` | The **Git repositories (additional)** textarea under the repository field. Extra URLs cloned into their own folder beside `repo_url`. |
-| `grok_profile_mode` | `shared` | `shared` mounts the owner's shared `~/.grok` profile volume; `private` gives that workspace a private `~/.grok` on its own home volume. Also the default behind the per-workspace **Grok profile** dropdown; switching a live workspace between the two modes needs a rebuild. |
+| `grok_profile_mode` | `shared` | `shared` mounts the owner's three Grok state volumes (`grok-notes-<owner-id>`, `grok-memory-<owner-id>`, `grok-sessions-<owner-id>`) at `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions`, inside that workspace's own home volume; `private` mounts none of them and the workspace starts with an empty `~/.grok`. Also the default behind the per-workspace **Grok profile** dropdown; switching a live workspace between the two modes needs a rebuild. |
 | `github_mcp` | `true` | Wires the `github` MCP HTTP server into Grok's rendered `config.toml`. Its `Authorization` header names `$GH_TOKEN` and nothing else, so no token value is ever part of a template variable. Set `GITHUB_MCP=false` and re-push to drop the block. |
 | `context7_mcp` | `true` | Wires the cached `context7` MCP stdio server into Grok's rendered `config.toml`. The key is optional, so it ships without one. Set `CONTEXT7_MCP=false` and re-push to drop the block. |
 | `context7_api_key` | `""`, `sensitive` | Handed to the workspace as `CONTEXT7_API_KEY`. The rendered file names the variable. |
@@ -847,8 +853,10 @@ bazelisk run //scripts:new-workspace -- --plain git@git.example.com:org/private.
 ## Inside the workspace container
 
 Each template creates one Docker container per workspace. Extra named volumes
-(`vscode-settings-<owner-id>` at `~/.shared/vscode`, and `grok-profile-<owner-id>`
-at `~/.grok` in shared mode) are chowned to the home owner at the start of
+(`vscode-settings-<owner-id>` at `~/.shared/vscode`, and in shared mode the three state
+volumes `grok-notes-<owner-id>` at `~/.grok/notes`, `grok-memory-<owner-id>` at
+`~/.grok/memory` and `grok-sessions-<owner-id>` at `~/.grok/sessions`) are chowned to
+the home owner at the start of
 `startup.sh.tftpl`, because Docker creates an empty named volume as `root:root`
 755 and the agent runs as `coder`.
 
@@ -993,8 +1001,8 @@ decided by a marker - never by mtime and never by first boot:
 - The key is what makes the rule hold. The CLI's own settings writer (`grok mcp add` and
   friends) deletes every comment line, so a comment-only marker can vanish with nobody
   touching the file.
-- On a shared profile volume the config file usually already exists, because another of the
-  owner's workspaces wrote it, so the marker rather than first boot is what decides.
+- The config file usually already exists, because an earlier start of this workspace
+  wrote it, so the marker rather than first boot is what decides.
 - Re-rendering carries over the tables the CLI owns instead of wiping them: `[cli]` holds
   `cli.installer`, which picks the CLI's update path; `[ui]` holds `permission_mode`, so
   re-adopting a file must never flip an operator back to prompting; and `[marketplace]` is
@@ -1002,42 +1010,49 @@ decided by a marker - never by mtime and never by first boot:
 - The unmanaged case is announced rather than silent, because the render is the only place
   a workspace's model catalog and MCP lanes are ever written.
 - `~/.grok/notes-setup.sh` is the exception to the absent-only rule: it is stack-owned code
-  and the copy on the shared profile volume has to be the one this template shipped, so it
+  and the copy in this workspace has to be the one this template shipped, so it
   is rewritten every start. It is written beside its target and `mv`'d in - and `chmod
   0644`'d first, because `mktemp` makes 0600 and `mv` keeps that mode - so the rename is the
-  first moment the file exists for anyone to source, and a sibling workspace booting at the
-  same time against the one shared volume never sources a half-written library.
+  first moment the file exists for anyone to source, and a process that starts seconds
+  later never reads a half-written library.
 
-### The shared grok profile volume
+### The per-owner grok state volumes
 
-`~/.grok` is not necessarily a workspace's own directory, and that decides several of the
+Only three directories under `~/.grok` are shared, and that decides several of the
 rules above.
 
-- In `shared` mode (the default `grok_profile_mode`) the container mounts the owner's
-  shared per-user Docker volume read-write at `/home/coder/.grok`, nested inside that
-  workspace's own `/home/coder` volume. The terminal helpers, `config.toml`,
-  `notes-setup.sh` and the `memory-v2/` tree the CLI keeps there are then the same files
-  every other workspace this owner has reads and writes, and they survive a rebuild.
-- That is also why `config.toml` cannot be per-workspace in that mode: it is one file, and
-  the last workspace to boot re-renders it for all of them, so this workspace's default
-  model (or, in `devcontainer`, its model alias) and config extras overwrite whatever the
-  previous boot wrote - for every sibling.
-- `private` mounts nothing extra: the tree then lives on this workspace's own home volume,
-  so its `config.toml`, defaults and extras included, is its own and dies with it.
-- In `devcontainer` the mount is on the workspace container only. A dev container the repo
+- In `shared` mode (the default `grok_profile_mode`) the container mounts three of the
+  owner's Docker volumes read-write, nested inside that workspace's own `/home/coder`
+  volume: `grok-notes-<owner-id>` at `~/.grok/notes`, `grok-memory-<owner-id>` at
+  `~/.grok/memory` and `grok-sessions-<owner-id>` at `~/.grok/sessions`. Those three
+  trees are then the same files every other workspace this owner has reads and writes,
+  and they survive a rebuild.
+- Everything else under `~/.grok` - `config.toml` above all - is a regular file on this
+  workspace's own home volume. Each start re-renders `config.toml` for this workspace
+  alone, so its default model (or, in `devcontainer`, its model alias), its theme and
+  its config extras are its own, and a hand edit there lasts until that one workspace
+  restarts.
+- The whole-profile volume this template used to mount over all of `~/.grok`,
+  `grok-profile-<owner-id>`, is still mounted in `shared` mode, but **read-only** and at
+  `~/.grok-legacy`, only so the first start after the split can hoist its `notes/`,
+  `memory/` and `sessions/` across (`notes_hoist_legacy` in
+  `templates/common/notes-setup.sh`). Nothing reads it afterwards, and a later `chore:`
+  removes that mount.
+- `private` mounts no per-owner volume at all: the three state directories then live on
+  this workspace's own home volume too, so they are its own and die with it.
+- In `devcontainer` the mounts are on the workspace container only. A dev container the repo
   builds on the sidecar keeps its own home and its own `~/.grok`, which is why the live
   `notes-setup.sh` there is a regular file reached through the clone bind rather than a
   link into `~/.grok`, and why a built dev container sees neither the settings volume nor
-  the editor symlink.
-- The Coder Agents seeds under `~/.coder` and `~/.agents` are not on that mount: they live
+  the shared editor overlay.
+- The Coder Agents seeds under `~/.coder` and `~/.agents` are not on those mounts: they live
   on the workspace's own home volume, and that stage neither needs nor disturbs it.
 
 ### Stale editor swap files
 
-The same persistence that makes `config.toml` one file for every sibling turns a killed
-editor into a permanent nuisance. Open `vim ~/.grok/config.toml`, stop the workspace with
-the editor still up, and the agent's process tree dies while the swap file stays on the
-volume. The next `vim` on that name stops with `E325: ATTENTION` and a question about a
+The swap file's own persistence turns a killed editor into a permanent nuisance. Open
+`vim ~/.grok/config.toml`, stop the workspace with the editor still up, and the agent's
+process tree dies while the swap file stays on the home volume. The next `vim` on that name stops with `E325: ATTENTION` and a question about a
 session whose container has been gone for days, and because "(E)dit anyway" leaves the
 swap in place and mints `.swo`, `.swn`, `.swm` beside it, an operator who keeps answering
 the prompt ends up with four of them and a prompt that never goes away.
@@ -1104,8 +1119,8 @@ next person to open the file. That window is narrow, it sits on a file every sta
 overwrites anyway, and it is why the sweep stops at one name here.
 
 This is not an invitation to hand-edit the file. `config.toml` is re-rendered from
-`grok-config.toml.tftpl` on every start, so an edit a person makes there is overwritten by
-the next boot, and under `shared` the boot that overwrites it may be a sibling's. The keys
+`grok-config.toml.tftpl` on every start of this workspace, so an edit a person makes
+there is overwritten by the next boot and touches no other workspace. The keys
 a person actually wants are template variables: `grok_subagent_max_concurrent`,
 `grok_subagent_max_depth` and `grok_subagents_lane` for the fan-out
 ([the fan-out seam](grok-build-and-agents.md#the-fan-out-seam)), and `grok_config_extra`
@@ -1411,8 +1426,12 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   `waited=$((waited + 1))` (one dollar) inside the tftpl: `templatefile()` interpolates
   `${…}` and leaves `$((` alone. `$$((` would expand `$$` to the PID. `coder_agent.dir` stays unset: the agent would
   chdir there before `startup.sh`, and a missing clone folder would fail the agent. The
-  editor's settings live on the per-owner `vscode-settings-<owner-id>` volume seed, not
-  in a per-start merge.
+  editor's settings are a per-start merge: the boot
+  (`templates/workspace/startup.sh.tftpl`) writes `~/.local/share/code-server/User/settings.json`
+  as a real file from this workspace's render, then layers the per-owner
+  `vscode-settings-<owner-id>` seed (`~/.shared/vscode/settings.json`, where an
+  operator's API keys live) over it, then re-asserts `workbench.colorTheme` from the
+  render last so the seed cannot veto this workspace's own theme.
 - The `devcontainer` fork has no persistent prefix to reuse - both toggle modes rebuild
   the container that hosts the editor - so it installs the pinned release fresh under
   `/tmp/code-server` on every start, and bakes the settings seed as base64 into `settings_b64` (empty when the
@@ -1447,28 +1466,28 @@ What the vault is, how to adopt it, and how to rotate a key in it is
 ### Editor settings seed
 
 - `settings.json.tftpl` is copied once, the first time `~/.shared/vscode/settings.json`
-  is missing, onto the per-owner volume `vscode-settings-<owner-id>`. Startup chowns
-  that volume (and the shared `~/.grok` profile volume) to the home owner before
-  the write: an empty Docker named volume is `root:root` 755, and the agent runs
+  is missing, onto the per-owner volume `vscode-settings-<owner-id>`, where it stays as
+  the overlay below. Startup chowns that volume (and the three `~/.grok` state volumes)
+  to the home owner before the write: an empty Docker named volume is `root:root` 755, and the agent runs
   as `coder`. A failed write logs a warning instead of running `jq`/`python`
   against a file that was never created.
-- code-server's User settings file is a symlink to that path, so every workspace that
-  owner has opens the same file, and an edit - in any workspace, or from the host by
-  mounting the volume - is not overwritten on the next start. Delete the file to reseed
-  from the template.
-- A built dev container sees neither the volume nor that symlink, so it is the one place
-  the seed is merged instead of linked.
+- code-server's User settings file, `~/.local/share/code-server/User/settings.json`, is
+  a real file on this workspace's own home volume. Each start writes it in three passes:
+  the per-workspace render (which carries `workbench.colorTheme` from the **Editor colour
+  theme** field), then every key from that shared overlay on top so an API key entered
+  once stays, then the theme re-asserted last so the overlay can never veto this
+  workspace's own theme. The write is atomic (`<path>.tmp` then `mv`).
+- A symlink you made yourself at that path is left alone and named on stdout: the stack
+  creates no symlink, and it never replaces one.
+- A built dev container sees neither the volume nor that overlay, so it is the one place
+  the seed is baked rather than layered.
 - The code-server module is deliberately given no settings map in plain mode: its merge
-  runs on every start and `mv`s over that symlink, which would fork a private copy and
-  discard the sharing. (`devcontainer` passes the seed to the module only in the mode where
+  runs on every start and would `mv` over the file the boot just layered, dropping the
+  overlay's keys. (`devcontainer` passes the seed to the module only in the mode where
   the merge is wanted, and bakes it as `settings_b64` for the built container.)
 - The seed in git carries no API key. Cline and Roo read their key out of `settings.json`
   and have no `env_key` field, so when `LITELLM_API_KEY` is set the startup script injects
   it into the seed once (`jq`, falling back to `python3`) and nowhere else.
-- A *regular* file at the User settings path is the old per-workspace copy: the startup
-  script keeps it beside the link once, as `<path>.pre-shared`, then points the editor at
-  the shared file on every start so a workspace cannot drift off it. GNU `ln -sfn` replaces
-  a symlink and does not follow it.
 - `subdomain = false` everywhere: there is no `CODER_WILDCARD_ACCESS_URL` on this box, so
   the editor is proxied on the path-based access URL.
 

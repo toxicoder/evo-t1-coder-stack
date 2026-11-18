@@ -865,7 +865,8 @@ as a tar on stdin:
   `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline),
   `vscode-alt.svg` (the editor icon) and `notes-setup.sh` (the library behind each
   clone's private `notes.md`, which also leaves one background watcher per container
-  copying those files to the owner's profile volume between boots), staged beside
+  copying those files to the owner's notes volume (`grok-notes-<owner-id>`, mounted
+  at `~/.grok/notes`) between boots), staged beside
   each staged `main.tf` and read
   there with `file()` / `filebase64()`. The SVG stays small enough that the
   inlined data URL fits Coder v2.36's 256-character `workspace_apps.icon` column.
@@ -971,8 +972,10 @@ The list format, the two clone paths, and what `--dry-run` prints:
 ### Terminals, Grok Build state and Coder Agents
 
 The `tmux` terminal profiles and the app-bar buttons, what `grok doctor` should report
-inside a workspace and which findings are expected there, the one `~/.grok` volume shared
-per owner (and what `shared` vs `private` costs on a rebuild), the pre-installed MCP
+inside a workspace and which findings are expected there, the three per-owner state
+volumes `shared` mode mounts under `~/.grok` (notes, memory, sessions) beside that
+workspace's own `config.toml` (and what `shared` vs `private` costs on a rebuild), the
+pre-installed MCP
 servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
 control-plane Coder Agents chat that needs nothing enabled:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). The seven stack-seeded skill commands at the

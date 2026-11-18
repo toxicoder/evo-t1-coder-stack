@@ -575,8 +575,8 @@ traceparent and baggage, plus `metadata.session_id` in the body.
 - Both workspace templates render `x-litellm-session-id = "ws-<workspace-uuid>"` under
   `[models]` in `~/.grok/config.toml`, so one key covers every conversation of a
   workspace, subagent calls included.
-- In `shared` profile mode that is one file per user, re-rendered by the last-booted
-  workspace, which then shares that key across that user's workspaces.
+- In `shared` profile mode that is one file per workspace, re-rendered on that workspace's own
+  start, so two workspaces of one owner can carry different renders of that key.
 
 ### What floats freely
 

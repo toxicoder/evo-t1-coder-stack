@@ -32,9 +32,16 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
   are denied to the agent, and the deny has no exception for a benign read). Ask the
   CLI that owns the value instead — `dev-stack -- status`, `bootstrap -- --check`,
   `update-configs`, `refresh-configs` — or read `.env.example` for the key's shape.
-- The `~/.grok` you see here is one volume per owner, shared with that owner's other
-  workspaces, and the last-booted workspace re-renders the shared `config.toml` for all
-  of them. A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, the
+- The `~/.grok` you see here shares STATE, not configuration. In `shared` mode
+  `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions` each ride their own per-owner
+  volume (`grok-notes-<owner-id>`, `grok-memory-<owner-id>`, `grok-sessions-<owner-id>`) and
+  match across that owner's workspaces, while `~/.grok/config.toml` is a real file on this
+  workspace's own home volume, rendered from the template on start, so a hand edit to it lasts
+  until that one workspace restarts and touches no other workspace. In `private` mode there is
+  no per-owner mount at all and all three directories are that workspace's alone. The old
+  whole-profile volume `grok-profile-<owner-id>` comes back read-only at `~/.grok-legacy`
+  purely for the one-time hoist of those three directories; a later `chore:` removes it.
+  A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, the
   `"__evoT1Stack": true` JSON key, or the `__evoT1Stack = true` TOML key in
   `~/.grok/config.toml`) is stack-owned: change the seed in this repo and
   re-materialize it, never the copy that lives in a workspace. `~/.grok/notes-setup.sh`
@@ -236,7 +243,7 @@ proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.m
   lint pin that drifted from the gate is a failing test rather than a cold cache on someone's
   laptop. Keep `contributor-env` tracked.
 - `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys: `proxy/router.conf.template` is the source, `proxy/router.conf` is its render under the shipped defaults, and `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`. Edit the naming parts, never a rendered conf. A new top-level payload directory is invisible to `test-fast` and `lint` until it is added to `//:stack_data` (a new `scripts/*.sh` needs no filegroup edit — the `shell_sources` glob picks it up, and it instead needs a key in `_SCRIPT_LIBS` or `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than quietly inheriting the world; `//scripts:doc_sources` is the union of those sources), and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, `hermes/config.yaml`, and `searxng/settings.yml`.
-- Workspace `~/.grok` is one shared profile volume per user (`grok-profile-<owner-id>`) by default. Last-booted workspace re-renders `config.toml`.
+- Workspace `~/.grok` is per-workspace configuration plus shared state: `shared` mode (the default) mounts three per-owner volumes at `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions`, and mounts the old whole-profile volume `grok-profile-<owner-id>` read-only at `~/.grok-legacy` for the one-time hoist only; `private` mode mounts none of them. `config.toml` is that workspace's own file, rendered on start, with `[ui] theme` from the `grok_theme` create-form parameter (the contributor seed takes the same choice as the `GROK_THEME` environment variable), and code-server's `~/.local/share/code-server/User/settings.json` is a real file too, rendered per workspace with `workbench.colorTheme` from `vscode_color_theme` and the shared `~/.shared/vscode/settings.json` layered over it as an overlay, the theme re-asserted last.
 - The project scaffold `scripts/new-repo.sh` renders is its own repository (`toxicoder/ezrepo`
   by default; `--template-url` / `$EZREPO_URL` point elsewhere) and is vendored nowhere here.
   The CLI shallow-clones it into a scratch dir, overlays only the lanes the operator named, and

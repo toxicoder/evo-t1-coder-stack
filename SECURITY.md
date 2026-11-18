@@ -171,22 +171,31 @@ repo can verify.
   simply that nothing else is attached to it and nothing is published to the host.
   Keep the toggle off unless someone is actually building containers. See README,
   "Coder workspace template".
-- **The Grok Build profile volume is per-user, not host-wide, and only in `shared`
-  mode.** That is the default mode (template variable `grok_profile_mode`; the create
-  form's **Grok profile** field can drop one workspace to `private`), and in it each
-  workspace mounts its owner's `grok-profile-<owner-id>` volume read-write at
-  `/home/coder/.grok`, keyed by workspace **owner** id, so one human's cross-workspace
-  state sharing is the intent and no other user's workspace is ever configured to mount
-  it. `private` mode mounts nothing: that workspace's `~/.grok` — `config.toml` included
-  — sits on its own home volume and is nobody else's. The accepted cost in `shared` mode
-  is that the SQLite memory/index files in there are opened live by every holder, so
-  concurrent writers can race; nothing credential-bearing lives in `~/.grok` either,
+- **What `shared` mode shares is state, not configuration, and it is per-user, not
+  host-wide.** That is the default mode (template variable `grok_profile_mode`; the
+  create form's **Grok profile** field can drop one workspace to `private`), and in it
+  each workspace mounts three of its owner's volumes read-write, each keyed by
+  workspace **owner** id: `grok-notes-<owner-id>` at `/home/coder/.grok/notes`,
+  `grok-memory-<owner-id>` at `/home/coder/.grok/memory`, and
+  `grok-sessions-<owner-id>` at `/home/coder/.grok/sessions`. Nothing else under
+  `~/.grok` crosses between that owner's workspaces: `config.toml`, the MCP caches and
+  the skills are per-workspace files on that workspace's own home volume, rendered from
+  the template on its own start, so no other user's workspace is ever configured to
+  mount any of them and no workspace can rewrite another's config. `private` mode
+  mounts none of them: that workspace's notes, memory and sessions sit on its own home
+  volume with the rest of `~/.grok` and die with it. The one leftover is the owner's
+  old whole-profile volume `grok-profile-<owner-id>`, mounted READ-ONLY at
+  `/home/coder/.grok-legacy` purely so the boot can copy those three directories across
+  once; nothing reads it afterwards, and a later `chore:` removes the mount. The
+  accepted cost in `shared` mode is that the SQLite memory/index files in the shared
+  memory volume are opened live by every holder, so concurrent writers can race;
+  nothing credential-bearing lives in `~/.grok` either,
   because `config.toml` names `LITELLM_API_KEY` through `env_key` — and `GH_TOKEN` by a
   `${GH_TOKEN}` reference when the `github_mcp` server is on (the template default) —
   while both keys travel in the workspace environment. So no secret bytes land in any
   rendered file, but the trust boundary widens to GitHub, outside the LAN, as soon as
   an owner connects a GitHub account. Park it with `GITHUB_MCP=false` and a template
-  re-push if a workspace must not gain GitHub tools. See README, "Grok Build state: one shared profile per user".
+  re-push if a workspace must not gain GitHub tools. See [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
 - **The `context7` MCP server follows that same rule and the same default-on.**
   `CONTEXT7_API_KEY`, when it is set, also travels in the workspace environment, and the
   rendered `config.toml` only names `$CONTEXT7_API_KEY` - never the value. The push
@@ -201,12 +210,18 @@ repo can verify.
   only path-based routing is available). It listens on all interfaces inside
   the workspace; access control is the Coder app proxy plus Authelia/Cloudflare
   in front of the public URL. Extension installs are manual from Open VSX;
-  neither editor auto-installs them. User settings live on a per-owner volume,
-  `vscode-settings-<owner-id>`, mounted at `/home/coder/.shared/vscode` — one
-  file every workspace that owner has, and no other user's workspace mounts it.
-  The git seed does not contain the LiteLLM master key. The startup script
-  writes `LITELLM_API_KEY` into that file once, at seed time, because Cline and
-  Roo read the key from `settings.json` and have no environment-key field. The
-  volume is the secret at rest; treat a copy of it like a copy of the key.
+  neither editor auto-installs them. The shared editor-settings overlay lives on
+  a per-owner volume, `vscode-settings-<owner-id>`, mounted at
+  `/home/coder/.shared/vscode` — every workspace that owner has reads it, and no
+  other user's workspace mounts it. The file code-server actually opens,
+  `~/.local/share/code-server/User/settings.json`, is a real per-workspace file:
+  the boot renders it, then layers that overlay on top so an API key entered in
+  any one workspace reaches all of them. The git seed does not contain the
+  LiteLLM master key. The startup script writes `LITELLM_API_KEY` into the
+  shared file at seed time, because Cline and Roo read the key from
+  `settings.json` and have no environment-key field, and the merge carries that
+  key into the per-workspace copy. So the key rests in two places, not one: the
+  owner's settings volume and each of that owner's workspace home volumes. Treat
+  a copy of either like a copy of the key.
 - **Reporting.** Report vulnerabilities by opening an issue marked
   `security`; please do not disclose working exploits publicly.

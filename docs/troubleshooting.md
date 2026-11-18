@@ -328,8 +328,9 @@ up to three `request_timeout` periods. Both halves are fixed here.
 
 - Prove recurrence before you touch anything. The events are in each session's
   `updates.jsonl`, so one pass over the store counts attempts against outcomes. The
-  store is the shared profile volume, so run it where the sessions are (inside a
-  workspace), and leave the `~/.grok/sessions` path %-escaped as the CLI wrote it:
+  store rides the owner's `grok-sessions-<owner-id>` volume (`shared` mode), so run
+  it where the sessions are (inside a workspace), and leave the `~/.grok/sessions`
+  path %-escaped as the CLI wrote it:
 
 ```sh
 grep -rho --include=updates.jsonl \
@@ -671,8 +672,10 @@ template push. With none of those set, a missing block is a defect, not a park.
 - A missing `[mcp_servers.github]` or `[mcp_servers.context7]` in
   `~/.grok/config.toml` means the last push passed `--var ...=false`, or the
   workspace started from an older template, or the file carries no stack marker at all
-  (next bullet). Clear the gate and re-push, then re-materialize the file and restart
-  the workspace so the managed `config.toml` re-renders. Two routes re-materialize it:
+  (next bullet). No sibling can blank it: `~/.grok/config.toml` is this workspace's own
+  file, so an absent block is this workspace's own render, not another workspace's.
+  Clear the gate and re-push, then re-materialize the file and restart the workspace so
+  the managed `config.toml` re-renders. Two routes re-materialize it:
   `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>` from the
   stack host, for a running workspace container, and
   `bazelisk run //scripts:seed-dev-env -- --home <dir>` for a host home (a laptop, CI,
@@ -987,9 +990,10 @@ files there to copy in), so `coder` cannot write `settings.json`. `jq` and
 `python` then fail because the file was never created. `already cloned, skipping`
 on the next line is informational: the clone already exists.
 
-Fix: the template chowns that volume (and the shared `~/.grok` profile volume)
-to the home owner before the seed, and skips `jq`/`python` when the write
-fails. Push the templates and restart the workspace; there is nothing to delete.
+Fix: the template chowns that volume (and the three per-owner state volumes `shared`
+mode mounts under `~/.grok`) to the home owner before the seed, and skips
+`jq`/`python` when the write fails. Push the templates and restart the workspace;
+there is nothing to delete.
 
 ```sh
 bazelisk run //scripts:push-template
@@ -1005,13 +1009,18 @@ coder restart <workspace>
 
 ### `E325: ATTENTION / Found a swap file by the name "~/.grok/.config.toml.swp"` -> a vim the last workspace stop killed
 
-- `~/.grok` is the owner's persistent profile volume, so a swap file outlives the
-  container that produced it. The usual history is: someone opened the config in vim,
-  the workspace was stopped with the editor still up, and the swap is now asking about a
-  session whose container no longer exists.
+- `~/.grok/config.toml` is a real file on this workspace's own home volume, so a swap
+  file outlives a stop of that workspace and nothing else. The usual history is:
+  someone opened the config in vim, the workspace was stopped with the editor still
+  up, and the swap is now asking about a session whose container no longer exists.
 - Read the prompt's own lines before choosing. `modified: no` means it holds no
-  unsaved work. The `host name` says which workspace's vim wrote it - a sibling
-  workspace shares this volume, so the file can predate this container entirely.
+  unsaved work. The `host name` names the container whose vim wrote it, and each
+  workspace renders its own `config.toml` now, so a name that is not this
+  workspace's means the swap predates that split - it is left over from when
+  `~/.grok` was one whole-profile per-owner volume, which a current boot mounts
+  read-only at `~/.grok-legacy` for the one-time state copy and reads nowhere else.
+  A name that is this workspace's own is the ordinary case: the home volume outlives
+  every stop and recreate.
 - `(D)elete it` is the right answer for an orphan. Do not pick `(R)ecover`: every start
   re-renders `config.toml` from `grok-config.toml.tftpl`, so recovery would restore bytes
   the stack is going to replace regardless.
@@ -1028,10 +1037,11 @@ coder restart <workspace>
   `bazelisk run //scripts:seed-dev-env -- --force` is the fix), or the workspace predates
   the body, which a `bazelisk run //scripts:push-template` and one restart settles.
 - The reason the prompt keeps coming back is that the file is being hand-edited at all.
-  It is re-rendered on every start, and under a shared profile the boot that overwrites
-  it can be a sibling's, so an edit made there survives until someone restarts. The keys
-  live in the template instead: `grok_subagent_max_concurrent`, `grok_subagents_lane`,
-  and `grok_config_extra`. docs/coder-templates.md#stale-editor-swap-files.
+  This workspace re-renders its own copy on every start, so an edit made there survives
+  until that workspace restarts and touches no other workspace - no sibling's boot
+  overwrites it any more. The keys live in the template instead:
+  `grok_subagent_max_concurrent`, `grok_subagents_lane`, and `grok_config_extra`.
+  docs/coder-templates.md#stale-editor-swap-files.
 
 ### Only about 4 subagents run at once though `[subagents] max_concurrent` says 15 -> the writers are on a pinned lane
 
