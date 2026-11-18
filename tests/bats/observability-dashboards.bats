@@ -127,6 +127,7 @@ dash_all_facts() {
 #   var|<name>|<type>|<ds_uid>|<has_query>
 #   varref|<name>                   a $var / ${var} / repeat reference from a panel
 #   link|<where>|<url>              every dashboard-level and link-panel URL
+#   dashlist|<id>|<title>|<query>|<maxItems>|<headings>|<starred>|<visible>
 #   forbid|<detail>                 a shape the contract forbids outright
 dash_emit_facts() {
   python3 - "${1}" <<'PY'
@@ -372,6 +373,17 @@ for panel, shown in visible_panels(doc):
         for entry in panel.get("links") or []:
             if isinstance(entry, dict) and entry.get("url"):
                 print("link|%s|%s" % (where, clean(entry["url"])))
+
+    # The dashlist is the folder's backstop navigator, so its filter and its cap
+    # decide whether it reaches anything: a starred-only or headings-only list, a
+    # filtered query, or a maxItems below the folder size silently drops pages.
+    if panel.get("type") == "dashlist":
+        print("dashlist|%s|%s|%s|%s|%s|%s|%s" % (
+            clean(pid), title, clean(panel.get("query", "")),
+            clean(panel.get("maxItems", "")),
+            "1" if panel.get("headings") else "0",
+            "1" if panel.get("starred") else "0",
+            "1" if shown else "0"))
 
 for left in range(len(rectangles)):
     for right in range(left + 1, len(rectangles)):
@@ -740,6 +752,40 @@ PY
   done < <(dash_all_facts "link")
   assert_eq "no link is a dead tile" "" "${findings}"
   [[ -n $(dash_all_facts "link") ]] || fail "no dashboard link found in ${DASH_DIR}"
+}
+
+@test "the home dashboard reaches every other dashboard in the folder" {
+  local uids others total reached want findings="" backstop
+  uids="$(dash_all_facts "scalar" | awk -F'|' '$2=="uid"{print $3}')"
+  printf '%s\n' "${uids}" | grep -qx "evo-home" \
+    || fail "no dashboard in ${DASH_DIR} carries uid evo-home, so nothing anchors the folder"
+
+  others="$(printf '%s\n' "${uids}" | awk 'NF && $0 != "evo-home"')"
+  total="$(printf '%s\n' "${others}" | awk 'NF' | wc -l | tr -d ' ')"
+  [[ ${total} -gt 0 ]] || fail "evo-home is the only dashboard in ${DASH_DIR}; nothing to reach"
+
+  # Every /d/<uid> home.json resolves: a dashboard-level links: entry, a link panel's
+  # own url, or one of its links: entries. The dashlist is deliberately not counted
+  # here - it truncates at maxItems and filters by query, so a page can sit below its
+  # fold while the list still looks healthy. A page that drops off home.json becomes
+  # dead weight nobody navigates to, so each one needs a hand-placed tile.
+  reached="$(dash_all_facts "link" | awk -F'|' '
+      $1 == "home.json" && $3 ~ /^\/d\// {
+        url = $3; sub(/^\/d\//, "", url); sub(/[/?].*/, "", url); print url }' | sort -u)"
+  while IFS= read -r want; do
+    [[ -n ${want} ]] || continue
+    printf '%s\n' "${reached}" | grep -qx "${want}" \
+      || findings+="evo-home reaches no link panel or links: entry for ${want}; "
+  done <<<"${others}"
+  assert_eq "every dashboard in ${DASH_DIR} other than evo-home is reachable from home.json" \
+    "" "${findings}"
+
+  # And the dashlist has to be the folder-wide backstop the contract promises:
+  # unfiltered, not starred-only or headings-only, and tall enough to name every page.
+  backstop="$(dash_all_facts "dashlist" | awk -F'|' -v n="${total}" \
+      '$1 == "home.json" && $8 == "1" && $4 == "" && $6 != "1" && $7 != "1" && ($5 + 0) >= n { print "1"; exit }')"
+  assert_eq "home.json's dashlist is a folder-wide backstop (empty query, not starred or headings, maxItems >= ${total})" \
+    "1" "${backstop}"
 }
 
 @test "no dashboard carries an import block, a host name, or a dead metric shape" {
