@@ -227,7 +227,7 @@
     {
       "type": "stat",
       "title": "node_exporter",
-      "description": "absent() of the host exporter's own build_info, so a box that stopped being scraped reads missing rather than no data, which is the difference between an outage and a config gap.",
+      "description": "0 while the host exporter answers its scrape, 1 when it has no series at all. That is the difference between a box that is down and a box that stopped being scraped, and every host number in the bundle comes from this exporter, so a 1 here is why the host pages read empty rather than red.",
       "id": 15,
       "gridPos": { "h": 4, "w": 4, "x": 0, "y": 11 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -235,7 +235,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(node_exporter_build_info{job=\"node_exporter\"})",
+          "expr": "(absent(node_exporter_build_info{job=\"node_exporter\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -264,7 +264,7 @@
     {
       "type": "stat",
       "title": "cAdvisor",
-      "description": "absent() of cAdvisor's build_info: when this reads missing, every container panel in the bundle goes blank at once, so it is the first thing to rule out.",
+      "description": "0 while cAdvisor publishes its version series, 1 when it publishes nothing. A 1 means every per-container number in the bundle is missing rather than idle, so this is the first tile to rule out when the Containers page goes blank.",
       "id": 16,
       "gridPos": { "h": 4, "w": 4, "x": 4, "y": 11 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -272,7 +272,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(cadvisor_version_info{job=\"cadvisor\"})",
+          "expr": "(absent(cadvisor_version_info{job=\"cadvisor\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -301,7 +301,7 @@
     {
       "type": "stat",
       "title": "blackbox (Sparks)",
-      "description": "absent() of the ICMP probes Prometheus runs against each Spark: missing here means the probes stopped, not that the Sparks are down, so check the probe panel before the fleet page.",
+      "description": "The health probe over each Spark's health endpoint, held at 0 while no Spark is enrolled, which is what ships: no target groups, nothing to probe, nothing to alarm on. A 1 means the generated target file does have boxes enrolled while the prober answers nothing, so read it as the probe layer being wrong rather than the boxes being offline.",
       "id": 17,
       "gridPos": { "h": 4, "w": 4, "x": 8, "y": 11 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -309,7 +309,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(probe_success{job=\"blackbox-spark\"})",
+          "expr": "((absent(probe_success{job=\"blackbox-spark\"}) and on() (count(up{job=\"spark-node\"}) > 0)) or vector(0))",
           "instant": true
         }
       ],
@@ -338,7 +338,7 @@
     {
       "type": "stat",
       "title": "blackbox (models)",
-      "description": "absent() of the HTTP probes against each Spark's model-serving port; a 0 here with every model panel empty means the probes are fine and the backends are not answering.",
+      "description": "The HTTP probe against each Spark's model-serving port, gated the same way so an unenrolled fleet reads 0. A 0 with every model panel empty means the probes are fine and the backends are the ones not answering; a 1 means the probe layer itself is silent.",
       "id": 18,
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 11 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -346,7 +346,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(probe_success{job=\"blackbox-spark-models\"})",
+          "expr": "((absent(probe_success{job=\"blackbox-spark-models\"}) and on() (count(up{job=\"spark-node\"}) > 0)) or vector(0))",
           "instant": true
         }
       ],
