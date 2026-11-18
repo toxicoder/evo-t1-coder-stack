@@ -37,15 +37,27 @@ SCRIPT=""
 LIB=""
 SCRATCH=""
 PROJ=""
+PROMETHEUS_YML=""
+DASHBOARD_DIR=""
+
+# The profile-gated services the CLI walks, as scripts/observability-check.sh
+# declares them: the six pipeline containers plus the four exporters the same
+# profile publishes on loopback. The canned render, the canned ps table and the
+# canned container states all come from this one list.
+OBS_LIST=(prometheus loki mimir tempo grafana alloy node_exporter cadvisor
+  blackbox_exporter alertmanager)
 
 # setup - resolve the checkout, write the two stubs, and lay out one healthy
-# shape (six services rendered, six containers running, four in-network probes
+# shape (ten services rendered, ten containers running, four in-network probes
 # answering 200, every target up, nothing failed to Mimir, the four host exporters
-# exposing their families, both blackbox modules probing green) that individual
-# tests narrow. Nothing from this process's environment is allowed to decide what
-# the run reads, so every key the CLI consults is cleared first.
+# exposing their families, both blackbox modules probing green, every rule file
+# prometheus.yml names loaded with a rule in it, and every dashboard in the repo
+# answered by Grafana's search API) that individual tests narrow. Nothing from
+# this process's environment is allowed to decide what the run reads, so every key
+# the CLI consults is cleared first.
 # Globals:
-#   REPO_ROOT, SCRIPT, LIB, SCRATCH, PROJ, PATH
+#   REPO_ROOT, SCRIPT, LIB, SCRATCH, PROJ, PROMETHEUS_YML, DASHBOARD_DIR,
+#   OBS_LIST, PATH
 # Arguments:
 #   None
 # Outputs:
@@ -73,16 +85,20 @@ setup() {
   unset GRAFANA_PORT GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD
   unset PROMETHEUS_PORT PROMETHEUS_URL STACK_DOCKER_LOG_DIR MIMIR_RETENTION_PERIOD
   unset DOCKER_SERVICES_FILE DOCKER_PS_FILE DOCKER_STATE_FILE DOCKER_RUN_FILE
-  unset DOCKER_CONFIG_FAIL DOCKER_PS_FAIL CURL_PLAN EXPORTER_PLAN
+  unset DOCKER_CONFIG_FAIL DOCKER_PS_FAIL CURL_PLAN EXPORTER_PLAN RULES_PLAN SEARCH_PLAN
+
+  PROMETHEUS_YML="${REPO_ROOT}/observability/prometheus/prometheus.yml"
+  DASHBOARD_DIR="${REPO_ROOT}/observability/grafana/dashboards"
 
   printf '%s\n' 'services: {}' >"${PROJ}/docker-compose.yml"
   export COMPOSE_FILE="${PROJ}/docker-compose.yml"
 
-  printf '%s\n' prometheus loki mimir tempo grafana alloy >"${SCRATCH}/services"
+  : >"${SCRATCH}/services"
   : >"${SCRATCH}/ps"
   : >"${SCRATCH}/state"
   local service
-  for service in prometheus loki mimir tempo grafana alloy; do
+  for service in "${OBS_LIST[@]}"; do
+    printf '%s\n' "${service}" >>"${SCRATCH}/services"
     printf '%s obs-%s-1\n' "${service}" "${service}" >>"${SCRATCH}/ps"
     printf 'obs-%s-1=running\n' "${service}" >>"${SCRATCH}/state"
   done
@@ -100,6 +116,10 @@ setup() {
   write_scraped_targets_body "${SCRATCH}/targets-scraped.json"
   write_exporter_bodies "${SCRATCH}"
   stub_exporters
+  write_rules_body "${SCRATCH}/rules-loaded.json"
+  write_search_body "${SCRATCH}/search-all.json"
+  stub_rules "${SCRATCH}/rules-loaded.json"
+  stub_grafana_search "${SCRATCH}/search-all.json"
   printf '%s\n' \
     '# TYPE prometheus_remote_storage_samples_failed_total counter' \
     'prometheus_remote_storage_samples_failed_total{queue="0"} 0' >"${SCRATCH}/metrics-clean.txt"
@@ -324,9 +344,12 @@ write_targets_body() {
 # stub_prometheus <targets-file> <metrics-file> - point the curl plan at the two
 # bodies the data flow section reads; the loopback health endpoints keep answering
 # 200 with an empty body, and the exporter plan from stub_exporters rides along so
-# a test that narrows one URL does not fail on the other seven.
+# a test that narrows one URL does not fail on the other seven. The rules and
+# dashboard-search answers from stub_rules and stub_grafana_search ride with them,
+# because a test that rebuilds this plan to break one API must not be left with
+# fifteen errors from the two sections whose bodies it never mentioned.
 # Globals:
-#   SCRATCH, EXPORTER_PLAN
+#   SCRATCH, EXPORTER_PLAN, RULES_PLAN, SEARCH_PLAN
 # Arguments:
 #   $1 - targets body; $2 - metrics body
 # Outputs:
@@ -334,8 +357,113 @@ write_targets_body() {
 # Returns:
 #   0
 stub_prometheus() {
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9090/-/healthy|0|;http://127.0.0.1:3005/api/health|0|;\
-http://127.0.0.1:9090/api/v1/targets|0|${1};http://127.0.0.1:9090/metrics|0|${2}"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9090/-/healthy|0|;http://127.0.0.1:3005/api/health|0|;\
+http://127.0.0.1:9090/api/v1/targets|0|${1};http://127.0.0.1:9090/metrics|0|${2};${RULES_PLAN};${SEARCH_PLAN}"
+}
+
+# stub_rules <body-file> - answer Prometheus's rules API from one body. The curl
+# stub's last match wins, so a test that wants a different answer for that one URL
+# appends its own entry rather than rebuilding the plan.
+# Globals:
+#   CURL_PLAN
+# Arguments:
+#   $1 - the body to serve
+# Outputs:
+#   RULES_PLAN, and CURL_PLAN with that entry appended
+# Returns:
+#   0
+stub_rules() {
+  export RULES_PLAN="http://127.0.0.1:9090/api/v1/rules|0|${1}|200"
+  export CURL_PLAN="${CURL_PLAN};${RULES_PLAN}"
+}
+
+# stub_grafana_search <body-file> - answer the dashboard search API the same way.
+# Globals:
+#   CURL_PLAN
+# Arguments:
+#   $1 - the body to serve
+# Outputs:
+#   SEARCH_PLAN, and CURL_PLAN with that entry appended
+# Returns:
+#   0
+stub_grafana_search() {
+  export SEARCH_PLAN="http://127.0.0.1:3005/api/search?type=dash-db|0|${1}|200"
+  export CURL_PLAN="${CURL_PLAN};${SEARCH_PLAN}"
+}
+
+# write_rules_body <path> [mode] - a Prometheus /api/v1/rules body carrying one
+# group with one healthy rule for every file the repo's own prometheus.yml lists
+# under rule_files:. The mode withholds something from one file: `missing:<file>`
+# drops that group outright, `empty:<file>` loads the group with no rule in it.
+# Read out of the config rather than hardcoded, so the healthy shape stays healthy
+# whatever the bundle's rule set grows by.
+# Globals:
+#   PROMETHEUS_YML
+# Arguments:
+#   $1 - file to write; $2 - optional mode
+# Outputs:
+#   The body file
+# Returns:
+#   0
+write_rules_body() {
+  local path="$1" mode="${2:-}" file name row first=1
+  {
+    printf '%s' '{"status":"success","data":{"groups":['
+    while IFS= read -r file; do
+      [ -n "${file}" ] || continue
+      case "${mode}" in "missing:${file}") continue ;; esac
+      name="${file##*/}"
+      name="${name%.yml}"
+      if [ "${mode}" = "empty:${file}" ]; then
+        row="$(printf '{"name":"%s","file":"%s","interval":60,"rules":[]}' "${name}" "${file}")"
+      else
+        row="$(printf '{"name":"%s","file":"%s","interval":60,"rules":[{"name":"%sMissing","query":"up == 0","health":"ok","state":"inactive","labels":{},"annotations":{}}]}' \
+          "${name}" "${file}" "${name}")"
+      fi
+      if [ "${first}" = "1" ]; then
+        first=0
+      else
+        printf '%s' ','
+      fi
+      printf '%s' "${row}"
+    done < <(sed -n '/^rule_files:/,/^[^ ]/p' "${PROMETHEUS_YML}" 2>/dev/null |
+      sed -n 's/^[[:space:]]*-[[:space:]]*\(.*\)/\1/p')
+    printf '%s\n' ']}}'
+  } >"${path}"
+}
+
+# write_search_body <path> [omit-uid] - a Grafana /api/search?type=dash-db body
+# carrying every dashboard the repo ships, with each uid and title read out of the
+# file itself. The second argument leaves one uid out of the answer, which is the
+# state where the file provider never imported that dashboard.
+# Globals:
+#   DASHBOARD_DIR
+# Arguments:
+#   $1 - file to write; $2 - uid to leave out, if any
+# Outputs:
+#   The body file
+# Returns:
+#   0
+write_search_body() {
+  local path="$1" omit="${2:-}" file uid title row first=1
+  {
+    printf '%s' '['
+    for file in "${DASHBOARD_DIR}"/*.json; do
+      [ -f "${file}" ] || continue
+      uid="$(sed -n 's/^  "uid": "\([^"]*\)".*/\1/p' "${file}" | head -n 1)"
+      [ -n "${uid}" ] || continue
+      [ "${uid}" != "${omit}" ] || continue
+      title="$(sed -n 's/^  "title": "\([^"]*\)".*/\1/p' "${file}" | head -n 1)"
+      row="$(printf '{"type":"dash-db","title":"%s","uid":"%s"}' "${title}" "${uid}")"
+      if [ "${first}" = "1" ]; then
+        first=0
+      else
+        printf '%s' ','
+      fi
+      printf '%s' "${row}"
+    done
+    printf '%s\n' ']'
+  } >"${path}"
 }
 
 # write_exporter_bodies <dir> - one canned /metrics body per host exporter, each
@@ -552,7 +680,7 @@ assert_summary_is_last_line() {
   assert_match "nothing failed" '^summary: [0-9]+ ok, [0-9]+ warnings, 0 failed$' "${output}"
   assert_summary_is_last_line
   local service
-  for service in prometheus loki mimir tempo grafana alloy; do
+  for service in "${OBS_LIST[@]}"; do
     assert_match "the render lists ${service}" \
       "ok: compose renders ${service} under the observability profile" "${output}"
     assert_match "the container for ${service} runs" \
@@ -597,7 +725,7 @@ assert_summary_is_last_line() {
   assert_match "the failing service is named" \
     "error: grafana container obs-grafana-1 reports 'exited', not running" "${output}"
   assert_match "the fix is named" '//scripts:dev-stack -- up' "${output}"
-  assert_match "the other five are still reported" \
+  assert_match "the other nine are still reported" \
     'ok: prometheus container obs-prometheus-1 is running' "${output}"
   assert_match "the summary counts the failure" \
     '^summary: [0-9]+ ok, [0-9]+ warnings, 1 failed$' "${output}"
@@ -626,7 +754,7 @@ assert_summary_is_last_line() {
   }
   assert_match "one error names the compose file" \
     '^error: docker compose could not render ' "${output}"
-  assert_not_match "the six services are not each blamed on top of it" \
+  assert_not_match "the ten services are not each blamed on top of it" \
     'is not in the observability profile' "${output}"
   assert_summary_is_last_line
 }
@@ -695,7 +823,8 @@ assert_summary_is_last_line() {
 @test "a Prometheus that will not answer is one error and skips the data flow" {
   write_env_file "${SCRATCH}/dead.env"
   export CURL_PLAN="http://127.0.0.1:9090/-/healthy|0|;http://127.0.0.1:3005/api/health|0|;\
-http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
+http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|;\
+http://127.0.0.1:9090/api/v1/rules|7|;${SEARCH_PLAN}"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/dead.env"
   [ "${status}" -ne 0 ] || {
     printf 'FAIL: a dead Prometheus must fail the run, got %s\n' "${status}" >&2
@@ -711,7 +840,8 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "a down endpoint is a failure that names the URL" {
   write_env_file "${SCRATCH}/grafana-down.env"
-  export CURL_PLAN="http://127.0.0.1:9090/-/healthy|0|;http://127.0.0.1:3005/api/health|22|"
+  export CURL_PLAN="http://127.0.0.1:9090/-/healthy|0|;http://127.0.0.1:3005/api/health|22|;\
+${RULES_PLAN};http://127.0.0.1:3005/api/search?type=dash-db|22|"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/grafana-down.env"
   [ "${status}" -ne 0 ] || {
     printf 'FAIL: a down Grafana must fail the run, got %s\n' "${status}" >&2
@@ -738,7 +868,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "an exporter whose port refuses the connection says its container is not running" {
   write_env_file "${SCRATCH}/refused.env"
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9101/metrics|7||"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9101/metrics|7||"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/refused.env"
   [ "${status}" -ne 0 ] || {
     printf 'FAIL: a refused exporter port must fail the run, got %s\n' "${status}" >&2
@@ -756,7 +886,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "an exporter that answers 200 without its family is a warning, not a failure" {
   write_env_file "${SCRATCH}/no-family.env"
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9290/metrics|0|${SCRATCH}/metrics-no-family.txt|200"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9290/metrics|0|${SCRATCH}/metrics-no-family.txt|200"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/no-family.env"
   assert_eq "an exporter up and misconfigured must not fail the run" 0 "${status}"
   assert_match "the warning names the missing family and the collector" \
@@ -768,7 +898,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "an exporter answering 404 says the port or the path is wrong" {
   write_env_file "${SCRATCH}/wrong-path.env"
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/metrics|0||404"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9115/metrics|0||404"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/wrong-path.env"
   [ "${status}" -ne 0 ] || {
     printf 'FAIL: a 404 from an exporter port must fail the run, got %s\n' "${status}" >&2
@@ -785,7 +915,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "a prober that refuses the connection is an error the round-trip makes visible" {
   write_env_file "${SCRATCH}/prober-down.env"
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|7||"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|7||"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/prober-down.env"
   [ "${status}" -ne 0 ] || {
     printf 'FAIL: a prober that cannot be reached must fail the run, got %s\n' "${status}" >&2
@@ -800,7 +930,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "a blackbox module that never loaded is named instead of called a red target" {
   write_env_file "${SCRATCH}/dead-module.env"
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-no-module.txt|400"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-no-module.txt|400"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/dead-module.env"
   [ "${status}" -ne 0 ] || {
     printf 'FAIL: a module the prober does not know must fail the run, got %s\n' "${status}" >&2
@@ -815,7 +945,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "a probe that came back red is a warning that names the module and its target" {
   write_env_file "${SCRATCH}/probe-red.env"
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_models&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-red.txt|200"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9115/probe?module=spark_models&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-red.txt|200"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/probe-red.env"
   assert_eq "a red probe is the prober working, so it must not fail the run" 0 "${status}"
   assert_match "the warning names the module, the target and both series" \
@@ -827,7 +957,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
 
 @test "a prober that answers 200 with no probe_success series says it is probing nothing" {
   write_env_file "${SCRATCH}/probe-nothing.env"
-  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-no-series.txt|200"
+  export CURL_PLAN="${EXPORTER_PLAN};${RULES_PLAN};${SEARCH_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-no-series.txt|200"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/probe-nothing.env"
   assert_eq "a prober that probes nothing is a warning, not a failure" 0 "${status}"
   assert_match "the finding says no probe_success came back" \
@@ -857,13 +987,172 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
   assert_eq "no exporter was probed" "0" "$(stub_log_count curl)"
 }
 
+@test "every rule file prometheus.yml names is loaded and reported with its rules" {
+  [ -r "${PROMETHEUS_YML}" ] || skip "prometheus.yml is not readable in this run"
+  write_env_file "${SCRATCH}/rules.env"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/rules.env"
+  assert_eq "a fully loaded rule set exits 0" 0 "${status}"
+  assert_match "the rules section ran" '== rules ==' "${output}"
+  local file count=0
+  while IFS= read -r file; do
+    [ -n "${file}" ] || continue
+    count=$((count + 1))
+    assert_match "${file} is reported loaded with rules in it" \
+      "ok: ${file} is loaded: [1-9][0-9]* group\\(s\\), [1-9][0-9]* rule\\(s\\)" "${output}"
+  done < <(sed -n '/^rule_files:/,/^[^ ]/p' "${PROMETHEUS_YML}" |
+    sed -n 's/^[[:space:]]*-[[:space:]]*\(.*\)/\1/p')
+  [ "${count}" -gt 0 ] || {
+    printf 'FAIL: prometheus.yml named no rule file, so the loop proved nothing\n' >&2
+    return 1
+  }
+  assert_summary_is_last_line
+}
+
+@test "a rule file prometheus.yml names that never loaded is an error" {
+  [ -r "${PROMETHEUS_YML}" ] || skip "prometheus.yml is not readable in this run"
+  local missing
+  missing="$(sed -n '/^rule_files:/,/^[^ ]/p' "${PROMETHEUS_YML}" |
+    sed -n 's/^[[:space:]]*-[[:space:]]*\(.*\)/\1/p' | tail -n 1)"
+  [ -n "${missing}" ] || skip "prometheus.yml names no rule file to withhold"
+  write_env_file "${SCRATCH}/rules-missing.env"
+  write_rules_body "${SCRATCH}/rules-one-missing.json" "missing:${missing}"
+  stub_rules "${SCRATCH}/rules-one-missing.json"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/rules-missing.env"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: a rule file that never loaded must fail the run, got %s\n' "${status}" >&2
+    return 1
+  }
+  assert_match "the file that did not load is named" \
+    "error: ${missing} is named by observability/prometheus/prometheus.yml but Prometheus loaded no group from it" "${output}"
+  assert_match "the silence it causes is said plainly" 'every alert in that file is silent' "${output}"
+  assert_match "the other rule files are still reported" \
+    'ok: rules/stack\.rules\.yml is loaded' "${output}"
+  assert_match "the summary counts the failure" \
+    '^summary: [0-9]+ ok, [0-9]+ warnings, [1-9][0-9]* failed$' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a rule file that loaded with no rule in it is an error" {
+  [ -r "${PROMETHEUS_YML}" ] || skip "prometheus.yml is not readable in this run"
+  local target
+  target="$(sed -n '/^rule_files:/,/^[^ ]/p' "${PROMETHEUS_YML}" |
+    sed -n 's/^[[:space:]]*-[[:space:]]*\(.*\)/\1/p' | head -n 1)"
+  [ -n "${target}" ] || skip "prometheus.yml names no rule file to empty out"
+  write_env_file "${SCRATCH}/rules-empty.env"
+  write_rules_body "${SCRATCH}/rules-empty.json" "empty:${target}"
+  stub_rules "${SCRATCH}/rules-empty.json"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/rules-empty.env"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: a rule file that ships nothing must fail the run, got %s\n' "${status}" >&2
+    return 1
+  }
+  assert_match "the empty file is named with what it loaded" \
+    "error: ${target} loaded 1 group\\(s\\) holding 0 rules" "${output}"
+  assert_match "the finding says the alerts can never fire" \
+    'no alert can ever fire from it' "${output}"
+  assert_not_match "an empty file is not also counted as loaded" \
+    "ok: ${target} is loaded" "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a Prometheus that will not answer for its rules is a warning that names the profile" {
+  write_env_file "${SCRATCH}/rules-down.env"
+  export CURL_PLAN="${CURL_PLAN};http://127.0.0.1:9090/api/v1/rules|7||"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/rules-down.env"
+  assert_eq "a bundle that is simply not up must not fail the run" 0 "${status}"
+  assert_match "the warning names the port and the profile" \
+    'warning: no Prometheus is listening on 127\.0\.0\.1:9090: .*observability compose profile' "${output}"
+  assert_match "the fix is named" '//scripts:dev-stack -- up' "${output}"
+  assert_not_match "no rule file is blamed on top of it" \
+    'but Prometheus loaded no group from it' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a switched-off bundle checks neither the rule files nor the dashboards" {
+  write_env_file "${SCRATCH}/off-rules.env" 'OBSERVABILITY_ENABLED=false'
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/off-rules.env"
+  assert_eq "the off path still exits 0" 0 "${status}"
+  assert_match "the rules section skipped itself with the reason" \
+    'note: skipped: the bundle is switched off, so no rule file is expected to be loaded' "${output}"
+  assert_match "the dashboards section skipped itself with the reason" \
+    'note: skipped: the bundle is switched off, so no dashboard is expected to be registered' "${output}"
+  assert_eq "neither API was asked" "0" "$(stub_log_count curl)"
+}
+
+@test "every dashboard the repo ships is proven registered in Grafana" {
+  [ -d "${DASHBOARD_DIR}" ] || skip "the dashboard tree is not in this run"
+  write_env_file "${SCRATCH}/dashboards.env"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/dashboards.env"
+  assert_eq "a fully registered set exits 0" 0 "${status}"
+  assert_match "the dashboards section ran" '== dashboards ==' "${output}"
+  local file uid count=0
+  for file in "${DASHBOARD_DIR}"/*.json; do
+    [ -f "${file}" ] || continue
+    uid="$(sed -n 's/^  "uid": "\([^"]*\)".*/\1/p' "${file}" | head -n 1)"
+    [ -n "${uid}" ] || continue
+    count=$((count + 1))
+    assert_match "$(basename "${file}") is registered as ${uid}" \
+      "ok: ${uid} .* is registered in Grafana" "${output}"
+  done
+  [ "${count}" -gt 0 ] || {
+    printf 'FAIL: no shipped dashboard names a uid, so the loop proved nothing\n' >&2
+    return 1
+  }
+  assert_summary_is_last_line
+}
+
+@test "a dashboard git ships that Grafana never imported is an error named by its uid" {
+  [ -d "${DASHBOARD_DIR}" ] || skip "the dashboard tree is not in this run"
+  local file uid drop="" keep=""
+  local -a uids=()
+  for file in "${DASHBOARD_DIR}"/*.json; do
+    [ -f "${file}" ] || continue
+    uid="$(sed -n 's/^  "uid": "\([^"]*\)".*/\1/p' "${file}" | head -n 1)"
+    [ -n "${uid}" ] && uids+=("${uid}")
+  done
+  [ "${#uids[@]}" -gt 1 ] || skip "the tree needs two dashboards to prove one can go missing"
+  drop="${uids[0]}"
+  keep="${uids[-1]}"
+  write_env_file "${SCRATCH}/dashboards-missing.env"
+  write_search_body "${SCRATCH}/search-one-missing.json" "${drop}"
+  stub_grafana_search "${SCRATCH}/search-one-missing.json"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/dashboards-missing.env"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: a dashboard on disk and not in Grafana must fail the run, got %s\n' "${status}" >&2
+    return 1
+  }
+  assert_match "the file and its uid are named" \
+    "error: .*\.json is on disk and not in Grafana: ${drop}" "${output}"
+  assert_match "the provider is named as the thing that never imported it" \
+    'the file provider never imported it' "${output}"
+  assert_match "the other dashboards are still reported" \
+    "ok: ${keep} .* is registered in Grafana" "${output}"
+  assert_match "the summary counts the failure" \
+    '^summary: [0-9]+ ok, [0-9]+ warnings, [1-9][0-9]* failed$' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a Grafana that will not answer for its dashboards is a warning that says why" {
+  [ -d "${DASHBOARD_DIR}" ] || skip "the dashboard tree is not in this run"
+  write_env_file "${SCRATCH}/dashboards-down.env"
+  export CURL_PLAN="${CURL_PLAN};http://127.0.0.1:3005/api/search?type=dash-db|7||"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/dashboards-down.env"
+  assert_eq "a bundle that is simply not up must not fail the run" 0 "${status}"
+  assert_match "the warning names the port and the profile" \
+    'warning: no Grafana is listening on 127\.0\.0\.1:3005: .*observability compose profile' "${output}"
+  assert_match "the unproven set is counted" 'dashboard file\(s\) in observability/grafana/dashboards' "${output}"
+  assert_not_match "no single dashboard is blamed on top of it" \
+    'is on disk and not in Grafana' "${output}"
+  assert_summary_is_last_line
+}
+
 @test "the report grammar is the house vocabulary in the pinned order" {
   write_env_file "${SCRATCH}/grammar.env"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/grammar.env"
   local sections
   sections="$(printf '%s\n' "${output}" | grep -E '^== .* ==$' | tr '\n' ' ')"
-  assert_eq "the seven sections print in order" \
-    "== configuration == == log source == == compose render == == containers == == endpoints == == data flow == == exporters == " \
+  assert_eq "the nine sections print in order" \
+    "== configuration == == log source == == compose render == == containers == == endpoints == == data flow == == exporters == == rules == == dashboards == " \
     "${sections}"
   assert_match "a phase line was printed" '-> curl http://127.0.0.1:9090/-/healthy' "${output}"
   assert_match "the finding prefixes are in use" '^ok: ' "${output}"
@@ -887,6 +1176,9 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
     probe_exporter
     probe_prober
     targets_tally
+    rule_files_from
+    rules_tally
+    dashboard_fields
     check_configuration
     check_log_source
     check_compose_render
@@ -894,6 +1186,8 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
     check_endpoints
     check_data_flow
     check_exporters
+    check_rules
+    check_dashboards
     finish
   )
   local fn defined

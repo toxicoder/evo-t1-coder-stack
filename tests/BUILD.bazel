@@ -442,9 +442,13 @@ _SUITE_PAYLOAD = {
     ],
     "pg-apply-password.bats": [],
     # Stubs are written into the test's own tmpdir and the fixture env file, the
-    # compose project and the log tree all live under its scratch dir, so this
-    # suite reads nothing the common set does not already carry.
-    "observability-check.bats": [],
+    # compose project and the log tree all live under its scratch dir. The two checks
+    # the bundle grew add one group: the rules check names the three files under
+    # prometheus/rules/ it expects Prometheus to have loaded, and the dashboard check
+    # walks the provisioned dashboard tree and parses each file it finds.
+    "observability-check.bats": [
+        "//observability:payload",
+    ],
     # Every fact this suite pins comes out of the bundle's own config tree: the three
     # rule files, alertmanager.yml and its entrypoint, blackbox.yml, the DCGM counter
     # list, and prometheus.yml's job list. One group covers all of them.

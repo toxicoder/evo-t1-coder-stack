@@ -396,9 +396,14 @@ _SCRIPT_PAYLOAD = {
     ],
     # The prober reads no payload of its own: it asks the daemon and the loopback.
     # What remains is what the sourced lib names - the docker-compose.yml marker
-    # resolve_repo_root probes and compose_cmd addresses with -f.
+    # resolve_repo_root probes and compose_cmd addresses with -f. The two checks the
+    # bundle grew changed that: the rules check names the three files under
+    # prometheus/rules/ it expects Prometheus to have loaded, and the dashboard check
+    # walks observability/grafana/dashboards/ and parses every file it finds, so both
+    # trees have to be in the runfiles for the suite that drives them to read them.
     "observability-check": [
         "//:compose_file",
+        "//observability:payload",
     ],
     "pre-commit": [
         "//:compose_file",

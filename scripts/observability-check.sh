@@ -34,6 +34,14 @@
 # series the panel queries, and a blackbox module Prometheus never loaded stays
 # invisible until the alert it should have fired goes quiet.
 #
+# Two more things sit between a green `ps` and the screen the operator opens, and
+# both fail silently: a rule file prometheus.yml names that Prometheus never
+# loaded makes every alert in it dead with nothing in any log to say so, and a
+# dashboard JSON the file provider refused to import is simply not a screen. Both
+# are answered from the two APIs that know - /api/v1/rules and /api/search - and
+# both treat "the bundle is not up" as the legitimate state it is, because the
+# whole thing rides the observability compose profile.
+#
 # Usage (Bazel is the entry point; every example is the whole command):
 #   bazelisk run //scripts:observability-check
 #   bazelisk run //scripts:observability-check -- --env-file ./dev-stack.env
@@ -148,9 +156,13 @@ unset JSON_MODE
 
 # ── knobs ────────────────────────────────────────────────────────────────────
 
-# The six profile-gated services, in the order the bundle comes up. This one list
-# is what the render check, the container check and the report all walk.
-OBS_SERVICES="prometheus loki mimir tempo grafana alloy"
+# The ten profile-gated services, in the order the bundle comes up. This one list
+# is what the render check, the container check and the report all walk. The four
+# exporters are in it because they ride the same profile
+# (docker-compose.yml:1098,1133,1168,1187) and a `ps` that omits them is a run
+# that cannot see a missing node_exporter; they carry no in-network probe, since
+# each is asked of its own published loopback port in the exporters section.
+OBS_SERVICES="prometheus loki mimir tempo grafana alloy node_exporter cadvisor blackbox_exporter alertmanager"
 
 # The four readiness probes no host port can reach, as service:port/path. The
 # pairs are the compose service name and the port that service listens on inside
@@ -182,6 +194,20 @@ OBS_BLACKBOX_PROBES=("spark_health:blackbox-spark" "spark_models:blackbox-spark-
 # exporter that answers its own /metrics and is named by none of these is
 # collected by nobody.
 OBS_SCRAPED_JOBS="node_exporter cadvisor blackbox-spark blackbox-spark-models alertmanager"
+
+# The config this CLI reads two more facts out of, by path under the resolved
+# root rather than by copying them here, so the bundle stays the single place
+# that says what it ships: the rule files prometheus.yml's rule_files: block
+# names (observability/prometheus/prometheus.yml:43-46), and the dashboard JSON
+# the file provider loads, which docker-compose.yml:1019 binds read-only from
+# this directory to /var/lib/grafana/dashboards.
+OBS_PROMETHEUS_YML="observability/prometheus/prometheus.yml"
+OBS_DASHBOARD_DIR="observability/grafana/dashboards"
+
+# The Grafana verb that lists the provisioned dashboards. type=dash-db is the
+# set the file provider owns, which is the set this run can hold git against;
+# a screen someone hand-created in the browser is nobody's contract.
+OBS_DASHBOARD_SEARCH="api/search?type=dash-db"
 
 # The configuration keys, in report order. Every one of them is in .env.example
 # and has a default in docker-compose.yml, which is why an absent key is a note.
@@ -240,8 +266,9 @@ Usage: bazelisk run //scripts:observability-check -- [OPTIONS]
   -h | --help       print usage, exit 0
 
 Proves the observability bundle end to end: the keys compose interpolates, the
-log tree Alloy tails, the six profile-gated services, their readiness behind
-the loopback-only wall, and whether Prometheus is still scraping and shipping.
+log tree Alloy tails, the ten profile-gated services, their readiness behind
+the loopback-only wall, whether Prometheus is still scraping and shipping, the
+rule files it loaded, and the dashboards Grafana registered.
 
 Loki, Mimir, Tempo and Alloy publish no host port, so their /ready is probed
 from inside the compose network with a one-shot curl container. --no-docker
@@ -249,7 +276,8 @@ keeps the file-system and configuration checks and turns those probes into
 notes, which is the mode to run on a machine with no daemon.
 
 Sections: configuration, log source, compose render, containers, endpoints,
-data flow, exporters. The last line is always "summary: N ok, W warnings, F failed".
+data flow, exporters, rules, dashboards. The last line is always
+"summary: N ok, W warnings, F failed".
 
 Exit codes: 0 with no failures (or the bundle switched off, where there is
 nothing to check); 1 with at least one failure; 2 on a usage error.
@@ -614,6 +642,90 @@ targets_tally() {
     { prev = $0 }
     END { printf "total\t%d\t%d\n", total, ups }
   ' "${body}"
+}
+
+# @function rule_files_from
+# Print the rule files one prometheus.yml tells Prometheus to load: every entry
+# of its rule_files: list, and nothing past the block. Read from the file rather
+# than repeated here, so a fourth rule file added to the config is checked by
+# this CLI without a second edit anywhere.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the prometheus.yml to read
+# Outputs:
+#   One rule file path per line on stdout, as prometheus.yml writes it; nothing
+#   when the file has no rule_files block
+# Returns:
+#   0, always
+rule_files_from() {
+  local file="${1:-}"
+  [ -r "${file}" ] || return 0
+  awk '
+    /^rule_files[[:space:]]*:/ { inblock = 1; next }
+    inblock && /^[^[:space:]#]/ { inblock = 0 }
+    inblock && /^[[:space:]]*-/ {
+      entry = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", entry)
+      sub(/[[:space:]]*$/, "", entry)
+      sub(/^"/, "", entry)
+      sub(/"$/, "", entry)
+      if (entry != "") { print entry }
+    }
+  ' "${file}"
+}
+
+# @function rules_tally
+# Print one `file<TAB>groups<TAB>rules` row per rule file in a Prometheus
+# /api/v1/rules body. The record separator is the file key Prometheus writes into
+# every group, so one record is one group, and the rules inside it are counted by
+# their health keys: every rule carries exactly one health field and a group
+# carries none, which is what makes the count right without a JSON parser, the
+# same way targets_tally reads the target list.
+# Globals:
+#   None
+# Arguments:
+#   $1 - file holding the response body
+# Outputs:
+#   One row per rule file that loaded, in the order they first appear; nothing
+#   for an empty body
+# Returns:
+#   0, always
+rules_tally() {
+  local body="${1:-}"
+  [ -s "${body}" ] || return 0
+  awk '
+    BEGIN { RS = "\"file\":\""; n = 0 }
+    NR > 1 {
+      file = $0
+      sub(/".*/, "", file)
+      rules = split($0, pieces, "\"health\":\"") - 1
+      if (!(file in groups)) { n++; order[n] = file; groups[file] = 0; rulecount[file] = 0 }
+      groups[file]++
+      rulecount[file] += rules
+    }
+    END { for (i = 1; i <= n; i++) printf "%s\t%d\t%d\n", order[i], groups[order[i]], rulecount[order[i]] }
+  ' "${body}"
+}
+
+# @function dashboard_fields
+# Print one `uid<TAB>title` row for one dashboard JSON. Only the two top-level
+# keys count: the shipped files indent two spaces per level, and a `title` three
+# levels down is a panel's name, not the page's.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the dashboard file
+# Outputs:
+#   `uid<TAB>title` on stdout, with either field empty when the file omits it
+# Returns:
+#   0, always
+dashboard_fields() {
+  awk '
+    /^  "uid"[[:space:]]*:/   { uid = $0; sub(/^[^:]*:[[:space:]]*"/, "", uid); sub(/".*/, "", uid) }
+    /^  "title"[[:space:]]*:/ { title = $0; sub(/^[^:]*:[[:space:]]*"/, "", title); sub(/".*/, "", title) }
+    END { printf "%s\t%s\n", uid, title }
+  ' "${1:-}" 2>/dev/null
 }
 
 # @function check_configuration
@@ -1015,6 +1127,169 @@ check_exporters() {
   done
 }
 
+# @function check_rules
+# Ask Prometheus which rule files it actually loaded, and report one line per
+# file its own rule_files: block names. A file that is in git, named by the
+# config, and absent from /api/v1/rules loads nowhere: every alert in it is
+# silent, and `docker compose ps` stays green while that is true. A file that
+# loads with no rule in it is the same silence wearing a 200.
+#
+# Severity follows the profile, not the endpoint: the whole bundle is gated
+# behind observability, so a Prometheus that is simply not up is a state the
+# operator chose and this run says so as a warning, the way a red scrape target
+# is one. The endpoints section keeps the hard failure for a service the
+# profile was asked to run and that will not answer.
+# Globals:
+#   TIMEOUT, BUNDLE_ENABLED, work, REPO_ROOT_RESOLVED, PWD
+#   OBS_PROMETHEUS_YML
+# Arguments:
+#   None
+# Outputs:
+#   The rules section on stdout/stderr
+# Returns:
+#   0
+check_rules() {
+  section "rules"
+  if [ "${BUNDLE_ENABLED}" = "0" ]; then
+    note "skipped: the bundle is switched off, so no rule file is expected to be loaded"
+    return 0
+  fi
+  if ! has_tool curl; then
+    fail_item "curl is not on PATH: the Prometheus rules API could not be probed, and a check that silently skipped is a check that never ran"
+    return 0
+  fi
+
+  local root prom_yml entry
+  root="${REPO_ROOT_RESOLVED:-${PWD}}"
+  prom_yml="${root}/${OBS_PROMETHEUS_YML}"
+  if [ ! -r "${prom_yml}" ]; then
+    warn "${prom_yml} is not readable: the rule_files list is unknown, so no rule file is proven loaded"
+    return 0
+  fi
+
+  local -a want=()
+  while IFS= read -r entry; do
+    [ -n "${entry}" ] && want+=("${entry}")
+  done <<<"$(rule_files_from "${prom_yml}")"
+  if [ "${#want[@]}" = "0" ]; then
+    note "${OBS_PROMETHEUS_YML} names no rule_files: there is nothing for Prometheus to load, so no alert can fire from any of them"
+    return 0
+  fi
+
+  local base prom_port body="${work}/rules.json" err="" rc=0
+  prom_port="$(resolved_value PROMETHEUS_PORT 9090)"
+  base="http://127.0.0.1:${prom_port}"
+
+  phase "curl ${base}/api/v1/rules"
+  err="$(capped_run "${TIMEOUT}" curl -fsS --max-time "${TIMEOUT}" \
+    -o "${body}" "${base}/api/v1/rules" 2>&1)" || rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    if refused "${rc}" "${err}"; then
+      warn "no Prometheus is listening on 127.0.0.1:${prom_port}: the bundle runs under the observability compose profile, so it may simply not be up - start it with //scripts:dev-stack -- up, and until it is, none of the ${#want[@]} rule file(s) can be proven loaded"
+    else
+      warn "Prometheus did not answer ${base}/api/v1/rules: $(first_line "${err}") (curl exit ${rc}) - the ${#want[@]} rule file(s) prometheus.yml names are not proven loaded"
+    fi
+    return 0
+  fi
+
+  local tally groups rules
+  tally="$(rules_tally "${body}")"
+  for entry in "${want[@]}"; do
+    groups="$(printf '%s\n' "${tally}" | awk -F'\t' -v want="${entry}" '$1 == want { print $2; exit }')"
+    rules="$(printf '%s\n' "${tally}" | awk -F'\t' -v want="${entry}" '$1 == want { print $3; exit }')"
+    if [ -z "${groups}" ]; then
+      fail_item "${entry} is named by ${OBS_PROMETHEUS_YML} but Prometheus loaded no group from it: every alert in that file is silent - check the path against the bind that puts it under /etc/prometheus"
+    elif [ "${rules}" = "0" ]; then
+      fail_item "${entry} loaded ${groups} group(s) holding 0 rules: the file parses and ships nothing, so no alert can ever fire from it"
+    else
+      ok "${entry} is loaded: ${groups} group(s), ${rules} rule(s)"
+    fi
+  done
+}
+
+# @function check_dashboards
+# Prove every dashboard in git is a screen in Grafana. The file provider imports
+# what it likes out of the bound directory and says nothing when it refuses one,
+# so an unimported dashboard is not a broken panel and not a log line: it is just
+# one screen short of the folder, forever. The on-disk set is walked here and
+# compared against one /api/search answer, so a dashboard git ships and Grafana
+# never registered is named by its own uid.
+# Globals:
+#   TIMEOUT, BUNDLE_ENABLED, work, REPO_ROOT_RESOLVED, PWD
+#   OBS_DASHBOARD_DIR, OBS_DASHBOARD_SEARCH
+# Arguments:
+#   None
+# Outputs:
+#   The dashboards section on stdout/stderr
+# Returns:
+#   0
+check_dashboards() {
+  section "dashboards"
+  if [ "${BUNDLE_ENABLED}" = "0" ]; then
+    note "skipped: the bundle is switched off, so no dashboard is expected to be registered"
+    return 0
+  fi
+  if ! has_tool curl; then
+    fail_item "curl is not on PATH: the Grafana dashboard API could not be probed, and a check that silently skipped is a check that never ran"
+    return 0
+  fi
+
+  local root dir file
+  root="${REPO_ROOT_RESOLVED:-${PWD}}"
+  dir="${root}/${OBS_DASHBOARD_DIR}"
+  if [ ! -d "${dir}" ] || [ ! -r "${dir}" ]; then
+    warn "${dir} is not a readable directory: the shipped dashboards are invisible to this run, so none of them is proven registered"
+    return 0
+  fi
+
+  local -a files=()
+  for file in "${dir}"/*.json; do
+    [ -f "${file}" ] || continue
+    files+=("${file}")
+  done
+  if [ "${#files[@]}" = "0" ]; then
+    fail_item "${dir} holds no *.json: Grafana's file provider has nothing to load, so the dashboard folder would be empty"
+    return 0
+  fi
+
+  local base graf_port body="${work}/search.json" err="" rc=0 user
+  graf_port="$(resolved_value GRAFANA_PORT 3005)"
+  base="http://127.0.0.1:${graf_port}"
+  local -a auth=()
+  user="$(resolved_value GRAFANA_ADMIN_USER admin)"
+  if [ -n "${user}" ]; then
+    # The credential travels to curl and nowhere else: the value never joins a
+    # report line, the way GRAFANA_ADMIN_PASSWORD never joins the configuration
+    # section's ok:.
+    auth=(-u "${user}:$(resolved_value GRAFANA_ADMIN_PASSWORD '')")
+  fi
+
+  phase "curl ${base}/${OBS_DASHBOARD_SEARCH}"
+  err="$(capped_run "${TIMEOUT}" curl -fsS --max-time "${TIMEOUT}" "${auth[@]}" \
+    -o "${body}" "${base}/${OBS_DASHBOARD_SEARCH}" 2>&1)" || rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    if refused "${rc}" "${err}"; then
+      warn "no Grafana is listening on 127.0.0.1:${graf_port}: the bundle runs under the observability compose profile, so it may simply not be up - start it with //scripts:dev-stack -- up, and until it is, none of the ${#files[@]} dashboard file(s) in ${OBS_DASHBOARD_DIR} is proven registered"
+    else
+      warn "Grafana did not answer ${base}/${OBS_DASHBOARD_SEARCH}: $(first_line "${err}") (curl exit ${rc}) - the ${#files[@]} dashboard file(s) in ${OBS_DASHBOARD_DIR} are therefore unproven"
+    fi
+    return 0
+  fi
+
+  local uid title name
+  for file in "${files[@]}"; do
+    name="$(basename "${file}")"
+    IFS=$'\t' read -r uid title <<<"$(dashboard_fields "${file}")"
+    if [ -z "${uid}" ]; then
+      warn "${name} names no top-level uid: this run cannot ask Grafana for it, so it is not proven registered"
+    elif grep -q "\"uid\":\"${uid}\"" "${body}" 2>/dev/null; then
+      ok "${uid}${title:+ (${title})} is registered in Grafana"
+    else
+      fail_item "${name} is on disk and not in Grafana: ${uid}${title:+ (${title})} is missing from ${OBS_DASHBOARD_SEARCH}, so the file provider never imported it - check that the JSON parses and that ${OBS_DASHBOARD_DIR} is the directory bound to /var/lib/grafana/dashboards"
+    fi
+  done
+}
+
 # @function finish
 # Close the run: the summary as the last line of output, and the exit code that
 # answers the same question the report just answered.
@@ -1100,4 +1375,6 @@ check_containers
 check_endpoints
 check_data_flow
 check_exporters
+check_rules
+check_dashboards
 finish
