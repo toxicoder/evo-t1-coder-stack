@@ -33,12 +33,13 @@ boot_begin "stack advisors" 3
 #
 # Each guard goes through writable() below, which is where the symlink refusal lives:
 # cat and cp both follow a link, so a planted one at a target or at the directory above it
-# would have this body replace a file it does not own. A refusal is a warning on stderr --
-# a skill that quietly failed to install is the failure an operator has to be able to see.
+# would have this body replace a file it does not own. A refusal is a counted warning --
+# boot_warn is the verb that both prints it and raises the tally boot_summary closes on,
+# so a skill that quietly failed to install cannot leave a log that reports a clean run.
 
 boot_stage 1 "the two skill homes"
 if [ -L "$HOME/.coder" ] || [ -L "$HOME/.agents" ]; then
-  boot_warn 'a skill home is a symlink - the advisor family is left alone' >&2
+  boot_warn 'a skill home is a symlink - the advisor family is left alone'
   boot_summary
   exit 0
 fi
@@ -49,7 +50,7 @@ boot_ok "neither skill home is a symlink"
 # second is why the check cannot be just "[ ! -e ]", which a dangling link passes.
 writable() {
   if [ -L "$1" ] || [ -L "$(dirname "$1")" ]; then
-    boot_warn "$1 sits behind a symlink - left alone" >&2
+    boot_warn "$1 sits behind a symlink - left alone"
     return 1
   fi
   [ ! -e "$1" ]

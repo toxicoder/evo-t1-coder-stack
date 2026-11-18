@@ -456,11 +456,18 @@ boot_body_list() {
   # Coder caps each workspace agent's logs at 1048576 bytes and drops the newest lines
   # past it (coderd max_logs_length; codersdk/agentsdk/logs.go maxBytesQueued), and every
   # boot body on that agent draws from the same budget. The acceptance rule is about 40
-  # narrated lines per body; the busiest shipped body (the startup script) sits at exactly
-  # 40 verb calls, so the cap is that plus a small allowance for the stage a later change
-  # legitimately adds. The fleet total is the tripwire on the aggregate: at a pessimistic
-  # 120 bytes a line it is still a small fraction of the ceiling, and it exists so the sum
-  # cannot drift upward while every member looks fine on its own.
+  # narrated lines per body; the busiest shipped body (the devcontainer startup twin)
+  # makes 42 verb calls, so the cap is that plus a small allowance for the stage a later
+  # change legitimately adds. The fleet total is the tripwire on the aggregate: at a
+  # pessimistic 120 bytes a line it stays a small fraction of the ceiling, and it exists
+  # so the sum cannot drift upward while every member looks fine on its own.
+  #
+  # What this cannot see: it counts call SITES, so a verb reached from a loop prints once
+  # per iteration and bills for one (stack-advisors' writable() warns once per refused
+  # path this way). That blind spot is closed at the other end -- the suites that execute a
+  # body read its own summary line back (tests/bats/stack-advisors.bats:234 demands
+  # "summary: N ok, 0 warnings, 0 failed" from a real run), so a loop that suddenly emits
+  # hundreds of lines shows up there as a count nobody expected.
   local bodies="${BATS_TEST_TMPDIR}/budget" f calls total=0
   local per_body=48 fleet_total=400
   boot_body_list >"${bodies}"

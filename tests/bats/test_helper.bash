@@ -264,6 +264,20 @@ bats_render_tftpl() {
       [ "${pair%%=*}" = "${name}" ] || continue
       supplied="yes"
       value="${pair#*=}"
+      # A value that looks like an interpolation or a sed instruction would render here
+      # differently than under templatefile(): keys substitute one at a time, so a
+      # ${other_key} sitting inside a value survives as literal text that terraform would
+      # have expanded, and a backslash is read a second time by the replacement. Nothing
+      # a suite legitimately passes is either -- these values are payload markers -- so
+      # refuse the shape rather than hand back a render that quietly disagrees with terraform.
+      case "${value}" in
+        *'\'*|*'${'*|*'@@BATS_ESCAPED_BRACE@@'*)
+          printf 'FAIL: bats_render_tftpl: the value for %s carries a backslash, a dollar-brace, or the helper sentinel; it cannot be rendered the way terraform would\n' \
+            "${name}" >&2
+          rc=1
+          continue
+          ;;
+      esac
       value="$(printf '%s' "${value}" | sed 's/[&|]/\\&/g')"
       # shellcheck disable=SC2016  # ${name} is the sed pattern, not a shell expansion
       sed -i "s|\${${name}}|${value}|g" "${staged}"

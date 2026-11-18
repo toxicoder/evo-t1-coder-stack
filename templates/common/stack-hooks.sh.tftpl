@@ -41,7 +41,7 @@ boot_begin "stack hooks" 3
 boot_stage 1 "the symlink guard"
 for evo_t1_root in "$HOME/.grok" "$HOME/.grok/hooks" "$HOME/.grok/hooks/bin"; do
   if [ -L "$${evo_t1_root}" ]; then
-    printf 'warning: %s is a symlink - the hook family is left alone\n' "$${evo_t1_root}" >&2
+    boot_warn "$${evo_t1_root} is a symlink - the hook family is left alone"
     boot_summary
     exit 0
   fi
@@ -58,7 +58,7 @@ for evo_t1_path in \
   "$HOME/.grok/hooks/bin/selective-test-runner.sh" \
   "$HOME/.grok/hooks/bin/deny-patterns.txt"; do
   if [ -L "$${evo_t1_path}" ]; then
-    printf 'warning: %s is a symlink - that hook is not installed\n' "$${evo_t1_path}" >&2
+    boot_warn "$${evo_t1_path} is a symlink - that hook is not installed"
   fi
 done
 
