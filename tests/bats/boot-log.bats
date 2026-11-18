@@ -28,12 +28,32 @@ bats_require_minimum_version 1.5.0
 # shellcheck source=/dev/null
 load 'test_helper'
 
-REPO_ROOT=""
+# Keep an inherited REPO_ROOT: tests/bats_runner.sh exports it, and under
+# //tests:shell_coverage it names the instrumented mirror. Blanking it here would
+# erase it before setup() ever reads it.
+REPO_ROOT="${REPO_ROOT:-}"
 BOOT_LIB=""
 STUB_BIN=""
 
 setup() {
-  REPO_ROOT="$(bats_repo_root)" || skip "cannot locate the checkout from test_helper.bash"
+  # Resolve the library the way every other suite does: through REPO_ROOT, which
+  # tests/bats_runner.sh exports and tests/coverage/shell_cov.sh re-points at the
+  # instrumented mirror. Deriving the root from this file's own location instead reads
+  # the uninstrumented copy, and //tests:shell_coverage then reports all ten verbs as
+  # never having run. The remaining candidates are for a bare
+  # `bats tests/bats/boot-log.bats` with no runner in front of it.
+  local candidate incoming="${REPO_ROOT:-}"
+  REPO_ROOT=""
+  for candidate in "${incoming}" "${TEST_SRCDIR:-}/_main" "$(bats_canonical_repo_root || true)"; do
+    # The check is the library itself, not a repo marker: the mirror carries both, and a
+    # candidate that cannot name the file is not the root this suite wants.
+    if [[ -f ${candidate}/templates/common/boot-log.lib.sh ]]; then
+      REPO_ROOT="${candidate}"
+      break
+    fi
+  done
+  [[ -n ${REPO_ROOT} ]] ||
+    skip "cannot locate the checkout: REPO_ROOT is unset and no boot-log.lib.sh above the cwd"
   BOOT_LIB="${REPO_ROOT}/templates/common/boot-log.lib.sh"
   [ -f "${BOOT_LIB}" ] || skip "templates/common/boot-log.lib.sh is not in the tree"
   STUB_BIN="${BATS_TEST_TMPDIR}/bin"
@@ -255,6 +275,79 @@ drive_shapes() {
   [ "${lines[0]}" = "== demo: start ==" ]
   [ "${lines[1]}" = "== demo: stage 1/2: clone == (+0s)" ]
   [ "${lines[2]}" = "-> fetch (+0s)" ]
+  [ "${lines[3]}" = "ok: a" ]
+  [ "${lines[4]}" = "summary: 1 ok, 0 warnings, 0 failed (+0s, demo)" ]
+  [ "${stderr}" = "" ]
+}
+
+# ------------------------------------------------------------------- primitives
+
+@test "primitives: _boot_say is the one print -- one call, one line, no option parsing" {
+  # Every verb funnels through this printf, so its two promises are the verbs' promises:
+  # one line per call (the 1 MiB agent-log budget is shared by every body) and a format
+  # operand that never starts with '-', which is why a text of '-n' or '--' arrives as
+  # the word the body chose rather than eating an argument.
+  stub_date 1700000000
+  local body="${BATS_TEST_TMPDIR}/say.sh" out="${BATS_TEST_TMPDIR}/say.out"
+  write_driver "${body}" \
+    '_boot_say' \
+    '_boot_say one' \
+    '_boot_say three words here' \
+    '_boot_say -n not a printf flag' \
+    '_boot_say --'
+  cat >"${BATS_TEST_TMPDIR}/say.expected" <<'EOF'
+
+one
+three words here
+-n not a printf flag
+--
+EOF
+  bash "${body}" >"${out}"
+  cmp "${out}" "${BATS_TEST_TMPDIR}/say.expected"
+  [ "$(wc -l <"${out}" | tr -d ' ')" -eq 5 ]
+}
+
+@test "primitives: _boot_t reads 0 before boot_begin and the chosen delta after it" {
+  # The two branches of one line: BOOT_T0 unset falls back to _boot_now, so a verb that
+  # runs before the clock starts prints (+0s) instead of the whole epoch, and once
+  # BOOT_T0 exists the same line is the subtraction the (+Ns) stamp is made of.
+  stub_date 1700000042
+  local body="${BATS_TEST_TMPDIR}/t.sh"
+  write_driver "${body}" \
+    'printf "%s\n" "$(_boot_t)"' \
+    'boot_begin demo 1' \
+    'printf "%s\n" "$(_boot_t)"' \
+    'BOOT_T0=1700000000' \
+    'printf "%s\n" "$(_boot_t)"'
+  run --separate-stderr bash "${body}"
+  [ "${status}" -eq 0 ]
+  # boot_begin prints its own frame between the two reads, so the three numbers are
+  # lines 0, 2 and 3 of the run.
+  [ "${lines[0]}" = "0" ]
+  [ "${lines[1]}" = "== demo: start ==" ]
+  [ "${lines[2]}" = "0" ]
+  [ "${lines[3]}" = "42" ]
+}
+
+@test "primitives: with no date(1) on PATH _boot_t still answers 0 and the boot keeps printing" {
+  # The comment on _boot_t promises 0 "before it or without date(1)". A box with no
+  # date(1) at all is a different path from a date(1) that exits non-zero: here the
+  # lookup itself fails, under set -eu, and a boot that dies over a number is a boot
+  # lost. Nothing but builtins runs after PATH narrows to the empty stub bin.
+  local body="${BATS_TEST_TMPDIR}/nodate.sh"
+  write_driver "${body}" \
+    "PATH='${STUB_BIN}'" \
+    'export PATH' \
+    'printf "%s\n" "$(_boot_t)"' \
+    'boot_begin demo 1' \
+    'boot_stage 1 work' \
+    'boot_ok a' \
+    'boot_summary'
+  run --separate-stderr sh "${body}"
+  [ "${status}" -eq 0 ] || fail "a missing date(1) aborted the boot (status ${status})"
+  [ "${lines[0]}" = "0" ]
+  [ "${lines[1]}" = "== demo: start ==" ]
+  [ "${lines[2]}" = "== demo: stage 1/1: work == (+0s)" ]
   [ "${lines[3]}" = "ok: a" ]
   [ "${lines[4]}" = "summary: 1 ok, 0 warnings, 0 failed (+0s, demo)" ]
   [ "${stderr}" = "" ]
