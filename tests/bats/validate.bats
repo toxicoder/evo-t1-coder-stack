@@ -46,6 +46,7 @@ scratch_checkout() {
   printf 'services: {}\n' >"${scratch}/docker-compose.yml"
   cp "${REPO_ROOT}/scripts/lib/common.sh" "${scratch}/scripts/lib/common.sh"
   cp "${REPO_ROOT}/scripts/lib/parse_yaml.py" "${scratch}/scripts/lib/parse_yaml.py"
+  cp "${REPO_ROOT}/scripts/lib/parse_json.py" "${scratch}/scripts/lib/parse_json.py"
   # The variable-type gate reads this program and then the four template files by
   # path, so the scratch checkout owes all five. The real templates are copied
   # The one test below that needs a violation overwrites one of these copies.
@@ -73,6 +74,24 @@ scratch_checkout() {
     "${scratch}/observability/grafana/provisioning/datasources/stack.yaml"
   cp "${REPO_ROOT}/observability/grafana/provisioning/dashboards/stack.yaml" \
     "${scratch}/observability/grafana/provisioning/dashboards/stack.yaml"
+  # The rest of what the two parse phases name, so a real python3 run over this
+  # fixture reaches the same file set the host's does. The bundle's YAML is named
+  # in four directories and its JSON in one; a fixture that carries only the first
+  # six files is how the alerting rules and the dashboards stayed untested while
+  # the gate kept printing ok:. .y*ml covers both extensions in one glob.
+  local obs_dir
+  for obs_dir in grafana/provisioning/alerting blackbox alertmanager prometheus/rules; do
+    mkdir -p "${scratch}/observability/${obs_dir}"
+    (
+      cd "${REPO_ROOT}/observability/${obs_dir}" &&
+        cp ./*.y*ml "${scratch}/observability/${obs_dir}/"
+    )
+  done
+  mkdir -p "${scratch}/observability/grafana/dashboards"
+  (
+    cd "${REPO_ROOT}/observability/grafana/dashboards" &&
+      cp ./*.json "${scratch}/observability/grafana/dashboards/"
+  )
   printf '%s' "${scratch}"
 }
 
@@ -250,7 +269,60 @@ minimal_path() {
   [ "${status}" -eq 0 ]
   assert_match "the skip is a phase line" '^-> PyYAML not installed, skipping yaml parse$' "${output}"
   assert_match "the gate still ends in a verdict" '^ok: validate$' "${output}"
-  [ "$(stub_log_count python3)" -eq 1 ]
+  # Two calls, not one: the PyYAML probe and the JSON parse. json is in the
+  # standard library, so a box without PyYAML still has its dashboards and its
+  # generated file-SD checked. A gate that skipped the only JSON phase because an
+  # unrelated module was missing and then printed ok: is the shape this pins out.
+  assert_match "the JSON parse still runs" '^-> json parse$' "${output}"
+  assert_match "and names the parse" 'parse_json\.py' "$(stub_log python3)"
+  [ "$(stub_log_count python3)" -eq 2 ]
+}
+
+@test "validate: the JSON parse names the dashboard tree and the generated file-SD" {
+  fake_python3
+  # A generated file that exists is the enrolled state, so the gate owes it a
+  # parse; its absence is the shipped default and must not be a failure.
+  mkdir -p "${ROOT}/observability/spark-targets"
+  printf '%s\n' \
+    '[{"targets": ["spark-1.lan:9100"], "labels": {"box": "spark-1", "exporter": "node_exporter", "hostname": "spark-1"}}]' \
+    >"${ROOT}/observability/spark-targets/sparks.json"
+  run --separate-stderr env VALIDATE_INNER=1 BUILD_WORKSPACE_DIRECTORY="${ROOT}" \
+    bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  assert_match "the JSON parse runs" '^-> json parse$' "${output}"
+  assert_match "and hands the tree to the JSON parser" 'parse_json\.py' "$(stub_log python3)"
+  assert_match "naming every dashboard it found" \
+    'observability/grafana/dashboards/home\.json' "$(stub_log python3)"
+  assert_match "and the generated file-SD beside them" \
+    'observability/spark-targets/sparks\.json' "$(stub_log python3)"
+}
+
+@test "validate: a generated file-SD group that lost a join label fails the gate" {
+  # No fake python3 here: this is the wiring, and the only way to show the
+  # generated file actually reaches the parser is to let it. The label is the one
+  # observability/prometheus/prometheus.yml's four jobs keep on, so a group that
+  # lost it is a box no job scrapes, which reads on every dashboard as no Sparks.
+  mkdir -p "${ROOT}/observability/spark-targets"
+  printf '%s\n' \
+    '[{"targets": ["spark-1.lan:9100"], "labels": {"box": "spark-1", "hostname": "spark-1"}}]' \
+    >"${ROOT}/observability/spark-targets/sparks.json"
+  run --separate-stderr env VALIDATE_INNER=1 BUILD_WORKSPACE_DIRECTORY="${ROOT}" \
+    bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  assert_match "the parser names the fault and the group" \
+    'group 0 labels is missing exporter, so the box is orphaned' "${stderr}"
+  assert_not_match "a gate that found a violation prints no verdict" 'summary:' "${output}"
+}
+
+@test "validate: a dashboard that is not JSON fails the gate" {
+  # The fault this phase exists for. A dashboard Grafana cannot read is an empty
+  # panel and nothing else, so the gate is the only place it can be caught.
+  printf '%s\n' '{"title": "broken", ' >"${ROOT}/observability/grafana/dashboards/broken.json"
+  run --separate-stderr env VALIDATE_INNER=1 BUILD_WORKSPACE_DIRECTORY="${ROOT}" \
+    bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  assert_match "the failing file is named" 'broken\.json' "${stderr}"
+  assert_not_match "a gate that found a violation prints no verdict" 'summary:' "${output}"
 }
 
 @test "validate: a template that lost its type constraint fails the gate" {
