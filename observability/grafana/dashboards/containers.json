@@ -1,0 +1,291 @@
+{
+  "uid": "evo-containers",
+  "title": "Containers",
+  "tags": ["evo-t1", "containers", "cadvisor"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "container",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(container_cpu_usage_seconds_total{name!=\"\"}, name)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "CPU usage against CFS throttling",
+      "description": "Cores consumed with the seconds the CFS quota spent throttled on the same axis: usage climbing together with the throttled line means the container's own CPU limit, not the host, is what slows it down.",
+      "id": 1,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (rate(container_cpu_usage_seconds_total{evo_t1_host=\"stack-host\",name=~\"$container\"}[5m]))",
+          "legendFormat": "{{name}} usage"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (rate(container_cpu_cfs_throttled_seconds_total{evo_t1_host=\"stack-host\",name=~\"$container\"}[5m]))",
+          "legendFormat": "{{name}} throttled"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Memory working set against its limit",
+      "description": "Working set with the cgroup's memory limit drawn over it: a usage line that comes to rest on the limit line is a container about to be OOM-killed, and the gap that never opens is the one to widen.",
+      "id": 2,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (container_memory_working_set_bytes{evo_t1_host=\"stack-host\",name=~\"$container\"})",
+          "legendFormat": "{{name}} working set"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max by (name) (container_spec_memory_limit_bytes{evo_t1_host=\"stack-host\",name=~\"$container\"})",
+          "legendFormat": "{{name}} limit"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Resident set size",
+      "description": "RSS, which counts reclaimable page cache the kernel may take back; a gap that widens between this and the working set above is cache, not memory pressure.",
+      "id": 3,
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (container_memory_rss{evo_t1_host=\"stack-host\",name=~\"$container\"})",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "OOM kills",
+      "description": "Times the kernel's OOM killer picked this container; any rise at all means the limit on the panel above sits below the workload's real peak.",
+      "id": 4,
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 20 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (increase(container_oom_events_total{evo_t1_host=\"stack-host\",name=~\"$container\"}[5m]))",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Processes",
+      "description": "Live processes in the container's cgroup, visible only because this stack runs cAdvisor with --pid=host and privileged; a count that ratchets up without coming back down is a service leaking children rather than doing more work.",
+      "id": 5,
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (container_processes{evo_t1_host=\"stack-host\",name=~\"$container\"})",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Threads",
+      "description": "Kernel threads across the container's cgroup; a line that climbs while the process count above stays flat is a thread pool growing without bound.",
+      "id": 6,
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (container_threads{evo_t1_host=\"stack-host\",name=~\"$container\"})",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "File descriptors",
+      "description": "Descriptors held open; a line that only ever goes up is a socket or file leak, and it ends at the host's file-nr ceiling rather than at this panel.",
+      "id": 7,
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (container_file_descriptors{evo_t1_host=\"stack-host\",name=~\"$container\"})",
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Uptime since last start",
+      "description": "Seconds since each container's own start time, so a value that resets to zero is a restart nobody mentioned, and a container that restarts on a period is the one to read the OOM panel beside.",
+      "id": 8,
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 15 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "time() - container_start_time_seconds{evo_t1_host=\"stack-host\",name=~\"$container\"}",
+          "instant": true,
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Network rx/tx by interface",
+      "description": "Bytes per second in and out per interface with loopback filtered out, so a line here is traffic that actually left the container; an rx line that climbs while the service's own work does not is a retry storm or a scrape reading it too hard.",
+      "id": 9,
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bs", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name, interface) (rate(container_network_receive_bytes_total{evo_t1_host=\"stack-host\",name=~\"$container\",interface!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "{{name}} {{interface}} rx"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name, interface) (rate(container_network_transmit_bytes_total{evo_t1_host=\"stack-host\",name=~\"$container\",interface!~\"lo|veth.*|br.*|docker.*|virbr.*\"}[5m]))",
+          "legendFormat": "{{name}} {{interface}} tx"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Filesystem reads/writes by device",
+      "description": "Bytes per second read and written per backing device; a write line that spikes with no network traffic above it is a container logging, checkpointing, or compacting onto the stack's single NVMe.",
+      "id": 10,
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "Bs", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name, device) (rate(container_fs_reads_bytes_total{evo_t1_host=\"stack-host\",name=~\"$container\"}[5m]))",
+          "legendFormat": "{{name}} {{device}} read"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name, device) (rate(container_fs_writes_bytes_total{evo_t1_host=\"stack-host\",name=~\"$container\"}[5m]))",
+          "legendFormat": "{{name}} {{device}} write"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Silence since last cAdvisor report",
+      "description": "Seconds since cAdvisor last reported each container, against the 15s scrape interval; a value past a few intervals means the container stopped being scraped rather than stopped running, and the table beside it names which.",
+      "id": 11,
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "thresholds": {
+        "mode": "absolute",
+        "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 60 },
+          { "color": "red", "value": 300 }
+        ]
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "time() - container_last_seen{evo_t1_host=\"stack-host\",name=~\"$container\"}",
+          "instant": true,
+          "legendFormat": "{{name}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Reported containers and how stale each is",
+      "description": "Every container name cAdvisor still holds with the seconds since its last report, so one that exited or was removed shows up as a stale row instead of merely vanishing from the picker.",
+      "id": 12,
+      "gridPos": { "h": 7, "w": 16, "x": 8, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0 },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "stale_seconds" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": "color-background" },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "green", "value": null },
+                    { "color": "yellow", "value": 60 },
+                    { "color": "red", "value": 300 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "sortBy": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "time() - container_last_seen{evo_t1_host=\"stack-host\",name=~\"$container\"}",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}
