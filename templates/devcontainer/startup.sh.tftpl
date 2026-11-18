@@ -79,19 +79,6 @@ if ! grep -qs 'infisical/agent.env' "$HOME/.bashrc"; then
 fi
 %{ endif }
 
-# --- terminal-profile helpers -------------------------------------------------
-# docs/coder-templates.md#terminal-and-editor-defaults
-mkdir -p "$HOME/.grok/bin"
-cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
-${grok_build_terminal}
-GROK_BUILD_HELPER
-chmod +x "$HOME/.grok/bin/grok-build-terminal"
-
-cat >"$HOME/.grok/bin/vscode-terminal-tmux" <<'TMUX_ATTACH_HELPER'
-${vscode_terminal_tmux}
-TMUX_ATTACH_HELPER
-chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
-
 # --- Coder Agents context (skill + instructions) ------------------------------
 # docs/coder-templates.md#the-coder-agents-seeds-and-their-agents-tree-twins
 if [ ! -f "$HOME/.coder/skills/grok-build-delegation/SKILL.md" ]; then

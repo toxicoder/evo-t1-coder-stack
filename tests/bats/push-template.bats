@@ -95,6 +95,7 @@ COMMON_PAYLOADS=(
   infisical-secrets.sh.tftpl
   agents-seed.sh.tftpl
   stack-skills.sh.tftpl
+  terminal-launchers.sh.tftpl
   stack-repo-skills.sh.tftpl
   stack-advisors.sh.tftpl
   stack-hooks.sh.tftpl
@@ -156,6 +157,7 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/bash' >"${dest}/infisical-secrets.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
+  printf '%s\n' '#!/bin/sh' >"${dest}/terminal-launchers.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-advisors.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-hooks.sh.tftpl"
@@ -1353,6 +1355,37 @@ source_libs() {
     [ -z "$(stub_log docker)" ]
     [ -z "$(stub_log coder)" ]
   done
+}
+
+@test "template-push: the three payload lists name the same files" {
+  # Three hand-written lists describe one set: template_push_one's refusal loop, this
+  # suite's COMMON_PAYLOADS, which drives the probes above, and write_common_payloads,
+  # which builds the throwaway common dir they read. Add a payload to the script and
+  # forget the suite and every test here still passes while a real
+  # `bazelisk run //scripts:push-template` refuses - which is exactly what happened
+  # when the terminal launchers moved into their own coder_script body.
+  local script_list stub_list
+  script_list="$(sed -n '/^  for payload in/,/; do$/p' "${REPO_ROOT}/scripts/lib/template-push.sh" |
+    sed -e 's/^  for payload in//' -e 's/; do$//' -e 's/\\$//' \
+      -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' | sort -u)"
+  stub_list="$(sed -n '/^write_common_payloads()/,/^}/p' "${BASH_SOURCE[0]}" |
+    grep -oE '\$\{dest\}/[^"]+' | sed 's|.*/||' | sort -u)"
+
+  [ -n "${script_list}" ] || {
+    echo "the payload list in scripts/lib/template-push.sh reads as empty;" >&2
+    echo "the extraction is what this test depends on, so fix it before trusting anything below" >&2
+    return 1
+  }
+  [ "${script_list}" = "$(printf '%s\n' "${payloads[@]}" | sort -u)" ] || {
+    echo "scripts/lib/template-push.sh and this suite's COMMON_PAYLOADS disagree (< suite, > script):" >&2
+    diff <(printf '%s\n' "${payloads[@]}" | sort -u) <(printf '%s\n' "${script_list}") >&2
+    return 1
+  }
+  [ "${stub_list}" = "${script_list}" ] || {
+    echo "write_common_payloads and scripts/lib/template-push.sh disagree (< stub, > script):" >&2
+    diff <(printf '%s\n' "${script_list}") <(printf '%s\n' "${stub_list}") >&2
+    return 1
+  }
 }
 
 @test "template-push: template_verify_active reads the ACTIVE row and fails without one" {

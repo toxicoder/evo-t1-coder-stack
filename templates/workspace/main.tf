@@ -570,8 +570,6 @@ resource "coder_agent" "main" {
     # trailing newline, which is what the repo copy - and the config_seed.sh
     # reseed of ~/.tmux.conf - carries.
     tmux_conf                   = chomp(file("${path.module}/tmux.conf"))
-    grok_build_terminal         = chomp(file("${path.module}/grok-build-terminal.sh"))
-    vscode_terminal_tmux        = chomp(file("${path.module}/vscode-terminal-tmux.sh"))
     grok_build_delegation_skill = chomp(file("${path.module}/grok-build-delegation.SKILL.md"))
     coder_agents                = chomp(file("${path.module}/coder-agents.md"))
     mcp_cache_proxy             = chomp(file("${path.module}/mcp-cache-proxy.json"))
@@ -814,6 +812,26 @@ resource "coder_script" "stack_skills" {
     ez_learn_skill        = chomp(file("${path.module}/ez-learn.SKILL.md"))
     ez_skillify_skill     = chomp(file("${path.module}/ez-skillify.SKILL.md"))
     ez_create_skill_skill = chomp(file("${path.module}/ez-create-skill.SKILL.md"))
+  })
+}
+
+# The two terminal launcher scripts, in a body of their own for the reason the skill
+# seeds have one: every coder_script.script is a separate execve with its own ceiling,
+# and coder_agent.startup_script is the argument that runs out. Nothing at boot runs
+# either script -- the code-server terminal profile is the only consumer -- so this
+# body landing after the startup script is not a race anyone can see.
+resource "coder_script" "terminal_launchers" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the terminal launchers"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/terminal-launchers.sh.tftpl", {
+    grok_build_terminal  = chomp(file("${path.module}/grok-build-terminal.sh"))
+    vscode_terminal_tmux = chomp(file("${path.module}/vscode-terminal-tmux.sh"))
   })
 }
 

@@ -153,22 +153,40 @@ runnable_tmux_seed() {
 
 # --- payload feed byte parity -------------------------------------------------
 #
-# Both main.tf twins hand the seeded payloads to startup.sh.tftpl, where a
-# quoted here-doc writes each one into $HOME, and scripts/lib/config_seed.sh
-# seeds some of the same paths straight from the repo bytes. Two writers, one
-# file: the here-doc has to land those bytes exactly, so every feed chomps() and
-# the template's own line break supplies the written file's single trailing
-# newline.
+# Both main.tf twins hand the seeded payloads to a boot body, where a quoted
+# here-doc writes each one into $HOME, and scripts/lib/config_seed.sh seeds some
+# of the same paths straight from the repo bytes. Two writers, one file: the
+# here-doc has to land those bytes exactly, so every feed chomps() and the
+# template's own line break supplies the written file's single trailing newline.
+#
+# Most bodies ride the twin's own startup.sh.tftpl. The two terminal launchers
+# do not: they sit in coder_script "terminal_launchers", whose body is the shared
+# templates/common/terminal-launchers.sh.tftpl, because the startup argument is
+# the one execve that runs out of room and nothing at boot executes either script.
 
 # feed_specs - one line per payload that reaches $HOME through a quoted
-# here-doc: <main.tf variable> <payload basename> <here-doc tag>.
+# here-doc: <main.tf variable> <payload basename> <here-doc tag> <body>. The body
+# is `twin` for the twin's own startup.sh.tftpl and `launchers` for the common
+# coder_script body, which both twins render from one file.
 feed_specs() {
   printf '%s\n' \
-    'tmux_conf tmux.conf TMUX_CONF_EOF' \
-    'notes_setup notes-setup.sh NOTES_SETUP_EOF' \
-    'grok_build_terminal grok-build-terminal.sh GROK_BUILD_HELPER' \
-    'vscode_terminal_tmux vscode-terminal-tmux.sh TMUX_ATTACH_HELPER' \
-    'mcp_cache_proxy mcp-cache-proxy.json MCP_CACHE_PROXY_EOF'
+    'tmux_conf tmux.conf TMUX_CONF_EOF twin' \
+    'notes_setup notes-setup.sh NOTES_SETUP_EOF twin' \
+    'grok_build_terminal grok-build-terminal.sh GROK_BUILD_HELPER launchers' \
+    'vscode_terminal_tmux vscode-terminal-tmux.sh TMUX_ATTACH_HELPER launchers' \
+    'mcp_cache_proxy mcp-cache-proxy.json MCP_CACHE_PROXY_EOF twin'
+}
+
+# feed_src <twin startup> <body> - the template file main.tf renders for one feed.
+feed_src() {
+  case "${2}" in
+    twin) printf '%s\n' "${1}" ;;
+    launchers) printf '%s\n' "${REPO_ROOT}/templates/common/terminal-launchers.sh.tftpl" ;;
+    *)
+      echo "feed_specs: unknown body '${2}'" >&2
+      return 1
+      ;;
+  esac
 }
 
 # render_feed <tftpl> <var> <value-file> <out> - the twin as templatefile()
@@ -238,8 +256,8 @@ twin_name() {
 }
 
 @test "payload feeds: both main.tf twins chomp every here-doc payload" {
-  local tf var name tag rhs want
-  while read -r var name tag; do
+  local tf var name tag where rhs want
+  while read -r var name tag where; do
     want='chomp(file("${path.module}/'"${name}"'"))'
     for tf in "${WS_MAIN}" "${DC_MAIN}"; do
       # Exact match on the right-hand side: a feed that lost chomp(), grew a
@@ -255,8 +273,8 @@ twin_name() {
 @test "payload feeds: the here-doc writes the repo bytes with one trailing newline" {
   local mains=("${WS_MAIN}" "${DC_MAIN}")
   local starts=("${WS_STARTUP}" "${DC_STARTUP}")
-  local i twin var name tag payload value rendered body
-  while read -r var name tag; do
+  local i twin var name tag where payload value rendered body src
+  while read -r var name tag where; do
     payload="${REPO_ROOT}/templates/common/${name}"
     [ -f "${payload}" ] || { echo "payload missing: ${payload}" >&2; return 1; }
     # The parity claim is chomped payload plus the template's line break, and it
@@ -276,7 +294,8 @@ twin_name() {
       rendered="${BATS_TEST_TMPDIR}/${twin}-${var}.sh"
       body="${BATS_TEST_TMPDIR}/${twin}-${var}.body"
       feed_value "${mains[$i]}" "${var}" "${name}" "${value}"
-      render_feed "${starts[$i]}" "${var}" "${value}" "${rendered}"
+      src="$(feed_src "${starts[$i]}" "${where}")"
+      render_feed "${src}" "${var}" "${value}" "${rendered}"
       heredoc_body "${rendered}" "${tag}" "${body}"
       cmp -s "${body}" "${payload}" || {
         {
@@ -292,15 +311,16 @@ twin_name() {
 }
 
 @test "payload feeds: an un-chomped feed would leave a blank line at EOF" {
-  local f twin var name tag payload rendered body
-  while read -r var name tag; do
+  local f twin var name tag where payload rendered body src
+  while read -r var name tag where; do
     payload="${REPO_ROOT}/templates/common/${name}"
     [ -f "${payload}" ] || { echo "payload missing: ${payload}" >&2; return 1; }
     for f in "${WS_STARTUP}" "${DC_STARTUP}"; do
       twin="$(twin_name "${f}")"
       rendered="${BATS_TEST_TMPDIR}/${twin}-${var}-raw.sh"
       body="${BATS_TEST_TMPDIR}/${twin}-${var}-raw.body"
-      render_feed "${f}" "${var}" "${payload}" "${rendered}"
+      src="$(feed_src "${f}" "${where}")"
+      render_feed "${src}" "${var}" "${payload}" "${rendered}"
       heredoc_body "${rendered}" "${tag}" "${body}"
       # The shape the twins shipped with before every feed chomped: the payload's
       # own newline plus the template's line break. Pinning it is what lets the
