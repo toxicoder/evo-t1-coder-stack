@@ -1,6 +1,6 @@
 ---
 title: Monitoring and alerts
-description: "Running the observability bundle day to day: where the 26 alerts live, what Alertmanager pages on and off, why its UI stays on loopback, where a silence belongs, and how the three DGX Sparks become Prometheus targets."
+description: "Running the observability bundle day to day: where the 28 alerts live, what Alertmanager pages on and off, why its UI stays on loopback, where a silence belongs, and how the three DGX Sparks become Prometheus targets."
 tags: [operate, observability, prometheus, alertmanager, spark]
 ---
 
@@ -25,10 +25,18 @@ stack's own containers has to be run where the stack lives.
 ## Alerts
 
 Three rule files arrive with Prometheus and need no second registration:
-`observability/prometheus/rules/stack.rules.yml` carries the nine host alerts,
+`observability/prometheus/rules/stack.rules.yml` carries the eleven host alerts,
 `spark.rules.yml` the seven Spark alerts, and `inference.rules.yml` the ten inference
-alerts - 26 in all. Prometheus evaluates them. The bundle now also runs Alertmanager
+alerts - 28 in all. Prometheus evaluates them. The bundle now also runs Alertmanager
 (`prom/alertmanager:v0.35.0`) to group them, hold them, and decide who hears about them.
+
+Two of the host alerts exist because the obvious design has a blind spot. The two
+single-exporter gap alerts each wait for the *other* exporter to vouch for the box, so
+both exporters dying at once - a powered-off host, a restarted Docker - was silent;
+`HostExportersSilent` asks no second opinion and fires on the double absence. And a dead
+blackbox prober produces no probe series at all, so nothing it probes can report it;
+`BlackboxProbeGap` reads `up{job="blackbox"}`, which is why Prometheus scrapes the prober
+as a service of its own.
 
 What that means day to day:
 

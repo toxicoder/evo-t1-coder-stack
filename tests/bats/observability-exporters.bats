@@ -58,7 +58,7 @@ STUB_LOG=""
 PINNED_JOBS=(
   prometheus mimir loki tempo grafana alloy coder litellm
   node_exporter cadvisor spark-node blackbox-spark blackbox-spark-models
-  alertmanager
+  blackbox alertmanager
 )
 
 # The spark label every Spark alert has to carry, kept out of the awk programs so
@@ -100,10 +100,11 @@ setup() {
   unset ALERTMANAGER_WEBHOOK_URL
 }
 
-# write_alertmanager_stub <dir> - the binary stand-in. The entrypoint execs
-# /bin/alertmanager by absolute path, so a PATH shadow alone cannot catch it; the
-# copy under test has that literal relocated here as well (entrypoint_copy). The
-# stub records the argv it was exec'd with and exits 0.
+# write_alertmanager_stub <dir> - the binary stand-in. The entrypoint asks PATH first
+# and only then falls back to the documented /bin/alertmanager, so putting this stub on
+# PATH catches the primary resolution; entrypoint_copy relocates the fallback literal
+# into the same directory so the second branch is proven by the same run. The stub
+# records the argv it was exec'd with and exits 0.
 write_alertmanager_stub() {
   cat >"${1}/alertmanager" <<'STUB'
 #!/bin/sh
@@ -327,7 +328,10 @@ assert_file_namespace() {
   local facts alerts missing
   facts="$(rules_facts "${STACK_RULES}")"
   alerts="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="alert"')"
-  assert_eq "stack.rules.yml ships 9 alerts" "9" "$(printf '%s\n' "${alerts}" | wc -l | tr -d ' ')"
+  # 11, not 9: the two single-exporter gap alerts are joined by HostExportersSilent
+  # (both host exporters gone, which neither of them can see) and BlackboxProbeGap (a
+  # dead prober produces no probe series at all, so nothing it probes can report it).
+  assert_eq "stack.rules.yml ships 11 alerts" "11" "$(printf '%s\n' "${alerts}" | wc -l | tr -d ' ')"
   assert_eq "every one carries tier: host" "" \
     "$(printf '%s\n' "${alerts}" | awk -F'|' '$3!="host"{print $2}')"
   missing="$(printf '%s\n' "${facts}" | awk -F'|' '$5!="1"{print $1" "$2}')"
@@ -441,6 +445,21 @@ assert_file_namespace() {
     '--web.listen-address=:9093' "$(cat "${STUB_LOG}")"
 }
 
+@test "an emptied key removes the webhook file a previous boot left behind" {
+  # The file lives under --storage.path, which is a named volume that outlives the
+  # container. Without the removal, a URL the operator deleted keeps receiving alerts
+  # and nothing in the compose file or the config shows why.
+  local copy webhook="${SCRATCH}/webhook_url"
+  copy="$(entrypoint_copy)"
+  printf '%s' "http://old.example.invalid:9095/alert" >"${webhook}"
+
+  run env ALERTMANAGER_WEBHOOK_URL= sh "${copy}" --web.listen-address=:9093
+  assert_eq "the emptied-key path still exits 0" 0 "${status}"
+  assert_file_not_exists "and the stale URL is gone" "${webhook}"
+  assert_match "with alertmanager still exec'd" \
+    '--web.listen-address=:9093' "$(cat "${STUB_LOG}")"
+}
+
 @test "the blackbox modules the scrape params ask for exist" {
   local -a asked=()
   local missing=""
@@ -487,6 +506,60 @@ assert_file_namespace() {
   local bad
   bad="$(csv_facts "${COUNTERS}" | awk -F'|' '$6 !~ /^DCGM_FI_/{print $6}')"
   assert_eq "every row opens with a DCGM_FI_* field" "" "${bad}"
+}
+
+@test "the four jobs that read sparks.json each keep only their own groups" {
+  # One generated file feeds four jobs, so every one of them has to filter on the
+  # exporter label the generator stamps. A job with no keep scrapes all four groups
+  # per box, and the two probe URLs then read as permanently failing metric endpoints.
+  local facts missing
+  facts="${BATS_TEST_TMPDIR}/keeps.txt"
+  python3 - "${PROMETHEUS_YML}" >"${facts}" <<'PY'
+import sys
+
+import yaml
+
+wanted = {"spark-node", "blackbox-spark", "blackbox-spark-models"}
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+for job in doc.get("scrape_configs") or []:
+    name = job.get("job_name") or ""
+    if name not in wanted:
+        continue
+    wanted.discard(name)
+    keeps = [r for r in job.get("relabel_configs") or [] if (r or {}).get("action") == "keep"]
+    if not keeps:
+        print("no-keep|%s" % name)
+    elif not any("exporter" in (r.get("source_labels") or []) for r in keeps):
+        print("no-exporter-keep|%s" % name)
+
+for name in sorted(wanted):
+    print("absent|%s" % name)
+PY
+  missing="$(tr -d ' \t' <"${facts}")"
+  assert_eq "every Spark job filters the shared file on its own exporter label" "" "${missing}"
+}
+
+@test "spark:box_up asks only the node_exporter whether a box is up" {
+  # A box whose DCGM container died is still a running box, and a box serving no
+  # weights is still a serving box. If either answer reaches this rule the fleet pages
+  # critical for an optional exporter that simply is not running.
+  local body
+  body="$(awk '/record: spark:box_up/{f=1} f{print} f&&/^$/{exit}' "${SPARK_RULES}")"
+  assert_match "the rule names the stamped exporter label" 'exporter="node_exporter"' "${body}"
+  assert_not_match "the rule does not take every spark job's up" 'job=~"\.\*spark\.\*"' "${body}"
+  assert_match "a hand-written file still resolves by the exporter port" 'instance=~"\.\*:9100"' "${body}"
+}
+
+@test "spark:probe_up counts only the health probe" {
+  # The model-list probe goes red on a healthy box with no weights loaded. Folding it
+  # in would make SparkDown depend on whether someone loaded a model.
+  local body
+  body="$(awk '/record: spark:probe_up/{f=1} f{print} f&&/^$/{exit}' "${SPARK_RULES}")"
+  assert_match "the model-list probe stays out of the down verdict" \
+    'probe_success\{job="blackbox-spark"\}' "${body}"
 }
 
 @test "prometheus.yml's job names are exactly the pinned set" {

@@ -2219,8 +2219,9 @@ not this public path. Full notes: [hermes.md](hermes.md).
 
 ## Observability
 
-The six profile-gated services (`prometheus`, `mimir`, `loki`, `tempo`, `grafana`,
-`alloy`) fail quietly, because a monitoring stack that stopped collecting still answers
+The ten profile-gated services (`prometheus`, `mimir`, `loki`, `tempo`, `grafana`,
+`alloy`, `node_exporter`, `cadvisor`, `blackbox_exporter`, `alertmanager`) fail quietly,
+because a monitoring stack that stopped collecting still answers
 `/ready`. The shape of every entry below is the same: the read path (Grafana) and the
 write path (Prometheus -> Mimir, Alloy -> Loki) are separate, so decide which side is
 empty before you touch either. What each piece is for and where its config lives is in

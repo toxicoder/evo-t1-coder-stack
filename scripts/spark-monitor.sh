@@ -210,8 +210,12 @@ node_port="$(setting_value SPARK_NODE_EXPORTER_PORT "${node_port_default}")"
 dcgm_port="$(setting_value SPARK_DCGM_EXPORTER_PORT "${dcgm_port_default}")"
 dcgm_image="$(setting_value SPARK_DCGM_EXPORTER_IMAGE "${dcgm_image_default}")"
 monitor_enabled="$(setting_value SPARK_MONITOR_ENABLED false)"
+# The inference port the two blackbox probe groups are pointed at. Same key the
+# Homepage cards and spark_openai_url compose from, so a box that moved its API
+# server moves its probes with it and the two never disagree about where /health is.
+http_port="$(setting_value SPARK_HTTP_PORT 8888)"
 
-for port_pair in "SPARK_NODE_EXPORTER_PORT=${node_port}" "SPARK_DCGM_EXPORTER_PORT=${dcgm_port}"; do
+for port_pair in "SPARK_NODE_EXPORTER_PORT=${node_port}" "SPARK_DCGM_EXPORTER_PORT=${dcgm_port}" "SPARK_HTTP_PORT=${http_port}"; do
   case "${port_pair#*=}" in '' | *[!0-9]*) die "${port_pair% *}='${port_pair#*=}' is not a port number" ;; esac
 done
 if [ -z "${dcgm_image}" ]; then
@@ -283,23 +287,55 @@ if [ "${mode}" = targets ]; then
   # written on the stack host by the operator redirecting this output: printing only
   # is what keeps a laptop run from rewriting the host's target set.
   JSON_MODE=1
-  # Joined into one string before anything is printed: the array has to be one valid
+  # One file_sd group per series the stack wants from a box. Every group carries the
+  # same three labels, and they are the labels the rule files and the dashboards group
+  # by, so a panel never has to know which exporter produced a number:
+  #   box      the positional name the operator's fleet gives the machine
+  #   hostname the token SPARK_HOSTS resolves for it, which is what spark:box_up
+  #            derives from `instance`, so the GPU rows, the host rows and the probe
+  #            rows all land on one identity
+  #   exporter which kind of target this is, and the only thing that tells the four
+  #            jobs reading this one file apart - each keeps its own with a relabel
+  #            `action: keep` in observability/prometheus/prometheus.yml. Without it
+  #            the two probe URLs would be scraped as metric endpoints and every box
+  #            would carry two permanently failing targets.
+  # $5 is the extra labels verbatim, for the probes' `probe` discriminator.
+  sd_group() {
+    local extra=""
+    [ -z "${5:-}" ] || extra=",${5}"
+    printf '{"targets":["%s"],"labels":{"box":"%s","exporter":"%s","hostname":"%s"%s}}' \
+      "${1}" "${2}" "${3}" "${4}" "${extra}"
+  }
+
+  # Collected as groups and joined once at the end: the array has to be one valid
   # document even when the flag is off and there is nothing in it, which is when a
   # trailing comma or an empty line would be the whole output.
-  target_lines=""
+  target_groups=()
   target_idx=0
   if truthy "${monitor_enabled}"; then
     while [ "${target_idx}" -lt "${#hosts[@]}" ]; do
       target_host="${hosts[${target_idx}]}"
       target_idx=$((target_idx + 1))
-      target_lines="${target_lines}${target_lines:+,}"
-      target_lines="${target_lines}{\"targets\":[\"${target_host}:${node_port}\"],\"labels\":{\"box\":\"spark-${target_idx}\",\"exporter\":\"node_exporter\"}}"
-      target_lines="${target_lines},{\"targets\":[\"${target_host}:${dcgm_port}\"],\"labels\":{\"box\":\"spark-${target_idx}\",\"exporter\":\"dcgm\"}}"
+      target_box="spark-${target_idx}"
+      target_groups+=("$(sd_group "${target_host}:${node_port}" "${target_box}" node_exporter "${target_host}")")
+      target_groups+=("$(sd_group "${target_host}:${dcgm_port}" "${target_box}" dcgm "${target_host}")")
+      # The two probes are separate groups rather than a module matrix on one job
+      # because the two answers mean different things: a box can be healthy and still
+      # be serving no model. blackbox.yml's matchers are what make each red.
+      target_groups+=("$(sd_group "http://${target_host}:${http_port}/health" "${target_box}" blackbox "${target_host}" '"probe":"health"')")
+      target_groups+=("$(sd_group "http://${target_host}:${http_port}/v1/models" "${target_box}" blackbox "${target_host}" '"probe":"models"')")
     done
+  fi
+  target_lines=""
+  if [ "${#target_groups[@]}" -gt 0 ]; then
+    target_lines="$(
+      IFS=,
+      printf '%s' "${target_groups[*]-}"
+    )"
   fi
   printf '[%s]\n' "${target_lines}"
   if ! truthy "${monitor_enabled}"; then
-    note "SPARK_MONITOR_ENABLED is '${monitor_enabled}', so this is the empty target set: set it to true in .env (or the process environment) to emit the two groups per box"
+    note "SPARK_MONITOR_ENABLED is '${monitor_enabled}', so this is the empty target set: set it to true in .env (or the process environment) to emit the four groups per box"
   else
     note "print only -- nothing was written; on the stack host, redirect this into observability/spark-targets/sparks.json (see that directory's README) and Prometheus picks it up within a minute"
   fi

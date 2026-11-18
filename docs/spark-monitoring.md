@@ -220,30 +220,37 @@ The `file_sd` document, to stdout, writing nothing. With the flag off, verified 
 
 ```text
 []
-note: SPARK_MONITOR_ENABLED is 'false', so this is the empty target set: set it to true in .env (or the process environment) to emit the two groups per box
+note: SPARK_MONITOR_ENABLED is 'false', so this is the empty target set: set it to true in .env (or the process environment) to emit the four groups per box
 summary: 0 ok, 0 warnings, 0 failed
 ```
 
-With it on, one entry per box per exporter, labelled `box` and `exporter`. `--help` prints
-the usage block from the script's own header. The modes are mutually exclusive:
+With it on, four groups per box: the node_exporter on `SPARK_NODE_EXPORTER_PORT`, the
+DCGM exporter on `SPARK_DCGM_EXPORTER_PORT`, and the two blackbox probe URLs on
+`SPARK_HTTP_PORT` (`/health` and `/v1/models`). Every group carries the three labels the
+rule files and the dashboards group by - `box`, `exporter`, and `hostname` - so the GPU
+rows, the host rows and the probe rows of one box all land on the same identity. `--help`
+prints the usage block from the script's own header. The modes are mutually exclusive:
 `--status cannot be combined with --apply; pick one mode`.
 
 ## How the boxes get into Prometheus
 
-`--targets` prints the document; it never writes it (`scripts/spark-monitor.sh:304`). The
+`--targets` prints the document; it never writes it (`scripts/spark-monitor.sh:340`). The
 file lives at `observability/spark-targets/sparks.json` on the **stack host**, and that
 path is gitignored (`.gitignore:76`) precisely because it names your boxes - three
-addresses are not something this repo commits. `//observability` is what generates it on
-the host from the same two ports.
+addresses are not something this repo commits. `//scripts:spark-monitor` is what generates
+it on the host, from the three ports above.
 
-Prometheus reads it with `file_sd_configs` at `refresh_interval: 60s` on all three Spark
-jobs (`observability/prometheus/prometheus.yml:150-153`, `:168-171`, `:188-191`), so a
-changed file is picked up within a minute without a restart. The jobs are `spark-node`,
-`blackbox-spark` and `blackbox-spark-models`
-(`observability/prometheus/prometheus.yml:149`, `:164`, `:184`); the two blackbox jobs
-take the address from the same file and pass it as `__param_target`, so the target label
-carries the box rather than the prober. Spark alerts stamp `tier=spark` and
-`spark=<hostname>`.
+Prometheus reads that one file with `file_sd_configs` at `refresh_interval: 60s` on all
+three Spark jobs (`observability/prometheus/prometheus.yml:149`, `:171`, `:195`), so a
+changed file is picked up within a minute without a restart. Because four kinds of target
+share the file, each job keeps only its own with a relabel `action: keep` on the `exporter`
+label - without those filters the two probe URLs would be scraped as metric endpoints and
+every box would carry two permanently failing targets. The two blackbox jobs take the
+address from the same file and pass it as `__param_target`, so the target label carries the
+box rather than the prober. The prober itself is scraped as a service of its own
+(`observability/prometheus/prometheus.yml:219`), which is what makes
+`up{job="blackbox"}` exist for `BlackboxProbeGap` to fire on. Spark alerts stamp
+`tier=spark` and `spark=<hostname>`.
 
 The consequence of the empty document above: **an unenrolled fleet reads as zero Sparks.**
 No group in `sparks.json` means no target, which means no `up` series, which means an

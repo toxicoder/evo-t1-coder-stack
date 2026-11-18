@@ -355,13 +355,36 @@ bare_bin() {
   [[ "$(stub_log_count ssh)" == "0" ]]
   body="${output}"
   printf '%s\n' "${body}" >"${BATS_TEST_TMPDIR}/targets.json"
-  run python3 -c 'import json,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); sys.exit(0 if len(d) == 4 else 1)' \
+  # Four groups per box: the two exporters and the two probes. Losing one group costs
+  # a whole answer on the Spark pages, so the count is part of the assertion.
+  run python3 -c 'import json,sys; d=json.load(open(sys.argv[1], encoding="utf-8")); sys.exit(0 if len(d) == 8 else 1)' \
     "${BATS_TEST_TMPDIR}/targets.json"
   [ "${status}" -eq 0 ]
   assert_match "the node group is there" '"targets":\["alpha\.test:9100"\]' "${body}"
   assert_match "the dcgm group is there" '"targets":\["beta\.test:9400"\]' "${body}"
+  assert_match "the health probe group is there" '"targets":\["http://alpha\.test:8888/health"\]' "${body}"
+  assert_match "the model-list probe group is there" '"targets":\["http://beta\.test:8888/v1/models"\]' "${body}"
   assert_match "each group carries its box label" '"box":"spark-2","exporter":"dcgm"' "${body}"
   [ ! -e "${SCRATCH}/observability/spark-targets/sparks.json" ]
+}
+
+@test "cli: every --targets group carries the three labels the rules join on" {
+  local body
+  run_cli_only --targets
+  [ "${status}" -eq 0 ]
+  body="${output}"
+  printf '%s\n' "${body}" >"${BATS_TEST_TMPDIR}/targets.json"
+  # spark.rules.yml groups every Spark series by hostname and the four Prometheus jobs
+  # each keep on exporter. A group that reaches Prometheus without one of the three
+  # shared labels is either invisible to its job or orphaned from the box it belongs to.
+  run python3 -c 'import json,sys
+groups = json.load(open(sys.argv[1], encoding="utf-8"))
+want = {"box", "exporter", "hostname"}
+sys.exit(1 if [g for g in groups if not want <= set(g["labels"])] else 0)' \
+    "${BATS_TEST_TMPDIR}/targets.json"
+  [ "${status}" -eq 0 ]
+  assert_match "the host token is stamped on the box rows" '"hostname":"alpha\.test"' "${body}"
+  assert_match "the two probes are told apart by module" '"probe":"models"' "${body}"
 }
 
 @test "cli: --targets with the gate off prints the empty target set" {

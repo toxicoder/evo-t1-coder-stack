@@ -151,6 +151,13 @@ scrape_configs:
       - files:
           - targets/sparks.json
         refresh_interval: 60s
+    relabel_configs:
+      # One file feeds four kinds of target, so each job keeps only its own. Without
+      # this the two probe URLs in the same file would be scraped as metric
+      # endpoints, and every enrolled box would carry two permanently failing targets.
+      - source_labels: [exporter]
+        regex: node_exporter|dcgm
+        action: keep
 
   # Blackbox is the probe that answers the question an exporter cannot: is the
   # inference port answering at all, from outside the box. Prometheus passes the
@@ -170,6 +177,10 @@ scrape_configs:
           - targets/sparks.json
         refresh_interval: 60s
     relabel_configs:
+      # Only the health group, and only from this file's four kinds of target.
+      - source_labels: [exporter, probe]
+        regex: blackbox;health
+        action: keep
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
@@ -190,12 +201,26 @@ scrape_configs:
           - targets/sparks.json
         refresh_interval: 60s
     relabel_configs:
+      # Only the model-list group.
+      - source_labels: [exporter, probe]
+        regex: blackbox;models
+        action: keep
       - source_labels: [__address__]
         target_label: __param_target
       - source_labels: [__param_target]
         target_label: instance
       - target_label: __address__
         replacement: blackbox_exporter:9115
+
+  # The prober scraped as a service of its own. The two jobs above scrape what it
+  # says about other machines; nothing there can tell you the prober died, because a
+  # dead prober answers nothing at all and a target with no answer has no series to
+  # alert on. This job is what makes `up{job="blackbox"}` exist.
+  - job_name: blackbox
+    static_configs:
+      - targets: ["blackbox_exporter:9115"]
+        labels:
+          evo_t1_host: stack-host
 
   - job_name: alertmanager
     static_configs:

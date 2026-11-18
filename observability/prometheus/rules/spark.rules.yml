@@ -6,23 +6,28 @@
 # ships with no compose edit and no BUILD edit (the `prometheus_config` filegroup
 # globs prometheus/**).
 #
-# Two label spaces meet here. The GPU rows come from the DCGM exporter and carry its
-# own identity labels (hostname, gpu, ...); the box rows come from each Spark's own
-# node_exporter and from the blackbox probes, whose `instance` is the only host
-# handle a scrape target is guaranteed to have - the target list is generated on the
-# host into observability/spark-targets/sparks.json, so nothing committed here can
-# name a box. Every recorded series therefore carries `hostname`, and the two
-# box-side rules below derive it from `instance` with one shared regex so the GPU
-# rows and the box rows can join. That join is the file's one soft assumption: it
-# holds while the host token in sparks.json and the hostname DCGM reports are the
-# same string.
+# Two label spaces meet here, and one generated file makes them the same. The GPU
+# rows come from the DCGM exporter and carry its own identity labels (gpu, UUID,
+# modelName, ...); the box rows come from each Spark's node_exporter and from the
+# blackbox probes. The target list is generated on the host into
+# observability/spark-targets/sparks.json - nothing committed here can name a box -
+# and //scripts:spark-monitor stamps EVERY group in it with `box`, `exporter` and
+# `hostname`, so one host token lands on the GPU rows, the host rows and the probe
+# rows and the three join on `hostname` alone. The two box-side rules below still
+# derive `hostname` from `instance` with one shared regex: it keeps the identity
+# correct when an operator hand-edits sparks.json and drops the label, and it agrees
+# with the stamped value by construction, because `instance` is built from that same
+# token.
 #
 # Two selectors are worth reading before you edit them:
-#   - The Spark node_exporter is matched with job=~".*spark.*" unioned with
-#     instance=~".*:9100". The job name belongs to whoever wires the file_sd block;
-#     9100 is SPARK_NODE_EXPORTER_PORT's shipped default and the stack host's own
-#     node_exporter sits on 9101, so the port half is unambiguous today. Either half
-#     alone finds the fleet, neither half alone is guaranteed to.
+#   - The Spark node_exporter is matched with exporter="node_exporter" unioned with
+#     instance=~".*:9100". The stamped label is the answer and the port is the
+#     fallback for a hand-written file that omitted it. 9100 is
+#     SPARK_NODE_EXPORTER_PORT's shipped default and the stack host's own node_exporter
+#     sits on 9101, so the port half is unambiguous today. Either half alone finds the
+#     fleet, neither half alone is guaranteed to. The union deliberately leaves out the
+#     DCGM target on 9400 and the two probe URLs: a box whose GPU exporter is not
+#     running is still a running box, and must not read as down.
 #   - The DCGM selectors carry no job filter. Only the Sparks run a DCGM exporter in
 #     this stack, and a copied job filter would silently mute every GPU alert if that
 #     job were ever renamed.
@@ -155,26 +160,32 @@ groups:
         expr: max by (hostname, gpu) (last_over_time(DCGM_FI_DEV_GPU_UTIL[6h]))
 
       # ---- the fleet as a number ----------------------------------------------
-      # One value per Spark: 1 when its node_exporter answers. `hostname` is rewritten
-      # from `instance` (scheme and port stripped) because that is the only host label
-      # a scrape target is guaranteed to carry.
+      # One value per Spark: 1 when its node_exporter answers. Only the node_exporter
+      # decides that - the DCGM container and the two probes are separate answers with
+      # their own rules below, and folding them in here would call a box that is running
+      # with a dead GPU exporter a downed box. `hostname` is stamped by the generated
+      # target file and rewritten from `instance` as well, which is the belt-and-braces
+      # path for a hand-written file that left the label out.
       - record: spark:box_up
         expr: |
           min by (hostname) (
             label_replace(
-              (up{job=~".*spark.*"} or up{instance=~".*:9100"}),
+              (up{exporter="node_exporter"} or up{instance=~".*:9100"}),
               "hostname", "$1", "instance", "^(?:[a-zA-Z]+://)?([^:/?#]+).*"
             )
           )
 
-      # One value per probed host: the worst blackbox result against it. Untouched by
-      # job name on purpose - the join below is by host token, and no probe the stack
-      # host runs at an external endpoint can collide with a Spark's token.
+      # One value per probed host: the worst blackbox result against it. The health
+      # module only - the model-list probe goes red on a box that is perfectly healthy
+      # and simply has no weights loaded, which is a different outage with its own
+      # panels, and mixing the two would make SparkDown depend on it. Untouched by job
+      # name beyond that one filter: the join below is by host token, and no probe the
+      # stack host runs at an external endpoint can collide with a Spark's token.
       - record: spark:probe_up
         expr: |
           min by (hostname) (
             label_replace(
-              probe_success,
+              probe_success{job="blackbox-spark"},
               "hostname", "$1", "instance", "^(?:[a-zA-Z]+://)?([^:/?#]+).*"
             )
           )
