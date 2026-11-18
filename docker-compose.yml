@@ -1102,6 +1102,14 @@ services:
     # task-manager page shows a machine that is doing nothing.
     pid: host
     command:
+      # Named, not inherited. The image defaults to :9100, while the mapping
+      # below publishes 9101 and observability/prometheus/prometheus.yml scrapes
+      # node_exporter:9101, so a bind left to the default answers nothing and
+      # up{job="node_exporter"} stays 0 on a correctly built stack: HostNodeExporterGap
+      # would page 10 minutes after every boot and BlackboxProbeGap's gate on the
+      # same job could never be satisfied. The three ports have to be one number,
+      # and tests/bats/observability-exporters.bats pins that they are.
+      - --web.listen-address=:9101
       # rootfs relocation: every path the collectors read is taken under /host,
       # which is the read-only bind of / below. This is how node_exporter reports
       # the stack host while running in a container.

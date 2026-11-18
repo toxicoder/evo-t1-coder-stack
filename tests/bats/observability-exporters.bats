@@ -82,11 +82,12 @@ setup() {
   BLACKBOX_YML="${OBS}/blackbox/blackbox.yml"
   COUNTERS="${OBS}/dcgm/custom-counters.csv"
   PROMETHEUS_YML="${OBS}/prometheus/prometheus.yml"
+  COMPOSE="${REPO_ROOT}/docker-compose.yml"
 
   local artefact
   for artefact in "${STACK_RULES}" "${SPARK_RULES}" "${INFERENCE_RULES}" \
     "${ALERTMANAGER_YML}" "${ENTRYPOINT}" "${BLACKBOX_YML}" "${COUNTERS}" \
-    "${PROMETHEUS_YML}"; do
+    "${PROMETHEUS_YML}" "${COMPOSE}"; do
     [[ -f ${artefact} ]] || skip "${artefact} is not in the tree"
   done
 
@@ -266,6 +267,41 @@ for job in doc.get("scrape_configs") or []:
     print("job|%s" % (job.get("job_name") or ""))
     for value in (job.get("params") or {}).get("module") or []:
         print("module|%s" % value)
+    for group in job.get("static_configs") or []:
+        for target in group.get("targets") or []:
+            print("target|%s|%s" % (job.get("job_name"), str(target).rsplit(":", 1)[-1]))
+PY
+}
+
+# compose_facts <file> - published|<service>|<container port> per ports: entry and
+# listen|<service>|<port> per bind-address flag in command:. Both the container side
+# of the mapping and the flag decide whether a scrape can reach the container, and
+# neither is visible from the other file, which is the gap that let node_exporter
+# publish 9101 while the image bound its default 9100.
+compose_facts() {
+  python3 - "${1}" <<'PY'
+import re
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+for name, service in sorted((doc.get("services") or {}).items()):
+    if not isinstance(service, dict):
+        continue
+    for entry in service.get("ports") or []:
+        # "127.0.0.1:9101:9101" and the short "9115" form both end in the
+        # container side, which is the half Prometheus dials on the network.
+        text = entry if isinstance(entry, str) else str(entry.get("target", ""))
+        print("published|%s|%s" % (name, text.rsplit(":", 1)[-1]))
+    for arg in service.get("command") or []:
+        arg = str(arg)
+        for pattern in (r"^--(?:web\.)?listen-address=(?:[^:]*:)?(\d+)$", r"^--port=(\d+)$"):
+            match = re.match(pattern, arg)
+            if match:
+                print("listen|%s|%s" % (name, match.group(1)))
 PY
 }
 
@@ -460,6 +496,7 @@ assert_file_namespace() {
     '--web.listen-address=:9093' "$(cat "${STUB_LOG}")"
 }
 
+
 @test "the blackbox modules the scrape params ask for exist" {
   local -a asked=()
   local missing=""
@@ -569,4 +606,50 @@ PY
   assert_eq "the job set matches the contract the gap alerts select on" \
     "$(printf '%s\n' "${PINNED_JOBS[@]}" | sort)" \
     "$(printf '%s\n' "${actual[@]}" | sort)"
+}
+
+# The four host exporters as service|scrape job|the one port that has to be
+# published and dialed|the port the image binds when command: names none. The
+# last column is the upstream default and is written down for one reason: a
+# service may leave its bind to that default only while the default already is
+# the port Prometheus dials. node_exporter is exactly the case where it is not -
+# it published 9101 while binding 9100, so every host series was missing,
+# HostNodeExporterGap paged 10 minutes after each boot, and BlackboxProbeGap's
+# gate on the same job could never be satisfied. The suites that stub curl
+# cannot see that, because nothing in them addresses the container.
+LISTEN_CONTRACT=(
+  "node_exporter|node_exporter|9101|9100"
+  "cadvisor|cadvisor|8080|8080"
+  "blackbox_exporter|blackbox|9115|9115"
+  "alertmanager|alertmanager|9093|9093"
+)
+
+@test "every host exporter binds, publishes and is scraped on one port" {
+  local row service job want default facts listen finding="" port
+  local -a ports=()
+  facts="$(compose_facts "${COMPOSE}")"
+  for row in "${LISTEN_CONTRACT[@]}"; do
+    IFS='|' read -r service job want default <<<"${row}"
+    mapfile -t ports < <(printf '%s\n' "${facts}" |
+      awk -F'|' -v s="${service}" '$1=="published" && $2==s {print $3}')
+    [[ "${ports[*]-}" == "${want}" ]] ||
+      finding+="${service} publishes ${ports[*]-nothing}, Prometheus dials ${want}; "
+    mapfile -t ports < <(prom_facts "${PROMETHEUS_YML}" |
+      awk -F'|' -v j="${job}" '$1=="target" && $2==j {print $3}')
+    [[ ${#ports[@]} -gt 0 ]] || finding+="${job} names no static target at all; "
+    for port in "${ports[@]-}"; do
+      [[ ${port} == "${want}" ]] ||
+        finding+="${job} scrapes ${port}, the service publishes ${want}; "
+    done
+    listen="$(printf '%s\n' "${facts}" |
+      awk -F'|' -v s="${service}" '$1=="listen" && $2==s {print $3}')"
+    if [[ -n ${listen} ]]; then
+      [[ ${listen} == "${want}" ]] ||
+        finding+="${service} binds ${listen}, Prometheus dials ${want}; "
+    elif [[ ${default} != "${want}" ]]; then
+      finding+="${service} names no listen flag, so it binds its default ${default} while Prometheus dials ${want}; "
+    fi
+  done
+  assert_eq "each exporter's bind, published port and scrape target are one port" \
+    "" "${finding}"
 }
