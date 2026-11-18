@@ -455,6 +455,14 @@ _SUITE_PAYLOAD = {
     "observability-exporters.bats": [
         "//observability:payload",
     ],
+    # Every fact here is read out of the provisioned dashboard tree, and the metric
+    # allow-list reads the recording rules this repo ships so a new rule never needs
+    # an edit in this file. Both ride the bundle's payload group, which already
+    # carries :grafana_dashboards and :prometheus_config; the parser the suite shells
+    # out to, scripts/lib/parse_json.py, arrives for every suite in _BATS_COMMON.
+    "observability-dashboards.bats": [
+        "//observability:payload",
+    ],
     # The CLI and its probe are both shell under scripts/, which every suite already
     # carries; the fixtures this suite feeds them (docker ps output, a probe report, a
     # dotenv file) are written into the test's own tmpdir.
