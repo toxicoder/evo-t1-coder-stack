@@ -2426,7 +2426,7 @@ bazelisk run //scripts:dev-stack -- status
 bazelisk run //scripts:prod-stack -- status
 ```
 
-Six rows when the profile is selected, none when it is not. With the flag off the five
+Ten rows when the profile is selected, none when it is not. With the flag off the five
 **Observability** cards on the dashboard read `down` together, which is the honest signal
 rather than a card bug: the badge reports what each endpoint answers, and the flag is the
 reason none of them answer. Then:

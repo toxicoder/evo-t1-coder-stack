@@ -59,7 +59,7 @@ exporter rereads it (`scripts/spark-monitor.sh:696-697`).
 
 ## The flag
 
-```
+```dotenv
 SPARK_MONITOR_ENABLED=false
 ```
 
