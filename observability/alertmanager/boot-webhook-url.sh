@@ -33,6 +33,18 @@ if [ -n "${ALERTMANAGER_WEBHOOK_URL:-}" ]; then
   # reads, so a trailing newline is harmless, and no credential belongs in argv.
   printf '%s' "${ALERTMANAGER_WEBHOOK_URL}" >"${webhook_file}" ||
     echo "spark-monitor: cannot write ${webhook_file}; webhook receivers stay silent" >&2
+else
+  # The key is unset or empty, so the file has to go with it. It sits under
+  # --storage.path, which is a named volume that outlives the container: an earlier
+  # boot's URL would otherwise keep receiving alerts for a webhook the operator has
+  # since deleted, and nothing in the compose file or the config would show why.
+  rm -f "${webhook_file}" 2>/dev/null || true
 fi
 
+# Where the binary sits has only ever been proved by the image itself, so PATH is
+# asked first and the documented location is the fallback. One exec either way, so
+# alertmanager stays PID 1.
+if command -v alertmanager >/dev/null 2>&1; then
+  exec alertmanager "$@"
+fi
 exec /bin/alertmanager "$@"
