@@ -291,8 +291,16 @@ minimal_path() {
   [ "${status}" -eq 0 ]
   assert_match "the JSON parse runs" '^-> json parse$' "${output}"
   assert_match "and hands the tree to the JSON parser" 'parse_json\.py' "$(stub_log python3)"
-  assert_match "naming every dashboard it found" \
-    'observability/grafana/dashboards/home\.json' "$(stub_log python3)"
+  # The expectation is the tree itself, so this names every dashboard that exists
+  # now and the ones a later change adds, and does not tie this branch to a file
+  # that only arrives with a dashboard page written after it.
+  local -a dashes=("${REPO_ROOT}"/observability/grafana/dashboards/*.json)
+  [ "${#dashes[@]}" -gt 0 ]
+  local dash
+  for dash in "${dashes[@]}"; do
+    assert_match "naming $(basename "${dash}")" \
+      "observability/grafana/dashboards/$(basename "${dash}")" "$(stub_log python3)"
+  done
   assert_match "and the generated file-SD beside them" \
     'observability/spark-targets/sparks\.json' "$(stub_log python3)"
 }
