@@ -8,19 +8,31 @@
 # docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 
+# The library arrives as one map value main.tf passes. Terraform does not re-interpolate
+# a map value, so its own dollar-brace text lands here verbatim: no here-doc, no temp
+# file, and every comment in this file spells that token out instead of writing it.
+${boot_log_lib}
+
 # Absent-only contract: a file that already exists belongs to the user, so a healthy
-# workspace writes nothing and prints nothing (this body's log is what an operator
-# reads). The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents copy
-# what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder copy,
-# never a second inline body. A skill whose body shells out to a helper gets that helper
-# under scripts/ in both homes, because the body names the ~/.agents path and the chat
-# agent reads the same body from ~/.coder.
+# workspace writes nothing; the log names what it wrote and what it left to the
+# operator. The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents
+# copy what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder
+# copy, never a second inline body. A skill whose body shells out to a helper gets
+# that helper under scripts/ in both homes, because the body names the ~/.agents path
+# and the chat agent reads the same body from ~/.coder.
+
+boot_begin "repo skills" 1
+
+boot_stage 1 "the four repository-command skills"
 
 if [ ! -f "$HOME/.coder/skills/ez-bazel-first/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/ez-bazel-first" 2>/dev/null
   cat >"$HOME/.coder/skills/ez-bazel-first/SKILL.md" <<'EZ_BAZEL_FIRST_SKILL_MD_EOF'
 ${ez_bazel_first_skill}
 EZ_BAZEL_FIRST_SKILL_MD_EOF
+  boot_ok "ez-bazel-first SKILL.md"
+else
+  boot_note "ez-bazel-first SKILL.md is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-bazel-first/SKILL.md" ]; then
@@ -34,6 +46,9 @@ if [ ! -f "$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" ]; t
   cat >"$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" <<'EZ_BAZEL_FIRST_OWNED_FILES_CHECK_PY_EOF'
 ${ez_bazel_first_owned_files_check}
 EZ_BAZEL_FIRST_OWNED_FILES_CHECK_PY_EOF
+  boot_ok "ez-bazel-first owned_files_check.py"
+else
+  boot_note "ez-bazel-first owned_files_check.py is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-bazel-first/scripts/owned_files_check.py" ]; then
@@ -47,6 +62,9 @@ if [ ! -f "$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" ]; then
   cat >"$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" <<'EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF'
 ${ez_bazel_first_glob_budget}
 EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF
+  boot_ok "ez-bazel-first glob_budget.py"
+else
+  boot_note "ez-bazel-first glob_budget.py is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-bazel-first/scripts/glob_budget.py" ]; then
@@ -60,6 +78,9 @@ if [ ! -f "$HOME/.coder/skills/ez-strong-types/SKILL.md" ]; then
   cat >"$HOME/.coder/skills/ez-strong-types/SKILL.md" <<'EZ_STRONG_TYPES_SKILL_MD_EOF'
 ${ez_strong_types_skill}
 EZ_STRONG_TYPES_SKILL_MD_EOF
+  boot_ok "ez-strong-types SKILL.md"
+else
+  boot_note "ez-strong-types SKILL.md is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-strong-types/SKILL.md" ]; then
@@ -73,6 +94,9 @@ if [ ! -f "$HOME/.coder/skills/ez-strong-types/scripts/type_baseline.py" ]; then
   cat >"$HOME/.coder/skills/ez-strong-types/scripts/type_baseline.py" <<'EZ_STRONG_TYPES_TYPE_BASELINE_PY_EOF'
 ${ez_strong_types_type_baseline}
 EZ_STRONG_TYPES_TYPE_BASELINE_PY_EOF
+  boot_ok "ez-strong-types type_baseline.py"
+else
+  boot_note "ez-strong-types type_baseline.py is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-strong-types/scripts/type_baseline.py" ]; then
@@ -86,6 +110,9 @@ if [ ! -f "$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" ]; then
   cat >"$HOME/.coder/skills/ez-trunk-based-repo/SKILL.md" <<'EZ_TRUNK_BASED_REPO_SKILL_MD_EOF'
 ${ez_trunk_based_repo_skill}
 EZ_TRUNK_BASED_REPO_SKILL_MD_EOF
+  boot_ok "ez-trunk-based-repo SKILL.md"
+else
+  boot_note "ez-trunk-based-repo SKILL.md is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-trunk-based-repo/SKILL.md" ]; then
@@ -99,6 +126,9 @@ if [ ! -f "$HOME/.coder/skills/ez-micro-plan/SKILL.md" ]; then
   cat >"$HOME/.coder/skills/ez-micro-plan/SKILL.md" <<'EZ_MICRO_PLAN_SKILL_MD_EOF'
 ${ez_micro_plan_skill}
 EZ_MICRO_PLAN_SKILL_MD_EOF
+  boot_ok "ez-micro-plan SKILL.md"
+else
+  boot_note "ez-micro-plan SKILL.md is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-micro-plan/SKILL.md" ]; then
@@ -112,6 +142,9 @@ if [ ! -f "$HOME/.coder/skills/ez-micro-plan/scripts/plan_check.py" ]; then
   cat >"$HOME/.coder/skills/ez-micro-plan/scripts/plan_check.py" <<'EZ_MICRO_PLAN_PLAN_CHECK_PY_EOF'
 ${ez_micro_plan_plan_check}
 EZ_MICRO_PLAN_PLAN_CHECK_PY_EOF
+  boot_ok "ez-micro-plan plan_check.py"
+else
+  boot_note "ez-micro-plan plan_check.py is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-micro-plan/scripts/plan_check.py" ]; then
@@ -119,5 +152,21 @@ if [ ! -f "$HOME/.agents/skills/ez-micro-plan/scripts/plan_check.py" ]; then
   cp "$HOME/.coder/skills/ez-micro-plan/scripts/plan_check.py" \
     "$HOME/.agents/skills/ez-micro-plan/scripts/plan_check.py" 2>/dev/null
 fi
+
+# The twin cp runs with its errors quieted, so the outcome is read back instead of
+# trusted: an artifact missing from either home here is a seed that failed quietly.
+for f in ez-bazel-first/SKILL.md \
+         ez-bazel-first/scripts/owned_files_check.py \
+         ez-bazel-first/scripts/glob_budget.py \
+         ez-strong-types/SKILL.md \
+         ez-strong-types/scripts/type_baseline.py \
+         ez-trunk-based-repo/SKILL.md \
+         ez-micro-plan/SKILL.md \
+         ez-micro-plan/scripts/plan_check.py; do
+  [ -f "$HOME/.coder/skills/$f" ] || boot_warn "no coder copy of $f"
+  [ -f "$HOME/.agents/skills/$f" ] || boot_warn "no agents twin of $f"
+done
+
+boot_summary
 
 exit 0

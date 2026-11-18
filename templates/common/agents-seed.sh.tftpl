@@ -6,18 +6,30 @@
 # this payload is the largest the template inlines. docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 
+# The verbs arrive as a map value and Terraform does not re-interpolate one, so the
+# library's own dollar-brace text lands verbatim - spelled that way here because
+# Terraform reads a real one anywhere in this file, comments included.
+${boot_log_lib}
+
+boot_begin "agents seed" 3
+boot_stage 1 "the orchestration rulebook"
+
 # Marker-aware, not absent-only: a copy carrying the stack marker
 # (managed-by: evo-t1-coder-stack) is stack-owned and gets the current text on every
 # start, while a copy whose marker lines a person deleted is theirs and is left alone.
 # The same marker refresh-configs checks before it rewrites the file from the seed in
-# this repo. Silent on a healthy workspace, because this body's log is what an operator
-# reads when the rulebook is missing.
+# this repo. One line per start says which of the two it did, because this body's log is
+# what an operator reads when the rulebook is missing.
 if [ ! -f "$HOME/.grok/AGENTS.md" ] \
    || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/AGENTS.md"; then
   mkdir -p "$HOME/.grok" 2>/dev/null
+  boot_phase "writing $HOME/.grok/AGENTS.md from the seed"
   cat >"$HOME/.grok/AGENTS.md" <<'GROK_AGENTS_EOF'
 ${grok_build_agents}
 GROK_AGENTS_EOF
+  boot_ok "the rulebook is in place at ~/.grok/AGENTS.md"
+else
+  boot_note "left ~/.grok/AGENTS.md alone: its owner deleted the stack marker"
 fi
 
 # The same marker contract, applied to the swap file left beside the other file this
@@ -42,6 +54,13 @@ fi
 # deleting it: nothing this step cannot prove stays recoverable, and a wrong judgement is
 # an `ls ~/.grok/stale-swaps` away from undone. docs/coder-templates.md#stale-editor-swap-files
 grok_sweep_config_swaps() {
+  # What this pass decided travels out in three variables the caller seeds before it and
+  # prints after. The suite sources this function on its own
+  # (tests/bats/config-swap-sweep.bats), where the verbs above are not part of the
+  # extract, so the report has to print either way.
+  if ! command -v boot_note >/dev/null 2>&1; then
+    boot_note() { printf '%s\n' "$*"; }
+  fi
   # The descriptor scan's root, named as one constant so the suite can point it at an
   # empty tree and prove the fail-closed half. The boot calls this with no arguments.
   grok_proc_dir=/proc
@@ -53,15 +72,21 @@ grok_sweep_config_swaps() {
   # is exactly what the compare below reads as no holder. That would move a swap out from
   # under a live editor, the one thing this step promises never to do.
   readlink -f / >/dev/null 2>&1 || return 0
+  grok_sweep_state=no_descriptors
   # No descriptor tree to consult is the same undecided case and fails the same way: with
   # the glob matching nothing, every swap would look unheld.
   [ -d "$grok_proc_dir" ] || return 0
+  grok_sweep_state=scanned
   grok_stale_dir="$HOME/.grok/stale-swaps"
   for grok_swap in "$HOME/.grok"/.config.toml.sw?; do
     [ -f "$grok_swap" ] || continue
     # A symlink is not a swap. Archiving one would move the name, strand the bytes it
-    # points at, and then promise recovery of a dangling path.
-    [ -L "$grok_swap" ] && continue
+    # points at, and then promise recovery of a dangling path. The name goes up to the
+    # stage that reports it: this loop stays free of the verbs, which the extract lacks.
+    if [ -L "$grok_swap" ]; then
+      [ -n "$grok_sweep_symlink" ] || grok_sweep_symlink="$grok_swap"
+      continue
+    fi
     # A find that is missing or failing lands here on a non-zero status and keeps the file.
     grok_recent="$(find "$grok_swap" -mmin -60 2>/dev/null)" || continue
     [ -n "$grok_recent" ] && continue
@@ -96,13 +121,53 @@ grok_sweep_config_swaps() {
     # situation this exists for. The archive dates from the day the stack set it down,
     # which is the only clock that makes the month of recovery real.
     touch "$grok_stale_dir/$grok_name" 2>/dev/null || true
-    echo "Moved the stale editor swap $grok_swap to ~/.grok/stale-swaps/$grok_name: the" \
-      "session that left it is not one this container can see, and this boot replaces the" \
-      "file it shadows either way. vim -r ~/.grok/stale-swaps/$grok_name recovers it."
+    grok_sweep_moved=$((grok_sweep_moved + 1))
+    # One argument, not three: every verb in the library reads its first operand alone,
+    # so the continuation lines an echo could carry have to be joined here.
+    grok_report="Moved the stale editor swap $grok_swap to ~/.grok/stale-swaps/$grok_name: the"
+    grok_report="$grok_report session that left it is not one this container can see, and this"
+    grok_report="$grok_report boot replaces the file it shadows either way. vim -r ~/.grok/stale-swaps/$grok_name recovers it."
+    boot_note "$grok_report"
   done
   # Prune only the names this function gives itself, at one level only: an operator who
   # reads the recovery docs and parks a file in that directory keeps it.
   find "$grok_stale_dir" -maxdepth 1 -type f -name 'sweep-*.orphan.*' -mtime +30 \
     -exec rm -f {} + 2>/dev/null || true
 }
+
+boot_stage 2 "the stale editor swap sweep"
+# The three the sweep answers in. Under set -u the case below has to read names the body
+# itself has bound, so they are seeded here as well as written there.
+grok_sweep_state=unmanaged
+grok_sweep_moved=0
+grok_sweep_symlink=''
+boot_phase "reading the marker, then every descriptor link under /proc"
 grok_sweep_config_swaps || true
+
+# The sweep is the part of this boot an operator cannot otherwise see: it decides in
+# silence which swap is an orphan and which it cannot prove, and every one of those gates
+# is a reason the E325 prompt survives a boot. One line names the gate it stopped at.
+boot_stage 3 "what the marker check decided"
+case "$grok_sweep_state" in
+  unmanaged)
+    boot_note "~/.grok/config.toml carries no stack marker, so its swap is the operator's"
+    ;;
+  no_probe)
+    boot_warn "the holder probe is unusable: every swap stays where it is"
+    ;;
+  no_descriptors)
+    boot_warn "no descriptor tree to read: every swap stays where it is"
+    ;;
+  scanned)
+    if [ "$grok_sweep_moved" -gt 0 ]; then
+      boot_ok "archived $grok_sweep_moved orphaned editor swap(s) into ~/.grok/stale-swaps"
+    else
+      boot_note "no orphaned editor swap to archive"
+    fi
+    if [ -n "$grok_sweep_symlink" ]; then
+      boot_warn "left the symlink $grok_sweep_symlink: archiving a link strands the bytes it points at"
+    fi
+    ;;
+esac
+
+boot_summary

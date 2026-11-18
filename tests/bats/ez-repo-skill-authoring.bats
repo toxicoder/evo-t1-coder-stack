@@ -236,7 +236,7 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the eight map keys" {
+@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the eight payload keys and the boot logger" {
   # A here-doc that quietly stopped receiving its payload still has a legal opener
   # and closer, so the tag checks above pass vacuously: the file that lands on disk
   # would be empty and the command simply missing. Pin the line right after each
@@ -254,10 +254,26 @@ ascii_gate() {
   [ -n "${got}" ] || {
     printf 'FAIL: %s interpolates no map key at all\n' "${SEED}" >&2
     return 1; }
-  want="$(printf '%s\n' "${KEYS[@]}" | sed 's/^/${/; s/$/}/' | sort -u)"
-  assert_eq "the body reads exactly the eight keys the twins pass" "${want}" "${got}"
-  assert_eq "and each key is interpolated exactly once" "8" \
+  want="$(printf '%s\n' "${KEYS[@]}" boot_log_lib | sed 's/^/${/; s/$/}/' | sort -u)"
+  assert_eq "the body reads the eight payload keys plus the boot logger" "${want}" "${got}"
+  assert_eq "and each key is interpolated exactly once" "9" \
     "$(grep -cE '^\$\{[a-z_]+\}$' "${SEED}" || true)"
+  # The ninth key carries no payload: main.tf passes the TEXT of
+  # templates/common/boot-log.lib.sh for it, and the body drops that text in as one
+  # bare line. It has to be the first thing the shell reads - a logger defined below
+  # the first command narrates nothing about the part of the boot an operator asks
+  # about, which is how far it got before it went quiet. Comments may precede it, and
+  # this repo's bodies carry one explaining why the line is bare; nothing executable
+  # may.
+  local first_cmd
+  first_cmd="$(awk '
+    $0 == "set -u" { on = 1; next }
+    on && /^[[:space:]]*$/ { next }
+    on && /^#/ { next }
+    on { print; exit }
+  ' "${SEED}")"
+  assert_eq "the boot logger is the first thing the shell reads after the option line" \
+    '${boot_log_lib}' "${first_cmd}"
 }
 
 @test "stack-repo-skills seed: the .agents twin is a cp of the managed copy, never a second here-doc" {
@@ -415,13 +431,14 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills size: the body and all eight payloads are measured in both twins" {
+@test "stack-repo-skills size: the body, its boot logger and all eight payloads are measured in both twins" {
   # This is the guard that keeps the escape hatch honest. startup_size.awk is what
   # the push reads to refuse an argument past MAX_ARG_STRLEN before the workspace
   # ever boots; a body it does not emit a record for is a body nobody measures, and
   # it shows up as a workspace that fails to boot with "A startup script has failed"
-  # instead of as a failed push. Nine records per twin: the body itself plus the
-  # eight payloads it inlines, and none of them may fall through to a catch-all.
+  # instead of as a failed push. Ten records per twin: the body itself, the boot
+  # logger main.tf hands it, and the eight payloads it inlines, and none of them may
+  # fall through to a catch-all.
   local twin out want tab records
   tab="$(printf '\t')"
   [[ -f "${REPO_ROOT}/scripts/lib/startup_size.awk" ]] ||
@@ -429,12 +446,12 @@ ascii_gate() {
   for twin in "${REPO_ROOT}/templates/workspace" "${REPO_ROOT}/templates/devcontainer"; do
     out="$(awk -f "${REPO_ROOT}/scripts/lib/startup_size.awk" "${twin}/main.tf")"
     assert_match "${twin} measures something at all" '.' "${out}"
-    for want in stack-repo-skills.sh.tftpl "${PAYLOADS[@]}"; do
+    for want in stack-repo-skills.sh.tftpl boot-log.lib.sh "${PAYLOADS[@]}"; do
       assert_match "${twin} measures ${want} inside the stack-repo-skills body" \
         "^stack-repo-skills\.sh\.tftpl${tab}${want//./\\.}\$" "${out}"
     done
     records="$(printf '%s\n' "${out}" | grep -c "^stack-repo-skills\.sh\.tftpl${tab}" || true)"
-    assert_eq "${twin} emits exactly nine records for the body" "9" "${records}"
+    assert_eq "${twin} emits exactly ten records for the body" "10" "${records}"
     # A body this reader cannot name is one it cannot size.
     assert_not_match "${twin} never reports the new body as unmeasurable" \
       "^stack-repo-skills\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"

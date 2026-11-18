@@ -186,3 +186,132 @@ stub_log_count() {
     printf '0'
   fi
 }
+
+# ---------------------------------------------------------------------------
+# Boot-body rendering. Every suite that runs a coder_script or startup body needs it
+# rendered first, and each one used to hand-roll its own list of map keys; a key added
+# to main.tf then broke whichever suites had not memorised it. These two helpers are
+# that seam, in one place.
+# ---------------------------------------------------------------------------
+
+# bats_repo_root -- print the checkout these helpers were loaded from.
+bats_repo_root() {
+  local here
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)" || return 1
+  [ -f "${here}/docker-compose.yml" ] || return 1
+  printf '%s' "${here}"
+}
+
+# bats_render_tftpl <tftpl> <dest> [NAME=VALUE]... -- render one boot body the way
+# templatefile() would, with no terraform on PATH, and hand the shell the REAL boot
+# logger: boot_log_lib is always filled with the shipped
+# templates/common/boot-log.lib.sh, so a suite exercises the narration instead of
+# stubbing it to a word and calling the pass meaningless. A caller that names
+# boot_log_lib itself is refused for the same reason.
+#
+# The two steps run in the order Terraform runs them: hide every escaped $${ pair,
+# substitute each ${name} against the caller's map, put the escapes back. The library
+# is spliced in by awk at the end rather than passed through sed, because its own text
+# is full of ${...} that sed would read as part of a replacement.
+#
+# An ${name} the caller did not supply fails the call. A key renamed on one side of the
+# seam has to be a red test, not a body that runs with a hole where its payload was.
+# A VALUE must carry neither a pipe nor a newline.
+#
+# Returns: 0 on success; 1 when a template, the library, or a value is missing.
+bats_render_tftpl() {
+  local tpl="${1:-}" dest="${2:-}"
+  shift 2 2>/dev/null || {
+    printf 'FAIL: bats_render_tftpl: <tftpl> <dest> [NAME=VALUE]...\n' >&2
+    return 1
+  }
+  local root lib staged names name pair value supplied rc=0
+  [ -f "${tpl}" ] || {
+    printf 'FAIL: bats_render_tftpl: no template at %s\n' "${tpl}" >&2
+    return 1
+  }
+  root="$(bats_repo_root)" || {
+    printf 'FAIL: bats_render_tftpl: cannot locate the checkout from test_helper.bash\n' >&2
+    return 1
+  }
+  lib="${root}/templates/common/boot-log.lib.sh"
+  [ -f "${lib}" ] || {
+    printf 'FAIL: bats_render_tftpl: the boot logger is missing at %s\n' "${lib}" >&2
+    return 1
+  }
+  for pair in "$@"; do
+    if [ "${pair%%=*}" = "boot_log_lib" ]; then
+      printf 'FAIL: bats_render_tftpl: boot_log_lib belongs to the helper, not the caller\n' >&2
+      return 1
+    fi
+  done
+
+  staged="$(mktemp "${TMPDIR:-/tmp}/bats-tftpl.XXXXXX")" || return 1
+  cp "${tpl}" "${staged}"
+  # Terraform's escape has to be out of the way before the interpolations are hunted,
+  # or every $${shell_var} in a body reads as a key nobody passed. The sentinel carries
+  # no brace of its own: GNU sed will not match a literal { sitting at the end of a
+  # pattern (and rejects \{ as an unmatched interval), so a sentinel that kept the brace
+  # would restore as "=${var}" and hand the body a guard whose test is always false --
+  # silently, because the render still exits 0. The brace is put back with the token.
+  sed -i 's/\$\${/@@BATS_ESCAPED_BRACE@@/g' "${staged}"
+  names="$(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' "${staged}" | tr -d '${}' | sort -u)" || true
+  while IFS= read -r name; do
+    [ -n "${name}" ] || continue
+    [ "${name}" = "boot_log_lib" ] && continue
+    supplied=""
+    for pair in "$@"; do
+      [ "${pair%%=*}" = "${name}" ] || continue
+      supplied="yes"
+      value="${pair#*=}"
+      value="$(printf '%s' "${value}" | sed 's/[&|]/\\&/g')"
+      # shellcheck disable=SC2016  # ${name} is the sed pattern, not a shell expansion
+      sed -i "s|\${${name}}|${value}|g" "${staged}"
+    done
+    if [ -z "${supplied}" ]; then
+      printf 'FAIL: bats_render_tftpl: ${%s} is interpolated by %s and no value was passed for it\n' \
+        "${name}" "${tpl}" >&2
+      rc=1
+    fi
+  done <<<"${names}"
+  sed -i 's/@@BATS_ESCAPED_BRACE@@/${/g' "${staged}"
+
+  if [ "${rc}" -eq 0 ]; then
+    awk -v lib="${lib}" '
+      $0 == "${boot_log_lib}" {
+        while ((getline line < lib) > 0) { print line }
+        close(lib)
+        next
+      }
+      { print }
+    ' "${staged}" >"${dest}"
+    grep -q 'boot_begin()' "${dest}" || {
+      printf 'FAIL: bats_render_tftpl: %s never received the boot logger\n' "${tpl}" >&2
+      rc=1
+    }
+  fi
+  rm -f "${staged}"
+  return "${rc}"
+}
+
+# bats_strip_boot_lines [file] -- print <file> (stdin when omitted) without the lines
+# the boot logger prints. Every body narrates now, so a suite that used to claim "this
+# start printed nothing" claims that about the body's own output instead. The framing,
+# the per-file ok:/note:, and the closing summary are the narration and are what an
+# operator reads; warning: and error: deliberately SURVIVE the strip, because a suite
+# that asked for silence should still go red when the boot had something to complain
+# about. The patterns are the logger's exact shapes rather than a prefix guess, so a
+# body that legitimately prints an arrow or an ok of its own keeps it. sed and not
+# grep -v: grep exits 1 when nothing survives the filter, and under bats a command
+# substitution that fails fails the test, which would make a perfectly silent body
+# look broken.
+bats_strip_boot_lines() {
+  sed \
+    -e '/^== [^=]*: start ==$/d' \
+    -e '/^== [^=]*: stage [0-9]*\/[0-9]*: .* == (+[0-9]*s)$/d' \
+    -e '/^-> .* (+[0-9]*s)$/d' \
+    -e '/^ok: /d' \
+    -e '/^note: /d' \
+    -e '/^summary: [0-9]* ok, [0-9]* warnings, [0-9]* failed (+[0-9]*s, .*$/d' \
+    "${1:-/dev/stdin}"
+}

@@ -788,6 +788,65 @@ proxy instead of resolving it, and `000` or a 5xx then describes the proxy.
 coder logs <workspace>
 ```
 
+### How do I read the workspace start log? -> the body header, the last stage line, and the truncated tail
+
+- Where it is: open the workspace in the Coder UI and read its start log, and from a host
+  shell the same text is `coder logs <workspace>`. The agent's `startup_script` output is the
+  body of that log, and each `coder_script` prints under the name Coder labels it with -
+  **Seed the Grok Build rulebook**, **Seed the fleet agents, personas and skills**, **Fetch
+  stack secrets from Infisical**, and the rest, which are the `display_name` values at
+  `templates/workspace/main.tf:726-1010`.
+- Every body speaks the same shapes (`templates/common/boot-log.lib.sh`, handed to each body
+  as the `boot_log_lib` key of its `templatefile()` map):
+
+```text
+== <body>: start ==
+== <body>: stage i/N: <title> == (+Ns)
+-> <phase> (+Ns)
+ok: <what landed>
+warning: <what did not, and what the boot did instead>
+note: <commentary that decides nothing>
+error: <what failed>                                          (stderr)
+summary: N ok, W warnings, F failed (+Ns, <body>)
+```
+
+- Which body failed: the `== <body>: start ==` header names it, and that name is
+  `boot_begin`'s first argument rather than the file's. The eleven in the shipped `workspace`
+  twin are `workspace startup` (`templates/workspace/startup.sh.tftpl:19`), `code-server`,
+  `agents seed`, `stack skills`, `repo skills`, `stack fleet`, `stack advisors`,
+  `stack hooks`, `terminal launchers`, `github token refresh`, and `infisical secrets`;
+  `devcontainer` adds `dind bootstrap`.
+- Which stage it died in: the last `== <body>: stage i/N: <title> ==` line above the failure.
+  On every path that got past its header a body's final act is `boot_summary`, so a body that
+  printed a header and no closing `summary:` never reached the end of its own script - it died
+  in the stage that line names, or Coder stopped it at the script's `timeout`. The startup
+  body's eight stage titles (`workspace startup`
+  stages 1-8, `templates/workspace/startup.sh.tftpl:37-321`) are the map for anything about
+  tmux, the CLI, the shell profile, the skills and the notes library, the editor settings,
+  the Grok profile, ownership and the git credentials, or the repositories.
+- The one case where a body prints nothing at all and nothing is wrong: the vault body leaves
+  before it opens its run when the image carries no `infisical` binary
+  (`templates/common/infisical-secrets.sh.tftpl:15`), which is silent by design because the
+  vault is optional.
+- A log that stops mid-boot is a spent budget, not lost scrollback. One agent's whole stream -
+  `startup_script` plus every `coder_script` on it - is 1 MiB, a Postgres check on
+  `workspace_agents.logs_length`
+  ([dump.sql, v2.36.6](https://github.com/coder/coder/blob/v2.36.6/coderd/database/dump.sql#L2996)).
+  When it fills the agent's uploader drops the NEWEST lines
+  ([`codersdk/agentsdk/logs.go`](https://github.com/coder/coder/blob/v2.36.6/codersdk/agentsdk/logs.go),
+  `maxBytesQueued = 1048576`, the `log queue full; truncating new logs` path), and once the
+  server answers `LogLimitExceeded: true` nothing further is uploaded. So the head of the boot
+  survives and the tail is what you lost: read from the top, and treat a body whose `summary:`
+  is missing at the bottom of the log as unproven rather than as a failure - it may have
+  finished after the budget ran out.
+- Nothing raises that budget from here, and the loud fix is the wrong one: `coder_agent` in the
+  provider this stack pins (`~> 2.18`, locked 2.18.0 in
+  `templates/workspace/.terraform.lock.hcl`) takes no log-size argument, `terraform plan`
+  answering `An argument named "log_buffer_size" is not expected here.`, and the agent-side
+  constant is not read from the environment. The bound and the about-40-lines-per-body writing
+  rule it forces are in
+  [coder-templates.md](coder-templates.md#the-boot-log-each-body-prints).
+
 ### Image missing tools, or the build aborts mid-layer -> `curl: (22)`
 
 - Cause: a pinned download returned an error. The layer prints `curl: (22)` and stops

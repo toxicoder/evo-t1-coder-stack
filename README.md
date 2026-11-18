@@ -1298,7 +1298,9 @@ operator hits most:
   the dashboard's **Agent backend** card, or probe the fleet with
   `bazelisk run //scripts:spark-verify -- --no-tests`.
 - **Workspace stuck in *starting*** - startup is blocking by design, so the reason is in
-  the workspace startup log (`coder logs <workspace>`).
+  the workspace startup log (`coder logs <workspace>`), where each boot body narrates
+  itself; which body failed, which stage it died in, and what a truncated log means is
+  [How do I read the workspace start log?](docs/troubleshooting.md#how-do-i-read-the-workspace-start-log--the-body-header-the-last-stage-line-and-the-truncated-tail).
 - **Any `git push` or `gh` failure inside a workspace** - start with
   `bazelisk run //scripts:github-auth -- check <repo-url>`, once, and read its last line.
   `push would FAIL` means one command: `bazelisk run //scripts:github-auth -- fix <repo-url>`,

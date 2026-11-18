@@ -159,8 +159,8 @@ thing for each:
 - **A key the shell could not use as an identifier** - empty, starting with a digit, or holding a
   character outside `[A-Za-z0-9_]`, which is also where blank and comment lines fall out - is
   skipped silently. Nothing is printed for it; the only line that says how many keys landed is the
-  success line, `infisical: loaded N secret keys into <home>/.infisical/agent.env`, and it counts
-  what the publish loop actually wrote.
+  success line, `ok: infisical: loaded N secret keys into <home>/.infisical/agent.env`, and it
+  counts what the publish loop actually wrote.
 
 **The security boundary**, stated so no operator has to guess at it: because `agent.env` is
 sourced by every shell a workspace starts, a vault key that the shell, the dynamic loader, an

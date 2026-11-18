@@ -535,6 +535,7 @@ resource "coder_agent" "main" {
   # //tests:bats_startup_script_size_test fails past 122880 bytes; when it goes red, move
   # prose to the docs rather than raising the bound.
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
+    boot_log_lib = chomp(file("${path.module}/boot-log.lib.sh"))
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
     # resolve, so all ten are declared together. github_mcp, search_mcp and
     # context7_mcp are *boolean* gates in there - each only decides whether its
@@ -791,6 +792,7 @@ resource "coder_script" "gh_token_refresh" {
   timeout = 60
 
   script = templatefile("${path.module}/gh-token-refresh.sh.tftpl", {
+    boot_log_lib                 = chomp(file("${path.module}/boot-log.lib.sh"))
     github_auth_id               = var.github_auth_id
     coder_github_app_install_url = local.coder_github_app_install_url
   })
@@ -804,7 +806,9 @@ resource "coder_script" "gh_token_refresh" {
 # so a stack that never adopted Infisical renders no script, no boot log line, and no
 # agent-env key.
 #
-# The body declares no Terraform variable of its own and is rendered with an empty map,
+# The body declares no Terraform variable of its own; boot_log_lib is the one key it
+# renders with, the boot logger's text, so its progress reaches the agent log the same
+# way every other body's does,
 # which is the point: the rendered text is identical for every workspace, and Coder
 # stores a rendered script body as text on the server, so nothing secret may be
 # interpolated into it. Every input arrives through the agent environment above.
@@ -820,7 +824,9 @@ resource "coder_script" "infisical_secrets" {
   # fatal: agent.env keeps whatever the last start wrote and the workspace boots.
   timeout = 120
 
-  script = templatefile("${path.module}/infisical-secrets.sh.tftpl", {})
+  script = templatefile("${path.module}/infisical-secrets.sh.tftpl", {
+    boot_log_lib = chomp(file("${path.module}/boot-log.lib.sh"))
+  })
 }
 
 # The Grok Build rulebook, seeded by a body of its own for the reason the skill trio has
@@ -839,6 +845,7 @@ resource "coder_script" "agents_seed" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/agents-seed.sh.tftpl", {
+    boot_log_lib      = chomp(file("${path.module}/boot-log.lib.sh"))
     grok_build_agents = chomp(file("${path.module}/GROK_BUILD_AGENTS.md"))
   })
 }
@@ -858,6 +865,7 @@ resource "coder_script" "stack_skills" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/stack-skills.sh.tftpl", {
+    boot_log_lib          = chomp(file("${path.module}/boot-log.lib.sh"))
     ez_learn_skill        = chomp(file("${path.module}/ez-learn.SKILL.md"))
     ez_skillify_skill     = chomp(file("${path.module}/ez-skillify.SKILL.md"))
     ez_create_skill_skill = chomp(file("${path.module}/ez-create-skill.SKILL.md"))
@@ -899,6 +907,7 @@ resource "coder_script" "stack_repo_skills" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/stack-repo-skills.sh.tftpl", {
+    boot_log_lib                     = chomp(file("${path.module}/boot-log.lib.sh"))
     ez_bazel_first_skill             = chomp(file("${path.module}/ez-bazel-first.SKILL.md"))
     ez_bazel_first_owned_files_check = chomp(file("${path.module}/ez-bazel-first.owned_files_check.py"))
     ez_bazel_first_glob_budget       = chomp(file("${path.module}/ez-bazel-first.glob_budget.py"))
@@ -928,6 +937,7 @@ resource "coder_script" "stack_fleet" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/stack-fleet.sh.tftpl", {
+    boot_log_lib                 = chomp(file("${path.module}/boot-log.lib.sh"))
     explorer_agent               = chomp(file("${path.module}/explorer.AGENT.md"))
     architect_agent              = chomp(file("${path.module}/architect.AGENT.md"))
     implementer_agent            = chomp(file("${path.module}/implementer.AGENT.md"))
@@ -959,6 +969,7 @@ resource "coder_script" "stack_advisors" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/stack-advisors.sh.tftpl", {
+    boot_log_lib                = chomp(file("${path.module}/boot-log.lib.sh"))
     documenter_skill            = chomp(file("${path.module}/documenter.SKILL.md"))
     documenter_agent            = chomp(file("${path.module}/documenter.AGENT.md"))
     performance_optimizer_skill = chomp(file("${path.module}/performance-optimizer.SKILL.md"))
@@ -985,6 +996,7 @@ resource "coder_script" "stack_hooks" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/stack-hooks.sh.tftpl", {
+    boot_log_lib               = chomp(file("${path.module}/boot-log.lib.sh"))
     evo_t1_hooks_json          = chomp(file("${path.module}/hooks.evo-t1-hooks.json"))
     secret_guard_sh            = chomp(file("${path.module}/hooks.secret-guard.sh"))
     dangerous_command_guard_sh = chomp(file("${path.module}/hooks.dangerous-command-guard.sh"))
@@ -1014,6 +1026,7 @@ resource "coder_script" "dind_bootstrap" {
   timeout = 180
 
   script = templatefile("${path.module}/dind-bootstrap.sh.tftpl", {
+    boot_log_lib = chomp(file("${path.module}/boot-log.lib.sh"))
     dind_host    = local.dind_host
     dind_sidecar = local.dind_sidecar
   })
@@ -1136,6 +1149,7 @@ resource "coder_script" "code_server" {
   # (editor_folder).
 
   script = templatefile("${path.module}/code-server.sh.tftpl", {
+    boot_log_lib        = chomp(file("${path.module}/boot-log.lib.sh"))
     editor_folder       = local.editor_folder
     settings_b64        = local.use_dc ? base64encode(jsonencode(local.vscode_module_settings)) : ""
     code_server_version = local.code_server_version

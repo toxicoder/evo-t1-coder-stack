@@ -4,6 +4,9 @@
 # pinned release left under the prefix, otherwise install standalone there,
 # then start code-server on port 13337.
 set -eu
+${boot_log_lib}
+
+boot_begin "code-server" 3
 PREFIX="/home/coder/.local/share/code-server"
 # The release to run, from the code_server_version local in main.tf. The
 # upstream installer takes the bare number and builds both the v<version> tag
@@ -19,13 +22,17 @@ CS_BIN="$${PREFIX}/bin/code-server"
 # the home volume first saw. The installer unpacks each release under
 # lib/code-server-<version>/ and repoints the symlink, so this path is the one
 # that means "the pinned release is already here, skip the download".
+boot_stage 1 "the editor install and the settings seed"
 if [ ! -x "$${PREFIX}/lib/code-server-$${CS_VERSION}/bin/code-server" ]; then
+  boot_phase "installing the pinned release $${CS_VERSION} into $${PREFIX}"
   curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}" --version="$${CS_VERSION}"
 fi
 if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
   ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
 fi
-echo "Running code-server in the background (log: /tmp/code-server.log)."
+boot_ok "code-server $${CS_VERSION} is in place under $${PREFIX}"
+boot_stage 2 "the launch"
+boot_phase "Running code-server in the background (log: /tmp/code-server.log)."
 # Positional folder plus --ignore-last-opened: path-based coder_app
 # URLs drop the ?folder= query before the browser sees it, and without
 # this flag the last restored workspace (often /home/coder) wins.
@@ -38,8 +45,10 @@ FOLDER="${editor_folder}"
 # the moment .git appears, so a warm start — folder already cloned — adds
 # nothing to the launch. /home/coder is skipped: nothing clones there and
 # waiting on it would only delay the editor by the full timeout.
+boot_stage 3 "the folder .git wait"
 mkdir -p -- "$${FOLDER}" 2>/dev/null || true
 if [ "$${FOLDER}" != "/home/coder" ]; then
+  boot_phase "waiting up to 60 s for $${FOLDER}/.git to land from the clone stage"
   waited=0
   while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do
     sleep 1
@@ -49,5 +58,12 @@ if [ "$${FOLDER}" != "/home/coder" ]; then
     # PID and the leftover (( is "syntax error near unexpected token '('".
     waited=$((waited + 1))
   done
+  if [ -e "$${FOLDER}/.git" ]; then
+    boot_ok "$${FOLDER}/.git landed after $${waited} s"
+  else
+    boot_warn "no $${FOLDER}/.git after $${waited} s; the editor opens the folder anyway"
+  fi
 fi
 "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &
+boot_ok "code-server is starting on port 13337 (log: /tmp/code-server.log)"
+boot_summary

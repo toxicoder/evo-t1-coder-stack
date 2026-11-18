@@ -5,26 +5,32 @@
 # every body as one argument; docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 
+# The library arrives as a map value and Terraform does not re-interpolate one, so its
+# own dollar-brace text lands verbatim; no here-doc and no temp file carries it.
+${boot_log_lib}
+
 # Absent-only contract: a file that already exists belongs to the user, so a healthy
-# workspace writes nothing and prints nothing (this body's log is what an operator
-# reads). The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents copy
+# workspace writes nothing and the log says so. That log is what an operator reads.
+# The ~/.coder copy is what the Coder Agents chat reads and the ~/.agents copy
 # what the Grok Build CLI reads; the twin is always a cp of the managed ~/.coder copy,
 # never a second inline body. The ez- names stay clear of the upstream ones they sit
 # beside: create-skill is a bundled platform skill needing an x.ai sign-in this stack
 # lacks, and /flush, /dream, /remember and /memory are built-in memory commands gated
 # on a memory store that is off by default; docs/grok-build-and-agents.md.
 
+boot_begin "stack skills" 2
+
+boot_stage 1 "the three skills into $HOME/.coder/skills"
+boot_phase "writing each SKILL.md into the coder skills home"
+
 if [ ! -f "$HOME/.coder/skills/ez-learn/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/ez-learn" 2>/dev/null
   cat >"$HOME/.coder/skills/ez-learn/SKILL.md" <<'EZ_LEARN_SKILL_MD_EOF'
 ${ez_learn_skill}
 EZ_LEARN_SKILL_MD_EOF
-fi
-
-if [ ! -f "$HOME/.agents/skills/ez-learn/SKILL.md" ]; then
-  mkdir -p "$HOME/.agents/skills/ez-learn" 2>/dev/null
-  cp "$HOME/.coder/skills/ez-learn/SKILL.md" \
-    "$HOME/.agents/skills/ez-learn/SKILL.md" 2>/dev/null
+  boot_ok "ez-learn SKILL.md written into the coder skills home"
+else
+  boot_note "ez-learn SKILL.md left alone, the coder copy is the operator's own"
 fi
 
 if [ ! -f "$HOME/.coder/skills/ez-skillify/SKILL.md" ]; then
@@ -32,12 +38,9 @@ if [ ! -f "$HOME/.coder/skills/ez-skillify/SKILL.md" ]; then
   cat >"$HOME/.coder/skills/ez-skillify/SKILL.md" <<'EZ_SKILLIFY_SKILL_MD_EOF'
 ${ez_skillify_skill}
 EZ_SKILLIFY_SKILL_MD_EOF
-fi
-
-if [ ! -f "$HOME/.agents/skills/ez-skillify/SKILL.md" ]; then
-  mkdir -p "$HOME/.agents/skills/ez-skillify" 2>/dev/null
-  cp "$HOME/.coder/skills/ez-skillify/SKILL.md" \
-    "$HOME/.agents/skills/ez-skillify/SKILL.md" 2>/dev/null
+  boot_ok "ez-skillify SKILL.md written into the coder skills home"
+else
+  boot_note "ez-skillify SKILL.md left alone, the coder copy is the operator's own"
 fi
 
 if [ ! -f "$HOME/.coder/skills/ez-create-skill/SKILL.md" ]; then
@@ -45,12 +48,55 @@ if [ ! -f "$HOME/.coder/skills/ez-create-skill/SKILL.md" ]; then
   cat >"$HOME/.coder/skills/ez-create-skill/SKILL.md" <<'EZ_CREATE_SKILL_SKILL_MD_EOF'
 ${ez_create_skill_skill}
 EZ_CREATE_SKILL_SKILL_MD_EOF
+  boot_ok "ez-create-skill SKILL.md written into the coder skills home"
+else
+  boot_note "ez-create-skill SKILL.md left alone, the coder copy is the operator's own"
+fi
+
+boot_stage 2 "the cp twin into $HOME/.agents/skills"
+boot_phase "copying each managed copy into the agents skills home"
+# The cp keeps its 2>/dev/null, so each twin is read back from the file rather
+# assumed: a twin that did not land is a warning, not a silence.
+
+if [ ! -f "$HOME/.agents/skills/ez-learn/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-learn" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-learn/SKILL.md" \
+    "$HOME/.agents/skills/ez-learn/SKILL.md" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/ez-learn/SKILL.md" ]; then
+    boot_ok "ez-learn twin copied into the agents skills home"
+  else
+    boot_warn "ez-learn twin did not land in the agents skills home"
+  fi
+else
+  boot_note "ez-learn twin left alone, the agents copy is the operator's own"
+fi
+
+if [ ! -f "$HOME/.agents/skills/ez-skillify/SKILL.md" ]; then
+  mkdir -p "$HOME/.agents/skills/ez-skillify" 2>/dev/null
+  cp "$HOME/.coder/skills/ez-skillify/SKILL.md" \
+    "$HOME/.agents/skills/ez-skillify/SKILL.md" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/ez-skillify/SKILL.md" ]; then
+    boot_ok "ez-skillify twin copied into the agents skills home"
+  else
+    boot_warn "ez-skillify twin did not land in the agents skills home"
+  fi
+else
+  boot_note "ez-skillify twin left alone, the agents copy is the operator's own"
 fi
 
 if [ ! -f "$HOME/.agents/skills/ez-create-skill/SKILL.md" ]; then
   mkdir -p "$HOME/.agents/skills/ez-create-skill" 2>/dev/null
   cp "$HOME/.coder/skills/ez-create-skill/SKILL.md" \
     "$HOME/.agents/skills/ez-create-skill/SKILL.md" 2>/dev/null
+  if [ -f "$HOME/.agents/skills/ez-create-skill/SKILL.md" ]; then
+    boot_ok "ez-create-skill twin copied into the agents skills home"
+  else
+    boot_warn "ez-create-skill twin did not land in the agents skills home"
+  fi
+else
+  boot_note "ez-create-skill twin left alone, the agents copy is the operator's own"
 fi
+
+boot_summary
 
 exit 0

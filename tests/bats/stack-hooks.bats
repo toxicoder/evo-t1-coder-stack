@@ -833,17 +833,42 @@ wait_for_line() {
 
 @test "registration: the seed body installs the family, keeps a marker-free copy alone, and refuses a linked directory loudly" {
   # Everything the registration greps above claim, run for real: terraform renders
-  # $${var} to ${var} and ${key} to the payload, so the same substitution here lets the
-  # body itself be the thing under test. Three things can go wrong quietly -- the mode,
-  # the marker contract, and a silent bail-out -- and each gets one assertion.
+  # $${var} to ${var} and ${key} to the payload, so rendering through the shared seam
+  # makes the body itself the thing under test. Five things can go quietly -- the fold,
+  # the mode, the marker contract, a silent bail-out, and a run that never narrated
+  # itself -- and each gets one assertion.
   local home rendered script mode
   home="${BATS_TEST_TMPDIR}/seedhome"
   rendered="${BATS_TEST_TMPDIR}/hooks-seed.sh"
   mkdir -p "${home}"
   render_hooks_seed "${rendered}"
 
+  # The escape fold is the helper's, done in Terraform's order, and this is the claim
+  # that it happened: nothing may reach the shell still wearing the dollar-dollar guard
+  # (the shell reads that as the PID plus literal text), and the loop vars the body wrote
+  # escaped have to stand as the shell vars the symlink guard tests below depend on.
+  if grep -q '\$\${' "${rendered}"; then
+    printf 'the render left a dollar-dollar escape in %s, so the fold did not run\n' "${rendered}" >&2
+    return 1
+  fi
+  grep -q '\[ -L "${evo_t1_root}" \]' "${rendered}" || {
+    printf 'the render never restored the shell var the symlink guard reads: %s\n' "${rendered}" >&2
+    return 1; }
+
   run env HOME="${home}" sh "${rendered}"
   [ "${status}" -eq 0 ] || { printf 'the seed exited %s: %s\n' "${status}" "${output}" >&2; return 1; }
+
+  # A body that lost the logger still exits 0 and still writes every file, so the exit
+  # status alone cannot tell an operator that this family ran. The framing is the proof
+  # the run was narrated, and the closing summary is the line that says what it cost and
+  # how many payloads landed.
+  grep -q '^== stack hooks: start ==$' <<<"${output}" || {
+    printf 'the seed ran without the logger opening the run: %s\n' "${output}" >&2
+    return 1; }
+  grep -qE '^summary: [0-9]+ ok, [0-9]+ warnings, [0-9]+ failed ' <<<"${output}" || {
+    printf 'the seed closed without its counts, so the boot log says nothing about what it seeded: %s\n' "${output}" >&2
+    return 1; }
+
   assert_file_exists "the manifest" "${home}/.grok/hooks/evo-t1-hooks.json"
   assert_file_exists "the deny list" "${home}/.grok/hooks/bin/deny-patterns.txt"
   for script in secret-guard dangerous-command-guard post-edit-format selective-test-runner; do
@@ -886,18 +911,24 @@ wait_for_line() {
     return 1; }
 }
 
-# render_hooks_seed <out> -- the seed body the way terraform would render it: the $$
-# escapes collapse to shell vars and every map key becomes its payload.
+# render_hooks_seed <out> -- the seed body the way terraform would render it, through the
+# one seam every suite that runs a body shares: bats_render_tftpl hides the $$ escapes,
+# substitutes each map key, puts the escapes back, and splices the REAL boot logger in at
+# the bare boot_log_lib line. Folding the escapes here instead would mean choosing between
+# two quiet failures: fold first and a guarded shell var reads as a key nobody passed;
+# fold never and the body runs with a literal library line and dies under set -u.
 render_hooks_seed() {
-  local out="${1}" key
-  sed -e 's/\$\${/${/g' "${COMMON}/stack-hooks.sh.tftpl" >"${out}"
+  local out="${1}"
   # The manifest carries its marker as a JSON key of its own, so the render hands it a
-  # minimal document that does; the shell payloads get theirs from the body.
-  sed -i "s|^\${evo_t1_hooks_json}$|{\"__evoT1Stack\": true}|" "${out}"
-  for key in secret_guard_sh dangerous_command_guard_sh \
-    post_edit_format_sh selective_test_runner_sh deny_patterns_txt; do
-    sed -i "s|^\${${key}}$|RENDERED ${key}|" "${out}"
-  done
+  # minimal document that does; the shell payloads get theirs from the body, which is
+  # what makes the marker-appending path the one under test here.
+  bats_render_tftpl "${COMMON}/stack-hooks.sh.tftpl" "${out}" \
+    evo_t1_hooks_json='{"__evoT1Stack": true}' \
+    secret_guard_sh='RENDERED secret_guard_sh' \
+    dangerous_command_guard_sh='RENDERED dangerous_command_guard_sh' \
+    post_edit_format_sh='RENDERED post_edit_format_sh' \
+    selective_test_runner_sh='RENDERED selective_test_runner_sh' \
+    deny_patterns_txt='RENDERED deny_patterns_txt'
 }
 
 # ---------------------------------------------------------------------------
@@ -1038,9 +1069,11 @@ render_hooks_seed() {
   # Every single-dollar ${name} in the body is a Terraform interpolation the twins have
   # to feed: an unmapped key fails the render at workspace start, which is the loudest
   # failure this family can have. The $$ escapes are shell vars and belong here, so
-  # those are stripped first rather than demanding the file carry none at all.
+  # those are stripped first rather than demanding the file carry none at all. The count
+  # is the canary, so it stays a literal: seven, the six payloads plus the boot logger
+  # the twins feed from boot-log.lib.sh.
   local key w hit seen=0
-  local -a want=(evo_t1_hooks_json secret_guard_sh dangerous_command_guard_sh \
+  local -a want=(boot_log_lib evo_t1_hooks_json secret_guard_sh dangerous_command_guard_sh \
     post_edit_format_sh selective_test_runner_sh deny_patterns_txt)
   while IFS= read -r key; do
     [ -n "${key}" ] || continue
@@ -1051,5 +1084,5 @@ render_hooks_seed() {
     done
     [ "${hit}" -eq 1 ] || { printf 'FAIL: the seed body interpolates ${%s}, which no main.tf twin feeds\n' "${key}" >&2; return 1; }
   done < <(sed -E 's/\$\$\{[a-z0-9_]+\}//g' "${body}" | grep -oE '\$\{[a-z0-9_]+\}' | sed -E 's/^\$\{([a-z0-9_]+)\}$/\1/' | sort -u)
-  [ "${seen}" -eq 6 ] || { printf 'FAIL: only %s of the six payload keys are interpolated, so a hook file would seed empty\n' "${seen}" >&2; return 1; }
+  [ "${seen}" -eq 7 ] || { printf 'FAIL: only %s of the seven keys the twins feed are interpolated, so a hook payload would seed empty or the body would run without its logger\n' "${seen}" >&2; return 1; }
 }

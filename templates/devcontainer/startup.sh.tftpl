@@ -10,6 +10,14 @@
 
 set -u
 
+${boot_log_lib}
+
+# The library arrives as a Terraform map value, which Terraform does not
+# re-interpolate, so the library's own dollar-brace text lands here verbatim: no
+# here-doc and no temp file. A comment in this body spells that token as
+# "dollar-brace" too, because Terraform reads a real one anywhere in the file.
+boot_begin "workspace startup" 8
+
 SUDO=""
 if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
   SUDO="sudo"
@@ -26,9 +34,12 @@ if [ -n "$home_owner" ]; then
 fi
 
 # --- tmux -------------------------------------------------------------------
+boot_stage 1 "tmux and its config"
 if ! command -v tmux >/dev/null 2>&1; then
+  boot_phase "installing tmux with apt-get"
   $SUDO apt-get update -y >/dev/null
   $SUDO DEBIAN_FRONTEND=noninteractive apt-get install -y tmux >/dev/null
+  boot_ok "tmux installed"
 fi
 
 # --- tmux configuration -----------------------------------------------------
@@ -45,8 +56,10 @@ fi
 
 # --- Grok Build CLI ----------------------------------------------------------
 # docs/coder-templates.md#the-grok-build-cli-probe-the-download-and-the-installer-stub
+boot_stage 2 "the Grok Build CLI"
 GROK_FRESH_INSTALL=0
 if ! command -v grok >/dev/null 2>&1; then
+  boot_phase "downloading and running the grok installer from x.ai (max-time 180s)"
   grok_installer="$(mktemp 2>/dev/null || true)"
   if [ -n "$grok_installer" ] \
      && curl -fsSL --http1.1 --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 180 \
@@ -55,9 +68,16 @@ if ! command -v grok >/dev/null 2>&1; then
     command -v grok >/dev/null 2>&1 && GROK_FRESH_INSTALL=1
   fi
   rm -f "$${grok_installer:-}"
+  if [ "$GROK_FRESH_INSTALL" = "1" ]; then
+    boot_ok "grok installed"
+  else
+    boot_warn "grok is still not on PATH - the installer did not take"
+  fi
 fi
+boot_stage 3 "the shell profile"
 if ! grep -qs 'grok/bin' "$HOME/.bashrc"; then
   printf '\n# Grok Build CLI\nexport PATH="$HOME/.grok/bin:$PATH"\n' >>"$HOME/.bashrc"
+  boot_ok "the grok bin PATH line added to ~/.bashrc"
 fi
 export PATH="$HOME/.grok/bin:$PATH"
 
@@ -81,11 +101,13 @@ fi
 
 # --- Coder Agents context (skill + instructions) ------------------------------
 # docs/coder-templates.md#the-coder-agents-seeds-and-their-agents-tree-twins
+boot_stage 4 "skills, agents, and the notes library"
 if [ ! -f "$HOME/.coder/skills/grok-build-delegation/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/grok-build-delegation" 2>/dev/null
   cat >"$HOME/.coder/skills/grok-build-delegation/SKILL.md" <<'AGENT_SKILL_MD_EOF'
 ${grok_build_delegation_skill}
 AGENT_SKILL_MD_EOF
+  boot_ok "the delegation skill seeded under ~/.coder/skills"
 fi
 
 if [ ! -f "$HOME/.agents/skills/grok-build-delegation/SKILL.md" ]; then
@@ -105,6 +127,7 @@ if [ ! -f "$HOME/.coder/AGENTS.md" ]; then
   cat >"$HOME/.coder/AGENTS.md" <<'AGENT_INSTR_MD_EOF'
 ${coder_agents}
 AGENT_INSTR_MD_EOF
+  boot_ok "the coder AGENTS.md seeded"
 fi
 
 # The ~/.agents twin, same rule as above; INSTRUCTIONS.md is the name the ~/.agents
@@ -129,6 +152,7 @@ NOTES_SETUP_EOF
 then
   chmod 0644 "$notes_lib_tmp" 2>/dev/null || true
   mv -f "$notes_lib_tmp" "$notes_lib" 2>/dev/null || true
+  boot_ok "the notes library published at ~/.grok/notes-setup.sh"
 fi
 rm -f "$notes_lib_tmp" 2>/dev/null || true
 # shellcheck disable=SC1090
@@ -136,6 +160,7 @@ rm -f "$notes_lib_tmp" 2>/dev/null || true
 
 # --- Editor settings ----------------------------------------------------------
 # docs/coder-templates.md#editor-settings-seed
+boot_stage 5 "editor settings"
 mkdir -p "$HOME/.shared/vscode" "$HOME/.local/share/code-server/User"
 shared_settings="$HOME/.shared/vscode/settings.json"
 user_settings="$HOME/.local/share/code-server/User/settings.json"
@@ -158,14 +183,15 @@ VSCODE_SETTINGS_EOF
       fi
     fi
     chmod 600 "$shared_settings" 2>/dev/null || true
+    boot_ok "the shared editor settings seeded"
   else
-    echo "WARNING: could not write $shared_settings — the vscode-settings volume is not writable. Editor settings were not seeded." >&2
+    boot_err "could not write $shared_settings — the vscode-settings volume is not writable. Editor settings were not seeded."
   fi
 fi
 # A real file, rewritten each start: render, then the shared overlay wins, then the
 # theme, so the overlay cannot veto it. Your own symlink here is left alone.
 if [ -L "$user_settings" ]; then
-  echo "note: $user_settings is your own symlink - the stack leaves it alone."
+  boot_note "$user_settings is your own symlink - the stack leaves it alone."
 else
   user_settings_new="$${user_settings}.tmp"
   if cat >"$user_settings_new" <<'VSCODE_USER_SETTINGS_EOF'
@@ -186,14 +212,16 @@ VSCODE_USER_SETTINGS_EOF
     fi
     mv -f "$user_settings_new" "$user_settings"
     chmod 600 "$user_settings" 2>/dev/null || true
+    boot_ok "the code-server user settings refreshed"
   else
-    echo "WARNING: could not write $user_settings_new - the editor settings were not refreshed." >&2
+    boot_err "could not write $user_settings_new - the editor settings were not refreshed."
     rm -f "$user_settings_new" 2>/dev/null || true
   fi
 fi
 
 # --- Grok Build config --------------------------------------------------------
 # docs/coder-templates.md#marker-ownership-of-the-seeded-files
+boot_stage 6 "the Grok Build profile"
 mkdir -p "$HOME/.grok/memory" "$HOME/.grok/logs/mcp" 2>/dev/null
 
 if [ ! -f "$HOME/.grok/config.toml" ] \
@@ -227,6 +255,7 @@ GROK_CONFIG_EOF
   } >"$HOME/.grok/config.toml" || true
   rm -f "$cli_block" "$ui_keys"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
+  boot_ok "config.toml re-materialized with the stack markers"
 else
   # Same marker contract as ~/.tmux.conf above; the loss costs this model catalog.
   echo "WARNING: $HOME/.grok/config.toml carries neither stack marker (no" \
@@ -245,11 +274,7 @@ check_mcp_commands() {
   while IFS= read -r mcp_cmd; do
     [ -n "$mcp_cmd" ] || continue
     [ -x "$mcp_cmd" ] && continue
-    echo "WARNING: $mcp_cfg declares an MCP command that is not executable:" \
-      "$mcp_cmd - the running image is older than the templates. Rebuild" \
-      "evo-t1-dev (bazelisk run //scripts:build-dev-image), or install it" \
-      "here: npm i -g --prefix /opt/npm-global <package> at the version" \
-      "pinned in images/dev/tool-versions.env." >&2
+    boot_err "$mcp_cfg declares an MCP command that is not executable: $mcp_cmd - the running image is older than the templates. Rebuild evo-t1-dev (bazelisk run //scripts:build-dev-image), or install it here: npm i -g --prefix /opt/npm-global <package> at the version pinned in images/dev/tool-versions.env."
   done < <(grep -E '^[[:space:]]*command[[:space:]]*=' "$mcp_cfg" 2>/dev/null \
     | sed -n 's/.*=[[:space:]]*"\([^"]*\)".*/\1/p' | sort -u)
 }
@@ -264,8 +289,10 @@ if [ ! -f "$HOME/.grok/mcp-cache-proxy/config.json" ]; then
 ${mcp_cache_proxy}
 MCP_CACHE_PROXY_EOF
   chmod 600 "$HOME/.grok/mcp-cache-proxy/config.json" 2>/dev/null || true
+  boot_ok "the context7 cache-proxy config seeded"
 fi
 
+boot_stage 7 "ownership, the legacy hoist, and the git credentials"
 if [ -n "$home_owner" ]; then
   $SUDO chown -R "$home_owner" "$HOME/.grok" "$HOME/.shared" 2>/dev/null || true
 fi
@@ -286,10 +313,12 @@ if command -v git >/dev/null 2>&1 && command -v gh >/dev/null 2>&1; then
   if [ -n "$home_owner" ]; then
     $SUDO chown "$home_owner" "$HOME/.gitconfig" 2>/dev/null || true
   fi
+  boot_ok "the gh credential helper wired for github.com"
 fi
 
 # --- Repository clone onto the shared devcontainer bind ----------------------
 # docs/coder-templates.md#why-the-shared-bind-path-is-load-bearing
+boot_stage 8 "the repositories and the notes watcher"
 repo_url_raw="$(cat <<'REPO_URL_EOF'
 ${repo_url}
 REPO_URL_EOF
@@ -344,6 +373,13 @@ if [ "$(id -u)" = "0" ] && [ -n "$clone_owner" ]; then
   fi
 fi
 
+# The host alone: a create-form URL can carry userinfo, and no boot line may
+# print a credential.
+repo_host() {
+  printf '%s' "$1" | sed -E -e 's#^[A-Za-z0-9+.-]+://##' -e 's#^[^/@]*@##' \
+    -e 's#[:/].*##'
+}
+
 run_clone() {
   if [ -n "$clone_runner" ] && [ -n "$clone_home" ]; then
     $clone_runner env HOME="$clone_home" git "$@"
@@ -371,21 +407,19 @@ if [ -z "$repo_url_raw" ]; then
   :
 elif [ -d "$target/.git" ]; then
   # No pull here: re-fetching is the user's call, and one could conflict mid-edit.
-  echo "$repo_folder: already cloned, skipping"
+  boot_note "$repo_folder: already cloned, skipping"
   run_notes "$target" "$repo_url_raw" || true
 elif [ -e "$target" ] && [ -n "$(ls -A -- "$target" 2>/dev/null)" ]; then
 # Emptiness is tested, not just existence: this mkdir and the one in
 # coder_script.code_server both leave an empty folder on a first boot, and that clones.
-  echo "WARNING: $target exists but is not a git repository — leaving it alone and" \
-    "skipping the clone. Remove it from the stack host if it should not be there." >&2
+  boot_err "$target exists but is not a git repository — leaving it alone and skipping the clone. Remove it from the stack host if it should not be there."
 elif ! command -v git >/dev/null 2>&1; then
-  echo "WARNING: git is not installed in the workspace container, so $repo_url_raw" \
-    "was not cloned into $target — the dev container build will fail. This template" \
-    "expects the golden image (bazelisk run //scripts:build-dev-image), which ships git." >&2
+  boot_err "git is not installed in the workspace container, so $repo_url_raw was not cloned into $target — the dev container build will fail. This template expects the golden image (bazelisk run //scripts:build-dev-image), which ships git."
 else
   # -- before the URL: the value is user input and must never parse as an option.
+  boot_phase "cloning the $(repo_host "$repo_url_raw") repository into $target"
   if run_clone clone -- "$repo_url_raw" "$target"; then
-    echo "cloned $repo_url_raw into $target"
+    boot_ok "cloned $repo_url_raw into $target"
     run_notes "$target" "$repo_url_raw" || true
     if [ -n "$clone_owner" ]; then
       chown -R "$clone_owner" "$target" 2>/dev/null || true
@@ -394,7 +428,7 @@ else
     # Loud and non-fatal on purpose: the devcontainer build reports the same problem a
     # second time, and the workspace still boots for someone to fix it.
     echo "==============================================================" >&2
-    echo "WARNING: the repository clone failed — the dev container will not build." >&2
+    boot_err "the repository clone failed — the dev container will not build."
     echo "  repository: $repo_url_raw" >&2
     echo "  target:     $target" >&2
     echo "  The two likely causes:" >&2
@@ -426,24 +460,21 @@ for extra_url in $(printf '%s\n' "$extra_repos_raw" | tr ',' '\n' | tr '\r' '\n'
   fi
   extra_target="$dc_dir/$extra_folder"
   if [ -d "$extra_target/.git" ]; then
-    echo "$extra_folder: already cloned, skipping"
+    boot_note "$extra_folder: already cloned, skipping"
     run_notes "$extra_target" "$extra_url" || true
   elif [ -e "$extra_target" ]; then
-    echo "WARNING: $extra_target exists but is not a git repository — leaving it" \
-      "alone and skipping the clone. Remove it from the stack host if it should not be there." >&2
+    boot_err "$extra_target exists but is not a git repository — leaving it alone and skipping the clone. Remove it from the stack host if it should not be there."
   elif ! command -v git >/dev/null 2>&1; then
-    echo "WARNING: git is not installed, so $extra_url was not cloned into $extra_target." \
-      "This template expects the golden image (bazelisk run //scripts:build-dev-image), which ships git." >&2
+    boot_err "git is not installed, so $extra_url was not cloned into $extra_target. This template expects the golden image (bazelisk run //scripts:build-dev-image), which ships git."
   elif run_clone clone -- "$extra_url" "$extra_target"; then
-    echo "cloned $extra_url into $extra_target"
+    boot_phase "cloning the $(repo_host "$extra_url") repository into $extra_target"
+    boot_ok "cloned $extra_url into $extra_target"
     run_notes "$extra_target" "$extra_url" || true
     if [ -n "$clone_owner" ]; then
       chown -R "$clone_owner" "$extra_target" 2>/dev/null || true
     fi
   else
-    echo "WARNING: $extra_url did not clone into $extra_target. The same two causes" \
-      "apply as for the primary repository: a credential that does not cover this" \
-      "repository, or no route to its host." >&2
+    boot_err "$extra_url did not clone into $extra_target. The same two causes apply as for the primary repository: a credential that does not cover this repository, or no route to its host."
   fi
 done
 
@@ -478,16 +509,12 @@ if [ -d "$target/.git" ]; then
   if [ -z "$dc_config" ]; then
     echo "==============================================================" >&2
     if [ "$build_devcontainer" = "yes" ]; then
-      echo "WARNING: $repo_folder has no devcontainer configuration found — the dev" \
-        "container will NOT build, and with the dev-container toggle on that means no" \
-        "editor and no in-container terminal either: this workspace's code-server and" \
-        "Grok hang off the dev-container sub-agent, and no dev container means no" \
-        "sub-agent to attach them to (recreate this workspace with the dev-container" \
-        "toggle set to No if the plain-container shape is what you want)." >&2
+      boot_err "$repo_folder has no devcontainer configuration found — the dev container will NOT build, and with the dev-container toggle on that means no editor and no in-container terminal either: this workspace's code-server and Grok hang off the dev-container sub-agent, and no dev container means no sub-agent to attach them to (recreate this workspace with the dev-container toggle set to No if the plain-container shape is what you want)."
     else
-      echo "WARNING: $repo_folder has no devcontainer configuration found — expected" \
-        "with the dev-container toggle off; the editor opens the clone directly." >&2
+      boot_note "$repo_folder has no devcontainer configuration found — expected with the dev-container toggle off; the editor opens the clone directly."
     fi
     echo "==============================================================" >&2
   fi
 fi
+
+boot_summary

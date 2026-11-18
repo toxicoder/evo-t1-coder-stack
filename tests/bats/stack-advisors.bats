@@ -189,17 +189,23 @@ setup() {
 # The five payloads, and the set the directory holds.
 # ---------------------------------------------------------------------------
 
-# render_advisors <out> -- the seed body with every map key replaced by a marker, which
-# is what lets a test run the body itself instead of only reading it. A payload here is
-# one line naming its key, so an assertion about which file holds which body is also a
-# check that the body writes each key to the path the manifest names.
+# render_advisors <out> -- the seed body rendered for execution. Each payload becomes one
+# line naming its key, so an assertion about which file holds which body is also a check
+# that the body writes each key to the path the manifest names. The boot logger comes from
+# bats_render_tftpl, which splices the real templates/common/boot-log.lib.sh and refuses a
+# caller that tries to pass its own: a stubbed library defines no verbs, the body has no
+# set -e, and the run "passes" while proving nothing. The same helper fails the render when
+# the body gains a key this list does not name, which is what kept this suite honest.
 render_advisors() {
-  local out="${1}" key
-  cp "${COMMON}/stack-advisors.sh.tftpl" "${out}"
-  for key in documenter_skill documenter_agent performance_optimizer_skill \
-    debugger_skill migrator_skill ez_code_index_skill ez_code_index_py; do
-    sed -i "s|^\${${key}}$|SEEDED ${key}|" "${out}"
-  done
+  local out="${1}"
+  bats_render_tftpl "${COMMON}/stack-advisors.sh.tftpl" "${out}" \
+    documenter_skill="SEEDED documenter_skill" \
+    documenter_agent="SEEDED documenter_agent" \
+    performance_optimizer_skill="SEEDED performance_optimizer_skill" \
+    debugger_skill="SEEDED debugger_skill" \
+    migrator_skill="SEEDED migrator_skill" \
+    ez_code_index_skill="SEEDED ez_code_index_skill" \
+    ez_code_index_py="SEEDED ez_code_index_py"
 }
 
 @test "advisors seed: one render fills both homes and the agents copy is a cp of the managed one" {
@@ -211,7 +217,23 @@ render_advisors() {
 
   run env HOME="${home}" sh "${rendered}"
   [ "${status}" -eq 0 ] || { printf 'the advisor body exited %s: %s\n' "${status}" "${output}" >&2; return 1; }
-  [ -z "${output}" ] || { printf 'a healthy first install printed %s\n' "${output}" >&2; return 1; }
+  # Silence is a claim about what the BODY printed. The logger's framing, its per-file
+  # ok:/note: lines and its closing summary are the boot log an operator reads and always
+  # appear, so they are stripped first; warning: and error: deliberately survive the strip,
+  # which keeps this a real claim - a first install with something to complain about still
+  # goes red here.
+  local printed
+  printed="$(printf '%s\n' "${output}" | bats_strip_boot_lines)"
+  [ -z "${printed}" ] || { printf 'a healthy first install printed %s\n' "${printed}" >&2; return 1; }
+  # And the narration is really there: a body that went silent through the whole install
+  # would satisfy every check above and leave an operator with a start log that says
+  # nothing about how far the boot got.
+  printf '%s\n' "${output}" | grep -q '^== stack advisors: start ==$' || {
+    printf 'the seed never opened its log, so a boot that stalled looks like a clean one\n' >&2
+    return 1; }
+  printf '%s\n' "${output}" | grep -qE '^summary: [0-9]+ ok, 0 warnings, 0 failed ' || {
+    printf 'the seed never closed its log with a clean summary: %s\n' "${output}" >&2
+    return 1; }
 
   for key in documenter performance-optimizer debugger migrator ez-code-index; do
     assert_file_exists "the managed copy of ${key}" "${home}/.coder/skills/${key}/SKILL.md"
@@ -234,7 +256,10 @@ render_advisors() {
   before="$(find "${home}/.coder" "${home}/.agents" "${home}/.grok" -type f -exec cksum {} \; | sort)"
   run env HOME="${home}" sh "${rendered}"
   [ "${status}" -eq 0 ] || { printf 'the second start exited %s\n' "${status}" >&2; return 1; }
-  [ -z "${output}" ] || { printf 'the second start printed %s\n' "${output}" >&2; return 1; }
+  # Same claim as the first install, over the same strip: absent-only means the body added
+  # nothing of its own to the second start, while still telling the operator it ran.
+  printed="$(printf '%s\n' "${output}" | bats_strip_boot_lines)"
+  [ -z "${printed}" ] || { printf 'the second start printed %s\n' "${printed}" >&2; return 1; }
   after="$(find "${home}/.coder" "${home}/.agents" "${home}/.grok" -type f -exec cksum {} \; | sort)"
   [ "${before}" = "${after}" ] || { printf 'the second start rewrote files it does not own\n' >&2; return 1; }
 }

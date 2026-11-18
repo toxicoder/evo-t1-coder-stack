@@ -166,11 +166,12 @@ missing one fails the push before the CLI runs.
   `${coder_github_app_install_url}` interpolate.
 - `infisical-secrets.sh.tftpl` is the `coder_script "infisical_secrets"` body that fetches
   that workspace's own copy of the stack's credentials from the self-hosted vault on start
-  (`templates/workspace/main.tf:711-724`). It is the one body rendered with an **empty map**
-  (`templates/workspace/main.tf:723`): it declares no Terraform variable of its own, so the
-  rendered text is identical for every workspace and carries no secret, because Coder stores
-  a rendered `coder_script.script` as text on the server. Everything it needs arrives as an
-  agent-env variable. The vault itself - its three services, the operator CLI, the managed
+  (`templates/workspace/main.tf:766-781`). Its map is a single key, **`boot_log_lib`**
+  (`templates/workspace/main.tf:778-780`): it declares no Terraform variable of its own, so
+  the rendered text is identical for every workspace and carries no secret, because Coder
+  stores a rendered `coder_script.script` as text on the server, and the one value it does
+  take is the same library text everywhere. Everything else it needs arrives as an agent-env
+  variable. The vault itself - its three services, the operator CLI, the managed
   key inventory and rotation - is [operate/secrets.md](operate/secrets.md); what the
   templates have to keep true about it is
   [The Infisical boot fetch](#the-infisical-boot-fetch).
@@ -892,9 +893,13 @@ the home owner at the start of
    reader that sources `~/.infisical/agent.env` under `set -a` into `~/.bashrc` - the reader
    is what makes the vault fetch worth doing at all
    (see [The Infisical boot fetch](#the-infisical-boot-fetch)).
-4. Writes the two terminal-profile tmux helpers (see below). The default one gives each
-   visible terminal its own pane: it re-joins a folder's session only while nothing is
-   attached to it, and otherwise opens a numbered sibling.
+4. The two terminal-profile tmux helpers are written by their own
+   `coder_script "terminal_launchers"` body, which runs after this one returns (see
+   below). Nothing at boot executes either script -- the code-server terminal profile is
+   the only consumer -- so landing them a step later costs an operator nothing, and each
+   body names itself in the start log. The default one gives each visible terminal its
+   own pane: it re-joins a folder's session only while nothing is attached to it, and
+   otherwise opens a numbered sibling.
 5. Seeds the Coder Agents context files, then the shared code-server User settings, only
    for files that are absent.
 6. Renders `~/.grok/config.toml` (the three gated MCP servers ship by default; the five
@@ -916,7 +921,8 @@ helpers point at a folder that was never cloned.
 
 The order above is not incidental; each line is a constraint the script has to keep.
 
-- `~/.tmux.conf` is seeded *before* the two terminal helpers. `tmux` reads that file once
+- `~/.tmux.conf` is seeded *before* the two terminal helpers, which their own
+  `coder_script` writes after this body returns. `tmux` reads that file once
   at server start and every terminal (plus an SSH client that reattaches) shares that one
   server, so seeding after the first `tmux new-session -A` could run would leave that
   session unconfigured for the whole boot. `mouse off` is what keeps every click with
@@ -1176,6 +1182,66 @@ this checkout when the intent really is to rewrite it.
   user-owned and stays. Deleting a seeded copy never keeps your own - the boot writes it
   back - so only dropping that marker does.
 
+### The boot log each body prints
+
+Every exec'd body narrates itself, so a workspace start reads as a staged run rather than a
+wall of file copies. The verbs are `scripts/lib/common.sh`'s own words - `== section ==`,
+`-> phase`, `ok:`, `warning:`, `note:`, `error:`, and a closing `summary:` - so one
+vocabulary covers the host CLIs and the workspace boot.
+
+- The verbs live in one payload, `templates/common/boot-log.lib.sh`, and both twins hand it
+  to every exec'd body as the `boot_log_lib` key of that body's `templatefile()` map: the
+  startup body plus ten `coder_script`s in `workspace`
+  (`templates/workspace/main.tf:509-510`), and eleven in the `devcontainer` twin, which adds
+  one body, `dind-bootstrap.sh.tftpl`. The two bodies nothing execs, `settings.json.tftpl` and
+  `grok-config.toml.tftpl`, take no such key.
+- A body takes the library as one bare line under its `set -u`. Terraform does not
+  re-interpolate a map value, so the library's own dollar-brace shell text lands verbatim -
+  no here-doc, no temp file, no second copy to drift. That is also why the escape rule below
+  is absolute rather than a style preference: Terraform reads an interpolation token wherever
+  it sits, a `.tftpl` comment included, so no comment in one of these files may spell one.
+- The shapes, verbatim from `templates/common/boot-log.lib.sh:22-63`:
+
+```text
+== <body>: start ==                                boot_begin <body> <stages>
+== <body>: stage i/N: <title> == (+Ns)              boot_stage <i> <title>
+-> <phase> (+Ns)                                   boot_phase <text>
+ok: <text>                                         boot_ok <text>
+warning: <text>                                    boot_warn <text>
+note: <text>                                       boot_note <text>
+error: <text>                                      boot_err <text>   (stderr)
+summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
+```
+
+- Each body opens with its own `== <body>: start ==` and, on every path that got that far, its
+  final act is `boot_summary`, so the eleven bodies of one agent share a single log and stay
+  tellable apart by the name in those two lines (`boot_begin`'s first argument, echoed again in
+  the `summary:`). `note:` is the only verb nothing counts, which is how a gated-off body
+  reads: notes, then `summary: 0 ok, 0 warnings, 0 failed`.
+- The bound every body is written against: one agent's whole log stream - `startup_script`
+  and every `coder_script` on it together - is 1 MiB. It is a Postgres check,
+  `CONSTRAINT max_logs_length CHECK ((logs_length <= 1048576))` on `workspace_agents`
+  ([dump.sql, v2.36.6](https://github.com/coder/coder/blob/v2.36.6/coderd/database/dump.sql#L2996)),
+  and `workspace_agents` is the only table in that schema that carries agent logs at all, so
+  a script's lines draw on the same budget as the startup script's. The agent's uploader
+  holds the same number as a constant
+  ([`codersdk/agentsdk/logs.go`](https://github.com/coder/coder/blob/v2.36.6/codersdk/agentsdk/logs.go),
+  `maxBytesQueued = 1048576`) and counts it across every log source at once, returning before
+  it appends when the queue is full: the lines you lose are the NEWEST ones, and once the
+  server answers `LogLimitExceeded: true` the uploader drops everything still queued. Hence
+  the about-40-lines-per-body rule, and hence a command with a stream of its own is aimed at
+  a file rather than at the log - the editor launch redirects to `/tmp/code-server.log`
+  (`templates/workspace/code-server.sh.tftpl:67`) while the narration says the same thing in
+  one `boot_phase` line.
+- Nothing on the template side raises that budget, so do not re-add an argument for it.
+  `coder_agent` in the provider this stack pins (`~> 2.18`, locked 2.18.0 in
+  `templates/workspace/.terraform.lock.hcl`) has no log-size argument: `terraform plan`
+  answers `An argument named "log_buffer_size" is not expected here.` The agent-side constant
+  is not read from the environment either - its own comment records the number as "taken from
+  dump.sql `max_logs_length` constraint". Where to read the log and what a truncated one
+  means is
+  [troubleshooting.md](troubleshooting.md#how-do-i-read-the-workspace-start-log--the-body-header-the-last-stage-line-and-the-truncated-tail).
+
 ### Startup script templatefile rules
 
 - Every script the template renders is a `templatefile()` body: the agent's
@@ -1187,11 +1253,12 @@ this checkout when the intent really is to rewrite it.
   expansion in one has to be written `$${name}`; the
   one-dollar braced form is swallowed as an interpolation, in a comment or a `for` loop as
   readily as in a command. The unbraced form (`$name`) needs no escape.
-  `infisical-secrets.sh.tftpl` is the one body rendered with an empty map
-  (`templates/workspace/main.tf:727`), so every braced expansion in it is shell text, none
-  of it interpolates, and the rendered bytes are the same for every workspace.
+  `infisical-secrets.sh.tftpl` is the sparsest body: its map is the single `boot_log_lib`
+  key (`templates/workspace/main.tf:778-780`), so apart from the one line that takes it every
+  braced expansion in it is shell text, none of it interpolates, and the rendered bytes are
+  the same for every workspace.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
-  ten: `grok_config`, `notes_setup`, `tmux_conf`,
+  eleven: `boot_log_lib`, `grok_config`, `notes_setup`, `tmux_conf`,
   `grok_build_delegation_skill`, `coder_agents`,
   `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`, `infisical_hook`.
   The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The payloads of the other
@@ -1298,10 +1365,11 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   reason every credential in `main.tf` rides it: Coder stores a rendered
   `coder_script.script` as text on the server, so a value interpolated into one would sit in
   Coder's database in plain sight, while an agent-env value is rendered per start and never
-  written to disk (`templates/workspace/main.tf:634-638`). The body accordingly declares no
-  Terraform variable of its own and renders with an empty map, and the seven keys the
+  written to disk (`templates/workspace/main.tf:682-686`). The body accordingly declares no
+  Terraform variable of its own - its `templatefile()` map is the single `boot_log_lib` key
+  - and the seven keys the
   `env = merge({...})` block hands it are its whole interface
-  (`templates/workspace/main.tf:639-653`, `:727`).
+  (`templates/workspace/main.tf:687-701`, `:778-780`).
 - The body runs in this order, and every step that cannot proceed prints what it needs and
   exits 0: no `infisical` binary in the image (`templates/common/infisical-secrets.sh.tftpl:8` - the golden image bakes the pinned release, so that is an image older than `INFISICAL_CLI_VERSION`),
   the six-name not-configured guard (`:14-20`), the `INFISICAL_PULL_ON_START` gate

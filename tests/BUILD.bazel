@@ -187,6 +187,16 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
         "//hermes:skills",
     ],
+    # The suite drives the boot logger itself: it sources the shipped library by path
+    # and runs every verb under sh/bash/dash, so the only repo payload it opens is that
+    # one file. The clock it stubs and every fixture it writes live under
+    # BATS_TEST_TMPDIR, which is why this owes no stub and no fixture group.
+    "boot-log.bats": [
+        # The library itself, plus both main.tf twins: the wiring tests derive the list of
+        # narrating bodies out of the two coder_script maps rather than a hard-coded one,
+        # and they open every body that map names.
+        "//:templates_payload",
+    ],
     "bootstrap.bats": [
         "//infisical:payload",
         "//proxy:confs",

@@ -13,6 +13,12 @@
 # let a workspace boot with a /documenter command and no role to dispatch, or the reverse.
 set -u
 
+# The library arrives as a map value and Terraform does not re-interpolate one, so its own
+# dollar-brace text lands verbatim; a comment here has to spell that token in words too.
+${boot_log_lib}
+
+boot_begin "stack advisors" 3
+
 # Absent-only contract, the same one stack-skills.sh.tftpl keeps for the skills: a file
 # that already exists belongs to the person who wrote it, so a healthy workspace writes
 # nothing and prints nothing (this body's log is what an operator reads when a skill is
@@ -30,27 +36,34 @@ set -u
 # would have this body replace a file it does not own. A refusal is a warning on stderr --
 # a skill that quietly failed to install is the failure an operator has to be able to see.
 
+boot_stage 1 "the two skill homes"
 if [ -L "$HOME/.coder" ] || [ -L "$HOME/.agents" ]; then
-  printf 'warning: a skill home is a symlink - the advisor family is left alone\n' >&2
+  boot_warn 'a skill home is a symlink - the advisor family is left alone' >&2
+  boot_summary
   exit 0
 fi
+boot_ok "neither skill home is a symlink"
 
 # True when this body may create path $1: nothing sits there yet, and neither the path nor
 # the directory above it is a link. The absent-only contract covers the first half; the
 # second is why the check cannot be just "[ ! -e ]", which a dangling link passes.
 writable() {
   if [ -L "$1" ] || [ -L "$(dirname "$1")" ]; then
-    printf 'warning: %s sits behind a symlink - left alone\n' "$1" >&2
+    boot_warn "$1 sits behind a symlink - left alone" >&2
     return 1
   fi
   [ ! -e "$1" ]
 }
+
+boot_stage 2 "the four advisor runbooks and the documenter role"
+boot_phase "absent-only: a file that already exists is left alone"
 
 if writable "$HOME/.coder/skills/documenter/SKILL.md"; then
   mkdir -p "$HOME/.coder/skills/documenter" 2>/dev/null
   cat >"$HOME/.coder/skills/documenter/SKILL.md" <<'DOCUMENTER_SKILL_MD_EOF'
 ${documenter_skill}
 DOCUMENTER_SKILL_MD_EOF
+  boot_ok "wrote $HOME/.coder/skills/documenter/SKILL.md"
 fi
 
 if writable "$HOME/.agents/skills/documenter/SKILL.md" &&
@@ -58,6 +71,7 @@ if writable "$HOME/.agents/skills/documenter/SKILL.md" &&
   mkdir -p "$HOME/.agents/skills/documenter" 2>/dev/null
   cp "$HOME/.coder/skills/documenter/SKILL.md" \
     "$HOME/.agents/skills/documenter/SKILL.md" 2>/dev/null
+  boot_ok "copied $HOME/.agents/skills/documenter/SKILL.md"
 fi
 
 # The role the skill dispatches, under ~/.grok/agents/ the way the fleet family writes its
@@ -68,6 +82,7 @@ if writable "$HOME/.grok/agents/documenter.md"; then
   cat >"$HOME/.grok/agents/documenter.md" <<'DOCUMENTER_AGENT_MD_EOF'
 ${documenter_agent}
 DOCUMENTER_AGENT_MD_EOF
+  boot_ok "wrote $HOME/.grok/agents/documenter.md"
 fi
 
 if writable "$HOME/.coder/skills/performance-optimizer/SKILL.md"; then
@@ -75,6 +90,7 @@ if writable "$HOME/.coder/skills/performance-optimizer/SKILL.md"; then
   cat >"$HOME/.coder/skills/performance-optimizer/SKILL.md" <<'PERFORMANCE_OPTIMIZER_SKILL_MD_EOF'
 ${performance_optimizer_skill}
 PERFORMANCE_OPTIMIZER_SKILL_MD_EOF
+  boot_ok "wrote $HOME/.coder/skills/performance-optimizer/SKILL.md"
 fi
 
 if writable "$HOME/.agents/skills/performance-optimizer/SKILL.md" &&
@@ -82,6 +98,7 @@ if writable "$HOME/.agents/skills/performance-optimizer/SKILL.md" &&
   mkdir -p "$HOME/.agents/skills/performance-optimizer" 2>/dev/null
   cp "$HOME/.coder/skills/performance-optimizer/SKILL.md" \
     "$HOME/.agents/skills/performance-optimizer/SKILL.md" 2>/dev/null
+  boot_ok "copied $HOME/.agents/skills/performance-optimizer/SKILL.md"
 fi
 
 if writable "$HOME/.coder/skills/debugger/SKILL.md"; then
@@ -89,6 +106,7 @@ if writable "$HOME/.coder/skills/debugger/SKILL.md"; then
   cat >"$HOME/.coder/skills/debugger/SKILL.md" <<'DEBUGGER_SKILL_MD_EOF'
 ${debugger_skill}
 DEBUGGER_SKILL_MD_EOF
+  boot_ok "wrote $HOME/.coder/skills/debugger/SKILL.md"
 fi
 
 if writable "$HOME/.agents/skills/debugger/SKILL.md" &&
@@ -96,6 +114,7 @@ if writable "$HOME/.agents/skills/debugger/SKILL.md" &&
   mkdir -p "$HOME/.agents/skills/debugger" 2>/dev/null
   cp "$HOME/.coder/skills/debugger/SKILL.md" \
     "$HOME/.agents/skills/debugger/SKILL.md" 2>/dev/null
+  boot_ok "copied $HOME/.agents/skills/debugger/SKILL.md"
 fi
 
 if writable "$HOME/.coder/skills/migrator/SKILL.md"; then
@@ -103,6 +122,7 @@ if writable "$HOME/.coder/skills/migrator/SKILL.md"; then
   cat >"$HOME/.coder/skills/migrator/SKILL.md" <<'MIGRATOR_SKILL_MD_EOF'
 ${migrator_skill}
 MIGRATOR_SKILL_MD_EOF
+  boot_ok "wrote $HOME/.coder/skills/migrator/SKILL.md"
 fi
 
 if writable "$HOME/.agents/skills/migrator/SKILL.md" &&
@@ -110,13 +130,17 @@ if writable "$HOME/.agents/skills/migrator/SKILL.md" &&
   mkdir -p "$HOME/.agents/skills/migrator" 2>/dev/null
   cp "$HOME/.coder/skills/migrator/SKILL.md" \
     "$HOME/.agents/skills/migrator/SKILL.md" 2>/dev/null
+  boot_ok "copied $HOME/.agents/skills/migrator/SKILL.md"
 fi
+
+boot_stage 3 "the code-index skill and its helper"
 
 if writable "$HOME/.coder/skills/ez-code-index/SKILL.md"; then
   mkdir -p "$HOME/.coder/skills/ez-code-index" 2>/dev/null
   cat >"$HOME/.coder/skills/ez-code-index/SKILL.md" <<'EZ_CODE_INDEX_SKILL_MD_EOF'
 ${ez_code_index_skill}
 EZ_CODE_INDEX_SKILL_MD_EOF
+  boot_ok "wrote $HOME/.coder/skills/ez-code-index/SKILL.md"
 fi
 
 if writable "$HOME/.agents/skills/ez-code-index/SKILL.md" &&
@@ -124,6 +148,7 @@ if writable "$HOME/.agents/skills/ez-code-index/SKILL.md" &&
   mkdir -p "$HOME/.agents/skills/ez-code-index" 2>/dev/null
   cp "$HOME/.coder/skills/ez-code-index/SKILL.md" \
     "$HOME/.agents/skills/ez-code-index/SKILL.md" 2>/dev/null
+  boot_ok "copied $HOME/.agents/skills/ez-code-index/SKILL.md"
 fi
 
 # The helper sits in a scripts/ subdir of the same skill directory, the way
@@ -135,6 +160,7 @@ if writable "$HOME/.coder/skills/ez-code-index/scripts/code_index.py"; then
   cat >"$HOME/.coder/skills/ez-code-index/scripts/code_index.py" <<'EZ_CODE_INDEX_PY_EOF'
 ${ez_code_index_py}
 EZ_CODE_INDEX_PY_EOF
+  boot_ok "wrote $HOME/.coder/skills/ez-code-index/scripts/code_index.py"
 fi
 
 if writable "$HOME/.agents/skills/ez-code-index/scripts/code_index.py" &&
@@ -142,6 +168,9 @@ if writable "$HOME/.agents/skills/ez-code-index/scripts/code_index.py" &&
   mkdir -p "$HOME/.agents/skills/ez-code-index/scripts" 2>/dev/null
   cp "$HOME/.coder/skills/ez-code-index/scripts/code_index.py" \
     "$HOME/.agents/skills/ez-code-index/scripts/code_index.py" 2>/dev/null
+  boot_ok "copied $HOME/.agents/skills/ez-code-index/scripts/code_index.py"
 fi
+
+boot_summary
 
 exit 0

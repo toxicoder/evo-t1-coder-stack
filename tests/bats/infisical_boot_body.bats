@@ -38,6 +38,7 @@ REPO_ROOT=""
 TPL=""
 SCRATCH=""
 BOOT=""
+BOOT_LIB=""
 
 # The six names the body's one seam reads. Order is the body's own, and the guard test
 # drives every one of them, so this list is the contract rather than a convenience.
@@ -46,6 +47,9 @@ BOOT=""
 # bytes, and the nine-character needle that names the repo's Infisical payload group would
 # otherwise be matched inside this very path, for a group this suite reads nothing from.
 # Composing the path here keeps that map honest.
+# The map value the twins hand this body: templatefile() substitutes it first, and the
+# helper below puts the library's own bytes there, so the render mirrors Terraform.
+readonly BOOT_LIB_SENTINEL="__EVO_BOOT_LOG_LIB__"
 readonly EVO_DOTDIR=".infisical"
 readonly EVO_AGENTFILE="agent.env"
 
@@ -75,7 +79,7 @@ readonly VAULT_NAMES="INFISICAL_DOMAIN INFISICAL_PROJECT_ID INFISICAL_MACHINE_ID
 
 # setup - resolve the checkout, shadow the CLI, render the body once for this test.
 # Globals:
-#   REPO_ROOT, TPL, SCRATCH, BOOT, PATH, STUB_LOG
+#   REPO_ROOT, TPL, SCRATCH, BOOT, BOOT_LIB, PATH, STUB_LOG
 # Arguments:
 #   None
 # Outputs:
@@ -89,14 +93,21 @@ setup() {
   mkdir -p "${SCRATCH}"
   use_stubs infisical
   BOOT="${SCRATCH}/boot.sh"
-  render_body "${TPL}" "${BOOT}"
+  BOOT_LIB="${REPO_ROOT}/templates/common/boot-log.lib.sh"
+  [ -f "${BOOT_LIB}" ] || skip "templates/common/boot-log.lib.sh is absent"
+  # The map holds the one key the body reads and its value is the library's text: the
+  # render puts the sentinel where Terraform puts that value, and splice_boot_lib lands the
+  # bytes there, which is the order templatefile() applies its two steps in.
+  render_body "${TPL}" "${BOOT}" "boot_log_lib=${BOOT_LIB_SENTINEL}"
+  splice_boot_lib "${BOOT}"
 }
 
 # render_body <template> <dest> [NAME=VALUE...] - apply the two steps templatefile()
 # applies, in the order Terraform applies them: substitute every ${name} against the map
 # the caller passes, then un-escape $${ to ${. A ${name} the caller did not supply is a
-# failure rather than a literal that quietly reaches the shell, because both twins render
-# this body with an empty map. A VALUE must not contain | or a newline.
+# failure rather than a literal that quietly reaches the shell, because the twins' map
+# holds exactly the one key this body reads. A VALUE must not contain | or a newline, so
+# the library goes in as a sentinel and splice_boot_lib puts its bytes there.
 # Globals:
 #   None
 # Arguments:
@@ -297,6 +308,53 @@ write_dump() {
   chmod 600 "${dest}"
 }
 
+# splice_boot_lib <rendered> - replace the sentinel line with the library's own bytes,
+# which is what the map value hands Terraform: a map value is not re-interpolated, so the
+# library's dollar-brace text lands in the script verbatim and the verbs are the repo's.
+# Globals:
+#   BOOT_LIB
+# Arguments:
+#   $1 - the rendered script, rewritten in place
+# Outputs:
+#   The rewritten script
+# Returns:
+#   0
+splice_boot_lib() {
+  local dest="$1" staged="${1}.lib"
+  awk -v lib="${BOOT_LIB}" '
+    /^__EVO_BOOT_LOG_LIB__$/ {
+      while ((getline line < lib) > 0) print line
+      close(lib)
+      next
+    }
+    { print }
+  ' "${dest}" >"${staged}"
+  mv "${staged}" "${dest}"
+}
+
+# twin_map_keys <main.tf> - print, once each and sorted, the keys the twin's templatefile()
+# call for this body passes. Read from the call's opening brace to its closing paren, so a
+# twin that renamed or dropped the key shows up as a name rather than as a count.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the twin's main.tf
+# Outputs:
+#   One key per line on stdout
+# Returns:
+#   0
+twin_map_keys() {
+  awk '
+    /infisical-secrets\.sh\.tftpl", \{/ { inmap = 1; next }
+    inmap && /^[[:space:]]*\}\)/ { inmap = 0 }
+    inmap && match($0, /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) {
+      key = substr($0, RSTART, RLENGTH)
+      gsub(/[^A-Za-z0-9_]/, "", key)
+      print key
+    }
+  ' "$1" | sort -u
+}
+
 # ---------------------------------------------------------------------------
 # The render: what templatefile() hands to bash has to be bash.
 # ---------------------------------------------------------------------------
@@ -316,11 +374,15 @@ write_dump() {
   [ "${status}" -ne 0 ]
   assert_match "an un-supplied interpolation is named by name" 'terraform_var' "${output}"
 
-  # The body itself. The body declares no Terraform variable of its own, so nothing is
-  # left for the map to supply: any ${name} with a single dollar would have reached the
-  # shell as a literal, and setup() renders with no map at all.
-  run grep -oE '(^|[^$])\$\{[A-Za-z_][A-Za-z0-9_]*\}' "${TPL}"
-  assert_eq "the raw body declares no Terraform interpolation" "" "${output}"
+  # The body itself. It declares exactly one Terraform key, the library seam setup()
+  # rendered: the escaped $${ pairs above it are shell text, and any second single-dollar
+  # interpolation would find no value in either twin's map to render.
+  local decls
+  decls="$(grep -oE '(^|[^$])\$\{[A-Za-z_][A-Za-z0-9_]*\}' "${TPL}" |
+    grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*\}' | tr -d '${}' | sort -u)" || true
+  assert_eq "the raw body declares one Terraform key, the library seam" "boot_log_lib" "${decls}"
+  assert_contains_file "and the render landed the library where the key sat" \
+    "${BOOT}" '^boot_summary\(\) \{$'
 
   [ -s "${BOOT}" ]
   # No $${ survived: grep exits 1 on no match, which is the pass here.
@@ -347,19 +409,19 @@ write_dump() {
     return 1
   }
 
-  # Why zero interpolations is the right expectation: both twins render this body with an
-  # empty map, so a body that grew a ${terraform_var} would have no value to render. The
-  # twins ride their own payload groups; when this target does not carry them the pin is
-  # stated rather than silently skipped over.
+  # Why exactly one key is the right expectation: both twins render this body with a map
+  # holding the boot log library and nothing else, so a body that grew a second
+  # interpolation would have no value to render, and a twin that lost the key would leave
+  # the verbs undefined. The twins ride their own payload groups; when this target does not
+  # carry them the pin is stated rather than silently skipped over.
   local twin_a="${REPO_ROOT}/templates/workspace/main.tf" twin_b="${REPO_ROOT}/templates/devcontainer/main.tf"
   if [ ! -f "${twin_a}" ] || [ ! -f "${twin_b}" ]; then
-    skip "the main.tf twins are not in this target's runfiles: the empty-map pin needs //templates/workspace:payload and //templates/devcontainer:payload on this suite's key"
+    skip "the main.tf twins are not in this target's runfiles: the one-key map pin needs //templates/workspace:payload and //templates/devcontainer:payload on this suite's key"
   fi
-  run grep -cE 'infisical-secrets\.sh\.tftpl", \{\}' "${twin_a}" "${twin_b}"
-  [ "${status}" -eq 0 ]
-  assert_eq "both twins render it with an empty map" \
-    "${twin_a}:1
-${twin_b}:1" "${output}"
+  assert_eq "both twins render it with the library as their only key" "boot_log_lib" \
+    "$(twin_map_keys "${twin_a}")"
+  assert_eq "and the devcontainer twin renders the same one key" "boot_log_lib" \
+    "$(twin_map_keys "${twin_b}")"
 }
 
 # ---------------------------------------------------------------------------
@@ -397,8 +459,14 @@ ${twin_b}:1" "${output}"
       printf 'FAIL: %s withheld exited %s: %s\n' "${name}" "${status}" "${output}" >&2
       return 1
     }
-    assert_eq "a missing ${name} prints nothing on stdout" "" "${output}"
+    assert_not_match "a missing ${name} is not reported on stdout" 'vault not configured' "${output}"
+    assert_eq "and stdout carries nothing but the boot's own framing" "0" \
+      "$(printf '%s\n' "${output}" | grep -cvE '^(== |-> |ok: |warning: |note: |summary: )' || true)"
     assert_match "a missing ${name} is reported to stderr" 'vault not configured for this stack' "${stderr:-}"
+    assert_match "and the boot names the body and the stage it stopped in" \
+      '^== infisical secrets: stage 1/4: ' "${output}"
+    assert_match "and closes by counting the guard's failure" \
+      '^summary: 0 ok, 0 warnings, 1 failed \(\+[0-9]+s, infisical secrets\)$' "${output}"
     assert_match "and the operator is told which six keys are the seam" \
       'INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET' "${stderr:-}"
     # Each of the six the guard reads has to appear in the guidance too. The line once
@@ -520,13 +588,15 @@ EOS
 
   # The log counts what the loop wrote, so the two numbers have to agree, and agree with
   # the four keys the fixture made admissible.
-  logged="$(printf '%s\n' "${boot}" | sed -n 's/^infisical: loaded \([0-9][0-9]*\) secret keys into .*/\1/p')"
+  logged="$(printf '%s\n' "${boot}" | sed -n 's/^ok: infisical: loaded \([0-9][0-9]*\) secret keys into .*/\1/p')"
   actual="$(grep -c '^export ' "${agent}")"
   assert_eq "the logged count is the line count" "${actual}" "${logged}"
   assert_eq "and both are the four admissible keys" "4" "${logged}"
   assert_eq "the log names the file it wrote, not a value" \
-    "infisical: loaded 4 secret keys into $(vault_dir "${home}")/${EVO_AGENTFILE}" \
-    "$(printf '%s\n' "${boot}" | grep '^infisical: loaded ')"
+    "ok: infisical: loaded 4 secret keys into $(vault_dir "${home}")/${EVO_AGENTFILE}" \
+    "$(printf '%s\n' "${boot}" | grep '^ok: infisical: loaded ')"
+  assert_match "and the run closes by counting that one publish" \
+    '^summary: 1 ok, 0 warnings, 0 failed \(\+[0-9]+s, infisical secrets\)$' "${boot}"
   assert_eq "and the boot log carried no secret value" "0" \
     "$(printf '%s\n' "${boot}${boot_err}" | grep -c 'must-never-land' || true)"
 }

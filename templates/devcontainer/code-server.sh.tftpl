@@ -6,6 +6,9 @@
 # nothing), seed or merge the settings map when the dev-container toggle
 # handed one in, then start code-server on port 13337.
 set -eu
+${boot_log_lib}
+
+boot_begin "code-server" 3
 PREFIX="/tmp/code-server"
 # The release to run, from the code_server_version local in main.tf, and the
 # twin of the same pin in templates/workspace/code-server.sh.tftpl (both twins
@@ -18,30 +21,37 @@ PREFIX="/tmp/code-server"
 # the pinned release.
 CS_VERSION="${code_server_version}"
 CS_BIN="$${PREFIX}/bin/code-server"
+boot_stage 1 "the editor install and the settings seed"
+boot_phase "installing the pinned release $${CS_VERSION} into $${PREFIX}"
 curl -fsSL https://code-server.dev/install.sh | sh -s -- --method=standalone --prefix="$${PREFIX}" --version="$${CS_VERSION}"
 if [ -n "$${CODER_SCRIPT_BIN_DIR:-}" ] && [ ! -e "$${CODER_SCRIPT_BIN_DIR}/code-server" ]; then
   ln -s "$${CS_BIN}" "$${CODER_SCRIPT_BIN_DIR}/code-server"
 fi
+boot_ok "code-server $${CS_VERSION} is in place under $${PREFIX}"
 SETTINGS_B64='${settings_b64}'
 if [ -n "$${SETTINGS_B64}" ]; then
   SETTINGS_FILE="$${HOME}/.local/share/code-server/User/settings.json"
   mkdir -p "$(dirname "$${SETTINGS_FILE}")"
+  boot_phase "seeding $${SETTINGS_FILE}"
   printf '%s' "$${SETTINGS_B64}" | base64 -d > "$${SETTINGS_FILE}.seed"
   if [ ! -f "$${SETTINGS_FILE}" ]; then
     mv "$${SETTINGS_FILE}.seed" "$${SETTINGS_FILE}"
+    boot_ok "wrote $${SETTINGS_FILE}"
   elif command -v jq >/dev/null 2>&1; then
     if jq -s '.[0] * .[1]' "$${SETTINGS_FILE}" "$${SETTINGS_FILE}.seed" > "$${SETTINGS_FILE}.new"; then
       mv "$${SETTINGS_FILE}.new" "$${SETTINGS_FILE}"
+      boot_ok "merged the seed into $${SETTINGS_FILE}"
     else
-      printf 'Could not merge: keeping the settings file that is already there.\n'
+      boot_warn "Could not merge: keeping the settings file that is already there."
     fi
     rm -f "$${SETTINGS_FILE}.seed" "$${SETTINGS_FILE}.new"
   else
-    printf 'No jq on PATH: keeping the settings file that is already there.\n'
+    boot_warn "No jq on PATH: keeping the settings file that is already there."
     rm -f "$${SETTINGS_FILE}.seed"
   fi
 fi
-echo "Running code-server in the background (log: /tmp/code-server.log)."
+boot_stage 2 "the launch"
+boot_phase "Running code-server in the background (log: /tmp/code-server.log)."
 # Positional folder plus --ignore-last-opened: path-based coder_app
 # URLs drop the ?folder= query before the browser sees it, and without
 # this flag the last restored workspace (often /home/coder) wins.
@@ -55,8 +65,10 @@ FOLDER="${editor_folder}"
 # nothing to the launch, and in dev-container mode the clone is already
 # there before this container exists. /home/coder is skipped: nothing
 # clones there and waiting on it would only delay the editor.
+boot_stage 3 "the folder .git wait"
 mkdir -p -- "$${FOLDER}" 2>/dev/null || true
 if [ "$${FOLDER}" != "/home/coder" ]; then
+  boot_phase "waiting up to 60 s for $${FOLDER}/.git to land from the clone stage"
   waited=0
   while [ ! -e "$${FOLDER}/.git" ] && [ "$${waited}" -lt 60 ]; do
     sleep 1
@@ -66,5 +78,12 @@ if [ "$${FOLDER}" != "/home/coder" ]; then
     # PID and the leftover (( is "syntax error near unexpected token '('".
     waited=$((waited + 1))
   done
+  if [ -e "$${FOLDER}/.git" ]; then
+    boot_ok "$${FOLDER}/.git landed after $${waited} s"
+  else
+    boot_warn "no $${FOLDER}/.git after $${waited} s; the editor opens the folder anyway"
+  fi
 fi
 "$${CS_BIN}" --auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened "$${FOLDER}" > /tmp/code-server.log 2>&1 &
+boot_ok "code-server is starting on port 13337 (log: /tmp/code-server.log)"
+boot_summary
