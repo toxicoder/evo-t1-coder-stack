@@ -40,9 +40,10 @@ PROJ=""
 
 # setup - resolve the checkout, write the two stubs, and lay out one healthy
 # shape (six services rendered, six containers running, four in-network probes
-# answering 200, every target up, nothing failed to Mimir) that individual tests
-# narrow. Nothing from this process's environment is allowed to decide what the
-# run reads, so every key the CLI consults is cleared first.
+# answering 200, every target up, nothing failed to Mimir, the four host exporters
+# exposing their families, both blackbox modules probing green) that individual
+# tests narrow. Nothing from this process's environment is allowed to decide what
+# the run reads, so every key the CLI consults is cleared first.
 # Globals:
 #   REPO_ROOT, SCRIPT, LIB, SCRATCH, PROJ, PATH
 # Arguments:
@@ -72,7 +73,7 @@ setup() {
   unset GRAFANA_PORT GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD
   unset PROMETHEUS_PORT PROMETHEUS_URL STACK_DOCKER_LOG_DIR MIMIR_RETENTION_PERIOD
   unset DOCKER_SERVICES_FILE DOCKER_PS_FILE DOCKER_STATE_FILE DOCKER_RUN_FILE
-  unset DOCKER_CONFIG_FAIL DOCKER_PS_FAIL CURL_PLAN
+  unset DOCKER_CONFIG_FAIL DOCKER_PS_FAIL CURL_PLAN EXPORTER_PLAN
 
   printf '%s\n' 'services: {}' >"${PROJ}/docker-compose.yml"
   export COMPOSE_FILE="${PROJ}/docker-compose.yml"
@@ -96,10 +97,13 @@ setup() {
   export DOCKER_RUN_FILE="${SCRATCH}/codes"
 
   write_targets_body "${SCRATCH}/targets-up.json" up up
+  write_scraped_targets_body "${SCRATCH}/targets-scraped.json"
+  write_exporter_bodies "${SCRATCH}"
+  stub_exporters
   printf '%s\n' \
     '# TYPE prometheus_remote_storage_samples_failed_total counter' \
     'prometheus_remote_storage_samples_failed_total{queue="0"} 0' >"${SCRATCH}/metrics-clean.txt"
-  stub_prometheus "${SCRATCH}/targets-up.json" "${SCRATCH}/metrics-clean.txt"
+  stub_prometheus "${SCRATCH}/targets-scraped.json" "${SCRATCH}/metrics-clean.txt"
 
   seed_log_dir "${SCRATCH}/logs-full" a1b2c3d4e5
 }
@@ -160,9 +164,12 @@ STUB
 }
 
 # write_curl_stub <dir> - the curl stand-in: the last argv word is the URL, and a
-# plan of `url|exit-code|body-file` entries says how that URL answers. A URL the
-# plan does not name answers 200 with an empty body, and a non-zero exit code
-# stands in for what curl's own -f does to a non-2xx.
+# plan of `url|exit-code|body-file|http-code` entries says how that URL answers. A
+# URL the plan does not name answers 200 with an empty body, and a non-zero exit
+# code stands in for what curl's own -f does to a non-2xx. The http-code field is
+# optional and answers a probe that asked for -w instead of -f, which is how
+# scripts/observability-check.sh tells a refused socket from a 404 from a 200 with
+# the wrong body.
 # Globals:
 #   STUB_LOG
 # Arguments:
@@ -178,11 +185,14 @@ set -u
 if [ -n "${STUB_LOG:-}" ]; then printf 'curl %s\n' "$*" >>"${STUB_LOG}/curl.log"; fi
 url="${*: -1}"
 rc=0
+code=200
 body=""
 out=""
+want_code=""
 prev=""
 for arg in "$@"; do
   if [ "${prev}" = "-o" ]; then out="${arg}"; fi
+  if [ "${prev}" = "-w" ]; then want_code="${arg}"; fi
   prev="${arg}"
 done
 if [ -n "${CURL_PLAN:-}" ]; then
@@ -195,22 +205,32 @@ if [ -n "${CURL_PLAN:-}" ]; then
     e_url="${entry%%|*}"
     rest="${entry#*|}"
     e_rc="${rest%%|*}"
-    e_body="${rest#*|}"
+    rest="${rest#*|}"
+    if [[ "${rest}" == *'|'* ]]; then
+      e_body="${rest%%|*}"
+      e_code="${rest#*|}"
+    else
+      e_body="${rest}"
+      e_code=""
+    fi
     if [ "${e_url}" = "${url}" ]; then
       rc="${e_rc}"
       body="${e_body}"
+      code="${e_code:-200}"
     fi
   done
 fi
 if [ "${rc}" != "0" ]; then
   printf 'curl: (%s) The requested URL returned an error\n' "${rc}" >&2
-  exit 1
+  case "${rc}" in '' | *[!0-9]* | 0) rc=1 ;; esac
+  exit "${rc}"
 fi
 if [ -n "${out}" ]; then
   if [ -n "${body}" ] && [ -f "${body}" ]; then cat "${body}" >"${out}"; else : >"${out}"; fi
 elif [ -n "${body}" ] && [ -f "${body}" ]; then
   cat "${body}"
 fi
+if [ -n "${want_code}" ]; then printf '%s' "${code}"; fi
 exit 0
 STUB
   chmod 755 "${1}/curl"
@@ -303,9 +323,10 @@ write_targets_body() {
 
 # stub_prometheus <targets-file> <metrics-file> - point the curl plan at the two
 # bodies the data flow section reads; the loopback health endpoints keep answering
-# 200 with an empty body.
+# 200 with an empty body, and the exporter plan from stub_exporters rides along so
+# a test that narrows one URL does not fail on the other seven.
 # Globals:
-#   SCRATCH
+#   SCRATCH, EXPORTER_PLAN
 # Arguments:
 #   $1 - targets body; $2 - metrics body
 # Outputs:
@@ -313,8 +334,88 @@ write_targets_body() {
 # Returns:
 #   0
 stub_prometheus() {
-  export CURL_PLAN="http://127.0.0.1:9090/-/healthy|0|;http://127.0.0.1:3005/api/health|0|;\
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9090/-/healthy|0|;http://127.0.0.1:3005/api/health|0|;\
 http://127.0.0.1:9090/api/v1/targets|0|${1};http://127.0.0.1:9090/metrics|0|${2}"
+}
+
+# write_exporter_bodies <dir> - one canned /metrics body per host exporter, each
+# holding the family scripts/observability-check.sh expects to see, plus the
+# /probe bodies the prober round-trip parses. Text only: no exporter, no socket.
+# Globals:
+#   None
+# Arguments:
+#   $1 - directory to write into
+# Outputs:
+#   <dir>/<exporter>.metrics.txt and the canned /probe bodies
+# Returns:
+#   0
+write_exporter_bodies() {
+  local dir="$1"
+  printf '%s\n' \
+    '# TYPE node_filefd_allocated gauge' \
+    'node_filefd_allocated 1234' >"${dir}/node_exporter.metrics.txt"
+  printf '%s\n' \
+    '# TYPE container_last_seen gauge' \
+    'container_last_seen{id="/"} 1767225600' >"${dir}/cadvisor.metrics.txt"
+  printf '%s\n' \
+    '# TYPE blackbox_exporter_config_last_reload_success_timestamp_seconds gauge' \
+    'blackbox_exporter_config_last_reload_success_timestamp_seconds 1767225600' \
+    >"${dir}/blackbox_exporter.metrics.txt"
+  printf '%s\n' \
+    '# TYPE alertmanager_alerts gauge' \
+    'alertmanager_alerts{state="active"} 0' >"${dir}/alertmanager.metrics.txt"
+  printf '%s\n' '# TYPE go_goroutines gauge' 'go_goroutines 11' >"${dir}/metrics-no-family.txt"
+  printf '%s\n' 'probe_success 1' 'probe_http_status_code 200' >"${dir}/probe-green.txt"
+  printf '%s\n' 'probe_success 0' 'probe_http_status_code 0' >"${dir}/probe-red.txt"
+  printf '%s\n' 'probe_duration_seconds 0.004' >"${dir}/probe-no-series.txt"
+  printf '%s\n' 'Target module spark_health not found' >"${dir}/probe-no-module.txt"
+}
+
+# stub_exporters - the green answer for every exporter URL the exporters section
+# asks: four /metrics bodies carrying their family, Alertmanager's /-/ready, and
+# both blackbox module round-trips answering probe_success 1.
+# Globals:
+#   SCRATCH
+# Arguments:
+#   None
+# Outputs:
+#   EXPORTER_PLAN
+# Returns:
+#   0
+stub_exporters() {
+  local bb_target='http://prometheus:9090/-/healthy'
+  EXPORTER_PLAN="http://127.0.0.1:9101/metrics|0|${SCRATCH}/node_exporter.metrics.txt|200;\
+http://127.0.0.1:9290/metrics|0|${SCRATCH}/cadvisor.metrics.txt|200;\
+http://127.0.0.1:9115/metrics|0|${SCRATCH}/blackbox_exporter.metrics.txt|200;\
+http://127.0.0.1:9093/metrics|0|${SCRATCH}/alertmanager.metrics.txt|200;\
+http://127.0.0.1:9093/-/ready|0|;\
+http://127.0.0.1:9115/probe?module=spark_health&target=${bb_target}|0|${SCRATCH}/probe-green.txt|200;\
+http://127.0.0.1:9115/probe?module=spark_models&target=${bb_target}|0|${SCRATCH}/probe-green.txt|200"
+  export EXPORTER_PLAN
+}
+
+# write_scraped_targets_body <path> - the healthy target list: the two jobs
+# write_targets_body emits plus the five the exporters section expects Prometheus
+# to collect (observability/prometheus/prometheus.yml:124,133,164,184,200), all up.
+# Globals:
+#   None
+# Arguments:
+#   $1 - file to write
+# Outputs:
+#   The body file
+# Returns:
+#   0
+write_scraped_targets_body() {
+  local path="$1" job rows="" sep=""
+  for job in prometheus litellm node_exporter cadvisor blackbox-spark \
+    blackbox-spark-models alertmanager; do
+    rows="${rows}${sep}{\"discoveredLabels\":{\"__address__\":\"${job}:9101\"},\
+\"labels\":{\"instance\":\"${job}:9101\",\"job\":\"${job}\"},\
+\"scrapeUrl\":\"http://${job}:9101/metrics\",\"lastError\":\"\",\"health\":\"up\"}"
+    sep=","
+  done
+  printf '%s\n' \
+    "{\"status\":\"success\",\"data\":{\"activeTargets\":[${rows}],\"droppedTargets\":[]}}" >"${path}"
 }
 
 # assert_summary_is_last_line - the grammar's one absolute rule: whatever else the
@@ -463,9 +564,21 @@ assert_summary_is_last_line() {
     'ok: grafana answers at http://127.0.0.1:3005/api/health' "${output}"
   assert_match "the portless services are probed in-network" \
     'ok: alloy is ready: 200 from http://alloy:12345/-/ready' "${output}"
-  assert_match "all targets are up" 'ok: prometheus scrape targets: all 2 up' "${output}"
+  assert_match "all targets are up" 'ok: prometheus scrape targets: all 7 up' "${output}"
   assert_match "remote_write is clean" \
     'ok: prometheus remote_write: no failed samples to Mimir' "${output}"
+  assert_match "node_exporter answers with its family" \
+    'ok: node_exporter answers at http://127.0.0.1:9101/metrics and exposes node_filefd_allocated series' "${output}"
+  assert_match "cAdvisor answers with its family" \
+    'ok: cadvisor answers at http://127.0.0.1:9290/metrics and exposes container_last_seen series' "${output}"
+  assert_match "blackbox answers with its own series" \
+    'ok: blackbox_exporter answers at http://127.0.0.1:9115/metrics and exposes blackbox_exporter_ series' "${output}"
+  assert_match "Alertmanager answers on both its verbs" \
+    'ok: alertmanager answers at http://127.0.0.1:9093/-/ready' "${output}"
+  assert_match "the prober ran both pinned modules" \
+    'ok: blackbox_exporter ran the spark_models probe of http://prometheus:9090/-/healthy: probe_success 1' "${output}"
+  assert_match "Prometheus still collects the exporters" \
+    'ok: prometheus collects the blackbox-spark-models job' "${output}"
   assert_not_match "the admin password is never printed" 'hunter2' "${output}"
   assert_match "the password key is still reported" \
     'ok: GRAFANA_ADMIN_PASSWORD is set \(value not printed\)' "${output}"
@@ -535,6 +648,8 @@ assert_summary_is_last_line() {
     'ok: grafana answers at http://127.0.0.1:3005/api/health' "${output}"
   assert_match "the log source still ran without a daemon" \
     'ok: .*logs-full holds 1 container log file' "${output}"
+  assert_match "the exporter probes still ran over loopback" \
+    'ok: alertmanager answers at http://127.0.0.1:9093/-/ready' "${output}"
   assert_eq "docker was never called" "0" "$(stub_log_count docker)"
   assert_summary_is_last_line
 }
@@ -621,13 +736,134 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
   assert_match "the other probes still answered" 'ok: loki is ready: 200' "${output}"
 }
 
+@test "an exporter whose port refuses the connection says its container is not running" {
+  write_env_file "${SCRATCH}/refused.env"
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9101/metrics|7||"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/refused.env"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: a refused exporter port must fail the run, got %s\n' "${status}" >&2
+    return 1
+  }
+  assert_match "the refused service names its port and why" \
+    'error: node_exporter is not listening on 127.0.0.1:9101: connection refused, so its container is not running' "${output}"
+  assert_match "the fix is named" '//scripts:dev-stack -- up' "${output}"
+  assert_not_match "a refused port is not also called a wrong path" \
+    'node_exporter answered 404' "${output}"
+  assert_match "the other exporters are still probed" \
+    'ok: cadvisor answers at http://127.0.0.1:9290/metrics and exposes container_last_seen series' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "an exporter that answers 200 without its family is a warning, not a failure" {
+  write_env_file "${SCRATCH}/no-family.env"
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9290/metrics|0|${SCRATCH}/metrics-no-family.txt|200"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/no-family.env"
+  assert_eq "an exporter up and misconfigured must not fail the run" 0 "${status}"
+  assert_match "the warning names the missing family and the collector" \
+    'warning: cadvisor answered 200 at http://127.0.0.1:9290/metrics but exposes no series starting with container_last_seen: .*collector.* is off' "${output}"
+  assert_not_match "that exporter is not also counted as answering" \
+    'ok: cadvisor answers at' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "an exporter answering 404 says the port or the path is wrong" {
+  write_env_file "${SCRATCH}/wrong-path.env"
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/metrics|0||404"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/wrong-path.env"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: a 404 from an exporter port must fail the run, got %s\n' "${status}" >&2
+    return 1
+  }
+  assert_match "the 404 is named with its path" \
+    'error: blackbox_exporter answered 404 at http://127.0.0.1:9115/metrics: .*serves no /metrics' "${output}"
+  assert_not_match "a 404 is not reported as a missing family" \
+    'no series starting with blackbox_exporter_' "${output}"
+  assert_match "the prober round-trip is still answered" \
+    'ok: blackbox_exporter ran the spark_models probe' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a prober that refuses the connection is an error the round-trip makes visible" {
+  write_env_file "${SCRATCH}/prober-down.env"
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|7||"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/prober-down.env"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: a prober that cannot be reached must fail the run, got %s\n' "${status}" >&2
+    return 1
+  }
+  assert_match "the prober's own port and verb are named" \
+    'error: blackbox_exporter is not listening on 127.0.0.1:9115: connection refused, so no probe of any module can have run' "${output}"
+  assert_match "the module that was never asked is still reported green" \
+    'ok: blackbox_exporter ran the spark_models probe of http://prometheus:9090/-/healthy: probe_success 1' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a blackbox module that never loaded is named instead of called a red target" {
+  write_env_file "${SCRATCH}/dead-module.env"
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-no-module.txt|400"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/dead-module.env"
+  [ "${status}" -ne 0 ] || {
+    printf 'FAIL: a module the prober does not know must fail the run, got %s\n' "${status}" >&2
+    return 1
+  }
+  assert_match "the unknown module is named with the code" \
+    'error: blackbox_exporter does not know the module spark_health: 400 from' "${output}"
+  assert_match "blackbox's own complaint is quoted" 'Target module spark_health not found' "${output}"
+  assert_not_match "a dead module is not reported as a red probe" 'came back red' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a probe that came back red is a warning that names the module and its target" {
+  write_env_file "${SCRATCH}/probe-red.env"
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_models&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-red.txt|200"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/probe-red.env"
+  assert_eq "a red probe is the prober working, so it must not fail the run" 0 "${status}"
+  assert_match "the warning names the module, the target and both series" \
+    'warning: blackbox_exporter ran the spark_models probe of http://prometheus:9090/-/healthy and it came back red: probe_success 0, probe_http_status_code 0' "${output}"
+  assert_not_match "the red module is not also counted green" \
+    'ok: blackbox_exporter ran the spark_models probe' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a prober that answers 200 with no probe_success series says it is probing nothing" {
+  write_env_file "${SCRATCH}/probe-nothing.env"
+  export CURL_PLAN="${EXPORTER_PLAN};http://127.0.0.1:9115/probe?module=spark_health&target=http://prometheus:9090/-/healthy|0|${SCRATCH}/probe-no-series.txt|200"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/probe-nothing.env"
+  assert_eq "a prober that probes nothing is a warning, not a failure" 0 "${status}"
+  assert_match "the finding says no probe_success came back" \
+    'warning: blackbox_exporter answered 200 at .* but sent no probe_success series: the prober is up and probing nothing' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "an exporter Prometheus does not collect is a warning that names the job" {
+  write_env_file "${SCRATCH}/uncollected.env"
+  stub_prometheus "${SCRATCH}/targets-up.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/uncollected.env"
+  assert_eq "nobody scraping an exporter is a warning, not a failure" 0 "${status}"
+  assert_match "the missing job is named and told what it costs" \
+    'warning: prometheus collects no cadvisor job: .*nobody scrapes it.*panel will be empty' "${output}"
+  assert_match "the exporter itself is still reported as answering" \
+    'ok: cadvisor answers at http://127.0.0.1:9290/metrics' "${output}"
+  assert_not_match "a job the target list carries is not blamed" 'collects no prometheus job' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a switched-off bundle probes no exporter port at all" {
+  write_env_file "${SCRATCH}/off-exporters.env" 'OBSERVABILITY_ENABLED=false'
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/off-exporters.env"
+  assert_eq "the off path still exits 0" 0 "${status}"
+  assert_match "the exporters section skipped itself with the reason" \
+    'note: skipped: the bundle is switched off, so no exporter port is expected to be bound' "${output}"
+  assert_eq "no exporter was probed" "0" "$(stub_log_count curl)"
+}
+
 @test "the report grammar is the house vocabulary in the pinned order" {
   write_env_file "${SCRATCH}/grammar.env"
   run bash "${SCRIPT}" --env-file "${SCRATCH}/grammar.env"
   local sections
   sections="$(printf '%s\n' "${output}" | grep -E '^== .* ==$' | tr '\n' ' ')"
-  assert_eq "the six sections print in order" \
-    "== configuration == == log source == == compose render == == containers == == endpoints == == data flow == " \
+  assert_eq "the seven sections print in order" \
+    "== configuration == == log source == == compose render == == containers == == endpoints == == data flow == == exporters == " \
     "${sections}"
   assert_match "a phase line was printed" '-> curl http://127.0.0.1:9090/-/healthy' "${output}"
   assert_match "the finding prefixes are in use" '^ok: ' "${output}"
@@ -646,6 +882,10 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
     compose_cmd
     probe_loopback
     probe_in_network
+    fetch_with_code
+    refused
+    probe_exporter
+    probe_prober
     targets_tally
     check_configuration
     check_log_source
@@ -653,6 +893,7 @@ http://127.0.0.1:9090/api/v1/targets|7|;http://127.0.0.1:9090/metrics|7|"
     check_containers
     check_endpoints
     check_data_flow
+    check_exporters
     finish
   )
   local fn defined

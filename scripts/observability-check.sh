@@ -27,6 +27,13 @@
 # one-shot curl container, which is also why none of them needs a healthcheck or a
 # shell in its image.
 #
+# The four host exporters the same profile publishes on loopback - node_exporter,
+# cAdvisor, blackbox_exporter, Alertmanager - are probed too, and against a
+# different bar than the six services above: a container that started is not an
+# exporter that answers, an exporter that answers is not one that exposes the
+# series the panel queries, and a blackbox module Prometheus never loaded stays
+# invisible until the alert it should have fired goes quiet.
+#
 # Usage (Bazel is the entry point; every example is the whole command):
 #   bazelisk run //scripts:observability-check
 #   bazelisk run //scripts:observability-check -- --env-file ./dev-stack.env
@@ -150,6 +157,32 @@ OBS_SERVICES="prometheus loki mimir tempo grafana alloy"
 # the project network; none of them is published to the host on purpose.
 OBS_INNER_PROBES=("loki:3100/ready" "mimir:8080/ready" "tempo:3200/ready" "alloy:12345/-/ready")
 
+# The four host exporters the profile publishes on loopback, as
+# name:env-key:default-port:metric-prefix. The port keys and their defaults are
+# the compose interpolations (docker-compose.yml:1116,1150,1168,1203), and the
+# metric prefix is one series that family must expose for the exporter to count
+# as configured: node_filefd_allocated and container_last_seen are on by default
+# (ctx/L0.md:76,80), and the two prefixes catch the exporter's own series without
+# betting the verdict on one gauge name.
+OBS_HOST_EXPORTERS=(
+  "node_exporter:OBS_NODE_EXPORTER_PORT:9101:node_filefd_allocated"
+  "cadvisor:OBS_CADVISOR_PORT:9290:container_last_seen"
+  "blackbox_exporter:OBS_BLACKBOX_PORT:9115:blackbox_exporter_"
+  "alertmanager:OBS_ALERTMANAGER_PORT:9093:alertmanager_"
+)
+
+# The modules observability/blackbox/blackbox.yml ships and the scrape job that
+# passes each one (observability/prometheus/prometheus.yml:164,184), as
+# module:job. Each is asked of the prober directly, so a module that never loaded
+# is answered here rather than by an alert that never fires.
+OBS_BLACKBOX_PROBES=("spark_health:blackbox-spark" "spark_models:blackbox-spark-models")
+
+# The scrape jobs that only exist if prometheus.yml still collects the four
+# exporters (observability/prometheus/prometheus.yml:124,133,164,184,200). An
+# exporter that answers its own /metrics and is named by none of these is
+# collected by nobody.
+OBS_SCRAPED_JOBS="node_exporter cadvisor blackbox-spark blackbox-spark-models alertmanager"
+
 # The configuration keys, in report order. Every one of them is in .env.example
 # and has a default in docker-compose.yml, which is why an absent key is a note.
 OBS_CONFIG_KEYS=(
@@ -216,7 +249,7 @@ keeps the file-system and configuration checks and turns those probes into
 notes, which is the mode to run on a machine with no daemon.
 
 Sections: configuration, log source, compose render, containers, endpoints,
-data flow. The last line is always "summary: N ok, W warnings, F failed".
+data flow, exporters. The last line is always "summary: N ok, W warnings, F failed".
 
 Exit codes: 0 with no failures (or the bundle switched off, where there is
 nothing to check); 1 with at least one failure; 2 on a usage error.
@@ -393,6 +426,157 @@ probe_in_network() {
   case "${code}" in
     2*) ok "${service} is ready: ${code} from ${url}" ;;
     *) fail_item "${service} is not ready: ${code:-nothing} from ${url} (expected 2xx)" ;;
+  esac
+}
+
+# @function fetch_with_code
+# Fetch one URL into a file and report its HTTP status code, keeping curl's own
+# complaint for the caller to quote. This is probe_loopback's question asked the
+# other way: no -f, because a 404 and a refused socket are two different findings
+# here and -f would fold them into one non-zero exit. curl's stderr goes to a file
+# rather than being merged into stdout, so the code stays one clean token.
+# Globals:
+#   TIMEOUT, work, FETCH_CODE, FETCH_ERR
+# Arguments:
+#   $1 - the URL
+#   $2 - file to write the response body to
+# Outputs:
+#   The body in $2; the status code in FETCH_CODE and curl's first complaint line
+#   in FETCH_ERR (empty when curl never got that far)
+# Returns:
+#   curl's exit status, so 7 is "nothing was listening"
+fetch_with_code() {
+  local url="$1" body="$2" rc=0
+  FETCH_CODE=""
+  FETCH_ERR=""
+  capped_run "${TIMEOUT}" curl -sS --max-time "${TIMEOUT}" -o "${body}" \
+    -w '%{http_code}' "${url}" >"${work}/http-code" 2>"${work}/http-err" || rc=$?
+  FETCH_CODE="$(sed -n '1p' "${work}/http-code" 2>/dev/null || true)"
+  FETCH_ERR="$(sed -n '1p' "${work}/http-err" 2>/dev/null || true)"
+  return "${rc}"
+}
+
+# @function refused
+# Succeed when curl's exit and complaint say the socket was refused rather than
+# merely broken, which is the one answer that means the container is not running
+# at all. -sS keeps curl's message, so "Connection refused" is there to match.
+# Globals:
+#   None
+# Arguments:
+#   $1 - curl's exit status; $2 - curl's first complaint line
+# Outputs:
+#   None
+# Returns:
+#   0 when nothing is listening on that port, 1 for every other curl failure
+refused() {
+  local rc="${1:-}" err="${2:-}"
+  if [[ ${rc} == "7" || ${err} == *"Connection refused"* || ${err} == *"Couldn't connect"* ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# @function probe_exporter
+# Probe one host exporter's /metrics and say which of the three shapes it is in,
+# because the three want three different fixes: a refused socket means the
+# container never started; a 404 means something else holds that port, or this
+# probe asks a path the binary has never served; and a 200 with no expected
+# family means the exporter is up with the collector that serves it switched off
+# (node_exporter --collector.processes is ctx/L0.md:75's example of exactly that).
+# Severity follows what this CLI already does with Prometheus: an endpoint the
+# profile is supposed to have published that does not answer is a failure, the way
+# probe_loopback reports it, while a service that answers and is merely
+# misconfigured is a warning, the way a red scrape target already is.
+# Globals:
+#   TIMEOUT, work
+# Arguments:
+#   $1 - exporter name; $2 - published port; $3 - path; $4 - metric family prefix
+# Outputs:
+#   One ok:, warning: or error: line, and its phase line
+# Returns:
+#   0, always: a dead exporter is a result here, never an abort
+probe_exporter() {
+  local what="$1" port="$2" path="$3" metric="$4"
+  local url="http://127.0.0.1:${port}${path}" body="${work}/${what}.metrics" rc=0
+  phase "curl ${url}"
+  fetch_with_code "${url}" "${body}" || rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    if refused "${rc}" "${FETCH_ERR}"; then
+      fail_item "${what} is not listening on 127.0.0.1:${port}: connection refused, so its container is not running - start the bundle with //scripts:dev-stack -- up"
+    else
+      fail_item "${what} did not answer at ${url}: ${FETCH_ERR:-no answer} (curl exit ${rc})"
+    fi
+    return 0
+  fi
+  case "${FETCH_CODE}" in
+    404)
+      fail_item "${what} answered 404 at ${url}: something holds ${port} but serves no ${path}, so the published port belongs to another service or the path is wrong"
+      ;;
+    2??)
+      if grep -qE "^${metric}" "${body}" 2>/dev/null; then
+        ok "${what} answers at ${url} and exposes ${metric} series"
+      else
+        warn "${what} answered 200 at ${url} but exposes no series starting with ${metric}: the exporter is up and misconfigured, or the collector that serves it is off"
+      fi
+      ;;
+    *)
+      fail_item "${what} answered ${FETCH_CODE:-nothing} at ${url}: expected 200"
+      ;;
+  esac
+}
+
+# @function probe_prober
+# Ask blackbox_exporter to run one probe end to end and report what it answered.
+# Prometheus asks the prober the same way, so this is the only check that shows a
+# module that never loaded while the bundle is otherwise green: an unknown module
+# is answered 4xx with blackbox's own "not found" body, which is not a red target
+# and must not be reported as one. A probe that came back red IS the prober
+# working, so probe_success 0 is a warning that names its target rather than a
+# failure of the prober.
+# Globals:
+#   TIMEOUT, work
+# Arguments:
+#   $1 - module name; $2 - prober port; $3 - target the prober should reach
+# Outputs:
+#   One ok:, warning: or error: line, and its phase line
+# Returns:
+#   0, always
+probe_prober() {
+  local module="$1" port="$2" target="$3"
+  local url="http://127.0.0.1:${port}/probe?module=${module}&target=${target}"
+  local body="${work}/probe-${module}.txt" rc=0 success="" status=""
+  phase "curl ${url}"
+  fetch_with_code "${url}" "${body}" || rc=$?
+  if [ "${rc}" -ne 0 ]; then
+    if refused "${rc}" "${FETCH_ERR}"; then
+      fail_item "blackbox_exporter is not listening on 127.0.0.1:${port}: connection refused, so no probe of any module can have run"
+    else
+      fail_item "blackbox_exporter could not be asked for the ${module} probe at ${url}: ${FETCH_ERR:-no answer} (curl exit ${rc})"
+    fi
+    return 0
+  fi
+  case "${FETCH_CODE}" in
+    404)
+      fail_item "blackbox_exporter answered 404 at ${url}: something holds ${port} but serves no /probe, so the published port belongs to another service"
+      ;;
+    2??)
+      success="$(awk '$1 == "probe_success" { print $2; exit }' "${body}" 2>/dev/null)"
+      status="$(awk '$1 == "probe_http_status_code" { print $2; exit }' "${body}" 2>/dev/null)"
+      case "${success}" in
+        1) ok "blackbox_exporter ran the ${module} probe of ${target}: probe_success 1" ;;
+        0) warn "blackbox_exporter ran the ${module} probe of ${target} and it came back red: probe_success 0, probe_http_status_code ${status:-none} - the module loaded, the target does not answer the way it expects" ;;
+        *) warn "blackbox_exporter answered 200 at ${url} but sent no probe_success series: the prober is up and probing nothing" ;;
+      esac
+      ;;
+    *)
+      local detail=""
+      detail="$(sed -n '1p' "${body}" 2>/dev/null || true)"
+      if grep -qi 'not found' "${body}" 2>/dev/null; then
+        fail_item "blackbox_exporter does not know the module ${module}: ${FETCH_CODE} from ${url} - ${detail}"
+      else
+        fail_item "blackbox_exporter refused the ${module} probe: ${FETCH_CODE:-nothing} from ${url} - ${detail}"
+      fi
+      ;;
   esac
 }
 
@@ -766,6 +950,71 @@ check_data_flow() {
   fi
 }
 
+# @function check_exporters
+# The four exporters the profile publishes on the host's loopback, and the two
+# questions no other section of this run answers: does each one expose the series
+# the panel queries, and does Prometheus still collect it. The job names come from
+# prometheus.yml, so an exporter that answers its own /metrics while no job names
+# it is reported as what it is - collected by nobody - instead of being counted
+# green by the four probes above it.
+# Globals:
+#   TIMEOUT, BUNDLE_ENABLED, work, ENV_SRC
+#   OBS_HOST_EXPORTERS, OBS_BLACKBOX_PROBES, OBS_SCRAPED_JOBS
+# Arguments:
+#   None
+# Outputs:
+#   The exporters section on stdout/stderr
+# Returns:
+#   0
+check_exporters() {
+  section "exporters"
+  if [ "${BUNDLE_ENABLED}" = "0" ]; then
+    note "skipped: the bundle is switched off, so no exporter port is expected to be bound"
+    return 0
+  fi
+  if ! has_tool curl; then
+    fail_item "curl is not on PATH: no exporter could be probed, and a check that silently skipped is a check that never ran"
+    return 0
+  fi
+
+  local spec name port_key default_port metric
+  for spec in "${OBS_HOST_EXPORTERS[@]}"; do
+    IFS=':' read -r name port_key default_port metric <<<"${spec}"
+    probe_exporter "${name}" "$(resolved_value "${port_key}" "${default_port}")" "/metrics" "${metric}"
+  done
+
+  # Alertmanager's own readiness verb, asked the way prometheus and grafana are.
+  local am_port bb_port prom_port target probe
+  am_port="$(resolved_value OBS_ALERTMANAGER_PORT 9093)"
+  phase "curl http://127.0.0.1:${am_port}/-/ready"
+  probe_loopback "alertmanager" "http://127.0.0.1:${am_port}/-/ready"
+
+  # The prober probes what nothing scrapes, so it gets asked for a probe of a URL
+  # that is up whenever the bundle is, by service name, the way Prometheus itself
+  # reaches it. The verdict this reports is about the prober, not the target.
+  bb_port="$(resolved_value OBS_BLACKBOX_PORT 9115)"
+  prom_port="$(resolved_value PROMETHEUS_PORT 9090)"
+  target="http://prometheus:${prom_port}/-/healthy"
+  for probe in "${OBS_BLACKBOX_PROBES[@]}"; do
+    probe_prober "${probe%%:*}" "${bb_port}" "${target}"
+  done
+
+  # The target list the data flow section already fetched is the only proof that
+  # somebody collects these: a green /metrics with no job is a series nobody reads.
+  local targets="${work}/targets.json" job
+  if [ ! -s "${targets}" ]; then
+    note "the scrape jobs were not checked: Prometheus never answered /api/v1/targets, so its target list is unknown"
+    return 0
+  fi
+  for job in ${OBS_SCRAPED_JOBS}; do
+    if grep -q "\"job\":\"${job}\"" "${targets}" 2>/dev/null; then
+      ok "prometheus collects the ${job} job"
+    else
+      warn "prometheus collects no ${job} job: the exporter answers its own /metrics and nobody scrapes it, so its panel will be empty"
+    fi
+  done
+}
+
 # @function finish
 # Close the run: the summary as the last line of output, and the exit code that
 # answers the same question the report just answered.
@@ -850,4 +1099,5 @@ check_compose_render
 check_containers
 check_endpoints
 check_data_flow
+check_exporters
 finish
