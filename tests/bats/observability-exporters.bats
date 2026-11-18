@@ -496,6 +496,27 @@ assert_file_namespace() {
     '--web.listen-address=:9093' "$(cat "${STUB_LOG}")"
 }
 
+@test "a webhook file that cannot be written is removed rather than left stale" {
+  # The other road to the same stale URL. printf's redirection truncates only once
+  # the open succeeds, so a read-only or full /alertmanager leaves the previous
+  # boot's URL on disk and Alertmanager keeps posting to the webhook the operator
+  # rotated away from. Root ignores the mode below, so that arm is skipped rather
+  # than passing for the wrong reason.
+  [[ ${EUID} -eq 0 ]] && skip "running as root: a 0444 file is still writable"
+  local copy webhook="${SCRATCH}/webhook_url"
+  copy="$(entrypoint_copy)"
+  printf '%s' "http://old.example.invalid:9095/alert" >"${webhook}"
+  chmod 0444 "${webhook}"
+
+  run env ALERTMANAGER_WEBHOOK_URL="http://new.example.invalid:9095/alert" \
+    sh "${copy}" --web.listen-address=:9093
+  assert_eq "the container still starts" 0 "${status}"
+  assert_file_not_exists "the stale URL did not survive the failed write" "${webhook}"
+  assert_match "the message names alertmanager" 'alertmanager: cannot write' "${output}"
+  assert_not_match "and no line blames another CLI" 'spark-monitor' "${output}"
+  assert_match "with alertmanager still exec'd" \
+    '--web.listen-address=:9093' "$(cat "${STUB_LOG}")"
+}
 
 @test "the blackbox modules the scrape params ask for exist" {
   local -a asked=()
