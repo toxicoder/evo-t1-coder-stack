@@ -69,8 +69,12 @@ missing one fails the push before the CLI runs.
   to the owner's notes volume between boots. The workspace twin watches
   `$HOME/workspace`; the devcontainer twin passes its `$dc_dir`, because those clones sit
   on the `/srv/coder-devcontainers` bind.
-- `tmux.conf`, `grok-build-terminal.sh`, and `vscode-terminal-tmux.sh` are the
-  terminal payloads the startup script writes. Helpers use `$folder` (not
+- `tmux.conf` is the fidelity config the startup script writes. `grok-build-terminal.sh`
+  and `vscode-terminal-tmux.sh` are the two terminal launchers, and they ride
+  `coder_script "terminal_launchers"` with the shared body
+  `templates/common/terminal-launchers.sh.tftpl` rather than the startup argument, which
+  is the one execve that runs out of room: nothing at boot runs either script, the
+  code-server terminal profile is their only consumer. Helpers use `$folder` (not
   `$${folder}`) because `file()` contents are not re-interpolated.
 - `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
   skill and instruction seeds (chomped `file()`).
@@ -1187,8 +1191,8 @@ this checkout when the intent really is to rewrite it.
   (`templates/workspace/main.tf:727`), so every braced expansion in it is shell text, none
   of it interpolates, and the rendered bytes are the same for every workspace.
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
-  twelve: `grok_config`, `notes_setup`, `tmux_conf`, `grok_build_terminal`,
-  `vscode_terminal_tmux`, `grok_build_delegation_skill`, `coder_agents`,
+  ten: `grok_config`, `notes_setup`, `tmux_conf`,
+  `grok_build_delegation_skill`, `coder_agents`,
   `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`, `infisical_hook`.
   The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The payloads of the other
   families are not among them: `ez_learn_skill`, `ez_skillify_skill` and
