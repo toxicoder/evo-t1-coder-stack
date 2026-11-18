@@ -1116,7 +1116,7 @@
       "type": "table",
       "id": 36,
       "title": "Top containers by CPU",
-      "description": "The 20 containers taking the most CPU, sorted descending, with working set, process count, OOM events in the last hour and age since start; a working set climbing toward its limit is the OOM event the OOM column shows next, and container_processes is only present because cAdvisor runs privileged with --pid=host in this stack.",
+      "description": "The 20 containers taking the most CPU, sorted descending, with working set, process count, OOM events in the last hour, age since start, and the bytes per second each container moves on the network and on block storage; a working set climbing toward its limit is the OOM event the OOM column shows next. container_processes is only present because cAdvisor runs privileged with --pid=host in this stack, and the two throughput columns read the container's own cgroup, so a container that talks through a peer namespace shows its traffic on that peer instead.",
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 79 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
@@ -1203,6 +1203,38 @@
               {
                 "id": "unit",
                 "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #F (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Network"
+              },
+              {
+                "id": "unit",
+                "value": "Bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #G (lastNotNull)"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Block I/O"
+              },
+              {
+                "id": "unit",
+                "value": "Bps"
               }
             ]
           }
@@ -1296,6 +1328,22 @@
           "refId": "E",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "time() - max by (name) (container_start_time_seconds{evo_t1_host=\"stack-host\",name!=\"\"})",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "F",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (rate(container_network_receive_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m])) + sum by (name) (rate(container_network_transmit_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m]))",
+          "legendFormat": "{{name}}",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "G",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (name) (rate(container_fs_reads_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m])) + sum by (name) (rate(container_fs_writes_bytes_total{evo_t1_host=\"stack-host\",name!=\"\"}[5m]))",
           "legendFormat": "{{name}}",
           "instant": true,
           "format": "table"
