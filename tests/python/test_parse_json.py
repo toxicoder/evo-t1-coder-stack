@@ -232,6 +232,24 @@ class CheckReasonTests(HelperCase):
         self.assertIn("group 0", reason)
         self.assertIn("box/exporter/hostname", reason)
 
+    def test_a_join_label_that_is_not_a_string_is_refused(self) -> None:
+        # Prometheus types file_sd labels as map[string]string, so one null in the
+        # map is a document the scrape refuses outright and every Spark vanishes.
+        # str() of the value renders None as "None" and passes that, so the check
+        # has to ask for a str before it asks for a non-blank one.
+        for value in ("null", "9400", "true", "[]", "{}", "1.5"):
+            with self.subTest(value=value):
+                body = (
+                    '[{"targets": ["a:9100"], "labels": {"box": "b", "exporter": '
+                    + value
+                    + ', "hostname": "h"}}]\n'
+                )
+                reason = self.check(self.file(f"sd-label-{value}.json", body))
+                self.assertIsNotNone(reason)
+                assert reason is not None
+                self.assertIn("group 0", reason)
+                self.assertIn("missing exporter", reason)
+
     def test_a_group_is_refused_for_each_broken_shape_it_can_have(self) -> None:
         cases = (
             ("[7]\n", "group 0 is int, expected an object"),

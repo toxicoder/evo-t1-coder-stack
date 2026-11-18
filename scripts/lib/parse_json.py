@@ -19,7 +19,9 @@ groups, which is why the top level is allowed to be a list. Its groups are check
 hardly more loosely: Prometheus reads the file verbatim, so a group that lost its
 ``targets`` scrapes nothing and a group that lost ``hostname`` or ``exporter`` is either
 invisible to its job or orphaned from the box it belongs to. Both read as "no Sparks" on
-the dashboards rather than as an error, so the gate is the only thing that says so.
+the dashboards rather than as an error, so the gate is the only thing that says so. A
+label that is present but is not a string is the same fault: Prometheus types the label
+map as ``map[string]string`` and rejects the whole document over one ``null``.
 """
 
 import json
@@ -46,7 +48,15 @@ def check_group(path: str, index: int, group: object) -> str | None:
     labels = group.get("labels", {})
     if not isinstance(labels, dict):
         return f"{path}: group {index} labels is {type(labels).__name__}, expected an object"
-    missing = [name for name in SD_LABELS if not str(labels.get(name, "")).strip()]
+    # isinstance first, then blankness: Prometheus types file_sd labels as
+    # map[string]string, so a null or a number is a document the scrape refuses
+    # outright and every Spark disappears. str() would render None as "None" and
+    # let exactly that fault through this gate.
+    missing = [
+        name
+        for name in SD_LABELS
+        if not isinstance(labels.get(name), str) or not labels[name].strip()
+    ]
     if missing:
         return f"{path}: group {index} labels is missing {'/'.join(missing)}, so the box is orphaned"
     return None
