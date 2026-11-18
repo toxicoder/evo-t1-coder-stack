@@ -260,29 +260,58 @@
     },
     {
       "type": "timeseries",
-      "title": "Queue wait before dispatch (p50/p95/p99)",
-      "description": "Time between admission and dispatch, which is queue time and not time to first token: LiteLLM v1.102.1 publishes no first-token series, so no panel on this page claims one. Proxy-wide because this family carries no model or deployment key, and a rising p95 with in-flight flat means the router is holding requests while every deployment stays busy.",
-      "id": 12,
-      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 37 },
+      "title": "Time to first token by model (p50/p95/p99)",
+      "description": "Seconds from the request reaching the upstream to the first token coming back, which is the wait a person watching a completion actually feels. LiteLLM records this family when a stream produces its first chunk, so a model served without streaming has no line here rather than a zero, and a line that is missing while the latency panels beside it are full means that model is not streaming. Per requested_model, so a slow box shows up at the model level here and at the deployment level on the backends page.",
+      "id": 24,
+      "gridPos": { "h": 9, "w": 8, "x": 0, "y": 37 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.50, sum by (le) (rate(litellm_request_queue_time_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.50, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p50 {{requested_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p95 {{requested_model}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.99, sum by (requested_model, le) (rate(litellm_llm_api_time_to_first_token_metric_bucket{requested_model=~\"$model\"}[5m])))",
+          "legendFormat": "p99 {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue wait before dispatch (p50/p95/p99)",
+      "description": "Time between the request arriving at the proxy and the upstream call starting, so everything the router holds rather than the box serving. Per requested_model like the panels beside it: this family keys on the model and the deployment. A rising p95 with in-flight requests flat means the router is holding work while every deployment stays busy.",
+      "id": 12,
+      "gridPos": { "h": 9, "w": 8, "x": 8, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(litellm_request_queue_time_seconds_bucket{requested_model=~\"$model\"}[5m])))",
           "legendFormat": "p50 queue wait"
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(litellm_request_queue_time_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(litellm_request_queue_time_seconds_bucket{requested_model=~\"$model\"}[5m])))",
           "legendFormat": "p95 queue wait"
         },
         {
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(litellm_request_queue_time_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(litellm_request_queue_time_seconds_bucket{requested_model=~\"$model\"}[5m])))",
           "legendFormat": "p99 queue wait"
         }
       ]
@@ -290,9 +319,9 @@
     {
       "type": "timeseries",
       "title": "Generation rate, tokens per second (derived)",
-      "description": "There is no time-to-last-token series at this tag, so decode speed is derived twice rather than read: the recorded rule is the reciprocal of the seconds-per-output-token histogram, and the second line divides the completion-token rate by the seconds per second the upstream spent. Neither includes first-token wait, so a line that falls while queue wait is flat is the box decoding slower.",
+      "description": "There is no time-to-last-token series at this tag, so decode speed is derived twice rather than read. The recorded rule is the reciprocal of the seconds-per-output-token histogram. The second line divides the completion-token rate by the seconds the upstream actually spent decoding, which is the LLM API seconds minus the first-token wait, filtered to the same models as the numerator so a selected model is not divided by the whole fleet's time; before any stream has been served the subtraction has no first-token series to take away and falls back to the full upstream seconds. Neither line counts first-token wait, so a line that falls while queue wait is flat is the box decoding slower.",
       "id": 13,
-      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 37 },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 37 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
       "targets": [
@@ -305,8 +334,8 @@
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(litellm_output_tokens_metric_total{requested_model=~\"$model\"}[5m])) / (sum(rate(litellm_llm_api_latency_metric_sum[5m])) > 0)",
-          "legendFormat": "tokens per upstream second (no TTFT to subtract)"
+          "expr": "sum(rate(litellm_output_tokens_metric_total{requested_model=~\"$model\"}[5m])) / ((sum(rate(litellm_llm_api_latency_metric_sum{requested_model=~\"$model\"}[5m])) - sum(rate(litellm_llm_api_time_to_first_token_metric_sum{requested_model=~\"$model\"}[5m]))) or sum(rate(litellm_llm_api_latency_metric_sum{requested_model=~\"$model\"}[5m])) > 0)",
+          "legendFormat": "tokens per upstream second (first-token wait removed)"
         }
       ]
     },

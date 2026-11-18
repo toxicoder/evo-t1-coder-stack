@@ -151,7 +151,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(node_exporter_build_info{job=\"node_exporter\"})",
+          "expr": "(absent(node_exporter_build_info{job=\"node_exporter\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -176,7 +176,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(cadvisor_version_info{job=\"cadvisor\"})",
+          "expr": "(absent(cadvisor_version_info{job=\"cadvisor\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -191,8 +191,8 @@
     },
     {
       "type": "stat",
-      "title": "Spark probe target up",
-      "description": "One means the blackbox prober that answers for the Spark boxes has no series at all, so the Sparks pages show an empty fleet instead of a down one. Check the prober container before believing any Spark is offline.",
+      "title": "Spark probe job silent",
+      "description": "Zero is the healthy reading and it covers a stack with no Spark enrolled, which is what ships: no groups published, nothing to probe, nothing to alarm on. One means the generated target file does publish node_exporter groups, so Sparks are enrolled, while the job that probes their health port has no series at all. Read that as the prober or the generated file being wrong rather than the boxes being offline, and compare against what //scripts:spark-monitor -- --targets would write.",
       "id": 9,
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 23 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -201,7 +201,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"blackbox-spark\"})",
+          "expr": "(absent(up{job=\"blackbox-spark\"}) and on() (count(up{job=\"spark-node\"}) > 0)) or vector(0)",
           "instant": true
         }
       ],
@@ -216,8 +216,8 @@
     },
     {
       "type": "stat",
-      "title": "Spark models probe target up",
-      "description": "One means the job that probes the model-serving ports on each Spark is absent, so an inference outage would show up on the backends page as no data. This is the prober that answers whether a box is serving at all.",
+      "title": "Model probe job silent",
+      "description": "Zero is the healthy reading and it covers a stack with no Spark enrolled. One means boxes are enrolled by the generated target file while the job that probes the model-serving ports has no series at all, so an inference outage would read as no data on the backends page. Same cause as the tile beside it: the prober or the generated file.",
       "id": 10,
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 23 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -226,7 +226,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"blackbox-spark-models\"})",
+          "expr": "(absent(up{job=\"blackbox-spark-models\"}) and on() (count(up{job=\"spark-node\"}) > 0)) or vector(0)",
           "instant": true
         }
       ],
@@ -348,7 +348,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"coder\"})",
+          "expr": "(absent(up{job=\"coder\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -373,7 +373,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"litellm\"})",
+          "expr": "(absent(up{job=\"litellm\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -398,7 +398,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"alertmanager\"})",
+          "expr": "(absent(up{job=\"alertmanager\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -423,7 +423,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"grafana\"})",
+          "expr": "(absent(up{job=\"grafana\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -448,7 +448,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"alloy\"})",
+          "expr": "(absent(up{job=\"alloy\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -473,7 +473,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "absent(up{job=\"tempo\"})",
+          "expr": "(absent(up{job=\"tempo\"}) or vector(0))",
           "instant": true
         }
       ],
@@ -494,8 +494,7 @@
       "gridPos": { "h": 4, "w": 3, "x": 0, "y": 38 },
       "targets": [],
       "links": [
-        {
-          "title": "Stack host task manager",
+        { "title": "Stack host task manager",
           "url": "/d/evo-host-taskmanager/stack-host-task-manager",
           "targetBlank": false,
           "tooltip": "Load, memory, filesystem, and disk on the stack host"
@@ -616,6 +615,7 @@
     }
   ],
   "links": [
+    { "title": "EVO-T1 stack home", "type": "dashboards", "url": "/d/evo-home/evo-t1-home", "targetBlank": false },
     { "title": "Stack host task manager", "type": "dashboards", "url": "/d/evo-host-taskmanager/stack-host-task-manager", "targetBlank": false },
     { "title": "Containers", "type": "dashboards", "url": "/d/evo-containers/containers", "targetBlank": false },
     { "title": "DGX Sparks overview", "type": "dashboards", "url": "/d/evo-sparks-overview/dgx-sparks-overview", "targetBlank": false },

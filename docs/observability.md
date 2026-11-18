@@ -260,7 +260,7 @@ on, which are two rows above:
 
 | Question | Page | UID | Panels |
 |---|---|---|---|
-| What callers see, per model: `Request rate by model`, `Error ratio by model, 4xx vs 5xx`, the three latency panels, `Cache hit ratio`, `Served models, one row per deployment` | Models | `evo-inference-models` | 23 |
+| What callers see, per model: `Request rate by model`, `Error ratio by model, 4xx vs 5xx`, the three latency panels, `Time to first token by model (p50/p95/p99)`, `Cache hit ratio`, `Served models, one row per deployment` | Models | `evo-inference-models` | 24 |
 | What the router is doing, per deployment: `Deployment inventory and state`, `Backends off the healthy state`, `Cooldown transitions per deployment`, `Admission rejections by reason`, `Balance per deployment`, `Aliases served per deployment`, `Upstream p95 against total p95, per deployment` | Inference backends | `evo-inference-backends` | 24 |
 
 The bundle itself:
@@ -268,7 +268,7 @@ The bundle itself:
 | Question | Page | UID | Panels |
 |---|---|---|---|
 | Start here: the `EVO-T1 dashboards` list and one link panel per board, then a stat per bundle service beside `Targets up`, `Targets configured` and `Scrape freshness` | EVO-T1 stack | `evo-home` | 33 |
-| Is the monitoring still working: `Scrape targets up`, `Prometheus TSDB on disk`, `Remote write to Mimir`, and one reporting-stat per exporter and per bundle process | Stack overview | `evo-stack-overview` | 28 |
+| Is the monitoring still working: `Scrape targets up`, `Prometheus TSDB on disk`, `Remote write to Mimir`, and one reporting-stat per exporter and per bundle process, each reading `0` while that process answers its scrape and `1` when it has no series at all | Stack overview | `evo-stack-overview` | 28 |
 | What is firing and did it get out: `Firing alerts`, the three severity counts, `Firing series by alert`, `Alertmanager intake`, `Notifications dropped`, `Slowest rule group` | Alerts | `evo-alerts` | 16 |
 | What did a container say: `Log volume`, `stdout and stderr`, `Errors only` | Container logs | `evo-stack-logs` | 3 |
 | Where did a request spend its time: `Span rate by service`, `Span latency, p95 by service`, `Span errors` | Traces and service map | `evo-stack-traces` | 4 |
