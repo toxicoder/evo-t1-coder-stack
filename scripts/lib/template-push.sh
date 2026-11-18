@@ -188,6 +188,7 @@ template_push_one() {
     infisical-secrets.sh.tftpl \
     agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
+    boot-log.lib.sh \
     terminal-launchers.sh.tftpl \
     stack-repo-skills.sh.tftpl \
     stack-advisors.sh.tftpl \

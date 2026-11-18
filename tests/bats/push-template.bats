@@ -95,6 +95,7 @@ COMMON_PAYLOADS=(
   infisical-secrets.sh.tftpl
   agents-seed.sh.tftpl
   stack-skills.sh.tftpl
+  boot-log.lib.sh
   terminal-launchers.sh.tftpl
   stack-repo-skills.sh.tftpl
   stack-advisors.sh.tftpl
@@ -157,6 +158,7 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/bash' >"${dest}/infisical-secrets.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
+  printf '%s\n' '#!/bin/sh' >"${dest}/boot-log.lib.sh"
   printf '%s\n' '#!/bin/sh' >"${dest}/terminal-launchers.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-advisors.sh.tftpl"

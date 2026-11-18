@@ -879,6 +879,7 @@ resource "coder_script" "terminal_launchers" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/terminal-launchers.sh.tftpl", {
+    boot_log_lib         = chomp(file("${path.module}/boot-log.lib.sh"))
     grok_build_terminal  = chomp(file("${path.module}/grok-build-terminal.sh"))
     vscode_terminal_tmux = chomp(file("${path.module}/vscode-terminal-tmux.sh"))
   })

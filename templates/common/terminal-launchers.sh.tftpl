@@ -8,14 +8,29 @@
 # so landing them a moment after the startup script costs an operator nothing.
 set -u
 
-mkdir -p "$HOME/.grok/bin"
+# The library arrives as a map value, and Terraform does not re-interpolate one, so the
+# library's own dollar-brace text lands verbatim: no here-doc and no temp file to carry
+# it. A comment here has to spell that token as "dollar-brace" too - Terraform reads a
+# real one anywhere in this file, comments included.
+${boot_log_lib}
 
+boot_begin "terminal launchers" 2
+
+boot_stage 1 "the grok terminal launcher"
+mkdir -p "$HOME/.grok/bin"
+boot_phase "writing $HOME/.grok/bin/grok-build-terminal"
 cat >"$HOME/.grok/bin/grok-build-terminal" <<'GROK_BUILD_HELPER'
 ${grok_build_terminal}
 GROK_BUILD_HELPER
 chmod +x "$HOME/.grok/bin/grok-build-terminal"
+boot_ok "grok-build-terminal is in place"
 
+boot_stage 2 "the tmux attach launcher"
+boot_phase "writing $HOME/.grok/bin/vscode-terminal-tmux"
 cat >"$HOME/.grok/bin/vscode-terminal-tmux" <<'TMUX_ATTACH_HELPER'
 ${vscode_terminal_tmux}
 TMUX_ATTACH_HELPER
 chmod +x "$HOME/.grok/bin/vscode-terminal-tmux"
+boot_ok "vscode-terminal-tmux is in place"
+
+boot_summary
