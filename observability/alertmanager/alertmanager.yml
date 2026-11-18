@@ -1,0 +1,202 @@
+# Alertmanager routing for the EVO-T1 stack.
+#
+# One file, three worlds. The alerts this stack fires (a Spark is down, an
+# exporter gap, a deployment is cooled down, queue saturation, VRAM pressure)
+# come from three different places -- the stack host, one of the three Spark
+# boxes, the LiteLLM router -- and the first question an operator asks a page is
+# "which world", so the tree branches on `tier` before anything else and each
+# branch ends on its own receiver name. The Alertmanager UI filter and
+# `amtool config routes show --config.file=...` both key on those names, so they
+# are written as search terms rather than internal ids.
+#
+# The label contract this tree reads, and that the Prometheus rule file has to
+# stamp on every alert:
+#
+#   tier=host        node_exporter, cAdvisor, blackbox, and the bundle's own
+#                    components on the stack host.
+#   tier=spark       anything scraped off SPARK{1,2,3}_HOST: the DCGM and
+#                    node_exporter exporters and their gaps. Must also carry
+#                    `spark` (spark1|spark2|spark3) -- that label is what both
+#                    the grouping and the inhibition below key on.
+#   tier=inference   LiteLLM: deployment cooldown, queue depth, admission
+#                    rejects.
+#   severity=critical  the box is unreachable, or the router has no healthy
+#                    deployment. This is the inhibitor's source, so an alert
+#                    that means "this whole thing is gone" has to carry it.
+#
+# `stack: evo-t1` needs no rule: it is an external_label of the Prometheus that
+# evaluates these alerts (observability/prometheus/prometheus.yml:20-21), so it
+# rides along on every one of them.
+
+# Notifications, and why this file carries no URL.
+#
+# ALERTMANAGER_WEBHOOK_URL is empty by default and Alertmanager has to boot with
+# it empty, so the URL cannot live in `url:`. Alertmanager cannot read the
+# environment itself: a webhook `url` is a SecretTemplateURL that is validated
+# only when it is not a template (config/common/url.go:194-209), there is no
+# os.Expand on it, and the template funcmap (template/template.go:284-395) has
+# no env accessor -- so `url: $ALERTMANAGER_WEBHOOK_URL` would either never
+# resolve or fail the config load outright.
+#
+# `url_file` is the seam that does work: the notifier reads it per notification
+# (notify/webhook/webhook.go:113-122) and, when nothing is there, returns an
+# unrecoverable error for that single send
+# (notify/webhook/webhook.go:129 -- "webhook URL is empty after templating")
+# instead of failing the pipeline. Consequences, both of them wanted: with no
+# file mounted every receiver below is a no-op, the config still loads and the
+# container still starts; and the moment ALERTMANAGER_WEBHOOK_URL is set and
+# written to /alertmanager/webhook_url (the service entrypoint's job, not
+# this file's, so the URL never lands in a commit) the same receivers start
+# delivering with no reload. The path is inside --storage.path rather than
+# beside the config because compose mounts /etc/alertmanager read-only: the
+# storage volume is the one place in this container the process may write, and
+# the entrypoint regenerates the file on every start so an edited
+# ALERTMANAGER_WEBHOOK_URL takes effect on the next restart and a removed one
+# cannot survive as a stale secret on disk.
+
+route:
+  # Catch-all. Anything that arrives without a `tier` lands here rather than
+  # going quiet: a missing tier is a bug in the rule file, not a reason to stop
+  # notifying.
+  receiver: stack-alerts
+  # The Alertmanager default group_by is [alertname, job], and `job` is wrong
+  # for two of the three tiers here: one Spark box is scraped by two jobs
+  # (node_exporter and DCGM), so a box-level incident would arrive as two pages
+  # 30 seconds apart, and a host-wide pressure or file-descriptor gap that spans
+  # jobs does not want splitting by job either. `tier` is what an operator
+  # actually wants kept apart, so it replaces `job` at the root.
+  group_by: ['alertname', 'tier']
+  # The default is 4h, and every alert here is a state an operator may be
+  # living with for hours -- a deployment that cooled down under a flaky
+  # upstream, a Spark whose DCGM image has not landed yet. At 4h that is six
+  # reminders a day for something already acknowledged. A box that is actually
+  # down is made louder below instead of turning the whole tier up.
+  repeat_interval: 12h
+  # group_wait, group_interval and resolve_timeout keep the Alertmanager
+  # defaults (30s, 5m, 5m) on purpose: Prometheus evaluates every 15s
+  # (observability/prometheus/prometheus.yml:14), so the 30s group_wait is
+  # already two full evaluation cycles of settle time before the first page, and
+  # a 5m resolve_timeout cannot lose an alert that a 15s scrape re-sends.
+  routes:
+    # ---- the stack host ----------------------------------------------------
+    # HostDown and the host exporter gap come through here as critical; the
+    # cAdvisor, PSI and file-system alerts are the routine majority.
+    - matchers: ['tier="host"']
+      receiver: host-alerts
+      group_by: ['alertname', 'instance']
+
+    # ---- the Spark boxes ---------------------------------------------------
+    - matchers: ['tier="spark"']
+      receiver: spark-alerts
+      # Group by the box and by nothing finer. Deliberately absent are the DCGM
+      # identity labels (gpu, UUID, device, pci_bus_id -- see
+      # .grok/plans/host-and-spark-metrics/ctx/L0.md): with any one of them in
+      # here a whole-box VRAM or temperature event is one notification per GPU,
+      # which on a multi-die box is four pages for one incident. `instance`
+      # stays out for the same reason in the other direction -- it pins the
+      # exporter's port, so it would split the node_exporter gap from the DCGM
+      # gap on the box that is actually the problem.
+      group_by: ['alertname', 'spark']
+      routes:
+        - matchers: ['severity="critical"']
+          receiver: spark-alerts
+          # The one alert worth re-paging on. SparkDown lives here, and a box
+          # that is still unreachable three hours later is still an incident
+          # someone has to go look at; everything else on the box stays at 12h.
+          repeat_interval: 3h
+
+    # ---- inference ---------------------------------------------------------
+    # Cooled-down deployments and queue saturation. Inherits
+    # [alertname, tier] from the root. `model_id` is the label LiteLLM's
+    # counters carry (see ctx/L0.md) and it stays out on purpose: a router
+    # group that cools down takes its deployments with it, and one page per
+    # model_id is precisely how an operator ends up muting the channel.
+    - matchers: ['tier="inference"']
+      receiver: inference-alerts
+
+    # ---- heartbeat ---------------------------------------------------------
+    # A dead-man's-switch alert fires forever by design, so it belongs on the
+    # receiver with no integration under it: pointed at any receiver below it
+    # would page on a timer over a perfectly healthy stack.
+    - matchers: ['alertname=~"Watchdog|DeadMansSwitch"']
+      receiver: blackhole
+
+inhibit_rules:
+  # A Spark that is down makes everything else on it true, and the exporters are
+  # the loudest of that set: node_exporter missing, DCGM missing, no GPU series.
+  # One critical from the box silences the rest of that box's alerts for as long
+  # as it fires. `equal: ['spark']` is what keeps the silencing inside one box,
+  # and it is why `spark` in the contract above is not optional: equal compares
+  # label values, and two alerts that both *lack* `spark` compare equal to each
+  # other, so a rule file that drops the label lets spark1 silence spark2.
+  - source_matchers: ['tier="spark"', 'severity="critical"']
+    target_matchers: ['tier="spark"']
+    equal: ['spark']
+
+  # Same shape on the host: with node_exporter gone, the container, pressure and
+  # file-descriptor alerts are all reading the same absence. `instance` is the
+  # right key here because the host tier is one box, and its alerts do not carry
+  # a `spark`.
+  - source_matchers: ['tier="host"', 'severity="critical"']
+    target_matchers: ['tier="host"']
+    equal: ['instance']
+
+  # With no healthy deployment left, queue depth and latency are symptoms of the
+  # one page that says so. `tier` is constant on this branch, so the rule
+  # silences the whole inference tier while the critical fires -- which is the
+  # intent, and is also why it must not be widened past tier="inference".
+  - source_matchers: ['tier="inference"', 'severity="critical"']
+    target_matchers: ['tier="inference"']
+    equal: ['tier']
+
+receivers:
+  # A receiver with no integration under it is valid and delivers nothing. This
+  # is the one the heartbeat route above lands on, and it is what an operator
+  # points a tier at when they want it routed but not spoken.
+  - name: blackhole
+
+  # The four receivers below carry the same webhook block on purpose: it is what
+  # makes the tier split visible in the UI and in amtool, and it lets an
+  # operator repoint one tier (the Spark boxes to an on-call webhook, the host
+  # to a channel) without touching the tree. All four read the URL from the same
+  # file, so an empty ALERTMANAGER_WEBHOOK_URL leaves every one of them a no-op.
+
+  # Catch-all: alerts with no `tier`, and anything a future rule adds before it
+  # has a branch of its own.
+  - name: stack-alerts
+    webhook_configs:
+      - url_file: /alertmanager/webhook_url
+        send_resolved: true
+        # A resolved notification is the half that says a Spark came back; with
+        # it off, the only recovery signal is the operator noticing silence.
+        max_alerts: 100
+        # The default 0 is unlimited, and one group on a busy box can carry
+        # enough DCGM series to make the POST the thing that fails.
+        timeout: 30s
+        # The default is no timeout at all, which lets an unreachable sink hold
+        # a notification pipeline open across every repeat interval.
+
+  # Stack host: node_exporter, cAdvisor, blackbox, and the bundle itself.
+  - name: host-alerts
+    webhook_configs:
+      - url_file: /alertmanager/webhook_url
+        send_resolved: true
+        max_alerts: 100
+        timeout: 30s
+
+  # One notification per box, per alertname. This is the receiver a Spark
+  # incident pages on.
+  - name: spark-alerts
+    webhook_configs:
+      - url_file: /alertmanager/webhook_url
+        send_resolved: true
+        max_alerts: 100
+        timeout: 30s
+
+  # LiteLLM: cooled-down deployments, queue saturation, admission rejects.
+  - name: inference-alerts
+    webhook_configs:
+      - url_file: /alertmanager/webhook_url
+        send_resolved: true
+        max_alerts: 100
+        timeout: 30s

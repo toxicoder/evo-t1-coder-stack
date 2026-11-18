@@ -1,0 +1,314 @@
+# Recording and alerting rules for the DGX Spark fleet.
+#
+# Loaded by the Prometheus in the observability profile through `rule_files:` in
+# observability/prometheus/prometheus.yml. Compose mounts ./observability/prometheus
+# as a directory at /etc/prometheus, so a rule file that lands beside prometheus.yml
+# ships with no compose edit and no BUILD edit (the `prometheus_config` filegroup
+# globs prometheus/**).
+#
+# Two label spaces meet here. The GPU rows come from the DCGM exporter and carry its
+# own identity labels (hostname, gpu, ...); the box rows come from each Spark's own
+# node_exporter and from the blackbox probes, whose `instance` is the only host
+# handle a scrape target is guaranteed to have - the target list is generated on the
+# host into observability/spark-targets/sparks.json, so nothing committed here can
+# name a box. Every recorded series therefore carries `hostname`, and the two
+# box-side rules below derive it from `instance` with one shared regex so the GPU
+# rows and the box rows can join. That join is the file's one soft assumption: it
+# holds while the host token in sparks.json and the hostname DCGM reports are the
+# same string.
+#
+# Two selectors are worth reading before you edit them:
+#   - The Spark node_exporter is matched with job=~".*spark.*" unioned with
+#     instance=~".*:9100". The job name belongs to whoever wires the file_sd block;
+#     9100 is SPARK_NODE_EXPORTER_PORT's shipped default and the stack host's own
+#     node_exporter sits on 9101, so the port half is unambiguous today. Either half
+#     alone finds the fleet, neither half alone is guaranteed to.
+#   - The DCGM selectors carry no job filter. Only the Sparks run a DCGM exporter in
+#     this stack, and a copied job filter would silently mute every GPU alert if that
+#     job were ever renamed.
+#
+# DCGM exposes no slowdown-threshold field in the default-on set, so the headroom
+# rules below measure against 95 C written out - the slowdown point these cards hold
+# clocks from. It appears twice, once per sensor, and nowhere else.
+
+groups:
+  - name: spark_recording
+    rules:
+      # ---- compute and memory utilisation ------------------------------------
+      - record: spark:gpu_util_pct:gpu
+        expr: avg by (hostname, gpu) (DCGM_FI_DEV_GPU_UTIL)
+
+      - record: spark:gpu_util_pct:box
+        expr: avg by (hostname) (spark:gpu_util_pct:gpu)
+
+      - record: spark:gpu_util_pct:fleet_mean
+        expr: avg(spark:gpu_util_pct:box)
+
+      - record: spark:gpu_mem_copy_util_pct:gpu
+        expr: avg by (hostname, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL)
+
+      - record: spark:gpu_mem_copy_util_pct:box
+        expr: avg by (hostname) (spark:gpu_mem_copy_util_pct:gpu)
+
+      - record: spark:gpu_mem_copy_util_pct:fleet_mean
+        expr: avg(spark:gpu_mem_copy_util_pct:box)
+
+      # ---- framebuffer fill ---------------------------------------------------
+      # used / (used + free), so it reads as one fraction regardless of the card.
+      # A GPU that reports 0/0 divides to NaN and NaN is dropped, so an idle or
+      # uninitialised card never reaches the alert below.
+      - record: spark:gpu_fb_fill_ratio:gpu
+        expr: max by (hostname, gpu) (DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE))
+
+      - record: spark:gpu_fb_fill_ratio:box
+        expr: max by (hostname) (spark:gpu_fb_fill_ratio:gpu)
+
+      - record: spark:gpu_fb_fill_ratio:fleet_max
+        expr: max(spark:gpu_fb_fill_ratio:box)
+
+      # ---- temperature headroom ----------------------------------------------
+      - record: spark:gpu_temp_c:gpu
+        expr: max by (hostname, gpu) (DCGM_FI_DEV_GPU_TEMP)
+
+      - record: spark:gpu_mem_temp_c:gpu
+        expr: max by (hostname, gpu) (DCGM_FI_DEV_MEMORY_TEMP)
+
+      # Headroom, not temperature: a positive number is degrees of margin left, so
+      # "less than" reads the way an operator expects. The constant is a scalar on
+      # purpose - subtracting a label-less vector(95) from these would match nothing
+      # and silently record nothing.
+      - record: spark:gpu_temp_headroom_c:gpu
+        expr: 95 - spark:gpu_temp_c:gpu
+
+      - record: spark:gpu_mem_temp_headroom_c:gpu
+        expr: 95 - spark:gpu_mem_temp_c:gpu
+
+      - record: spark:gpu_temp_headroom_c:box
+        expr: min by (hostname) (spark:gpu_temp_headroom_c:gpu)
+
+      # ---- power --------------------------------------------------------------
+      - record: spark:gpu_power_watts:gpu
+        expr: max by (hostname, gpu) (DCGM_FI_DEV_POWER_USAGE)
+
+      - record: spark:gpu_power_watts:box
+        expr: sum by (hostname) (spark:gpu_power_watts:gpu)
+
+      - record: spark:gpu_power_watts:fleet_sum
+        expr: sum(spark:gpu_power_watts:box)
+
+      # DCGM_FI_DEV_POWER_MGMT_LIMIT is outside the default-on field set this stack
+      # relies on, so this records nothing on a box that does not expose it. That is
+      # the intended failure mode: the two power sums above still carry the load, and
+      # no alert reads this one.
+      - record: spark:gpu_power_share_of_limit:gpu
+        expr: max by (hostname, gpu) (DCGM_FI_DEV_POWER_USAGE / DCGM_FI_DEV_POWER_MGMT_LIMIT)
+
+      # ---- interconnect -------------------------------------------------------
+      # The DCGM_FI_PROF_* family needs --cap-add SYS_ADMIN; on a box without it the
+      # rows are simply absent. These two rules are the only readers of that family,
+      # which is why no alert below depends on them - an absent family records
+      # nothing, and a rule that never fires is indistinguishable from a healthy box.
+      - record: spark:gpu_pcie_bytes_per_second:gpu
+        expr: max by (hostname, gpu) (rate(DCGM_FI_PROF_PCIE_TX_BYTES[5m]) + rate(DCGM_FI_PROF_PCIE_RX_BYTES[5m]))
+
+      - record: spark:gpu_pcie_bytes_per_second:box
+        expr: sum by (hostname) (spark:gpu_pcie_bytes_per_second:gpu)
+
+      # A gauge, not a counter, so no rate(): a DGX Spark carries no NVLink, so this
+      # reads 0 or nothing on a single-module box and matters on a bridged pair.
+      - record: spark:gpu_nvlink_bytes_per_second:box
+        expr: sum by (hostname) (DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL)
+
+      # PCIe replays are the default-on proxy for a link renegotiating downwards.
+      - record: spark:gpu_pcie_replays_increase_1h:gpu
+        expr: max by (hostname, gpu) (increase(DCGM_FI_DEV_PCIE_REPLAY_COUNTER[1h]))
+
+      # ---- ECC ----------------------------------------------------------------
+      # increase() over 1h is the per-hour delta the operator reads; the counters are
+      # lifetime totals that only reset with the exporter, and increase() folds a
+      # counter reset back in.
+      - record: spark:gpu_ecc_correctable_rows_increase_1h:gpu
+        expr: max by (hostname, gpu) (increase(DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS[1h]))
+
+      - record: spark:gpu_ecc_correctable_rows_increase_1h:box
+        expr: sum by (hostname) (spark:gpu_ecc_correctable_rows_increase_1h:gpu)
+
+      - record: spark:gpu_ecc_uncorrectable_rows_increase_1h:gpu
+        expr: max by (hostname, gpu) (increase(DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS[1h]))
+
+      - record: spark:gpu_ecc_uncorrectable_rows_increase_1h:box
+        expr: sum by (hostname) (spark:gpu_ecc_uncorrectable_rows_increase_1h:gpu)
+
+      - record: spark:gpu_row_remap_failure:gpu
+        expr: max by (hostname, gpu) (DCGM_FI_DEV_ROW_REMAP_FAILURE)
+
+      # ---- throttling ---------------------------------------------------------
+      # No throttle-reason field is default-on, so a throttled card is inferred: its
+      # SM clock held well under its own 6h ceiling. The 6h window is the peak-hold,
+      # so it needs a box that has been up long enough to have boosted once.
+      - record: spark:gpu_sm_clock_deficit:gpu
+        expr: max by (hostname, gpu) (DCGM_FI_DEV_SM_CLOCK) / max by (hostname, gpu) (max_over_time(DCGM_FI_DEV_SM_CLOCK[6h]))
+
+      # The set of GPUs seen in the last 6h, kept across the gap so a card that fell
+      # off the bus is still compared against what it used to report.
+      - record: spark:gpu_reported_recently:gpu
+        expr: max by (hostname, gpu) (last_over_time(DCGM_FI_DEV_GPU_UTIL[6h]))
+
+      # ---- the fleet as a number ----------------------------------------------
+      # One value per Spark: 1 when its node_exporter answers. `hostname` is rewritten
+      # from `instance` (scheme and port stripped) because that is the only host label
+      # a scrape target is guaranteed to carry.
+      - record: spark:box_up
+        expr: |
+          min by (hostname) (
+            label_replace(
+              (up{job=~".*spark.*"} or up{instance=~".*:9100"}),
+              "hostname", "$1", "instance", "^(?:[a-zA-Z]+://)?([^:/?#]+).*"
+            )
+          )
+
+      # One value per probed host: the worst blackbox result against it. Untouched by
+      # job name on purpose - the join below is by host token, and no probe the stack
+      # host runs at an external endpoint can collide with a Spark's token.
+      - record: spark:probe_up
+        expr: |
+          min by (hostname) (
+            label_replace(
+              probe_success,
+              "hostname", "$1", "instance", "^(?:[a-zA-Z]+://)?([^:/?#]+).*"
+            )
+          )
+
+      # How many Sparks are answering at all. Recorded, never alerted on: the fleet is
+      # opt-in (SPARK_MONITOR_ENABLED=false ships), and there is no expected-count to
+      # compare against without naming boxes in a committed file.
+      - record: spark:boxes_answering
+        expr: count(spark:box_up == 1) or vector(0)
+
+  - name: spark_alerts
+    rules:
+      - alert: SparkDown
+        # Both signals have to agree, so a blackbox hiccup or one failed scrape does
+        # not page. The second branch covers a box no probe covers at all - with
+        # SPARK_MONITOR_ENABLED off there are no probe series, and a downed Spark
+        # would otherwise go unreported forever.
+        expr: |
+          (
+            (spark:box_up == 0) and on (hostname) (spark:probe_up == 0)
+          )
+          or
+          (
+            (spark:box_up == 0) unless on (hostname) (spark:probe_up)
+          )
+        for: 3m
+        labels:
+          severity: critical
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} is down - its node_exporter scrape and its blackbox probe both fail
+          description: No node_exporter scrape has succeeded for {{ $labels.hostname }} and the probe against it is failing too, so this is the box, not one exporter.
+          runbook: bazelisk run //scripts:spark-monitor -- --status --box <n>
+
+      - alert: SparkGpuTempNearSlowdown
+        # Core or VRAM temperature: both throttle the card, and the two sensors trip
+        # at different loads. 8 C of margin is where these cards start holding clocks.
+        expr: |
+          (spark:gpu_temp_headroom_c:gpu < 8)
+          or
+          (spark:gpu_mem_temp_headroom_c:gpu < 8)
+        for: 5m
+        labels:
+          severity: warning
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} GPU {{ $labels.gpu }} is within {{ printf "%.0f" $value }} C of the slowdown point
+          description: Core or memory temperature has less than 8 C of margin against the 95 C slowdown point the headroom rules measure from, held for 5m. Check the room's airflow and what is saturating the fleet.
+
+      - alert: SparkGpuVramPressure
+        # used / (used + free). Deliberately not paging: a full framebuffer is normal
+        # under an inference job, and this exists so a fleet-wide OOM-adjacent state is
+        # visible before the job dies.
+        expr: spark:gpu_fb_fill_ratio:gpu > 0.95
+        for: 15m
+        labels:
+          severity: warning
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} GPU {{ $labels.gpu }} is {{ printf "%.2f" $value }} full
+          description: Framebuffer has stayed above 95% of used+free for 15m. A model that needs more than this will fail to load rather than slow down.
+
+      - alert: SparkGpuEccUncorrectable
+        # The window is already an hour, so `for` only filters a scrape-time blip on a
+        # counter that will not go back down.
+        expr: spark:gpu_ecc_uncorrectable_rows_increase_1h:gpu > 0
+        for: 5m
+        labels:
+          severity: critical
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} GPU {{ $labels.gpu }} logged {{ printf "%.0f" $value }} uncorrectable ECC row remaps in the last hour
+          description: Uncorrectable ECC means data was lost, not corrected. Correctable remaps are a wear signal; these are a fault. Plan to take the box out of rotation.
+          runbook: bazelisk run //scripts:spark-monitor -- --status --box <n>
+
+      - alert: SparkGpuRowRemapFailure
+        # Latches until the card reboots, so a short `for` is enough - it will not go
+        # away on its own and there is no point waiting on it.
+        expr: spark:gpu_row_remap_failure:gpu > 0
+        for: 5m
+        labels:
+          severity: critical
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} GPU {{ $labels.gpu }} has a failed row remap
+          description: DCGM reports a row-remap failure, which means the spare rows are exhausted. The card is at end of service for a workload that cares about memory integrity.
+
+      - alert: SparkGpuThrottling
+        # Gated on the GPU being busy: an idle card holds its SM clock down on purpose
+        # and would otherwise fire all night.
+        expr: |
+          (spark:gpu_sm_clock_deficit:gpu < 0.6)
+          and on (hostname, gpu)
+          (spark:gpu_util_pct:gpu > 50)
+        for: 15m
+        labels:
+          severity: warning
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} GPU {{ $labels.gpu }} is throttling at {{ printf "%.0f" (100 * $value) }}% of its own SM-clock ceiling
+          description: SM clock has held below 60% of its 6h peak for 15m while the GPU stayed above 50% utilisation. Usual causes are the power cap, a thermal hold, or a PCIe link renegotiating down.
+          runbook: bazelisk run //scripts:spark-monitor -- --status --box <n>
+
+      - alert: SparkGpuSeriesSilent
+        # Two shapes of the same fault, kept disjoint so one box does not raise both: a
+        # GPU that reported in the last 6h and stopped while its neighbours kept
+        # reporting (a card falling off the bus), and a box whose node_exporter answers
+        # while DCGM contributes nothing at all. Each branch requires DCGM rows in its
+        # own window, which is what keeps the shipped SPARK_MONITOR_ENABLED=false state
+        # - no DCGM anywhere, ever - from firing. A box that legitimately runs no DCGM
+        # fires once it has reported within 24h, which is the intended reading: that
+        # box used to be observable and is not now.
+        expr: |
+          (
+            ((spark:gpu_reported_recently:gpu) unless on (hostname, gpu) (spark:gpu_util_pct:gpu))
+            and on (hostname) (max by (hostname) (DCGM_FI_DEV_GPU_UTIL))
+          )
+          or
+          (
+            ((spark:box_up == 1) and on (hostname) (max by (hostname) (last_over_time(DCGM_FI_DEV_GPU_UTIL[24h]))))
+            unless on (hostname) (max by (hostname) (DCGM_FI_DEV_GPU_UTIL))
+          )
+        for: 10m
+        labels:
+          severity: critical
+          tier: spark
+          spark: '{{ $labels.hostname }}'
+        annotations:
+          summary: Spark {{ $labels.hostname }} {{ if $labels.gpu }}GPU {{ $labels.gpu }} stopped reporting while the box still answers{{ else }}reports no GPU at all while the box still answers{{ end }}
+          description: The box is up on node_exporter but its DCGM rows are gone, so the GPU side of this Spark is dark - usually an exporter container that died or a card the driver lost.
+          runbook: bazelisk run //scripts:spark-monitor -- --status --box <n>

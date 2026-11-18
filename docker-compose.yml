@@ -859,6 +859,14 @@ services:
       # the operator adds under rules/ arrive together, and Prometheus reads
       # rule_files as paths relative to this mount.
       - ./observability/prometheus:/etc/prometheus:ro
+      # The Spark fleet's scrape targets, which are generated on this host by
+      # `bazelisk run //scripts:spark-monitor -- --targets > \
+      # observability/spark-targets/sparks.json` and are gitignored because they name
+      # the boxes. This nests inside the mount above so prometheus.yml can keep
+      # naming `targets/sparks.json` the way it names `rules/*.rules.yml`, while the
+      # generated file stays out of the reviewed config tree. A host that has not
+      # enrolled any Spark has no file here, and file_sd reads that as zero Sparks.
+      - ./observability/spark-targets:/etc/prometheus/targets:ro
       - prometheus-data:/prometheus
     # This image keeps its busybox shell (the -distroless and -busybox variants are
     # separate tags), so a real probe is available here and on grafana below. The
@@ -1067,6 +1075,144 @@ services:
         condition: service_started
 
   # ---------------------------------------------------------------------------
+  # The host's own metrics, and the two things that make the inference tier
+  # diagnosable. Same profile as the rest of the bundle, so a stack started
+  # without `--profile observability` starts none of them and pays nothing.
+  #
+  # None of the four carries a healthcheck. The two Prometheus-adjacent images
+  # answer /-/healthy but the exporter images ship no shell this file can rely
+  # on, and a test that cannot run leaves a service stuck in "starting" - the
+  # failure docs describe for the distroless quartet above. //scripts:
+  # observability-check is the probe instead: it asks each /metrics endpoint and
+  # names the family that is missing, which is the question a healthcheck would
+  # have answered with a bare 200.
+  # ---------------------------------------------------------------------------
+
+  node_exporter:
+    image: quay.io/prometheus/node-exporter:v1.12.1
+    logging:
+      driver: json-file
+      options: { tag: node_exporter, max-size: "5m", max-file: "2" }
+    hostname: node_exporter
+    restart: unless-stopped
+    profiles: ["observability"]
+    # The point of this service is the machine under the containers, so it reads
+    # the host's /proc and /sys rather than its own namespace's. Without pid:host
+    # the process collector reports this container's handful of processes and the
+    # task-manager page shows a machine that is doing nothing.
+    pid: host
+    command:
+      # rootfs relocation: every path the collectors read is taken under /host,
+      # which is the read-only bind of / below. This is how node_exporter reports
+      # the stack host while running in a container.
+      - --path.rootfs=/host
+      # processes is in node_exporter's disabled-by-default table, so
+      # node_processes_pids and node_processes_max_processes do not exist as
+      # series until it is named. The task-manager process table depends on it.
+      - --collector.processes
+      # tmpfs is not in the shipped exclude list, so a filesystem panel would
+      # otherwise graph a dozen ephemeral mounts as if they were disks. Excluding
+      # it here keeps the fix in one place rather than in every dashboard query.
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run|var/lib/docker/overlay2)($$|/)
+      - --collector.filesystem.fs-types-exclude=^(tmpfs|overlay|squashfs|autofs|fuse.*)$$
+    volumes:
+      - /:/host:ro,rslave
+    ports:
+      # Loopback only: the series name mountpoints, devices, and interface names
+      # on this box, and the read path for anyone off the box is Grafana. Same
+      # reasoning as prometheus above.
+      - "127.0.0.1:${OBS_NODE_EXPORTER_PORT:-9101}:9101"
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.61.0
+    logging:
+      driver: json-file
+      options: { tag: cadvisor, max-size: "5m", max-file: "2" }
+    hostname: cadvisor
+    restart: unless-stopped
+    profiles: ["observability"]
+    # privileged plus pid:host is what docs/running.md requires for
+    # container_processes to be populated. It is the only privileged container
+    # the observability bundle adds -- Kasm is privileged too, outside this
+    # profile -- so it is called out here and in
+    # docs/observability.md: if the operator objects, this service is the thing
+    # to remove, and every panel except the per-container process table survives.
+    privileged: true
+    pid: host
+    command:
+      - --docker_only=true
+      - --housekeeping_interval=30s
+      # The stack's containers are the subject; raw cgroup metrics multiply the
+      # series count for a detail nobody on this box reads, and this box's disk
+      # also holds model weights.
+      - --store_container_labels=false
+      - --whitelisted_container_labels=image,name
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+    devices:
+      - /dev/kmsg:/dev/kmsg
+    ports:
+      - "127.0.0.1:${OBS_CADVISOR_PORT:-9290}:8080"
+
+  blackbox_exporter:
+    image: prom/blackbox-exporter:v0.29.1
+    logging:
+      driver: json-file
+      options: { tag: blackbox_exporter, max-size: "5m", max-file: "2" }
+    hostname: blackbox_exporter
+    restart: unless-stopped
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./observability/blackbox:/etc/blackbox:ro
+    ports:
+      # Loopback only. Prometheus is the real caller and reaches this by service
+      # name on the compose network; the bind exists for //scripts:observability-check
+      # and for a human asking "is the prober up". A general-purpose outbound HTTP
+      # prober has no business on the LAN, which is why this is not a bare port.
+      - "127.0.0.1:${OBS_BLACKBOX_PORT:-9115}:9115"
+
+  alertmanager:
+    image: prom/alertmanager:v0.35.0
+    logging:
+      driver: json-file
+      options: { tag: alertmanager, max-size: "5m", max-file: "2" }
+    hostname: alertmanager
+    restart: unless-stopped
+    profiles: ["observability"]
+    environment:
+      # Read here and nowhere else: Alertmanager's own config parser cannot
+      # expand an environment variable in a webhook URL, so the value has to be
+      # turned into a file before the binary starts. It stays out of the
+      # committed YAML and out of the read-only config mount.
+      - ALERTMANAGER_WEBHOOK_URL=${ALERTMANAGER_WEBHOOK_URL:-}
+    # The image is busybox-based and runs as nobody, which is also the owner of
+    # /alertmanager, so that volume is the one writable place the notifier's
+    # `url_file:` can point at. The script beside this file does the write and
+    # then execs the binary with the flags below; keeping it a file rather than
+    # an inline `sh -c` is what lets shellcheck and shfmt read it.
+    entrypoint:
+      - /bin/sh
+      - /etc/alertmanager/boot-webhook-url.sh
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      # The UI rides the router with the rest of the bundle's pages, so it binds
+      # loopback like Prometheus rather than the LAN: an unauthenticated
+      # Alertmanager that can silence alerts is not something to hand a network.
+      - --web.listen-address=0.0.0.0:9093
+    volumes:
+      - ./observability/alertmanager:/etc/alertmanager:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:${OBS_ALERTMANAGER_PORT:-9093}:9093"
+
+  # ---------------------------------------------------------------------------
   # Secrets bundle.
   #
   # Three services, one compose profile, one flag. `INFISICAL_ENABLED=false`
@@ -1221,6 +1367,10 @@ volumes:
   tempo-data:
   grafana-data:
   alloy-data:
+  # Alertmanager keeps its silence and notification-state file here, so an
+  # operator's active silences survive a restart of the bundle and a reset of it
+  # is a deliberate act alongside the rest.
+  alertmanager-data:
   # The secrets bundle's stores, one volume each so `dev-stack -- reset` and
   # //scripts:storage-clean can name them individually. infisical-redis-data
   # carries no data while redis runs with persistence off (see that service's

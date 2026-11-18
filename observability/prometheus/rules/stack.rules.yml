@@ -1,0 +1,292 @@
+# Recording and alerting rules for the stack HOST: the box that runs Coder,
+# LiteLLM, Ollama, Kasm and this monitoring tier itself. The recording group
+# carries the ratios the host dashboard graphs; the alert group is only what an
+# operator must hear about, so every rule there has a threshold and a `for:`
+# chosen on purpose, both argued in the comment above it.
+#
+# The selectors answer to the exporters as the pinned images emit them:
+#
+#   - The PSI series carry no labels at all, so they are grouped only by the
+#     scrape's `instance` and never filtered on `operation=` or `pressure=`.
+#   - Filesystem series keep real mounts only and network series keep real links
+#     only: a tmpfs or a veth pair full of nothing pages nobody.
+#   - cAdvisor's container identity is `name`, and `name=""` is the root cgroup,
+#     which every container's usage is also rolled into, so it is excluded.
+#   - `container_cpu_cfs_periods_total` is published only for a container that
+#     has a quota, so the throttling ratio is defined for limited containers and
+#     an unlimited one reports no series rather than a clean 0.
+#
+# Host identity comes from the scrape's `instance` label: this file names no
+# hostname, because the Spark boxes are enumerated outside the tree.
+
+groups:
+  - name: stack_host_recording
+    rules:
+      # Cores busy, against the core count. The `mode="idle"` series are one per
+      # core, so their count is the denominator the dashboards need.
+      - record: host:cpu_utilisation:ratio
+        expr: |
+          sum by (instance) (rate(node_cpu_seconds_total{mode!="idle"}[5m]))
+            /
+          count by (instance) (node_cpu_seconds_total{mode="idle"})
+
+      # Runnable pressure per core: catches a queue that CPU utilisation alone
+      # hides, because 16 cores at 60% with 80 runnable tasks is a busy box.
+      - record: host:cpu_load1_per_core:ratio
+        expr: |
+          max by (instance) (node_load1)
+            /
+          count by (instance) (node_cpu_seconds_total{mode="idle"})
+
+      # MemAvailable over MemTotal is the only memory headroom figure worth
+      # graphing: MemFree alone counts reclaimable page cache as lost.
+      - record: host:memory_utilisation:ratio
+        expr: |
+          1 - max by (instance) (
+            node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes
+          )
+
+      # Pressure-stall information: wall-clock seconds per second that tasks
+      # waited (some/) or were fully stalled (full/) on each resource. These are
+      # counters, so they rate, and they carry no labels, so only `instance`.
+      - record: host:psi_cpu_wait:ratio5m
+        expr: |
+          max by (instance) (rate(node_pressure_cpu_waiting_seconds_total[5m]))
+
+      - record: host:psi_memory_wait:ratio5m
+        expr: |
+          max by (instance) (rate(node_memory_waiting_seconds_total[5m]))
+
+      - record: host:psi_memory_stalled:ratio5m
+        expr: |
+          max by (instance) (rate(node_memory_stalled_seconds_total[5m]))
+
+      - record: host:psi_io_wait:ratio5m
+        expr: |
+          max by (instance) (rate(node_io_waiting_seconds_total[5m]))
+
+      - record: host:psi_io_stalled:ratio5m
+        expr: |
+          max by (instance) (rate(node_io_stalled_seconds_total[5m]))
+
+      # Space and inode headroom per mount, kept per mountpoint rather than
+      # collapsed to the host: an alert that cannot name the mount is not
+      # actionable, and min keeps the tightest device under a shared mountpoint.
+      - record: host:filesystem_avail:ratio
+        expr: |
+          min by (instance, mountpoint) (
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+              /
+            node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"}
+          )
+
+      - record: host:filesystem_inodes_avail:ratio
+        expr: |
+          min by (instance, mountpoint) (
+            node_filesystem_files_free{fstype!~"tmpfs|overlay|squashfs"}
+              /
+            node_filesystem_files{fstype!~"tmpfs|overlay|squashfs"}
+          )
+
+      # node_disk_io_time_seconds_total is already device-busy seconds per
+      # second, so its rate is a 0..1 saturation ratio with no arithmetic. loop
+      # devices back squashfs image layers and read as busy for minutes during a
+      # pull without the disk being sick, so they stay out of the panel.
+      - record: host:disk_io_utilisation:ratio5m
+        expr: |
+          max by (instance, device) (
+            rate(node_disk_io_time_seconds_total{device!~"lo|loop.*|ram.*"}[5m])
+          )
+
+      # Errors are counters whose rate is small and absolute, so they are summed
+      # over the real links per host rather than turned into a ratio.
+      - record: host:network_receive_errors:rate5m
+        expr: |
+          sum by (instance) (
+            rate(node_network_receive_errs_total{device!~"lo|veth.*|br.*|docker.*|virbr.*"}[5m])
+          )
+
+      - record: host:network_transmit_errors:rate5m
+        expr: |
+          sum by (instance) (
+            rate(node_network_transmit_errs_total{device!~"lo|veth.*|br.*|docker.*|virbr.*"}[5m])
+          )
+
+      # Both conntrack series are on by default, and the limit comes from
+      # nf_conntrack_max, so a fill of 1 means new flows are dropped outright.
+      - record: host:conntrack_utilisation:ratio
+        expr: |
+          max by (instance) (
+            node_nf_conntrack_entries / node_nf_conntrack_entries_limit
+          )
+
+      - record: host:filefd_utilisation:ratio
+        expr: |
+          max by (instance) (
+            node_filefd_allocated / node_filefd_maximum
+          )
+
+      # Share of a limited container's scheduling periods that got throttled.
+      # A number near 1 means the quota, not the host, is what slows it down.
+      - record: container:cpu_throttled:ratio5m
+        expr: |
+          sum by (instance, name) (
+            rate(container_cpu_cfs_throttled_periods_total{name!=""}[5m])
+          )
+            /
+          sum by (instance, name) (
+            rate(container_cpu_cfs_periods_total{name!=""}[5m])
+          )
+
+  - name: stack_host_alerts
+    rules:
+      # A build, an embed run or an image pull pins cores for minutes at a time,
+      # so the fuse is long: 10 straight minutes past 90% is a stuck loop or a
+      # queue nobody drained, and on this box it starves every other container.
+      - alert: HostCpuPegged
+        expr: host:cpu_utilisation:ratio > 0.90
+        for: 10m
+        labels:
+          severity: critical
+          tier: host
+        annotations:
+          summary: "Host CPU pegged on {{ $labels.instance }}"
+          description: >-
+            {{ $labels.instance }} has been using {{ $value | humanizePercentage }}
+            of its cores for 10m (threshold 90%). Check for a workspace agent or a
+            local model run that has taken the box.
+
+      # The box holds model weights resident, so high utilisation on its own is a
+      # weak signal and the threshold sits high; 5m is short because once memory is
+      # genuinely gone the OOM killer picks the victim before the next scrape.
+      - alert: HostMemoryNearExhaustion
+        expr: host:memory_utilisation:ratio > 0.95
+        for: 5m
+        labels:
+          severity: critical
+          tier: host
+        annotations:
+          summary: "Host memory near exhaustion on {{ $labels.instance }}"
+          description: >-
+            {{ $labels.instance }} has been using {{ $value | humanizePercentage }}
+            of its memory for 5m (threshold 95%), so MemAvailable is nearly gone and
+            the OOM killer picks the victim next.
+
+      # The earlier and better memory signal: PSI counts tasks that actually
+      # waited on memory, so 20% of wall time spent waiting is a box that is
+      # already slow even though the utilisation figure still looks survivable.
+      - alert: HostMemoryPressureStall
+        expr: host:psi_memory_wait:ratio5m > 0.20
+        for: 10m
+        labels:
+          severity: warning
+          tier: host
+        annotations:
+          summary: "Host memory pressure high on {{ $labels.instance }}"
+          description: >-
+            Tasks on {{ $labels.instance }} have waited on memory for
+            {{ $value | humanizePercentage }} of wall time over the last 5m, held
+            for 10m (threshold 20%). Free memory is reclaiming faster than it frees.
+
+      # Loki, Mimir, Tempo and the container image store all write to the host
+      # filesystems. 15m rides out a pull that briefly fills a scratch layer;
+      # past that the next writer fails, and a full store is how a log pipeline
+      # loses data silently rather than loudly.
+      - alert: HostFilesystemNearFull
+        expr: host:filesystem_avail:ratio < 0.10
+        for: 15m
+        labels:
+          severity: critical
+          tier: host
+        annotations:
+          summary: "Filesystem near full on {{ $labels.instance }}"
+          description: >-
+            {{ $labels.mountpoint }} on {{ $labels.instance }} has
+            {{ $value | humanizePercentage }} of its space free, held for 15m
+            (threshold 10%). Compact or prune before the writer fails.
+
+      # Inode exhaustion answers ENOSPC to whatever is writing, exactly like a
+      # full disk, but it fills slowly through many small files. Longer fuse,
+      # lower severity: there is time to find the directory that holds them.
+      - alert: HostFilesystemInodesNearFull
+        expr: host:filesystem_inodes_avail:ratio < 0.10
+        for: 30m
+        labels:
+          severity: warning
+          tier: host
+        annotations:
+          summary: "Inodes near exhausted on {{ $labels.instance }}"
+          description: >-
+            {{ $labels.mountpoint }} on {{ $labels.instance }} has
+            {{ $value | humanizePercentage }} of its inodes free, held for 30m
+            (threshold 10%). Writes fail with ENOSPC well before space runs out.
+
+      # Device-busy ratio past 0.90 for 15m is a queue nobody is draining; a
+      # compaction or a pull that clears in a few minutes is the noise the length
+      # of the fuse is there to swallow.
+      - alert: HostDiskIoSaturated
+        expr: host:disk_io_utilisation:ratio5m > 0.90
+        for: 15m
+        labels:
+          severity: warning
+          tier: host
+        annotations:
+          summary: "Disk saturated on {{ $labels.instance }}"
+          description: >-
+            Device {{ $labels.device }} on {{ $labels.instance }} has been busy
+            {{ $value | humanizePercentage }} of every second for 15m (threshold
+            90%). Everything waiting on that queue is paying for it.
+
+      # Every container flow crosses the host's conntrack table. Past the limit
+      # new connections are dropped rather than slowed, which looks like a dead
+      # service to the thing connecting, so page before the table fills.
+      - alert: HostConntrackNearLimit
+        expr: host:conntrack_utilisation:ratio > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          tier: host
+        annotations:
+          summary: "Conntrack table near its limit on {{ $labels.instance }}"
+          description: >-
+            {{ $labels.instance }} has {{ $value | humanizePercentage }} of its
+            conntrack table in use for 10m (threshold 80%). Raise
+            net.netfilter.nf_conntrack_max or find the connection leak.
+
+      # A monitoring layer that does not notice its own gap is how a fault stays
+      # invisible. absent() covers both a dead exporter and a scrape config that
+      # stopped matching, and the and on() gate means this fires only while the
+      # other exporter still answers, so a powered-off box is one host-down
+      # finding rather than two pages. The identity series keeps its `job` label,
+      # which is the only host identity this file is allowed to carry.
+      - alert: HostNodeExporterGap
+        expr: |
+          absent(node_exporter_build_info{job="node_exporter"})
+            and on()
+          max by () (up{job="cadvisor"} == 1)
+        for: 10m
+        labels:
+          severity: critical
+          tier: host
+        annotations:
+          summary: "node_exporter series missing on the stack host"
+          description: >-
+            No node_exporter_build_info has been scraped from
+            job="node_exporter" for 10m while cAdvisor still answers, so the host
+            CPU, memory, disk and network panels are frozen on stale data.
+
+      - alert: HostCadvisorGap
+        expr: |
+          absent(cadvisor_version_info{job="cadvisor"})
+            and on()
+          max by () (up{job="node_exporter"} == 1)
+        for: 10m
+        labels:
+          severity: critical
+          tier: host
+        annotations:
+          summary: "cAdvisor series missing on the stack host"
+          description: >-
+            No cadvisor_version_info has been scraped from job="cadvisor" for 10m
+            while node_exporter still answers, so per-container CPU, memory and
+            throttling are dark while the host itself looks healthy.

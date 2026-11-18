@@ -1,0 +1,61 @@
+# Grafana alerting provisioning: one contact point and one policy.
+#
+# Why this exists beside Prometheus's own alerting block, rather than instead of
+# it: the rules in observability/prometheus/rules/ fire in Prometheus and are
+# delivered by Alertmanager directly. Grafana's job is the read path (Alerting ->
+# Rules, which lists them because the Prometheus datasource is registered with
+# `alerting: true`) and the write path for anything a person creates by hand in
+# the Grafana UI. Those Grafana-managed alerts need somewhere to go, and the only
+# sensible somewhere is the same Alertmanager the stack rules already use - one
+# place holds the silences and the repeat intervals, whichever engine fired.
+#
+# The URL carries no credential: Alertmanager is on the compose network, is bound
+# to loopback for humans, and has no auth of its own. The operator's real
+# destination (a chat webhook, a pager) is configured in
+# observability/alertmanager/alertmanager.yml and read from ALERTMANAGER_WEBHOOK_URL
+# there, never in this file.
+
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: stack-alertmanager
+    receivers:
+      # `alertmanager` type rather than `webhook`: it speaks the /api/v2/alerts
+      # protocol, so Alertmanager's grouping, inhibition and silences apply to
+      # what arrives here exactly as they do to what Prometheus sends.
+      - uid: stack-alertmanager
+        type: alertmanager
+        settings:
+          url: http://alertmanager:9093
+          # Match Alertmanager's own grouping so a Grafana-managed alert that
+          # shares a group with a Prometheus one lands in the same notification
+          # instead of a second one beside it.
+          maxAlerts: "1000"
+
+policies:
+  - orgId: 1
+    receiver: stack-alertmanager
+    group_by:
+      - alertname
+      - severity
+      # Grouping by the offending box is what keeps a Spark that is flapping from
+      # producing one notification per GPU: the box is the unit an operator acts
+      # on. `hostname` is the label DCGM and node_exporter both carry.
+      - hostname
+    # The default policy is the catch-all; a more specific route below is the
+    # operator's own, and provisioning does not overwrite a policy edited in the
+    # UI unless the file's `uid` matches it. Deliberately no `uid` here, so a UI
+    # edit is never silently reverted by the next restart.
+    routes:
+      # A critical alert repeats far sooner than the default. This is the one
+      # timing decision in the file, and it is here rather than in Alertmanager
+      # because it applies to alerts Grafana originates, which Alertmanager never
+      # sees until they are already on their way.
+      - matcher:
+          - "severity = critical"
+        receiver: stack-alertmanager
+        group_wait: 15s
+        group_interval: 2m
+        repeat_interval: 15m
+        continue: false

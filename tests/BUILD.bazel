@@ -445,6 +445,16 @@ _SUITE_PAYLOAD = {
     # compose project and the log tree all live under its scratch dir, so this
     # suite reads nothing the common set does not already carry.
     "observability-check.bats": [],
+    # Every fact this suite pins comes out of the bundle's own config tree: the three
+    # rule files, alertmanager.yml and its entrypoint, blackbox.yml, the DCGM counter
+    # list, and prometheus.yml's job list. One group covers all of them.
+    "observability-exporters.bats": [
+        "//observability:payload",
+    ],
+    # The CLI and its probe are both shell under scripts/, which every suite already
+    # carries; the fixtures this suite feeds them (docker ps output, a probe report, a
+    # dotenv file) are written into the test's own tmpdir.
+    "spark-monitor.bats": [],
     "pre-commit.bats": [
         "//:env_example",
         "//:env_sample",

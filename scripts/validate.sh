@@ -91,7 +91,22 @@ main() {
     python3 scripts/lib/parse_yaml.py homepage/config/*.yaml litellm/config.yaml hermes/config.yaml searxng/settings.yml \
       observability/prometheus/prometheus.yml observability/loki/loki.yml observability/tempo/tempo.yml \
       observability/mimir/mimir.yml observability/grafana/provisioning/datasources/stack.yaml \
-      observability/grafana/provisioning/dashboards/stack.yaml
+      observability/grafana/provisioning/dashboards/stack.yaml \
+      observability/grafana/provisioning/alerting/stack.yaml \
+      observability/blackbox/blackbox.yml observability/alertmanager/alertmanager.yml \
+      observability/prometheus/rules/stack.rules.yml observability/prometheus/rules/spark.rules.yml \
+      observability/prometheus/rules/inference.rules.yml
+    # Dashboards are JSON, and until now no gate parsed any JSON at all: a broken
+    # dashboard shipped to Grafana and surfaced as an empty panel in the browser.
+    # The generated Spark file-SD is checked only when a box has produced it, so an
+    # unenrolled fleet (the default, and the state the repo is committed in) is not
+    # a validation failure.
+    phase "json parse"
+    local json_targets=(observability/grafana/dashboards/*.json)
+    if [ -f observability/spark-targets/sparks.json ]; then
+      json_targets+=("observability/spark-targets/sparks.json")
+    fi
+    python3 scripts/lib/parse_json.py "${json_targets[@]}"
   else
     phase "PyYAML not installed, skipping yaml parse"
   fi

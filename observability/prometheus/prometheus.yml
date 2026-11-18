@@ -36,6 +36,29 @@ remote_write:
       # data an operator is most likely asking about.
       max_backoff: 1m
 
+# Rules are loaded from the same read-only mount as this file, so a path here is
+# relative to /etc/prometheus inside the container (docker-compose.yml binds
+# ./observability/prometheus). Everything under rules/ arrives with this file;
+# there is no second place to register a rule.
+rule_files:
+  - rules/stack.rules.yml
+  - rules/spark.rules.yml
+  - rules/inference.rules.yml
+
+# The alerts fire here and are *delivered* by Alertmanager, which owns grouping,
+# silences and the repeat interval. Not adding this block would leave every rule
+# in rules/ visible on Prometheus's /alerts page and nowhere else - no silence,
+# no grouping, and nothing for Grafana's Alerting page to read.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+      # Alertmanager is on the same profile as this service, so the pair comes up
+      # together; the timeout and a short backoff keep a restarting Alertmanager
+      # from stalling the notification queue.
+      timeout: 10s
+      max_alerts: 1000
+
 scrape_configs:
   # ---- the bundle itself ----------------------------------------------------
   # Each of these answers /metrics from its own binary; they are here because a
@@ -88,3 +111,92 @@ scrape_configs:
       credentials: "$(LITELLM_MASTER_KEY)"
     static_configs:
       - targets: ["litellm:4000"]
+
+  # ---- the stack host, as a machine -----------------------------------------
+  # Everything above this line scrapes a *service*. These two scrape the box the
+  # services run on, which is the half the bundle did not have: an operator could
+  # see a container burning CPU and could not see whether the machine was out of
+  # memory, out of disk, or thrashing. node_exporter runs with pid:host and
+  # --collector.processes for exactly that reason (docker-compose.yml).
+  # The job name is the service name, which is what rules/stack.rules.yml's
+  # exporter-gap alerts select on (`job="node_exporter"`, `job="cadvisor"`); a
+  # rename here has to be made there too or those two alerts go quiet forever.
+  - job_name: node_exporter
+    static_configs:
+      - targets: ["node_exporter:9101"]
+        labels:
+          # One label distinguishes the stack host from the Sparks, which carry
+          # the same series names from their own node_exporter. A dashboard that
+          # means "this box" filters on it; a fleet query ignores it.
+          evo_t1_host: stack-host
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
+        labels:
+          evo_t1_host: stack-host
+    # Container identity here is the `name` label (the Docker container name);
+    # `id` is a cgroup path and is useless to a reader. The two labels cadvisor
+    # is started with a whitelist for are therefore load-bearing - see the
+    # service's command in docker-compose.yml.
+
+  # ---- the DGX Sparks ------------------------------------------------------
+  # Targets for the Spark node_exporter and DCGM exporter come from a file the
+  # operator generates (`//scripts:spark-monitor --targets` writes what would be
+  # written; the host writes sparks.json itself). It is gitignored, so no
+  # hostname is ever committed here, and an absent file is not an error - it is
+  # the stack running with no Sparks enrolled, which is the default.
+  - job_name: spark-node
+    file_sd_configs:
+      - files:
+          - targets/sparks.json
+        refresh_interval: 60s
+
+  # Blackbox is the probe that answers the question an exporter cannot: is the
+  # inference port answering at all, from outside the box. Prometheus passes the
+  # real URL in `__param_target`, so one blackbox container probes every Spark and
+  # the target label carries the URL rather than the prober's own address.
+  #
+  # The URLs come from the same generated file as the exporter targets, in groups
+  # that carry a `job` label. No Spark address is committed here, and there is no
+  # placeholder target to forget to edit: an unenrolled fleet simply has no groups,
+  # which reads as zero Sparks rather than as a probe pointed at this box.
+  - job_name: blackbox-spark
+    metrics_path: /probe
+    params:
+      module: [spark_health]
+    file_sd_configs:
+      - files:
+          - targets/sparks.json
+        refresh_interval: 60s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox_exporter:9115
+
+  # A second job over the same prober, for the model list. Two jobs rather than
+  # one with a module matrix, because the two answers mean different things and an
+  # operator alerts on them separately: a box can be healthy and still not be
+  # serving the model its deployment says it is.
+  - job_name: blackbox-spark-models
+    metrics_path: /probe
+    params:
+      module: [spark_models]
+    file_sd_configs:
+      - files:
+          - targets/sparks.json
+        refresh_interval: 60s
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox_exporter:9115
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]

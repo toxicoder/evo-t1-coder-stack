@@ -1,15 +1,17 @@
 """Package purpose: the observability bundle's payload (metrics, logs, traces).
 
-One directory holds every config the six profiled services mount, and the tree is
+One directory holds every config the bundle's services mount, and the tree is
 separated per component because that is how compose mounts it: one bind per service,
 each read by exactly one container. `prometheus/` is mounted as a directory so an
 operator can drop rule files beside prometheus.yml without a compose edit; the rest
 are single files, and each grafana/ subdirectory mirrors one provisioning mount so
 shadowing the image's own /etc/grafana/provisioning siblings stays impossible.
 
-Nothing under this tree is read by a production script except //scripts:validate
-(parses the YAML) and //scripts:observability-check (reads the Alloy config to
-report what the shipper tails). Both declare it in scripts/BUILD.bazel.
+Three production scripts read this tree: //scripts:validate parses the YAML,
+//scripts:observability-check reads the Alloy config to report what the shipper
+tails, and //scripts:spark-monitor ferries dcgm/custom-counters.csv to each Spark
+and mounts it into that box's exporter. Each declares what it reads in
+scripts/BUILD.bazel.
 """
 
 package(default_visibility = ["//visibility:public"])
@@ -42,13 +44,41 @@ filegroup(
 
 filegroup(
     name = "grafana_provisioning",
-    # Listed, not globbed: these two files name the datasource UIDs the four
-    # dashboards query by, so a third provisioning file is a change someone has to
-    # read, not a file that ships because it landed in a directory.
+    # Listed, not globbed: these files name the datasource UIDs the dashboards
+    # query by and the contact point alerts route through, so a new provisioning
+    # file is a change someone has to read, not a file that ships because it
+    # landed in a directory.
     srcs = [
+        "grafana/provisioning/alerting/stack.yaml",
         "grafana/provisioning/dashboards/stack.yaml",
         "grafana/provisioning/datasources/stack.yaml",
     ],
+)
+
+filegroup(
+    name = "blackbox_config",
+    # The prober's whole module set. Listed rather than globbed: a module is a
+    # network behaviour this box asks the LAN to perform, so each one is reviewed.
+    srcs = ["blackbox/blackbox.yml"],
+)
+
+filegroup(
+    name = "alertmanager_config",
+    srcs = [
+        "alertmanager/alertmanager.yml",
+        # The container's own entrypoint: it turns ALERTMANAGER_WEBHOOK_URL into
+        # the file alertmanager.yml's `url_file:` reads, because Alertmanager
+        # cannot expand an environment variable itself.
+        "alertmanager/boot-webhook-url.sh",
+    ],
+)
+
+filegroup(
+    name = "dcgm_counters",
+    # The counter list //scripts:spark-monitor ferries to each Spark and mounts
+    # into the DCGM exporter. It is a payload of that CLI as much as of this tree,
+    # so scripts/BUILD.bazel names it in _SCRIPT_PAYLOAD too.
+    srcs = ["dcgm/custom-counters.csv"],
 )
 
 filegroup(
@@ -67,17 +97,30 @@ filegroup(
     srcs = ["alloy/config.alloy"],
 )
 
-# Every file the bundle's six containers mount, for the gates that address the tree
-# as one directory (//:stack_data, the compose-config suites).
+filegroup(
+    name = "spark_targets",
+    # Only the README is tracked: sparks.json is generated on the stack host and is
+    # gitignored because it names the boxes. The directory still has to ship, because
+    # compose bind-mounts it and //tests:bats_stack_data_test checks that every bind
+    # source exists beside the compose file.
+    srcs = ["spark-targets/README.md"],
+)
+
+# Every file the bundle's containers mount, for the gates that address the tree as
+# one directory (//:stack_data, the compose-config suites).
 filegroup(
     name = "payload",
     srcs = [
+        ":alertmanager_config",
         ":alloy_config",
+        ":blackbox_config",
+        ":dcgm_counters",
         ":grafana_dashboards",
         ":grafana_provisioning",
         ":loki_config",
         ":mimir_config",
         ":prometheus_config",
+        ":spark_targets",
         ":tempo_config",
     ],
 )
