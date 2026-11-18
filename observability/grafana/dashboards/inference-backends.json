@@ -1,0 +1,670 @@
+{
+  "uid": "evo-inference-backends",
+  "title": "Inference backends",
+  "tags": ["evo-t1", "litellm", "inference"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "deployment",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "query": "label_values(litellm_deployment_state, model_id)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "requested_model",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": {
+          "query": "label_values(litellm_proxy_total_requests_metric_total, requested_model)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Backends the router lists",
+      "description": "How many deployments litellm_deployment_state currently reports, which is the router's own table rather than anything scraped off a serving box. Red is not a threshold here: fewer rows than litellm/config.yaml declares means the proxy loaded a shorter model list than you think, and the missing model has no backend at all.",
+      "id": 1,
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "noValue": "no data" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(litellm_deployment_state{model_id=~\"$deployment\"})",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Backends off the healthy state",
+      "description": "litellm:deployments_not_ready, the count of deployments whose litellm_deployment_state is off 0, as the router's background health checks last saw it. Any value above 0 is red: the router has stopped sending that deployment traffic, and with one deployment per model group that model has no working backend.",
+      "id": 2,
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "no data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:deployments_not_ready",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Cooldown transitions, last 15m",
+      "description": "Summed litellm:cooldown_events:15m, the number of times the router pulled any deployment out of rotation in the last 15 minutes. This is the whole cooldown surface at this LiteLLM tag: there is no remaining-cooldown gauge, so a box that recovers and fails again shows up as a growing count here rather than as a timer.",
+      "id": 3,
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "no data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum(litellm:cooldown_events:15m)",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Admission backlog (proxy-wide)",
+      "description": "litellm_admission_queued_requests summed over the proxy: requests held by admission rather than being served. It carries no labels and is counted per uvicorn worker, so a proxy-wide sum is the finest honest read and no backend can be named from it. A sustained backlog means the queue, not a serving box, is setting the latency callers see.",
+      "id": 4,
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "noValue": "no data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:admission_queued_requests",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Deployment inventory and state",
+      "description": "One row per deployment the router knows about, keyed model_id and api_base, which is the only place on this page that prints the upstream base URL. The state column is litellm_deployment_state: 0 healthy, 1 partial outage, 2 complete outage. A box that is switched off is legitimately 2; a box parked at 1 is the one to open a shell on.",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "healthy", "color": "green" },
+                "1": { "text": "partial outage", "color": "yellow" },
+                "2": { "text": "complete outage", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm_deployment_state{model_id=~\"$deployment\"}",
+          "instant": true,
+          "legendFormat": "{{model_id}} {{api_base}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Liveness the stack sees (scrape and probe)",
+      "description": "Not LiteLLM's own view: up for the litellm scrape target answers whether the proxy is publishing metrics at all, and probe_success and probe_http_status_code for the blackbox-spark-models job answer whether the model endpoints behind it answer HTTP. These series carry the scrape target, not model_id, so the two filters above do not reach them and a 0 names an endpoint that is not answering, not a particular deployment.",
+      "id": 6,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "up{job=\"litellm\"}",
+          "instant": true,
+          "legendFormat": "proxy scrape {{instance}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_success{job=\"blackbox-spark-models\"}",
+          "instant": true,
+          "legendFormat": "model probe {{instance}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "probe_http_status_code{job=\"blackbox-spark-models\"}",
+          "instant": true,
+          "legendFormat": "probe http {{instance}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate per deployment",
+      "description": "litellm_deployment_total_requests_total per deployment: what the router actually dispatched, which is the number the least-busy picker is working from. A flat line here while the model keeps answering is the serving box having stopped taking work; two aliases landing on the same backend shows as two lines that always move together.",
+      "id": 7,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id, requested_model) (rate(litellm_deployment_total_requests_total{model_id=~\"$deployment\", requested_model=~\"$requested_model\"}[5m]))",
+          "legendFormat": "{{model_id}} {{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Error ratio per deployment",
+      "description": "That deployment's own failure responses over its own dispatched requests, both from litellm_deployment_failure_responses_total and litellm_deployment_total_requests_total and both keyed model_id, so the join is exact and a lightly loaded box is not punished by a shared denominator. Red means the router is losing the traffic it sent to this backend; a backend with no traffic in the window simply has no line rather than a clean 0.",
+      "id": 8,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "fillOpacity": 12, "lineWidth": 1, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.02 },
+              { "color": "red", "value": 0.1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_deployment_failure_responses_total{model_id=~\"$deployment\"}[5m])) / (sum by (model_id) (rate(litellm_deployment_total_requests_total{model_id=~\"$deployment\"}[5m])) > 0)",
+          "legendFormat": "{{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Failures per deployment by upstream status",
+      "description": "litellm_deployment_failure_responses_total split by the upstream status the serving box returned, so a 500 from one backend is not blended into a 400 from another. Read it beside the fallback panel below: a failure here with nothing behind it there was raised inside the proxy rather than returned by a box.",
+      "id": 9,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 13 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id, exception_status) (rate(litellm_deployment_failure_responses_total{model_id=~\"$deployment\"}[5m]))",
+          "legendFormat": "{{model_id}} {{exception_status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Cooldown transitions per deployment",
+      "description": "increase() of litellm_deployment_cooled_down_total over 15 minutes per model_id and api_base: how often the router pulled this one deployment out of rotation. This is the flap detector, since a box with a short cooldown_time can be cooled constantly and still look healthy under traffic, and there is no cooldown-duration gauge at this tag to contradict it.",
+      "id": 10,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id, api_base) (increase(litellm_deployment_cooled_down_total{model_id=~\"$deployment\"}[15m]))",
+          "legendFormat": "{{model_id}} {{api_base}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Fallbacks raised, by model group",
+      "description": "litellm_deployment_successful_fallbacks_total and litellm_deployment_failed_fallbacks_total over 5m, split by requested_model, fallback_model and exception_class. Those counters are keyed on the model group and not on model_id, so this panel says which group lost its primary and not which deployment took the hand-off, and there is no router retry counter at this tag, so this is net fallback volume only.",
+      "id": 11,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model, fallback_model) (rate(litellm_deployment_successful_fallbacks_total{requested_model=~\"$requested_model\"}[5m]))",
+          "legendFormat": "ok {{requested_model}} -> {{fallback_model}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (requested_model, fallback_model, exception_class) (rate(litellm_deployment_failed_fallbacks_total{requested_model=~\"$requested_model\"}[5m]))",
+          "legendFormat": "fail {{requested_model}} -> {{fallback_model}} {{exception_class}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Request latency p50/p95/p99 per deployment",
+      "description": "The recorded total-latency quantiles per model_id, which is what a caller routed to that backend waits for. p95 climbing while p50 sits still means one class of request on this backend is hurting; all three moving together means the box itself slowed down.",
+      "id": 12,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:request_latency_p50:5m{model_id=~\"$deployment\"}",
+          "legendFormat": "p50 {{model_id}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:request_latency_p95:5m{model_id=~\"$deployment\"}",
+          "legendFormat": "p95 {{model_id}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:request_latency_p99:5m{model_id=~\"$deployment\"}",
+          "legendFormat": "p99 {{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Upstream p95 against total p95, per deployment",
+      "description": "The recorded upstream quantile (litellm_llm_api_latency_metric_bucket, the part the serving box owns) plotted against the total quantile for the same model_id. The gap is the proxy's work on that request: a wide gap is this stack's problem, lines locked together mean the box is genuinely slow.",
+      "id": 13,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:request_latency_p95:5m{model_id=~\"$deployment\"}",
+          "legendFormat": "total {{model_id}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:upstream_latency_p95:5m{model_id=~\"$deployment\"}",
+          "legendFormat": "upstream {{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Proxy overhead share (proxy-wide)",
+      "description": "litellm:overhead_share:5m, the overhead histogram as a share of total latency. It is charted proxy-wide on purpose: the overhead histogram carries no backend label on the surface these rules are pinned to, so the repo's own recording rule aggregates it across the proxy and no per-backend split is honest here. Rising while the upstream quantiles stay flat is the proxy costing the caller time.",
+      "id": 14,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 29 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "custom": { "fillOpacity": 8, "lineWidth": 1, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.15 },
+              { "color": "red", "value": 0.4 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:overhead_share:5m",
+          "legendFormat": "overhead share"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens per second per backend",
+      "description": "The recorded prompt, completion and total token rates per model_id, which is the per-backend key the token counters actually carry: they publish no api_base, so a backend is named here by its model_id and never by a URL. A completion line that collapses while the prompt line holds is a box still accepting work and failing to finish it.",
+      "id": 15,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:input_tokens_per_second:1m{model_id=~\"$deployment\"}",
+          "legendFormat": "prompt {{model_id}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:output_tokens_per_second:1m{model_id=~\"$deployment\"}",
+          "legendFormat": "completion {{model_id}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (rate(litellm_total_tokens_metric_total{model_id=~\"$deployment\"}[5m]))",
+          "legendFormat": "total {{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Tokens generated per request, per backend",
+      "description": "The recorded completion-token rate over the recorded per-backend request rate, both keyed model_id, so the division is exact and the reading is how much each backend is generating per request it takes. There is no tokens-in-flight series at this tag, so this is the closest per-backend answer to work in progress; the two rules are recorded over 1m and 5m, so treat it as a level rather than an instantaneous count.",
+      "id": 16,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 12, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:output_tokens_per_second:1m{model_id=~\"$deployment\"} / (litellm:requests_per_second:5m{model_id=~\"$deployment\"} > 0)",
+          "legendFormat": "{{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency per output token (proxy-wide)",
+      "description": "litellm:latency_per_output_token_p95:5m, seconds per generated token from litellm_deployment_latency_per_output_token_bucket: how fast the serving boxes decode. Proxy-wide because the recorded rule keys this histogram on le alone, so there is no honest per-backend split on the surface this repo pins to; read it against the per-backend completion rate in this row, since a backend that is slow shows up there first. Rising means generation itself got slower, not the queue.",
+      "id": 24,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 37 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:latency_per_output_token_p95:5m",
+          "legendFormat": "p95 s per output token"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Queue wait (proxy-wide)",
+      "description": "litellm:queue_wait_p50:5m and p95, the time a request waits between admission and dispatch. Proxy-wide because this repo's own rules aggregate the queue histogram by le alone, so the series carries no backend label and cannot name which deployment a request was waiting on. A p95 past 0.5s means every deployment stayed busy while callers queued.",
+      "id": 17,
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:queue_wait_p50:5m",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:queue_wait_p95:5m",
+          "legendFormat": "p95"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Admission rejections by reason",
+      "description": "litellm:admission_rejections_per_second:5m, the requests admission refused outright rather than queued, split by reason. Any line above zero is red: the reason is the finding, because a budget reason means the rpm and token limits are the binding constraint and anything else is admission refusing work it should have queued. Proxy-wide, for the same label-less reason as the backlog stat at the top.",
+      "id": 18,
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": { "fillOpacity": 12, "lineWidth": 1, "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.001 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:admission_rejections_per_second:5m",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Admission budget headroom (proxy-wide)",
+      "description": "The tightest remaining request and token budget the proxy reports, from litellm_remaining_requests_metric and litellm_remaining_tokens_metric. Charted as the minimum rather than per backend because neither gauge is keyed on model_id by any rule in this repo, so naming a backend from them would be an invented join. Heading for 0 is the panel that explains a rejection spike beside it.",
+      "id": 19,
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 45 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "custom": { "fillOpacity": 0, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "min(litellm_remaining_requests_metric)",
+          "legendFormat": "requests left"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "min(litellm_remaining_tokens_metric)",
+          "legendFormat": "tokens left"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Balance per deployment",
+      "description": "One row per backend with the five numbers that decide whether the fleet is even: dispatched rate, p95 total latency, completion tokens per second, router state, and cooldown transitions over the last hour. Each column is its own query keyed model_id, so a cell that is empty is a backend with no traffic in the window rather than a zero. Read the rate column across before the latency column.",
+      "id": 20,
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 53 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "no data",
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": { "text": "healthy", "color": "green" },
+                "1": { "text": "partial outage", "color": "yellow" },
+                "2": { "text": "complete outage", "color": "red" }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:requests_per_second:5m{model_id=~\"$deployment\"}",
+          "instant": true,
+          "legendFormat": "{{model_id}} req/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:request_latency_p95:5m{model_id=~\"$deployment\"}",
+          "instant": true,
+          "legendFormat": "{{model_id}} p95 s"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm:output_tokens_per_second:1m{model_id=~\"$deployment\"}",
+          "instant": true,
+          "legendFormat": "{{model_id}} out tok/s"
+        },
+        {
+          "refId": "D",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "litellm_deployment_state{model_id=~\"$deployment\"}",
+          "instant": true,
+          "legendFormat": "{{model_id}} state"
+        },
+        {
+          "refId": "E",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (model_id) (increase(litellm_deployment_cooled_down_total{model_id=~\"$deployment\"}[1h]))",
+          "instant": true,
+          "legendFormat": "{{model_id}} cooldowns 1h"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Deployment rate spread per model group",
+      "description": "The busiest deployment's dispatched rate over the quietest one in the same requested_model group, from litellm_deployment_total_requests_total, which carries model_id and requested_model together so the grouping is real and not a join. A line sitting near 1 is an even group; a line climbing into the tens is one deployment taking the group while another is starved or quietly out of rotation.",
+      "id": 21,
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 53 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 1, "custom": { "fillOpacity": 8, "lineWidth": 1 } }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "max by (requested_model) (sum by (model_id, requested_model) (rate(litellm_deployment_total_requests_total{model_id=~\"$deployment\", requested_model=~\"$requested_model\"}[5m]))) / (min by (requested_model) (sum by (model_id, requested_model) (rate(litellm_deployment_total_requests_total{model_id=~\"$deployment\", requested_model=~\"$requested_model\"}[5m]))) > 0)",
+          "legendFormat": "{{requested_model}}"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Aliases served per deployment",
+      "description": "How many requested_model values each model_id appears under in the router's dispatch counter over the selected range: the model inventory as the backends actually experienced it, one row per backend. A deployment that should serve three aliases and shows one has been left out of a model group, which no other panel on this page says.",
+      "id": 22,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 62 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "noValue": "no data" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count by (model_id) (count by (model_id, requested_model) (increase(litellm_deployment_total_requests_total{model_id=~\"$deployment\", requested_model=~\"$requested_model\"}[$__range])) > 0)",
+          "instant": true,
+          "legendFormat": "{{model_id}}"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Model-list endpoints the probe covers",
+      "description": "How many targets the blackbox-spark-models job is probing right now, which is the model-list inventory the stack expects rather than what any serving box reports about itself. It is counted proxy-wide because the probe series carry a scrape target and no model_id, so they cannot be attributed to a backend; a drop here means the stack lost sight of endpoints, which is a monitoring gap before it is an inference fault.",
+      "id": 23,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 62 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "noValue": "no data" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "count(probe_success{job=\"blackbox-spark-models\"})",
+          "instant": true
+        }
+      ]
+    }
+  ]
+}
