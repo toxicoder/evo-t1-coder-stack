@@ -62,6 +62,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "mappings": [
             {
               "type": "value",
@@ -102,6 +103,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "mappings": [
             {
               "type": "value",
@@ -130,6 +132,7 @@
       "description": "Count of spark:gpu_reported_recently:gpu rows for this box. The rule keeps a card counted for 6h after it goes silent on purpose, so a number here that is higher than the GPU lines below is a card that fell off the bus rather than a card that is idle.",
       "id": 3,
       "gridPos": { "h": 4, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "noValue": "no data" }, "overrides": [] },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -488,7 +491,7 @@
       "id": 17,
       "gridPos": { "h": 7, "w": 8, "x": 16, "y": 36 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "dtdurations" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "noValue": "no data", "unit": "dtdurations" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
@@ -574,7 +577,7 @@
       "id": 22,
       "gridPos": { "h": 8, "w": 6, "x": 12, "y": 52 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "fieldConfig": { "defaults": { "noValue": "no data", "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
@@ -602,7 +605,7 @@
       "id": 23,
       "gridPos": { "h": 8, "w": 6, "x": 18, "y": 52 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "fieldConfig": { "defaults": { "noValue": "no data", "unit": "celsius" }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
@@ -854,6 +857,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "mappings": [
             {
               "type": "value",

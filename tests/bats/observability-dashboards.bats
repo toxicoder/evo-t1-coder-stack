@@ -321,6 +321,11 @@ for panel, shown in visible_panels(doc):
     title = clean(panel.get("title"))
     ptype = clean(panel.get("type"))
     print("panel|%s|%s|%s|%s" % (clean(pid), ptype, title, "1" if shown else "0"))
+    if panel.get("type") == "stat":
+        # A stat with no noValue prints Grafana's own "No data" in the panel's colour,
+        # so an outage and an unenrolled feature look alike. The house value is explicit.
+        defaults = (panel.get("fieldConfig") or {}).get("defaults") or {}
+        print("statnovalue|%s|%s" % (clean(pid), "1" if defaults.get("noValue") else "0"))
     for key in panel:
         print("panelkey|%s|%s|%s" % (clean(pid), ptype, clean(key)))
     if pid in seen_ids:
@@ -707,6 +712,17 @@ PY
   local total
   total="$(dash_all_facts "query" | wc -l | tr -d ' ')"
   [[ ${total} -gt 0 ]] || fail "no querying panel found in ${DASH_DIR}"
+}
+
+@test "every stat says something when its query returns nothing" {
+  # Grafana prints its own "No data" in the panel's threshold colour when a stat carries
+  # no noValue, so a stopped exporter and an unenrolled feature look identical. Every
+  # stat here states its empty reading instead.
+  local findings=""
+  while IFS='|' read -r kind pid has; do
+    [[ ${has} == "1" ]] || findings+="panel ${pid}; "
+  done < <(dash_all_facts "statnovalue")
+  assert_eq "every stat panel sets a noValue (missing: ${findings})" "" "${findings}"
 }
 
 @test "every metric named in an expr is on the pinned allow-list" {

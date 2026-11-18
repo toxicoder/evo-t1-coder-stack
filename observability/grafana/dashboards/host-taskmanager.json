@@ -47,6 +47,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "s"
         },
         "overrides": []
@@ -74,6 +75,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -118,6 +120,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "short"
         },
         "overrides": []
@@ -145,6 +148,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -189,6 +193,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -233,6 +238,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "short"
         },
         "overrides": []
@@ -346,6 +352,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "short"
         },
         "overrides": []
@@ -373,6 +380,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "short"
         },
         "overrides": []
@@ -425,6 +433,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -469,6 +478,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -513,6 +523,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -557,6 +568,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -601,6 +613,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -725,6 +738,7 @@
       ],
       "fieldConfig": {
         "defaults": {
+              "noValue": "no data",
           "unit": "percentunit"
         },
         "overrides": []

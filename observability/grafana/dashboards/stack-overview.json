@@ -17,6 +17,7 @@
       "description": "How many of the bundle's scrape jobs answered their last poll. It counts targets, not services, so the number you expect is however many jobs observability/prometheus/prometheus.yml configures today.",
       "id": 1,
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "noValue": "no data" }, "overrides": [] },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
@@ -42,6 +43,7 @@
       "description": "Configured jobs whose scrape failed. Anything above zero is a service that exists but is not answering, so read it against the job lines below rather than treating it as one outage.",
       "id": 2,
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "noValue": "no data" }, "overrides": [] },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {

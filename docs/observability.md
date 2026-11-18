@@ -323,14 +323,15 @@ The folder is source, so it is tested as source:
 bazelisk test //tests:bats_observability_dashboards_test
 ```
 
-`tests/bats/observability-dashboards.bats` asserts sixteen properties over every file in
+`tests/bats/observability-dashboards.bats` asserts seventeen properties over every file in
 it: the folder is non-empty and each file parses with the repo's own parser; each is pure
 ASCII, LF-only, one trailing newline; the pinned top-level keys and house values are
 present; UIDs and titles are unique across the folder; panel ids are unique integers;
 every panel carries a full `gridPos` and no two visible panels overlap; every panel stays
 inside the house key set; every target opens with `refId` and carries its own datasource;
 every datasource is one of the four provisioned UIDs; every querying panel carries a
-`description`; every referenced variable is declared; every templating variable is well
+`description`; every stat states its own empty reading rather than leaving it to Grafana;
+every referenced variable is declared; every templating variable is well
 formed; every link names a dashboard that exists in the folder; every UID besides
 `evo-home` is named by a link panel or a `links:` entry there; and no file carries an
 import block, a host name, or a dead metric shape.
