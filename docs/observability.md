@@ -12,6 +12,7 @@ tags: [observability, prometheus, grafana, loki, tempo, mimir, operate]
 - The path a metric, a log line and a span take before Grafana renders them
 - The one flag that decides whether the bundle exists, and how to turn it off
 - Where each component's config lives in the checkout, and what it costs to change
+- Which of the thirteen provisioned dashboards answers which question, and how a panel actually gets changed
 - Retention caps, the named volumes the data lands on, and how to reach each UI
 - What is not here - no pager destination until you set one, no object storage, no trace client
 
@@ -206,7 +207,7 @@ container:
 | `observability/mimir/mimir.yml` | Mimir, including `multitenancy_enabled: false` - see the query path below |
 | `observability/grafana/provisioning/datasources/stack.yaml` | The four datasources and their fixed UIDs |
 | `observability/grafana/provisioning/dashboards/stack.yaml` | The provider that loads the JSON below: folder `EVO-T1`, `allowUiUpdates: false`, `disableDeletion: true` |
-| `observability/grafana/dashboards/` | `stack-overview.json`, `stack-logs.json`, `stack-traces.json`, `litellm.json` - mounted again at `/var/lib/grafana/dashboards`, which is the path the provider reads |
+| `observability/grafana/dashboards/` | The thirteen provisioned dashboard JSONs - the section below names each one and what it answers - mounted again at `/var/lib/grafana/dashboards` (`docker-compose.yml:1019`), which is the path the provider reads |
 | `observability/alloy/config.alloy` | The log pipeline: which files to tail, what to ship to Loki |
 | `observability/prometheus/rules/` | Prometheus, through that `rule_files:` block: `stack.rules.yml`, `spark.rules.yml`, `inference.rules.yml`. They arrive with the directory this file is mounted from, so there is no second place to register a rule |
 | `observability/alertmanager/alertmanager.yml` | Alertmanager: the `tier` routes, three inhibit rules, and five receivers (four webhook, one blackhole for the heartbeat) |
@@ -221,12 +222,131 @@ read-only in the UI. `allowUiUpdates: false` and `disableDeletion: true` stop a 
 from overwriting the JSON, so anything you build by hand lands in Grafana's own database
 in `grafana-data` instead - it works, and it drifts from git invisibly.
 
-The four dashboards are provisioned, so they appear on a fresh Grafana in the `EVO-T1`
-folder with no clicking: a stack overview, the logs board, the traces board, and a board
-for LiteLLM. They are the whole set, so a board you want is a JSON file added to the
-checkout and a recreate, not a browser session. The LiteLLM board is the one that depends
-on a credential: its metrics sit behind `LITELLM_MASTER_KEY`, so with the key unset every
-panel on it reads empty while the other three stay full.
+The thirteen dashboards are provisioned, so they appear on a fresh Grafana in the
+`EVO-T1` folder with no clicking - the section below names each one and the question it
+answers. The LiteLLM board is the one that depends on a credential: its metrics sit behind
+`LITELLM_MASTER_KEY`, so with the key unset every panel on it reads empty while the others
+stay full.
+
+## The dashboards
+
+Thirteen JSON files in `observability/grafana/dashboards/` are the only dashboards this
+stack ships. `observability/grafana/provisioning/dashboards/stack.yaml:11` loads them all
+into one `EVO-T1` folder (`:14`) with `disableDeletion: true` (`:16`),
+`updateIntervalSeconds: 60` (`:17`) and `allowUiUpdates: false` (`:18`). Read those three
+values before you try to fix a panel. Then find your question in the tables below: every
+page name and every panel name quoted here is copied out of the JSON, so you can search
+the UI for it. Panel counts include the panels a collapsed row holds.
+
+### Which page answers which question
+
+The stack host - the box the bundle itself runs on:
+
+| Question | Page | UID | Panels |
+|---|---|---|---|
+| What is the box doing as a machine: per-core CPU, load, the PSI pressure stats, memory and swap, IOPS and throughput per device, `Space and inode headroom per mount`, dropped packets, conntrack, file descriptors, `Top containers by CPU` | Stack host task manager | `evo-host-taskmanager` | 36 |
+| Which container is at fault: `CPU usage against CFS throttling`, `Memory working set against its limit`, `OOM kills`, `Uptime since last start`, `Reported containers and how stale each is` | Containers | `evo-containers` | 12 |
+
+The DGX Sparks - the off-stack boxes Prometheus probes through blackbox:
+
+| Question | Page | UID | Panels |
+|---|---|---|---|
+| Which box needs looking at: one repeated stat strip per enrolled box, then `Every Spark, one row per box` and `Serving request rate, by deployment` | DGX Sparks overview | `evo-sparks-overview` | 11 |
+| Everything about the one box you have picked: the host rows, the GPU rows (`GPU utilisation`, `Framebuffer used and free`, `GPU and memory temperature against the slowdown point`, `ECC row remaps in the last hour`), the blackbox probe rows, and that box's own deployments | One DGX Spark | `evo-spark-host` | 41 |
+| The fleet as one number: `Total GPU utilisation`, `Total GPU power draw`, `Hottest GPU core`, `Fullest framebuffer`, `Uncorrectable ECC rows, last hour`, the per-box comparison tables, and the fleet admission queue | DGX Spark fleet | `evo-sparks-fleet` | 15 |
+
+The inference backends - the software that serves the models, not the machines it runs
+on, which are two rows above:
+
+| Question | Page | UID | Panels |
+|---|---|---|---|
+| What callers see, per model: `Request rate by model`, `Error ratio by model, 4xx vs 5xx`, the three latency panels, `Cache hit ratio`, `Served models, one row per deployment` | Models | `evo-inference-models` | 23 |
+| What the router is doing, per deployment: `Deployment inventory and state`, `Backends off the healthy state`, `Cooldown transitions per deployment`, `Admission rejections by reason`, `Balance per deployment`, `Aliases served per deployment`, `Upstream p95 against total p95, per deployment` | Inference backends | `evo-inference-backends` | 24 |
+
+The bundle itself:
+
+| Question | Page | UID | Panels |
+|---|---|---|---|
+| Start here: the `EVO-T1 dashboards` list and one link panel per board, then a stat per bundle service beside `Targets up`, `Targets configured` and `Scrape freshness` | EVO-T1 stack | `evo-home` | 33 |
+| Is the monitoring still working: `Scrape targets up`, `Prometheus TSDB on disk`, `Remote write to Mimir`, and one reporting-stat per exporter and per bundle process | Stack overview | `evo-stack-overview` | 28 |
+| What is firing and did it get out: `Firing alerts`, the three severity counts, `Firing series by alert`, `Alertmanager intake`, `Notifications dropped`, `Slowest rule group` | Alerts | `evo-alerts` | 16 |
+| What did a container say: `Log volume`, `stdout and stderr`, `Errors only` | Container logs | `evo-stack-logs` | 3 |
+| Where did a request spend its time: `Span rate by service`, `Span latency, p95 by service`, `Span errors` | Traces and service map | `evo-stack-traces` | 4 |
+| What did the proxy cost and do: `Spend in the selected range`, `Spend per model, selected range`, `Requests by status code`, `Deployment state`, `Cooldown events per deployment` | LiteLLM proxy | `evo-litellm` | 17 |
+
+Four of those carry a `How to read this page` text panel - `evo-alerts`,
+`evo-inference-models`, `evo-litellm` and `evo-stack-traces` - and it is worth reading
+before you chase a flat line on one of them.
+
+### How the Sparks pages reach one machine
+
+`evo-sparks-overview` and `evo-spark-host` each declare a `host` templating variable, both
+of them a `query` variable whose query is `label_values(spark:box_up, hostname)`, so the
+dropdown lists the boxes Prometheus actually sees and nothing else. On `evo-spark-host` the
+variable is labelled `Spark` and every panel on the page filters to whatever it holds.
+
+The overview does not ask you to choose first. Seven stat panels - `Spark $host`,
+`GPU util`, `Framebuffer fill`, `Temp headroom`, `Power`, `CPU`, `Memory` - each carry
+`repeat` on that same variable with `repeatDirection: h`, so the strip renders one column
+per enrolled box. The link panel `Open this Spark` repeats alongside them and points at
+`/d/evo-spark-host/one-dgx-spark?var-host=${var:queryparam}`: the tile under the box you
+are reading opens that box's page with `host` already set. That is the path from a red tile
+on the overview to the GPU rows for that machine, and it is the only link between the two
+boards. `evo-sparks-fleet` declares no variable at all, because it aggregates across every
+box by design.
+
+### A dashboard is a committed file
+
+The provider owns the `EVO-T1` folder, so nothing you do in the browser to a shipped panel
+survives: `allowUiUpdates: false` refuses the save, `disableDeletion: true` refuses the
+delete, and the 60-second poll quietly undoes whatever the UI let you stage. A board you
+build from scratch is not thrown away - it lands in Grafana's own database on `grafana-data`
+- but it is invisible to git and to the gate below, which is the same drift the `:ro` mounts
+above exist to prevent.
+
+So the way to change a panel is to edit its JSON and let the interval apply it. The folder
+is bind-mounted read-only onto the path the provider scans (`docker-compose.yml:1019`), so
+an edit to a file that is already there is visible to the running container and shows up
+within a minute - no restart, and no recreate. A new file needs no registration either, for
+the same reason. Recreate only when the mount line or the provisioning tree itself changed
+(`docker-compose.yml:1018`), and then with the `up -d` rule from the section above:
+
+```sh
+bazelisk run //scripts:prod-stack -- up
+```
+
+### The gate
+
+The folder is source, so it is tested as source:
+
+```sh
+bazelisk test //tests:bats_observability_dashboards_test
+```
+
+`tests/bats/observability-dashboards.bats` asserts sixteen properties over every file in
+it: the folder is non-empty and each file parses with the repo's own parser; each is pure
+ASCII, LF-only, one trailing newline; the pinned top-level keys and house values are
+present; UIDs and titles are unique across the folder; panel ids are unique integers;
+every panel carries a full `gridPos` and no two visible panels overlap; every panel stays
+inside the house key set; every target opens with `refId` and carries its own datasource;
+every datasource is one of the four provisioned UIDs; every querying panel carries a
+`description`; every referenced variable is declared; every templating variable is well
+formed; every link names a dashboard that exists in the folder; every UID besides
+`evo-home` is named by a link panel or a `links:` entry there; and no file carries an
+import block, a host name, or a dead metric shape.
+
+The one to read before you write an `expr`: every metric name in every `expr` has to sit on
+a pinned allow-list, and that list is assembled at test time from the recording rules this
+repo ships under `observability/prometheus/rules/` as well as the pinned names
+(`tests/bats/observability-dashboards.bats:688`). A new recording rule therefore needs no
+test edit, and a metric nothing here records fails the build instead of rendering an empty
+tile. `bazelisk run //scripts:validate` covers the coarser layer: it parses every dashboard
+JSON through `scripts/lib/parse_json.py` (`scripts/validate.sh:104`), the gate that already
+covers the three rule files.
+
+Nothing in this section has been rendered in a live Grafana from this checkout: the pages
+are proven by that structure and by metric names a source in this repo backs, not by
+pixels.
 
 ## Retention and disk
 

@@ -189,6 +189,14 @@ read-only and `cadvisor` covers the containers, so the tile answers "what is the
 now, as the dashboard sees it" and the Grafana board answers "and what was it at 03:00".
 The tile survives the bundle being off; the board does not.
 
+Which board, exactly, is catalogued in [observability.md](observability.md) under
+`## The dashboards` - four families of them: the stack host (`evo-host-taskmanager`,
+`evo-containers`), the DGX Sparks (`evo-sparks-overview`, `evo-spark-host`,
+`evo-sparks-fleet`), the inference backends (`evo-inference-models`,
+`evo-inference-backends`), and the bundle itself (`evo-home`, `evo-stack-overview`,
+`evo-alerts`, `evo-stack-logs`, `evo-stack-traces`, `evo-litellm`). The question-to-page
+table lives there; this page stays about the dashboard and the desktops.
+
 The docker socket stays unmounted: service status comes from each service's API, which
 avoids handing the dashboard a root-equivalent host credential. The Hermes card in the
 **Host** group is the same pattern (`siteMonitor` of `http://hermes:9119/api/status`);
