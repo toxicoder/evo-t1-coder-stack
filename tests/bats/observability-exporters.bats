@@ -22,7 +22,14 @@
 #   - the DCGM counter CSV's column count, and that it names only DCGM_FI_* fields -
 #     a name DCGM does not know costs one exporter log error per scrape, forever;
 #   - the scrape job names, which the exporter-gap alerts select on, so a rename in
-#     prometheus.yml alone mutes those alerts.
+#     prometheus.yml alone mutes those alerts;
+#   - the LiteLLM token seam: prometheus.yml opens its bearer token from a file,
+#     compose writes that file from the proxy's own master key, and the path each
+#     side names is the whole contract - they sit hundreds of lines apart in two
+#     files, and a mismatch is one red target and an empty dashboard, not an error;
+#   - the two Grafana knobs that silence the search-manifest-watcher pair and the
+#     dashboard quota 501, which only do anything if the overrides file the knob
+#     names is a file this tree actually ships, bound at exactly that path.
 #
 #   - that the monitoring containers can boot at all: no Prometheus bind nests
 #     inside another (runc mkdirs a mountpoint, which the read-only parent
@@ -56,6 +63,7 @@ ENTRYPOINT=""
 BLACKBOX_YML=""
 COUNTERS=""
 PROMETHEUS_YML=""
+OVERRIDES_YML=""
 SCRATCH=""
 STUB_LOG=""
 
@@ -67,6 +75,16 @@ PINNED_JOBS=(
   node_exporter cadvisor spark-node blackbox-spark blackbox-spark-models
   blackbox alertmanager
 )
+
+# The token seam and the two Grafana knobs, as pinned strings rather than as values
+# read back out of the payload: prometheus.yml's credentials_file, compose's configs
+# target, and the GF_UNIFIED_STORAGE_OVERRIDES_PATH / its bind destination are one
+# contract stated in two files, so the tests below compare the files against each other
+# and against these four strings.
+LITELLM_TOKEN_FILE="/etc/prometheus-secrets/litellm_token"
+LITELLM_TOKEN_CONTENT='${LITELLM_MASTER_KEY:-change-me-litellm}'
+GRAFANA_OVERRIDES_CONTAINER_PATH="/etc/grafana/stack-overrides.yml"
+GRAFANA_OVERRIDES_SOURCE="observability/grafana/unified-storage/overrides.yml"
 
 # Keys Prometheus v3.16.0 decodes in an alerting.alertmanagers[] entry. Derived by
 # planting each candidate at that level and asking promtool on the pinned image, so it
@@ -124,6 +142,9 @@ setup() {
   BLACKBOX_YML="${OBS}/blackbox/blackbox.yml"
   COUNTERS="${OBS}/dcgm/custom-counters.csv"
   PROMETHEUS_YML="${OBS}/prometheus/prometheus.yml"
+  # Deliberately not in the artefact loop below: one test's job is that this file is
+  # in the tree at all, and skipping would let its absence pass as a green suite.
+  OVERRIDES_YML="${OBS}/grafana/unified-storage/overrides.yml"
   COMPOSE="${REPO_ROOT}/docker-compose.yml"
 
   local artefact
@@ -324,6 +345,31 @@ for job in doc.get("scrape_configs") or []:
 PY
 }
 
+# prom_authorization_facts <file> <job_name> - job|1 when that scrape config exists,
+# authkey|<k> per key of its authorization block, and authval|<k>|<value> per scalar key.
+# Prometheus expands no environment variable anywhere in its config file, so the only
+# authorization value that can ever carry a working token is one naming a file.
+prom_authorization_facts() {
+  python3 - "${1}" "${2}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+job = next((entry for entry in doc.get("scrape_configs") or []
+            if (entry or {}).get("job_name") == sys.argv[2]), None)
+if job is None:
+    sys.exit(0)
+print("job|1")
+for key, value in sorted((job.get("authorization") or {}).items()):
+    print("authkey|%s" % key)
+    if not isinstance(value, (dict, list)):
+        print("authval|%s|%s" % (key, value))
+PY
+}
+
 # compose_facts <file> - published|<service>|<container port> per ports: entry and
 # listen|<service>|<port> per bind-address flag in command:. Both the container side
 # of the mapping and the flag decide whether a scrape can reach the container, and
@@ -396,6 +442,91 @@ for arg in service.get("command") or []:
     match = re.match(r"^--config\.file=(.+)$", str(arg))
     if match:
         print("confdir|%s" % os.path.dirname(match.group(1)))
+PY
+}
+
+# compose_config_facts <file> - top|<name>|<content> per top-level configs entry, and
+# attach|<service>|<source>|<target>|<mode> per configs[] entry of one service. The two
+# halves of the token seam are ~600 lines apart in this one file and joined by nothing a
+# reader can see but the source name, so neither half alone can say whether the file
+# Prometheus opens is the file compose writes. `mode` is rendered back as octal because
+# YAML 1.1 reads an unquoted 0444 as the integer 292.
+compose_config_facts() {
+  python3 - "${1}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+for name, definition in sorted((doc.get("configs") or {}).items()):
+    content = (definition or {}).get("content") if isinstance(definition, dict) else None
+    print("top|%s|%s" % (name, "" if content is None else content))
+
+for service, spec in sorted((doc.get("services") or {}).items()):
+    if not isinstance(spec, dict):
+        continue
+    for entry in spec.get("configs") or []:
+        if isinstance(entry, dict):
+            source = str(entry.get("source") or "")
+            target = str(entry.get("target") or "")
+            mode = entry.get("mode")
+            mode = "" if mode is None or isinstance(mode, str) else "%04o" % int(mode)
+        else:
+            parts = str(entry).split(":")
+            source = parts[0] if parts else ""
+            target = parts[1] if len(parts) > 1 else ""
+            mode = parts[2] if len(parts) > 2 else ""
+        print("attach|%s|%s|%s|%s" % (service, source, target, mode or "rw"))
+PY
+}
+
+# compose_env_facts <file> <service> - env|<KEY>|<value> for one service's environment,
+# in either the mapping or the list form. A `${VAR:-default}` is reported as the literal
+# compose text: what the gate pins is the string the operator's .env interpolates into,
+# and this suite must not read this machine's environment to answer.
+compose_env_facts() {
+  python3 - "${1}" "${2}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+spec = (doc.get("services") or {}).get(sys.argv[2]) or {}
+environment = spec.get("environment") or {}
+if isinstance(environment, dict):
+    items = sorted(environment.items())
+else:
+    items = [str(entry).split("=", 1) if "=" in str(entry) else (str(entry), "")
+             for entry in environment]
+for key, value in items:
+    print("env|%s|%s" % (key, value))
+PY
+}
+
+# overrides_facts <file> - key|<k> per top-level key of the Grafana quota overrides
+# file, plus map|<k> when that value is a mapping. Grafana takes the file's presence as
+# "quotas are configured" and then decodes overrides as a map, so a comment-only file or
+# a top key holding a string leaves the dashboard's quota call answering 501 exactly as
+# before, with no error anywhere to say so.
+overrides_facts() {
+  python3 - "${1}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle)
+
+if not isinstance(doc, dict):
+    sys.exit(0)
+for key, value in sorted(doc.items()):
+    print("key|%s" % key)
+    if isinstance(value, dict):
+        print("map|%s" % key)
 PY
 }
 
@@ -973,4 +1104,103 @@ LISTEN_CONTRACT=(
     fi
   done
   assert_eq "no annotation or label template uses an infix operator" "" "${findings}"
+}
+
+@test "the litellm scrape authenticates with a token file" {
+  local facts path
+  facts="$(prom_authorization_facts "${PROMETHEUS_YML}" litellm)"
+  printf '%s\n' "${facts}" | grep -qx 'job|1' ||
+    fail "prometheus.yml carries no litellm job, so this proved nothing"
+  printf '%s\n' "${facts}" | grep -qx 'authkey|credentials_file' ||
+    fail "the litellm job no longer opens its bearer from a file: $(printf '%s\n' "${facts}" | tr '\n' ' ')"
+  # authorization.credentials is the shape that broke the target: Prometheus expands no
+  # environment variable anywhere in its config file (measured on v3.16.0 against a
+  # listener that logs its request headers - $(VAR), ${VAR} and $VAR all go out
+  # verbatim), so an inline value is sent as a literal and LiteLLM answers 401.
+  if printf '%s\n' "${facts}" | grep -qx 'authkey|credentials'; then
+    fail "the litellm job sets authorization.credentials, which no environment can fill"
+  fi
+  path="$(printf '%s\n' "${facts}" |
+    awk -F'|' '$1=="authval" && $2=="credentials_file"{print $3}')"
+  assert_eq "the scrape opens the token at the path compose writes it to" \
+    "${LITELLM_TOKEN_FILE}" "${path}"
+}
+
+@test "compose writes the token file the litellm scrape opens" {
+  local facts top content attach source target mode
+  facts="$(compose_config_facts "${COMPOSE}")"
+  [[ -n ${facts} ]] ||
+    fail "docker-compose.yml declares no top-level configs, so this proved nothing"
+  top="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="top" && $2=="litellm_metrics_token"' | head -1)"
+  [[ -n ${top} ]] ||
+    fail "no configs.litellm_metrics_token, so nothing writes the file the litellm job opens"
+  content="${top#*|*|}"
+  assert_eq "the token renders from the same key the proxy authenticates with" \
+    "${LITELLM_TOKEN_CONTENT}" "${content}"
+  [[ ${content} == *LITELLM_MASTER_KEY* ]] ||
+    fail "the token does not come from LITELLM_MASTER_KEY, so it can never match the master key"
+  # The fallback has to be a string: an empty configs content makes the daemon refuse the
+  # bind, and compose then fails the whole project at startup rather than one target.
+  [[ ${content} != *':-}' ]] ||
+    fail "configs.litellm_metrics_token falls back to an empty string"
+  attach="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="attach" && $2=="prometheus"' | head -1)"
+  [[ -n ${attach} ]] ||
+    fail "the prometheus service attaches no config, so it has no token file to open"
+  IFS='|' read -r _ _ source target mode <<<"${attach}"
+  assert_eq "the prometheus service attaches the litellm token config" \
+    "litellm_metrics_token" "${source}"
+  assert_eq "compose writes it where the scrape reads it" \
+    "${LITELLM_TOKEN_FILE}" "${target}"
+  assert_eq "the token file is world-readable and unwritable" "0444" "${mode}"
+}
+
+@test "the prometheus service holds no copy of the master key in its environment" {
+  local keys
+  keys="$(compose_env_facts "${COMPOSE}" prometheus | awk -F'|' '$1=="env"{print $2}')"
+  # The service used to carry LITELLM_MASTER_KEY here on the belief that Prometheus would
+  # substitute it into the scrape config. It never does, so the entry only put the key in
+  # the container's environment (and into docker inspect) for nothing.
+  if printf '%s\n' "${keys}" | grep -qx LITELLM_MASTER_KEY; then
+    fail "prometheus has LITELLM_MASTER_KEY in its environment again, which Prometheus cannot use"
+  fi
+}
+
+@test "the Grafana knobs that quiet 13.3 noise name a file this tree ships" {
+  local env filters overrides_path binds src dest mode found="" findings=""
+  env="$(compose_env_facts "${COMPOSE}" grafana)"
+  [[ -n ${env} ]] ||
+    fail "the grafana service declares no environment, so this proved nothing"
+  filters="$(printf '%s\n' "${env}" | awk -F'|' '$1=="env" && $2=="GF_LOG_FILTERS"{print $3}')"
+  [[ -n ${filters} ]] ||
+    fail "GF_LOG_FILTERS is gone, and upstream grafana/grafana#137058 puts the manifest-watcher pair back in the log every poll"
+  [[ ${filters} == *search-manifest-watcher:error* ]] ||
+    fail "GF_LOG_FILTERS='${filters}' leaves the search-manifest-watcher warnings at warn"
+  overrides_path="$(printf '%s\n' "${env}" |
+    awk -F'|' '$1=="env" && $2=="GF_UNIFIED_STORAGE_OVERRIDES_PATH"{print $3}')"
+  assert_eq "Grafana is pointed at the stack's quota overrides file" \
+    "${GRAFANA_OVERRIDES_CONTAINER_PATH}" "${overrides_path}"
+  # The variable alone buys nothing: Grafana takes the 501 away only once the path it
+  # names resolves, so the bind is half of the fix and lives 600 lines away from it.
+  binds="$(compose_mount_facts "${COMPOSE}" grafana)"
+  while IFS='|' read -r _ src dest mode; do
+    [[ ${dest} == "${GRAFANA_OVERRIDES_CONTAINER_PATH}" ]] || continue
+    found=1
+    [[ ${src} == *"${GRAFANA_OVERRIDES_SOURCE}" ]] ||
+      findings+="bind source ${src} is not ${GRAFANA_OVERRIDES_SOURCE}; "
+    [[ ${mode} == ro ]] || findings+="${src} is mounted ${mode}; the payload is stack-owned; "
+  done <<<"${binds}"
+  [[ ${found} == 1 ]] ||
+    fail "nothing binds ${GRAFANA_OVERRIDES_CONTAINER_PATH} into grafana, so the quota call keeps answering 501"
+  assert_eq "the quota overrides bind carries this tree's file, read-only" "" "${findings}"
+}
+
+@test "the shipped quota overrides file is the shape Grafana decodes" {
+  local facts
+  [[ -f ${OVERRIDES_YML} ]] ||
+    fail "${GRAFANA_OVERRIDES_SOURCE} is missing, so GF_UNIFIED_STORAGE_OVERRIDES_PATH points at nothing and /apis/quotas.grafana.app keeps answering 501 (grafana/grafana#136271)"
+  facts="$(overrides_facts "${OVERRIDES_YML}")"
+  printf '%s\n' "${facts}" | grep -qx 'key|overrides' ||
+    fail "${GRAFANA_OVERRIDES_SOURCE} carries no top-level overrides: key - a comment-only file leaves the 501 in place with no error to say so"
+  printf '%s\n' "${facts}" | grep -qx 'map|overrides' ||
+    fail "overrides: is not a mapping, which Grafana's decoder refuses at boot"
 }
