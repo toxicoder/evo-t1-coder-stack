@@ -1,0 +1,16 @@
+# Unified-storage quota overrides for the stack's Grafana.
+#
+# Read by the container named in docker-compose.yml through
+# GF_UNIFIED_STORAGE_OVERRIDES_PATH=/etc/grafana/stack-overrides.yml. Grafana's
+# unified-storage resource server answers
+# /apis/quotas.grafana.app/v0alpha1/namespaces/default/usage with 501 while no
+# overrides file is configured, and the browse-dashboards view fires that call on
+# every dashboard page, so an unconfigured box prints an error line per page load
+# and fills a browser console with 501s (grafana/grafana#136271).
+#
+# The file's presence is the fix; its content says nothing special. `overrides: {}`
+# means no per-group limit is set, so the endpoint answers 200 with Grafana's own
+# defaults and the quota banner simply reports "unlimited". To cap a resource for
+# real, add it under `overrides:` keyed by group/resource - and expect the UI to
+# enforce it, which is why this file ships empty rather than with invented numbers.
+overrides: {}

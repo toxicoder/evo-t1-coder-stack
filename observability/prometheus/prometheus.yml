@@ -101,14 +101,29 @@ scrape_configs:
 
   # LiteLLM's /metrics comes from `callbacks: ["prometheus"]` in
   # litellm/config.yaml, and it sits behind LITELLM_MASTER_KEY like every other
-  # LiteLLM route (SECURITY.md). Prometheus expands `$(VAR)` from its own process
-  # environment, so the key arrives through the service's `environment:` block and
-  # never enters this committed file. An unset key means this one target 401s,
-  # which `observability-check` reports as its own finding.
+  # LiteLLM route (SECURITY.md). The token arrives as a file, not as a variable:
+  # Prometheus does not expand environment variables anywhere in this file - not
+  # `$(VAR)`, not `${VAR}`, not `$VAR`; all three are sent to the target verbatim,
+  # measured on v3.16.0 against a listener that logs its request headers - so a
+  # `credentials:` here would scrape with a literal `$(LITELLM_MASTER_KEY)` and
+  # LiteLLM would answer 401 `Unauthorized access to metrics endpoint: No
+  # connected db.` forever. That wording is the tell, and it is not about a
+  # database: at v1.102.1 the auth path compares the bearer against the master key
+  # and returns PROXY_ADMIN before it ever looks for a DB, so only a *wrong* token
+  # falls through to the "No connected db." branch. Keep the auth on and fix the
+  # token; setting `litellm_settings.require_auth_for_metrics_endpoint: false`,
+  # which is what that 401 offers, would put the model aliases and traffic counts
+  # the metrics carry on the LAN, since :4000 is published to it.
+  #
+  # Compose writes the file (docker-compose.yml's `configs:` block) from the same
+  # LITELLM_MASTER_KEY the proxy interpolates, mode 0444, at the path below. A
+  # missing or wrong file is one red target and nothing else - Prometheus loads
+  # the rest of this config and reports the failure as that target's lastError,
+  # which is what `observability-check` reads.
   - job_name: litellm
     authorization:
       type: Bearer
-      credentials: "$(LITELLM_MASTER_KEY)"
+      credentials_file: /etc/prometheus-secrets/litellm_token
     static_configs:
       - targets: ["litellm:4000"]
 

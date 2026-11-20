@@ -823,13 +823,20 @@ services:
     hostname: prometheus
     restart: unless-stopped
     profiles: ["observability"]
-    environment:
-      # Prometheus expands $(VAR) in its config file from its own process
-      # environment, which is how observability/prometheus/prometheus.yml can
-      # present LiteLLM's bearer token without the key ever being committed. An
-      # empty value is not a startup failure: that one target 401s and
-      # //scripts:observability-check names it.
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+    configs:
+      # LiteLLM's bearer token, delivered as a file. Prometheus expands no
+      # environment variable anywhere in its config file - measured on
+      # v3.16.0 against a listener that logs its request headers, `$(VAR)`,
+      # `${VAR}` and `$VAR` in `authorization.credentials` are each sent
+      # verbatim, so the scrape arrives with a literal token and LiteLLM answers
+      # 401 `No connected db.` forever. `credentials_file:` is the supported
+      # door, and compose writes that file from the same key the proxy boots
+      # with; the default below is the proxy's own default, so the two sides
+      # agree with no .env as well as with one. See the `configs:` block at the
+      # foot of this file.
+      - source: litellm_metrics_token
+        target: /etc/prometheus-secrets/litellm_token
+        mode: 0444
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
@@ -1003,6 +1010,26 @@ services:
       GF_TRACING_ENABLED: "true"
       GF_TRACING_OTLP_ADDRESS: "tempo:4317"
       GF_TRACING_OTLP_PROPAGATION: "tracecontext,baggage"
+      # Two quiet knobs, both measured on grafana/grafana:13.3.1, both about log
+      # noise an operator reads as a fault and is not:
+      #
+      # `search-manifest-watcher` warns twice per ~49 s poll (`source listed zero
+      # manifests` / `zero manifests, keeping previous set`) whenever no app
+      # publishes a search manifest, which is every OSS install with nothing
+      # provisioned into the app platform. Upstream calls it a logging defect
+      # (grafana/grafana#137058) and confirms search keeps working; retrying an
+      # empty source is intended, only the warn level is wrong. The filter drops
+      # that logger to error and leaves every other logger at the default.
+      #
+      # The quota lookup the browse view fires on every dashboard page answers
+      # 501 until an overrides file exists, because the resource server's quota
+      # service is nil with nothing pointed at it (grafana/grafana#136271). Naming
+      # the file below makes the same call answer 200, which clears both the
+      # server's error line and the browser-console 501s. The file itself is
+      # observability/grafana/unified-storage/overrides.yml, mounted under the
+      # volumes below; `{}` means "no overrides", i.e. Grafana's own defaults.
+      GF_LOG_FILTERS: search-manifest-watcher:error
+      GF_UNIFIED_STORAGE_OVERRIDES_PATH: /etc/grafana/stack-overrides.yml
     ports:
       # Published on every interface, like the dashboard and Kasm: this is the
       # credentialed read path for the whole bundle, and it is the one new service
@@ -1017,6 +1044,12 @@ services:
       - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
       - ./observability/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
       - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # The quota overrides file GF_UNIFIED_STORAGE_OVERRIDES_PATH names above. A
+      # single read-only file rather than a directory: the path is one file's
+      # worth of YAML, and mounting a directory over /etc/grafana would shadow the
+      # image's own provisioning and plugins siblings that the two mounts above
+      # deliberately step around.
+      - ./observability/grafana/unified-storage/overrides.yml:/etc/grafana/stack-overrides.yml:ro
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:3000/api/health"]
       interval: 30s
@@ -1386,3 +1419,31 @@ volumes:
   # container's writable layer if that changes.
   infisical-db-data:
   infisical-redis-data:
+
+# ---------------------------------------------------------------------------
+# configs: file payloads compose materialises for a container, from the
+# interpolation environment rather than from anything on disk.
+#
+# There is one, and it exists because one component cannot take a secret from
+# its own environment. Prometheus has no environment-variable expansion in its
+# config file at all - it reads the token it scrapes LiteLLM with out of a file,
+# so the token has to arrive as a file. Compose's `configs.content` writes that
+# file from the very same `${LITELLM_MASTER_KEY}` the proxy's own
+# `LITELLM_MASTER_KEY:` line interpolates, which is what keeps the two ends of
+# the scrape from drifting apart, and it keeps the key out of the committed
+# scrape config and out of `docker inspect`'s command line alike.
+#
+# Needs Docker Compose v2.23.1 or newer, the release that added `configs.content`
+# (https://docs.docker.com/reference/compose-file/configs/). An older compose
+# refuses the file at parse time with an unsupported-property error, which is a
+# loud failure at `up` rather than a silently dead target.
+# ---------------------------------------------------------------------------
+configs:
+  litellm_metrics_token:
+    # The default is written to match the proxy's own
+    # `${LITELLM_MASTER_KEY:-change-me-litellm}` above, character for character:
+    # with no .env both sides land on the placeholder and the scrape still works,
+    # and with one they both read the key. A compose `configs` entry whose content
+    # interpolates to the empty string is a startup failure for the whole project,
+    # so this default is load-bearing, not cosmetic.
+    content: ${LITELLM_MASTER_KEY:-change-me-litellm}

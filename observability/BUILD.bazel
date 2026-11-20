@@ -56,6 +56,17 @@ filegroup(
 )
 
 filegroup(
+    name = "grafana_unified_storage",
+    # The quota-overrides file GF_UNIFIED_STORAGE_OVERRIDES_PATH points at, mounted
+    # as a single read-only file by the grafana service. Its existence is the
+    # point: without it /apis/quotas.grafana.app answers 501 on every dashboard
+    # page. Listed rather than globbed, the way the provisioning tree is, because
+    # the path is named twice more (the compose mount and the GF_ variable) and
+    # those three have to agree.
+    srcs = ["grafana/unified-storage/overrides.yml"],
+)
+
+filegroup(
     name = "blackbox_config",
     # The prober's whole module set. Listed rather than globbed: a module is a
     # network behaviour this box asks the LAN to perform, so each one is reviewed.
@@ -117,6 +128,7 @@ filegroup(
         ":dcgm_counters",
         ":grafana_dashboards",
         ":grafana_provisioning",
+        ":grafana_unified_storage",
         ":loki_config",
         ":mimir_config",
         ":prometheus_config",
