@@ -16,7 +16,7 @@ ${boot_log_lib}
 # re-interpolate, so the library's own dollar-brace text lands here verbatim: no
 # here-doc and no temp file. A comment in this body spells that token as
 # "dollar-brace" too, because Terraform reads a real one anywhere in the file.
-boot_begin "workspace startup" 8
+boot_begin "workspace startup" 9
 
 SUDO=""
 if [ "$(id -u)" != "0" ] && command -v sudo >/dev/null 2>&1; then
@@ -483,6 +483,41 @@ EXTRA_REPOS_EOF
     fi
   }
   run_notes_watch || true
+fi
+
+# --- Session archive (out-of-band backup) --------------------------------------
+# A long-term copy of this workspace's session tree, written to one host-wide volume
+# every workspace on this daemon shares. The Grok CLI never reads it and nothing here
+# feeds it back: ~/.grok/sessions stays the only session state the CLI sees, and the
+# hooks deny list refuses any agent command that names the archive path.
+# docs/grok-build-and-agents.md#the-out-of-band-session-archive
+boot_stage 9 "session archive"
+ARCHIVE="/var/lib/grok-session-archive"
+DEST="$${ARCHIVE}/workspaces/$(hostname)"
+# A named volume Docker has never seen arrives root:root while the agent runs as coder,
+# so take the mount point back the way the ~/.grok and ~/.shared volumes above do.
+# Without this the mkdir below fails quietly and the mirror never starts.
+if [ -n "$home_owner" ]; then
+  $SUDO chown "$home_owner" "$ARCHIVE" 2>/dev/null || true
+fi
+mkdir -p "$DEST" 2>/dev/null || true
+if [ -w "$ARCHIVE" ]; then
+  # Background mirror. No --delete: keep historical files even if a live session is
+  # pruned. Survives for the life of the container; dies cleanly with it. The sessions
+  # directory is re-tested inside the loop because the CLI creates it on its first run,
+  # which can land well after this boot.
+  (
+    while true; do
+      if [ -d "$HOME/.grok/sessions" ]; then
+        rsync -a --exclude='*.tmp' --exclude='*.lock' \
+          "$HOME/.grok/sessions/" "$DEST/" 2>/dev/null || true
+      fi
+      sleep 180
+    done
+  ) >/dev/null 2>&1 &
+  boot_ok "session archive sync started -> $DEST"
+else
+  boot_warn "session archive skipped (no sessions dir or archive not writable)"
 fi
 
 boot_summary
