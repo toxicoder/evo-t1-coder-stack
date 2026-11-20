@@ -148,6 +148,12 @@ chmod[[:space:]]+(-[[:graph:]]+[[:space:]]+)*0*777[[:space:]]+/([[:space:]]|$)
 # bytes without ever naming the path. The host-side operator CLI is //scripts:session-archive,
 # whose own name carries no "grok-" prefix and so stays reachable.
 (/var/lib/grok-session-archive|grok-session-archive)
+# The same target reached through a glob, which is the one-character bypass of the rule
+# above: `ls /var/lib/*rok-session-archive/workspaces` spells neither literal and would
+# otherwise sail past it. A literal star or question mark is required in front, so an
+# ordinary path segment (the //scripts:session-archive label, a bats suite named after
+# the volume) matches neither rule and stays allowed.
+[*?][-A-Za-z0-9._]*session-archive
 
 # --- the credential chain -----------------------------------------------------------
 # GitHub auth has exactly one entry point in this stack, and each of these was tried in
