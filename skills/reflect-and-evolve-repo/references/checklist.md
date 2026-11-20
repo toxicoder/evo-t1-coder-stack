@@ -23,7 +23,8 @@ Read this before proposing anything, and again when the evidence is ambiguous. E
 - The operator CLIs and the suites that already cover them, so a check extends a script that exists instead of starting a new one:
   `ls scripts/*.sh`, `ls tests/bats/`
 - What no Bazel target owns yet: `bazelisk run //scripts:bazel-map -- scope --untracked`. A file no filegroup claims answers
-  `warning: the graph does not know <path>: no target declares it`, which is the finding, not a broken command.
+  `warning: the graph does not know <path>: no target declares it (a new file reaches the harness through a filegroup)`, which is
+  the finding, not a broken command.
 - The same question for a whole directory, then for one file: `bazelisk run //scripts:bazel-map -- unlisted docs`,
   `bazelisk run //scripts:bazel-map -- owners <path>`
 - The twin a template payload file owes, so a change to one copy is never the whole change:
@@ -58,8 +59,12 @@ Rank friction by what it says about the repository, never by its size, and read 
   fix is a script under `scripts/` with a Bats twin, or one line in the docs page that owns the task. Not a new global rule.
 - A directory that returns rows from `bazelisk run //scripts:bazel-map -- unlisted <dir>` is invisible to `//:test-fast` and
   `//:lint`; that is a gate hole before it is ever a code problem.
-- Convention drift in the history itself: `git log --pretty='%s' -30 | grep -cE '^(feat|fix|docs|test|chore|ci|refactor): '`
-  against `git log --pretty='%s' -30 | wc -l` (measured on this clone: 24 of 30). A gap is a `docs/branching.md` problem.
+- Convention drift in the history itself: run both counts over the last thirty subjects and compare them yourself,
+  `git log --pretty='%s' -30 | grep -cE '^(feat|fix|docs|test|chore|ci|refactor): '` against
+  `git log --pretty='%s' -30 | wc -l` (both numbers are yours; this page pins no value, because one commit makes a printed value
+  wrong). Anything short of equal is a candidate `docs/branching.md` problem, and the subjects the first command left out are the
+  evidence: `git log --pretty='%s' -30 | grep -vE '^(feat|fix|docs|test|chore|ci|refactor): ' | head`. Read them before ruling
+  drift in, since a trunk-based history accounts most of its gap with merge commits.
 - One session is an anecdote and three is a pattern: require three distinct `sid8` rows of the same shape before ruling a problem
   in, and list all three in the report.
 
