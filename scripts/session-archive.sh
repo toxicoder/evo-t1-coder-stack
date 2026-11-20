@@ -14,9 +14,10 @@
 #
 # Every verb reaches the volume through one read-only container mount, so the archive
 # cannot be written from here either. There is no pruning verb on purpose: the volume
-# grows until an operator removes it (`docker volume rm` after every workspace holding
-# it is stopped), and a CLI that could delete session history would be the one thing
-# this archive is supposed to protect against.
+# grows until an operator deletes it from a host shell, and a CLI that could delete
+# session history would be the one thing this archive is supposed to protect against.
+# The raw `docker volume` forms below are host-shell commands; the same deny list that
+# keeps a workspace agent out of the archive refuses them to an agent.
 #
 # Usage:
 #   bazelisk run //scripts:session-archive [--volume NAME] [--image NAME]
@@ -158,7 +159,7 @@ archive_run() {
 # Returns:
 #   0 when at least one leaf printed, 1 when the archive held nothing
 cmd_list() {
-  local rows
+  local rows status=0
   section "archived workspaces in ${ARCHIVE_VOLUME}"
   rows="$(archive_run sh -c '
     root="$1"
@@ -169,7 +170,13 @@ cmd_list() {
       size=$(du -sh "${leaf}" 2>/dev/null | cut -f1)
       printf "%s\t%s files\t%s\n" "${leaf}" "${files}" "${size:-unknown}"
     done
-  ' sh "${ARCHIVE_ROOT}")"
+  ' sh "${ARCHIVE_ROOT}")" || status=$?
+  # A container that could not start and an archive with nothing in it both print no
+  # rows, and only one of them is worth the "never booted yet" note.
+  if [ "${status}" -ne 0 ]; then
+    err "the archive container did not run (status ${status}); try: check"
+    return 1
+  fi
   if [ -z "${rows}" ]; then
     warn "no workspace leaves in ${ARCHIVE_VOLUME} yet"
     note "the mirror starts at boot stage 9; a workspace that never booted archives nothing"
@@ -234,11 +241,20 @@ cmd_show() {
 cmd_export() {
   validate_leaf "${TARGET}" || return 2
   [ -n "${EXPORT_DIR}" ] || EXPORT_DIR="/tmp/${TARGET}"
+  # A destination is operator-supplied text about to reach mkdir and tar. A leading dash
+  # would be read as an option and fail inside mkdir with status 1, which the header
+  # contract reserves for a soft failure; it is a usage error and belongs at 2.
+  case "${EXPORT_DIR}" in
+    -*)
+      err "refusing a destination that starts with '-': ${EXPORT_DIR}"
+      return 2
+      ;;
+  esac
   if [ -e "${EXPORT_DIR}" ] && [ -n "$(ls -A "${EXPORT_DIR}" 2>/dev/null)" ]; then
     err "${EXPORT_DIR} exists and is not empty; pass a fresh destination"
     return 2
   fi
-  mkdir -p "${EXPORT_DIR}" || {
+  mkdir -p -- "${EXPORT_DIR}" || {
     err "cannot create ${EXPORT_DIR}"
     return 1
   }
