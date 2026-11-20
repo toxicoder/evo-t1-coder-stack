@@ -569,6 +569,17 @@ _SUITE_PAYLOAD = {
     # repo-tier link and the rules that load it, the flags sample that no other gate
     # parses, the docs twin plus the nav file that makes it reachable, and the rulebook
     # that cites all of them.
+    # The reflection runbook is this suite's whole subject: the canonical body with its
+    # references page and its bundled sweeper, the repo-tier symlink that makes the body a
+    # discoverable skill, the fixture session tree the sweeper ranks, and the docs page that
+    # names the skill in the roster. No other suite reads the repo-tier skills/ tree, so
+    # nothing else bills for //:skill_sources.
+    "reflect-and-evolve-skill.bats": [
+        "//:skill_sources",
+        "//:stack_data",
+        "//docs:content",
+        ":fixtures",
+    ],
     "trunk-refactor-skill.bats": [
         "//:agent_rules",
         "//:flags_example",
