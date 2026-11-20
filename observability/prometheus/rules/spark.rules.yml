@@ -320,7 +320,7 @@ groups:
           tier: spark
           spark: '{{ $labels.hostname }}'
         annotations:
-          summary: Spark {{ $labels.hostname }} GPU {{ $labels.gpu }} is throttling at {{ printf "%.0f" (100 * $value) }}% of its own SM-clock ceiling
+          summary: Spark {{ $labels.hostname }} GPU {{ $labels.gpu }} is throttling at {{ $value | humanizePercentage }} of its own SM-clock ceiling
           description: SM clock has held below 60% of its 6h peak for 15m while the GPU stayed above 50% utilisation. Usual causes are the power cap, a thermal hold, or a PCIe link renegotiating down.
           runbook: bazelisk run //scripts:spark-monitor -- --status --box <n>
 

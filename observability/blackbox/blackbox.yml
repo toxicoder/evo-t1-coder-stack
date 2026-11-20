@@ -13,11 +13,16 @@
 # the seam a scrape config passes verbatim, so renaming one is a two-file
 # change.
 #
-# `keep_alive: false` is on in all three, deliberately: the probe is one request
-# per scrape, and a pooled connection left idle for a whole scrape interval gets
-# closed by the peer's own idle timeout, so the next probe trips on the stale
-# socket and reads as an outage. On a LAN that handshake is well under a
-# millisecond; a trustworthy red/green is worth it.
+# Every probe opens its own connection, which is what this file wants: a pooled
+# connection left idle for a whole scrape interval gets closed by the peer's own
+# idle timeout, so the next probe trips on the stale socket and reads as an
+# outage. On a LAN that handshake is well under a millisecond; a trustworthy
+# red/green is worth it. The pinned image already behaves this way -- v0.29.1
+# builds the probe's HTTP client with keep-alives disabled
+# (blackbox_exporter prober/http.go:457) -- and the http block has no knob for
+# it, so there is nothing to turn off here. Do not add one: blackbox decodes
+# that block strictly, and an unknown field there rejects the whole file at
+# boot, which reads as a container in a restart loop rather than as a bad probe.
 #
 # No Authorization header anywhere. Both Spark endpoints are keyless
 # (docker-compose.yml:536) and a committed file here must never carry a
@@ -54,7 +59,6 @@ modules:
     http:
       # LAN names carry A records only; a v6 attempt buys a false red.
       preferred_ip_protocol: ip4
-      keep_alive: false
       # TensorFold does not redirect /health, so a 30x here means something in
       # front of it answered -- a finding, not a success.
       follow_redirects: false
@@ -89,7 +93,6 @@ modules:
     timeout: 5s
     http:
       preferred_ip_protocol: ip4
-      keep_alive: false
       follow_redirects: false
       fail_if_body_not_matches_regexp:
         # The body is {"object":"list","data":[...]} (the shape
@@ -123,7 +126,6 @@ modules:
     timeout: 8s
     http:
       preferred_ip_protocol: ip4
-      keep_alive: false
       follow_redirects: true
       # valid_status_codes is left unset on purpose: empty means 2xx only, and
       # widening it (3xx, or 401 for an auth-walled UI) would make this module

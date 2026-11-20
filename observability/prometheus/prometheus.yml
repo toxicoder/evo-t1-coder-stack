@@ -54,10 +54,10 @@ alerting:
     - static_configs:
         - targets: ["alertmanager:9093"]
       # Alertmanager is on the same profile as this service, so the pair comes up
-      # together; the timeout and a short backoff keep a restarting Alertmanager
-      # from stalling the notification queue.
+      # together; the timeout keeps a restarting Alertmanager from stalling the
+      # queue, which the notifier bounds by dropping when it fills. There is no
+      # cap to set here: v3.16.0 has no such key, and promtool refuses the config.
       timeout: 10s
-      max_alerts: 1000
 
 scrape_configs:
   # ---- the bundle itself ----------------------------------------------------
@@ -141,15 +141,15 @@ scrape_configs:
     # service's command in docker-compose.yml.
 
   # ---- the DGX Sparks ------------------------------------------------------
-  # Targets for the Spark node_exporter and DCGM exporter come from a file the
-  # operator generates (`//scripts:spark-monitor --targets` writes what would be
-  # written; the host writes sparks.json itself). It is gitignored, so no
-  # hostname is ever committed here, and an absent file is not an error - it is
-  # the stack running with no Sparks enrolled, which is the default.
+  # Targets for the Spark node_exporter and DCGM exporter come from the
+  # gitignored sparks.json the host generates via //scripts:spark-monitor, so
+  # no hostname is committed here, and an absent file is an unenrolled fleet.
+  # The path is absolute because this file's own mount does not hold it:
+  # compose binds that directory at /etc/spark-targets, a sibling mount.
   - job_name: spark-node
     file_sd_configs:
       - files:
-          - targets/sparks.json
+          - /etc/spark-targets/sparks.json
         refresh_interval: 60s
     relabel_configs:
       # One file feeds four kinds of target, so each job keeps only its own. Without
@@ -174,7 +174,7 @@ scrape_configs:
       module: [spark_health]
     file_sd_configs:
       - files:
-          - targets/sparks.json
+          - /etc/spark-targets/sparks.json
         refresh_interval: 60s
     relabel_configs:
       # Only the health group, and only from this file's four kinds of target.
@@ -198,7 +198,7 @@ scrape_configs:
       module: [spark_models]
     file_sd_configs:
       - files:
-          - targets/sparks.json
+          - /etc/spark-targets/sparks.json
         refresh_interval: 60s
     relabel_configs:
       # Only the model-list group.
