@@ -525,7 +525,13 @@ fi
 # docs/grok-build-and-agents.md#the-out-of-band-session-archive
 boot_stage 9 "session archive"
 ARCHIVE="/var/lib/grok-session-archive"
-DEST="$${ARCHIVE}/workspaces/$(hostname)"
+# The leaf is this workspace's own directory inside a volume every workspace shares, and
+# the sanctioned reader accepts only a leaf of [A-Za-z0-9._-]. Fold anything else rather
+# than trust it: a slash would write outside workspaces/, and an empty leaf would collect
+# every workspace on this box into one mirror.
+ARCHIVE_LEAF="$(hostname 2>/dev/null | tr -c 'A-Za-z0-9._-' '-' | sed 's/[-_.]*$//')"
+[ -n "$ARCHIVE_LEAF" ] || ARCHIVE_LEAF="unknown"
+DEST="$${ARCHIVE}/workspaces/$${ARCHIVE_LEAF}"
 # A named volume Docker has never seen arrives root:root while the agent runs as coder,
 # so take the mount point back the way the ~/.grok and ~/.shared volumes above do.
 # Without this the mkdir below fails quietly and the mirror never starts.
@@ -533,23 +539,38 @@ if [ -n "$home_owner" ]; then
   $SUDO chown "$home_owner" "$ARCHIVE" 2>/dev/null || true
 fi
 mkdir -p "$DEST" 2>/dev/null || true
-if [ -w "$ARCHIVE" ]; then
-  # Background mirror. No --delete: keep historical files even if a live session is
-  # pruned. Survives for the life of the container; dies cleanly with it. The sessions
-  # directory is re-tested inside the loop because the CLI creates it on its first run,
-  # which can land well after this boot.
-  (
-    while true; do
-      if [ -d "$HOME/.grok/sessions" ]; then
-        rsync -a --exclude='*.tmp' --exclude='*.lock' \
-          "$HOME/.grok/sessions/" "$DEST/" 2>/dev/null || true
-      fi
-      sleep 180
-    done
-  ) >/dev/null 2>&1 &
-  boot_ok "session archive sync started -> $DEST"
+if [ ! -w "$ARCHIVE" ] || [ ! -w "$DEST" ]; then
+  # Both are checked. The leaf, because a writable mount point with an unwritable leaf
+  # would print ok: about a mirror that writes nothing. The volume root, because the
+  # per-workspace lock below is created in it, and flock failing there kills a loop
+  # this stage would already have reported as started.
+  boot_warn "session archive skipped (archive or leaf not writable under $ARCHIVE)"
+elif ! command -v flock >/dev/null 2>&1; then
+  boot_warn "session archive skipped (no flock to keep one mirror per workspace)"
 else
-  boot_warn "session archive skipped (no sessions dir or archive not writable)"
+  # Background mirror. No --delete: keep historical files even if a live session is
+  # pruned. The sessions directory is re-tested inside the loop because the CLI creates
+  # it on its first run, which can land well after this boot. flock -n is what keeps the
+  # stage idempotent: Coder re-runs this body on every start, and a second loop over the
+  # same leaf would only double the write rate. setsid keeps the mirror alive when the
+  # start script exits, with nohup and the redirected fds covering an image that has no
+  # setsid - the same shape the notes watcher uses in notes-setup.sh.
+  mirror_wrapper=""
+  if command -v setsid >/dev/null 2>&1; then
+    mirror_wrapper="setsid"
+  fi
+  (
+    # shellcheck disable=SC2086  # an empty wrapper has to vanish, not be one argument
+    $mirror_wrapper nohup flock -n "$${ARCHIVE}/.mirror-$${ARCHIVE_LEAF}.lock" sh -c '
+      while :; do
+        if [ -d "$1" ]; then
+          rsync -a --exclude="*.tmp" --exclude="*.lock" "$1/" "$2/" 2>/dev/null || true
+        fi
+        sleep 180
+      done
+    ' _ "$HOME/.grok/sessions" "$DEST" </dev/null >/dev/null 2>&1 &
+  )
+  boot_ok "session archive sync started -> $DEST"
 fi
 
 boot_summary
