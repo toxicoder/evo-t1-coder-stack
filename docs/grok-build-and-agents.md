@@ -1226,6 +1226,39 @@ that works even with no global config at all. And when a repository tracks a `no
 of its own, the scratch file is written as `.scratch-notes.md` beside it instead — your
 clone is never asked to delete somebody else's committed file.
 
+### The out-of-band session archive
+
+Beside the three state mounts there is one more volume, and it shares nothing with
+them: `grok-session-archive`, mounted read-write at `/var/lib/grok-session-archive`.
+It is deliberately outside `~/.grok`, and it is host-wide rather than per-owner - every
+workspace on that daemon mounts the same volume, each writing under its own
+`workspaces/<hostname>/` leaf.
+
+- Like the per-owner volumes it is a plain string name in `main.tf`, not a
+  `docker_volume` resource, so Docker creates it on the first container start that
+  names it and reuses it afterwards.
+- The copy is made by a background `rsync` that stage 9 of `startup.sh.tftpl` starts
+  and leaves running for the life of the container: every 180 seconds it mirrors
+  `~/.grok/sessions/` into `workspaces/$(hostname)/`, skipping `*.tmp` and `*.lock`. It
+  runs without `--delete`, so a session pruned from the live tree keeps its archived
+  copy. The stage is best-effort: it warns and carries on when the archive is not
+  writable, and re-tests for the sessions directory each tick because the CLI creates
+  that directory on its first run, which can be long after boot.
+- A fresh named volume arrives `root:root` while the agent runs as `coder`, so the
+  stage chowns the mount point to the home owner first, exactly as the `~/.grok` and
+  `~/.shared` volumes above do.
+- **Nothing reads it back.** `~/.grok/sessions` stays the only session state the CLI,
+  the rulebook, and Coder's session management know about; no config key and no startup
+  logic points at the archive, and the hooks deny list
+  (`templates/common/hooks.deny-patterns.txt`) refuses any agent command that names the
+  path or the volume. The point is a copy an operator can inspect later, from the host,
+  after the workspace that made it is gone.
+- Read it out-of-band with `bazelisk run //scripts:session-archive -- list`, or
+  directly: `docker run --rm -v grok-session-archive:/archive:ro alpine ls
+  /archive/workspaces`. There is no pruning: the volume grows until an operator
+  truncates or removes it (`docker volume rm grok-session-archive` after every
+  workspace using it is stopped).
+
 ### Caveats, honestly
 
 - Keyed by **owner id**, never host-wide and never cross-user: another user's

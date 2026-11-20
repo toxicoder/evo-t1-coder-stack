@@ -997,6 +997,8 @@ The `tmux` terminal profiles and the app-bar buttons, what `grok doctor` should 
 inside a workspace and which findings are expected there, the three per-owner state
 volumes `shared` mode mounts under `~/.grok` (notes, memory, sessions) beside that
 workspace's own `config.toml` (and what `shared` vs `private` costs on a rebuild), the
+host-wide `grok-session-archive` volume the boot mirrors sessions into for later
+out-of-band inspection (read by nothing inside the workspace), the
 pre-installed MCP
 servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
 control-plane Coder Agents chat that needs nothing enabled:
