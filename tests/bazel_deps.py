@@ -227,6 +227,19 @@ TOKEN_GROUPS: Final[LabelMap] = {
         "//:skill_sources",
         "//:stack_data",
     ],
+    # The repo reflection runbook's two payload stems. The body stem also matches the
+    # `.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink the same suite opens, which is
+    # why it owes //:agent_rules beside //:skill_sources; the sibling runbook needs no such
+    # pairing because it declares //:stack_data whole.
+    "reflect-and-evolve-repo/SKILL.md": [
+        "//:skill_sources",
+        "//:agent_rules",
+        "//:stack_data",
+    ],
+    "reflect-and-evolve-repo/references/checklist.md": [
+        "//:skill_sources",
+        "//:stack_data",
+    ],
     "flags.yaml.example": ["//:flags_example", "//:stack_data"],
     "fixtures/": [":fixtures"],
     "hermes/": [

@@ -580,6 +580,17 @@ _SUITE_PAYLOAD = {
         "//docs:content",
         ":fixtures",
     ],
+    # The repo reflection runbook is this suite's whole subject: the canonical body and its
+    # references page, the repo-tier symlink that makes the body a discoverable skill, the
+    # sibling body it must stay distinct from and the one sweeper both share, and the docs page
+    # that names both skills in the same roster subsection. It bills no fixture: the sweeper
+    # case builds its session tree at runtime, because a store written to be provably unopened
+    # is not something to commit.
+    "reflect-and-evolve-repo-skill.bats": [
+        "//:agent_rules",
+        "//:skill_sources",
+        "//docs:content",
+    ],
     "trunk-refactor-skill.bats": [
         "//:agent_rules",
         "//:flags_example",
@@ -695,6 +706,13 @@ _SUITE_PAYLOAD_ALLOW = {
     "publish-pages-tree.bats": [
         "//:gitignore",
         "//:entry_docs",
+    ],
+    # It opens nothing under templates/. The token is one row of the verbatim-span list it
+    # greps out of the new skill's body: the body has to carry the seed-path instruction that
+    # names `templates/common/`, and the suite proves that sentence survived by matching the
+    # literal, never by reading a template.
+    "reflect-and-evolve-repo-skill.bats": [
+        "//:templates_payload",
     ],
     # It parses docker-compose.yml for its bind-mount sources and asserts each one exists
     # beside it, so the files it checks come out of compose, not out of a literal.
