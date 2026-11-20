@@ -14,16 +14,18 @@ Read this before proposing anything, and again when the evidence is ambiguous. E
         [--home DIR] [--repo PATH] [--limit N] [--since DAYS] [--json]
 
   Defaults: `--home` is `$GROK_HOME` else `~/.grok`, `--repo` the cwd, `--limit` 20, `--since` 90.
-- `/ez-learn` session logs, newest first, so a fact is not written twice:
+- `/ez-learn` session logs, newest first, so a fact is not written twice (substitute `<slug>-<hash8>`, which `ls -d ~/.grok/memory/*/` prints):
   `ls -t ~/.grok/memory/<slug>-<hash8>/sessions/ | head -10`
-- Notes file and code index for this clone, the index sha read against `git rev-parse HEAD`:
+- Notes file and code index for this clone, with `<host>/<owner>/<repo>` substituted by this clone's own:
   `tail -n 60 ~/.grok/notes/<host>/<owner>/<repo>/notes.md`, `head -n 10 ~/.grok/notes/<host>/<owner>/<repo>/code-index.md`
+  No index until you build it: `python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo .` writes `code-index.json` and `code-index.md` beside that notes file, and its header carries the `sha` it was built from, to compare with `git rev-parse HEAD`.
 - Agent config and the guards that wrap every tool call: `head -n 60 ~/.grok/config.toml`,
   `ls ~/.grok/hooks/bin/`, `head -n 40 ~/.grok/hooks/bin/deny-patterns.txt`
 - Operator CLIs and the coverage they already carry, so a check is extended and not invented:
   `ls scripts/*.sh`, `bazelisk run //scripts:bazel-map -- scope --untracked`
-- The last reflection's leftovers: `ls /tmp/reflect-and-evolve/ 2>/dev/null`, `git status --short`,
-  `git for-each-ref --sort=-committerdate refs/heads | head -10`
+- The last reflection's leftovers, and the scratch every later command here writes into, so create it once:
+  `mkdir -p /tmp/reflect-and-evolve`, `ls /tmp/reflect-and-evolve/ 2>/dev/null` (silence after that mkdir means no leftovers; before it, silence also means the path is wrong),
+  `git status --short`, `git for-each-ref --sort=-committerdate refs/heads | head -10`
 - The gate baseline, run now, so a later red is yours or is not: `bazelisk test //:test-fast`,
   `bazelisk test //:lint --test_tag_filters=manual`
 - Hard limits, binding on every read above: never `cat` a `chat_history.jsonl`, `prompt_history.jsonl`, or `events.jsonl` into the
@@ -41,14 +43,13 @@ Rank friction by what it says about the system, never by its size, and read the 
 - A high `toolFailureCount` concentrated in one tool name is a guard, a hook, or a missing rule. Take counts and titles only, never a
   message body: `python3 skills/reflect-and-evolve/scripts/session_signals.py --json --limit 30 >
   /tmp/reflect-and-evolve/signals.json`, then `head -c 2000` of it.
-- A repeated user correction outweighs any count: `grep -o 'generated_title[^,]*'
-  /tmp/reflect-and-evolve/signals.json | sort | uniq -c | sort -rn | head -10`
+- A repeated user correction outweighs any count, so count the repeats off the `title` each `--json` row carries:
+  `grep -o '"title": "[^"]*"' /tmp/reflect-and-evolve/signals.json | sort | uniq -c | sort -rn | head -10`
 - A high `errorCount` over a quiet tool log is the model layer or the lane, not the rulebook: check the pins in
   `~/.grok/config.toml` and the fleet queue before writing prose about it.
 - A high `regenerationCount` with few tool calls means the answer missed the ask: the fix is a scope or definition rule in the body
   that owns that task, not a new global rule.
-- A high `compactionCount`, or `ctx%` near 100, is an output-budget failure: some page told a session to read without a cap. Put the
-  cap on that page.
+- A high `compactionCount`, or a `ctx%` at the top of the range the store really holds (live values run 0 to about 75 and never near 100), is an output-budget failure: some page told a session to read without a cap. Put the cap on that page.
 - One session is an anecdote and three is a pattern: require three distinct `sid8` rows of the same shape before ruling a problem in,
   and list them in the report.
 - Many tool calls on one question with zero failures is a mapping job that should have been a child; the rule to write names the
@@ -63,9 +64,9 @@ A proposal is made only when all five lines exist; a missing line is a follow-up
 - Cost removed: the future session cost in the units the table reports (calls, turns, failures, compactions), and what the next
   session stops doing.
 - One seam: the one file and section where the rule is read, proven the only home by `grep -rn '<the new phrase>' ~/.grok/AGENTS.md
-  AGENTS.md .grok/rules/ skills/ templates/common/`; where two pages must carry it, one is the source and the other points at it.
+  AGENTS.md .grok/rules/ skills/ templates/common/` (your phrase in place of the placeholder); where two pages must carry it, one is the source and the other points at it.
 - A way to tell it fired: a Bats assertion, a gate command, or a greppable marker a later session leaves behind. Name it now:
-  `bazelisk test //tests:bats_<stem>_test`, `bazelisk test //:test-fast`
+  `bazelisk test "//tests:bats_<stem>_test"` (substitute the suite stem; the quotes keep the label one word), `bazelisk test //:test-fast`
 - The deletion that comes with it: the owner, the condition that makes the rule stale, and the command that finds it then. A rule
   with no exit is deleted by surprise.
 - Take the cheapest carrier: a line in a page the agent already reads, then a helper in a script that exists, then a program under
@@ -76,7 +77,7 @@ A proposal is made only when all five lines exist; a missing line is a follow-up
 ## What not to do
 
 - A rule that restates a rule: search with `grep -rin '<key phrase>' ~/.grok/AGENTS.md AGENTS.md .grok/rules/ skills/
-  templates/common/` and tighten the line that already answers it.
+  templates/common/` (your phrase in place of the placeholder) and tighten the line that already answers it.
 - Prose where a script belongs, and a script where one line is enough: a step every run performs verbatim is a script, and a
   three-line fix does not earn two hundred lines of Python.
 - Widening a gate instead of steering the agent: never relax a Bazel target, a lint filter, or a hook to make a run pass; put the
@@ -106,5 +107,4 @@ Step 5 of the body closes with this. Copy the skeleton, fill every cell, and quo
 
 - Every Proof command row is a command you ran in this session, with its real output line; name what you did not check rather than
   leaving a confident blank.
-- Append the report to `~/.grok/notes/<host>/<owner>/<repo>/notes.md` so the next reflection meets it as the leftover inventory, then
-  `find /tmp/reflect-and-evolve -type f -delete`.
+- Append the report to `~/.grok/notes/<host>/<owner>/<repo>/notes.md` (substituted as above) so the next reflection meets it as the leftover inventory, then `find /tmp/reflect-and-evolve -type f -delete 2>/dev/null || true`.
