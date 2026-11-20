@@ -24,12 +24,12 @@
 #   - the scrape job names, which the exporter-gap alerts select on, so a rename in
 #     prometheus.yml alone mutes those alerts.
 #
-#   - that the Prometheus container can boot at all: no bind nests inside another
-#     (runc creates a mountpoint with mkdirat, which an already-mounted read-only
-#     parent refuses), every file_sd path lands in a bind compose actually declares,
-#     every alertmanagers key is one the pinned image decodes, and no rule template
-#     uses an infix operator. Each of those four is a fatal startup error rather than
-#     a log line, so a green suite here is the only proof the tier comes up.
+#   - that the monitoring containers can boot at all: no Prometheus bind nests
+#     inside another (runc mkdirs a mountpoint, which the read-only parent
+#     refuses unless its own source already carries that directory), every
+#     file_sd path lands in a bind compose declares, every alertmanagers and
+#     blackbox http key is one the pinned image decodes, and no rule template
+#     uses an infix operator: each is fatal at boot, not a log line.
 #
 # Structure is read through the YAML, never grepped: every fact comes from
 # `python3 - <<PY` over yaml.safe_load, and the whole set parses first through the
@@ -68,16 +68,39 @@ PINNED_JOBS=(
   blackbox alertmanager
 )
 
-# The keys Prometheus v3.16.0 decodes in an alerting.alertmanagers[] entry, read off
-# upstream config/config.go's AlertmanagerConfig at that tag plus the inlined
-# http_client_config. The block is decoded strictly, so a key outside this set stops
-# the container at boot. max_alerts is the trap this pins: it is a real key in
+# Keys Prometheus v3.16.0 decodes in an alerting.alertmanagers[] entry. Derived by
+# planting each candidate at that level and asking promtool on the pinned image, so it
+# is the decoder's own answer rather than a reading of config/config.go: accepted are
+# these, and max_alerts, username, password, password_file, max_idle_conns,
+# max_idle_conns_per_host, queue_capacity, min_backoff, max_backoff, max_retries,
+# max_items and enable_http3 each came back "field <k> not found in type
+# config.AlertmanagerConfig". The block is decoded strictly, so a key outside this set
+# stops the container at boot. max_alerts is the trap this pins: it is a real key in
 # alertmanager.yml's own webhook_configs, and no key at all on the Prometheus side.
 PINNED_ALERTMANAGER_KEYS=(
   alert_relabel_configs api_version authorization basic_auth bearer_token
-  bearer_token_file enable_http2 follow_redirects oauth2 path_prefix password
-  password_file proxy_from_environment proxy_url relabel_configs scheme sigv4
-  static_configs timeout tls_config username
+  bearer_token_file enable_http2 follow_redirects http_headers no_proxy oauth2
+  path_prefix proxy_connect_header proxy_from_environment proxy_url
+  relabel_configs scheme sigv4 static_configs timeout tls_config
+)
+
+# Keys blackbox_exporter v0.29.1 decodes in a module's http block, from the same
+# plant-and-ask against --config.check on the pinned image. The loader runs with
+# KnownFields(true), so an unknown key there rejects the whole file and the container
+# restart-loops. keep_alive is the reason this list exists: it was set in all three
+# modules, and the prober already builds its client with keep-alives disabled
+# (prober/http.go:457), so the field bought nothing and cost the boot. username,
+# password, keepalive, max_idle_conns and max_idle_conns_per_host are all refused.
+PINNED_BLACKBOX_HTTP_KEYS=(
+  authorization basic_auth bearer_token bearer_token_file body body_file
+  body_size_limit check_revoked compression enable_http2 enable_http3
+  fail_if_body_json_matches_cel fail_if_body_json_not_matches_cel
+  fail_if_body_matches_regexp fail_if_body_not_matches_regexp
+  fail_if_header_matches fail_if_header_not_matches fail_if_not_ssl fail_if_ssl
+  follow_redirects headers http_headers ip_protocol_fallback method no_follow_redirects
+  no_proxy oauth2 path_prefix preferred_ip_protocol proxy_connect_header
+  proxy_from_environment proxy_url skip_resolve_phase_with_proxy
+  tls_config valid_http_versions valid_status_codes
 )
 
 # The spark label every Spark alert has to carry, kept out of the awk programs so
@@ -226,8 +249,9 @@ walk_keys(doc)
 PY
 }
 
-# blackbox_facts <file> - module|<name>, prober|<name>|<prober>, and one
-# scan|<name>|<finding> line per host, port, or URL a module names.
+# blackbox_facts <file> - module|<name>, prober|<name>|<prober>, httpkey|<name>|<key>
+# per key of a module's http block, and one scan|<name>|<finding> line per host, port,
+# or URL a module names.
 blackbox_facts() {
   python3 - "${1}" <<'PY'
 import json
@@ -262,6 +286,8 @@ for name, module in sorted((doc.get("modules") or {}).items()):
     collect(module or {})
     for key in sorted(keys & FORBIDDEN_KEYS):
         print("scan|%s|names the key %s" % (name, key))
+    for key in sorted((module or {}).get("http") or {}):
+        print("httpkey|%s|%s" % (name, key))
     blob = json.dumps(module or {})
     for pattern, label in ((re.compile(re.escape("://")), "carries a URL"),
                            (IPV4, "names an IPv4 address"),
@@ -332,10 +358,14 @@ PY
 
 # compose_mount_facts <file> <service> - mount|<source>|<dest>|<mode> per host-path
 # bind of one service, plus confdir|<dir> for the directory --config.file= sits in.
-# A named volume (prometheus-data) has no host directory and cannot nest, so it is
-# left out. The nesting question is load-bearing: runc creates a bind's mountpoint
-# with mkdirat, and inside an already-mounted read-only parent that call is EROFS,
-# which is how one bind under /etc/prometheus kept Prometheus from ever starting.
+# Only a source with no slash at all is a named volume (prometheus-data) and skipped;
+# relative, absolute and variable-rooted host paths all stay in, so an absolute source
+# cannot slip out of the nesting check. The nesting question is the load-bearing one:
+# runc creates a bind's mountpoint with mkdirat, and inside an already-mounted
+# read-only parent that call is EROFS unless the parent's own source directory already
+# carries the mountpoint - which a generated, gitignored document never does, and git
+# cannot carry an empty directory for. That is how one bind under /etc/prometheus kept
+# Prometheus from ever starting.
 compose_mount_facts() {
   python3 - "${1}" "${2}" <<'PY'
 import os
@@ -358,7 +388,7 @@ for entry in service.get("volumes") or []:
         source = parts[0] if parts else ""
         dest = parts[1] if len(parts) > 1 else ""
         mode = parts[2] if len(parts) > 2 else ""
-    if not source.startswith("."):
+    if "/" not in source:
         continue
     print("mount|%s|%s|%s" % (source, dest, mode or "rw"))
 
@@ -401,10 +431,13 @@ import yaml
 
 TEMPLATE = re.compile(r"\{\{(.*?)\}\}", re.S)
 QUOTED = re.compile(r'"[^"]*"|\'[^\']*\'')
-# An operator with whitespace on both sides, between two operands. A pipeline's
-# pipe and a function's own argument list are not operators, and quoted prose
-# inside the template is stripped first so it cannot match on its own punctuation.
-INFIX = re.compile(r"[\w)\]]\s+[-+*/]\s+[$(\w]")
+# An operator between two operands, with or without the spaces: text/template needs
+# spaces to read it, and a rule author who omits them still writes a fatal file. The
+# right operand is required to open a term ($, (, or a digit) so a hyphenated label
+# name like $labels.app-version is not mistaken for subtraction. A pipeline's pipe and
+# a function's own argument list are not operators, and quoted prose inside the
+# template is stripped first so it cannot match on its own punctuation.
+INFIX = re.compile(r"[\w)\]]\s*[-+*/]\s*[$(\d]")
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     doc = yaml.safe_load(handle) or {}
@@ -663,6 +696,26 @@ assert_file_namespace() {
   assert_eq "no module names a host, a port, or a URL" "" "${findings}"
 }
 
+@test "every blackbox http key is one the pinned image decodes" {
+  local facts unknown="" seen=0 lines module key
+  facts="$(blackbox_facts "${BLACKBOX_YML}")"
+  lines="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="httpkey"')"
+  [[ -n ${lines} ]] || fail "no module carries an http block, so this proved nothing"
+  # Two modules with two keys each is the floor: one key would let a file whose whole
+  # http block is a single invented key pass as a real config.
+  seen="$(printf '%s\n' "${lines}" | wc -l | tr -d ' ')"
+  [[ ${seen} -ge 4 ]] || fail "only ${seen} http keys are declared, too few to prove the set"
+  if [[ $(printf '%s\n' "${lines}" | awk -F'|' '{print $2}' | sort -u | wc -l) -lt 2 ]]; then
+    fail "only one module carries an http block, so the per-module scan proved nothing"
+  fi
+  while IFS='|' read -r _ module key; do
+    [[ ${key} ]] || continue
+    [[ " ${PINNED_BLACKBOX_HTTP_KEYS[*]} " == *" ${key} "* ]] ||
+      unknown+="${module}.${key}; "
+  done <<<"${lines}"
+  assert_eq "blackbox.yml asks for no http field v0.29.1 does not know" "" "${unknown}"
+}
+
 @test "every active DCGM counter row keeps the exporter's three-column shape" {
   local facts rows bad_cols bad_tabs bad_ascii
   facts="$(csv_facts "${COUNTERS}")"
@@ -828,21 +881,29 @@ LISTEN_CONTRACT=(
 # sees none of this, and each of these four held a container in a restart loop.
 
 @test "no Prometheus bind nests inside another bind" {
-  local facts findings=""
-  local -a dests=()
+  local facts findings="" pair_a pair_b a amode b
+  local -a mounts=()
   facts="$(compose_mount_facts "${COMPOSE}" prometheus)"
   [[ -n ${facts} ]] ||
     fail "the prometheus service declares no host bind, so this proved nothing"
-  mapfile -t dests < <(printf '%s\n' "${facts}" | awk -F'|' '$1=="mount"{print $3}')
-  [[ ${#dests[@]} -ge 2 ]] ||
-    fail "the prometheus service binds ${#dests[@]} host paths, so nesting cannot be seen"
-  local a b
-  for a in "${dests[@]}"; do
-    for b in "${dests[@]}"; do
+  mapfile -t mounts < <(printf '%s\n' "${facts}" | awk -F'|' '$1=="mount"{print $3"|"$4}')
+  [[ ${#mounts[@]} -ge 2 ]] ||
+    fail "the prometheus service binds ${#mounts[@]} host paths, so nesting cannot be seen"
+  for pair_a in "${mounts[@]}"; do
+    a="${pair_a%%|*}"
+    amode="${pair_a##*|}"
+    for pair_b in "${mounts[@]}"; do
+      b="${pair_b%%|*}"
       [[ ${a} != "${b}" ]] || continue
       case ${b} in
         "${a}"/*)
-          findings+="bind ${b} sits inside ${a}, which runc cannot mkdir into; "
+          if [[ ${amode} == ro ]]; then
+            findings+="bind ${b} nests inside the read-only ${a}, which mounts only "
+            findings+="while ${a}'s own source still carries ${b}; "
+          else
+            findings+="bind ${b} nests inside ${a}; keep the binds siblings so every "
+            findings+="mountpoint exists before runc reaches for it; "
+          fi
           ;;
       esac
     done
@@ -871,6 +932,10 @@ LISTEN_CONTRACT=(
     fi
     [[ " ${dirs[*]-} " == *" ${reldir} "* ]] ||
       findings+="${path} resolves to ${reldir}, which no prometheus bind delivers; "
+    # The directory alone is not the contract: file_sd on a name nothing generates is
+    # not an error either, so all three jobs would go quietly to zero targets.
+    [[ ${path##*/} == sparks.json ]] ||
+      findings+="${path} is not the sparks.json that //scripts:spark-monitor writes; "
   done <<<"${paths}"
   assert_eq "each file_sd document sits inside a bind the prometheus service declares" \
     "" "${findings}"
