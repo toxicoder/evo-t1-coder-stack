@@ -253,6 +253,10 @@ _SCRIPT_LIBS = {
         "lib/tftpl_strip_gates.awk",
         ":seed_probes",
     ],
+    "session-archive": [
+        "lib/coder_api.sh",
+        "lib/common.sh",
+    ],
     "setup-host": [
         "lib/common.sh",
         "lib/host_resolve.py",
@@ -434,6 +438,13 @@ _SCRIPT_PAYLOAD = {
         "//:compose_file",
         "//:githooks",
         "//:templates_payload",
+    ],
+    # The compose file is declared because common.sh is sourced and resolve_checkout
+    # probes for that marker by default - the same reason coder-sessions carries it. The
+    # CLI opens no payload of its own: every fact comes from a `docker run` over the
+    # archive volume, on the host that holds it.
+    "session-archive": [
+        "//:compose_file",
     ],
     "setup-host": [
         "//homepage:payload",

@@ -493,6 +493,12 @@ _SUITE_PAYLOAD = {
         "//:devcontainer",
         "//:templates_payload",
     ],
+    # The CLI half runs against the docker stub and a fixture tree; the twin half reads
+    # main.tf and startup.sh.tftpl as text, the way grok-profile.bats pins every other
+    # mount, so the template payload is what this suite actually opens.
+    "session-archive.bats": [
+        "//:templates_payload",
+    ],
     "setup-host.bats": [
         "//images/dev:tool_versions",
     ],

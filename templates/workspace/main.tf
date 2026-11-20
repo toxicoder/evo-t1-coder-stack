@@ -1536,6 +1536,21 @@ resource "docker_container" "workspace" {
     read_only      = false
   }
 
+  # A secondary, long-term archive of every workspace's Grok sessions, one host-wide
+  # volume that all of this daemon's workspaces mount together. Like the per-owner
+  # volumes above it is a plain string name rather than a docker_volume resource, so
+  # Docker creates it on the first container start that names it and reuses it
+  # afterwards. startup.sh.tftpl mirrors ~/.grok/sessions into it in the background,
+  # under a per-workspace path. Nothing reads it back: the Grok CLI, the agent rulebook,
+  # and Coder's session management all stay pointed at ~/.grok/sessions, and the hooks
+  # deny list refuses any agent command that names this path. It sits outside ~/.grok
+  # on purpose, so the live session tree the CLI owns is untouched by its existence.
+  volumes {
+    container_path = "/var/lib/grok-session-archive"
+    volume_name    = "grok-session-archive"
+    read_only      = false
+  }
+
   # Only the sidecar reference matters: it makes Terraform attach the daemon to
   # the network before starting the workspace, so `dind` already resolves in the
   # embedded DNS the moment someone types a docker command. The reference is to

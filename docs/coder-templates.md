@@ -858,12 +858,15 @@ bazelisk run //scripts:new-workspace -- --plain git@git.example.com:org/private.
 ## Inside the workspace container
 
 Each template creates one Docker container per workspace. Extra named volumes
-(`vscode-settings-<owner-id>` at `~/.shared/vscode`, and in shared mode the three state
+(`vscode-settings-<owner-id>` at `~/.shared/vscode`, in shared mode the three state
 volumes `grok-notes-<owner-id>` at `~/.grok/notes`, `grok-memory-<owner-id>` at
-`~/.grok/memory` and `grok-sessions-<owner-id>` at `~/.grok/sessions`) are chowned to
-the home owner at the start of
-`startup.sh.tftpl`, because Docker creates an empty named volume as `root:root`
-755 and the agent runs as `coder`.
+`~/.grok/memory` and `grok-sessions-<owner-id>` at `~/.grok/sessions`, and the host-wide
+`grok-session-archive` at `/var/lib/grok-session-archive`) are chowned to the home owner
+by `startup.sh.tftpl` - the first four at its start, the archive by its own stage -
+because Docker creates an empty named volume as `root:root`
+755 and the agent runs as `coder`. The archive volume sits outside `~/.grok` on purpose
+and is read by nothing in the workspace: see
+[the out-of-band session archive](grok-build-and-agents.md#the-out-of-band-session-archive).
 
 - Image from `images/dev/Dockerfile` (overridable with the `image` variable) carrying:
   Node 22 + 24, Python 3.12 + 3.11, Go 1.24, Bazelisk/buildifier,
@@ -910,6 +913,14 @@ the home owner at the start of
    the editor's wait loop can see it, then clones into it. This is idempotent, runs as
    the workspace user so their git credentials are consulted, and refuses to touch an
    existing non-empty non-git folder there. An empty pre-created target still clones.
+8. **Starts the out-of-band session archive mirror** (boot stage 9). It chowns
+   `/var/lib/grok-session-archive` to the home owner, folds the container hostname into a
+   safe leaf name under `workspaces/`, then leaves a backgrounded loop that `rsync`s
+   `~/.grok/sessions/` into that leaf every 180 seconds, without `--delete`, for the life
+   of the container. `flock -n` keeps it to one loop per leaf across repeated starts.
+   Best-effort and invisible to the CLI: nothing in the workspace reads the volume back,
+   and the hooks deny list refuses an agent command that names it. See
+   [the out-of-band session archive](grok-build-and-agents.md#the-out-of-band-session-archive).
 
 The repository leaf is derived the same way in `main.tf` and in `startup.sh.tftpl`:
 split on `/`, drop empty segments, take the last, drop a trailing `.git`, map every

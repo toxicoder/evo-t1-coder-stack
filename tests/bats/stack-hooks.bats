@@ -534,6 +534,43 @@ assert_quiet() {
   done
 }
 
+@test "dangerous-command-guard: keeps an agent out of the out-of-band session archive" {
+  # The archive is a copy of every workspace's session tree that no agent is meant to
+  # read. Denied three ways: the container path, the volume name as a docker -v source
+  # (which reaches the same bytes without naming the path), and the one-character glob
+  # bypass of both, which is the form that would otherwise sail past a literal-only rule.
+  local cmd
+  for cmd in "ls /var/lib/grok-session-archive/workspaces" \
+    "cat /var/lib/grok-session-archive/workspaces/ws-a/sessions/x.jsonl" \
+    "docker run --rm -v grok-session-archive:/archive:ro alpine ls /archive" \
+    "ls /var/lib/*rok-session-archive/workspaces" \
+    "cp -r /var/lib/grok-session-archive /tmp/out"; do
+    run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
+    assert_decision deny || {
+      printf 'the archive was not denied: %s -> %s\n' "${cmd}" "${hook_out}" >&2
+      return 1
+    }
+  done
+}
+
+@test "dangerous-command-guard: the archive rule leaves its siblings alone" {
+  # The rule matches the whole command string, so these are the calls whoever maintains
+  # the feature has to keep being able to run: the operator CLI's Bazel label, its test
+  # target, the seed list by path, and the live session tree the CLI really does use.
+  # None of them carries the volume-name prefix or a leading glob character.
+  local cmd
+  for cmd in "bazelisk run //scripts:session-archive -- list" \
+    "bazelisk test //tests:bats_session_archive_test" \
+    "sed -n 142,155p templates/common/hooks.deny-patterns.txt" \
+    "ls -1 ~/.grok/sessions"; do
+    run_hook dangerous-command-guard.sh "$(event_json run_terminal_command command "${cmd}")"
+    assert_decision || {
+      printf 'the archive rule blocked a legitimate command: %s -> %s\n' "${cmd}" "${hook_out}" >&2
+      return 1
+    }
+  done
+}
+
 @test "dangerous-command-guard: reads the command as text, and says so in the reason" {
   # Matching the whole string is the choice, not an oversight: stripping quoted regions would
   # clear the two prose probes below and would equally blind the guard to sh -c "..." and
