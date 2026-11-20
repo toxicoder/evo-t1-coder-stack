@@ -1820,6 +1820,15 @@ The fourth payload `coder_script.stack_repo_skills` seeds is not a converter.
 subagents and proving the split dispatches; how its slots, lane and check fit together is
 [The fan-out seam](#the-fan-out-seam).
 
+### The repo-scoped runbook
+
+`/reflect-and-evolve` reviews past Grok Build sessions and turns what it finds into planned changes.
+It reads the per-session `signals.json` under `~/.grok/sessions/<escaped-cwd>/`, ranked by the bundled
+`skills/reflect-and-evolve/scripts/session_signals.py`, plus the `/ez-learn` session logs and the notes file.
+It changes the seeds in this repo, never the copies a workspace booted with. Repo-scoped like `/trunk-refactor`
+and not seeded into a workspace home: canonical at `skills/reflect-and-evolve/SKILL.md`, discovered through
+the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by `tests/bats/reflect-and-evolve-skill.bats`.
+
 ### What this is not
 
 Coder Agents is control-plane-native. This stack does not wrap Grok Build: the wiring

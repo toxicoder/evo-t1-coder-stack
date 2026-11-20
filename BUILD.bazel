@@ -115,22 +115,26 @@ filegroup(
     visibility = ["//visibility:public"],
 )
 
-# The trunk-based + feature-flags skill body, shipped with the repo so a session reads
-# it from the checkout instead of a home copy that another workspace may rewrite.
+# The repo-tier skill bodies, shipped with the repo so a session reads them from the
+# checkout instead of a home copy that another workspace may rewrite.
 filegroup(
     name = "skill_sources",
-    # glob-policy: a skill body is a prose tree read from the checkout, and the trunk-refactor skill grows by adding pages. The gate that pins its content is //tests:bats_trunk_refactor_skill_test, which names the group, not the files.
+    # glob-policy: a skill body is a prose tree read from the checkout, and a skill grows by adding pages under references/ and a bundled helper under scripts/. The .py rides the same group as its own prose because the pair is one skill and no other group carries a file under skills/; the gate that pins the content is the skill's own //tests:bats_*_skill_test suite, which names the group, not the files.
     srcs = glob(
-        ["skills/**/*.md"],
+        [
+            "skills/**/*.md",
+            "skills/**/*.py",
+        ],
         allow_empty = True,
     ),
     visibility = ["//visibility:public"],
 )
 
-# The always-loaded agent rules and the repo-tier skill entry that links to the group
+# The always-loaded agent rules and the repo-tier skill entries that link to the group
 # above. Grok scans `.grok/rules/*.md` and `.grok/skills/` at every directory level, so
-# these two files are what make the trunk + flags model load without being asked; the
-# skill is a symlink, which is why the glob names `**/*` and not `**/*.md`.
+# these files are what make the trunk + flags model and the reflection runbook load
+# without being asked; each skill entry is a symlink, which is why the glob names `**/*`
+# and not `**/*.md`.
 filegroup(
     name = "agent_rules",
     # glob-policy: Grok scans .grok/rules/*.md and .grok/skills/ at every boot, so the directory is the load contract -- a rule file that needs a BUILD edit to be seen is a rule that silently stops loading. **/* rather than **/*.md because the skill entry is a symlink.
