@@ -24,6 +24,13 @@
 #   - the scrape job names, which the exporter-gap alerts select on, so a rename in
 #     prometheus.yml alone mutes those alerts.
 #
+#   - that the Prometheus container can boot at all: no bind nests inside another
+#     (runc creates a mountpoint with mkdirat, which an already-mounted read-only
+#     parent refuses), every file_sd path lands in a bind compose actually declares,
+#     every alertmanagers key is one the pinned image decodes, and no rule template
+#     uses an infix operator. Each of those four is a fatal startup error rather than
+#     a log line, so a green suite here is the only proof the tier comes up.
+#
 # Structure is read through the YAML, never grepped: every fact comes from
 # `python3 - <<PY` over yaml.safe_load, and the whole set parses first through the
 # repo's own scripts/lib/parse_yaml.py.
@@ -59,6 +66,18 @@ PINNED_JOBS=(
   prometheus mimir loki tempo grafana alloy coder litellm
   node_exporter cadvisor spark-node blackbox-spark blackbox-spark-models
   blackbox alertmanager
+)
+
+# The keys Prometheus v3.16.0 decodes in an alerting.alertmanagers[] entry, read off
+# upstream config/config.go's AlertmanagerConfig at that tag plus the inlined
+# http_client_config. The block is decoded strictly, so a key outside this set stops
+# the container at boot. max_alerts is the trap this pins: it is a real key in
+# alertmanager.yml's own webhook_configs, and no key at all on the Prometheus side.
+PINNED_ALERTMANAGER_KEYS=(
+  alert_relabel_configs api_version authorization basic_auth bearer_token
+  bearer_token_file enable_http2 follow_redirects oauth2 path_prefix password
+  password_file proxy_from_environment proxy_url relabel_configs scheme sigv4
+  static_configs timeout tls_config username
 )
 
 # The spark label every Spark alert has to carry, kept out of the awk programs so
@@ -252,8 +271,11 @@ for name, module in sorted((doc.get("modules") or {}).items()):
 PY
 }
 
-# prom_facts <file> - job|<job_name> per scrape config and module|<m> per module
-# value the scrape params ask blackbox for.
+# prom_facts <file> - job|<job_name> per scrape config, module|<m> per module value
+# the scrape params ask blackbox for, target|<job>|<port> per static target, and
+# file_sd|<job>|<path> per file-SD document. The file_sd path is emitted because it
+# is read relative to the config file unless it is absolute, so the compose bind is
+# the only other place that can say whether the file is reachable at all.
 prom_facts() {
   python3 - "${1}" <<'PY'
 import sys
@@ -270,6 +292,9 @@ for job in doc.get("scrape_configs") or []:
     for group in job.get("static_configs") or []:
         for target in group.get("targets") or []:
             print("target|%s|%s" % (job.get("job_name"), str(target).rsplit(":", 1)[-1]))
+    for group in job.get("file_sd_configs") or []:
+        for path in group.get("files") or []:
+            print("file_sd|%s|%s" % (job.get("job_name"), str(path)))
 PY
 }
 
@@ -302,6 +327,97 @@ for name, service in sorted((doc.get("services") or {}).items()):
             match = re.match(pattern, arg)
             if match:
                 print("listen|%s|%s" % (name, match.group(1)))
+PY
+}
+
+# compose_mount_facts <file> <service> - mount|<source>|<dest>|<mode> per host-path
+# bind of one service, plus confdir|<dir> for the directory --config.file= sits in.
+# A named volume (prometheus-data) has no host directory and cannot nest, so it is
+# left out. The nesting question is load-bearing: runc creates a bind's mountpoint
+# with mkdirat, and inside an already-mounted read-only parent that call is EROFS,
+# which is how one bind under /etc/prometheus kept Prometheus from ever starting.
+compose_mount_facts() {
+  python3 - "${1}" "${2}" <<'PY'
+import os
+import re
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+service = (doc.get("services") or {}).get(sys.argv[2]) or {}
+for entry in service.get("volumes") or []:
+    if isinstance(entry, dict):
+        source = str(entry.get("source") or "")
+        dest = str(entry.get("target") or "")
+        mode = str(entry.get("mode") or "")
+    else:
+        parts = str(entry).split(":")
+        source = parts[0] if parts else ""
+        dest = parts[1] if len(parts) > 1 else ""
+        mode = parts[2] if len(parts) > 2 else ""
+    if not source.startswith("."):
+        continue
+    print("mount|%s|%s|%s" % (source, dest, mode or "rw"))
+
+for arg in service.get("command") or []:
+    match = re.match(r"^--config\.file=(.+)$", str(arg))
+    if match:
+        print("confdir|%s" % os.path.dirname(match.group(1)))
+PY
+}
+
+# prom_alertmanager_keys <file> - key|<k> for each key of each alerting.alertmanagers[]
+# entry. Prometheus decodes that block strictly, so an unknown key is a fatal
+# "field <k> not found in type config.AlertmanagerConfig" rather than a warning.
+prom_alertmanager_keys() {
+  python3 - "${1}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+for entry in (doc.get("alerting") or {}).get("alertmanagers") or []:
+    for key in sorted(entry or {}):
+        print("key|%s" % key)
+PY
+}
+
+# rule_template_facts <file> - rule|<name> per rule, and infix|<name>|<field>|<key>|
+# <template> for every annotation or label whose Go template does infix arithmetic.
+# text/template has no infix operators and Prometheus registers no mul or div either
+# (promtool on the pinned image: 'function "mul" not defined'), so such a template
+# fails the rule file at boot - and Prometheus exits rather than skipping the group.
+rule_template_facts() {
+  python3 - "${1}" <<'PY'
+import re
+import sys
+
+import yaml
+
+TEMPLATE = re.compile(r"\{\{(.*?)\}\}", re.S)
+QUOTED = re.compile(r'"[^"]*"|\'[^\']*\'')
+# An operator with whitespace on both sides, between two operands. A pipeline's
+# pipe and a function's own argument list are not operators, and quoted prose
+# inside the template is stripped first so it cannot match on its own punctuation.
+INFIX = re.compile(r"[\w)\]]\s+[-+*/]\s+[$(\w]")
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+for group in doc.get("groups") or []:
+    for rule in group.get("rules") or []:
+        name = rule.get("alert") or rule.get("record") or "?"
+        print("rule|%s" % name)
+        for field in ("annotations", "labels"):
+            for key, value in sorted((rule.get(field) or {}).items()):
+                for expr in TEMPLATE.findall(str(value)):
+                    if INFIX.search(QUOTED.sub(" ", expr)):
+                        print("infix|%s|%s|%s|%s" % (name, field, key, expr.strip()))
 PY
 }
 
@@ -704,4 +820,92 @@ LISTEN_CONTRACT=(
   done
   assert_eq "each exporter's bind, published port and scrape target are one port" \
     "" "${finding}"
+}
+
+# The three containers on this profile read one another's files: prometheus.yml names
+# paths that only the compose binds can make reachable, and its own blocks are decoded
+# by a pinned binary that refuses an unknown field outright. A suite that stubs curl
+# sees none of this, and each of these four held a container in a restart loop.
+
+@test "no Prometheus bind nests inside another bind" {
+  local facts findings=""
+  local -a dests=()
+  facts="$(compose_mount_facts "${COMPOSE}" prometheus)"
+  [[ -n ${facts} ]] ||
+    fail "the prometheus service declares no host bind, so this proved nothing"
+  mapfile -t dests < <(printf '%s\n' "${facts}" | awk -F'|' '$1=="mount"{print $3}')
+  [[ ${#dests[@]} -ge 2 ]] ||
+    fail "the prometheus service binds ${#dests[@]} host paths, so nesting cannot be seen"
+  local a b
+  for a in "${dests[@]}"; do
+    for b in "${dests[@]}"; do
+      [[ ${a} != "${b}" ]] || continue
+      case ${b} in
+        "${a}"/*)
+          findings+="bind ${b} sits inside ${a}, which runc cannot mkdir into; "
+          ;;
+      esac
+    done
+  done
+  assert_eq "every prometheus bind destination stands on its own" "" "${findings}"
+}
+
+@test "every file_sd path is a document compose actually binds into Prometheus" {
+  local mounts confdir paths findings=""
+  local -a dirs=()
+  mounts="$(compose_mount_facts "${COMPOSE}" prometheus)"
+  confdir="$(printf '%s\n' "${mounts}" | awk -F'|' '$1=="confdir"{print $2}')"
+  [[ -n ${confdir} ]] ||
+    fail "the prometheus service names no --config.file, so a relative path has no base"
+  mapfile -t dirs < <(printf '%s\n' "${mounts}" | awk -F'|' '$1=="mount"{print $3}')
+  paths="$(prom_facts "${PROMETHEUS_YML}" | awk -F'|' '$1=="file_sd"{print $3}')"
+  [[ -n ${paths} ]] || fail "prometheus.yml names no file_sd file, so this proved nothing"
+  local path reldir
+  while IFS= read -r path; do
+    [[ -n ${path} ]] || continue
+    if [[ ${path} == /* ]]; then
+      reldir="${path%/*}"
+    else
+      reldir="${confdir}/$(dirname "${path}")"
+      [[ ${reldir} == "${confdir}/." ]] && reldir="${confdir}"
+    fi
+    [[ " ${dirs[*]-} " == *" ${reldir} "* ]] ||
+      findings+="${path} resolves to ${reldir}, which no prometheus bind delivers; "
+  done <<<"${paths}"
+  assert_eq "each file_sd document sits inside a bind the prometheus service declares" \
+    "" "${findings}"
+}
+
+@test "the alertmanagers block carries only keys the pinned Prometheus decodes" {
+  local keys unknown="" key
+  keys="$(prom_alertmanager_keys "${PROMETHEUS_YML}" | awk -F'|' '$1=="key"{print $2}')"
+  [[ -n ${keys} ]] ||
+    fail "prometheus.yml declares no alertmanagers entry, so this proved nothing"
+  printf '%s\n' "${keys}" | grep -qx timeout ||
+    fail "the block no longer sets timeout, so the key set proves nothing about a real entry"
+  for key in ${keys}; do
+    [[ " ${PINNED_ALERTMANAGER_KEYS[*]} " == *" ${key} "* ]] || unknown+="${key}; "
+  done
+  assert_eq "every alertmanagers key is one Prometheus v3.16.0 knows" "" "${unknown}"
+}
+
+@test "no rule template does arithmetic text/template cannot parse" {
+  local file facts findings=""
+  local -a files=() seen=()
+  # Globbed rather than found: under Bazel the payload arrives as symlinks, which
+  # `find -type f` would filter out and report as an empty rules directory.
+  shopt -s nullglob
+  files=("${OBS}/prometheus/rules"/*.yml)
+  shopt -u nullglob
+  [[ ${#files[@]} -gt 0 ]] || fail "no rule file under observability/prometheus/rules"
+  for file in "${files[@]}"; do
+    facts="$(rule_template_facts "${file}")"
+    mapfile -t seen < <(printf '%s\n' "${facts}" | awk -F'|' '$1=="rule"')
+    [[ ${#seen[@]} -gt 0 ]] || fail "$(basename "${file}") carries no rule, so it proved nothing"
+    if [[ -n ${facts} ]]; then
+      findings+="$(printf '%s\n' "${facts}" |
+        awk -F'|' '$1=="infix"{print $2" "$3" "$4": {"$5"}; "}')"
+    fi
+  done
+  assert_eq "no annotation or label template uses an infix operator" "" "${findings}"
 }
