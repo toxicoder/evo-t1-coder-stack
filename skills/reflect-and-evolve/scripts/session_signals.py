@@ -146,12 +146,47 @@ def as_int(doc: Dict[str, JsonValue], key: str) -> int:
     return 0
 
 
-def as_pct(doc: Dict[str, JsonValue], key: str) -> Optional[int]:
-    """Read the context window usage, a 0..1 ratio, as a whole percent."""
-    value = doc.get(key)
+def as_number(value: JsonValue) -> Optional[float]:
+    """Return the value as a float, or None unless it is a real, finite number.
+
+    The JSON parser answers the bare tokens `NaN`, `Infinity` and `-Infinity` with floats
+    that make `round()` raise ValueError and `int()` raise OverflowError, and an integer
+    literal can be wider than a float, so every number feeding the percent column is
+    screened here first. That is what keeps a hostile store from ending the run in a
+    traceback.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return int(round(float(value) * 100))
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    if not (float("-inf") < number < float("inf")):
+        return None
+    return number
+
+
+def as_pct(doc: Dict[str, JsonValue], key: str) -> Optional[int]:
+    """Read the context window usage as a whole percent, or None when it is unusable.
+
+    The store already writes `contextWindowUsage` as a percent (measured on 848 live
+    sessions: integers 0 to 75), so it is printed unmultiplied. Only when that key is
+    absent does the percent come from the token pair, and then only when both sides of it
+    are positive numbers; anything else is a gap in the data and prints as one.
+    """
+    if key in doc:
+        number = as_number(doc[key])
+        if number is None or number < 0:
+            return None
+        return int(round(number))
+    used = as_number(doc.get("contextTokensUsed"))
+    window = as_number(doc.get("contextWindowTokens"))
+    if used is None or window is None or used <= 0.0 or window <= 0.0:
+        return None
+    try:
+        return int(round(100.0 * used / window))
+    except (OverflowError, ValueError, ZeroDivisionError):
+        return None
 
 
 def as_str(doc: Dict[str, JsonValue], key: str) -> str:
@@ -207,7 +242,7 @@ def clean_title(raw: str) -> str:
     if not collapsed:
         return "-"
     if len(collapsed) > TITLE_MAX:
-        return collapsed[: TITLE_MAX - 2].rstrip() + ".."
+        return collapsed[:TITLE_MAX] + ".."
     return collapsed
 
 
@@ -242,6 +277,18 @@ def row_for(
         score=2 * toolfail + 2 * errors + regen + compaction,
         last_active=last_active,
     )
+
+
+def sort_key(row: Row) -> Tuple[int, int, float, str]:
+    """Score descending, then the more recent session first, then the id ascending.
+
+    The recency leg carries a flag ahead of the timestamp so a session with no usable
+    `last_active_at` sorts after every dated one at the same score, rather than colliding
+    with the epoch and jumping to the top; the id leg then makes the order total.
+    """
+    if row.last_active is None:
+        return (-row.score, 1, 0.0, row.sid)
+    return (-row.score, 0, -row.last_active.timestamp(), row.sid)
 
 
 def collect(
@@ -295,14 +342,9 @@ def collect(
 
     if seen == 0:
         report.note("no sessions for %s" % repo)
-    # Stable on purpose: the names arrive sorted, so a tie on score and recency keeps the
-    # ids in that order rather than in whatever order the directory came back in.
-    rows.sort(
-        key=lambda item: (
-            -(item.score),
-            -(item.last_active.timestamp() if item.last_active else 0.0),
-        )
-    )
+    # Stable on purpose: the names arrive sorted, so a tie that reaches the id leg keeps
+    # the sessions in that order rather than in whatever order the directory came back in.
+    rows.sort(key=sort_key)
     return rows
 
 
