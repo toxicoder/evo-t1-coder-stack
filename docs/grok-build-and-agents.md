@@ -1829,6 +1829,15 @@ It changes the seeds in this repo, never the copies a workspace booted with. Rep
 and not seeded into a workspace home: canonical at `skills/reflect-and-evolve/SKILL.md`, discovered through
 the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by `tests/bats/reflect-and-evolve-skill.bats`.
 
+`/reflect-and-evolve-repo` is its sibling against a different subject: where `/reflect-and-evolve` improves
+the agent setup, this one reviews past work in *this repository* and turns what it finds into planned
+improvements to code, project conventions, scripts, docs and configs. It reads the same ranked `signals.json`
+table through the same bundled `skills/reflect-and-evolve/scripts/session_signals.py`, which stays the only
+sanctioned way into `~/.grok/sessions/`, and it adds what a repo run has and a session run does not: git
+history, and the repo's own tooling and gate. Repo-scoped like `/trunk-refactor` and not seeded into a
+workspace home: canonical at `skills/reflect-and-evolve-repo/SKILL.md`, discovered through the
+`.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink, pinned by `tests/bats/reflect-and-evolve-repo-skill.bats`.
+
 ### What this is not
 
 Coder Agents is control-plane-native. This stack does not wrap Grok Build: the wiring

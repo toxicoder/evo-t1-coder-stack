@@ -4,7 +4,8 @@ description: "Thoroughly review past Grok Build sessions and implement well-plan
 when-to-use: "Use when the user asks to reflect and evolve, to review past sessions and
   improve yourself, to evolve the agent / AGENTS.md / skills based on what we've learned, or to
   make the system better from previous work, and after a long or difficult session when the
-  user wants the setup improved."
+  user wants the setup improved. For the repository itself - its code, project conventions,
+  scripts, docs and configs - use /reflect-and-evolve-repo."
 argument-hint: "[repo-path] [--since <days>] [--dry-run]"
 compatibility: "Requires python3 for the session sweeper and read access to
   `~/.grok/sessions/` for the evidence; what it changes is gated by the repository's own gate
