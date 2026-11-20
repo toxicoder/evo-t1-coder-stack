@@ -2,8 +2,12 @@
 
 `sparks.json` lives here and is the only file this directory ever holds. Prometheus
 reads it through `file_sd_configs` (`observability/prometheus/prometheus.yml` names
-`targets/sparks.json`, and compose bind-mounts this directory at that path) for the
-`spark-node`, `blackbox-spark` and `blackbox-spark-models` jobs.
+`/etc/spark-targets/sparks.json`, and compose bind-mounts this directory at that
+path) for the `spark-node`, `blackbox-spark` and `blackbox-spark-models` jobs.
+That mount is a sibling of `/etc/prometheus` rather than a directory under it:
+runc creates a mountpoint with mkdirat, and inside the read-only
+`/etc/prometheus` bind that fails, which stops the container before Prometheus
+starts.
 
 It is generated on the stack host and is gitignored, because it names the Spark
 boxes by hostname:

@@ -862,11 +862,11 @@ services:
       # The Spark fleet's scrape targets, which are generated on this host by
       # `bazelisk run //scripts:spark-monitor -- --targets > \
       # observability/spark-targets/sparks.json` and are gitignored because they name
-      # the boxes. This nests inside the mount above so prometheus.yml can keep
-      # naming `targets/sparks.json` the way it names `rules/*.rules.yml`, while the
-      # generated file stays out of the reviewed config tree. A host that has not
-      # enrolled any Spark has no file here, and file_sd reads that as zero Sparks.
-      - ./observability/spark-targets:/etc/prometheus/targets:ro
+      # the boxes. The destination is a sibling of the mount above, not under it:
+      # runc creates a mountpoint with mkdirat, and inside the read-only parent that
+      # call fails, so a nested destination stops the container before it starts.
+      # Prometheus therefore names this path absolutely, /etc/spark-targets/...
+      - ./observability/spark-targets:/etc/spark-targets:ro
       - prometheus-data:/prometheus
     # This image keeps its busybox shell (the -distroless and -busybox variants are
     # separate tags), so a real probe is available here and on grafana below. The
