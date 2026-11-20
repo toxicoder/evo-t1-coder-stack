@@ -79,7 +79,7 @@ fi
 # own six. The stem is the name the skill's prompt names, and the [subagents.models] pin in
 # grok-config.toml.tftpl routes it onto the writers' lane.
 if writable "$HOME/.grok/agents/documenter.md"; then
-  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/agents"
   cat >"$HOME/.grok/agents/documenter.md" <<'DOCUMENTER_AGENT_MD_EOF'
 ${documenter_agent}
 DOCUMENTER_AGENT_MD_EOF

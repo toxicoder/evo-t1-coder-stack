@@ -678,8 +678,8 @@ assert_link_to() {
       '^if ! \[ -L "\$HOME/\.grok/agents/'"${name}"'\.md" \][[:space:]]*\\$'
     assert_contains_file "${name} guard asks the marker first" "${SEED}" \
       "grep -qs 'managed-by: evo-t1-coder-stack' \"\\\$HOME/\.grok/agents/${name}\.md\""
-    assert_contains_file "${name} agents dir is created" "${SEED}" \
-      'mkdir -p "\$HOME/\.grok/agents" 2>/dev/null'
+    assert_contains_file "${name} agents dir is made writable" "${SEED}" \
+      'boot_ensure_dir "\$HOME/\.grok/agents"'
     assert_contains_file "${name} is written into the agents home" "${SEED}" \
       'cat >"\$HOME/\.grok/agents/'"${name}"'\.md" '"$(hdoc_open)"
 
@@ -717,8 +717,8 @@ assert_link_to() {
       '^if ! \[ -L "\$HOME/\.grok/personas/'"${name}"'\.toml" \][[:space:]]*\\$'
     assert_contains_file "${name} guard asks the marker first" "${SEED}" \
       "grep -qs 'managed-by: evo-t1-coder-stack' \"\\\$HOME/\.grok/personas/${name}\.toml\""
-    assert_contains_file "${name} personas dir is created" "${SEED}" \
-      'mkdir -p "\$HOME/\.grok/personas" 2>/dev/null'
+    assert_contains_file "${name} personas dir is made writable" "${SEED}" \
+      'boot_ensure_dir "\$HOME/\.grok/personas"'
     assert_contains_file "${name} is written into the personas home" "${SEED}" \
       'cat >"\$HOME/\.grok/personas/'"${name}"'\.toml" '"$(hdoc_open)"
 

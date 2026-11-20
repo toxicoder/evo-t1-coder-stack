@@ -22,12 +22,16 @@ boot_stage 1 "the orchestration rulebook"
 # what an operator reads when the rulebook is missing.
 if [ ! -f "$HOME/.grok/AGENTS.md" ] \
    || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/AGENTS.md"; then
-  mkdir -p "$HOME/.grok" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok"
   boot_phase "writing $HOME/.grok/AGENTS.md from the seed"
   cat >"$HOME/.grok/AGENTS.md" <<'GROK_AGENTS_EOF'
 ${grok_build_agents}
 GROK_AGENTS_EOF
-  boot_ok "the rulebook is in place at ~/.grok/AGENTS.md"
+  if [ -s "$HOME/.grok/AGENTS.md" ]; then
+    boot_ok "the rulebook is in place at ~/.grok/AGENTS.md"
+  else
+    boot_err "$HOME/.grok/AGENTS.md did not land: every agent in this workspace boots with no rulebook"
+  fi
 else
   boot_note "left ~/.grok/AGENTS.md alone: its owner deleted the stack marker"
 fi

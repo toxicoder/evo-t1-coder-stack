@@ -1194,3 +1194,93 @@ grok_wait() {
     echo "the sweep left a dead pane: $(TXA list-panes -a)" >&2; return 1; }
   TXA kill-server 2>/dev/null || true
 }
+
+# --- the launcher body against a HOME it cannot write -------------------------
+#
+# settings.json points both terminal profiles at `exec "$HOME/.grok/bin/<launcher>"`, so
+# a launcher that never landed is a tab that dies with "The terminal process ...
+# terminated with exit code: 127" and says nothing about why. The body writes those two
+# files, and it writes them into ~/.grok -- the directory the Docker daemon leaves
+# root-owned whenever the per-owner Grok volume mount points under it are new. The
+# startup script that repairs that ownership starts in the same concurrent errgroup as
+# this body, so the body meets the locked directory. These two tests drive the rendered
+# body against exactly that, with chown(8) and sudo(8) stubbed so the repair is observed
+# rather than actually performed on this account.
+
+# launchers_stub <ok|fail> -- a bin/ with sudo and chown; `ok` makes the directory it is
+# handed writable, `fail` refuses the way an unprivileged boot does.
+launchers_stub() {
+  local mode="${1:-}" bin="${BATS_TEST_TMPDIR}/stub-bin"
+  mkdir -p "${bin}"
+  printf '%s\n' '#!/bin/sh' 'exec "$@"' >"${bin}/sudo"
+  if [ "${mode}" = "ok" ]; then
+    printf '%s\n' '#!/bin/sh' 'chmod u+rwx "$2"' 'exit 0' >"${bin}/chown"
+  else
+    printf '%s\n' '#!/bin/sh' 'exit 1' >"${bin}/chown"
+  fi
+  chmod 755 "${bin}/sudo" "${bin}/chown"
+  printf '%s\n' "${bin}"
+}
+
+# launchers_body <home> -- render the shipped body the way main.tf does and hand back its
+# path; the two payloads go in as markers, since byte parity is the suite's other tests.
+launchers_body() {
+  local home="${1:-}" rendered="${BATS_TEST_TMPDIR}/launchers.sh"
+  [ -n "${home}" ] || { echo "launchers_body: <home>" >&2; return 1; }
+  rm -rf "${home}"
+  mkdir -p "${home}/.grok"
+  chmod 555 "${home}/.grok"
+  bats_render_tftpl \
+    "${REPO_ROOT}/templates/common/terminal-launchers.sh.tftpl" \
+    "${rendered}" \
+    grok_build_terminal=EVO_GROK_LAUNCHER_MARKER \
+    vscode_terminal_tmux=EVO_TMUX_LAUNCHER_MARKER || return 1
+  printf '%s\n' "${rendered}"
+}
+
+@test "terminal launchers: a locked ~/.grok still receives both launchers" {
+  local home bin body
+  home="${BATS_TEST_TMPDIR}/home"
+  body="$(launchers_body "${home}")" || return 1
+  bin="$(launchers_stub ok)" || return 1
+  run env PATH="${bin}:${PATH}" HOME="${home}" sh "${body}"
+  [ "${status}" -eq 0 ] || {
+    echo "the body exited ${status}: ${output}" >&2; return 1; }
+  printf '%s\n' "${output}" |
+    grep -q '^summary: 2 ok, 0 warnings, 0 failed ' || {
+    echo "the launchers did not both land: ${output}" >&2; return 1; }
+  local f
+  for f in grok-build-terminal vscode-terminal-tmux; do
+    [ -x "${home}/.grok/bin/${f}" ] || {
+      echo "~/.grok/bin/${f} is not executable" >&2; return 1; }
+    grep -q 'EVO_' "${home}/.grok/bin/${f}" || {
+      echo "~/.grok/bin/${f} holds no payload bytes" >&2; return 1; }
+  done
+}
+
+@test "terminal launchers: a launcher that cannot land is an error: line, not a green summary" {
+  # The regression this pins is the silence: before the body checked its own output, this
+  # same run printed "ok: vscode-terminal-tmux is in place" twice and closed at
+  # "summary: 2 ok, 0 warnings, 0 failed" while writing nothing, and the operator found
+  # out from a terminal that would not open.
+  local home bin body
+  home="${BATS_TEST_TMPDIR}/home"
+  body="$(launchers_body "${home}")" || return 1
+  bin="$(launchers_stub fail)" || return 1
+  run env PATH="${bin}:${PATH}" HOME="${home}" sh "${body}"
+  # Three failures, one per thing the boot was refused: the directory, then each of the
+  # two files that could not be written into it.
+  printf '%s\n' "${output}" |
+    grep -q '^summary: 0 ok, 0 warnings, 3 failed ' || {
+    echo "the failed writes went uncounted: ${output}" >&2; return 1; }
+  local f
+  for f in grok-build-terminal vscode-terminal-tmux; do
+    printf '%s\n' "${output}" |
+      grep -q "error: .*${f} did not land" || {
+      echo "no error: named the missing ${f}: ${output}" >&2; return 1; }
+    printf '%s\n' "${output}" | grep -q "${f}.*exits 127" || {
+      echo "the ${f} failure never said what the operator sees: ${output}" >&2; return 1; }
+    [ ! -e "${home}/.grok/bin/${f}" ] || {
+      echo "${f} landed in a directory the boot was refused" >&2; return 1; }
+  done
+}

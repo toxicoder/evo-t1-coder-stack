@@ -72,7 +72,7 @@ boot_stage 2 "the manifest"
 if ! [ -L "$HOME/.grok/hooks/evo-t1-hooks.json" ] \
    && { [ ! -f "$HOME/.grok/hooks/evo-t1-hooks.json" ] \
         || grep -qs '"__evoT1Stack": true' "$HOME/.grok/hooks/evo-t1-hooks.json"; }; then
-  mkdir -p "$HOME/.grok/hooks" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/hooks"
   cat >"$HOME/.grok/hooks/evo-t1-hooks.json" <<'EVO_T1_HOOKS_JSON_EOF'
 ${evo_t1_hooks_json}
 EVO_T1_HOOKS_JSON_EOF
@@ -91,7 +91,7 @@ boot_stage 3 "the four guards and the deny list"
 if ! [ -L "$HOME/.grok/hooks/bin/secret-guard.sh" ] \
    && { [ ! -f "$HOME/.grok/hooks/bin/secret-guard.sh" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/secret-guard.sh"; }; then
-  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/hooks/bin"
   cat >"$HOME/.grok/hooks/bin/secret-guard.sh" <<'SECRET_GUARD_EOF'
 ${secret_guard_sh}
 SECRET_GUARD_EOF
@@ -108,7 +108,7 @@ fi
 if ! [ -L "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" ] \
    && { [ ! -f "$HOME/.grok/hooks/bin/dangerous-command-guard.sh" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/dangerous-command-guard.sh"; }; then
-  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/hooks/bin"
   cat >"$HOME/.grok/hooks/bin/dangerous-command-guard.sh" <<'DANGEROUS_COMMAND_GUARD_EOF'
 ${dangerous_command_guard_sh}
 DANGEROUS_COMMAND_GUARD_EOF
@@ -125,7 +125,7 @@ fi
 if ! [ -L "$HOME/.grok/hooks/bin/post-edit-format.sh" ] \
    && { [ ! -f "$HOME/.grok/hooks/bin/post-edit-format.sh" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/post-edit-format.sh"; }; then
-  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/hooks/bin"
   cat >"$HOME/.grok/hooks/bin/post-edit-format.sh" <<'POST_EDIT_FORMAT_EOF'
 ${post_edit_format_sh}
 POST_EDIT_FORMAT_EOF
@@ -142,7 +142,7 @@ fi
 if ! [ -L "$HOME/.grok/hooks/bin/selective-test-runner.sh" ] \
    && { [ ! -f "$HOME/.grok/hooks/bin/selective-test-runner.sh" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/selective-test-runner.sh"; }; then
-  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/hooks/bin"
   cat >"$HOME/.grok/hooks/bin/selective-test-runner.sh" <<'SELECTIVE_TEST_RUNNER_EOF'
 ${selective_test_runner_sh}
 SELECTIVE_TEST_RUNNER_EOF
@@ -163,7 +163,7 @@ fi
 if ! [ -L "$HOME/.grok/hooks/bin/deny-patterns.txt" ] \
    && { [ ! -f "$HOME/.grok/hooks/bin/deny-patterns.txt" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/hooks/bin/deny-patterns.txt"; }; then
-  mkdir -p "$HOME/.grok/hooks/bin" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/hooks/bin"
   cat >"$HOME/.grok/hooks/bin/deny-patterns.txt" <<'DENY_PATTERNS_EOF'
 ${deny_patterns_txt}
 DENY_PATTERNS_EOF
