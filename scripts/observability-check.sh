@@ -1060,6 +1060,12 @@ check_data_flow() {
     while IFS=$'\t' read -r _ job status; do
       [ -n "${job}" ] || continue
       warn "prometheus target job '${job}' reports '${status}', not up: its panel will be empty"
+      # Both ways the litellm scrape goes red are the bearer file: Prometheus
+      # could not read it, or what it holds is not the key the proxy answers with.
+      # Metrics auth stays on either way, so it is never offered as the fix.
+      if [ "${job}" = "litellm" ]; then
+        warn "the litellm scrape reads its bearer from /etc/prometheus-secrets/litellm_token in the prometheus container: check that the file exists there, and that compose rendered configs.litellm_metrics_token from the same LITELLM_MASTER_KEY the proxy has"
+      fi
     done <<<"${down_lines}"
   fi
 

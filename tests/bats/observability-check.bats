@@ -819,6 +819,38 @@ assert_summary_is_last_line() {
   assert_summary_is_last_line
 }
 
+@test "a red litellm target names the token file and the config that fills it" {
+  write_env_file "${SCRATCH}/litellm-down.env"
+  write_targets_body "${SCRATCH}/targets-litellm-down.json" up down
+  stub_prometheus "${SCRATCH}/targets-litellm-down.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/litellm-down.env"
+  assert_eq "a red target with a cause still exits 0" 0 "${status}"
+  assert_match "the down job is still named on its own line" \
+    "warning: prometheus target job 'litellm' reports 'down', not up" "${output}"
+  assert_match "the finding names the token file and where it lives" \
+    'warning: the litellm scrape reads its bearer from /etc/prometheus-secrets/litellm_token in the prometheus container' "${output}"
+  assert_match "the finding names the compose entry that renders it" \
+    'configs\.litellm_metrics_token from the same LITELLM_MASTER_KEY the proxy has' "${output}"
+  assert_match "a red target is still no failure" \
+    '^summary: [0-9]+ ok, [0-9]+ warnings, 0 failed$' "${output}"
+  assert_not_match "metrics auth is never offered as the fix" \
+    'require_auth_for_metrics_endpoint' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a red target from another job does not blame the token file" {
+  write_env_file "${SCRATCH}/prom-down.env"
+  write_targets_body "${SCRATCH}/targets-prom-down.json" down up
+  stub_prometheus "${SCRATCH}/targets-prom-down.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/prom-down.env"
+  assert_eq "a red target is still a warning, not a failure" 0 "${status}"
+  assert_match "the red job is named" \
+    "warning: prometheus target job 'prometheus' reports 'down', not up" "${output}"
+  assert_not_match "the token file is not mentioned for a job that has none" \
+    '/etc/prometheus-secrets/litellm_token' "${output}"
+  assert_summary_is_last_line
+}
+
 @test "failed samples to Mimir are a warning that names the counter" {
   write_env_file "${SCRATCH}/push.env"
   printf '%s\n' \
