@@ -51,7 +51,7 @@
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 0 },
       "options": {
         "mode": "markdown",
-        "content": "Every number here is LiteLLM's own prometheus callback (`callbacks: [prometheus]` in `litellm/config.yaml`), scraped from `litellm:4000/metrics` by the `litellm` job in `observability/prometheus/prometheus.yml`, which sends `authorization: Bearer $(LITELLM_MASTER_KEY)` because the proxy guards `/metrics` the same way it guards every other route. So a page of No data is a scrape problem before it is an inference problem: a wrong or unset master key 401s that one target, and a proxy that has served nothing yet simply has no series to show."
+        "content": "Every number here is LiteLLM's own prometheus callback (`callbacks: [prometheus]` in `litellm/config.yaml`), scraped from `litellm:4000/metrics` by the `litellm` job in `observability/prometheus/prometheus.yml`, which presents the master key as a bearer it reads from the file `/etc/prometheus-secrets/litellm_token` (Compose writes that file from `LITELLM_MASTER_KEY`, and Prometheus substitutes no variable of its own) because the proxy guards `/metrics` the same way it guards every other route. So a page of No data is a scrape problem before it is an inference problem: a token file that is missing, or that holds a key the proxy no longer answers with, 401s that one target - the body reads `No connected db.`, which is the wrong-token branch of LiteLLM's auth path and not a database fault - and a proxy that has served nothing yet simply has no series to show."
       }
     },
     {

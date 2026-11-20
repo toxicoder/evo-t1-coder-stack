@@ -272,9 +272,11 @@ groups:
           description: "The router still lists the deployment, but it has recorded no request in 10m. Either the serving box stopped answering or it was removed from the model group without the router noticing."
 
       # The whole proxy going silent, kept separate from the per-backend gap
-      # above: a missing LITELLM_MASTER_KEY in the scrape's environment 401s this
-      # target (see the litellm job in prometheus.yml) and lands here, not on the
-      # backend alert.
+      # above: the litellm scrape authenticates from a file, and a target that
+      # answers 401 (the file is absent, or it holds a key the proxy no longer
+      # answers with - see the litellm job in prometheus.yml) lands here, not on
+      # the backend alert. The scrape's environment holds no key to go missing:
+      # Compose writes the file when it creates the container.
       - alert: LiteLLMMetricsAbsent
         expr: absent(litellm_request_total_latency_metric_count)
         for: 5m
