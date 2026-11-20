@@ -55,8 +55,8 @@ alerting:
         - targets: ["alertmanager:9093"]
       # Alertmanager is on the same profile as this service, so the pair comes up
       # together; the timeout keeps a restarting Alertmanager from stalling the
-      # notification queue. There is no alert cap to set on this side: v3.16.0
-      # decodes this block strictly and an unknown key fails the whole config.
+      # queue, which the notifier bounds by dropping when it fills. There is no
+      # cap to set here: v3.16.0 has no such key, and promtool refuses the config.
       timeout: 10s
 
 scrape_configs:

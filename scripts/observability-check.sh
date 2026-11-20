@@ -207,8 +207,8 @@ OBS_DASHBOARD_DIR="observability/grafana/dashboards"
 # The file-SD document the three Spark jobs read their targets from
 # (observability/prometheus/prometheus.yml:149,171,195), which compose binds
 # read-only into Prometheus at /etc/spark-targets (docker-compose.yml:869), a
-# sibling of the /etc/prometheus bind: runc cannot mkdir inside a read-only
-# parent. Generated, never shipped, so absence is an unenrolled fleet on disk.
+# sibling of the /etc/prometheus bind: runc cannot mkdir a nested mountpoint the
+# read-only parent does not carry. Generated, so absence is an unenrolled fleet.
 OBS_SPARK_TARGETS_JSON="observability/spark-targets/sparks.json"
 
 # The Grafana verb that lists the provisioned dashboards. type=dash-db is the
