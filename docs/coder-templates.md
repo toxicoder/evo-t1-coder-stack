@@ -914,11 +914,12 @@ and is read by nothing in the workspace: see
    the workspace user so their git credentials are consulted, and refuses to touch an
    existing non-empty non-git folder there. An empty pre-created target still clones.
 8. **Starts the out-of-band session archive mirror** (boot stage 9). It chowns
-   `/var/lib/grok-session-archive` to the home owner, then leaves a backgrounded `while`
-   loop that `rsync`s `~/.grok/sessions/` into `workspaces/$(hostname)/` every 180
-   seconds, without `--delete`, for the life of the container. Best-effort and invisible
-   to the CLI: nothing in the workspace reads the volume back, and the hooks deny list
-   refuses an agent command that names it. See
+   `/var/lib/grok-session-archive` to the home owner, folds the container hostname into a
+   safe leaf name under `workspaces/`, then leaves a backgrounded loop that `rsync`s
+   `~/.grok/sessions/` into that leaf every 180 seconds, without `--delete`, for the life
+   of the container. `flock -n` keeps it to one loop per leaf across repeated starts.
+   Best-effort and invisible to the CLI: nothing in the workspace reads the volume back,
+   and the hooks deny list refuses an agent command that names it. See
    [the out-of-band session archive](grok-build-and-agents.md#the-out-of-band-session-archive).
 
 The repository leaf is derived the same way in `main.tf` and in `startup.sh.tftpl`:

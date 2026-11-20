@@ -1239,11 +1239,18 @@ workspace on that daemon mounts the same volume, each writing under its own
   names it and reuses it afterwards.
 - The copy is made by a background `rsync` that stage 9 of `startup.sh.tftpl` starts
   and leaves running for the life of the container: every 180 seconds it mirrors
-  `~/.grok/sessions/` into `workspaces/$(hostname)/`, skipping `*.tmp` and `*.lock`. It
+  `~/.grok/sessions/` into `workspaces/<leaf>/`, skipping `*.tmp` and `*.lock`. It
   runs without `--delete`, so a session pruned from the live tree keeps its archived
-  copy. The stage is best-effort: it warns and carries on when the archive is not
-  writable, and re-tests for the sessions directory each tick because the CLI creates
+  copy. `flock -n` on a per-leaf lock file in the volume root is what keeps the stage
+  idempotent: Coder re-runs the startup body on every start, and a second loop over the
+  same leaf would only double the write rate. The stage is best-effort: it warns and
+  carries on when the volume root or the leaf is not writable, or when `flock` is
+  missing, and re-tests for the sessions directory each tick because the CLI creates
   that directory on its first run, which can be long after boot.
+- The leaf is the container hostname with anything outside `[A-Za-z0-9._-]` folded to
+  `-`, so a name carrying a slash cannot write outside `workspaces/` and an empty one
+  cannot collapse every workspace into a single mirror. The sanctioned reader accepts
+  exactly that character set, so the write side and the read side agree.
 - A fresh named volume arrives `root:root` while the agent runs as `coder`, so the
   stage chowns the mount point to the home owner first, exactly as the `~/.grok` and
   `~/.shared` volumes above do.
@@ -1251,13 +1258,21 @@ workspace on that daemon mounts the same volume, each writing under its own
   the rulebook, and Coder's session management know about; no config key and no startup
   logic points at the archive, and the hooks deny list
   (`templates/common/hooks.deny-patterns.txt`) refuses any agent command that names the
-  path or the volume. The point is a copy an operator can inspect later, from the host,
-  after the workspace that made it is gone.
-- Read it out-of-band with `bazelisk run //scripts:session-archive -- list`, or
-  directly: `docker run --rm -v grok-session-archive:/archive:ro alpine ls
-  /archive/workspaces`. There is no pruning: the volume grows until an operator
-  truncates or removes it (`docker volume rm grok-session-archive` after every
-  workspace using it is stopped).
+  path, the volume, or a globbed form of either. The point is a copy an operator can
+  inspect later, from the host, after the workspace that made it is gone.
+- Read it with `bazelisk run //scripts:session-archive -- list`. Every verb mounts the
+  volume read-only, so the reader cannot write it either, and there is no pruning verb:
+  the volume grows until an operator removes it. The raw `docker run -v <volume>:ro` and
+  `docker volume rm <volume>` forms are host-shell commands, and the same deny list that
+  protects the archive from a workspace agent refuses them there - run them in a host
+  shell, not from an agent prompt.
+- One consequence of the volume being host-wide rather than per-owner: the leaf is named
+  for the workspace, and Coder workspace names are unique per organization. Two owners
+  who both call a workspace `dev` mirror into the same `workspaces/dev`, and every
+  workspace user is uid 1000, so nothing on the filesystem separates them inside the
+  volume. That is acceptable for the archive's only purpose - an operator reading their
+  own box's history - and is why no agent is ever given a route to it. Give the leaf an
+  owner component if a box ever holds more than one trusted operator's sessions.
 
 ### Caveats, honestly
 
