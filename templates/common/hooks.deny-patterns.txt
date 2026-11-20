@@ -139,6 +139,16 @@ docker[[:space:]]+rm[[:space:]]+[^|;]*(coder|litellm|searxng|kasm|homepage|herme
 # a total one, and no workspace task needs it.
 chmod[[:space:]]+(-[[:graph:]]+[[:space:]]+)*0*777[[:space:]]+/([[:space:]]|$)
 
+# --- the out-of-band session archive --------------------------------------------
+# /var/lib/grok-session-archive is a long-term rsync target the workspace boot writes
+# on its own. An agent has no reason to touch it: the live session tree it mirrors is
+# ~/.grok/sessions, and reading the copy would mean an agent auditing its own parent
+# session out from under that session. Both spellings are denied -- the container path
+# and the volume name -- because `docker run -v grok-session-archive:/a` reaches the same
+# bytes without ever naming the path. The host-side operator CLI is //scripts:session-archive,
+# whose own name carries no "grok-" prefix and so stays reachable.
+(/var/lib/grok-session-archive|grok-session-archive)
+
 # --- the credential chain -----------------------------------------------------------
 # GitHub auth has exactly one entry point in this stack, and each of these was tried in
 # a past session, cost turns, and fixed nothing. See the GitHub auth section of the
