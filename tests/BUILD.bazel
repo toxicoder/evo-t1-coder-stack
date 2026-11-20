@@ -493,6 +493,10 @@ _SUITE_PAYLOAD = {
         "//:devcontainer",
         "//:templates_payload",
     ],
+    # Every fact this suite drives comes through the docker stub it writes itself and a
+    # fixture directory standing in for the volume; the CLI under test opens no payload
+    # file, so nothing is declared and //:compose_file arrives by inheritance from it.
+    "session-archive.bats": [],
     "setup-host.bats": [
         "//images/dev:tool_versions",
     ],
