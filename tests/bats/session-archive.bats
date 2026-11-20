@@ -278,3 +278,189 @@ docker_argv() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"ok:"* ]]
 }
+
+@test "session-archive: list separates a dead container from an empty archive" {
+  # Both print no rows, and only one of them means "nobody has booted yet".
+  STUB_RUN_RC=125 run bash "${SCRIPT}" list
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"the archive container did not run"* ]]
+  [[ "${output}" != *"never booted"* ]]
+}
+
+@test "session-archive: export refuses a destination that starts with a dash" {
+  # It reaches mkdir and tar, so the contract is a usage error at 2 rather than whatever
+  # option parser trips inside mkdir.
+  run bash "${SCRIPT}" export ws-alice '-dest'
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"refusing a destination"* ]]
+  [ ! -s "${STUB_LOG}/docker" ]
+}
+
+# --- the two template twins -------------------------------------------------------
+# The CLI above is the reader; the writer half of the feature is the mount in main.tf
+# and the mirror in startup.sh.tftpl, and neither has a docker stub to hide behind.
+# These read the twins as text, the way grok-profile.bats pins every other mount.
+
+# twin <workspace|devcontainer> <file> - the twin's own copy of a template file.
+twin() {
+  local path="${REPO_ROOT}/templates/${1}/${2}"
+  # Failing here rather than letting grep report "No such file" keeps the diagnosis on
+  # the twin that lost the file, which is the failure this feature is most exposed to.
+  [ -f "${path}" ] || {
+    printf 'templates/%s/%s is not in the tree\n' "${1}" "${2}" >&2
+    return 1
+  }
+  printf '%s\n' "${path}"
+}
+
+@test "session-archive: both twins mount the archive read-write outside .grok" {
+  local twin mf
+  for twin in workspace devcontainer; do
+    mf="$(twin "${twin}" main.tf)"
+    grep -q 'container_path = "/var/lib/grok-session-archive"' "${mf}" || {
+      printf '%s does not mount the archive outside ~/.grok\n' "${twin}" >&2
+      return 1
+    }
+    grep -q 'volume_name    = "grok-session-archive"' "${mf}" || {
+      printf '%s does not name the host-wide volume\n' "${twin}" >&2
+      return 1
+    }
+    # Read-write: the boot mirror is the only writer, and it writes from inside.
+    grep -A2 'container_path = "/var/lib/grok-session-archive"' "${mf}" |
+      grep -q 'read_only      = false' || {
+      printf '%s mounts the archive read-only, so nothing can write it\n' "${twin}" >&2
+      return 1
+    }
+  done
+}
+
+@test "session-archive: the volume is referenced by name, never declared as a resource" {
+  # A declared docker_volume would be one resource per workspace and would make a stop
+  # fail with "volume is in use" against a sibling workspace. Same reason the per-owner
+  # volumes are plain strings.
+  local twin mf
+  for twin in workspace devcontainer; do
+    mf="$(twin "${twin}" main.tf)"
+    ! grep -q 'resource "docker_volume" "session_archive"' "${mf}" || {
+      printf '%s declares the archive as a docker_volume resource\n' "${twin}" >&2
+      return 1
+    }
+  done
+}
+
+@test "session-archive: the mount does not disturb how .grok/sessions is mounted" {
+  # The whole point of the archive is that the live session tree is untouched: the three
+  # state concerns still arrive from the one dynamic block on their owner volumes.
+  local twin mf concern
+  for twin in workspace devcontainer; do
+    mf="$(twin "${twin}" main.tf)"
+    for concern in notes memory sessions; do
+      grep -q "{ path = \"/home/coder/.grok/${concern}\", name = local.grok_${concern}_volume, ro = false }" "${mf}" || {
+        printf '%s no longer mounts ~/.grok/%s on its owner volume\n' "${twin}" "${concern}" >&2
+        return 1
+      }
+    done
+    grep -q 'for_each = local.grok_profile_shared ? \[' "${mf}" || {
+      printf '%s lost the shared-mode gate on the state mounts\n' "${twin}" >&2
+      return 1
+    }
+  done
+}
+
+@test "session-archive: the boot stage mirrors safely and stays one loop" {
+  local twin body
+  for twin in workspace devcontainer; do
+    body="$(sed -n '/^# --- Session archive/,/^boot_summary$/p' "$(twin "${twin}" startup.sh.tftpl)")"
+    printf '%s' "${body}" | grep -q '^boot_stage 9 "session archive"$' || {
+      printf '%s has no stage 9\n' "${twin}" >&2
+      return 1
+    }
+    grep -q 'boot_begin "workspace startup" 9' "$(twin "${twin}" startup.sh.tftpl)" || {
+      printf '%s still tells the boot log it has 8 stages\n' "${twin}" >&2
+      return 1
+    }
+    printf '%s' "${body}" | grep -q 'rsync -a --exclude="\*\.tmp" --exclude="\*\.lock"' || {
+      printf '%s does not exclude the transient files\n' "${twin}" >&2
+      return 1
+    }
+    # No --delete is the requirement: an archived session survives the live tree pruning
+    # it, which is the only reason a second copy of session history exists. Comments are
+    # stripped first, because the stage explains in prose why the flag is absent.
+    if printf '%s' "${body}" | grep -v '^[[:space:]]*#' | grep -q -- '--delete'; then
+      printf '%s runs rsync with --delete and would prune archived history\n' "${twin}" >&2
+      return 1
+    fi
+    printf '%s' "${body}" | grep -q 'sleep 180' || {
+      printf '%s has lost its tick interval\n' "${twin}" >&2
+      return 1
+    }
+    printf '%s' "${body}" | grep -q 'flock -n' || {
+      printf '%s has no single-instance lock, so every start leaks another mirror\n' "${twin}" >&2
+      return 1
+    }
+    # The lock file is created in the volume root, so the gate has to test that too: a
+    # root the agent cannot write leaves flock failing after the stage said ok:.
+    printf '%s' "${body}" | grep -q '! -w "$ARCHIVE"' || {
+      printf '%s reports a mirror it cannot lock\n' "${twin}" >&2
+      return 1
+    }
+    printf '%s' "${body}" | grep -q '! -w "$DEST"' || {
+      printf '%s reports a mirror it cannot write\n' "${twin}" >&2
+      return 1
+    }
+    printf '%s' "${body}" | grep -q "HOME/.grok/sessions" || {
+      printf '%s does not mirror the live sessions tree\n' "${twin}" >&2
+      return 1
+    }
+  done
+}
+
+@test "session-archive: the leaf the boot writes is a name the reader accepts" {
+  # The adversary's finding: the write side took $(hostname) raw while validate_leaf
+  # refused anything but one [A-Za-z0-9._-] segment, so a hostname could write a leaf
+  # this CLI would never read - or write outside workspaces/ entirely.
+  local twin body sanitizer
+  for twin in workspace devcontainer; do
+    body="$(sed -n '/^# --- Session archive/,/^boot_summary$/p' "$(twin "${twin}" startup.sh.tftpl)")"
+    sanitizer="$(printf '%s' "${body}" | grep 'ARCHIVE_LEAF=' | head -1)"
+    if [ -z "${sanitizer}" ]; then
+      printf '%s builds no leaf name at all\n' "${twin}" >&2
+      return 1
+    fi
+    printf '%s' "${sanitizer}" | grep -q "tr -c 'A-Za-z0-9._-' '-'" || {
+      printf '%s folds a different character set than validate_leaf accepts\n' "${twin}" >&2
+      return 1
+    }
+    # The empty fold has to land somewhere that is not the bare workspaces/ directory.
+    printf '%s' "${body}" | grep -q 'ARCHIVE_LEAF="unknown"' || {
+      printf '%s lets an empty hostname collapse every workspace into one leaf\n' "${twin}" >&2
+      return 1
+    }
+  done
+  # And the fold really does produce a name validate_leaf admits.
+  local hostile leaf
+  for hostile in 'evil/../peer' 'a b' 'h/u/s/t' ''; do
+    leaf="$(printf '%s' "${hostile}" | tr -c 'A-Za-z0-9._-' '-' | sed 's/[-_.]*$//')"
+    [ -n "${leaf}" ] || leaf="unknown"
+    run bash "${SCRIPT}" show "${leaf}"
+    [[ "${output}" != *"one path segment"* ]] || {
+      printf 'the reader refuses the leaf the boot wrote for %s: %s\n' "${hostile}" "${leaf}" >&2
+      return 1
+    }
+  done
+}
+
+@test "session-archive: the two twins agree on the mount and the stage" {
+  # templates/workspace and templates/devcontainer keep independent payload copies, and
+  # this feature is only correct if both got it.
+  diff <(sed -n '/A secondary, long-term archive/,/^  }$/p' "$(twin workspace main.tf)") \
+    <(sed -n '/A secondary, long-term archive/,/^  }$/p' "$(twin devcontainer main.tf)") || {
+    printf 'the archive mount differs between the twins\n' >&2
+    return 1
+  }
+  diff <(sed -n '/^# --- Session archive/,/^boot_summary$/p' "$(twin workspace startup.sh.tftpl)") \
+    <(sed -n '/^# --- Session archive/,/^boot_summary$/p' "$(twin devcontainer startup.sh.tftpl)") || {
+    printf 'the archive boot stage differs between the twins\n' >&2
+    return 1
+  }
+}

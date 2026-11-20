@@ -493,10 +493,12 @@ _SUITE_PAYLOAD = {
         "//:devcontainer",
         "//:templates_payload",
     ],
-    # Every fact this suite drives comes through the docker stub it writes itself and a
-    # fixture directory standing in for the volume; the CLI under test opens no payload
-    # file, so nothing is declared and //:compose_file arrives by inheritance from it.
-    "session-archive.bats": [],
+    # The CLI half runs against the docker stub and a fixture tree; the twin half reads
+    # main.tf and startup.sh.tftpl as text, the way grok-profile.bats pins every other
+    # mount, so the template payload is what this suite actually opens.
+    "session-archive.bats": [
+        "//:templates_payload",
+    ],
     "setup-host.bats": [
         "//images/dev:tool_versions",
     ],
