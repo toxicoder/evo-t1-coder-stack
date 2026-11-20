@@ -2321,9 +2321,18 @@ curl -s http://127.0.0.1:9090/api/v1/targets
   scrapes are compose-DNS (`coder:2112`, `litellm:4000`), not the host mappings - a
   `curl 127.0.0.1:2112` that works from the host proves only that the port mapping is
   fine.
-- **`litellm` alone is `down` with a 401**: the scrape sends the master key, and
-  Prometheus expands it from its own environment. `LITELLM_MASTER_KEY` rotated in `.env`
-  without recreating `prometheus` leaves the collector holding the old one.
+- **`litellm` alone is `down` with a 401**: the scrape sends the master key as a bearer
+  token that it reads from a file, `/etc/prometheus-secrets/litellm_token`
+  (`observability/prometheus/prometheus.yml`), which Compose writes from
+  `LITELLM_MASTER_KEY` when it creates the container. Prometheus performs no
+  environment-variable expansion in its config file, so a value it could not substitute
+  would be sent verbatim and rejected. A `LITELLM_MASTER_KEY` rotated in `.env` without
+  recreating `prometheus` leaves the collector holding the old token; `up` rewrites the
+  file, a `restart` does not. The response body names the fault: LiteLLM answers a
+  missing bearer with "Malformed API Key passed in", and a wrong one with
+  `No connected db.` - which is an auth failure at v1.102.1, not a database complaint
+  (this bundle runs LiteLLM with no DB at all). `bazelisk run //scripts:observability-check`
+  prints that target's `lastError`, so it names the 401 without a `docker logs` read.
 
 ### Grafana's datasource tests green but the panel is empty -> the Mimir query path, then the tenancy header
 
