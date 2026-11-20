@@ -1,0 +1,3 @@
+{"turnCount": 8, "toolCallCount": 30, "toolFailureCount": 0, "errorCount": 2,
+ "regenerationCount": 0, "compactionCount": 0,
+ "contextTokensUsed": 65536, "contextWindowTokens": 262144}

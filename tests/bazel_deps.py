@@ -88,7 +88,9 @@ GLOB_POLICY_CONTEXT: Final[int] = 3
 
 # `glob(` as a call, so prose saying a script "globs a directory" is not counted.
 _GLOB_RE: Final[re.Pattern[str]] = re.compile(r"\bglob\(")
-_GLOB_POLICY_RE: Final[re.Pattern[str]] = re.compile(r"#\s*glob-policy\s*:\s*(\S.*)$", re.I)
+_GLOB_POLICY_RE: Final[re.Pattern[str]] = re.compile(
+    r"#\s*glob-policy\s*:\s*(\S.*)$", re.I
+)
 
 # Not source: build output, installed packages, generated site trees. Walking them
 # would count globs in files this repo does not own.
@@ -117,7 +119,9 @@ def build_files(root: Root) -> list[str]:
         dirnames[:] = sorted(d for d in dirnames if d not in _GLOB_SKIP_DIRS)
         for name in filenames:
             if name in ("BUILD", "BUILD.bazel"):
-                found.append(os.path.relpath(os.path.join(dirpath, name), os.fspath(root)))
+                found.append(
+                    os.path.relpath(os.path.join(dirpath, name), os.fspath(root))
+                )
     return sorted(found)
 
 
@@ -214,6 +218,15 @@ TOKEN_GROUPS: Final[LabelMap] = {
     # they never open. Same reason `run_mypy.sh` is a file token and `lints/` is not.
     "trunk-feature-flags.md": ["//:agent_rules", "//:stack_data"],
     "trunk-refactor/SKILL.md": ["//:skill_sources", "//:stack_data"],
+    # The reflection runbook's three payload stems, spelled as stems for the same reason
+    # trunk-refactor is: a `skills/` or `.grok/` directory token would bill the
+    # skill-authoring and seeding suites for payload they never open.
+    "reflect-and-evolve/SKILL.md": ["//:skill_sources", "//:stack_data"],
+    "reflect-and-evolve/references/checklist.md": ["//:skill_sources", "//:stack_data"],
+    "reflect-and-evolve/scripts/session_signals.py": [
+        "//:skill_sources",
+        "//:stack_data",
+    ],
     "flags.yaml.example": ["//:flags_example", "//:stack_data"],
     "fixtures/": [":fixtures"],
     "hermes/": [
@@ -315,7 +328,9 @@ STACK_DATA_GROUPS: Final[list[str]] = [
 
 # Any path that reaches into scripts/lib, however the caller spells it: `source`, `.`,
 # `awk -f`, `python3`, or the `cat` that ships a POSIX probe to a remote host.
-_LIB_RE: Final[re.Pattern[str]] = re.compile(r"([A-Za-z0-9_./-]*lib/[A-Za-z0-9_./-]+\.(?:awk|py|sh))")
+_LIB_RE: Final[re.Pattern[str]] = re.compile(
+    r"([A-Za-z0-9_./-]*lib/[A-Za-z0-9_./-]+\.(?:awk|py|sh))"
+)
 
 # A program named without its directory, as a lib reaches its own helpers.
 _BARE_RE: Final[re.Pattern[str]] = re.compile(r"([A-Za-z0-9_-]+\.(?:awk|py|sh))")
@@ -334,21 +349,26 @@ def token_pattern(token: str) -> re.Pattern[str]:
     """
     name = re.escape(token[:-1] if token.endswith("/") else token)
     if token.endswith("/"):
-        return re.compile(r"(?:^|[^A-Za-z0-9_.-])%s/|/%s(?![A-Za-z0-9_.:/-])" % (name, name))
+        return re.compile(
+            r"(?:^|[^A-Za-z0-9_.-])%s/|/%s(?![A-Za-z0-9_.:/-])" % (name, name)
+        )
     return re.compile(r"(?<![A-Za-z0-9_])%s(?![A-Za-z0-9_.])" % name)
 
 
 def present_tokens(texts: Sources) -> set[str]:
     """The tokens from TOKEN_GROUPS that appear in any of `texts`."""
     codes = [code_lines(text) for text in texts]
-    return {token for token in TOKEN_GROUPS
-            if any(token_pattern(token).search(code) for code in codes)}
+    return {
+        token
+        for token in TOKEN_GROUPS
+        if any(token_pattern(token).search(code) for code in codes)
+    }
 
 
 def read(root: Root, rel_path: str) -> MaybeText:
     """Read repo-relative `rel_path` under `root`, or return None when it is not there."""
     try:
-        with open(os.path.join(root, rel_path), encoding = "utf-8") as handle:
+        with open(os.path.join(root, rel_path), encoding="utf-8") as handle:
             return handle.read()
     except OSError:
         return None
@@ -410,7 +430,9 @@ _STRONG_READ_RE: Final[re.Pattern[str]] = re.compile(
 # The delimiter of a here-doc opener. The body of a here-doc is the text a command emits, so
 # it reads the same way a `printf` argument does: a usage example naming `litellm` there is
 # not a read of //litellm:config.
-_HEREDOC_RE: Final[re.Pattern[str]] = re.compile(r"<<(?!<)-?\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?")
+_HEREDOC_RE: Final[re.Pattern[str]] = re.compile(
+    r"<<(?!<)-?\s*[\"']?([A-Za-z_][A-Za-z0-9_]*)[\"']?"
+)
 
 
 def heredoc_delimiter(line: str) -> str:
@@ -423,7 +445,7 @@ def heredoc_delimiter(line: str) -> str:
     quotes counts.
     """
     for match in _HEREDOC_RE.finditer(line):
-        before = line[:match.start()]
+        before = line[: match.start()]
         if before.count('"') % 2 or before.count("'") % 2:
             continue
         return match.group(1)
@@ -478,7 +500,9 @@ def read_lines(text: MaybeText) -> str:
     string is prose about a file, and the whole-word resolution against scripts/lib would
     otherwise turn it into a declared dependency.
     """
-    return "\n".join(line for line in code_lines(text).splitlines() if _READ_RE.search(line))
+    return "\n".join(
+        line for line in code_lines(text).splitlines() if _READ_RE.search(line)
+    )
 
 
 def parse_dict(text: str, name: str) -> LabelMap | None:
@@ -501,7 +525,9 @@ def parse_dict(text: str, name: str) -> LabelMap | None:
                 # and lists by contract (see the docstring), and a BUILD file that broke that
                 # shape fails the gate anyway, so the alias states the agreed shape rather
                 # than re-deriving it here.
-                return cast(LabelMap, ast.literal_eval(text[match.end() - 1:index + 1]))
+                return cast(
+                    LabelMap, ast.literal_eval(text[match.end() - 1 : index + 1])
+                )
     return None
 
 
@@ -537,11 +563,15 @@ def drift(texts: Sources, declared: Iterable[str], allow: Iterable[str]) -> Drif
     tokens = present_tokens(texts)
     exempt = set(allow)
     missing = sorted(
-        token for token in tokens
-        if not any(label in declared or label in exempt for label in TOKEN_GROUPS[token])
+        token
+        for token in tokens
+        if not any(
+            label in declared or label in exempt for label in TOKEN_GROUPS[token]
+        )
     )
     unused = sorted(
-        label for label in set(declared) - exempt
+        label
+        for label in set(declared) - exempt
         if not any(label in TOKEN_GROUPS[token] for token in tokens)
     )
     return Drift(missing, unused)
@@ -564,7 +594,9 @@ def sourced_libs(root: Root, rel_path: str, seen: set[str] | None = None) -> set
     reads = read_lines(text)
     candidates: set[str] = set()
     for match in _LIB_RE.finditer(code):
-        candidates.add(os.path.join("scripts", match.group(1)[match.group(1).find("lib/"):]))
+        candidates.add(
+            os.path.join("scripts", match.group(1)[match.group(1).find("lib/") :])
+        )
     for match in _BARE_RE.finditer(reads):
         name = match.group(1)
         candidates.add(os.path.join("scripts", "lib", name))
@@ -598,11 +630,16 @@ def check_scripts(root: Root, report: Reporter) -> int:
     payload_map = parse_dict(build, "_SCRIPT_PAYLOAD")
     allow_map = parse_dict(build, "_SCRIPT_PAYLOAD_ALLOW") or {}
     if libs_map is None or payload_map is None:
-        report("error: scripts/BUILD.bazel must declare _SCRIPT_LIBS and _SCRIPT_PAYLOAD")
+        report(
+            "error: scripts/BUILD.bazel must declare _SCRIPT_LIBS and _SCRIPT_PAYLOAD"
+        )
         return 1
 
-    scripts = sorted(name for name in os.listdir(os.path.join(root, "scripts"))
-                     if name.endswith(".sh"))
+    scripts = sorted(
+        name
+        for name in os.listdir(os.path.join(root, "scripts"))
+        if name.endswith(".sh")
+    )
     findings = 0
     for name in scripts:
         stem = name[:-3]
@@ -612,7 +649,7 @@ def check_scripts(root: Root, report: Reporter) -> int:
             continue
 
         derived_libs = {
-            path[len("scripts/"):]
+            path[len("scripts/") :]
             for path in sourced_libs(root, os.path.join("scripts", name))
         }
         declared = declared_libs(libs_map[stem])
@@ -620,20 +657,30 @@ def check_scripts(root: Root, report: Reporter) -> int:
             report("error: //scripts:%s sources %s without declaring it" % (stem, path))
             findings += 1
         for path in sorted(declared - derived_libs):
-            report("error: //scripts:%s declares %s that it never sources" % (stem, path))
+            report(
+                "error: //scripts:%s declares %s that it never sources" % (stem, path)
+            )
             findings += 1
 
         texts = [read(root, os.path.join("scripts", name))]
-        texts += [read(root, os.path.join("scripts", path)) for path in sorted(derived_libs)]
+        texts += [
+            read(root, os.path.join("scripts", path)) for path in sorted(derived_libs)
+        ]
         for label in overlap(payload_map[stem], allow_map.get(stem, [])):
             report("error: //scripts:%s lists %s in both payload maps" % (stem, label))
             findings += 1
         missing, unused = drift(texts, set(payload_map[stem]), allow_map.get(stem, []))
         for token in missing:
-            report("error: //scripts:%s reads %s with no group declared for it" % (stem, token))
+            report(
+                "error: //scripts:%s reads %s with no group declared for it"
+                % (stem, token)
+            )
             findings += 1
         for label in unused:
-            report("error: //scripts:%s declares %s that no source mentions" % (stem, label))
+            report(
+                "error: //scripts:%s declares %s that no source mentions"
+                % (stem, label)
+            )
             findings += 1
     return findings
 
@@ -660,8 +707,11 @@ def check_suites(root: Root, report: Reporter) -> int:
     if match:
         common = set(re.findall(r"\"([^\"]+)\"", match.group(1)))
 
-    suites = sorted(name for name in os.listdir(os.path.join(root, "tests", "bats"))
-                    if name.endswith(".bats"))
+    suites = sorted(
+        name
+        for name in os.listdir(os.path.join(root, "tests", "bats"))
+        if name.endswith(".bats")
+    )
     findings = 0
     for name in suites:
         if name not in payload_map:
@@ -724,8 +774,10 @@ def check_aggregate(root: Root, report: Reporter) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the selected checks, print the report, and return the exit status."""
-    parser = argparse.ArgumentParser(description = "Check Bazel data maps against the sources.")
-    parser.add_argument("--root", default = ".", help = "repo root to check")
+    parser = argparse.ArgumentParser(
+        description="Check Bazel data maps against the sources."
+    )
+    parser.add_argument("--root", default=".", help="repo root to check")
     parser.add_argument(
         "--target",
         choices=["all", "scripts", "suites", "aggregate", "globs"],
