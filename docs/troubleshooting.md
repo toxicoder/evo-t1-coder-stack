@@ -1031,6 +1031,61 @@ tmux new-session -d -s probe && tmux attach -t probe; echo "exit=$?"   # replay 
   Then reseed from a host shell (`bazelisk run //scripts:update-configs -- workspace`)
   and restart the workspace, which is what re-renders its `~/.grok/config.toml`.
 
+### `The terminal process "/bin/bash '-lc', 'exec "$HOME/.grok/bin/vscode-terminal-tmux"'" terminated with exit code: 127` -> the launcher was never written
+
+- 127 is the shell saying the file it was told to exec is not there. Both editor terminal
+  profiles exec a launcher under `~/.grok/bin`, and `coder_script "terminal_launchers"`
+  (`templates/common/terminal-launchers.sh.tftpl`) is what writes those two files. The
+  profile, `tmux` and the tab are all fine; the file is missing. The same message naming
+  `grok-build-terminal` is this same fault in the other profile, and the one naming
+  neither is [the exit code 1 case above](#the-terminal-process-binbash--lc-exec-homegrokbingrok-build-terminal-terminated-with-exit-code-1---something-closed-the-tmux-session-under-the-tab),
+  where the file exists and tmux refuses.
+- Cause: the three per-owner Grok volumes mount *under* `~/.grok` - `grok-notes-<owner-id>`
+  at `~/.grok/notes`, with the memory and sessions pair beside it - and the Docker daemon
+  creates a bind mount's target path as `root:root` 755. Whenever those mount points are
+  new, `~/.grok` arrives owned by root and the workspace user cannot create anything in
+  it. This is the same daemon behaviour the
+  [`~/.shared/vscode/settings.json` entry](#permission-denied--jq-error-could-not-open-file-on-sharedvscodesettingsjson---empty-named-volume-is-root-owned)
+  covers one directory over.
+- Why the repair missed: the startup script does chown `~/.grok` to the home owner, and
+  nothing orders that before this body. On Coder v2.36 the startup script and every
+  `run_on_start` body fan out in one concurrent errgroup - ten bodies launched inside the
+  same millisecond in the start log - so the seeds run first and meet a directory they
+  cannot write. They then said nothing about it: `mkdir -p ... 2>/dev/null` swallowed the
+  refusal, `cat >` failed, and the run printed `ok:` for each launcher and closed at
+  `summary: 2 ok, 0 warnings, 0 failed`.
+- Read the start log before touching the profile. The same boot takes the rest of the
+  `~/.grok` family with it, because those bodies raced the same chown: `~/.grok/AGENTS.md`,
+  `~/.grok/agents/`, `~/.grok/personas/` and `~/.grok/hooks/`. An affected workspace is
+  missing all of them at once, which is how to tell this from one payload that drifted.
+- What the seed does about it now: each body that writes under `~/.grok` asks for its own
+  directory through `boot_ensure_dir` (`templates/common/boot-log.lib.sh`), which creates
+  it and takes back the ownership of each component that is not this boot's to write, and
+  the launcher body reads its two files back and prints `error:` naming the 127 when one
+  did not land. A boot that cannot write now says so in its own summary line.
+- Confirm with:
+
+```sh
+ls -l ~/.grok/bin                                          # both launchers, both +x
+test -f ~/.grok/AGENTS.md && echo rulebook || echo "rulebook missing too"
+```
+
+Then look at the `== terminal launchers: start ==` run in the workspace start log and
+read its `summary:` line: a green `2 ok, 0 warnings, 0 failed` with no files is the old
+template, and `3 failed` with two `error:` lines is a boot that still cannot write.
+
+- Fix: push the templates from the stack host and restart the workspace - the bodies are
+  template text, so a workspace on an older template version keeps the race.
+
+```sh
+bazelisk run //scripts:push-template   # stack host
+coder restart <workspace>
+```
+
+- To bring one workspace back while the restart waits, re-materialize the two files from a
+  shell in it: `bazelisk run //scripts:seed-dev-env -- --home "$HOME"`. The **bash**
+  profile in the terminal dropdown stays the route no helper mediates.
+
 ### `docker` -> `command not found` inside a workspace -> an older image, or the wrong preset
 
 - Cause: that container was built from an image predating the Docker client toolchain,

@@ -62,6 +62,7 @@ setup() {
   # out of it, so one counter or BOOT_T0 left over from a neighbouring test would move
   # the exact numbers this suite compares.
   unset BOOT_NAME BOOT_STAGES BOOT_T0 BOOT_OK BOOT_WARN BOOT_FAIL BOOT_STUB_NOW
+  unset EVO_CHOWN_LEDGER
   cd "${BATS_TEST_TMPDIR}" || return 1
 }
 
@@ -79,6 +80,41 @@ stub_date() {
     printf '%s\n' '#!/bin/sh' "printf '%s\\n' '${epoch}'" >"${STUB_BIN}/date"
   fi
   chmod 755 "${STUB_BIN}/date"
+}
+
+# stub_chown <ok|fail> -- put chown(8) and sudo(8) in this test's bin/, which the drivers
+# already lead PATH with. The library reaches for `sudo chown` the moment it finds a
+# directory it cannot write, and a suite that let the real pair run would leave this
+# account owning things it never made. Both stubs append the path they were handed to
+# $EVO_CHOWN_LEDGER, so a test can read exactly which components the walk touched. The
+# `ok` stub then makes that directory writable, which is what a repair by a privileged
+# agent amounts to here; `fail` refuses, which is what a boot with no privilege does.
+stub_chown() {
+  local mode="${1:-}"
+  [ -n "${mode}" ] || { printf 'stub_chown: <ok|fail>\n' >&2; return 2; }
+  printf '%s\n' '#!/bin/sh' 'exec "$@"' >"${STUB_BIN}/sudo"
+  if [ "${mode}" = "ok" ]; then
+    printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$2" >>"${EVO_CHOWN_LEDGER}"' \
+      'chmod u+rwx "$2"' 'exit 0' >"${STUB_BIN}/chown"
+  else
+    printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$2" >>"${EVO_CHOWN_LEDGER}"' \
+      'exit 1' >"${STUB_BIN}/chown"
+  fi
+  chmod 755 "${STUB_BIN}/sudo" "${STUB_BIN}/chown"
+}
+
+# write_home_fixture <mode> -- a throwaway HOME holding a ~/.grok a fresh container would
+# have left behind: the mode the Docker daemon gives a bind mount's parent. `locked`
+# removes this account's write bit, which is the shape a root-owned directory has from
+# here. Returns the path on stdout.
+write_home_fixture() {
+  local mode="${1:-open}" home="${BATS_TEST_TMPDIR}/home"
+  rm -rf "${home}"
+  mkdir -p "${home}/.grok"
+  if [ "${mode}" = "locked" ]; then
+    chmod 555 "${home}/.grok"
+  fi
+  printf '%s\n' "${home}"
 }
 
 # write_driver <dest> <line...> -- a boot body this suite owns: strict mode, the stub
@@ -578,4 +614,147 @@ boot_body_list() {
       "${total}" "${fleet_total}" >&2
     return 1
   fi
+}
+
+# --------------------------------------------------------------- boot_ensure_dir
+#
+# The workspace home carries the per-owner Grok volumes as bind mounts under ~/.grok, and
+# the Docker daemon creates a bind mount's target path as root, so ~/.grok arrives
+# root-owned on any boot where those mount points are new. The startup script repairs that
+# ownership, and Coder v2.36 starts it in the same concurrent errgroup as every
+# run_on_start body, so a body that writes under $HOME can reach a directory it cannot
+# write. That is the whole reason this verb exists, and these tests drive exactly that
+# shape: a ~/.grok the boot cannot write, with chown(8) and sudo(8) stubbed so the repair
+# is observed rather than performed.
+
+@test "boot_ensure_dir: a missing directory is created under an open HOME and nothing is printed" {
+  # The common case owes silence: a body calls this on every boot, and a verb that
+  # narrated success would spend the shared 1 MiB agent log on directories that were
+  # already fine. Only a failure earns a line.
+  stub_date 1700000000
+  local home body
+  home="$(write_home_fixture open)"
+  body="${BATS_TEST_TMPDIR}/ensure-open.sh"
+  write_driver "${body}" \
+    "HOME='${home}'" \
+    'if boot_ensure_dir "$HOME/.grok/bin"; then printf "rc=0\n"; else printf "rc=1\n"; fi'
+  run --separate-stderr sh "${body}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "rc=0" ]
+  [ -d "${home}/.grok/bin" ]
+  [ "${stderr}" = "" ]
+}
+
+@test "boot_ensure_dir: a directory that is not ours to write is taken back, then the leaf is made" {
+  # The fault itself. ~/.grok arrives not writable, so mkdir cannot enter it; the walk
+  # has to repair that component and only that component, and the leaf still has to
+  # appear afterwards. The ledger is the proof of which path was touched.
+  stub_date 1700000000
+  stub_chown ok
+  local home body shell
+  home="$(write_home_fixture locked)"
+  export EVO_CHOWN_LEDGER="${BATS_TEST_TMPDIR}/chown.log"
+  for shell in bash sh; do
+    body="${BATS_TEST_TMPDIR}/ensure-repair-${shell}.sh"
+    write_driver "${body}" \
+      "HOME='${home}'" \
+      'if boot_ensure_dir "$HOME/.grok/bin"; then printf "rc=0\n"; else printf "rc=1\n"; fi'
+    run --separate-stderr "${shell}" "${body}"
+    [ "${status}" -eq 0 ] || fail "${shell}: the repair aborted the boot (status ${status})"
+    [ "${output}" = "rc=0" ] || fail "${shell}: the call did not return 0: ${output}"
+    [ -d "${home}/.grok/bin" ] || fail "${shell}: the leaf was never created"
+    [ "$(cat "${EVO_CHOWN_LEDGER}")" = "${home}/.grok" ] ||
+      fail "${shell}: the walk repaired $(tr '\n' ',' <"${EVO_CHOWN_LEDGER}")"
+    rm -f "${EVO_CHOWN_LEDGER}"
+    rmdir "${home}/.grok/bin"
+    chmod 555 "${home}/.grok"
+  done
+}
+
+@test "boot_ensure_dir: the walk stops below HOME, which a seed has no business repairing" {
+  # HOME is the workspace user's own directory and a recursive chown from here would
+  # reach into the mounted volumes sitting beside the target. One repaired path, and it
+  # is the deepest one that exists and cannot be written.
+  stub_date 1700000000
+  stub_chown ok
+  local home body
+  home="$(write_home_fixture locked)"
+  export EVO_CHOWN_LEDGER="${BATS_TEST_TMPDIR}/chown.log"
+  body="${BATS_TEST_TMPDIR}/ensure-scope.sh"
+  write_driver "${body}" \
+    "HOME='${home}'" \
+    'if boot_ensure_dir "$HOME/.grok/hooks/bin"; then printf "rc=0\n"; else printf "rc=1\n"; fi'
+  run --separate-stderr sh "${body}"
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${EVO_CHOWN_LEDGER}")" = "${home}/.grok" ]
+  [ "$(wc -l <"${EVO_CHOWN_LEDGER}" | tr -d ' ')" -eq 1 ]
+}
+
+@test "boot_ensure_dir: a directory that stays unwritable is named on stderr and counted as a failure" {
+  # The half that made the 127 so expensive. A body that cannot write its directory has
+  # to say so, because the alternative is an ok: about a file that never landed and a
+  # summary that closes at 0 failed. The caller reads the 1 back and refuses its own
+  # claim; the error: line is what the operator sees in the start log.
+  stub_date 1700000000
+  stub_chown fail
+  local home body
+  home="$(write_home_fixture locked)"
+  export EVO_CHOWN_LEDGER="${BATS_TEST_TMPDIR}/chown.log"
+  body="${BATS_TEST_TMPDIR}/ensure-denied.sh"
+  write_driver "${body}" \
+    'boot_begin demo 1' \
+    "HOME='${home}'" \
+    'if boot_ensure_dir "$HOME/.grok/bin"; then printf "rc=0\n"; else printf "rc=1\n"; fi' \
+    'boot_summary'
+  run --separate-stderr sh "${body}"
+  [ "${status}" -eq 0 ] || fail "a refused directory took the boot down (status ${status})"
+  [ "${lines[0]}" = "== demo: start ==" ]
+  [ "${lines[1]}" = "rc=1" ]
+  [ "${stderr}" = "error: ${home}/.grok/bin is not writable by this boot; whatever it should hold is missing" ]
+  [ "${lines[${#lines[@]} - 1]}" = "summary: 0 ok, 0 warnings, 1 failed (+0s, demo)" ]
+  [ ! -e "${home}/.grok/bin" ]
+}
+
+@test "boot_ensure_dir: no path and no HOME each report themselves and return 1" {
+  # Both are a caller bug, and under set -u an unbound read of HOME would be a silent
+  # death instead of a line the operator can act on.
+  stub_date 1700000000
+  local body
+  body="${BATS_TEST_TMPDIR}/ensure-nopath.sh"
+  write_driver "${body}" \
+    'if boot_ensure_dir ""; then printf "rc=0\n"; else printf "rc=1\n"; fi'
+  run --separate-stderr sh "${body}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "rc=1" ]
+  [ "${stderr}" = "error: boot_ensure_dir: called with no path" ]
+
+  body="${BATS_TEST_TMPDIR}/ensure-nohome.sh"
+  write_driver "${body}" \
+    "HOME=''" \
+    'if boot_ensure_dir "whatever"; then printf "rc=0\n"; else printf "rc=1\n"; fi'
+  run --separate-stderr sh "${body}"
+  [ "${status}" -eq 0 ] || fail "an empty HOME aborted the boot (status ${status})"
+  [ "${output}" = "rc=1" ]
+  [ "${stderr}" = "error: boot_ensure_dir: no HOME, so whatever has no owner to restore" ]
+}
+
+@test "boot_ensure_dir: a target outside HOME is made without any repair being attempted" {
+  # The walk is a HOME-relative one. A path outside it gets the mkdir and nothing else,
+  # so a body can seed somewhere else in the container without the helper guessing an
+  # owner for it.
+  stub_date 1700000000
+  stub_chown ok
+  local home outside body
+  home="$(write_home_fixture open)"
+  outside="${BATS_TEST_TMPDIR}/elsewhere/deep"
+  export EVO_CHOWN_LEDGER="${BATS_TEST_TMPDIR}/chown.log"
+  body="${BATS_TEST_TMPDIR}/ensure-outside.sh"
+  write_driver "${body}" \
+    "HOME='${home}'" \
+    "if boot_ensure_dir '${outside}'; then printf \"rc=0\n\"; else printf \"rc=1\n\"; fi"
+  run --separate-stderr sh "${body}"
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "rc=0" ]
+  [ -d "${outside}" ]
+  [ ! -e "${EVO_CHOWN_LEDGER}" ]
 }

@@ -1213,6 +1213,24 @@ error: <text>                                      boot_err <text>   (stderr)
 summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
 ```
 
+- The one precondition a body cannot inherit from another body is a writable directory
+  under `$HOME`. The three per-owner Grok volumes mount *under* `~/.grok`, and the Docker
+  daemon creates a bind mount's target path as `root:root`, so `~/.grok` arrives
+  root-owned on any boot where those mount points are new. The startup script chowns it
+  back to the home owner, and nothing orders that before a sibling body: the start
+  scripts fan out in one errgroup, startup script included, which is the same
+  `script_count=10` burst [The one-argument ceiling](#the-one-argument-ceiling) counts.
+  So a body that writes under `~/.grok` calls `boot_ensure_dir <dir>`
+  (`templates/common/boot-log.lib.sh:65-140`) rather than a bare `mkdir -p`. It creates
+  the directory and takes back the ownership of each component of it that is not this
+  boot's to write, walking from `$HOME` down, stopping below `$HOME` itself, and never
+  recursing into the mounted volumes that sit beside the target. It returns 1 and prints
+  `error:` when the directory stays unwritable, which is what lets a body refuse its own
+  `ok:`. `templates/common/terminal-launchers.sh.tftpl` is the case that earned it: a
+  launcher that never landed is a code-server tab that dies with `exit code: 127`, and
+  the body closed at `summary: 2 ok, 0 warnings, 0 failed` while writing nothing. The
+  bodies that seed the two skill homes under `~/.coder` and `~/.agents` still `mkdir -p`
+  directly - neither is a bind-mount parent, so nothing arrives there owned by root.
 - Each body opens with its own `== <body>: start ==` and, on every path that got that far, its
   final act is `boot_summary`, so the eleven bodies of one agent share a single log and stay
   tellable apart by the name in those two lines (`boot_begin`'s first argument, echoed again in
@@ -1572,7 +1590,11 @@ Template-side facts only; the long prose lives in
   `/bin/bash`, so build/tasks commands never wait on tmux. Plain `bash` and **Grok
   Build** stay available as extra profiles.
 - Two helpers are seeded into `~/.grok/bin` on every start, both `chmod +x`:
-  `vscode-terminal-tmux` (the default profile) and `grok-build-terminal`.
+  `vscode-terminal-tmux` (the default profile) and `grok-build-terminal`. The two
+  profiles in `settings.json` exec exactly those paths, so the seed body reads both
+  files back and prints `error:` naming the `exit code: 127` a tab gets when one did not
+  land, rather than closing green. The missing-file cause and its remedy are in
+  [troubleshooting.md](troubleshooting.md#the-terminal-process-binbash--lc-exec-homegrokbinvscode-terminal-tmux-terminated-with-exit-code-127---the-launcher-was-never-written).
 - `vscode-terminal-tmux` keeps `vscode-<folder>-<hash>` as its base session name. It
   re-joins one of that folder's sessions while no client is attached to it, oldest
   first (the closed-tab rejoin: an unattached session is reused even while sibling

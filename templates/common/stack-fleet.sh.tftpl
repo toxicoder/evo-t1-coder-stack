@@ -60,7 +60,7 @@ boot_stage 2 "the six role definitions"
 if ! [ -L "$HOME/.grok/agents/explorer.md" ] \
    && { [ ! -f "$HOME/.grok/agents/explorer.md" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/explorer.md"; }; then
-  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/agents"
   cat >"$HOME/.grok/agents/explorer.md" <<'EXPLORER_AGENT_EOF'
 ${explorer_agent}
 EXPLORER_AGENT_EOF
@@ -72,7 +72,7 @@ fi
 if ! [ -L "$HOME/.grok/agents/architect.md" ] \
    && { [ ! -f "$HOME/.grok/agents/architect.md" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/architect.md"; }; then
-  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/agents"
   cat >"$HOME/.grok/agents/architect.md" <<'ARCHITECT_AGENT_EOF'
 ${architect_agent}
 ARCHITECT_AGENT_EOF
@@ -84,7 +84,7 @@ fi
 if ! [ -L "$HOME/.grok/agents/implementer.md" ] \
    && { [ ! -f "$HOME/.grok/agents/implementer.md" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/implementer.md"; }; then
-  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/agents"
   cat >"$HOME/.grok/agents/implementer.md" <<'IMPLEMENTER_AGENT_EOF'
 ${implementer_agent}
 IMPLEMENTER_AGENT_EOF
@@ -96,7 +96,7 @@ fi
 if ! [ -L "$HOME/.grok/agents/tester.md" ] \
    && { [ ! -f "$HOME/.grok/agents/tester.md" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/tester.md"; }; then
-  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/agents"
   cat >"$HOME/.grok/agents/tester.md" <<'TESTER_AGENT_EOF'
 ${tester_agent}
 TESTER_AGENT_EOF
@@ -108,7 +108,7 @@ fi
 if ! [ -L "$HOME/.grok/agents/reviewer.md" ] \
    && { [ ! -f "$HOME/.grok/agents/reviewer.md" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/reviewer.md"; }; then
-  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/agents"
   cat >"$HOME/.grok/agents/reviewer.md" <<'REVIEWER_AGENT_EOF'
 ${reviewer_agent}
 REVIEWER_AGENT_EOF
@@ -122,7 +122,7 @@ fi
 if ! [ -L "$HOME/.grok/agents/security-auditor.md" ] \
    && { [ ! -f "$HOME/.grok/agents/security-auditor.md" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/agents/security-auditor.md"; }; then
-  mkdir -p "$HOME/.grok/agents" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/agents"
   cat >"$HOME/.grok/agents/security-auditor.md" <<'SECURITY_AUDITOR_AGENT_EOF'
 ${security_auditor_agent}
 SECURITY_AUDITOR_AGENT_EOF
@@ -136,7 +136,7 @@ boot_stage 3 "the three persona overlays"
 if ! [ -L "$HOME/.grok/personas/thorough-researcher.toml" ] \
    && { [ ! -f "$HOME/.grok/personas/thorough-researcher.toml" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/personas/thorough-researcher.toml"; }; then
-  mkdir -p "$HOME/.grok/personas" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/personas"
   cat >"$HOME/.grok/personas/thorough-researcher.toml" <<'THOROUGH_RESEARCHER_PERSONA_EOF'
 ${thorough_researcher_persona}
 THOROUGH_RESEARCHER_PERSONA_EOF
@@ -148,7 +148,7 @@ fi
 if ! [ -L "$HOME/.grok/personas/senior-implementer.toml" ] \
    && { [ ! -f "$HOME/.grok/personas/senior-implementer.toml" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/personas/senior-implementer.toml"; }; then
-  mkdir -p "$HOME/.grok/personas" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/personas"
   cat >"$HOME/.grok/personas/senior-implementer.toml" <<'SENIOR_IMPLEMENTER_PERSONA_EOF'
 ${senior_implementer_persona}
 SENIOR_IMPLEMENTER_PERSONA_EOF
@@ -160,7 +160,7 @@ fi
 if ! [ -L "$HOME/.grok/personas/skeptical-reviewer.toml" ] \
    && { [ ! -f "$HOME/.grok/personas/skeptical-reviewer.toml" ] \
         || grep -qs 'managed-by: evo-t1-coder-stack' "$HOME/.grok/personas/skeptical-reviewer.toml"; }; then
-  mkdir -p "$HOME/.grok/personas" 2>/dev/null
+  boot_ensure_dir "$HOME/.grok/personas"
   cat >"$HOME/.grok/personas/skeptical-reviewer.toml" <<'SKEPTICAL_REVIEWER_PERSONA_EOF'
 ${skeptical_reviewer_persona}
 SKEPTICAL_REVIEWER_PERSONA_EOF
