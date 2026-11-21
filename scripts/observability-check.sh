@@ -620,14 +620,21 @@ probe_prober() {
 # separator is the health key itself, so each record ends where one target's
 # health begins, and the last "job" in the record before it belongs to that
 # target: the labels object is emitted before the health field, so the nearest
-# preceding job label is the right one, without a JSON parser.
+# preceding job label is the right one, without a JSON parser. The lastError is
+# read from that same record by the same rule, because Prometheus writes it
+# immediately before health - it is the only place the cause of a red target
+# exists, and a tally that dropped it left the caller guessing at one.
 # Globals:
 #   None
 # Arguments:
 #   $1 - file holding the response body
 # Outputs:
-#   One `down<TAB>job<TAB>health` line per target that is not up, then one
-#   `total<TAB><n><TAB><up>` line; nothing for an empty body
+#   Exactly four TAB-separated fields on every line, in this order:
+#   `down<TAB>job<TAB>health<TAB>lastError` per target that is not up, then one
+#   `total<TAB><n><TAB><up><TAB>-` line. The fourth field is the target's own
+#   lastError text, or `-` when it carries none and on the total line, so the
+#   caller never reads a missing column as an empty one. A tab, CR or LF inside
+#   that text is folded to a space, so one target is always exactly one line.
 # Returns:
 #   0, always
 targets_tally() {
@@ -643,11 +650,18 @@ targets_tally() {
         job = parts[split(prev, parts, "\"job\":\"")]
         sub(/".*/, "", job)
       }
+      error = ""
+      if (split(prev, bits, "\"lastError\":\"") > 1) {
+        error = bits[split(prev, bits, "\"lastError\":\"")]
+        sub(/".*/, "", error)
+        gsub(/[ \t\r\n]/, " ", error)
+      }
       total++
-      if (status == "up") { ups++ } else { printf "down\t%s\t%s\n", job, status }
+      if (status == "up") { ups++ }
+      else { printf "down\t%s\t%s\t%s\n", job, status, (error == "" ? "-" : error) }
     }
     { prev = $0 }
-    END { printf "total\t%d\t%d\n", total, ups }
+    END { printf "total\t%d\t%d\t-\n", total, ups }
   ' "${body}"
 }
 
@@ -1056,15 +1070,28 @@ check_data_flow() {
     ok "prometheus scrape targets: all ${total} up"
   else
     ok "prometheus scrape targets: ${ups} of ${total} up"
-    local job status
-    while IFS=$'\t' read -r _ job status; do
+    local job status last_error
+    while IFS=$'\t' read -r _ job status last_error; do
       [ -n "${job}" ] || continue
-      warn "prometheus target job '${job}' reports '${status}', not up: its panel will be empty"
-      # Both ways the litellm scrape goes red are the bearer file: Prometheus
-      # could not read it, or what it holds is not the key the proxy answers with.
-      # Metrics auth stays on either way, so it is never offered as the fix.
+      warn "prometheus target job '${job}' reports '${status}', not up: lastError '${last_error}' - its panel will be empty"
+      # What prom/prometheus:v3.16.0 records for one red litellm target is at
+      # least three different things: an unreadable bearer file, a bearer the
+      # proxy rejects with a 401, and a proxy that is not listening at all. Only
+      # the first two are the bearer file, so the pointer below follows the
+      # lastError instead of naming a cause this CLI never read. Metrics auth
+      # stays on either way, so it is never offered as the fix.
       if [ "${job}" = "litellm" ]; then
-        warn "the litellm scrape reads its bearer from /etc/prometheus-secrets/litellm_token in the prometheus container: check that the file exists there, and that compose rendered configs.litellm_metrics_token from the same LITELLM_MASTER_KEY the proxy has"
+        case "${last_error}" in
+          *401* | *Unauthorized* | *"authorization credentials"* | *"credentials file"*)
+            warn "that lastError is the bearer, not the proxy: check that /etc/prometheus-secrets/litellm_token exists in the prometheus container, and that compose rendered configs.litellm_metrics_token from the same LITELLM_MASTER_KEY the proxy has - metrics auth stays on"
+            ;;
+          *"connection refused"* | *"connection reset"* | *"no route to host"* | *"no such host"* | *"i/o timeout"* | *"dial tcp"*)
+            warn "that lastError is the proxy itself, not the bearer file: litellm has to be up and answering litellm:4000 on the project network before any token is worth reading into"
+            ;;
+          *)
+            warn "the lastError above is the only cause this CLI has for the litellm scrape: it dials litellm:4000 on the project network, so start there rather than at the bearer file"
+            ;;
+        esac
       fi
     done <<<"${down_lines}"
   fi
