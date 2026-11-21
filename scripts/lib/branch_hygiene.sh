@@ -42,6 +42,16 @@
 # deliberately absent - as a first path segment it would sweep in any branch someone
 # started with `pre/`, which is a prefix, not an environment.
 #
+# What is in the table is the vocabulary of an environment, and nothing that reads as
+# a feature first. `int`, `accept` and `training` were here and are gone: a branch
+# called `int` is an integer helper, `accept` is an accept-flow change, `training` is
+# a model-training feature, and all three arrived as errors that exit 1 without
+# --strict, which is the weight reserved for a rule the operator cannot have meant
+# to break. `uat`, `sit` and `sandbox` stayed because nothing else is called that.
+# The match is a whole word, so `prod-eu` is not caught while `prod/eu` is: a hyphen
+# joins one name rather than naming a namespace, and widening it to prefixes would
+# sweep in `dev-tools` and `stage-fright`, so the line is drawn at whole words.
+#
 # -g is load-bearing, not decoration: a sourced file's `declare` is scoped to whatever
 # function sourced it, so a plain `declare -A` made these tables disappear the moment
 # the test helper loaded the lib from inside load_lib, and every lookup came back
@@ -51,7 +61,7 @@ ENVIRONMENT_WORDS=(
   [dev]=1 [develop]=1 [development]=1
   [stage]=1 [staging]=1 [preprod]=1
   [prod]=1 [production]=1 [live]=1
-  [uat]=1 [sit]=1 [qa]=1 [int]=1 [integration]=1 [accept]=1 [training]=1
+  [uat]=1 [sit]=1 [qa]=1 [integration]=1
   [sandbox]=1
 )
 # The two-word form is written with a separator git itself accepts. A branch name
@@ -63,9 +73,13 @@ ENVIRONMENT_WORDS["pre-production"]=1
 # `main` breaks a different sentence in docs/branching.md - only one branch is
 # allowed to be long-lived - so it is kept out of the environment table and reported
 # with its own words instead of being called an environment nobody promoted to a
-# GitHub Environment.
+# GitHub Environment. Both canonical names are listed so the rule holds whichever one
+# this run was told is the trunk: with --trunk master the thing at risk is main, and
+# the run that reported only master offered up the real trunk for deletion. The name
+# the run is auditing against is exempt in reserved_name_kind, so a healthy repo with
+# one trunk reports nothing.
 declare -gA TRUNK_NAMES
-TRUNK_NAMES=([master]=1)
+TRUNK_NAMES=([main]=1 [master]=1)
 
 # Branches that are long-lived by design and so never cleanup candidates.
 # `gh-pages` is what //docs-site publishes through deploy-docs.yml and is an
@@ -99,7 +113,7 @@ Usage: branch-hygiene.sh [--repo DIR] [--trunk NAME] [--remote NAME]...
 
   --repo DIR      audit this checkout instead of resolving one (also $EVO_T1_REPO)
   --trunk NAME    the trunk branch; default main
-  --remote NAME    limit the remote scan to this remote; repeatable, default all
+  --remote NAME   limit the remote scan to this remote; repeatable, default all
   --max-age DAYS  an unmerged branch older than this is stale; default 14
   --fetch         git remote update --prune over the selected remotes first
                   (needs network, and prunes stale remote-tracking refs locally)
@@ -108,10 +122,34 @@ Usage: branch-hygiene.sh [--repo DIR] [--trunk NAME] [--remote NAME]...
 EOF
 }
 
+# @function require_value
+# Refuse a long option that arrived without its value.
+# `shift 2` with one argument left fails, and under `set -e` that ended the run before
+# anything was printed: exit 1, which in this CLI means "the audit ran and found
+# something", with no output saying so. A missing value is a bad argument and has to
+# leave on 2 with the reason, the same shape as an unknown argument.
+# Globals:
+#   VALUE - set to the value the operator gave, when there was one
+# Arguments:
+#   $1 - the flag as typed; $2 - the value the operator may or may not have given
+# Outputs:
+#   error: ... plus the usage block on stderr, then exits 2
+# Returns:
+#   0 when there is a usable value
+require_value() {
+  local flag="$1" value="${2:-}"
+  if [ -z "${value}" ] || [[ ${value} == -* ]]; then
+    err "${flag} needs a value"
+    usage >&2
+    exit 2
+  fi
+  VALUE="${value}"
+}
+
 # @function parse_args
 # Fill the run's options from argv, refusing anything unrecognized.
 # Globals:
-#   REPO_ARG, TRUNK, MAX_AGE_DAYS, STRICT, PLAN, DO_FETCH, REMOTES
+#   REPO_ARG, TRUNK, MAX_AGE_DAYS, STRICT, PLAN, DO_FETCH, REMOTES, VALUE
 # Arguments:
 #   $@ - the CLI arguments
 # Outputs:
@@ -125,7 +163,8 @@ parse_args() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --repo)
-        REPO_ARG="${2:-}"
+        require_value --repo "${2:-}"
+        REPO_ARG="${VALUE}"
         shift 2
         ;;
       --repo=*)
@@ -133,7 +172,8 @@ parse_args() {
         shift
         ;;
       --trunk)
-        TRUNK="${2:-}"
+        require_value --trunk "${2:-}"
+        TRUNK="${VALUE}"
         shift 2
         ;;
       --trunk=*)
@@ -141,7 +181,8 @@ parse_args() {
         shift
         ;;
       --remote)
-        REMOTES+=("${2:-}")
+        require_value --remote "${2:-}"
+        REMOTES+=("${VALUE}")
         shift 2
         ;;
       --remote=*)
@@ -149,7 +190,8 @@ parse_args() {
         shift
         ;;
       --max-age)
-        MAX_AGE_DAYS="${2:-}"
+        require_value --max-age "${2:-}"
+        MAX_AGE_DAYS="${VALUE}"
         shift 2
         ;;
       --max-age=*)
@@ -184,6 +226,14 @@ parse_args() {
       err "--max-age wants a whole number of days, got: ${MAX_AGE_DAYS}"
       exit 2
     }
+  # An unbounded value reaches date as `-999999999999 days`, which GNU date refuses
+  # and the BSD fallback cannot parse on Linux, so the run stopped mid-audit with no
+  # summary line at all. A branch lifetime past ten years is not a lifetime, so the
+  # range is closed here rather than left to whichever date implementation is installed.
+  [ "${MAX_AGE_DAYS}" -le 3650 ] || {
+    err "--max-age wants at most 3650 days, got: ${MAX_AGE_DAYS}"
+    exit 2
+  }
   [ -n "${TRUNK}" ] || {
     err "--trunk needs a branch name"
     exit 2
@@ -226,7 +276,7 @@ resolve_repo_arg() {
 # on the bare name only, so a branch someone filed under master/ is not called a
 # second trunk.
 # Globals:
-#   ENVIRONMENT_WORDS, TRUNK_NAMES, RESERVED_KIND, RESERVED_WORD
+#   ENVIRONMENT_WORDS, TRUNK_NAMES, RESERVED_KIND, RESERVED_WORD, TRUNK
 # Arguments:
 #   $1 - the branch name as the rules read it, without the remote namespace
 # Outputs:
@@ -245,6 +295,11 @@ reserved_name_kind() {
     word="${name}"
   else
     word="${head_segment}"
+  fi
+  if [ "${name}" = "${head_segment}" ] && [ "${name}" = "${TRUNK}" ]; then
+    # The trunk this run was told about is not a violation of its own rule, and it is
+    # in the table precisely so the other one can be caught.
+    return 1
   fi
   if [ -n "${ENVIRONMENT_WORDS[${word}]:-}" ]; then
     RESERVED_KIND="environment"
@@ -291,6 +346,14 @@ is_always_kept() {
   local kind="$1" name="$2" keep rule
   rule="$(branch_part "${kind}" "${name}")"
   [ "${rule}" = "${TRUNK}" ] && return 0
+  # A trunk-shaped name is never a cleanup candidate, whichever trunk this run named.
+  # With --trunk master the real main used to be free to land in the deletion plan,
+  # and `git push origin --delete main` is the one line this tool must never print.
+  # The name is still reported - audit_environment calls a second trunk what it is -
+  # it simply is not offered up for deletion.
+  if [ -n "${TRUNK_NAMES[${rule}]:-}" ]; then
+    return 0
+  fi
   for keep in "${ALWAYS_KEEP[@]}"; do
     [ "${rule}" = "${keep}" ] && return 0
   done
@@ -319,6 +382,12 @@ report_or_warn() {
 
 # @function list_local
 # Print one TAB-separated row per local branch: name, tip SHA, commit date.
+# The name is %(refname:lstrip=2), not %(refname:short): `short` drops the `heads/`
+# prefix only while the name is unambiguous, so a branch someone made with
+# `git update-ref refs/heads/origin/staging` (a name that collides with a remote
+# namespace, or refs/heads/HEAD) comes back as `heads/origin/staging` and every rule
+# then reads the word `heads` instead of `staging`. Stripping two components by hand
+# is stable, and the same expression list_remote already uses.
 # Globals:
 #   none
 # Arguments:
@@ -328,7 +397,7 @@ report_or_warn() {
 # Returns:
 #   0
 list_local() {
-  git for-each-ref --format='%(refname:short)%09%(objectname:short)%09%(committerdate:short)' \
+  git for-each-ref --format='%(refname:lstrip=2)%09%(objectname:short)%09%(committerdate:short)' \
     --sort=committerdate refs/heads/
 }
 
@@ -384,32 +453,69 @@ selected_remotes() {
   return 0
 }
 
+# @function split_remote_ref
+# Split a remote-tracking row into its remote and its branch name.
+# The remote is the LONGEST configured remote name the row starts with, not its first
+# path segment: git accepts a remote called `ns/x`, and against that row a
+# first-segment match reads remote `ns` and branch `x/staging`. Every rule that reads
+# a remote row goes through here, so all three of them move together - a branch
+# literally named `staging` on such a remote has to be an environment finding, a
+# deletion command has to name the remote it came from, and that remote's own trunk
+# ref has to stay out of the cleanup list.
+# Globals:
+#   SPLIT_REMOTE, SPLIT_BRANCH - written on success, cleared on failure
+# Arguments:
+#   $1 - the row's name, as list_remote prints it
+# Outputs:
+#   None
+# Returns:
+#   0 when a configured remote matched, 1 when none did
+split_remote_ref() {
+  local name="$1" remote best=""
+  # Outside a checkout there are no remotes to match, which is an answer rather than
+  # an error; the CLI refuses a non-repo before any audit runs.
+  while IFS= read -r remote; do
+    [ -n "${remote}" ] || continue
+    case "${name}" in
+      "${remote}/"*)
+        if [ "${#remote}" -gt "${#best}" ]; then
+          best="${remote}"
+        fi
+        ;;
+    esac
+  done < <(git remote 2>/dev/null || true)
+  SPLIT_REMOTE=""
+  SPLIT_BRANCH=""
+  [ -n "${best}" ] || return 1
+  SPLIT_REMOTE="${best}"
+  SPLIT_BRANCH="${name#"${best}/"}"
+}
+
 # @function branch_part
-# Print the branch name as the rules read it, with the remote directory stripped.
+# Print the branch name as the rules read it, with the remote marker stripped.
 # A remote-tracking row arrives as origin/dev, and matching the rules against that
 # string would test the word `origin` and find nothing: the remote is a namespace,
-# not part of the branch name. Only a leading segment that is a configured remote
-# is removed, so a branch whose own name carries a slash keeps all of it.
+# not part of the branch name. The strip applies on either side of the remote
+# boundary, because a *local* branch can carry the same marker - one made with
+# `git update-ref refs/heads/origin/staging` has `origin` as its first segment, and
+# leaving it in tested the word `origin` and called a branch literally named staging
+# clean. Only a leading segment that is a configured remote is removed, so a branch
+# whose own name carries a slash keeps the rest of it.
 # Globals:
-#   none
+#   SPLIT_REMOTE, SPLIT_BRANCH
 # Arguments:
-#   $1 - "local" or "remote"; $2 - the row's name
+#   $1 - "local" or "remote", the row's side, which the audits use for their wording;
+#     the strip below does not depend on it
+#   $2 - the row's name
 # Outputs:
 #   The name to match rules against, on stdout
 # Returns:
 #   0
 branch_part() {
-  local kind="$1" name="$2" remote head
-  if [ "${kind}" = "remote" ]; then
-    head="${name%%/*}"
-    # Outside a checkout there are no remotes to match, which is an answer rather
-    # than an error; the CLI refuses a non-repo before any audit runs.
-    for remote in $(git remote 2>/dev/null || true); do
-      if [ "${head}" = "${remote}" ]; then
-        printf '%s' "${name#*/}"
-        return 0
-      fi
-    done
+  local name="$2"
+  if split_remote_ref "${name}"; then
+    printf '%s' "${SPLIT_BRANCH}"
+    return 0
   fi
   printf '%s' "${name}"
 }
@@ -539,11 +645,20 @@ audit_stale() {
 plan_deletion() {
   local kind="$1" name="$2" sha="$3"
   if [ "${kind}" = "remote" ]; then
-    # The remote is taken from the row, never from a literal origin: a checkout with
-    # a second remote would otherwise be told to delete a same-named branch on the
-    # wrong one, and the tip SHA it recorded would belong to the ref it did not mean.
+    # The remote and the branch both come from the row, never from a literal origin
+    # and never from a first-segment split: a checkout with a second remote would
+    # otherwise be told to delete a same-named branch on the wrong one, and the tip
+    # SHA it recorded would belong to the ref it did not mean.
+    local remote branch
+    if split_remote_ref "${name}"; then
+      remote="${SPLIT_REMOTE}"
+      branch="${SPLIT_BRANCH}"
+    else
+      remote="${name%%/*}"
+      branch="${name#*/}"
+    fi
     phase "delete ${name} (record tip ${sha} first)"
-    log "    git push ${name%%/*} --delete ${name#*/}"
+    log "    git push ${remote} --delete ${branch}"
   else
     phase "delete ${name} (record tip ${sha} first)"
     log "    git branch -d ${name}"

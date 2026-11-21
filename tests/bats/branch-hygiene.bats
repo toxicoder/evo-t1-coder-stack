@@ -148,6 +148,19 @@ reset_counters() {
   SUMMARY_FAIL_ITEMS=""
 }
 
+# deny <predicate> [args...] - assert a predicate does NOT match, in a form that can
+# actually fail the run. A bare `! predicate` line cannot: `set -e` is switched off
+# for any command whose status is inverted with `!`, so a regression there is printed
+# and walked past, and the last command of the body decides the outcome. Proven by
+# putting a deleted word back in the reserved table while the asserting test stayed
+# green.
+deny() {
+  if "$@"; then
+    echo "expected no match, but this succeeded: $*" >&2
+    return 1
+  fi
+}
+
 @test "branch-hygiene: is_environment_name reads the branch name, not the remote" {
   load_lib
   (is_environment_name staging)
@@ -157,11 +170,11 @@ reset_counters() {
   # The sanctioned prefixes stay clean, and a namespace that is not an environment
   # word does not become one because it happens to be a path. `pre` alone is not in
   # the table: as a first segment it would sweep in anything filed under pre/.
-  ! is_environment_name feat/search-lane
-  ! is_environment_name test/flake-fix
-  ! is_environment_name chore/branch-hygiene-gate
-  ! is_environment_name main
-  ! is_environment_name pre/2026-11-migration
+  deny is_environment_name feat/search-lane
+  deny is_environment_name test/flake-fix
+  deny is_environment_name chore/branch-hygiene-gate
+  deny is_environment_name main
+  deny is_environment_name pre/2026-11-migration
 }
 
 @test "branch-hygiene: every word in the reserved tables is a name git can produce" {
@@ -193,9 +206,9 @@ reset_counters() {
   reserved_name_kind master
   [ "${RESERVED_KIND}" = "trunk" ]
   [ "${RESERVED_WORD}" = "master" ]
-  ! is_environment_name master
+  deny is_environment_name master
   # Only a bare name is a second trunk; a path below it is a namespace someone chose.
-  ! reserved_name_kind master/legacy-import
+  deny reserved_name_kind master/legacy-import
 }
 
 @test "branch-hygiene: a second trunk is reported with its own sentence" {
@@ -204,6 +217,10 @@ reset_counters() {
   audit
   [ "${status}" -eq 1 ]
   [[ "${stderr}" == *"is reserved: 'master' is a second trunk name"* ]]
+  # The clause is the point of the separate message: a second trunk breaks "main is
+  # the only long-lived branch", and pinning only the prefix would let that sentence
+  # drift back to calling it an environment nobody promoted.
+  [[ "${stderr}" == *"'master' is a second trunk name; docs/branching.md makes main the only long-lived branch"* ]]
   [[ "${stderr}" != *"master'* is an environment name"* ]]
 }
 
@@ -278,9 +295,9 @@ reset_counters() {
   (is_always_kept local gh-pages)
   (is_always_kept remote origin/gh-pages)
   (is_always_kept remote backup/gh-pages)
-  ! is_always_kept local feat/landed
-  ! is_always_kept remote origin/feat/landed
-  ! is_always_kept remote backup/feat/landed
+  deny is_always_kept local feat/landed
+  deny is_always_kept remote origin/feat/landed
+  deny is_always_kept remote backup/feat/landed
 }
 
 @test "branch-hygiene: report_or_warn counts an error always and a warning only without --strict" {
@@ -412,9 +429,11 @@ reset_counters() {
   [ "$(resolve_repo_arg work)" = "${FIXTURE}/work" ]
   # An absolute --repo is the operator's own answer and survives untouched.
   [ "$(resolve_repo_arg "${FIXTURE}/work")" = "${FIXTURE}/work" ]
-  ! resolve_repo_arg no-such-dir
-  # Resolving must not move the caller: the cd belongs to the subshell.
-  [ "${PWD}" != "${FIXTURE}/work" ]
+  deny resolve_repo_arg no-such-dir
+  # Refusing a path must not conjure it: a helper that "fixed" the miss with mkdir -p
+  # would turn every typo'd --repo into a directory that then fails the git check with
+  # a message about a repository rather than about the path the operator typed.
+  [ ! -e "${FIXTURE}/no-such-dir" ]
 }
 
 @test "branch-hygiene: a relative --repo resolves against the Bazel workspace dir" {
@@ -584,8 +603,15 @@ reset_counters() {
   fixture_repo >/dev/null
   add_branch feat/landed
   merge_into_main feat/landed
+  # Built after the merge so it descends from main's new tip and fast-forwards too.
+  add_branch feat/also-landed
+  merge_into_main feat/also-landed
   git -C "${FIXTURE}/work" switch -q feat/landed
   audit
+  # The positive control belongs here. An assertion that names only what must be
+  # absent is also satisfied by a run that reported nothing at all, which is exactly
+  # the failure this exemption could hide.
+  [[ "${output}" == *"local branch feat/also-landed is merged"* ]]
   [[ "${output}" != *"local branch feat/landed is merged"* ]]
 }
 
@@ -656,4 +682,197 @@ reset_counters() {
     GITHUB_WORKSPACE= bash "${SCRIPT}" --repo "${FIXTURE}/work"
   [ "${status}" -eq 2 ]
   [[ "${stderr}" == *"no trunk branch main"* ]]
+}
+
+@test "branch-hygiene: a remote whose own name holds a slash is still a remote" {
+  # git accepts `git remote add ns/x <url>`, and a first-path-segment split of the row
+  # ns/x/staging reads the remote as `ns` and the branch as `x/staging`. The
+  # environment rule then printed "ok" for a branch literally named staging.
+  fixture_repo >/dev/null
+  cd "${FIXTURE}/work"
+  git remote add "ns/x" "${FIXTURE}/origin.git"
+  git push -q "ns/x" main:staging
+  git fetch -q "ns/x"
+  audit
+  [ "${status}" -eq 1 ]
+  [[ "${stderr}" == *"remote branch ns/x/staging is reserved: 'staging' is an environment name"* ]]
+  # That remote's own trunk ref is a trunk, not a branch that outlived its change.
+  [[ "${output}" != *"ns/x/main is merged"* ]]
+}
+
+@test "branch-hygiene: split_remote_ref takes the longest configured remote" {
+  fixture_repo >/dev/null
+  cd "${FIXTURE}/work"
+  git remote add "ns/x" "${FIXTURE}/origin.git"
+  load_lib
+  # Longest match, not first segment: `ns` is not a remote here and `ns/x` is.
+  split_remote_ref "ns/x/staging"
+  [ "${SPLIT_REMOTE}" = "ns/x" ]
+  [ "${SPLIT_BRANCH}" = "staging" ]
+  split_remote_ref "origin/dev"
+  [ "${SPLIT_REMOTE}" = "origin" ]
+  [ "${SPLIT_BRANCH}" = "dev" ]
+  # A branch whose own name carries a slash keeps every segment after the remote.
+  split_remote_ref "origin/feat/landed-one"
+  [ "${SPLIT_BRANCH}" = "feat/landed-one" ]
+  # Nothing matched, and the previous answer has to be gone rather than left behind
+  # for a caller that reads the globals without checking the status.
+  deny split_remote_ref "nosuch/branch"
+  [ -z "${SPLIT_REMOTE}" ]
+  [ -z "${SPLIT_BRANCH}" ]
+}
+
+@test "branch-hygiene: plan_deletion splits a slash-named remote at the remote" {
+  # The wrong split prints a command that deletes a branch nobody named on a remote
+  # that does not exist, while the tip SHA it records belongs to neither.
+  fixture_repo >/dev/null
+  cd "${FIXTURE}/work"
+  git remote add "ns/x" "${FIXTURE}/origin.git"
+  load_lib
+  run plan_deletion remote "ns/x/merged-thing" ddb08cb7
+  [[ "${output}" == *"git push ns/x --delete merged-thing"* ]]
+  [[ "${output}" != *"git push ns --delete"* ]]
+}
+
+@test "branch-hygiene: a local branch that borrows a remote namespace is audited" {
+  # refs/heads/origin/staging is reachable by update-ref, and %(refname:short) hands
+  # back `heads/origin/staging` once a refs/remotes/origin/* ref makes it ambiguous -
+  # every rule then reads the word `heads` and the branch is invisible, while the
+  # deletion plan it generates names a branch git cannot find.
+  fixture_repo >/dev/null
+  add_branch staging
+  git -C "${FIXTURE}/work" update-ref refs/heads/origin/staging \
+    "$(git -C "${FIXTURE}/work" rev-parse main)"
+  audit
+  [ "${status}" -eq 1 ]
+  [[ "${stderr}" == *"local branch origin/staging is reserved: 'staging' is an environment name"* ]]
+  [[ "${output}" != *"heads/origin/staging"* ]]
+}
+
+@test "branch-hygiene: --trunk master does not offer the real trunk for deletion" {
+  # Whichever trunk the run names, a trunk-shaped name is never a cleanup candidate.
+  # This used to print `git push origin --delete main`, the one command this tool must
+  # never put in front of an operator.
+  fixture_repo >/dev/null
+  add_branch master
+  merge_into_main master
+  add_branch feat/landed
+  merge_into_main feat/landed
+  # Move master up to where main is, so master is the trunk the ancestry test runs
+  # against and main is one of the refs it already contains. With --trunk master this
+  # is exactly the checkout that printed `git push origin --delete main`.
+  git -C "${FIXTURE}/work" branch -f master main
+  audit --trunk master --plan
+  [[ "${output}" != *"--delete main"* ]]
+  [[ "${output}" != *"git branch -d main"* ]]
+  # The positive control: the guard above is not the whole run having given up.
+  [[ "${output}" == *"git branch -d feat/landed"* ]]
+  [[ "${output}" == *"git push origin --delete feat/landed"* ]]
+}
+
+@test "branch-hygiene: --remote naming a remote this checkout lacks exits 2" {
+  # Auditing zero refs is a green gate that looked at nothing, which this CLI has to
+  # refuse rather than report as a clean tree.
+  fixture_repo >/dev/null
+  add_branch staging
+  audit --remote typo
+  [ "${status}" -eq 2 ]
+  [[ "${stderr}" == *"--remote typo is not a remote"* ]]
+  [[ "${output}" != *"summary:"* ]]
+}
+
+@test "branch-hygiene: require_value keeps a value and refuses the shapes that are not" {
+  load_lib
+  require_value --repo work
+  [ "${VALUE}" = "work" ]
+  # Empty and flag-shaped are both "the operator did not give a value": `--max-age
+  # --strict` would otherwise take --strict as the number of days.
+  run --separate-stderr require_value --repo ""
+  [ "${status}" -eq 2 ]
+  [[ "${stderr}" == *"--repo needs a value"* ]]
+  [[ "${stderr}" == *"Usage: branch-hygiene.sh"* ]]
+  run --separate-stderr require_value --max-age --strict
+  [ "${status}" -eq 2 ]
+  [[ "${stderr}" == *"--max-age needs a value"* ]]
+}
+
+@test "branch-hygiene: a flag that arrives without its value is refused" {
+  # `shift 2` with one argument left fails, and under set -e that ended the run on
+  # exit 1 - this CLI's "the audit found something" code - printing nothing at all.
+  fixture_repo >/dev/null
+  local flag
+  for flag in --repo --trunk --remote --max-age; do
+    run --separate-stderr env -C "${BATS_TEST_TMPDIR?}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+      GITHUB_WORKSPACE= bash "${SCRIPT}" "${flag}"
+    [ "${status}" -eq 2 ] || return 1
+    [[ "${stderr}" == *"${flag} needs a value"* ]] || return 1
+    [[ "${stderr}" == *"Usage: branch-hygiene.sh"* ]] || return 1
+  done
+}
+
+@test "branch-hygiene: --max-age outside the range is refused before the audit" {
+  # An unbounded value reached date as `-999999999999 days`, which GNU date refuses and
+  # the BSD fallback cannot parse on Linux: the run stopped mid-audit with no summary.
+  fixture_repo >/dev/null
+  audit --max-age 999999999999
+  [ "${status}" -eq 2 ]
+  [[ "${stderr}" == *"--max-age wants at most 3650 days"* ]]
+}
+
+@test "branch-hygiene: EVO_T1_REPO picks the checkout and --repo outranks it" {
+  # usage advertises the env-var form, which is what a CI job sets once instead of
+  # threading a path through every invocation. Advertising it and ignoring it is worse
+  # than not offering it: the job believes it audited a repository.
+  fixture_repo >/dev/null
+  add_branch staging
+  # A name only this fixture has. Without it the assertions below are satisfiable by
+  # the real checkout the CLI falls back to when no --repo arrives - and this repo
+  # really does have an origin/staging, so the test stayed green with the env var
+  # ignored entirely.
+  add_branch feat/envvar-probe
+  merge_into_main feat/envvar-probe
+  run --separate-stderr env -C "${BATS_TEST_TMPDIR?}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= EVO_T1_REPO="${FIXTURE}/work" bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${stderr}" == *"origin/staging is reserved"* ]]
+  [[ "${output}" == *"feat/envvar-probe"* ]]
+  # A decoy in the environment must not override the path the operator typed.
+  run --separate-stderr env -C "${BATS_TEST_TMPDIR?}" REPO_ROOT= BUILD_WORKSPACE_DIRECTORY= \
+    GITHUB_WORKSPACE= EVO_T1_REPO="/nonexistent-decoy-dir" bash "${SCRIPT}" \
+    --repo "${FIXTURE}/work"
+  [ "${status}" -eq 1 ]
+  [[ "${stderr}" == *"origin/staging is reserved"* ]]
+  [[ "${output}" == *"feat/envvar-probe"* ]]
+}
+
+@test "branch-hygiene: a fetch that cannot complete warns and stays a warning" {
+  # The documented behaviour is that --fetch failure costs the run its freshness, not
+  # its verdict. git's own stderr has to be silenced with it, or its error: line sits
+  # above the warning: and any caller grepping ^error: reads a failure the summary
+  # counted as a warning.
+  fixture_repo >/dev/null
+  cd "${FIXTURE}/work"
+  git remote add dead "${BATS_TEST_TMPDIR}/no-such-origin.git"
+  audit --fetch --remote dead
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"warning: could not fetch dead"* ]]
+  [[ "${stderr}" != *"error: could not fetch"* ]]
+  [[ "${output}" == *", 0 failed"* ]]
+}
+
+@test "branch-hygiene: the tables stay clear of names that read as work first" {
+  # int, accept and training were in the environment table and are gone: a branch
+  # called int is an integer helper and training is a model feature, and an environment
+  # finding is an error that exits 1 without --strict.
+  load_lib
+  deny is_environment_name int
+  deny is_environment_name accept
+  deny is_environment_name training
+  deny is_environment_name int/bounds-check
+  deny is_environment_name training/rerun
+  # The vocabulary the rule is actually against stays covered.
+  is_environment_name uat
+  is_environment_name sit
+  is_environment_name sandbox
+  is_environment_name integration
 }

@@ -46,7 +46,7 @@ require_tool git
 # @function main
 # Resolve the checkout and run every audit over it.
 # Globals:
-#   REPO_ARG, TRUNK, SELF_DIR, INVOKE_DIR
+#   REPO_ARG, TRUNK, SELF_DIR, INVOKE_DIR, EVO_T1_REPO, REMOTES
 # Arguments:
 #   None (argv is parsed by the caller)
 # Outputs:
@@ -54,10 +54,19 @@ require_tool git
 # Returns:
 #   0 clean, 1 findings, 2 the audit could not run
 main() {
-  local root
+  local root base
+  # usage advertises $EVO_T1_REPO as the flag-free form, which is what a CI job sets
+  # once instead of threading the path through every invocation. --repo still wins,
+  # so the advertised promise and the explicit flag cannot disagree.
+  REPO_ARG="${REPO_ARG:-${EVO_T1_REPO:-}}"
   if [ -n "${REPO_ARG}" ]; then
     root="$(resolve_repo_arg "${REPO_ARG}")" || {
-      err "cannot enter --repo ${REPO_ARG} (resolved to ${INVOKE_DIR}/${REPO_ARG})"
+      if [[ ${REPO_ARG} == /* ]]; then
+        base=""
+      else
+        base="${INVOKE_DIR}/"
+      fi
+      err "cannot enter --repo ${REPO_ARG} (resolved to ${base}${REPO_ARG})"
       exit 2
     }
   else
@@ -85,12 +94,28 @@ main() {
     fi
   }
 
+  # A --remote that names nothing audits zero refs and leaves the run to report a
+  # clean tree: the one outcome worse than a false alarm is a green gate that looked
+  # at nothing. Refuse it here, before the fetch, so the typo is named once and early.
+  local wanted
+  for wanted in ${REMOTES[@]+"${REMOTES[@]}"}; do
+    [ -n "${wanted}" ] || continue
+    git remote get-url "${wanted}" >/dev/null 2>&1 || {
+      err "--remote ${wanted} is not a remote of ${root} (this checkout has: $(git remote | tr '\n' ' '))"
+      exit 2
+    }
+  done
+
   if [ "${DO_FETCH}" -eq 1 ]; then
     section "Remotes"
     local remote
     for remote in $(selected_remotes); do
       phase "fetch ${remote}"
-      git remote update --prune "${remote}" >/dev/null ||
+      # A fetch that will not complete is a warning, not a failure: the run still
+      # reports what this clone last saw. git's own stderr has to go quiet with it,
+      # or its `error: ...` line sits above the `warning:` and anything grepping for
+      # ^error: calls this run a failure it counted as a warning.
+      git remote update --prune "${remote}" >/dev/null 2>&1 ||
         warn "could not fetch ${remote}; its remote branches may be stale"
     done
   fi
@@ -99,9 +124,18 @@ main() {
   current="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 
   section "Environment-named branches"
+  # Both row lists are read once and reused by all three audits. A ref pointing at a
+  # missing object makes git for-each-ref die with a bare `fatal:` and exit 128, so
+  # the failure is caught and reported as this CLI's own verdict: 2, could not run.
   local local_rows remote_rows
-  local_rows="$(list_local)"
-  remote_rows="$(list_remote)"
+  if ! local_rows="$(list_local 2>&1)"; then
+    err "cannot read local branches: $(head -n 1 <<<"${local_rows}")"
+    exit 2
+  fi
+  if ! remote_rows="$(list_remote 2>&1)"; then
+    err "cannot read remote branches: $(head -n 1 <<<"${remote_rows}")"
+    exit 2
+  fi
   audit_environment local "${local_rows}"
   audit_environment remote "${remote_rows}"
 
