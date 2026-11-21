@@ -34,9 +34,13 @@
 #     dashboard quota 501, which only do anything if the overrides file the knob
 #     names is a file this tree actually ships, bound at exactly that path, if the
 #     filter value names that one logger and nothing wider (a list that also carries
-#     `*:error` mutes every logger in the product), and if every group under
-#     `overrides:` is a mapping - a scalar there fails the boot and the service's
-#     restart policy loops it;
+#     `*:error` mutes every logger in the product), and if the overrides document is
+#     one Grafana's own decoder will take - a group that is not a mapping, or a
+#     top-level key written twice, fails the boot and the service's restart policy
+#     loops it, and PyYAML reports neither;
+#   - that the master key reaches exactly one container: the token config is attached
+#     once, to prometheus, and a second attach anywhere in the file is this suite
+#     going red rather than the key quietly landing in a LAN-published box;
 #   - that litellm/config.yaml leaves /metrics behind the master key: the switch that
 #     would take that auth off is absent from the file, and the block it would sit in
 #     is still there, so the absence reads as a decision and not as a file that lost
@@ -525,16 +529,35 @@ PY
 
 # overrides_facts <file> - key|<k> per top-level key of the Grafana quota overrides
 # file, plus map|<k> when that value is a mapping, and the same pair one level down
-# under `overrides:` as sub|<group> and submap|<group>. Grafana takes the file's
-# presence as "quotas are configured" and then decodes overrides as a map of
-# per-group limits, so a comment-only file or a top key holding a string leaves the
-# dashboard's quota call answering 501 exactly as before, with no error anywhere to
-# say so - and a group whose value is not a mapping stops the container at boot.
+# under `overrides:` as sub|<group> and submap|<group>, plus dupkey|<k> for a
+# top-level key the text repeats. Grafana takes the file's presence as "quotas are
+# configured" and then decodes overrides as a map of per-group limits, so a
+# comment-only file or a top key holding a string leaves the dashboard's quota call
+# answering 501 exactly as before, with no error anywhere to say so - and a group
+# whose value is not a mapping, or a key written twice, stops the container at boot.
 overrides_facts() {
   python3 - "${1}" <<'PY'
 import sys
 
 import yaml
+
+# yaml.safe_load keeps the last of a repeated mapping key and says nothing, while
+# Grafana's Go decoder refuses the document outright, so a file with a second
+# top-level `overrides:` is green here and exit 1 there. Count the keys off the
+# text before the parser gets the chance to be forgiving.
+top = {}
+with open(sys.argv[1], encoding="utf-8") as handle:
+    for line in handle:
+        if not line.strip() or line[0] in " \t#":
+            continue
+        if ":" not in line:
+            continue
+        key = line.split(":", 1)[0].strip()
+        if key:
+            top[key] = top.get(key, 0) + 1
+for key, times in sorted(top.items()):
+    if times > 1:
+        print("dupkey|%s" % key)
 
 with open(sys.argv[1], encoding="utf-8") as handle:
     doc = yaml.safe_load(handle)
@@ -1221,6 +1244,17 @@ LISTEN_CONTRACT=(
   assert_eq "compose writes it where the scrape reads it" \
     "${LITELLM_TOKEN_FILE}" "${target}"
   assert_eq "the token file is world-readable and unwritable" "0444" "${mode}"
+  # The assertion above reads one line and takes the first, so it cannot see a
+  # second attach anywhere in the file. Attaching this same config to, say, the
+  # grafana service - published on the LAN at ${GRAFANA_PORT} - put the master key
+  # in a second container and left every line above green. The key belongs to the
+  # collector alone, so the attach set is asserted whole, across every service.
+  local attaches
+  attaches="$(printf '%s\n' "${facts}" | grep '^attach|' || true)"
+  assert_eq "exactly one container is handed the master key" 1 \
+    "$(printf '%s\n' "${attaches}" | grep -c . || true)"
+  assert_eq "the one container handed the key is the collector" \
+    "prometheus" "$(printf '%s\n' "${attaches}" | awk -F'|' '{print $2}')"
 }
 
 @test "the prometheus service holds no copy of the master key in its environment" {
@@ -1288,6 +1322,14 @@ LISTEN_CONTRACT=(
   done <<<"${groups}"
   assert_eq "every group under overrides: is a mapping - a scalar there stops Grafana at boot with failed to load runtime config, and the service's restart: unless-stopped turns that one exit into a crash loop" \
     "" "${not_a_map}"
+  # A fourth fatal shape the YAML parser will not report: write `overrides:` twice
+  # and safe_load keeps the last, while Grafana's decoder refuses the document -
+  # measured on grafana/grafana:13.3.1, exit 1 with `failed to load runtime
+  # config: ... mapping key "overrides" already defined at line 1`.
+  local dupes
+  dupes="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="dupkey"{print $2}')"
+  assert_eq "no top-level key is repeated - PyYAML folds a duplicate and stays green where Grafana exits 1 and crash-loops under restart: unless-stopped" \
+    "" "${dupes}"
 }
 
 @test "litellm/config.yaml keeps the metrics endpoint authenticated" {
