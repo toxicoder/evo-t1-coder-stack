@@ -2360,7 +2360,13 @@ them means anything.
   `grafana/grafana:13.3.1`. No cap is known to take effect there: four plausible shapes
   written under `overrides:` left that 1000 untouched, and three other shapes stop the
   container at boot, so the file's own header says to prove a limit on the pinned image
-  before committing one. If the `501` is back, the bind or the variable went missing.
+  before committing one. If the `501` is back, the bind or the variable went missing -
+  and the knob cuts both ways: pointed at a path that is not there, Grafana does not
+  fall back to the 501, it exits 1 with `Error: overrides file does not exist`
+  (measured on 13.3.1), and `restart: unless-stopped` loops it. A missing bind source
+  makes that shape on its own, since Docker mounts a directory where the file should
+  be, so a checkout that never got `observability/grafana/unified-storage/overrides.yml`
+  costs the whole dashboard rather than one console line.
 - `DashboardScenePage.tsx:171 skipping rendering` is a leftover `console.log` in
   Grafana's own bundle (`public/app/features/dashboard-scene/pages/DashboardScenePage.tsx`,
   read out of the pinned image's source map). It prints when the page declines to render
