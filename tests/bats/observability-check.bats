@@ -326,22 +326,28 @@ drop_env_key() {
   mv "${1}.tmp" "${1}"
 }
 
-# write_targets_body <path> <health-a> <health-b> - a Prometheus /api/v1/targets
-# body with two active targets, one per health value, in the field order
-# Prometheus itself emits (labels before health).
+# write_targets_body <path> <health-a> <health-b> [<error-a> <error-b>] - a
+# Prometheus /api/v1/targets body with two active targets, one per health value,
+# in the field order Prometheus itself emits (labels before health, lastError
+# immediately before it). The two error arguments plant each target's lastError;
+# left out they stay the empty string Prometheus writes for a target that never
+# failed, which is what every caller that only cares about health passes.
 # Globals:
 #   None
 # Arguments:
-#   $1 - file to write; $2 - health of the prometheus job; $3 - health of the litellm job
+#   $1 - file to write; $2 - health of the prometheus job; $3 - health of the
+#   litellm job; $4 - lastError of the prometheus job; $5 - lastError of the
+#   litellm job
 # Outputs:
 #   The body file
 # Returns:
 #   0
 write_targets_body() {
+  local path="$1" health_a="$2" health_b="$3" error_a="${4:-}" error_b="${5:-}"
   printf '%s\n' "{\"status\":\"success\",\"data\":{\"activeTargets\":[\
-{\"discoveredLabels\":{\"__address__\":\"127.0.0.1:9090\"},\"labels\":{\"instance\":\"127.0.0.1:9090\",\"job\":\"prometheus\"},\"scrapeUrl\":\"http://127.0.0.1:9090/metrics\",\"lastError\":\"\",\"health\":\"$2\"},\
-{\"discoveredLabels\":{\"__address__\":\"litellm:4000\"},\"labels\":{\"instance\":\"litellm:4000\",\"job\":\"litellm\"},\"scrapeUrl\":\"http://litellm:4000/metrics\",\"lastError\":\"\",\"health\":\"$3\"}\
-],\"droppedTargets\":[]}}" >"${1}"
+{\"discoveredLabels\":{\"__address__\":\"127.0.0.1:9090\"},\"labels\":{\"instance\":\"127.0.0.1:9090\",\"job\":\"prometheus\"},\"scrapeUrl\":\"http://127.0.0.1:9090/metrics\",\"lastError\":\"${error_a}\",\"health\":\"${health_a}\"},\
+{\"discoveredLabels\":{\"__address__\":\"litellm:4000\"},\"labels\":{\"instance\":\"litellm:4000\",\"job\":\"litellm\"},\"scrapeUrl\":\"http://litellm:4000/metrics\",\"lastError\":\"${error_b}\",\"health\":\"${health_b}\"}\
+],\"droppedTargets\":[]}}" >"${path}"
 }
 
 # stub_prometheus <targets-file> <metrics-file> - point the curl plan at the two
@@ -806,7 +812,7 @@ assert_summary_is_last_line() {
   assert_summary_is_last_line
 }
 
-@test "a down target is a warning that names its job and still exits 0" {
+@test "a down target is a warning that names its job and its empty lastError" {
   write_env_file "${SCRATCH}/down.env"
   write_targets_body "${SCRATCH}/targets-down.json" up down
   stub_prometheus "${SCRATCH}/targets-down.json" "${SCRATCH}/metrics-clean.txt"
@@ -814,8 +820,140 @@ assert_summary_is_last_line() {
   assert_eq "a red target is a warning, not a failure" 0 "${status}"
   assert_match "the down job is named" \
     "warning: prometheus target job 'litellm' reports 'down', not up" "${output}"
+  assert_match "a target that recorded nothing prints the placeholder, not a blank" \
+    "reports 'down', not up: lastError '-'" "${output}"
   assert_not_match "the up job is not named" "job 'prometheus' reports" "${output}"
   assert_match "the tally is printed" 'ok: prometheus scrape targets: 1 of 2 up' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a red litellm target with a 401 names the token file and the config that fills it" {
+  write_env_file "${SCRATCH}/litellm-down.env"
+  write_targets_body "${SCRATCH}/targets-litellm-down.json" up down "" \
+    "server returned HTTP status 401 Unauthorized"
+  stub_prometheus "${SCRATCH}/targets-litellm-down.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/litellm-down.env"
+  assert_eq "a red target with a cause still exits 0" 0 "${status}"
+  assert_match "the down job is still named on its own line" \
+    "warning: prometheus target job 'litellm' reports 'down', not up" "${output}"
+  assert_match "the warning carries the target's own lastError" \
+    "lastError 'server returned HTTP status 401 Unauthorized'" "${output}"
+  assert_match "the finding names the token file and where it lives" \
+    'warning: that lastError is the bearer, not the proxy: /etc/prometheus-secrets/litellm_token in the prometheus container has to hold the key' "${output}"
+  assert_match "the finding tells the operator to compare without printing the key" \
+    'compare the two by hash, never by printing them' "${output}"
+  assert_match "the finding names the recreate a rotated key needs" \
+    'up -d --force-recreate prometheus' "${output}"
+  assert_match "a red target is still no failure" \
+    '^summary: [0-9]+ ok, [0-9]+ warnings, 0 failed$' "${output}"
+  assert_not_match "metrics auth is never offered as the fix" \
+    'require_auth_for_metrics_endpoint' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "an unreadable bearer file is quoted and still points at the token file" {
+  write_env_file "${SCRATCH}/litellm-nofile.env"
+  write_targets_body "${SCRATCH}/targets-litellm-nofile.json" up down "" \
+    'Get \"http://litellm:4000/metrics\": unable to read authorization credentials: unable to read file /etc/prometheus-secrets/litellm_token: open /etc/prometheus-secrets/litellm_token: no such file or directory' 
+  stub_prometheus "${SCRATCH}/targets-litellm-nofile.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/litellm-nofile.env"
+  assert_eq "an unreadable credentials file is still a warning, not a failure" 0 "${status}"
+  # Verbatim off /api/v1/targets on prom/prometheus:v3.16.0, the Get "url": prefix
+  # and the open <path>: tail included: both arrive with escaped quotes, and a
+  # reader that cuts the field at the first " byte loses everything after Get.
+  assert_match "the lastError is quoted whole, prefix, quotes, path and all" \
+    'lastError '"'"'Get "http://litellm:4000/metrics": unable to read authorization credentials: unable to read file /etc/prometheus-secrets/litellm_token: open /etc/prometheus-secrets/litellm_token: no such file or directory'"'"'' "${output}"
+  assert_match "the unreadable-credentials shape is the one that names the token file" \
+    'warning: that lastError is the bearer, not the proxy: /etc/prometheus-secrets/litellm_token in the prometheus container has to hold the key' "${output}"
+  assert_not_match "metrics auth is never offered as the fix" \
+    'require_auth_for_metrics_endpoint' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a refused litellm connection blames the proxy and never the token file" {
+  write_env_file "${SCRATCH}/litellm-refused.env"
+  write_targets_body "${SCRATCH}/targets-litellm-refused.json" up down "" \
+    'Get \"http://litellm:4000/metrics\": dial tcp 172.18.0.5:4000: connect: connection refused' 
+  stub_prometheus "${SCRATCH}/targets-litellm-refused.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/litellm-refused.env"
+  assert_eq "a proxy that is down is still a warning, not a failure" 0 "${status}"
+  assert_match "the refused connection is quoted as the target recorded it" \
+    'lastError '"'"'Get "http://litellm:4000/metrics": dial tcp 172.18.0.5:4000: connect: connection refused'"'"'' "${output}"
+  assert_match "the pointer says the proxy is the thing that is down" \
+    'warning: that lastError is the proxy itself, not the bearer file: litellm has to be up and answering litellm:4000 on the project network' "${output}"
+  assert_not_match "a dead proxy is never sent to check the token file" \
+    '/etc/prometheus-secrets/litellm_token' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "a litellm lastError of no known shape names neither cause" {
+  write_env_file "${SCRATCH}/litellm-unknown.env"
+  write_targets_body "${SCRATCH}/targets-litellm-unknown.json" up down "" \
+    'Get \"http://litellm:4000/metrics\": context deadline exceeded while reading body' 
+  stub_prometheus "${SCRATCH}/targets-litellm-unknown.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/litellm-unknown.env"
+  assert_eq "an unrecognised cause is still a warning, not a failure" 0 "${status}"
+  assert_match "the cause the target recorded is printed rather than guessed at" \
+    'lastError '"'"'Get "http://litellm:4000/metrics": context deadline exceeded while reading body'"'"'' "${output}"
+  assert_match "the pointer says the lastError is all this CLI has" \
+    'warning: the lastError above is the only cause this CLI has for the litellm scrape' "${output}"
+  assert_not_match "an unknown shape does not blame the token file" \
+    '/etc/prometheus-secrets/litellm_token' "${output}"
+  assert_summary_is_last_line
+}
+
+@test "an escaped tab in the lastError still prints as one target line" {
+  write_env_file "${SCRATCH}/litellm-tab.env"
+  # encoding/json writes a control byte as a two-byte escape, so this is the
+  # spelling a real body carries - and the one that could still split one target
+  # across two tally rows if the reader folded only the raw byte.
+  write_targets_body "${SCRATCH}/targets-litellm-tab.json" up down "" \
+    'Get \"http://litellm:4000/metrics\": dial tcp 172.18.0.5:4000:\tconnect: connection refused' 
+  stub_prometheus "${SCRATCH}/targets-litellm-tab.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/litellm-tab.env"
+  assert_eq "an escaped tab is no more fatal than the message around it" 0 "${status}"
+  assert_match "the escape is folded to a space in the warning" \
+    'lastError '"'"'Get "http://litellm:4000/metrics": dial tcp 172.18.0.5:4000: connect: connection refused'"'"'' "${output}"
+  local lines
+  lines="$(printf '%s\n' "${output}" | grep -c '^warning: prometheus target job')"
+  assert_eq "one red target is exactly one warning line" 1 "${lines}"
+  assert_summary_is_last_line
+}
+
+@test "raw control bytes in a lastError never reach the report" {
+  write_env_file "${SCRATCH}/litellm-ctl.env"
+  # A scraped peer chooses its own failure text, and the CLI prints it. Raw ESC,
+  # BEL and CR have to be stripped, or this check hands a terminal-control
+  # sequence straight to whatever shell the operator is reading it in.
+  local ctl
+  ctl="$(printf 'Get \\"http://litellm:4000/metrics\\": \033[31mRED\007\rrefused')"
+  write_targets_body "${SCRATCH}/targets-litellm-ctl.json" up down "" "${ctl}"
+  stub_prometheus "${SCRATCH}/targets-litellm-ctl.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/litellm-ctl.env"
+  assert_eq "a control byte is no more fatal than the message around it" 0 "${status}"
+  assert_match "the text around the control bytes still arrives" "\[31mRED +refused" "${output}"
+  local stray
+  stray="$(printf '%s' "${output}" | tr -d '\n' | tr -dc '\000-\037\177' | wc -c | tr -d '[:space:]')"
+  assert_eq "no control byte but the line breaks survives into the report" 0 "${stray}"
+  local lines
+  lines="$(printf '%s\n' "${output}" | grep -c '^warning: prometheus target job')"
+  assert_eq "one red target is still exactly one warning line" 1 "${lines}"
+  assert_summary_is_last_line
+}
+
+@test "a red target from another job does not blame the token file" {
+  write_env_file "${SCRATCH}/prom-down.env"
+  write_targets_body "${SCRATCH}/targets-prom-down.json" down up \
+    'Get \"http://127.0.0.1:9090/metrics\": dial tcp 127.0.0.1:9090: connect: connection refused' 
+  stub_prometheus "${SCRATCH}/targets-prom-down.json" "${SCRATCH}/metrics-clean.txt"
+  run bash "${SCRIPT}" --env-file "${SCRATCH}/prom-down.env"
+  assert_eq "a red target is still a warning, not a failure" 0 "${status}"
+  assert_match "the red job is named with its own lastError" \
+    'warning: prometheus target job '"'"'prometheus'"'"' reports '"'"'down'"'"', not up: lastError '"'"'Get "http://127.0.0.1:9090/metrics": dial tcp 127.0.0.1:9090: connect: connection refused'"'"'' "${output}"
+  assert_not_match "the litellm pointer is not attached to a job that has no bearer" \
+    'litellm has to be up and answering' "${output}"
+  assert_not_match "the token file is not mentioned for a job that has none" \
+    '/etc/prometheus-secrets/litellm_token' "${output}"
   assert_summary_is_last_line
 }
 

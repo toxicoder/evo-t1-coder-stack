@@ -107,8 +107,22 @@ repo can verify.
   hold that same text at rest, so a shell that can read them reads what the containers
   said. LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
   other LiteLLM endpoint — keep it that way, since the metrics name your model
-  aliases and traffic volumes; Prometheus sends that key from its own environment, so it
-  never lands in the committed scrape file.
+  aliases and traffic volumes, and LiteLLM's `:4000` is published to the LAN. The key
+  reaches Prometheus as a file, never as a variable: compose's `configs:` block renders
+  `litellm_metrics_token` from `${LITELLM_MASTER_KEY:-change-me-litellm}` and hands it to
+  the prometheus container at `/etc/prometheus-secrets/litellm_token`, mode 0444, and the
+  `litellm` job reads that path with `authorization.credentials_file`
+  (observability/prometheus/prometheus.yml). The pinned Prometheus (v3.16.0) expands
+  `$VAR` and `${VAR}` under `global.external_labels` -- measured at
+  `/api/v1/status/config`, where `$(VAR)` stays literal even there -- and leaves them
+  verbatim in a scrape target address and in `authorization.credentials`, measured at a
+  listener that logs its request headers, so that file is the only door
+  the token can come through -- and it is what keeps the key out of the committed scrape
+  config and out of `docker inspect`'s command line alike. If the `litellm` target goes
+  red, do not take the auth off. The 401 LiteLLM returns offers
+  `litellm_settings.require_auth_for_metrics_endpoint: false`, and that switch publishes
+  to the LAN exactly the model aliases and traffic volumes this bullet is protecting. Fix
+  the token file instead.
 - **Workspace credentials.** The LiteLLM master key reaches each workspace as the
   `LITELLM_API_KEY` environment variable, which the startup script injects into the
   rendered `~/.grok/config.toml` (the key lives in the file as an `env_key`

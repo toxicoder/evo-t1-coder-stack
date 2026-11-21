@@ -2313,17 +2313,71 @@ curl -s http://127.0.0.1:9090/api/v1/targets
 ```
 
 - **Absent from the list entirely**: the job is not in
-  `observability/prometheus/prometheus.yml`. Add it there and recreate Prometheus - a
-  `restart` keeps the old mount and the old config, since the file is mounted read-only.
-  Prometheus also runs with `--web.enable-lifecycle`, but nothing here calls it; a
-  recreate is the path the stack uses.
+  `observability/prometheus/prometheus.yml`. Add it there and let the collector read it
+  again: that file arrives through a bind mount, which follows the *path*, so the edit is
+  already inside the container and only the running process is behind it. Restarting the
+  service picks it up, and `POST /-/reload` answers 200 on this one
+  (`--web.enable-lifecycle`, `docker-compose.yml:854`) without dropping the scrape loop's
+  in-flight state. A recreate is what you need when the mount line or another compose
+  setting changed, not for an edit to a file that is already mounted.
 - **Present and `down`**: the app is not answering on the name Prometheus dials. The
   scrapes are compose-DNS (`coder:2112`, `litellm:4000`), not the host mappings - a
   `curl 127.0.0.1:2112` that works from the host proves only that the port mapping is
   fine.
-- **`litellm` alone is `down` with a 401**: the scrape sends the master key, and
-  Prometheus expands it from its own environment. `LITELLM_MASTER_KEY` rotated in `.env`
-  without recreating `prometheus` leaves the collector holding the old one.
+- **`litellm` alone is `down` with a 401**: the scrape sends the master key as a bearer
+  token that it reads from a file, `/etc/prometheus-secrets/litellm_token`
+  (`observability/prometheus/prometheus.yml`), which Compose writes from
+  `LITELLM_MASTER_KEY` when it creates the container. Measured on v3.16.0, the collector
+  expands environment variables under `global.external_labels` - they come back filled
+  in at `/api/v1/status/config` - and nowhere a credential could hide: a scrape target
+  address and an `authorization` block send the written text back verbatim, so a value
+  it could not substitute is rejected. That file is the one credential in the bundle a rotate can strand, and it
+  behaves the opposite way from the bind mounts above: it is a Compose `configs` entry,
+  and Compose writes those when it *creates* the container. Measured with the compose
+  this repo ships, `up -d` after a rotate prints `Running`, keeps the same container and
+  the same `com.docker.compose.config-hash`, and the file inside still holds the old key;
+  a `restart` matches it. The recreate that works names the service -
+  `docker compose -p evo-t1-prod --profile observability -f docker-compose.yml up -d
+  --force-recreate prometheus`, the invocation `prod-stack` itself prints with the
+  recreate added, since `prod-stack up` passes no flags through. The response body names the fault: LiteLLM answers a
+  missing bearer with "Malformed API Key passed in", and a wrong one with
+  `No connected db.` - which is an auth failure at v1.102.1, not a database complaint
+  (this bundle runs LiteLLM with no DB at all). `bazelisk run //scripts:observability-check`
+  prints that target's `lastError`, so it names the 401 without a `docker logs` read.
+
+### Grafana's dashboard page logs a quotas `501` and `skipping rendering` -> two separate upstream lines, one of them closed here
+
+Cause: both show up in the browser console on every dashboard page, and only one of
+them means anything.
+
+- `GET /apis/quotas.grafana.app/v0alpha1/namespaces/default/usage?group=dashboard.grafana.app&resource=dashboards`
+  answering `501 (Not Implemented)` is upstream grafana/grafana#136271: with
+  `unified_storage.overrides_path` unset the resource server's quota service is nil and
+  refuses the call, while the browse-dashboards view fires it on every page load. This
+  bundle closes it by pointing Grafana at `observability/grafana/unified-storage/overrides.yml`
+  through `GF_UNIFIED_STORAGE_OVERRIDES_PATH`, so the call answers `200`. The file sets
+  no limit; its presence is the whole fix, and what the endpoint then reports is
+  Grafana's own default - `{"usage":0,"limit":1000}` for both dashboards and folders on
+  `grafana/grafana:13.3.1`. No cap is known to take effect there: four plausible shapes
+  written under `overrides:` left that 1000 untouched, and three other shapes stop the
+  container at boot, so the file's own header says to prove a limit on the pinned image
+  before committing one. If the `501` is back, the bind or the variable went missing -
+  and the knob cuts both ways: pointed at a path that is not there, Grafana does not
+  fall back to the 501, it exits 1 with `Error: overrides file does not exist`
+  (measured on 13.3.1), and `restart: unless-stopped` loops it. A missing bind source
+  makes that shape on its own, since Docker mounts a directory where the file should
+  be, so a checkout that never got `observability/grafana/unified-storage/overrides.yml`
+  costs the whole dashboard rather than one console line.
+- `DashboardScenePage.tsx:171 skipping rendering` is a leftover `console.log` in
+  Grafana's own bundle (`public/app/features/dashboard-scene/pages/DashboardScenePage.tsx`,
+  read out of the pinned image's source map). It prints when the page declines to render
+  for one pass because the route's dashboard uid changed under it, which is the normal
+  path for any navigation between dashboards and for a trip to or from Home. It carries
+  no diagnostic value, shares no cause with the `501`, and keeps printing after that one
+  is fixed. Nothing in this stack can silence it, and nothing needs to.
+
+So a console that shows only `skipping rendering` is a healthy Grafana, and a panel that
+is empty is not this line's fault - take the datasource path below.
 
 ### Grafana's datasource tests green but the panel is empty -> the Mimir query path, then the tenancy header
 

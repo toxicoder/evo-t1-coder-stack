@@ -79,11 +79,23 @@ every container stays up:
   their own (`prometheus:9090`, `mimir:8080`, `loki:3100`, `tempo:3200`,
   `grafana:3000`, `alloy:12345`), the stack host through `node_exporter:9101` and
   `cadvisor:8080`, Alertmanager itself at `alertmanager:9093`, and the Spark jobs that
-  reach `blackbox_exporter:9115` as their prober. Fourteen jobs in all. The LiteLLM
-  scrape carries a bearer token, so the
-  metrics stay behind `LITELLM_MASTER_KEY` the way every other LiteLLM endpoint is; the
-  key arrives in Prometheus' own environment and is expanded there, which is why it is
-  not written into the committed scrape file.
+  reach `blackbox_exporter:9115` as their prober. Fifteen jobs in all. The LiteLLM
+  scrape carries a bearer token, so the metrics stay behind `LITELLM_MASTER_KEY` the way
+  every other LiteLLM endpoint is. Measured on the pinned v3.16.0: `$VAR` and `${VAR}`
+  under `global.external_labels` come back filled in at `/api/v1/status/config`, where
+  `$(VAR)` stays literal, and a scrape target address and `authorization.credentials`
+  expand nothing at all - `$(VAR)`, `${VAR}` and `$VAR` in the latter each reached a
+  listener that logs its request headers verbatim - so the key cannot travel that way,
+  and it arrives as a file instead. Compose renders `configs.litellm_metrics_token` into
+  `/etc/prometheus-secrets/litellm_token` in the container (`docker-compose.yml:839-841`,
+  `:1452`), and the `litellm` job presents that file through
+  `authorization.credentials_file` (`observability/prometheus/prometheus.yml:126-129`).
+  The config's `content:` interpolates the very same
+  `${LITELLM_MASTER_KEY:-change-me-litellm}` the proxy boots with
+  (`docker-compose.yml:1459`), so with no dotenv both ends land on the shipped
+  placeholder and the scrape works, and the fault an operator actually meets is the two
+  ends disagreeing: rotate the key without recreating `prometheus` and the file still
+  holds the old one.
 - **The apps with no `/metrics` are observed by logs alone, on purpose.** `ollama`,
   `searxng`, `kasm`, `homepage`, the two nginx hops, `hermes`, and the three Infisical
   containers (`infisical`, `infisical-db`, `infisical-redis`) publish no Prometheus
@@ -133,8 +145,8 @@ Four things about that wiring are worth knowing before you edit it:
 
 - **The gap alerts select on the job name.** `HostNodeExporterGap` and `HostCadvisorGap`
   fire when `job="node_exporter"` or `job="cadvisor"` carries no series, which is why the
-  job name is the Compose service name (`observability/prometheus/prometheus.yml:124` and
-  `:133`). Renaming either service without renaming its job makes two alerts permanently
+  job name is the Compose service name (`observability/prometheus/prometheus.yml:142` and
+  `:151`). Renaming either service without renaming its job makes two alerts permanently
   quiet, and no test will tell you.
 - **The Spark tier is quiet until the boxes are enrolled.** Those two jobs read their
   targets from `observability/spark-targets/sparks.json` through `file_sd_configs`, a file
@@ -207,7 +219,8 @@ container:
 | `observability/mimir/mimir.yml` | Mimir, including `multitenancy_enabled: false` - see the query path below |
 | `observability/grafana/provisioning/datasources/stack.yaml` | The four datasources and their fixed UIDs |
 | `observability/grafana/provisioning/dashboards/stack.yaml` | The provider that loads the JSON below: folder `EVO-T1`, `allowUiUpdates: false`, `disableDeletion: true` |
-| `observability/grafana/dashboards/` | The thirteen provisioned dashboard JSONs - the section below names each one and what it answers - mounted again at `/var/lib/grafana/dashboards` (`docker-compose.yml:1019`), which is the path the provider reads |
+| `observability/grafana/dashboards/` | The thirteen provisioned dashboard JSONs - the section below names each one and what it answers - mounted again at `/var/lib/grafana/dashboards` (`docker-compose.yml:1049`), which is the path the provider reads |
+| `observability/grafana/unified-storage/overrides.yml` | Grafana's unified-storage quota overrides, mounted read-only at `/etc/grafana/stack-overrides.yml` and named there by `GF_UNIFIED_STORAGE_OVERRIDES_PATH` (`docker-compose.yml:1035`, `:1055`) - the note below says what its presence buys |
 | `observability/alloy/config.alloy` | The log pipeline: which files to tail, what to ship to Loki |
 | `observability/prometheus/rules/` | Prometheus, through that `rule_files:` block: `stack.rules.yml`, `spark.rules.yml`, `inference.rules.yml`. They arrive with the directory this file is mounted from, so there is no second place to register a rule |
 | `observability/alertmanager/alertmanager.yml` | Alertmanager: the `tier` routes, three inhibit rules, and five receivers (four webhook, one blackhole for the heartbeat) |
@@ -216,17 +229,62 @@ container:
 | `observability/grafana/provisioning/alerting/stack.yaml` | The `stack-alertmanager` contact point and Grafana's default alerting policy |
 
 Two consequences of the `:ro` mounts, both the same rule the other payload directories
-follow: edit the checkout and recreate the service (`up -d`, not `restart`, since a
-restart keeps the old mounts), and treat the provisioned dashboards and datasources as
-read-only in the UI. `allowUiUpdates: false` and `disableDeletion: true` stop a save
-from overwriting the JSON, so anything you build by hand lands in Grafana's own database
-in `grafana-data` instead - it works, and it drifts from git invisibly.
+follow. A bind follows the *path*, so an edit made in the checkout is already inside the
+running container, and the only question left is when the process reads it again:
+and these are directory binds, so measured against the pinned image an in-place rewrite
+of a mounted file and a rename of a new one over it both reached the container with no
+restart and no recreate, which is why the dashboards section below can promise a minute
+rather than a redeploy. The one
+credential that behaves differently is the LiteLLM bearer token, and the reason is that
+it is not a bind - Compose writes a `configs` entry when it creates the container, so
+rotating `LITELLM_MASTER_KEY` takes `up -d --force-recreate prometheus`, where a plain
+`up -d` leaves the old bytes in place, and so does a `restart`. And treat the provisioned
+dashboards and datasources as read-only in the UI: `allowUiUpdates: false` and
+`disableDeletion: true` stop a save from overwriting the JSON, so anything you build by
+hand lands in Grafana's own database in `grafana-data` instead - it works, and it drifts
+from git invisibly.
+
+The `grafana` service carries two settings that live in its `environment:` block
+(`docker-compose.yml:1034-1035`) rather than in any file above, each one there to quiet a
+Grafana 13.3.1 defect this box pays for as log noise.
+`GF_LOG_FILTERS: search-manifest-watcher:error` drops that one logger to `error` and
+leaves every other logger at its default. The watcher warns twice each poll, and the
+polls in the log this branch was cut from were 41 to 59 s apart -
+`source listed zero manifests`, then `zero manifests, keeping previous set` - whenever no
+app publishes a search manifest, which is every OSS install with nothing provisioned into
+the app platform; upstream calls that a logging defect (grafana/grafana#137058) and
+confirms search keeps working, because retrying an empty source is intended and only the
+level is wrong. The filter is a workaround for that defect, not a preference: it comes
+out when the pin moves to a release carrying the fix, and the pin today is
+`grafana/grafana:13.3.1` (`docker-compose.yml:976`).
+`GF_UNIFIED_STORAGE_OVERRIDES_PATH: /etc/grafana/stack-overrides.yml`
+points the unified-storage resource server at the file the table names: without it the
+quota lookup the browse view fires on every dashboard page answers 501, since that
+server's quota service is nil with nothing pointed at it (grafana/grafana#136271), and the
+box prints one error line per page load while the browser console fills with 501s; with it
+the same call answers 200. Both halves were measured on `grafana/grafana:13.3.1` as two
+containers differing only in that variable: the one without the file answered 501 for both
+`dashboard.grafana.app/dashboards` and `folder.grafana.app/folders` and the one with it
+answered 200 for both, with `/api/health` 200 either way. On the filter side, over one
+300-second window the unfiltered container wrote 16 `search-manifest-watcher` lines, all
+`level=warn`, and the filtered one wrote none from that logger - the only line in it that
+still names it is Grafana's own `level=info` record that the setting came from the
+environment. The overrides file itself says `overrides: {}`, which is
+Grafana's own defaults - it is the file's presence that clears the 501, not any limit set
+in it. What the quota call then reports is that default, `{"usage":0,"limit":1000}` for
+dashboards and for folders on 13.3.1; four plausible cap shapes left the number where it
+was, and a scalar or an unparseable document under `overrides:` stops the container at
+boot, so the file's header asks for a limit to be proven on the pinned image before it is
+written down.
 
 The thirteen dashboards are provisioned, so they appear on a fresh Grafana in the
 `EVO-T1` folder with no clicking - the section below names each one and the question it
 answers. The LiteLLM board is the one that depends on a credential: its metrics sit behind
-`LITELLM_MASTER_KEY`, so with the key unset every panel on it reads empty while the others
-stay full.
+`LITELLM_MASTER_KEY` like every other LiteLLM route, and the bearer Prometheus presents is
+the file Compose rendered from that key, so anything that puts the two ends out of step -
+a key rotated in the env file with `prometheus` never recreated, a token file that is
+missing or wrong - leaves every panel on that board reading empty while the others stay
+full.
 
 ## The dashboards
 
@@ -305,11 +363,11 @@ build from scratch is not thrown away - it lands in Grafana's own database on `g
 above exist to prevent.
 
 So the way to change a panel is to edit its JSON and let the interval apply it. The folder
-is bind-mounted read-only onto the path the provider scans (`docker-compose.yml:1019`), so
+is bind-mounted read-only onto the path the provider scans (`docker-compose.yml:1049`), so
 an edit to a file that is already there is visible to the running container and shows up
 within a minute - no restart, and no recreate. A new file needs no registration either, for
 the same reason. Recreate only when the mount line or the provisioning tree itself changed
-(`docker-compose.yml:1018`), and then with the `up -d` rule from the section above:
+(`docker-compose.yml:1047-1048`), and then with the `up -d` rule from the section above:
 
 ```sh
 bazelisk run //scripts:prod-stack -- up
@@ -413,7 +471,7 @@ an empty log root, and a Prometheus that scraped everything for a day and never 
 sample to Mimir. `--no-docker` skips the four unpublished backends when you are not on a
 shell that can address the daemon.
 
-Its service list is still the original six (`OBS_SERVICES`, `scripts/observability-check.sh:146`).
+Its service list is still the original six (`OBS_SERVICES`, `scripts/observability-check.sh:165`).
 The four exporters and Alertmanager declare no `healthcheck` and publish no readiness path
 of their own, so their state comes from the `status` rows and the container logs below,
 not from this check.
@@ -448,8 +506,18 @@ curl -s http://127.0.0.1:9090/api/v1/targets
 ```
 
 Every target should read `"health":"up"`. A target missing entirely is the scrape config;
-a target present and `down` is the app not serving `/metrics`, or the LiteLLM bearer
-token not matching.
+a target present and `down` is the app not serving `/metrics`, or - for `litellm` alone -
+the bearer file not holding the key the proxy answers with. That failure describes itself
+twice over: a file that is not there leaves one red target whose `lastError` names
+`/etc/prometheus-secrets/litellm_token` while Prometheus loads the rest of the config
+normally, and a file holding the wrong key brings LiteLLM's 401 body `No connected db.`,
+which at v1.102.1 is the wrong-token branch rather than a database complaint - its auth
+path compares the bearer against `LITELLM_MASTER_KEY` and returns PROXY_ADMIN before it
+looks for a DB. Either way the fix is the file and a recreate of `prometheus` so Compose
+renders it again; the metrics stay authenticated. What that 401 offers instead is turning
+the endpoint's auth off (`litellm_settings.require_auth_for_metrics_endpoint`), and this
+stack refuses it: `:4000` is published to the LAN, and these metrics name model aliases
+and traffic volumes.
 
 Is the write to Mimir landing:
 
