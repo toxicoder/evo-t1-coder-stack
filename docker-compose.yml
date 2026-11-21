@@ -824,13 +824,13 @@ services:
     restart: unless-stopped
     profiles: ["observability"]
     configs:
-      # LiteLLM's bearer token, delivered as a file. Prometheus expands `$VAR` and
-      # `${VAR}` in `global.external_labels` values and in nothing else in its
-      # config file - measured on v3.16.0, where an external label of `$EXPAND_ME`
-      # arrived as `expanded-ok` while a target address stayed literal, and
-      # `$(VAR)`, `${VAR}` and `$VAR` in `authorization.credentials` each reached a
-      # listener that logs its request headers verbatim, so the scrape arrives with
-      # a literal token and LiteLLM answers
+      # LiteLLM's bearer token, delivered as a file. Measured on v3.16.0: `$VAR` and
+      # `${VAR}` under `global.external_labels` come back expanded at
+      # `/api/v1/status/config`, while a scrape target address and
+      # `authorization.credentials` expand nothing - `$(VAR)`, `${VAR}` and `$VAR`
+      # there each reached a listener that logs its request headers verbatim, so
+      # the scrape arrives with the literal text the operator typed and LiteLLM
+      # answers
       # 401 `No connected db.` forever. `credentials_file:` is the supported
       # door, and compose writes that file from the same key the proxy boots
       # with; the default below is the proxy's own default, so the two sides
@@ -1428,10 +1428,10 @@ volumes:
 # interpolation environment rather than from anything on disk.
 #
 # There is one, and it exists because one component cannot take a secret from
-# its own environment. Prometheus expands `$VAR` and `${VAR}` in its
-# `global.external_labels` values and in nothing else that could carry this token,
-# so it reads the bearer it scrapes LiteLLM with out of a file, and the token has to
-# arrive as a file. Compose's `configs.content` writes that
+# its own environment. Measured on v3.16.0: `$VAR` and `${VAR}` under
+# `global.external_labels` come back expanded at `/api/v1/status/config`, while a
+# target address and `authorization.credentials` expand nothing, so the bearer it
+# scrapes LiteLLM with arrives as a file. Compose's `configs.content` writes that
 # file from the very same `${LITELLM_MASTER_KEY}` the proxy's own
 # `LITELLM_MASTER_KEY:` line interpolates, which is what keeps the two ends of
 # the scrape from drifting apart, and it keeps the key out of the committed

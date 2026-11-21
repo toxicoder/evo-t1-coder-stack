@@ -113,8 +113,10 @@ repo can verify.
   the prometheus container at `/etc/prometheus-secrets/litellm_token`, mode 0444, and the
   `litellm` job reads that path with `authorization.credentials_file`
   (observability/prometheus/prometheus.yml). The pinned Prometheus (v3.16.0) expands
-  `$VAR` and `${VAR}` only in `global.external_labels` values, and does nothing to a
-  scrape target address or to `authorization.credentials`, so that file is the only door
+  `$VAR` and `${VAR}` under `global.external_labels` -- measured at
+  `/api/v1/status/config`, where `$(VAR)` stays literal even there -- and leaves them
+  verbatim in a scrape target address and in `authorization.credentials`, measured at a
+  listener that logs its request headers, so that file is the only door
   the token can come through -- and it is what keeps the key out of the committed scrape
   config and out of `docker inspect`'s command line alike. If the `litellm` target goes
   red, do not take the auth off. The 401 LiteLLM returns offers

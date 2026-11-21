@@ -2327,10 +2327,11 @@ curl -s http://127.0.0.1:9090/api/v1/targets
 - **`litellm` alone is `down` with a 401**: the scrape sends the master key as a bearer
   token that it reads from a file, `/etc/prometheus-secrets/litellm_token`
   (`observability/prometheus/prometheus.yml`), which Compose writes from
-  `LITELLM_MASTER_KEY` when it creates the container. Prometheus expands environment
-  variables in its `global.external_labels` values only, never in a scrape target or an
-  `authorization` block, so a value it could not substitute would be sent verbatim and
-  rejected. That file is the one credential in the bundle a rotate can strand, and it
+  `LITELLM_MASTER_KEY` when it creates the container. Measured on v3.16.0, the collector
+  expands environment variables under `global.external_labels` - they come back filled
+  in at `/api/v1/status/config` - and nowhere a credential could hide: a scrape target
+  address and an `authorization` block send the written text back verbatim, so a value
+  it could not substitute is rejected. That file is the one credential in the bundle a rotate can strand, and it
   behaves the opposite way from the bind mounts above: it is a Compose `configs` entry,
   and Compose writes those when it *creates* the container. Measured with the compose
   this repo ships, `up -d` after a rotate prints `Running`, keeps the same container and

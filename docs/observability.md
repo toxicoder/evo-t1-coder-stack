@@ -79,19 +79,20 @@ every container stays up:
   their own (`prometheus:9090`, `mimir:8080`, `loki:3100`, `tempo:3200`,
   `grafana:3000`, `alloy:12345`), the stack host through `node_exporter:9101` and
   `cadvisor:8080`, Alertmanager itself at `alertmanager:9093`, and the Spark jobs that
-  reach `blackbox_exporter:9115` as their prober. Fourteen jobs in all. The LiteLLM
+  reach `blackbox_exporter:9115` as their prober. Fifteen jobs in all. The LiteLLM
   scrape carries a bearer token, so the metrics stay behind `LITELLM_MASTER_KEY` the way
-  every other LiteLLM endpoint is. The collector expands `$VAR` and `${VAR}` only in
-  `global.external_labels` values - a scrape target address and
-  `authorization.credentials` get no expansion at all, and `$(VAR)`, `${VAR}` and `$VAR`
-  in the latter each go out verbatim on v3.16.0 - so the key cannot travel that way, and
-  it arrives as a file instead. Compose renders `configs.litellm_metrics_token` into
+  every other LiteLLM endpoint is. Measured on the pinned v3.16.0: `$VAR` and `${VAR}`
+  under `global.external_labels` come back filled in at `/api/v1/status/config`, where
+  `$(VAR)` stays literal, and a scrape target address and `authorization.credentials`
+  expand nothing at all - `$(VAR)`, `${VAR}` and `$VAR` in the latter each reached a
+  listener that logs its request headers verbatim - so the key cannot travel that way,
+  and it arrives as a file instead. Compose renders `configs.litellm_metrics_token` into
   `/etc/prometheus-secrets/litellm_token` in the container (`docker-compose.yml:839-841`,
   `:1452`), and the `litellm` job presents that file through
   `authorization.credentials_file` (`observability/prometheus/prometheus.yml:126-129`).
   The config's `content:` interpolates the very same
   `${LITELLM_MASTER_KEY:-change-me-litellm}` the proxy boots with
-  (`docker-compose.yml:1452`), so with no dotenv both ends land on the shipped
+  (`docker-compose.yml:1459`), so with no dotenv both ends land on the shipped
   placeholder and the scrape works, and the fault an operator actually meets is the two
   ends disagreeing: rotate the key without recreating `prometheus` and the file still
   holds the old one.
@@ -230,9 +231,10 @@ container:
 Two consequences of the `:ro` mounts, both the same rule the other payload directories
 follow. A bind follows the *path*, so an edit made in the checkout is already inside the
 running container, and the only question left is when the process reads it again:
-measured against the pinned image, an in-place rewrite of a mounted file and a rename of
-a new one over it both reached the container with no restart and no recreate, which is
-why the dashboards section below can promise a minute rather than a redeploy. The one
+and these are directory binds, so measured against the pinned image an in-place rewrite
+of a mounted file and a rename of a new one over it both reached the container with no
+restart and no recreate, which is why the dashboards section below can promise a minute
+rather than a redeploy. The one
 credential that behaves differently is the LiteLLM bearer token, and the reason is that
 it is not a bind - Compose writes a `configs` entry when it creates the container, so
 rotating `LITELLM_MASTER_KEY` takes `up -d --force-recreate prometheus`, where a plain
@@ -260,9 +262,14 @@ points the unified-storage resource server at the file the table names: without 
 quota lookup the browse view fires on every dashboard page answers 501, since that
 server's quota service is nil with nothing pointed at it (grafana/grafana#136271), and the
 box prints one error line per page load while the browser console fills with 501s; with it
-the same call answers 200. Both were measured on `grafana/grafana:13.3.1`: 12
-`search-manifest-watcher` warnings became 0 and the quota call went from 501 to 200, with
-`/api/health` still 200. The overrides file itself says `overrides: {}`, which is
+the same call answers 200. Both halves were measured on `grafana/grafana:13.3.1` as two
+containers differing only in that variable: the one without the file answered 501 for both
+`dashboard.grafana.app/dashboards` and `folder.grafana.app/folders` and the one with it
+answered 200 for both, with `/api/health` 200 either way. On the filter side, over one
+300-second window the unfiltered container wrote 16 `search-manifest-watcher` lines, all
+`level=warn`, and the filtered one wrote none from that logger - the only line in it that
+still names it is Grafana's own `level=info` record that the setting came from the
+environment. The overrides file itself says `overrides: {}`, which is
 Grafana's own defaults - it is the file's presence that clears the 501, not any limit set
 in it. What the quota call then reports is that default, `{"usage":0,"limit":1000}` for
 dashboards and for folders on 13.3.1; four plausible cap shapes left the number where it

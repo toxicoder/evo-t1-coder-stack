@@ -38,9 +38,11 @@
 #     one Grafana's own decoder will take - a group that is not a mapping, or a
 #     top-level key written twice, fails the boot and the service's restart policy
 #     loops it, and PyYAML reports neither;
-#   - that the master key reaches exactly one container: the token config is attached
-#     once, to prometheus, and a second attach anywhere in the file is this suite
-#     going red rather than the key quietly landing in a LAN-published box;
+#   - that the token config is attached to exactly one container: once, to prometheus,
+#     and a second attach anywhere in the file is this suite going red rather than the
+#     key quietly landing in a LAN-published box. This is the file attach set; the same
+#     key is still interpolated into the environments of the services that own it
+#     (litellm, homepage, hermes), which those services read themselves;
 #   - that litellm/config.yaml leaves /metrics behind the master key: the switch that
 #     would take that auth off is absent from the file, and the block it would sit in
 #     is still there, so the absence reads as a decision and not as a file that lost
@@ -366,9 +368,10 @@ PY
 
 # prom_authorization_facts <file> <job_name> - job|1 when that scrape config exists,
 # authkey|<k> per key of its authorization block, and authval|<k>|<value> per scalar key.
-# Prometheus expands $VAR and ${VAR} in global.external_labels values and in nothing
-# else in the file, so the only authorization value that can ever carry a working token
-# is one naming a file.
+# Measured on v3.16.0: $VAR and ${VAR} expand under global.external_labels, where they
+# come back filled in at /api/v1/status/config, and expand nowhere in a scrape config,
+# so the only authorization value that can ever carry a working token is one naming a
+# file.
 prom_authorization_facts() {
   python3 - "${1}" "${2}" <<'PY'
 import sys
@@ -1192,11 +1195,11 @@ LISTEN_CONTRACT=(
     fail "prometheus.yml carries no litellm job, so this proved nothing"
   printf '%s\n' "${facts}" | grep -qx 'authkey|credentials_file' ||
     fail "the litellm job no longer opens its bearer from a file: $(printf '%s\n' "${facts}" | tr '\n' ' ')"
-  # authorization.credentials is the shape that broke the target: Prometheus expands
-  # $VAR and ${VAR} in global.external_labels values only, and nowhere else in the file
-  # (measured on v3.16.0 against a listener that logs its request headers - $(VAR),
-  # ${VAR} and $VAR all go out verbatim), so an inline value is sent as a literal and
-  # LiteLLM answers 401.
+  # authorization.credentials is the shape that broke the target: measured on v3.16.0,
+  # $VAR and ${VAR} expand under global.external_labels - they come back filled in at
+  # /api/v1/status/config - and expand nowhere in a scrape config, where $(VAR),
+  # ${VAR} and $VAR each reached a listener that logs its request headers verbatim,
+  # so an inline value is sent as a literal and LiteLLM answers 401.
   if printf '%s\n' "${facts}" | grep -qx 'authkey|credentials'; then
     fail "the litellm job sets authorization.credentials, which no environment can fill"
   fi
