@@ -743,10 +743,15 @@ deny() {
   add_branch staging
   git -C "${FIXTURE}/work" update-ref refs/heads/origin/staging \
     "$(git -C "${FIXTURE}/work" rev-parse main)"
-  audit
+  audit --plan
   [ "${status}" -eq 1 ]
   [[ "${stderr}" == *"local branch origin/staging is reserved: 'staging' is an environment name"* ]]
   [[ "${output}" != *"heads/origin/staging"* ]]
+  # The plan line has to be a command git can actually run. Under the ambiguous short
+  # name it read `git branch -d heads/origin/staging`, which git answers "not found",
+  # so an operator following the plan would be left holding a command that does nothing.
+  [[ "${output}" == *"git branch -d origin/staging"* ]]
+  git -C "${FIXTURE}/work" rev-parse --verify --quiet refs/heads/origin/staging >/dev/null
 }
 
 @test "branch-hygiene: --trunk master does not offer the real trunk for deletion" {
@@ -857,6 +862,10 @@ deny() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"warning: could not fetch dead"* ]]
   [[ "${stderr}" != *"error: could not fetch"* ]]
+  # Stronger, and not coupled to git's phrasing: this run's own warning reaches the
+  # operator on stdout through log(), so anything of git's that leaked to stderr would
+  # name the remote whether it arrived as error:, fatal:, or hint:.
+  [[ "${stderr}" != *"dead"* ]]
   [[ "${output}" == *", 0 failed"* ]]
 }
 
