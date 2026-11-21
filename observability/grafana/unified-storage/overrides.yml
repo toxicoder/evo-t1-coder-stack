@@ -22,9 +22,14 @@
 #   - the path is a directory, which is what a missing bind source becomes;
 #   - the document will not parse (`yaml: line 1: did not find expected ',' or ']'`);
 #   - a value under `overrides:` is a scalar rather than a mapping
-#     (`cannot unmarshal !!str banana into resource.NamespaceOverrides`).
+#     (`cannot unmarshal !!str banana into resource.NamespaceOverrides`);
+#   - `overrides:` is written twice at the top level, which is what appending a
+#     cap below the shipped key does
+#     (`mapping key "overrides" already defined at line 1`). A YAML parser that
+#     keeps the last duplicate never sees this one, so the gate counts the
+#     top-level keys itself before it parses.
 #
-# Worse than all three is a guess that parses: it boots, the endpoint keeps
+# Worse than all four is a guess that parses: it boots, the endpoint keeps
 # reporting its own default, and the operator believes the limit is set. Four
 # plausible shapes for a dashboard cap were tried on 13.3.1 and not one moved the
 # 1000. The gate parses the shape this file ships
