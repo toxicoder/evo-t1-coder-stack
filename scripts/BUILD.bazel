@@ -140,6 +140,11 @@ _SCRIPT_LIBS = {
         "lib/infisical.sh",
         "lib/spark.sh",
     ],
+    # Every verdict is a git for-each-ref or merge-base over the checkout's own refs;
+    # the only first-party helper it needs is the report vocabulary and resolve_checkout.
+    "branch-hygiene": [
+        "lib/common.sh",
+    ],
     "build-dev-image": [
         "lib/common.sh",
         "lib/dockerfile_args.awk",
@@ -321,6 +326,11 @@ _SCRIPT_PAYLOAD = {
         "//:templates_payload",
         "//infisical:payload",
         "//proxy:confs",
+    ],
+    # It roots itself with resolve_checkout, which probes for the compose file, and then
+    # reads only git's own refs; it opens no payload file of its own.
+    "branch-hygiene": [
+        "//:compose_file",
     ],
     "build-dev-image": [
         "//:compose_file",
