@@ -37,11 +37,11 @@ credential is about to leak.
 - Never echo a secret into the report, not a prefix and not a redacted middle. Give
   `path:line` and the shape of the value instead.
 - Never read `.env` or `.env.*`: the deny covers the read and the file is not the evidence
-  (`templates/common/GROK_BUILD_AGENTS.md:50`). A rendered artifact the repo ships is.
+  (`templates/common/GROK_BUILD_AGENTS.md`, "Execution"). A rendered artifact the repo ships is.
 - Proofs of concept stay read-only and harmless: no new dependency, no exploit against a
   live service, no data exfiltrated to demonstrate a hole.
 - Write in pure ASCII, so a lookalike character in a payload is reported as one and not
-  shipped as one (`templates/common/GROK_BUILD_AGENTS.md:52-53`).
+  shipped as one (`templates/common/GROK_BUILD_AGENTS.md`, "Character Hygiene").
 - A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it
   ships no file of its own. Run up to three read-only mappers at a time to pull the trace or
   the shipped artifact you need, instead of handing the request back to the parent and

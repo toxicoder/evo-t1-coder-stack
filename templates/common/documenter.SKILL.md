@@ -93,8 +93,8 @@ report each kept or broken with its `path:line`; then you fix what broke and it 
 - Every new fact traces to the diff or to a file a mapper cited with `path:line`; what the
   author meant is not evidence.
 - Prose and commands are ASCII, punctuation included
-  (`templates/common/GROK_BUILD_AGENTS.md:52-53`). Never read `.env` or `.env.*`, and never
-  print a secret (`templates/common/GROK_BUILD_AGENTS.md:50`): name the CLI that prints it.
+  (`templates/common/GROK_BUILD_AGENTS.md`, "Character Hygiene"). Never read `.env` or `.env.*`, and never
+  print a secret (`templates/common/GROK_BUILD_AGENTS.md`, "Execution"): name the CLI that prints it.
 
 ## Done means
 

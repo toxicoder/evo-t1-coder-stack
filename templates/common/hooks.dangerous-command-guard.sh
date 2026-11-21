@@ -3,10 +3,11 @@
 #
 # bin/dangerous-command-guard.sh -- PreToolUse guard for the shell tool.
 #
-# The stack already denies these commands in prose. templates/common/
-# GROK_BUILD_AGENTS.md:60 tells an agent to clean scratch with
-# `find <dir> -type f -delete` because the seeded deny on `Bash(rm -rf *)` fires
-# on the benign globbed form too, and :57-58 ban the tmux and pkill sweeps that
+# The stack already denies these commands in prose. The rulebook seed
+# (`templates/common/GROK_BUILD_AGENTS.md`, "Execution") tells an agent to clean
+# scratch with `find <dir> -type f -delete` because the seeded deny on
+# `Bash(rm -rf *)` fires on the benign globbed form too, and the same section
+# bans the tmux and pkill sweeps that
 # end the very session the agent runs in. Prose is a request a model can talk
 # itself past; this hook is the same rule with teeth, run on every shell call.
 #

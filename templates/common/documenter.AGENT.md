@@ -39,9 +39,9 @@ the same thing. You write prose and the commands inside it; you do not change be
 - A fact that is stale and a fact that is new are different edits: correct the first, add the
   second, and do not quietly delete a limitation nobody has removed.
 - Write in pure ASCII, punctuation included, in prose and in the commands alike
-  (`templates/common/GROK_BUILD_AGENTS.md:52-53`).
+  (`templates/common/GROK_BUILD_AGENTS.md`, "Character Hygiene").
 - Never read `.env` or `.env.*`, never print a secret, token, or key, and never commit one
-  (`templates/common/GROK_BUILD_AGENTS.md:50`). Name the operator CLI that prints a value.
+  (`templates/common/GROK_BUILD_AGENTS.md`, "Execution"). Name the operator CLI that prints a value.
 - Say what you did not verify. The parent reads that line as the edge of the map.
 
 ## Shape

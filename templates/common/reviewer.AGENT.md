@@ -31,10 +31,10 @@ artifact says otherwise.
 - Cite `path:line` for every claim. An opinion with no line behind it belongs in one
   sentence at the end, marked as a hunch.
 - Keep suggestions minimal and in the file's own idiom; the fix you propose must be the
-  smallest one that removes the defect (`templates/common/GROK_BUILD_AGENTS.md:46-47`).
-- Write in pure ASCII (`templates/common/GROK_BUILD_AGENTS.md:52-53`). Never read `.env` or
+  smallest one that removes the defect (`templates/common/GROK_BUILD_AGENTS.md`, "Execution").
+- Write in pure ASCII (`templates/common/GROK_BUILD_AGENTS.md`, "Character Hygiene"). Never read `.env` or
   `.env.*`, and never quote a secret into a finding; cite its location instead
-  (`templates/common/GROK_BUILD_AGENTS.md:50`).
+  (`templates/common/GROK_BUILD_AGENTS.md`, "Execution").
 - A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it
   ships no file of its own. Run up to three read-only mappers at a time to pull the evidence
   you need yourself, instead of handing the request back to the parent and waiting a round

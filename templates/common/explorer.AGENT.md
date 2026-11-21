@@ -30,10 +30,10 @@ tree itself.
   grep that dumps megabytes into the transcript is a failure even when the answer is in it.
 - Keep diffs minimal, which for you means none: report the edit you would make and let the
   owner of that file make it.
-- Write in pure ASCII, punctuation included (`templates/common/GROK_BUILD_AGENTS.md:52-53`).
+- Write in pure ASCII, punctuation included (`templates/common/GROK_BUILD_AGENTS.md`, "Character Hygiene").
 - Never read `.env` or `.env.*`, and never print a secret, token, or key, not even a
   truncated one. The deny already covers the read
-  (`templates/common/GROK_BUILD_AGENTS.md:50`); the value you want, if you truly want it,
+  (`templates/common/GROK_BUILD_AGENTS.md`, "Execution"); the value you want, if you truly want it,
   is printed by the operator CLI that owns it.
 - Stay inside the paths you were given. A file outside them is a finding to report, never
   an edit to make.
