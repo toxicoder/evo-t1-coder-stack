@@ -201,10 +201,13 @@ _SUITE_PAYLOAD = {
         "//infisical:payload",
         "//proxy:confs",
     ],
-    # The CLI answers from `git for-each-ref` alone and opens no payload file, and every
-    # fixture this suite feeds it - the bare origin, the working clone, each commit - is
-    # created inside the test's own tmpdir, so nothing under the repo is a dependency.
-    "branch-hygiene.bats": [],
+    # The CLI answers from `git for-each-ref` alone, and every fixture this suite feeds
+    # it - the bare origin, the working clone, each commit - is created inside the test's
+    # own tmpdir, so nothing under the repo is a dependency beyond the docs page the
+    # findings cite, which the entry script's own citations pull in.
+    "branch-hygiene.bats": [
+        "//docs:content",
+    ],
     # The suite sources the shipped probe and drives both of its functions, so it
     # owes the group that carries the lint runners and their shared host-tool probe.
     "check-tool.bats": [

@@ -30,6 +30,16 @@
 # reads this checkout's branches, no test reaches the network, and a change to
 # this repo's own branch list cannot turn this suite red or green.
 #
+# Two layers, because the rules live in scripts/lib/branch_hygiene.sh and the CLI is
+# the ingress. The predicate tests source that lib and call each function directly:
+# is_environment_name against names on both sides of the remote boundary, branch_part
+# against a configured remote and one that is not, is_always_kept on a second remote's
+# trunk, report_or_warn's two weights, and each audit over hand-built rows. The rest
+# drive scripts/branch-hygiene.sh end to end and assert its exit codes, which is the
+# only place the section order, the summary line, and the never-deletes promise live.
+# A predicate only the CLI ever reached would satisfy neither the function inventory
+# nor a reader asking whether the rule itself is tested.
+#
 # Usage: bazelisk test //tests:bats_branch_hygiene_test   (from any cwd)
 #
 # Safety: fixture only. Nothing here touches a real remote or deletes a branch.
@@ -115,6 +125,180 @@ audit() {
 # occurrences <needle> - how many output lines carry the needle.
 occurrences() {
   printf '%s\n' "${output}" | grep -F -- "$1" | wc -l | tr -d ' '
+}
+
+# load_lib - bring the rules into the test's own shell so each predicate can be
+# called directly. common.sh comes first because the audit functions report through
+# its log/ok/warn/fail_item, exactly as the CLI sources them in that order.
+load_lib() {
+  # shellcheck source=/dev/null
+  source "${REPO_ROOT}/scripts/lib/common.sh"
+  unset JSON_MODE
+  # shellcheck source=/dev/null
+  source "${REPO_ROOT}/scripts/lib/branch_hygiene.sh"
+}
+
+# reset_counters - SUMMARY_* are globals that the lib's report_or_warn accumulates
+# into, and bats reuses one shell across a test, so a unit test that asserts a count
+# has to start from a known zero rather than from whatever a previous call left.
+reset_counters() {
+  SUMMARY_OK=0
+  SUMMARY_WARN=0
+  SUMMARY_FAIL=0
+  SUMMARY_FAIL_ITEMS=""
+}
+
+@test "branch-hygiene: is_environment_name reads the branch name, not the remote" {
+  load_lib
+  (is_environment_name staging)
+  (is_environment_name production)
+  (is_environment_name prod/hotfix-42)
+  (is_environment_name master)
+  # The sanctioned prefixes stay clean, and a namespace that is not an environment
+  # word does not become one because it happens to be a path.
+  ! is_environment_name feat/search-lane
+  ! is_environment_name test/flake-fix
+  ! is_environment_name chore/branch-hygiene-gate
+  ! is_environment_name main
+}
+
+@test "branch-hygiene: branch_part strips a configured remote and nothing else" {
+  fixture_repo >/dev/null
+  cd "${FIXTURE}/work"
+  load_lib
+  [ "$(branch_part remote origin/staging)" = "staging" ]
+  [ "$(branch_part remote origin/feat/two-segments)" = "feat/two-segments" ]
+  # A local name is already the branch name, slashes and all.
+  [ "$(branch_part local chore/foo)" = "chore/foo" ]
+  # A leading segment that is not a configured remote is part of the name.
+  [ "$(branch_part remote notes/not-a-remote)" = "notes/not-a-remote" ]
+}
+
+@test "branch-hygiene: is_always_kept exempts the trunk and gh-pages on any remote" {
+  # The predicate decides on the branch part, and the branch part depends on which
+  # remotes the repository actually has, so this needs a real one under it.
+  fixture_repo >/dev/null
+  git -C "${FIXTURE}/work" remote add backup "${FIXTURE}/origin.git"
+  cd "${FIXTURE}/work"
+  load_lib
+  TRUNK=main
+  (is_always_kept local main)
+  (is_always_kept remote origin/main)
+  # The remote's own name is not what makes the trunk the trunk.
+  (is_always_kept remote backup/main)
+  (is_always_kept local gh-pages)
+  (is_always_kept remote origin/gh-pages)
+  (is_always_kept remote backup/gh-pages)
+  ! is_always_kept local feat/landed
+  ! is_always_kept remote origin/feat/landed
+  ! is_always_kept remote backup/feat/landed
+}
+
+@test "branch-hygiene: report_or_warn counts an error always and a warning only without --strict" {
+  load_lib
+  reset_counters
+  STRICT=0
+  report_or_warn warn "a warning"
+  [ "${SUMMARY_WARN}" -eq 1 ]
+  [ "${SUMMARY_FAIL}" -eq 0 ]
+  STRICT=1
+  report_or_warn warn "the same thing, now a finding"
+  [ "${SUMMARY_FAIL}" -eq 1 ]
+  STRICT=0
+  report_or_warn error "an error is never a warning"
+  [ "${SUMMARY_FAIL}" -eq 2 ]
+}
+
+@test "branch-hygiene: audit_environment flags the environment row and blesses the rest" {
+  load_lib
+  reset_counters
+  audit_environment local \
+    "$(printf 'staging\taaa1111\t2026-01-01\nfeat/ok\tbbb2222\t2026-01-01')"
+  [ "${SUMMARY_FAIL}" -eq 1 ]
+  [ "${SUMMARY_OK}" -eq 1 ]
+}
+
+@test "branch-hygiene: the row lists carry a real name, tip, and date, and drop origin/HEAD" {
+  fixture_repo >/dev/null
+  add_branch feat/listed
+  cd "${FIXTURE}/work"
+  load_lib
+  run list_remote
+  [[ "${output}" != *"origin/HEAD"* ]]
+  local row
+  row="$(printf '%s\n' "${output}" | grep -F 'origin/feat/listed' | head -1)"
+  [ -n "${row}" ]
+  [ "$(printf '%s' "${row}" | cut -f1)" = "origin/feat/listed" ]
+  [ "$(printf '%s' "${row}" | cut -f2)" = "$(git rev-parse --short feat/listed)" ]
+  [[ "$(printf '%s' "${row}" | cut -f3)" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+  run list_local
+  [[ "${output}" == *"main"* ]]
+}
+
+@test "branch-hygiene: audit_merged names the merged row once and plans its deletion" {
+  fixture_repo >/dev/null
+  add_branch feat/landed
+  merge_into_main feat/landed
+  cd "${FIXTURE}/work"
+  load_lib
+  local rows
+  rows="$(printf 'feat/landed\t%s\t2026-11-01' "$(git rev-parse --short feat/landed)")"
+  reset_counters
+  PLAN=0
+  audit_merged local main "${rows}" "" ""
+  [ "${SUMMARY_WARN}" -eq 1 ]
+  # --plan is the only way a deletion command reaches the operator, and it prints
+  # the tip SHA alongside it so the record exists before the command is run.
+  reset_counters
+  PLAN=1
+  run audit_merged local main "${rows}" "" ""
+  [[ "${output}" == *"git branch -d feat/landed"* ]]
+  [[ "${output}" == *"record tip $(git rev-parse --short feat/landed) first"* ]]
+}
+
+@test "branch-hygiene: audit_stale skips what the trunk already has" {
+  fixture_repo >/dev/null
+  add_branch feat/landed
+  add_branch feat/abandoned 90
+  merge_into_main feat/landed
+  cd "${FIXTURE}/work"
+  load_lib
+  MAX_AGE_DAYS=14
+  reset_counters
+  audit_stale local main \
+    "$(printf 'feat/landed\t%s\t2000-01-01\nfeat/abandoned\t%s\t2000-01-02' \
+      "$(git rev-parse --short feat/landed)" "$(git rev-parse --short feat/abandoned)")" ""
+  # Only the unmerged one is stale: the merged row belongs to audit_merged, and a
+  # second line calling it "unmerged" would contradict the ancestry test just run.
+  [ "${SUMMARY_WARN}" -eq 1 ]
+}
+
+@test "branch-hygiene: parse_args fills every option and usage lists them" {
+  load_lib
+  parse_args --repo /tmp/somewhere --trunk master --max-age 3 --strict --plan --fetch \
+    --remote origin
+  [ "${REPO_ARG}" = "/tmp/somewhere" ]
+  [ "${TRUNK}" = "master" ]
+  [ "${MAX_AGE_DAYS}" -eq 3 ]
+  [ "${STRICT}" -eq 1 ]
+  [ "${PLAN}" -eq 1 ]
+  [ "${DO_FETCH}" -eq 1 ]
+  [ "${REMOTES[0]}" = "origin" ]
+  run usage
+  [[ "${output}" == *"--max-age DAYS"* ]]
+  [[ "${output}" == *"--plan"* ]]
+}
+
+@test "branch-hygiene: plan_deletion prints the remote form without running it" {
+  fixture_repo >/dev/null
+  add_branch staging
+  cd "${FIXTURE}/work"
+  load_lib
+  run plan_deletion remote origin/staging ddb08cb7
+  [[ "${output}" == *"git push origin --delete staging"* ]]
+  [[ "${output}" == *"record tip ddb08cb7 first"* ]]
+  # The command is text. The branch it names is still there.
+  [ -n "$(git -C "${FIXTURE}/work" rev-parse --verify --quiet refs/remotes/origin/staging)" ]
 }
 
 @test "branch-hygiene: a trunk-only clone is clean and exits 0" {
