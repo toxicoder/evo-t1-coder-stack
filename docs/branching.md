@@ -56,7 +56,9 @@ request as the only way back into `main`.
   with its tip SHA because that is the record a deletion has to leave behind. It reports
   and never deletes - `--plan` prints the commands, and deleting stays the operator's call.
   Pass `--fetch` before acting on what it names, so the remote rows are the remote's
-  current answer rather than the last one this checkout happened to see.
+  current answer rather than the last one this checkout happened to see. That flag is
+  the run's only write: it is `git remote update --prune`, which refreshes and prunes
+  this checkout's own remote-tracking refs and deletes nothing on the remote.
 - `fix/…` means a defect that is already on `main`. **A hotfix branches from `main` and lands
   on `main` first** — every environment deploys *from* `main` (or from a tag cut on `main`),
   so there is no `staging` or `production` branch to patch and then remember to merge back.

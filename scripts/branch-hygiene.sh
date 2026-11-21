@@ -36,12 +36,17 @@ unset JSON_MODE
 # shellcheck source=lib/branch_hygiene.sh disable=SC1091
 source "${SELF_DIR}/lib/branch_hygiene.sh"
 
+# Where the operator stood when they typed the command, which is what a relative
+# --repo is anchored to. Under `bazelisk run` the launcher starts with its cwd inside
+# the runfiles tree, so $PWD alone would resolve `.` to a tree with no checkout in it.
+INVOKE_DIR="${BUILD_WORKSPACE_DIRECTORY:-${PWD}}"
+
 require_tool git
 
 # @function main
 # Resolve the checkout and run every audit over it.
 # Globals:
-#   REPO_ARG, TRUNK, SELF_DIR
+#   REPO_ARG, TRUNK, SELF_DIR, INVOKE_DIR
 # Arguments:
 #   None (argv is parsed by the caller)
 # Outputs:
@@ -51,7 +56,10 @@ require_tool git
 main() {
   local root
   if [ -n "${REPO_ARG}" ]; then
-    root="${REPO_ARG}"
+    root="$(resolve_repo_arg "${REPO_ARG}")" || {
+      err "cannot enter --repo ${REPO_ARG} (resolved to ${INVOKE_DIR}/${REPO_ARG})"
+      exit 2
+    }
   else
     root="$(resolve_checkout "${SELF_DIR}")" || {
       err "no checkout: pass --repo DIR or run this inside the clone"
@@ -80,7 +88,7 @@ main() {
   if [ "${DO_FETCH}" -eq 1 ]; then
     section "Remotes"
     local remote
-    for remote in $(git remote); do
+    for remote in $(selected_remotes); do
       phase "fetch ${remote}"
       git remote update --prune "${remote}" >/dev/null ||
         warn "could not fetch ${remote}; its remote branches may be stale"

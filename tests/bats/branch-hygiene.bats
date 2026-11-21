@@ -153,13 +153,102 @@ reset_counters() {
   (is_environment_name staging)
   (is_environment_name production)
   (is_environment_name prod/hotfix-42)
-  (is_environment_name master)
+  (is_environment_name pre-production)
   # The sanctioned prefixes stay clean, and a namespace that is not an environment
-  # word does not become one because it happens to be a path.
+  # word does not become one because it happens to be a path. `pre` alone is not in
+  # the table: as a first segment it would sweep in anything filed under pre/.
   ! is_environment_name feat/search-lane
   ! is_environment_name test/flake-fix
   ! is_environment_name chore/branch-hygiene-gate
   ! is_environment_name main
+  ! is_environment_name pre/2026-11-migration
+}
+
+@test "branch-hygiene: every word in the reserved tables is a name git can produce" {
+  # A table entry that git cannot name is a rule that never fires, and the table once
+  # carried `dev - 1` and `pre - production` exactly that way: present, advertised,
+  # and covering nothing. This test is what keeps the two tables honest.
+  load_lib
+  local word
+  for word in "${!ENVIRONMENT_WORDS[@]}" "${!TRUNK_NAMES[@]}"; do
+    [[ "${word}" != *" "* ]] || return 1
+    # The substitution deletes every character outside printable ASCII, so a word
+    # that comes back unchanged held nothing but ASCII. `dev - 1` comes back as
+    # `dev-1`, which is how this catches a table entry git can never name.
+    [[ "${word}" == "${word//[^!-~]/}" ]] || return 1
+    git check-ref-format --branch "${word}" >/dev/null 2>&1 || return 1
+  done
+  (is_environment_name pre-production)
+}
+
+@test "branch-hygiene: reserved_name_kind separates an environment from a second trunk" {
+  load_lib
+  # Called directly, not in a subshell: the verdict lands in the RESERVED_* globals,
+  # and a subshell would keep them and hand back only the exit status.
+  reserved_name_kind staging
+  [ "${RESERVED_KIND}" = "environment" ]
+  [ "${RESERVED_WORD}" = "staging" ]
+  # A legacy master is a broken "one long-lived branch" rule, not an environment
+  # nobody promoted, so it must not be reported as one.
+  reserved_name_kind master
+  [ "${RESERVED_KIND}" = "trunk" ]
+  [ "${RESERVED_WORD}" = "master" ]
+  ! is_environment_name master
+  # Only a bare name is a second trunk; a path below it is a namespace someone chose.
+  ! reserved_name_kind master/legacy-import
+}
+
+@test "branch-hygiene: a second trunk is reported with its own sentence" {
+  fixture_repo >/dev/null
+  add_branch master
+  audit
+  [ "${status}" -eq 1 ]
+  [[ "${stderr}" == *"is reserved: 'master' is a second trunk name"* ]]
+  [[ "${stderr}" != *"master'* is an environment name"* ]]
+}
+
+@test "branch-hygiene: the lib can be sourced twice without erroring" {
+  # It is a sourced helper, so a second source has to be a no-op. A readonly table
+  # made the second source die with "ENVIRONMENT_WORDS: readonly variable".
+  load_lib
+  run bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; \
+    source '${REPO_ROOT}/scripts/lib/branch_hygiene.sh'; \
+    source '${REPO_ROOT}/scripts/lib/branch_hygiene.sh'; echo SOURCED-OK"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"SOURCED-OK"* ]]
+  [[ "${output}" != *"readonly variable"* ]]
+}
+
+@test "branch-hygiene: a lib sourced from inside a function keeps its tables global" {
+  # The scope a sourced file's `declare` lands in is the sourcing function's, so a
+  # plain `declare -A` here scoped the reserved tables to load_lib: every lookup came
+  # back empty and is_environment_name called `staging` a clean name. `declare -g` is
+  # what makes the lib behave the same whoever sources it.
+  run bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; unset JSON_MODE; \
+    load_it() { source '${REPO_ROOT}/scripts/lib/branch_hygiene.sh'; }; \
+    load_it; is_environment_name staging; echo rc=\$?"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"rc=0"* ]]
+}
+
+@test "branch-hygiene: selected_remotes follows --remote and falls back to all" {
+  # --fetch has to spend its network on the remotes the run actually reports on.
+  fixture_repo >/dev/null
+  git -C "${FIXTURE}/work" remote add backup "${FIXTURE}/origin.git"
+  cd "${FIXTURE}/work"
+  load_lib
+  REMOTES=()
+  run selected_remotes
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"origin"* ]]
+  [[ "${output}" == *"backup"* ]]
+  REMOTES=(backup)
+  run selected_remotes
+  [ "${output}" = "backup" ]
+  # An empty --remote value is nothing to act on, and it must not reach git.
+  REMOTES=("" backup)
+  run selected_remotes
+  [ "${output}" = "backup" ]
 }
 
 @test "branch-hygiene: branch_part strips a configured remote and nothing else" {
@@ -301,6 +390,54 @@ reset_counters() {
   [ -n "$(git -C "${FIXTURE}/work" rev-parse --verify --quiet refs/remotes/origin/staging)" ]
 }
 
+@test "branch-hygiene: plan_deletion names the row's own remote" {
+  # A checkout carrying a second remote is the case a literal `origin` gets wrong:
+  # the operator is told to delete a same-named branch on the wrong remote, and the
+  # tip SHA they dutifully record belongs to the ref the plan did not mean.
+  fixture_repo >/dev/null
+  git -C "${FIXTURE}/work" remote add backup "${FIXTURE}/origin.git"
+  cd "${FIXTURE}/work"
+  load_lib
+  run plan_deletion remote backup/legacy-import ddb08cb7
+  [[ "${output}" == *"git push backup --delete legacy-import"* ]]
+  [[ "${output}" != *"git push origin --delete"* ]]
+  run plan_deletion local legacy-import ddb08cb7
+  [[ "${output}" == *"git branch -d legacy-import"* ]]
+}
+
+@test "branch-hygiene: resolve_repo_arg anchors a relative path and refuses a dead one" {
+  fixture_repo >/dev/null
+  load_lib
+  INVOKE_DIR="${FIXTURE}"
+  [ "$(resolve_repo_arg work)" = "${FIXTURE}/work" ]
+  # An absolute --repo is the operator's own answer and survives untouched.
+  [ "$(resolve_repo_arg "${FIXTURE}/work")" = "${FIXTURE}/work" ]
+  ! resolve_repo_arg no-such-dir
+  # Resolving must not move the caller: the cd belongs to the subshell.
+  [ "${PWD}" != "${FIXTURE}/work" ]
+}
+
+@test "branch-hygiene: a relative --repo resolves against the Bazel workspace dir" {
+  # `bazelisk run //scripts:branch-hygiene -- --repo .` starts its launcher inside
+  # the runfiles tree, so $PWD is not where the operator typed the command. Bazel
+  # leaves BUILD_WORKSPACE_DIRECTORY behind for exactly this, and a relative --repo
+  # that ignored it failed with "is not a git repository" on a real run.
+  fixture_repo >/dev/null
+  mkdir -p "${BATS_TEST_TMPDIR}/runfiles"
+  run --separate-stderr env -C "${BATS_TEST_TMPDIR}/runfiles" REPO_ROOT= \
+    BUILD_WORKSPACE_DIRECTORY="${FIXTURE}" GITHUB_WORKSPACE= \
+    bash "${SCRIPT}" --repo work
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"summary:"* ]]
+  # The control: the same relative path with no anchor names a directory that is
+  # not there, and the run has to say so and exit 2 rather than audit nothing.
+  run --separate-stderr env -C "${BATS_TEST_TMPDIR}/runfiles" REPO_ROOT= \
+    BUILD_WORKSPACE_DIRECTORY= GITHUB_WORKSPACE= \
+    bash "${SCRIPT}" --repo work
+  [ "${status}" -eq 2 ]
+  [[ "${stderr}" == *"cannot enter --repo work"* ]]
+}
+
 @test "branch-hygiene: a trunk-only clone is clean and exits 0" {
   fixture_repo >/dev/null
   audit
@@ -315,13 +452,16 @@ reset_counters() {
   add_branch staging
   audit
   [ "${status}" -eq 1 ]
-  [[ "${stderr}" == *"remote branch origin/staging is an environment name"* ]]
+  [[ "${stderr}" == *"remote branch origin/staging is reserved"* ]]
   # The tip SHA has to be on the line: it is the record the working rules want kept
   # before anyone deletes the branch.
-  [[ "${stderr}" == *"origin/staging is an environment name (tip "* ]]
+  [[ "${stderr}" == *"origin/staging is reserved: 'staging' is an environment name"* ]]
+  local tip
+  tip="$(git -C "${FIXTURE}/work" rev-parse --short refs/remotes/origin/staging)"
+  [[ "${stderr}" == *"(tip ${tip})"* ]]
   # The branch exists on both sides of the remote boundary, and each is its own
   # finding: deleting origin/staging does not remove the local one.
-  [ "$(occurrences 'is an environment name')" -eq 2 ]
+  [ "$(occurrences 'is reserved:')" -eq 2 ]
   [[ "${output}" == *"summary: "*"2 failed"* ]]
 }
 
@@ -330,8 +470,8 @@ reset_counters() {
   add_branch production
   audit
   [ "${status}" -eq 1 ]
-  [[ "${output}" == *"local branch production is an environment name"* ]]
-  [[ "${output}" == *"remote branch origin/production is an environment name"* ]]
+  [[ "${output}" == *"local branch production is reserved"* ]]
+  [[ "${output}" == *"remote branch origin/production is reserved"* ]]
 }
 
 @test "branch-hygiene: an environment word below a namespace is still an environment branch" {
@@ -339,7 +479,7 @@ reset_counters() {
   add_branch prod/hotfix-42
   audit
   [ "${status}" -eq 1 ]
-  [[ "${output}" == *"origin/prod/hotfix-42 is an environment name"* ]]
+  [[ "${output}" == *"origin/prod/hotfix-42 is reserved"* ]]
 }
 
 @test "branch-hygiene: a sanctioned work prefix stays clean" {
@@ -348,7 +488,7 @@ reset_counters() {
   add_branch feat/search-lane
   audit
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"local branch test/flake-fix is not an environment name"* ]]
+  [[ "${output}" == *"local branch test/flake-fix is not a reserved name"* ]]
   [[ "${stderr}" != *"environment name"* ]]
   [[ "${output}" == *"0 failed"* ]]
 }
@@ -458,7 +598,7 @@ reset_counters() {
   [ "${status}" -eq 1 ]
   # The named remote is the only one consulted, so its own spelling of the branch
   # is what the rules see, and no origin/ row appears at all.
-  [[ "${stderr}" == *"remote branch backup/staging is an environment name"* ]]
+  [[ "${stderr}" == *"remote branch backup/staging is reserved"* ]]
   [[ "${output}" != *"origin/"* ]]
   [[ "${stderr}" != *"origin/"* ]]
 }
@@ -471,7 +611,7 @@ reset_counters() {
   # The exemption is decided on the branch part, so `backup/main` reads as the trunk
   # the way `origin/main` does. Hardcoding origin/ here would report a second
   # remote's trunk as a branch that outlived its change.
-  [[ "${output}" == *"remote branch backup/main is not an environment name"* ]]
+  [[ "${output}" == *"remote branch backup/main is not a reserved name"* ]]
   [[ "${output}" != *"backup/main is merged"* ]]
 }
 

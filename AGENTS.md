@@ -167,7 +167,9 @@ Prefer Bazelisk. Make is a shim.
   error, a merged-but-undeleted or past-lifetime branch a warning, each printed with
   its tip SHA because that is the record a deletion has to leave behind. It reports
   and never deletes; `--plan` prints the commands for a human to run, and
-  `--fetch` is what makes the remote rows current before you act on them.
+  `--fetch` (the run's only write: `git remote update --prune` over the selected
+  remotes, touching this checkout's remote-tracking refs and no branch on the remote)
+  is what makes the remote rows current before you act on them.
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that
   workspace's own DinD sidecar — run it in a host shell or name `--container`/`--home`)
