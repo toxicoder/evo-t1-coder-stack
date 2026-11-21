@@ -2324,15 +2324,40 @@ curl -s http://127.0.0.1:9090/api/v1/targets
 - **`litellm` alone is `down` with a 401**: the scrape sends the master key as a bearer
   token that it reads from a file, `/etc/prometheus-secrets/litellm_token`
   (`observability/prometheus/prometheus.yml`), which Compose writes from
-  `LITELLM_MASTER_KEY` when it creates the container. Prometheus performs no
-  environment-variable expansion in its config file, so a value it could not substitute
-  would be sent verbatim and rejected. A `LITELLM_MASTER_KEY` rotated in `.env` without
+  `LITELLM_MASTER_KEY` when it creates the container. Prometheus expands environment
+  variables in its `global.external_labels` values only, never in a scrape target or an
+  `authorization` block, so a value it could not substitute would be sent verbatim and
+  rejected. A `LITELLM_MASTER_KEY` rotated in `.env` without
   recreating `prometheus` leaves the collector holding the old token; `up` rewrites the
   file, a `restart` does not. The response body names the fault: LiteLLM answers a
   missing bearer with "Malformed API Key passed in", and a wrong one with
   `No connected db.` - which is an auth failure at v1.102.1, not a database complaint
   (this bundle runs LiteLLM with no DB at all). `bazelisk run //scripts:observability-check`
   prints that target's `lastError`, so it names the 401 without a `docker logs` read.
+
+### Grafana's dashboard page logs a quotas `501` and `skipping rendering` -> two separate upstream lines, one of them closed here
+
+Cause: both show up in the browser console on every dashboard page, and only one of
+them means anything.
+
+- `GET /apis/quotas.grafana.app/v0alpha1/namespaces/default/usage?group=dashboard.grafana.app&resource=dashboards`
+  answering `501 (Not Implemented)` is upstream grafana/grafana#136271: with
+  `unified_storage.overrides_path` unset the resource server's quota service is nil and
+  refuses the call, while the browse-dashboards view fires it on every page load. This
+  bundle closes it by pointing Grafana at `observability/grafana/unified-storage/overrides.yml`
+  through `GF_UNIFIED_STORAGE_OVERRIDES_PATH`, so the call answers `200`. The file sets
+  no limit; its presence is the whole fix, and a real cap goes under `overrides:` keyed
+  by group and resource. If the `501` is back, the bind or the variable went missing.
+- `DashboardScenePage.tsx:171 skipping rendering` is a leftover `console.log` in
+  Grafana's own bundle (`public/app/features/dashboard-scene/pages/DashboardScenePage.tsx`,
+  read out of the pinned image's source map). It prints when the page declines to render
+  for one pass because the route's dashboard uid changed under it, which is the normal
+  path for any navigation between dashboards and for a trip to or from Home. It carries
+  no diagnostic value, shares no cause with the `501`, and keeps printing after that one
+  is fixed. Nothing in this stack can silence it, and nothing needs to.
+
+So a console that shows only `skipping rendering` is a healthy Grafana, and a panel that
+is empty is not this line's fault - take the datasource path below.
 
 ### Grafana's datasource tests green but the panel is empty -> the Mimir query path, then the tenancy header
 
