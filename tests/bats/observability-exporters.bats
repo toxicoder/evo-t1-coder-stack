@@ -26,10 +26,17 @@
 #   - the LiteLLM token seam: prometheus.yml opens its bearer token from a file,
 #     compose writes that file from the proxy's own master key, and the path each
 #     side names is the whole contract - they sit hundreds of lines apart in two
-#     files, and a mismatch is one red target and an empty dashboard, not an error;
+#     files, and a mismatch is one red target and an empty dashboard, not an error.
+#     The token text is compared at both ends of the seam rather than against the
+#     shipped default alone: the proxy's own default is a second string ~1180 lines
+#     away in the same file, and drifting it on its own is the same permanent 401;
 #   - the two Grafana knobs that silence the search-manifest-watcher pair and the
 #     dashboard quota 501, which only do anything if the overrides file the knob
-#     names is a file this tree actually ships, bound at exactly that path;
+#     names is a file this tree actually ships, bound at exactly that path, if the
+#     filter value names that one logger and nothing wider (a list that also carries
+#     `*:error` mutes every logger in the product), and if every group under
+#     `overrides:` is a mapping - a scalar there fails the boot and the service's
+#     restart policy loops it;
 #   - that litellm/config.yaml leaves /metrics behind the master key: the switch that
 #     would take that auth off is absent from the file, and the block it would sit in
 #     is still there, so the absence reads as a decision and not as a file that lost
@@ -517,10 +524,12 @@ PY
 }
 
 # overrides_facts <file> - key|<k> per top-level key of the Grafana quota overrides
-# file, plus map|<k> when that value is a mapping. Grafana takes the file's presence as
-# "quotas are configured" and then decodes overrides as a map, so a comment-only file or
-# a top key holding a string leaves the dashboard's quota call answering 501 exactly as
-# before, with no error anywhere to say so.
+# file, plus map|<k> when that value is a mapping, and the same pair one level down
+# under `overrides:` as sub|<group> and submap|<group>. Grafana takes the file's
+# presence as "quotas are configured" and then decodes overrides as a map of
+# per-group limits, so a comment-only file or a top key holding a string leaves the
+# dashboard's quota call answering 501 exactly as before, with no error anywhere to
+# say so - and a group whose value is not a mapping stops the container at boot.
 overrides_facts() {
   python3 - "${1}" <<'PY'
 import sys
@@ -534,8 +543,14 @@ if not isinstance(doc, dict):
     sys.exit(0)
 for key, value in sorted(doc.items()):
     print("key|%s" % key)
-    if isinstance(value, dict):
-        print("map|%s" % key)
+    if not isinstance(value, dict):
+        continue
+    print("map|%s" % key)
+    if key == "overrides":
+        for group, quota in sorted(value.items(), key=lambda item: str(item[0])):
+            print("sub|%s" % group)
+            if isinstance(quota, dict):
+                print("submap|%s" % group)
 PY
 }
 
@@ -1169,7 +1184,7 @@ LISTEN_CONTRACT=(
 }
 
 @test "compose writes the token file the litellm scrape opens" {
-  local facts top content attach source target mode
+  local facts top content attach source target mode proxy_key
   facts="$(compose_config_facts "${COMPOSE}")"
   [[ -n ${facts} ]] ||
     fail "docker-compose.yml declares no top-level configs, so this proved nothing"
@@ -1185,6 +1200,18 @@ LISTEN_CONTRACT=(
   # bind, and compose then fails the whole project at startup rather than one target.
   [[ ${content} != *':-}' ]] ||
     fail "configs.litellm_metrics_token falls back to an empty string"
+  # The two ends of this seam are ~1180 lines apart in this one file, and the footer
+  # comment above the configs block claims they match "character for character". A
+  # comment is not evidence and the pinned constant above cannot see the other end:
+  # moving only the proxy's own LITELLM_MASTER_KEY default leaves Compose writing one
+  # token while the proxy authenticates with another, which is the permanent 401 this
+  # branch exists to prevent. Only comparing the two strings catches it.
+  proxy_key="$(compose_env_facts "${COMPOSE}" litellm |
+    awk -F'|' '$1=="env" && $2=="LITELLM_MASTER_KEY"{print $3}')"
+  [[ -n ${proxy_key} ]] ||
+    fail "the litellm service sets no LITELLM_MASTER_KEY, so nothing authenticates the scrape the token file feeds"
+  assert_eq "the token compose writes is the same string the proxy boots with" \
+    "${proxy_key}" "${content}"
   attach="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="attach" && $2=="prometheus"' | head -1)"
   [[ -n ${attach} ]] ||
     fail "the prometheus service attaches no config, so it has no token file to open"
@@ -1215,8 +1242,12 @@ LISTEN_CONTRACT=(
   filters="$(printf '%s\n' "${env}" | awk -F'|' '$1=="env" && $2=="GF_LOG_FILTERS"{print $3}')"
   [[ -n ${filters} ]] ||
     fail "GF_LOG_FILTERS is gone, and upstream grafana/grafana#137058 puts the manifest-watcher pair back in the log every poll"
-  [[ ${filters} == *search-manifest-watcher:error* ]] ||
-    fail "GF_LOG_FILTERS='${filters}' leaves the search-manifest-watcher warnings at warn"
+  # Exact rather than a substring: Grafana reads this as a list of logger:level
+  # filters, so a value that also carries `*:error` names the watcher and silences
+  # every other logger in the product at once - the substring test stayed green for
+  # exactly that value.
+  [[ ${filters} == "search-manifest-watcher:error" ]] ||
+    fail "GF_LOG_FILTERS='${filters}' is not exactly the one filter this pins: a wider list can silence every logger in Grafana"
   overrides_path="$(printf '%s\n' "${env}" |
     awk -F'|' '$1=="env" && $2=="GF_UNIFIED_STORAGE_OVERRIDES_PATH"{print $3}')"
   assert_eq "Grafana is pointed at the stack's quota overrides file" \
@@ -1237,7 +1268,7 @@ LISTEN_CONTRACT=(
 }
 
 @test "the shipped quota overrides file is the shape Grafana decodes" {
-  local facts
+  local facts groups group not_a_map=""
   [[ -f ${OVERRIDES_YML} ]] ||
     fail "${GRAFANA_OVERRIDES_SOURCE} is missing, so GF_UNIFIED_STORAGE_OVERRIDES_PATH points at nothing and /apis/quotas.grafana.app keeps answering 501 (grafana/grafana#136271)"
   facts="$(overrides_facts "${OVERRIDES_YML}")"
@@ -1245,6 +1276,18 @@ LISTEN_CONTRACT=(
     fail "${GRAFANA_OVERRIDES_SOURCE} carries no top-level overrides: key - a comment-only file leaves the 501 in place with no error to say so"
   printf '%s\n' "${facts}" | grep -qx 'map|overrides' ||
     fail "overrides: is not a mapping, which Grafana's decoder refuses at boot"
+  # Measured on the pinned grafana/grafana:13.3.1: `dashboards.grafana.app: banana`
+  # under overrides: exits 1 with "failed to load runtime config: load file: yaml:
+  # unmarshal errors: line 2: cannot unmarshal !!str `banana` into
+  # resource.NamespaceOverrides". The shipped file carries no group at all, so this
+  # loop is the guard on the first one anyone adds.
+  groups="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="sub"{print $2}')"
+  while IFS= read -r group; do
+    [[ -n ${group} ]] || continue
+    printf '%s\n' "${facts}" | grep -qxF "submap|${group}" || not_a_map+="${group}; "
+  done <<<"${groups}"
+  assert_eq "every group under overrides: is a mapping - a scalar there stops Grafana at boot with failed to load runtime config, and the service's restart: unless-stopped turns that one exit into a crash loop" \
+    "" "${not_a_map}"
 }
 
 @test "litellm/config.yaml keeps the metrics endpoint authenticated" {
