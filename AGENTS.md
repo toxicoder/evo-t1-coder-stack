@@ -161,6 +161,13 @@ Prefer Bazelisk. Make is a shim.
   offers the lane ids; the run prints what is available)
 - MCP lanes: `bazelisk run //scripts:mcp-check` (declared lanes, `command=` binaries,
   lane credentials, and each server's handshake; runs inside a workspace or on the host)
+- branch cleanup (run it before you delete anything, and after a merge round):
+  `bazelisk run //scripts:branch-hygiene -- [--repo DIR] [--remote NAME] [--max-age DAYS] [--strict] [--fetch] [--plan]`
+  — the machine check for `docs/branching.md`: an environment-named branch is an
+  error, a merged-but-undeleted or past-lifetime branch a warning, each printed with
+  its tip SHA because that is the record a deletion has to leave behind. It reports
+  and never deletes; `--plan` prints the commands for a human to run, and
+  `--fetch` is what makes the remote rows current before you act on them.
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that
   workspace's own DinD sidecar — run it in a host shell or name `--container`/`--home`)

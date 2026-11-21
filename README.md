@@ -1263,6 +1263,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 ├── searxng/settings.yml   # SearXNG metasearch config, mounted read-only
 ├── scripts/
 │   ├── bootstrap.sh          # .env + secrets + access URL + certs + router conf + checks
+│   ├── branch-hygiene.sh    # audit branch topology against docs/branching.md: environment
+│   │                        #   names, merged-but-undeleted, past-lifetime; reports only
 │   ├── build-dev-image.sh   # builds images/dev -> evo-t1-dev:latest
 │   ├── coder-agents.sh      # wires the control-plane chat agent (LiteLLM + thinking models)
 │   ├── coder-sessions.sh    # list, tail, answer, launch, stop, and watch the Grok Build
