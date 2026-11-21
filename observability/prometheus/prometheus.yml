@@ -101,10 +101,13 @@ scrape_configs:
 
   # LiteLLM's /metrics comes from `callbacks: ["prometheus"]` in
   # litellm/config.yaml, and it sits behind LITELLM_MASTER_KEY like every other
-  # LiteLLM route (SECURITY.md). The token arrives as a file, not as a variable:
-  # Prometheus does not expand environment variables anywhere in this file - not
-  # `$(VAR)`, not `${VAR}`, not `$VAR`; all three are sent to the target verbatim,
-  # measured on v3.16.0 against a listener that logs its request headers - so a
+  # LiteLLM route (SECURITY.md). The token arrives as a file, not as a variable.
+  # Prometheus expands `$VAR` and `${VAR}` in `global.external_labels` values and
+  # in nothing else here: a target address, a label, and `authorization.credentials`
+  # all reach the code byte for byte, measured on v3.16.0, where an external label of
+  # `$EXPAND_ME` arrived as `expanded-ok` while a target of `$TARGET_HOST:9999` in the
+  # same file stayed literal and an inline bearer reached a header-logging listener
+  # unchanged. So a
   # `credentials:` here would scrape with a literal `$(LITELLM_MASTER_KEY)` and
   # LiteLLM would answer 401 `Unauthorized access to metrics endpoint: No
   # connected db.` forever. That wording is the tell, and it is not about a
