@@ -1015,8 +1015,9 @@ services:
       # Two quiet knobs, both measured on grafana/grafana:13.3.1, both about log
       # noise an operator reads as a fault and is not:
       #
-      # `search-manifest-watcher` warns twice per ~49 s poll (`source listed zero
-      # manifests` / `zero manifests, keeping previous set`) whenever no app
+      # `search-manifest-watcher` warns twice each poll, the polls 41 to 59 s apart in
+      # the log this was cut from (`source listed zero manifests` /
+      # `zero manifests, keeping previous set`) whenever no app
       # publishes a search manifest, which is every OSS install with nothing
       # provisioned into the app platform. Upstream calls it a logging defect
       # (grafana/grafana#137058) and confirms search keeps working; retrying an
@@ -1436,10 +1437,16 @@ volumes:
 # the scrape from drifting apart, and it keeps the key out of the committed
 # scrape config and out of `docker inspect`'s command line alike.
 #
-# Needs Docker Compose v2.23.1 or newer, the release that added `configs.content`
-# (https://docs.docker.com/reference/compose-file/configs/). An older compose
-# refuses the file at parse time with an unsupported-property error, which is a
-# loud failure at `up` rather than a silently dead target.
+# Needs a compose new enough to know `configs.content`; upstream's schema page
+# names v2.23.1 as the release that added it
+# (https://docs.docker.com/reference/compose-file/configs/). That floor is read off
+# the docs: what was run here is compose v5.5.1, and no older build was ever pointed
+# at this file, so what an older one does is upstream's behaviour and not a
+# measurement. Nothing in this repo enforces it either - bootstrap checks only that
+# the plugin answers (`scripts/bootstrap.sh:207`). An operator who gets a
+# schema-validation error naming `configs.litellm_metrics_token` is looking at a
+# compose older than that floor, and the thing to rule out next is the litellm
+# target reading a token file that was never written.
 # ---------------------------------------------------------------------------
 configs:
   litellm_metrics_token:

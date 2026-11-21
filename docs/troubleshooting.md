@@ -2313,10 +2313,13 @@ curl -s http://127.0.0.1:9090/api/v1/targets
 ```
 
 - **Absent from the list entirely**: the job is not in
-  `observability/prometheus/prometheus.yml`. Add it there and recreate Prometheus - a
-  `restart` keeps the old mount and the old config, since the file is mounted read-only.
-  Prometheus also runs with `--web.enable-lifecycle`, but nothing here calls it; a
-  recreate is the path the stack uses.
+  `observability/prometheus/prometheus.yml`. Add it there and let the collector read it
+  again: that file arrives through a bind mount, which follows the *path*, so the edit is
+  already inside the container and only the running process is behind it. Restarting the
+  service picks it up, and `POST /-/reload` answers 200 on this one
+  (`--web.enable-lifecycle`, `docker-compose.yml:854`) without dropping the scrape loop's
+  in-flight state. A recreate is what you need when the mount line or another compose
+  setting changed, not for an edit to a file that is already mounted.
 - **Present and `down`**: the app is not answering on the name Prometheus dials. The
   scrapes are compose-DNS (`coder:2112`, `litellm:4000`), not the host mappings - a
   `curl 127.0.0.1:2112` that works from the host proves only that the port mapping is
@@ -2327,9 +2330,15 @@ curl -s http://127.0.0.1:9090/api/v1/targets
   `LITELLM_MASTER_KEY` when it creates the container. Prometheus expands environment
   variables in its `global.external_labels` values only, never in a scrape target or an
   `authorization` block, so a value it could not substitute would be sent verbatim and
-  rejected. A `LITELLM_MASTER_KEY` rotated in `.env` without
-  recreating `prometheus` leaves the collector holding the old token; `up` rewrites the
-  file, a `restart` does not. The response body names the fault: LiteLLM answers a
+  rejected. That file is the one credential in the bundle a rotate can strand, and it
+  behaves the opposite way from the bind mounts above: it is a Compose `configs` entry,
+  and Compose writes those when it *creates* the container. Measured with the compose
+  this repo ships, `up -d` after a rotate prints `Running`, keeps the same container and
+  the same `com.docker.compose.config-hash`, and the file inside still holds the old key;
+  a `restart` matches it. The recreate that works names the service -
+  `docker compose -p evo-t1-prod --profile observability -f docker-compose.yml up -d
+  --force-recreate prometheus`, the invocation `prod-stack` itself prints with the
+  recreate added, since `prod-stack up` passes no flags through. The response body names the fault: LiteLLM answers a
   missing bearer with "Malformed API Key passed in", and a wrong one with
   `No connected db.` - which is an auth failure at v1.102.1, not a database complaint
   (this bundle runs LiteLLM with no DB at all). `bazelisk run //scripts:observability-check`
@@ -2346,8 +2355,12 @@ them means anything.
   refuses the call, while the browse-dashboards view fires it on every page load. This
   bundle closes it by pointing Grafana at `observability/grafana/unified-storage/overrides.yml`
   through `GF_UNIFIED_STORAGE_OVERRIDES_PATH`, so the call answers `200`. The file sets
-  no limit; its presence is the whole fix, and a real cap goes under `overrides:` keyed
-  by group and resource. If the `501` is back, the bind or the variable went missing.
+  no limit; its presence is the whole fix, and what the endpoint then reports is
+  Grafana's own default - `{"usage":0,"limit":1000}` for both dashboards and folders on
+  `grafana/grafana:13.3.1`. No cap is known to take effect there: four plausible shapes
+  written under `overrides:` left that 1000 untouched, and three other shapes stop the
+  container at boot, so the file's own header says to prove a limit on the pinned image
+  before committing one. If the `501` is back, the bind or the variable went missing.
 - `DashboardScenePage.tsx:171 skipping rendering` is a leftover `console.log` in
   Grafana's own bundle (`public/app/features/dashboard-scene/pages/DashboardScenePage.tsx`,
   read out of the pinned image's source map). It prints when the page declines to render

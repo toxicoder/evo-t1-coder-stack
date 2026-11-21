@@ -218,8 +218,8 @@ container:
 | `observability/mimir/mimir.yml` | Mimir, including `multitenancy_enabled: false` - see the query path below |
 | `observability/grafana/provisioning/datasources/stack.yaml` | The four datasources and their fixed UIDs |
 | `observability/grafana/provisioning/dashboards/stack.yaml` | The provider that loads the JSON below: folder `EVO-T1`, `allowUiUpdates: false`, `disableDeletion: true` |
-| `observability/grafana/dashboards/` | The thirteen provisioned dashboard JSONs - the section below names each one and what it answers - mounted again at `/var/lib/grafana/dashboards` (`docker-compose.yml:1048`), which is the path the provider reads |
-| `observability/grafana/unified-storage/overrides.yml` | Grafana's unified-storage quota overrides, mounted read-only at `/etc/grafana/stack-overrides.yml` and named there by `GF_UNIFIED_STORAGE_OVERRIDES_PATH` (`docker-compose.yml:1034`, `:1054`) - the note below says what its presence buys |
+| `observability/grafana/dashboards/` | The thirteen provisioned dashboard JSONs - the section below names each one and what it answers - mounted again at `/var/lib/grafana/dashboards` (`docker-compose.yml:1049`), which is the path the provider reads |
+| `observability/grafana/unified-storage/overrides.yml` | Grafana's unified-storage quota overrides, mounted read-only at `/etc/grafana/stack-overrides.yml` and named there by `GF_UNIFIED_STORAGE_OVERRIDES_PATH` (`docker-compose.yml:1035`, `:1055`) - the note below says what its presence buys |
 | `observability/alloy/config.alloy` | The log pipeline: which files to tail, what to ship to Loki |
 | `observability/prometheus/rules/` | Prometheus, through that `rule_files:` block: `stack.rules.yml`, `spark.rules.yml`, `inference.rules.yml`. They arrive with the directory this file is mounted from, so there is no second place to register a rule |
 | `observability/alertmanager/alertmanager.yml` | Alertmanager: the `tier` routes, three inhibit rules, and five receivers (four webhook, one blackhole for the heartbeat) |
@@ -228,17 +228,26 @@ container:
 | `observability/grafana/provisioning/alerting/stack.yaml` | The `stack-alertmanager` contact point and Grafana's default alerting policy |
 
 Two consequences of the `:ro` mounts, both the same rule the other payload directories
-follow: edit the checkout and recreate the service (`up -d`, not `restart`, since a
-restart keeps the old mounts), and treat the provisioned dashboards and datasources as
-read-only in the UI. `allowUiUpdates: false` and `disableDeletion: true` stop a save
-from overwriting the JSON, so anything you build by hand lands in Grafana's own database
-in `grafana-data` instead - it works, and it drifts from git invisibly.
+follow. A bind follows the *path*, so an edit made in the checkout is already inside the
+running container, and the only question left is when the process reads it again:
+measured against the pinned image, an in-place rewrite of a mounted file and a rename of
+a new one over it both reached the container with no restart and no recreate, which is
+why the dashboards section below can promise a minute rather than a redeploy. The one
+credential that behaves differently is the LiteLLM bearer token, and the reason is that
+it is not a bind - Compose writes a `configs` entry when it creates the container, so
+rotating `LITELLM_MASTER_KEY` takes `up -d --force-recreate prometheus`, where a plain
+`up -d` leaves the old bytes in place, and so does a `restart`. And treat the provisioned
+dashboards and datasources as read-only in the UI: `allowUiUpdates: false` and
+`disableDeletion: true` stop a save from overwriting the JSON, so anything you build by
+hand lands in Grafana's own database in `grafana-data` instead - it works, and it drifts
+from git invisibly.
 
 The `grafana` service carries two settings that live in its `environment:` block
-(`docker-compose.yml:1033-1034`) rather than in any file above, each one there to quiet a
+(`docker-compose.yml:1034-1035`) rather than in any file above, each one there to quiet a
 Grafana 13.3.1 defect this box pays for as log noise.
 `GF_LOG_FILTERS: search-manifest-watcher:error` drops that one logger to `error` and
-leaves every other logger at its default. The watcher warns twice per ~49 s poll -
+leaves every other logger at its default. The watcher warns twice each poll, and the
+polls in the log this branch was cut from were 41 to 59 s apart -
 `source listed zero manifests`, then `zero manifests, keeping previous set` - whenever no
 app publishes a search manifest, which is every OSS install with nothing provisioned into
 the app platform; upstream calls that a logging defect (grafana/grafana#137058) and
@@ -255,7 +264,11 @@ the same call answers 200. Both were measured on `grafana/grafana:13.3.1`: 12
 `search-manifest-watcher` warnings became 0 and the quota call went from 501 to 200, with
 `/api/health` still 200. The overrides file itself says `overrides: {}`, which is
 Grafana's own defaults - it is the file's presence that clears the 501, not any limit set
-in it, and a real cap goes under `overrides:` keyed by group and resource.
+in it. What the quota call then reports is that default, `{"usage":0,"limit":1000}` for
+dashboards and for folders on 13.3.1; four plausible cap shapes left the number where it
+was, and a scalar or an unparseable document under `overrides:` stops the container at
+boot, so the file's header asks for a limit to be proven on the pinned image before it is
+written down.
 
 The thirteen dashboards are provisioned, so they appear on a fresh Grafana in the
 `EVO-T1` folder with no clicking - the section below names each one and the question it
@@ -343,11 +356,11 @@ build from scratch is not thrown away - it lands in Grafana's own database on `g
 above exist to prevent.
 
 So the way to change a panel is to edit its JSON and let the interval apply it. The folder
-is bind-mounted read-only onto the path the provider scans (`docker-compose.yml:1048`), so
+is bind-mounted read-only onto the path the provider scans (`docker-compose.yml:1049`), so
 an edit to a file that is already there is visible to the running container and shows up
 within a minute - no restart, and no recreate. A new file needs no registration either, for
 the same reason. Recreate only when the mount line or the provisioning tree itself changed
-(`docker-compose.yml:1046-1047`), and then with the `up -d` rule from the section above:
+(`docker-compose.yml:1047-1048`), and then with the `up -d` rule from the section above:
 
 ```sh
 bazelisk run //scripts:prod-stack -- up
@@ -451,7 +464,7 @@ an empty log root, and a Prometheus that scraped everything for a day and never 
 sample to Mimir. `--no-docker` skips the four unpublished backends when you are not on a
 shell that can address the daemon.
 
-Its service list is still the original six (`OBS_SERVICES`, `scripts/observability-check.sh:146`).
+Its service list is still the original six (`OBS_SERVICES`, `scripts/observability-check.sh:165`).
 The four exporters and Alertmanager declare no `healthcheck` and publish no readiness path
 of their own, so their state comes from the `status` rows and the container logs below,
 not from this check.

@@ -8,9 +8,26 @@
 # every dashboard page, so an unconfigured box prints an error line per page load
 # and fills a browser console with 501s (grafana/grafana#136271).
 #
-# The file's presence is the fix; its content says nothing special. `overrides: {}`
-# means no per-group limit is set, so the endpoint answers 200 with Grafana's own
-# defaults and the quota banner simply reports "unlimited". To cap a resource for
-# real, add it under `overrides:` keyed by group/resource - and expect the UI to
-# enforce it, which is why this file ships empty rather than with invented numbers.
+# The file's presence is the fix; nothing in it is. With `overrides: {}` the quota
+# call answers 200 and reports Grafana's own per-resource default - measured on
+# grafana/grafana:13.3.1, `{"usage":0,"limit":1000}` for both
+# dashboard.grafana.app/dashboards and folder.grafana.app/folders. It is not
+# "unlimited", and it is not a cap this stack chose.
+#
+# Edit this file only against the pinned image, because Grafana decodes it at boot
+# and refuses to start on anything it cannot read. Measured on 13.3.1, each of
+# these exits 1 with `failed to load runtime config` - and the service's
+# `restart: unless-stopped` turns that into a crash-looping dashboard:
+#
+#   - the path is a directory, which is what a missing bind source becomes;
+#   - the document will not parse (`yaml: line 1: did not find expected ',' or ']'`);
+#   - a value under `overrides:` is a scalar rather than a mapping
+#     (`cannot unmarshal !!str banana into resource.NamespaceOverrides`).
+#
+# Worse than all three is a guess that parses: it boots, the endpoint keeps
+# reporting its own default, and the operator believes the limit is set. Four
+# plausible shapes for a dashboard cap were tried on 13.3.1 and not one moved the
+# 1000. The gate parses the shape this file ships
+# (tests/bats/observability-exporters.bats); prove any real limit on the pinned image
+# by reading that endpoint back before committing it.
 overrides: {}
