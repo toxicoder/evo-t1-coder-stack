@@ -38,7 +38,10 @@
 # Safety: reads templates/common/{*.AGENT.md,*.PERSONA.toml, the four fleet
 # SKILL.md,stack-fleet.sh.tftpl}, both main.tf twins,
 # scripts/lib/{template-push.sh,config_seed.sh,startup_size.awk}, the LiteLLM
-# config, and the repo-tier links under .grok/. Writes nothing.
+# config, and the repo-tier links under .grok/. The rulebook reference contract
+# at the foot of the file scans the whole of templates/common/, since a pointer
+# into the seed is only as good as the seed section it names and the shell
+# guard's header carries one the same way a definition does. Writes nothing.
 
 bats_require_minimum_version 1.5.0
 
@@ -1141,4 +1144,150 @@ assert_link_to() {
     assert_not_match "${twin}/main.tf never reports the fleet body as unmeasurable" \
       "^stack-fleet\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"
   done
+}
+
+
+# ---------------------------------------------------------------------------
+# The rulebook reference contract.
+#
+# The payloads in templates/common/ are the only text the boot ships beside the
+# rulebook seed, and they inherit their two hardest invariants -- pure ASCII and
+# the dotenv boundary -- by pointing into it. A numeric pointer into a document
+# that grows is a rot risk, and this one had rotted: of the 21 line-number cites
+# these tests replace, 16 had slid onto unrelated paragraphs, including all
+# eight "write in pure ASCII" pointers, which had landed inside the Edit
+# Conflict Gate. A child that follows such a pointer reads a rule about
+# something else, and the invariant goes unenforced at the one place it was
+# told to check it. The surviving form names a section, which a later insertion
+# cannot move.
+#
+# These three take the whole directory rather than the thirteen files this suite
+# otherwise owns: the seed is shared by both families and by the hooks, so a
+# pointer is only as good as the seed section it names wherever it is written.
+# A payload another suite owns can therefore redden this file, which is the
+# point -- the contract is the seed's, not any one family's.
+#
+# Every scan here enumerates with find and -type l rather than grepping
+# recursively. Under hermetic runfiles each payload is a symlink into the output
+# base, and a recursive grep walks straight past every one of them: the whole
+# directory then matches nothing and the test passes while checking nothing.
+# ---------------------------------------------------------------------------
+
+# CITE_DENY -- the spellings of a line-number pointer this contract refuses.
+# This is a deny-list of the forms actually observed, not a proof of
+# completeness: a novel prose spelling is an extension to this list, added the
+# same way the two the review panel proved were added here.
+CITE_DENY=(
+  'GROK_BUILD_AGENTS\.md[^A-Za-z0-9]{0,4}[0-9]'
+  'GROK_BUILD_AGENTS\.md[^A-Za-z0-9]{0,4}[Ll]ine[[:space:]]*[0-9]'
+  'GROK_BUILD_AGENTS\.md[^A-Za-z0-9]{0,4}[Ll][0-9]'
+)
+
+@test "rulebook: no payload points into the seed by line number" {
+  # The numeral is the form that rotted; naming the section is the stable one.
+  # Refusing it is what stops a later edit from reintroducing a pointer that
+  # reads correctly on the day it is written and wrong by the next insertion.
+  # Historical task reports under .grok/plans/ keep their line numbers on
+  # purpose -- they record what a commit did -- and are not payloads.
+  local hits="" pattern file
+  local -a files=()
+  while IFS= read -r file; do
+    files+=("${file}")
+  done < <(find "${COMMON}" -maxdepth 1 \( -type f -o -type l \) | sort)
+  # An empty scan is a silent pass, which is the failure mode this whole section
+  # exists to refuse, so say what was actually looked at.
+  (( ${#files[@]} > 0 )) || {
+    printf 'FAIL: %s yielded no payload files, so this scan proved nothing\n' "${COMMON}" >&2
+    return 1; }
+  for pattern in "${CITE_DENY[@]}"; do
+    hits+="$(grep -nE "${pattern}" -- "${files[@]}" 2>/dev/null || true)"
+  done
+  if [[ -n "${hits}" ]]; then
+    printf 'FAIL: a payload cites the seed by line number; cite its section title instead:\n%s\n' \
+      "${hits}" >&2
+    return 1
+  fi
+}
+
+@test "rulebook: every seed section a payload cites still exists" {
+  # The other half of the rule above. A section title is stable only while the
+  # heading is, so renaming one silently unpoints every payload that named it,
+  # which is the same loss a drifted line number was.
+  local seed="${COMMON}/GROK_BUILD_AGENTS.md" cited missing=0
+  [[ -f "${seed}" ]] || {
+    printf 'FAIL: the seed is not reachable at %s\n' "${seed}" >&2
+    return 1; }
+  local -a files=()
+  while IFS= read -r file; do
+    files+=("${file}")
+  done < <(find "${COMMON}" -maxdepth 1 \( -type f -o -type l \) | sort)
+  local -a cited_titles=()
+  while IFS= read -r cited; do
+    [[ -n "${cited}" ]] || continue
+    cited_titles+=("${cited}")
+  done < <(grep -hoE 'GROK_BUILD_AGENTS\.md`, *"[^"]+"' -- "${files[@]}" 2>/dev/null |
+    sed -E 's/.*"([^"]+)"$/\1/' | sort -u)
+  # Citing nothing is the vacuous pass this test exists to refuse.
+  (( ${#cited_titles[@]} > 0 )) || {
+    printf 'FAIL: no payload cites a seed section at all, so this test proves nothing\n' >&2
+    return 1; }
+  for cited in "${cited_titles[@]}"; do
+    if ! grep -qx "# ${cited}" "${seed}"; then
+      printf 'FAIL: a payload cites seed section "%s" and the seed has no "# %s" header\n' \
+        "${cited}" "${cited}" >&2
+      missing=1
+    fi
+  done
+  return "${missing}"
+}
+
+@test "rulebook: the seed's roster names every agent definition that ships" {
+  # The seed introduced its roster as "the six definitions those pins name"
+  # while seven shipped and the config pinned all seven, so a parent choosing a
+  # role from the rulebook never learned the advisor family's `documenter`
+  # existed. That roster is the only place the choice gets made, so it has to
+  # enumerate the payloads rather than a remembered count.
+  #
+  # Scoped to the roster sentence itself, not the seed and not even the whole
+  # section. A wider grep is satisfied by a backticked role name anywhere it
+  # happens to sit: `tester`, `reviewer`, and `security-auditor` occur in the
+  # section's own role table and again under "# Delegation and verification", so
+  # deleting the roster outright left those three green while the other four
+  # failed. The sentence is the roster; that is what has to name them.
+  local seed="${COMMON}/GROK_BUILD_AGENTS.md" file stem missing=0
+  local -a stems_seen=()
+  [[ -f "${seed}" ]] || {
+    printf 'FAIL: the seed is not reachable at %s\n' "${seed}" >&2
+    return 1; }
+  local roster
+  roster="$(awk '/definitions those pins/{f=1} f{print} /role on its lane/{f=0}' "${seed}")"
+  [[ -n "${roster}" ]] || {
+    printf 'FAIL: no roster sentence matched "definitions those pins" in %s\n' "${seed}" >&2
+    return 1; }
+  while IFS= read -r file; do
+    stem="$(basename "${file}" .AGENT.md)"
+    stems_seen+=("${stem}")
+    if ! printf '%s\n' "${roster}" | grep -q "\`${stem}\`"; then
+      printf 'FAIL: %s ships as a definition but the seed roster sentence never names it\n' \
+        "${stem}" >&2
+      missing=1
+    fi
+  done < <(find "${COMMON}" -maxdepth 1 -name '*.AGENT.md' | sort)
+  (( ${#stems_seen[@]} >= 7 )) || {
+    printf 'FAIL: only %s definitions were found under %s, so the roster check proved nothing\n' \
+      "${#stems_seen[@]}" "${COMMON}" >&2
+    return 1; }
+  # The count word is the prose this defect actually lived in, so it is pinned
+  # too rather than left for the next reader to notice out of step.
+  local -a words=(zero one two three four five six seven eight nine ten eleven twelve)
+  local want="${words[${#stems_seen[@]}]-}"
+  [[ -n "${want}" ]] || {
+    printf 'FAIL: no number word for %s definitions\n' "${#stems_seen[@]}" >&2
+    return 1; }
+  if ! printf '%s\n' "${roster}" | grep -qE "The ${want} definitions those pins"; then
+    printf 'FAIL: %s definitions ship, but the roster does not read "The %s definitions those pins"\n' \
+      "${#stems_seen[@]}" "${want}" >&2
+    missing=1
+  fi
+  return "${missing}"
 }

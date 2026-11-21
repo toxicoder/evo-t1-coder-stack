@@ -79,7 +79,8 @@ No cloud model id belongs anywhere in this repo. Alias detail and the routing ar
 The rulebook a workspace boots with is the seed `templates/common/GROK_BUILD_AGENTS.md`,
 rewritten into `~/.grok/AGENTS.md` on every start while it carries the stack marker. This file
 is repo operator documentation; the seed is the source of truth for agent behaviour. The rest
-of the suite the same boot seeds is `templates/common/*.AGENT.md` (six role definitions) and
+of the suite the same boot seeds is `templates/common/*.AGENT.md` (seven role definitions:
+the fleet's six plus the advisor's `documenter`) and
 `templates/common/*.PERSONA.toml` (three overlays) into `~/.grok/agents/` and
 `~/.grok/personas/`, and `templates/common/*.SKILL.md` into `~/.coder/skills/` with a `cp` twin
 in `~/.agents/skills/`. Change the seed in this repo and re-materialize it, never the copy that

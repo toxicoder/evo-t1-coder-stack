@@ -81,7 +81,9 @@ Tool names and parameter names change between Grok Build versions, and this file
 - A missing tool or unknown parameter is a gap to stop and report (with the closest real alternative or a question), never a reason to invent a call. After a failed call, re-verify the schema or switch to a known tool.
 
 # Sub-agent Roles
-Use these role descriptions in child prompts (this spawn_subagent schema has no type parameter: state the role in the prompt text, and only pass `isolation`, `resume_from`, `cwd`, or `model` when the live schema lists them). A role name is never a `model` value: `explore`, `plan`, and `general-purpose` belong in the prompt text, and passing one as `model` fails with `Unknown Task.model slug` (measured: 20 wasted calls across 9 sessions). `model` takes a slug from the roster the tool lists (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`, `coder`, `coder-fast`, `chat`, ...), and you leave it out entirely unless the user asked for a specific model. Pick `agent-swarm` for a wave of parallel independent children whose load should spread over every Spark box, and keep a single long conversation on `agent`, which stays pinned to one box. The stack already pins all three built-in types to the workspace's fan-out lane in `[subagents.models]`, so a wave rides that lane without you naming a model on each call; pass `model` only when the user asked for a specific model, since the lane itself comes from the pin and the guide leaves how a per-call `model` ranks against it open. Never give a child a vague prompt.
+Use these role descriptions in child prompts (this spawn_subagent schema has no type parameter: state the role in the prompt text, and only pass `isolation`, `resume_from`, `cwd`, or `model` when the live schema lists them). A role name is never a `model` value: `explore`, `plan`, and `general-purpose` belong in the prompt text, and passing one as `model` fails with `Unknown Task.model slug` (measured: 20 wasted calls across 9 sessions). `model` takes a slug from the roster the tool lists (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`, `coder`, `coder-fast`, `chat`, ...), and you leave it out entirely unless the user asked for a specific model. Pick `agent-swarm` for a wave of parallel independent children whose load should spread over every Spark box, and keep a single long conversation on `agent`, which stays pinned to one box. The stack already pins `general-purpose` and the writer types to the
+workspace's fan-out lane in `[subagents.models]`, with `explore` and `plan` on their own
+lanes below, so a wave rides that lane without you naming a model on each call; pass `model` only when the user asked for a specific model, since the lane itself comes from the pin and the guide leaves how a per-call `model` ranks against it open. Never give a child a vague prompt.
 
 | Role | Capabilities | Use for |
 |------|--------------|---------|
@@ -94,10 +96,12 @@ Which lane a role rides is a config decision, and the stack already made it:
 low, session pin lifted, so a wave of mappers is placed across every Spark box), `plan` to
 `agent` (pinned and deep, because a planner re-reads what it just read and its answer steers
 every wave after it), and `general-purpose` plus the writer roles to the fan-out lane. The
-skeptical roles ride `agent-review` (xhigh, pin lifted). The six definitions those pins name
-live in `.grok/agents/` and are seeded to `~/.grok/agents/` - `explorer`, `architect`,
-`implementer`, `tester`, `reviewer`, `security-auditor` - each declaring the tools its role
-may use and nothing else, and three persona overlays (`thorough-researcher`,
+skeptical roles ride `agent-review` (xhigh, pin lifted). The seven definitions those pins
+name live in `.grok/agents/` and are seeded to `~/.grok/agents/` - `explorer`,
+`architect`, `implementer`, `tester`, `reviewer`, and `security-auditor` from the fleet
+family, plus `documenter` from the advisor family, which is the one to dispatch when a
+change already exists and its docs no longer match it - each declaring the tools its role
+may use and nothing else. Three persona overlays (`thorough-researcher`,
 `senior-implementer`, `skeptical-reviewer`) sit beside them in `~/.grok/personas/`. Name the
 role in the child prompt; leave the `model` argument alone unless the operator asked for a
 specific model, because the pin is what puts a role on its lane.
