@@ -454,6 +454,10 @@ _SUITE_PAYLOAD = {
     # list, and prometheus.yml's job list. One group covers all of them.
     "observability-exporters.bats": [
         "//observability:payload",
+        # The suite reads the proxy's own config to prove the metrics endpoint kept its
+        # auth: the refused switch is absent from that file, so the file has to be in
+        # the runfiles or the case can only ever report its own absence.
+        "//litellm:config",
     ],
     # Every fact here is read out of the provisioned dashboard tree, and the metric
     # allow-list reads the recording rules this repo ships so a new rule never needs

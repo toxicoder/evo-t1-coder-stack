@@ -29,7 +29,11 @@
 #     files, and a mismatch is one red target and an empty dashboard, not an error;
 #   - the two Grafana knobs that silence the search-manifest-watcher pair and the
 #     dashboard quota 501, which only do anything if the overrides file the knob
-#     names is a file this tree actually ships, bound at exactly that path.
+#     names is a file this tree actually ships, bound at exactly that path;
+#   - that litellm/config.yaml leaves /metrics behind the master key: the switch that
+#     would take that auth off is absent from the file, and the block it would sit in
+#     is still there, so the absence reads as a decision and not as a file that lost
+#     its shape.
 #
 #   - that the monitoring containers can boot at all: no Prometheus bind nests
 #     inside another (runc mkdirs a mountpoint, which the read-only parent
@@ -146,6 +150,10 @@ setup() {
   # in the tree at all, and skipping would let its absence pass as a green suite.
   OVERRIDES_YML="${OBS}/grafana/unified-storage/overrides.yml"
   COMPOSE="${REPO_ROOT}/docker-compose.yml"
+  # The proxy's own config, and the one file here outside the observability bundle.
+  # Out of the artefact loop below for the same reason as the overrides file: it feeds
+  # a single case, and its absence is that case's finding rather than everyone's skip.
+  LITELLM_CONFIG="${REPO_ROOT}/litellm/config.yaml"
 
   local artefact
   for artefact in "${STACK_RULES}" "${SPARK_RULES}" "${INFERENCE_RULES}" \
@@ -347,8 +355,9 @@ PY
 
 # prom_authorization_facts <file> <job_name> - job|1 when that scrape config exists,
 # authkey|<k> per key of its authorization block, and authval|<k>|<value> per scalar key.
-# Prometheus expands no environment variable anywhere in its config file, so the only
-# authorization value that can ever carry a working token is one naming a file.
+# Prometheus expands $VAR and ${VAR} in global.external_labels values and in nothing
+# else in the file, so the only authorization value that can ever carry a working token
+# is one naming a file.
 prom_authorization_facts() {
   python3 - "${1}" "${2}" <<'PY'
 import sys
@@ -601,6 +610,38 @@ with open(sys.argv[1], encoding="utf-8") as handle:
             sum(1 for char in text if ord(char) > 127),
             text.split(",")[0].strip(),
         ))
+PY
+}
+
+# litellm_config_facts <file> - setting|<k> for every mapping key at any depth, and
+# map|<top key> for each top-level key whose value is a mapping. The key this feeds is
+# read out of litellm_settings, so the scan cannot stop at the top level, and the map
+# line is what tells a key nobody set apart from a block nobody has.
+litellm_config_facts() {
+  python3 - "${1}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+
+def walk_keys(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            print("setting|%s" % key)
+            walk_keys(value)
+    elif isinstance(node, list):
+        for value in node:
+            walk_keys(value)
+
+
+for key, value in sorted(doc.items()):
+    if isinstance(value, dict):
+        print("map|%s" % key)
+
+walk_keys(doc)
 PY
 }
 
@@ -1113,10 +1154,11 @@ LISTEN_CONTRACT=(
     fail "prometheus.yml carries no litellm job, so this proved nothing"
   printf '%s\n' "${facts}" | grep -qx 'authkey|credentials_file' ||
     fail "the litellm job no longer opens its bearer from a file: $(printf '%s\n' "${facts}" | tr '\n' ' ')"
-  # authorization.credentials is the shape that broke the target: Prometheus expands no
-  # environment variable anywhere in its config file (measured on v3.16.0 against a
-  # listener that logs its request headers - $(VAR), ${VAR} and $VAR all go out
-  # verbatim), so an inline value is sent as a literal and LiteLLM answers 401.
+  # authorization.credentials is the shape that broke the target: Prometheus expands
+  # $VAR and ${VAR} in global.external_labels values only, and nowhere else in the file
+  # (measured on v3.16.0 against a listener that logs its request headers - $(VAR),
+  # ${VAR} and $VAR all go out verbatim), so an inline value is sent as a literal and
+  # LiteLLM answers 401.
   if printf '%s\n' "${facts}" | grep -qx 'authkey|credentials'; then
     fail "the litellm job sets authorization.credentials, which no environment can fill"
   fi
@@ -1203,4 +1245,28 @@ LISTEN_CONTRACT=(
     fail "${GRAFANA_OVERRIDES_SOURCE} carries no top-level overrides: key - a comment-only file leaves the 501 in place with no error to say so"
   printf '%s\n' "${facts}" | grep -qx 'map|overrides' ||
     fail "overrides: is not a mapping, which Grafana's decoder refuses at boot"
+}
+
+@test "litellm/config.yaml keeps the metrics endpoint authenticated" {
+  local facts
+  [[ -f ${LITELLM_CONFIG} ]] ||
+    fail "litellm/config.yaml is not in this run's tree - it rides //litellm:config, which this suite's _SUITE_PAYLOAD entry in tests/BUILD.bazel has to declare"
+  facts="$(litellm_config_facts "${LITELLM_CONFIG}")"
+  [[ -n ${facts} ]] || fail "litellm/config.yaml parsed to nothing, so the key scan proved nothing"
+  # Absence is the required state here, not an omission. /metrics answers under the
+  # master key like every other LiteLLM route (SECURITY.md), and compose publishes
+  # :4000 to the LAN, so the series the litellm scrape carries - model aliases, token
+  # counts, per-key traffic - are readable by anything on that network the moment that
+  # auth is switched off. LiteLLM's own 401 body offers the switch as the remedy
+  # (litellm_settings.require_auth_for_metrics_endpoint: false), which is why false is
+  # not a neutral answer to a red target: the target goes green by publishing the
+  # fleet's traffic counts. A wrong token is fixed on the scrape side, at the file the
+  # seam above pins.
+  if printf '%s\n' "${facts}" | grep -qx 'setting|require_auth_for_metrics_endpoint'; then
+    fail "litellm/config.yaml sets require_auth_for_metrics_endpoint, which takes /metrics off the master key while :4000 is published to the LAN"
+  fi
+  # The guard against a vacuous pass: without it a config whose litellm_settings block
+  # had been renamed or dropped would satisfy the absence above by carrying nothing.
+  printf '%s\n' "${facts}" | grep -qx 'map|litellm_settings' ||
+    fail "litellm/config.yaml carries no litellm_settings: mapping, so it is not the shape that switch would live under"
 }
