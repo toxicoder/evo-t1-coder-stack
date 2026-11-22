@@ -816,8 +816,8 @@ the rulebook's slot-filling rule) and `bazelisk test //tests:bats_ez_micro_plan_
 ## The seeded fleet suite
 
 The seam above is what a fan-out costs; this is who is in it. The family has its own seeding
-`coder_script`, `stack_fleet` (`templates/workspace/main.tf:748`,
-`templates/devcontainer/main.tf:799`), which puts thirteen payloads in place on every start
+`coder_script`, `stack_fleet` (`templates/workspace/main.tf:753`,
+`templates/devcontainer/main.tf:804`), which puts thirteen payloads in place on every start
 from `templates/common/`, and `//scripts:seed-dev-env` seeds the same thirteen into a
 contributor home through the `~/.grok/agents`, `~/.grok/personas` and fleet-skill rows of
 `seed_seed_targets` (`scripts/lib/config_seed.sh:130-147`, seventeen of them; the
@@ -934,7 +934,7 @@ for a cloud model id, which is the rule in
 ### The five advisor commands
 
 Five more commands ride a `coder_script` of their own, `stack_advisors`
-(`templates/workspace/main.tf:779`, `templates/devcontainer/main.tf:830`), whose body is
+(`templates/workspace/main.tf:784`, `templates/devcontainer/main.tf:835`), whose body is
 `templates/common/stack-advisors.sh.tftpl`. Four are advisors that each gate a different kind
 of work, and the fifth writes the local map described at the end of this section. Same contract
 and same two homes as the four above: `~/.coder/skills/<name>/SKILL.md` for the chat and the
@@ -1099,7 +1099,7 @@ an oversight.
   rulebook rule that no pattern can replace.
 
 Two things seed them, and both are wanted. `coder_script "stack_hooks"`
-(`templates/workspace/main.tf:805`, `templates/devcontainer/main.tf:856`) runs
+(`templates/workspace/main.tf:810`, `templates/devcontainer/main.tf:861`) runs
 `templates/common/stack-hooks.sh.tftpl` on every workspace start (`run_on_start`, gated on
 `data.coder_workspace.me.start_count`), and `scripts/lib/config_seed.sh:160-165` carries the
 same six targets for a host tree or a workspace that missed a boot. This family is

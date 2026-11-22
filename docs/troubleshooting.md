@@ -795,7 +795,7 @@ coder logs <workspace>
   body of that log, and each `coder_script` prints under the name Coder labels it with -
   **Seed the Grok Build rulebook**, **Seed the fleet agents, personas and skills**, **Fetch
   stack secrets from Infisical**, and the rest, which are the `display_name` values at
-  `templates/workspace/main.tf:726-1010`.
+  `templates/workspace/main.tf:731-1015`.
 - Every body speaks the same shapes (`templates/common/boot-log.lib.sh`, handed to each body
   as the `boot_log_lib` key of its `templatefile()` map):
 
@@ -821,7 +821,7 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
   printed a header and no closing `summary:` never reached the end of its own script - it died
   in the stage that line names, or Coder stopped it at the script's `timeout`. The startup
   body's eight stage titles (`workspace startup`
-  stages 1-8, `templates/workspace/startup.sh.tftpl:37-321`) are the map for anything about
+  stages 1-8, `templates/workspace/startup.sh.tftpl:37-326`) are the map for anything about
   tmux, the CLI, the shell profile, the skills and the notes library, the editor settings,
   the Grok profile, ownership and the git credentials, or the repositories.
 - The one case where a body prints nothing at all and nothing is wrong: the vault body leaves
@@ -1278,6 +1278,29 @@ note: a rendered width below fleet-width is a --var that outlived its template -
   A profile that answers `warning: no '# fleet-width:' line - this profile predates it;
   restart the workspace to re-materialize` has no ceiling to compare against yet, so that
   one is a restart, not a `--var`.
+
+  The whole surface, for a script or a CI step that wants the answer rather than the prose
+  (`--help` prints the same):
+
+```text
+bazelisk run //scripts:subagent-check -- [--config PATH] [--parallel N] [--json] [--strict]
+
+  --config PATH   the profile to read; default $HOME/.grok/config.toml, which is the one
+                  this workspace's own render owns
+  --parallel N    the streams one box serves, what a pinned lane is measured against;
+                  default 5, the PARALLEL recipe default in scripts/spark-configure.sh
+  --json          one flat object on stdout and nothing else, for a machine to read
+  --strict        a warning is a failure, so a fleet-shaped check can gate a pipeline
+
+  sections        == subagent slots ==, then -> the profile, -> the width, -> the lanes,
+                  -> the depth, closing with summary: N ok, W warnings, F failed
+  exit            0 with nothing failed, 1 with a failure (or a warning under --strict),
+                  2 on a usage error such as an unknown flag or a non-numeric --parallel
+  --json keys     config, marker, max_concurrent, fleet_width, writers_lane, pinned,
+                  max_depth, verdict, ok, warnings, failed
+                  verdict is ok, warning, or error; pinned is what the writers' lane in
+                  [subagents.models] resolves to, false for the four pin-lifted aliases
+```
 
 - The same finding arrives by itself at every start: the profile stage of the boot compares
   the two numbers right after re-materializing the config
@@ -2095,8 +2118,8 @@ bazelisk run //scripts:prod-stack -- up
 ### `infisical: vault not configured for this stack` -> the boot fetch ran with an empty name on the agent environment
 
 - The line is in the workspace start log, in the script Coder labels **Fetch stack secrets
-  from Infisical** (`templates/workspace/main.tf:718`, same body in the devcontainer twin
-  at `templates/devcontainer/main.tf:769`):
+  from Infisical** (`templates/workspace/main.tf:723`, same body in the devcontainer twin
+  at `templates/devcontainer/main.tf:774`):
 
 ```text
 infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the push composes INFISICAL_DOMAIN itself, from INFISICAL_PORT, so the name missing here is one of the other five: each is read from the key of the same spelling in the stack host's .env, and one that is empty or still spells change-me is skipped rather than sent: set it there and re-run bazelisk run //scripts:push-template.
@@ -2105,7 +2128,7 @@ infisical: vault not configured for this stack. These six names arrive on the co
 - Cause: the body's first gate, `templates/common/infisical-secrets.sh.tftpl:14-20` - any
   one of those six empty on the agent environment prints this and exits `0`, so the
   workspace boots with no vault secrets and nothing else complains. The resource exists at
-  all only while `infisical_enabled` is true (`templates/workspace/main.tf:716`), so this
+  all only while `infisical_enabled` is true (`templates/workspace/main.tf:721`), so this
   is not the flag being off; it is one value that never arrived. The push forwards each of
   the five read-side values only when `.env` carries something real - `env_get_forwardable` drops an
   empty value and one still spelling `change-me*` (`scripts/push-template.sh:198-205`, the five
@@ -2154,7 +2177,7 @@ infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps th
   (`scripts/push-template.sh:636`, `:668-671`), so an adopted vault still ships a boot that never
   waits on the network. That off is the safe side of a real trade: a fetch that reaches the
   vault is a fetch bounded by the script's own `timeout = 120`
-  (`templates/workspace/main.tf:725`), and the exit is `0` either way because no secret
+  (`templates/workspace/main.tf:730`), and the exit is `0` either way because no secret
   manager gets to fail a workspace start.
 - What the boot keeps is whatever `~/.infisical/agent.env` an earlier start wrote, which on
   a workspace that has never pulled is nothing at all. To load the credentials now, on the
