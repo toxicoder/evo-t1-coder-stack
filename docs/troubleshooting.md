@@ -1569,9 +1569,31 @@ summary: 1 ok, 1 warnings, 0 failed
   template would render on the next start. A stopped container has nothing to exec into,
   so it cannot be read and is reported as such rather than guessed at:
   `warning: coder-alice-evo is stopped (exited) - its profile is unreachable and its width
-  comes from the stored parameter`. A workspace that has been stopped for weeks stays
-  unmeasured until you start it, and since its width is that stored parameter anyway, the
-  printed `coder update` line is the fix there too.
+  comes from the stored parameter`. That warning is the whole of what a stopped workspace
+  gets: no `note:` remedy line follows it, and under `--json` that workspace's `remedy` is
+  `null`, because the sweep has read no number to fill the command with. What clears a
+  width that has sat stale for weeks is the same update every other offender takes,
+  `coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=<n>`, and you
+  compose that line yourself - `<n>` is the `# fleet-width:` the workspace's own render
+  wrote, which is exactly the number the sweep cannot see through a stopped container.
+  Start it and the next sweep reads the profile and prints the line for you.
+
+- Two verdicts cover a running container whose profile the sweep could not get at, and both
+  are kept apart from the missing-render warning on purpose. `docker exec` passes `cat`'s
+  status through, so a status is evidence about the file only when nothing else produced it:
+
+  - `warning: <container> did not answer within <n>s - the sweep cannot read its profile`
+    is the cap biting: the exec had not returned when `PROBE_TIMEOUT` cut it off, which is
+    `timeout(1)`'s 124, or 137 once the kill landed. The container is up and hung.
+  - `warning: <container> could not be read (docker exec returned <rc>) - its profile says nothing`
+    is docker itself refusing, for any status that is neither 0 nor one of the two timeout
+    codes, and not the 1 or 2 that `cat` returns for a file that is not there - `126` and
+    `127` land here.
+
+  Neither is what 1 and 2 mean - the exec ran and the file was genuinely absent:
+  `warning: no profile at /home/coder/.grok/config.toml in <container> - the boot render has not run`.
+  Call a hung or refused exec a missing render and the operator restarts a workspace whose
+  boot ran fine.
 
 - The stored parameter is the thing to clear. Every start re-renders `config.toml`, so a
   restart on its own re-applies the same stored number; what moves it is
@@ -1592,6 +1614,11 @@ summary: 1 ok, 1 warnings, 0 failed
   - with no `docker` on PATH: `error: cannot list workspace containers - the docker CLI is
     not on this host`. A daemon that will not answer is
     `error: cannot list containers - is the docker daemon reachable from this host?`;
+  - with a `PROBE_TIMEOUT` the caller corrupted - empty, or carrying anything but digits:
+    `error: PROBE_TIMEOUT='<value>' is not a whole number of seconds`. That cap bounds every
+    docker call through `timeout(1)`, which refuses to start on a non-numeric one, so the
+    sweep checks it before it asks the daemon anything and prints this instead of letting a
+    failed `timeout` read as an unreachable daemon;
   - a host carrying no workspace containers is not a fault:
     `note: no workspace containers on this daemon - nothing to sweep`, closing with
     `summary: 0 ok, 0 warnings, 0 failed`, exit 0.

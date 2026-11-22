@@ -649,9 +649,11 @@ check_depth() {
 # container's own DinD sidecar, so the sweep would judge one sidecar and call it
 # the fleet; and a host with no docker CLI cannot enumerate anything at all.
 # Both refusals name the run the operator actually needs rather than returning
-# an empty report that reads like a clean fleet.
+# an empty report that reads like a clean fleet. The cap on every docker call is
+# checked too: a PROBE_TIMEOUT the caller corrupted makes timeout(1) fail, and
+# that is the caller's environment, not a daemon that will not answer.
 # Globals:
-#   CODER_WORKSPACE_ID, EVO_T1_DEVCONTAINER
+#   CODER_WORKSPACE_ID, EVO_T1_DEVCONTAINER, PROBE_TIMEOUT
 # Arguments:
 #   None
 # Outputs:
@@ -664,6 +666,12 @@ host_guard() {
   fi
   command -v docker >/dev/null 2>&1 ||
     die "cannot list workspace containers - the docker CLI is not on this host"
+  # Checked here rather than left to timeout(1): a non-numeric cap makes the
+  # binary fail, and the sweep would then blame the daemon for the caller's own
+  # environment.
+  case "${PROBE_TIMEOUT}" in
+    '' | *[!0-9]*) die "PROBE_TIMEOUT='${PROBE_TIMEOUT}' is not a whole number of seconds" ;;
+  esac
   return 0
 }
 
@@ -693,7 +701,7 @@ workspace_rows() {
     --filter label=coder.workspace_id \
     --format '{{.Label "coder.workspace_name"}}'"${tab}"'{{.Label "coder.owner"}}'"${tab}"'{{.Names}}'"${tab}"'{{.State}}' \
     </dev/null 2>&1 |
-    awk -F'\t' '$3 !~ /-dind-sidecar$/ && $1 != ""'
+    awk -F'\t' 'NF == 4 && $3 !~ /-dind-sidecar$/ && $1 != "" && $3 != ""'
 }
 
 # @function read_profile
@@ -822,7 +830,7 @@ judge_width() {
 # Returns:
 #   0, always; exits 1 when the daemon itself would not answer at all
 sweep_workspaces() {
-  local rows="" rc=0 state=""
+  local rows="" rc=0 state="" row="" remedy_json=""
   rows="$(workspace_rows)" ||
     die "cannot list containers - is the docker daemon reachable from this host?"
   if [ -z "${rows}" ]; then
@@ -834,7 +842,19 @@ sweep_workspaces() {
   # aborted sweep leaves nothing behind.
   SWEEP_TMP=""
   trap 'rm -f "${SWEEP_TMP:-}"' EXIT
-  while IFS=$'\t' read -r SWEEP_WORKSPACE SWEEP_OWNER SWEEP_CONTAINER state; do
+  while IFS= read -r row; do
+    [ -n "${row}" ] || continue
+    # Split by hand rather than `IFS=$'\t' read -r a b c d`. Tab is IFS
+    # whitespace, so read collapses runs of it and an empty middle field - a
+    # container whose coder.owner label is absent, which docker prints empty -
+    # shifts every later column left, and the sweep then execs a container
+    # named after the state column and reports the real one as missing.
+    SWEEP_WORKSPACE="${row%%$'\t'*}"
+    row="${row#*$'\t'}"
+    SWEEP_OWNER="${row%%$'\t'*}"
+    row="${row#*$'\t'}"
+    SWEEP_CONTAINER="${row%%$'\t'*}"
+    state="${row#*$'\t'}"
     [ -n "${SWEEP_CONTAINER}" ] || continue
     phase "${SWEEP_WORKSPACE} (${SWEEP_CONTAINER})"
     SWEEP_RUNNING=""
@@ -861,7 +881,18 @@ sweep_workspaces() {
         die "cannot create a sweep temp file under ${TMPDIR:-/tmp}"
       read_profile "${SWEEP_CONTAINER}" >"${SWEEP_TMP}" 2>/dev/null || rc=$?
       CONFIG="${SWEEP_TMP}"
-      if [ "${rc}" -ne 0 ] || [ ! -s "${CONFIG}" ]; then
+      # Three different failures, and only one of them is a workspace that has
+      # not rendered. docker exec passes cat's status through, so 1 and 2 are
+      # "that file is not there"; 124 and 137 are the cap biting; anything else
+      # is docker itself refusing. Reporting a hung or refused exec as a missing
+      # render sends the operator to restart a workspace whose boot ran fine.
+      if [ "${rc}" = "124" ] || [ "${rc}" = "137" ]; then
+        warn "${SWEEP_CONTAINER} did not answer within ${PROBE_TIMEOUT}s - the sweep cannot read its profile"
+        SWEEP_VERDICT="warning"
+      elif [ "${rc}" -ne 0 ] && [ "${rc}" != "1" ] && [ "${rc}" != "2" ]; then
+        warn "${SWEEP_CONTAINER} could not be read (docker exec returned ${rc}) - its profile says nothing"
+        SWEEP_VERDICT="warning"
+      elif [ "${rc}" -ne 0 ] || [ ! -s "${CONFIG}" ]; then
         warn "no profile at /home/coder/.grok/config.toml in ${SWEEP_CONTAINER} - the boot render has not run"
         SWEEP_VERDICT="warning"
       else
@@ -869,13 +900,22 @@ sweep_workspaces() {
       fi
       rm -f "${SWEEP_TMP}"
     fi
+    # The remedy is the one field assembled from label text rather than passed
+    # through json_escape by the caller, and json_value quotes without escaping,
+    # so an owner or workspace name carrying a quote would emit JSON the parser
+    # rejects. Escape it here, and keep the empty-means-null rule json_value owns.
+    if [ -n "${SWEEP_REMEDY}" ]; then
+      remedy_json="\"$(json_escape "${SWEEP_REMEDY}")\""
+    else
+      remedy_json="null"
+    fi
     # The newline is appended outside the command substitution because $( ) strips
     # a trailing one, and these lines are the whole stdout contract under --json.
     SWEEP_JSON="${SWEEP_JSON}$(printf '{"workspace":"%s","owner":"%s","container":"%s","running":%s,"max_concurrent":%s,"fleet_width":%s,"verdict":"%s","remedy":%s}' \
       "$(json_escape "${SWEEP_WORKSPACE}")" "$(json_escape "${SWEEP_OWNER}")" \
       "$(json_escape "${SWEEP_CONTAINER}")" "${SWEEP_RUNNING:-null}" \
       "$(json_value "${MAX_CONCURRENT}")" "$(json_value "${FLEET_WIDTH}")" \
-      "${SWEEP_VERDICT:-warning}" "$(json_value "${SWEEP_REMEDY}")")"$'\n'
+      "${SWEEP_VERDICT:-warning}" "${remedy_json}")"$'\n'
   done <<<"${rows}"
   SWEEP_TMP=""
   return 0
