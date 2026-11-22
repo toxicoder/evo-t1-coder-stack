@@ -434,7 +434,7 @@ assert_contributor_home() {
     'SEARXNG_URL = "http://host.docker.internal:8181"'
 }
 
-@test "seed-dev-env: the fan-out width takes the fleet width unless the env says otherwise" {
+@test "seed-dev-env: the fan-out width ships its own 15 and the fleet key only echoes" {
   load_seed_api
   local scratch out tpl notes
   scratch="$(make_scratch)"
@@ -510,15 +510,26 @@ assert_contributor_home() {
   assert_fixed "pinned lane for the writers" "${out}" 'general-purpose = "agent"'
   assert_fixed "pinned lane stays swarm-sized" "${out}" 'max_concurrent = 15'
 
-  # GROK_SWARM_WIDTH is where the 15 actually comes from, so a contributor on a
-  # smaller fleet narrows it here. Hard-coding 15 in the seeder passes every other
-  # case in this file, which is why the key needs a case of its own.
+  # GROK_SWARM_WIDTH is the fleet's own ceiling: it renders the `# fleet-width:`
+  # line beside the width and nothing else, because the width ships its own 15.
+  # The 7 is what catches a seeder that still derived the width from this key --
+  # every other case in this file renders 15 either way.
   GROK_SWARM_WIDTH='7' seed_render_grok_config "${tpl}" "${out}"
-  assert_fixed "the fleet width key supplies the width" "${out}" 'max_concurrent = 7'
-  # And supplies the echo with it: an echo hard-coded to 15 passes every case
+  assert_fixed "the fleet width key leaves the width alone" "${out}" 'max_concurrent = 15'
+  # And it moves the echo with it: an echo hard-coded to 15 passes every case
   # above, so this is the one that proves the token is substituted, not written.
   assert_fixed_pair "the echo follows the fleet width key" "${out}" \
-    '# fleet-width: 7' 'max_concurrent = 7'
+    '# fleet-width: 7' 'max_concurrent = 15'
+
+  # The two knobs are independent, which is what the pair is for: the explicit
+  # width owns max_concurrent while the fleet key keeps echoing the ceiling the
+  # fleet was built at, so a hand-narrowed home still says so on its own face.
+  # Neither number is the shipped 15, so neither line passes by default.
+  GROK_SWARM_WIDTH='7' GROK_SUBAGENT_MAX_CONCURRENT='11' \
+    seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "the explicit width owns the width" "${out}" 'max_concurrent = 11'
+  assert_fixed_pair "the echo follows the fleet under an explicit width" "${out}" \
+    '# fleet-width: 7' 'max_concurrent = 11'
 
   # A value sed could not substitute safely is refused out loud, and the width
   # still comes out of the lane rather than rendering a broken TOML integer.

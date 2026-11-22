@@ -190,9 +190,9 @@ seed_render_grok_config() {
     note "GROK_SWARM_WIDTH='${fleet_width}' is past the fleet's ceiling - using 32"
     fleet_width="32"
   fi
-  slots="${GROK_SUBAGENT_MAX_CONCURRENT:-${GROK_SWARM_WIDTH:-15}}"
+  slots="${GROK_SUBAGENT_MAX_CONCURRENT:-15}"
   if [[ ! ${slots} =~ ^[1-9][0-9]*$ ]]; then
-    note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is not a count - using the fleet width 15"
+    note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is not a count - using the shipped width 15"
     slots="15"
   elif ((slots > 32)); then
     note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is past the fleet's ceiling - using 32"
