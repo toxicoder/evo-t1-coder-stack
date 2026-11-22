@@ -63,6 +63,13 @@
 # has a concurrency ceiling, and the two keys stay under general_settings where the proxy
 # accepts them.
 #
+# And it pins the failover that rides on top of that cadence: the health filter armed at
+# all, a staleness threshold that outlives the sweep that wrote the mark, the two keys
+# that must be ABSENT from router_settings for the filter to run, a cooldown window the
+# probe loop can actually cool a marked box with, and a compose liveness probe that uses
+# the image's own interpreter (the image ships no curl and no wget) against the port the
+# service itself publishes.
+#
 # Usage: bazelisk test //tests:bats_litellm_config_test   (from any cwd)
 # Safety: reads litellm/config.yaml, litellm/compaction_router.py, docker-compose.yml
 # and the two template dirs; writes nothing.
@@ -855,4 +862,273 @@ general_settings_block() {
   ' "${CONFIG}")"
   assert_not_match "router_settings carries no health_check_interval" 'health_check_interval' "${router_block}"
   assert_not_match "router_settings carries no health_check_concurrency" 'health_check_concurrency' "${router_block}"
+}
+
+# --- failover: what takes a dead Spark box out of rotation --------------------
+#
+# Two mechanisms exclude a deployment and only one of them can see the failure this
+# fleet actually gets. Cooldown is blind to a box that is simply gone:
+# _is_cooldown_required returns False as soon as the exception text contains
+# APIConnectionError (router_utils/cooldown_handlers.py:223, ignored_strings), and a
+# refused connection, a dead engine, and a TensorFold NoRoom refusal all surface as
+# that exception. The health filter is the one that removes such a box --
+# async_get_available_deployment (router.py:13041) -> async_get_healthy_deployments
+# (router.py:12700) -> _async_filter_health_check_unhealthy_deployments
+# (router.py:14137) -- because the probe loop writes the health state unconditionally
+# (proxy_server.py:3981) before the cooldown path can veto the same exception, and
+# because least-busy has no health input of its own (a box failing everything sits at
+# an in-flight count of zero and _least_busy, least_busy.py:83, returns the FIRST
+# deployment at the minimum). Each test below answers one way that filter can silently
+# stop working. The cadence floor and the concurrency ceiling stay in the section above.
+
+# litellm_service_block - the compose `litellm` service: its key line plus every
+# deeper-indented line, stopping at its first sibling, comments dropped. Compose keys
+# repeat across services, so a grep over the whole file would be satisfied by another
+# container's healthcheck rather than by this service's.
+litellm_service_block() {
+  awk '
+    BEGIN { depth = -1 }
+    /^  litellm:[[:space:]]*$/ { depth = 2; print; next }
+    depth >= 0 {
+      if ($0 ~ /^[[:space:]]*$/ || $0 ~ /^[[:space:]]*#/) { next }
+      if (match($0, /[^[:space:]]/) - 1 <= depth) { exit }
+      print
+    }
+  ' "${REPO_ROOT}/docker-compose.yml"
+}
+
+# litellm_healthcheck_block - the healthcheck map of that service, sliced the same way:
+# comments are already dropped upstream, so the block's own prose about curl and wget
+# cannot reach an assertion below.
+litellm_healthcheck_block() {
+  litellm_service_block | awk '
+    BEGIN { depth = -1 }
+    /^[[:space:]]*healthcheck:/ { depth = match($0, /[^[:space:]]/) - 1; print; next }
+    depth >= 0 {
+      if ($0 ~ /^[[:space:]]*$/) { next }
+      if (match($0, /[^[:space:]]/) - 1 <= depth) { exit }
+      print
+    }
+  '
+}
+
+# litellm_healthcheck_test - the healthcheck `test:` value flattened onto one line. The
+# shipped form is a JSON flow sequence broken over eight lines, so a line-by-line grep
+# could not prove the interpreter and the URL belong to the SAME command: a probe whose
+# python3 lives in `test:` and whose URL sits in some other key would pass both greps.
+litellm_healthcheck_test() {
+  litellm_healthcheck_block | awk '
+    BEGIN { open = 0; on = 0; seen = 0; ti = -1 }
+    /^[[:space:]]*test:/ && ti < 0 { on = 1; ti = match($0, /[^[:space:]]/) - 1; print; next }
+    on {
+      # Stop at the next sibling key: a test: written as a plain string carries no
+      # bracket to close on, and the keys after it are not part of the command.
+      if (match($0, /[^[:space:]]/) - 1 <= ti && $0 ~ /^[[:space:]]*[A-Za-z_]+:/) { exit }
+      print
+      line = $0
+      n = gsub(/\[/, "[", line)
+      line = $0
+      m = gsub(/\]/, "]", line)
+      open += n - m
+      if (n > 0) { seen = 1 }
+      if (seen && open <= 0) { exit }
+    }
+  ' | tr '\n' ' ' | tr -s ' ' |
+    sed -e 's/^ //' -e 's/ $//' -e 's/^test:[[:space:]]*//'
+}
+
+# block_int <key> <block> - the single bare-integer value of one key, or nothing. A unit
+# suffix is deliberately not parsed, so every caller's "exactly one integer" assertion
+# turns `health_check_interval: 120s` into a failure instead of a silent 120.
+block_int() {
+  printf '%s\n' "$2" |
+    sed -n "s/^[[:space:]]*$1:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*\$/\1/p"
+}
+
+# block_secs <key> <block> - the same for a compose duration, which carries its unit.
+# Only the plain `<n>s` form parses: compose also accepts 1m30s, but a probe cadence
+# written any other way is a cadence the comparisons below cannot make.
+block_secs() {
+  printf '%s\n' "$2" |
+    sed -n "s/^[[:space:]]*$1:[[:space:]]*\([0-9][0-9]*\)s\{0,1\}[[:space:]]*\$/\1/p"
+}
+
+# require_compose - the same guard the two compose tests above carry inline: a run that
+# could not see the file would otherwise report every assertion below as green.
+require_compose() {
+  [[ -f "${REPO_ROOT}/docker-compose.yml" ]] || {
+    echo "docker-compose.yml is not reachable from ${REPO_ROOT}" >&2
+    return 1
+  }
+}
+
+@test "failover: the health filter is armed, not merely configured" {
+  # Every key in the two sections above is dead weight without this one:
+  # _async_filter_health_check_unhealthy_deployments returns the candidate list
+  # untouched unless enable_health_check_routing is true (router.py:14153). A config
+  # that kept the cadence but lost this flag would still probe all 31 deployments,
+  # still log every dead box, and still route to it -- the failure is invisible
+  # because the probes look like they are working.
+  local block hits
+  block="$(general_settings_block)"
+  [ -n "${block}" ] || { echo "general_settings is missing" >&2; return 1; }
+  hits="$(printf '%s\n' "${block}" | grep -Ec '^[[:space:]]*enable_health_check_routing:[[:space:]]*true[[:space:]]*$' || true)"
+  assert_eq "enable_health_check_routing is set true exactly once" "1" "${hits}"
+}
+
+@test "failover: the probe interval sits between the detection floor and the measured probe cost" {
+  # Floor 120: the period is one sweep plus the interval, because the loop sleeps
+  # health_check_interval AFTER a sweep finishes (proxy_server.py:4234), and a sweep is
+  # all 31 deployments through the concurrency-2 gate -- below this the fleet spends
+  # more on probing than on serving. Ceiling 300: each probe is a real completion
+  # (ahealth_check into acompletion with the default 16 health_check_max_tokens) on a
+  # box whose prompt cache is already full, so waiting longer than this buys detection
+  # latency nobody accepts. LiteLLM's own default is 600.
+  local interval
+  interval="$(block_int health_check_interval "$(general_settings_block)")"
+  assert_eq "health_check_interval is exactly one integer" "1" "$(printf '%s\n' "${interval}" | grep -c .)"
+  [[ "${interval}" -ge 120 ]] ||
+    fail "health_check_interval is ${interval}: below the 120 s floor a sweep of 31 deployments lands on the fleet too often to be a detection mechanism"
+  [[ "${interval}" -le 300 ]] ||
+    fail "health_check_interval is ${interval}: above 300 s each real completion probed on a cache-full box is paid for by a dead box still receiving traffic for that long"
+}
+
+@test "failover: an unhealthy mark outlives the sweep that wrote it" {
+  # The filter fails open -- it hands back the whole candidate list when the state is
+  # older than health_check_staleness_threshold (and when it is missing, and when
+  # filtering would leave nothing). So a threshold shorter than one sweep makes the
+  # filter a no-op on schedule: the mark expires before the next sweep can refresh it
+  # and the dead box is eligible again. Twice the interval is the minimum that keeps
+  # one full cycle of marks alive; the cap is how long a box that stopped being probed
+  # at all (proxy killed, loop starved) can still be steered around.
+  local block interval staleness
+  block="$(general_settings_block)"
+  interval="$(block_int health_check_interval "${block}")"
+  assert_eq "health_check_interval is exactly one integer" "1" "$(printf '%s\n' "${interval}" | grep -c .)"
+  staleness="$(block_int health_check_staleness_threshold "${block}")"
+  assert_eq "health_check_staleness_threshold is exactly one integer" "1" "$(printf '%s\n' "${staleness}" | grep -c .)"
+  [[ "${staleness}" -ge $((interval * 2)) ]] ||
+    fail "health_check_staleness_threshold is ${staleness}s against a ${interval}s interval: an unhealthy mark has to outlive the probe cycle that wrote it, and a stale mark makes the filter fail open onto the dead box (LiteLLM's own default is a flat 600 s whatever the interval says, router.py:993)"
+  [[ "${staleness}" -le 1800 ]] ||
+    fail "health_check_staleness_threshold is ${staleness}s: past 1800 s a deployment nobody is probing any more stays marked unhealthy, or unmarked, for longer than an operator has noticed"
+}
+
+@test "failover: router_settings carries no allowed_fails" {
+  # Its absence is load-bearing in both directions. With the key unset, cooldown uses
+  # the vendor's rate rule (cooldown_handlers.py:405): cool once a deployment fails
+  # more than half of at least 5 requests in a rolling minute. Set it to any
+  # non-default number and should_cooldown_based_on_allowed_fails_policy takes the
+  # counting branch instead, whose fail window IS cooldown_time -- so the
+  # `allowed_fails: 40` this config used to carry needed 41 failures inside 5 s and
+  # never fired, while looking like a tuned threshold.
+  local block
+  block="$(router_settings_block)"
+  [ -n "${block}" ] || { echo "router_settings is missing" >&2; return 1; }
+  assert_not_match "router_settings sets no allowed_fails" '^[[:space:]]*allowed_fails:' "${block}"
+}
+
+@test "failover: router_settings carries no allowed_fails_policy, which would switch the filter off" {
+  # The trap. A router-wide allowed_fails_policy with
+  # background_health_check_model_groups unset disables the health filter outright
+  # (router.py:14161) -- the one config edit that quietly unarms everything the section
+  # above pays for, while every probe keeps running and every health page keeps looking
+  # green. It reads as a tidier way to group the cooldown policy, which is why it needs
+  # its own assertion rather than being covered by the one above.
+  local block
+  block="$(router_settings_block)"
+  [ -n "${block}" ] || { echo "router_settings is missing" >&2; return 1; }
+  assert_not_match "router_settings sets no allowed_fails_policy" '^[[:space:]]*allowed_fails_policy:' "${block}"
+}
+
+@test "failover: the cooldown window is one the probe loop can cool a marked box with" {
+  # With the filter on, the probe loop also cools each deployment its last cycle marked
+  # unhealthy, for exactly cooldown_time (proxy_server.py:4013 passes
+  # time_to_cooldown=router.cooldown_time, :4018). That path only started running when
+  # routing was switched on -- before it the writer returned early. Under 30 s a marked
+  # box is eligible again before a client's own retry budget has even noticed; over
+  # 300 s a box that recovered between sweeps (a green probe clears the mark,
+  # proxy_health_check.py:683) is still shut out.
+  local cooldown
+  cooldown="$(block_int cooldown_time "$(router_settings_block)")"
+  assert_eq "cooldown_time is exactly one integer" "1" "$(printf '%s\n' "${cooldown}" | grep -c .)"
+  [[ "${cooldown}" -ge 30 ]] ||
+    fail "cooldown_time is ${cooldown}s: the probe loop cools a marked-unhealthy deployment for exactly this long, and under 30 s it is back in rotation before the failure it was pulled for has been noticed"
+  [[ "${cooldown}" -le 300 ]] ||
+    fail "cooldown_time is ${cooldown}s: a box that came back between sweeps stays shut out for that long even though its green probe already cleared the mark"
+}
+
+@test "failover: the compose liveness probe runs on the interpreter the image actually ships" {
+  # The pinned image has no curl and no wget -- the busybox applets are not enabled --
+  # so a probe written against either exits 127 and the container reads unhealthy while
+  # the proxy answers fine. The check is the venv's own python3 against
+  # /health/liveliness, which is unprotected and answers "I'm alive!"
+  # (_health_endpoints.py:1938); /health itself sits behind user_api_key_auth
+  # (_health_endpoints.py:1110) and would need the master key in the container's command
+  # line. Absence is checked as a plain substring: `curlpipe` would fail too, because a
+  # probe that reaches for either binary by any spelling is the same broken probe.
+  local hc_test
+  require_compose || return 1
+  hc_test="$(litellm_healthcheck_test)"
+  [ -n "${hc_test}" ] || { echo "the litellm service declares no healthcheck test:" >&2; return 1; }
+  assert_match "the probe is a plain command list, not a shell string" \
+    '^\[[[:space:]]*"CMD",' "${hc_test}"
+  assert_match "the probe runs the image's own interpreter" '/app/\.venv/bin/python3' "${hc_test}"
+  assert_match "the probe asks the unprotected liveliness endpoint" \
+    'http://127\.0\.0\.1:4000/health/liveliness' "${hc_test}"
+  assert_not_match "the probe names no curl" 'curl' "${hc_test}"
+  assert_not_match "the probe names no wget" 'wget' "${hc_test}"
+}
+
+@test "failover: the compose probe is paced so one stall is not a verdict" {
+  # All four keys have to be present or compose silently falls back to its own defaults
+  # (interval 30 s, timeout 30 s, retries 3) and the timeout can end up LONGER than the
+  # interval, so probes stack on a stalled proxy instead of waiting it out. start_period
+  # is the one that keeps a boot from reading as an outage: the proxy imports the config,
+  # builds 31 deployments and mounts the two custom callbacks before uvicorn binds.
+  local hc interval timeout retries start_period
+  require_compose || return 1
+  hc="$(litellm_healthcheck_block)"
+  [ -n "${hc}" ] || { echo "the litellm service declares no healthcheck block" >&2; return 1; }
+  interval="$(block_secs interval "${hc}")"
+  timeout="$(block_secs timeout "${hc}")"
+  retries="$(block_int retries "${hc}")"
+  start_period="$(block_secs start_period "${hc}")"
+  local key value
+  for key in interval timeout retries start_period; do
+    case "${key}" in
+      interval) value="${interval}" ;;
+      timeout) value="${timeout}" ;;
+      retries) value="${retries}" ;;
+      start_period) value="${start_period}" ;;
+    esac
+    assert_eq "healthcheck ${key} is exactly one integer" "1" "$(printf '%s\n' "${value}" | grep -c .)"
+  done
+  [[ "${retries}" -ge 1 ]] ||
+    fail "healthcheck retries is ${retries}: a single stall marks the proxy unhealthy, and a proxy that stalls under one long stream is normal"
+  [[ "${timeout}" -lt "${interval}" ]] ||
+    fail "healthcheck timeout ${timeout}s is not shorter than interval ${interval}s: probes then overlap and stack on a stalled proxy instead of giving it the interval to answer"
+}
+
+@test "failover: the compose probe dials the port the service itself publishes" {
+  # The probe runs INSIDE the container, so the port in its URL is the container-side
+  # half -- the right-hand side of the ports: mapping -- and not the host-side half an
+  # operator retunes with LITELLM_PORT. Read one from the other's text and the pair can
+  # drift: a remapped uvicorn leaves a probe that answers on a port nothing listens on,
+  # and the container reads healthy while serving nothing.
+  local svc published hc_test probe_port
+  require_compose || return 1
+  svc="$(litellm_service_block)"
+  [ -n "${svc}" ] || { echo "docker-compose.yml declares no litellm service" >&2; return 1; }
+  published="$(printf '%s\n' "${svc}" |
+    sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}[^"]*:\([0-9][0-9]*\)"\{0,1\}[[:space:]]*$/\1/p' | sort -u)"
+  [ -n "${published}" ] || { echo "the litellm service publishes no container port" >&2; return 1; }
+  hc_test="$(litellm_healthcheck_test)"
+  probe_port="$(printf '%s\n' "${hc_test}" |
+    sed -nE 's|.*127\.0\.0\.1:([0-9]+)/health/liveliness.*|\1|p' | head -1)"
+  [ -n "${probe_port}" ] || { echo "the probe URL names no port" >&2; return 1; }
+  # Membership rather than equality: a service may publish more than one container
+  # port, and what has to hold is that the probe dials one something listens on.
+  if ! printf '%s\n' "${published}" | grep -qx -- "${probe_port}"; then
+    fail "the probe dials 127.0.0.1:${probe_port}, which is not a container port the litellm service publishes (${published//$'\n'/ })"
+  fi
 }
