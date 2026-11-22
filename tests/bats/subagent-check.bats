@@ -1268,8 +1268,10 @@ SWEEP_TAB=$'\t'
 # write_docker_stub <path> - the two verbs the sweep issues, and nothing else. Every
 # argv is appended tab-separated to ${STUB_LOG}/docker, so a test can hold the CLI to
 # the exact `docker ps` filter and format rather than to a result that happens to look
-# right. `ps` prints ${STUB_PS_OUT} verbatim and exits ${STUB_PS_RC:-0}; `version`
-# exits ${STUB_VERSION_RC:-0}; `exec` refuses any form but
+# right. `ps` prints ${STUB_PS_OUT} verbatim on stdout and ${STUB_PS_ERR:-} on stderr,
+# which is how a test puts a `sudo docker` notice on the stream the sweep deliberately
+# keeps off its answer, and exits ${STUB_PS_RC:-0}. `version` exits
+# ${STUB_VERSION_RC:-0}; `exec` refuses any form but
 # `exec <container> sh -c <script> sh` - the one form read_profile issues - with exit
 # 9, so a rewrite of that call site lands as a failure here instead of as a silently
 # canned profile. Otherwise it runs that script for real, on this host's PATH, under
@@ -1289,6 +1291,7 @@ case "${cmd}" in
   version) exit "${STUB_VERSION_RC:-0}" ;;
   ps)
     if [ -n "${STUB_PS_OUT:-}" ]; then printf '%s\n' "${STUB_PS_OUT}"; fi
+    if [ -n "${STUB_PS_ERR:-}" ]; then printf '%s\n' "${STUB_PS_ERR}" >&2; fi
     exit "${STUB_PS_RC:-0}"
     ;;
   exec)
@@ -2233,6 +2236,89 @@ print(json.loads(sys.stdin.read())["remedy"])')"
     "$(sweep_exec_targets)"
 }
 
+@test "subagent-check: --all does not count a docker stderr notice as a row it failed to judge" {
+  local rows
+  use_sweep_stubs
+  # The listing is read on stdout alone. Merging the daemon's stderr onto it was the
+  # defect: a CLI or `sudo docker` notice landing on the same stream as the table was
+  # tallied by the "is this line non-empty" counter as a container this sweep failed to
+  # judge, so the one note that announces a problem printed on a fleet with nothing
+  # wrong with it - the dishonesty the note exists to catch, manufactured out of noise.
+  # The notice still has to be heard, because a daemon that refused is the thing an
+  # operator has to be told about, so it rides stderr and the counters read rows only.
+  sweep_home coder-alice-evo 15 15
+  sweep_home coder-alice-narrow 4 15
+  sweep_home coder-alice-weird 15 15
+  rows="$(sweep_row evo alice coder-alice-evo running)"$'\n'
+  rows="${rows}$(sweep_row narrow alice coder-alice-narrow running)"
+  export STUB_PS_ERR='WARNING: bridge-nf-call-iptables is disabled'
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_match "the notice is still printed, on the channel the operator reads" \
+    'bridge-nf-call-iptables' "${output}"
+  # This is the assertion that notices the merge coming back. Captured into the
+  # answer, the notice was never printed at all, so a run with 2>&1 restored dies
+  # here rather than two lines further down. The next one keeps the report's own
+  # stdout to its verdicts: the daemon's noise belongs to stderr, and the note the
+  # merge used to fabricate belongs to neither stream.
+  assert_not_match "and it never lands on the report's own stdout" \
+    'bridge-nf-call-iptables' "$(sweep_stdout "${rows}")"
+  assert_not_match "and it earned no place among the rows this sweep failed to judge" \
+    'were not judged' "${output}"
+  assert_eq "both workspaces were judged, exactly as if the notice had never printed" \
+    "$(printf '%s\n%s\n%s\n%s' \
+      '-> evo (coder-alice-evo)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      '-> narrow (coder-alice-narrow)' \
+      'warning: max_concurrent = 4 is below the fleet width 15')" \
+    "$(printf '%s\n' "${output}" | grep -E '^-> |^(ok|warning): ')"
+  assert_eq "and the summary counts the fleet it judged, not the noise beside it" \
+    'summary: 1 ok, 1 warnings, 0 failed' "${output##*$'\n'}"
+
+  # The guard has to keep a real note alive: with one genuinely unusable row among the
+  # two good ones, the note prints and says 1 of 3, which is the arithmetic only a
+  # row-shaped counter can produce. Before the guard it said 2 of 4 here.
+  rows="${rows}"$'\n'"we${SWEEP_TAB}ird${SWEEP_TAB}alice${SWEEP_TAB}coder-alice-weird${SWEEP_TAB}running"
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_match "one unusable row out of three listed, the stderr line excluded from both" \
+    'note: 1 of the 3 rows this daemon listed were not judged - a DinD sidecar row is expected among them, and anything else is a row that was not four usable columns' \
+    "${output}"
+  assert_eq "the two good rows still carry their verdicts" \
+    'summary: 1 ok, 1 warnings, 0 failed' "${output##*$'\n'}"
+}
+
+@test "subagent-check: --all does not count a blank line the daemon printed as a named row" {
+  local rows
+  use_sweep_stubs
+  # docker's --format cannot print a line of nothing but blanks, but a wrapper CLI on
+  # the other side of DOCKER_BIN can, and the listed counter reads the answer line by
+  # line. A blank it tallied would print the same fabricated note the stderr merge
+  # used to print - the sweep accusing itself of dropping a container it never had.
+  # A row the daemon really named still has to be counted, garbled or not, so the
+  # exclusion is of blanks and not of anything the counter does not like.
+  sweep_home coder-alice-evo 15 15
+  sweep_home coder-alice-narrow 4 15
+  rows="$(sweep_row evo alice coder-alice-evo running)"$'\n'
+  rows="${rows}$(sweep_row narrow alice coder-alice-narrow running)"$'\n'
+  rows="${rows} 	   "
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_not_match "a line of blanks is not a container this sweep failed to judge" \
+    'were not judged' "${output}"
+  assert_eq "both real rows were still judged, blanks or no blanks" \
+    "$(printf '%s\n%s\n%s\n%s' \
+      '-> evo (coder-alice-evo)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      '-> narrow (coder-alice-narrow)' \
+      'warning: max_concurrent = 4 is below the fleet width 15')" \
+    "$(printf '%s\n' "${output}" | grep -E '^-> |^(ok|warning): ')"
+  assert_eq "and the summary counts two workspaces, not three" \
+    'summary: 1 ok, 1 warnings, 0 failed' "${output##*$'\n'}"
+}
+
 @test "subagent-check: --all drops a field past any length a Coder label can reach" {
   local rows long_owner long_ws own255 own256 blob_owner blob_ws
   use_sweep_stubs
@@ -2454,6 +2540,20 @@ print("%s|%s" % (d["workspace"], d["remedy"]))')"
   STUB_PS_OUT="${STUB_PS_OUT}$(sweep_row '' alice coder-alice-namless running)"
   assert_eq "workspace_rows prints the daemon's answer exactly as the daemon printed it" \
     "${STUB_PS_OUT}" "$(workspace_rows)"
+  # The daemon's words and the daemon's table are two different things, and the
+  # counters below read the second one line by line. Merging them was the defect: a
+  # `sudo docker` notice on the answer's stream was tallied as a container this sweep
+  # failed to judge, so the one note that announces a problem fired on a healthy host.
+  export STUB_PS_ERR
+  STUB_PS_ERR='WARNING: bridge-nf-call-iptables is disabled'
+  local merged="" noticed=""
+  merged="$(workspace_rows 2>"${BATS_TEST_TMPDIR}/ps.err")"
+  noticed="$(cat "${BATS_TEST_TMPDIR}/ps.err")"
+  assert_eq "the answer stays the three rows, with nothing of the notice in it" \
+    "${STUB_PS_OUT}" "${merged}"
+  assert_match "and the notice reaches the operator on stderr, where it belongs" \
+    'bridge-nf-call-iptables' "${noticed}"
+  unset STUB_PS_ERR
   sweep_home coder-alice-evo 15 15
   assert_eq "read_profile prints the container's own rendered profile, bytes for bytes" \
     "$(cat "${STUB_EXEC_HOME_DIR}/coder-alice-evo/.grok/config.toml")" \

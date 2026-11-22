@@ -704,20 +704,24 @@ host_guard() {
 # Arguments:
 #   None
 # Outputs:
-#   One raw tab-separated row per container on stdout, unfiltered, docker's own
-#   error text included; the caller counts and judges what it is given
+#   Whatever the daemon printed on stdout, unfiltered: the table and nothing else.
+#   The daemon's own words go straight to the caller's stderr, so they reach the
+#   operator and stay out of the answer - the caller counts rows in this stream
+#   line by line, and a notice merged onto it would be tallied as a container.
 # Returns:
 #   0 when the daemon answered, the command's status otherwise
 workspace_rows() {
   local tab=$'\t' rc=0
   # One call, unfiltered, so the caller can count what the daemon named and what
   # it could use from the same answer; a second `docker ps` could see a different
-  # fleet and turn an honest report into an arithmetic accident.
+  # fleet and turn an honest report into an arithmetic accident. Stderr is left on
+  # its own descriptor for the same reason it is not dropped: the daemon's reason
+  # for refusing is what the operator needs, and it is not a row.
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
   stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} ps -a \
     --filter label=coder.workspace_id \
     --format '{{.Label "coder.workspace_name"}}'"${tab}"'{{.Label "coder.owner"}}'"${tab}"'{{.Names}}'"${tab}"'{{.State}}' \
-    </dev/null 2>&1 || rc=$?
+    </dev/null || rc=$?
   return "${rc}"
 }
 
@@ -874,9 +878,15 @@ sweep_workspaces() {
   # Rows that name a workspace at all. The DinD sidecar carries the same
   # coder.workspace_id label as the workspace it serves, so it is excluded on its
   # container name here as well as below: counting it would print the note at the
-  # foot of this loop on every host that runs one.
+  # foot of this loop on every host that runs one. Every other line the daemon
+  # printed is a row it named, including the garbled ones - a stray tab inside a
+  # label makes a five-field row, and that row is exactly what this note exists to
+  # announce. A line with nothing but blanks in it is not a row: docker's --format
+  # cannot print one, and a wrapper CLI that does must not be tallied as a container
+  # this sweep failed to judge. Empty is the same case, and is what a command
+  # substitution leaves behind when the daemon listed nothing.
   listed="$(printf '%s\n' "${raw}" |
-    awk -F'\t' '$0 != "" && !($3 ~ /-dind-sidecar$/) { n++ } END { print n + 0 }')"
+    awk -F'\t' '$0 ~ /[^ \t\r\f\v]/ && !($3 ~ /-dind-sidecar$/) { n++ } END { print n + 0 }')"
   # A row is usable when the workspace, container, and state columns each carry
   # something and none is absurdly long. The owner column is exempt, because a
   # container whose coder.owner label is absent is still a workspace whose width
