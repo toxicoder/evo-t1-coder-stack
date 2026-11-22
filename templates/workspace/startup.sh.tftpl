@@ -256,6 +256,11 @@ GROK_CONFIG_EOF
   rm -f "$cli_block" "$ui_keys"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
   boot_ok "config.toml re-materialized with the stack markers"
+  sub_w="$(sed -n 's/^max_concurrent = \([0-9][0-9]*\)$/\1/p' "$HOME/.grok/config.toml" 2>/dev/null | head -1)"
+  sub_f="$(sed -n 's/^# fleet-width: \([0-9][0-9]*\)$/\1/p' "$HOME/.grok/config.toml" 2>/dev/null | head -1)"
+  if [ -n "$sub_w" ] && [ -n "$sub_f" ] && [ "$sub_w" -lt "$sub_f" ]; then
+    boot_note "subagents width $sub_w is below the fleet's $sub_f - a --var that outlived its template, unless you set it on purpose (docs/troubleshooting.md#the-rendered-width-is-below-fleet-width)"
+  fi
 else
   # Same marker contract as ~/.tmux.conf above; the loss costs this model catalog.
   echo "WARNING: $HOME/.grok/config.toml carries neither stack marker (no" \
