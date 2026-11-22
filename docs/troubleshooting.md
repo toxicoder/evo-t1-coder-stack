@@ -1166,6 +1166,15 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
 grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
 ```
 
+- That first block prints two numbers now: the fleet's own ceiling as `# fleet-width:`,
+  above this session's cap as `max_concurrent`
+  (`templates/workspace/grok-config.toml.tftpl:427-428`, devcontainer twin
+  `templates/devcontainer/grok-config.toml.tftpl:428-429`). `15` over `15` is this entry -
+  the number is right and the placement is not. `15` over `4` is a different fault, where
+  the width itself was set, and
+  [the rendered-width entry](#the-rendered-width-is-below-fleet-width)
+  is the one that answers it.
+
 - `max_concurrent` is how many a session may have in flight. `[subagents.models]` is
   where each type's traffic goes, and a writer pinned to `agent` carries the workspace's
   own `x-litellm-session-id`, so the whole fan-out lands on the one Spark box that key
@@ -1174,7 +1183,7 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
   width there is about 4 no matter what the number above it says. The rest queue:
   `limit_behavior = "queue"` holds the overflow rather than failing the spawn.
 - Read those same four lines for the depth, because the block now prints `max_depth`
-  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:407-408`), rendered
+  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:428-429`), rendered
   from the `grok_subagent_max_depth` variable whose default is 2. At 2 a child spawns
   read-only mappers of its own, so a wave can be wider than the parent's own `slots`, and
   each in-flight child holds one of the fleet's 15 streams: a parent sums `1 + spawns` per
@@ -1203,7 +1212,8 @@ grep -m1 'x-litellm-session-id' ~/.grok/config.toml
   A `ws-...` value means Terraform rendered it; `contributor` means
   `bazelisk run //scripts:seed-dev-env` did, and that path takes the lane from the
   `GROK_SUBAGENTS_LANE` environment variable (`scripts/seed-dev-env.sh`), defaulting to
-  `agent-swarm`.
+  `agent-swarm`, and the ceiling from `GROK_SWARM_WIDTH` (`scripts/seed-dev-env.sh:185`),
+  so a contributor home carries the same pair.
 - On the Terraform path, no dotenv key, no CLI flag, and no `//scripts:push-template`
   passthrough names that variable, so it was set by a raw
   `coder templates push --var grok_subagents_lane=...`. Undo it the same way from the
@@ -1218,6 +1228,89 @@ coder restart <workspace>
 - Restarting is not optional: the value is baked into the agent's startup script at push
   time, and `update-configs` deliberately never re-copies `config.toml`.
   docs/litellm-routing.md and docs/grok-build-and-agents.md#the-fan-out-seam.
+
+### The rendered width is below fleet-width
+
+- The profile carries two numbers and the gap between them is the diagnosis:
+
+```bash
+grep -A4 '^\[subagents\]' ~/.grok/config.toml
+```
+
+  `# fleet-width:` is the fleet's own ceiling, `max_concurrent` this session's cap
+  (`templates/workspace/grok-config.toml.tftpl:427-428`, devcontainer twin
+  `templates/devcontainer/grok-config.toml.tftpl:428-429`). They stay two lines rather
+  than one number because an explicit `--var` owns `max_concurrent` and never moves the
+  ceiling. `15` over `4` is this entry; `15` over `15` is
+  [the pinned-lane entry above](#only-about-4-subagents-run-at-once-though-subagents-max_concurrent-says-15---the-writers-are-on-a-pinned-lane).
+
+- Nothing in this repo renders a `4`. Both twins derive the width from the fleet -
+  `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
+  (`templates/workspace/main.tf:553`, `templates/devcontainer/main.tf:581`) - and take the
+  ceiling beside it from that same variable (`templates/workspace/main.tf:558`). Measured:
+  `terraform apply` with the shipped defaults prints `15`, and the same run with
+  `-var grok_subagent_max_concurrent=4` prints `4`. So a rendered `4` is a number somebody
+  set, and a `4` still there is one that outlived what set it.
+
+- It can sit in two places, and they clear differently:
+  - the **template**, from a raw `coder templates push --var grok_subagent_max_concurrent=4`.
+    `//scripts:push-template` passes no fan-out `--var` of its own - its only `grok_*` one
+    is `grok_profile_mode` (`scripts/push-template.sh:528`) - so a template-level value is
+    somebody's raw push, the same shape as the lane rollback above;
+  - the **workspace**, from `coder start <workspace> --var ...` or the Variables tab in the
+    dashboard. A workspace value survives every template push and is re-applied on every
+    start, which is how a number typed in for one experiment months ago still caps a
+    fan-out today.
+
+- One command reads both numbers and names the case, from inside the workspace:
+
+```bash
+bazelisk run //scripts:subagent-check
+```
+
+  Its verdict for this fault (`scripts/subagent-check.sh`):
+
+```text
+warning: max_concurrent = <n> is below the fleet width <fleet>
+note: a rendered width below fleet-width is a --var that outlived its template - on the stack host: coder start <workspace> --var grok_subagent_max_concurrent=<fleet>, or //scripts:push-template for a template-level --var, then restart
+```
+
+  A profile that answers `warning: no '# fleet-width:' line - this profile predates it;
+  restart the workspace to re-materialize` has no ceiling to compare against yet, so that
+  one is a restart, not a `--var`.
+
+- The same finding arrives by itself at every start: the profile stage of the boot compares
+  the two numbers right after re-materializing the config
+  (`boot_stage 6 "the Grok Build profile"`, `templates/workspace/startup.sh.tftpl:224`,
+  the comparison at `:259-262`, same lines in the devcontainer twin) and prints through
+  `boot_note` (`templates/common/boot-log.lib.sh:51`), so the workspace start log carries
+  `note: subagents width 4 is below the fleet's 15 - a --var that outlived its template,
+  unless you set it on purpose`.
+
+- Remedy, from the stack host, in this order:
+
+```bash
+bazelisk run //scripts:push-template    # stack host; re-pushes with the coder.tf defaults
+coder restart <workspace>
+```
+
+  Every start re-renders `config.toml` from the template, so the push only clears a
+  template-level value. When the number sits on the workspace, put the fleet's own width
+  back there instead:
+
+```bash
+coder start <workspace> --var grok_subagent_max_concurrent=15
+```
+
+  and start the workspace once so the profile re-renders. `15` is `grok_swarm_width` under
+  the shipped recipe - 3 Spark boxes x `PARALLEL` 5 (`scripts/spark-configure.sh:92`) - so
+  a smaller fleet changes both numbers with `--var grok_swarm_width` on the push rather
+  than widening the session past what the boxes can hold.
+
+- A width under the ceiling is not always a fault: it is the queue an operator sets on
+  purpose for a session whose writers ride a pinned lane, where one box's `PARALLEL` is the
+  useful width. The check prints the same warning either way, so the question is what
+  `general-purpose` names under `[subagents.models]`, not how big the number is.
 
 ## Docker-in-docker
 
