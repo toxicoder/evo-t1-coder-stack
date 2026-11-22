@@ -480,17 +480,19 @@ while the managed block is intact.
 - `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane each
   type rides, both rendered from template variables: `grok_subagents_lane` (default
   `agent-swarm`) for the writers, three more for the reader, planner and skeptic roles named
-  below, and `grok_subagent_max_concurrent` (default `null`, which means "take
-  `grok_swarm_width`, the fleet's width"), and `grok_subagent_max_depth` (default 2,
-  validated 1..3) sets how deep the tree of children may go. The two width keys are one
-  calculation, and `main.tf` is where it is made:
+  below, and `grok_subagent_max_concurrent` (default 15, the variable's own shipped
+  number; `null` is kept as the opt-in that hands the width to `grok_swarm_width`, the
+  fleet's own ceiling), and `grok_subagent_max_depth` (default 2,
+  validated 1..3) sets how deep the tree of children may go. The width and the ceiling are
+  two numbers on purpose, and `main.tf` is where they meet:
   `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
-  So the width is `grok_swarm_width` (default 15) whichever lane the writers ride;
+  So the width is the variable's own shipped 15 whichever lane the writers ride, and the
+  `: var.grok_swarm_width` arm answers only a caller that passes null on purpose;
   `--var grok_subagents_lane=agent` is the rollback that puts the writers back on
   the parent's pinned box and leaves that width alone, and an explicit
   `--var grok_subagent_max_concurrent=N` always wins. The variable's
-  own validation accepts null or a whole number 1..32, because past the fleet's ceiling
-  a bigger number is only a longer queue. A parent session and every subagent it spawns
+  own validation accepts any whole number 1..32 it is given, plus that explicit null,
+  because past the fleet's ceiling a bigger number is only a longer queue. A parent session and every subagent it spawns
   carry the same `x-litellm-session-id`, so on a pinned lane the whole fan-out resolves
   to one deployment and competes for that box's `PARALLEL` streams - 5 by default, set in
   `scripts/spark-configure.sh` - so the width that is useful on one box is about 4: that
@@ -530,9 +532,9 @@ while the managed block is intact.
   `general-purpose`, and that is the type every writer in a fan-out runs as, so those
   children inherited the parent's model and queued behind the one box a pinned parent
   resolves to while the swarm-named readers spread over three. What those four variables
-  decide is placement only: the width comes from `grok_swarm_width` (default 15) on every
-  lane, so `grok_subagents_lane` remains the knob a workspace turns on to fan out, and
-  narrowing the queue is the separate `grok_subagent_max_concurrent`.
+  decide is placement only: the in-flight width comes from `grok_subagent_max_concurrent`
+  (its own shipped 15) on every lane, so `grok_subagents_lane` remains the knob a workspace
+  turns on to fan out, and narrowing that width is the same variable rather than the lane.
 - `[features]` carries `telemetry = false`, `web_fetch = true` and
   `active_agent_messages = true`, the last of them giving the parent
   `send_subagent_message`: a child already running can be handed a new instruction and
@@ -659,22 +661,33 @@ again describes the whole tree.
 **Two numbers, one rule.** The same grep opens its four lines of context with
 `# fleet-width: 15` - the fleet's own ceiling, rendered into the same table from
 `var.grok_swarm_width` (`templates/workspace/grok-config.toml.tftpl:427`, fed at
-`templates/workspace/main.tf:558`) so an explicit width never erases it - and the pair is
+`templates/workspace/main.tf:558`) so an explicit width never erases it - while the number
+below it is `grok_subagent_max_concurrent`, the variable's own shipped 15. The pair is
 what the width gets read against. Equal numbers mean the session is sized for the fleet:
 every slot it holds is a stream a box can actually serve. A width below its fleet-width
 means a persisted value - on the template, from a raw `coder templates push --var`, or on
 the workspace, from `coder start --parameter` / `coder update --parameter` or the Variables
 tab (`--var` is a push-only flag; `coder start` has none) - unless an operator set it there
-on purpose to sit inside one pinned box. `bazelisk run //scripts:subagent-check`
-reads both and names which of the two you have; the same comparison runs at every start, in
-stage 6 of `templates/workspace/startup.sh.tftpl`, where a narrower width is one `note:`
-line on the startup log. Neither value can be cleared from inside the workspace, because
-both sit in the Coder database on the host.
+on purpose to sit inside one pinned box. A width above its fleet-width is the pair a
+one-knob fleet change leaves behind: the two keys are separate numbers, so a workspace that
+shrank the fleet with `--var grok_swarm_width=10` moved the ceiling alone and kept the
+shipped 15. That pair is not a stale stored value, it is a fleet that got smaller under a
+width that never moved. `bazelisk run //scripts:subagent-check`
+reads both and names which of the three readings you have, and counts the above one as a
+`note:` beside the ok items, since past the fleet's streams the extra spawns queue in
+LiteLLM rather than failing. The same comparison runs at every start, in stage 6 of
+`templates/workspace/startup.sh.tftpl`, where a narrower width is one `note:` line on the
+startup log and a wider one prints nothing. Neither value can be cleared from inside the
+workspace, because both sit in the Coder database on the host. So shrinking a shared fleet
+is a two-knob job: dropping `grok_swarm_width` moves the ceiling alone, and
+`grok_subagent_max_concurrent` has to go with it in the same push, or a 15-wide session
+meets `NoRoom` on a 10-stream fleet.
 
 **What the lane choice buys.** `grok_subagents_lane` is the knob for the writers and it
-decides placement, not size: the width comes from `grok_swarm_width` (default 15) on
-every lane, and an explicit
-`grok_subagent_max_concurrent` overrules it (its validation accepts null or 1..32). That
+decides placement, not size: the in-flight width comes from
+`grok_subagent_max_concurrent` (the variable's own shipped 15) on every lane, and only a
+workspace that sets it to `null` on purpose takes the width from `grok_swarm_width` instead
+(its validation accepts any whole number 1..32 plus that explicit null). That
 15 is the fleet's arithmetic rather than taste. A parent and every child it spawns
 carry the same `x-litellm-session-id`, so a pinned lane places the whole fan-out on one
 box and the useful width is that box's `PARALLEL` - 5 by default, from
@@ -719,10 +732,11 @@ GROK_SUBAGENTS_LANE=agent-swarm bazelisk run //scripts:seed-dev-env -- --home <d
 ```
 
 `GROK_SUBAGENTS_LANE` names the writers' lane and `GROK_SUBAGENT_MAX_CONCURRENT` the width,
-with `GROK_SWARM_WIDTH` (default 15) behind it, the same fallback `main.tf` makes to
-`grok_swarm_width` (that number also fills the `# fleet-width:` line the seed writes
-directly above the width, `scripts/seed-dev-env.sh:286`, so a contributor home carries the
-same pair a workspace renders); `GROK_EXPLORE_LANE` (default `agent-explore`),
+which defaults to the same `default = 15` the variable ships in both twins' `coder.tf`, so
+the seeder and the template agree on the width without a second knob. `GROK_SWARM_WIDTH`
+(default 15) now feeds only the `# fleet-width:` line the seed writes directly above the
+width, `scripts/seed-dev-env.sh:286`, so a contributor home carries the same pair a
+workspace renders; `GROK_EXPLORE_LANE` (default `agent-explore`),
 `GROK_PLAN_LANE` (default `agent`) and `GROK_REVIEW_LANE` (default `agent-review`) name the
 three role lanes the same way. A value the seeder cannot use is refused in place and
 the default goes in, so a typo is a line in the output rather than a broken key in
