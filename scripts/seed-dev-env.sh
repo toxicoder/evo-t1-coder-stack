@@ -166,15 +166,15 @@ seed_render_grok_config() {
   local proxy_lit="" proxy_path="" lane="" slots="" depth="" fleet_width=""
   local explore_lane="" plan_lane="" review_lane="" theme=""
   local -a theme_sed=()
-  # The fan-out knobs, with the same derivation templates/workspace/main.tf uses:
-  # the width is the fleet's ceiling (3 boxes x PARALLEL 5 = 15) on every lane,
-  # because agent-swarm is ungated in the rendered config and a session whose
-  # default lane is pinned can still name it on any spawn. An operator who pins
-  # every lane to one box lowers it here. The depth is how far below the parent a
-  # child may spawn, and a depth-2 child holds one of those 15 streams too, so a
-  # spawner is not free and the knob stops at 3. A value the sed could not take
-  # safely (a model id is a bare token, the width and the depth are counts)
-  # falls back.
+  # The fan-out knobs. The width is this seeder's own shipped 15 - what coder.tf defaults
+  # grok_subagent_max_concurrent to - and the fleet ceiling (3 boxes x PARALLEL 5 = 15) it
+  # matches on every lane, because agent-swarm is ungated in the rendered config and a
+  # session whose default lane is pinned can still name it on any spawn. An operator who
+  # pins every lane to one box lowers it here; GROK_SWARM_WIDTH feeds the `# fleet-width:`
+  # echo alone, so a home narrowed there keeps the width. The depth is how far below the
+  # parent a child may spawn, and a depth-2 child holds one of those 15 streams too, so a
+  # spawner is not free and the knob stops at 3. A value the sed could not take safely (a
+  # model id is a bare token, the width and the depth are counts) falls back.
   lane="${GROK_SUBAGENTS_LANE:-agent-swarm}"
   if [[ ! ${lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
     note "GROK_SUBAGENTS_LANE='${lane}' is not a model id - using agent-swarm"
@@ -190,9 +190,9 @@ seed_render_grok_config() {
     note "GROK_SWARM_WIDTH='${fleet_width}' is past the fleet's ceiling - using 32"
     fleet_width="32"
   fi
-  slots="${GROK_SUBAGENT_MAX_CONCURRENT:-${GROK_SWARM_WIDTH:-15}}"
+  slots="${GROK_SUBAGENT_MAX_CONCURRENT:-15}"
   if [[ ! ${slots} =~ ^[1-9][0-9]*$ ]]; then
-    note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is not a count - using the fleet width 15"
+    note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is not a count - using the shipped width 15"
     slots="15"
   elif ((slots > 32)); then
     note "GROK_SUBAGENT_MAX_CONCURRENT='${slots}' is past the fleet's ceiling - using 32"

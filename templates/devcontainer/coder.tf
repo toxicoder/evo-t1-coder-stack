@@ -29,7 +29,7 @@ variable "grok_default_model" {
 
 variable "grok_subagents_lane" {
   type        = string
-  description = "Grok catalog key every subagent a session spawns runs on, rendered into [subagents.models] in the workspace's ~/.grok/config.toml for all three built-in types (general-purpose, explore, plan). The default puts subagents on the unpinned `agent-swarm` fan-out lane, and `agent` is the rollback that puts them back on the same pinned Spark lane as the parent session. `agent-swarm` is the fan-out choice: it is the one Spark group with no LiteLLM session pin, so the least-busy picker spreads a fan-out over all three boxes instead of queueing them behind one box's streams. It decides placement only: the in-flight width comes from grok_swarm_width, so this is the knob a workspace turns on to spread a fan-out over every box rather than queue it behind one. It now drives the writer types only; the read/search and skeptic lanes have their own variables below."
+  description = "Grok catalog key every subagent a session spawns runs on, rendered into [subagents.models] in the workspace's ~/.grok/config.toml for all three built-in types (general-purpose, explore, plan). The default puts subagents on the unpinned `agent-swarm` fan-out lane, and `agent` is the rollback that puts them back on the same pinned Spark lane as the parent session. `agent-swarm` is the fan-out choice: it is the one Spark group with no LiteLLM session pin, so the least-busy picker spreads a fan-out over all three boxes instead of queueing them behind one box's streams. It decides placement only: the in-flight width comes from grok_subagent_max_concurrent, so this is the knob a workspace turns on to spread a fan-out over every box rather than queue it behind one. It now drives the writer types only; the read/search and skeptic lanes have their own variables below."
   default     = "agent-swarm"
 }
 
@@ -70,7 +70,7 @@ variable "grok_review_lane" {
 
 variable "grok_swarm_width" {
   type        = number
-  description = "The fleet's own fan-out width, and the default for [subagents] max_concurrent whatever lane the operator picked. 15 is 3 Spark boxes x PARALLEL 5 (scripts/spark-configure.sh): the number of full-length streams the whole fleet can hold at once. It is the default rather than a lane-conditional 4 because `agent-swarm` is always selectable - the alias block ships ungated in grok-config.toml.tftpl, and a session on a pinned default lane can still name it on any spawn - so a config that sized itself at one box's PARALLEL would cap a swarm the user had only to ask for. An operator who pins every lane to one box and wants the narrower queue sets grok_subagent_max_concurrent explicitly."
+  description = "The fleet's own fan-out width, and the ceiling rendered as the `# fleet-width:` line beside [subagents] max_concurrent, which is also the width a workspace gets when it sets grok_subagent_max_concurrent = null on purpose. 15 is 3 Spark boxes x PARALLEL 5 (scripts/spark-configure.sh): the number of full-length streams the whole fleet can hold at once. It is the default rather than a lane-conditional 4 because `agent-swarm` is always selectable - the alias block ships ungated in grok-config.toml.tftpl, and a session on a pinned default lane can still name it on any spawn - so a config that sized itself at one box's PARALLEL would cap a swarm the user had only to ask for. An operator who pins every lane to one box and wants the narrower queue sets grok_subagent_max_concurrent explicitly."
   default     = 15
   validation {
     condition     = var.grok_swarm_width >= 1 && var.grok_swarm_width <= 32
@@ -80,11 +80,11 @@ variable "grok_swarm_width" {
 
 variable "grok_subagent_max_concurrent" {
   type        = number
-  description = "How many subagents one session may have in flight, rendered into [subagents] max_concurrent in the workspace's ~/.grok/config.toml. Leave it unset to take grok_swarm_width, the fleet ceiling, so the session is sized for a swarm on every lane; set a number to override, which is how an operator who pins everything to one box narrows the queue to that box's PARALLEL. The 1..32 validation accepts any explicit value, and above the fleet's 15 streams a number deepens LiteLLM's queue rather than buying capacity. Only the unpinned agent-swarm lane spreads a fan-out over more than one box."
-  default     = null
+  description = "How many subagents one session may have in flight, rendered into [subagents] max_concurrent in the workspace's ~/.grok/config.toml. Ships 15 outright - the fleet ceiling, 3 Spark boxes x PARALLEL 5 (scripts/spark-configure.sh) - so the width is this variable's own number and tracks no other knob. Set a smaller number to narrow the queue, which is what an operator who pins every lane to one box does to hold the session at that box's PARALLEL; set it to null to hand the width back to grok_swarm_width, the fleet's own ceiling. The 1..32 validation accepts any explicit value, and above the fleet's 15 streams a number deepens LiteLLM's queue rather than buying capacity. Only the unpinned agent-swarm lane spreads a fan-out over more than one box."
+  default     = 15
   validation {
     condition     = var.grok_subagent_max_concurrent == null || (var.grok_subagent_max_concurrent >= 1 && var.grok_subagent_max_concurrent <= 32)
-    error_message = "grok_subagent_max_concurrent must be null (take grok_swarm_width, the fleet's width) or a whole number between 1 and 32."
+    error_message = "grok_subagent_max_concurrent must be 15 (the shipped default), another whole number between 1 and 32, or null to take grok_swarm_width, the fleet's width."
   }
 }
 

@@ -37,12 +37,14 @@ setup() {
 
 # write_profile <path> [width] [fleet] [lane] [marker] [depth] - the [subagents]
 # block as templates/*/grok-config.toml.tftpl renders it, which is the pair this
-# CLI reads: the `# fleet-width:` comment directly above max_concurrent, both fed
-# from var.grok_swarm_width. Each argument takes `-` to mean "this file never got
-# that line", which is how the missing-key branches get a fixture without a
-# second helper per shape. marker takes 1 (the comment the render writes), key
-# (only the plain TOML key, which is what survives the CLI rewriting the file) or
-# 0 (no ownership marker at all).
+# CLI reads: the `# fleet-width:` comment directly above max_concurrent. The width
+# renders from var.grok_subagent_max_concurrent, which ships 15 outright, and the
+# ceiling comment from var.grok_swarm_width, so the two can disagree, which is why
+# this fixture writes both numbers by hand. Each argument takes `-` to mean "this
+# file never got that line", which is how the missing-key branches get a fixture
+# without a second helper per shape. marker takes 1 (the comment the render
+# writes), key (only the plain TOML key, which is what survives the CLI rewriting
+# the file) or 0 (no ownership marker at all).
 write_profile() {
   local path="$1" width="${2:-15}" fleet="${3:-15}" lane="${4:-agent-swarm}"
   local marker="${5:-1}" depth="${6:-2}"

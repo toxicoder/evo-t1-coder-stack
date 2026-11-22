@@ -405,7 +405,7 @@ auto_compact_threshold_percent = 70
 # Which lane a fan-out rides and how wide it goes, both from --var so one workspace
 # can target the whole fleet: the writers default to the unpinned `agent-swarm` lane,
 # and an explicit `--var grok_subagent_max_concurrent=N` still overrides the width.
-# Unset, that width is `grok_swarm_width`, the fleet's own ceiling (3 boxes x
+# That width is the variable's own shipped 15, the fleet's stream count (3 boxes x
 # PARALLEL 5 = 15, scripts/spark-configure.sh), on every lane rather than 15-swarm /
 # 4-pinned. The reason is a choice the user gets to make at the spawn: the
 # `agent-swarm` block below is ungated, so a session whose default lane is pinned can
@@ -419,8 +419,8 @@ auto_compact_threshold_percent = 70
 # Depth rides the same 15: a depth-2 child holds a stream too, so a parent counts
 # `1 + spawns` per task in flight; 1 keeps nesting off.
 # The fleet's own ceiling is echoed inside the table rather than folded into the number:
-# an explicit --var still owns max_concurrent, so the pair is what makes a width older
-# than the template that set it legible from inside the workspace.
+# grok_swarm_width renders that line and is the width only under a deliberate null, so
+# an explicit --var still owns max_concurrent and a stale width stays legible in here.
 # //scripts:subagent-check and the boot advisory compare the two numbers.
 [subagents]
 enabled = true

@@ -769,23 +769,35 @@ types in `[subagents.models]` -
 `general-purpose`, which is the type a spawn gets when it names none and the one every
 writer in a fan-out runs as, plus the seeded `implementer` and `tester`, while the read-only
 `explore` and `plan` follow their own lane variables below. The width is a separate knob and
-does not follow the lane: `grok_swarm_width` (default 15) is what `main.tf` renders into
-`[subagents] max_concurrent` on every lane, because `agent-swarm` stays selectable on any
-spawn even when the default lane is pinned. That 15 is the fleet ceiling - `PARALLEL` per
-box (`scripts/spark-configure.sh`, 5 by default) x 3 boxes = 15 - so it asks every box for
-all of its streams. On a pinned lane only one box is reachable, so what is usable there is
-that box's `PARALLEL` minus the parent's own stream: past about 4 in flight you deepen
+does not follow the lane: `grok_subagent_max_concurrent` is the variable's own shipped 15 and
+`main.tf` renders that number into `[subagents] max_concurrent` on every lane, because
+`agent-swarm` stays selectable on any spawn even when the default lane is pinned. That 15 is
+the fleet ceiling - `PARALLEL` per box (`scripts/spark-configure.sh`, 5 by default) x 3 boxes
+= 15 - so it asks every box for all of its streams. `grok_swarm_width` (default 15) is the
+fleet's own ceiling, rendered as the `# fleet-width:` line beside `max_concurrent`, and the
+width a workspace gets only when it sets `grok_subagent_max_concurrent = null` on purpose.
+On a pinned lane only one box is reachable, so what is usable there is that box's `PARALLEL`
+minus the parent's own stream: past about 4 in flight you deepen
 LiteLLM's queue rather than buying capacity, and an operator who pins every lane narrows
 the number by hand.
-`--var grok_subagent_max_concurrent=N` overrules the `grok_swarm_width` default whenever
-one workspace wants a number of its own, `--var grok_subagent_max_depth=N` sets how deep
+`--var grok_subagent_max_concurrent=N` overrules that shipped 15 whenever one workspace wants
+a number of its own, `--var grok_subagent_max_depth=N` sets how deep
 the tree may go, and
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
-seam and the `/ez-micro-plan` plan that fills the slots. That overrule is the only way a
-rendered width lands under the fleet's, so the profile keeps both numbers side by side:
-`[subagents]` carries `# fleet-width: 15` directly above `max_concurrent`
-(`templates/workspace/grok-config.toml.tftpl:427`, fed from `var.grok_swarm_width` at
-`templates/workspace/main.tf:558`), so 15 printed over 4 reads as a `--var` that outlived
+seam, the three readings of the rendered pair, and the `/ez-micro-plan` plan that fills the
+slots. Nothing else moves that width: the
+variable ships its 15 itself, `grok_swarm_width` feeds the ceiling line alone, and only an
+explicit `grok_subagent_max_concurrent = null` hands the width to that ceiling, so naming a
+number is the only way a rendered width lands under the fleet's. The two knobs are also
+independent going the other way: `grok_swarm_width` is what `subagent-check` and the boot
+compare against, and past the fleet's streams a box refuses the extra spawn with `NoRoom`,
+so shrinking a shared fleet is a two-knob job - drop `grok_swarm_width` and move
+`grok_subagent_max_concurrent` in the same push, or a 15-wide session meets a 10-stream
+fleet. The profile keeps both
+numbers side by side: `[subagents]` carries `# fleet-width: 15` directly above
+`max_concurrent` (`templates/workspace/grok-config.toml.tftpl:427`, fed from
+`var.grok_swarm_width` at `templates/workspace/main.tf:558`), so 15 printed over 4 reads as a
+`--var` that outlived
 its template - on the template, or on the workspace, whose copy sits in the Coder database
 and is out of reach from inside the container.
 `bazelisk run //scripts:subagent-check` reads the pair and names which one you have,

@@ -567,13 +567,13 @@ resource "coder_agent" "main" {
       # The fan-out knobs: --var only, no coder_parameter, so a workspace
       # opts into the swarm lane without the form's option-membership rule. The
       # width is one number for both lanes rather than derived from the lane: only
-      # the unpinned lane spreads a fan-out over several boxes, so the default
-      # width is the fleet's own (grok_swarm_width, 3 boxes x PARALLEL 5 = 15) on
-      # every lane: agent-swarm is ungated in the config below and a session whose
-      # default lane is pinned can still name it on any spawn, so sizing the
-      # session at one box's PARALLEL would cap a swarm the user had only to ask
-      # for. An explicit --var wins, which is how an operator who pins every lane
-      # to one box narrows the queue back to that box's own PARALLEL.
+      # the unpinned lane spreads a fan-out over several boxes, so the width is the
+      # variable's own shipped 15 (3 Spark boxes x PARALLEL 5 = 15;
+      # scripts/spark-configure.sh) on every lane: agent-swarm is ungated below, a
+      # pinned-default session can still name it on any spawn, and sizing the session
+      # at one box's PARALLEL would cap a swarm the user had only to ask for. An
+      # explicit --var wins, which is how an operator who pins every lane narrows the
+      # queue to that box's PARALLEL; null hands it to grok_swarm_width, the fleet's.
       # The three role lanes ride their own aliases (litellm/config.yaml) so a
       # wave of mappers and a wave of reviewers reach every box while the
       # writers still follow grok_subagents_lane; see [subagents.models].
