@@ -556,6 +556,16 @@ What a create form shows, in `workspace` order.
 9. **Editor colour theme** (`vscode_color_theme`, free-form, mutable, default
    `Default Dark Modern`). Written as `workbench.colorTheme` in that workspace's
    code-server User settings, where it wins over the shared editor-settings overlay.
+10. **Grok approval mode** (`grok_permission_mode`, dropdown, mutable, default
+    `always-approve`). How much that workspace's Grok sessions stop and ask before they
+    act, rendered as `[ui] permission_mode` in that workspace's `~/.grok/config.toml`.
+    The dropdown offers exactly four values: `default` (the CLI's own policy, which does
+    prompt), `ask` (a tool call waits for a person), `auto` (prompts less than `ask`) and
+    `always-approve` (nothing prompts; the product name for `bypassPermissions`). What it
+    relaxes is prompting only - the `[permission]` deny list the render ships still
+    refuses the dotenv reads, the `Bash(rm -rf *)` form and the commit guards in every
+    mode. `order = 10`, so it sorts after the editor theme rather than beside the two
+    themes. Each workspace keeps its own and a change applies on the next start.
 
 `devcontainer` asks two questions instead: **Git repository** and **Build repo's dev
 container** (`use_devcontainer`, Yes/No, immutable), plus the same Grok and theme fields.
@@ -1039,9 +1049,17 @@ decided by a marker - never by mtime and never by first boot:
 - The config file usually already exists, because an earlier start of this workspace
   wrote it, so the marker rather than first boot is what decides.
 - Re-rendering carries over the tables the CLI owns instead of wiping them: `[cli]` holds
-  `cli.installer`, which picks the CLI's update path; `[ui]` holds `permission_mode`, so
-  re-adopting a file must never flip an operator back to prompting; and `[marketplace]` is
-  CLI settings the stack never owns.
+  `cli.installer`, which picks the CLI's update path; `[ui]` carries over the keys the
+  operator added; and `[marketplace]` is CLI settings the stack never owns. The `[ui]`
+  carry-over is filtered, not copied: the render owns `theme` and `permission_mode` in
+  that table, so the startup drops those keys - the alternation
+  `(theme|auto_dark_theme|auto_light_theme|ui_theme|permission_mode)` at
+  `templates/workspace/startup.sh.tftpl:238` - from what it carries across. The strip is
+  what makes the render's answer the only one in the file: an operator's
+  `permission_mode` left beside the render's own line gives one `[ui]` table two
+  identical keys, which is invalid TOML. So the create form's **Grok approval mode** is
+  the seam for that key, and an approval mode hand-written into the file does not
+  survive a re-render, while every other `[ui]` key the operator set still does.
 - The unmanaged case is announced rather than silent, because the render is the only place
   a workspace's model catalog and MCP lanes are ever written.
 - `~/.grok/notes-setup.sh` is the exception to the absent-only rule: it is stack-owned code

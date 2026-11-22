@@ -210,9 +210,11 @@ you try a change on a scratch tree before pointing a live stack at it. See
   in place.
 - It does not touch `~/.grok/config.toml`. That file is rendered *inside* the
   workspace, and it is a per-workspace file on that workspace's own home volume:
-  the model list, the session-affinity key and the `[ui]` theme belong to one
-  workspace, so a copy pushed from the host would stamp this checkout's defaults
-  over what that workspace's own create-form answers rendered. A
+  the model list, the session-affinity key, the `[ui]` theme and the `[ui]`
+  approval mode belong to one workspace, so a copy pushed from the host would
+  stamp this checkout's defaults over what that workspace's own create-form
+  answers rendered - the approval mode is one of those answers
+  (`grok_permission_mode`, default `always-approve`). A
   **start/restart** re-renders it from this checkout, which is the only way a
   per-workspace value gets in, and the pass says so after it reseeds.
 - `~/.shared/vscode/settings.json` is the one rendered target it does reseed, and
@@ -233,7 +235,10 @@ writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width,
 variable), and
 `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
 reader, the planner and the skeptic ride, and `GROK_THEME` (default `grokbuild`)
-the `[ui]` theme name. The width default is this knob's
+the `[ui]` theme name, and `GROK_PERMISSION_MODE` (default `always-approve`) the
+`[ui]` approval mode - the same choice the create form makes with
+`grok_permission_mode`, over the same accepted set (`default`, `ask`, `auto`,
+`always-approve`). The width default is this knob's
 own shipped 15 (three Spark boxes at `PARALLEL` 5), the same literal 15 the
 templates ship on `grok_subagent_max_concurrent`, on every lane rather than one
 number per lane; a pinned lane only ever keeps one box's streams busy, so an
@@ -248,7 +253,8 @@ refused by the box with `NoRoom`. The depth default is 2, which
 lets a child spawn read-only mappers of its own, and the seeder holds the value to 1..3,
 with 1 putting nesting back off (`scripts/seed-dev-env.sh:187-197`). A value the seeder
 cannot use - a lane that is not a bare model id, a width that is not a count or sits past
-32, a depth that is not a count or sits past 3 - is refused with
+32, a depth that is not a count or sits past 3, an approval mode outside `default` /
+`ask` / `auto` / `always-approve` - is refused with
 a `note:` line naming the key, and the derived default goes in, so a typo lands as output
 you read rather than as an unusable key in the rendered `~/.grok/config.toml`.
 [grok-build-and-agents.md](grok-build-and-agents.md) covers the profile
