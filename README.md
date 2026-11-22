@@ -784,10 +784,16 @@ the number by hand.
 a number of its own, `--var grok_subagent_max_depth=N` sets how deep
 the tree may go, and
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
-seam and the `/ez-micro-plan` plan that fills the slots. Nothing else moves that width: the
+seam, the three readings of the rendered pair, and the `/ez-micro-plan` plan that fills the
+slots. Nothing else moves that width: the
 variable ships its 15 itself, `grok_swarm_width` feeds the ceiling line alone, and only an
 explicit `grok_subagent_max_concurrent = null` hands the width to that ceiling, so naming a
-number is the only way a rendered width lands under the fleet's. The profile keeps both
+number is the only way a rendered width lands under the fleet's. The two knobs are also
+independent going the other way: `grok_swarm_width` is what `subagent-check` and the boot
+compare against, and past the fleet's streams a box refuses the extra spawn with `NoRoom`,
+so shrinking a shared fleet is a two-knob job - drop `grok_swarm_width` and move
+`grok_subagent_max_concurrent` in the same push, or a 15-wide session meets a 10-stream
+fleet. The profile keeps both
 numbers side by side: `[subagents]` carries `# fleet-width: 15` directly above
 `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:427`, fed from
 `var.grok_swarm_width` at `templates/workspace/main.tf:558`), so 15 printed over 4 reads as a
