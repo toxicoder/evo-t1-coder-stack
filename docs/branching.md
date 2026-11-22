@@ -50,6 +50,15 @@ request as the only way back into `main`.
 - Cut `feat/…`, `fix/…`, `refactor/…` (and `docs/…`, `test/…`, `chore/…`, `ci/…`) from the
   current tip of `main`, one branch per change, and delete it the moment it merges. A branch
   that outlives its change is a branch nobody rebases any more.
+  `bazelisk run //scripts:branch-hygiene` is the check for that sentence and for the two
+  below: it lists every branch the trunk already contains, every unmerged branch past the
+  branch lifetime, and every branch that carries an environment in its name, each printed
+  with its tip SHA because that is the record a deletion has to leave behind. It reports
+  and never deletes - `--plan` prints the commands, and deleting stays the operator's call.
+  Pass `--fetch` before acting on what it names, so the remote rows are the remote's
+  current answer rather than the last one this checkout happened to see. That flag is
+  the run's only write: it is `git remote update --prune`, which refreshes and prunes
+  this checkout's own remote-tracking refs and deletes nothing on the remote.
 - `fix/…` means a defect that is already on `main`. **A hotfix branches from `main` and lands
   on `main` first** — every environment deploys *from* `main` (or from a tag cut on `main`),
   so there is no `staging` or `production` branch to patch and then remember to merge back.
@@ -144,6 +153,12 @@ fixes and a bug a human fixes leave the tracker in the same state.
 - Environments are where future protection rules and secrets go, per environment:
   `development`, `staging`, `production`. `production` stays restricted to `main` — or to
   tags — with required reviewers. See the header comment in `.github/workflows/ci.yml`.
+  Those three words are environments and never branch names, and
+  `bazelisk run //scripts:branch-hygiene` is what keeps that honest: a branch or a
+  remote-tracking ref named `dev`, `staging`, `prod`, `uat` or the like - bare, or as the
+  first segment of a path - is an error and exits 1. It is an operator CLI rather than a
+  CI step on purpose: the branches that break the rule live on the remote, where a job
+  checked out at `main` cannot see them.
 
 ## Scope
 
