@@ -665,10 +665,15 @@ general_settings:
   # outright instead of degrading. One non-retryable status is enough to arm it:
   # _is_cooldown_required admits 401/404/408 (cooldown_handlers.py:234-248) and
   # the arm at :400 checks only whether LiteLLM would retry that status, with no
-  # single-deployment guard, so a 404 from Ollama -- a weights tag that went
-  # missing, an Arc that never pulled the model -- parks the fallback for a full
-  # cooldown_time with no user request having failed. Leaving those four out of
-  # the sweep also drops four of the 31 probes every cycle pays.
+  # single-deployment guard, so a non-retryable status from a probe -- a 401, or a
+  # 404 that reaches the router with its int status intact -- can park the fallback
+  # for a full cooldown_time with no user request having failed (_should_retry
+  # returns True for 408/409/429/5xx and False for the rest, utils.py:6854-6880, so
+  # only that second family arms the check at :400). The arm did not reproduce in the
+  # three-box harness: an Ollama 404 came back through the probe as
+  # exception_status 500, which is retryable and therefore lands on the guarded arms
+  # instead. So read this opt-out as what the source says it prevents -- and as four
+  # fewer real completions every cycle, since 4 of the 31 probes were buying nothing.
   #
   # Scope, stated honestly: the filter sits on the chat-completion selection path
   # above. The image / audio / embedding / rerank paths select through
