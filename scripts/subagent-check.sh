@@ -4,8 +4,9 @@
 #
 # The stack renders [subagents] in every workspace's ~/.grok/config.toml from
 # var.grok_swarm_width, so the width a fleet runs at is a template decision. A
-# --var handed to `coder start`, or pinned on the template, outlives the run that
-# passed it: it persists in the Coder database, every later start reuses it, and
+# --parameter given to `coder start`/`coder update`, or a --var pinned on the
+# template, outlives the run that passed it: it persists in the Coder database,
+# every later start reuses it, and
 # no agent inside the workspace can clear it. The render then carries a
 # max_concurrent below the fleet's stream count, a fan-out queues behind one
 # parent's slots, and nothing in the workspace says so.
@@ -230,15 +231,48 @@ USAGE
 #   Nothing: exits 2
 usage_error() {
   printf 'error: %s\n' "$1" >&2
-  usage
+  # The --json contract is one object on stdout and nothing beside it, and a
+  # caller that pipes stdout straight into a parser cannot strip a usage block
+  # it was never told to expect; -h/--help still answers on stdout.
+  usage >&2
   exit 2
 }
 
+# @function profile_line
+# Print the raw value of one key inside the [subagents] table, and nothing when
+# the table or the key is absent. The block boundaries are enforced the way
+# profile_writers_lane enforces its own: a same-named key in another table is
+# somebody else's setting, and reporting it as this session's width is exactly
+# the confident wrong number this CLI must never print. The trailing class is
+# [[:space:]] rather than end-of-line so a CRLF profile or a stray space after
+# the digits still reads, instead of answering "this profile has no [subagents]
+# table" about a file that plainly has one.
+# Globals:
+#   CONFIG
+# Arguments:
+#   $1 - the key to read
+# Outputs:
+#   The digits on stdout, nothing when the key is absent
+# Returns:
+#   0, always: a failing reader would reach the caller's assignment through
+#   pipefail and abort a strict-mode script over a file that has no such key
+profile_line() {
+  local key="${1:-}" value=""
+  [ -n "${key}" ] && [ -f "${CONFIG}" ] || return 0
+  value="$(awk '/^\[subagents\]/{f=1} /^\[/ && !/^\[subagents\]/{f=0} f' \
+    "${CONFIG}" 2>/dev/null |
+    sed -n "s/^${key}[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*\$/\1/p" |
+    head -n 1)" || value=""
+  # A hand-edited profile can carry 04. JSON has no leading zeros, and a numeric
+  # test reads one as octal and dies on 08, so the digits leave here canonical.
+  value="$(printf '%s' "${value}" | sed 's/^0*\([0-9]\)/\1/')"
+  printf '%s' "${value}"
+}
+
 # @function profile_int
-# Print the first "<key> = <int>" line of the profile, or nothing. The line is
-# anchored and the value constrained to digits, so a commented or stringified
-# value cannot read as a width, and the last key of another table cannot be
-# mistaken for the [subagents] one.
+# Print the first "<key> = <int>" line of the profile's [subagents] table, or
+# nothing. The line is anchored and the value constrained to digits, so a
+# commented or stringified value cannot read as a width.
 # Globals:
 #   CONFIG
 # Arguments:
@@ -249,18 +283,15 @@ usage_error() {
 #   0, always: a failing sed would reach the caller's assignment through
 #   pipefail and abort a strict-mode script over a file that has no such key
 profile_int() {
-  local key="${1:-}" value=""
-  [ -n "${key}" ] && [ -f "${CONFIG}" ] || return 0
-  value="$(sed -n "s/^${key} = \([0-9][0-9]*\)$/\1/p" "${CONFIG}" 2>/dev/null |
-    head -n 1)" || value=""
-  printf '%s' "${value}"
+  profile_line "${1:-}"
 }
 
 # @function profile_fleet_width
 # Print the integer on the `# fleet-width:` comment the render writes directly
-# above max_concurrent, or nothing. The same sed the boot advisory in
-# templates/*/startup.sh.tftpl runs, so the two can never disagree about what a
-# fleet-width line is.
+# above max_concurrent, or nothing. Scoped to [subagents] the way profile_line
+# scopes a key: an earlier stray `# fleet-width:` in another table would
+# otherwise beat the render's own line, and this function then orders the
+# operator to set the width to a number nobody chose.
 # Globals:
 #   CONFIG
 # Arguments:
@@ -272,8 +303,11 @@ profile_int() {
 profile_fleet_width() {
   local value=""
   [ -f "${CONFIG}" ] || return 0
-  value="$(sed -n 's/^# fleet-width: \([0-9][0-9]*\)$/\1/p' "${CONFIG}" 2>/dev/null |
+  value="$(awk '/^\[subagents\]/{f=1} /^\[/ && !/^\[subagents\]/{f=0} f' \
+    "${CONFIG}" 2>/dev/null |
+    sed -n 's/^#[[:space:]]*fleet-width:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' |
     head -n 1)" || value=""
+  value="$(printf '%s' "${value}" | sed 's/^0*\([0-9]\)/\1/')"
   printf '%s' "${value}"
 }
 
@@ -380,8 +414,11 @@ check_width() {
   if [ "${MAX_CONCURRENT}" -lt "${FLEET_WIDTH}" ]; then
     warn "max_concurrent = ${MAX_CONCURRENT} is below the fleet width ${FLEET_WIDTH}"
     # <workspace> stays a placeholder: this CLI cannot know which workspace the
-    # profile came from, and on the stack host one run addresses many.
-    note "a rendered width below fleet-width is a --var that outlived its template - on the stack host: coder start <workspace> --var grok_subagent_max_concurrent=${FLEET_WIDTH}, or //scripts:push-template for a template-level --var, then restart"
+    # profile came from, and on the stack host one run addresses many. The width is
+    # a Coder parameter, so the CLI flag is --parameter; --var belongs to
+    # `coder templates push`, and //scripts:push-template passes no fan-out --var
+    # at all, which is what makes a plain re-push the template-level remedy.
+    note "a rendered width below fleet-width is a value that outlived its template - on the stack host: coder start <workspace> --parameter grok_subagent_max_concurrent=${FLEET_WIDTH} (coder update <workspace> --parameter ... persists it, or use the Variables tab), or //scripts:push-template to clear a template-level value back to the coder.tf default, then restart"
   elif [ "${MAX_CONCURRENT}" -gt "${FLEET_WIDTH}" ]; then
     note "max_concurrent = ${MAX_CONCURRENT} is above the fleet width ${FLEET_WIDTH} - past the fleet's streams the extra spawns queue in LiteLLM"
   else

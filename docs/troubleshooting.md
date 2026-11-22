@@ -1257,8 +1257,13 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
     `//scripts:push-template` passes no fan-out `--var` of its own - its only `grok_*` one
     is `grok_profile_mode` (`scripts/push-template.sh:528`) - so a template-level value is
     somebody's raw push, the same shape as the lane rollback above;
-  - the **workspace**, from `coder start <workspace> --var ...` or the Variables tab in the
-    dashboard. A workspace value survives every template push and is re-applied on every
+  - the **workspace**, from `coder start <workspace> --parameter ...`, from
+    `coder update <workspace> --parameter ...`, or from the Variables tab in the
+    dashboard. (`coder start` takes `--parameter name=value`; `--var` is a
+    `coder templates push` flag and that pair has no `--var` to give it - on
+    Coder v2.36.6 `coder start --help` lists `--parameter`, `--parameter-default`,
+    `--rich-parameter-file`, `--use-parameter-defaults` and `--no-wait`, and no
+    `--var`.) A workspace value survives every template push and is re-applied on every
     start, which is how a number typed in for one experiment months ago still caps a
     fan-out today.
 
@@ -1272,7 +1277,7 @@ bazelisk run //scripts:subagent-check
 
 ```text
 warning: max_concurrent = <n> is below the fleet width <fleet>
-note: a rendered width below fleet-width is a --var that outlived its template - on the stack host: coder start <workspace> --var grok_subagent_max_concurrent=<fleet>, or //scripts:push-template for a template-level --var, then restart
+note: a rendered width below fleet-width is a value that outlived its template - on the stack host: coder start <workspace> --parameter grok_subagent_max_concurrent=<fleet> (coder update <workspace> --parameter ... persists it, or use the Variables tab), or //scripts:push-template to clear a template-level value back to the coder.tf default, then restart
 ```
 
   A profile that answers `warning: no '# fleet-width:' line - this profile predates it;
@@ -1307,7 +1312,7 @@ bazelisk run //scripts:subagent-check -- [--config PATH] [--parallel N] [--json]
   (`boot_stage 6 "the Grok Build profile"`, `templates/workspace/startup.sh.tftpl:224`,
   the comparison at `:259-262`, same lines in the devcontainer twin) and prints through
   `boot_note` (`templates/common/boot-log.lib.sh:51`), so the workspace start log carries
-  `note: subagents width 4 is below the fleet's 15 - a --var that outlived its template,
+  `note: subagents width 4 is below the fleet's 15 - a value that outlived its template,
   unless you set it on purpose`.
 
 - Remedy, from the stack host, in this order:
@@ -1322,10 +1327,15 @@ coder restart <workspace>
   back there instead:
 
 ```bash
-coder start <workspace> --var grok_subagent_max_concurrent=15
+coder start <workspace> --parameter grok_subagent_max_concurrent=15
 ```
 
-  and start the workspace once so the profile re-renders. `15` is `grok_swarm_width` under
+  `coder start` takes `--parameter name=value` and has no `--var`; `--var` belongs to
+  `coder templates push`, which is the command above. The start itself re-renders
+  `config.toml`, so that one line is enough to see the number move; it is also one-shot, so
+  clear the stored value with `coder update <workspace> --parameter
+  grok_subagent_max_concurrent=15` or the Variables tab, or the next start narrows it again.
+  `15` is `grok_swarm_width` under
   the shipped recipe - 3 Spark boxes x `PARALLEL` 5 (`scripts/spark-configure.sh:92`) - so
   a smaller fleet changes both numbers with `--var grok_swarm_width` on the push rather
   than widening the session past what the boxes can hold.

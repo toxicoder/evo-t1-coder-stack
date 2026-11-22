@@ -662,9 +662,10 @@ again describes the whole tree.
 `templates/workspace/main.tf:558`) so an explicit width never erases it - and the pair is
 what the width gets read against. Equal numbers mean the session is sized for the fleet:
 every slot it holds is a stream a box can actually serve. A width below its fleet-width
-means a persisted `--var` - on the template, from a raw `coder templates push --var`, or on
-the workspace, from `coder start --var` or the Variables tab - unless an operator set it
-there on purpose to sit inside one pinned box. `bazelisk run //scripts:subagent-check`
+means a persisted value - on the template, from a raw `coder templates push --var`, or on
+the workspace, from `coder start --parameter` / `coder update --parameter` or the Variables
+tab (`--var` is a push-only flag; `coder start` has none) - unless an operator set it there
+on purpose to sit inside one pinned box. `bazelisk run //scripts:subagent-check`
 reads both and names which of the two you have; the same comparison runs at every start, in
 stage 6 of `templates/workspace/startup.sh.tftpl`, where a narrower width is one `note:`
 line on the startup log. Neither value can be cleared from inside the workspace, because

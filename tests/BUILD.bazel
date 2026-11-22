@@ -552,11 +552,18 @@ _SUITE_PAYLOAD = {
         "//:templates_payload",
     ],
     # The suite drives the shipped CLI over profiles it writes itself under
-    # BATS_TEST_TMPDIR, so it reads no payload directory: the script and the
-    # scripts/lib/ helpers it sources ride in with //scripts:doc_sources from
+    # BATS_TEST_TMPDIR, so the CLI side reads no payload directory: the script and
+    # the scripts/lib/ helpers it sources ride in with //scripts:doc_sources from
     # _BATS_COMMON, and the one payload the CLI touches (the compose file, for its
-    # repo-root walk) is a common entry too.
-    "subagent-check.bats": [],
+    # repo-root walk) is a common entry too. The templates ride in for the last
+    # section, which cuts stage 6's width advisory out of both startup twins and
+    # runs it, so the boot path that warns about a narrowed width is covered by the
+    # shipped text rather than by a copy of it. That note names a docs anchor, so
+    # the page it points at rides in too and the assertion reads the real target.
+    "subagent-check.bats": [
+        "//:templates_payload",
+        "//docs:content",
+    ],
     "storage-clean.bats": [
         "//:templates_payload",
     ],
