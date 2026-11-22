@@ -233,11 +233,18 @@ writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width,
 variable), and
 `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
 reader, the planner and the skeptic ride, and `GROK_THEME` (default `grokbuild`)
-the `[ui]` theme name. The width default is the fleet's
-own `GROK_SWARM_WIDTH` (15: three Spark boxes at `PARALLEL` 5), which is the same
-`grok_swarm_width` the templates take, on every lane rather than one number per lane;
-a pinned lane only ever keeps one box's streams busy, so an operator who pins
-everything sets `GROK_SUBAGENT_MAX_CONCURRENT` by hand. The depth default is 2, which
+the `[ui]` theme name. The width default is this knob's
+own shipped 15 (three Spark boxes at `PARALLEL` 5), the same literal 15 the
+templates ship on `grok_subagent_max_concurrent`, on every lane rather than one
+number per lane; a pinned lane only ever keeps one box's streams busy, so an
+operator who pins everything sets `GROK_SUBAGENT_MAX_CONCURRENT` by hand.
+`GROK_SWARM_WIDTH` is the fleet's own ceiling, and here it feeds only the
+`# fleet-width:` line the seeder renders beside `max_concurrent` - the same line
+the templates render from `grok_swarm_width`, so the two agree because each one
+ships 15, not because the seeder falls back to the fleet. Dropping
+`GROK_SWARM_WIDTH` alone now moves that ceiling line and leaves a 15-wide home, so
+set `GROK_SUBAGENT_MAX_CONCURRENT` with it: 15 streams over a 10-stream fleet is
+refused by the box with `NoRoom`. The depth default is 2, which
 lets a child spawn read-only mappers of its own, and the seeder holds the value to 1..3,
 with 1 putting nesting back off (`scripts/seed-dev-env.sh:187-197`). A value the seeder
 cannot use - a lane that is not a bare model id, a width that is not a count or sits past
