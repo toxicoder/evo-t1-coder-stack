@@ -285,9 +285,9 @@ the box.
   state count rather than any one line.
 
 - `[tensorfold] ended chatcmpl-... reason=client-left prompt=... after=Ns`: whoever asked
-  hung up. A tiny prompt abandoned at around 81 s was a health check queued behind
-  longer work; a huge prompt abandoned at around 400 s is a client with its own timeout,
-  and it re-prefills from zero if it retries.
+  hung up. A tiny prompt abandoned at around 81 s was a health check the proxy
+  abandoned on its own probe budget; a huge prompt abandoned at around 400 s is a
+  client with its own timeout, and it re-prefills from zero if it retries.
 
 Two things on this stack cause the evictions, and both are tuned here rather than on the
 box:
@@ -302,14 +302,21 @@ box:
   `litellm_params` through `acompletion` at the default `health_check_max_tokens` of 16
   -- and the four probes queued behind a long turn were dropped by the proxy's own
   health-check timeout at about 81 s, which is the same `reason=client-left` shape as the
-  line above. A box merely busy enough to stall a 16-token probe past that drop would be
-  pulled off the fleet for a cycle over a measurement artifact, so nothing here goes
-  lower. Read the period as one sweep *plus* the interval, not as the interval: the loop
-  sleeps after a sweep finishes, and a sweep is all 31 deployments through the
-  concurrency-2 gate. If the warnings come back every few seconds, that interval is the
-  first key to look at. What the filter those probes feed actually excludes, and what to
-  check when it stops excluding, is under `A Spark box is powered off and still getting
-  traffic` below.
+  line above. The cap itself is 60 s (`HEALTH_CHECK_TIMEOUT_SECONDS`,
+  `constants.py:1557`), read per deployment (`health_check.py:530`), so the queue in
+  front of the probe is the plain reading of the gap between that cap and the 81 s the
+  log shows - the drop time is what was seen, the queue is inference.
+  A box merely busy enough to stall a 16-token probe past that drop is what keeps the
+  floor here: `health_check_ignore_transient_errors: true` is what now stops one slow
+  408 or 429 probe from also pulling that box off the fleet for a cycle
+  (`proxy_server.py:3971-3974`, `:4002-4006`), but the probes still cost a
+  prompt-cache state each, so nothing goes lower. Read the period as one sweep *plus*
+  the interval, not as the interval: the loop sleeps after a sweep finishes, and a
+  sweep is the 27 deployments that did not opt out through the concurrency-2 gate. If
+  the warnings come back every few seconds, that interval is the first key to look
+  at. What the filter those probes feed actually excludes, and what to check when it
+  stops excluding, is under `A Spark box is powered off and still getting traffic`
+  below.
 
 - The 195k needle. `//scripts:spark-verify` runs the recipe's `needle.py --length 195000`
   as the window proof, and a 195k prompt the server has never seen is the largest single
@@ -337,6 +344,16 @@ refuses with the status-less `NoRoom` value all surface as that exception. So no
 `allowed_fails` number and no `cooldown_time` cools a box that is simply gone -- which is
 why `litellm/config.yaml` ships no `allowed_fails` key at all, and why `cooldown_time: 60`
 is there for the other failure: a box that answers HTTP and returns real 5xx.
+
+Say which half of this entry is measured. The half that is: with
+`enable_health_check_routing: true` a box that answered HTTP 500 to client traffic
+received zero client requests in the sample window, against several with the flag
+removed and `allowed_fails: 40` / `cooldown_time: 5` restored - zero against
+several, from a throwaway three-box harness that a reviewer re-ran with its own
+containers. The refused-connection half, which is what this entry is named for, is
+read out of the two code paths above rather than measured: the harness's
+`docker stop` phase cannot show anything, because a stopped container logs nothing
+in either arm.
 
 What pulls a down box out is the health filter, and it needs both halves of it running:
 
@@ -377,8 +394,14 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
 ```
 
   A box you know is off sitting in `unhealthy_endpoints` while its two siblings are in
-  `healthy_endpoints` is the filter doing its job. It in `healthy_endpoints` too is the
-  loop not running -- read the two `general_settings` keys above before you read the box.
+  `healthy_endpoints` is the filter doing its job. It in `healthy_endpoints` too is
+  most often the loop not running -- read the two `general_settings` keys above before
+  you read the box. One innocent case is a restart or a redeploy of the proxy: no
+  Redis is configured for this proxy, so the marks live in one process
+  (`router_utils/health_state_cache.py:32-36`) and every restart clears them until the
+  first sweep finishes, with nothing logged on the filter's fail-open exits. Right
+  after a deploy `healthy_endpoints` can list a box you know is off; read `/health`
+  again a cycle later before you conclude anything.
 
 - Is the process itself answering? `/health/liveliness` needs no key at all
   (`_health_endpoints.py:1938`), which is what the compose `healthcheck:` dials. `/health`
@@ -388,9 +411,16 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
 - Do not read the proxy log for this. The probe loop writes its own lines through
   `verbose_proxy_logger`, so the sweep and the cooldowns it takes are DEBUG-level and a
   healthy-looking log proves nothing. The one line that does reach the default level is
-  `background_health_check_cycle_duration_exceeded_interval` (`proxy_server.py:4213`), a
-  WARNING that fires when a sweep outruns `health_check_interval` -- it appeared in a
-  measurement run with the interval at 15 s, and it never appears at the shipped 120 s.
+  `background_health_check_cycle_duration_exceeded_interval`
+  (`proxy_server.py:4212-4214`), a WARNING that fires when one sweep alone outruns
+  `health_check_interval` -- it appeared in a measurement run with the interval at 15
+  s. Nothing in this repo measures the sweep at the shipped 120 s, so read the line as
+  arithmetic rather than a settled all-clear: the sweep covers the 27 deployments that
+  did not opt out, pushed through the concurrency-2 gate, so roughly 14 sequential
+  rounds, and a mean probe over about 8 s crosses the interval. Treat it as a reason
+  to raise the interval, not to chase the box. What 120 s does buy is that cycles
+  cannot stack: the sleep sits after the sweep (`proxy_server.py:4234`) and
+  concurrency 2 is a hard cap.
   `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -i 'cycle_duration_exceeded'`
   is the grep worth typing; the loop's own lines need the proxy started with
   `--detailed_debug`.
@@ -439,9 +469,12 @@ bazelisk run //scripts:spark-verify -- 10.0.0.5
 ```
 
 Recovery needs no operator action once the box answers again: the next green probe
-overwrites the mark with `is_healthy: True` (`proxy_health_check.py:683`), and the same
-loop is what notices, so a box that comes back on its own is serving again inside roughly
-one sweep plus `health_check_interval`. What an operator does do is fix the box -- power,
+overwrites the mark with `is_healthy: True` (`health_check.py:683`), and the same
+loop is what notices, so a box that comes back on its own is eligible again inside
+roughly one sweep plus `health_check_interval`. Eligible is the precise word: the
+cooldown entry that same loop wrote for the box has to expire on its own
+(`cooldown_time`), and every failing cycle re-arms it, so the first turn back can
+still land on another box. What an operator does do is fix the box -- power,
 the TensorFold server, `bazelisk run //scripts:spark-configure -- <host> --apply` -- or,
 when the container is the sick half, restart it so it re-reads the config:
 
