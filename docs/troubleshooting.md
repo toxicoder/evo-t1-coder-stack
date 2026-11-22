@@ -1337,8 +1337,8 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
 
 - That first block prints two numbers now: the fleet's own ceiling as `# fleet-width:`,
   above this session's cap as `max_concurrent`
-  (`templates/workspace/grok-config.toml.tftpl:429-430`, devcontainer twin
-  `templates/devcontainer/grok-config.toml.tftpl:430-431`). `15` over `15` is this entry -
+  (`templates/workspace/grok-config.toml.tftpl:427-428`, devcontainer twin
+  `templates/devcontainer/grok-config.toml.tftpl:428-429`). `15` over `15` is this entry -
   the number is right and the placement is not. `15` over `4` is a different fault, where
   the width itself was set, and
   [the rendered-width entry](#the-rendered-width-is-below-fleet-width)
@@ -1411,8 +1411,8 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
 ```
 
   `# fleet-width:` is the fleet's own ceiling, `max_concurrent` this session's cap
-  (`templates/workspace/grok-config.toml.tftpl:429-430`, devcontainer twin
-  `templates/devcontainer/grok-config.toml.tftpl:430-431`). They stay two lines rather
+  (`templates/workspace/grok-config.toml.tftpl:427-428`, devcontainer twin
+  `templates/devcontainer/grok-config.toml.tftpl:428-429`). They stay two lines rather
   than one number because they answer to two variables: `max_concurrent` is the variable's
   own shipped 15, which an explicit `--var` owns and never moves the ceiling. `15` over `4`
   is this entry; `15` over `15` is
@@ -1421,9 +1421,9 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
 - Nothing in this repo renders a `4`. Both twins ship the width as the variable's own
   literal `15`, so the `: var.grok_swarm_width` arm of
   `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
-  (`templates/workspace/main.tf:556`, `templates/devcontainer/main.tf:584`) answers only a
+  (`templates/workspace/main.tf:553`, `templates/devcontainer/main.tf:581`) answers only a
   caller that passes null on purpose. The ceiling beside it is that same `grok_swarm_width`,
-  on its own line (`templates/workspace/main.tf:561`). Measured:
+  on its own line (`templates/workspace/main.tf:558`). Measured:
   `terraform apply` with the shipped defaults prints `15`, and the same run with
   `-var grok_subagent_max_concurrent=4` prints `4`. So a rendered `4` is a number somebody
   set, and a `4` still there is one that outlived what set it.
