@@ -370,12 +370,14 @@ session_rows_for() {
 # @function json_field
 # Render one value as a JSON string literal, ready to paste after a colon.
 #
-# common.sh's json_escape escapes the backslash and the quote, drops newlines and
-# truncates, and leaves the quoting to the caller. It does not touch tabs, and every
-# row this CLI hands over is tab-separated, so a tab that survived the split upstream
-# would land raw in the document and a strict parser would reject the whole array on
-# the control character. A tab becomes a space: the value stays readable and the
-# document always parses.
+# common.sh's json_escape escapes the backslash and the quote, drops every C0
+# control byte, truncates, and leaves the quoting to the caller. Every row this
+# CLI hands over is tab-separated, so a tab that survived the split upstream
+# would land raw in the document and a strict parser would reject the whole array
+# on the control character. A tab becomes a space: the value stays readable and
+# the document always parses. The fold has to happen BEFORE the call, because
+# json_escape now deletes control bytes outright and would eat the tab instead of
+# leaving it here to be folded, turning two words into one.
 #
 # Globals:
 #   None
@@ -386,7 +388,9 @@ session_rows_for() {
 # Returns:
 #   0
 json_field() {
-  printf '"%s"' "$(json_escape "${1:-}" | tr '\t' ' ')"
+  local folded
+  folded="$(printf '%s' "${1:-}" | tr '\t' ' ')"
+  printf '"%s"' "$(json_escape "${folded}")"
 }
 
 # @function report_json

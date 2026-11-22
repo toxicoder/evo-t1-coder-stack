@@ -409,20 +409,36 @@ canonical_url() {
 JSON_ESCAPE_SED='s/["\\]/\\&/g'
 
 # @function json_escape
-# Escape backslash and double quote, drop newlines, and clip to 180 characters
-# so remote replies cannot close a JSON string.
+# Escape backslash and double quote, drop every C0 control byte, and clip to a
+# maximum length. The control bytes go because RFC 8259 requires them to be
+# escaped and this function emits none, so one raw byte from a remote reply
+# would make the whole line unparseable rather than one field odd. The 180
+# default bounds text that came back from somewhere else, so a reply cannot make
+# the report arbitrarily large; a value this script composed itself passes its
+# own length and asks for 0 to keep it whole, because clipping a command the
+# operator is meant to run prints a command that fails. A max that is not a
+# plain non-negative integer falls back to the default, since the slice below
+# evaluates its bound arithmetically.
 # Globals:
 #   JSON_ESCAPE_SED
 # Arguments:
 #   $1 - raw text
+#   $2 - maximum characters, optional; 180 by default, 0 for no clip
 # Outputs:
 #   The escaped, clipped text
 # Returns:
 #   0
 json_escape() {
-  local trimmed
-  trimmed="$(printf '%s' "$1" | sed -E "${JSON_ESCAPE_SED}" | tr -d '\n\r')"
-  printf '%s' "${trimmed:0:180}"
+  local trimmed max="${2:-180}"
+  case "${max}" in
+    '' | *[!0-9]*) max=180 ;;
+  esac
+  trimmed="$(printf '%s' "$1" | sed -E "${JSON_ESCAPE_SED}" | tr -d '\000-\037')"
+  if [ "${max}" = "0" ]; then
+    printf '%s' "${trimmed}"
+    return
+  fi
+  printf '%s' "${trimmed:0:max}"
 }
 
 # @function json_value
