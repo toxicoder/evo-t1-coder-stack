@@ -292,14 +292,24 @@ the box.
 Two things on this stack cause the evictions, and both are tuned here rather than on the
 box:
 
-- Probe cadence. `health_check_interval` and `health_check_concurrency` in
-  `litellm/config.yaml` decide how often every Spark deployment gets a real generation.
-  They sit at LiteLLM's own default of 300 s and a concurrency of 2 on purpose: at 30 s
-  across five deployments a round was putting more probes on a box than user requests,
-  and each one took a prompt-cache state from a conversation. Auto-recovery does not
-  need 30 s -- a box that is actually down is pulled by `allowed_fails` and
-  `cooldown_time` under live traffic, and the re-probe is what brings it back. If the
-  warnings come back every few seconds, that is the first key to look at.
+- Probe cadence. `health_check_interval`, `health_check_concurrency` and
+  `health_check_staleness_threshold` in `litellm/config.yaml` decide how often every
+  Spark deployment gets a real generation, and they ship at `120`, `2`, and `900` --
+  where the interval used to sit at LiteLLM's own default of 300 s. 120 s is the floor
+  the measurement allows, not a taste: at 30 s across five deployments a round was
+  putting more probes on a box than user requests, and each one took a prompt-cache
+  state from a conversation. A probe is a real completion -- the deployment's whole
+  `litellm_params` through `acompletion` at the default `health_check_max_tokens` of 16
+  -- and the four probes queued behind a long turn were dropped by the proxy's own
+  health-check timeout at about 81 s, which is the same `reason=client-left` shape as the
+  line above. A box merely busy enough to stall a 16-token probe past that drop would be
+  pulled off the fleet for a cycle over a measurement artifact, so nothing here goes
+  lower. Read the period as one sweep *plus* the interval, not as the interval: the loop
+  sleeps after a sweep finishes, and a sweep is all 31 deployments through the
+  concurrency-2 gate. If the warnings come back every few seconds, that interval is the
+  first key to look at. What the filter those probes feed actually excludes, and what to
+  check when it stops excluding, is under `A Spark box is powered off and still getting
+  traffic` below.
 
 - The 195k needle. `//scripts:spark-verify` runs the recipe's `needle.py --length 195000`
   as the window proof, and a 195k prompt the server has never seen is the largest single
@@ -316,6 +326,132 @@ bazelisk run //scripts:spark-verify -- --needle 10.0.0.5   # force it: the box g
   quietly rebuilt with a shorter window is still visible; the needle is the active
   confirmation of it. `--no-tests` skips all four recipe probes for a quick read-only
   pass, and that is what `//scripts:bootstrap` runs.
+
+### A Spark box is powered off and still getting traffic -> cooldown cannot see a refused connection, the health filter can
+
+Cause: the exclusion people reach for for this is the one that cannot fire on the failure
+a down box actually raises. `_is_cooldown_required` returns False the moment the exception
+text contains `APIConnectionError` (`litellm/router_utils/cooldown_handlers.py:223`,
+`ignored_strings`), and a closed port, a dead engine process, and a TensorFold box that
+refuses with the status-less `NoRoom` value all surface as that exception. So no
+`allowed_fails` number and no `cooldown_time` cools a box that is simply gone -- which is
+why `litellm/config.yaml` ships no `allowed_fails` key at all, and why `cooldown_time: 60`
+is there for the other failure: a box that answers HTTP and returns real 5xx.
+
+What pulls a down box out is the health filter, and it needs both halves of it running:
+
+- `enable_health_check_routing: true` in `general_settings`. Without it,
+  `_async_filter_health_check_unhealthy_deployments` (`router.py:14137`) is a no-op at
+  `router.py:14153`, and `async_get_available_deployment` (`router.py:13041`) hands
+  least-busy the whole list.
+- A live probe loop: `background_health_checks: true` plus `health_check_interval` above
+  zero. An interval that is unset or 0 returns from the loop before it starts
+  (`proxy_server.py:4071`) and starves the state the filter reads. A router-wide
+  `allowed_fails_policy` with `background_health_check_model_groups` unset switches the
+  filter off a third time (`router.py:14161`), which is why no such policy sits in this
+  config.
+
+That is also why the picker needed the filter at all. `least-busy` raises its in-flight
+counter before the call and gives it back on the failure hook, and `_least_busy` returns
+the FIRST deployment at the minimum (`router_strategy/least_busy.py:83`, `:120`, `:129`,
+`:143`), so a box that refuses everything sits at zero and an unfiltered least-busy
+prefers it over a healthy box. "Off but still getting traffic" is the expected shape of
+routing with the filter off, not a bug to chase on the box.
+
+Confirm it in this order:
+
+- Who does the router hold right now? `GET /health` with the master key answers it, and
+  because `background_health_checks: true` ships here the handler returns the cached
+  probe results (`_health_endpoints.py:1218`) rather than firing a fresh generation at
+  every deployment -- an operator's read of this endpoint costs the fleet nothing. Each
+  entry carries `model_id`, which is the per-box deployment id the config names
+  (`agent-spark-1`, `agent-swarm-spark-2`, ...), plus `api_base` and
+  `exception_status`, and the payload totals them as `healthy_count` /
+  `unhealthy_count`. Narrow one box with `?model_id=agent-spark-2` or one lane with
+  `?model=agent-swarm`. On the stack host, with the `LITELLM_MASTER_KEY` the container
+  itself runs with:
+
+```sh
+curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  http://127.0.0.1:4000/health | python3 -c 'import json,sys; d=json.load(sys.stdin); print("healthy", d.get("healthy_count"), "unhealthy", d.get("unhealthy_count")); [print(" ", e.get("model_id"), e.get("api_base"), e.get("exception_status")) for e in d.get("unhealthy_endpoints", [])]'
+```
+
+  A box you know is off sitting in `unhealthy_endpoints` while its two siblings are in
+  `healthy_endpoints` is the filter doing its job. It in `healthy_endpoints` too is the
+  loop not running -- read the two `general_settings` keys above before you read the box.
+
+- Is the process itself answering? `/health/liveliness` needs no key at all
+  (`_health_endpoints.py:1938`), which is what the compose `healthcheck:` dials. `/health`
+  is behind `user_api_key_auth` (`_health_endpoints.py:1110`), so it needs the master key
+  and is not a liveness probe.
+
+- Do not read the proxy log for this. The probe loop writes its own lines through
+  `verbose_proxy_logger`, so the sweep and the cooldowns it takes are DEBUG-level and a
+  healthy-looking log proves nothing. The one line that does reach the default level is
+  `background_health_check_cycle_duration_exceeded_interval` (`proxy_server.py:4213`), a
+  WARNING that fires when a sweep outruns `health_check_interval` -- it appeared in a
+  measurement run with the interval at 15 s, and it never appears at the shipped 120 s.
+  `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -i 'cycle_duration_exceeded'`
+  is the grep worth typing; the loop's own lines need the proxy started with
+  `--detailed_debug`.
+
+- `/v1/models` is not the read people try first: it lists the 13 model *aliases*, not the
+  deployments under them, so a box that has been filtered out is invisible there and the
+  alias still appears.
+
+- Is the filter still believing its state, or has it failed open? It returns the whole
+  candidate list when the state is missing, when it is older than
+  `health_check_staleness_threshold`, or when filtering would leave nothing to route to.
+  That threshold is the fail-open window: at the shipped `900` s a deployment that drops
+  out of the probe list altogether -- renamed, or removed from the config while the proxy
+  keeps running -- is believed dead for at most 15 minutes and then takes traffic again.
+  The vendor default is 600 s whatever the interval says, because it is computed from a
+  constant (`router.py:993`), so the two keys move together or the filter fails open
+  before the next sweep.
+
+Then separate a sick proxy from a sick box, because each has its own fix. The `litellm`
+service carries a compose `healthcheck:` that dials the proxy's own unprotected
+`/health/liveliness` with the image's interpreter -- the image ships no `curl` and no
+`wget` -- every 30 s, with `retries: 3` and a `start_period: 60s` that covers the config
+import and the 31 deployments built before uvicorn binds:
+
+```sh
+bazelisk run //scripts:prod-stack -- status
+docker compose -p evo-t1-coder-stack -f docker-compose.yml ps litellm
+docker inspect --format '{{.State.Health.Status}}' \
+  "$(docker compose -p evo-t1-coder-stack -f docker-compose.yml ps -q litellm)"
+```
+
+- `note:` the daemon restarts a container that *exits*, and not one that goes unhealthy.
+  `restart: unless-stopped` is what recovers a crashed proxy; the probe buys visibility
+  (`(unhealthy)` in `status` and in `ps`, the last three probes in `docker inspect`, the
+  event Alloy ships to Loki) and a `service_healthy` wait nothing here takes -- `hermes`
+  deliberately keeps `condition: service_started`, because compose waits indefinitely for
+  a healthy condition and a probe that stops passing would hold the host assistant down
+  with the proxy.
+- `ok:` liveliness answering `I'm alive!` with no container `unhealthy` anywhere means the
+  proxy is fine and the reads above are the ones to believe. A box that answers
+  `/v1/models` on its own port is still not a box the router will use, and that
+  distinction is what `//scripts:spark-verify` settles, from the stack host:
+
+```sh
+bazelisk run //scripts:spark-verify -- 10.0.0.5
+```
+
+Recovery needs no operator action once the box answers again: the next green probe
+overwrites the mark with `is_healthy: True` (`proxy_health_check.py:683`), and the same
+loop is what notices, so a box that comes back on its own is serving again inside roughly
+one sweep plus `health_check_interval`. What an operator does do is fix the box -- power,
+the TensorFold server, `bazelisk run //scripts:spark-configure -- <host> --apply` -- or,
+when the container is the sick half, restart it so it re-reads the config:
+
+```sh
+docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
+```
+
+While every Spark is unreachable the `agent` group hops to `coder` on the Arc, which is
+why a fleet that answers at all can still be answering badly; see the fallback chain in
+`docs/litellm-routing.md`.
 
 ### Sessions log `compact failed: exceeded wall-clock budget 300s (runaway generation)` -> a compaction stream that never sent a token, bought three times
 
