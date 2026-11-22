@@ -111,6 +111,14 @@ entries_for() {
   ' "${CONFIG}"
 }
 
+# Print each distinct model alias in model_list once. Group-scoped assertions that
+# have to iterate over every group -- rather than over a list written here, which
+# goes stale the day a lane is added -- start from this.
+model_aliases() {
+  sed -n 's/^[[:space:]]*-[[:space:]]*model_name:[[:space:]]*//p' "${CONFIG}" |
+    sed -e 's/[[:space:]]*$//' | sort -u
+}
+
 @test "routing: least-busy stays the picker and session_affinity stays armed" {
   run grep -F 'routing_strategy: least-busy' "${CONFIG}"
   [ "${status}" -eq 0 ]
@@ -874,12 +882,14 @@ general_settings_block() {
 # that exception. The health filter is the one that removes such a box --
 # async_get_available_deployment (router.py:13041) -> async_get_healthy_deployments
 # (router.py:12700) -> _async_filter_health_check_unhealthy_deployments
-# (router.py:14137) -- because the probe loop writes the health state unconditionally
-# (proxy_server.py:3981) before the cooldown path can veto the same exception, and
+# (router.py:14137) -- because the sweep writes the health state (proxy_server.py:3981)
+# above the routing-only bail at :3988 and the cooldown loop at :3991, so a mark exists
+# before the cooldown path can veto the same exception, and
 # because least-busy has no health input of its own (a box failing everything sits at
 # an in-flight count of zero and _least_busy, least_busy.py:83, returns the FIRST
-# deployment at the minimum). Each test below answers one way that filter can silently
-# stop working. The cadence floor and the concurrency ceiling stay in the section above.
+# deployment at the minimum, :88). Each test below answers one way that filter can
+# silently stop working. The cadence floor and the concurrency ceiling stay in the
+# section above.
 
 # litellm_service_block - the compose `litellm` service: its key line plus every
 # deeper-indented line, stopping at its first sibling, comments dropped. Compose keys
@@ -977,20 +987,21 @@ require_compose() {
 }
 
 @test "failover: the probe interval sits between the detection floor and the measured probe cost" {
-  # Floor 120: the period is one sweep plus the interval, because the loop sleeps
-  # health_check_interval AFTER a sweep finishes (proxy_server.py:4234), and a sweep is
-  # all 31 deployments through the concurrency-2 gate -- below this the fleet spends
-  # more on probing than on serving. Ceiling 300: each probe is a real completion
+  # Floor and ceiling both sit tight against the shipped number on purpose: a band
+  # wide enough to admit 300 s cannot tell this config from the one before it, and
+  # the interval is the dial the whole section argues about. Floor 120: the period is
+  # one sweep plus the interval, because the loop sleeps health_check_interval AFTER a
+  # sweep finishes (proxy_server.py:4234), and a sweep is the 27 deployments that did
+  # not opt out through the concurrency-2 gate -- below this the fleet spends more on
+  # probing than on serving. Ceiling 180: each probe is a real completion
   # (ahealth_check into acompletion with the default 16 health_check_max_tokens) on a
   # box whose prompt cache is already full, so waiting longer than this buys detection
   # latency nobody accepts. LiteLLM's own default is 600.
   local interval
   interval="$(block_int health_check_interval "$(general_settings_block)")"
   assert_eq "health_check_interval is exactly one integer" "1" "$(printf '%s\n' "${interval}" | grep -c .)"
-  [[ "${interval}" -ge 120 ]] ||
-    fail "health_check_interval is ${interval}: below the 120 s floor a sweep of 31 deployments lands on the fleet too often to be a detection mechanism"
-  [[ "${interval}" -le 300 ]] ||
-    fail "health_check_interval is ${interval}: above 300 s each real completion probed on a cache-full box is paid for by a dead box still receiving traffic for that long"
+  [[ "${interval}" -eq 120 ]] ||
+    fail "health_check_interval is ${interval}: this file argues for 120 s specifically, and a band wide enough to let it drift to 300 s would pass over the value that predates the filter"
 }
 
 @test "failover: an unhealthy mark outlives the sweep that wrote it" {
@@ -1015,7 +1026,8 @@ require_compose() {
 
 @test "failover: router_settings carries no allowed_fails" {
   # Its absence is load-bearing in both directions. With the key unset, cooldown uses
-  # the vendor's rate rule (cooldown_handlers.py:405): cool once a deployment fails
+  # the vendor's rate rule, the base-case arms at cooldown_handlers.py:392-398: cool
+  # once a deployment fails
   # more than half of at least 5 requests in a rolling minute. Set it to any
   # non-default number and should_cooldown_based_on_allowed_fails_policy takes the
   # counting branch instead, whose fail window IS cooldown_time -- so the
@@ -1131,4 +1143,68 @@ require_compose() {
   if ! printf '%s\n' "${published}" | grep -qx -- "${probe_port}"; then
     fail "the probe dials 127.0.0.1:${probe_port}, which is not a container port the litellm service publishes (${published//$'\n'/ })"
   fi
+}
+
+@test "failover: every group of one sits out the probe sweep, and nothing else does" {
+  # The filter can never exclude the only member of a group: dropping it empties the
+  # candidate list, which is the fail-open (router.py:14177). A mark there therefore
+  # buys no routing, and it is not free -- the same sweep cools what it marked
+  # (proxy_server.py:4013, time_to_cooldown=cooldown_time at :4018), and the cooldown
+  # list has no fail-open here because its only rescue (router.py:12774) needs an
+  # allowed_fails_policy this config deliberately refuses. coder is the terminal hop
+  # of every agent lane, so a probe that answers 404 -- a weights tag that went
+  # missing -- would park the fallback with no user request having failed. The
+  # assertion is derived from the file rather than from a list of Arc aliases
+  # written here: a future single-deployment group has to opt out the same way, and
+  # the count is pinned both directions so a Spark box cannot quietly join them.
+  local alias deps solo_count=0 solo_missing="" opted
+  while read -r alias; do
+    [[ -n "${alias}" ]] || continue
+    deps="$(grep -Ec "^[[:space:]]*-[[:space:]]+model_name:[[:space:]]*${alias}[[:space:]]*$" "${CONFIG}")"
+    if [[ "${deps}" -eq 1 ]]; then
+      solo_count=$((solo_count + 1))
+      if ! entries_for "${alias}" |
+        grep -Eq '^[[:space:]]*disable_background_health_check:[[:space:]]*true[[:space:]]*$'; then
+        solo_missing="${solo_missing:+${solo_missing} }${alias}"
+      fi
+    fi
+  done <<<"$(model_aliases)"
+  [[ "${solo_count}" -ge 1 ]] ||
+    fail "no single-deployment model group found: the alias scan is broken, not the config"
+  [[ -z "${solo_missing}" ]] ||
+    fail "these single-deployment groups are still in the probe sweep: ${solo_missing}"
+  opted="$(grep -Ec '^[[:space:]]*disable_background_health_check:[[:space:]]*true[[:space:]]*$' "${CONFIG}")"
+  assert_eq "only the groups of one opt out of probing" "${solo_count}" "${opted}"
+}
+
+@test "failover: a stalled probe still cannot mark a live box" {
+  # Load-bearing now that the marks drive routing, and one keystroke from being a
+  # flapping machine. A probe that stalls behind a long turn comes back as a 408, and
+  # this key is what drops 429/408 out of the list the sweep marks
+  # (proxy_server.py:3971) and out of the list it cools (:4002). Flip it to false and
+  # one slow 16-token probe moves a session-pinned conversation off its warm box and
+  # forces a full re-prefill for a cycle, which is the cost the 120 s cadence exists
+  # to keep off the fleet.
+  local hits
+  hits="$(general_settings_block |
+    grep -Ec '^[[:space:]]*health_check_ignore_transient_errors:[[:space:]]*true[[:space:]]*$' || true)"
+  assert_eq "health_check_ignore_transient_errors is set true exactly once" "1" "${hits}"
+}
+
+@test "failover: background_health_check_model_groups stays unset, so the filter speaks for every group" {
+  # Symmetric to the allowed_fails_policy assertion above, and the same kind of trap:
+  # it reads as a probe-scope knob, but set it and the filter only excludes
+  # deployments inside the listed groups (router.py:14174), so a group left off the
+  # list stops being steered around while its probes keep running and its health page
+  # keeps looking green. Nothing here wants that scoping; the per-deployment opt-out
+  # is the narrower tool, and it is what the single-deployment groups use.
+  local section
+  for section in general_settings router_settings; do
+    case "${section}" in
+      general_settings) section="$(general_settings_block)" ;;
+      router_settings) section="$(router_settings_block)" ;;
+    esac
+    assert_not_match "no background_health_check_model_groups" \
+      '^[[:space:]]*background_health_check_model_groups:' "${section}"
+  done
 }

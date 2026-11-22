@@ -303,8 +303,9 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      # The proxy imports the config, builds 31 deployments and mounts the two
-      # custom callbacks before uvicorn binds; 60 s of failures are not counted.
+      # The proxy imports the config, builds 31 deployments and loads the
+      # Prometheus callback plus the compaction router's handler before uvicorn
+      # binds; 60 s of failures are not counted.
       start_period: 60s
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
