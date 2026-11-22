@@ -537,7 +537,7 @@ resource "coder_agent" "main" {
   startup_script = templatefile("${path.module}/startup.sh.tftpl", {
     boot_log_lib = chomp(file("${path.module}/boot-log.lib.sh"))
     # Every key of the inner map is an interpolation grok-config.toml.tftpl has to
-    # resolve, so all ten are declared together. github_mcp, search_mcp and
+    # resolve, so every one is declared together. github_mcp, search_mcp and
     # context7_mcp are *boolean* gates in there - each only decides whether its
     # [mcp_servers.*] block appears - and no token is part of the decision: no
     # credential bytes are ever interpolated into the rendered script or into
@@ -579,9 +579,14 @@ resource "coder_agent" "main" {
       # writers still follow grok_subagents_lane; see [subagents.models].
       grok_subagents_lane          = var.grok_subagents_lane
       grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width
-      grok_explore_lane            = var.grok_explore_lane
-      grok_plan_lane               = var.grok_plan_lane
-      grok_review_lane             = var.grok_review_lane
+      # The fleet ceiling rendered beside the width as `# fleet-width:`. It stays a
+      # separate number on purpose: an explicit grok_subagent_max_concurrent is an
+      # operator's own setting and is never overridden, so the pair is what turns a
+      # width that outlived the template which set it into a visible mismatch.
+      grok_subagent_fleet_width = var.grok_swarm_width
+      grok_explore_lane         = var.grok_explore_lane
+      grok_plan_lane            = var.grok_plan_lane
+      grok_review_lane          = var.grok_review_lane
       # How deep a subagent tree may nest; rendered into [subagents] max_depth.
       grok_subagent_max_depth = var.grok_subagent_max_depth
     })

@@ -291,6 +291,9 @@ _SCRIPT_LIBS = {
         "lib/json_copy_key.py",
         ":seed_probes",
     ],
+    "subagent-check": [
+        "lib/common.sh",
+    ],
     "test-in-image": [
         "lib/common.sh",
     ],
@@ -485,6 +488,9 @@ _SCRIPT_PAYLOAD = {
     "storage-clean": [
         "//:compose_file",
         "//:templates_payload",
+    ],
+    "subagent-check": [
+        "//:compose_file",
     ],
     "test-in-image": [
         "//:compose_file",

@@ -646,7 +646,7 @@ wrong on both lanes - it leaves slots empty on a swarm session and overbooks a p
 one. Overflow is held, not failed (`limit_behavior = "queue"`), so an under-wide wave is
 silent and counting it stays the parent's job. The same grep prints the `max_depth` line
 beside `max_concurrent`, and that key is now rendered from `grok_subagent_max_depth`
-(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:408`. At the
+(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:429`. At the
 shipped 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
 `spawn_subagent` in their `tools`, so a skeptic can put a wave of read-only mappers under
 itself and get its evidence without a round trip through the parent. Each grandchild is its
@@ -655,6 +655,21 @@ stream, which is why a tree is counted by summing the in-flight `1 + spawns` ove
 task and keeping that total at or below the fleet's stream count (`fleet:` in the plan, 15
 by default). `max_depth = 1` is the rollback: no child spawns, and one parent's slot count
 again describes the whole tree.
+
+**Two numbers, one rule.** The same grep opens its four lines of context with
+`# fleet-width: 15` - the fleet's own ceiling, rendered into the same table from
+`var.grok_swarm_width` (`templates/workspace/grok-config.toml.tftpl:427`, fed at
+`templates/workspace/main.tf:558`) so an explicit width never erases it - and the pair is
+what the width gets read against. Equal numbers mean the session is sized for the fleet:
+every slot it holds is a stream a box can actually serve. A width below its fleet-width
+means a persisted value - on the template, from a raw `coder templates push --var`, or on
+the workspace, from `coder start --parameter` / `coder update --parameter` or the Variables
+tab (`--var` is a push-only flag; `coder start` has none) - unless an operator set it there
+on purpose to sit inside one pinned box. `bazelisk run //scripts:subagent-check`
+reads both and names which of the two you have; the same comparison runs at every start, in
+stage 6 of `templates/workspace/startup.sh.tftpl`, where a narrower width is one `note:`
+line on the startup log. Neither value can be cleared from inside the workspace, because
+both sit in the Coder database on the host.
 
 **What the lane choice buys.** `grok_subagents_lane` is the knob for the writers and it
 decides placement, not size: the width comes from `grok_swarm_width` (default 15) on
@@ -705,7 +720,9 @@ GROK_SUBAGENTS_LANE=agent-swarm bazelisk run //scripts:seed-dev-env -- --home <d
 
 `GROK_SUBAGENTS_LANE` names the writers' lane and `GROK_SUBAGENT_MAX_CONCURRENT` the width,
 with `GROK_SWARM_WIDTH` (default 15) behind it, the same fallback `main.tf` makes to
-`grok_swarm_width`; `GROK_EXPLORE_LANE` (default `agent-explore`),
+`grok_swarm_width` (that number also fills the `# fleet-width:` line the seed writes
+directly above the width, `scripts/seed-dev-env.sh:286`, so a contributor home carries the
+same pair a workspace renders); `GROK_EXPLORE_LANE` (default `agent-explore`),
 `GROK_PLAN_LANE` (default `agent`) and `GROK_REVIEW_LANE` (default `agent-review`) name the
 three role lanes the same way. A value the seeder cannot use is refused in place and
 the default goes in, so a typo is a line in the output rather than a broken key in
@@ -800,8 +817,8 @@ the rulebook's slot-filling rule) and `bazelisk test //tests:bats_ez_micro_plan_
 ## The seeded fleet suite
 
 The seam above is what a fan-out costs; this is who is in it. The family has its own seeding
-`coder_script`, `stack_fleet` (`templates/workspace/main.tf:748`,
-`templates/devcontainer/main.tf:799`), which puts thirteen payloads in place on every start
+`coder_script`, `stack_fleet` (`templates/workspace/main.tf:753`,
+`templates/devcontainer/main.tf:804`), which puts thirteen payloads in place on every start
 from `templates/common/`, and `//scripts:seed-dev-env` seeds the same thirteen into a
 contributor home through the `~/.grok/agents`, `~/.grok/personas` and fleet-skill rows of
 `seed_seed_targets` (`scripts/lib/config_seed.sh:130-147`, seventeen of them; the
@@ -918,7 +935,7 @@ for a cloud model id, which is the rule in
 ### The five advisor commands
 
 Five more commands ride a `coder_script` of their own, `stack_advisors`
-(`templates/workspace/main.tf:779`, `templates/devcontainer/main.tf:830`), whose body is
+(`templates/workspace/main.tf:784`, `templates/devcontainer/main.tf:835`), whose body is
 `templates/common/stack-advisors.sh.tftpl`. Four are advisors that each gate a different kind
 of work, and the fifth writes the local map described at the end of this section. Same contract
 and same two homes as the four above: `~/.coder/skills/<name>/SKILL.md` for the chat and the
@@ -1083,7 +1100,7 @@ an oversight.
   rulebook rule that no pattern can replace.
 
 Two things seed them, and both are wanted. `coder_script "stack_hooks"`
-(`templates/workspace/main.tf:805`, `templates/devcontainer/main.tf:856`) runs
+(`templates/workspace/main.tf:810`, `templates/devcontainer/main.tf:861`) runs
 `templates/common/stack-hooks.sh.tftpl` on every workspace start (`run_on_start`, gated on
 `data.coder_workspace.me.start_count`), and `scripts/lib/config_seed.sh:160-165` carries the
 same six targets for a host tree or a workspace that missed a boot. This family is

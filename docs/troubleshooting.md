@@ -285,21 +285,38 @@ the box.
   state count rather than any one line.
 
 - `[tensorfold] ended chatcmpl-... reason=client-left prompt=... after=Ns`: whoever asked
-  hung up. A tiny prompt abandoned at around 81 s was a health check queued behind
-  longer work; a huge prompt abandoned at around 400 s is a client with its own timeout,
-  and it re-prefills from zero if it retries.
+  hung up. A tiny prompt abandoned at around 81 s was a health check the proxy
+  abandoned on its own probe budget; a huge prompt abandoned at around 400 s is a
+  client with its own timeout, and it re-prefills from zero if it retries.
 
 Two things on this stack cause the evictions, and both are tuned here rather than on the
 box:
 
-- Probe cadence. `health_check_interval` and `health_check_concurrency` in
-  `litellm/config.yaml` decide how often every Spark deployment gets a real generation.
-  They sit at LiteLLM's own default of 300 s and a concurrency of 2 on purpose: at 30 s
-  across five deployments a round was putting more probes on a box than user requests,
-  and each one took a prompt-cache state from a conversation. Auto-recovery does not
-  need 30 s -- a box that is actually down is pulled by `allowed_fails` and
-  `cooldown_time` under live traffic, and the re-probe is what brings it back. If the
-  warnings come back every few seconds, that is the first key to look at.
+- Probe cadence. `health_check_interval`, `health_check_concurrency` and
+  `health_check_staleness_threshold` in `litellm/config.yaml` decide how often every
+  Spark deployment gets a real generation, and they ship at `120`, `2`, and `900` --
+  where the interval used to sit at LiteLLM's own default of 300 s. 120 s is the floor
+  the measurement allows, not a taste: at 30 s across five deployments a round was
+  putting more probes on a box than user requests, and each one took a prompt-cache
+  state from a conversation. A probe is a real completion -- the deployment's whole
+  `litellm_params` through `acompletion` at the default `health_check_max_tokens` of 16
+  -- and the four probes queued behind a long turn were dropped by the proxy's own
+  health-check timeout at about 81 s, which is the same `reason=client-left` shape as the
+  line above. The cap itself is 60 s (`HEALTH_CHECK_TIMEOUT_SECONDS`,
+  `constants.py:1557`), read per deployment (`health_check.py:530`), so the queue in
+  front of the probe is the plain reading of the gap between that cap and the 81 s the
+  log shows - the drop time is what was seen, the queue is inference.
+  A box merely busy enough to stall a 16-token probe past that drop is what keeps the
+  floor here: `health_check_ignore_transient_errors: true` is what now stops one slow
+  408 or 429 probe from also pulling that box off the fleet for a cycle
+  (`proxy_server.py:3971-3974`, `:4002-4006`), but the probes still cost a
+  prompt-cache state each, so nothing goes lower. Read the period as one sweep *plus*
+  the interval, not as the interval: the loop sleeps after a sweep finishes, and a
+  sweep is the 27 deployments that did not opt out through the concurrency-2 gate. If
+  the warnings come back every few seconds, that interval is the first key to look
+  at. What the filter those probes feed actually excludes, and what to check when it
+  stops excluding, is under `A Spark box is powered off and still getting traffic`
+  below.
 
 - The 195k needle. `//scripts:spark-verify` runs the recipe's `needle.py --length 195000`
   as the window proof, and a 195k prompt the server has never seen is the largest single
@@ -316,6 +333,158 @@ bazelisk run //scripts:spark-verify -- --needle 10.0.0.5   # force it: the box g
   quietly rebuilt with a shorter window is still visible; the needle is the active
   confirmation of it. `--no-tests` skips all four recipe probes for a quick read-only
   pass, and that is what `//scripts:bootstrap` runs.
+
+### A Spark box is powered off and still getting traffic -> cooldown cannot see a refused connection, the health filter can
+
+Cause: the exclusion people reach for for this is the one that cannot fire on the failure
+a down box actually raises. `_is_cooldown_required` returns False the moment the exception
+text contains `APIConnectionError` (`litellm/router_utils/cooldown_handlers.py:223`,
+`ignored_strings`), and a closed port, a dead engine process, and a TensorFold box that
+refuses with the status-less `NoRoom` value all surface as that exception. So no
+`allowed_fails` number and no `cooldown_time` cools a box that is simply gone -- which is
+why `litellm/config.yaml` ships no `allowed_fails` key at all, and why `cooldown_time: 60`
+is there for the other failure: a box that answers HTTP and returns real 5xx.
+
+Say which half of this entry is measured. The half that is: with
+`enable_health_check_routing: true` a box that answered HTTP 500 to client traffic
+received zero client requests in the sample window, against several with the flag
+removed and `allowed_fails: 40` / `cooldown_time: 5` restored - zero against
+several, from a throwaway three-box harness that a reviewer re-ran with its own
+containers. The refused-connection half, which is what this entry is named for, is
+read out of the two code paths above rather than measured: the harness's
+`docker stop` phase cannot show anything, because a stopped container logs nothing
+in either arm.
+
+What pulls a down box out is the health filter, and it needs both halves of it running:
+
+- `enable_health_check_routing: true` in `general_settings`. Without it,
+  `_async_filter_health_check_unhealthy_deployments` (`router.py:14137`) is a no-op at
+  `router.py:14153`, and `async_get_available_deployment` (`router.py:13041`) hands
+  least-busy the whole list.
+- A live probe loop: `background_health_checks: true` plus `health_check_interval` above
+  zero. An interval that is unset or 0 returns from the loop before it starts
+  (`proxy_server.py:4071`) and starves the state the filter reads. A router-wide
+  `allowed_fails_policy` with `background_health_check_model_groups` unset switches the
+  filter off a third time (`router.py:14161`), which is why no such policy sits in this
+  config.
+
+That is also why the picker needed the filter at all. `least-busy` raises its in-flight
+counter before the call and gives it back on the failure hook, and `_least_busy` returns
+the FIRST deployment at the minimum (`router_strategy/least_busy.py:83`, `:120`, `:129`,
+`:143`), so a box that refuses everything sits at zero and an unfiltered least-busy
+prefers it over a healthy box. "Off but still getting traffic" is the expected shape of
+routing with the filter off, not a bug to chase on the box.
+
+Confirm it in this order:
+
+- Who does the router hold right now? `GET /health` with the master key answers it, and
+  because `background_health_checks: true` ships here the handler returns the cached
+  probe results (`_health_endpoints.py:1218`) rather than firing a fresh generation at
+  every deployment -- an operator's read of this endpoint costs the fleet nothing. Each
+  entry carries `model_id`, which is the per-box deployment id the config names
+  (`agent-spark-1`, `agent-swarm-spark-2`, ...), plus `api_base` and
+  `exception_status`, and the payload totals them as `healthy_count` /
+  `unhealthy_count`. Narrow one box with `?model_id=agent-spark-2` or one lane with
+  `?model=agent-swarm`. On the stack host, with the `LITELLM_MASTER_KEY` the container
+  itself runs with:
+
+```sh
+curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
+  http://127.0.0.1:4000/health | python3 -c 'import json,sys; d=json.load(sys.stdin); print("healthy", d.get("healthy_count"), "unhealthy", d.get("unhealthy_count")); [print(" ", e.get("model_id"), e.get("api_base"), e.get("exception_status")) for e in d.get("unhealthy_endpoints", [])]'
+```
+
+  A box you know is off sitting in `unhealthy_endpoints` while its two siblings are in
+  `healthy_endpoints` is the filter doing its job. It in `healthy_endpoints` too is
+  most often the loop not running -- read the two `general_settings` keys above before
+  you read the box. One innocent case is a restart or a redeploy of the proxy: no
+  Redis is configured for this proxy, so the marks live in one process
+  (`router_utils/health_state_cache.py:32-36`) and every restart clears them until the
+  first sweep finishes, with nothing logged on the filter's fail-open exits. Right
+  after a deploy `healthy_endpoints` can list a box you know is off; read `/health`
+  again a cycle later before you conclude anything.
+
+- Is the process itself answering? `/health/liveliness` needs no key at all
+  (`_health_endpoints.py:1938`), which is what the compose `healthcheck:` dials. `/health`
+  is behind `user_api_key_auth` (`_health_endpoints.py:1110`), so it needs the master key
+  and is not a liveness probe.
+
+- Do not read the proxy log for this. The probe loop writes its own lines through
+  `verbose_proxy_logger`, so the sweep and the cooldowns it takes are DEBUG-level and a
+  healthy-looking log proves nothing. The one line that does reach the default level is
+  `background_health_check_cycle_duration_exceeded_interval`
+  (`proxy_server.py:4212-4214`), a WARNING that fires when one sweep alone outruns
+  `health_check_interval` -- it appeared in a measurement run with the interval at 15
+  s. Nothing in this repo measures the sweep at the shipped 120 s, so read the line as
+  arithmetic rather than a settled all-clear: the sweep covers the 27 deployments that
+  did not opt out, pushed through the concurrency-2 gate, so roughly 14 sequential
+  rounds, and a mean probe over about 8 s crosses the interval. Treat it as a reason
+  to raise the interval, not to chase the box. What 120 s does buy is that cycles
+  cannot stack: the sleep sits after the sweep (`proxy_server.py:4234`) and
+  concurrency 2 is a hard cap.
+  `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -i 'cycle_duration_exceeded'`
+  is the grep worth typing; the loop's own lines need the proxy started with
+  `--detailed_debug`.
+
+- `/v1/models` is not the read people try first: it lists the 13 model *aliases*, not the
+  deployments under them, so a box that has been filtered out is invisible there and the
+  alias still appears.
+
+- Is the filter still believing its state, or has it failed open? It returns the whole
+  candidate list when the state is missing, when it is older than
+  `health_check_staleness_threshold`, or when filtering would leave nothing to route to.
+  That threshold is the fail-open window: at the shipped `900` s a deployment that drops
+  out of the probe list altogether -- renamed, or removed from the config while the proxy
+  keeps running -- is believed dead for at most 15 minutes and then takes traffic again.
+  The vendor default is 600 s whatever the interval says, because it is computed from a
+  constant (`router.py:993`), so the two keys move together or the filter fails open
+  before the next sweep.
+
+Then separate a sick proxy from a sick box, because each has its own fix. The `litellm`
+service carries a compose `healthcheck:` that dials the proxy's own unprotected
+`/health/liveliness` with the image's interpreter -- the image ships no `curl` and no
+`wget` -- every 30 s, with `retries: 3` and a `start_period: 60s` that covers the config
+import and the 31 deployments built before uvicorn binds:
+
+```sh
+bazelisk run //scripts:prod-stack -- status
+docker compose -p evo-t1-coder-stack -f docker-compose.yml ps litellm
+docker inspect --format '{{.State.Health.Status}}' \
+  "$(docker compose -p evo-t1-coder-stack -f docker-compose.yml ps -q litellm)"
+```
+
+- `note:` the daemon restarts a container that *exits*, and not one that goes unhealthy.
+  `restart: unless-stopped` is what recovers a crashed proxy; the probe buys visibility
+  (`(unhealthy)` in `status` and in `ps`, the last three probes in `docker inspect`, the
+  event Alloy ships to Loki) and a `service_healthy` wait nothing here takes -- `hermes`
+  deliberately keeps `condition: service_started`, because compose waits indefinitely for
+  a healthy condition and a probe that stops passing would hold the host assistant down
+  with the proxy.
+- `ok:` liveliness answering `I'm alive!` with no container `unhealthy` anywhere means the
+  proxy is fine and the reads above are the ones to believe. A box that answers
+  `/v1/models` on its own port is still not a box the router will use, and that
+  distinction is what `//scripts:spark-verify` settles, from the stack host:
+
+```sh
+bazelisk run //scripts:spark-verify -- 10.0.0.5
+```
+
+Recovery needs no operator action once the box answers again: the next green probe
+overwrites the mark with `is_healthy: True` (`health_check.py:683`), and the same
+loop is what notices, so a box that comes back on its own is eligible again inside
+roughly one sweep plus `health_check_interval`. Eligible is the precise word: the
+cooldown entry that same loop wrote for the box has to expire on its own
+(`cooldown_time`), and every failing cycle re-arms it, so the first turn back can
+still land on another box. What an operator does do is fix the box -- power,
+the TensorFold server, `bazelisk run //scripts:spark-configure -- <host> --apply` -- or,
+when the container is the sick half, restart it so it re-reads the config:
+
+```sh
+docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
+```
+
+While every Spark is unreachable the `agent` group hops to `coder` on the Arc, which is
+why a fleet that answers at all can still be answering badly; see the fallback chain in
+`docs/litellm-routing.md`.
 
 ### Sessions log `compact failed: exceeded wall-clock budget 300s (runaway generation)` -> a compaction stream that never sent a token, bought three times
 
@@ -795,7 +964,7 @@ coder logs <workspace>
   body of that log, and each `coder_script` prints under the name Coder labels it with -
   **Seed the Grok Build rulebook**, **Seed the fleet agents, personas and skills**, **Fetch
   stack secrets from Infisical**, and the rest, which are the `display_name` values at
-  `templates/workspace/main.tf:726-1010`.
+  `templates/workspace/main.tf:731-1015`.
 - Every body speaks the same shapes (`templates/common/boot-log.lib.sh`, handed to each body
   as the `boot_log_lib` key of its `templatefile()` map):
 
@@ -821,7 +990,7 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
   printed a header and no closing `summary:` never reached the end of its own script - it died
   in the stage that line names, or Coder stopped it at the script's `timeout`. The startup
   body's eight stage titles (`workspace startup`
-  stages 1-8, `templates/workspace/startup.sh.tftpl:37-321`) are the map for anything about
+  stages 1-8, `templates/workspace/startup.sh.tftpl:37-326`) are the map for anything about
   tmux, the CLI, the shell profile, the skills and the notes library, the editor settings,
   the Grok profile, ownership and the git credentials, or the repositories.
 - The one case where a body prints nothing at all and nothing is wrong: the vault body leaves
@@ -1166,6 +1335,15 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
 grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
 ```
 
+- That first block prints two numbers now: the fleet's own ceiling as `# fleet-width:`,
+  above this session's cap as `max_concurrent`
+  (`templates/workspace/grok-config.toml.tftpl:427-428`, devcontainer twin
+  `templates/devcontainer/grok-config.toml.tftpl:428-429`). `15` over `15` is this entry -
+  the number is right and the placement is not. `15` over `4` is a different fault, where
+  the width itself was set, and
+  [the rendered-width entry](#the-rendered-width-is-below-fleet-width)
+  is the one that answers it.
+
 - `max_concurrent` is how many a session may have in flight. `[subagents.models]` is
   where each type's traffic goes, and a writer pinned to `agent` carries the workspace's
   own `x-litellm-session-id`, so the whole fan-out lands on the one Spark box that key
@@ -1174,7 +1352,7 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
   width there is about 4 no matter what the number above it says. The rest queue:
   `limit_behavior = "queue"` holds the overflow rather than failing the spawn.
 - Read those same four lines for the depth, because the block now prints `max_depth`
-  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:407-408`), rendered
+  beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:428-429`), rendered
   from the `grok_subagent_max_depth` variable whose default is 2. At 2 a child spawns
   read-only mappers of its own, so a wave can be wider than the parent's own `slots`, and
   each in-flight child holds one of the fleet's 15 streams: a parent sums `1 + spawns` per
@@ -1203,7 +1381,8 @@ grep -m1 'x-litellm-session-id' ~/.grok/config.toml
   A `ws-...` value means Terraform rendered it; `contributor` means
   `bazelisk run //scripts:seed-dev-env` did, and that path takes the lane from the
   `GROK_SUBAGENTS_LANE` environment variable (`scripts/seed-dev-env.sh`), defaulting to
-  `agent-swarm`.
+  `agent-swarm`, and the ceiling from `GROK_SWARM_WIDTH` (`scripts/seed-dev-env.sh:185`),
+  so a contributor home carries the same pair.
 - On the Terraform path, no dotenv key, no CLI flag, and no `//scripts:push-template`
   passthrough names that variable, so it was set by a raw
   `coder templates push --var grok_subagents_lane=...`. Undo it the same way from the
@@ -1218,6 +1397,134 @@ coder restart <workspace>
 - Restarting is not optional: the value is baked into the agent's startup script at push
   time, and `update-configs` deliberately never re-copies `config.toml`.
   docs/litellm-routing.md and docs/grok-build-and-agents.md#the-fan-out-seam.
+
+### The rendered width is below fleet-width
+
+- The profile carries two numbers and the gap between them is the diagnosis:
+
+```bash
+grep -A4 '^\[subagents\]' ~/.grok/config.toml
+```
+
+  `# fleet-width:` is the fleet's own ceiling, `max_concurrent` this session's cap
+  (`templates/workspace/grok-config.toml.tftpl:427-428`, devcontainer twin
+  `templates/devcontainer/grok-config.toml.tftpl:428-429`). They stay two lines rather
+  than one number because an explicit `--var` owns `max_concurrent` and never moves the
+  ceiling. `15` over `4` is this entry; `15` over `15` is
+  [the pinned-lane entry above](#only-about-4-subagents-run-at-once-though-subagents-max_concurrent-says-15---the-writers-are-on-a-pinned-lane).
+
+- Nothing in this repo renders a `4`. Both twins derive the width from the fleet -
+  `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
+  (`templates/workspace/main.tf:553`, `templates/devcontainer/main.tf:581`) - and take the
+  ceiling beside it from that same variable (`templates/workspace/main.tf:558`). Measured:
+  `terraform apply` with the shipped defaults prints `15`, and the same run with
+  `-var grok_subagent_max_concurrent=4` prints `4`. So a rendered `4` is a number somebody
+  set, and a `4` still there is one that outlived what set it.
+
+- It can sit in two places, and they clear differently:
+  - the **template**, from a raw `coder templates push --var grok_subagent_max_concurrent=4`.
+    `//scripts:push-template` passes no fan-out `--var` of its own - its only `grok_*` one
+    is `grok_profile_mode` (`scripts/push-template.sh:528`) - so a template-level value is
+    somebody's raw push, the same shape as the lane rollback above;
+  - the **workspace**, from `coder start <workspace> --parameter ...`, from
+    `coder update <workspace> --parameter ...`, or from the Variables tab in the
+    dashboard. (`coder start` takes `--parameter name=value`; `--var` is a
+    `coder templates push` flag and that pair has no `--var` to give it - on
+    Coder v2.36.6 `coder start --help` lists `--parameter`, `--parameter-default`,
+    `--rich-parameter-file`, `--use-parameter-defaults` and `--no-wait`, and no
+    `--var`.) A workspace value survives every template push and is re-applied on every
+    start, which is how a number typed in for one experiment months ago still caps a
+    fan-out today.
+
+- One command reads both numbers and names the case, from inside the workspace:
+
+```bash
+bazelisk run //scripts:subagent-check
+```
+
+  Its verdict for this fault (`scripts/subagent-check.sh`):
+
+```text
+warning: max_concurrent = <n> is below the fleet width <fleet>
+note: a rendered width below fleet-width is a value that outlived its template - on the stack host: coder start <workspace> --parameter grok_subagent_max_concurrent=<fleet> starts it wide once, and coder update <workspace> --parameter ... or the Variables tab keeps it there; if the number is the template version's own default, //scripts:push-template re-pushes it without one, since that script passes no fan-out width of its own. Re-run this check after the restart - the number moving is the proof.
+```
+
+  The note offers both remedies because the check cannot tell them apart from
+  inside the container: a workspace value and a template version's default live in
+  the same database on the host, and neither is readable over the agent token. The
+  second run of the check is what settles it, which is why the note asks for it.
+
+  Two near-misses read differently on purpose. A profile whose `[subagents]` table
+  is simply absent answers `warning: no 'max_concurrent' line - this profile has no
+  [subagents] table; restart the workspace to re-materialize`, and a restart is the
+  right order there. A table that lost only its width line answers `warning: the
+  [subagents] table carries no 'max_concurrent' line - a hand edit, which no restart
+  undoes`, because the render writes that line and a file the render still owns
+  never loses it on its own. A profile that answers `warning: no '# fleet-width:'
+  line above max_concurrent - this profile predates it; restart the workspace to
+  re-materialize` has no ceiling to compare against yet, so that one is a restart
+  too.
+
+  The whole surface, for a script or a CI step that wants the answer rather than the prose
+  (`--help` prints the same):
+
+```text
+bazelisk run //scripts:subagent-check -- [--config PATH] [--parallel N] [--json] [--strict]
+
+  --config PATH   the profile to read; default $HOME/.grok/config.toml, which is the one
+                  this workspace's own render owns
+  --parallel N    the streams one box serves, what a pinned lane is measured against;
+                  default 5, the PARALLEL recipe default in scripts/spark-configure.sh
+  --json          one flat object on stdout and nothing else, for a machine to read
+  --strict        a warning is a failure, so a fleet-shaped check can gate a pipeline
+
+  sections        == subagent slots ==, then -> the profile, -> the width, -> the lanes,
+                  -> the depth, closing with summary: N ok, W warnings, F failed
+  exit            0 with nothing failed, 1 with a failure (or a warning under --strict),
+                  2 on a usage error such as an unknown flag or a non-numeric --parallel
+  --json keys     config, marker, max_concurrent, fleet_width, writers_lane, pinned,
+                  max_depth, verdict, ok, warnings, failed
+                  verdict is ok, warning, or error; pinned is what the writers' lane in
+                  [subagents.models] resolves to, false for the four pin-lifted aliases
+```
+
+- The same finding arrives by itself at every start: the profile stage of the boot compares
+  the two numbers right after re-materializing the config
+  (`boot_stage 6 "the Grok Build profile"`, `templates/workspace/startup.sh.tftpl:224`,
+  the comparison at `:259-271`, same lines in the devcontainer twin) and prints through
+  `boot_note` (`templates/common/boot-log.lib.sh:51`), so the workspace start log carries
+  `note: subagents width 4 is below the fleet's 15 - a value that outlived its template,
+  unless you set it on purpose`.
+
+- Remedy, from the stack host, in this order:
+
+```bash
+bazelisk run //scripts:push-template    # stack host; it passes no fan-out width of its own
+coder restart <workspace>
+```
+
+  Every start re-renders `config.toml` from the template, so the push only clears a
+  template-level value. When the number sits on the workspace, put the fleet's own width
+  back there instead:
+
+```bash
+coder start <workspace> --parameter grok_subagent_max_concurrent=15
+```
+
+  `coder start` takes `--parameter name=value` and has no `--var`; `--var` belongs to
+  `coder templates push`, which is the command above. The start itself re-renders
+  `config.toml`, so that one line is enough to see the number move; it is also one-shot, so
+  clear the stored value with `coder update <workspace> --parameter
+  grok_subagent_max_concurrent=15` or the Variables tab, or the next start narrows it again.
+  `15` is `grok_swarm_width` under
+  the shipped recipe - 3 Spark boxes x `PARALLEL` 5 (`scripts/spark-configure.sh:92`) - so
+  a smaller fleet changes both numbers with `--var grok_swarm_width` on the push rather
+  than widening the session past what the boxes can hold.
+
+- A width under the ceiling is not always a fault: it is the queue an operator sets on
+  purpose for a session whose writers ride a pinned lane, where one box's `PARALLEL` is the
+  useful width. The check prints the same warning either way, so the question is what
+  `general-purpose` names under `[subagents.models]`, not how big the number is.
 
 ## Docker-in-docker
 
@@ -2002,8 +2309,8 @@ bazelisk run //scripts:prod-stack -- up
 ### `infisical: vault not configured for this stack` -> the boot fetch ran with an empty name on the agent environment
 
 - The line is in the workspace start log, in the script Coder labels **Fetch stack secrets
-  from Infisical** (`templates/workspace/main.tf:718`, same body in the devcontainer twin
-  at `templates/devcontainer/main.tf:769`):
+  from Infisical** (`templates/workspace/main.tf:723`, same body in the devcontainer twin
+  at `templates/devcontainer/main.tf:774`):
 
 ```text
 infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the push composes INFISICAL_DOMAIN itself, from INFISICAL_PORT, so the name missing here is one of the other five: each is read from the key of the same spelling in the stack host's .env, and one that is empty or still spells change-me is skipped rather than sent: set it there and re-run bazelisk run //scripts:push-template.
@@ -2012,7 +2319,7 @@ infisical: vault not configured for this stack. These six names arrive on the co
 - Cause: the body's first gate, `templates/common/infisical-secrets.sh.tftpl:14-20` - any
   one of those six empty on the agent environment prints this and exits `0`, so the
   workspace boots with no vault secrets and nothing else complains. The resource exists at
-  all only while `infisical_enabled` is true (`templates/workspace/main.tf:716`), so this
+  all only while `infisical_enabled` is true (`templates/workspace/main.tf:721`), so this
   is not the flag being off; it is one value that never arrived. The push forwards each of
   the five read-side values only when `.env` carries something real - `env_get_forwardable` drops an
   empty value and one still spelling `change-me*` (`scripts/push-template.sh:198-205`, the five
@@ -2061,7 +2368,7 @@ infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps th
   (`scripts/push-template.sh:636`, `:668-671`), so an adopted vault still ships a boot that never
   waits on the network. That off is the safe side of a real trade: a fetch that reaches the
   vault is a fetch bounded by the script's own `timeout = 120`
-  (`templates/workspace/main.tf:725`), and the exit is `0` either way because no secret
+  (`templates/workspace/main.tf:730`), and the exit is `0` either way because no secret
   manager gets to fail a workspace start.
 - What the boot keeps is whatever `~/.infisical/agent.env` an earlier start wrote, which on
   a workspace that has never pulled is nothing at all. To load the credentials now, on the

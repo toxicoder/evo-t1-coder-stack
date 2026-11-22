@@ -163,7 +163,7 @@ resolve_repo_root() {
 seed_render_grok_config() {
   local src="${1:-}" dest="${2:-}" rendered="" lbrace="" dollar='$' search=""
   local home="${3:-${HOME:-/home/coder}}" keep_ctx7="${4:-0}" keep7="0"
-  local proxy_lit="" proxy_path="" lane="" slots="" depth=""
+  local proxy_lit="" proxy_path="" lane="" slots="" depth="" fleet_width=""
   local explore_lane="" plan_lane="" review_lane="" theme=""
   local -a theme_sed=()
   # The fan-out knobs, with the same derivation templates/workspace/main.tf uses:
@@ -179,6 +179,16 @@ seed_render_grok_config() {
   if [[ ! ${lane} =~ ^[A-Za-z0-9._-]+$ ]]; then
     note "GROK_SUBAGENTS_LANE='${lane}' is not a model id - using agent-swarm"
     lane="agent-swarm"
+  fi
+  # The fleet's own width, rendered beside the session's width as `# fleet-width:` so a
+  # home whose width came down from an older setting says so on its own face.
+  fleet_width="${GROK_SWARM_WIDTH:-15}"
+  if [[ ! ${fleet_width} =~ ^[1-9][0-9]*$ ]]; then
+    note "GROK_SWARM_WIDTH='${fleet_width}' is not a count - using the fleet width 15"
+    fleet_width="15"
+  elif ((fleet_width > 32)); then
+    note "GROK_SWARM_WIDTH='${fleet_width}' is past the fleet's ceiling - using 32"
+    fleet_width="32"
   fi
   slots="${GROK_SUBAGENT_MAX_CONCURRENT:-${GROK_SWARM_WIDTH:-15}}"
   if [[ ! ${slots} =~ ^[1-9][0-9]*$ ]]; then
@@ -273,6 +283,7 @@ seed_render_grok_config() {
     -e "s|\${grok_plan_lane}|${plan_lane}|g" \
     -e "s|\${grok_review_lane}|${review_lane}|g" \
     -e "s|\${grok_subagent_max_concurrent}|${slots}|g" \
+    -e "s|\${grok_subagent_fleet_width}|${fleet_width}|g" \
     -e "s|\${grok_subagent_max_depth}|${depth}|g" \
     -e "s|\${grok_theme}|${theme}|g" \
     "${theme_sed[@]}" \

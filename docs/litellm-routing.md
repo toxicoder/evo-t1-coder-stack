@@ -15,6 +15,8 @@ tags: [litellm, models, routing, spark]
 - Routing inside the `agent` group, the four unpinned lanes (`agent-swarm`,
   `agent-explore`, `agent-review`, `agent-swarm-fast`), and the `agent` to `coder`
   fallback
+- What pulls a dead Spark box out of rotation, how it comes back on its own, and what
+  the container's own healthcheck does not do
 - The two fast-compaction lanes, and the proxy callback that moves one summary call of
   a session onto a cheaper tier
 - Reading the routing back, and editing an alias safely
@@ -69,15 +71,63 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
   lanes and the two fast-compaction lanes hop one step further, through the lane that
   bakes their own level, so a lane that asked for `low` is not served an `xhigh` answer
   by its fallback.
-- `allowed_fails: 40` and `cooldown_time: 5` decide when a box stops being a candidate.
-- `background_health_checks: true`, with `health_check_interval: 300` and
-  `health_check_concurrency: 2`, re-probe a box on their own, so recovery does not
-  wait for user traffic to rediscover it. Those two keys have to sit in
-  `general_settings:`; under `router_settings:` the proxy raises `ValueError` at boot.
-  The interval is LiteLLM's own default and the concurrency is deliberately small:
-  a probe is a real generation that carries the lane's baked `reasoning_effort`, and
-  on a box whose prompt cache sits full it evicts a warm conversation to fit itself.
-  See the TensorFold log section of [troubleshooting.md](troubleshooting.md).
+- `cooldown_time: 60` is how long a box that tripped the rate rule sits out, and it is
+  also the fail window that rule counts over. There is no `allowed_fails` key in the
+  config, and the absence is deliberate: naming it with a non-default number selects
+  the counting branch of the cooldown decision instead of the rate rule, and that
+  branch counts inside a window of `cooldown_time`. The `allowed_fails: 40` and
+  `cooldown_time: 5` this replaced therefore asked for 41 failures inside 5 s, which is
+  why it never fired. Without the key the vendor's rate rule decides when a box stops
+  being a candidate; see
+  [what `cooldown_time: 60` is for](#what-cooldown_time-60-is-for-now).
+- `background_health_checks: true` and `enable_health_check_routing: true` do the
+  re-probing and then make the result decide routing, so recovery does not wait for
+  user traffic to rediscover it. They sit beside `health_check_interval: 120`,
+  `health_check_staleness_threshold: 900` and `health_check_concurrency: 2`. Those keys
+  have to sit in `general_settings:`; `health_check_interval` and
+  `health_check_concurrency` under `router_settings:` make the proxy raise `ValueError`
+  at boot. The concurrency is deliberately small: a probe is a real generation that
+  carries the lane's baked `reasoning_effort`, and on a box whose prompt cache sits
+  full it evicts a warm conversation to fit itself. See the TensorFold log section of
+  [troubleshooting.md](troubleshooting.md).
+- `health_check_ignore_transient_errors: true` is load-bearing rather than tidy. A box
+  that is merely busy can answer a 16-token probe with a 429 or a 408, and with the
+  key on those endpoints are dropped before the state is written
+  (`proxy_server.py:3971-3974`) and again before the cooldown loop takes them
+  (`proxy_server.py:4002-4006`). Flipping it off would cost a session-pinned
+  conversation its warm box and that box's prompt cache its next prefill, over one
+  slow probe.
+- The four Arc deployments - `coder`, `coder-fast`, `chat`, `compaction-fast` - carry
+  `model_info.disable_background_health_check: true`, so the sweep drops them
+  (`proxy_server.py:4116-4118`). A group's only deployment can never be pulled out by
+  the health filter anyway - dropping it empties the candidate list, which is the
+  `router.py:14177` fail-open - so the mark buys no routing, and it is not free: the
+  same cycle cools what it marked (`proxy_server.py:4013`) and the cooldown list has
+  no fail-open under this config, because the bypass at `router.py:12774` needs a
+  policy the file refuses to set. `coder` is the terminal hop of every Spark lane, so
+  a 401 or a 404 from a probe would park the fallback for `cooldown_time` with no user
+  request having failed. Read the two functions in order and the family is exact: that
+  pair clears `_is_cooldown_required` on its own named arms (`cooldown_handlers.py:239`
+  and `:243`), and the arm at `:400-401` then cools it on the bare question of whether
+  LiteLLM would retry the status, with no single-deployment guard -- `_should_retry`
+  returns False for everything outside 408/409/429/5xx (`utils.py:6854-6880`). No other
+  probe reply strands anything: 429 and 408 are skipped at the call site by
+  `health_check_ignore_transient_errors` (`proxy_server.py:4001-4004`), any other 4xx is
+  refused at `:248`, and a genuine 5xx clears the catch-all at `:252` only to fall
+  through every base-case arm. That reading is the source's, not the harness's -- the
+  arm which recorded `exception_status` 500 had the Arc unreachable, and
+  `proxy_server.py:3999` derives the status with `getattr(original_exception,
+  "status_code", 500)`, so a box answering no HTTP at all arrives pre-labelled
+  retryable, and is vetoed at `:223-227` on its `APIConnectionError` text besides. The
+  consequence that is measured, and which stands without the stranding argument: those
+  four no longer appear in the cached `/health` report at all, and four of the 31 probes
+  a cycle stop being paid.
+- `health_check_staleness_threshold` has to be named because the shipped default does
+  not follow the interval: it is `DEFAULT_HEALTH_CHECK_INTERVAL * 2`, 600 s whatever
+  `health_check_interval` says (`router.py:993`), and it is the window the health filter
+  trusts before it stops filtering. 900 s is what keeps a slow sweep from opening that
+  window; see [how long it takes, and how it comes
+  back](#how-long-it-takes-and-how-it-comes-back).
 - `num_retries: 2` covers a transient blip; moving off a busy box is routing's job, not
   the retry chain's. `request_timeout: 1200` is now the tightest deadline on the chain -
   the CLI's streaming idle allowance (`inference_idle_timeout_secs`) sits at 1800 s - so
@@ -276,7 +326,16 @@ key, so a config that looks correct silently does nothing, which is why
 
 ### The picker: least-busy
 
-- `least-busy` picks the healthy deployment carrying the fewest in-flight requests.
+- `least-busy` picks the deployment carrying the fewest in-flight requests out of a list
+  that some filter already made healthy. It has no health input of its own, and that is
+  the one thing to know before trusting it to spread load.
+- Its counters are raised before the call (`router_strategy/least_busy.py:120`) and given
+  back on the failure hook (`:129`, `:143`), so a box that refuses every request sits at
+  zero -- and `_least_busy` (`:83`) returns the FIRST deployment at the minimum. A dead
+  box listed first in a group is therefore the preferred target, not the avoided one:
+  unfiltered, `least-busy` prefers it over a healthy box. What pulls it out is the health
+  filter that runs ahead of the strategy, which is the whole subject of
+  [when a Spark box goes down](#when-a-spark-box-goes-down-and-comes-back).
 - Its counters are per deployment and expire after a hardcoded 3600 s; there is no
   `routing_strategy_args` block to set, and `ttl` there would be a paste from newer docs.
 - It decides only for unpinned traffic: the affinity pin below resolves first, and
@@ -591,6 +650,130 @@ traceparent and baggage, plus `metadata.session_id` in the body.
 1. That request routes elsewhere, to whichever box `least-busy` picks.
 2. The pin itself is kept.
 3. The conversation goes back to the box once it is healthy again.
+
+## When a Spark box goes down and comes back
+
+### What actually removes it
+
+The health filter does, and it is the only mechanism that can. Selection on the
+chat-completion path runs `async_get_available_deployment` (`router.py:13041`) ->
+`async_get_healthy_deployments` (`router.py:12700`) ->
+`_async_filter_health_check_unhealthy_deployments` (`router.py:14137`), and that last
+call is a no-op unless `enable_health_check_routing` is set in `general_settings:`
+(`router.py:14153`). That is the key the config turns on for exactly this job.
+
+Cooldown cannot do it, and that is not a tuning question. `_is_cooldown_required`
+returns False as soon as the exception text contains `APIConnectionError`
+(`litellm/router_utils/cooldown_handlers.py:223`, `ignored_strings`). A refused
+connection, a dead engine, and a TensorFold `NoRoom` refusal all surface as that
+exception, so the failure that most needs a box pulled is the one the cooldown path is
+written to skip. The probe loop writes the health state (`proxy_server.py:3981`)
+*before* that veto can reach the same exception: the write sits behind the guard at
+`proxy_server.py:3965` and above the routing-only bail at `proxy_server.py:3988-3989`,
+so the mark is there whether or not the cooldown loop below it ever runs, which is why
+the filter marks what cooldown never marks.
+
+Three settings switch the filter off, and the config avoids all three:
+`enable_health_check_routing` off; `health_check_interval` unset or <= 0, which returns
+from the probe loop before it ever starts (`proxy_server.py:4071`); or a router-wide
+`allowed_fails_policy` with `background_health_check_model_groups` unset
+(`router.py:14161`). That last one is why `router_settings:` carries no
+`allowed_fails_policy` anywhere, and why one added there for an unrelated reason would
+quietly disable the filter that keeps a dead box out of `least-busy`.
+
+### What `cooldown_time: 60` is for now
+
+With `allowed_fails` gone, cooldown uses the vendor's rate rule
+(`cooldown_handlers.py:392-398`), guarded at `:395`: cool a deployment once it fails
+more than `DEFAULT_FAILURE_THRESHOLD_PERCENT` (0.5, `constants.py:69`) of at least
+`DEFAULT_FAILURE_THRESHOLD_MINIMUM_REQUESTS` (5, `constants.py:131`) requests in a
+rolling minute. The counting branch is the `else` one line below at `:404-405`,
+reached only when a router-wide policy is set or `allowed_fails` carries a
+non-default number (`:363-366`), and this file names neither.
+`SINGLE_DEPLOYMENT_TRAFFIC_FAILURE_THRESHOLD` is 1000, so the "all
+requests failed" arm never fires at this fleet's volume. That is the rule doing what
+cooldown was always the right tool for: a box that answers badly - a 500, a timeout, a
+malformed completion - is parked for `cooldown_time`, 60 s, and comes back on its own.
+The same 60 s is the period the probe loop cools a deployment its previous cycle marked
+unhealthy (`proxy_server.py:4013`, `time_to_cooldown=router.cooldown_time`, `:4018`);
+with routing on, that path runs now, where it used to return early.
+
+That 60 s is not confined to the probe path. Both paths read the one `cooldown_time`
+knob, so raising it off the 5 s default (`constants.py:75`) widens every group's
+exclusion, the three-deployment Spark groups included: a box that fails 3 of 5
+requests in a minute now sits out for a minute
+instead of 5 s, and a minute without one of three boxes moves a session pin that was
+warm there.
+
+### How long it takes, and how it comes back
+
+Detection is one sweep plus the interval, not the interval alone: the probe loop sleeps
+`health_check_interval` *after* a sweep finishes (`proxy_server.py:4234`) rather than
+firing on a clock. A sweep is the 27 deployments that did not opt out pushed through
+the `health_check_concurrency: 2` gate - the sweep drops every deployment carrying
+`model_info.disable_background_health_check` (`proxy_server.py:4116-4118`), which is
+four of the 31 - so the wait before a box is re-probed is one full sweep plus 120 s.
+
+Recovery needs no operator and no restart. A green probe overwrites the mark with
+`is_healthy: True` (`health_check.py:683`), so a box is eligible again on the first
+probe that succeeds after it comes back - no request has to fail first to rediscover
+it. That is eligible, not proven serving: the same loop cooled what it marked
+(`proxy_server.py:4013`), and that cooldown entry has to expire on its own clock, so
+the first turn back can still land on another box.
+
+The bound on that state is `health_check_staleness_threshold: 900`, and the filter fails
+open: it returns the whole candidate list when the health state is missing, when it is
+older than that threshold, or when filtering would leave no candidate at all. So a fleet
+whose probe state has gone stale routes to every box rather than to none - a stale
+sweep costs the filter, never the traffic. The threshold is set explicitly because the
+shipped default is `DEFAULT_HEALTH_CHECK_INTERVAL * 2` = 600 s whatever
+`health_check_interval` says (`router.py:993`); left at the default it would not track
+the 120 s interval this config asks for.
+
+A restart of the proxy is itself a fail-open condition, and it is not logged. No
+Redis is configured for this proxy, so the marks live in one process
+(`router_utils/health_state_cache.py:32-36`) and every restart or redeploy clears
+them until the first sweep finishes; the filter has no log line on any of its
+fail-open exits, so nothing proves that window happened while it is open.
+
+### What the filter does not cover
+
+The filter sits on the chat-completion selection path. The image, audio, embedding and
+rerank paths select through `_async_get_healthy_deployments` (`router.py:8554`), which
+applies the cooldown filter and the blocked flag only - a dead box stays a candidate
+there. This fleet serves chat and streaming completions, so the limit is honest rather
+than load-bearing, but it is the reason a new modality on these aliases needs its own
+look before anyone calls it covered.
+
+What covers a request already in flight is unchanged by this work and predates it: the
+two attempts the retry chain allows (`num_retries: 2` in `litellm_settings`, and
+`DefaultRetries: 2` inside each Spark lane's `model_group_retry_policy` block), the
+rest of that per-group policy, and the `fallbacks` chains. The filter changes where a
+retry lands, not whether the turn is retried.
+
+### The container's own probe
+
+The `litellm:` service in `docker-compose.yml` carries a `healthcheck:` block beside
+these router settings, and it is a different check on a different thing: it asks whether
+the proxy process answers, not whether a Spark box does. Its `test:` is the JSON-array
+form invoking the image's own `/app/.venv/bin/python3` - the image ships no `curl` and
+no `wget` - at a one-line `urllib` request to
+`http://127.0.0.1:4000/health/liveliness` with `timeout=5`, exiting 0 only on a 200,
+with `interval: 30s`, `timeout: 10s`, `retries: 3`, and `start_period: 60s` to cover the
+boot that imports the config and builds 31 deployments before uvicorn binds.
+`/health/liveliness` is the endpoint because it is unprotected and answers `I'm alive!`,
+while `/health` sits behind `user_api_key_auth`
+(`health_endpoints/_health_endpoints.py:1938` and `:1110`) and a probe on
+it would need the master key in the container's own command line.
+
+What it does not do: the compose daemon restarts a container that *exits*, not one that
+goes unhealthy. `restart: unless-stopped` stays the only thing that recovers a crashed
+proxy, and this probe buys visibility instead - `dev-stack status` and
+`docker compose ps` print (unhealthy), `docker inspect` carries the last three probes,
+and the log tag ships the event to Loki. It also buys a `service_healthy` wait that
+nothing here takes: `hermes` keeps `depends_on: litellm: condition: service_started`
+deliberately, because compose waits indefinitely for a healthy condition and a probe that
+stopped passing would hold the host assistant down with the proxy.
 
 ## Fallback: the Spark lanes to `coder`
 

@@ -781,7 +781,15 @@ the number by hand.
 one workspace wants a number of its own, `--var grok_subagent_max_depth=N` sets how deep
 the tree may go, and
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
-seam and the `/ez-micro-plan` plan that fills the slots. Depth 2, the shipped default,
+seam and the `/ez-micro-plan` plan that fills the slots. That overrule is the only way a
+rendered width lands under the fleet's, so the profile keeps both numbers side by side:
+`[subagents]` carries `# fleet-width: 15` directly above `max_concurrent`
+(`templates/workspace/grok-config.toml.tftpl:427`, fed from `var.grok_swarm_width` at
+`templates/workspace/main.tf:558`), so 15 printed over 4 reads as a `--var` that outlived
+its template - on the template, or on the workspace, whose copy sits in the Coder database
+and is out of reach from inside the container.
+`bazelisk run //scripts:subagent-check` reads the pair and names which one you have,
+beside the writers' lane and the depth. Depth 2, the shipped default,
 lets a child spawn read-only mappers of its own, so a skeptic scopes out its own evidence
 and the parent skips a round trip; 1 keeps nesting off, which is the rollback, and 3 is
 the operator's experiment ceiling. Only `reviewer`, `security-auditor` and `tester` name
@@ -1299,6 +1307,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   │                        #   with --status, install with --apply
 │   ├── spark-verify.sh      # read-only fleet check
 │   ├── storage-clean.sh     # interactive janitor for the persistent layer
+│   ├── subagent-check.sh    # read one workspace's fan-out sizing against the fleet: the
+│   │                        #   rendered # fleet-width:, the writers' lane, the depth
 │   ├── test-in-image.sh     # run the Bazel gates inside evo-t1-dev:latest
 │   ├── update-configs.sh    # after a pull: port the env files, reseed workspace config
 │   ├── update-stack.sh      # one step: git pull, then redeploy what the pull changed

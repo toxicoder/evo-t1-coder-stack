@@ -79,6 +79,24 @@ subagents_block() {
   done
 }
 
+@test "subagents config: both twins echo the fleet width on the line above the width" {
+  # An explicit --var owns max_concurrent and lives in the Coder database, which no
+  # agent inside a workspace can read or clear, so a width that outlived the
+  # template that set it is invisible from here unless the ceiling the fleet was
+  # built at rides in the same table. //scripts:subagent-check and the boot
+  # advisory both read the two numbers as a pair, so that is the shape asserted:
+  # the comment as the width's own preceding line, inside [subagents], once each.
+  # A line parked anywhere else in the file is prose nothing compares.
+  local file pair
+  for file in "${CONFIG_TWINS[@]}"; do
+    pair="$(sed -n '/^\[subagents\]/,/^\[mcp_servers\./p' "${file}" \
+      | grep -E '^(# fleet-width:|max_concurrent =)' || true)"
+    assert_eq "${file} fleet-width echo" \
+      $'# fleet-width: ${grok_subagent_fleet_width}\nmax_concurrent = ${grok_subagent_max_concurrent}' \
+      "${pair}"
+  done
+}
+
 @test "subagents config: every subagent type rides a lane, each role on its own" {
   # One knob per role, and no type left unpinned: a named type with no entry
   # inherits the parent's model, which is how a fleet ends up queued behind the
@@ -295,6 +313,26 @@ subagents_block() {
       echo "${file} re-tied the width to the default lane, capping a swarm the user can still choose" >&2
       return 1
     fi
+  done
+}
+
+@test "subagent width: both main.tf twins feed the fleet-width echo from the fleet" {
+  # The token is a render input like every other one in this map: dropped, the
+  # plan fails on an undefined variable; fed from the operator's override instead,
+  # the two rendered numbers always agree and the pair diagnoses nothing. Assert it
+  # inside the grok_config vars map, where a key aimed at another templatefile()
+  # call would still leave the config rendering no fleet width.
+  local file block
+  for file in "${MAIN_TWINS[@]}"; do
+    block="$(sed -n '/grok_config = templatefile(/,/^[[:space:]]*})/p' "${file}")"
+    [[ "${block}" == *'grok_subagent_fleet_width = var.grok_swarm_width'* ]] || {
+      echo "${file} does not feed the fleet-width echo from the fleet's own width" >&2
+      return 1
+    }
+    [[ "${block}" != *'grok_subagent_fleet_width = var.grok_subagent_max_concurrent'* ]] || {
+      echo "${file} feeds the echo the override, so width and fleet can never disagree" >&2
+      return 1
+    }
   done
 }
 

@@ -256,6 +256,19 @@ GROK_CONFIG_EOF
   rm -f "$cli_block" "$ui_keys"
   chmod 600 "$HOME/.grok/config.toml" 2>/dev/null || true
   boot_ok "config.toml re-materialized with the stack markers"
+  # fleet-width advisory: the rendered width against the ceiling the same render
+  # wrote above it. The scoping and the tolerances match profile_table in
+  # scripts/subagent-check.sh, which is the CLI's copy of this check.
+  sub_prog='/^[[:space:]]*\[/{h=$0;sub(/[[:space:]]*#.*$/,"",h);sub(/^[[:space:]]+/,"",h);sub(/[[:space:]]+$/,"",h);sub(/^\[/,"",h);sub(/\]$/,"",h);sub(/^[[:space:]]+/,"",h);sub(/[[:space:]]+$/,"",h);inside=(h==want);next} inside{print}'
+  sub_w="$(awk -v want=subagents "$sub_prog" "$HOME/.grok/config.toml" 2>/dev/null | sed -nE 's/^[[:space:]]*"?max_concurrent"?[[:space:]]*=[[:space:]]*\+?([0-9][0-9]*)([[:space:]]*#.*)?[[:space:]]*$/\1/p' | head -1 | sed 's/^0*\([0-9]\)/\1/')"
+  sub_f="$(awk -v want=subagents "$sub_prog" "$HOME/.grok/config.toml" 2>/dev/null | awk '/^[[:space:]]*$/{next} /^[[:space:]]*max_concurrent[[:space:]]*=/{print prev;exit} {prev=$0}' | sed -nE 's/^[[:space:]]*#[[:space:]]*fleet-width:[[:space:]]*([0-9][0-9]*)([[:space:]]*#.*)?[[:space:]]*$/\1/p' | head -1 | sed 's/^0*\([0-9]\)/\1/')"
+  # The comparison runs in awk on purpose: bash's integer test prints an error and
+  # lets the condition fall through on a value too large for it, and a startup log
+  # has no business carrying that.
+  sub_narrow="$(awk -v w="$sub_w" -v f="$sub_f" 'BEGIN{if (w ~ /^[0-9]+$/ && f ~ /^[0-9]+$/ && w+0 <= 9999 && f+0 <= 9999 && w+0 < f+0) print "y"}')"
+  if [ "$sub_narrow" = "y" ]; then
+    boot_note "subagents width $sub_w is below the fleet's $sub_f - a value that outlived its template, unless you set it on purpose (docs/troubleshooting.md#the-rendered-width-is-below-fleet-width)"
+  fi
 else
   # Same marker contract as ~/.tmux.conf above; the loss costs this model catalog.
   echo "WARNING: $HOME/.grok/config.toml carries neither stack marker (no" \

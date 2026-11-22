@@ -105,6 +105,17 @@ assert_not_fixed() {
   fi
 }
 
+# assert_fixed_pair <label> <path> <above> <below> - <above> is the line printed
+# directly above <below>. The fleet-width echo is read as the width's preceding
+# line by both the boot advisory and //scripts:subagent-check, so two independent
+# presences would pass a render that drifted the comment off the number.
+assert_fixed_pair() {
+  if ! grep -Fx -A1 -- "$3" "$2" | grep -Fx -- "$4" >/dev/null; then
+    printf 'FAIL: %s: %s lacks [%s] on the line above [%s]\n' "$1" "$2" "$3" "$4" >&2
+    return 1
+  fi
+}
+
 # assert_settings_link <dest> <shared> — dest is a symlink to shared.
 assert_settings_link() {
   if [ ! -L "$1" ]; then
@@ -446,6 +457,10 @@ assert_contributor_home() {
   assert_fixed "reviewer lane" "${out}" 'reviewer = "agent-review"'
   assert_fixed "security-auditor lane" "${out}" 'security-auditor = "agent-review"'
   assert_fixed "width takes the fleet width" "${out}" 'max_concurrent = 15'
+  # The ceiling the fleet was built at is echoed on the width's own line, so the
+  # two numbers a reader compares are the two numbers on the file's face.
+  assert_fixed_pair "fleet width echoed above the width" "${out}" \
+    '# fleet-width: 15' 'max_concurrent = 15'
   # Every token the template carries must be substituted here, or a contributor
   # home gets a literal ${...} where a model id belongs.
   assert_not_fixed "no unsubstituted template token" "${out}" '${grok_'
@@ -481,6 +496,10 @@ assert_contributor_home() {
   GROK_SUBAGENTS_LANE='agent' GROK_SUBAGENT_MAX_CONCURRENT='2' \
     seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "explicit width wins on a pinned lane" "${out}" 'max_concurrent = 2'
+  # The mismatch is the case the echo exists for: an override that outlived the
+  # template which set it has to stay legible against the fleet's 15.
+  assert_fixed_pair "the echo keeps the fleet's 15 under an override" "${out}" \
+    '# fleet-width: 15' 'max_concurrent = 2'
 
   # The rollback lane pins the writers to one box; it does not narrow the fleet's
   # width. agent-swarm is ungated in the render, so a session whose default lane is
@@ -496,6 +515,10 @@ assert_contributor_home() {
   # case in this file, which is why the key needs a case of its own.
   GROK_SWARM_WIDTH='7' seed_render_grok_config "${tpl}" "${out}"
   assert_fixed "the fleet width key supplies the width" "${out}" 'max_concurrent = 7'
+  # And supplies the echo with it: an echo hard-coded to 15 passes every case
+  # above, so this is the one that proves the token is substituted, not written.
+  assert_fixed_pair "the echo follows the fleet width key" "${out}" \
+    '# fleet-width: 7' 'max_concurrent = 7'
 
   # A value sed could not substitute safely is refused out loud, and the width
   # still comes out of the lane rather than rendering a broken TOML integer.

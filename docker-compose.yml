@@ -265,6 +265,48 @@ services:
     command: ["--config", "/app/config.yaml"]
     ports:
       - "${LITELLM_PORT:-4000}:4000"
+    # Liveness probe on the proxy's own unprotected endpoint
+    # (/health/liveliness answers "I'm alive!" with no master key, and 503 once a
+    # drain has begun -- litellm/proxy_health_endpoints/_health_endpoints.py:1938).
+    # /health itself is NOT usable here: it sits behind user_api_key_auth
+    # (_health_endpoints.py:1110), so a probe would need the master key in the
+    # container's own command line.
+    #
+    # The probe is the image's own interpreter because the image ships no curl
+    # and no wget (verified in ghcr.io/berriai/litellm:v1.102.1), and urllib is
+    # already in the venv. urllib raises on a non-2xx and on a refused
+    # connection, so a proxy that stopped serving exits non-zero without any
+    # shell, pipe, or `$$` quoting in the test.
+    #
+    # What this does NOT do: the daemon does not restart a container that goes
+    # unhealthy, only one that exits, so `restart: unless-stopped` above stays
+    # the only thing that recovers a crashed proxy. This probe is what makes the
+    # failure visible without a model request to notice it with -- `dev-stack
+    # status` and `docker compose ps` print (unhealthy), `docker inspect`
+    # carries the last three probes, and Alloy ships the event to Loki. A model
+    # request is still the only check that proves routing works; this proves the
+    # process is answering.
+    #
+    # hermes below keeps `condition: service_started` rather than
+    # service_healthy: compose waits indefinitely for a healthy condition, so a
+    # probe that stops passing would hold the host assistant down with the
+    # proxy, and hermes reconnects on its own. Nothing today needs to wait for
+    # this probe, which is the same reasoning that leaves searxng without one.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/app/.venv/bin/python3",
+          "-c",
+          "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=5).status==200 else 1)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # The proxy imports the config, builds 31 deployments and loads the
+      # Prometheus callback plus the compaction router's handler before uvicorn
+      # binds; 60 s of failures are not counted.
+      start_period: 60s
     environment:
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-change-me-litellm}
       # Every Spark URL in this file is built from one hostname per box
