@@ -193,9 +193,14 @@ The two levers that actually move load off a shedding box:
    workspace can have the fleet fully subscribed and the last arrivals wait. What makes
    that survivable is `limit_behavior = "queue"` holding the overflow instead of failing
    the spawn, so the cost of overshoot is a subagent's latency. That 15 is
-   `grok_swarm_width` (3 boxes x `PARALLEL` 5), the default on every lane whatever the
-   operator picks there; drop it when several workspaces share the fleet, or set
-   `grok_subagent_max_concurrent` to hold a width outright. The
+   `grok_subagent_max_concurrent`'s own shipped default, the same on every lane whatever
+   the operator picks there. `grok_swarm_width` (3 boxes x `PARALLEL` 5) is the fleet's
+   own ceiling, rendered as the `# fleet-width:` line beside `max_concurrent`, and the
+   width a workspace gets only when it sets `grok_subagent_max_concurrent = null` on
+   purpose. So an operator who shares the fleet shrinks it with two knobs, not one:
+   `grok_swarm_width` moves the ceiling and `grok_subagent_max_concurrent` moves the
+   width. Drop the first alone and the session still ships 15, and 15 streams over a
+   10-stream fleet is refused by the box with `NoRoom`. The
    two reader lanes
    spread the same way, and each group counts its own in-flight requests, but the box's
    `PARALLEL` streams are one pool that every alias arriving on it shares.
@@ -467,10 +472,14 @@ variable, so either rolls back alone without moving the other or the writers'
 The variables are declared in `templates/workspace/coder.tf:24-52` and its devcontainer
 twin, and they are what fills `[subagents.models]` in
 `templates/workspace/grok-config.toml.tftpl`. The fan-out width rides a different variable
-and does not follow any of these three: `grok_swarm_width` (default 15) is the width on
-every lane, and `main.tf` renders it as exactly
-`grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`.
-The lane decides placement, not width - what a pinned lane changes is where those 15 land,
+and does not follow any of these three: it is `grok_subagent_max_concurrent`'s own shipped
+15. `main.tf` renders that through
+`grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`,
+and the `: var.grok_swarm_width` arm of the ternary answers only a caller that passes null
+on purpose - the quote is the opt-in, not the source of the width. `grok_swarm_width`
+(default 15) is the fleet's own ceiling, rendered as the `# fleet-width:` line beside
+`max_concurrent`. The lane decides placement, not width - what a pinned lane
+changes is where those 15 land,
 and one box only ever admits `PARALLEL` (5) of them. The workspace side of that seam is
 [grok-build-and-agents.md](grok-build-and-agents.md#the-fan-out-seam). A contributor home
 names the same three lanes with `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and
