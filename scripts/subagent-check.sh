@@ -6,8 +6,8 @@
 # var.grok_swarm_width, so the width a fleet runs at is a template decision. A
 # --parameter given to `coder start`/`coder update`, or a --var pinned on the
 # template, outlives the run that passed it: it persists in the Coder database,
-# every later start reuses it, and
-# no agent inside the workspace can clear it. The render then carries a
+# every later start reuses it, and no agent inside the workspace can clear it.
+# The render then carries a
 # max_concurrent below the fleet's stream count, a fan-out queues behind one
 # parent's slots, and nothing in the workspace says so.
 #
@@ -238,19 +238,93 @@ usage_error() {
   exit 2
 }
 
-# @function profile_line
-# Print the raw value of one key inside the [subagents] table, and nothing when
-# the table or the key is absent. The block boundaries are enforced the way
-# profile_writers_lane enforces its own: a same-named key in another table is
-# somebody else's setting, and reporting it as this session's width is exactly
-# the confident wrong number this CLI must never print. The trailing class is
-# [[:space:]] rather than end-of-line so a CRLF profile or a stray space after
-# the digits still reads, instead of answering "this profile has no [subagents]
-# table" about a file that plainly has one.
+# @function profile_table
+# Print the body of one top-level table of the profile - the lines between its
+# header and the next one - so every reader below asks about one table instead
+# of about the whole file. TOML lets an operator pad the brackets, indent the
+# line, or end it with a comment, and all three name the same table, so the
+# header is compared only after the padding, the brackets and the comment come
+# off it. That exact comparison is the point: an unanchored veto keeps
+# [subagents.models] inside [subagents], and a key in another table reported as
+# this session's setting is precisely the confident wrong number this CLI must
+# never print.
 # Globals:
 #   CONFIG
 # Arguments:
-#   $1 - the key to read
+#   $1 - the table to slice
+# Outputs:
+#   The table's lines on stdout, nothing when the file or the table is absent
+# Returns:
+#   0, always: a failing reader would reach the caller's assignment through
+#   pipefail and abort a strict-mode script over a file that has no such table
+profile_table() {
+  local want="${1:-}"
+  [ -n "${want}" ] && [ -r "${CONFIG}" ] || return 0
+  awk -v want="${want}" '
+    /^[[:space:]]*\[/ {
+      header = $0
+      sub(/[[:space:]]*#.*$/, "", header)
+      sub(/^[[:space:]]+/, "", header)
+      sub(/[[:space:]]+$/, "", header)
+      sub(/^\[/, "", header)
+      sub(/\]$/, "", header)
+      sub(/^[[:space:]]+/, "", header)
+      sub(/[[:space:]]+$/, "", header)
+      inside = (header == want)
+      next
+    }
+    inside { print }
+  ' "${CONFIG}" 2>/dev/null
+  return 0
+}
+
+# @function profile_has_table
+# Succeed when the profile opens that table at all. The width phase needs this
+# to tell "the table is missing" from "the table is there and carries no such
+# line": the first is a profile that predates the render and wants a restart,
+# the second is a hand edit that a restart will not fix, and telling an operator
+# to restart for the wrong one of the two is how a session is burned.
+# Globals:
+#   CONFIG
+# Arguments:
+#   $1 - the table to look for
+# Outputs:
+#   Nothing; the exit status is the answer
+# Returns:
+#   0 when the header is there, 1 when it is not
+profile_has_table() {
+  local want="${1:-}" found=""
+  [ -n "${want}" ] && [ -r "${CONFIG}" ] || return 1
+  # The same header normaliser as profile_table, kept in its own awk program so
+  # each reader stays readable; the test over both fixtures is what keeps the two
+  # copies of the normalisation from drifting apart.
+  found="$(awk -v want="${want}" '
+    /^[[:space:]]*\[/ {
+      header = $0
+      sub(/[[:space:]]*#.*$/, "", header)
+      sub(/^[[:space:]]+/, "", header)
+      sub(/[[:space:]]+$/, "", header)
+      sub(/^\[/, "", header)
+      sub(/\]$/, "", header)
+      sub(/^[[:space:]]+/, "", header)
+      sub(/[[:space:]]+$/, "", header)
+      if (header == want) { print "y"; exit }
+    }
+  ' "${CONFIG}" 2>/dev/null)" || found=""
+  [ "${found}" = "y" ]
+}
+
+# @function profile_line
+# Print the value of one key inside the [subagents] table, and nothing when the
+# table or the key is absent. The trailing class is [[:space:]] rather than
+# end-of-line so a CRLF profile still reads, and a trailing TOML comment is
+# allowed because hand-narrowing the width for a pinned lane is the documented
+# operator move and annotating it is normal. A leading + is accepted for the same
+# reason: it is valid TOML for a positive integer.
+# Globals:
+#   CONFIG
+# Arguments:
+#   $1 - the key to read; a bare word, since it is interpolated into the sed
 # Outputs:
 #   The digits on stdout, nothing when the key is absent
 # Returns:
@@ -258,10 +332,14 @@ usage_error() {
 #   pipefail and abort a strict-mode script over a file that has no such key
 profile_line() {
   local key="${1:-}" value=""
-  [ -n "${key}" ] && [ -f "${CONFIG}" ] || return 0
-  value="$(awk '/^\[subagents\]/{f=1} /^\[/ && !/^\[subagents\]/{f=0} f' \
-    "${CONFIG}" 2>/dev/null |
-    sed -n "s/^${key}[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*\$/\1/p" |
+  # The key lands inside an s/// expression, so it stays a bare word: every
+  # caller passes a literal today, and a key carrying the delimiter would turn a
+  # reader into a sed syntax error instead of a clean nothing.
+  case "${key}" in
+    "" | *[!A-Za-z0-9_]*) return 0 ;;
+  esac
+  value="$(profile_table subagents |
+    sed -nE "s/^[[:space:]]*\"?${key}\"?[[:space:]]*=[[:space:]]*\+?([0-9][0-9]*)([[:space:]]*#.*)?[[:space:]]*\$/\1/p" |
     head -n 1)" || value=""
   # A hand-edited profile can carry 04. JSON has no leading zeros, and a numeric
   # test reads one as octal and dies on 08, so the digits leave here canonical.
@@ -270,9 +348,9 @@ profile_line() {
 }
 
 # @function profile_int
-# Print the first "<key> = <int>" line of the profile's [subagents] table, or
-# nothing. The line is anchored and the value constrained to digits, so a
-# commented or stringified value cannot read as a width.
+# Print one integer key of the profile's [subagents] table, or nothing. The value
+# is constrained to digits, so a commented-out or stringified value cannot read as
+# a width.
 # Globals:
 #   CONFIG
 # Arguments:
@@ -280,18 +358,17 @@ profile_line() {
 # Outputs:
 #   The integer on stdout, nothing when the key is absent
 # Returns:
-#   0, always: a failing sed would reach the caller's assignment through
-#   pipefail and abort a strict-mode script over a file that has no such key
+#   0, always (see profile_line for why a reader here never fails)
 profile_int() {
   profile_line "${1:-}"
 }
 
 # @function profile_fleet_width
-# Print the integer on the `# fleet-width:` comment the render writes directly
-# above max_concurrent, or nothing. Scoped to [subagents] the way profile_line
-# scopes a key: an earlier stray `# fleet-width:` in another table would
-# otherwise beat the render's own line, and this function then orders the
-# operator to set the width to a number nobody chose.
+# Print the integer on the `# fleet-width:` comment the render writes on the line
+# directly above max_concurrent, or nothing. It is read from that one position on
+# purpose: scoping to the table was not enough, because a stray copy of the same
+# comment earlier in the table otherwise beat the render's own line and this
+# function then ordered the operator to set the width to a number nobody chose.
 # Globals:
 #   CONFIG
 # Arguments:
@@ -302,10 +379,13 @@ profile_int() {
 #   0, always (see profile_int for why a reader here never fails)
 profile_fleet_width() {
   local value=""
-  [ -f "${CONFIG}" ] || return 0
-  value="$(awk '/^\[subagents\]/{f=1} /^\[/ && !/^\[subagents\]/{f=0} f' \
-    "${CONFIG}" 2>/dev/null |
-    sed -n 's/^#[[:space:]]*fleet-width:[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' |
+  value="$(profile_table subagents |
+    awk '
+      /^[[:space:]]*$/ { next }
+      /^[[:space:]]*max_concurrent[[:space:]]*=/ { print prev; exit }
+      { prev = $0 }
+    ' |
+    sed -nE 's/^[[:space:]]*#[[:space:]]*fleet-width:[[:space:]]*([0-9][0-9]*)([[:space:]]*#.*)?[[:space:]]*$/\1/p' |
     head -n 1)" || value=""
   value="$(printf '%s' "${value}" | sed 's/^0*\([0-9]\)/\1/')"
   printf '%s' "${value}"
@@ -325,10 +405,8 @@ profile_fleet_width() {
 #   0, always (see profile_int for why a reader here never fails)
 profile_writers_lane() {
   local value=""
-  [ -f "${CONFIG}" ] || return 0
-  value="$(awk '/^\[subagents\.models\]/{f=1} /^\[/ && !/subagents\.models/{f=0} f' \
-    "${CONFIG}" 2>/dev/null |
-    sed -n 's/^general-purpose[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' |
+  value="$(profile_table subagents.models |
+    sed -nE 's/^[[:space:]]*"?general-purpose"?[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' |
     head -n 1)" || value=""
   printf '%s' "${value}"
 }
@@ -375,6 +453,14 @@ check_profile() {
     fail_item "no profile at ${CONFIG}"
     return 1
   fi
+  # A file that exists but cannot be read has to be said here, once. Every reader
+  # below swallows its EACCES and answers "absent", which would otherwise leave
+  # this run printing a restart order for a file a restart cannot reach.
+  if [ ! -r "${CONFIG}" ]; then
+    MARKER_JSON=""
+    fail_item "${CONFIG} is not readable by this user - fix its mode, a restart cannot"
+    return 1
+  fi
   if grep -qsF -e "${STACK_MARKER}" -e "${STACK_MARKER_TOML}" "${CONFIG}"; then
     MARKER_JSON=true
     ok "stack-managed (the startup render still owns this file)"
@@ -404,11 +490,26 @@ check_width() {
   MAX_CONCURRENT="$(profile_int max_concurrent)"
   FLEET_WIDTH="$(profile_fleet_width)"
   if [ -z "${MAX_CONCURRENT}" ]; then
-    warn "no 'max_concurrent' line - this profile has no [subagents] table; restart the workspace to re-materialize"
+    # Two different states, two different remedies: a profile the render never
+    # wrote wants a restart, and a profile whose table lost one line wants an edit.
+    # Ordering a restart for the second is how an operator burns a session.
+    if profile_has_table subagents; then
+      warn "the [subagents] table carries no 'max_concurrent' line - a hand edit, which no restart undoes"
+    else
+      warn "no 'max_concurrent' line - this profile has no [subagents] table; restart the workspace to re-materialize"
+    fi
     return 0
   fi
   if [ -z "${FLEET_WIDTH}" ]; then
-    warn "no '# fleet-width:' line - this profile predates it; restart the workspace to re-materialize"
+    warn "no '# fleet-width:' line above max_concurrent - this profile predates it; restart the workspace to re-materialize"
+    return 0
+  fi
+  # Both numbers go straight into an arithmetic test. The template caps the
+  # parameter at 32, so digits this long are a typo or a corrupted file, and bash
+  # would print an error and let both comparisons fall through to the ok branch -
+  # reporting an absurd width as the state a fleet should ship with.
+  if [ "${#MAX_CONCURRENT}" -gt 4 ] || [ "${#FLEET_WIDTH}" -gt 4 ]; then
+    warn "max_concurrent = ${MAX_CONCURRENT} against fleet-width = ${FLEET_WIDTH} is not a width this stack can mean (the parameter is capped at 32)"
     return 0
   fi
   if [ "${MAX_CONCURRENT}" -lt "${FLEET_WIDTH}" ]; then
@@ -416,9 +517,11 @@ check_width() {
     # <workspace> stays a placeholder: this CLI cannot know which workspace the
     # profile came from, and on the stack host one run addresses many. The width is
     # a Coder parameter, so the CLI flag is --parameter; --var belongs to
-    # `coder templates push`, and //scripts:push-template passes no fan-out --var
-    # at all, which is what makes a plain re-push the template-level remedy.
-    note "a rendered width below fleet-width is a value that outlived its template - on the stack host: coder start <workspace> --parameter grok_subagent_max_concurrent=${FLEET_WIDTH} (coder update <workspace> --parameter ... persists it, or use the Variables tab), or //scripts:push-template to clear a template-level value back to the coder.tf default, then restart"
+    # `coder templates push` alone. Which of the two stored values this is - the
+    # workspace's or the template version's default - is not visible from inside
+    # the container, so the note says where to look and makes the next run of this
+    # check the proof, rather than promising an effect it cannot observe.
+    note "a rendered width below fleet-width is a value that outlived its template - on the stack host: coder start <workspace> --parameter grok_subagent_max_concurrent=${FLEET_WIDTH} starts it wide once, and coder update <workspace> --parameter ... or the Variables tab keeps it there; if the number is the template version's own default, //scripts:push-template re-pushes it without one, since that script passes no fan-out width of its own. Re-run this check after the restart - the number moving is the proof."
   elif [ "${MAX_CONCURRENT}" -gt "${FLEET_WIDTH}" ]; then
     note "max_concurrent = ${MAX_CONCURRENT} is above the fleet width ${FLEET_WIDTH} - past the fleet's streams the extra spawns queue in LiteLLM"
   else
@@ -503,6 +606,11 @@ main() {
         ;;
       --parallel)
         [ $# -ge 2 ] || usage_error "--parallel needs a number"
+        # Judged where it is taken rather than after the loop: a present-but-empty
+        # argument is indistinguishable from an omitted one once it is parked in
+        # the same variable, and would silently mean the default.
+        [[ $2 =~ ^[1-9][0-9]*$ ]] ||
+          usage_error "--parallel wants a whole number of streams per box"
         parallel="$2"
         shift 2
         ;;
@@ -523,9 +631,6 @@ main() {
     esac
   done
   [ -n "${JSON_MODE:-}" ] || unset JSON_MODE
-
-  [ -z "${parallel}" ] || [[ ${parallel} =~ ^[1-9][0-9]*$ ]] ||
-    usage_error "--parallel wants a whole number of streams per box"
 
   CONFIG="${config:-${HOME:-/home/coder}/.grok/config.toml}"
   PARALLEL="${parallel:-${DEFAULT_PARALLEL}}"

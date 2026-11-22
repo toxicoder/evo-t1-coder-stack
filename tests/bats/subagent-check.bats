@@ -150,12 +150,15 @@ load_cli_functions() {
     'a rendered width below fleet-width is a value that outlived its template' "${output}"
   assert_match "the note gives the workspace start that overrides it, at the fleet width" \
     'coder start <workspace> --parameter grok_subagent_max_concurrent=15' "${output}"
-  # The remedy has to be a command that exists: `coder start` has no --var, and
-  # //scripts:push-template takes no --var either (a bare re-push is what clears a
-  # template-level value, because the script never passes one).
-  assert_match "and the template-level alternative" '//scripts:push-template to clear a template-level value' "${output}"
+  # The remedy has to be a command that exists. `coder start` has no --var, and
+  # //scripts:push-template accepts none from a caller either. What makes the
+  # re-push half of the advice sound is that the script never names this
+  # parameter at all, and that condition is pinned on its own two tests below
+  # rather than asserted by this comment.
+  assert_match "and the template-level alternative" '//scripts:push-template re-pushes it without one' "${output}"
+  assert_match "and makes the next run the proof" 'Re-run this check after the restart' "${output}"
   assert_not_match "no --var is ever handed to coder start" 'coder start [^ ]* --var' "${output}"
-  assert_match "says to restart afterwards" 'then restart' "${output}"
+  assert_match "the number moving is what it asks to be shown" 'the number moving is the proof' "${output}"
   assert_match "a narrow fleet is a warning, not a failure" '2 ok, 1 warnings, 0 failed' "${output}"
   assert_not_match "the width is not also reported as healthy" \
     "ok: max_concurrent = 4, the fleet's own width" "${output}"
@@ -198,7 +201,7 @@ load_cli_functions() {
   run_check "${cfg}"
   [ "${status}" -eq 0 ]
   assert_match "the warning is the contract's, verbatim" \
-    "warning: no '# fleet-width:' line - this profile predates it; restart the workspace to re-materialize" \
+    "warning: no '# fleet-width:' line above max_concurrent - this profile predates it; restart the workspace to re-materialize" \
     "${output}"
   assert_match "and the width is not silently compared to nothing" '2 ok, 1 warnings, 0 failed' "${output}"
   assert_not_match "no below-width remedy without the number to compare against" \
@@ -211,9 +214,9 @@ load_cli_functions() {
 
   run_check "${cfg}"
   [ "${status}" -eq 0 ]
-  assert_match "it says the table is missing" \
-    "warning: no 'max_concurrent' line - this profile has no \[subagents\] table" "${output}"
-  assert_match "and points at the re-materialize" 'restart the workspace to re-materialize' "${output}"
+  assert_match "it names the table that is there and the line that is not" \
+    "warning: the \[subagents\] table carries no 'max_concurrent' line - a hand edit, which no restart undoes" "${output}"
+  assert_not_match "and it does not order a restart for a hand edit" 'restart the workspace' "${output}"
   assert_match "no width verdict is printed for a width that is not there" \
     '2 ok, 1 warnings, 0 failed' "${output}"
 }
@@ -229,7 +232,7 @@ load_cli_functions() {
   run_check "${cfg}"
   [ "${status}" -eq 0 ]
   assert_match "the quoted value does not read as a width" \
-    "warning: no 'max_concurrent' line" "${output}"
+    "the \[subagents\] table carries no 'max_concurrent' line" "${output}"
   assert_not_match "and nothing claims a width of 4" 'max_concurrent = 4' "${output}"
 }
 
@@ -532,7 +535,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
   local root="${BATS_TEST_TMPDIR}/root" out
   mkdir -p "${root}/scripts/lib"
   : >"${root}/docker-compose.yml"
-  load_cli_functions resolve_repo_root
+  load_cli_functions profile_table profile_has_table resolve_repo_root
 
   out="$(REPO_ROOT="${root}" GITHUB_WORKSPACE="" SELF_DIR="${root}" resolve_repo_root)"
   assert_eq "an explicit REPO_ROOT wins" "${root}" "${out}"
@@ -556,7 +559,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
   local root="${BATS_TEST_TMPDIR}/libroot" out rc=0
   mkdir -p "${root}/scripts/lib" "${root}/self"
   printf '#!/usr/bin/env bash\n' >"${root}/scripts/lib/common.sh"
-  load_cli_functions find_lib
+  load_cli_functions profile_table profile_has_table find_lib
 
   out="$(find_lib common.sh "${root}")"
   assert_eq "the resolved root is the first place it looks" \
@@ -580,7 +583,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
   write_profile "${cfg}" 15 15 agent-swarm 1 2
   # profile_int is the public name and profile_line the reader it delegates to;
   # a test that loads only the first gets a 127 and an empty answer.
-  load_cli_functions profile_line profile_int
+  load_cli_functions profile_table profile_has_table profile_line profile_int
   CONFIG="${cfg}"
 
   assert_eq "the rendered width reads" "15" "$(profile_int max_concurrent)"
@@ -609,7 +612,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 @test "subagent-check: profile_fleet_width reads only the render's own comment" {
   local cfg="${BATS_TEST_TMPDIR}/fleet.toml"
   write_profile "${cfg}" 4 15 agent-swarm 1 2
-  load_cli_functions profile_fleet_width
+  load_cli_functions profile_table profile_has_table profile_fleet_width
   CONFIG="${cfg}"
 
   assert_eq "the line the render writes above the width is the fleet width" \
@@ -632,7 +635,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 @test "subagent-check: profile_writers_lane is scoped to [subagents.models]" {
   local cfg="${BATS_TEST_TMPDIR}/lane.toml" other="${BATS_TEST_TMPDIR}/other.toml"
   write_profile "${cfg}" 15 15 agent-swarm 1 2
-  load_cli_functions profile_writers_lane
+  load_cli_functions profile_table profile_has_table profile_writers_lane
   CONFIG="${cfg}"
 
   assert_eq "general-purpose in the models table is the writers' lane" \
@@ -660,7 +663,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 @test "subagent-check: is_unpinned_lane accepts exactly the four aliases the proxy lifts" {
   local lane
-  load_cli_functions is_unpinned_lane
+  load_cli_functions profile_table profile_has_table is_unpinned_lane
 
   for lane in agent-swarm agent-explore agent-review agent-swarm-fast; do
     is_unpinned_lane "${lane}"
@@ -675,7 +678,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 @test "subagent-check: check_profile counts a missing file as a failure and stops" {
   local out="${BATS_TEST_TMPDIR}/profile.out" rc=0
-  load_cli_functions phase ok fail_item check_profile
+  load_cli_functions profile_table profile_has_table phase ok fail_item check_profile
   CONFIG="${BATS_TEST_TMPDIR}/absent.toml"
 
   check_profile >"${out}" 2>&1 || rc=$?
@@ -696,7 +699,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 @test "subagent-check: check_width counts the pair it read" {
   local out="${BATS_TEST_TMPDIR}/width.out"
-  load_cli_functions phase ok warn note profile_line profile_int profile_fleet_width check_width
+  load_cli_functions profile_table profile_has_table phase ok warn note profile_line profile_int profile_fleet_width check_width
 
   CONFIG="${BATS_TEST_TMPDIR}/match.toml"
   write_profile "${CONFIG}" 15 15 agent-swarm 1 2
@@ -726,7 +729,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 @test "subagent-check: check_lanes sets the pinned flag the object answers with" {
   local out="${BATS_TEST_TMPDIR}/lanes.out"
-  load_cli_functions phase ok warn note profile_writers_lane is_unpinned_lane check_lanes
+  load_cli_functions profile_table profile_has_table phase ok warn note profile_writers_lane is_unpinned_lane check_lanes
 
   CONFIG="${BATS_TEST_TMPDIR}/pinned.toml"
   write_profile "${CONFIG}" 15 15 agent 1 2
@@ -757,7 +760,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 @test "subagent-check: check_depth reports a depth and stays silent without one" {
   local out="${BATS_TEST_TMPDIR}/depth.out"
-  load_cli_functions phase note profile_line profile_int check_depth
+  load_cli_functions profile_table profile_has_table phase note profile_line profile_int check_depth
 
   CONFIG="${BATS_TEST_TMPDIR}/depth.toml"
   write_profile "${CONFIG}" 15 15 agent-swarm 1 2
@@ -778,7 +781,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 @test "subagent-check: finish decides the exit code from the counters, both channels" {
   local out rc=0
-  load_cli_functions summary finish
+  load_cli_functions profile_table profile_has_table summary finish
 
   SUMMARY_OK=3 SUMMARY_WARN=1 SUMMARY_FAIL=0
   out="$( (finish) 2>&1)" || rc=$?
@@ -815,7 +818,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 @test "subagent-check: usage_error complains, prints the block, and exits 2" {
   local out rc=0
-  load_cli_functions usage usage_error
+  load_cli_functions profile_table profile_has_table usage usage_error
 
   out="$( (usage) 2>&1)"
   assert_match "the block stands on its own" 'usage: bazelisk run //scripts:subagent-check' "${out}"
@@ -900,18 +903,19 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
   assert_eq "the usage error still answers with its own code" "2" "${rc}"
   assert_eq "and stdout carries no prose for a parser to trip over" "" "${stdout}"
   assert_match "the complaint is on stderr" 'error: unknown option: --nope' "${err}"
-  assert_match "with the block beside it, where a human reads it" 'Usage:|--config' "${err}"
+  assert_match "with the block beside it, where a human reads it" 'usage:.*subagent-check|--config' "${err}"
 }
 
 @test "subagent-check: profile_line scopes to the table and canonicalises" {
   local cfg="${BATS_TEST_TMPDIR}/scoped.toml"
-  load_cli_functions profile_line profile_int profile_fleet_width
+  load_cli_functions profile_table profile_has_table profile_line profile_int profile_fleet_width
 
   {
     printf '# managed-by: evo-t1-coder-stack\n'
     printf '[other]\nmax_concurrent = 7\n'
-    printf '[subagents]\nmax_concurrent = 0012 \n'
+    printf '[subagents]\n'
     printf '# fleet-width: 015\n'
+    printf 'max_concurrent = 0012 \n'
     printf '[tail]\nmax_concurrent = 3\n'
   } >"${cfg}"
   CONFIG="${cfg}"
@@ -935,7 +939,7 @@ print("%s|%s|%s|%d" % (d["marker"], d["verdict"], d["config"], d["failed"]))')"
 
 # width_hunk <tftpl> - the advisory hunk, byte for byte as the template holds it.
 width_hunk() {
-  awk '/^  sub_w="\$\(/ {f=1} f {print} f && /^  fi$/ {exit}' "$1"
+  awk '/^  # fleet-width advisory/ {f=1} f {print} f && /^  fi$/ {exit}' "$1"
 }
 
 # boot_width_note <tftpl> <width> [fleet] - run that hunk against a fixture
@@ -962,6 +966,8 @@ boot_width_note() {
     'sub_w="\$\(awk' "$(width_hunk "${workspace}")"
   assert_match "and so does the devcontainer twin" \
     'sub_f="\$\(awk' "$(width_hunk "${devcontainer}")"
+  assert_match "the hunk carries its own table slicer, not a bare-file reader" \
+    'sub_prog=' "$(width_hunk "${workspace}")"
   # The twins are independent payload copies everywhere except in a hunk a single
   # fault has to answer the same way in both.
   assert_eq "both twins carry the identical hunk" \
@@ -1009,4 +1015,230 @@ boot_width_note() {
   out="$(HOME="${home}" bash "${driver}")"
   assert_match "a CRLF profile still gets its note" \
     "note: subagents width 4 is below the fleet's 15" "${out}"
+}
+
+# -- the hand-edited profile, which is the one that actually happens -------------
+#
+# The render writes a shape this suite already covers. The profiles below are the
+# ones an operator produces afterwards, and every one of them was observed, during
+# review, to make the CLI print a wrong verdict or the boot advisory go silent.
+# TOML accepts all of them: `python3 -c 'import tomllib; tomllib.load(...)'` reads
+# each as the same integer the render would have written.
+
+# write_raw_profile <path> <content> - a profile exactly as handed over, with no
+# helper shaping it on the way.
+write_raw_profile() {
+  printf '%s' "$2" >"$1"
+}
+
+# boot_hunk_note <tftpl> <profile-content> - boot the advisory against a profile
+# written verbatim, and print what the startup log would carry.
+boot_hunk_note() {
+  local tftpl="$1" body="$2"
+  local home="${BATS_TEST_TMPDIR}/raw-home" driver="${BATS_TEST_TMPDIR}/raw-hunk.sh"
+  mkdir -p "${home}/.grok"
+  write_raw_profile "${home}/.grok/config.toml" "${body}"
+  {
+    printf 'boot_note() { printf "note: %%s\\n" "$1"; }\n'
+    width_hunk "${tftpl}"
+  } >"${driver}"
+  HOME="${home}" bash "${driver}"
+}
+
+@test "subagent-check: a padded header and an annotated key read as the render they are" {
+  local cfg="${BATS_TEST_TMPDIR}/padded.toml"
+  load_cli_functions profile_table profile_has_table profile_line profile_int profile_fleet_width
+
+  write_raw_profile "${cfg}" '[ subagents ]
+# fleet-width: 15
+max_concurrent = 4 # narrowed for the pinned lane
+'
+  CONFIG="${cfg}"
+  assert_eq "padding inside the brackets is the same table" "4" "$(profile_int max_concurrent)"
+  assert_eq "and a TOML comment after the digits is the same number" "15" "$(profile_fleet_width)"
+  profile_has_table subagents
+  assert_eq "the table is found, so the missing-key branch stays silent" "0" "$?"
+
+  write_raw_profile "${cfg}" '[subagents]
+# fleet-width: 15
+  max_concurrent = 4
+'
+  CONFIG="${cfg}"
+  assert_eq "an indented key is the same key" "4" "$(profile_int max_concurrent)"
+
+  write_raw_profile "${cfg}" '[subagents]
+# fleet-width: 15
+"max_concurrent" = 4
+'
+  CONFIG="${cfg}"
+  assert_eq "a quoted key is the same key" "4" "$(profile_int max_concurrent)"
+
+  write_raw_profile "${cfg}" '[subagents]
+# fleet-width: 15
+max_concurrent = +4
+'
+  CONFIG="${cfg}"
+  assert_eq "TOML writes a positive integer with a plus, and that is a width" "4" "$(profile_int max_concurrent)"
+
+  write_raw_profile "${cfg}" '[subagents] # grouped under the header comment
+# fleet-width: 15
+max_concurrent = 4
+'
+  CONFIG="${cfg}"
+  assert_eq "a comment after the header is still that header" "4" "$(profile_int max_concurrent)"
+}
+
+@test "subagent-check: the boot advisory still fires on a hand-edited profile" {
+  local hunk="${REPO_ROOT}/templates/workspace/startup.sh.tftpl" out
+
+  out="$(boot_hunk_note "${hunk}" '[ subagents ]
+# fleet-width: 15
+max_concurrent = 4 # narrowed for the pinned lane
+')"
+  assert_match "a padded header and an inline comment do not silence the note" \
+    "note: subagents width 4 is below the fleet's 15" "${out}"
+
+  out="$(boot_hunk_note "${hunk}" '[subagents]
+# fleet-width: 0015
+max_concurrent = 04
+')"
+  assert_eq "the boot log prints the numbers the CLI prints, not the raw zeros" \
+    "note: subagents width 4 is below the fleet's 15 - a value that outlived its template, unless you set it on purpose (docs/troubleshooting.md#the-rendered-width-is-below-fleet-width)" \
+    "${out}"
+
+  # The comparison has to survive a value bash's integer test cannot hold, without
+  # writing an error line into every boot of that workspace.
+  out="$(boot_hunk_note "${hunk}" '[subagents]
+# fleet-width: 15
+max_concurrent = 999999999999999999999
+')"
+  assert_eq "an absurd width prints no note and no shell error" "" "${out}"
+}
+
+@test "subagent-check: the ceiling is read from the one line the render writes" {
+  local cfg="${BATS_TEST_TMPDIR}/stray.toml"
+  load_cli_functions profile_table profile_line profile_int profile_fleet_width
+
+  # The same comment, twice: the render's own line above max_concurrent, and a
+  # copy the operator left above another key. head -1 over the whole table used to
+  # take the copy, and the tool then ordered the fleet's width to be 100.
+  write_raw_profile "${cfg}" '[subagents]
+enabled = true
+# fleet-width: 100
+max_depth = 2
+# fleet-width: 15
+max_concurrent = 4
+'
+  CONFIG="${cfg}"
+  assert_eq "the ceiling above max_concurrent wins, by position" "15" "$(profile_fleet_width)"
+  assert_eq "and the width is still the width" "4" "$(profile_int max_concurrent)"
+
+  write_raw_profile "${cfg}" '[subagents]
+enabled = true
+# fleet-width: 15
+'
+  CONFIG="${cfg}"
+  assert_eq "a fleet-width comment with no width under it is not a ceiling" "" "$(profile_fleet_width)"
+}
+
+@test "subagent-check: a lost line and a missing table get different orders" {
+  local cfg="${BATS_TEST_TMPDIR}/keyless.toml" out
+  write_raw_profile "${cfg}" '# managed-by: evo-t1-coder-stack
+[subagents]
+enabled = true
+max_depth = 2
+'
+  run_check "${cfg}"
+  assert_match "a table that lost its width line is called a hand edit" \
+    "the \[subagents\] table carries no 'max_concurrent' line - a hand edit, which no restart undoes" \
+    "${output}"
+  assert_not_match "and is not sent off for a restart" 'restart the workspace' "${output}"
+
+  write_raw_profile "${cfg}" '# managed-by: evo-t1-coder-stack
+[litellm]
+max_concurrent = 4
+'
+  run_check "${cfg}"
+  assert_match "a profile with no table at all still wants the restart" \
+    "no 'max_concurrent' line - this profile has no \[subagents\] table; restart the workspace" \
+    "${output}"
+}
+
+@test "subagent-check: an absurd width is never called the shipped state" {
+  local cfg="${BATS_TEST_TMPDIR}/huge.toml"
+  write_profile "${cfg}" 999999999999999999999 15 agent-swarm 1 2
+
+  run_check "${cfg}"
+  assert_match "the pair is reported as impossible rather than compared" \
+    'is not a width this stack can mean' "${output}"
+  assert_not_match "no bash integer error reaches the operator" \
+    'integer expression expected' "${output}"
+  assert_not_match "and it is not the ok the fall-through used to print" \
+    "ok: max_concurrent = 999999999999999999999" "${output}"
+  assert_match "a warning is what counts" '1 warnings' "${output}"
+}
+
+@test "subagent-check: an unreadable profile gets one order, and it is not a restart" {
+  local cfg="${BATS_TEST_TMPDIR}/noread.toml"
+  write_profile "${cfg}" 15 15 agent-swarm 1 2
+  chmod 000 "${cfg}"
+  # Running as a user that can read everything makes the case unreachable; skip
+  # rather than pass on a state the run never produced.
+  if [ -r "${cfg}" ]; then
+    skip "this run can read a 000 file, so the unreadable branch cannot be reached"
+  fi
+
+  run_check "${cfg}"
+  assert_match "one error names the mode" 'is not readable by this user' "${output}"
+  assert_not_match "and no second line orders a restart that cannot fix it" \
+    'restart the workspace' "${output}"
+  assert_eq "the run fails, so a gate still catches it" "1" "${status}"
+  chmod 644 "${cfg}"
+}
+
+@test "subagent-check: a lane key in a nested table is not the writers lane" {
+  local cfg="${BATS_TEST_TMPDIR}/laneleak.toml"
+  load_cli_functions profile_table profile_has_table profile_writers_lane
+
+  write_raw_profile "${cfg}" '[subagents.models]
+explore = "agent-explore"
+[subagents.models.extra]
+general-purpose = "chat"
+'
+  CONFIG="${cfg}"
+  assert_eq "the nested table's key never reaches the lane verdict" "" "$(profile_writers_lane)"
+
+  write_raw_profile "${cfg}" '[subagents.models]
+general-purpose = "agent-swarm"
+'
+  CONFIG="${cfg}"
+  assert_eq "the real table still answers" "agent-swarm" "$(profile_writers_lane)"
+}
+
+@test "subagent-check: --parallel given nothing is a usage error, not the default" {
+  local cfg="${BATS_TEST_TMPDIR}/parallel.toml"
+  write_profile "${cfg}" 15 15 agent-swarm 1 2
+
+  run_check "${cfg}" --parallel ""
+  assert_eq "an empty argument is refused, not read as the default 5" "2" "${status}"
+  assert_match "and the complaint names the option" 'whole number of streams' "${output}"
+
+  run_check "${cfg}" --parallel 0x5
+  assert_eq "a non-decimal width is refused too" "2" "${status}"
+
+  run_check "${cfg}" --parallel 3
+  assert_eq "a real width still parses" "0" "${status}"
+}
+
+@test "subagent-check: the re-push remedy stands on push-template never naming the width" {
+  local hits
+  # The note tells an operator to re-push the template to drop a template-level
+  # width. That is sound only while the pushing script never sends that parameter
+  # itself: a re-push carrying the narrow number would recreate the fault. Pin the
+  # condition the advice rests on, so relaying a dotenv key into a --var there
+  # reddens this suite instead of quietly making the printed command wrong.
+  hits="$(grep -c 'grok_subagent_max_concurrent' "${REPO_ROOT}/scripts/push-template.sh" || true)"
+  assert_eq "push-template.sh never names the width parameter" "0" "${hits}"
+  hits="$(grep -c 'grok_swarm_width' "${REPO_ROOT}/scripts/push-template.sh" || true)"
+  assert_eq "and it never names the fleet width either" "0" "${hits}"
 }

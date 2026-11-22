@@ -1277,12 +1277,24 @@ bazelisk run //scripts:subagent-check
 
 ```text
 warning: max_concurrent = <n> is below the fleet width <fleet>
-note: a rendered width below fleet-width is a value that outlived its template - on the stack host: coder start <workspace> --parameter grok_subagent_max_concurrent=<fleet> (coder update <workspace> --parameter ... persists it, or use the Variables tab), or //scripts:push-template to clear a template-level value back to the coder.tf default, then restart
+note: a rendered width below fleet-width is a value that outlived its template - on the stack host: coder start <workspace> --parameter grok_subagent_max_concurrent=<fleet> starts it wide once, and coder update <workspace> --parameter ... or the Variables tab keeps it there; if the number is the template version's own default, //scripts:push-template re-pushes it without one, since that script passes no fan-out width of its own. Re-run this check after the restart - the number moving is the proof.
 ```
 
-  A profile that answers `warning: no '# fleet-width:' line - this profile predates it;
-  restart the workspace to re-materialize` has no ceiling to compare against yet, so that
-  one is a restart, not a `--var`.
+  The note offers both remedies because the check cannot tell them apart from
+  inside the container: a workspace value and a template version's default live in
+  the same database on the host, and neither is readable over the agent token. The
+  second run of the check is what settles it, which is why the note asks for it.
+
+  Two near-misses read differently on purpose. A profile whose `[subagents]` table
+  is simply absent answers `warning: no 'max_concurrent' line - this profile has no
+  [subagents] table; restart the workspace to re-materialize`, and a restart is the
+  right order there. A table that lost only its width line answers `warning: the
+  [subagents] table carries no 'max_concurrent' line - a hand edit, which no restart
+  undoes`, because the render writes that line and a file the render still owns
+  never loses it on its own. A profile that answers `warning: no '# fleet-width:'
+  line above max_concurrent - this profile predates it; restart the workspace to
+  re-materialize` has no ceiling to compare against yet, so that one is a restart
+  too.
 
   The whole surface, for a script or a CI step that wants the answer rather than the prose
   (`--help` prints the same):
@@ -1310,7 +1322,7 @@ bazelisk run //scripts:subagent-check -- [--config PATH] [--parallel N] [--json]
 - The same finding arrives by itself at every start: the profile stage of the boot compares
   the two numbers right after re-materializing the config
   (`boot_stage 6 "the Grok Build profile"`, `templates/workspace/startup.sh.tftpl:224`,
-  the comparison at `:259-262`, same lines in the devcontainer twin) and prints through
+  the comparison at `:259-271`, same lines in the devcontainer twin) and prints through
   `boot_note` (`templates/common/boot-log.lib.sh:51`), so the workspace start log carries
   `note: subagents width 4 is below the fleet's 15 - a value that outlived its template,
   unless you set it on purpose`.
@@ -1318,7 +1330,7 @@ bazelisk run //scripts:subagent-check -- [--config PATH] [--parallel N] [--json]
 - Remedy, from the stack host, in this order:
 
 ```bash
-bazelisk run //scripts:push-template    # stack host; re-pushes with the coder.tf defaults
+bazelisk run //scripts:push-template    # stack host; it passes no fan-out width of its own
 coder restart <workspace>
 ```
 
