@@ -105,16 +105,23 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
   same cycle cools what it marked (`proxy_server.py:4013`) and the cooldown list has
   no fail-open under this config, because the bypass at `router.py:12774` needs a
   policy the file refuses to set. `coder` is the terminal hop of every Spark lane, so
-  a probe that came back with a status LiteLLM will not retry (a 401, or a 404 that
-  keeps its int status through the provider wrapper) would park the fallback for
-  `cooldown_time` with no user request having failed - the arm at `:400` is one of the
-  two in `_should_cooldown_deployment` without a single-deployment guard, and
-  `_should_retry` returns False for everything outside 408/409/429/5xx
-  (`utils.py:6854-6880`). That arm is read out of the source: in the three-box harness
-  an Ollama 404 reached the router as `exception_status` 500, which is retryable, so
-  it landed on the guarded arms and the fallback stayed reachable. The consequence that
-  is measured: those four no longer appear in the cached `/health` report at all, and
-  four of the 31 probes a cycle stop being paid.
+  a 401 or a 404 from a probe would park the fallback for `cooldown_time` with no user
+  request having failed. Read the two functions in order and the family is exact: that
+  pair clears `_is_cooldown_required` on its own named arms (`cooldown_handlers.py:239`
+  and `:243`), and the arm at `:400-401` then cools it on the bare question of whether
+  LiteLLM would retry the status, with no single-deployment guard -- `_should_retry`
+  returns False for everything outside 408/409/429/5xx (`utils.py:6854-6880`). No other
+  probe reply strands anything: 429 and 408 are skipped at the call site by
+  `health_check_ignore_transient_errors` (`proxy_server.py:4001-4004`), any other 4xx is
+  refused at `:248`, and a genuine 5xx clears the catch-all at `:252` only to fall
+  through every base-case arm. That reading is the source's, not the harness's -- the
+  arm which recorded `exception_status` 500 had the Arc unreachable, and
+  `proxy_server.py:3999` derives the status with `getattr(original_exception,
+  "status_code", 500)`, so a box answering no HTTP at all arrives pre-labelled
+  retryable, and is vetoed at `:223-227` on its `APIConnectionError` text besides. The
+  consequence that is measured, and which stands without the stranding argument: those
+  four no longer appear in the cached `/health` report at all, and four of the 31 probes
+  a cycle stop being paid.
 - `health_check_staleness_threshold` has to be named because the shipped default does
   not follow the interval: it is `DEFAULT_HEALTH_CHECK_INTERVAL * 2`, 600 s whatever
   `health_check_interval` says (`router.py:993`), and it is the window the health filter

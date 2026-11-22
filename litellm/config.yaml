@@ -662,18 +662,22 @@ general_settings:
   # fail open. The mark would therefore buy no routing and cost the cooldown
   # above, which has no such fail-open -- and `coder` is the terminal target of
   # every agent lane's fallback chain, so a cooled `coder` means the request fails
-  # outright instead of degrading. One non-retryable status is enough to arm it:
-  # _is_cooldown_required admits 401/404/408 (cooldown_handlers.py:234-248) and
-  # the arm at :400 checks only whether LiteLLM would retry that status, with no
-  # single-deployment guard, so a non-retryable status from a probe -- a 401, or a
-  # 404 that reaches the router with its int status intact -- can park the fallback
-  # for a full cooldown_time with no user request having failed (_should_retry
-  # returns True for 408/409/429/5xx and False for the rest, utils.py:6854-6880, so
-  # only that second family arms the check at :400). The arm did not reproduce in the
-  # three-box harness: an Ollama 404 came back through the probe as
-  # exception_status 500, which is retryable and therefore lands on the guarded arms
-  # instead. So read this opt-out as what the source says it prevents -- and as four
-  # fewer real completions every cycle, since 4 of the 31 probes were buying nothing.
+  # outright instead of degrading. One status is enough to arm it, and only one family
+  # of statuses: a 401 or a 404 clears _is_cooldown_required on its own named arm
+  # (cooldown_handlers.py:239-244), and the arm at :400 then cools it on the bare
+  # question of whether LiteLLM would retry that status, with no single-deployment
+  # guard -- _should_retry returns False for everything outside 408/409/429/5xx
+  # (utils.py:6854-6880). The other probe replies strand nothing: 429 and 408 are
+  # skipped at the call site by health_check_ignore_transient_errors
+  # (proxy_server.py:4001-4004), any other 4xx is refused at :248, and a real 5xx
+  # clears the catch-all at :252 only to fall through every base-case arm. So this
+  # opt-out is a reading of those two functions, not a measurement -- the harness arm
+  # that recorded exception_status 500 had the Arc unreachable, and
+  # proxy_server.py:3999 derives the status as getattr(original_exception,
+  # "status_code", 500), so a box answering no HTTP at all arrives pre-labelled
+  # retryable (and is vetoed at :223-227 on its APIConnectionError text besides).
+  # The half that is measured is the cheap one, and it holds on its own: 4 of the 31
+  # probes a cycle stop being paid, and those four rows leave the cached /health report.
   #
   # Scope, stated honestly: the filter sits on the chat-completion selection path
   # above. The image / audio / embedding / rerank paths select through
