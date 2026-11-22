@@ -299,7 +299,7 @@ subagents_block() {
   done
 }
 
-@test "subagent width: both main.tf twins render the variable's own 15 on every lane" {
+@test "subagent width: both main.tf twins keep the variable's ternary and ban the lane-tied width" {
   # The shipped 15 comes from the variable itself; this map passes it through on
   # every lane. The width used to follow the lane: 15 on agent-swarm, 4 on a pinned
   # one. That was right only while the lane was a workspace-wide decision, and it is
