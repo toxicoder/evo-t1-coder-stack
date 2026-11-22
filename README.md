@@ -789,7 +789,14 @@ rendered width lands under the fleet's, so the profile keeps both numbers side b
 its template - on the template, or on the workspace, whose copy sits in the Coder database
 and is out of reach from inside the container.
 `bazelisk run //scripts:subagent-check` reads the pair and names which one you have,
-beside the writers' lane and the depth. Depth 2, the shipped default,
+beside the writers' lane and the depth. `bazelisk run //scripts:subagent-check -- --all`
+does the same read over the whole stack from a stack-host shell, where `docker`
+addresses the daemon holding the workspace containers, and prints one verdict per
+workspace so the few still rendering a width under the fleet's surface in one command
+instead of one visit each. Each offender it names keeps the number Coder stored for that
+workspace, not one off the template, and the fix is the
+`coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=15` line it
+prints, run on that same host shell. Depth 2, the shipped default,
 lets a child spawn read-only mappers of its own, so a skeptic scopes out its own evidence
 and the parent skips a round trip; 1 keeps nesting off, which is the rollback, and 3 is
 the operator's experiment ceiling. Only `reviewer`, `security-auditor` and `tester` name
@@ -1308,7 +1315,8 @@ The full version of these three: [docs/litellm-routing.md](docs/litellm-routing.
 │   ├── spark-verify.sh      # read-only fleet check
 │   ├── storage-clean.sh     # interactive janitor for the persistent layer
 │   ├── subagent-check.sh    # read one workspace's fan-out sizing against the fleet: the
-│   │                        #   rendered # fleet-width:, the writers' lane, the depth
+│   │                        #   rendered # fleet-width:, the writers' lane, the depth;
+│   │                        #   --all sweeps every workspace container on the host
 │   ├── test-in-image.sh     # run the Bazel gates inside evo-t1-dev:latest
 │   ├── update-configs.sh    # after a pull: port the env files, reseed workspace config
 │   ├── update-stack.sh      # one step: git pull, then redeploy what the pull changed

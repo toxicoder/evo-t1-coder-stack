@@ -1470,6 +1470,7 @@ note: a rendered width below fleet-width is a value that outlived its template -
 
 ```text
 bazelisk run //scripts:subagent-check -- [--config PATH] [--parallel N] [--json] [--strict]
+bazelisk run //scripts:subagent-check -- --all [--json] [--strict]
 
   --config PATH   the profile to read; default $HOME/.grok/config.toml, which is the one
                   this workspace's own render owns
@@ -1477,15 +1478,24 @@ bazelisk run //scripts:subagent-check -- [--config PATH] [--parallel N] [--json]
                   default 5, the PARALLEL recipe default in scripts/spark-configure.sh
   --json          one flat object on stdout and nothing else, for a machine to read
   --strict        a warning is a failure, so a fleet-shaped check can gate a pipeline
+  --all           the fleet sweep: every workspace container on the daemon, which makes it
+                  a stack-host run, and the one flag --config cannot be paired with
 
   sections        == subagent slots ==, then -> the profile, -> the width, -> the lanes,
                   -> the depth, closing with summary: N ok, W warnings, F failed
+                  --all prints one section instead, == subagent width sweep ==, then one
+                  -> <workspace> (<container>) line and one verdict per workspace
   exit            0 with nothing failed, 1 with a failure (or a warning under --strict),
-                  2 on a usage error such as an unknown flag or a non-numeric --parallel
+                  2 on a usage error such as an unknown flag, a non-numeric --parallel,
+                  or --all paired with --config
   --json keys     config, marker, max_concurrent, fleet_width, writers_lane, pinned,
                   max_depth, verdict, ok, warnings, failed
                   verdict is ok, warning, or error; pinned is what the writers' lane in
                   [subagents.models] resolves to, false for the four pin-lifted aliases
+                  --all --json prints one flat object per workspace instead, with
+                  workspace, owner, container, running, max_concurrent, fleet_width,
+                  verdict, remedy; a width or a running flag the sweep could not read is
+                  null, and so is remedy on a workspace that needs nothing
 ```
 
 - The same finding arrives by itself at every start: the profile stage of the boot compares
@@ -1525,6 +1535,66 @@ coder start <workspace> --parameter grok_subagent_max_concurrent=15
   purpose for a session whose writers ride a pinned lane, where one box's `PARALLEL` is the
   useful width. The check prints the same warning either way, so the question is what
   `general-purpose` names under `[subagents.models]`, not how big the number is.
+
+### Which of my workspaces still render a narrow width -> the fleet sweep names them
+
+- Everything above answers for one workspace, because the check reads one
+  `~/.grok/config.toml` and that file is that workspace's own. The stored parameter is
+  per workspace too, so a stack that drifted under the old default is one page to open per
+  workspace. `--all` walks them from the stack host instead:
+
+```bash
+bazelisk run //scripts:subagent-check -- --all
+```
+
+  It enumerates every container labelled `coder.workspace_id` on the daemon (the DinD
+  sidecar carries that label as well and is left out), reads each container's rendered
+  profile, and prints the width verdict for it beside the one `coder update` line that
+  clears the stored value. Like `//scripts:branch-hygiene` it reports and never writes:
+  the report and the printed commands are the deliverable, and you run those yourself, on
+  the host.
+
+```text
+== subagent width sweep ==
+-> evo (coder-alice-evo)
+warning: max_concurrent = 4 is below the fleet width 15
+note: coder update alice/evo --parameter grok_subagent_max_concurrent=15
+-> self (coder-alice-self)
+ok: max_concurrent = 15, the fleet's own width
+summary: 1 ok, 1 warnings, 0 failed
+```
+
+- What it judges is the rendered profile of the running workspaces: it execs into the
+  container and reads the file that workspace's agent actually boots with, not what the
+  template would render on the next start. A stopped container has nothing to exec into,
+  so it cannot be read and is reported as such rather than guessed at:
+  `warning: coder-alice-evo is stopped (exited) - its profile is unreachable and its width
+  comes from the stored parameter`. A workspace that has been stopped for weeks stays
+  unmeasured until you start it, and since its width is that stored parameter anyway, the
+  printed `coder update` line is the fix there too.
+
+- The stored parameter is the thing to clear. Every start re-renders `config.toml`, so a
+  restart on its own re-applies the same stored number; what moves it is
+  `coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=<n>`, or the
+  Variables tab. The sweep prints that line per offender with the owner and the fleet's own
+  width already filled in, which is why reading the fleet is the part worth scripting and
+  the update is the part you run by hand.
+
+- It runs on the stack host and refuses everywhere else, because a workspace's `docker`
+  addresses its own sidecar (see the preamble at the top of this page):
+
+  - inside a workspace, or in the contributor container, where `CODER_WORKSPACE_ID` or
+    `EVO_T1_DEVCONTAINER` is set: `error: subagent-check --all is a stack-host run: this
+    shell's docker addresses its own sidecar`;
+  - paired with `--config`, which names one path and so contradicts a sweep:
+    `error: --all judges every workspace, not one path`, with the usage block on stderr and
+    exit 2;
+  - with no `docker` on PATH: `error: cannot list workspace containers - the docker CLI is
+    not on this host`. A daemon that will not answer is
+    `error: cannot list containers - is the docker daemon reachable from this host?`;
+  - a host carrying no workspace containers is not a fault:
+    `note: no workspace containers on this daemon - nothing to sweep`, closing with
+    `summary: 0 ok, 0 warnings, 0 failed`, exit 0.
 
 ## Docker-in-docker
 
