@@ -1495,7 +1495,9 @@ bazelisk run //scripts:subagent-check -- --all [--json] [--strict]
                   --all --json prints one flat object per workspace instead, with
                   workspace, owner, container, running, max_concurrent, fleet_width,
                   verdict, remedy; a width or a running flag the sweep could not read is
-                  null, and so is remedy on a workspace that needs nothing
+                  null, and so is remedy whenever the sweep has no command to name - a
+                  workspace that needs nothing, a stopped one, and a below-width one whose
+                  coder.owner label is empty
 ```
 
 - The same finding arrives by itself at every start: the profile stage of the boot compares
@@ -1550,9 +1552,15 @@ bazelisk run //scripts:subagent-check -- --all
   It enumerates every container labelled `coder.workspace_id` on the daemon (the DinD
   sidecar carries that label as well and is left out), reads each container's rendered
   profile, and prints the width verdict for it beside the one `coder update` line that
-  clears the stored value. Like `//scripts:branch-hygiene` it reports and never writes:
-  the report and the printed commands are the deliverable, and you run those yourself, on
-  the host.
+  clears the stored value. Enumeration is `docker ps -a` on that label, cut into four
+  tab-separated columns - workspace, owner, container, state - and a row is kept only when
+  it carries all four and the workspace, container and state each say something; the owner
+  column may sit empty, which is the missing-label case below. A row that fails that is
+  dropped exactly like a short one, before anything is printed for it: no `->` phase line,
+  no exec, no verdict, nothing counted in the summary. A container whose state nobody read
+  is neither running nor stopped, and exec-ing into it would print a verdict built on
+  nothing. Like `//scripts:branch-hygiene` it reports and never writes: the report and the
+  printed commands are the deliverable, and you run those yourself, on the host.
 
 ```text
 == subagent width sweep ==
@@ -1577,6 +1585,13 @@ summary: 1 ok, 1 warnings, 0 failed
   compose that line yourself - `<n>` is the `# fleet-width:` the workspace's own render
   wrote, which is exactly the number the sweep cannot see through a stopped container.
   Start it and the next sweep reads the profile and prints the line for you.
+  A running container that carries no `coder.owner` label is the other case where the sweep
+  hands you the command: `coder update /<workspace> --parameter ...` is not a target, and a
+  command that cannot run is worse than none, so it prints the flag it knows and leaves the
+  target to you, and the JSON channel carries `"remedy":null` for the same reason:
+  `note: no coder.owner label on <container> - run coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=<n>`
+  There you compose the owner rather than the number - the profile was read, so `<n>` is
+  already filled with the `# fleet-width:` it carries.
 
 - Two verdicts cover a running container whose profile the sweep could not get at, and both
   are kept apart from the missing-render warning on purpose. `docker exec` passes `cat`'s
@@ -1586,9 +1601,12 @@ summary: 1 ok, 1 warnings, 0 failed
     is the cap biting: the exec had not returned when `PROBE_TIMEOUT` cut it off, which is
     `timeout(1)`'s 124, or 137 once the kill landed. The container is up and hung.
   - `warning: <container> could not be read (docker exec returned <rc>) - its profile says nothing`
-    is docker itself refusing, for any status that is neither 0 nor one of the two timeout
-    codes, and not the 1 or 2 that `cat` returns for a file that is not there - `126` and
-    `127` land here.
+    is the exec itself failing for a reason that is not a missing file and not the timeout:
+    any status outside 0, 1, 2, 124 and 137 lands here. Some of those are docker refusing
+    the exec (`126`), and `127` is as likely to be the in-container `sh` not finding `cat`
+    as it is docker - the read is `docker exec <container> sh -c 'cat ...' sh`, so a
+    container whose image has no `cat` answers through this same branch. What stays out of
+    it is 1 and 2, which are `cat`'s own answer rather than the exec's.
 
   Neither is what 1 and 2 mean - the exec ran and the file was genuinely absent:
   `warning: no profile at /home/coder/.grok/config.toml in <container> - the boot render has not run`.
@@ -1614,11 +1632,20 @@ summary: 1 ok, 1 warnings, 0 failed
   - with no `docker` on PATH: `error: cannot list workspace containers - the docker CLI is
     not on this host`. A daemon that will not answer is
     `error: cannot list containers - is the docker daemon reachable from this host?`;
-  - with a `PROBE_TIMEOUT` the caller corrupted - empty, or carrying anything but digits:
-    `error: PROBE_TIMEOUT='<value>' is not a whole number of seconds`. That cap bounds every
+  - with a `PROBE_TIMEOUT` carrying anything but digits - a word, a decimal, a leading
+    space: `error: PROBE_TIMEOUT='<value>' is not a whole number of seconds`. That cap bounds every
     docker call through `timeout(1)`, which refuses to start on a non-numeric one, so the
     sweep checks it before it asks the daemon anything and prints this instead of letting a
-    failed `timeout` read as an unreachable daemon;
+    failed `timeout` read as an unreachable daemon. An empty value never reaches that check:
+    `scripts/lib/coder_api.sh:43` is `PROBE_TIMEOUT="${PROBE_TIMEOUT:-20}"`, and `:-`
+    substitutes on empty as well as unset, so an empty cap silently takes the library default
+    of 20 seconds and the sweep runs;
+  - with a `PROBE_TIMEOUT` that is all digits and zero, which is every form of it (`0`, `00`,
+    `000`): `error: PROBE_TIMEOUT='0' sets no cap: timeout(1) reads 0 as unlimited`. Zero
+    clears the arm above and `timeout(1)` reads it as no limit at all, the opposite of a cap,
+    so the sweep dies before any docker call: exit 1, nothing on stdout, no
+    `== subagent width sweep ==` heading, because the guard runs ahead of the section
+    (`scripts/subagent-check.sh:1048`);
   - a host carrying no workspace containers is not a fault:
     `note: no workspace containers on this daemon - nothing to sweep`, closing with
     `summary: 0 ok, 0 warnings, 0 failed`, exit 0.

@@ -409,20 +409,28 @@ canonical_url() {
 JSON_ESCAPE_SED='s/["\\]/\\&/g'
 
 # @function json_escape
-# Escape backslash and double quote, drop newlines, and clip to 180 characters
-# so remote replies cannot close a JSON string.
+# Escape backslash and double quote and drop newlines, then clip to a maximum
+# length. The 180 default bounds text that came back from somewhere else, so a
+# remote reply cannot make the report arbitrarily large; a value this script
+# composed itself passes its own length and asks for 0 to keep it whole, because
+# clipping a command the operator is meant to run prints a command that fails.
 # Globals:
 #   JSON_ESCAPE_SED
 # Arguments:
 #   $1 - raw text
+#   $2 - maximum characters, optional; 180 by default, 0 for no clip
 # Outputs:
 #   The escaped, clipped text
 # Returns:
 #   0
 json_escape() {
-  local trimmed
+  local trimmed max="${2:-180}"
   trimmed="$(printf '%s' "$1" | sed -E "${JSON_ESCAPE_SED}" | tr -d '\n\r')"
-  printf '%s' "${trimmed:0:180}"
+  if [ "${max}" = "0" ]; then
+    printf '%s' "${trimmed}"
+    return
+  fi
+  printf '%s' "${trimmed:0:max}"
 }
 
 # @function json_value

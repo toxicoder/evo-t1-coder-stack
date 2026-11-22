@@ -64,8 +64,10 @@
 # A width below fleet-width is a warning, not a failure: the workspace works and
 # the fan-out is only narrower than the fleet can carry, which is also what an
 # operator who set the --var on purpose asked for. A profile carrying neither
-# stack marker is a failure, because the render that owns those keys never
-# reaches that file again and no restart fixes it.
+# stack marker is a failure under --config, because the render that owns those
+# keys never reaches that file again and no restart fixes it; under --all the
+# same profile is a warning, because one odd workspace out of a fleet must not
+# decide the exit code of a report that is still reading the rest of them.
 #
 # Related: scripts/mcp-check.sh (the same profile-read shape and the same two
 #   stack markers), scripts/spark-configure.sh (the PARALLEL recipe default
@@ -668,10 +670,16 @@ host_guard() {
     die "cannot list workspace containers - the docker CLI is not on this host"
   # Checked here rather than left to timeout(1): a non-numeric cap makes the
   # binary fail, and the sweep would then blame the daemon for the caller's own
-  # environment.
+  # environment. The empty arm is out of reach while coder_api.sh owns the
+  # :-20 default, and stays because this is the last place the value is read
+  # before it reaches timeout(1). Zero is all digits and means "no limit" to
+  # timeout(1), which is the opposite of a cap, so it is refused as well.
   case "${PROBE_TIMEOUT}" in
     '' | *[!0-9]*) die "PROBE_TIMEOUT='${PROBE_TIMEOUT}' is not a whole number of seconds" ;;
   esac
+  if [ "${PROBE_TIMEOUT}" -le 0 ] 2>/dev/null; then
+    die "PROBE_TIMEOUT='${PROBE_TIMEOUT}' sets no cap: timeout(1) reads 0 as unlimited"
+  fi
   return 0
 }
 
@@ -685,7 +693,12 @@ host_guard() {
 # of the states this sweep reports - plain `docker ps` would never enumerate it
 # and its stale width would go unreported. And the DinD sidecar carries the same
 # coder.workspace_id label as the workspace it serves, so it is dropped on its
-# own container name, the third column of this row.
+# own container name, the third column of this row. A row survives only when the
+# workspace, container, and state columns each carry something; the owner column
+# is exempt, because a container whose coder.owner label is absent is still a
+# workspace whose width deserves a verdict. A state docker never reported is
+# neither the stopped one nor the running one, and exec-ing into it would print a
+# verdict built on nothing, so that row goes the way of a short one.
 # Globals:
 #   DOCKER_BIN, PROBE_TIMEOUT
 # Arguments:
@@ -701,7 +714,7 @@ workspace_rows() {
     --filter label=coder.workspace_id \
     --format '{{.Label "coder.workspace_name"}}'"${tab}"'{{.Label "coder.owner"}}'"${tab}"'{{.Names}}'"${tab}"'{{.State}}' \
     </dev/null 2>&1 |
-    awk -F'\t' 'NF == 4 && $3 !~ /-dind-sidecar$/ && $1 != "" && $3 != ""'
+    awk -F'\t' 'NF == 4 && $3 !~ /-dind-sidecar$/ && $1 != "" && $3 != "" && $4 != ""'
 }
 
 # @function read_profile
@@ -793,8 +806,16 @@ judge_width() {
     # to `coder templates push` alone. This prints the command and stops: like
     # scripts/branch-hygiene.sh, the report is the deliverable and nothing here
     # touches the workspace. Re-running this sweep after the update is the proof.
-    SWEEP_REMEDY="coder update ${SWEEP_OWNER}/${SWEEP_WORKSPACE} --parameter grok_subagent_max_concurrent=${FLEET_WIDTH}"
-    note "${SWEEP_REMEDY}"
+    if [ -n "${SWEEP_OWNER}" ]; then
+      SWEEP_REMEDY="coder update ${SWEEP_OWNER}/${SWEEP_WORKSPACE} --parameter grok_subagent_max_concurrent=${FLEET_WIDTH}"
+      note "${SWEEP_REMEDY}"
+    else
+      # `coder update /ws` is not a target, so an absent coder.owner label leaves
+      # the sweep no owner to name. It prints the flag it knows and leaves the
+      # target to the operator rather than emitting a command that cannot run;
+      # the JSON channel carries null for the same reason.
+      note "no coder.owner label on ${SWEEP_CONTAINER} - run coder update <owner>/${SWEEP_WORKSPACE} --parameter grok_subagent_max_concurrent=${FLEET_WIDTH}"
+    fi
     SWEEP_VERDICT="warning"
   elif [ "${MAX_CONCURRENT}" -gt "${FLEET_WIDTH}" ]; then
     note "max_concurrent = ${MAX_CONCURRENT} is above the fleet width ${FLEET_WIDTH} - past the fleet's streams the extra spawns queue in LiteLLM"
@@ -903,9 +924,13 @@ sweep_workspaces() {
     # The remedy is the one field assembled from label text rather than passed
     # through json_escape by the caller, and json_value quotes without escaping,
     # so an owner or workspace name carrying a quote would emit JSON the parser
-    # rejects. Escape it here, and keep the empty-means-null rule json_value owns.
+    # rejects. Escape it here, and keep the empty-means-null rule json_value
+    # owns. The 0 asks for no length clip: the 180 default bounds a reply from
+    # somewhere else, while this is a command the operator is meant to paste, and
+    # a clipped one fails. The prose note prints the same command uncut, so the
+    # two channels have to carry the same string.
     if [ -n "${SWEEP_REMEDY}" ]; then
-      remedy_json="\"$(json_escape "${SWEEP_REMEDY}")\""
+      remedy_json="\"$(json_escape "${SWEEP_REMEDY}" 0)\""
     else
       remedy_json="null"
     fi

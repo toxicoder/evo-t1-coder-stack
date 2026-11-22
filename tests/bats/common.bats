@@ -220,6 +220,19 @@ line two")"; b="$(first_line "   ")"; printf "[%s][%s]" "${a}" "${b}"'
   long="$(printf 'x%.0s' {1..200})"
   clipped="$(json_escape "${long}")"
   [ "${#clipped}" -eq 180 ]
+  # The bound is the caller's argument, not a constant: 180 stays the default for text
+  # that came back from somewhere else, an explicit length bounds one caller's own
+  # field, and 0 hands the whole value back -- which is what a command the operator is
+  # meant to paste needs, since a clipped one fails. Clipping is applied after
+  # escaping, so a shortened value can end on an escape's backslash and that is the
+  # caller's call, not a reason to keep the whole string.
+  bounded="$(json_escape "${long}" 42)"
+  [ "${#bounded}" -eq 42 ]
+  [ "${bounded}" = "$(printf 'x%.0s' {1..42})" ]
+  uncut="$(json_escape "${long}" 0)"
+  [ "${#uncut}" -eq 200 ]
+  [ "${uncut}" = "${long}" ]
+  [ "$(json_escape 'a"b\c' 0)" = 'a\"b\\c' ]
   [ "$(json_value)" = "null" ]
   [ "$(json_value "42")" = "42" ]
   [ "$(json_value "abc")" = "\"abc\"" ]
