@@ -6,8 +6,8 @@
 # three are text in a template someone can edit: every subagent type a session can
 # spawn has to ride a lane, each role on the alias that suits the work (a named type
 # with no entry inherits the parent's model, which is how a swarm wave ends up
-# queued behind one box anyway), the width has to come from the fleet's own
-# grok_swarm_width on every lane rather than follow the default lane, the operator
+# queued behind one box anyway), the width has to be grok_subagent_max_concurrent's
+# own shipped 15 on every lane rather than follow the default lane, the operator
 # docs have to keep teaching that rule, and the rulebook has to tell the parent to
 # fill
 # the slots it was
@@ -200,21 +200,30 @@ subagents_block() {
   done
 }
 
-@test "subagent width: both coder.tf twins derive it and validate the override" {
-  local file
+@test "subagent width: both coder.tf twins ship their own 15 and validate the override" {
+  local file block
   for file in "${CODER_TWINS[@]}"; do
-    run grep -F 'variable "grok_subagent_max_concurrent"' "${file}"
-    [ "${status}" -eq 0 ]
-    # null, not 4: a literal default is what made the swarm lane no wider than a
-    # pinned one, so the fleet sat half idle with the knob untouched.
-    run grep -F 'default     = null' "${file}"
-    [ "${status}" -eq 0 ] || {
-      echo "${file} defaults the width instead of deriving it from the lane" >&2
+    # Assert inside the variable block: grok_swarm_width carries the identical
+    # default     = 15 line two blocks above, so a file-wide grep cannot tell the
+    # two apart and passes even when the width variable ships nothing.
+    block="$(awk '/^variable "grok_subagent_max_concurrent" \{/,/^\}/' "${file}")"
+    [[ -n "${block}" ]] || {
+      echo "${file} has no grok_subagent_max_concurrent variable, so the width is a literal" >&2
       return 1
     }
+    # 15 outright, not null: the width is this variable's own number on every lane.
+    # A null default tied it to grok_swarm_width, so an operator who shrank the
+    # fleet's ceiling also narrowed every queue beside it.
+    [[ "${block}" == *'default     = 15'* ]] || {
+      echo "${file} does not ship the width as the variable's own 15" >&2
+      return 1
+    }
+    # The == null arm is the explicit-null opt-in: it is what makes passing null
+    # legal, which is the one case that hands the width to grok_swarm_width. The
+    # rest of the condition is the 1..32 bound on every explicit value.
     run grep -F 'var.grok_subagent_max_concurrent == null ||' "${file}"
     [ "${status}" -eq 0 ] || {
-      echo "${file} lost the validation that keeps the override a sane count" >&2
+      echo "${file} lost the == null validation arm, so an explicit null cannot take the fleet ceiling" >&2
       return 1
     }
     # The lane variable has to name all three types, or the description is the
@@ -290,13 +299,16 @@ subagents_block() {
   done
 }
 
-@test "subagent width: both main.tf twins default to the fleet width on every lane" {
-  # The width used to follow the lane: 15 on agent-swarm, 4 on a pinned one. That
-  # was right only while the lane was a workspace-wide decision, and it is not:
-  # the agent-swarm model block is ungated, so a session whose default lane is
+@test "subagent width: both main.tf twins render the variable's own 15 on every lane" {
+  # The shipped 15 comes from the variable itself; this map passes it through on
+  # every lane. The width used to follow the lane: 15 on agent-swarm, 4 on a pinned
+  # one. That was right only while the lane was a workspace-wide decision, and it is
+  # not: the agent-swarm model block is ungated, so a session whose default lane is
   # pinned can still name the swarm lane on any spawn. A config sized at one box's
   # PARALLEL then caps a swarm the user was one argument away from, which is the
-  # failure this assertion now forbids. An explicit --var still overrides.
+  # failure this assertion now forbids. The : var.grok_swarm_width arm answers only a
+  # caller that passes grok_subagent_max_concurrent = null on purpose, and an explicit
+  # --var still overrides.
   local file
   for file in "${MAIN_TWINS[@]}"; do
     run grep -F 'var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent' "${file}"
@@ -306,7 +318,7 @@ subagents_block() {
     }
     run grep -F ': var.grok_swarm_width' "${file}"
     [ "${status}" -eq 0 ] || {
-      echo "${file} does not fall back to the fleet width" >&2
+      echo "${file} lost the explicit-null arm that hands the width to the fleet's ceiling" >&2
       return 1
     }
     if grep -qF 'var.grok_subagents_lane == "agent-swarm" ? 15 : 4' "${file}"; then
@@ -409,19 +421,20 @@ subagents_block() {
   }
 }
 
-@test "contributor seed: the lane and the width are variables, not literals" {
+@test "contributor seed: the lane and the width are variables with their own defaults" {
   local seed="${REPO_ROOT}/scripts/seed-dev-env.sh"
   [ -f "${seed}" ] || skip "no scripts/seed-dev-env.sh in the checkout"
   run grep -F 'GROK_SUBAGENTS_LANE' "${seed}"
   [ "${status}" -eq 0 ]
   run grep -F 'GROK_SUBAGENT_MAX_CONCURRENT' "${seed}"
   [ "${status}" -eq 0 ]
-  # The seed's own fallback is the fleet width, not a lane-conditional 4: a
-  # contributor home that sized itself at one box could not run the swarm a
-  # session there can name on any spawn.
-  run grep -F 'GROK_SUBAGENT_MAX_CONCURRENT:-${GROK_SWARM_WIDTH:-15}' "${seed}"
+  # The width stays an overridable variable, and its own default is the shipped 15:
+  # not a lane-conditional 4, and not GROK_SWARM_WIDTH, which a contributor home
+  # could shrink alone. A home that sized itself at one box could not run the swarm
+  # a session there can name on any spawn.
+  run grep -F 'GROK_SUBAGENT_MAX_CONCURRENT:-15' "${seed}"
   [ "${status}" -eq 0 ] || {
-    echo "seed-dev-env.sh no longer defaults a contributor home to the fleet width" >&2
+    echo "seed-dev-env.sh no longer defaults a contributor home to the variable's own 15" >&2
     return 1
   }
   if grep -qF 'slots="4"' "${seed}"; then
@@ -560,11 +573,12 @@ subagents_block() {
 
 @test "fan-out docs: no operator doc re-ties the width to the default lane" {
   # The width used to follow grok_subagents_lane: 15 on agent-swarm, 4 on a pinned
-  # one. main.tf has taken it from grok_swarm_width on every lane since, but four
+  # one. main.tf has rendered the variable's own 15 on every lane since, but four
   # operator docs kept teaching the old rule because nothing read them -- the stale
   # terraform ternary was still printed verbatim in the agents guide. This refuses
-  # the retired wording and requires the variable that actually supplies the width
-  # to be named, so the prose cannot drift from main.tf again unnoticed.
+  # the retired wording and requires grok_swarm_width to be named -- the fleet's own
+  # ceiling, and the width only for a caller that passes null on purpose -- so the
+  # prose cannot drift from main.tf again unnoticed.
   local file flat pattern
   local -a banned=(
     'width.{0,60}follows? the (lane|writers)'
@@ -601,7 +615,7 @@ subagents_block() {
     done
     run grep -F 'grok_swarm_width' "${file}"
     [ "${status}" -eq 0 ] || {
-      echo "${file} never names grok_swarm_width, the variable that supplies the width" >&2
+      echo "${file} never names grok_swarm_width, the fleet's own ceiling and the width only on an explicit null" >&2
       return 1
     }
   done
