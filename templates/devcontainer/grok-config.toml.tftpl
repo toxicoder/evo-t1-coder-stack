@@ -420,10 +420,8 @@ auto_compact_threshold_percent = 70
 # Depth rides the same 15: a depth-2 child holds a stream too, so a parent counts
 # `1 + spawns` per task in flight; 1 keeps nesting off.
 # The fleet's own ceiling is echoed inside the table rather than folded into the number:
-# `grok_swarm_width` renders as the `# fleet-width:` line beside `max_concurrent`, and
-# it is the width this workspace gets only when it sets grok_subagent_max_concurrent =
-# null on purpose; an explicit --var still overrides the shipped 15, so the pair is what
-# makes a width older than the template that set it legible from inside the workspace.
+# grok_swarm_width renders that line and is the width only under a deliberate null, so
+# an explicit --var still owns max_concurrent and a stale width stays legible in here.
 # //scripts:subagent-check and the boot advisory compare the two numbers.
 [subagents]
 enabled = true
