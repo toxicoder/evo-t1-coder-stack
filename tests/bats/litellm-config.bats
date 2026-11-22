@@ -1135,9 +1135,14 @@ require_compose() {
     sed -n 's/^[[:space:]]*-[[:space:]]*"\{0,1\}[^"]*:\([0-9][0-9]*\)"\{0,1\}[[:space:]]*$/\1/p' | sort -u)"
   [ -n "${published}" ] || { echo "the litellm service publishes no container port" >&2; return 1; }
   hc_test="$(litellm_healthcheck_test)"
+  # Its own assertion, so a probe pointed at some other endpoint says that rather
+  # than "names no port": the port regex below is anchored on the liveliness path, so
+  # without this line a wrong path reports as a missing port and sends a reader to the
+  # ports: mapping when the path is what broke.
+  assert_match "the probe dials the liveliness endpoint" '/health/liveliness' "${hc_test}"
   probe_port="$(printf '%s\n' "${hc_test}" |
     sed -nE 's|.*127\.0\.0\.1:([0-9]+)/health/liveliness.*|\1|p' | head -1)"
-  [ -n "${probe_port}" ] || { echo "the probe URL names no port" >&2; return 1; }
+  [ -n "${probe_port}" ] || { echo "the probe URL names no port after the host" >&2; return 1; }
   # Membership rather than equality: a service may publish more than one container
   # port, and what has to hold is that the probe dials one something listens on.
   if ! printf '%s\n' "${published}" | grep -qx -- "${probe_port}"; then
