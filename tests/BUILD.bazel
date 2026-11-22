@@ -551,6 +551,12 @@ _SUITE_PAYLOAD = {
     "startup-vault-hook.bats": [
         "//:templates_payload",
     ],
+    # The suite drives the shipped CLI over profiles it writes itself under
+    # BATS_TEST_TMPDIR, so it reads no payload directory: the script and the
+    # scripts/lib/ helpers it sources ride in with //scripts:doc_sources from
+    # _BATS_COMMON, and the one payload the CLI touches (the compose file, for its
+    # repo-root walk) is a common entry too.
+    "subagent-check.bats": [],
     "storage-clean.bats": [
         "//:templates_payload",
     ],
