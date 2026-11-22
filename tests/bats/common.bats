@@ -238,6 +238,44 @@ line two")"; b="$(first_line "   ")"; printf "[%s][%s]" "${a}" "${b}"'
   [ "$(json_value "abc")" = "\"abc\"" ]
 }
 
+@test "common: json_escape drops every C0 control byte and refuses a max that is not a count" {
+  source_libs
+  local raw control escaped
+  # RFC 8259 requires a C0 control byte inside a string to be escaped and this function
+  # emits no escape for one, so the byte has to go: one raw 0x01 in a remote reply or an
+  # operator-typed label made the WHOLE line unparseable, not one field odd. Tab sits in
+  # the same range and goes with it, which costs nothing at the only callers there are -
+  # a field that carried one was never a name worth keeping half of.
+  raw="$(printf 'a\tb\001c\037d')"
+  [ "${#raw}" -eq 7 ]
+  escaped="$(json_escape "${raw}")"
+  [ "${escaped}" = "abcd" ] || fail "the control bytes survived: ${escaped}"
+  # Escaping still happens, and the two passes do not interfere: the byte leaves while
+  # the quote and the backslash go on as their escapes.
+  control=$'a\001"b\\c'
+  [ "${#control}" -eq 6 ]
+  [ "$(json_escape "${control}")" = 'a\"b\\c' ]
+
+  # A max that is not a plain non-negative integer is not a bound. The slice below
+  # evaluates its bound arithmetically, so -3 used to mean "drop the last three" and
+  # anything non-numeric was a hole; both fall back to the 180 default now, and a value
+  # shorter than the default comes back whole.
+  [ "$(json_escape "abcdefghij" -3)" = "abcdefghij" ]
+  [ "$(json_escape "abcdefghij" abc)" = "abcdefghij" ]
+  [ "$(json_escape "abcdefghij" 3x)" = "abcdefghij" ]
+  [ "$(json_escape "abcdefghij" '')" = "abcdefghij" ]
+
+  # The same two under the caller's own `set -euo pipefail`, which is how every CLI in
+  # the stack expands one of these inside a report line: a bad max is a bad argument,
+  # not a reason to abort the run that passed it.
+  drive 'printf "[%s]" "$(json_escape "abcdefghij" abc)"'
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "[abcdefghij]" ]
+  drive 'printf "[%s]" "$(json_escape "abcdefghij" -3)"'
+  [ "${status}" -eq 0 ]
+  [ "${output}" = "[abcdefghij]" ]
+}
+
 @test "common: log goes to stdout, or to stderr when JSON_MODE is on" {
   run --separate-stderr bash -c "source '${REPO_ROOT}/scripts/lib/common.sh'; log plain"
   [ "${status}" -eq 0 ]

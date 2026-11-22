@@ -30,7 +30,9 @@
 # inside that workspace can see or clear it, so only a host run can find them.
 # For each offender it prints the one `coder update` command that clears the
 # stale stored parameter. Like scripts/branch-hygiene.sh it reports and never
-# writes: no container is touched, and no coder command is run.
+# writes: it starts nothing, stops nothing, rewrites nothing, and runs no coder
+# command. The one thing it does to a running container is docker exec a read of
+# the profile that workspace's own boot already rendered.
 #
 # Options (accepted anywhere in argv):
 #   --all             sweep every workspace container on this host's daemon
@@ -150,16 +152,11 @@ COMMON_LIB="$(find_lib common.sh "${REPO_ROOT_RESOLVED}")" || {
 # shellcheck source=/dev/null
 source "${COMMON_LIB}"
 
-# The --all sweep is the only path that touches the daemon, and it addresses it
-# exactly the way the other daemon-facing CLIs do: stack_timeout bounds every
-# call and DOCKER_BIN may hold more than one word. The single-profile path never
-# calls either, so it still needs no network and no docker.
-CODER_API_LIB="$(find_lib coder_api.sh "${REPO_ROOT_RESOLVED}")" || {
-  printf 'error: subagent-check cannot run without its helpers: no scripts/lib/coder_api.sh above\n' >&2
-  exit 1
-}
-# shellcheck source=lib/coder_api.sh disable=SC1091
-source "${CODER_API_LIB}"
+# The --all sweep is the only path that touches the daemon, so scripts/lib/
+# coder_api.sh is sourced inside that branch rather than here: stack_timeout
+# bounds every daemon call and DOCKER_BIN may hold more than one word, and the
+# single-profile path calls neither. A workspace boot reads one file, and it
+# should not be able to fail because a daemon-side helper went missing.
 
 # The LiteLLM PARALLEL a Spark box serves, from the recipe default in
 # scripts/spark-configure.sh. It is the useful width once the writers ride a
@@ -267,7 +264,9 @@ each judged against the fleet-width its own render wrote, with the one coder
 update command that clears a stale stored parameter printed per offender. That
 path needs the docker CLI and only runs on the stack host - inside a workspace
 or the contributor dev container docker addresses that container's own sidecar.
-It reports and never writes.
+It starts nothing, stops nothing, rewrites nothing, and runs no coder command; the
+one thing it does to a running container is docker exec a read of the profile that
+workspace's own boot already rendered.
 
 Options: --config (default $HOME/.grok/config.toml), --parallel (the LiteLLM
 PARALLEL each Spark box serves, the useful width on a pinned lane; default 5),
@@ -668,6 +667,12 @@ host_guard() {
   fi
   command -v docker >/dev/null 2>&1 ||
     die "cannot list workspace containers - the docker CLI is not on this host"
+  # stack_timeout calls timeout(1) unconditionally, so without it every daemon
+  # call dies with "command not found" and the sweep reports an unreachable
+  # daemon. Name the missing binary instead, the way coder-agents and
+  # push-template already refuse it.
+  command -v timeout >/dev/null 2>&1 ||
+    die "cannot bound any daemon call - timeout(1) is not on this host"
   # Checked here rather than left to timeout(1): a non-numeric cap makes the
   # binary fail, and the sweep would then blame the daemon for the caller's own
   # environment. The empty arm is out of reach while coder_api.sh owns the
@@ -684,37 +689,36 @@ host_guard() {
 }
 
 # @function workspace_rows
-# Print one "workspace<TAB>owner<TAB>container<TAB>state" line per workspace
-# container on this host's daemon, across every compose project it holds. Three
+# Ask the daemon once for every workspace container it holds, across every
+# compose project, and print the rows exactly as docker printed them. Two
 # details are load-bearing. The query goes to the daemon by label and never
 # through `docker compose ps`, because a compose call resolves a project from
 # the cwd, and under `bazelisk run` that cwd is a runfiles copy whose directory
 # name is no project anywhere. `-a` is here because a stopped workspace is one
 # of the states this sweep reports - plain `docker ps` would never enumerate it
-# and its stale width would go unreported. And the DinD sidecar carries the same
-# coder.workspace_id label as the workspace it serves, so it is dropped on its
-# own container name, the third column of this row. A row survives only when the
-# workspace, container, and state columns each carry something; the owner column
-# is exempt, because a container whose coder.owner label is absent is still a
-# workspace whose width deserves a verdict. A state docker never reported is
-# neither the stopped one nor the running one, and exec-ing into it would print a
-# verdict built on nothing, so that row goes the way of a short one.
+# and its stale width would go unreported. Filtering is left to the caller, so
+# the same answer can be counted twice: what the daemon named, and what the
+# sweep could actually judge.
 # Globals:
 #   DOCKER_BIN, PROBE_TIMEOUT
 # Arguments:
 #   None
 # Outputs:
-#   Tab-separated rows on stdout; docker's own error text when the call fails
+#   One raw tab-separated row per container on stdout, unfiltered, docker's own
+#   error text included; the caller counts and judges what it is given
 # Returns:
 #   0 when the daemon answered, the command's status otherwise
 workspace_rows() {
-  local tab=$'\t'
+  local tab=$'\t' rc=0
+  # One call, unfiltered, so the caller can count what the daemon named and what
+  # it could use from the same answer; a second `docker ps` could see a different
+  # fleet and turn an honest report into an arithmetic accident.
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
   stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} ps -a \
     --filter label=coder.workspace_id \
     --format '{{.Label "coder.workspace_name"}}'"${tab}"'{{.Label "coder.owner"}}'"${tab}"'{{.Names}}'"${tab}"'{{.State}}' \
-    </dev/null 2>&1 |
-    awk -F'\t' 'NF == 4 && $3 !~ /-dind-sidecar$/ && $1 != "" && $3 != "" && $4 != ""'
+    </dev/null 2>&1 || rc=$?
+  return "${rc}"
 }
 
 # @function read_profile
@@ -737,7 +741,10 @@ read_profile() {
   local container="${1:-}"
   [ -n "${container}" ] || return 1
   # shellcheck disable=SC2086 # DOCKER_BIN may legitimately hold "sudo docker"
-  stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} exec "${container}" \
+  # The -- stops docker parsing the container name as flags: the name is a label
+  # value here, and an option-looking one would otherwise make docker read a
+  # different container and the sweep attribute that profile to this workspace.
+  stack_timeout "${PROBE_TIMEOUT}" ${DOCKER_BIN} exec -- "${container}" \
     sh -c 'cat "${HOME:-/home/coder}/.grok/config.toml" 2>/dev/null' sh \
     </dev/null 2>/dev/null
 }
@@ -778,10 +785,17 @@ judge_width() {
   # An unreadably long digit run is not a width this stack can mean (the
   # parameter is capped at 32) and it is not comparable either: bash errors on
   # it and lets both tests fall through, which would report a corrupted file as
-  # the shipped state. It leaves as the hand edit it is, with the number left
-  # unmeasured rather than printed as a width.
+  # the shipped state. It gets its own verdict here rather than clearing
+  # MAX_CONCURRENT, because falling into the missing-line branch would tell the
+  # operator their max_concurrent is absent when it is present and correct - the
+  # exact misdiagnosis this function exists to avoid, and the same words the
+  # single-profile path prints at the check above.
   if [ "${#MAX_CONCURRENT}" -gt 4 ] || [ "${#FLEET_WIDTH}" -gt 4 ]; then
+    warn "max_concurrent = ${MAX_CONCURRENT} against fleet-width = ${FLEET_WIDTH} is not a width this stack can mean (the parameter is capped at 32)"
     MAX_CONCURRENT=""
+    FLEET_WIDTH=""
+    SWEEP_VERDICT="warning"
+    return 0
   fi
   if [ -z "${MAX_CONCURRENT}" ]; then
     # Two states, two remedies, same rule as the single-profile path: a profile
@@ -819,9 +833,12 @@ judge_width() {
     SWEEP_VERDICT="warning"
   elif [ "${MAX_CONCURRENT}" -gt "${FLEET_WIDTH}" ]; then
     note "max_concurrent = ${MAX_CONCURRENT} is above the fleet width ${FLEET_WIDTH} - past the fleet's streams the extra spawns queue in LiteLLM"
-    # Counted with the ok items, as the single-profile path counts it: it is
-    # commentary, not a fault. note() prints without counting, so the count is
-    # made here rather than by bending the wording.
+    # Counted with the ok items: an above-width workspace is not a fault, it is
+    # commentary on a hand-set parameter. note() prints without counting, so the
+    # count is made here rather than by bending the wording into an ok: line the
+    # operator did not ask for. The single-profile path reaches the same verdict
+    # through its own phases, so the exit code agrees even though the line does
+    # not carry the ok prefix, and a Bats case pins this count on purpose.
     SUMMARY_OK=$((${SUMMARY_OK:-0} + 1))
     SWEEP_VERDICT="ok"
   else
@@ -851,11 +868,30 @@ judge_width() {
 # Returns:
 #   0, always; exits 1 when the daemon itself would not answer at all
 sweep_workspaces() {
-  local rows="" rc=0 state="" row="" remedy_json=""
-  rows="$(workspace_rows)" ||
+  local raw="" rows="" rc=0 state="" row="" remedy_json="" judged=0 listed=0
+  raw="$(workspace_rows)" ||
     die "cannot list containers - is the docker daemon reachable from this host?"
+  # Rows that name a workspace at all. The DinD sidecar carries the same
+  # coder.workspace_id label as the workspace it serves, so it is excluded on its
+  # container name here as well as below: counting it would print the note at the
+  # foot of this loop on every host that runs one.
+  listed="$(printf '%s\n' "${raw}" |
+    awk -F'\t' '$0 != "" && !($3 ~ /-dind-sidecar$/) { n++ } END { print n + 0 }')"
+  # A row is usable when the workspace, container, and state columns each carry
+  # something and none is absurdly long. The owner column is exempt, because a
+  # container whose coder.owner label is absent is still a workspace whose width
+  # deserves a verdict. A state docker never reported is neither the stopped one
+  # nor the running one, and exec-ing into it would print a verdict built on
+  # nothing, and a field past 255 characters is no Coder name.
+  rows="$(printf '%s\n' "${raw}" |
+    awk -F'\t' 'NF == 4 && $3 !~ /-dind-sidecar$/ && $1 != "" && $3 != "" && $4 != "" &&
+                length($1) <= 255 && length($2) <= 255 && length($3) <= 255 && length($4) <= 255')"
   if [ -z "${rows}" ]; then
-    note "no workspace containers on this daemon - nothing to sweep"
+    if [ "${listed}" -gt 0 ]; then
+      note "the daemon listed ${listed} row(s), none of which was a workspace this sweep could judge"
+    else
+      note "no workspace containers on this daemon - nothing to sweep"
+    fi
     return 0
   fi
   # One temp per workspace, created mode 600 and removed as each row finishes.
@@ -865,6 +901,7 @@ sweep_workspaces() {
   trap 'rm -f "${SWEEP_TMP:-}"' EXIT
   while IFS= read -r row; do
     [ -n "${row}" ] || continue
+    judged=$((judged + 1))
     # Split by hand rather than `IFS=$'\t' read -r a b c d`. Tab is IFS
     # whitespace, so read collapses runs of it and an empty middle field - a
     # container whose coder.owner label is absent, which docker prints empty -
@@ -942,6 +979,9 @@ sweep_workspaces() {
       "$(json_value "${MAX_CONCURRENT}")" "$(json_value "${FLEET_WIDTH}")" \
       "${SWEEP_VERDICT:-warning}" "${remedy_json}")"$'\n'
   done <<<"${rows}"
+  if [ "${judged}" -lt "${listed}" ]; then
+    note "$((listed - judged)) of the ${listed} rows this daemon listed were not judged - a DinD sidecar row is expected among them, and anything else is a row that was not four usable columns"
+  fi
   SWEEP_TMP=""
   return 0
 }
@@ -1047,6 +1087,10 @@ main() {
   # its own contract, and the single-profile report below stays byte-identical.
   # It runs after the assignments above because sweep_finish reads STRICT.
   if [ "${all}" = "1" ]; then
+    CODER_API_LIB="$(find_lib coder_api.sh "${REPO_ROOT_RESOLVED}")" ||
+      die "cannot sweep the fleet: no scripts/lib/coder_api.sh above"
+    # shellcheck source=lib/coder_api.sh disable=SC1091
+    source "${CODER_API_LIB}"
     host_guard
     section "subagent width sweep"
     sweep_workspaces

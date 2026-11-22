@@ -793,7 +793,13 @@ beside the writers' lane and the depth. `bazelisk run //scripts:subagent-check -
 does the same read over the whole stack from a stack-host shell, where `docker`
 addresses the daemon holding the workspace containers, and prints one verdict per
 workspace so the few still rendering a width under the fleet's surface in one command
-instead of one visit each. Each offender it names keeps the number Coder stored for that
+instead of one visit each. That read is one `docker ps -a` on the `coder.workspace_id`
+label, then a read-only `cat` of each running container's own rendered profile through
+`docker exec --`: like `//scripts:branch-hygiene` the sweep starts nothing, stops nothing,
+rewrites nothing, and runs no `coder` command, and it needs the docker CLI and `timeout(1)`
+on that host. A row the daemon listed that the sweep could not judge is counted and named in
+a closing `note:` rather than dropped in silence, and the DinD sidecar row is excluded from
+that count. Each offender it names keeps the number Coder stored for that
 workspace, not one off the template, and the fix is the
 `coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=15` line it
 prints, run on that same host shell. Depth 2, the shipped default,

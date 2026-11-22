@@ -1292,6 +1292,7 @@ case "${cmd}" in
     exit "${STUB_PS_RC:-0}"
     ;;
   exec)
+    if [ "${1:-}" = "--" ]; then shift; fi
     container="${1:-}"
     shift || true
     if [ "${1:-}" != "sh" ] || [ "${2:-}" != "-c" ]; then
@@ -1382,7 +1383,9 @@ sweep_ps_argv() {
 
 # sweep_exec_targets - the containers the sweep actually exec'd into, one per line.
 sweep_exec_targets() {
-  awk -F'\t' '$2 == "exec" {print $3}' "${STUB_LOG}/docker" 2>/dev/null || true
+  # The sweep passes `--` before the container so an option-looking label cannot
+  # become a docker flag; the target is the field after it when it is there.
+  awk -F'\t' '$2 == "exec" { print ($3 == "--" ? $4 : $3) }' "${STUB_LOG}/docker" 2>/dev/null || true
 }
 
 @test "subagent-check: --all sweeps two workspaces and prints the contract exactly" {
@@ -1972,7 +1975,7 @@ print(json.loads(sys.stdin.read())["remedy"])')"
   assert_not_match "and no restart is ordered for a render that already ran" \
     'restart the workspace' "${output}"
   assert_eq "the exec was bounded by the same cap it just named" "1" \
-    "$(grep -c '^timeout -k 2 7 docker exec coder-alice-hang ' "${STUB_LOG}/timeout.log" || true)"
+    "$(grep -c '^timeout -k 2 7 docker exec -- coder-alice-hang ' "${STUB_LOG}/timeout.log" || true)"
   assert_eq "counted once, as a warning" 'summary: 0 ok, 1 warnings, 0 failed' \
     "${output##*$'\n'}"
 
@@ -2025,9 +2028,12 @@ print(json.loads(sys.stdin.read())["remedy"])')"
   use_sweep_stubs
   # A truncated listing line has no state column. Guessing at it is not harmless:
   # with the state missing, the parser hands the container name to the state slot,
-  # reads "not running", and reports a container that is up as stopped. workspace_rows
+  # reads "not running", and reports a container that is up as stopped. sweep_workspaces
   # drops the row on the field count, so it earns no phase line, no verdict, no count,
-  # and above all no exec into a container whose state nobody actually read. The
+  # and above all no exec into a container whose state nobody actually read. It is not
+  # swallowed either: the sweep counts what the daemon listed against what it judged
+  # and prints the difference, so a row lost to its shape is said aloud at the foot of
+  # the report rather than leaving a fleet of one where a fleet of two was listed. The
   # profile exists on purpose: the row is dropped for its shape, not for its bytes.
   sweep_home coder-alice-evo 15 15
   sweep_home coder-alice-short 15 15
@@ -2036,8 +2042,10 @@ print(json.loads(sys.stdin.read())["remedy"])')"
 
   run_sweep "${rows}"
   [ "${status}" -eq 0 ]
-  assert_eq "only the complete row is judged, exactly once" \
-    "$(printf '%s\n%s' '-> evo (coder-alice-evo)' "ok: max_concurrent = 15, the fleet's own width")" \
+  assert_eq "only the complete row is judged, exactly once, and the drop is counted" \
+    "$(printf '%s\n%s\n%s' '-> evo (coder-alice-evo)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      'note: 1 of the 2 rows this daemon listed were not judged - a DinD sidecar row is expected among them, and anything else is a row that was not four usable columns')" \
     "$(printf '%s\n' "${output}" | grep -E '^-> |^(ok|warning|note): ')"
   assert_not_match "the short row earns no phase line" 'short \(coder-alice-short\)' \
     "${output}"
@@ -2056,9 +2064,11 @@ print(json.loads(sys.stdin.read())["remedy"])')"
   # container it never classified, and that row carries all four columns, so it clears
   # NF == 4 and reaches the loop - where it is neither running nor stopped, which is
   # the one state the sweep has no reading for. Exec-ing into it and reporting what
-  # comes back would print a verdict built on a state nobody read. workspace_rows
+  # comes back would print a verdict built on a state nobody read. sweep_workspaces
   # requires every one of the four fields to carry something, so this row goes the way
-  # of the short one above. The profile exists on purpose: the row is dropped for the
+  # of the short one above - and is counted by the same note, because a row the daemon
+  # listed and the sweep silently skipped is indistinguishable from a workspace nobody
+  # enumerated. The profile exists on purpose: the row is dropped for the
   # empty column, not for its bytes, and a container that would have answered is the
   # point - only the state can say whether it should be asked.
   sweep_home coder-alice-evo 15 15
@@ -2068,8 +2078,10 @@ print(json.loads(sys.stdin.read())["remedy"])')"
 
   run_sweep "${rows}" --json
   [ "${status}" -eq 0 ]
-  assert_eq "only the row carrying a state is judged, exactly once" \
-    "$(printf '%s\n%s' '-> evo (coder-alice-evo)' "ok: max_concurrent = 15, the fleet's own width")" \
+  assert_eq "only the row carrying a state is judged, exactly once, and the drop is counted" \
+    "$(printf '%s\n%s\n%s' '-> evo (coder-alice-evo)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      'note: 1 of the 2 rows this daemon listed were not judged - a DinD sidecar row is expected among them, and anything else is a row that was not four usable columns')" \
     "$(printf '%s\n' "${output}" | grep -E '^-> |^(ok|warning|note): ')"
   assert_eq "and the object is the surviving row's alone" \
     '{"workspace":"evo","owner":"alice","container":"coder-alice-evo","running":true,"max_concurrent":15,"fleet_width":15,"verdict":"ok","remedy":null}' \
@@ -2144,6 +2156,284 @@ print(json.loads(sys.stdin.read())["remedy"])')"
   done
 }
 
+@test "subagent-check: --all says so when every row the daemon listed was unusable" {
+  local rows
+  use_sweep_stubs
+  # A tab inside coder.workspace_name is only bytes to docker, so it reaches the sweep as
+  # a five-field row and the four-column filter drops it. With nothing left, the old
+  # silence printed the empty-daemon line, which is a different fact: this host does hold
+  # workspaces, the sweep just could not read any of them, and an operator sent to check
+  # whether the daemon is up is being asked to look at the wrong thing.
+  sweep_home coder-alice-weird 15 15
+  rows="we${SWEEP_TAB}ird${SWEEP_TAB}alice${SWEEP_TAB}coder-alice-weird${SWEEP_TAB}running"
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_eq "the note counts the rows the daemon named, none of them judged" \
+    'note: the daemon listed 1 row(s), none of which was a workspace this sweep could judge' \
+    "$(printf '%s\n' "${output}" | grep '^note: ')"
+  assert_not_match "and the empty-daemon line is not the answer here" 'nothing to sweep' "${output}"
+  assert_not_match "nor is the partial note fired on top of it, since nothing was judged" \
+    'were not judged' "${output}"
+  assert_eq "no row was judged, so the report carries no phase line at all" "" \
+    "$(printf '%s\n' "${output}" | grep '^-> ')"
+  assert_not_match "the unusable row earns no verdict" 'coder-alice-weird' "${output}"
+  assert_eq "and no container was exec'd into on the strength of a row nobody parsed" "" \
+    "$(sweep_exec_targets)"
+  assert_eq "an unusable row counts as neither ok, warning, nor failure" \
+    'summary: 0 ok, 0 warnings, 0 failed' "${output##*$'\n'}"
+}
+
+@test "subagent-check: --all counts a label that split its own row across two lines" {
+  local rows
+  use_sweep_stubs
+  # docker prints label bytes as they are, so a newline inside coder.workspace_name
+  # arrives as two lines: an orphan field, then the tail of the row carrying all four
+  # columns. The tail is judgeable and is judged; the orphan is dropped. The count is the
+  # finding - a report that said nothing would leave the operator with one workspace
+  # where the daemon named a container, and no way to tell the two apart.
+  sweep_home coder-alice-two 15 15
+  rows="two"$'\n'"lines${SWEEP_TAB}alice${SWEEP_TAB}coder-alice-two${SWEEP_TAB}running"
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_eq "the surviving half is judged, and the orphan is counted by the note" \
+    "$(printf '%s\n%s\n%s' \
+      '-> lines (coder-alice-two)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      'note: 1 of the 2 rows this daemon listed were not judged - a DinD sidecar row is expected among them, and anything else is a row that was not four usable columns')" \
+    "$(printf '%s\n' "${output}" | grep -E '^-> |^(ok|warning|note): ')"
+  assert_not_match "the orphan field earned no phase line of its own" '^-> two (' "${output}"
+  assert_eq "exactly the judgeable container was read" "coder-alice-two" "$(sweep_exec_targets)"
+  assert_eq "the judged row is counted once and the dropped row not at all" \
+    'summary: 1 ok, 0 warnings, 0 failed' "${output##*$'\n'}"
+}
+
+@test "subagent-check: --all does not count the DinD sidecar among the rows it failed to judge" {
+  local rows
+  use_sweep_stubs
+  # Load-bearing, and the reason the note is allowed to exist at all: the sidecar carries
+  # coder.workspace_id, so the daemon lists it on every host that runs one. If it were
+  # counted as listed but unjudged, this note would print at the foot of every sweep on
+  # every healthy host, and the one line that says something went wrong would be noise.
+  # It is excluded from the count and from the loop by the same name test.
+  sweep_home coder-alice-evo 15 15
+  rows="$(sweep_row evo alice coder-alice-evo running)"$'\n'
+  rows="${rows}$(sweep_row evo alice coder-alice-evo-dind-sidecar running)"
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_eq "a fleet with nothing wrong with it prints no note at all" "" \
+    "$(printf '%s\n' "${output}" | grep '^note: ')"
+  assert_not_match "the sidecar is not counted as a row this sweep failed to judge" \
+    'were not judged' "${output}"
+  assert_eq "one workspace judged, listed and judged in equal measure" \
+    'summary: 1 ok, 0 warnings, 0 failed' "${output##*$'\n'}"
+  assert_eq "and the workspace behind that sidecar was still read" "coder-alice-evo" \
+    "$(sweep_exec_targets)"
+}
+
+@test "subagent-check: --all drops a field past any length a Coder label can reach" {
+  local rows long_owner long_ws own255 own256 blob_owner blob_ws
+  use_sweep_stubs
+  # A field past 255 characters is no Coder name, and letting one through would paste the
+  # blob straight into a phase line and a JSON string. The bound is the finding as much
+  # as the drop is: 255 is the longest label the sweep must keep, 256 the first it must
+  # drop, and the note has to count what it dropped rather than lose it.
+  long_owner="o$(printf 'x%.0s' {1..300})"
+  long_ws="w$(printf 'y%.0s' {1..300})"
+  own255="o$(printf 'z%.0s' {1..254})"
+  own256="o$(printf 'z%.0s' {1..255})"
+  blob_owner="$(printf 'x%.0s' {1..60})"
+  blob_ws="$(printf 'y%.0s' {1..60})"
+  sweep_home coder-alice-evo 15 15
+  sweep_home c-longowner 15 15
+  sweep_home c-longws 15 15
+  sweep_home c-own255 15 15
+  sweep_home c-own256 15 15
+  rows="$(sweep_row evo alice coder-alice-evo running)"$'\n'
+  rows="${rows}$(sweep_row ws "${long_owner}" c-longowner running)"$'\n'
+  rows="${rows}$(sweep_row "${long_ws}" bob c-longws running)"$'\n'
+  rows="${rows}$(sweep_row w255 "${own255}" c-own255 running)"$'\n'
+  rows="${rows}$(sweep_row w256 "${own256}" c-own256 running)"
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_eq "the three over-long rows are counted, the two within the bound are judged" \
+    "$(printf '%s\n%s\n%s\n%s\n%s' \
+      '-> evo (coder-alice-evo)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      '-> w255 (c-own255)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      'note: 3 of the 5 rows this daemon listed were not judged - a DinD sidecar row is expected among them, and anything else is a row that was not four usable columns')" \
+    "$(printf '%s\n' "${output}" | grep -E '^-> |^(ok|warning|note): ')"
+  assert_not_match "no 300-character owner blob reaches the report" "${blob_owner}" "${output}"
+  assert_not_match "and no 300-character workspace blob does either" "${blob_ws}" "${output}"
+  assert_eq "a field nobody parsed is never exec'd into" \
+    "$(printf '%s\n%s' 'coder-alice-evo' 'c-own255')" "$(sweep_exec_targets)"
+  assert_eq "the two bound-respecting rows are the only ones counted" \
+    'summary: 2 ok, 0 warnings, 0 failed' "${output##*$'\n'}"
+}
+
+@test "subagent-check: --all puts the container behind -- so a label is never a docker flag" {
+  local rows
+  use_sweep_stubs
+  # read_profile runs `docker exec -- <container>`. The -- is not decoration: the
+  # container name here is a label value, and docker reads an option-looking one as its
+  # own flag, so the exec would address a different container while the sweep printed the
+  # profile it read as this workspace's verdict. The stub takes either form, so only the
+  # argv it recorded can pin the -- down. -rf is the shape that would be eaten.
+  sweep_home coder-alice-evo 15 15
+  sweep_home "-rf" 15 15
+  rows="$(sweep_row evo alice coder-alice-evo running)"$'\n'"$(sweep_row dash bob "-rf" running)"
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  assert_eq "every exec carries -- in the field docker reads as the container name" "2" \
+    "$(awk -F'\t' '$2 == "exec" && $3 == "--"' "${STUB_LOG}/docker" | grep -c .)"
+  assert_eq "and no exec was issued without it" "0" \
+    "$(awk -F'\t' '$2 == "exec" && $3 != "--"' "${STUB_LOG}/docker" | grep -c . || true)"
+  assert_eq "the container follows the --, name and all, even one that starts with a dash" \
+    "$(printf '%s\n%s' 'exec | -- | coder-alice-evo' 'exec | -- | -rf')" \
+    "$(awk -F'\t' '$2 == "exec" { print $2 " | " $3 " | " $4 }' "${STUB_LOG}/docker")"
+  assert_eq "the same argv is what timeout(1) bounded, -- included" "1" \
+    "$(grep -c '^timeout -k 2 20 docker exec -- coder-alice-evo ' "${STUB_LOG}/timeout.log")"
+  assert_eq "so both containers really were read, the option-shaped one included" \
+    "$(printf '%s\n%s' 'coder-alice-evo' '-rf')" "$(sweep_exec_targets)"
+}
+
+@test "subagent-check: --all refuses a host with no timeout(1) instead of blaming the daemon" {
+  local rows isolated
+  use_sweep_stubs
+  # Every daemon call goes through timeout(1). On a host without it the binary is missing,
+  # every probe dies with "command not found", and the sweep reports an unreachable
+  # daemon - which sends the operator to restart something that is answering perfectly.
+  # The refusal has to name the binary that is not there.
+  #
+  # A non-executable decoy on the PATH is not the way to reach this branch: bash reports a
+  # non-executable file it finds on PATH from `command -v`, decoys included (the same
+  # behaviour tests/bats/common.bats pins for capped_run), so the host under test gets a
+  # PATH holding no timeout file at all, plus the two binaries the CLI needs to get as far
+  # as the guard and its own docker.
+  isolated="${BATS_TEST_TMPDIR}/no-timeout"
+  mkdir -p "${isolated}"
+  write_docker_stub "${isolated}/docker"
+  ln -s "$(command -v bash)" "${isolated}/bash"
+  ln -s "$(command -v dirname)" "${isolated}/dirname"
+  assert_eq "the PATH this run hands the CLI holds no timeout(1) anywhere" "" \
+    "$(PATH="${isolated}" bash -c 'command -v timeout' 2>/dev/null || true)"
+
+  sweep_home coder-alice-evo 15 15
+  rows="$(sweep_row evo alice coder-alice-evo running)"
+
+  run env -u CODER_WORKSPACE_ID -u EVO_T1_DEVCONTAINER PATH="${isolated}" \
+    HOME="${BATS_TEST_TMPDIR}" STUB_PS_OUT="${rows}" bash "${SCRIPT}" --all
+  [ "${status}" -eq 1 ]
+  assert_eq "it names the binary that is missing, and what it bounds" \
+    'error: cannot bound any daemon call - timeout(1) is not on this host' \
+    "$(printf '%s\n' "${output}" | grep '^error: ')"
+  assert_not_match "the daemon is not blamed for a missing coreutils binary" \
+    'docker daemon reachable' "${output}"
+  assert_not_match "and no listing failure is claimed at all" 'cannot list containers' "${output}"
+  assert_not_match "the docker CLI is not the thing reported missing" \
+    'the docker CLI is not on this host' "${output}"
+  assert_not_match "no section heading stands where a report never started" \
+    '== subagent width sweep ==' "${output}"
+  assert_eq "the daemon was never asked for a listing" "" \
+    "$(cat "${STUB_LOG}/docker" 2>/dev/null || true)"
+  assert_eq "so no container was read either" "" "$(sweep_exec_targets)"
+}
+
+@test "subagent-check: --all and --config give one absurd width the very same verdict" {
+  local rows cfg sweep_a sweep_b solo_a solo_b stdout rc=0
+  use_sweep_stubs
+  # The parameter is capped at 32, so a digit run of twenty is a typo or a corrupted
+  # file - and it is not comparable either: bash errors on the arithmetic test and lets
+  # both branches fall through, which reported a corrupted profile as the shipped state.
+  # Clearing the digits instead was worse, because the missing-line branch then told the
+  # operator their max_concurrent is absent when it sits there plainly. The two paths
+  # share this verdict word for word, which is the whole reason the sweep reuses the
+  # single-profile readers rather than carrying its own parser.
+  sweep_home coder-alice-hugefw 4 99999999999999999999
+  sweep_home coder-alice-hugecw 99999999999999999999 15
+  rows="$(sweep_row hugefw alice coder-alice-hugefw running)"$'\n'
+  rows="${rows}$(sweep_row hugecw alice coder-alice-hugecw running)"
+
+  run_sweep "${rows}"
+  [ "${status}" -eq 0 ]
+  sweep_a="$(printf '%s\n' "${output}" | grep '^warning: ' | head -n 1)"
+  sweep_b="$(printf '%s\n' "${output}" | grep '^warning: ' | tail -n 1)"
+  assert_eq "a ceiling this long gets its own verdict, verbatim, on the sweep" \
+    'warning: max_concurrent = 4 against fleet-width = 99999999999999999999 is not a width this stack can mean (the parameter is capped at 32)' \
+    "${sweep_a}"
+  assert_eq "and so does a max_concurrent this long" \
+    'warning: max_concurrent = 99999999999999999999 against fleet-width = 15 is not a width this stack can mean (the parameter is capped at 32)' \
+    "${sweep_b}"
+  assert_not_match "a line that is present is not reported as absent" \
+    "carries no 'max_concurrent' line" "${output}"
+  assert_not_match "and a ceiling that is present is not reported as one that predates it" \
+    "no '# fleet-width:' line" "${output}"
+  assert_eq "both rows are warnings and neither is an ok" \
+    'summary: 0 ok, 2 warnings, 0 failed' "${output##*$'\n'}"
+
+  # The same two profiles through the single-profile path, and the two answers compared.
+  cfg="${BATS_TEST_TMPDIR}/huge-fleet.toml"
+  write_profile "${cfg}" 4 99999999999999999999 agent-swarm 1 -
+  run_check "${cfg}"
+  [ "${status}" -eq 0 ]
+  solo_a="$(printf '%s\n' "${output}" | grep '^warning: ')"
+  assert_eq "the two paths say the identical thing about the identical bytes" \
+    "${sweep_a}" "${solo_a}"
+
+  cfg="${BATS_TEST_TMPDIR}/huge-width.toml"
+  write_profile "${cfg}" 99999999999999999999 15 agent-swarm 1 -
+  run_check "${cfg}"
+  [ "${status}" -eq 0 ]
+  solo_b="$(printf '%s\n' "${output}" | grep '^warning: ')"
+  assert_eq "and the same holds for the other number in the pair" \
+    "${sweep_b}" "${solo_b}"
+
+  # The machine channel gets nulls, not the absurd digits: an object that carried
+  # 99999999999999999999 as max_concurrent would hand a dashboard the corrupted file as
+  # the width a fleet really has.
+  stdout="$(sweep_stdout "${rows}" --json)" || rc=$?
+  assert_eq "a sweep of absurd widths is still a clean run without --strict" "0" "${rc}"
+  assert_eq "both objects carry null for a pair that was never a width" "2" \
+    "$(printf '%s\n' "${stdout}" | grep -c '"max_concurrent":null,"fleet_width":null')"
+}
+
+@test "subagent-check: --all keeps one control byte from taking the JSON channel down" {
+  local rows stdout line rc=0 parsed
+  use_sweep_stubs
+  # A coder.workspace_name label is operator-typed text. One raw 0x01 in it used to make
+  # every line of the --json stdout unparseable, so a fleet of forty workspaces vanished
+  # from the machine channel over one byte in one label: RFC 8259 forbids a raw C0 control
+  # byte inside a string, and json_escape emits no escape for one, so the byte has to go
+  # and the line still has to parse. Below fleet width on purpose, so the label rides the
+  # remedy as well and both fields the sweep composes out of it are in play.
+  sweep_home coder-alice-ctl 4 7
+  rows="$(printf 'a\001b\talice\tcoder-alice-ctl\trunning')"
+
+  stdout="$(sweep_stdout "${rows}" --json)" || true
+  while IFS= read -r line; do
+    if [ -n "${line}" ]; then
+      printf '%s\n' "${line}" | python3 -m json.tool >/dev/null || rc=$?
+    fi
+  done <<<"${stdout}"
+  assert_eq "the object is still one a parser accepts, byte stripped and all" "0" "${rc}"
+  assert_eq "and the workspace is not lost from the machine channel" "1" \
+    "$(printf '%s\n' "${stdout}" | grep -c .)"
+  assert_eq "the control byte is gone from both label fields, not left raw in either" \
+    '{"workspace":"ab","owner":"alice","container":"coder-alice-ctl","running":true,"max_concurrent":4,"fleet_width":7,"verdict":"warning","remedy":"coder update alice/ab --parameter grok_subagent_max_concurrent=7"}' \
+    "${stdout}"
+  parsed="$(printf '%s\n' "${stdout}" | python3 -c '
+import json, sys
+d = json.loads(sys.stdin.read())
+print("%s|%s" % (d["workspace"], d["remedy"]))')"
+  assert_eq "and it comes back gone through the parser, in the command too" \
+    "ab|coder update alice/ab --parameter grok_subagent_max_concurrent=7" "${parsed}"
+}
+
 @test "subagent-check: the six sweep functions each answer for one row" {
   local out rc=0 jsonf="${BATS_TEST_TMPDIR}/sweep.json" errf="${BATS_TEST_TMPDIR}/sweep.err"
   use_sweep_stubs
@@ -2153,15 +2443,17 @@ print(json.loads(sys.stdin.read())["remedy"])')"
   # shellcheck disable=SC1091
   source "${REPO_ROOT}/scripts/lib/coder_api.sh"
 
-  # The two daemon reads, called for themselves: workspace_rows is the listing with the
-  # sidecar and the nameless row already dropped, and read_profile is one container's
-  # own bytes or nothing at all.
+  # The two daemon reads, called for themselves. workspace_rows is the listing with
+  # nothing taken off it - the daemon's own answer, sidecar row and nameless row
+  # included - because filtering moved into sweep_workspaces, which has to count what
+  # the daemon named and what it could judge out of the very same answer. One `docker
+  # ps` is the whole truth for both numbers; a second call could see a different fleet.
   export STUB_PS_OUT
   STUB_PS_OUT="$(sweep_row evo alice coder-alice-evo running)"$'\n'
   STUB_PS_OUT="${STUB_PS_OUT}$(sweep_row evo alice coder-alice-evo-dind-sidecar running)"$'\n'
   STUB_PS_OUT="${STUB_PS_OUT}$(sweep_row '' alice coder-alice-namless running)"
-  assert_eq "workspace_rows prints the surviving row as the four tab-separated columns" \
-    "$(sweep_row evo alice coder-alice-evo running)" "$(workspace_rows)"
+  assert_eq "workspace_rows prints the daemon's answer exactly as the daemon printed it" \
+    "${STUB_PS_OUT}" "$(workspace_rows)"
   sweep_home coder-alice-evo 15 15
   assert_eq "read_profile prints the container's own rendered profile, bytes for bytes" \
     "$(cat "${STUB_EXEC_HOME_DIR}/coder-alice-evo/.grok/config.toml")" \
@@ -2234,6 +2526,31 @@ print(json.loads(sys.stdin.read())["remedy"])')"
   assert_eq "and each row's own temp file is gone when its row is" "0" \
     "$(find "${TMPDIR:-/tmp}" -maxdepth 1 -name 'subagent-check.*' -type f 2>/dev/null | grep -c . || true)"
 
+  # The other half of the split: the listing above was the daemon's raw answer, and this
+  # is the same answer run through the filter. The sidecar is excluded on its name (and
+  # excluded from the count with it, which is why the note says one and not two), the
+  # row whose name column is empty is not four usable columns, and one row survives.
+  SUMMARY_OK=0 SUMMARY_WARN=0 SUMMARY_FAIL=0 SUMMARY_FAIL_ITEMS=""
+  SWEEP_JSON=""
+  : >"${STUB_LOG}/docker"
+  STUB_PS_OUT="$(sweep_row evo alice coder-alice-evo running)"$'\n'
+  STUB_PS_OUT="${STUB_PS_OUT}$(sweep_row evo alice coder-alice-evo-dind-sidecar running)"$'\n'
+  STUB_PS_OUT="${STUB_PS_OUT}$(sweep_row '' alice coder-alice-namless running)"
+  out="${BATS_TEST_TMPDIR}/filtered.out"
+  rc=0
+  ( sweep_workspaces; sweep_finish ) >"${out}" 2>&1 || rc=$?
+  assert_eq "the filter judges the one usable row and counts the row it dropped" \
+    "$(printf '%s\n%s\n%s' \
+      '-> evo (coder-alice-evo)' \
+      "ok: max_concurrent = 15, the fleet's own width" \
+      'note: 1 of the 2 rows this daemon listed were not judged - a DinD sidecar row is expected among them, and anything else is a row that was not four usable columns')" \
+    "$(grep -E '^-> |^(ok|warning|note): ' "${out}")"
+  assert_eq "so exactly one container was exec'd into, and it is not the sidecar" \
+    "coder-alice-evo" "$(sweep_exec_targets)"
+  assert_eq "and a row dropped for its shape is neither ok, warning, nor failure" \
+    'summary: 1 ok, 0 warnings, 0 failed' "$(tail -n 1 "${out}")"
+  assert_eq "which is a clean sweep, so the closed run exits clean on it" "0" "${rc}"
+
   # host_guard is the gate in front of all of it. In a subshell, because die exits.
   rc=0
   ( CODER_WORKSPACE_ID=1 host_guard ) >"${out}" 2>&1 || rc=$?
@@ -2245,4 +2562,62 @@ print(json.loads(sys.stdin.read())["remedy"])')"
   assert_eq "so is the contributor container" "1" "${rc}"
   CODER_WORKSPACE_ID="" EVO_T1_DEVCONTAINER="" host_guard
   assert_eq "and a host shell holding a docker CLI is let through" "0" "$?"
+}
+
+@test "subagent-check: --config still answers when scripts/lib/coder_api.sh is gone" {
+  local copy="${BATS_TEST_TMPDIR}/no-daemon-lib" cfg
+  use_sweep_stubs
+  # scripts/lib/coder_api.sh is the daemon-side helper: stack_timeout bounds every docker
+  # call and DOCKER_BIN may hold more than one word, and the single-profile path calls
+  # neither. Sourced at the top of the script it made every one-file read depend on a
+  # helper that read never needs, so a tree missing that one file could not answer the
+  # question a workspace boot actually asks. It is sourced inside the --all branch now,
+  # and this is the shape that pins it: the helper gone, both paths run, and only the one
+  # that needs it refuses. The copy carries exactly what the CLI can reach - the scripts
+  # tree find_lib walks and the marker resolve_repo_root probes for - and it runs from
+  # there, never from the checkout.
+  mkdir -p "${copy}/scripts"
+  cp -a "${REPO_ROOT}/scripts/." "${copy}/scripts/"
+  cp -a "${REPO_ROOT}/docker-compose.yml" "${copy}/docker-compose.yml"
+  rm -f "${copy}/scripts/lib/coder_api.sh"
+  assert_eq "the copy really has no daemon helper to source" "no" \
+    "$([ -e "${copy}/scripts/lib/coder_api.sh" ] && echo yes || echo no)"
+  assert_eq "and it keeps the one helper both paths do need" "yes" \
+    "$([ -f "${copy}/scripts/lib/common.sh" ] && echo yes || echo no)"
+
+  cfg="${BATS_TEST_TMPDIR}/copy.toml"
+  write_profile "${cfg}" 15 15 agent-swarm 1 2
+
+  # REPO_ROOT is named because resolve_repo_root tries it before anything else and the
+  # Bats runner exports its own: left set, the copy would resolve its helpers out of the
+  # real checkout and the run would prove nothing.
+  run env -u CODER_WORKSPACE_ID -u EVO_T1_DEVCONTAINER REPO_ROOT="${copy}" \
+    HOME="${BATS_TEST_TMPDIR}" bash "${copy}/scripts/subagent-check.sh" --config "${cfg}"
+  [ "${status}" -eq 0 ]
+  assert_match "the one-profile path never notices the missing daemon helper" \
+    '== subagent slots ==' "${output}"
+  assert_match "and it still judges the width it was handed" \
+    "ok: max_concurrent = 15, the fleet's own width" "${output}"
+  assert_match "closing with the summary the contract owes" \
+    'summary: 3 ok, 0 warnings, 0 failed' "${output}"
+  assert_not_match "and no daemon helper is missed on the way" 'coder_api.sh' "${output}"
+
+  # The sweep is the path that needs the helper, and it refuses by name rather than
+  # half-sweeping a fleet with an unbounded docker call.
+  run env -u CODER_WORKSPACE_ID -u EVO_T1_DEVCONTAINER REPO_ROOT="${copy}" \
+    HOME="${BATS_TEST_TMPDIR}" STUB_PS_OUT="$(sweep_row evo alice coder-alice-evo running)" \
+    bash "${copy}/scripts/subagent-check.sh" --all
+  [ "${status}" -eq 1 ]
+  assert_match "the sweep says what it cannot do and why" \
+    'error: cannot sweep the fleet: no scripts/lib/coder_api.sh above' "${output}"
+  assert_eq "and that is the last word it speaks" \
+    'error: cannot sweep the fleet: no scripts/lib/coder_api.sh above' \
+    "$(printf '%s\n' "${output}" | grep '^error: ' | tail -n 1)"
+  assert_match "the search stayed inside the copy, where the helper is gone" \
+    "${copy}/scripts/lib/coder_api.sh" "${output}"
+  assert_not_match "no sweep section printed for a sweep that never started" \
+    '== subagent width sweep ==' "${output}"
+  assert_not_match "and no summary stands where a report never ran" 'summary: ' "${output}"
+  assert_eq "the daemon was never addressed at all" "" \
+    "$(cat "${STUB_LOG}/docker" 2>/dev/null || true)"
 }
