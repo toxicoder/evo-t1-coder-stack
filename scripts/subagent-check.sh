@@ -3,7 +3,7 @@
 # ## subagent-check.sh - prove the subagent width a session actually gets
 #
 # The stack renders [subagents] in every workspace's ~/.grok/config.toml from
-# var.grok_swarm_width, so the width a fleet runs at is a template decision. A
+# var.grok_subagent_max_concurrent, which ships 15 outright on every lane. A
 # --parameter given to `coder start`/`coder update`, or a --var pinned on the
 # template, outlives the run that passed it: it persists in the Coder database,
 # every later start reuses it, and no agent inside the workspace can clear it.
@@ -11,8 +11,8 @@
 # max_concurrent below the fleet's stream count, a fan-out queues behind one
 # parent's slots, and nothing in the workspace says so.
 #
-# The render writes its own diagnosis into the file: a `# fleet-width:` comment
-# directly above max_concurrent, both fed from the same variable. A rendered
+# The render writes its own diagnosis: the `# fleet-width:` comment above
+# max_concurrent, from var.grok_swarm_width, so the pair can disagree. A rendered
 # `# fleet-width: 15` over `max_concurrent = 4` is the whole finding. This CLI
 # reads that pair, the writers' lane in [subagents.models], and the depth, and
 # answers what the fan-out of a session started from this profile would get.
