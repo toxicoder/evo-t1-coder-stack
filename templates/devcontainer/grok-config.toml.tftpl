@@ -46,9 +46,9 @@ disable_web_search = true
 # The create form's "Grok theme" for this workspace. Any value but "auto" is a
 # fixed theme; "auto" follows the terminal's dark/light appearance, and the CLI
 # honours the per-appearance pair only alongside it, so both sides are named
-# here (the pair the CLI itself maps to). These are the only [ui] keys the
-# template writes; the rest of [ui] is the operator's, and the startup render
-# carries it over.
+# here (the pair the CLI itself maps to). With the approval mode below these are
+# the only [ui] keys the template writes; the rest of [ui] is the operator's,
+# and the startup render carries it over.
 [ui]
 theme = "${grok_theme}"
 %{if grok_theme == "auto"~}
@@ -58,6 +58,7 @@ auto_light_theme = "grokday"
 %{else~}
 
 %{endif~}
+permission_mode = "${grok_permission_mode}"
 [models]
 # `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
 # tool_calls array on this runtime. The Arc (IPEX-LLM Ollama) aliases below
@@ -616,12 +617,14 @@ SEARXNG_DEFAULT_LANGUAGE = "all"
 # environment instead (the coder_agent env in main.tf), the route this CLI
 # honours today; the documented default it replaces is 20000 bytes.
 
-# Conservative defaults on purpose: no always-approve / yolo here — that is a
-# per-user decision (`/settings`, or [ui] permission_mode). These denies only
-# keep secrets and destructive rm out of the easy path. The startup render
+# The create form owns the approval mode: the render writes [ui] permission_mode
+# from grok_permission_mode, always-approve by default. The startup render
 # carries the CLI-owned tables ([cli], [marketplace]) over from the file it
-# replaces, and the operator's other [ui] keys with it, so an approval mode set
-# in [ui] survives a re-render while the theme keys above stay the template's.
+# replaces, and the operator's other [ui] keys with it, so those survive a
+# re-render while the theme and approval keys stay the template's. The denies
+# below stay conservative on purpose: deny outranks allow, so they still refuse
+# under always-approve -- they only keep secrets and destructive rm out of the
+# easy path.
 #
 # The dotenv family is split by what the file holds. The live `.env` and the
 # suffixed shapes that carry real values are denied for Read and Edit; the

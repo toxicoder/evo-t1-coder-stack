@@ -137,6 +137,12 @@ variable "grok_theme" {
   default     = "grokbuild"
 }
 
+variable "grok_permission_mode" {
+  type        = string
+  description = "Grok Build approval mode for this workspace, rendered as [ui] permission_mode in this workspace's ~/.grok/config.toml. One of 'default', 'ask', 'auto' or 'always-approve' - the last is the product name for bypassPermissions, and it is the shipped default because a workspace here runs unattended. What it relaxes is prompting only: a deny rule still outranks every other list, so the dotenv reads and the rm -rf deny keep refusing. The create form offers exactly these four, so a --var here has to pick one of them too."
+  default     = "always-approve"
+}
+
 variable "vscode_color_theme" {
   type        = string
   description = "workbench.colorTheme written into this workspace's code-server user settings. Free text: the name has to match a theme the editor actually has installed, and the create form offers no list."

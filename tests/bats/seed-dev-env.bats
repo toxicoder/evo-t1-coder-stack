@@ -627,6 +627,90 @@ assert_contributor_home() {
   assert_not_fixed "refused value never reaches the file" "${out}" 'two words'
 }
 
+@test "seed-dev-env: the approval mode ships always-approve when the env is unset" {
+  load_seed_api
+  local scratch out tpl
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # The key is unconditional in the twin, so a home that never names a mode has
+  # to land on the value the create form ships, not on whatever the CLI guesses.
+  seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "default mode" "${out}" 'permission_mode = "always-approve"'
+
+  # A placeholder the sed chain does not name survives verbatim, and a bare
+  # ${...} is not a TOML value. The twin names the key in prose too, so the
+  # assertion pins the whole placeholder, dollar and braces included.
+  assert_not_fixed "placeholder substituted" "${out}" '${grok_permission_mode}'
+}
+
+@test "seed-dev-env: the approval mode takes the env" {
+  load_seed_api
+  local scratch out tpl
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # auto is in the accepted set and is not the shipped default, so this cannot
+  # pass by ignoring the env the way the default asserted at the default could.
+  GROK_PERMISSION_MODE='auto' seed_render_grok_config "${tpl}" "${out}"
+  assert_fixed "explicit mode wins" "${out}" 'permission_mode = "auto"'
+}
+
+@test "seed-dev-env: the approval mode accepts exactly the create form's four values" {
+  load_seed_api
+  local scratch out tpl notes mode
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # The guard's set is that form's own option list. A name dropped from the
+  # alternation falls back here in silence while the form still offers it, so
+  # each of the four renders and has to arrive unrefused.
+  for mode in default ask auto always-approve; do
+    notes="$(GROK_PERMISSION_MODE="${mode}" seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+    assert_not_match "${mode} accepted" 'is not an approval mode' "${notes}"
+    assert_fixed "mode ${mode}" "${out}" "permission_mode = \"${mode}\""
+  done
+}
+
+@test "seed-dev-env: an approval mode outside the set is refused and the default stands" {
+  load_seed_api
+  local scratch out tpl notes
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # Same shape as every other knob here: the refusal is a note, never a die, and
+  # the render keeps the shipped mode. The value starts with an accepted one, so
+  # a guard whose anchor slipped would let it through and fail here instead.
+  notes="$(GROK_PERMISSION_MODE='auto-approved' seed_render_grok_config "${tpl}" "${out}" 2>&1)"
+  assert_match "mode refused" \
+    "GROK_PERMISSION_MODE='auto-approved' is not an approval mode - using always-approve" "${notes}"
+  assert_fixed "mode fell back with the note" "${out}" 'permission_mode = "always-approve"'
+  assert_not_fixed "refused value never reaches the file" "${out}" 'auto-approved'
+}
+
+@test "seed-dev-env: the config the approval mode lands in is valid TOML" {
+  load_seed_api
+  python3 -c 'import tomllib' >/dev/null 2>&1 || skip "tomllib is not available (needs Python 3.11+)"
+  local scratch out tpl
+  scratch="$(make_scratch)"
+  out="${scratch}/config.toml"
+  tpl="${REPO_ROOT}/templates/workspace/grok-config.toml.tftpl"
+
+  # The seed owns the [ui] table outright, so a mode that arrived unquoted or a
+  # directive left behind is a config the CLI silently reads none of. The
+  # cheapest catch is the parser that reader uses.
+  seed_render_grok_config "${tpl}" "${out}"
+  python3 -c 'import tomllib,sys; tomllib.load(open(sys.argv[1],"rb"))' "${out}" || {
+    printf 'FAIL: %s: the rendered config is not valid TOML, [ui] reads:\n%s\n' \
+      "${tpl}" "$(grep -n -A3 '^\[ui\]' "${out}")" >&2
+    return 1
+  }
+}
+
 @test "seed-dev-env: the context7 lane is kept when a key or --context7-mcp says so" {
   load_seed_api
   local scratch home out tpl

@@ -8,14 +8,15 @@
 # per-workspace file. The old owner volume comes back exactly once, READ-ONLY, at
 # /home/coder/.grok-legacy, so the boot can drain it but can never write into a volume
 # a sibling workspace still owns; a writable legacy mount is a bug, not a fallback.
-# `private` mode emits none of the four. Both themes are per-workspace mutable
-# coder_parameters, and code-server's User/settings.json is a real file the stack
-# writes, not a symlink onto the shared editor overlay.
+# `private` mode emits none of the four. Both themes and the approval mode are
+# per-workspace mutable coder_parameters, and code-server's User/settings.json is a real
+# file the stack writes, not a symlink onto the shared editor overlay.
 #
 # Every assertion loops over BOTH twins, because the two trees are independent payload
 # copies and a fix that lands in one of them alone has to go red. The [ui] carry-over
-# fold is not read as text but lifted out of the twin and EXECUTED over a render, so a
-# fold that emits a second [ui] table is caught rather than grepped for. The whole suite
+# passes are not read as text but lifted out of the twin and EXECUTED over a render, so a
+# fold that emits a second [ui] table, or leaves the render's own key sitting beside the
+# operator's copy of it, is caught rather than grepped for. The whole suite
 # skips while any template it reads is absent: a suite for a topology the tree does
 # not ship has no right to fail the gate.
 #
@@ -198,6 +199,52 @@ hcl_block() {
   done
 }
 
+@test "grok_profile: grok_permission_mode is a mutable coder_parameter over the always-approve variable default" {
+  local twin mf cf body
+  for twin in workspace devcontainer; do
+    mf="$(twin_file "${twin}" main.tf)"
+    cf="$(twin_file "${twin}" coder.tf)"
+    body="$(hcl_block '^data "coder_parameter" "grok_permission_mode"' "${mf}")"
+    if [[ -z "${body}" ]]; then
+      printf 'FAIL: %s: no coder_parameter block for grok_permission_mode\n' "${mf}" >&2
+      return 1
+    fi
+    require_in "grok_permission_mode is a string parameter" '^[[:space:]]*type[[:space:]]*=[[:space:]]*"string"' "${body}" || return 1
+    require_in "grok_permission_mode is mutable" '^[[:space:]]*mutable[[:space:]]*=[[:space:]]*true' "${body}" || return 1
+    require_in "grok_permission_mode defaults to its variable" '^[[:space:]]*default[[:space:]]*=[[:space:]]*var\.grok_permission_mode' "${body}" || return 1
+    require_line "the render receives the parameter" \
+      'grok_permission_mode[[:space:]]*=[[:space:]]*data\.coder_parameter\.grok_permission_mode\.value' "${mf}" || return 1
+    body="$(hcl_block '^variable "grok_permission_mode"' "${cf}")"
+    if [[ -z "${body}" ]]; then
+      printf 'FAIL: %s: no variable block for grok_permission_mode\n' "${cf}" >&2
+      return 1
+    fi
+    require_in "grok_permission_mode is a string variable" '^[[:space:]]*type[[:space:]]*=[[:space:]]*string' "${body}" || return 1
+    require_in "grok_permission_mode ships always-approve" '^[[:space:]]*default[[:space:]]*=[[:space:]]*"always-approve"' "${body}" || return 1
+  done
+}
+
+@test "grok_profile: the grok_permission_mode parameter offers exactly the four accepted approval modes" {
+  local twin mf body n mode
+  for twin in workspace devcontainer; do
+    mf="$(twin_file "${twin}" main.tf)"
+    body="$(hcl_block '^data "coder_parameter" "grok_permission_mode"' "${mf}")"
+    if [[ -z "${body}" ]]; then
+      printf 'FAIL: %s: no coder_parameter block for grok_permission_mode\n' "${mf}" >&2
+      return 1
+    fi
+    n="$(printf '%s\n' "${body}" | grep -Ec -- '^[[:space:]]*option \{$' || true)"
+    if [[ "${n}" != "4" ]]; then
+      printf 'FAIL: %s: the approval-mode dropdown has %s option block(s), expected 4\n' "${mf}" "${n}" >&2
+      return 1
+    fi
+    for mode in default ask auto always-approve; do
+      require_in "the dropdown offers ${mode}" \
+        "^[[:space:]]*value[[:space:]]*=[[:space:]]*\"${mode}\"[[:space:]]*$" "${body}" || return 1
+    done
+  done
+}
+
 @test "grok_profile: the boot writes code-server settings as a real file, never a symlink" {
   local twin sf
   for twin in workspace devcontainer; do
@@ -230,6 +277,23 @@ lift_ui_fold() {
   [ -s "$2" ]
 }
 
+# lift_ui_strip <startup> <out> - write the [ui] STRIP awk PROGRAM out of the shipped
+# twin into <out>: the single-quoted argument of the bare `awk` call that reads the
+# operator's own file, whose shell continuation ends at the redirect. The strip and the
+# fold are one mechanism, so both are lifted and run as the pair the twin ships.
+lift_ui_strip() {
+  awk '
+    !s && /^[[:space:]]*awk / && index($0, "f=1;next") && index($0, "f=0}") { s = 1 }
+    s {
+      t = $0
+      if (t ~ /[\\][[:space:]]*$/) { sub(/[[:space:]]*\\[[:space:]]*$/, "", t); buf = buf t; next }
+      buf = buf t; fin = 1; exit
+    }
+    END { if (!fin) exit 1; print buf }
+  ' "$1" | sed -e "s/^[^']*'//" -e "s/'[^']*\$//" >"$2"
+  [ -s "$2" ]
+}
+
 @test "grok_profile: the [ui] carry-over folds the operator keys into the render's own table" {
   # The render already opens one [ui] table, so the carry-over must fold the
   # operator's other [ui] keys INTO it. A fold that emits a table of its own is a
@@ -244,7 +308,10 @@ lift_ui_fold() {
       return 1
     fi
     keys="${dir}/keys"
-    printf '%s\n' 'permission_mode = "acceptEdits"' 'banner = "keep me"' >"${keys}"
+    # The two keys here are ones the render never writes: the strip pass upstream
+    # drops the render-owned keys from this fixture, and the case below executes
+    # that for permission_mode, so the fold is proven on genuinely operator keys.
+    printf '%s\n' 'remember_tool_approvals = true' 'banner = "keep me"' >"${keys}"
     # Case 1: the render owns [ui] with the theme, and a model table follows it.
     render="${dir}/render"
     printf '%s\n' '[ui]' 'theme = "grokbuild"' '' '[model."agent"]' \
@@ -256,8 +323,8 @@ lift_ui_fold() {
       return 1
     }
     require_count "one [ui] table after the fold" 1 '^\[ui\][[:space:]]*$' "${dir}/out" || return 1
-    require_fixed "the carried permission_mode survives a re-render" \
-      'permission_mode = "acceptEdits"' "${dir}/out" || return 1
+    require_fixed "the carried remember_tool_approvals survives a re-render" \
+      'remember_tool_approvals = true' "${dir}/out" || return 1
     require_fixed "the carried banner survives a re-render" \
       'banner = "keep me"' "${dir}/out" || return 1
     require_fixed "the render keeps its own theme" \
@@ -275,8 +342,8 @@ lift_ui_fold() {
       return 1
     }
     require_count "one [ui] table appended" 1 '^\[ui\][[:space:]]*$' "${dir}/out-bare" || return 1
-    require_fixed "the appended table carries permission_mode" \
-      'permission_mode = "acceptEdits"' "${dir}/out-bare" || return 1
+    require_fixed "the appended table carries the operator key" \
+      'remember_tool_approvals = true' "${dir}/out-bare" || return 1
     # Appended, not prepended: the [ui] table sits below the render's own table.
     if [[ "$(grep -n '^\[ui\][[:space:]]*$' "${dir}/out-bare" | cut -d: -f1)" -lt \
       "$(grep -n '^\[model\."agent"\]' "${dir}/out-bare" | cut -d: -f1)" ]]; then
@@ -286,12 +353,76 @@ lift_ui_fold() {
   done
 }
 
+@test "grok_profile: the carry-over strips the operator's permission_mode so the render keeps the only copy" {
+  # The render owns [ui] permission_mode now, so an operator file that still carries
+  # a value of its own must have it dropped by the strip pass: two lines for one key
+  # in one table is invalid TOML (tomllib rejects the duplicate outright), and that
+  # is exactly what a re-render of a hand-edited config used to produce. Both shipped
+  # passes run here over a fixture - strip over the operator's file, fold over a
+  # render that already carries the key - so the alternation, not just its text, is
+  # what gets checked.
+  local twin sf dir op keys render out
+  for twin in workspace devcontainer; do
+    sf="$(twin_file "${twin}" startup.sh.tftpl)"
+    dir="$(make_scratch)"
+    if ! lift_ui_strip "${sf}" "${dir}/strip.awk"; then
+      printf 'FAIL: %s: no [ui] strip awk to lift\n' "${sf}" >&2
+      return 1
+    fi
+    if ! lift_ui_fold "${sf}" "${dir}/fold.awk"; then
+      printf 'FAIL: %s: no [ui] carry-over awk to lift\n' "${sf}" >&2
+      return 1
+    fi
+    op="${dir}/operator"
+    printf '%s\n' '[ui]' 'theme = "groknight"' 'permission_mode = "ask"' \
+      'banner = "keep me"' '[models]' 'agent = "agent"' >"${op}"
+    keys="${dir}/keys"
+    awk -f "${dir}/strip.awk" "${op}" >"${keys}"
+    render="${dir}/render"
+    printf '%s\n' '[ui]' 'theme = "grokbuild"' 'permission_mode = "always-approve"' \
+      '' '[models]' 'agent = "agent"' >"${render}"
+    out="${dir}/out"
+    awk -f "${dir}/fold.awk" -v ui="${keys}" <"${render}" >"${out}"
+    require_count "one permission_mode line in the merged config" 1 \
+      '^[[:space:]]*permission_mode[[:space:]]*=' "${out}" || return 1
+    require_count "one [ui] table in the merged config" 1 '^\[ui\][[:space:]]*$' "${out}" || return 1
+    require_fixed "the render's own approval mode wins" \
+      'permission_mode = "always-approve"' "${out}" || return 1
+    require_absent "the operator's approval mode is stripped" \
+      'permission_mode = "ask"' "${out}" || return 1
+    require_fixed "an unrelated operator [ui] key is kept" \
+      'banner = "keep me"' "${out}" || return 1
+    python3 -c 'import tomllib,sys; tomllib.load(open(sys.argv[1],"rb"))' "${out}" || {
+      printf 'FAIL: %s: the merged config is not valid TOML:\n%s\n' "${sf}" \
+        "$(cat "${out}")" >&2
+      return 1
+    }
+  done
+}
+
 @test "grok_profile: the config template emits one [ui] table carrying the theme parameter" {
   local twin tf first
   for twin in workspace devcontainer; do
     tf="$(twin_file "${twin}" grok-config.toml.tftpl)"
     require_count "exactly one [ui] table" 1 '^\[ui\][[:space:]]*$' "${tf}" || return 1
     first="$(awk '/^\[ui\][[:space:]]*$/{inui=1; next} /^\[/{inui=0} inui && NF {print; exit}' "${tf}")"
+    if [[ "${first}" != 'theme = "${grok_theme}"' ]]; then
+      printf 'FAIL: %s: the [ui] table opens with [%s], not [theme = "${grok_theme}"]\n' "${tf}" "${first}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "grok_profile: the config template's one [ui] table also emits the permission_mode parameter" {
+  local twin tf ui first
+  for twin in workspace devcontainer; do
+    tf="$(twin_file "${twin}" grok-config.toml.tftpl)"
+    require_count "one permission_mode line in the whole template" 1 \
+      '^[[:space:]]*permission_mode[[:space:]]*=' "${tf}" || return 1
+    ui="$(awk '/^\[ui\][[:space:]]*$/{inui=1; next} /^\[/{inui=0} inui' "${tf}")"
+    require_in "permission_mode takes the parameter" \
+      '^[[:space:]]*permission_mode[[:space:]]*=[[:space:]]*"\$\{grok_permission_mode\}"[[:space:]]*$' "${ui}" || return 1
+    first="$(printf '%s\n' "${ui}" | awk 'NF {print; exit}')"
     if [[ "${first}" != 'theme = "${grok_theme}"' ]]; then
       printf 'FAIL: %s: the [ui] table opens with [%s], not [theme = "${grok_theme}"]\n' "${tf}" "${first}" >&2
       return 1

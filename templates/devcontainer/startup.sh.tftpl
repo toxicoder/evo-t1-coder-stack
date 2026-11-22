@@ -235,7 +235,7 @@ if [ ! -f "$HOME/.grok/config.toml" ] \
     awk '/^\[(cli|marketplace)\][[:space:]]*$/{f=1;print;next} /^\[/{f=0} f' \
       "$HOME/.grok/config.toml" >"$cli_block" 2>/dev/null || : >"$cli_block"
     awk '/^\[ui\][[:space:]]*$/{f=1;next} /^\[/{f=0} \
-      f && $0 !~ /^[[:space:]]*(theme|auto_dark_theme|auto_light_theme|ui_theme)[[:space:]]*=/' \
+      f && $0 !~ /^[[:space:]]*(theme|auto_dark_theme|auto_light_theme|ui_theme|permission_mode)[[:space:]]*=/' \
       "$HOME/.grok/config.toml" >"$ui_keys" 2>/dev/null || : >"$ui_keys"
   else
     : >"$cli_block"

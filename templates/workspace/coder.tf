@@ -150,6 +150,17 @@ variable "grok_theme" {
   default     = "grokbuild"
 }
 
+# The approval mode used to be left to each person, which meant a fleet stalled on
+# a prompt nobody was watching. It ships as a stack default instead: what relaxes
+# is prompting, not the guardrails, because a deny rule still outranks every other
+# list under always-approve. An operator who wants the prompts back answers the
+# create form with one of the three prompting values, per workspace.
+variable "grok_permission_mode" {
+  type        = string
+  description = "Grok Build permission mode, rendered as [ui] permission_mode in this workspace's ~/.grok/config.toml. One of 'default', 'ask', 'auto' or 'always-approve': the first three prompt to some degree, 'default' leaving the policy to the CLI, 'ask' prompting before a tool runs and 'auto' prompting less; 'always-approve' is the product name for bypassPermissions and prompts for nothing. The stack defaults to always-approve so an unattended agent keeps working through a tool call that would otherwise wait on a question, and the [permission] deny list the template ships still refuses the secrets and destructive forms in every mode."
+  default     = "always-approve"
+}
+
 variable "vscode_color_theme" {
   type        = string
   description = "workbench.colorTheme written into this workspace's code-server user settings. Free text: the name has to match a theme the editor actually has installed, and the create form offers no list."
