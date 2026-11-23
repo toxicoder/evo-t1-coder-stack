@@ -59,6 +59,7 @@ auto_light_theme = "grokday"
 
 %{endif~}
 permission_mode = "${grok_permission_mode}"
+
 [models]
 # `agent` (Spark vLLM) is the alias the agent loop needs: it returns a real
 # tool_calls array on this runtime. The Arc (IPEX-LLM Ollama) aliases below
@@ -617,14 +618,18 @@ SEARXNG_DEFAULT_LANGUAGE = "all"
 # environment instead (the coder_agent env in main.tf), the route this CLI
 # honours today; the documented default it replaces is 20000 bytes.
 
-# The create form owns the approval mode: the render writes [ui] permission_mode
-# from grok_permission_mode, always-approve by default. The startup render
+# The approval mode ships as a stack default: the render writes [ui]
+# permission_mode from grok_permission_mode, and the create form's "Grok
+# approval mode" offers the four values that config key documents -- default,
+# ask, auto and always-approve -- defaulting to the last. The startup render
 # carries the CLI-owned tables ([cli], [marketplace]) over from the file it
-# replaces, and the operator's other [ui] keys with it, so those survive a
-# re-render while the theme and approval keys stay the template's. The denies
-# below stay conservative on purpose: deny outranks allow, so they still refuse
-# under always-approve -- they only keep secrets and destructive rm out of the
-# easy path.
+# replaces, and the operator's other [ui] keys with it, less the keys the
+# render owns: the theme pair above and this mode. A hand-written
+# [ui] permission_mode is therefore dropped at the next start, and the boot
+# says so on the console -- two copies in one [ui] table would be bad TOML.
+# These denies stay conservative because deny outranks allow and still refuses
+# under always-approve: they keep secrets and destructive rm out of the easy
+# path.
 #
 # The dotenv family is split by what the file holds. The live `.env` and the
 # suffixed shapes that carry real values are denied for Read and Edit; the

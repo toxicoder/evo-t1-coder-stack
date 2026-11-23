@@ -227,11 +227,14 @@ data "coder_parameter" "grok_theme" {
 data "coder_parameter" "grok_permission_mode" {
   name         = "grok_permission_mode"
   display_name = "Grok approval mode"
-  description  = "How much this workspace's Grok Build sessions ask before they act, written into the rendered ~/.grok/config.toml as [ui] permission_mode. The four options are the whole set. always-approve is the shipped default because a workspace here runs unattended, and what it relaxes is prompting only - the [permission] deny list the managed block writes still outranks it, so the dotenv reads and the rm -rf deny keep refusing. Applies on the next start, and it is this workspace's own setting - the owner's other workspaces keep theirs."
+  description  = "How much this workspace's Grok Build sessions stop and ask before they act, written into the rendered ~/.grok/config.toml as [ui] permission_mode. The stack ships always-approve so an unattended agent is not blocked on a question nobody is watching; the three prompting modes are here for a workspace you sit with. Applies on the next start, and it is this workspace's own setting - the owner's other workspaces keep theirs."
   type         = "string"
-  # "dropdown", not a text field, for the reason the profile mode above gives:
-  # these four spellings are everything the CLI accepts, and a typo here would
-  # render a mode the CLI does not know.
+  # "dropdown", not a text field: these are the four values the [ui]
+  # permission_mode key documents, the seed refuses anything else, and a typo
+  # here would render a mode nothing recognises. The CLI's own --permission-mode
+  # flag spells more modes than these four; one of those belongs in the
+  # operator's [ui] block by hand, and the boot says so when the carry-over
+  # drops it, since the render owns the key either way.
   form_type = "dropdown"
   mutable   = true
   default   = var.grok_permission_mode
@@ -240,25 +243,25 @@ data "coder_parameter" "grok_permission_mode" {
   option {
     name        = "CLI default"
     value       = "default"
-    description = "The CLI's own prompting: the stack takes no position on how often the agent asks."
+    description = "No stack opinion: the CLI applies its own built-in approval policy, which does prompt. Pick this to opt out of the stack default entirely."
   }
 
   option {
-    name        = "Ask"
+    name        = "Ask (prompts before a tool runs)"
     value       = "ask"
-    description = "The CLI's prompting mode, for a workspace whose owner wants to confirm tool calls rather than leave the agent unattended."
+    description = "The prompting end of the set: a tool call waits for a person. Right for a workspace you watch rather than one that runs unattended."
   }
 
   option {
-    name        = "Auto"
+    name        = "Auto (prompts only where unsure)"
     value       = "auto"
-    description = "The CLI's own judgement between asking and never asking: fewer prompts than Ask, more oversight than Always approve."
+    description = "Between the two: the CLI prompts less than ask and more than always-approve. Use it when the stack default is too loose and ask is too slow."
   }
 
   option {
     name        = "Always approve (stack default)"
     value       = "always-approve"
-    description = "Nothing prompts - the product name for bypassPermissions. The guardrails still hold: a deny rule outranks every other list, so the dotenv reads and the rm -rf deny keep refusing."
+    description = "The product name for bypassPermissions: nothing prompts, so a tool call runs the moment the agent asks for it. The [permission] deny list still refuses secrets and destructive rm here as in every mode."
   }
 }
 

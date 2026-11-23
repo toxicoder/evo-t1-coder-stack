@@ -284,8 +284,13 @@ _SUITE_PAYLOAD = {
     # on the setup probe and the whole seam reads green while asserting nothing.
     # The volumes seam and the theme seam, read out of the two main.tf twins, the two
     # coder.tf twins, and the startup and grok-config bodies: all of it template payload.
+    # The approval-mode seam also reads the four operator pages that teach it, so they ride
+    # in here too: a page missing from the runfiles has to fail that test, not skip past it
+    # and leave the seam reading green while asserting nothing.
     "grok-profile.bats": [
         "//:templates_payload",
+        "//:entry_docs",
+        "//docs:content",
     ],
     "grok-subagent-slots.bats": [
         "//:templates_payload",

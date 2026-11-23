@@ -384,9 +384,12 @@ data "coder_parameter" "grok_permission_mode" {
   default      = var.grok_permission_mode
   order        = 10
 
-  # Exactly these four spellings are valid; the seed refuses anything else and
-  # falls back to always-approve, so the dropdown is the only place a mode is
-  # chosen rather than a free-text field that can be mistyped.
+  # These are the four values the [ui] permission_mode key documents, and the
+  # seed refuses anything else, so the dropdown is the only place a mode is
+  # chosen rather than a free-text field that can be mistyped. The CLI's own
+  # --permission-mode flag spells more modes than these four; one of those
+  # belongs in the operator's [ui] block by hand, and the boot says so when the
+  # carry-over drops it, since the render owns the key either way.
   option {
     name        = "CLI default"
     value       = "default"

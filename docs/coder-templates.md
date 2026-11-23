@@ -565,7 +565,12 @@ What a create form shows, in `workspace` order.
     relaxes is prompting only - the `[permission]` deny list the render ships still
     refuses the dotenv reads, the `Bash(rm -rf *)` form and the commit guards in every
     mode. `order = 10`, so it sorts after the editor theme rather than beside the two
-    themes. Each workspace keeps its own and a change applies on the next start.
+    themes. Each workspace keeps its own and a change applies on the next start. Those
+    four are what the `[ui] permission_mode` key documents, not the whole vocabulary the
+    CLI speaks: its own `--permission-mode` flag spells more, so a mode outside this
+    dropdown belongs in the `[ui]` block of `~/.grok/config.toml` by hand, and the next
+    start replaces it with what this field says - and says so on the boot log, naming the
+    value it dropped.
 
 `devcontainer` asks two questions instead: **Git repository** and **Build repo's dev
 container** (`use_devcontainer`, Yes/No, immutable), plus the same Grok and theme fields.
@@ -1059,7 +1064,12 @@ decided by a marker - never by mtime and never by first boot:
   `permission_mode` left beside the render's own line gives one `[ui]` table two
   identical keys, which is invalid TOML. So the create form's **Grok approval mode** is
   the seam for that key, and an approval mode hand-written into the file does not
-  survive a re-render, while every other `[ui]` key the operator set still does.
+  survive a re-render, while every other `[ui]` key the operator set still does. The drop
+  leaves a trace: when the strip removes a `permission_mode` the body prints one
+  `warning:` line naming the value it dropped
+  (`templates/workspace/startup.sh.tftpl:248`), and `boot_warn` counts it into the
+  closing summary (`templates/common/boot-log.lib.sh:45`), so a workspace that starts,
+  or stops, prompting after a restart leaves a line an operator can read.
 - The unmanaged case is announced rather than silent, because the render is the only place
   a workspace's model catalog and MCP lanes are ever written.
 - `~/.grok/notes-setup.sh` is the exception to the absent-only rule: it is stack-owned code

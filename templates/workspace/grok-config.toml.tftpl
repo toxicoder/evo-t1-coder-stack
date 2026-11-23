@@ -612,13 +612,16 @@ SEARXNG_DEFAULT_LANGUAGE = "all"
 
 # The approval mode ships as a stack default: the render writes [ui]
 # permission_mode from grok_permission_mode, and the create form's "Grok
-# approval mode" offers default, ask, auto and always-approve, defaulting to
-# the last. These denies stay conservative because deny outranks allow and
-# still refuses under always-approve: they keep secrets and destructive rm out
-# of the easy path. The startup render carries the CLI-owned tables ([cli],
-# [marketplace]) over from the file it replaces, and the operator's other [ui]
-# keys with it, less the keys the render owns -- the theme pair above and this
-# mode, which must not be emitted twice into one [ui] table.
+# approval mode" offers the four values that config key documents -- default,
+# ask, auto and always-approve -- defaulting to the last. The startup render
+# carries the CLI-owned tables ([cli], [marketplace]) over from the file it
+# replaces, and the operator's other [ui] keys with it, less the keys the
+# render owns: the theme pair above and this mode. A hand-written
+# [ui] permission_mode is therefore dropped at the next start, and the boot
+# says so on the console -- two copies in one [ui] table would be bad TOML.
+# These denies stay conservative because deny outranks allow and still refuses
+# under always-approve: they keep secrets and destructive rm out of the easy
+# path.
 #
 # The dotenv family is split by what the file holds. The live `.env` and the
 # suffixed shapes that carry real values are denied for Read and Edit; the

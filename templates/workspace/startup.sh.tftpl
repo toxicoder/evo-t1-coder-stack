@@ -237,6 +237,16 @@ if [ ! -f "$HOME/.grok/config.toml" ] \
     awk '/^\[ui\][[:space:]]*$/{f=1;next} /^\[/{f=0} \
       f && $0 !~ /^[[:space:]]*(theme|auto_dark_theme|auto_light_theme|ui_theme|permission_mode)[[:space:]]*=/' \
       "$HOME/.grok/config.toml" >"$ui_keys" 2>/dev/null || : >"$ui_keys"
+    # The render owns the approval mode now, so a hand-written one in the file
+    # being replaced does not come across. Name the value this boot dropped:
+    # losing an operator's mode in silence is how a workspace starts prompting,
+    # or stops prompting, with nobody able to say why.
+    dropped_mode="$(awk '/^\[ui\][[:space:]]*$/{u=1;next} /^\[/{u=0} \
+      u && /^[[:space:]]*permission_mode[[:space:]]*=/ {gsub(/[[:space:]]/,""); print substr($0, index($0,"=")+1); exit}' \
+      "$HOME/.grok/config.toml" 2>/dev/null)"
+    if [ -n "$dropped_mode" ]; then
+      boot_warn "the render owns [ui] permission_mode now - the existing file's $dropped_mode is not carried over"
+    fi
   else
     : >"$cli_block"
     : >"$ui_keys"

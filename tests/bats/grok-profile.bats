@@ -16,14 +16,19 @@
 # copies and a fix that lands in one of them alone has to go red. The [ui] carry-over
 # passes are not read as text but lifted out of the twin and EXECUTED over a render, so a
 # fold that emits a second [ui] table, or leaves the render's own key sitting beside the
-# operator's copy of it, is caught rather than grepped for. The whole suite
+# operator's copy of it, is caught rather than grepped for; so is the probe that names the
+# approval mode the boot drops. The [permission] note and the dropdown's option fields are
+# byte-compared BETWEEN the twins, since nothing else compares them and they have split
+# once already. The four operator pages that teach this behaviour are read as prose too:
+# a claim there is one sentence naming the parameter, the seed variable and the shipped
+# default, never a whole paragraph matched byte for byte. The whole suite
 # skips while any template it reads is absent: a suite for a topology the tree does
 # not ship has no right to fail the gate.
 #
 # Usage: bazelisk test //tests:bats_grok_profile_test   (from any cwd)
-# Safety: reads the two template trees as data; runs awk and python3 over fixtures it
-# builds itself; no terraform, no docker daemon, no network; writes nothing outside the
-# per-test scratch tree.
+# Safety: reads the two template trees and the operator pages that teach this behaviour as
+# data; runs awk and python3 over fixtures it builds itself; no terraform, no docker
+# daemon, no network; writes nothing outside the per-test scratch tree.
 
 bats_require_minimum_version 1.5.0
 
@@ -294,6 +299,79 @@ lift_ui_strip() {
   [ -s "$2" ]
 }
 
+# lift_ui_probe <startup> <out> - write the dropped-mode PROBE awk PROGRAM out of the
+# shipped twin into <out>: the single-quoted argument of the `awk` call that reads the
+# operator's [ui] table for the approval mode this boot is about to drop, so the boot
+# note can name it. It is deliberately a different program from the strip pass - the
+# probe tracks its own `u` flag and stops at the first match, the strip tracks `f` and
+# keeps every surviving line - so it is lifted on its own shape and EXECUTED, never
+# assumed to be the strip under another name.
+lift_ui_probe() {
+  awk '
+    !s && index($0, "dropped_mode=\"$(awk ") && index($0, "u=1;next") && index($0, "u=0") { s = 1 }
+    s {
+      t = $0
+      if (t ~ /[\\][[:space:]]*$/) { sub(/[[:space:]]*\\[[:space:]]*$/, "", t); buf = buf t; next }
+      buf = buf t; fin = 1; exit
+    }
+    END { if (!fin) exit 1; print buf }
+  ' "$1" | sed -e "s/^[^']*'//" -e "s/'[^']*\$//" >"$2"
+  [ -s "$2" ]
+}
+
+# sentences <flat> - split flattened prose into one sentence per line, on the
+# sentence-final punctuation this prose uses.
+sentences() {
+  printf '%s\n' "$1" | sed -E 's/([.!?])[[:space:]]+/\1\n/g'
+}
+
+# one_sentence_names <label> <flat> <ere>... - fail unless ONE sentence of the
+# flattened <flat> prose matches every <ere>. The operator pages are hard-wrapped and
+# get reworded, so a claim here is "some sentence says all of this at once", which a
+# byte-for-byte paragraph match would break on the first edit that kept the meaning.
+one_sentence_names() {
+  local label="$1" text="$2"
+  shift 2
+  local -a wants=("$@")
+  local part w ok
+  while IFS= read -r part; do
+    ok=1
+    for w in "${wants[@]}"; do
+      if ! printf '%s\n' "${part}" | grep -Eq -- "${w}"; then
+        ok=0
+        break
+      fi
+    done
+    if [[ "${ok}" == "1" ]]; then
+      return 0
+    fi
+  done < <(sentences "${text}")
+  printf 'FAIL: %s: no single sentence names all of: %s\n' "${label}" "${wants[*]}" >&2
+  return 1
+}
+
+# permission_note <config-twin> - the comment block the render ships above
+# [permission]: from the sentence that opens the approval-mode story to the table it
+# documents, which is the prose the two config twins have to agree on word for word.
+permission_note() {
+  awk '
+    /^# The approval mode ships as a stack default/ { f = 1 }
+    /^\[permission\][[:space:]]*$/ { exit }
+    f { print }
+  ' "$1"
+}
+
+# dropdown_fields <main.tf> - the option `name` and `description` lines of the
+# approval-mode dropdown, in file order, comments and layout dropped so the twin that
+# re-indents or re-comments the block still reads as the same four choices.
+dropdown_fields() {
+  hcl_block '^data "coder_parameter" "grok_permission_mode"' "$1" | awk '
+    /^[[:space:]]*option \{[[:space:]]*$/ { i = 1; next }
+    i && /^[[:space:]]*\}[[:space:]]*$/ { i = 0; next }
+    i && /^[[:space:]]*(name|description)[[:space:]]*=/ { print }
+  '
+}
+
 @test "grok_profile: the [ui] carry-over folds the operator keys into the render's own table" {
   # The render already opens one [ui] table, so the carry-over must fold the
   # operator's other [ui] keys INTO it. A fold that emits a table of its own is a
@@ -428,4 +506,184 @@ lift_ui_strip() {
       return 1
     fi
   done
+}
+
+# require_page <file> - fail naming the payload groups that have to ship an operator
+# page this suite reads. A missing page is a failure, not a skip: a suite that skips
+# reads identical to one that passes.
+require_page() {
+  if [ ! -f "$1" ]; then
+    printf 'FAIL: %s is not in the runfiles: add //:entry_docs and //docs:content to this suite'\''s _SUITE_PAYLOAD entry\n' "$1" >&2
+    return 1
+  fi
+}
+
+# flat_prose <file> - the page as one line. This prose is hard-wrapped, and a claim
+# that runs across source lines is invisible to a per-line grep.
+flat_prose() {
+  tr '\n' ' ' <"$1" | tr -s ' '
+}
+
+@test "grok_profile: the operator pages teach the approval mode as a stack default the create form answers" {
+  # Nothing else in the gate opens these four pages, which is how four of them kept
+  # teaching a retired width rule after main.tf moved (see FANOUT_DOCS in
+  # tests/bats/grok-subagent-slots.bats). Pin the substance only: each page names the
+  # create-form parameter, names the shipped default, and ties the parameter to what it
+  # renders, in one sentence.
+  local -a pages=(
+    "${REPO_ROOT}/docs/grok-build-and-agents.md"
+    "${REPO_ROOT}/docs/config-updates.md"
+    "${REPO_ROOT}/docs/coder-templates.md"
+    "${REPO_ROOT}/AGENTS.md"
+  )
+  local -a seed_pages=(
+    "${REPO_ROOT}/docs/grok-build-and-agents.md"
+    "${REPO_ROOT}/docs/config-updates.md"
+    "${REPO_ROOT}/AGENTS.md"
+  )
+  local file flat page
+  # README.md and AGENTS.md both travel with this suite through //:entry_docs, so a
+  # page that resolves above always carries the two root docs: a missing one is the
+  # runfiles losing the group, not a page being renamed. README is reached for that
+  # reachability alone - it documents no [ui] key today, so the approval-mode claims
+  # below belong to the four pages that actually teach the mode.
+  [[ -f "${REPO_ROOT}/README.md" ]] || {
+    printf 'FAIL: README.md is not reachable from %s - the runfiles lost //:entry_docs\n' \
+      "${REPO_ROOT}" >&2
+    return 1
+  }
+  for file in "${pages[@]}"; do
+    require_page "${file}" || return 1
+    page="$(basename "${file}")"
+    flat="$(flat_prose "${file}")"
+    require_in "${page} names the create-form parameter" 'grok_permission_mode' "${flat}" || return 1
+    require_in "${page} names the shipped default" 'always-approve' "${flat}" || return 1
+    one_sentence_names "${page}: the parameter is tied to what it renders" "${flat}" \
+      'grok_permission_mode' '(permission_mode|approval mode)' || return 1
+  done
+  # The seed variable is the contributor's half of the same choice, so every page that
+  # documents the contributor seed has to name it beside the create-form parameter it
+  # mirrors. coder-templates.md is not one of them: it documents create-form fields and
+  # names no seed variable, GROK_THEME included.
+  for file in "${seed_pages[@]}"; do
+    require_page "${file}" || return 1
+    page="$(basename "${file}")"
+    flat="$(flat_prose "${file}")"
+    require_in "${page} names the seed variable" 'GROK_PERMISSION_MODE' "${flat}" || return 1
+    one_sentence_names "${page}: the create form and the seed are one choice" "${flat}" \
+      'grok_permission_mode' 'GROK_PERMISSION_MODE' || return 1
+  done
+}
+
+@test "grok_profile: AGENTS.md ties the approval mode to its seed variable the way it ties the theme" {
+  # The rulebook already states the theme seam as "the create-form parameter, and the
+  # seed takes the same choice". The approval mode has to be stated the same way, or an
+  # operator reading only AGENTS.md never learns GROK_PERMISSION_MODE exists. The theme
+  # sentence is asserted first so the shape below cannot pass on an empty page.
+  local agents flat
+  agents="${REPO_ROOT}/AGENTS.md"
+  require_page "${agents}" || return 1
+  flat="$(flat_prose "${agents}")"
+  one_sentence_names "the theme tie AGENTS.md already makes" "${flat}" \
+    'grok_theme' 'GROK_THEME' || return 1
+  one_sentence_names "the approval-mode tie, in that same shape" "${flat}" \
+    'grok_permission_mode' 'GROK_PERMISSION_MODE' 'always-approve' || return 1
+}
+
+@test "grok_profile: the boot names the [ui] permission_mode it drops from the file it replaces" {
+  # The render owns the key now, so an operator's own value disappears at the next
+  # start. Silence is how a workspace starts prompting, or stops prompting, with nobody
+  # able to say why, so the twin lifts the value out of the file it is replacing and
+  # warns with it. The probe is its own awk program, not the strip pass, so it is
+  # lifted and EXECUTED over the fixtures rather than grepped for.
+  local twin sf dir probe seen lines
+  for twin in workspace devcontainer; do
+    sf="$(twin_file "${twin}" startup.sh.tftpl)"
+    require_line "the boot captures the mode it is about to drop" 'dropped_mode="\$\(' "${sf}" || return 1
+    require_line "the note fires only when a value was actually dropped" \
+      '\[\[? -n "\$dropped_mode" \]\]?' "${sf}" || return 1
+    require_line "the boot note names the key and the value it dropped" \
+      'boot_warn.*permission_mode.*\$dropped_mode' "${sf}" || return 1
+    dir="$(make_scratch)"
+    if ! lift_ui_probe "${sf}" "${dir}/probe.awk"; then
+      printf 'FAIL: %s: no dropped-mode awk to lift\n' "${sf}" >&2
+      return 1
+    fi
+    probe="${dir}/probe.awk"
+    # An [ui] table that carries a mode: the boot has one value to name, and it names
+    # the one that was written. The program prints the right-hand side as the file has
+    # it, quotes included, so what the console shows is what the operator wrote.
+    printf '%s\n' '[ui]' 'theme = "groknight"' 'permission_mode = "ask"' \
+      'banner = "keep me"' >"${dir}/has-mode"
+    seen="$(awk -f "${probe}" "${dir}/has-mode")"
+    lines="$(printf '%s\n' "${seen}" | grep -c . || true)"
+    if [[ "${seen//\"/}" != "ask" || "${lines}" != "1" ]]; then
+      printf 'FAIL: %s: the probe printed [%s] for a fixture whose [ui] carries permission_mode = "ask"\n' \
+        "${sf}" "${seen}" >&2
+      return 1
+    fi
+    # No [ui] table at all: nothing was dropped, so the boot stays quiet.
+    printf '%s\n' '[models]' 'agent = "agent"' >"${dir}/no-table"
+    seen="$(awk -f "${probe}" "${dir}/no-table")"
+    if [[ -n "${seen}" ]]; then
+      printf 'FAIL: %s: the probe printed [%s] for a file with no [ui] table\n' "${sf}" "${seen}" >&2
+      return 1
+    fi
+    # An [ui] table with no approval mode: the other keys are not a dropped mode.
+    printf '%s\n' '[ui]' 'theme = "groknight"' 'banner = "keep me"' >"${dir}/no-mode"
+    seen="$(awk -f "${probe}" "${dir}/no-mode")"
+    if [[ -n "${seen}" ]]; then
+      printf 'FAIL: %s: the probe printed [%s] for an [ui] table with no permission_mode\n' \
+        "${sf}" "${seen}" >&2
+      return 1
+    fi
+  done
+}
+
+@test "grok_profile: the two config twins ship the same [permission] approval-mode note" {
+  # The twins are independent payload copies and this change already split them once,
+  # so the paragraph that explains the approval mode is compared byte for byte instead
+  # of being grepped in each twin on its own. The non-empty and content probes come
+  # first: a paragraph neither twin ships would compare identical.
+  local dir ws dc
+  dir="$(make_scratch)"
+  ws="${dir}/workspace-note"
+  dc="${dir}/devcontainer-note"
+  permission_note "$(twin_file workspace grok-config.toml.tftpl)" >"${ws}"
+  permission_note "$(twin_file devcontainer grok-config.toml.tftpl)" >"${dc}"
+  if [ ! -s "${ws}" ]; then
+    printf 'FAIL: %s ships no "The approval mode ships as a stack default" paragraph\n' \
+      "$(twin_file workspace grok-config.toml.tftpl)" >&2
+    return 1
+  fi
+  require_line "the note documents the key the render owns" 'permission_mode' "${ws}" || return 1
+  require_line "the note names the shipped default" 'always-approve' "${ws}" || return 1
+  if ! diff -u "${ws}" "${dc}" >&2; then
+    printf 'FAIL: the [permission] approval-mode note is not identical in the two config twins\n' >&2
+    return 1
+  fi
+}
+
+@test "grok_profile: the two main.tf twins offer the same four approval modes" {
+  # Four option blocks per twin, already pinned for their values elsewhere; what no
+  # test did was check that a label or a description written into one twin's dropdown
+  # is the label the other twin offers. Same fields, same order, or it goes red.
+  local dir ws dc n pair
+  dir="$(make_scratch)"
+  ws="${dir}/workspace-options"
+  dc="${dir}/devcontainer-options"
+  dropdown_fields "$(twin_file workspace main.tf)" >"${ws}"
+  dropdown_fields "$(twin_file devcontainer main.tf)" >"${dc}"
+  for pair in "${ws}:workspace" "${dc}:devcontainer"; do
+    n="$(grep -c . "${pair%:*}" || true)"
+    if [[ "${n}" != "8" ]]; then
+      printf 'FAIL: %s: the approval-mode dropdown exposes %s option field(s), expected 8 (4 options x name + description)\n' \
+        "$(twin_file "${pair#*:}" main.tf)" "${n}" >&2
+      return 1
+    fi
+  done
+  if ! diff -u "${ws}" "${dc}" >&2; then
+    printf 'FAIL: the two main.tf twins do not offer the same option names and descriptions\n' >&2
+    return 1
+  fi
 }

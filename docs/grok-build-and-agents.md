@@ -630,7 +630,15 @@ while the managed block is intact.
   copy comes across minus the keys the render owns, and `permission_mode` is one of
   them now: the startup strips it from the operator's copy so the render's own line
   cannot land beside it, which would hand one `[ui]` table two identical keys and the
-  CLI an invalid TOML file.
+  CLI an invalid TOML file. The strip says what it took - when it drops a mode the start
+  prints one `warning:` line naming the value it dropped
+  (`templates/workspace/startup.sh.tftpl:248`), so an approval mode lost at a restart is
+  lost in the open. A workspace that quietly starts prompting, or stops prompting, is
+  otherwise a report nobody can reproduce. And the create form's four are what the
+  `[ui] permission_mode` key documents, not the whole vocabulary: the CLI's own
+  `--permission-mode` flag spells more (`templates/workspace/main.tf:389-392`). One of
+  those belongs in the operator's `[ui]` block by hand, and the next start replaces it
+  with the form's answer and says so on the startup log.
 
 ## The fan-out seam
 
