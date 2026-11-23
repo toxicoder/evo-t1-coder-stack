@@ -393,7 +393,11 @@ empty query is not proof that nothing depends on a file) see
 
   Edit the naming parts, never a rendered conf.
 
-- A new top-level payload directory is invisible to `test-fast` and `lint` until it is added to `//:stack_data` (a new `scripts/*.sh` needs no filegroup edit — the `shell_sources` glob picks it up, and it instead needs a key in `_SCRIPT_LIBS` or `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than quietly inheriting the world; `//scripts:doc_sources` is the union of those sources).
+- A new top-level payload directory is invisible to `test-fast` and `lint` until it is
+  added to `//:stack_data` (a new `scripts/*.sh` needs no filegroup edit — the
+  `shell_sources` glob picks it up, and it instead needs a key in `_SCRIPT_LIBS` or
+  `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than
+  quietly inheriting the world; `//scripts:doc_sources` is the union of those sources).
 
 - `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, `hermes/config.yaml`, and `searxng/settings.yml`.
 

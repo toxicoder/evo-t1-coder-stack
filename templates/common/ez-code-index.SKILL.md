@@ -65,8 +65,8 @@ flags:
 - 1 the clone is not indexable
 - 2 usage
 
-Exit 1 names its reason on stderr (not a git tree, no commit yet, or no origin remote to take the key
-from) and that is a finding to report, not a directory to invent. Both files land by
+Exit 1 names its reason on stderr (not a git tree, no commit yet, or no origin remote to
+take the key from) and that is a finding to report, not a directory to invent. Both files land by
 temp-then-rename, and with no `rg` on the box the same skip list drives an `os.walk` instead.
 
 ## Read it instead of searching

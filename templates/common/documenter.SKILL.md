@@ -108,9 +108,11 @@ it is not a changelog. Correct a stale fact, add a new one, leave a limitation n
 ## Step 4 -- Check: the skeptic runs the documentation (2 to 5 calls)
 
 Hand the changed files -- the files, not your summary -- to one child on `agent-review` that
-wrote none of it, never the producer, the rule `templates/common/GROK_BUILD_AGENTS.md` carries in its Delegation section.
+wrote none of it, never the producer, the rule
+`templates/common/GROK_BUILD_AGENTS.md` carries in its Delegation section.
 
-Its one job is to execute every command a doc tells a reader to run and report each kept or broken with its `path:line`.
+Its one job is to execute every command a doc tells a reader to run and report each kept
+or broken with its `path:line`.
 
 Then you fix what broke and it re-runs it:
 

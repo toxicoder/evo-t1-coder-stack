@@ -43,7 +43,10 @@ Read this before proposing anything, and again when the evidence is ambiguous. E
 
 ## Signal reading
 
-Rank friction by what it says about the system, never by its size, and read the table in the sweeper's own order: `2*toolFailureCount + 2*errorCount + regenerationCount + compactionCount` descending, then recency.
+Rank friction by what it says about the system, never by its size, and read the table in
+the sweeper's own order:
+`2*toolFailureCount + 2*errorCount + regenerationCount + compactionCount` descending,
+then recency.
 
 The top row is a candidate, not a verdict.
 
