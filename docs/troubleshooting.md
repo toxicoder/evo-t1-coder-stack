@@ -243,7 +243,7 @@ calls as plain text.
 curl -sS "${AGENT_MODEL_URL:-http://${SPARK2_HOST:-localhost}:${SPARK_HTTP_PORT:-8888}/v1/models}" | head -c 200
 ```
 
-- Or check the whole fleet at once, from the checkout. `spark-verify.sh` takes `--json`
+- Check the whole fleet at once, from the checkout. `spark-verify.sh` takes `--json`
   and `--no-tests`; `--no-tests` skips the recipe's own probes (a 195k-token needle plus
   a 1/2/4/5-client sweep, minutes per box) and leaves the quick read-only check:
 
@@ -276,7 +276,7 @@ Fix, one of these:
 bazelisk run //scripts:spark-configure -- <host> --apply
 ```
 
-- Or repoint `SPARK1_OPENAI_URL`, `SPARK2_OPENAI_URL` and `SPARK3_OPENAI_URL` in `.env`
+- Repoint `SPARK1_OPENAI_URL`, `SPARK2_OPENAI_URL` and `SPARK3_OPENAI_URL` in `.env`
   at a tool-capable OpenAI-compatible endpoint, then restart the proxy so it re-reads
   them. The stack runners have no `restart` subcommand, so this one stays a direct
   compose call:
