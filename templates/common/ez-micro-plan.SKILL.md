@@ -27,9 +27,10 @@ metadata:
 # Micro-task plan and fan-out
 
 This is the parent's protocol. Children never plan: they receive one micro task, do it,
-and report. The plan exists so a child can start with everything it needs and nothing it
-does not, and so the parent can hand a ready task to any free slot without re-deriving
-anything.
+and report.
+
+The plan exists so a child can start with everything it needs and nothing it does not,
+and so the parent can hand a ready task to any free slot without re-deriving anything.
 
 Four rules carry the design:
 
@@ -59,19 +60,24 @@ Read your real slot count once, here, and never guess it again:
     grep -A4 '^\[subagents\]' ~/.grok/config.toml
 
 `max_concurrent` is the ceiling for one session and `sampling_limit` follows it when
-unset. Put that number in the plan as `slots:`. The writer types ship on the unpinned
-`agent-swarm` lane by default, so a workspace that passed no `--var` already spreads a
-fan-out over every Spark box. If this one instead reports a pinned Spark lane, someone
-rolled it back with `--var grok_subagents_lane=agent`, and the fix is to put that lane
-back rather than to plan a smaller wave. `docs/litellm-routing.md` explains the
-trade. That knob moves the writer
-types only: `grok_explore_lane`, `grok_plan_lane` and `grok_review_lane` route the
-mappers, the planner and the skeptics, so a wave of readers or a review pass can be put
-on its own alias without touching the writers. `[subagents.models]` is the
-seam that routes a subagent type to a lane, and the guide documents it applying whatever
-the parent's own model is, so the lane is a config decision: the spawn call's `model`
-argument names one child's model, and the guide leaves how it ranks against that pin
-open, so change the pin when you want the lane itself to move.
+unset. Put that number in the plan as `slots:`.
+
+The writer types ship on the unpinned `agent-swarm` lane by default, so a workspace that
+passed no `--var` already spreads a fan-out over every Spark box.
+
+If this one instead reports a pinned Spark lane, someone rolled it back with
+`--var grok_subagents_lane=agent`, and the fix is to put that lane back rather than to
+plan a smaller wave. `docs/litellm-routing.md` explains the trade.
+
+That knob moves the writer types only: `grok_explore_lane`, `grok_plan_lane` and
+`grok_review_lane` route the mappers, the planner and the skeptics, so a wave of readers
+or a review pass can be put on its own alias without touching the writers.
+
+`[subagents.models]` is the seam that routes a subagent type to a lane, and the guide
+documents it applying whatever the parent's own model is, so the lane is a config
+decision. The spawn call's `model` argument names one child's model, and the guide leaves
+how it ranks against that pin open, so change the pin when you want the lane itself to
+move.
 
 ## Step 1 -- map the change surface before you split anything (up to 5 calls)
 
@@ -81,12 +87,21 @@ You cannot scope tasks from a guess. Enumerate what must change and what might:
 
 Use the repo's own map verbs where it has them (here:
 `bazelisk run //scripts:bazel-map -- scope --untracked`, `-- twins <path>`,
-`-- files <target>`). When the surface is bigger than five calls, spawn one `explore`
-child per disjoint area and have it answer: files that must change, files that must not,
-the pattern to copy, and the command that proves it. Its answer becomes a lane brief in
-Step 3, not a blob in your context.
+`-- files <target>`).
+
+When the surface is bigger than five calls, spawn one `explore` child per disjoint area
+and have it answer:
+
+- files that must change;
+- files that must not;
+- the pattern to copy;
+- the command that proves it.
+
+Its answer becomes a lane brief in Step 3, not a blob in your context.
 
 ## Step 2 -- write the plan (parent only)
+
+### Plan directory layout
 
 Create `.grok/plans/<slug>/plan.md` with `ctx/` and `results/` beside it. The layout is
 fixed because the check parses it:
@@ -97,6 +112,8 @@ fixed because the check parses it:
       ctx/L1-<lane>.md     one brief per lane; that lane's children read it
       ctx/L2-T<nn>.md      a task brief, only when L0 plus L1 cannot start the task
       results/T<nn>.md     written by the child, read by the parent
+
+### The plan skeleton
 
 Skeleton (keep the headings; the check keys on them):
 
@@ -155,24 +172,41 @@ Skeleton (keep the headings; the check keys on them):
     ## Not doing
     - <what a reviewer might expect and will not find>
 
+### Task block keys
+
 Every task block carries all nine lines, exactly those keys, and may add a tenth, the
-optional `spawns:`, naming how many read-only mappers that child fans out itself. A task
-that spawns owns `-`: a spawner ships nothing and pays a stream for each child, so the
-checker refuses a spawner that also lists files. `owns` is a comma list or
-`-` for a read-only task. `reads` names context files (`L0`, `L1-<lane>`, `L2-T<nn>`) and
-nothing else; the repo files a task edits are in `owns`, and any file it reads to copy a
-pattern is named in `reads` with a line range (`src/lib/spark.sh:40-75`). `needs` is
-`none` or a comma list of task ids that must be done first. `done` is one command or one
-inspectable artifact. `report` is that task's own result path. In `## Dispatch`, `review:`
-is optional and names the review panel: a comma list of skeptics (`review: T09, T10`)
-dispatched together in one turn once every producer has landed. The check enforces the
-same contract on each id once you write the key, and warns about the whole key when you
-leave it out: every reviewer owns nothing and needs every task that owns a file. Give each
-one its own attack angle, so the panel covers requirements (every acceptance check kept or
-broken), proof (re-runs the producers' own `done:` commands), and adversary (regressions,
-edge states, flag-off paths). `fleet:` in the same block is the tree's model-stream
-ceiling, 15 by default: the `3 boxes x PARALLEL 5` ceiling in
-`scripts/spark-configure.sh`, which `slots:` does not cover.
+optional `spawns:`, naming how many read-only mappers that child fans out itself.
+
+A task that spawns owns `-`: a spawner ships nothing and pays a stream for each child, so
+the checker refuses a spawner that also lists files.
+
+- `owns` is a comma list or `-` for a read-only task.
+- `reads` names context files (`L0`, `L1-<lane>`, `L2-T<nn>`) and nothing else; the repo
+  files a task edits are in `owns`, and any file it reads to copy a pattern is named in
+  `reads` with a line range (`src/lib/spark.sh:40-75`).
+- `needs` is `none` or a comma list of task ids that must be done first.
+- `done` is one command or one inspectable artifact.
+- `report` is that task's own result path.
+
+### The review panel and the fleet ceiling
+
+In `## Dispatch`, `review:` is optional and names the review panel: a comma list of
+skeptics (`review: T09, T10`) dispatched together in one turn once every producer has
+landed.
+
+The check enforces the same contract on each id once you write the key, and warns about
+the whole key when you leave it out: every reviewer owns nothing and needs every task that
+owns a file.
+
+Give each one its own attack angle, so the panel covers:
+
+- requirements (every acceptance check kept or broken);
+- proof (re-runs the producers' own `done:` commands);
+- adversary (regressions, edge states, flag-off paths).
+
+`fleet:` in the same block is the tree's model-stream ceiling, 15 by default: the
+`3 boxes x PARALLEL 5` ceiling in `scripts/spark-configure.sh`, which `slots:` does not
+cover.
 
 ## Step 3 -- layer the context, and keep it thin
 

@@ -497,6 +497,8 @@ while the managed block is intact.
 
 ### The model aliases and their lanes
 
+#### The alias set and the reasoning levels
+
 - The twelve aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`,
   `agent-explore`, `agent-review`, `agent-xhigh-fast`, `agent-swarm-fast`, `coder`,
   `coder-fast`, `chat`) are defined with `base_url` set to `litellm_url` and
@@ -509,95 +511,138 @@ while the managed block is intact.
   set `supports_reasoning_effort = false` because LiteLLM bakes the level for
   callers that have no reasoning-effort field.
 
-  The `agent-explore` / `agent-review` pair is the
+#### The reader lane and the skeptic lane
+
+- The `agent-explore` / `agent-review` pair is the
   reader and the skeptic: the `explore` type and the seeded `explorer` ride
   `agent-explore` (`low`), and the seeded
   `reviewer` and `security-auditor` ride `agent-review` (`xhigh`). What each lifts, what
   it costs, and the `--var` that rolls it back are in
   [litellm-routing.md](litellm-routing.md#the-fan-out-lanes-agent-explore-and-agent-review).
 
-  The `agent-xhigh-fast` / `agent-swarm-fast` pair is their parent lane with one call of the
+#### The fast compaction pair
+
+- The `agent-xhigh-fast` / `agent-swarm-fast` pair is their parent lane with one call of the
   conversation answered elsewhere: on those two aliases only, the proxy callback
   `litellm/compaction_router.py` re-serves the CLI's conversation-summary call from the Arc
   group `compaction-fast` and leaves every other call of the session on its Spark box.
   Nothing in either `[model.*]` block names that target, because no client key could - the
   hop is server-side, and it forks on `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 tokens
-  estimated): within it the summary goes to the Arc group, above it to the Spark group
-  `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default `agent-low`), because the Arc weights
-  answer inside a 32768-token window and a bigger input would be truncated into a useless
-  summary of the history the call exists to preserve. Both are selectable as
-  `grok_default_model` and neither is a Coder Agents chat model. The mechanism, the five
-  `EVO_T1_FAST_COMPACTION*` knobs, and the 107 s to 1915 s Spark-side compactions that
-  motivated it are in
+  estimated):
+
+  - within it the summary goes to the Arc group
+  - above it to the Spark group `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default `agent-low`)
+
+  because the Arc weights answer inside a 32768-token window and a bigger input would be
+  truncated into a useless summary of the history the call exists to preserve.
+
+  Both are selectable as `grok_default_model` and neither is a Coder Agents chat model. The
+  mechanism, the five `EVO_T1_FAST_COMPACTION*` knobs, and the 107 s to 1915 s Spark-side
+  compactions that motivated it are in
   [litellm-routing.md](litellm-routing.md#the-fast-compaction-lanes-agent-xhigh-fast-and-agent-swarm-fast).
+#### The session pin header
+
 - `[models]` also carries `extra_headers` with
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
   workspace's traffic to one healthy Spark box. Each workspace renders its own
   key: `config.toml` is that workspace's own file.
+#### The subagent width and depth keys
+
 - `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane each
   type rides, both rendered from template variables: `grok_subagents_lane` (default
   `agent-swarm`) for the writers, three more for the reader, planner and skeptic roles named
   below, and `grok_subagent_max_concurrent` (default 15, the variable's own shipped
   number; `null` is kept as the opt-in that hands the width to `grok_swarm_width`, the
   fleet's own ceiling), and `grok_subagent_max_depth` (default 2,
-  validated 1..3) sets how deep the tree of children may go. The width and the ceiling are
-  two numbers on purpose, and `main.tf` is where they meet:
+  validated 1..3) sets how deep the tree of children may go.
+
+  The width and the ceiling are two numbers on purpose, and `main.tf` is where they meet:
   `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
   So the width is the variable's own shipped 15 whichever lane the writers ride, and the
   `: var.grok_swarm_width` arm answers only a caller that passes null on purpose;
   `--var grok_subagents_lane=agent` is the rollback that puts the writers back on
   the parent's pinned box and leaves that width alone, and an explicit
-  `--var grok_subagent_max_concurrent=N` always wins. The variable's
-  own validation accepts any whole number 1..32 it is given, plus that explicit null,
-  because past the fleet's ceiling a bigger number is only a longer queue. A parent session and every subagent it spawns
+  `--var grok_subagent_max_concurrent=N` always wins.
+
+  The variable's own validation accepts any whole number 1..32 it is given, plus that
+  explicit null,
+  because past the fleet's ceiling a bigger number is only a longer queue.
+
+#### What a pinned lane costs
+
+- A parent session and every subagent it spawns
   carry the same `x-litellm-session-id`, so on a pinned lane the whole fan-out resolves
   to one deployment and competes for that box's `PARALLEL` streams - 5 by default, set in
   `scripts/spark-configure.sh` - so the width that is useful on one box is about 4: that
   box's `PARALLEL` minus the parent's own stream, which is why an operator who pins
   everything to one box narrows the queue by setting `grok_subagent_max_concurrent`
-  rather than by switching lanes. The `agent-swarm` default is where widening pays: that
+  rather than by switching lanes.
+
+#### What the swarm lane buys
+
+- The `agent-swarm` default is where widening pays: that
   group carries no pin, so each subagent request is placed on
   whichever reachable box has the fewest requests in flight and the ceiling becomes
   `PARALLEL` per box rather than per workspace - 3 boxes x 5 = 15, which asks the fleet
   for every stream it has, so treat 15 as a one-workspace-at-a-time number.
-  `sampling_limit` is deliberately left unset: it defaults to `max_concurrent`, so the
+- `sampling_limit` is deliberately left unset: it defaults to `max_concurrent`, so the
   two caps cannot drift apart. `limit_behavior = "queue"` below them holds the overflow
   instead of failing the spawn, so overshoot costs a subagent latency rather than its
-  life. `max_depth` rides beside them, rendered from `grok_subagent_max_depth` and shipped
+  life.
+
+#### How deep the tree of children may go
+
+- `max_depth` rides beside them, rendered from `grok_subagent_max_depth` and shipped
   at 2, and at 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
   `spawn_subagent` in their `tools` (`templates/common/reviewer.AGENT.md:5`), so a skeptic
-  or a tester can fan read-only mappers out one level under itself. Each of those
-  grandchildren is its own session with its own `max_concurrent`, and what it costs the
+  or a tester can fan read-only mappers out one level under itself.
+
+  Each of those grandchildren is its own session with its own `max_concurrent`, and what it costs the
   fleet is one model stream, so a tree is budgeted by summing the in-flight `1 + spawns`
   over every task and keeping that total at or below the fleet's stream count (`fleet:` in
   the plan, 15 by default, `templates/common/ez-micro-plan.plan_check.py:42`). That total
   is a separate number from the session cap above, which counts one parent's own children.
+
   `max_depth = 1` is the rollback to no nesting, and it restores the behaviour the fleet
-  shipped with before a child could spawn. `[subagents.models]` pins every subagent type a session can get to a lane of its
+  shipped with before a child could spawn.
+
+#### The four lane variables
+
+- `[subagents.models]` pins every subagent type a session can get to a lane of its
   own, and there are four variables behind those pins, not one: `grok_subagents_lane`
   (default `agent-swarm`) for the writers, `grok_explore_lane` (default `agent-explore`) for the
   mappers, `grok_plan_lane` (default `agent`) for the planner, and `grok_review_lane`
-  (default `agent-review`) for the skeptics. Concretely the block renders
-  `general-purpose`, `implementer` and `tester` from the writers' lane, `explore` and
+  (default `agent-review`) for the skeptics.
+
+  Concretely the block renders `general-purpose`, `implementer` and `tester` from the
+  writers' lane, `explore` and
   `explorer` from the reader's, `plan` and `architect` from the planner's, and `reviewer`
   and `security-auditor` from the skeptic's - the last six keys are the seeded role
   definitions named in [the seeded fleet suite](#the-seeded-fleet-suite), and a key no
-  session selects is inert. Splitting the block that way is what lets one role go back on
-  the parent's lane without moving the others: a wave of mappers can spread over the whole
-  fleet while the planner that steers the next wave stays pinned to one box. Pinning only the
-  two read-only types was the defect this block fixes: a spawn that names no type gets
+  session selects is inert.
+
+  Splitting the block that way is what lets one role go back on the parent's lane without
+  moving the others: a wave of mappers can spread over the whole
+  fleet while the planner that steers the next wave stays pinned to one box.
+
+  Pinning only the two read-only types was the defect this block fixes: a spawn that names no type gets
   `general-purpose`, and that is the type every writer in a fan-out runs as, so those
   children inherited the parent's model and queued behind the one box a pinned parent
-  resolves to while the swarm-named readers spread over three. What those four variables
-  decide is placement only: the in-flight width comes from `grok_subagent_max_concurrent`
+  resolves to while the swarm-named readers spread over three.
+
+  What those four variables decide is placement only: the in-flight width comes from `grok_subagent_max_concurrent`
   (its own shipped 15) on every lane, so `grok_subagents_lane` remains the knob a workspace
   turns on to fan out, and narrowing that width is the same variable rather than the lane.
+#### The three feature flags
+
 - `[features]` carries `telemetry = false`, `web_fetch = true` and
   `active_agent_messages = true`, the last of them giving the parent
   `send_subagent_message`: a child already running can be handed a new instruction and
   keep its context, which is cheaper than killing it and dispatching a replacement. All
   three keys are static in `templates/workspace/grok-config.toml.tftpl:368-373` and none
   is rendered from a template variable.
+#### The two MCP server blocks
+
 - `github_mcp` (default `true`, so the block renders unless you park it with
   `GITHUB_MCP=false` and re-push) adds the `github` HTTP MCP server
   (`https://api.githubcopilot.com/mcp/`), whose `Authorization` header references
@@ -615,8 +660,12 @@ while the managed block is intact.
   the sensitive template variable `context7_api_key`, filled by the push from
   `CONTEXT7_API_KEY` in the host `.env` - not from Coder External Auth, which is what
   fills `GH_TOKEN` above.
+#### The verbatim escape hatch
+
 - `grok_config_extra` appends whatever the create form's **Grok config extras** field
   holds, verbatim under its own comment header.
+#### The approval default is a stack decision
+
 - `[permission]` holds the guardrails the stack owns. The approval mode is a stack
   default now rather than a per-user call: the render writes
   `[ui] permission_mode = "always-approve"` unless the create form's **Grok approval
@@ -624,7 +673,11 @@ while the managed block is intact.
   `auto`, `always-approve`) names another, and the contributor seed takes the same
   choice from `GROK_PERMISSION_MODE`. What relaxes is prompting, not the guardrails: a
   `deny` rule still outranks every other list under always-approve, so the dotenv reads
-  and the `rm -rf` deny still refuse. `Bash(rm -rf *)` blocks the destructive
+  and the `rm -rf` deny still refuse.
+
+#### The dotenv deny and the template allow list
+
+- `Bash(rm -rf *)` blocks the destructive
   form, and the dotenv family is split by what a file actually holds: the live
   `.env` and the populated suffixed shapes (`.env.local`, `.env.*.local`,
   `.env.production` / `.env.prod`, `.env.staging` / `.env.stage`,
@@ -633,40 +686,62 @@ while the managed block is intact.
   templates a repo ships (`.env.example`, `.env.sample`, `.env.template`,
   `.env.dist`, `.env.defaults`, plus the `.env.*.example` / `.env.*.sample`
   spellings) are named in `allow`, so an agent maintains the env key list without a
-  prompt in any mode. Neither list is the old blanket `**/.env.*`: deny outranks
+  prompt in any mode.
+
+  Neither list is the old blanket `**/.env.*`: deny outranks
   allow, so the blanket form blocked the templates along with the live files and
   left the key list -- the file that keeps a real `.env` honest -- to drift.
+
   `.gitignore` carries the matching half on the git side: the whole family is
   ignored except the names `allow` lists.
+#### The git verbs the branch-first policy needs
+
 - `allow` also carries the verbs the branch-first, commit-per-unit policy needs:
   `Bash(git switch *)`, `Bash(git checkout -b *)` and `-B`, `Bash(git add *)`,
-  `Bash(git commit *)`. A grant that cannot be had is how that policy fails quietly:
+  `Bash(git commit *)`.
+
+  A grant that cannot be had is how that policy fails quietly:
   an unattended run (`grok -p`, how the delegation skill launches its children)
   answers "headless run cannot ask for approval" and drops the call, so a child
   would finish a whole task with its work uncommitted. Everything on that list is
-  local to the checkout and undone by another git command. `git push` is absent on
-  purpose - the one step that leaves the machine keeps a human in it - and so is
+  local to the checkout and undone by another git command.
+
+  `git push` is absent on purpose - the one step that leaves the machine keeps a human in
+  it - and so is
   anything that can lose work (`git branch -D`, `git restore`,
   `git reset --hard`). The deny side closes the two ways a commit could land with
-  no gate having seen it: `Bash(git commit --no-verify *)` / `-n`, past the
-  hermetic pre-commit hook, and `Bash(git add -f *)` / `--force`, past
-  `.gitignore`. Both are prefix globs, so they narrow that door rather than seal
-  it, and the `Stage by path` rule in the seed text is the rest of the defence.
+  no gate having seen it:
+
+  - `Bash(git commit --no-verify *)` / `-n`, past the hermetic pre-commit hook
+  - `Bash(git add -f *)` / `--force`, past `.gitignore`
+
+  Both are prefix globs, so they narrow that door rather than seal it, and the
+  `Stage by path` rule in the seed text is the rest of the defence.
+#### Why the recursive-delete deny catches benign cleanups
+
 - `Bash(rm -rf *)` is a prefix glob, so it catches a benign per-path scratch cleanup
   along with the destruction it is there to prevent. Agents run into that constantly:
   across 271 workspace sessions, 86 recorded at least one denied tool call and 56
-  attempted an `rm -rf`, and 55 sessions did both. The shapes that are never denied
-  are per-path deletions - `find <dir> -type f -delete`, or `rm -f` naming each path -
-  so clean scratch that way. An `allow` entry cannot rescue `rm -rf`, because deny
-  outranks allow. Narrowing the pattern is an operator call and a deliberate one: it
-  is the only thing between an agent and a recursive delete on a path it got wrong.
+  attempted an `rm -rf`, and 55 sessions did both.
+
+  The shapes that are never denied are per-path deletions - `find <dir> -type f -delete`, or
+  `rm -f` naming each path - so clean scratch that way.
+
+  An `allow` entry cannot rescue `rm -rf`, because deny outranks allow. Narrowing the pattern
+  is an operator call and a deliberate one: it is the only thing between an agent and a
+  recursive delete on a path it got wrong.
+#### The self-teardown deny family
+
 - The self-teardown family is denied alongside it, because an agent that closes its own
-  terminal cannot finish the task that closed it. `tmux kill-server` / `kill-session` /
-  `kill-window` / `kill-pane` / `restart-server`, `pkill` and `killall` naming `tmux`,
-  `node`, `code-server`, `grok` or `bash`, those killers aimed at a whole user or parent
-  (`pkill -u`, `-U`, `-P`), and the shell forms that signal a whole process group
-  (`kill 0`, `kill -- -<pgid>`, `kill -9 -1`) each match a `deny` rule. The reason is the
-  shape of the workspace: the Bash tool runs inside the tmux session the agent was
+  terminal cannot finish the task that closed it. The following each match a `deny` rule:
+
+  - `tmux kill-server` / `kill-session` / `kill-window` / `kill-pane` / `restart-server`
+  - `pkill` and `killall` naming `tmux`, `node`, `code-server`, `grok` or `bash`
+  - those killers aimed at a whole user or parent (`pkill -u`, `-U`, `-P`)
+  - the shell forms that signal a whole process group (`kill 0`, `kill -- -<pgid>`,
+    `kill -9 -1`)
+
+  The reason is the shape of the workspace: the Bash tool runs inside the tmux session the agent was
   launched in, so a sweep that tidies up "stray" sessions or processes takes the agent,
   its tool shell and the in-flight reply down together, and the editor tab dies with
   `terminated with exit code: 1` over work left half-done. An agent stops one process it
@@ -675,6 +750,8 @@ while the managed block is intact.
   an abbreviated tmux verb (`tmux kill-sess`) or a bracketed pattern (`pkill -f [t]mux`)
   walks past them - the seed rule that names the prohibition is the other half, and the
   plain `bash` profile is how a session reaches a shell once they are all gone.
+#### The marker that keeps the config stack-owned
+
 - Stack ownership of the file rests on either marker spelling: the line-1
   `managed-by: evo-t1-coder-stack` comment or the top-level `__evoT1Stack = true` key.
   Both twins emit both, because the comment alone does not last - `grok mcp add`
@@ -682,20 +759,24 @@ while the managed block is intact.
   comment-only marker handed the config to the user with no human in the loop, and the
   default lanes silently stopped arriving. A hand-edited config is left alone only
   while it carries one of them, so takeover means deleting **both** lines; delete the
-  file and restart to hand it back. When the guard does re-render, the CLI-owned tables
-  `[cli]`, `[ui]` and `[marketplace]` are carried over rather than wiped. The `[ui]`
-  copy comes across minus the keys the render owns, and `permission_mode` is one of
-  them now: the startup strips it from the operator's copy so the render's own line
-  cannot land beside it, which would hand one `[ui]` table two identical keys and the
-  CLI an invalid TOML file. The strip says what it took - when it drops a mode the start
-  prints one `warning:` line naming the value it dropped
-  (`templates/workspace/startup.sh.tftpl:248`), so an approval mode lost at a restart is
-  lost in the open. A workspace that quietly starts prompting, or stops prompting, is
-  otherwise a report nobody can reproduce. And the create form's four are what the
-  `[ui] permission_mode` key documents, not the whole vocabulary: the CLI's own
-  `--permission-mode` flag spells more (`templates/workspace/main.tf:389-392`). One of
-  those belongs in the operator's `[ui]` block by hand, and the next start replaces it
-  with the form's answer and says so on the startup log.
+  file and restart to hand it back.
+
+  When the guard does re-render, the CLI-owned tables `[cli]`, `[ui]` and `[marketplace]` are
+  carried over rather than wiped. The `[ui]` copy comes across minus the keys the render owns,
+  and `permission_mode` is one of them now: the startup strips it from the operator's copy so
+  the render's own line cannot land beside it, which would hand one `[ui]` table two identical
+  keys and the CLI an invalid TOML file.
+
+  The strip says what it took - when it drops a mode the start prints one `warning:` line
+  naming the value it dropped (`templates/workspace/startup.sh.tftpl:248`), so an approval
+  mode lost at a restart is lost in the open. A workspace that quietly starts prompting, or
+  stops prompting, is otherwise a report nobody can reproduce.
+
+  And the create form's four are what the `[ui] permission_mode` key documents, not the whole
+  vocabulary: the CLI's own `--permission-mode` flag spells more
+  (`templates/workspace/main.tf:389-392`). One of those belongs in the operator's `[ui]` block
+  by hand, and the next start replaces it with the form's answer and says so on the startup
+  log.
 
 ## The fan-out seam
 
@@ -704,6 +785,8 @@ how many slots one session gets, which lane those children's traffic rides, and 
 the work was cut finely enough to fill the slots. The first two are the rendered
 `[subagents]` keys just above; the third is a seeded skill and one command the parent runs
 before wave 1.
+
+### The ceiling and the fleet width
 
 **How a session learns its own ceiling.** `[subagents] max_concurrent` is the per-session
 number, and `sampling_limit` is left unset because it defaults to that same number - one
@@ -719,37 +802,53 @@ The rulebook (`~/.grok/AGENTS.md`, from
 number of its own: the prompt used to hardcode a smaller fleet and to tell the parent to
 run two or three children per wave, and both are gone, because a cap the prompt invents is
 wrong on both lanes - it leaves slots empty on a swarm session and overbooks a pinned
-one. Overflow is held, not failed (`limit_behavior = "queue"`), so an under-wide wave is
-silent and counting it stays the parent's job. The same grep prints the `max_depth` line
+one.
+
+Overflow is held, not failed (`limit_behavior = "queue"`), so an under-wide wave is
+silent and counting it stays the parent's job.
+
+The same grep prints the `max_depth` line
 beside `max_concurrent`, and that key is now rendered from `grok_subagent_max_depth`
-(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:429`. At the
-shipped 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
+(default 2, validated 1..3) by `templates/workspace/grok-config.toml.tftpl:429`.
+
+At the shipped 2 a child may spawn: `reviewer`, `security-auditor` and `tester` name
 `spawn_subagent` in their `tools`, so a skeptic can put a wave of read-only mappers under
-itself and get its evidence without a round trip through the parent. Each grandchild is its
-own session, so it is not charged to the slot count above; what it does cost is a model
-stream, which is why a tree is counted by summing the in-flight `1 + spawns` over every
-task and keeping that total at or below the fleet's stream count (`fleet:` in the plan, 15
-by default). `max_depth = 1` is the rollback: no child spawns, and one parent's slot count
-again describes the whole tree.
+itself and get its evidence without a round trip through the parent.
+
+Each grandchild is its own session, so it is not charged to the slot count above; what it
+does cost is a model stream, which is why a tree is counted by summing the in-flight
+`1 + spawns` over every task and keeping that total at or below the fleet's stream count
+(`fleet:` in the plan, 15 by default).
+
+`max_depth = 1` is the rollback: no child spawns, and one parent's slot count again
+describes the whole tree.
 
 **Two numbers, one rule.** The same grep opens its four lines of context with
 `# fleet-width: 15` - the fleet's own ceiling, rendered into the same table from
 `var.grok_swarm_width` (`templates/workspace/grok-config.toml.tftpl:427`, fed at
 `templates/workspace/main.tf:558`) so an explicit width never erases it - while the number
 below it is `grok_subagent_max_concurrent`, the variable's own shipped 15. The pair is
-what the width gets read against. Equal numbers mean the session is sized for the fleet:
-every slot it holds is a stream a box can actually serve. A width below its fleet-width
-means a persisted value - on the template, from a raw `coder templates push --var`, or on
-the workspace, from `coder start --parameter` / `coder update --parameter` or the Variables
-tab (`--var` is a push-only flag; `coder start` has none) - unless an operator set it there
-on purpose to sit inside one pinned box. A width above its fleet-width is the pair a
-one-knob fleet change leaves behind: the two keys are separate numbers, so a workspace that
-shrank the fleet with `--var grok_swarm_width=10` moved the ceiling alone and kept the
-shipped 15. That pair is not a stale stored value, it is a fleet that got smaller under a
-width that never moved. `bazelisk run //scripts:subagent-check`
-reads both and names which of the three readings you have, and counts the above one as a
-`note:` beside the ok items, since past the fleet's streams the extra spawns queue in
-LiteLLM rather than failing. The same comparison runs at every start, in stage 6 of
+what the width gets read against:
+
+- Equal numbers mean the session is sized for the fleet: every slot it holds is a stream a
+  box can actually serve.
+- A width below its fleet-width means a persisted value - on the template, from a raw
+  `coder templates push --var`, or on the workspace, from `coder start --parameter` /
+  `coder update --parameter` or the Variables tab (`--var` is a push-only flag;
+  `coder start` has none) - unless an operator set it there on purpose to sit inside one
+  pinned box.
+- A width above its fleet-width is the pair a one-knob fleet change leaves behind: the two
+  keys are separate numbers, so a workspace that shrank the fleet with
+  `--var grok_swarm_width=10` moved the ceiling alone and kept the shipped 15.
+
+That pair is not a stale stored value, it is a fleet that got smaller under a width that
+never moved.
+
+`bazelisk run //scripts:subagent-check` reads both and names which of the three readings you
+have, and counts the above one as a `note:` beside the ok items, since past the fleet's
+streams the extra spawns queue in LiteLLM rather than failing.
+
+The same comparison runs at every start, in stage 6 of
 `templates/workspace/startup.sh.tftpl`, where a narrower width is one `note:` line on the
 startup log and a wider one prints nothing. Neither value can be cleared from inside the
 workspace, because both sit in the Coder database on the host. So shrinking a shared fleet
@@ -757,32 +856,44 @@ is a two-knob job: dropping `grok_swarm_width` moves the ceiling alone, and
 `grok_subagent_max_concurrent` has to go with it in the same push, or a 15-wide session
 meets `NoRoom` on a 10-stream fleet.
 
+### Lane choice and the review panel
+
 **What the lane choice buys.** `grok_subagents_lane` is the knob for the writers and it
 decides placement, not size: the in-flight width comes from
 `grok_subagent_max_concurrent` (the variable's own shipped 15) on every lane, and only a
 workspace that sets it to `null` on purpose takes the width from `grok_swarm_width` instead
-(its validation accepts any whole number 1..32 plus that explicit null). That
-15 is the fleet's arithmetic rather than taste. A parent and every child it spawns
-carry the same `x-litellm-session-id`, so a pinned lane places the whole fan-out on one
-box and the useful width is that box's `PARALLEL` - 5 by default, from
-`scripts/spark-configure.sh` - minus the parent's own stream; past that, extra slots are
-LiteLLM queue depth. `agent-swarm` is one of four Spark groups with no session pin -
+(its validation accepts any whole number 1..32 plus that explicit null).
+
+That 15 is the fleet's arithmetic rather than taste.
+
+A parent and every child it spawns carry the same `x-litellm-session-id`, so a pinned lane
+places the whole fan-out on one box and the useful width is that box's `PARALLEL` - 5 by
+default, from `scripts/spark-configure.sh` - minus the parent's own stream; past that, extra
+slots are LiteLLM queue depth.
+
+`agent-swarm` is one of four Spark groups with no session pin -
 `agent-explore`, `agent-review` and `agent-swarm-fast` lift it the same way, and
 [litellm-routing.md](litellm-routing.md#the-fan-out-lanes-agent-explore-and-agent-review)
 is where what each lane buys is worked out - so each child lands on whichever reachable
 box has the fewest requests in flight and the ceiling
 becomes `PARALLEL` per box: 3 boxes x 5 = 15, which is every stream the fleet has and
-therefore a one-workspace-at-a-time number. The pins no longer put every type on that one
-lane: `[subagents.models]` renders `general-purpose` and the seeded `implementer` and
-`tester` from `grok_subagents_lane`, `explore` and the seeded `explorer` from
-`grok_explore_lane` (default `agent-explore`), `plan` and the seeded `architect` from
-`grok_plan_lane` (default `agent`, still pinned, because one planner is a conversation that
-steers every wave after it), and the seeded `reviewer` and `security-auditor` from
-`grok_review_lane` (default `agent-review`). What has not changed is why the block exists
-at all: every writer in a fan-out is a `general-purpose` child,
-and while only the two read-only types were pinned those writers inherited the parent's
-model, so a swarm-named wave still queued its edits behind one box's streams. The lane is
-therefore a config decision: the guide documents `[subagents.models]` as the per-type
+therefore a one-workspace-at-a-time number.
+
+The pins no longer put every type on that one lane: `[subagents.models]` renders
+
+- `general-purpose` and the seeded `implementer` and `tester` from `grok_subagents_lane`
+- `explore` and the seeded `explorer` from `grok_explore_lane` (default `agent-explore`)
+- `plan` and the seeded `architect` from `grok_plan_lane` (default `agent`, still pinned,
+  because one planner is a conversation that steers every wave after it)
+- the seeded `reviewer` and `security-auditor` from `grok_review_lane` (default
+  `agent-review`)
+
+What has not changed is why the block exists at all: every writer in a fan-out is a
+`general-purpose` child, and while only the two read-only types were pinned those writers
+inherited the parent's model, so a swarm-named wave still queued its edits behind one box's
+streams.
+
+The lane is therefore a config decision: the guide documents `[subagents.models]` as the per-type
 override that "applies for any parent", and documents the spawn call's own `model`
 argument as the agent's choice of one child's model, without saying which of the two wins
 when both name one. Set the pin when the lane matters.
@@ -790,11 +901,15 @@ when both name one. Set the pin when the lane matters.
 **The review pass is a panel.** The independent check that closes a fleet run is a wave of
 skeptics dispatched in one turn, each riding `agent-review` through the `grok_review_lane`
 pin above, each owning no file, and each re-running the producers' own `done:` commands
-rather than reading their reports. The default panel is three angles: requirements, which
-answers every acceptance check kept or broken; proof, which runs the `done:` commands and
-quotes what they printed; and adversary, which looks for the regression, the edge state and
-the flag-off path. Each may fan out up to three read-only mappers of its own under the
-depth above. `templates/common/ez-micro-plan.plan_check.py:227` accepts a `review:` key
+rather than reading their reports. The default panel is three angles:
+
+- requirements, which answers every acceptance check kept or broken
+- proof, which runs the `done:` commands and quotes what they printed
+- adversary, which looks for the regression, the edge state and the flag-off path
+
+Each may fan out up to three read-only mappers of its own under the depth above.
+
+`templates/common/ez-micro-plan.plan_check.py:227` accepts a `review:` key
 naming the whole panel, comma or space separated, and holds each reviewer to owning nothing
 while needing every task that ships a file.
 
@@ -807,12 +922,16 @@ GROK_SUBAGENTS_LANE=agent-swarm bazelisk run //scripts:seed-dev-env -- --home <d
 
 `GROK_SUBAGENTS_LANE` names the writers' lane and `GROK_SUBAGENT_MAX_CONCURRENT` the width,
 which defaults to the same `default = 15` the variable ships in both twins' `coder.tf`, so
-the seeder and the template agree on the width without a second knob. `GROK_SWARM_WIDTH`
+the seeder and the template agree on the width without a second knob.
+
+`GROK_SWARM_WIDTH`
 (default 15) now feeds only the `# fleet-width:` line the seed writes directly above the
 width, `scripts/seed-dev-env.sh:286`, so a contributor home carries the same pair a
 workspace renders; `GROK_EXPLORE_LANE` (default `agent-explore`),
 `GROK_PLAN_LANE` (default `agent`) and `GROK_REVIEW_LANE` (default `agent-review`) name the
-three role lanes the same way. A value the seeder cannot use is refused in place and
+three role lanes the same way.
+
+A value the seeder cannot use is refused in place and
 the default goes in, so a typo is a line in the output rather than a broken key in
 `~/.grok/config.toml`:
 
@@ -821,12 +940,15 @@ note: GROK_SUBAGENTS_LANE='not a model id' is not a model id - using agent-swarm
 note: GROK_SUBAGENT_MAX_CONCURRENT='99' is past the fleet's ceiling - using 32
 ```
 
+### Cutting the plan and dispatching the wave
+
 **How the work is cut.** `/ez-micro-plan` is the parent's protocol for splitting one
 multi-file change across that fleet, and it writes its own document, separate from Grok
 Build's `/plan`: `/plan` lives at `~/.grok/sessions/<cwd>/<session-id>/plan.md`, is the
 Plan Mode preview, and dies with the session, while this one is repo-local at
-`.grok/plans/<slug>/plan.md` and is what the parent and every child read from. It carries
-`## Goal` with numbered acceptance checks, `## Dispatch` (lane, `slots:`, where the slot
+`.grok/plans/<slug>/plan.md` and is what the parent and every child read from.
+
+It carries `## Goal` with numbered acceptance checks, `## Dispatch` (lane, `slots:`, where the slot
 count came from, `parent keeps:` for the hotspots the parent merges itself), `## Lanes`,
 `## Tasks`, `## Ledger`, and `## Not doing`. Beside it sit the context briefs and the
 child reports:
@@ -841,16 +963,22 @@ child reports:
 One writer per layer is the rule that keeps a child from inheriting the parent's session:
 children write only their own `results/T<nn>.md`, never a brief, and the parent is the
 only thing that moves a fact sideways from one child to the next (a child reports
-`found:`, the parent writes it into the lane brief before the next wave). `ctx/L0.md` is
-frozen before wave 1, because children already running read the copy that was there when
+`found:`, the parent writes it into the lane brief before the next wave).
+
+`ctx/L0.md` is frozen before wave 1, because children already running read the copy that was there when
 they started - editing it mid-run is a re-dispatch, not an edit.
 
-A task is micro when all of this holds: one deliverable, three or fewer files in `owns`
-from one directory family, a `calls:` budget of 15 or fewer counting the reads a child
-needs to get oriented, one `done:` command a reviewer can run, no other ready task
-sharing a path, and `needs:` naming only finished tasks. Below that bar the plan costs
-more than it saves, which is why the skill opens by asking whether the change touches
-about five files at all.
+A task is micro when all of this holds:
+
+- one deliverable
+- three or fewer files in `owns` from one directory family
+- a `calls:` budget of 15 or fewer counting the reads a child needs to get oriented
+- one `done:` command a reviewer can run
+- no other ready task sharing a path
+- `needs:` naming only finished tasks
+
+Below that bar the plan costs more than it saves, which is why the skill opens by asking
+whether the change touches about five files at all.
 
 **How it is dispatched, and what the check prints.** `plan_check.py` is the gate, and it
 is the same file in both skill homes:
@@ -872,8 +1000,9 @@ T02
 
 The bare ids after the summary are the wave to spawn - `--ready` prints the tasks whose
 `needs:` are all satisfied, capped at `slots`, and the parent takes that set rather than
-the plan's order and spawns the whole wave in one turn. The refusals are the collisions a
-fan-out otherwise discovers at wave 3; a plan with two ready tasks on the same file and a
+the plan's order and spawns the whole wave in one turn.
+
+The refusals are the collisions a fan-out otherwise discovers at wave 3; a plan with two ready tasks on the same file and a
 read-only role handed that file prints:
 
 ```text
@@ -883,21 +1012,35 @@ warning: T02 reads the L1-src brief from lane map
 summary: 2 tasks | 2 lanes | 2 slots | wave width 2 | 2 errors, 1 warnings
 ```
 
-It also refuses a missing task key, a task with no `done:` check, a `calls` budget over
-25 (over 15 is a warning - 15 is the bar for a micro task, 25 is where the plan is wrong),
-a dependency cycle or an unknown dependency id, a lane or context file that does not
-exist on disk, a task without a `## Ledger` row, and a first wave narrower than `slots`
-(compared against `min(slots, task count)`, so a small plan is not scolded for being
-small, but a coarse one is). `--slots N` overrides the plan's number, `--json` prints the
-same findings as an object with `plan`, `slots`, `tasks`, `lanes`, `ready`, `errors` and
-`warnings` for a script to read, `--no-files` skips the on-disk existence check for the
-briefs, and `--strict` makes warnings fail. Exit is 0 clean, 1 with violations, 2 when the
-plan path is missing or unreadable. The plan is a work artifact rather than the record, so
-its tree stays out of git: `notes_ensure_excludes` in `templates/common/notes-setup.sh`
-adds `.grok/plans/` to the stack's global excludes file
-(`~/.grok/notes/exclude`, or the `core.excludesFile` you already point at) next to
-`notes.md` and `.scratch-notes.md`, and `results/` is deleted once the change is
-committed. The seam is pinned by `bazelisk test //tests:bats_grok_subagent_slots_test`
+It also refuses:
+
+- a missing task key
+- a task with no `done:` check
+- a `calls` budget over 25 (over 15 is a warning - 15 is the bar for a micro task, 25 is
+  where the plan is wrong)
+- a dependency cycle or an unknown dependency id
+- a lane or context file that does not exist on disk
+- a task without a `## Ledger` row
+- a first wave narrower than `slots` (compared against `min(slots, task count)`, so a small
+  plan is not scolded for being small, but a coarse one is)
+
+The flags:
+
+- `--slots N` overrides the plan's number
+- `--json` prints the same findings as an object with `plan`, `slots`, `tasks`, `lanes`,
+  `ready`, `errors` and `warnings` for a script to read
+- `--no-files` skips the on-disk existence check for the briefs
+- `--strict` makes warnings fail
+
+Exit is 0 clean, 1 with violations, 2 when the plan path is missing or unreadable.
+
+The plan is a work artifact rather than the record, so its tree stays out of git:
+`notes_ensure_excludes` in `templates/common/notes-setup.sh` adds `.grok/plans/` to the
+stack's global excludes file (`~/.grok/notes/exclude`, or the `core.excludesFile` you already
+point at) next to `notes.md` and `.scratch-notes.md`, and `results/` is deleted once the
+change is committed.
+
+The seam is pinned by `bazelisk test //tests:bats_grok_subagent_slots_test`
 (both twins' `[subagents]` block, the `coder.tf` validation, the `main.tf` derivation, and
 the rulebook's slot-filling rule) and `bazelisk test //tests:bats_ez_micro_plan_test`
 (the checker driven over a scratch plan tree).
@@ -910,8 +1053,9 @@ The seam above is what a fan-out costs; this is who is in it. The family has its
 from `templates/common/`, and `//scripts:seed-dev-env` seeds the same thirteen into a
 contributor home through the `~/.grok/agents`, `~/.grok/personas` and fleet-skill rows of
 `seed_seed_targets` (`scripts/lib/config_seed.sh:130-147`, seventeen of them; the
-`documenter.md` row at 136 sitting in the middle belongs to the advisor family below). The
-body that writes them is
+`documenter.md` row at 136 sitting in the middle belongs to the advisor family below).
+
+The body that writes them is
 `templates/common/stack-fleet.sh.tftpl`, its own body for the same one-argument reason the
 two skill families have theirs
 ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Thirteen is six agent
@@ -933,23 +1077,32 @@ mode, which a persona deliberately does not (`~/.grok/docs/user-guide/16-subagen
 | `reviewer` | findings ordered by what breaks if they stand, each with the command that proves it | `agent-review` |
 | `security-auditor` | secrets, injection, authorization and egress hunts, ranked by what an attacker gets | `agent-review` |
 
+#### The edit tools each definition names
+
 Within these six, only `implementer` names `search_replace`, and only `implementer` and
 `tester` name `write` at all; the other four name no edit tool and each says in its own body
 that it edits nothing. The seventh definition `templates/common/` holds, `documenter`, is the
 advisor family's rather than this one's and names both `search_replace` and `write`
 (`templates/common/documenter.AGENT.md:5`), because the deliverable of that role is an edit to
-a page - see [The five advisor commands](#the-five-advisor-commands). `explorer` is the one
-definition here that inherits the MCP catalog, because it is the one whose tools name
+a page - see [The five advisor commands](#the-five-advisor-commands).
+
+`explorer` is the one definition here that inherits the MCP catalog, because it is the one
+whose tools name
 `search_tool` and `use_tool`; the other five set `mcpInheritance: none`,
 the frontmatter key the guide documents for that choice
 (`~/.grok/docs/user-guide/16-subagents.md:228`), on the seeds' own reasoning that an
-inherited catalog with no MCP tool in `tools:` would be empty anyway. Three of the seven
-name `spawn_subagent`: `reviewer`, `security-auditor` and `tester`
+inherited catalog with no MCP tool in `tools:` would be empty anyway.
+
+#### The spawn ceiling
+
+Three of the seven name `spawn_subagent`: `reviewer`, `security-auditor` and `tester`
 (`templates/common/reviewer.AGENT.md:5`, `templates/common/security-auditor.AGENT.md:5`,
 `templates/common/tester.AGENT.md:5`). `explorer`, `architect`, `implementer` and
 `documenter` name none of it, so a mapper cannot recurse and the wave a spawner raises one
 level down is made of read-only mappers. The `tools` list is what enforces that ceiling; the
 body prose of each seed only explains it.
+
+#### Which layer names a definition
 
 **How one is selected.** Four layers name an agent definition, and they are not the same
 knob:
@@ -980,8 +1133,9 @@ writers somewhere specific should set the variable rather than rely on the file.
 `templates/common/<name>.PERSONA.toml` and land at `~/.grok/personas/<name>.toml`, where the
 file stem is the persona name (`~/.grok/docs/user-guide/16-subagents.md:93`). Discovery runs
 the project's `.grok/personas/`, then this user directory, then the bundled catalog, and an
-inline `[subagents.personas]` table outranks all three (`:89-93`). A persona is an overlay
-only: its `instructions` reach the child as a
+inline `[subagents.personas]` table outranks all three (`:89-93`).
+
+A persona is an overlay only: its `instructions` reach the child as a
 `<system-reminder>` and move tone, output format and task focus, never the agent type, the
 model, or the tools (`:77`) - which is why none of the three names either, and why the header
 comment in each file says so. `thorough-researcher` and `skeptical-reviewer` also declare
@@ -1053,6 +1207,8 @@ One new role definition ships with this family rather than with the fleet: `docu
 light read-and-write role `/documenter` dispatches, and it rides the same body as the skill so
 a start has both or has neither.
 
+#### The local code index
+
 The code index is a file, not a service:
 
 ```sh
@@ -1063,6 +1219,7 @@ It writes `code-index.json` for a program and `code-index.md` for a person under
 `~/.grok/notes/<host>/<owner>/<repo>/` - the same notes directory `ez-learn` owns, outside the
 clone, carried by the owner's `grok-notes-<owner-id>` volume, so nothing new runs and
 nothing is committed.
+
 `--home DIR` points it at another profile home instead of `$HOME`, and `--json` prints
 the whole record instead of the one `ok: N files, M symbols -> ...` line. The helper is
 `templates/common/ez-code-index.code_index.py`, seeded into a `scripts/` subdir of the same
@@ -1099,65 +1256,94 @@ id in them is a local alias:
 Six payloads in `templates/common/` become one manifest and five files under `~/.grok/hooks/`:
 `evo-t1-hooks.json` plus, under `hooks/bin/`, the four guards and the deny list the command
 guard reads.
+
 Grok Build reads `~/.grok/hooks/*.json`, and a handler `command` that is a relative path
 resolves against the manifest's own directory and is started directly, so each script is seeded
 `0755` with the payload's `#!` line still on row 1. Every one reads one line of event JSON on
 stdin. The two PreToolUse guards always print a parseable decision there - `{"decision":"allow"}`
 or `{"decision":"deny","reason":...}` - and a deny additionally exits 2; a PostToolUse handler
-cannot block at all, so it stays silent on stdout unless it has something to tell the model. No
-guard exits non-zero on its own account, so a broken one cannot wedge a session.
+cannot block at all, so it stays silent on stdout unless it has something to tell the model.
+
+No guard exits non-zero on its own account, so a broken one cannot wedge a session.
+
+#### The secret guard
 
 - `PreToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/secret-guard.sh`: denies a
   write whose text carries an AWS access-key id, a GitHub token, a Slack token, a Google API
   key, a `-----BEGIN ... PRIVATE KEY-----` block, a URL that carries both a user and a
   password, or a credential-keyword assignment (`api_key`, `secret`, `token`, `password`, and
-  their upper-case SDK spellings) whose value carries a digit. It sweeps the fields a write
-  puts text into - the flat `new_string`, `content`, `contents`, `command` and `text`, and
+  their upper-case SDK spellings) whose value carries a digit.
+
+  It sweeps the fields a write puts text into - the flat `new_string`, `content`, `contents`,
+  `command` and `text`, and
   `new_string`, `new_text`, `content`, `contents` and `text` inside each entry of a batched
   `edits` array - one level deep and no deeper, so an unknown nesting is not swept and the
-  truncation check is what covers it. It leaves the read-side `old_string`/`old_text`
-  alone, so a secret an older commit wrote cannot convict every later edit beside it. A value
-  that names the environment instead of carrying a secret is the correct pattern, not a hit, so
+  truncation check is what covers it.
+
+  It leaves the read-side `old_string`/`old_text` alone, so a secret an older commit wrote
+  cannot convict every later edit beside it.
+
+  A value that names the environment instead of carrying a secret is the correct pattern, not a
+  hit, so
   `os.environ/X`, `os.environ["X"]`, `process.env.X` and `getenv("X")` are folded to one short
   token before the scan. The deny reason names the pattern
-  class and never the matched text. It fails open on an event it cannot parse, and denies when
+  class and never the matched text.
+
+  It fails open on an event it cannot parse, and denies when
   the runner reports `toolInputTruncated`, because that is text the scan never saw
   (`templates/common/hooks.secret-guard.sh`).
+#### The command guard
+
 - `PreToolUse`, matcher `Bash|run_terminal_command` -> `bin/dangerous-command-guard.sh`: tests
   `toolInput.command` against the list beside itself and denies, naming the file, the line
   number and the pattern that matched.
+#### The post-edit formatter
+
 - `PostToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/post-edit-format.sh`: the
   formatters the golden image already ships, at the same invocations `//:fix` uses for shell and
   Bazel files - `shfmt -w -s -i 2 -ci` for `.sh`, `buildifier -mode=fix` for `BUILD`,
-  `BUILD.bazel`, `MODULE.bazel` and `.bzl` - plus `ruff format --quiet` for `.py`. It refuses
-  anything outside `CLAUDE_PROJECT_DIR`, addressed directly or reached through a link (the
-  containment test runs again on the resolved path),
-  anything under `.git/`, `bazel-out/`, `bazel-bin/`, `bazel-testlogs/`, `node_modules/` or
-  `__pycache__/`, `.env` and `.env.*`,
-  and any path containing `/.grok/`, `/.agents/` or `/.coder/`. It only ever answers, never
-  blocks: a rewrite is reported as `additionalContext`, and silence means nothing changed or
-  the formatter is not on PATH.
+  `BUILD.bazel`, `MODULE.bazel` and `.bzl` - plus `ruff format --quiet` for `.py`. It refuses:
+
+  - anything outside `CLAUDE_PROJECT_DIR`, addressed directly or reached through a link (the
+    containment test runs again on the resolved path)
+  - anything under `.git/`, `bazel-out/`, `bazel-bin/`, `bazel-testlogs/`, `node_modules/` or
+    `__pycache__/`, `.env` and `.env.*`
+  - any path containing `/.grok/`, `/.agents/` or `/.coder/`
+
+  It only ever answers, never blocks: a rewrite is reported as `additionalContext`, and silence
+  means nothing changed or the formatter is not on PATH.
+#### The selective test runner
+
 - `PostToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/selective-test-runner.sh`:
   **off unless `EVO_T1_HOOK_TESTS=1`**. When it is on, the hook derives one Bazel label -
   `//tests:bats_<stem>_test` straight from a `tests/bats/<stem>.bats` path, otherwise the first
   label `bazelisk run //scripts:bazel-map -- tests-for <path>` prints - and starts
   `bazelisk test <label>` detached with `nohup`, logging to
-  `${TMPDIR:-/tmp}/evo-t1-hook-tests/<sanitized-label>.log`. It returns one context line naming
-  the label and that log; it never runs a test inline, so the edit turn does not wait on the
-  suite.
+  `${TMPDIR:-/tmp}/evo-t1-hook-tests/<sanitized-label>.log`.
+
+  It returns one context line naming the label and that log; it never runs a test inline, so the
+  edit turn does not wait on the suite.
+
+#### Extending the deny list
 
 The deny list is the extension point. `~/.grok/hooks/bin/deny-patterns.txt` holds one extended
 regex per line, `#` starts a comment and blank lines are ignored, so an operator forbids one
 more command by appending one line - and because there is no allow list, deleting a line is the
-only way to permit something again. That copy is stack-owned: the boot rewrites it from
+only way to permit something again.
+
+That copy is stack-owned: the boot rewrites it from
 `templates/common/hooks.deny-patterns.txt` while its `managed-by:` marker stands, so a line
-appended in a workspace is gone at the next start. Land the rule in the seed (with the Bats case
+appended in a workspace is gone at the next start.
+
+Land the rule in the seed (with the Bats case
 in `tests/bats/stack-hooks.bats` that denies it), or delete the marker from that one file to keep
 a copy of your own, which the boot then leaves alone. A line that does not compile as an ERE is
 skipped with a
 single note on stderr rather than blocking every shell call, which is why the file's own header
 carries the one-line compile check to run before you commit a rule:
 `LC_ALL=C grep -E -q -- '<pattern>' </dev/null`.
+
+#### Three limits of a clean scan
 
 Three limits are worth knowing before you trust a clean scan, and each is a choice rather than
 an oversight.
@@ -1180,21 +1366,28 @@ an oversight.
   (`find "." -type f -delete`) for free, and it would equally blind the guard to `sh -c "..."`
   and `bash -c "..."`, the indirection a command actually travels through most - so the string
   is read as written, and the few rules that have to see inside a quote spell the quote
-  themselves. The remedy for the rest is to rewrite the quoted sentence; the stack's own
+  themselves.
+
+  The remedy for the rest is to rewrite the quoted sentence; the stack's own
   `Bash(rm -rf *)` permission deny behaves the same way for the same reason.
 - The deny list is a floor, not a fence. It catches the forms this repo has actually measured,
   and a novel destructive command walks straight through it. Nothing in a hook reads the state
   the command will act on, which is why "confirm before an action that is hard to undo" stays a
   rulebook rule that no pattern can replace.
 
+#### Who seeds the hooks
+
 Two things seed them, and both are wanted. `coder_script "stack_hooks"`
 (`templates/workspace/main.tf:810`, `templates/devcontainer/main.tf:861`) runs
 `templates/common/stack-hooks.sh.tftpl` on every workspace start (`run_on_start`, gated on
 `data.coder_workspace.me.start_count`), and `scripts/lib/config_seed.sh:160-165` carries the
-same six targets for a host tree or a workspace that missed a boot. This family is
-**marker-aware** rather than absent-only like the skills: a copy that still carries the stack
-marker - the `"__evoT1Stack": true` key in the manifest, which has to stay parseable JSON, and
-the `managed-by: evo-t1-coder-stack` comment in the shell files - is rewritten on every start.
+same six targets for a host tree or a workspace that missed a boot.
+
+This family is **marker-aware** rather than absent-only like the skills: a copy that still
+carries the stack marker - the `"__evoT1Stack": true` key in the manifest, which has to stay
+parseable JSON, and the `managed-by: evo-t1-coder-stack` comment in the shell files - is
+rewritten on every start.
+
 That is deliberate, because a guard that drifted from the seed is a silent behaviour change:
 these scripts decide what a session may run and what it may write. Delete the marker and the
 copy is yours, and the boot leaves it alone.
@@ -1204,10 +1397,13 @@ copy is yours, and the boot leaves it alone.
 Every multi-file change ends with an independent review panel that wrote none of it, on
 `agent-review`, before anything is reported done: three angles sent in one turn
 (requirements, proof, adversary), each owning no file, where one skeptic over all three
-angles is enough for a single-file fix. The rulebook states it as a requirement,
-not a suggestion (`templates/common/GROK_BUILD_AGENTS.md`, "Mandatory independent review"),
+angles is enough for a single-file fix.
+
+The rulebook states it as a requirement, not a suggestion (`templates/common/GROK_BUILD_AGENTS.md`, "Mandatory independent review"),
 and its reasoning is one sentence: a delegated result is a claim, and a review that trusts
-the claim rather than the artifact is not a review. Each panelist re-runs the producers'
+the claim rather than the artifact is not a review.
+
+Each panelist re-runs the producers'
 `done:` commands rather than reading their reports of them, which is why `tester`,
 `reviewer` and `security-auditor` exist as separate definitions whose spawn tool reaches
 read-only mappers, rather than as instructions tacked onto the writer.
@@ -1248,12 +1444,13 @@ to the copy that is running - the same rule the two skill families above live by
 ## Grok Build state: shared state, per-workspace config
 
 Every workspace gets its own `/home/coder` volume, and `~/.grok` sits on it as an
-ordinary directory, `config.toml` included. What is shared is **state**: three nested
-mounts inside that home volume, one per concern, each a Docker volume named for the
-owner (`grok-notes-<owner-id>`, `grok-memory-<owner-id>`, `grok-sessions-<owner-id>`),
-referenced by name rather than declared as a Terraform resource, which every workspace
-of that owner mounts read-write at its own path **while that workspace is in `shared`
-mode**.
+ordinary directory, `config.toml` included.
+
+What is shared is **state**: three nested mounts inside that home volume, one per concern,
+each a Docker volume named for the owner (`grok-notes-<owner-id>`,
+`grok-memory-<owner-id>`, `grok-sessions-<owner-id>`), referenced by name rather than
+declared as a Terraform resource, which every workspace of that owner mounts read-write at
+its own path **while that workspace is in `shared` mode**.
 
 ### The two modes
 
@@ -1281,7 +1478,9 @@ repository's private scratch `notes.md`), `memory/`, and `sessions/` - one volum
 each, mounted at `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions`. Nothing
 else under `~/.grok` is shared: `config.toml`, `skills/`, the MCP warm caches and a CLI
 you installed yourself under `~/.grok/bin` are regular files on this workspace's own
-home volume, and those die with the workspace. The CLI's own skill directories,
+home volume, and those die with the workspace.
+
+The CLI's own skill directories,
 `skills/` and `bundled/`, are never created here without an x.ai sign-in; the stack's
 skill seeds live under `~/.coder/skills` and `~/.agents/skills`, outside this tree.
 
@@ -1292,13 +1491,17 @@ The whole-profile volume this template used to mount over all of `~/.grok`,
 `templates/common/notes-setup.sh` takes a concern only when the destination is missing
 or empty, and nothing reads that mount afterwards. A later `chore:` removes it.
 
+#### The notes file and its watcher
+
 `notes/<host>/<owner>/<repo>/notes.md` is keyed per git remote, so every clone a
 workspace holds — the primary and each additional repository — has its own file. What you
 edit is the regular file at the clone root: that is what the editor, the terminal and a
 nested dev container all see, since the inner container mounts the clone bind and has
-its own `~/.grok`. The copy runs both ways, and not only at boot. Startup copies the live
-file here and restores it when a recreate leaves the clone with nothing or with only the
-seeded stub line, and then leaves **one background watcher per container** that repeats
+its own `~/.grok`.
+
+The copy runs both ways, and not only at boot. Startup copies the live file here and
+restores it when a recreate leaves the clone with nothing or with only the seeded stub
+line, and then leaves **one background watcher per container** that repeats
 the back-copy about every 30 seconds (`NOTES_SYNC_INTERVAL`, in seconds) over every clone
 under `$HOME/workspace`; the devcontainer template watches its `/srv/coder-devcontainers`
 bind root instead, since those clones sit there rather than under the workspace home. The
@@ -1306,28 +1509,38 @@ watcher is single-instance behind a non-blocking `flock` on `$HOME/.notes-sync.l
 the container's own home rather than the shared volume, because each of the owner's
 workspaces needs its own.
 
+#### What a recreate keeps
+
 That is what makes "survives workspace recreate" true rather than a hope: an edit is on the
 volume within roughly one interval, so a recreate no longer waits on someone restarting the
 workspace to pick up what was typed since the last boot. What is not promised is the tail
 - a file written in the last two seconds is left for the next tick, because copying it
-whole could archive a half-saved file. Going the other way, two guards stop a recreate from
-erasing notes: a live file that is empty or still holds only the seeded stub never replaces
+whole could archive a half-saved file.
+
+Going the other way, two guards stop a recreate from erasing notes: a live file that is empty or still holds only the seeded stub never replaces
 a canonical copy carrying real notes, and a real canonical copy restores over such a stub
-in a clone. Before any substantive canonical copy is replaced it is archived as
+in a clone.
+
+Before any substantive canonical copy is replaced it is archived as
 `notes/<host>/<owner>/<repo>/backups/notes-YYYYmmdd-HHMMSS.md`, keeping the newest
 `NOTES_BACKUP_KEEP` (10 by default), and that directory is where an operator recovers notes
 after an accident. `grok_profile_mode=private` mounts no shared volume, so those notes die
 with that workspace; `shared` is the default. Like the memory tree, the last workspace
 started for a given user and repository wins.
 
+#### What boot writes
+
 Two things about that start are worth knowing before you go looking for a vanished
 setting. Boot **writes `git config --global core.excludesFile`** — but only when you
 have not set it yourself. Left unset it points at `~/.grok/notes/exclude`, which lists
 `notes.md` and `.scratch-notes.md`, so from then on *every* git repository in that
 workspace ignores both names at any depth; if you already set the option, those two
-lines are appended to the file it names and nothing else about it is touched. Boot also
-drops the same two lines into each clone's own `.git/info/exclude`, which is the layer
-that works even with no global config at all. And when a repository tracks a `notes.md`
+lines are appended to the file it names and nothing else about it is touched.
+
+Boot also drops the same two lines into each clone's own `.git/info/exclude`, which is the
+layer that works even with no global config at all.
+
+And when a repository tracks a `notes.md`
 of its own, the scratch file is written as `.scratch-notes.md` beside it instead — your
 clone is never asked to delete somebody else's committed file.
 
@@ -1342,13 +1555,17 @@ workspace on that daemon mounts the same volume, each writing under its own
 - Like the per-owner volumes it is a plain string name in `main.tf`, not a
   `docker_volume` resource, so Docker creates it on the first container start that
   names it and reuses it afterwards.
+#### How the archive is written
+
 - The copy is made by a background `rsync` that stage 9 of `startup.sh.tftpl` starts
   and leaves running for the life of the container: every 180 seconds it mirrors
   `~/.grok/sessions/` into `workspaces/<leaf>/`, skipping `*.tmp` and `*.lock`. It
   runs without `--delete`, so a session pruned from the live tree keeps its archived
   copy. `flock -n` on a per-leaf lock file in the volume root is what keeps the stage
   idempotent: Coder re-runs the startup body on every start, and a second loop over the
-  same leaf would only double the write rate. The stage is best-effort: it warns and
+  same leaf would only double the write rate.
+
+  The stage is best-effort: it warns and
   carries on when the volume root or the leaf is not writable, or when `flock` is
   missing, and re-tests for the sessions directory each tick because the CLI creates
   that directory on its first run, which can be long after boot.
@@ -1359,6 +1576,8 @@ workspace on that daemon mounts the same volume, each writing under its own
 - A fresh named volume arrives `root:root` while the agent runs as `coder`, so the
   stage chowns the mount point to the home owner first, exactly as the `~/.grok` and
   `~/.shared` volumes above do.
+#### Who may read the archive
+
 - **Nothing reads it back.** `~/.grok/sessions` stays the only session state the CLI,
   the rulebook, and Coder's session management know about; no config key and no startup
   logic points at the archive, and the hooks deny list
@@ -1367,7 +1586,9 @@ workspace on that daemon mounts the same volume, each writing under its own
   inspect later, from the host, after the workspace that made it is gone.
 - Read it with `bazelisk run //scripts:session-archive -- list`. Every verb mounts the
   volume read-only, so the reader cannot write it either, and there is no pruning verb:
-  the volume grows until an operator removes it. The raw `docker run -v <volume>:ro` and
+  the volume grows until an operator removes it.
+
+  The raw `docker run -v <volume>:ro` and
   `docker volume rm <volume>` forms are host-shell commands, and the same deny list that
   protects the archive from a workspace agent refuses them there - run them in a host
   shell, not from an agent prompt.
@@ -1402,19 +1623,27 @@ workspace on that daemon mounts the same volume, each writing under its own
   for itself: keyless engines only, no key, no account, no request logging. A
   workspace reaches it through the host gateway, so the workspace networks stay
   untouched.
+### Why the native search tool is parked
+
 - It is **not** a model transport, and the native tool is parked: both twins render
   `disable_web_search = true` at top level, so a session starts with no `web_search`
   tool at all. Measured 2026-10-25: no model transport this box ships serves that
-  tool type. The `agent` group is LiteLLM in front of the Spark boxes
+  tool type.
+
+  The `agent` group is LiteLLM in front of the Spark boxes
   (`openai/Qwen3.8-Flash-Next`), and it refuses the request before anything is
   fetched - `tools of type 'web_search' are not supported: this server runs function
   tools only`, HTTP 400. `supports_backend_search = false` does not route around it,
   because the client-side fallback still hands the model alias a `web_search`-typed
   tool, which is the exact shape that endpoint rejects. The fallback lane fails too:
   it is the `coder` alias, Ollama `qwen2.5-coder:32b`, and that model is not pulled on
-  the host. So `web_search = "agent"` and `supports_backend_search = false` stay as
+  the host.
+
+  So `web_search = "agent"` and `supports_backend_search = false` stay as
   they are - the role stays filled so re-enabling is a one-key flip - but while the
   key reads `true` nothing dials it.
+### The MCP search lane and its probe
+
 - The `searxng` MCP stdio server is what answers instead, and it is the search lane
   rather than a fallback: both templates render that block gated on `search_mcp`,
   which defaults to true. It dials `$SEARXNG_URL` (default
@@ -1430,17 +1659,25 @@ workspace on that daemon mounts the same volume, each writing under its own
   ```
 
   An empty result page and "no answer" are different answers, which is why the probe
-  reports which one it got. It also names every engine the instance has parked and
+  reports which one it got.
+
+  It also names every engine the instance has parked and
   the reason its backend gave (`parked by its backend: google: access denied`),
   read out of the reply body whether or not that reply found results - an instance
-  running on half its engines is visible there before it starts answering empty. A
-  park is temporary: SearXNG holds an engine out for `search.suspended_times`
-  seconds after it refuses, so re-run before writing one off. `--json` adds
-  `engines_parked`. It checks the service hop; `grok mcp doctor searxng`
-  inside the workspace checks the MCP hop. The binary it launches
+  running on half its engines is visible there before it starts answering empty.
+
+  A park is temporary: SearXNG holds an engine out for `search.suspended_times`
+  seconds after it refuses, so re-run before writing one off.
+
+  `--json` adds `engines_parked`. It checks the service hop; `grok mcp doctor searxng`
+  inside the workspace checks the MCP hop.
+
+  The binary it launches
   (`/opt/npm-global/bin/searxng-mcp-server`) is baked into the golden image, so a
   probe that answers with results plus a failed handshake is a server, URL or port
   problem, not a missing package.
+
+### Turning native search back on
 
 - To put native search back on a transport that really serves the tool: flip the key
   to `false` in the seed - both `templates/workspace/grok-config.toml.tftpl` and
@@ -1448,6 +1685,8 @@ workspace on that daemon mounts the same volume, each writing under its own
   workspace without a push, the create form's **Grok config extras** field appends
   free-form TOML verbatim to that workspace's file. Either way start a new session,
   and expect the same 400 back if the endpoint still answers function tools only.
+
+### The three declared MCP servers
 
 - **MCP servers: the default render declares three - `github`, `context7` and the
   gated `searxng` server, which is the search lane itself.** Each is a boolean gate in
@@ -1458,16 +1697,20 @@ workspace on that daemon mounts the same volume, each writing under its own
   `search_mcp` (default true) and dials the service above through `SEARXNG_URL`.
   That URL is one of six keys the render sets in `[mcp_servers.searxng.env]`; the
   others pin the bridge's own tuning rather than taking its compiled-in defaults:
-  `SEARXNG_TIMEOUT_MS` (20s, above the instance's per-engine budget and equal to the
-  probe's `--timeout`), `SEARXNG_CACHE_TTL_MS` (15 minutes, which switches on the
-  bounded 128-entry response cache that ships disabled, so a repeated query stops
-  re-dialling backends that already refused this instance), `SEARXNG_MAX_RESULTS`
-  (a ceiling that keeps one search inside the MCP output cap - on the pinned 1.0.77
-  CLI that cap rides `GROK_MAX_MCP_OUTPUT_BYTES`, because `grok inspect` still answers
-  `[mcp] — unrecognized config key` and never applies it),
-  `SEARXNG_DEFAULT_SAFESEARCH` (mirrors `search.safe_search` in
-  `searxng/settings.yml`) and `SEARXNG_DEFAULT_LANGUAGE` (`all`, so an image bump
-  cannot quietly start geo-filtering every agent search).
+
+  - `SEARXNG_TIMEOUT_MS` (20s, above the instance's per-engine budget and equal to the
+    probe's `--timeout`)
+  - `SEARXNG_CACHE_TTL_MS` (15 minutes, which switches on the bounded 128-entry response
+    cache that ships disabled, so a repeated query stops re-dialling backends that already
+    refused this instance)
+  - `SEARXNG_MAX_RESULTS` (a ceiling that keeps one search inside the MCP output cap - on the
+    pinned 1.0.77 CLI that cap rides `GROK_MAX_MCP_OUTPUT_BYTES`, because `grok inspect`
+    still answers `[mcp] — unrecognized config key` and never applies it)
+  - `SEARXNG_DEFAULT_SAFESEARCH` (mirrors `search.safe_search` in `searxng/settings.yml`)
+  - `SEARXNG_DEFAULT_LANGUAGE` (`all`, so an image bump cannot quietly start geo-filtering
+    every agent search)
+### The offline stdio servers stay undeclared
+
   The five offline stdio servers (`filesystem`, `memory`, `sequential-thinking`,
   `git` and `time`) stay pre-installed in the image (`npm -g` for the first
   three, `uv tool` for the Python two), but the rendered `config.toml` names
@@ -1475,37 +1718,54 @@ workspace on that daemon mounts the same volume, each writing under its own
   their tools, and a declared-but-unused server still costs every session its
   handshake time and tool schemas. Declare one by hand and check a stubborn
   server with `grok mcp doctor <name>` inside a workspace.
+### The github server
+
 - The `github` server (`https://api.githubcopilot.com/mcp/`) renders by default even
   though it needs a token and outbound network: with GitHub tools on, the agent can
   drive the repository it is working in, and the cheaper failure is the block that
   renders with no credential and pays one failed handshake per session. `github_mcp`
   (default true) is the gate; `$GH_TOKEN` comes from Coder External Auth, never from a
   PAT.
+### The context7 server and its cache
+
 - The `context7` server (library and API docs) also renders by default, and is the
   only cached one. `context7_mcp` (default true) is its gate, and the block it
   renders runs `mcp-cache-proxy` in front of the official `context7-mcp` - two packages
   pinned in `images/dev/tool-versions.env` and baked into the golden image, so parking
   or restoring it is a flag plus a template push, while changing the packages
-  themselves takes an image rebuild. The proxy keeps its SQLite cache under
+  themselves takes an image rebuild.
+
+  The proxy keeps its SQLite cache under
   `~/.grok/mcp-cache-proxy/`, which sits on this workspace's own
-  home volume, so each workspace warms its own cache, and the cache TTL is 12 h: the first lookup of a
+  home volume, so each workspace warms its own cache, and the cache TTL is 12 h: the first
+  lookup of a
   library reaches the Context7 API and needs network, while an identical lookup inside
-  the TTL is answered locally. `CONTEXT7_API_KEY` is optional and the lane does not
+  the TTL is answered locally.
+
+  `CONTEXT7_API_KEY` is optional and the lane does not
   depend on it: an empty value sends no `Authorization` header at all, so the server
   handshakes and answers at the public rate limit, with private libraries the only
-  thing out of reach. A key in `.env` plus a re-push fills the env. What *parks* the
+  thing out of reach. A key in `.env` plus a re-push fills the env.
+
+  What *parks* the
   lane on purpose is `CONTEXT7_MCP=false` in `.env` (relayed by `push-template.sh`) or
   `--var context7_mcp=false` on a template push; a `[mcp_servers.context7]` block
   missing from a render that got neither of those is a defect, not a park. The lookup
   order is fixed - `resolve-library-id` first, then `query-docs` on the id it returns
-  - and `search_tool` lists the live tool names rather than a hardcoded list. Prove it
+  - and `search_tool` lists the live tool names rather than a hardcoded list.
+
+  Prove it
   with `grok mcp doctor context7` inside a workspace.
+### Proving the lanes with mcp-check
+
 - Prove all three at once with `bazelisk run //scripts:mcp-check`: it reads the
   rendered `~/.grok/config.toml`, reports whether each lane is declared, whether its
   `command=` binary is present, whether the lane's credential and cache config are
   there, and what each server's handshake says. A binary the box cannot find is image
   drift (the running `evo-t1-dev` predates the npm bake), and the check prints the
   pinned `npm i -g --prefix /opt/npm-global` command that restores it.
+### The three failure shapes
+
 - A lane an agent needs fails in exactly three shapes, and that check tells them
   apart, so run it before editing anything:
   - **The block is missing from the rendered config.** That is a failure, not a
@@ -1526,46 +1786,63 @@ workspace on that daemon mounts the same volume, each writing under its own
     Auth (the **GitHub reauth** app) and start a new session. An empty
     `CONTEXT7_API_KEY` is not a gap - see the key's paragraph above, the lane answers
     keyless at the public rate limit.
+### What the rulebook tells the agent
+
 - What the agent is told about all this lives in `~/.grok/AGENTS.md`, which
   `coder_script.agents_seed` renders from `templates/common/GROK_BUILD_AGENTS.md` into a
   body of its own (see "The one-argument ceiling" in
   [coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Two sections cover
   the lanes. **Research
   lanes** makes a lookup part of the normal loop rather than a last resort, with the
-  routing fixed by question type: a library, framework, CLI or setup question goes to
-  `context7` (resolve the library id first, then query docs on that id); anything else
-  on the web goes to the `searxng` `search` tool; a URL already in hand goes to
-  `searxng`'s `fetch_content`, because Grok's native `web_fetch` is unavailable here
-  too - `features.web_fetch` is on, but on a non-xAI endpoint that tool only runs
-  through `toolset.web_fetch.proxy_endpoint`, and this stack sets none. It also states
-  that native `web_search` is parked so nobody spends a turn rediscovering the 400.
+  routing fixed by question type:
+
+  - a library, framework, CLI or setup question goes to `context7` (resolve the library id
+    first, then query docs on that id)
+  - anything else on the web goes to the `searxng` `search` tool
+  - a URL already in hand goes to `searxng`'s `fetch_content`, because Grok's native
+    `web_fetch` is unavailable here too - `features.web_fetch` is on, but on a non-xAI
+    endpoint that tool only runs through `toolset.web_fetch.proxy_endpoint`, and this stack
+    sets none
+
+  It also states that native `web_search` is parked so nobody spends a turn rediscovering
+  the 400.
   **Tool output stays out of the parent context** makes that
   tool use delegated work: the child returns a digest - numbered findings, each one
   claim, one source URL and at most two lines of support, no raw result dumps,
   confidence stated - and keeps the raw pages to itself.
+### Cline, Roo, and the shared editor settings
+
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
   default `http://host.docker.internal:4000/v1`; model alias `agent`, with
   `agent-low`/`agent-medium`/`agent-xhigh`/`agent-xhigh-fast`/`agent-swarm`/`agent-swarm-fast`/`coder`/`coder-fast`/`chat`
-  listed in `__evoT1StackModels`). The seed is
+  listed in `__evoT1StackModels`).
+
+  The seed is
   `settings.json.tftpl`, copied onto the per-owner volume
   `vscode-settings-<owner-id>` (mounted at `~/.shared/vscode/settings.json`) only
   while that file is absent, where it stays as the shared overlay. What code-server
   actually reads, `~/.local/share/code-server/User/settings.json`, is a real file on
   this workspace's own home volume, which `templates/workspace/startup.sh.tftpl`
-  rewrites on every start in three passes: the per-workspace render as the base, then
-  every key of that overlay on top so an API key entered once still wins, then
-  `workbench.colorTheme` re-asserted from the render last, so a theme put in the shared
-  overlay loses to this workspace's own theme (the **Editor colour theme** field,
-  `vscode_color_theme`, default `Default Dark Modern`). Startup chowns that volume to
-  the home owner before the first write (empty named volumes are `root:root`
-  755). Edits to the overlay stick, and every workspace
-  that owner has gets them layered over its own render; delete it to copy the template
-  in again. From the
+  rewrites on every start in three passes:
+
+  - the per-workspace render as the base
+  - then every key of that overlay on top so an API key entered once still wins
+  - then `workbench.colorTheme` re-asserted from the render last, so a theme put in the
+    shared overlay loses to this workspace's own theme (the **Editor colour theme** field,
+    `vscode_color_theme`, default `Default Dark Modern`)
+
+  Startup chowns that volume to the home owner before the first write (empty named volumes
+  are `root:root` 755).
+
+  Edits to the overlay stick, and every workspace that owner has gets them layered over its
+  own render; delete it to copy the template in again. From the
   host it is the volume's `settings.json`:
 
   ```sh
   docker run --rm -it -v vscode-settings-<owner-id>:/vscode alpine vi /vscode/settings.json
   ```
+
+### The built dev container bakes the seed
 
 - A built dev container sees neither the volume nor that overlay, so it is the one
   place the seed is **baked** rather than layered: the inlined
@@ -1575,6 +1852,8 @@ workspace on that daemon mounts the same volume, each writing under its own
   inside a built dev container therefore survive neither a rebuild nor a look at the
   shared file. Everywhere else no settings map is passed at all, because a merge
   would replace the symlink.
+### Installing the extensions by hand
+
 - Installing Cline, Roo, the Red Hat YAML extension and Material Icon Theme is a
   manual step in the Extensions panel (Open VSX by default). If an extension build
   names its settings differently, set the OpenAI-compatible endpoint and key in its
@@ -1604,6 +1883,8 @@ The chat agent is compiled into coderd unconditionally.
 
 ### Model wiring
 
+#### The seeder command
+
 Scripted, idempotent, re-runnable, and already started from `prod-stack` /
 `dev-stack` `up` (`--apply --wait`, default 1800 s). Registering the first account
 is the only operator step: the seeder continues once an owner exists, and the Agents
@@ -1622,16 +1903,21 @@ bazelisk run //scripts:coder-agents -- --apply
 `--help` prints the same two commands with every flag and every `CODER_AGENTS_*`
 override, which is the list to reach for from a shell.
 
+#### Which config is the default
+
 The deployment default follows the health gate. `agent` is registered as the default,
 and when LiteLLM reports no healthy deployment behind the Spark alias the Arc `chat`
 config takes the default in its place. That matters because a chat opened without an
 explicit model pick has only the default to resolve to, so a stack that comes up while
-the Spark lane is dark still gets an Agents chat that answers. An existing config is
-left as it stands, since this API surface has no PATCH: the script names the Admin
+the Spark lane is dark still gets an Agents chat that answers.
+
+An existing config is left as it stands, since this API surface has no PATCH: the script names the Admin
 screen to correct it when a stored row drifted.
 
 The closing summary counts how many of the four auxiliary lanes carry a pin, and a lane
 left without one prints a `warning:` that names the lane.
+
+#### The wait window and the seeder log
 
 `--wait` (or `--wait=SECONDS`) polls for that first owner instead of skip-0. The
 window is counted from the database's first "no owner" answer, so a slow buildinfo
@@ -1647,21 +1933,28 @@ line that exits 0 - no coder container yet, no db container, nobody registered -
 an unwritable log path degrades to the old discard with a `warning:` instead of
 failing the boot.
 
+#### What the script writes
+
 A chat turn needs an enabled chat model config - the chat's own pick, else the
 deployment default, else it errors before the first tool call - and that wiring is
 what the script writes. It mints a short-lived admin API token from the stack's own
 Postgres (`token_name 'stack-coder-agents'`, deleted by the trap, never printed) and
 drives the server's experimental chat API:
 
+#### The provider row
+
 - an `openai-compat` AI provider named **`litellm`** (not `litellm-auto`), base URL
   `http://litellm:4000/v1` - LiteLLM over the compose network, *server-side*,
   authenticated with `LITELLM_MASTER_KEY`. The agent dials the in-process AI Gateway
   (aibridge), which forwards to the provider's `base_url` + `/chat/completions`, so
-  `/v1` has to be part of the base URL and the key has to match the live proxy: with
-  `.env` leaving the key empty, compose still boots the proxy on its
+  `/v1` has to be part of the base URL and the key has to match the live proxy.
+
+  With `.env` leaving the key empty, compose still boots the proxy on its
   `change-me-litellm` interpolation default, and that default is what gets sent.
   Created when absent, drift-patched when an existing provider carries a drifted
   `base_url` or key.
+#### The model config rows
+
 - chat model configs `agent` (context limit 262144, set as the default; LiteLLM bakes
   `reasoning_effort` `xhigh`), `agent-low` / `agent-medium` / `agent-xhigh` (same
   lane with a baked thinking level, not default), `agent-swarm` (same lane and the same
@@ -1670,12 +1963,14 @@ drives the server's experimental chat API:
   purpose: on this stack's IPEX-LLM runtime those weights return tool calls as plain
   text with no `tool_calls`, and an agent turn without callable tools cannot browse or
   edit, so registering them would only add a silently broken model to the pickers.
+
   `context_limit` is the agent's own compaction budget (a 70 per cent default
   compaction threshold applies), which is why it is pinned per alias. The
   two fast-compaction lanes are absent too, for a mechanical reason rather than a measured
   one: the hop keys on the summary instruction the Grok CLI appends, the aibridge behind
   these pickers never sends one, and `compaction-fast` is no client alias at all, so an
   Agents chat on `agent-xhigh-fast` would be a chat on `agent-xhigh` under a longer name.
+
   Before that sweep the script asks the proxy `GET /v1/model/info` and `GET /health`
   and joins them on `model_id`, so it knows which aliases still have a healthy
   deployment. An alias with none is not registered: `chat` goes unhealthy the moment
@@ -1683,8 +1978,12 @@ drives the server's experimental chat API:
   chat that errors on the first send. `/health` is read without
   `?check_deployments=true` because that form fires a live completion per deployment
   and evicts the Spark prompt caches the health-check notes in `litellm/config.yaml`
-  warn about. The gate fails open: a proxy that will not answer leaves every alias
+  warn about.
+
+  The gate fails open: a proxy that will not answer leaves every alias
   registerable, and `CODER_AGENTS_LIVE_ALIASES="agent chat"` overrides it outright.
+#### The auxiliary pins
+
 - pins for the four auxiliary lanes - `general` and `explore` (the two subagent
   types) prefer `agent`, `compaction` and `title_generation` (the helper calls)
   prefer `chat` - chosen only from the aliases the health gate left standing, and
@@ -1692,10 +1991,13 @@ drives the server's experimental chat API:
   has since gone unhealthy. A pin aimed at a config the script did not create is the
   admin's and is left alone. Both helper lanes landing on a dead `chat` is what made
   conversations lose their titles and die at the compaction threshold, which is why a
-  stale pin now moves instead of being kept forever. Neither preference list names
-  `agent-swarm`: that config is registered for the model picker only, because these lanes
+  stale pin now moves instead of being kept forever.
+
+  Neither preference list names `agent-swarm`: that config is registered for the model picker only, because these lanes
   serve the control-plane chat agent, which is one conversation, and one conversation
   wants the pin.
+#### The read-only drift check
+
 - a read-only drift check on the stored configs: a config that is disabled, is not
   the deployment default, or carries a `context_limit` that does not match the alias's
   serving window is reported with a `warning:` and the screen to fix it on. The
@@ -1704,6 +2006,8 @@ drives the server's experimental chat API:
 - a three-line system-prompt addendum, appended after Coder's default prompt text
   (`include_default_system_prompt: true`), that keeps the delegation and
   secret-hygiene rules which must hold even when a chat has no workspace attached.
+
+#### The AI Gateway stays off
 
 Coder's optional AI Gateway proxy stays off - LiteLLM remains the model transport,
 which is why no AI-Gateway keys exist in `docker-compose.yml`.
@@ -1735,13 +2039,17 @@ for the other:
   budget with its 70 per cent default, while the CLI fires at
   `[session] auto_compact_threshold_percent` (70) of its 262144-token window.
 
+#### The two fast-compaction lanes
+
 That is still the shape on the two fast-compaction lanes, and it is why the remedy is
 server-side rather than a client setting: a session on `agent-xhigh-fast` or
 `agent-swarm-fast` sends the same in-session summary call on its session model, and
 `litellm/compaction_router.py` moves that one request onto the Arc group
 `compaction-fast` before the proxy picks a deployment. Nothing in `~/.grok/config.toml`
 asks for it, every other call of that session still rides the Spark lane, and a session on
-any other alias compacts as it always has. The limit is the Arc's own 32768-token window:
+any other alias compacts as it always has.
+
+The limit is the Arc's own 32768-token window:
 above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000 estimated tokens) the summary goes to
 `agent-low` instead, which keeps the 262144-token window and drops the baked `xhigh`,
 because a slow summary beats one Ollama silently clamped. The key cannot raise that limit:
@@ -1798,11 +2106,15 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
 25. `~/.coder/skills/ez-micro-plan/scripts/plan_check.py`
 26. `~/.agents/skills/ez-micro-plan/scripts/plan_check.py`
 
+#### What each numbered path is for
+
 - 1 and 2 are the Coder agent's *default* discovery paths.
 - 3 and 4 are the same text under the Grok Build CLI's convention, and the CLI is
   what `execute`-lane delegation drives. The chat agent dedupes skills by name,
   first match wins, home scope before a working-dir path, so one agent never loads a
   skill twice: the twins exist for the CLI, not as a second source for chat.
+#### Which body writes each family
+
 - 1-4 are written by `startup.sh.tftpl`. 5-10 are the stack's three skill commands and are
   written by `coder_script.stack_skills`, whose own `execve` carries the three payloads;
   they ride their own script body rather than the startup argument because that argument
@@ -1817,29 +2129,40 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   that three of its four bodies invoke by `~/.agents` path. Same absent-only contract and
   the same `cp` twin rule; the helper directories are made by the body, so a workspace that
   already has the `SKILL.md` but lost a helper still gets the helper back.
+#### The memory and skill trio
+
 - 5 and 6 are `/ez-learn`: this stack's copy of the upstream memory commands `/flush`,
   `/dream`, `/remember` and `/memory`. It turns the current session into durable facts -
   flush the conversation into a session log under the workspace's `~/.grok/memory/`
   directory, dream those logs into an organized `MEMORY.md`, save one note, or browse and
   clear what was stored. Reaching past those logs into the raw transcripts under
   `~/.grok/sessions/` is opt-in depth, done only when the operator asks for it. Its
-  default mode is report-only, and it writes memory files, never a skill. 7 and 8 are
-  `/ez-skillify`, which turns the session that just worked into a skill from its own
-  transcript, and 9 and 10 are `/ez-create-skill`, which scaffolds one from what the
-  operator describes. The three payloads are
+  default mode is report-only, and it writes memory files, never a skill.
+
+  7 and 8 are `/ez-skillify`, which turns the session that just worked into a skill from its
+  own transcript, and 9 and 10 are `/ez-create-skill`, which scaffolds one from what the
+  operator describes.
+
+  The three payloads are
   `templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
-  `ez-create-skill.SKILL.md`, on the same absent-only contract. `/ez-create-skill` stands
-  in for the bundled platform skill `create-skill`, which arrives only in the skills
+  `ez-create-skill.SKILL.md`, on the same absent-only contract.
+
+  `/ez-create-skill` stands in for the bundled platform skill `create-skill`, which arrives only in the skills
   bundle behind an x.ai sign-in this stack does not have; `/ez-skillify` has no published
   upstream counterpart at all; and the memory family `/ez-learn` copies is upstream
   *built-ins*: `/flush`, `/dream` and `/memory` are gated behind cross-session memory,
   which is off by default, while `/remember` is a pager command with no such gate. Either
-  way the seed is what makes the three commands exist. Each ships under its own `ez-`
-  name to stay clear of those upstream names, since a user-scope skill overrides a
+  way the seed is what makes the three commands exist.
+
+  Each ships under its own `ez-` name to stay clear of those upstream names, since a user-scope skill overrides a
   same-named bundled one and a seed named `create-skill` would hide the bundled copy on a
-  workspace that ever does sign in. The boot and the reseed delete a leftover
+  workspace that ever does sign in.
+
+  The boot and the reseed delete a leftover
   marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
   above.
+#### The orchestration protocol text
+
 - The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
   probe-one-worker-first, verify-what-a-worker-actually-produced, the git cadence that
   cuts the branch before the first edit and commits each unit as it lands, holding the push
@@ -1860,6 +2183,8 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   cloned folder under `/srv/coder-devcontainers/...`, where a dev container built on
   the sidecar carries its own home and no seeded path is visible from inside it
   anyway).
+#### Where the marker sits in each seed
+
 - Each seeded file carries the stack marker - the `managed-by: evo-t1-coder-stack`
   comment, or the `"__evoT1Stack": true` / `__evoT1Stack = true` key in a JSON or TOML
   file - in `SKILL.md` directly under the `---` frontmatter, since the agent's skill
@@ -1927,12 +2252,16 @@ subagents and proving the split dispatches; how its slots, lane and check fit to
 
 ### The repo-scoped runbook
 
+#### The session reviewer
+
 `/reflect-and-evolve` reviews past Grok Build sessions and turns what it finds into planned changes.
 It reads the per-session `signals.json` under `~/.grok/sessions/<escaped-cwd>/`, ranked by the bundled
 `skills/reflect-and-evolve/scripts/session_signals.py`, plus the `/ez-learn` session logs and the notes file.
 It changes the seeds in this repo, never the copies a workspace booted with. Repo-scoped like `/trunk-refactor`
 and not seeded into a workspace home: canonical at `skills/reflect-and-evolve/SKILL.md`, discovered through
 the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by `tests/bats/reflect-and-evolve-skill.bats`.
+
+#### The repository reviewer
 
 `/reflect-and-evolve-repo` is its sibling against a different subject: where `/reflect-and-evolve` improves
 the agent setup, this one reviews past work in *this repository* and turns what it finds into planned
@@ -1974,6 +2303,8 @@ assistant can follow with a push. Global options
 (`--json`, `--container`, `--timeout`, `--dry-run`) go before the subcommand, and
 `--json` makes `list`, `show` and `watch` printable by a phone client.
 
+### The credential question
+
 **Why the daemon and not the Coder API.** A workspace that can host a session is a
 *running* one, and a running workspace is a labelled container: both templates stamp
 `coder.workspace_id` and `coder.workspace_name`, the same labels
@@ -1983,12 +2314,16 @@ matters because the only Coder token this stack mints is the root-equivalent one
 out. A chat turn should not mint one to answer "what is running", so where a verb
 belongs to Coder rather than to the daemon the CLI prints the hand-off command.
 
+### Reading the right container
+
 **Two details that make the answer correct.** Each workspace creates a
 `coder-<id>-dind-sidecar` carrying the same labels; it runs a Docker daemon and no
 shell, so it is dropped by name. And a tmux server belongs to one uid and listens on
 `/tmp/tmux-<uid>/default`, so the sockets are enumerated per uid - `docker exec`
 lands as the image's user, and asking *that* user for its default server reports
 "no sessions" for an agent the operator can see on screen.
+
+### What each state word means
 
 **The state words** come from `state_word` in the script and are what the
 `coding-agents` Hermes skill teaches: `running` (output within 30 s), `quiet` (an
