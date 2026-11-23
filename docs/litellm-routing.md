@@ -544,111 +544,176 @@ Agents chat model, so a pin is the only way onto either one.
 ### The fast-compaction lanes: `agent-xhigh-fast` and `agent-swarm-fast`
 
 The eighth and ninth Spark groups, and the only two that ask the proxy to answer one of
-their calls somewhere else. Everything else about each is its parent: `agent-xhigh-fast` is
+their calls somewhere else.
+
+Everything else about each is its parent: `agent-xhigh-fast` is
 `agent-xhigh` - three equal `openai/Qwen3.8-Flash-Next` deployments, `xhigh` baked, the
 session pin kept - and `agent-swarm-fast` is `agent-swarm`, the same three boxes with the
-pin lifted for it alone among the new lanes. The nine Spark lane groups are now
+pin lifted for it alone among the new lanes.
+
+The nine Spark lane groups are now
 `agent agent-low agent-medium agent-xhigh agent-swarm agent-explore agent-review
 agent-xhigh-fast agent-swarm-fast`, plus the Arc group `compaction-fast`.
+
+#### What the hop is
 
 What the hop is: on those two aliases only, the proxy recognises the CLI's
 conversation-summary call and re-serves it from somewhere cheaper than the Spark box it
 arrived on - `compaction-fast`, the small Ollama-served coding weight on the Arc, when the
-summary fits that window, and a Spark group thinking at `low` when it does not. That is
-where the speed comes from - the Spark lane answers at xhigh thinking and a summary does
-not need it. The CLI appends its summary instruction as the last turn of the body - the
+summary fits that window, and a Spark group thinking at `low` when it does not.
+
+That is where the speed comes from - the Spark lane answers at xhigh thinking and a
+summary does not need it.
+
+The CLI appends its summary instruction as the last turn of the body - the
 auto-compaction ask, or the `/compact` one wrapped in a `<summary_request>` tag - and the
 callback matches a stable clause inside whichever one it sees,
 `produce a faithful, concise summary of the conversation so far` and
 `summarize the conversation so far`, in a turn short enough to be the instruction itself.
+
 It reads that ask nowhere else in the body: the system prompt rides every turn of the
 session, so matching there would move a whole conversation to the summary target the moment
-an operator pasted one of those sentences into a workspace rulebook. It reads it from
-whichever key the protocol carries the turns under - `messages` for Chat Completions and
-Anthropic Messages, `input` for a model whose `api_backend` is `responses` - so the hop does
-not quietly stop working on a protocol choice. A recognized ask is
+an operator pasted one of those sentences into a workspace rulebook.
+
+It reads it from whichever key the protocol carries the turns under - `messages` for
+Chat Completions and Anthropic Messages, `input` for a model whose `api_backend` is
+`responses` - so the hop does not quietly stop working on a protocol choice.
+
+A recognized ask is
 rewritten to the target model, with `tools`, `tool_choice` and `reasoning_effort` dropped
 from it: a summary is prose, the schemas are dead weight to it, and a small model handed a
-tool schema may answer with a call instead of a summary. Every other call of the same
-conversation stays on its Spark box, and a session on any other alias compacts exactly as
-it always has. The hop is a property of the alias, not of the proxy: picking one of these
-two aliases is the opt-in, and `EVO_T1_FAST_COMPACTION=0` is the kill switch beside it. One
-residue is worth naming: a user turn whose entire content is a quoted ask looks like an ask,
+tool schema may answer with a call instead of a summary.
+
+Every other call of the same conversation stays on its Spark box, and a session on any
+other alias compacts exactly as it always has.
+
+The hop is a property of the alias, not of the proxy: picking one of these
+two aliases is the opt-in, and `EVO_T1_FAST_COMPACTION=0` is the kill switch beside it.
+
+One residue is worth naming: a user turn whose entire content is a quoted ask looks like an ask,
 and gets the summary target's answer.
 
-What it is not: a client setting. The Grok Build CLI has no compaction-model key, so there
-is nothing in `~/.grok/config.toml` that points that call anywhere, and
+#### It is not a client setting
+
+What it is not: a client setting. The Grok Build CLI has no compaction-model key, so
+there is nothing in `~/.grok/config.toml` that points that call anywhere, and
 `[models] session_summary` is not the compaction lane either - it serves titles and the
-session recap. The whole remedy therefore lives server-side, and the measurement behind it
+session recap.
+
+The whole remedy therefore lives server-side, and the measurement behind it
 is the `compact failed: exceeded wall-clock budget 300s` section of
 [troubleshooting.md](troubleshooting.md).
 
+#### Why the extra config is worth it
+
 Why the extra config is worth it: compactions that did succeed on the Spark lane took 107 s
 to 1915 s, and 18 of the 36 sampled successes ran past the CLI's 300 s wall-clock budget -
-they are the summaries that budget was discarding. What the hop changes without a stopwatch
+they are the summaries that budget was discarding.
+
+What the hop changes without a stopwatch
 is who answers: a 14B Arc weight with no thinking level and no schemas in the prompt, rather
-than a Spark box thinking at xhigh over the same request with its tool schemas attached. No
-timing has been measured on the hop yet, so no speed-up figure is quoted here for either
+than a Spark box thinking at xhigh over the same request with its tool schemas attached.
+
+No timing has been measured on the hop yet, so no speed-up figure is quoted here for either
 tier; `docs/troubleshooting.md` names the one log line that shows it firing, and that line
 is where a measurement starts.
 
+#### Which tier answers, and what caps the guard
+
 Which tier answers: the guard is `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000), and
-it picks a tier rather than ending the hop. Below it the summary goes to `compaction-fast`,
+it picks a tier rather than ending the hop.
+
+Below it the summary goes to `compaction-fast`,
 which is the right place for it, because those weights answer inside a 32768-token window
 and Ollama clamps an over-long input instead of refusing it - a summary pushed in over that
-comes back quietly truncated, and a truncated summary is worse than the slower one it would
-replace. That window is also the ceiling the guard cannot raise past: the fork happens at the
+comes back quietly truncated, and a truncated summary is worse than the slower one it would replace.
+
+That window is also the ceiling the guard cannot raise past: the fork happens at the
 smaller of `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` and the `max_input_tokens` `config.yaml`
 declares for the Arc target group, so `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000` forks at
 32768 and logs one `compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 is above
 the 32768 tokens config.yaml declares for 'compaction-fast'; forking at the declared window
-instead` line. The declared window is a fact about the weights and the pinned LiteLLM has no
+instead` line.
+
+The declared window is a fact about the weights and the pinned LiteLLM has no
 context-window check between the hook and Ollama, so a knob cannot reach past it; a target
 group that declares no window leaves the guard whole, and prints one
 `compaction router: 'compaction-fast' declares no max_input_tokens in config.yaml; forking at
 EVO_T1_FAST_COMPACTION_INPUT_LIMIT alone` line rather than failing quietly.
+
+#### The Spark tier and the token estimate
+
 Above it the summary goes to `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default
 `agent-low`): the same three Spark boxes, the 262144-token window a real summary needs, and
-the thinking baked to `low` instead of `xhigh`. Blank that knob, or name the lane the call
-arrived on, and an oversized summary stays where it is, which is the pre-hop behaviour. The
-estimate is counted over everything the backend prefills - each turn's text, the payloads
-the text flattener cannot see, and every request-level schema key - and it charges three
-classes of character separately: ASCII prose at four characters to a token, a base64 payload
-at two, and anything outside ASCII at one. Reading those denser classes at the prose rate was
+the thinking baked to `low` instead of `xhigh`.
+
+Blank that knob, or name the lane the call
+arrived on, and an oversized summary stays where it is, which is the pre-hop behaviour.
+
+The estimate is counted over everything the backend prefills - each turn's text, the
+payloads the text flattener cannot see, and every request-level schema key - and it
+charges three classes of character separately:
+
+- ASCII prose at four characters to a token
+- a base64 payload at two
+- anything outside ASCII at one.
+
+Reading those denser classes at the prose rate was
 how a 90,000-character screenshot read as 22,500 tokens and went to a 32768-token model.
+
 Every one of them errs toward the larger number, and the larger number means the Spark tier.
+
+#### Where the guard sits against the client
 
 Where the guard sits against the client: the shipped `[session]` block sets
 `auto_compact_threshold_percent = 70` and both fast aliases declare a `context_window` of
 262144 (`templates/workspace/grok-config.toml.tftpl:387`, and `:284` and `:301` for the two
 aliases), so a session on either one reaches its auto-compaction at about 183,500 tokens -
-over seven times the guard. A summary that size cannot be read faithfully by a 32768-token
+over seven times the guard.
+
+A summary that size cannot be read faithfully by a 32768-token
 model, so the Arc tier was never going to serve it and the guard is what stops it trying: on
 that estimate the call goes to `agent-low`, which keeps the window and drops the baked
-`xhigh` thinking. Pointing `EVO_T1_FAST_COMPACTION_TARGET` at `agent-low` is the lever that
+`xhigh` thinking.
+
+Pointing `EVO_T1_FAST_COMPACTION_TARGET` at `agent-low` is the lever that
 covers a full-size summary even with the limit left alone, and it is a routing choice with
 its own trade, not a free win: the summary is still a Spark call, holding a stream on a box
 the writers want, at a thinking level turned down from the one the lane exists to bake.
+
+#### The fallback on the Spark tier
 
 The known limit on that tier is its fallback, and it is the stack's standing one: every
 Spark group's last resort is the Arc, so `agent-low: ["coder"]`
 (`litellm/config.yaml:862`, and the same shape under `agent-xhigh-fast: ["agent-xhigh",
 "coder"]` and `agent-swarm-fast: ["agent-swarm", "coder"]`) means that when all three Sparks
 are cooled an oversized summary lands on `coder` - a 32768-token group - and is answered
-from a truncated reading, which is the outcome the fork exists to prevent. Nothing here
-makes that worse: the pair's own chains end at `coder` too, and so does
-`compaction-fast: ["agent-low", "coder"]`. The fork changes who tries first. What an operator
-holds is the choice of who tries second: blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` to leave
-the summary on the lane it arrived on, point it at another Spark group, or edit the fallback
-list beside it in the same routing file. When the Sparks are unreachable the answer is the
+from a truncated reading, which is the outcome the fork exists to prevent.
+
+Nothing here makes that worse: the pair's own chains end at `coder` too, and so does
+`compaction-fast: ["agent-low", "coder"]`. The fork changes who tries first.
+
+What an operator holds is the choice of who tries second: blank
+`EVO_T1_FAST_COMPACTION_SPARK_TARGET` to leave the summary on the lane it arrived on,
+point it at another Spark group, or edit the fallback list beside it in the same routing
+file.
+
+When the Sparks are unreachable the answer is the
 one every agent lane already has - the working degraded mode is `chat`.
 
-What has been measured is the old path, not the new one. The 107 s to 1915 s spread and the
-18 abandoned successes above are both from the Spark lane before the hop existed, swept out
-of the session logs in [troubleshooting.md](troubleshooting.md). Neither tier has a timing
-of its own yet: the hop has not served a summary on a running stack, so no speed-up figure
-is claimed for either one. `tests/python/test_compaction_router.py` proves which group each
+#### What has been measured so far
+
+What has been measured is the old path, not the new one. The 107 s to 1915 s spread and
+the 18 abandoned successes above are both from the Spark lane before the hop existed,
+swept out of the session logs in [troubleshooting.md](troubleshooting.md).
+
+Neither tier has a timing of its own yet: the hop has not served a summary on a running
+stack, so no speed-up figure is claimed for either one.
+
+`tests/python/test_compaction_router.py` proves which group each
 request shape lands on; the operator's own log line is what will prove what it costs.
+
+#### The five knobs
 
 Everything a caller can tune is one of five environment variables, read in
 `litellm/compaction_router.py` and nowhere else, which makes the litellm service's
@@ -662,7 +727,11 @@ Everything a caller can tune is one of five environment variables, read in
 | `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` | `24000` | the token estimate that decides which of the two tiers takes the call; a ceiling this module may lower and never raise, because the Arc target group's own `max_input_tokens` caps it and logs one line when it does |
 | `EVO_T1_FAST_COMPACTION_SPARK_TARGET` | `agent-low` | where a summary above the guard goes, checked against `config.yaml` the same way; blank it, or name the lane it arrived on, and it stays there |
 
-Three ways to land this feature and get nothing. The first is caught for you at the pinned
+#### Three ways to land it and get nothing
+
+Three ways to land this feature and get nothing.
+
+The first is caught for you at the pinned
 LiteLLM and the other two are silent, which is why the silent two are what the gates check:
 
 - `litellm_settings.callbacks` must name the *instance*,
@@ -689,7 +758,9 @@ LiteLLM and the other two are silent, which is why the silent two are what the g
 ### What carries a session id
 
 A value has to look like an id to count: alphanumerics, hyphens or underscores, 8
-characters or more. The sources, in order, are `x-litellm-trace-id`, then
+characters or more.
+
+The sources, in order, are `x-litellm-trace-id`, then
 `x-litellm-session-id`, then any `x-<vendor>-session-id`, then
 `session-id`/`session_id`/`thread-id`/`conversation_id` (Codex style), then W3C
 traceparent and baggage, plus `metadata.session_id` in the body.
@@ -719,29 +790,39 @@ traceparent and baggage, plus `metadata.session_id` in the body.
 
 ### What actually removes it
 
-The health filter does, and it is the only mechanism that can. Selection on the
-chat-completion path runs `async_get_available_deployment` (`router.py:13041`) ->
+The health filter does, and it is the only mechanism that can.
+
+Selection on the chat-completion path runs `async_get_available_deployment` (`router.py:13041`) ->
 `async_get_healthy_deployments` (`router.py:12700`) ->
 `_async_filter_health_check_unhealthy_deployments` (`router.py:14137`), and that last
 call is a no-op unless `enable_health_check_routing` is set in `general_settings:`
-(`router.py:14153`). That is the key the config turns on for exactly this job.
+(`router.py:14153`).
+
+That is the key the config turns on for exactly this job.
 
 Cooldown cannot do it, and that is not a tuning question. `_is_cooldown_required`
 returns False as soon as the exception text contains `APIConnectionError`
-(`litellm/router_utils/cooldown_handlers.py:223`, `ignored_strings`). A refused
-connection, a dead engine, and a TensorFold `NoRoom` refusal all surface as that
-exception, so the failure that most needs a box pulled is the one the cooldown path is
-written to skip. The probe loop writes the health state (`proxy_server.py:3981`)
+(`litellm/router_utils/cooldown_handlers.py:223`, `ignored_strings`).
+
+A refused connection, a dead engine, and a TensorFold `NoRoom` refusal all surface as
+that exception, so the failure that most needs a box pulled is the one the cooldown path
+is written to skip.
+
+The probe loop writes the health state (`proxy_server.py:3981`)
 *before* that veto can reach the same exception: the write sits behind the guard at
 `proxy_server.py:3965` and above the routing-only bail at `proxy_server.py:3988-3989`,
 so the mark is there whether or not the cooldown loop below it ever runs, which is why
 the filter marks what cooldown never marks.
 
 Three settings switch the filter off, and the config avoids all three:
-`enable_health_check_routing` off; `health_check_interval` unset or <= 0, which returns
-from the probe loop before it ever starts (`proxy_server.py:4071`); or a router-wide
-`allowed_fails_policy` with `background_health_check_model_groups` unset
-(`router.py:14161`). That last one is why `router_settings:` carries no
+
+- `enable_health_check_routing` off
+- `health_check_interval` unset or <= 0, which returns from the probe loop before it ever
+  starts (`proxy_server.py:4071`)
+- a router-wide `allowed_fails_policy` with `background_health_check_model_groups` unset
+  (`router.py:14161`)
+
+That last one is why `router_settings:` carries no
 `allowed_fails_policy` anywhere, and why one added there for an unrelated reason would
 quietly disable the filter that keeps a dead box out of `least-busy`.
 
@@ -750,19 +831,25 @@ quietly disable the filter that keeps a dead box out of `least-busy`.
 With `allowed_fails` gone, cooldown uses the vendor's rate rule
 (`cooldown_handlers.py:392-398`), guarded at `:395`: cool a deployment once it fails
 more than `DEFAULT_FAILURE_THRESHOLD_PERCENT` (0.5, `constants.py:69`) of at least
-`DEFAULT_FAILURE_THRESHOLD_MINIMUM_REQUESTS` (5, `constants.py:131`) requests in a
-rolling minute. The counting branch is the `else` one line below at `:404-405`,
+`DEFAULT_FAILURE_THRESHOLD_MINIMUM_REQUESTS` (5, `constants.py:131`) requests in a rolling minute.
+
+The counting branch is the `else` one line below at `:404-405`,
 reached only when a router-wide policy is set or `allowed_fails` carries a
 non-default number (`:363-366`), and this file names neither.
-`SINGLE_DEPLOYMENT_TRAFFIC_FAILURE_THRESHOLD` is 1000, so the "all
-requests failed" arm never fires at this fleet's volume. That is the rule doing what
-cooldown was always the right tool for: a box that answers badly - a 500, a timeout, a
-malformed completion - is parked for `cooldown_time`, 60 s, and comes back on its own.
-The same 60 s is the period the probe loop cools a deployment its previous cycle marked
-unhealthy (`proxy_server.py:4013`, `time_to_cooldown=router.cooldown_time`, `:4018`);
-with routing on, that path runs now, where it used to return early.
 
-That 60 s is not confined to the probe path. Both paths read the one `cooldown_time`
+`SINGLE_DEPLOYMENT_TRAFFIC_FAILURE_THRESHOLD` is 1000, so the "all
+requests failed" arm never fires at this fleet's volume.
+
+That is the rule doing what cooldown was always the right tool for: a box that answers
+badly - a 500, a timeout, a malformed completion - is parked for `cooldown_time`, 60 s,
+and comes back on its own. The same 60 s is the period the probe loop cools a deployment
+its previous cycle marked unhealthy (`proxy_server.py:4013`,
+`time_to_cooldown=router.cooldown_time`, `:4018`); with routing on, that path runs now,
+where it used to return early.
+
+That 60 s is not confined to the probe path.
+
+Both paths read the one `cooldown_time`
 knob, so raising it off the 5 s default (`constants.py:75`) widens every group's
 exclusion, the three-deployment Spark groups included: a box that fails 3 of 5
 requests in a minute now sits out for a minute
@@ -773,68 +860,91 @@ warm there.
 
 Detection is one sweep plus the interval, not the interval alone: the probe loop sleeps
 `health_check_interval` *after* a sweep finishes (`proxy_server.py:4234`) rather than
-firing on a clock. A sweep is the 27 deployments that did not opt out pushed through
+firing on a clock.
+
+A sweep is the 27 deployments that did not opt out pushed through
 the `health_check_concurrency: 2` gate - the sweep drops every deployment carrying
 `model_info.disable_background_health_check` (`proxy_server.py:4116-4118`), which is
 four of the 31 - so the wait before a box is re-probed is one full sweep plus 120 s.
 
-Recovery needs no operator and no restart. A green probe overwrites the mark with
+Recovery needs no operator and no restart.
+
+A green probe overwrites the mark with
 `is_healthy: True` (`health_check.py:683`), so a box is eligible again on the first
-probe that succeeds after it comes back - no request has to fail first to rediscover
-it. That is eligible, not proven serving: the same loop cooled what it marked
+probe that succeeds after it comes back - no request has to fail first to rediscover it.
+
+That is eligible, not proven serving: the same loop cooled what it marked
 (`proxy_server.py:4013`), and that cooldown entry has to expire on its own clock, so
 the first turn back can still land on another box.
 
 The bound on that state is `health_check_staleness_threshold: 900`, and the filter fails
-open: it returns the whole candidate list when the health state is missing, when it is
-older than that threshold, or when filtering would leave no candidate at all. So a fleet
-whose probe state has gone stale routes to every box rather than to none - a stale
-sweep costs the filter, never the traffic. The threshold is set explicitly because the
+open: it returns the whole candidate list:
+
+- when the health state is missing
+- when it is older than that threshold
+- when filtering would leave no candidate at all So a fleet whose probe state has gone
+  stale routes to every box rather than to none - a stale sweep costs the filter, never
+  the traffic.
+
+The threshold is set explicitly because the
 shipped default is `DEFAULT_HEALTH_CHECK_INTERVAL * 2` = 600 s whatever
 `health_check_interval` says (`router.py:993`); left at the default it would not track
 the 120 s interval this config asks for.
 
-A restart of the proxy is itself a fail-open condition, and it is not logged. No
-Redis is configured for this proxy, so the marks live in one process
+A restart of the proxy is itself a fail-open condition, and it is not logged.
+
+No Redis is configured for this proxy, so the marks live in one process
 (`router_utils/health_state_cache.py:32-36`) and every restart or redeploy clears
 them until the first sweep finishes; the filter has no log line on any of its
 fail-open exits, so nothing proves that window happened while it is open.
 
 ### What the filter does not cover
 
-The filter sits on the chat-completion selection path. The image, audio, embedding and
-rerank paths select through `_async_get_healthy_deployments` (`router.py:8554`), which
-applies the cooldown filter and the blocked flag only - a dead box stays a candidate
-there. This fleet serves chat and streaming completions, so the limit is honest rather
+The filter sits on the chat-completion selection path.
+
+The image, audio, embedding and rerank paths select through
+`_async_get_healthy_deployments` (`router.py:8554`), which applies the cooldown filter
+and the blocked flag only - a dead box stays a candidate there.
+
+This fleet serves chat and streaming completions, so the limit is honest rather
 than load-bearing, but it is the reason a new modality on these aliases needs its own
 look before anyone calls it covered.
 
-What covers a request already in flight is unchanged by this work and predates it: the
-two attempts the retry chain allows (`num_retries: 2` in `litellm_settings`, and
-`DefaultRetries: 2` inside each Spark lane's `model_group_retry_policy` block), the
-rest of that per-group policy, and the `fallbacks` chains. The filter changes where a
-retry lands, not whether the turn is retried.
+What covers a request already in flight is unchanged by this work and predates it:
+
+- the two attempts the retry chain allows (`num_retries: 2` in `litellm_settings`, and
+  `DefaultRetries: 2` inside each Spark lane's `model_group_retry_policy` block)
+- the rest of that per-group policy
+- the `fallbacks` chains
+
+The filter changes where a retry lands, not whether the turn is retried.
 
 ### The container's own probe
 
 The `litellm:` service in `docker-compose.yml` carries a `healthcheck:` block beside
 these router settings, and it is a different check on a different thing: it asks whether
-the proxy process answers, not whether a Spark box does. Its `test:` is the JSON-array
-form invoking the image's own `/app/.venv/bin/python3` - the image ships no `curl` and
-no `wget` - at a one-line `urllib` request to
+the proxy process answers, not whether a Spark box does.
+
+Its `test:` is the JSON-array form invoking the image's own `/app/.venv/bin/python3` -
+the image ships no `curl` and no `wget` - at a one-line `urllib` request to
 `http://127.0.0.1:4000/health/liveliness` with `timeout=5`, exiting 0 only on a 200,
 with `interval: 30s`, `timeout: 10s`, `retries: 3`, and `start_period: 60s` to cover the
 boot that imports the config and builds 31 deployments before uvicorn binds.
+
 `/health/liveliness` is the endpoint because it is unprotected and answers `I'm alive!`,
 while `/health` sits behind `user_api_key_auth`
 (`health_endpoints/_health_endpoints.py:1938` and `:1110`) and a probe on
 it would need the master key in the container's own command line.
 
 What it does not do: the compose daemon restarts a container that *exits*, not one that
-goes unhealthy. `restart: unless-stopped` stays the only thing that recovers a crashed
+goes unhealthy.
+
+`restart: unless-stopped` stays the only thing that recovers a crashed
 proxy, and this probe buys visibility instead - `dev-stack status` and
 `docker compose ps` print (unhealthy), `docker inspect` carries the last three probes,
-and the log tag ships the event to Loki. It also buys a `service_healthy` wait that
+and the log tag ships the event to Loki.
+
+It also buys a `service_healthy` wait that
 nothing here takes: `hermes` keeps `depends_on: litellm: condition: service_started`
 deliberately, because compose waits indefinitely for a healthy condition and a probe that
 stopped passing would hold the host assistant down with the proxy.
@@ -848,6 +958,9 @@ stopped passing would hold the host assistant down with the proxy.
 - Each thinking alias carries the same hop of its own - `agent-low: ["coder"]`, and the
   same for `agent-medium` and `agent-xhigh`. Groups are independent, so none of them
   inherits `agent`'s entry, and the five pinned lanes go down with the same boxes.
+
+### The per-lane fallback chains
+
 - `agent-swarm` degrades one step further: `agent-swarm: ["agent", "coder"]`. Health
   state, cooldowns and in-flight counters are per group, so its own three deployments can
   all be cooled while the same boxes are still healthy under `agent`; `agent` is tried
@@ -879,6 +992,9 @@ stopped passing would hold the host assistant down with the proxy.
   has, which is what a summary was after on this lane in the first place. Acyclic:
   compaction-fast -> agent-low -> coder. It is the one chain here that a user never picks:
   it belongs to the group the callback moves traffic to, not to an alias anyone types.
+
+### History, caps, and what is deliberately absent
+
 - It used to be a chain, `agent -> agent-fast -> coder`. `agent-fast` was a second alias
   for the same model on a second box with a lower output ceiling; one group of three equal
   deployments already covers every reachable box, so the chain collapsed to one acyclic
@@ -930,11 +1046,16 @@ Measured on a harness boot of this config against the live Spark boxes, before
    non-empty. An empty key fails every request inside the proxy, before it ever reaches
    the box.
 
+### Restart the proxy first
+
 Order matters when an alias is new rather than changed: the proxy reads
 `litellm/config.yaml` at boot and a workspace renders its catalog from that file when it
-starts, so restart the proxy first and boot the workspace after it. A workspace older than
-the proxy asks for an alias the config does not have, and the router answers "No
-deployments available" rather than falling back. The rollback is one variable per lane, and
+starts, so restart the proxy first and boot the workspace after it.
+
+A workspace older than the proxy asks for an alias the config does not have, and the
+router answers "No deployments available" rather than falling back.
+
+The rollback is one variable per lane, and
 it does not need the proxy at all: `--var grok_subagents_lane=agent` re-pins the writers to
 one box, and `--var grok_explore_lane=agent-low` and `--var grok_review_lane=agent` put each
 reader role back on a pinned alias that every config version already carries.
@@ -954,9 +1075,9 @@ docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml rest
 
 ### Where an alias edit lands
 
-- `scripts/coder-agents.sh` registers `agent` (the default, with `chat` standing in when the Spark lane is dark),
-  `agent-low`/`agent-medium`/`agent-xhigh`, `agent-swarm`, and `chat` as the Coder Agents
-  chat model configs, through `CODER_AGENTS_PROVIDER_URL`
+- `scripts/coder-agents.sh` registers `agent` (the default, with `chat` standing in when
+  the Spark lane is dark), `agent-low`/`agent-medium`/`agent-xhigh`, `agent-swarm`, and
+  `chat` as the Coder Agents chat model configs, through `CODER_AGENTS_PROVIDER_URL`
   (default `http://litellm:4000/v1`). `agent-swarm` is registerable but is never picked
   for an auxiliary lane pin: the control-plane chat agent is one conversation, and one
   conversation wants the pin.
@@ -967,20 +1088,21 @@ docker compose -p evo-t1-dev --env-file dev-stack.env -f docker-compose.yml rest
   hop keys on the summary instruction the Grok CLI appends, and the aibridge behind those
   dropdowns never sends one, so an Agents chat on `agent-xhigh-fast` is a chat on
   `agent-xhigh` under a longer name. They are a CLI and a workspace-form choice instead.
-- A new alias is a client catalog entry as well as a proxy entry. Both `templates/*/main.tf`
-  twins carry one `{value, name, description}` object per alias in `local.model_choices`,
-  which is what the workspace create form offers for `grok_default_model`, and both
-  `templates/*/grok-config.toml.tftpl` twins carry its `[model."<alias>"]` block. An alias
-  the config has and the twins do not is an alias no workspace ever lists.
+- A new alias is a client catalog entry as well as a proxy entry. Both
+  `templates/*/main.tf` twins carry one `{value, name, description}` object per alias in
+  `local.model_choices`, which is what the workspace create form offers for
+  `grok_default_model`, and both `templates/*/grok-config.toml.tftpl` twins carry its
+  `[model."<alias>"]` block. An alias the config has and the twins do not is an alias no
+  workspace ever lists.
 - The editor roster is the third copy of the name. `__evoT1StackModels` in both
-  `templates/*/settings.json.tftpl` twins is the alias list Cline and Roo/Kilo are offered,
-  and that seed is copied onto the per-owner `vscode-settings-<owner-id>` volume only while
-  the file is absent - a roster that gains an id never reaches an owner whose
+  `templates/*/settings.json.tftpl` twins is the alias list Cline and Roo/Kilo are
+  offered, and that seed is copied onto the per-owner `vscode-settings-<owner-id>` volume
+  only while the file is absent - a roster that gains an id never reaches an owner whose
   `settings.json` already exists, so re-seeding means deleting that volume's file.
-- A routing hook adds two artifacts beyond the alias itself. `litellm/compaction_router.py`
-  is a payload file beside the config, bind-mounted single-file as
-  `./litellm/compaction_router.py:/app/compaction_router.py:ro` - never a directory mount
-  over `/app`, which would hide `config.yaml` - and it is live only while
+- A routing hook adds two artifacts beyond the alias itself.
+  `litellm/compaction_router.py` is a payload file beside the config, bind-mounted
+  single-file as `./litellm/compaction_router.py:/app/compaction_router.py:ro` - never a
+  directory mount over `/app`, which would hide `config.yaml` - and it is live only while
   `litellm_settings.callbacks` names `compaction_router.proxy_handler_instance`, the
   instance rather than the class.
 - Both of those live in `docker-compose.yml` and `litellm/config.yaml` respectively, so

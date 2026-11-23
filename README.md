@@ -698,9 +698,10 @@ bazelisk run //scripts:prod-stack -- up
 
 ### The host repair
 
-`--repair` is the recovery Bazel cannot do itself. Leftover Docker bind-mounts in
-`bazel-out/.../prod-stack.runfiles` (a directory sitting where
-`homepage/assets/icons/evo-t1.svg` belongs, or a root-owned copy) make the next
+`--repair` is the recovery Bazel cannot do itself.
+
+Leftover Docker bind-mounts in `bazel-out/.../prod-stack.runfiles` (a directory sitting
+where `homepage/assets/icons/evo-t1.svg` belongs, or a root-owned copy) make the next
 `bazelisk run //scripts:prod-stack` die with `FileAccessException ... Permission
 denied` before the stack script starts.
 
@@ -724,9 +725,10 @@ prints which daemon it asked.
 
 If `git pull` itself fails with `Could not resolve host: github.com`, Docker or
 Kasm has made Tailscale MagicDNS (`100.100.100.100`) unreachable and it was the
-only nameserver. Run the copy-paste under
-[troubleshooting.md](docs/troubleshooting.md) (`Could not resolve host: github.com`)
-on the current checkout, then `git pull`.
+only nameserver.
+
+Run the copy-paste under [troubleshooting.md](docs/troubleshooting.md)
+(`Could not resolve host: github.com`) on the current checkout, then `git pull`.
 
 After that, `bash scripts/setup-host.sh --repair`
 is the durable path (Linux: resolved drop-in plus `tailscale set --accept-dns=false`,
@@ -844,22 +846,25 @@ no `high` level on this runtime.
 
 ### The nine Spark aliases
 
-There are nine Spark aliases in all: `agent-swarm` is the
-fifth and, with the two after it and `agent-swarm-fast`, one of the four that carry no
-session pin - same boxes, same baked `xhigh`, each request placed on the box carrying the
-fewest in flight, which is the lane a parallel subagent fan-out wants, and the shipped
-default for the writers.
+There are nine Spark aliases in all: `agent-swarm` is the fifth and, with the two after
+it and `agent-swarm-fast`, one of the four that carry no session pin -
+
+- same boxes
+- same baked `xhigh`
+- each request placed on the box carrying the fewest in flight
+- the lane a parallel subagent fan-out wants
+- the shipped default for the writers
 
 Rolling them back to one box is `--var grok_subagents_lane=agent`.
 
 ### The placement switch
 
-That one variable is
-the whole placement switch: it pins the writer
-types in `[subagents.models]` -
-`general-purpose`, which is the type a spawn gets when it names none and the one every
-writer in a fan-out runs as, plus the seeded `implementer` and `tester`, while the read-only
-`explore` and `plan` follow their own lane variables below.
+That one variable is the whole placement switch: it pins the writer types in
+`[subagents.models]` -
+
+- `general-purpose`, which is the type a spawn gets when it names none and the one every
+  writer in a fan-out runs as, plus the seeded `implementer` and `tester`
+- the read-only `explore` and `plan` follow their own lane variables below
 
 ### Two sizing knobs
 
@@ -868,11 +873,12 @@ does not follow the lane: `grok_subagent_max_concurrent` is the variable's own s
 `main.tf` renders that number into `[subagents] max_concurrent` on every lane, because
 `agent-swarm` stays selectable on any spawn even when the default lane is pinned.
 
-That 15 is
-the fleet ceiling - `PARALLEL` per box (`scripts/spark-configure.sh`, 5 by default) x 3 boxes
-= 15 - so it asks every box for all of its streams. `grok_swarm_width` (default 15) is the
-fleet's own ceiling, rendered as the `# fleet-width:` line beside `max_concurrent`, and the
-width a workspace gets only when it sets `grok_subagent_max_concurrent = null` on purpose.
+That 15 is the fleet ceiling - `PARALLEL` per box (`scripts/spark-configure.sh`, 5 by
+default) x 3 boxes = 15 - so it asks every box for all of its streams.
+
+`grok_swarm_width` (default 15) is the fleet's own ceiling, rendered as the
+`# fleet-width:` line beside `max_concurrent`, and the width a workspace gets only when
+it sets `grok_subagent_max_concurrent = null` on purpose.
 
 On a pinned lane only one box is reachable, so what is usable there is that box's `PARALLEL`
 minus the parent's own stream: past about 4 in flight you deepen
@@ -881,49 +887,52 @@ the number by hand.
 
 ### Overriding the pair
 
-`--var grok_subagent_max_concurrent=N` overrules that shipped 15 whenever one workspace wants
-a number of its own, `--var grok_subagent_max_depth=N` sets how deep
-the tree may go, and
-[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
-seam, the three readings of the rendered pair, and the `/ez-micro-plan` plan that fills the
-slots.
+`--var grok_subagent_max_concurrent=N` overrules that shipped 15 whenever one workspace
+wants a number of its own, `--var grok_subagent_max_depth=N` sets how deep the tree may
+go.
+
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers
+the seam, the three readings of the rendered pair, and the `/ez-micro-plan` plan that
+fills the slots.
 
 Nothing else moves that width: the
 variable ships its 15 itself, `grok_swarm_width` feeds the ceiling line alone, and only an
 explicit `grok_subagent_max_concurrent = null` hands the width to that ceiling, so naming a
 number is the only way a rendered width lands under the fleet's.
 
-The two knobs are also
-independent going the other way: `grok_swarm_width` is what `subagent-check` and the boot
-compare against, and past the fleet's streams a box refuses the extra spawn with `NoRoom`,
-so shrinking a shared fleet is a two-knob job - drop `grok_swarm_width` and move
-`grok_subagent_max_concurrent` in the same push, or a 15-wide session meets a 10-stream
-fleet.
+The two knobs are also independent going the other way: `grok_swarm_width` is what
+`subagent-check` and the boot compare against, and past the fleet's streams a box refuses
+the extra spawn with `NoRoom`, so shrinking a shared fleet is a two-knob job -
 
-The profile keeps both
-numbers side by side: `[subagents]` carries `# fleet-width: 15` directly above
-`max_concurrent` (`templates/workspace/grok-config.toml.tftpl:427`, fed from
-`var.grok_swarm_width` at `templates/workspace/main.tf:558`), so 15 printed over 4 reads as a
-`--var` that outlived
-its template - on the template, or on the workspace, whose copy sits in the Coder database
-and is out of reach from inside the container.
+- drop `grok_swarm_width`
+- move `grok_subagent_max_concurrent` in the same push, or a 15-wide session meets a
+  10-stream fleet
+
+The profile keeps both numbers side by side: `[subagents]` carries `# fleet-width: 15`
+directly above `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:427`, fed
+from `var.grok_swarm_width` at `templates/workspace/main.tf:558`), so 15 printed over 4
+reads as a `--var` that outlived its template -
+
+on the template, or on the workspace, whose copy sits in the Coder database and is out of
+reach from inside the container.
 
 ### Reading a rendered profile
 
 `bazelisk run //scripts:subagent-check` reads the pair and names which one you have,
 beside the writers' lane and the depth.
 
-`bazelisk run //scripts:subagent-check -- --all`
-does the same read over the whole stack from a stack-host shell, where `docker`
-addresses the daemon holding the workspace containers, and prints one verdict per
-workspace so the few still rendering a width under the fleet's surface in one command
-instead of one visit each.
+`bazelisk run //scripts:subagent-check -- --all` does the same read over the whole stack
+from a stack-host shell, where `docker` addresses the daemon holding the workspace
+containers.
 
-That read is one `docker ps -a` on the `coder.workspace_id`
-label, then a read-only `cat` of each running container's own rendered profile through
-`docker exec --`: like `//scripts:branch-hygiene` the sweep starts nothing, stops nothing,
-rewrites nothing, and runs no `coder` command, and it needs the docker CLI and `timeout(1)`
-on that host.
+It prints one verdict per workspace so the few still rendering a width under the fleet's
+surface in one command instead of one visit each.
+
+That read is one `docker ps -a` on the `coder.workspace_id` label, then a read-only `cat`
+of each running container's own rendered profile through `docker exec --`:
+
+Like `//scripts:branch-hygiene` the sweep starts nothing, stops nothing, rewrites nothing,
+and runs no `coder` command, and it needs the docker CLI and `timeout(1)` on that host.
 
 A row the daemon listed that the sweep could not judge is counted and named in
 a closing `note:` rather than dropped in silence, and the DinD sidecar row is excluded from
@@ -961,24 +970,28 @@ the two one-shot roles a fleet dispatches rather than for a conversation: a chil
 answers once carries no warm prefix into a next turn, so the pin protects nothing here and
 only costs a box's admission slots.
 
-The read-only mappers - the built-in `explore` type and
-the seeded `explorer` agent - ride `agent-explore`, which bakes `low` because mapping work
-is a lookup; the skeptical roles `reviewer` and `security-auditor`, which carry the
-mandatory independent review of a multi-file change, ride `agent-review`, which bakes the
-`xhigh` that `agent` itself carries.
+The read-only mappers - the built-in `explore` type and the seeded `explorer` agent - ride
+`agent-explore`, which bakes `low` because mapping work is a lookup.
 
-Both defaults are template variables
-(`--var grok_explore_lane=`, `--var grok_review_lane=`, declared in
-`templates/workspace/coder.tf`), and each is the single seam for its role's cost: name
-`agent-low` or `agent-xhigh` there to put that role back on a pinned lane at the same
-thinking level.
+The skeptical roles `reviewer` and `security-auditor`, which carry the mandatory
+independent review of a multi-file change, ride `agent-review`, which bakes the `xhigh`
+that `agent` itself carries.
 
-Neither is registered as a Coder Agents chat model, because neither is
-meant to be typed into the Agents dropdown, and each degrades one step deeper than a pinned
-lane, hopping through the alias that bakes its own level before Arc - `agent-explore` ->
-`agent-low` -> `coder`, `agent-review` -> `agent-xhigh` -> `coder`
-(`litellm/config.yaml:882-883`) - so a parent that dispatched a mapper at `low` gets a
-`low` answer from the fallback rather than an `xhigh` it did not ask for.
+Both defaults are template variables (`--var grok_explore_lane=`,
+`--var grok_review_lane=`, declared in `templates/workspace/coder.tf`).
+
+Each is the single seam for its role's cost: name `agent-low` or `agent-xhigh` there to
+put that role back on a pinned lane at the same thinking level.
+
+Neither is registered as a Coder Agents chat model, because neither is meant to be typed
+into the Agents dropdown.
+
+Each degrades one step deeper than a pinned lane, hopping through the alias that bakes its
+own level before Arc - `agent-explore` -> `agent-low` -> `coder`, `agent-review` ->
+`agent-xhigh` -> `coder` (`litellm/config.yaml:882-883`) -
+
+A parent that dispatched a mapper at `low` gets a `low` answer from the fallback rather
+than an `xhigh` it did not ask for.
 
 ### The two fast compaction aliases
 
@@ -987,12 +1000,13 @@ lanes: each is its parent deployment for deployment - `agent-xhigh` with the
 session pin kept, `agent-swarm` with the pin lifted for it alone - and what
 differs is where one call of the conversation is answered.
 
-The Grok Build CLI has
-no compaction-model key, so the summary it asks for when a session nears its
-context window rides the session model and inherits that model's thinking level: a
-long session's summary is Qwen3.8-Flash-Next answering at `xhigh`, measured at 107
-s to 1915 s, with 18 of the 36 sampled successes running past the CLI's 300 s
-wall-clock budget.
+The Grok Build CLI has no compaction-model key, so the summary it asks for when a
+session nears its context window rides the session model and inherits that model's
+thinking level:
+
+A long session's summary is Qwen3.8-Flash-Next answering at `xhigh`, measured at 107 s to
+1915 s, with 18 of the 36 sampled successes running past the CLI's 300 s wall-clock
+budget.
 
 #### Why the summary call moves
 
@@ -1008,12 +1022,12 @@ property of the alias, so picking one of these two is the opt-in, and
 
 #### The Arc window and its guard rails
 
-It stops at the Arc's
-window: those weights answer inside 32768 tokens, so a summary estimated above
-`EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) goes to `agent-low` instead - a Spark
-group with the 262144-token window a full-size summary needs, at thinking baked
-`low` - rather than be handed to Ollama to clamp, because a slow summary beats a
-truncated one.
+It stops at the Arc's window: those weights answer inside 32768 tokens.
+
+A summary estimated above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) goes to
+`agent-low` instead - a Spark group with the 262144-token window a full-size summary
+needs, at thinking baked `low` - rather than be handed to Ollama to clamp, because a slow
+summary beats a truncated one.
 
 That window also caps the key: a guard set above the
 `max_input_tokens` the target group declares is overruled and forks at the
@@ -1027,23 +1041,24 @@ here; what changes without a stopwatch is who answers.
 
 #### The degradation chains
 
-Each fast lane degrades to
-the lane it is the twin of - `agent-xhigh-fast` -> `agent-xhigh` -> `coder`,
-`agent-swarm-fast` -> `agent-swarm` -> `coder` (`litellm/config.yaml:887-888`) -
-keeping its baked level and its pin behaviour, while `compaction-fast` is the one
-chain nobody types: it hops to a Spark rather than to another Arc alias,
-`compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:893`), because
-`coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama
+Each fast lane degrades to the lane it is the twin of - `agent-xhigh-fast` ->
+`agent-xhigh` -> `coder`, `agent-swarm-fast` -> `agent-swarm` -> `coder`
+(`litellm/config.yaml:887-888`) - keeping its baked level and its pin behaviour.
+
+`compaction-fast` is the one chain nobody types: it hops to a Spark rather than to
+another Arc alias, `compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:893`),
+because `coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama
 container and a hop between them is a hop to whatever is already down.
 
 #### The keys and the Agents dropdown
 
-The other
-four `EVO_T1_FAST_COMPACTION*` keys - the kill switch, `EVO_T1_FAST_COMPACTION_LANES`
-(default `agent-xhigh-fast,agent-swarm-fast`), `EVO_T1_FAST_COMPACTION_TARGET`
-(default `compaction-fast`) and the input limit above - are read in that module
-and nowhere else, which makes the litellm service's `environment:` block the whole
-policy.
+The other four `EVO_T1_FAST_COMPACTION*` keys are read in that module and nowhere else,
+which makes the litellm service's `environment:` block the whole policy:
+
+- the kill switch
+- `EVO_T1_FAST_COMPACTION_LANES` (default `agent-xhigh-fast,agent-swarm-fast`)
+- `EVO_T1_FAST_COMPACTION_TARGET` (default `compaction-fast`)
+- the input limit above
 
 Neither fast lane is registered as a Coder Agents chat model: the hop keys
 on the summary instruction the CLI appends, that dropdown's aibridge never sends
@@ -1293,9 +1308,10 @@ homes, with `templates/common/documenter.AGENT.md` landing beside the fleet role
 
 The guard family under `~/.grok/hooks/` - secret guard, dangerous-command guard reading
 `hooks/bin/deny-patterns.txt`, the post-edit formatter, and the selective test runner that
-is off until `EVO_T1_HOOK_TESTS=1` - rides `coder_script "stack_hooks"`, and the two
-`.grok/workflows/` files added alongside `fleet-verify.js` are `implement-reviewed` and
-`debug-fix`.
+is off until `EVO_T1_HOOK_TESTS=1` - rides `coder_script "stack_hooks"`.
+
+The two `.grok/workflows/` files added alongside `fleet-verify.js` are
+`implement-reviewed` and `debug-fix`.
 
 Detail:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-five-advisor-commands).
@@ -1410,10 +1426,17 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
   `commands`, `--model` and `--writable` cover the rest.
 - **Audit:** `bazelisk run //scripts:hermes-doctor` reads what readiness does not - the
   config the container actually loads, the environment it was created with, its mounts,
-  and the seed beside the checkout - and reports whether approvals, the working
-  directory, the web lane, the write fence, the image pin, the dashboard door, the
-  anywhere door (the gateway API server and the push channel) and the coding-agent
-  verbs are still what this repo ships.
+  and the seed beside the checkout - and reports whether these are still what this repo
+  ships:
+
+  - approvals
+  - the working directory
+  - the web lane
+  - the write fence
+  - the image pin
+  - the dashboard door
+  - the anywhere door (the gateway API server and the push channel)
+  - the coding-agent verbs
 
   Read-only, and it prints key names with no value.
 

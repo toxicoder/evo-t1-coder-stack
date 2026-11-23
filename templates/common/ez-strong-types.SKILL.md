@@ -35,11 +35,17 @@ Five conditions define done:
 5. The full gate is green, in CI as well as locally, then committed and opened as a PR.
 
 Budget 50 to 80 of your own calls plus one wave of writers. Two facts from previous
-runs of this exact task set the shape of the work: on a repo that already types well,
-most language lanes turn out to be documentation only, and the wall time is spent in
-the writer wave and in one CI round-trip. Both are avoidable by measuring first.
+runs of this exact task set the shape of the work:
+
+- on a repo that already types well, most language lanes turn out to be documentation
+  only.
+- the wall time is spent in the writer wave and in one CI round-trip.
+
+Both are avoidable by measuring first.
 
 ## Step 0 -- census and baseline before any edit (delegate)
+
+### Measure the baseline first
 
 Measure, because "as much as reasonably possible" needs a number to move.
 
@@ -49,15 +55,21 @@ Measure, because "as much as reasonably possible" needs a number to move.
       > /tmp/strong-types-baseline.json
 
 It reports per-language file counts, explicit `Any`, `# type: ignore`, unannotated
-`def`, `@ts-ignore`, missing `set -euo pipefail`, and `eval`. Record the checker's own
-error count and the per-file split too, since that is what a writer needs:
+`def`, `@ts-ignore`, missing `set -euo pipefail`, and `eval`.
+
+Record the checker's own error count and the per-file split too, since that is what a
+writer needs:
 
     <checker> 2>&1 | tail -5
     <checker> 2>&1 | grep -oE '^[^:]+' | sort | uniq -c | sort -rn | head -20
 
+### Delegate the sweep
+
 Delegate the broad sweep to one read-only child and take a digest back: file, line,
-error code, count. Hand each writer its own exact error list in Step 3; a writer that
-has to find its work spends a third of its calls doing it.
+error code, count.
+
+Hand each writer its own exact error list in Step 3; a writer that has to find its work
+spends a third of its calls doing it.
 
 ## Step 1 -- pin the profile centrally (yours alone, no writer touches these)
 
@@ -65,38 +77,52 @@ Write the config before the code, and write every rule explicitly rather than
 relying on a preset flag. A named rule can be argued about in review; `--strict`
 cannot.
 
+### The rule-by-rule profiles
+
 - Python: `mypy.ini` with the standard strict set spelled out, plus
-  `disallow_any_explicit = True` and `disallow_any_generics = True`. Unstubbed
-  third-party imports become a declared boundary with `ignore_missing_imports`, named
-  in a comment, not silenced globally.
+  `disallow_any_explicit = True` and `disallow_any_generics = True`.
+  - Unstubbed third-party imports become a declared boundary with
+    `ignore_missing_imports`, named in a comment, not silenced globally.
 - TypeScript: `strict` plus `noUncheckedIndexedAccess`, `noImplicitOverride`,
   `noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUnusedLocals`,
-  `noUnusedParameters`. Turn on `checkJs` only together with a tightened `include`, or
-  it will ingest minified build bundles and report thousands of errors you did not ask
-  for. Leave `exactOptionalPropertyTypes` and `noPropertyAccessFromIndexSignature` off
-  unless the code already satisfies them, and say so in a comment.
+  `noUnusedParameters`.
+  - Turn on `checkJs` only together with a tightened `include`, or it will ingest
+    minified build bundles and report thousands of errors you did not ask for.
+  - Leave `exactOptionalPropertyTypes` and `noPropertyAccessFromIndexSignature` off
+    unless the code already satisfies them, and say so in a comment.
 - Shell: `set -euo pipefail` everywhere, `shellcheck -x --severity=warning`, and a
-  `.shellcheckrc` if the repo needs exceptions. A function contract block per function
-  is the type system shell has; keep it current.
+  `.shellcheckrc` if the repo needs exceptions.
+  - A function contract block per function is the type system shell has; keep it
+    current.
 - Terraform: `type` constraints on every `variable`, no bare `any` or unparameterised
-  `list`/`map`. Where no linter is installed, a small scanner that emits
-  `file<TAB>line<TAB>rule<TAB>detail` and runs as a validate phase is worth more than a
-  tool you cannot install. Verify a new scanner against a file you deliberately break:
-  one buggy one-liner once reported every variable in a repo untyped.
+  `list`/`map`.
+  - Where no linter is installed, a small scanner that emits
+    `file<TAB>line<TAB>rule<TAB>detail` and runs as a validate phase is worth more than
+    a tool you cannot install.
+  - Verify a new scanner against a file you deliberately break: one buggy one-liner
+    once reported every variable in a repo untyped.
 - Terraform templates, YAML, JSON, Markdown: state in the docs what is checked and what
   is checked nowhere. An honest gap beats a fake gate.
 
+### Register the checker and the ratchet
+
 Register each checker as a target following the repo's own recipe for a new gate, and
 keep the semantics: a missing checker prints a skip and exits 0 locally, and exits 1
-under `CI=true` or `REQUIRE_LINT_TOOLS=1`. Then wire the baseline script with
-`--fail-on-increase /tmp/strong-types-baseline.json` as its own target so the budget
-only ratchets down.
+under `CI=true` or `REQUIRE_LINT_TOOLS=1`.
+
+Then wire the baseline script with `--fail-on-increase /tmp/strong-types-baseline.json`
+as its own target so the budget only ratchets down.
 
 ## Step 2 -- write the shared vocabulary yourself
 
-Before any fan-out, you own the modules where a shape is named once: the recursive
-aliases for parsed data, the `TypedDict`s for known dict slices, the `Protocol`s for
-structural shapes, the enums and `NewType`s, and the dataclasses at the boundaries.
+Before any fan-out, you own the modules where a shape is named once:
+
+- the recursive aliases for parsed data.
+- the `TypedDict`s for known dict slices.
+- the `Protocol`s for structural shapes.
+- the enums and `NewType`s.
+- the dataclasses at the boundaries.
+
 Anything a writer might invent is a symbol you should define first, because two writers
 who each invent a `Config` type produce two.
 
@@ -105,6 +131,8 @@ single most useful move: it removes most of the `Any` that parsed TOML, JSON, an
 would otherwise force into signatures.
 
 ## Step 3 -- fan out, one writer per file
+
+### Brief each writer
 
 At most four writers, launched in one turn, each with:
 
@@ -118,10 +146,19 @@ At most four writers, launched in one turn, each with:
 - "add no dependency". The image is the supply chain, and a committed lockfile plus
   `npm ci` in CI makes an npm addition off the table.
 
-Everything shared stays with you: all `BUILD` files, the checker configs, payload and
-suite manifests, generated docs, and navigation. Writers on one checkout collide in
-time even with disjoint files, so isolate them or forbid `git stash` and `git checkout`
-for baselining and have them read `git show HEAD:<path>` into `/tmp`.
+### Keep the shared files yourself
+
+Everything shared stays with you:
+
+- all `BUILD` files.
+- the checker configs.
+- payload and suite manifests.
+- generated docs.
+- navigation.
+
+Writers on one checkout collide in time even with disjoint files, so isolate them or
+forbid `git stash` and `git checkout` for baselining and have them read
+`git show HEAD:<path>` into `/tmp`.
 
 ## Step 4 -- the escape-hatch ladder
 
@@ -140,19 +177,26 @@ Reach for the top rung that preserves behaviour, and never skip a rung silently.
 8. `Any` with an error code and a reason, counted by the ratchet, in a place a reader
    is told why.
 
-Load-bearing fixes that recur: a loader that returns `object` producing a wall of
-`attr-defined` errors is fixed by typing it `-> types.ModuleType` and raising when
-`spec` or `spec.loader` is `None`, which usually deletes pre-existing ignores rather
-than adding new ones. Declare attributes a mixin only sets in a helper.
+### Load-bearing fixes
+
+Load-bearing fixes that recur:
+
+- A loader that returns `object` producing a wall of `attr-defined` errors is fixed by
+  typing it `-> types.ModuleType` and raising when `spec` or `spec.loader` is `None`,
+  which usually deletes pre-existing ignores rather than adding new ones.
+- Declare attributes a mixin only sets in a helper.
 
 ## Step 5 -- keep the tests honest
 
-A type-clean change can break a test, and two causes recur. Generated output checked
-into the tree goes stale, so rebuild the export before running anything that asserts
-against it. And a new build `data` edge widens the denominator of a coverage suite that
-measures declared payloads, so previously unreachable functions become measured and the
-percentage drops on an otherwise green run. Write the missing tests; do not lower the
-floor.
+A type-clean change can break a test, and two causes recur:
+
+- Generated output checked into the tree goes stale, so rebuild the export before
+  running anything that asserts against it.
+- A new build `data` edge widens the denominator of a coverage suite that measures
+  declared payloads, so previously unreachable functions become measured and the
+  percentage drops on an otherwise green run.
+
+Write the missing tests; do not lower the floor.
 
 Run the suite after each wave, not once at the end.
 
@@ -163,12 +207,17 @@ Run the suite after each wave, not once at the end.
     <aggregate gate target>         # the exact command CI runs
 
 Run the aggregate gate locally before you push, because CI runs more than the fast
-lane and a CI-only failure costs a full round-trip. Then: a short-lived branch from the
-tip of the default branch; commits grouped so that none of them is red, typically one
-per language lane plus one for the gate and one for tests; messages via
-`git commit -F /tmp/msg.txt`; the PR via `gh pr create --body-file` with Problem, What
-changed, How tested, and Risks. Leave the merge to the reviewer. Clean up every scratch
-file, background server, and worktree you made.
+lane and a CI-only failure costs a full round-trip. Then:
+
+- a short-lived branch from the tip of the default branch.
+- commits grouped so that none of them is red, typically one per language lane plus one
+  for the gate and one for tests.
+- messages via `git commit -F /tmp/msg.txt`.
+- the PR via `gh pr create --body-file` with Problem, What changed, How tested, and
+  Risks.
+
+Leave the merge to the reviewer. Clean up every scratch file, background server, and
+worktree you made.
 
 ## Pitfalls, each with the fix
 

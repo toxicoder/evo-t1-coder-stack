@@ -43,8 +43,10 @@ Four rules carry the design:
 
 The plan document is separate from Grok Build's own `/plan`: that one is
 `~/.grok/sessions/<cwd>/<session-id>/plan.md`, is the Plan Mode preview, and disappears
-with the session. This plan is repo-local at `.grok/plans/<slug>/plan.md`, is written in
-Act mode, and is what both the parent and every child read from.
+with the session.
+
+This plan is repo-local at `.grok/plans/<slug>/plan.md`, is written in Act mode, and is
+what both the parent and every child read from.
 
 Budget: 15 to 30 of your own tool calls to plan, dispatch, and merge a 20-task change. A
 plan that needs 60 calls of authoring was the wrong plan.
@@ -55,12 +57,16 @@ Write the plan when the change touches about five or more files, spans more than
 of work (source plus tests plus docs, say), or needs two or more waves. Below that, do
 the work yourself or spawn one child: authoring this plan costs more than it saves.
 
+### The real slot count
+
 Read your real slot count once, here, and never guess it again:
 
     grep -A4 '^\[subagents\]' ~/.grok/config.toml
 
 `max_concurrent` is the ceiling for one session and `sampling_limit` follows it when
 unset. Put that number in the plan as `slots:`.
+
+### The lane is a config decision
 
 The writer types ship on the unpinned `agent-swarm` lane by default, so a workspace that
 passed no `--var` already spreads a fan-out over every Spark box.
@@ -75,9 +81,10 @@ or a review pass can be put on its own alias without touching the writers.
 
 `[subagents.models]` is the seam that routes a subagent type to a lane, and the guide
 documents it applying whatever the parent's own model is, so the lane is a config
-decision. The spawn call's `model` argument names one child's model, and the guide leaves
-how it ranks against that pin open, so change the pin when you want the lane itself to
-move.
+decision.
+
+The spawn call's `model` argument names one child's model, and the guide leaves how it
+ranks against that pin open, so change the pin when you want the lane itself to move.
 
 ## Step 1 -- map the change surface before you split anything (up to 5 calls)
 
@@ -190,6 +197,8 @@ the checker refuses a spawner that also lists files.
 
 ### The review panel and the fleet ceiling
 
+#### The review panel
+
 In `## Dispatch`, `review:` is optional and names the review panel: a comma list of
 skeptics (`review: T09, T10`) dispatched together in one turn once every producer has
 landed.
@@ -203,6 +212,8 @@ Give each one its own attack angle, so the panel covers:
 - requirements (every acceptance check kept or broken);
 - proof (re-runs the producers' own `done:` commands);
 - adversary (regressions, edge states, flag-off paths).
+
+#### The fleet ceiling
 
 `fleet:` in the same block is the tree's model-stream ceiling, 15 by default: the
 `3 boxes x PARALLEL 5` ceiling in `scripts/spark-configure.sh`, which `slots:` does not
@@ -220,25 +231,55 @@ Each layer answers one question, has a size cap, and is written by exactly one p
 | `ctx/L2-T<nn>.md` | the one fact only this task needs | parent, just in time | one child | 20 lines |
 | `results/T<nn>.md` | what happened, what was found | child | parent | 12 lines |
 
-L0 is the shared cache and it is frozen before wave 1: goal in three lines, the vocabulary
-table, every seam a task invents that another task consumes (a signature, a config key, a
-flag name, a token, a path) written verbatim, the paths a child must not touch, and the
-commands that prove the goal. Anything two children both need belongs here; anything one
-child needs belongs in L2 or its prompt. A change to L0 after dispatch is a re-dispatch
-event, not an edit: children already running read the old copy.
+### What L0 carries
 
-Write L1 per lane from the Step 1 answers, and grow it between waves. When two children
-independently rediscover the same fact, that fact goes into L1 before the next wave is
-dispatched, so no third child pays for it again. That promotion is the whole caching
-mechanism: children never write shared files, and the parent is the only writer.
+L0 is the shared cache and it is frozen before wave 1:
+
+- goal in three lines
+- the vocabulary table
+- every seam a task invents that another task consumes (a signature, a config key, a
+  flag name, a token, a path) written verbatim
+- the paths a child must not touch
+- the commands that prove the goal
+
+Anything two children both need belongs here; anything one child needs belongs in L2 or
+its prompt.
+
+A change to L0 after dispatch is a re-dispatch event, not an edit: children already
+running read the old copy.
+
+### L1 grows between waves
+
+Write L1 per lane from the Step 1 answers, and grow it between waves.
+
+When two children independently rediscover the same fact, that fact goes into L1 before
+the next wave is dispatched, so no third child pays for it again.
+
+That promotion is the whole caching mechanism: children never write shared files, and the
+parent is the only writer.
+
+### L2 keeps L0 at 80 lines
 
 L2 exists so L0 stays 80 lines. If you find L0 growing past the cap, move the detail down.
 
-The prompt carries seven parts and nothing else: the role line, the task id plus its one
-line summary, `owns`, the `reads` paths, the pinned seams the task touches (copied from
-L0, not re-summarized), `done`, and the `report` path. Add the two standing instructions:
-stop and report instead of touching a file outside `owns`, and do not read `plan.md`, the
-Ledger, or another task's result.
+### The seven prompt parts
+
+The prompt carries seven parts and nothing else:
+
+- the role line
+- the task id plus its one line summary
+- `owns`
+- the `reads` paths
+- the pinned seams the task touches (copied from L0, not re-summarized)
+- `done`
+- the `report` path
+
+Add the two standing instructions:
+
+- stop and report instead of touching a file outside `owns`
+- do not read `plan.md`, the Ledger, or another task's result
+
+### The fixed report fields
 
 Child report, fixed fields, so you can read six lines instead of a transcript:
 
@@ -252,6 +293,8 @@ Child report, fixed fields, so you can read six lines instead of a transcript:
 
 ## Step 4 -- size every task, then prove the plan dispatches
 
+### Size every task
+
 A task is micro when all of these hold. Split it when any of them fail:
 
 - one deliverable, and one report line for it;
@@ -262,36 +305,62 @@ A task is micro when all of these hold. Split it when any of them fail:
 - no other ready task shares a path with it;
 - it never waits on a live task, only on finished ones.
 
-Two structural habits do most of the work. A test file is its own task next to its
-source task, never folded into it: that is one free slot and one clean review. And a fact
-several children would each go and look up gets a `map` lane of `explore` tasks that land
-in wave 0 and write lane briefs, so the writers start warm.
+Two structural habits do most of the work:
 
-Hotspots stay with you: registries, barrel and index re-exports, BUILD files, lockfiles,
-shared fixtures and seeds, schemas and migrations, i18n catalogs, docs indexes. List them
-under `parent keeps:` and schedule them yourself between waves.
+- A test file is its own task next to its source task, never folded into it: that is one
+  free slot and one clean review.
+- A fact several children would each go and look up gets a `map` lane of `explore` tasks
+  that land in wave 0 and write lane briefs, so the writers start warm.
+
+### Hotspots stay with you
+
+Hotspots stay with you:
+
+- registries
+- barrel and index re-exports
+- BUILD files
+- lockfiles
+- shared fixtures and seeds
+- schemas and migrations
+- i18n catalogs
+- docs indexes
+
+List them under `parent keeps:` and schedule them yourself between waves.
+
+### Run the check before you dispatch
 
 Run the check before you dispatch, and fix what it names:
 
     python3 ~/.agents/skills/ez-micro-plan/scripts/plan_check.py \
       .grok/plans/<slug>/plan.md --ready
 
-It errors on a task missing a key, two ready tasks sharing a path, a dependency cycle or
-unknown id, a lane or context file that does not exist, a task with no `done` check, a
-`calls` budget over 25, a `spawns` that is not a number or that ships a file of its own, a
-spawner whose children do not fit `fleet`, an opening wave that cannot fit the fleet even
-with every `slots` position filled, a reviewer that owns a file or skips a producer, and a
-first wave narrower than `slots` (that last one is the point: if wave 1 cannot fill the
-fleet, the split is too coarse). It prints the ready set on `--ready`, which is the wave to
-spawn, and what that wave pays, on stderr: `cost: <n> streams of <fleet>`.
+It errors on:
+
+- a task missing a key
+- two ready tasks sharing a path
+- a dependency cycle or unknown id
+- a lane or context file that does not exist
+- a task with no `done` check
+- a `calls` budget over 25
+- a `spawns` that is not a number or that ships a file of its own
+- a spawner whose children do not fit `fleet`
+- an opening wave that cannot fit the fleet even with every `slots` position filled
+- a reviewer that owns a file or skips a producer
+- a first wave narrower than `slots` (that last one is the point: if wave 1 cannot fill
+  the fleet, the split is too coarse)
+
+It prints the ready set on `--ready`, which is the wave to spawn, and what that wave pays,
+on stderr: `cost: <n> streams of <fleet>`.
 
 ## Step 5 -- dispatch: keep every slot busy
 
 1. Take the ready set from `--ready`, capped at `slots`, and price it in streams before
-   you spawn: Sum the in-flight `1 + spawns` over every task and keep that total at or
-   below the fleet's stream count (`fleet:` in the plan, 15 by default) -- separate from
-   `slots`, which caps one parent's own children. A depth-2 grandchild opens its own
-   session, so it escapes `slots` and still holds one of the fleet's streams.
+   you spawn:
+   - Sum the in-flight `1 + spawns` over every task and keep that total at or below the
+     fleet's stream count (`fleet:` in the plan, 15 by default) -- separate from `slots`,
+     which caps one parent's own children.
+   - A depth-2 grandchild opens its own session, so it escapes `slots` and still holds
+     one of the fleet's streams.
 2. Spawn the whole wave in one turn: several `spawn_subagent` calls in a single message,
    each with `background = true`. One wave per turn, or the fleet idles while you type.
 3. As each child lands, in that same turn: read its six report lines, run its `done`
@@ -306,14 +375,24 @@ spawn, and what that wave pays, on stderr: `cost: <n> streams of <fleet>`.
    each producer has landed, and each one re-runs every producer's own `done` command
    itself instead of trusting `results/T<nn>.md`.
 
+### A wave is not a phase
+
 A wave is not a phase: it is whatever fits in the slots. Prefer many small waves over two
-big ones. A child that fails twice with the same error is a layer problem, not a retry
-candidate: take that slice yourself. A child that reports `needs:` a file outside `owns`
-is a reslice, not a rule violation.
+big ones.
+
+A child that fails twice with the same error is a layer problem, not a retry candidate:
+take that slice yourself.
+
+A child that reports `needs:` a file outside `owns` is a reslice, not a rule violation.
+
+### When the plan outgrows a manual loop
 
 When the plan outgrows a manual loop -- more than about 40 tasks -- the same file drives
 the `workflow` tool with an `agent_budget`; the task blocks are the round list. That is
-still parent-owned orchestration. A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own.
+still parent-owned orchestration.
+
+A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it
+ships no file of its own.
 
 ## Step 6 -- close it out
 
