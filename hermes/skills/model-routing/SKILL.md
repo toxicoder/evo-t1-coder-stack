@@ -11,8 +11,11 @@ metadata:
 
 # model-routing
 
-Use when the operator asks which model to use, why a model behaves oddly, or how
-to switch the assistant's model.
+Use when the operator asks:
+
+- which model to use
+- why a model behaves oddly
+- how to switch the assistant's model
 
 ## One door
 
@@ -45,69 +48,107 @@ Notes that matter:
   drive an agent loop, because Qwen2.5-Coder returns tool calls as text.
 - So the working degraded mode is `chat`, not the fallback. If the Sparks are
   unreachable, say so and offer `chat`.
+
+### Thinking levels and per-group routing
+
 - The `agent-*` rows are thinking variants of `agent`: same model, same boxes, same
   tool calling, with the level baked into the alias. `agent` itself already bakes
   `xhigh`, so reach for one only when the operator asks for a specific level.
+
   Qwen3.8-Flash-Next takes `low`, `medium` and `xhigh` — there is no `high`.
 - Those groups are independent: least-busy and the session pin are computed per
   group, so a chat on `agent-medium` can sit on the same box as one on `agent`. The
   box still serves 5 streams in total, which is why nothing here gets a cap.
+
+### The swarm lane
+
 - `agent-swarm` is the same model on the same three boxes, `xhigh` baked: only its
-  routing state differs. It is one of the four groups the session pin does not cover (the
-  other three are its fast twin below and the two fleet lanes), so every request goes to
-  least-busy and lands on whichever healthy box has the fewest requests in flight.
+  routing state differs.
+
+  It is one of the four groups the session pin does not cover (the other three are its
+  fast twin below and the two fleet lanes), so every request goes to least-busy and
+  lands on whichever healthy box has the fewest requests in flight.
 - That is why a fan-out uses it and a long thread does not: independent parallel
   work reaches all 15 streams (5 on each of the three boxes), where a pinned
-  session only ever reaches the 5 streams of the one box it was pinned to. The
-  price is stickiness — the next turn may prefill on a different box — so a single
+  session only ever reaches the 5 streams of the one box it was pinned to.
+
+  The price is stickiness — the next turn may prefill on a different box — so a single
   long conversation stays on `agent`, which keeps the pin.
 - Its degradation hop differs as well: `agent-swarm` falls back to `agent` and only
-  then to `coder`, where each sibling Spark lane hops straight to `coder`. Health
-  state is per group, so the swarm's own three deployments can all be cooled while
-  the same boxes stay healthy under `agent`. The working degraded mode is still
-  `chat`, for the same reason as above.
+  then to `coder`, where each sibling Spark lane hops straight to `coder`.
+
+  Health state is per group, so the swarm's own three deployments can all be cooled
+  while the same boxes stay healthy under `agent`.
+
+  The working degraded mode is still `chat`, for the same reason as above.
+
+### The fast lanes and their summary hop
+
 - The two `*-fast` rows are each the lane it is named after: `agent-xhigh-fast` is
   `agent-xhigh` and `agent-swarm-fast` is `agent-swarm` - same three boxes, same baked
   `xhigh`, and each keeps the pin its parent has. The one thing either adds is what
-  happens to the conversation summary. When a session on one of those two aliases sends the Grok CLI's
-  summary request - either of the two asks the CLI appends, read in the turn that asks and
-  never in the rulebook that rides every turn - the LiteLLM proxy re-targets that one call to `compaction-fast` before
-  the router picks a Spark box: the Arc's `qwen2.5-coder:14b`, the same weights
-  `coder-fast` serves, held as its own group so a summary shares no routing state with that
-  alias. Every other call of that conversation still runs on a Spark at `xhigh`.
+  happens to the conversation summary.
+
+  When a session on one of those two aliases sends the Grok CLI's summary request -
+  either of the two asks the CLI appends, read in the turn that asks and never in the
+  rulebook that rides every turn - the LiteLLM proxy re-targets that one call to
+  `compaction-fast` before the router picks a Spark box: the Arc's `qwen2.5-coder:14b`,
+  the same weights `coder-fast` serves, held as its own group so a summary shares no
+  routing state with that alias.
+
+  Every other call of that conversation still runs on a Spark at `xhigh`.
 - There is nothing to set beside it: the Grok CLI has no compaction-model setting, so
   picking one of those two aliases is the whole opt-in. A session on `agent`, `agent-xhigh`
   or `agent-swarm` compacts on its own Spark exactly as it always has.
-- The hop has one guard, and it picks a tier. The Arc weights are a 32768-token model, so a
-  summary whose estimated input is over `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000,
-  kept under that window on purpose) goes to `agent-low` - a Spark group, so
-  it keeps the 262144-token window a full-size summary needs, at thinking baked `low` rather
-  than `xhigh` - instead of being truncated to fit the Arc. A slow summary beats a summary of
-  half the conversation. The guard is a ceiling the proxy may lower and never raise: the
-  target group's own `max_input_tokens` in `litellm/config.yaml` caps it - a group that
-  declares none leaves the key whole, and the proxy logs one line about it - so raising
-  that key cannot park a summary inside a model too small to read it. Blank
-  `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized summary
-  stays where it arrived, at the lane's own thinking level.
+- The hop has one guard, and it picks a tier. The Arc weights are a 32768-token model, so
+  a summary whose estimated input is over `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default
+  24000, kept under that window on purpose) goes to `agent-low` - a Spark group, so it
+  keeps the 262144-token window a full-size summary needs, at thinking baked `low` rather
+  than `xhigh` - instead of being truncated to fit the Arc.
+
+  A slow summary beats a summary of half the conversation.
+
+  The guard is a ceiling the proxy may lower and never raise: the target group's own
+  `max_input_tokens` in `litellm/config.yaml` caps it - a group that declares none leaves
+  the key whole, and the proxy logs one line about it - so raising that key cannot park a
+  summary inside a model too small to read it.
+
+  Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized summary stays where it
+  arrived, at the lane's own thinking level.
 - Their degradation hops follow their parents, and the target carries its own:
-  `agent-xhigh-fast` -> `agent-xhigh` -> `coder`, `agent-swarm-fast` -> `agent-swarm` ->
-  `coder`, and `compaction-fast` -> `agent-low` -> `coder`. That last chain is deliberate:
-  `coder`, `coder-fast` and `chat` all sit on the Arc box this group already shares, so a
-  hop to one of them is a hop to whatever is already down, and `agent-low` is the quickest
-  answer the fleet has.
+
+  - `agent-xhigh-fast` -> `agent-xhigh` -> `coder`
+  - `agent-swarm-fast` -> `agent-swarm` -> `coder`
+  - `compaction-fast` -> `agent-low` -> `coder`
+
+  That last chain is deliberate: `coder`, `coder-fast` and `chat` all sit on the Arc box
+  this group already shares, so a hop to one of them is a hop to whatever is already down,
+  and `agent-low` is the quickest answer the fleet has.
+
+### The fleet lanes
+
 - The two fan-out rows above are for a Grok Build fleet, not for this session: Hermes
   itself stays on `agent`, because a chat is one long conversation and that is exactly what
   the pin is for. Each serves a child that answers once, so there is no warm prefix for a
-  pin to protect and the lift costs nothing here. The reader gets `low`, because mapping
-  work is a lookup it returns as a digest; the skeptic gets `xhigh`, the level `agent`
-  itself carries, because it is the check that what landed is actually true and it opens
-  the files it judges rather than trusting the diff it was handed. Their degradation hop
-  differs from the swarm's as well: each hops through the lane that bakes its own level
-  before Arc (`agent-explore` -> `agent-low` -> `coder`, `agent-review` -> `agent-xhigh` ->
-  `coder`), so a fleet that dispatched a reader at `low` gets a `low` answer back.
+  pin to protect and the lift costs nothing here.
+
+  The reader gets `low`, because mapping work is a lookup it returns as a digest; the
+  skeptic gets `xhigh`, the level `agent` itself carries, because it is the check that what
+  landed is actually true and it opens the files it judges rather than trusting the diff it
+  was handed.
+
+  Their degradation hop differs from the swarm's as well: each hops through the lane that
+  bakes its own level before Arc (`agent-explore` -> `agent-low` -> `coder`,
+  `agent-review` -> `agent-xhigh` -> `coder`), so a fleet that dispatched a reader at `low`
+  gets a `low` answer back.
+
+### Context caps
+
 - `coder` / `coder-fast` cap at 32k context; `agent` is much larger.
 
 ## Switching the model
+
+### The three verbs
 
 Three verbs change the model, and which one you have depends on whether a session is
 already running:
@@ -124,50 +165,76 @@ hermes config set model.default chat    # or: agent, agent-medium, agent-swarm
   the value into the container as `HERMES_MODEL`.
 - Across every session: `hermes config set model.default <alias>`, the same key the
   `get` above reads. Say the alias out loud before you set it, and read it back with
-  `hermes config get model.default`. `model.model` is the legacy spelling of that
-  value: the loader copies it to `default` only when `default` is absent, then drops
-  it, and a persisted `/model` writes `default:` - so after one in-session switch
-  `hermes config set model.model <alias>` prints a success line and changes nothing,
-  and `hermes config get model.model` answers "Config key not set" even when a model
-  is set.
+  `hermes config get model.default`.
 
-All three take a pickable alias from the table above - every row but
-`compaction-fast`, which no row declares and the picker never offers, for the reason
-given below. And the alias has to be *declared* for any of them to land. That is what
-the seed's `providers:` block in `hermes/config.yaml`
-is for: Hermes routes a typed `/model <alias>` to the provider row that declares that
-id, and leaves a name no row declares on the current provider as an unknown hidden
-model. So when an alias "does nothing", the declaration is the first thing to check -
-an alias the proxy serves that no row lists is routable at LiteLLM and invisible to the
-picker. The gate in `tests/bats/hermes-config.bats` fails when the two lists drift.
+  `model.model` is the legacy spelling of that value: the loader copies it to `default`
+  only when `default` is absent, then drops it, and a persisted `/model` writes
+  `default:` - so after one in-session switch `hermes config set model.model <alias>`
+  prints a success line and changes nothing, and `hermes config get model.model` answers
+  "Config key not set" even when a model is set.
+
+### The alias has to be declared
+
+All three take a pickable alias from the table above - every row but `compaction-fast`,
+which no row declares and the picker never offers, for the reason given below. And the
+alias has to be *declared* for any of them to land.
+
+That is what the seed's `providers:` block in `hermes/config.yaml` is for: Hermes routes
+a typed `/model <alias>` to the provider row that declares that id, and leaves a name no
+row declares on the current provider as an unknown hidden model.
+
+So when an alias "does nothing", the declaration is the first thing to check - an alias
+the proxy serves that no row lists is routable at LiteLLM and invisible to the picker.
+The gate in `tests/bats/hermes-config.bats` fails when the two lists drift.
+
+### Re-seeding is a host action
+
 That block arrives with the volume, though: the seeder copies the seed only when the
 file is absent, so a container seeded before it existed has no rows at all and every
-alias lands in that hidden case. Re-seeding is a host action, not one you can take from
-in here: hand the operator the `hermes-doctor` `diff` check, which names that drift and
-prints the `hermes-bootstrap --force` line that fixes it.
+alias lands in that hidden case.
+
+Re-seeding is a host action, not one you can take from in here: hand the operator the
+`hermes-doctor` `diff` check, which names that drift and prints the
+`hermes-bootstrap --force` line that fixes it.
+
+### The route is a separate setting
 
 The other switch is the route, and it is a separate setting from the model.
 `--provider <row>` and `hermes config set model.provider <row>` choose which
 `providers:` row answers - its base URL, its key, its API mode - and they differ in
-whether the model travels with it. The CLI flag takes the row's `default_model`
-along, so `--provider arc-chat` sends `chat`, `arc-coder` sends `coder`,
-`arc-coder-fast` sends `coder-fast` and `litellm` sends `agent`, with
-`-m/--model <alias>` overriding that. The config key is gated on no such flag:
-`hermes config set model.provider <row>` moves the route alone, and the request keeps
-sending what the `model:` block holds. Those rows all share one endpoint, so the
-picker folds them into a single `litellm` entry listing every alias they declare, and
-the Arc rows stay reachable as `--provider` routes and typed `/model` names rather
-than picker rows of their own. So a route move is not always a model move: with the
-flag it is both, and through the config key neither.
+whether the model travels with it.
+
+The CLI flag takes the row's `default_model` along, with `-m/--model <alias>` overriding
+that:
+
+- `--provider arc-chat` sends `chat`
+- `arc-coder` sends `coder`
+- `arc-coder-fast` sends `coder-fast`
+- `litellm` sends `agent`
+
+The config key is gated on no such flag: `hermes config set model.provider <row>` moves
+the route alone, and the request keeps sending what the `model:` block holds.
+
+Those rows all share one endpoint, so the picker folds them into a single `litellm` entry
+listing every alias they declare, and the Arc rows stay reachable as `--provider` routes
+and typed `/model` names rather than picker rows of their own.
+
+So a route move is not always a model move: with the flag it is both, and through the
+config key neither.
+
+### The hidden alias
 
 `compaction-fast` is the one alias the proxy serves that no row declares, so the picker
 never offers it. It is the Arc summariser the two `*-fast` lanes hop to for a single
 conversation summary, and it carries no tool support; the seed keeps
 `discover_models: false` so Hermes never adopts it off the proxy's own model list.
+
 That is a hide rather than a wall. Typing it lands in the unknown-hidden-model case
 above, which Hermes *accepts*: the turn goes out with `model: compaction-fast` and the
-proxy serves that alias like any other. So keep the name out of what you type and out
-of what you tell an agent to reach for - nothing blocks it for you.
+proxy serves that alias like any other.
+
+So keep the name out of what you type and out of what you tell an agent to reach for -
+nothing blocks it for you.
 
 Never write a key into `config.yaml` — `api_key` stays `${LITELLM_MASTER_KEY}`,
 expanded from the environment.
@@ -181,11 +248,15 @@ expanded from the environment.
 - Do not hand-edit `litellm/config.yaml` from this container to fix a model: that
   file is bind-mounted from the checkout, so edit it in git and recreate the
   `litellm` service.
-- For a web lookup use the `web_search` tool: the seed pins `web.search_backend`
-  to `searxng` and turns both keyless switches off, so the query goes to this
-  stack's own instance and nowhere else. `web_extract` is left unconfigured on
-  purpose, so a page fetch fails on the box rather than dialing an extractor.
+- For a web lookup use the `web_search` tool: the seed pins `web.search_backend` to
+  `searxng` and turns both keyless switches off, so the query goes to this stack's own
+  instance and nowhere else.
+
+  `web_extract` is left unconfigured on purpose, so a page fetch fails on the box rather
+  than dialing an extractor.
+
   To see exactly what the instance returns, ask it directly:
-  `curl -s "http://searxng:8181/search?q=<terms>&format=json"`. Do not add a vendor
-  key or a `web.backend` for a third party to make an extract work - that is the
-  operator's call, and it has a privacy cost worth naming first.
+  `curl -s "http://searxng:8181/search?q=<terms>&format=json"`.
+
+  Do not add a vendor key or a `web.backend` for a third party to make an extract work -
+  that is the operator's call, and it has a privacy cost worth naming first.

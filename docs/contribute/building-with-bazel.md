@@ -53,19 +53,27 @@ bash scripts/setup-host.sh --check  # report tools, leftover runfiles and DNS; w
 bash scripts/setup-host.sh --repair # recover leftover runfiles and Linux public DNS
 ```
 
+### Recovery and DNS
+
 `--repair` is the recovery when `bazelisk run //scripts:prod-stack` dies creating
 the runfiles tree (`FileAccessException ... Permission denied` on
 `homepage/assets/icons/evo-t1.svg`). Bazel never reaches the stack script, so the
-repair has to live in this shell entry point. On Linux it also installs public
-DNS so `github.com` still resolves when Tailscale MagicDNS is the only
-nameserver (`Could not resolve host: github.com` after a compose `up`). `--check`
-reports that lookup and writes nothing.
+repair has to live in this shell entry point.
 
-Everything else is a Bazel target, including every `scripts/*.sh`. CI repeats the gate from
-a clean runner inside the same golden image: `.github/workflows/ci.yml` builds
+On Linux it also installs public DNS so `github.com` still resolves when Tailscale
+MagicDNS is the only nameserver (`Could not resolve host: github.com` after a compose `up`).
+`--check` reports that lookup and writes nothing.
+
+Everything else is a Bazel target, including every `scripts/*.sh`.
+
+### CI repeats the gate
+
+CI repeats the gate from a clean runner inside the same golden image: `.github/workflows/ci.yml` builds
 `images/dev` with buildx and the Actions layer cache and docker-runs the two suites below in
 it, so the bazel job does not install the pins onto the runner at all — the image already
-carries them. The persistent cache on that path is the buildx GHA layer cache, so a pull
+carries them.
+
+The persistent cache on that path is the buildx GHA layer cache, so a pull
 request that leaves `images/dev/**` alone replays the image layers.
 
 ## Daily commands
@@ -93,17 +101,28 @@ bazelisk run //scripts:prod-stack -- status --project-name evo-t1-coder-stack   
 | `//scripts:test-in-image` | The merge gate inside `evo-t1-dev:latest`, for a machine that is not the contributor container |
 | `//scripts:seed-dev-env` | Materialize a contributor home (Grok config, editor settings, notes, tmux, helpers) from the workspace templates |
 
+### The Makefile shims
+
 `make test`/`bats`/`lint`/`fix`/`validate` and the `stack-*`/`prod-stack-*` shims are the
-same commands;
-`make help` lists them. `//:test-fast` does not start Compose, pull models, or SSH to a Spark
-box: the suites exercise those scripts against `tests/bats/tool_stubs`. `bazelisk run
+same commands; `make help` lists them.
+
+`//:test-fast` does not:
+
+- start Compose
+- pull models
+- SSH to a Spark box
+
+The suites exercise those scripts against `tests/bats/tool_stubs`. `bazelisk run
 //scripts:<stem> -- <args>` is how a human runs one of them for real.
+
+### Operator runs are bounded
 
 Those operator runs are bounded: a script's non-interactive `docker exec` closes stdin
 (`</dev/null`), and the docker wrappers go through `timeout(1)` with `--kill-after`, so a
 `bazelisk run //scripts:<stem>` cannot sit forever the way `docker exec -i` did under
-`bazelisk run`, waiting for an EOF that never came. `logs --follow` is the intentional
-long-running exception, and you stop it with Ctrl-C.
+`bazelisk run`, waiting for an EOF that never came.
+
+`logs --follow` is the intentional long-running exception, and you stop it with Ctrl-C.
 
 ## What Bazel brings
 
@@ -116,28 +135,40 @@ long-running exception, and you stop it with Ctrl-C.
   unchanged suite replays its cached PASS instead of re-running Bats.
 - **Local disk and repository cache.** `.bazelrc` points `--disk_cache` at
   `~/.cache/bazel-disk` and `--repository_cache` at `~/.cache/bazel-repo`. A contributor
-  container and a Coder workspace reuse those directories across runs. In CI the gate
-  container is `--rm` and runs with `HOME=/tmp` and `USER=$(id -un)`, so a plain run keeps
-  neither cache between jobs, and Bazel can name a uid the image passwd file does not
-  list; the cache that survives there is the image's buildx GHA cache. No remote cache is
-  configured — the same two flags would take a `--remote_cache=<uri>` endpoint later.
+  container and a Coder workspace reuse those directories across runs.
+
+  In CI the gate container is `--rm` and runs with `HOME=/tmp` and `USER=$(id -un)`, so a
+  plain run keeps neither cache between jobs, and Bazel can name a uid the image passwd
+  file does not list; the cache that survives there is the image's buildx GHA cache.
+
+  No remote cache is configured — the same two flags would take a `--remote_cache=<uri>`
+  endpoint later.
+
+### Persisting the repository cache in CI
 
 The repository cache is the one worth persisting in CI, and `EVO_T1_BAZEL_CACHE=<host dir>`
 is the seam: `//scripts:test-in-image` bind-mounts that directory into the gate container and
-points `--repository_cache` at it, so each external archive downloads once per key. Each CI
-gate step exports it as `${RUNNER_TEMP}/bazel-repo-cache` and is wrapped in an `actions/cache`
+points `--repository_cache` at it, so each external archive downloads once per key.
+
+Each CI gate step exports it as `${RUNNER_TEMP}/bazel-repo-cache` and is wrapped in an `actions/cache`
 pair keyed on `MODULE.bazel`, `MODULE.bazel.lock` and `.bazelrc`, with the save under
-`if: always()` — the archives fetched
-before a red gate are exactly what the next run would otherwise pay for again. That endpoint
-matters: `github.com/.../releases/download/...` answers 504 for a slice of requests, one such
-504 aborts Bazel's analysis, and a refetch-on-every-job job decides its colour by luck. The
-in-container path is passed as an explicit option because the `~` in `.bazelrc` expands from
-the Bazel server's own `user.home`, which this container's uid does not appear in: a mount
-placed from that `~` could sit where Bazel never writes and look like a working cache for
-exactly one run. With the variable unset the script mounts nothing, which is what a
-contributor laptop gets.
+`if: always()` — the archives fetched before a red gate are exactly what the next run would
+otherwise pay for again.
+
+That endpoint matters: `github.com/.../releases/download/...` answers 504 for a slice of
+requests, one such 504 aborts Bazel's analysis, and a refetch-on-every-job job decides its
+colour by luck.
+
+The in-container path is passed as an explicit option because the `~` in `.bazelrc` expands
+from the Bazel server's own `user.home`, which this container's uid does not appear in: a
+mount placed from that `~` could sit where Bazel never writes and look like a working cache
+for exactly one run.
+
+With the variable unset the script mounts nothing, which is what a contributor laptop gets.
 
 ## Script targets and runfiles
+
+### The generated launcher
 
 `scripts/BUILD.bazel` declares one `exec_shell` launcher plus one `sh_binary` wrapper per
 `scripts/*.sh`, generated from the directory, so a new CLI is a Bazel target without a second
@@ -148,25 +179,39 @@ launcher pattern at the repo root.
 `//tools:exec_shell.bzl` writes a generated launcher and runs the real `.sh` from runfiles
 with bash, so a checkout whose scripts are mode `100644` still builds.
 
+### Declared libs and payload groups
+
 Each CLI target also declares the repo files that script reads by path: the libs it
 sources (`_SCRIPT_LIBS`) and the payload groups whose files it opens (`_SCRIPT_PAYLOAD`),
-both keyed by script stem in `scripts/BUILD.bazel`. Those payload groups live one per
-payload directory (`//litellm:config`, `//searxng:settings`, `//homepage:config`,
-`//homepage:icons`, `//hermes:seed`, `//hermes:skills`, `//proxy:confs`,
-`//images/dev:dockerfile`, `//images/dev:tool_versions`, and a `:payload` in each of
-`templates/common`, `templates/workspace`, `templates/devcontainer`), with the root
-BUILD.bazel holding the groups that have no directory of their own (`//:compose_file`,
-`//:env_sample`, `//:env_example`, `//:license`, `//:devcontainer`, `//:githooks`, and the
-`//:ci_*` groups). `//:stack_data` is the explicit aggregate of all of them, and
+both keyed by script stem in `scripts/BUILD.bazel`.
+
+Those payload groups live one per payload directory (`//litellm:config`,
+`//searxng:settings`, `//homepage:config`, `//homepage:icons`, `//hermes:seed`,
+`//hermes:skills`, `//proxy:confs`, `//images/dev:dockerfile`, `//images/dev:tool_versions`,
+and a `:payload` in each of `templates/common`, `templates/workspace`,
+`templates/devcontainer`), with the root BUILD.bazel holding the groups that have no
+directory of their own (`//:compose_file`, `//:env_sample`, `//:env_example`, `//:license`,
+`//:devcontainer`, `//:githooks`, and the `//:ci_*` groups).
+
+`//:stack_data` is the explicit aggregate of all of them, and
 `//scripts:doc_sources` (every `scripts/**.sh`, so a sourced `scripts/lib/*.sh` resolves
-too) rides along on every CLI. `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
+too) rides along on every CLI.
+
+### The real-checkout fallback
+
+`proxy/certs/` is `.bazelignored` (bootstrap issues those on the host), so a
 `bazelisk run` of a stack runner, of `push-template`, or of the six CLIs that read a file the
 checkout alone holds (`dashboard-password`, `pull-models`, `coder-agents`, `spark-verify`,
 `spark-configure`, `build-dev-image`) prefers `BUILD_WORKSPACE_DIRECTORY` (the real checkout)
-over the runfiles copy as the compose project directory, the live `.env`, and the template tree (runfiles
-`templates/**` are symlinks that Coder cannot follow after unpack). Without the committed payloads a
-sandboxed run would read a partial copy of the repo and fail for the wrong reason. A new
-top-level payload directory gets its own package with its own `filegroup` targets, joins
+over the runfiles copy as the compose project directory, the live `.env`, and the template
+tree (runfiles `templates/**` are symlinks that Coder cannot follow after unpack).
+
+Without the committed payloads a sandboxed run would read a partial copy of the repo and fail
+for the wrong reason.
+
+### A new payload directory
+
+A new top-level payload directory gets its own package with its own `filegroup` targets, joins
 `//:stack_data` by label, and is named in the map of every target that reads it: `test-fast`
 and `lint` only see repo files that travel in runfiles, so an unlisted directory is invisible
 to the harness rather than checked loosely.
@@ -183,20 +228,41 @@ machine-readable record of which repo file each target reads:
 | `_SUITE_PAYLOAD` | the payload groups one Bats suite opens, beyond what every suite carries |
 | `*_PAYLOAD_ALLOW` | a pairing the source scan cannot see from either side; each entry states its reason |
 
+### What the scan reports
+
 `tests/bazel_deps.py` re-derives all of them by scanning the shell and Bats sources and
 reports the drift both ways: a script that starts reading a payload its target does not
-declare, and a target that still ships a payload nothing opens. `//tests:bats_bazel_deps_test`
-runs it, so the BUILD files stay something an automated reader can trust, and a
-`bazelisk query` of any target names the files a change to which should be reviewed with it.
+declare, and a target that still ships a payload nothing opens.
 
-The scan treats a comment, a here-doc body, a log message, and a scratch file a suite writes
-as prose rather than a dependency, so the maps record reads and not mentions. When the scan
-genuinely cannot see a pairing (a lib that builds a path and returns it as a string, a
-`case` glob over `git diff` output, help text), the entry goes in the `_ALLOW` map with the
-reason as a comment above the key; the Bats gate fails an `_ALLOW` key that has no reason.
+`//tests:bats_bazel_deps_test` runs it, so the BUILD files stay something an automated
+reader can trust, and a `bazelisk query` of any target names the files a change to which
+should be reviewed with it.
 
-A script that needs the checkout reaches it the same way: source its libs by absolute path from
-`SELF_DIR`, resolve the root with `resolve_checkout` (`scripts/lib/common.sh`), then `cd` into
-what it prints. Never `cd "$(dirname "$0")/.."` - under `bazelisk run` the launcher execs the
-runfiles copy of the script, so that is the runfiles tree, which holds only `//:stack_data` and is
+### What the scan counts as prose
+
+The scan treats as prose rather than a dependency, so the maps record reads and not
+mentions:
+
+- a comment
+- a here-doc body
+- a log message
+- a scratch file a suite writes
+
+### When the scan cannot see a pairing
+
+When the scan genuinely cannot see a pairing (a lib that builds a path and returns it as a
+string, a `case` glob over `git diff` output, help text), the entry goes in the `_ALLOW`
+map with the reason as a comment above the key; the Bats gate fails an `_ALLOW` key that
+has no reason.
+
+### Reaching the checkout from a script
+
+A script that needs the checkout reaches it the same way:
+
+1. source its libs by absolute path from `SELF_DIR`
+2. resolve the root with `resolve_checkout` (`scripts/lib/common.sh`)
+3. `cd` into what it prints
+
+Never `cd "$(dirname "$0")/.."` - under `bazelisk run` the launcher execs the runfiles
+copy of the script, so that is the runfiles tree, which holds only `//:stack_data` and is
 recreated on the next build.

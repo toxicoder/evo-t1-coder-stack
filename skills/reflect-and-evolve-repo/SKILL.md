@@ -23,8 +23,10 @@ metadata:
 
 Review past work in this git repository, identify systemic issues, friction, and anti-patterns in
 the codebase and the project practices around it, then make high-leverage, well-planned
-improvements. Focus on this specific project and its best practices rather than on general agent
-setup: this skill changes the repository, `/reflect-and-evolve` changes the agent.
+improvements.
+
+Focus on this specific project and its best practices rather than on general agent setup: this
+skill changes the repository, `/reflect-and-evolve` changes the agent.
 
 ## When to Use
 
@@ -60,22 +62,33 @@ Collect real signal specific to this project:
 - Review past sessions, session artifacts, or memory for friction tied to this codebase: the sweeper
   `python3 skills/reflect-and-evolve/scripts/session_signals.py --limit 20` ranks the sessions, then
   `~/.grok/memory/<slug>-<hash8>/sessions/*.md` (the `/ez-learn` logs) and `~/.grok/notes/<host>/<owner>/<repo>/notes.md`. Look for:
+
   - Repeated bugs, friction, or user corrections related to this codebase
   - Places the agent struggled with project conventions
   - Tasks that required excessive manual steps or workarounds
   - Missing tests, docs, scripts, or automation
   - Inconsistencies in style, architecture, or practice
-- That route is not free: `~/.grok/sessions/<escaped-cwd>/*/` holds gigabytes and the sweeper above is the
-  only sanctioned way in. Never print `chat_history.jsonl`, `prompt_history.jsonl`, or `events.jsonl`, never
-  list `/var/lib/grok-session-archive`, never read `.env` or `.env.*`, and cap the rest with `head -n`.
 - Check the existing `scripts/`, the `Makefile`, the Bazel targets, `.githooks/pre-commit`, and the
   CI workflow for gaps. Make is a shim here, so a Makefile-only fix says nothing new.
 - Note the project-specific rules already documented, so the run evolves them instead of restating.
+
+#### Guardrails on the session route
+
+That route is not free: `~/.grok/sessions/<escaped-cwd>/*/` holds gigabytes and the sweeper above
+is the only sanctioned way in, so cap the rest with `head -n`, and:
+
+- never print `chat_history.jsonl`, `prompt_history.jsonl`, or `events.jsonl`
+- never list `/var/lib/grok-session-archive`
+- never read `.env` or `.env.*`
+
+#### When the history is thin
 
 If session history is limited, state the limitation and work primarily from the current codebase
 state and recent git history.
 
 ### 2. Analyze for High-Leverage Project Improvements
+
+#### The categories
 
 Categorize the findings specific to this repo:
 
@@ -88,6 +101,8 @@ Categorize the findings specific to this repo:
 | Testing / reliability | Fragile areas or missing coverage | Add a `tests/bats/` suite or widen the coverage targets |
 | Developer experience | Slow or error-prone local workflows | Improve `scripts/`, the Bazel targets, or the devcontainer config |
 | Architectural | Fundamental design issues surfaced by work | Larger refactor or restructuring (plan it carefully) |
+
+#### Prioritizing the findings
 
 Prioritize changes that:
 
@@ -110,13 +125,23 @@ Before editing, write a short plan covering:
 - How you will validate: `bazelisk test //:test-fast`,
   `bazelisk test //:lint --test_tag_filters=manual`, and `bazelisk test //tests:bats_<stem>_test`
 
-Cut the branch before the first edit: a short-lived branch off the tip of `main`, one logical change
-per branch. `development`, `staging`, and `production` are environments, never branches. Incomplete
-work lands on `main` behind a flag that defaults off, in the first shape that fits: an env var with
-a dotenv sample, a compose `profiles:` entry, a `config/flags.yaml` key, a template parameter.
+#### The branch and the flag
 
-Prefer a small number of high-impact changes over many minor ones in a single run. If the scope is
-large, implement the highest-value subset and note the rest for a later reflection.
+Cut the branch before the first edit: a short-lived branch off the tip of `main`, one logical change
+per branch. `development`, `staging`, and `production` are environments, never branches.
+
+Incomplete work lands on `main` behind a flag that defaults off, in the first shape that fits:
+
+- an env var with a dotenv sample
+- a compose `profiles:` entry
+- a `config/flags.yaml` key
+- a template parameter
+
+#### How wide the run goes
+
+Prefer a small number of high-impact changes over many minor ones in a single run.
+
+If the scope is large, implement the highest-value subset and note the rest for a later reflection.
 
 ### 4. Implement in the Repository
 
@@ -137,12 +162,16 @@ Make the changes directly in the repo:
 - Record significant changes in the commit message and the pull request body: this repo keeps no
   first-party `CHANGELOG.md`. A fact worth keeping past the change goes to `/ez-learn` notes.
 
+#### Verify each change
+
 After each substantial change, verify it: run the tests, the lint, the typecheck, or the one scoped target.
 
 Run the whole gate after the run: `bazelisk test //:test-fast`,
 `bazelisk test //:lint --test_tag_filters=manual`, and `bazelisk run //:validate` when you touched a
 payload it parses. `bazelisk run //:fix` is the formatter; a cached `N tests pass.` wants one
 `--nocache_test_results` pass before the pull request.
+
+#### Where the run stops
 
 A reflection that reaches for the agent's own files stops at the seed: a file under `~/.grok/`
 carrying the `managed-by: evo-t1-coder-stack` marker is rewritten on the next boot, so edit the seed
@@ -152,11 +181,13 @@ under `templates/common/` and re-materialize it, never the copy that lives in a 
 
 - Confirm the most important changes work and are non-breaking, with the command and its output.
 - Provide a clear summary to the user:
+
   - What evidence from the repo and the sessions was reviewed
   - The key problems or opportunities identified
   - The changes made, with file paths and a brief rationale for each
   - Why each change improves the project going forward
   - Any recommended follow-up or residual risk
+
 - Suggest committing the improvements if appropriate, on the branch this run cut.
 
 ## Principles
