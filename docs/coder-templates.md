@@ -1591,8 +1591,7 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
   form is swallowed as an interpolation, in a comment or a `for` loop as readily as in a
   command. The unbraced form (`$name`) needs no escape.
 
-  - `infisical-secrets.sh.tftpl` is the sparsest body:
-  `infisical-secrets.sh.tftpl` is the sparsest body: its map is the single `boot_log_lib`
+  - `infisical-secrets.sh.tftpl` is the sparsest body: its map is the single `boot_log_lib`
   key (`templates/workspace/main.tf:783-785`), so apart from the one line that takes it every
   braced expansion in it is shell text, none of it interpolates, and the rendered bytes are
   the same for every workspace.

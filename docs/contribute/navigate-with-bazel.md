@@ -88,22 +88,6 @@ bazelisk run //scripts:bazel-map -- scope [--staged] [--untracked] [--ref <ref>]
 bazelisk run //scripts:bazel-map -- unlisted <dir>...
 ```
 
-### The verbs
-
-Seven verbs, one query each. Each is spelled out where it is used later on this page:
-
-- `bazelisk run //scripts:bazel-map -- targets [pattern]`: enumerate real target names instead of
-  guessing them; `--label-kind` prints the rule class
-- `bazelisk run //scripts:bazel-map -- tests-for <path>...`: the suites that read a payload
-- `bazelisk run //scripts:bazel-map -- owners <path>...`: is this file visible to the
-  harness at all, which filegroup claims it
-- `bazelisk run //scripts:bazel-map -- files <target>`: what a target actually reads
-- `bazelisk run //scripts:bazel-map -- twins <path>...`: the twin template copies
-- `bazelisk run //scripts:bazel-map -- scope [--staged] [--untracked] [--ref <ref>]`: the test list
-  derived from what this checkout changes
-- `bazelisk run //scripts:bazel-map -- unlisted <dir>...`: which payload directory no
-  filegroup claims
-
 ### Flags and exit codes
 
 Flags, accepted anywhere in argv: `--staged`, `--untracked`, `--ref <ref>`, `--all`,

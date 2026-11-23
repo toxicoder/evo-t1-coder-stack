@@ -157,7 +157,6 @@ repo can verify.
 
 - What a reviewer has to know about the collector: Alloy mounts the host's container log
   directory (`STACK_DOCKER_LOG_DIR`, default `/var/lib/docker/containers`) read-only at the same
-  (`STACK_DOCKER_LOG_DIR`, default `/var/lib/docker/containers`) read-only at the same
   path inside the container, which is host filesystem content - every line every
   container printed - but not the daemon: the docker socket stays unmounted here as it
   does for the dashboard, so Alloy can read logs and cannot start, stop or inspect
