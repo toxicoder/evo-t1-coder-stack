@@ -109,13 +109,8 @@ and `hash8` is the first 8 hex chars of a blake3 digest.
 The hash input is the normalized `org/repo` from the `origin` remote with any `.git`
 and trailing slash stripped; with no git remote it is the canonical absolute cwd.
 
-Slug rules:
-
-- lowercase
-- every run of non-`[a-z0-9]` becomes a single `-`
-- truncated to 40 chars
-- edge dashes stripped
-- empty becomes `workspace`
+Slug rules: lowercase, every run of non-`[a-z0-9]` becomes a single `-`, truncated to 40
+chars, edge dashes stripped, and empty becomes `workspace`.
 
     git -C "$PWD" remote get-url origin 2>/dev/null || echo "no origin: hash the canonical cwd"
     ls -1d "$grok_home"/memory*/ 2>/dev/null
@@ -400,7 +395,6 @@ Dream reports one of:
     Dream merged N observations into M topics.
     Dream completed.
     Nothing to consolidate.
-
     Dream is already running; try again when it finishes.
     Dream did not finish; it will retry automatically.
     Dream failed.

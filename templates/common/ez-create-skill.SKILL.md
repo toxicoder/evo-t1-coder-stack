@@ -158,11 +158,8 @@ description: "Clear this repo's /tmp scratch files and report what went. Use whe
 
 ### Prove it parses
 
-Read it back and prove what a parser checks:
-
-- line 1 exactly `---`
-- the fence closes
-- the frontmatter parses
+Read it back and prove what a parser checks: line 1 exactly `---`, the fence closes, the
+frontmatter parses.
 
     f="$HOME/.agents/skills/<name>/SKILL.md"
     head -n 1 "$f"

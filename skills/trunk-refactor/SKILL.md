@@ -126,7 +126,6 @@ Read-only. Make no edits and no commits. Write findings to a scratch file
        ls | grep -iE '^(docker-compose|compose)' ; find . -maxdepth 3 \
          \( -name 'compose*.yml' -o -name 'compose*.yaml' -o -name 'docker-compose*.yml' \) \
          -not -path '*/node_modules/*' | head -20
-
        ls -d k8s kubernetes manifests overlays base charts helm ansible playbooks inventories \
          terraform tofujit envs stacks argocd kustomize 2>/dev/null
        ls MODULE.bazel WORKSPACE BUILD.bazel MODULE.bazel.lock manage.sh Makefile 2>/dev/null
