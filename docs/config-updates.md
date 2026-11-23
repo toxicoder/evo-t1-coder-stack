@@ -432,9 +432,7 @@ the workspace keeps running.
 
 The template's `gh_token_refresh` coder_script
 re-mints on start and every 20 minutes (`0 */20 * * * *`) into the **gh auth store**,
-which is the copy that stays live.
-
-git asks its credential helper, and the
+which is the copy that stays live. git asks its credential helper, and the
 stack's helper reads the store through a form that clears the stale pair first,
 so push follows the store and not the frozen environment.
 
@@ -579,10 +577,10 @@ checks to run on the Traefik box.
 
 ## Spark agent model group
 
+### The keys that fill the group
+
 The `agent` model group is three deployments behind one LiteLLM alias, one per
 Spark box, and these are the keys that fill it:
-
-### The keys that fill the group
 
 - `SPARKn_HOST` is where each box is named - once. docker-compose.yml composes
   every Spark URL from it plus the port below, so a box that gets a new

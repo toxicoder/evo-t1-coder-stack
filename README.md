@@ -911,10 +911,8 @@ the extra spawn with `NoRoom`, so shrinking a shared fleet is a two-knob job -
 The profile keeps both numbers side by side: `[subagents]` carries `# fleet-width: 15`
 directly above `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:427`, fed
 from `var.grok_swarm_width` at `templates/workspace/main.tf:558`), so 15 printed over 4
-reads as a `--var` that outlived its template -
-
-on the template, or on the workspace, whose copy sits in the Coder database and is out of
-reach from inside the container.
+reads as a `--var` that outlived its template - on the template, or on the workspace,
+whose copy sits in the Coder database and is out of reach from inside the container.
 
 ### Reading a rendered profile
 
@@ -929,10 +927,9 @@ It prints one verdict per workspace so the few still rendering a width under the
 surface in one command instead of one visit each.
 
 That read is one `docker ps -a` on the `coder.workspace_id` label, then a read-only `cat`
-of each running container's own rendered profile through `docker exec --`:
-
-Like `//scripts:branch-hygiene` the sweep starts nothing, stops nothing, rewrites nothing,
-and runs no `coder` command, and it needs the docker CLI and `timeout(1)` on that host.
+of each running container's own rendered profile through `docker exec --`: like
+`//scripts:branch-hygiene` the sweep starts nothing, stops nothing, rewrites nothing, and
+runs no `coder` command, and it needs the docker CLI and `timeout(1)` on that host.
 
 A row the daemon listed that the sweep could not judge is counted and named in
 a closing `note:` rather than dropped in silence, and the DinD sidecar row is excluded from
@@ -988,10 +985,9 @@ into the Agents dropdown.
 
 Each degrades one step deeper than a pinned lane, hopping through the alias that bakes its
 own level before Arc - `agent-explore` -> `agent-low` -> `coder`, `agent-review` ->
-`agent-xhigh` -> `coder` (`litellm/config.yaml:882-883`) -
-
-A parent that dispatched a mapper at `low` gets a `low` answer from the fallback rather
-than an `xhigh` it did not ask for.
+`agent-xhigh` -> `coder` (`litellm/config.yaml:882-883`) - so a parent that dispatched a
+mapper at `low` gets a `low` answer from the fallback rather than an `xhigh` it did not ask
+for.
 
 ### The two fast compaction aliases
 
@@ -1002,11 +998,9 @@ differs is where one call of the conversation is answered.
 
 The Grok Build CLI has no compaction-model key, so the summary it asks for when a
 session nears its context window rides the session model and inherits that model's
-thinking level:
-
-A long session's summary is Qwen3.8-Flash-Next answering at `xhigh`, measured at 107 s to
-1915 s, with 18 of the 36 sampled successes running past the CLI's 300 s wall-clock
-budget.
+thinking level: a long session's summary is Qwen3.8-Flash-Next answering at `xhigh`,
+measured at 107 s to 1915 s, with 18 of the 36 sampled successes running past the CLI's
+300 s wall-clock budget.
 
 #### Why the summary call moves
 
@@ -1331,14 +1325,12 @@ Details, including how to reset it: [docs/dashboard.md](docs/dashboard.md).
 
 ## Homepage dashboard
 
-The [Homepage](https://gethomepage.dev) dashboard is the landing page:
-
-- a card per service with live status from each service's own API (Coder version,
-  LiteLLM health and alias count, Ollama version, SearXNG release and limiter state)
-- plus a header of boxed tiles - host CPU, memory, CPU temperature, disk, `eth0`
-  throughput - beside the clock (date and 24-hour time), local weather (open-meteo,
-  keyless) and a search box that asks the stack's own SearXNG, the same instance the
-  workspace agents and Hermes dial
+The [Homepage](https://gethomepage.dev) dashboard is the landing page: a card per
+service with live status from each service's own API (Coder version, LiteLLM health and
+alias count, Ollama version, SearXNG release and limiter state), plus a header of boxed
+tiles - host CPU, memory, CPU temperature, disk, `eth0` throughput - beside the clock
+(date and 24-hour time), local weather (open-meteo, keyless) and a search box that asks
+the stack's own SearXNG, the same instance the workspace agents and Hermes dial.
 
 With the observability bundle on, an **Observability** group adds five cards - Grafana,
 Prometheus and the three stores - each badged by its own health path over compose DNS.

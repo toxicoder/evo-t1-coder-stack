@@ -2541,9 +2541,7 @@ whose browser side is already gone.
 Fix: the seed keeps one pane per visible terminal, and both launchers sweep their own
 sessions for a client that has reported no activity past a 6 h grace before they read
 `session_attached` - `EVO_TMUX_STALE_AFTER` (seconds) moves the
-number.
-
-tmux 3.4 only lets you detach by the client's tty path
+number. tmux 3.4 only lets you detach by the client's tty path
 (`detach-client -t /dev/pts/N`): it refuses a pid with `can't find client` and
 has no `kill-client`.
 
@@ -2827,8 +2825,6 @@ bazelisk run //scripts:github-auth -- fix [container] [repo-url]
 
 #### The verdicts, and what each one costs you
 
-- The verdicts, and what each one costs you:
-
 - `PUSH-READY` (200 advertising refs): a push would negotiate. If the push still fails,
   the credential is not the failing thing.
 - `REFUSED-GRANT` (403): that credential authenticates and every write to the repo is
@@ -2874,9 +2870,7 @@ bazelisk run //scripts:github-auth -- fix [container] [repo-url]
   about the scheme. `api.github.com` and `gh` accept `Authorization: Bearer <token>`. The
   git data endpoint refuses it: one token answered `/user` with `200` and
   `<repo>.git/info/refs?service=git-receive-pack` with `401` plus
-  `remote: invalid credentials` while the token rode a bearer header.
-
-  git has to send it
+  `remote: invalid credentials` while the token rode a bearer header. git has to send it
   as **Basic** auth with the token as the password.
 
   The username text is not checked

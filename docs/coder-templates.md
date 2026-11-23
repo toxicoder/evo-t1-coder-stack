@@ -1344,9 +1344,7 @@ is doomed either way.
 #### What makes the step safe
 
 What makes the step safe is that it destroys nothing it cannot prove. Neither of its two
-checks establishes that a writer is gone.
-
-vim writes the swap once about four seconds after
+checks establishes that a writer is gone. vim writes the swap once about four seconds after
 a change and then stays quiet while you read, so a live session idling over the file looks
 like a crashed one; and each workspace runs in its own PID namespace, so the `/proc` scan
 sees this container's descriptors only, which leaves a sibling workspace holding the same
