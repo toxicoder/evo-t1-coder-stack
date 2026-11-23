@@ -91,28 +91,29 @@ every container stays up:
   - Alertmanager itself at `alertmanager:9093`
   - the Spark jobs that reach `blackbox_exporter:9115` as their prober
 
-  Fifteen jobs in all. The LiteLLM
-  scrape carries a bearer token, so the metrics stay behind `LITELLM_MASTER_KEY` the way
-  every other LiteLLM endpoint is.
+Fifteen jobs in all. The LiteLLM
+scrape carries a bearer token, so the metrics stay behind `LITELLM_MASTER_KEY` the way
+every other LiteLLM endpoint is.
 
-  Measured on the pinned v3.16.0: `$VAR` and `${VAR}`
-  under `global.external_labels` come back filled in at `/api/v1/status/config`, where
-  `$(VAR)` stays literal, and a scrape target address and `authorization.credentials`
-  expand nothing at all - `$(VAR)`, `${VAR}` and `$VAR` in the latter each reached a
-  listener that logs its request headers verbatim - so the key cannot travel that way,
-  and it arrives as a file instead.
+Measured on the pinned v3.16.0: `$VAR` and `${VAR}`
+under `global.external_labels` come back filled in at `/api/v1/status/config`, where
+`$(VAR)` stays literal, and a scrape target address and `authorization.credentials`
+expand nothing at all - `$(VAR)`, `${VAR}` and `$VAR` in the latter each reached a
+listener that logs its request headers verbatim - so the key cannot travel that way,
+and it arrives as a file instead.
 
-  Compose renders `configs.litellm_metrics_token` into
-  `/etc/prometheus-secrets/litellm_token` in the container (`docker-compose.yml:839-841`,
-  `:1452`), and the `litellm` job presents that file through
-  `authorization.credentials_file` (`observability/prometheus/prometheus.yml:126-129`).
+Compose renders `configs.litellm_metrics_token` into
+`/etc/prometheus-secrets/litellm_token` in the container (`docker-compose.yml:839-841`,
+`:1452`), and the `litellm` job presents that file through
+`authorization.credentials_file` (`observability/prometheus/prometheus.yml:126-129`).
 
-  The config's `content:` interpolates the very same
-  `${LITELLM_MASTER_KEY:-change-me-litellm}` the proxy boots with
-  (`docker-compose.yml:1459`), so with no dotenv both ends land on the shipped
-  placeholder and the scrape works, and the fault an operator actually meets is the two
-  ends disagreeing: rotate the key without recreating `prometheus` and the file still
-  holds the old one.
+The config's `content:` interpolates the very same
+`${LITELLM_MASTER_KEY:-change-me-litellm}` the proxy boots with
+(`docker-compose.yml:1459`), so with no dotenv both ends land on the shipped
+placeholder and the scrape works, and the fault an operator actually meets is the two
+ends disagreeing: rotate the key without recreating `prometheus` and the file still
+holds the old one.
+
 - **The apps with no `/metrics` are observed by logs alone, on purpose.** These publish
   no Prometheus endpoint, so scraping them would leave a target answering 404 forever
   and a tally no one trusts:

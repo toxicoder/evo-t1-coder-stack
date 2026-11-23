@@ -28,10 +28,13 @@ You are the parent orchestrator. Default to fan-out / fan-in for multi-file work
   anything done. It re-runs the producer's own `done:` command instead of reading the
   producer's report, and it reports each claim kept or broken with `path:line`.
 
-  That reviewer is a panel, not one task: dispatch the three default angles together in one
-  turn - requirements (every acceptance check kept or broken), proof (the `done:` commands
-  re-run), adversary (breaks it: regressions, edge states, flag-off paths) - each on
-  `agent-review`, each owning no file, each allowed up to 3 read-only mappers of its own.
+  - That reviewer is a panel, not one task: dispatch the three default angles together in one
+    turn, each on `agent-review`, each owning no file, each allowed up to 3 read-only mappers
+    of its own:
+
+    - requirements (every acceptance check kept or broken)
+    - proof (the `done:` commands re-run)
+    - adversary (breaks it: regressions, edge states, flag-off paths)
 
   A delegated result is a claim, and a review that trusts the claim rather than the artifact
   is not a review. `skeptical-review` is the skill for a one-off check;

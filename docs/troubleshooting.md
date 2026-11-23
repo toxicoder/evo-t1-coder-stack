@@ -1959,11 +1959,11 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
   `warning: coder-alice-evo is stopped (exited) - its profile is unreachable and its width
   comes from the stored parameter`.
 
-  That warning is the whole of what a stopped workspace
+  - That warning is the whole of what a stopped workspace
   gets: no `note:` remedy line follows it, and under `--json` that workspace's `remedy` is
   `null`, because the sweep has read no number to fill the command with.
 
-  What clears a
+  - What clears a
   width that has sat stale for weeks is the same update every other offender takes,
   `coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=<n>`, and you
   compose that line yourself - `<n>` is the width you want that workspace to boot with, the
@@ -1971,7 +1971,7 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
   number nor the `# fleet-width:` beside it is readable through a stopped container.
   Start it and the next sweep reads the profile and prints the line for you.
 
-  A running container that carries no `coder.owner` label is the other case where the sweep
+  - A running container that carries no `coder.owner` label is the other case where the sweep
   hands you the command: `coder update /<workspace> --parameter ...` is not a target, and a
   command that cannot run is worse than none, so it prints the flag it knows and leaves the
   target to you, and the JSON channel carries `"remedy":null` for the same reason:
@@ -2610,17 +2610,17 @@ coder restart <workspace>
   attached client that stops draining its pty is never dropped (measured here:
   one stayed attached past 15 minutes while the server kept serving commands).
 
-  The only "too far behind" disconnect is in control mode, behind a hardcoded
+  - The only "too far behind" disconnect is in control mode, behind a hardcoded
   300 s age in `control.c`, which a VS Code tab never uses.
 
-  [microsoft/vscode#327437](https://github.com/microsoft/vscode/issues/327437)
+  - [microsoft/vscode#327437](https://github.com/microsoft/vscode/issues/327437)
   is open (a heap snapshot showed ~38 live terminals holding ~80 MB of a 484 MB
   renderer heap) and
   [coder/code-server#6413](https://github.com/coder/code-server/discussions/6413)
   reports browser-tab RAM reaching several GB with a continuous-output terminal
   left running after the tab is closed; neither has a maintainer mitigation.
 
-  Closing the tab is the mitigation, and the numbered sessions are what make the
+  - Closing the tab is the mitigation, and the numbered sessions are what make the
   live set match the tabs you can see.
 
 ### GitHub token expired, or the workspace has no GitHub account -> GitHub reauth
@@ -3422,32 +3422,32 @@ curl -s http://127.0.0.1:9090/api/v1/targets
   (`observability/prometheus/prometheus.yml`), which Compose writes from
   `LITELLM_MASTER_KEY` when it creates the container.
 
-  Measured on v3.16.0, the collector
+  - Measured on v3.16.0, the collector
   expands environment variables under `global.external_labels` - they come back filled
   in at `/api/v1/status/config` - and nowhere a credential could hide: a scrape target
   address and an `authorization` block send the written text back verbatim, so a value
   it could not substitute is rejected.
 
-  That file is the one credential in the bundle a rotate can strand, and it
+  - That file is the one credential in the bundle a rotate can strand, and it
   behaves the opposite way from the bind mounts above: it is a Compose `configs` entry,
   and Compose writes those when it *creates* the container.
 
-  Measured with the compose
+  - Measured with the compose
   this repo ships, `up -d` after a rotate prints `Running`, keeps the same container and
   the same `com.docker.compose.config-hash`, and the file inside still holds the old key;
   a `restart` matches it.
 
-  The recreate that works names the service -
+  - The recreate that works names the service -
   `docker compose -p evo-t1-prod --profile observability -f docker-compose.yml up -d
   --force-recreate prometheus`, the invocation `prod-stack` itself prints with the
   recreate added, since `prod-stack up` passes no flags through.
 
-  The response body names the fault: LiteLLM answers a
+  - The response body names the fault: LiteLLM answers a
   missing bearer with "Malformed API Key passed in", and a wrong one with
   `No connected db.` - which is an auth failure at v1.102.1, not a database complaint
   (this bundle runs LiteLLM with no DB at all).
 
-  `bazelisk run //scripts:observability-check`
+  - `bazelisk run //scripts:observability-check`
   prints that target's `lastError`, so it names the 401 without a `docker logs` read.
 
 ### Grafana's dashboard page logs a quotas `501` and `skipping rendering` -> two separate upstream lines, one of them closed here
@@ -3467,17 +3467,17 @@ them means anything.
   Grafana's own default - `{"usage":0,"limit":1000}` for both dashboards and folders on
   `grafana/grafana:13.3.1`.
 
-  No cap is known to take effect there: four plausible shapes
+  - No cap is known to take effect there: four plausible shapes
   written under `overrides:` left that 1000 untouched, and three other shapes stop the
   container at boot, so the file's own header says to prove a limit on the pinned image
   before committing one.
 
-  If the `501` is back, the bind or the variable went missing -
+  - If the `501` is back, the bind or the variable went missing -
   and the knob cuts both ways: pointed at a path that is not there, Grafana does not
   fall back to the 501, it exits 1 with `Error: overrides file does not exist`
   (measured on 13.3.1), and `restart: unless-stopped` loops it.
 
-  A missing bind source
+  - A missing bind source
   makes that shape on its own, since Docker mounts a directory where the file should
   be, so a checkout that never got `observability/grafana/unified-storage/overrides.yml`
   costs the whole dashboard rather than one console line.

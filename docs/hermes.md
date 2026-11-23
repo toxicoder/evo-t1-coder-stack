@@ -91,19 +91,19 @@ Related:
   process, and approval prompts render as cards in the chat rather than vanishing into
   a detached tty.
 
-  Hermes sends a keepalive every 20 seconds. Traefik and Authelia have to pass the
-  `Upgrade` hop. A close code **4403** is the Host / Origin / peer guard.
+  - Hermes sends a keepalive every 20 seconds. Traefik and Authelia have to pass the
+    `Upgrade` hop. A close code **4403** is the Host / Origin / peer guard.
 
-  Compose sets `HERMES_DASHBOARD_PUBLIC_URL` from `STACK_HERMES_URL` (the seed file
-  does not carry `public_url`). The seeded `dashboard.trusted_proxies` is
-  `["172.16.0.0/12"]`, which is what makes Hermes honour `X-Forwarded-Proto` from the
-  router (the Secure cookie and `wss`).
+  - Compose sets `HERMES_DASHBOARD_PUBLIC_URL` from `STACK_HERMES_URL` (the seed file
+    does not carry `public_url`). The seeded `dashboard.trusted_proxies` is
+    `["172.16.0.0/12"]`, which is what makes Hermes honour `X-Forwarded-Proto` from the
+    router (the Secure cookie and `wss`).
 
-  `HERMES_DASHBOARD_PUBLIC_URL` is environment and applies when the container is
-  recreated.
+  - `HERMES_DASHBOARD_PUBLIC_URL` is environment and applies when the container is
+    recreated.
 
-  An existing `hermes-data` volume does not pick up `trusted_proxies` until a reseed or
-  `hermes config set` - the volume seed is copy-once. The reseed command is below.
+  - An existing `hermes-data` volume does not pick up `trusted_proxies` until a reseed or
+    `hermes config set` - the volume seed is copy-once. The reseed command is below.
 
 ### The Homepage card
 
@@ -478,15 +478,15 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
 - The Arc's own weights also ship as named rows beside that catalogue - `arc-chat`,
   `arc-coder` and `arc-coder-fast` - each pointing at the same LiteLLM door.
 
-  The picker does not show them beside it: Hermes folds rows that share an endpoint,
-  credential and wire protocol into one group, so a single `litellm` entry lists
-  every alias those rows declare, and the Arc rows stay reachable as `--provider`
-  routes and as a typed `/model <alias>`.
+  - The picker does not show them beside it: Hermes folds rows that share an endpoint,
+    credential and wire protocol into one group, so a single `litellm` entry lists
+    every alias those rows declare, and the Arc rows stay reachable as `--provider`
+    routes and as a typed `/model <alias>`.
 
-  Each row's `default_model` is its weight's one declaration, and that declaration is
-  what makes `/model chat` routable: two rows declaring the same id makes `switch_model`
-  refuse the name outright, so `chat`, `coder` and `coder-fast` are declared only by
-  their Arc rows.
+  - Each row's `default_model` is its weight's one declaration, and that declaration is
+    what makes `/model chat` routable: two rows declaring the same id makes `switch_model`
+    refuse the name outright, so `chat`, `coder` and `coder-fast` are declared only by
+    their Arc rows.
 
   These are the route verbs, and `arc-chat` is the row to route through when a session
   wants the Arc's tool-capable model:
@@ -496,14 +496,14 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   hermes config set model.provider arc-chat   # make that row the default
   ```
 
-  `hermes --provider arc-chat` does not need the model named beside it - it sends
-  `chat` on its own, and `-m <alias>` is there only to send something else through
-  that row. A run that names no flag is untouched by any of this, so the default stays
-  `agent` and a healthy Spark box behaves exactly as before.
+  - `hermes --provider arc-chat` does not need the model named beside it - it sends
+    `chat` on its own, and `-m <alias>` is there only to send something else through
+    that row. A run that names no flag is untouched by any of this, so the default stays
+    `agent` and a healthy Spark box behaves exactly as before.
 
-  The rows go through LiteLLM rather than `http://ollama:11434` because the proxy is
-  the stack's sole model transport, it is where the aliases and the Arc's context
-  window are defined, and 11434 is deliberately unpublished.
+  - The rows go through LiteLLM rather than `http://ollama:11434` because the proxy is
+    the stack's sole model transport, it is where the aliases and the Arc's context
+    window are defined, and 11434 is deliberately unpublished.
 
 ### What the picker hides
 
