@@ -28,15 +28,17 @@ Deep, symptom-first list. The operational `dev-stack`/`prod-stack`, `search-chec
 Each fence below is one copy-paste action. A heading quotes the error string where there
 is one, so start with `grep -n` on the text you saw.
 
-Placeholders: `<wsid>` is a workspace id and `<ws>` a workspace name. The workspace
-container is `coder-<owner>-<ws>` (so `coder-alx-self-coder`); the `<wsid>` form names
-the DinD pieces around it - the sidecar `coder-<wsid>-dind-sidecar`, on the network
-`coder-<wsid>-dind`, with its own `coder-<wsid>-dind-lib` volume. What runs "from the
-stack host" needs a shell there: inside a workspace `docker` addresses that workspace's
-own private daemon through `DOCKER_HOST=tcp://dind:2375`, so a `docker inspect` aimed at
-the stack's `coder` or `router` container and run from inside a workspace queries the
-wrong daemon and answers `no such container`. `bazelisk run //scripts:...` also runs
-from the checkout.
+Placeholders:
+
+- `<wsid>` is a workspace id and `<ws>` a workspace name.
+- The workspace container is `coder-<owner>-<ws>` (so `coder-alx-self-coder`); the
+  `<wsid>` form names the DinD pieces around it - the sidecar `coder-<wsid>-dind-sidecar`,
+  on the network `coder-<wsid>-dind`, with its own `coder-<wsid>-dind-lib` volume.
+- What runs "from the stack host" needs a shell there: inside a workspace `docker`
+  addresses that workspace's own private daemon through `DOCKER_HOST=tcp://dind:2375`, so
+  a `docker inspect` aimed at the stack's `coder` or `router` container and run from
+  inside a workspace queries the wrong daemon and answers `no such container`.
+- `bazelisk run //scripts:...` also runs from the checkout.
 
 ## Stack bring-up
 
@@ -44,9 +46,10 @@ from the checkout.
 
 Cause: `docker compose` resolved `./proxy/homepage.conf` (or another file bind
 mount) next to a compose file that did not have that file. Under `bazelisk run`
-that file used to be the runfiles copy, which only holds `//:stack_data`. Docker
-then created a directory at the source path and failed mounting it onto nginx's
-`/etc/nginx/conf.d/default.conf`, which is a file in the image.
+that file used to be the runfiles copy, which only holds `//:stack_data`.
+
+Docker then created a directory at the source path and failed mounting it onto
+nginx's `/etc/nginx/conf.d/default.conf`, which is a file in the image.
 
 Fix: `homepage/**` and `proxy/*.conf` belong in `//:stack_data`, and the stack
 runners prefer `BUILD_WORKSPACE_DIRECTORY` (the real checkout) so relative
@@ -70,7 +73,9 @@ the stack script starts; that spelling is the next heading.
 Cause: an older `bazelisk run` used the runfiles copy of `docker-compose.yml`, so
 compose mounted `./homepage/assets/icons` from `bazel-out`. Docker then created a
 directory where `evo-t1.svg` belongs, or the homepage container chowned those
-files to root. Bazel cannot recreate `prod-stack.runfiles` over that leftover,
+files to root.
+
+Bazel cannot recreate `prod-stack.runfiles` over that leftover,
 and the stack script never starts, so a repair inside `prod-stack` cannot help.
 
 Fix: recover from a shell, then re-run. `--repair` uses sudo when chmod is not
@@ -91,17 +96,24 @@ host tools. `bash scripts/setup-host.sh --check` lists leftover paths without wr
 Cause: an older target ran the runfiles copy of the script, so `$(dirname "$0")/..`
 was the runfiles tree, and that tree ships only `//:stack_data`. The working `.env`
 is untracked, so it exists only in the checkout, and the rotation reported a missing
-file on a host that had one. The path in the message tells the two apart: a
-`bazel-out/.../dashboard-password.runfiles/...` path is this entry. The same bug had
-`pull-models` pulling its default list instead of the checkout's `OLLAMA_MODELS`,
-`coder-agents` provisioning the compose placeholder `LITELLM_MASTER_KEY` instead of the
-checkout's, and `spark-configure` / `spark-verify` writing `sparks/` output into a tree
-Bazel recreates.
+file on a host that had one.
+
+The path in the message tells the two apart: a
+`bazel-out/.../dashboard-password.runfiles/...` path is this entry.
+
+The same bug had:
+
+- `pull-models` pulling its default list instead of the checkout's `OLLAMA_MODELS`,
+- `coder-agents` provisioning the compose placeholder `LITELLM_MASTER_KEY` instead of the
+  checkout's,
+- and `spark-configure` / `spark-verify` writing `sparks/` output into a tree Bazel
+  recreates.
 
 Fix: those six CLIs (`dashboard-password`, `pull-models`, `coder-agents`,
 `spark-verify`, `spark-configure`, `build-dev-image`) resolve the checkout with
 `resolve_checkout` (`scripts/lib/common.sh`) before they read or write anything, so
 they honour `REPO_ROOT` and the `BUILD_WORKSPACE_DIRECTORY` that `bazel run` names.
+
 When nothing proves out - no candidate holds `docker-compose.yml` outside a
 `bazel-out/`, `bazel-bin/`, `execroot/`, or `*.runfiles` tree - the run exits `5` with one
 `error: unresolvable repo root: ...` line instead of half-running against a copy. Re-run
@@ -112,21 +124,28 @@ bazelisk run //scripts:dashboard-password
 ```
 
 The `first boot? run bazelisk run //scripts:bootstrap to create it` hint alongside it
-means the checkout has no `.env` at all: that is the bootstrap path. `DASHBOARD_ENV_FILE`
-points the rotation at another file and exists for test harnesses; there is deliberately
-no flag for it, because a flag that names a file this CLI overwrites is one mistype away.
+means the checkout has no `.env` at all: that is the bootstrap path.
+
+`DASHBOARD_ENV_FILE` points the rotation at another file and exists for test harnesses;
+there is deliberately no flag for it, because a flag that names a file this CLI
+overwrites is one mistype away.
 
 ### `Could not resolve host: github.com` -> Tailscale MagicDNS is the only nameserver
 
 Cause: `/etc/resolv.conf` names only Tailscale MagicDNS (`100.100.100.100`).
 Docker's iptables, and Kasm's privileged nested dockerd, can make that stub
-unreachable. When it is, **every** lookup dies, including `github.com`, so
+unreachable.
+
+When it is, **every** lookup dies, including `github.com`, so
 `git pull` over HTTPS fails. This is host DNS, not GitHub auth.
 
-On Linux, `bash scripts/setup-host.sh --repair` writes
-`/etc/systemd/resolved.conf.d/evo-t1-public-dns.conf` (`DNS=1.1.1.1 8.8.8.8`),
-runs `sudo tailscale set --accept-dns=false`, and keeps MagicDNS for `ts.net`
-via `resolvectl` split-DNS. `--check` still writes nothing.
+On Linux, `bash scripts/setup-host.sh --repair`:
+
+- writes `/etc/systemd/resolved.conf.d/evo-t1-public-dns.conf` (`DNS=1.1.1.1 8.8.8.8`),
+- runs `sudo tailscale set --accept-dns=false`,
+- and keeps MagicDNS for `ts.net` via `resolvectl` split-DNS.
+
+`--check` still writes nothing.
 
 A checkout that does not yet contain that `--repair` (the usual case: `git pull`
 is already failing) needs the same commands by hand, then pull:
@@ -141,11 +160,13 @@ bash scripts/setup-host.sh --repair
 ```
 
 `--check` prints which nameservers are in play and whether `github.com` resolves.
+
 Other ways to keep a public resolver: add `1.1.1.1` / `8.8.8.8` as a global
 nameserver in the Tailscale admin DNS page.
 
 The same MagicDNS-only resolver is what makes Terraform inside the `coder`
 container SERVFAIL `registry.terraform.io` (`127.0.0.11:53: server misbehaving`).
+
 That spelling lives under "Terraform and the host `coder` CLI" below. Compose
 pins public resolvers on `coder` so a template push does not wait on this host
 fix.
@@ -163,15 +184,17 @@ single pull:
 OLLAMA_MODELS=qwen2.5-coder:32b qwen2.5-coder:14b
 ```
 
-The word the shell says it cannot find is the second tag. The same read would
-also have executed anything written on a line of its own in that file, and it
-exported every other key there (`LITELLM_MASTER_KEY` included) into the
+The word the shell says it cannot find is the second tag.
+
+The same read would also have executed anything written on a line of its own in that
+file, and it exported every other key there (`LITELLM_MASTER_KEY` included) into the
 environment of the `docker exec` calls.
 
 Fix: the target now reads the one key it needs through `env_get`
 (`scripts/lib/common.sh`), which takes the line as text. Quoted and unquoted
-values behave the same, and nothing else in `.env` reaches the pull. A value
-that is not a model tag - a stray `;`, a leftover quote, a trailing comment - is
+values behave the same, and nothing else in `.env` reaches the pull.
+
+A value that is not a model tag - a stray `;`, a leftover quote, a trailing comment - is
 refused by name before the daemon is asked and before any of the ~35 GB
 download starts:
 
@@ -208,6 +231,8 @@ bazelisk run //scripts:dev-stack -- logs --tail 200 ollama
 Cause: no Spark box was reachable, so the Arc answered, and the Arc path returns tool
 calls as plain text.
 
+#### Prove which backend answered
+
 - Look at the dashboard's **Agent backend** card first: its per-box widgets go to error
   state while `agent` still answers.
 - Probe that endpoint. The card reads the same URL: `AGENT_MODEL_URL` from `.env` when
@@ -230,13 +255,17 @@ bazelisk run //scripts:spark-verify -- --no-tests
   `SPARKn_HOST` keys in `.env`, then the host part of `SPARKn_OPENAI_URL` - in that
   order, which is why the default run needs no arguments. With none of them set it
   falls back to the placeholders `.env.sample` ships, `spark-1.lan spark-2.lan
-  spark-3.lan`, which do not resolve. Export `SPARK_HOSTS="host1 host2 ..."` only to
-  check a fleet that `.env` does not name. A `SPARKn_OLLAMA_URL` left over in `.env`
-  from the era when a Spark box served Ollama is no longer read, so the box it names is
-  simply absent from the fleet; the run reports that itself with a `warning:` line that
-  names the key and the host, and the fix is to name the box with `SPARKn_HOST` or
-  `SPARKn_OPENAI_URL`, or drop the key. A host that does not answer is a skip, not a
-  failure.
+  spark-3.lan`, which do not resolve.
+
+  - Export `SPARK_HOSTS="host1 host2 ..."` only to check a fleet that `.env` does not
+    name.
+  - A `SPARKn_OLLAMA_URL` left over in `.env` from the era when a Spark box served Ollama
+    is no longer read, so the box it names is simply absent from the fleet; the run
+    reports that itself with a `warning:` line that names the key and the host, and the
+    fix is to name the box with `SPARKn_HOST` or `SPARKn_OPENAI_URL`, or drop the key.
+  - A host that does not answer is a skip, not a failure.
+
+#### Pick a fix
 
 Fix, one of these:
 
@@ -265,8 +294,11 @@ docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
 ### The TensorFold log is full of warnings, or `resumed at 0` -> read the line shapes first
 
 The server on each Spark box logs four shapes, and three of them are this stack's own
-traffic rather than anything wrong with the box. Read the shape before you reach for
-the box.
+traffic rather than anything wrong with the box.
+
+Read the shape before you reach for the box.
+
+#### The four line shapes
 
 - `[tensorfold] done chatcmpl-... prompt=58 ... effort=xhigh tokens=16 finish=length`
   followed by `warning: a reply reached max_tokens while still thinking, so its content
@@ -289,34 +321,39 @@ the box.
   abandoned on its own probe budget; a huge prompt abandoned at around 400 s is a
   client with its own timeout, and it re-prefills from zero if it retries.
 
+#### What evicts the prompt cache on this box
+
 Two things on this stack cause the evictions, and both are tuned here rather than on the
 box:
 
 - Probe cadence. `health_check_interval`, `health_check_concurrency` and
   `health_check_staleness_threshold` in `litellm/config.yaml` decide how often every
   Spark deployment gets a real generation, and they ship at `120`, `2`, and `900` --
-  where the interval used to sit at LiteLLM's own default of 300 s. 120 s is the floor
-  the measurement allows, not a taste: at 30 s across five deployments a round was
-  putting more probes on a box than user requests, and each one took a prompt-cache
-  state from a conversation. A probe is a real completion -- the deployment's whole
-  `litellm_params` through `acompletion` at the default `health_check_max_tokens` of 16
-  -- and the four probes queued behind a long turn were dropped by the proxy's own
-  health-check timeout at about 81 s, which is the same `reason=client-left` shape as the
-  line above. The cap itself is 60 s (`HEALTH_CHECK_TIMEOUT_SECONDS`,
-  `constants.py:1557`), read per deployment (`health_check.py:530`), so the queue in
-  front of the probe is the plain reading of the gap between that cap and the 81 s the
-  log shows - the drop time is what was seen, the queue is inference.
-  A box merely busy enough to stall a 16-token probe past that drop is what keeps the
-  floor here: `health_check_ignore_transient_errors: true` is what now stops one slow
-  408 or 429 probe from also pulling that box off the fleet for a cycle
-  (`proxy_server.py:3971-3974`, `:4002-4006`), but the probes still cost a
-  prompt-cache state each, so nothing goes lower. Read the period as one sweep *plus*
-  the interval, not as the interval: the loop sleeps after a sweep finishes, and a
-  sweep is the 27 deployments that did not opt out through the concurrency-2 gate. If
-  the warnings come back every few seconds, that interval is the first key to look
-  at. What the filter those probes feed actually excludes, and what to check when it
-  stops excluding, is under `A Spark box is powered off and still getting traffic`
-  below.
+  where the interval used to sit at LiteLLM's own default of 300 s.
+
+  - 120 s is the floor the measurement allows, not a taste: at 30 s across five
+    deployments a round was putting more probes on a box than user requests, and each one
+    took a prompt-cache state from a conversation.
+  - A probe is a real completion -- the deployment's whole `litellm_params` through
+    `acompletion` at the default `health_check_max_tokens` of 16 -- and the four probes
+    queued behind a long turn were dropped by the proxy's own health-check timeout at
+    about 81 s, which is the same `reason=client-left` shape as the line above.
+  - The cap itself is 60 s (`HEALTH_CHECK_TIMEOUT_SECONDS`, `constants.py:1557`), read per
+    deployment (`health_check.py:530`), so the queue in front of the probe is the plain
+    reading of the gap between that cap and the 81 s the log shows - the drop time is what
+    was seen, the queue is inference.
+  - A box merely busy enough to stall a 16-token probe past that drop is what keeps the
+    floor here: `health_check_ignore_transient_errors: true` is what now stops one slow
+    408 or 429 probe from also pulling that box off the fleet for a cycle
+    (`proxy_server.py:3971-3974`, `:4002-4006`), but the probes still cost a
+    prompt-cache state each, so nothing goes lower.
+  - Read the period as one sweep *plus* the interval, not as the interval: the loop sleeps
+    after a sweep finishes, and a sweep is the 27 deployments that did not opt out through
+    the concurrency-2 gate. If the warnings come back every few seconds, that interval is
+    the first key to look at.
+  - What the filter those probes feed actually excludes, and what to check when it stops
+    excluding, is under `A Spark box is powered off and still getting traffic`
+    below.
 
 - The 195k needle. `//scripts:spark-verify` runs the recipe's `needle.py --length 195000`
   as the window proof, and a 195k prompt the server has never seen is the largest single
@@ -331,29 +368,48 @@ bazelisk run //scripts:spark-verify -- --needle 10.0.0.5   # force it: the box g
   The window is still read passively on every run without the needle, from the server's
   own startup lines (`context_pairs` and `startup_estimate` in the report), so a box
   quietly rebuilt with a shorter window is still visible; the needle is the active
-  confirmation of it. `--no-tests` skips all four recipe probes for a quick read-only
+  confirmation of it.
+
+  `--no-tests` skips all four recipe probes for a quick read-only
   pass, and that is what `//scripts:bootstrap` runs.
 
 ### A Spark box is powered off and still getting traffic -> cooldown cannot see a refused connection, the health filter can
 
+#### Why a cooldown cannot fire here
+
 Cause: the exclusion people reach for for this is the one that cannot fire on the failure
 a down box actually raises. `_is_cooldown_required` returns False the moment the exception
 text contains `APIConnectionError` (`litellm/router_utils/cooldown_handlers.py:223`,
-`ignored_strings`), and a closed port, a dead engine process, and a TensorFold box that
-refuses with the status-less `NoRoom` value all surface as that exception. So no
-`allowed_fails` number and no `cooldown_time` cools a box that is simply gone -- which is
-why `litellm/config.yaml` ships no `allowed_fails` key at all, and why `cooldown_time: 60`
-is there for the other failure: a box that answers HTTP and returns real 5xx.
+`ignored_strings`).
 
-Say which half of this entry is measured. The half that is: with
+All three of these surface as that exception:
+
+- a closed port,
+- a dead engine process,
+- and a TensorFold box that refuses with the status-less `NoRoom` value.
+
+So no `allowed_fails` number and no `cooldown_time` cools a box that is simply gone --
+which is why `litellm/config.yaml` ships no `allowed_fails` key at all, and why
+`cooldown_time: 60` is there for the other failure: a box that answers HTTP and returns
+real 5xx.
+
+#### What is measured here, and what is read from code
+
+Say which half of this entry is measured.
+
+The half that is: with
 `enable_health_check_routing: true` a box that answered HTTP 500 to client traffic
 received zero client requests in the sample window, against several with the flag
 removed and `allowed_fails: 40` / `cooldown_time: 5` restored - zero against
 several, from a throwaway three-box harness that a reviewer re-ran with its own
-containers. The refused-connection half, which is what this entry is named for, is
+containers.
+
+The refused-connection half, which is what this entry is named for, is
 read out of the two code paths above rather than measured: the harness's
 `docker stop` phase cannot show anything, because a stopped container logs nothing
 in either arm.
+
+#### The health filter needs both halves running
 
 What pulls a down box out is the health filter, and it needs both halves of it running:
 
@@ -362,31 +418,41 @@ What pulls a down box out is the health filter, and it needs both halves of it r
   `router.py:14153`, and `async_get_available_deployment` (`router.py:13041`) hands
   least-busy the whole list.
 - A live probe loop: `background_health_checks: true` plus `health_check_interval` above
-  zero. An interval that is unset or 0 returns from the loop before it starts
-  (`proxy_server.py:4071`) and starves the state the filter reads. A router-wide
-  `allowed_fails_policy` with `background_health_check_model_groups` unset switches the
-  filter off a third time (`router.py:14161`), which is why no such policy sits in this
-  config.
+  zero.
+
+  - An interval that is unset or 0 returns from the loop before it starts
+    (`proxy_server.py:4071`) and starves the state the filter reads.
+  - A router-wide `allowed_fails_policy` with `background_health_check_model_groups`
+    unset switches the filter off a third time (`router.py:14161`), which is why no such
+    policy sits in this config.
+
+#### Why least-busy prefers the dead box
 
 That is also why the picker needed the filter at all. `least-busy` raises its in-flight
 counter before the call and gives it back on the failure hook, and `_least_busy` returns
 the FIRST deployment at the minimum (`router_strategy/least_busy.py:83`, `:120`, `:129`,
 `:143`), so a box that refuses everything sits at zero and an unfiltered least-busy
-prefers it over a healthy box. "Off but still getting traffic" is the expected shape of
+prefers it over a healthy box.
+
+"Off but still getting traffic" is the expected shape of
 routing with the filter off, not a bug to chase on the box.
+
+#### Confirm it in this order
 
 Confirm it in this order:
 
 - Who does the router hold right now? `GET /health` with the master key answers it, and
   because `background_health_checks: true` ships here the handler returns the cached
   probe results (`_health_endpoints.py:1218`) rather than firing a fresh generation at
-  every deployment -- an operator's read of this endpoint costs the fleet nothing. Each
-  entry carries `model_id`, which is the per-box deployment id the config names
-  (`agent-spark-1`, `agent-swarm-spark-2`, ...), plus `api_base` and
-  `exception_status`, and the payload totals them as `healthy_count` /
-  `unhealthy_count`. Narrow one box with `?model_id=agent-spark-2` or one lane with
-  `?model=agent-swarm`. On the stack host, with the `LITELLM_MASTER_KEY` the container
-  itself runs with:
+  every deployment -- an operator's read of this endpoint costs the fleet nothing.
+
+  - Each entry carries `model_id`, which is the per-box deployment id the config names
+    (`agent-spark-1`, `agent-swarm-spark-2`, ...), plus `api_base` and
+    `exception_status`, and the payload totals them as `healthy_count` /
+    `unhealthy_count`.
+  - Narrow one box with `?model_id=agent-spark-2` or one lane with `?model=agent-swarm`.
+
+  On the stack host, with the `LITELLM_MASTER_KEY` the container itself runs with:
 
 ```sh
 curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
@@ -396,12 +462,15 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
   A box you know is off sitting in `unhealthy_endpoints` while its two siblings are in
   `healthy_endpoints` is the filter doing its job. It in `healthy_endpoints` too is
   most often the loop not running -- read the two `general_settings` keys above before
-  you read the box. One innocent case is a restart or a redeploy of the proxy: no
-  Redis is configured for this proxy, so the marks live in one process
+  you read the box.
+
+  One innocent case is a restart or a redeploy of the proxy: no Redis is configured for
+  this proxy, so the marks live in one process
   (`router_utils/health_state_cache.py:32-36`) and every restart clears them until the
-  first sweep finishes, with nothing logged on the filter's fail-open exits. Right
-  after a deploy `healthy_endpoints` can list a box you know is off; read `/health`
-  again a cycle later before you conclude anything.
+  first sweep finishes, with nothing logged on the filter's fail-open exits.
+
+  Right after a deploy `healthy_endpoints` can list a box you know is off; read
+  `/health` again a cycle later before you conclude anything.
 
 - Is the process itself answering? `/health/liveliness` needs no key at all
   (`_health_endpoints.py:1938`), which is what the compose `healthcheck:` dials. `/health`
@@ -410,17 +479,21 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
 
 - Do not read the proxy log for this. The probe loop writes its own lines through
   `verbose_proxy_logger`, so the sweep and the cooldowns it takes are DEBUG-level and a
-  healthy-looking log proves nothing. The one line that does reach the default level is
-  `background_health_check_cycle_duration_exceeded_interval`
-  (`proxy_server.py:4212-4214`), a WARNING that fires when one sweep alone outruns
-  `health_check_interval` -- it appeared in a measurement run with the interval at 15
-  s. Nothing in this repo measures the sweep at the shipped 120 s, so read the line as
-  arithmetic rather than a settled all-clear: the sweep covers the 27 deployments that
-  did not opt out, pushed through the concurrency-2 gate, so roughly 14 sequential
-  rounds, and a mean probe over about 8 s crosses the interval. Treat it as a reason
-  to raise the interval, not to chase the box. What 120 s does buy is that cycles
-  cannot stack: the sleep sits after the sweep (`proxy_server.py:4234`) and
-  concurrency 2 is a hard cap.
+  healthy-looking log proves nothing.
+
+  - The one line that does reach the default level is
+    `background_health_check_cycle_duration_exceeded_interval`
+    (`proxy_server.py:4212-4214`), a WARNING that fires when one sweep alone outruns
+    `health_check_interval` -- it appeared in a measurement run with the interval at 15
+    s.
+  - Nothing in this repo measures the sweep at the shipped 120 s, so read the line as
+    arithmetic rather than a settled all-clear: the sweep covers the 27 deployments that
+    did not opt out, pushed through the concurrency-2 gate, so roughly 14 sequential
+    rounds, and a mean probe over about 8 s crosses the interval.
+  - Treat it as a reason to raise the interval, not to chase the box. What 120 s does buy
+    is that cycles cannot stack: the sleep sits after the sweep (`proxy_server.py:4234`)
+    and concurrency 2 is a hard cap.
+
   `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -i 'cycle_duration_exceeded'`
   is the grep worth typing; the loop's own lines need the proxy started with
   `--detailed_debug`.
@@ -432,18 +505,23 @@ curl -s -H "Authorization: Bearer $LITELLM_MASTER_KEY" \
 - Is the filter still believing its state, or has it failed open? It returns the whole
   candidate list when the state is missing, when it is older than
   `health_check_staleness_threshold`, or when filtering would leave nothing to route to.
-  That threshold is the fail-open window: at the shipped `900` s a deployment that drops
-  out of the probe list altogether -- renamed, or removed from the config while the proxy
-  keeps running -- is believed dead for at most 15 minutes and then takes traffic again.
-  The vendor default is 600 s whatever the interval says, because it is computed from a
-  constant (`router.py:993`), so the two keys move together or the filter fails open
-  before the next sweep.
 
-Then separate a sick proxy from a sick box, because each has its own fix. The `litellm`
-service carries a compose `healthcheck:` that dials the proxy's own unprotected
-`/health/liveliness` with the image's interpreter -- the image ships no `curl` and no
-`wget` -- every 30 s, with `retries: 3` and a `start_period: 60s` that covers the config
-import and the 31 deployments built before uvicorn binds:
+  - That threshold is the fail-open window: at the shipped `900` s a deployment that drops
+    out of the probe list altogether -- renamed, or removed from the config while the
+    proxy keeps running -- is believed dead for at most 15 minutes and then takes traffic
+    again.
+  - The vendor default is 600 s whatever the interval says, because it is computed from a
+    constant (`router.py:993`), so the two keys move together or the filter fails open
+    before the next sweep.
+
+#### Separate a sick proxy from a sick box
+
+Then separate a sick proxy from a sick box, because each has its own fix.
+
+The `litellm` service carries a compose `healthcheck:` that dials the proxy's own
+unprotected `/health/liveliness` with the image's interpreter -- the image ships no
+`curl` and no `wget` -- every 30 s, with `retries: 3` and a `start_period: 60s` that
+covers the config import and the 31 deployments built before uvicorn binds:
 
 ```sh
 bazelisk run //scripts:prod-stack -- status
@@ -460,21 +538,28 @@ docker inspect --format '{{.State.Health.Status}}' \
   a healthy condition and a probe that stops passing would hold the host assistant down
   with the proxy.
 - `ok:` liveliness answering `I'm alive!` with no container `unhealthy` anywhere means the
-  proxy is fine and the reads above are the ones to believe. A box that answers
-  `/v1/models` on its own port is still not a box the router will use, and that
-  distinction is what `//scripts:spark-verify` settles, from the stack host:
+  proxy is fine and the reads above are the ones to believe.
+
+  A box that answers `/v1/models` on its own port is still not a box the router will use,
+  and that distinction is what `//scripts:spark-verify` settles, from the stack host:
 
 ```sh
 bazelisk run //scripts:spark-verify -- 10.0.0.5
 ```
 
+#### Recovery
+
 Recovery needs no operator action once the box answers again: the next green probe
 overwrites the mark with `is_healthy: True` (`health_check.py:683`), and the same
 loop is what notices, so a box that comes back on its own is eligible again inside
-roughly one sweep plus `health_check_interval`. Eligible is the precise word: the
+roughly one sweep plus `health_check_interval`.
+
+Eligible is the precise word: the
 cooldown entry that same loop wrote for the box has to expire on its own
 (`cooldown_time`), and every failing cycle re-arms it, so the first turn back can
-still land on another box. What an operator does do is fix the box -- power,
+still land on another box.
+
+What an operator does do is fix the box -- power,
 the TensorFold server, `bazelisk run //scripts:spark-configure -- <host> --apply` -- or,
 when the container is the sick half, restart it so it re-reads the config:
 

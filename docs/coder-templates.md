@@ -50,6 +50,8 @@ Two templates live under `templates/`, and a push covers both.
 `template_push_one` stages every file in this list beside the staged `main.tf`; a
 missing one fails the push before the CLI runs.
 
+#### Boot identity: rulebook, icon, notes, and terminal
+
 - `GROK_BUILD_AGENTS.md` is the orchestration-protocol seed text that becomes every
   workspace's `~/.grok/AGENTS.md` (read with `file()`, chomped). It rides
   `coder_script.agents_seed` rather than the startup script, for the reason that section
@@ -76,6 +78,9 @@ missing one fails the push before the CLI runs.
   is the one execve that runs out of room: nothing at boot runs either script, the
   code-server terminal profile is their only consumer. Helpers use `$folder` (not
   `$${folder}`) because `file()` contents are not re-interpolated.
+
+#### The skill command seeds and the body that writes them
+
 - `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
   skill and instruction seeds (chomped `file()`).
 - `ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and `ez-create-skill.SKILL.md` are the
@@ -98,6 +103,9 @@ missing one fails the push before the CLI runs.
   rendered with `templatefile()` from the three `chomp(file())` entries `main.tf` passes it.
   It is absent-only and silent on a healthy workspace, because its log is what an operator
   reads when a skill is missing.
+
+#### The rulebook body and the repository-conversion family
+
 - `agents-seed.sh.tftpl` is the `coder_script "agents_seed"` body that writes
   `~/.grok/AGENTS.md` from `GROK_BUILD_AGENTS.md`. Marker-aware rather than absent-only: a
   copy still carrying the stack marker is rewritten on every start, and one whose marker
@@ -128,6 +136,9 @@ missing one fails the push before the CLI runs.
   more heredocs in the first one for the reason this whole file keeps repeating: each
   `coder_script.script` is its own `execve` argument with its own ceiling, and a family
   that ships helpers grows faster than one that ships a `SKILL.md` each.
+
+#### The advisor commands and their body
+
 - `documenter.SKILL.md`, `performance-optimizer.SKILL.md`, `debugger.SKILL.md` and
   `migrator.SKILL.md` are the stack's four advisor commands (`/documenter`,
   `/performance-optimizer`, `/debugger`, `/migrator`), `ez-code-index.SKILL.md` is the fifth
@@ -140,6 +151,9 @@ missing one fails the push before the CLI runs.
   `~/.agents/skills/<name>/`, with `documenter.md` written under `~/.grok/agents/` beside the
   skill that needs it so a start has the command and its role or has neither. Absent-only and
   silent on a healthy workspace, the way the two skill bodies above are.
+
+#### Hooks, the MCP cache proxy, token refresh, and the vault fetch
+
 - `hooks.evo-t1-hooks.json` is the hook manifest Grok Build reads at
   `~/.grok/hooks/evo-t1-hooks.json`, and five more files land under `hooks/bin/` beside it:
   the four handlers it names (`hooks.secret-guard.sh`, `hooks.dangerous-command-guard.sh`,
@@ -175,6 +189,9 @@ missing one fails the push before the CLI runs.
   key inventory and rotation - is [operate/secrets.md](operate/secrets.md); what the
   templates have to keep true about it is
   [The Infisical boot fetch](#the-infisical-boot-fetch).
+
+#### What the staged copy does to the template dir
+
 - Editing the common copy changes both templates; the staged copy overwrites any
   same-named file the template dir still carries.
 
@@ -240,16 +257,24 @@ The agent runs `coder_agent.startup_script`, and every `coder_script.script`, as
 `bash -c <body>`. The whole body therefore travels as **one** argument to `execve(2)`,
 and Linux caps a single argument at `MAX_ARG_STRLEN`, 32 pages = 131072 bytes. Measured
 on this host: an argument of 131071 bytes execs and one of 131072 fails with `E2BIG`.
-Past the wall the agent logs `fork/exec /bin/bash: argument list too long` with
-`exit_code=255` a few milliseconds in, the home directory never seeds, and the workspace
-banner reads "A startup script has failed". Coder puts no limit there and the plan
-reports no error, so the wall only announces itself on a live recreate.
+Past the wall:
+
+- the agent logs `fork/exec /bin/bash: argument list too long` with `exit_code=255` a few
+  milliseconds in,
+- the home directory never seeds,
+- the workspace banner reads "A startup script has failed".
+
+Coder puts no limit there and the plan reports no error, so the wall only announces
+itself on a live recreate.
+
+#### Which bytes make up the argument
 
 The size that matters is not `startup.sh.tftpl`. `main.tf` composes the body from that
 template plus every `templates/common/` payload it inlines, so any edit to the rulebook,
-the skills, the tmux config, the notes seeder, or the Grok config moves the number. That
-is how six commits crept from 104 KB to 130 KB and one documentation commit crossed the
-wall at 135 KB.
+the skills, the tmux config, the notes seeder, or the Grok config moves the number.
+
+That is how six commits crept from 104 KB to 130 KB and one documentation commit crossed
+the wall at 135 KB.
 
 Two things follow from the mechanism:
 
@@ -270,6 +295,8 @@ Two things follow from the mechanism:
   `execve(env, [env, bash, -c, body])`; the interpreter line is content inside the
   argument.
 
+#### How the push enforces the bound
+
 `startup_size_guard` in `scripts/push-template.sh` enforces this before the CLI runs,
 beside the icon and preset-description guards. It sums each body's composed bytes and
 refuses the push past `STARTUP_SIZE_BOUND` (122880, which leaves 8 KiB, about two
@@ -281,26 +308,38 @@ measuring something else goes red in review.
 The guard also says the number while it is still a warning: a body within
 `STARTUP_SIZE_WARN` (4096) of the bound prints its composed total and the bytes left,
 because the distance to the budget is what a reviewer needs and a hard failure only
-ever reports the crossing. Measured on 2026-11-06 with the byte algorithm in
-`tests/bats/startup-script-size.bats`: the widest body is now the devcontainer startup
-script at 115967 bytes, 6913 clear of the bound, with the workspace twin at 113767 and
-9113 clear. Before the trio moved out that same devcontainer body measured 122389 with
-only 491 clear, and `ez-learn.SKILL.md` plus its heredoc accounted for roughly 7 KB of
-it. The three payloads now travel in their own body, `coder_script.stack_skills`, which
-composes to 36847 bytes. Measured again on 2026-11-09 after the repository-conversion
-family landed: `coder_script.stack_repo_skills`, carrying three `SKILL.md` payloads and
-three python helpers, composes to 60336 bytes, 62544 clear of the bound, and neither
-startup twin moved. Measured again on 2026-11-14 after the family's fourth member
-landed: that same body now carries four `SKILL.md` payloads and four python helpers and
-composes to 91203 bytes, 31677 clear of the bound, and neither startup twin moved -
-which is the point of giving a payload family its own `coder_script` instead of feeding
-it to `startup_script`. Measured again on 2026-11-16 with the same reader
+ever reports the crossing.
+
+#### Measured sizes of the composed bodies
+
+Measured on 2026-11-06 with the byte algorithm in `tests/bats/startup-script-size.bats`:
+
+- the widest body is now the devcontainer startup script at 115967 bytes, 6913 clear of
+  the bound, with the workspace twin at 113767 and 9113 clear.
+- Before the trio moved out that same devcontainer body measured 122389 with only 491
+  clear, and `ez-learn.SKILL.md` plus its heredoc accounted for roughly 7 KB of it.
+- The three payloads now travel in their own body, `coder_script.stack_skills`, which
+  composes to 36847 bytes.
+
+Measured again on 2026-11-09 after the repository-conversion family landed:
+`coder_script.stack_repo_skills`, carrying three `SKILL.md` payloads and three python
+helpers, composes to 60336 bytes, 62544 clear of the bound, and neither startup twin
+moved.
+
+Measured again on 2026-11-14 after the family's fourth member landed: that same body now
+carries four `SKILL.md` payloads and four python helpers and composes to 91203 bytes,
+31677 clear of the bound, and neither startup twin moved - which is the point of giving
+a payload family its own `coder_script` instead of feeding it to `startup_script`.
+
+Measured again on 2026-11-16 with the same reader
 (`awk -f scripts/lib/startup_size.awk templates/workspace/main.tf`, bytes summed per body)
 after the advisor and guard families landed: `coder_script.stack_advisors`, carrying four
 advisor `SKILL.md` payloads, the `documenter` role, the code-index skill and its helper,
-composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four guards
-and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively, with neither
-startup twin touched.
+composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four
+guards and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively,
+with neither startup twin touched.
+
+#### Escape hatches when a body outgrows the bound
 
 When a body really does need to grow past the budget, the options are:
 
@@ -369,10 +408,12 @@ The script mints a short-lived token by inserting a row into the stack's own Pos
 - A push is also the only thing that *registers* a template: Coder stores the source as a
   Filestore row, not as files it scans on disk.
 - The tar is built from a throwaway staging copy, not from the template dir itself.
-  `.terraform/` is excluded (pushing it would put the plan's provider binaries into the
-  version's Filestore row), symlinks are dumped as their targets (`tar -h`), and the
-  `templates/common/` payloads are copied in beside `main.tf`. A staged copy that still
-  holds a symlink is refused before the CLI runs.
+  - `.terraform/` is excluded (pushing it would put the plan's provider binaries into the
+    version's Filestore row)
+  - symlinks are dumped as their targets (`tar -h`)
+  - the `templates/common/` payloads are copied in beside `main.tf`
+
+  A staged copy that still holds a symlink is refused before the CLI runs.
 - Then, per template, it confirms an **active** template version. A push can exit 0 and
   still leave the template inactive if its Terraform run failed, which shows up as the
   template missing from the create dropdown.
@@ -402,6 +443,8 @@ Nothing else about GitHub travels in a `--var`.
 | `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` | `--var infisical_client_secret=...` | same; handled exactly as `context7_api_key` is, so the value reaches the CLI as an argument and appears in no log line, including the line that says it was passed |
 | `INFISICAL_ENVIRONMENT` | `--var infisical_environment=...` | same reader and same condition |
 
+#### The three MCP switches and the search port
+
 - `GITHUB_MCP`, `CONTEXT7_MCP` and `SEARCH_MCP` share one polarity: all three MCP blocks
   ship from the template default (`true`), so the only value worth setting is `false`,
   and `true`/unset/empty pushes nothing at all.
@@ -417,6 +460,9 @@ Nothing else about GitHub travels in a `--var`.
   `dev-stack.env` carries `18181` still names `8181` unless the key is set in `.env`
   too. A workspace dials the host gateway, where the compose network does not help,
   so the port in the rendered `SEARXNG_URL` has to be the one actually published.
+
+#### The clone and the agent URL
+
 - `repo_url` prefills the Git repository field on both create forms. The Terraform
   default is still no clone (`workspace`) or the coder/coder demo (`devcontainer`).
   `.env.sample` sets `REPO_URL` to this stack's GitHub URL, so a normal push prefills
@@ -426,6 +472,9 @@ Nothing else about GitHub travels in a `--var`.
   token. See [GitHub credentials for a workspace](#github-credentials-for-a-workspace).
 - `coder_agent_url` exists so agents keep dialing the local plain listener when
   `CODER_ACCESS_URL` is a public name.
+
+#### The vault keys and their two gates
+
 - The five values the boot reads the vault with are forwarded **whether or not the flag is
   on** (`scripts/push-template.sh:696-730`), so adopting the vault later is a re-push of one
   word rather than a re-config of five, and a stack that never adopted Infisical pushes none

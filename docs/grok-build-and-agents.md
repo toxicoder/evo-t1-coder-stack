@@ -38,6 +38,9 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 - `terminal.integrated.defaultProfile.linux` is `tmux`; the automation profile stays
   `/bin/bash`, so build and task commands never wait on tmux. Plain `bash` and **Grok
   Build** stay available as extra profiles.
+
+### How a new terminal picks its tmux session
+
 - The `tmux` profile gives each terminal of a folder its own pane. The base session
   name is unchanged: `vscode-<folder>-<hash>`. A new terminal walks into one of
   that folder's sessions only while no client is attached to it, oldest first -
@@ -69,6 +72,9 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   period after it loses its last client
   ([tmux#5821](https://github.com/tmux/tmux/issues/5821) is an open request for
   one).
+
+### What a mirrored pane costs
+
 - One pane per visible terminal is what that rule buys. Clients attached to one
   tmux session share that session's current window, so a design that always
   reattaches makes every extra browser tab a mirror of the same pane: another
@@ -105,6 +111,9 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   Detaching one needs its tty: this tmux 3.4 answers `detach-client -t` for a
   `/dev/pts/…` path, refuses a pid with `can't find client`, and has no
   `kill-client` command at all.
+
+### The Grok Build terminal session
+
 - **Grok Build** keeps its own session, keyed off the repository: the helper walks up
   from the terminal's folder with `git rev-parse --show-toplevel` (or uses the
   terminal's `$PWD` outside a clone), names the session `grok-build-<folder>-<hash>`
@@ -120,8 +129,14 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   up is otherwise the one that can take a running agent down with it (the same
   9-of-20 loss the helper documents), and the stale viewers above are detached on
   the way in, which is where the 8-clients-on-one-pane count came from.
+
+### When tmux is not available
+
 - With no tmux (offline first boot) the helper execs a plain login shell, so the
   default terminal still opens.
+
+### The web terminal app
+
 - `display_apps.web_terminal` stays **off**: it would open a shell on the agent's
   working dir (`/home/coder`). A custom command-type `coder_app` named **Web
   Terminal** (`order = 6`, after **VS Code Web** at `order = 5`, before **GitHub
@@ -129,6 +144,9 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   `cd`s to the clone folder - an empty `repo_url` keeps it on `/home/coder` - and
   execs a login shell. Like the built-in, it reads no `terminal.integrated.*`
   settings.
+
+### The code-server install and its pinned release
+
 - Neither template installs code-server through the Registry. Each `main.tf` carries
   an inlined fork (`coder_script.code_server` + `coder_app.code_server`), because the
   upstream module hardcodes `/icon/code.svg` and has no icon input. Both twins pin the
@@ -143,6 +161,9 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   --app-name "VS Code Web" --ignore-last-opened <folder>`, passing no settings payload.
   `devcontainer` has no persistent prefix to reuse, so it installs the pinned release
   fresh under `/tmp/code-server` on every start.
+
+### The editor folder and its icon
+
 - The editor opens on `http://localhost:13337/?folder=<urlencoded>`: the
   `coder_app` resource in `coder/coder` `~> 2.18` has no `folder` argument, so the
   folder rides in the URL and as a positional argument to the code-server binary
@@ -167,18 +188,24 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 One clipboard is in play: the one on the computer you are typing on. The seed runs
 `set -g mouse off` and unbinds every key and every click that could move text into
 or out of tmux's own buffer, so the terminal client keeps each button and does the
-copying itself, the way it does in a native terminal on that machine. OSC 52 is the
-one route that still depends on what sits at the other end of the terminal, and it
-belongs to an app inside the pane rather than to the operator. Where each claim
-below comes from: the tmux ones were read off the shipped tmux 3.4 on this box (what
-an attach writes to the client, and what `list-keys` still holds once the payload is
-sourced), and the setting names, values and defaults were read out of the shipped
-code-server 4.145.0's own config registry (VS Code base 1.145.0). The two
-Clipboard-API observations -- that a client selection fires
-`navigator.clipboard.writeText`, and that `document.execCommand('copy')` is the
-fallback that still lands on an insecure origin -- come from the earlier
-headless-Chromium pass over that build with the rendered `settings.json` twin and the
-tmux payload loaded, when `mouse` was still on and the copy out was a Shift+drag.
+copying itself, the way it does in a native terminal on that machine.
+
+OSC 52 is the one route that still depends on what sits at the other end of the
+terminal, and it belongs to an app inside the pane rather than to the operator.
+
+Where each claim below comes from:
+
+- the tmux ones were read off the shipped tmux 3.4 on this box (what an attach
+  writes to the client, and what `list-keys` still holds once the payload is sourced)
+- the setting names, values and defaults were read out of the shipped code-server
+  4.145.0's own config registry (VS Code base 1.145.0)
+- the two Clipboard-API observations -- that a client selection fires
+  `navigator.clipboard.writeText`, and that `document.execCommand('copy')` is the
+  fallback that still lands on an insecure origin -- come from the earlier
+  headless-Chromium pass over that build with the rendered `settings.json` twin and
+  the tmux payload loaded, when `mouse` was still on and the copy out was a
+  Shift+drag
+
 That path is the client's own selection, which is what a plain drag drives now; the
 plain drag is due the same pass before it is restated as measured under `mouse off`.
 
@@ -332,6 +359,8 @@ report for a script. What the report should read here:
 
 ## The Grok Build CLI in the golden image
 
+### How the CLI is baked in and pinned
+
 - Baked in at `/usr/local/bin/grok`, with an `agent` link beside it, **outside** the
   `/home/coder` home volume, so a rebuilt volume cannot lose it.
 - Pinned as `GROK_VERSION` in `images/dev/tool-versions.env` (1.0.77 at the time of
@@ -346,6 +375,9 @@ report for a script. What the report should read here:
   rebuilding the image (`bazelisk run //scripts:build-dev-image`) and re-pushing the templates.
 - A self-installed CLI under `~/.grok/bin` stays first on the login-shell PATH, so it
   wins over the baked copy.
+
+### The upstream `/learn` question
+
 - **No published source names an upstream `/learn`, and the bundled skill set never
   lands here**: the `xai-org/grok-build` built-in command table, all 240 pages of
   docs.x.ai, every first-party changelog under `x.ai/cli/changelogs/`, and the public
@@ -353,26 +385,34 @@ report for a script. What the report should read here:
   platform skills are a separate set, enumerated by
   `FORMER_PLATFORM_SKILL_HASHES` in `crates/codegen/xai-grok-shell/src/builtin.rs`
   (help, imagine, create-skill, check-work, check, xlsx, pptx, docx, code-review,
-  best-of-n, create-workflow), and neither `learn` nor `skillify` is among them. That
-  set is downloaded at runtime through the CLI's proxy endpoints config
+  best-of-n, create-workflow), and neither `learn` nor `skillify` is among them.
+
+  That set is downloaded at runtime through the CLI's proxy endpoints config
   (`cli-chat-proxy.grok.com`, gated by `GROK_SKILLS_BASE_URL`) and needs an x.ai
   sign-in: the upstream `product_skills*` fetch in
   `crates/codegen/xai-grok-shell/src/session/slash_commands.rs` is gated on
   `xai_grok_login::GrokAuth`. This stack has no x.ai credential:
   LiteLLM is the sole model transport, with `env_key = "LITELLM_API_KEY"` and
   `base_url` `http://host.docker.internal:4000/v1`, so `~/.grok/bundled/` is never
-  created and there is no bundled copy for `grok inspect` to label. The one surface
-  nobody can read anonymously is the authenticated skills feed (`x.ai/skills/*` answers
-  403), so the honest claim is that no published source names `/learn`, not that it
-  cannot exist behind that feed. Nothing writes `~/.grok/skills/` either, but
+  created and there is no bundled copy for `grok inspect` to label.
+
+  The one surface nobody can read anonymously is the authenticated skills
+  feed (`x.ai/skills/*` answers 403), so the honest claim is that no published
+  source names `/learn`, not that it cannot exist behind that feed.
+
+  Nothing writes `~/.grok/skills/` either, but
   that is a stack choice, not a CLI limit: the upstream user guide
   (`crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md`) documents both tiers -
   `~/.grok/skills/` is the User scope and `<repo_root>/.grok/skills/` the Repo one, and
   `grok inspect` labels each definition by its actual source (`user`, `project`,
   `bundled`) - and startup discovery skips project skills and commands in untrusted
   folders, so a project-tier folder has to be trusted first or its skill is withheld.
+
   What separates the two consumers is that the **Coder Agents** chat agent reads
   `~/.coder/skills/` only, so reaching both means shipping both homes.
+
+### The stack's own skill commands
+
 - **The stack ships its own three skill commands as `/ez-learn`, `/ez-skillify` and
   `/ez-create-skill`**, so they are stack payloads like the delegation skill, not something
   to install, and the `ez-` prefix keeps them clear of the upstream names they sit
@@ -381,14 +421,15 @@ report for a script. What the report should read here:
   published source names a `/learn` or a `/skillify` at all. A user-scope skill overrides
   a same-named bundled one, so a seed named `create-skill` would have hidden the bundled
   copy.
+
   `/ez-learn` writes memory files - it reproduces the upstream `/flush`, `/dream`,
   `/remember` and `/memory`; the other two write skill files.
+
   The three payloads - `templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
   `ez-create-skill.SKILL.md` - are seeded at workspace start by
   `coder_script.stack_skills`: each is written into `~/.coder/skills/<name>/SKILL.md` and
   twin-copied to `~/.agents/skills/<name>/SKILL.md`, each only while that file is absent.
-  To take a
-  copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a
+  To take a copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a
   marker-free file is user-owned, and the seeder leaves it alone unless you pass
   `--force`. A deletion is undone - the boot writes the file again whenever it is
   absent, and `refresh-configs` re-seeds an absent target, so the next boot restores
@@ -398,6 +439,9 @@ report for a script. What the report should read here:
   both `slash_commands` and `skills`, so it works on whichever CLI the image baked at
   `/usr/local/bin/grok` and this needs no image rebuild; the **Grok Build** terminal
   profile gets it because that profile execs the same binary.
+
+### The repository-conversion commands
+
 - **The stack ships its own three repository-conversion commands as `/ez-bazel-first`,
   `/ez-strong-types` and `/ez-trunk-based-repo`**, and these stand in for nothing upstream:
   they convert whatever repository the workspace happens to hold, which is why they carry no
@@ -406,6 +450,9 @@ report for a script. What the report should read here:
   `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`, plus the three python
   helpers they shell out to. Same absent-only contract, same marker-based takeover rule,
   same `[skills] disabled` escape hatch.
+
+### The dispatch plan command
+
 - **A fourth command rides that same body: `/ez-micro-plan`.** It converts nothing - it is
   the parent's dispatch protocol for a fan-out of subagents: a repo-local plan at
   `.grok/plans/<slug>/plan.md`, the change split into micro tasks, layered context briefs
@@ -419,6 +466,9 @@ report for a script. What the report should read here:
   `~/.agents` twin on the same absent-only contract, the helper under `scripts/` like the
   trio's. What the plan carries and what the check prints is under
   [The fan-out seam](#the-fan-out-seam).
+
+### The retired `/learn` seed
+
 - **A leftover `/learn` seed retires itself.** This skill was seeded under the name
   `learn` until it moved, and a copy left standing keeps offering that old name beside
   `/ez-learn` for the life of the volume; there is no bundled `learn` for it to hide,
@@ -444,21 +494,28 @@ while the managed block is intact.
   template variable or the create form's **Grok default model** dropdown names
   another. `[models] default_reasoning_effort = "xhigh"`. The Spark lane answers
   `low` / `medium` / `xhigh`; `high` is never advertised.
+
+### The model aliases and their lanes
+
 - The twelve aliases (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`,
   `agent-explore`, `agent-review`, `agent-xhigh-fast`, `agent-swarm-fast`, `coder`,
   `coder-fast`, `chat`) are defined with `base_url` set to `litellm_url` and
   `env_key = "LITELLM_API_KEY"`. The key is injected as an environment variable, so
-  it never appears in a file. `agent` carries three
-  `[[model."agent".reasoning_efforts]]` tables (`xhigh` is the default). The
-  `agent-low` / `agent-medium` / `agent-xhigh` / `agent-swarm` / `agent-explore` /
-  `agent-review` / `agent-xhigh-fast` / `agent-swarm-fast` aliases set
-  `supports_reasoning_effort = false` because LiteLLM bakes the level for callers
-  that have no reasoning-effort field. The `agent-explore` / `agent-review` pair is the
+  it never appears in a file.
+
+  `agent` carries three `[[model."agent".reasoning_efforts]]` tables (`xhigh` is
+  the default). The `agent-low` / `agent-medium` / `agent-xhigh` / `agent-swarm` /
+  `agent-explore` / `agent-review` / `agent-xhigh-fast` / `agent-swarm-fast` aliases
+  set `supports_reasoning_effort = false` because LiteLLM bakes the level for
+  callers that have no reasoning-effort field.
+
+  The `agent-explore` / `agent-review` pair is the
   reader and the skeptic: the `explore` type and the seeded `explorer` ride
   `agent-explore` (`low`), and the seeded
   `reviewer` and `security-auditor` ride `agent-review` (`xhigh`). What each lifts, what
   it costs, and the `--var` that rolls it back are in
   [litellm-routing.md](litellm-routing.md#the-fan-out-lanes-agent-explore-and-agent-review).
+
   The `agent-xhigh-fast` / `agent-swarm-fast` pair is their parent lane with one call of the
   conversation answered elsewhere: on those two aliases only, the proxy callback
   `litellm/compaction_router.py` re-serves the CLI's conversation-summary call from the Arc
