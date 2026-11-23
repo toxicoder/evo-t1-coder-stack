@@ -243,10 +243,12 @@ Prefer Bazelisk. Make is a shim.
   — the machine check for `docs/branching.md`: an environment-named branch is an
   error, a merged-but-undeleted or past-lifetime branch a warning, each printed with
   its tip SHA because that is the record a deletion has to leave behind. It reports
-  and never deletes; `--plan` prints the commands for a human to run, and
-  `--fetch` (the run's only write: `git remote update --prune` over the selected
-  remotes, touching this checkout's remote-tracking refs and no branch on the remote)
-  is what makes the remote rows current before you act on them.
+  and never deletes;
+
+  - `--plan` prints the commands for a human to run
+  - `--fetch` (the run's only write: `git remote update --prune` over the selected
+    remotes, touching this checkout's remote-tracking refs and no branch on the remote)
+    is what makes the remote rows current before you act on them.
 
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that
@@ -403,15 +405,16 @@ empty query is not proof that nothing depends on a file) see
     `~/.grok/memory` and `~/.grok/sessions`, and mounts the old whole-profile volume
     `grok-profile-<owner-id>` read-only at `~/.grok-legacy` for the one-time hoist only;
     `private` mode mounts none of them.
-  - `config.toml` is that workspace's own file, rendered on start, with `[ui] theme` from
-    the `grok_theme` create-form parameter (the contributor seed takes the same choice as
-    the `GROK_THEME` environment variable), `[ui] permission_mode` from the
-    `grok_permission_mode` create-form parameter (the seed takes it as
-    `GROK_PERMISSION_MODE`, defaulting to `always-approve`), and code-server's
-    `~/.local/share/code-server/User/settings.json` is a real file too, rendered per
-    workspace with `workbench.colorTheme` from `vscode_color_theme` and the shared
-    `~/.shared/vscode/settings.json` layered over it as an overlay, the theme re-asserted
-    last.
+  - `config.toml` is that workspace's own file, rendered on start, with
+
+    - `[ui] theme` from the `grok_theme` create-form parameter (the contributor seed takes
+      the same choice as the `GROK_THEME` environment variable)
+    - `[ui] permission_mode` from the `grok_permission_mode` create-form parameter (the seed
+      takes it as `GROK_PERMISSION_MODE`, defaulting to `always-approve`)
+    - code-server's `~/.local/share/code-server/User/settings.json` is a real file too,
+      rendered per workspace with `workbench.colorTheme` from `vscode_color_theme` and the
+      shared `~/.shared/vscode/settings.json` layered over it as an overlay, the theme
+      re-asserted last.
 
 ### The project scaffold
 

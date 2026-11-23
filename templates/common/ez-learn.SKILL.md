@@ -400,6 +400,7 @@ Dream reports one of:
     Dream merged N observations into M topics.
     Dream completed.
     Nothing to consolidate.
+
     Dream is already running; try again when it finishes.
     Dream did not finish; it will retry automatically.
     Dream failed.

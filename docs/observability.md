@@ -106,6 +106,7 @@ every container stays up:
   `/etc/prometheus-secrets/litellm_token` in the container (`docker-compose.yml:839-841`,
   `:1452`), and the `litellm` job presents that file through
   `authorization.credentials_file` (`observability/prometheus/prometheus.yml:126-129`).
+
   The config's `content:` interpolates the very same
   `${LITELLM_MASTER_KEY:-change-me-litellm}` the proxy boots with
   (`docker-compose.yml:1459`), so with no dotenv both ends land on the shipped

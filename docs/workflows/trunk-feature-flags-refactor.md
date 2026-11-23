@@ -184,6 +184,7 @@ The playbook is the trunk; the environment is inventory:
       dev/hosts.yml
       staging/hosts.yml
       production/hosts.yml
+
       group_vars/dev.yml
       group_vars/staging.yml
       group_vars/production.yml

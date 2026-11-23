@@ -26,16 +26,19 @@ You are the parent orchestrator. Default to fan-out / fan-in for multi-file work
 - Mandatory independent review: any change that touches more than one file, or that a person
   will merge, ends with a reviewer that wrote none of it, on `agent-review`, before you report
   anything done. It re-runs the producer's own `done:` command instead of reading the
-  producer's report, and it reports each claim kept or broken with `path:line`. That reviewer
-  is a panel, not one task: dispatch the three default angles together in one turn -
-  requirements (every acceptance check kept or broken), proof (the `done:` commands re-run),
-  adversary (breaks it: regressions, edge states, flag-off paths) - each on `agent-review`,
-  each owning no file, each allowed up to 3 read-only mappers of its own. A delegated
-  result is a claim, and a review that trusts the claim rather than the artifact is not a
-  review. `skeptical-review` is the skill for a one-off check; `feature-implementation` wires
-  the phase into a change; `ez-micro-plan` refuses a plan whose `review:` task owns a file or
-  skips a file-owning task in its `needs`. Plan Mode is where the approach settles, and the
-  panel is where it gets checked: skip neither on a multi-file change.
+  producer's report, and it reports each claim kept or broken with `path:line`.
+
+  That reviewer is a panel, not one task: dispatch the three default angles together in one
+  turn - requirements (every acceptance check kept or broken), proof (the `done:` commands
+  re-run), adversary (breaks it: regressions, edge states, flag-off paths) - each on
+  `agent-review`, each owning no file, each allowed up to 3 read-only mappers of its own.
+
+  A delegated result is a claim, and a review that trusts the claim rather than the artifact
+  is not a review. `skeptical-review` is the skill for a one-off check;
+  `feature-implementation` wires the phase into a change; `ez-micro-plan` refuses a plan whose
+  `review:` task owns a file or skips a file-owning task in its `needs`. Plan Mode is where
+  the approach settles, and the panel is where it gets checked: skip neither on a multi-file
+  change.
 - Probe once per session, not per wave. A child that initializes, makes tool calls, and writes real artifacts has proven the layer; the rest of the fleet can go wide. When the plan's first wave is cheap read-only tasks, that wave is the probe. If a worker wedges, stop and diagnose before widening further.
 - Budget each worker: a micro task is 15 tool calls or fewer, and a task that wants more is two tasks. Only a long-lived child gets tens of calls, never hundreds. Poll a child's status and output before you build on its answer.
 
@@ -109,19 +112,25 @@ lanes below, so a wave rides that lane without you naming a model on each call; 
 ## Which lane each role rides
 
 Which lane a role rides is a config decision, and the stack already made it:
-`[subagents.models]` in `~/.grok/config.toml` pins `explore` to `agent-explore` (thinking
-low, session pin lifted, so a wave of mappers is placed across every Spark box), `plan` to
-`agent` (pinned and deep, because a planner re-reads what it just read and its answer steers
-every wave after it), and `general-purpose` plus the writer roles to the fan-out lane. The
-skeptical roles ride `agent-review` (xhigh, pin lifted). The seven definitions those pins
+`[subagents.models]` in `~/.grok/config.toml` pins
+
+- `explore` to `agent-explore` (thinking low, session pin lifted, so a wave of mappers is
+  placed across every Spark box)
+- `plan` to `agent` (pinned and deep, because a planner re-reads what it just read and its
+  answer steers every wave after it)
+- `general-purpose` plus the writer roles to the fan-out lane
+
+The skeptical roles ride `agent-review` (xhigh, pin lifted). The seven definitions those pins
 name live in `.grok/agents/` and are seeded to `~/.grok/agents/` - `explorer`,
 `architect`, `implementer`, `tester`, `reviewer`, and `security-auditor` from the fleet
 family, plus `documenter` from the advisor family, which is the one to dispatch when a
 change already exists and its docs no longer match it - each declaring the tools its role
-may use and nothing else. Three persona overlays (`thorough-researcher`,
-`senior-implementer`, `skeptical-reviewer`) sit beside them in `~/.grok/personas/`. Name the
-role in the child prompt; leave the `model` argument alone unless the operator asked for a
-specific model, because the pin is what puts a role on its lane.
+may use and nothing else.
+
+Three persona overlays (`thorough-researcher`, `senior-implementer`, `skeptical-reviewer`)
+sit beside them in `~/.grok/personas/`. Name the role in the child prompt; leave the `model`
+argument alone unless the operator asked for a specific model, because the pin is what puts
+a role on its lane.
 
 ## The three rules that follow
 

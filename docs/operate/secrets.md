@@ -533,8 +533,10 @@ whose failure is one `warning:` line.
   that interpolation and a failed one costs a line, not the bring-up - `warning: the env file
   was not refreshed from Infisical; <file> keeps the credentials it already has - retry with
   bazelisk run //scripts:infisical -- pull` - and compose recreates against what the file
-  already held. `//scripts:prod-stack` and `//scripts:update-stack` behave the same way; the
-  latter plans the fetch instead of running it under `--dry-run`.
+  already held.
+
+  `//scripts:prod-stack` and `//scripts:update-stack` behave the same way; the latter plans
+  the fetch instead of running it under `--dry-run`.
 - **`pull` leaves `.env` alone and says so.** A failed export is an `error:` line naming
   the file as untouched, and the verb exits 1. An export that comes back empty is a
   `warning:` and the same untouched file. A key the vault does not carry, or carries
