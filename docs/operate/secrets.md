@@ -222,7 +222,7 @@ can write a secret in the project.
 The two defences are the deny list above, matched on the normalised case, and the pre-publish
 pass that refuses to write the file at all and leaves the previous `agent.env` in place.
 
-### The residual, honestly
+### Write access to the vault project
 
 **The residual, honestly.** That list names what a shell or a loader *executes*. It is not a list
 of every environment variable that changes what a program does, and it cannot be one.

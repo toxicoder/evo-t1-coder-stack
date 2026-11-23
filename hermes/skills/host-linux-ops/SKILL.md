@@ -43,7 +43,9 @@ uname -a                                             # the host kernel you share
 
 Absent tools are normal.
 
-Either reach the same fact another way (`/proc`, `/sys`, `/var/log` through a mounted path), or hand the operator the exact host command and say plainly that you cannot run it from here.
+Either reach the same fact another way (`/proc`, `/sys`, `/var/log` through a
+mounted path), or hand the operator the exact host command and say plainly
+that you cannot run it from here.
 
 An invented output is worse than an unanswered question.
 

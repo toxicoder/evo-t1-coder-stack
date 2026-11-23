@@ -24,7 +24,7 @@ metadata:
 
 # Bug hunt
 
-### The three rules, and who runs the blocks
+## The three rules, and who runs the blocks
 
 Three rules, in this order: reproduce, localise, prove. A fix written before the symptom
 reproduced is a guess with a commit message attached, and a fix with no test that failed
@@ -38,13 +38,13 @@ the tool.
 Run every block below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent); a command written inline in this body runs nothing on its own.
 
-### Two consumers, one file
+## Two consumers, one file
 
 The CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under
 `<repo_root>/.grok/skills/` is CLI-only because the Coder Agents chat agent reads only
 `~/.coder/skills/<name>/SKILL.md`. Keep the pair; never ship one home alone.
 
-### Local references, models, and the call budget
+## Local references, models, and the call budget
 
 Local references only: the reader reads the code, the tests, the logs, and the diff. A
 research lane is for a fact outside this repository -- a library's documented default, a

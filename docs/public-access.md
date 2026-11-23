@@ -200,7 +200,8 @@ Set the naming parts in `.env` and put `auto` in `STACK_PUBLIC_HOSTS` (`.env.sam
 documents every part and shows the explicit-list shape beside it), and in
 `dev-stack.env` too when a dev stack runs beside the stable one.
 
-Then re-run `bootstrap` and recreate the stack you switched. The commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
+Then re-run `bootstrap` and recreate the stack you switched. The commands are in the
+[README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
 
 ## Traefik configuration
 

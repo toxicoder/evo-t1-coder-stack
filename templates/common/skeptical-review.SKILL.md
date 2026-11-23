@@ -93,7 +93,9 @@ Map the blast radius with one read-only child on `agent-explore`, the lane for p
 
 - who calls what changed
 - which payloads and twins move with it
-- which gate covers it It answers with `path:line` or it did not read the file.
+- which gate covers it
+
+It answers with `path:line` or it did not read the file.
 
 ## Step 2 -- re-run the producer's own done commands (mandatory, 3 to 5 calls)
 

@@ -99,9 +99,9 @@ Use the repo's own map verbs where it has them (here:
 When the surface is bigger than five calls, spawn one `explore` child per disjoint area
 and have it answer:
 
-- files that must change;
-- files that must not;
-- the pattern to copy;
+- files that must change
+- files that must not
+- the pattern to copy
 - the command that proves it.
 
 Its answer becomes a lane brief in Step 3, not a blob in your context.
@@ -209,8 +209,8 @@ owns a file.
 
 Give each one its own attack angle, so the panel covers:
 
-- requirements (every acceptance check kept or broken);
-- proof (re-runs the producers' own `done:` commands);
+- requirements (every acceptance check kept or broken)
+- proof (re-runs the producers' own `done:` commands)
 - adversary (regressions, edge states, flag-off paths).
 
 #### The fleet ceiling

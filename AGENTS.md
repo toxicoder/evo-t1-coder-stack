@@ -271,9 +271,15 @@ Prefer Bazelisk. Make is a shim.
 
 ### Running a script from the shell
 
-`scripts/setup-host.sh` is the only script run from shell, and only on the stack host (installs Bazelisk; `--repair` recovers leftover runfiles so `bazelisk run` can start, and on Linux installs public DNS so host `git pull` still resolves github.com).
+`scripts/setup-host.sh` is the only script run from shell, and only on the stack host (installs
+Bazelisk; `--repair` recovers leftover runfiles so `bazelisk run` can start, and on Linux installs
+public DNS so host `git pull` still resolves
+github.com).
 
-The one exception is `.devcontainer/library-scripts/configure.sh`, run by the Dev Containers hooks inside the contributor container, where no Bazel build exists yet to run it. Everywhere else the toolchain comes from the golden image. Everything else is a Bazel target.
+The one exception is `.devcontainer/library-scripts/configure.sh`, run by the Dev Containers hooks
+inside the contributor container, where no Bazel build exists yet to run it. Everywhere else the
+toolchain comes from the golden image. Everything else is a Bazel
+target.
 
 ### What done means
 
@@ -327,7 +333,9 @@ empty query is not proof that nothing depends on a file) see
 
 ### Template payloads and their twins
 
-- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `coder_script` bodies are sibling `.tftpl` files rendered with `templatefile()`.
+- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies
+(edit both twins when changing one). `coder_script` bodies are sibling `.tftpl` files rendered with
+`templatefile()`.
 
 - `templates/common/` exists once instead and both templates consume it:
 
@@ -343,7 +351,10 @@ empty query is not proof that nothing depends on a file) see
   - `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`
   - `infisical-secrets.sh.tftpl` (the `coder_script "infisical_secrets"` body that fetches the workspace's credentials at boot)
 
-  The push stages all of them beside each staged `main.tf`; pushing without any one of them fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
+  The push stages all of them beside each staged `main.tf`; pushing without any one of them fails
+  early by design. The SVG must produce a data URL of at most 256 characters
+  (`workspace_apps.icon` is varchar(256) on Coder
+  v2.36).
 
 ### Tests and the contributor container
 
@@ -381,7 +392,10 @@ empty query is not proof that nothing depends on a file) see
 
 ### Mounted payloads and public names
 
-- `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`).
+- `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted
+read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is
+mounted ro at
+`/opt/stack-skills`).
 
 - `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host).
 

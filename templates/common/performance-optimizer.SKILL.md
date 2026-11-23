@@ -25,7 +25,7 @@ metadata:
 
 # Performance optimizer
 
-### The one rule, and who runs the blocks
+## The one rule, and who runs the blocks
 
 One number before, one number after, one change between them: a speed-up nobody measured is an
 opinion with a commit attached, so no baseline means no run. This is the parent's runbook --
@@ -34,12 +34,12 @@ A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only 
 file of its own, so the writer fan-out is still yours; run each block with `run_terminal_command` or
 `execute`, since a block written inline here runs nothing on its own.
 
-### Two consumers, one file
+## Two consumers, one file
 
 The CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under
 `<repo_root>/.grok/skills/` is CLI-only because the chat agent reads only that other home.
 
-### Models and the four hard rules
+## Models and the four hard rules
 
 Models are the local aliases this run uses -- `agent`, `agent-explore`, `agent-swarm`,
 `agent-review` -- and no cloud id.

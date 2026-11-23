@@ -666,7 +666,7 @@ charges three classes of character separately:
 
 - ASCII prose at four characters to a token
 - a base64 payload at two
-- anything outside ASCII at one.
+- anything outside ASCII at one
 
 Reading those denser classes at the prose rate was
 how a 90,000-character screenshot read as 22,500 tokens and went to a 32768-token model.

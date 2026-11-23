@@ -24,7 +24,7 @@ metadata:
 
 # Security audit
 
-### The order, and the proof line
+## The order, and the proof line
 
 Sources first, sinks second, traces third, verdicts last. A finding is one line of proof
 someone else can re-run -- `path:line`, the command, and what it printed.
@@ -35,13 +35,13 @@ and only when it ships no file of its own; every writer here is still yours to l
 Run every block below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent); a command written inline in this body runs nothing on its own.
 
-### Two consumers, one file
+## Two consumers, one file
 
 The CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under
 `<repo_root>/.grok/skills/` is CLI-only because the Coder Agents chat agent reads only
 `~/.coder/skills/<name>/SKILL.md`. Keep the pair; never ship one home alone.
 
-### Local references, models, and the call budget
+## Local references, models, and the call budget
 
 Everything here is read from the checkout; a research lane is for a fact outside this
 repository -- a published advisory, a library's documented default.
