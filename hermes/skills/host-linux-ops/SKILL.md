@@ -27,7 +27,9 @@ Four parts, in this order, every time:
 4. The blast radius if they run a mutating variant, and the rollback.
 
 If the question has a safe read-only form, lead with it and make the write a
-separate, clearly-labelled step. `du -sh` before anyone reaches for `rm`.
+separate, clearly-labelled step.
+
+`du -sh` before anyone reaches for `rm`.
 
 ## Probe before you presume
 
@@ -39,10 +41,11 @@ cat /etc/os-release                                  # the container's base, not
 uname -a                                             # the host kernel you share
 ```
 
-Absent tools are normal. Either reach the same fact another way (`/proc`,
-`/sys`, `/var/log` through a mounted path), or hand the operator the exact host
-command and say plainly that you cannot run it from here. An invented output is
-worse than an unanswered question.
+Absent tools are normal.
+
+Either reach the same fact another way (`/proc`, `/sys`, `/var/log` through a mounted path), or hand the operator the exact host command and say plainly that you cannot run it from here.
+
+An invented output is worse than an unanswered question.
 
 ## Read-only inventory
 
@@ -78,6 +81,9 @@ in the transcript instead of a pager that swallows it.
 - **Port already in use.** `ss -ltnp` names the owning pid; `ps -p <pid> -o
   args=` names the process. Two stack projects (`evo-t1-prod` and `evo-t1-dev`)
   are the usual reason on this box.
+
+### Permissions, packages, and the clock
+
 - **Permission denied on a file you own.** `namei -l <path>` finds the directory
   in the chain that says no - far more useful than `chmod -R`, which is almost
   never the right answer and is a thing to refuse politely.
@@ -97,6 +103,9 @@ in the transcript instead of a pager that swallows it.
   kernel modules, or `/etc/docker/daemon.json` without an explicit request.
 - Do not pipe a script from the internet into a shell without showing it first:
   fetch it, read it aloud in the plan, then run the copy you read.
+
+### Payloads and guesses
+
 - Do not edit a payload that the checkout owns (`litellm/config.yaml`,
   `searxng/settings.yml`, `homepage/**`, `proxy/*.conf`) from the running
   container. Edit the seed, then recreate the service.

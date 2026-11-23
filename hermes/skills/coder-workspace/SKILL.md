@@ -11,13 +11,22 @@ metadata:
 
 # coder-workspace
 
-Use when the operator asks about Coder workspaces: what is running, restart one,
-or whether its GitHub auth works.
+Use when the operator asks about Coder workspaces:
+
+- what is running
+- restart one
+- whether its GitHub auth works
 
 ## Reach Coder
 
-Compose DNS inside the network: `http://coder:3000` (plain listener). TLS is the
-host's `:3001`, fronted by `router` — from this container use `:3000`.
+### Which port to dial
+
+Two doors reach Coder:
+
+- Compose DNS inside the network: `http://coder:3000` (plain listener)
+- TLS is the host's `:3001`, fronted by `router` — from this container use `:3000`
+
+### The docker socket
 
 The Docker socket is mounted here, so `docker` talks to the **host** daemon:
 
@@ -26,6 +35,8 @@ docker ps --format '{{.Names}}\t{{.Status}}'          # stack + coder-<owner>-<w
 docker restart coder-<owner>-<ws>
 docker logs --tail 100 coder-<owner>-<ws>
 ```
+
+### Which container is a workspace
 
 A workspace container is `coder-<owner>-<ws>`; the `dind` sidecar inside it is not
 a workspace and should be skipped when enumerating.
@@ -40,6 +51,8 @@ bazelisk run //scripts:new-workspace -- --dry-run <git-url>   # plan only, creat
 bazelisk run //scripts:github-auth -- check                   # every workspace container
 bazelisk run //scripts:github-auth -- check <repo-url>        # one repo, one container
 ```
+
+### What github-auth check prints
 
 `github-auth check` prints one line per credential slot and marks a slot
 `shadowed` when the `GH_TOKEN`/`GITHUB_TOKEN` pair outranks it.

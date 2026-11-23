@@ -21,38 +21,58 @@ tags: [learn, concepts, overview]
 > reading the docs. `/ez-learn` typed at the Grok Build prompt turns the session you are in
 > into durable memory - flush it into a session log, dream those logs into organized memory,
 > remember one note, or browse and clear the store; it is this stack's copy of the upstream
-> `/flush`, `/dream`, `/remember` and `/memory`. Skill authoring is its siblings:
-> `/ez-skillify` captures the session that just worked and `/ez-create-skill` scaffolds one
-> from a description. `grok inspect` lists the three once their seed has landed. A missing
-> one is the skill-seed entry in [troubleshooting.md](../troubleshooting.md).
+> `/flush`, `/dream`, `/remember` and `/memory`.
+>
+> Skill authoring is its siblings:
+>
+> - `/ez-skillify` captures the session that just worked
+> - `/ez-create-skill` scaffolds one from a description
+>
+> `grok inspect` lists the three once their seed has landed. A missing one is the skill-seed
+> entry in [troubleshooting.md](../troubleshooting.md).
 
 ## How the pieces fit
 
-Two templates turn a git URL into a running container: the plain `workspace` template, and
-`devcontainer`, which builds the clone's own `.devcontainer` on a DinD sidecar. Both are
-pushed from this checkout, and both seed the agent config the workspace starts with.
+### What the two templates build
 
-[Coder workspace templates](../coder-templates.md) owns the templates, the create form and
-the variables; [Grok Build, Coder Agents, and the workspace terminal](../grok-build-and-agents.md)
-owns what runs inside the container once it is up.
+Two templates turn a git URL into a running container:
+
+- the plain `workspace` template
+- `devcontainer`, which builds the clone's own `.devcontainer` on a DinD sidecar
+
+Both are pushed from this checkout, and both seed the agent config the workspace starts with.
+
+### Which page owns which half
+
+- [Coder workspace templates](../coder-templates.md) owns the templates, the create form and
+  the variables
+- [Grok Build, Coder Agents, and the workspace terminal](../grok-build-and-agents.md)
+  owns what runs inside the container once it is up
 
 ## The model lane
 
-One OpenAI-compatible door, several backends behind it: the Arc 140T through IPEX-LLM, and
-optional Spark boxes. Which one answers is a routing decision made in
-[litellm-routing.md](../litellm-routing.md), not in the client — and that page also states the
-one thing the local model cannot do.
+One OpenAI-compatible door, several backends behind it:
+
+- the Arc 140T through IPEX-LLM
+- optional Spark boxes
+
+Which one answers is a routing decision made in [litellm-routing.md](../litellm-routing.md),
+not in the client — and that page also states the one thing the local model cannot do.
 
 ## The assistant on the host
 
 [Hermes](../hermes.md) is the interactive assistant with the checkout, the compose project and
-the docker socket in reach, gated by approval prompts. Its public name is opt-in with
-`STACK_PUBLIC_HOSTS=auto`, which composes it from the naming parts; with that key empty
-the dashboard stays on the LAN.
+the docker socket in reach, gated by approval prompts.
+
+Its public name is opt-in with `STACK_PUBLIC_HOSTS=auto`, which composes it from the naming
+parts; with that key empty the dashboard stays on the LAN.
 [public-access.md](../public-access.md) is the page that decides what the box exposes.
 
 ## The rules a change follows
 
-[project-conventions.md](../project-conventions.md) is what a script has to look like to be
-mergeable, and [branching.md](../branching.md) is how it gets to `main`. The Bazel harness they
-both assume is in the [Contribute](../contribute/building-with-bazel.md) tab.
+- [project-conventions.md](../project-conventions.md) is what a script has to look like to be
+  mergeable
+- [branching.md](../branching.md) is how it gets to `main`
+
+The Bazel harness they both assume is in the [Contribute](../contribute/building-with-bazel.md)
+tab.

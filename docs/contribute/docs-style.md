@@ -27,6 +27,8 @@ it, which is what keeps 20-odd pages consistent.
 
 ## Frontmatter
 
+### The declared fields
+
 Every page declares three fields, and `docs-site/tests/unit/docs-content.test.ts` refuses a
 page that is missing any of them:
 
@@ -37,6 +39,8 @@ description: "Trunk-based branch rules: main is the only long-lived branch, ..."
 tags: [git, branching, ci]
 ---
 ```
+
+### What each field feeds
 
 - `title` is the sidebar label, the search result title, and the string your `# H1` has to
   match character for character.
@@ -49,16 +53,25 @@ tags: [git, branching, ci]
 
 ## The page title
 
+### What the layout prints
+
 Each page writes its own `# H1`, once, as the first heading of the body, spelled exactly like
-the frontmatter `title`. That heading is the one the table of contents and every `#anchor`
-point at, so `DocsH1` prints it and then the description beneath it as the lead paragraph. A
-page whose first heading is not its title keeps a plain heading and gets no lead paragraph,
+the frontmatter `title`.
+
+That heading is the one the table of contents and every `#anchor` point at, so `DocsH1`
+prints it and then the description beneath it as the lead paragraph.
+
+A page whose first heading is not its title keeps a plain heading and gets no lead paragraph,
 which is the visible sign that the two strings drifted apart.
+
+### Why the body owns the title
 
 The reason the authored heading is the only title: the page header used to print the frontmatter
 title and the body printed its own, so every page opened with the same string twice.
 
 ## The opening scan pair
+
+### The authored shape
 
 Immediately after the title, two bold labels each followed by a bullet list:
 
@@ -74,15 +87,26 @@ Immediately after the title, two bold labels each followed by a bullet list:
 ...
 ```
 
+### How the match works
+
 `docs-site/lib/remark-page-brief.ts` recognises that four-node run and rewrites it into one
-`<PageBrief>` — the two-column card with the list and tick icons. The match is exact: the label
-has to be the whole paragraph, bold, and spelled `What's on this page` and `What this enables`;
-the lists have to be lists; and no heading may sit between the title and the pair. Get any of
-that wrong and the page renders the lists as plain bullets, which is the only symptom.
+`<PageBrief>` — the two-column card with the list and tick icons.
+
+The match is exact:
+
+- the label has to be the whole paragraph, bold, and spelled `What's on this page` and
+  `What this enables`
+- the lists have to be lists
+- no heading may sit between the title and the pair
+
+Get any of that wrong and the page renders the lists as plain bullets, which is the only
+symptom.
 
 ## Chrome that arrives on its own
 
 Nothing below needs a component call in the page.
+
+### Prose and tables
 
 - **Abbreviations.** A term listed in `docs/includes/abbreviations.md` as `*[TERM]: definition`
   is wrapped wherever it appears in prose. Hover or focus shows the definition; click or Enter
@@ -92,6 +116,9 @@ Nothing below needs a component call in the page.
   screen, and a mirrored scroll bar at the bottom of the viewport when its columns are wider
   than the page. Both come from `docs-site/components/table-chrome.tsx`; a table that already
   carries a class is left as authored.
+
+### Diagrams and fenced code
+
 - **Diagrams.** A ` ```mermaid ` fence renders through `Mermaid`, follows the light/dark switch,
   and shows the chart text beside a parse error rather than leaving a blank box.
 - **Fenced code.** Every fence needs a language, checked by the same contract test, because the
@@ -99,14 +126,23 @@ Nothing below needs a component call in the page.
 
 ## Navigation
 
+### Where the sidebar comes from
+
 The sidebar is not read from the filesystem: most pages sit flat in `docs/` while belonging to
-different sections, and the reading order a prev/next footer needs is an editorial decision. The
-tree is declared once in `NAV` inside `docs-site/scripts/gen_nav.py` and generated into
+different sections, and the reading order a prev/next footer needs is an editorial decision.
+
+The tree is declared once in `NAV` inside `docs-site/scripts/gen_nav.py` and generated into
 `docs-site/lib/nav.json`, which the page-tree builder imports and a Zod schema validates.
 
-A section holds an ordered mix of leaves and collapsible folders. A leaf is `(label, path)` and a
-folder is `(label, [child, ...])`. Folders stay ordinary directories: a section whose first entry
-is an index page uses that page as its clickable label.
+### Leaves and folders
+
+A section holds an ordered mix of leaves and collapsible folders:
+
+- A leaf is `(label, path)` and a folder is `(label, [child, ...])`
+- Folders stay ordinary directories: a section whose first entry is an index page uses that
+  page as its clickable label
+
+### Regenerating the generated file
 
 Regenerate after you change either the tree or the file layout:
 
@@ -115,10 +151,14 @@ bazelisk run //docs:nav                              # rewrite lib/nav.json
 bazelisk run //docs-site:npm -- run nav:check         # fail if the two have drifted
 ```
 
+### What the checks refuse
+
 `//docs-site:nav_test` and the contract test together refuse a page that exists but is not
 declared, and a declaration whose file is gone, so an unlinked page cannot be merged.
 
 ## Checks
+
+### The Bazel targets
 
 ```bash
 bazelisk run //docs:serve            # dev server with hot reload
@@ -128,7 +168,10 @@ bazelisk test //docs-site:nav_test   # nav.json matches the declaration
 bazelisk test //docs-site:unit       # the contract test and the component suites
 ```
 
+### The operator CLI twin
+
 `docs/manage-docs.sh` is the same set as a single operator CLI (`serve`, `build`, `preview`,
 `verify`, `typecheck`, `test`, `nav`, `status`, `clean`) for a host that has Node but not Bazel.
+
 The gates run through Bazel; see [Testing with Bazel](test-with-bazel.md) for how the npm-backed
 targets are wired and why they stay out of `//:test-fast`.

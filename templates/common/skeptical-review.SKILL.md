@@ -26,28 +26,45 @@ metadata:
 
 # Skeptical review
 
+## What this phase is
+
 A panel of reviewers, each independent of the author, each trying to make the diff fail. This
 phase is mandatory: nothing merges on the producer's word, and a review written by the person
-who wrote the change is not a review. This is the parent's runbook -- decomposition, dispatch
+who wrote the change is not a review.
+
+This is the parent's runbook -- decomposition, dispatch
 and the merge stay yours, and the writers you sent out have all landed by review time. A
 depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships
-no file of its own. Budget 12 to 25 of your own calls: the review's value is the commands it
+no file of its own.
+
+Budget 12 to 25 of your own calls: the review's value is the commands it
 ran, not the prose.
+
+## How to run the blocks
 
 Run every block below with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
 Agents chat agent); a command written inline in this body runs nothing on its own.
+
+## Where this file lives
 
 Two consumers, one file: the CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under
 `<repo_root>/.grok/skills/` is CLI-only because the Coder Agents chat agent reads only
 `~/.coder/skills/<name>/SKILL.md`. Keep the pair; never ship one home alone.
 
+## What you read, and which models
+
 Read the diff, the tests, and the repo: everything a verdict needs is in the checkout, and
-a review that searched the web for how this codebase behaves has not read the codebase. A
-research lane is for a fact outside this repository. Models are the local aliases only --
+a review that searched the web for how this codebase behaves has not read the codebase.
+
+A research lane is for a fact outside this repository.
+
+Models are the local aliases only --
 `agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`, `agent-explore`,
 `agent-review` -- never a cloud id.
 
 ## Step 0 -- take the claim, not the conclusion (2 calls)
+
+### Record the claim first
 
 Write down what the change asserts before you read a line of it: the request in one
 sentence, each acceptance criterion, and the `done:` command the producer quoted. That list
@@ -56,21 +73,31 @@ is what you will falsify; a review with no claim to check drifts into style comm
     git rev-parse --abbrev-ref HEAD
     git diff --stat <base>...HEAD
 
+### A pull request
+
 For a pull request, read the issue behind it with
 `env -u GH_TOKEN -u GITHUB_TOKEN gh issue view <n> --comments` and quote its acceptance text
 back: the report answers to the reporter's words, not the author's summary.
 
 ## Step 1 -- read what was actually written (up to 5 calls)
 
+### Read the diff and the tests that cover it
+
 Read the whole diff, then each changed file in context -- a diff hides the caller that no
 longer matches the signature. Read the tests that cover it and ask what they would do if
 the feature were broken: a test that passes with the change reverted proves nothing.
 
-Map the blast radius with one read-only child on `agent-explore`, the lane for pure
-mapping: who calls what changed, which payloads and twins move with it, which gate covers
-it. It answers with `path:line` or it did not read the file.
+### Map the blast radius
+
+Map the blast radius with one read-only child on `agent-explore`, the lane for pure mapping:
+
+- who calls what changed
+- which payloads and twins move with it
+- which gate covers it It answers with `path:line` or it did not read the file.
 
 ## Step 2 -- re-run the producer's own done commands (mandatory, 3 to 5 calls)
+
+### Run them in your own shell
 
 Run the exact command the producer reported, in your own shell, and compare its summary
 line to the one the producer claimed. Do not read the producer's report before you run the
@@ -81,9 +108,13 @@ check, or you will read the conclusion into the evidence.
 
 Quote the summary line you got. `Executed 0 out of N tests: N tests pass.` is a cached pass
 over unchanged inputs, so re-run with `--nocache_test_results` before you accept a green you
-did not earn. A claim you did not run is a claim you did not check.
+did not earn.
+
+A claim you did not run is a claim you did not check.
 
 ## Step 3 -- dispatch the skeptic panel (1 call per skeptic, one turn)
+
+### Send the skeptics out together
 
 The review is a wave, not a tail: send the skeptics out together in one turn, so the phase
 costs the slowest angle rather than the sum of them. The default panel is three angles, each
@@ -96,9 +127,13 @@ skeptic that edited the diff cannot judge it:
 - **adversary** -- tries to break it: regressions in surrounding flows, empty and error
   states, flag-off paths.
 
+### What each skeptic gets
+
 Each skeptic gets the diff, the tests, and the acceptance list -- never the author's summary --
 and one question, and returns kept or broken per criterion with `path:line` and the command
 that shows it. A delegated result is still a claim: you re-run what a skeptic reports broken.
+
+### How wide the panel may go
 
 Each skeptic may fan out up to 3 read-only mappers of its own, so an evidence request stops
 costing a round trip to you. Decide the panel's width at that point against the whole tree:
@@ -107,15 +142,22 @@ stream count (`fleet:` in the plan, 15 by default). Every depth-2 mapper holds o
 fleet's streams, and the writers have all landed by review time, which is what makes the panel
 cheap.
 
+### When one reviewer is enough
+
 One reviewer is enough, and cheaper, when the change is a single-file fix or small enough for
 one head to hold: dispatch a single skeptic over all three angles and spend the streams you
 saved where they pay.
 
 ## Step 4 -- report kept and broken, each with its proof (1 call)
 
-One block per requirement, in the author's order, each line carrying the verdict, the
-`path:line`, and the command with its result. Then the findings that block, ranked by
-whether they break the requirement or only the style; only the first kind holds a merge.
+One block per requirement, in the author's order, each line carrying:
+
+- the verdict
+- the `path:line`
+- the command with its result
+
+Then the findings that block, ranked by whether they break the requirement or only the
+style; only the first kind holds a merge.
 
 Say plainly what you did not check and what you could not reproduce: an honest gap is
 review, where a confident blank is how a broken change ships with a green review beside it.

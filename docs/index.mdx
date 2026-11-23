@@ -17,13 +17,20 @@ tags: [overview, start, stack]
 - Getting oriented in one screen before opening a terminal
 - Reaching the page that owns a subject from one card, instead of reading four that touch it
 
+## What this repository brings up
+
 This repository brings up one Compose project on a GMKtec EVO-T1 (Intel Core Ultra 9
 285H, Arc 140T iGPU, 96 GB DDR5) and keeps it runnable by conversation, by dashboard, or
-by `bazelisk`. Everything is a Bazel target addressed as
-`bazelisk run //scripts:<stem> -- <args>`. On the stack host, `scripts/setup-host.sh` is
-the one script meant to run straight from a shell. On a laptop, reopen the repo in the
-[contributor environment](contribute/devcontainer.md) or run
-`bazelisk run //scripts:test-in-image`.
+by `bazelisk`.
+
+Everything is a Bazel target addressed as `bazelisk run //scripts:<stem> -- <args>`. On
+the stack host, `scripts/setup-host.sh` is the one script meant to run straight from a
+shell.
+
+On a laptop, reopen the repo in the [contributor environment](contribute/devcontainer.md)
+or run `bazelisk run //scripts:test-in-image`.
+
+### Two copies of the stack on one box
 
 The box deliberately runs **two isolated copies** of the stack: a stable one you work in
 and a dev one you break. [Two stacks on one box](https://github.com/toxicoder/evo-t1-coder-stack#two-stacks-on-one-box)
@@ -57,6 +64,8 @@ what a `git pull` leaves behind.
 
 ## What runs here
 
+### The service table
+
 | Service | Host port | What it is for |
 | --- | ---: | --- |
 | Homepage (+ nginx sidecar) | 80 / 443 | The landing page, and the only thing publishing it |
@@ -74,12 +83,22 @@ what a `git pull` leaves behind.
 | Tempo | — | Trace store: OTLP in on `4317`, queried through Grafana |
 | Alloy | — | The collector; tails the host's Docker json-file logs, read-only |
 
-Ollama is reachable only from inside the compose network: LiteLLM is the gateway, and it
-is the thing that carries the master key. The four observability backends publish nothing
-for the same reason - Grafana reaches them over the compose network - and all six sit
-behind one Compose profile, `OBSERVABILITY_ENABLED`.
+### What publishes nothing
 
-The sidebar tabs divide the rest: **Learn** covers how the pieces work, **Operate** covers
-running the box day to day, and **Contribute** covers the gates a change runs through.
+Ollama is reachable only from inside the compose network: LiteLLM is the gateway, and it
+is the thing that carries the master key.
+
+The four observability backends publish nothing for the same reason - Grafana reaches them
+over the compose network - and all six sit behind one Compose profile,
+`OBSERVABILITY_ENABLED`.
+
+### The sidebar tabs
+
+The sidebar tabs divide the rest:
+
+- **Learn** covers how the pieces work
+- **Operate** covers running the box day to day
+- **Contribute** covers the gates a change runs through
+
 Each subject has exactly one page, and the README links to that page rather than
 repeating it.
