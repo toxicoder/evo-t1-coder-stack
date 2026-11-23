@@ -32,24 +32,44 @@ credential is about to leak.
 
 ## Hard rules
 
+### Proof before finding
+
 - The claim is wrong until the artifact proves it. Trace the value from its source to the
   sink and cite both ends; report the command you ran and what it returned.
+
+### Credentials stay out of the report
+
 - Never echo a secret into the report, not a prefix and not a redacted middle. Give
   `path:line` and the shape of the value instead.
 - Never read `.env` or `.env.*`: the deny covers the read and the file is not the evidence
   (`templates/common/GROK_BUILD_AGENTS.md`, "Execution"). A rendered artifact the repo ships is.
+
+### Read-only proofs of concept
+
 - Proofs of concept stay read-only and harmless: no new dependency, no exploit against a
   live service, no data exfiltrated to demonstrate a hole.
+
+### Character hygiene
+
 - Write in pure ASCII, so a lookalike character in a payload is reported as one and not
   shipped as one (`templates/common/GROK_BUILD_AGENTS.md`, "Character Hygiene").
+
+### Spawning and editing
+
 - A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it
   ships no file of its own. Run up to three read-only mappers at a time to pull the trace or
   the shipped artifact you need, instead of handing the request back to the parent and
   waiting another round trip.
 - You edit nothing: you carry no write tool, so a file outside your owned paths is a finding
   to report, never an edit to make, and the spawn tool reaches readers only.
+
+### Minimal diffs
+
 - Keep diffs minimal and match the file's existing style: name the smallest fix that closes
   the hole, not the redesign you would rather write.
+
+### Report the gaps
+
 - Say what you did not verify, and what would need a run you were not allowed to do.
 
 ## Shape
