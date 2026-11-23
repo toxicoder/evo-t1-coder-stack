@@ -302,7 +302,9 @@ Read the shape before you reach for the box.
 
 - `[tensorfold] done chatcmpl-... prompt=58 ... effort=xhigh tokens=16 finish=length`
   followed by `warning: a reply reached max_tokens while still thinking, so its content
-  is empty`: that is the LiteLLM proxy's health check, not a user. At the pinned tag the
+  is empty`: that is the LiteLLM proxy's health check, not a user.
+
+  At the pinned tag the
   proxy sends the deployment's whole `litellm_params` through a real `acompletion`, so
   the lane's baked `reasoning_effort` rides along, and it asks for the default
   `health_check_max_tokens` of 16. A thinking reply cannot finish its reasoning in 16
@@ -663,6 +665,7 @@ grep -n 'ServiceUnavailableErrorRetries\|DefaultRetries' litellm/config.yaml
   (`agent`, `agent-low`, `agent-medium`, `agent-xhigh`, `agent-swarm`, `agent-explore`,
   `agent-review`, `agent-xhigh-fast`, `agent-swarm-fast`): one attempt for a dead stream,
   so a hung request is bounded at 1200 s instead of up to 3465 s.
+
   `DefaultRetries: 2` is untouched on purpose - TensorFold's `NoRoom` refusal arrives as
   `APIConnectionError`, which is absent from `_RETRIES_BY_EXCEPTION_TYPE`, so that walk
   falls through to `DefaultRetries` and keeps its two attempts. The proxy reads the file
@@ -745,7 +748,9 @@ No line at all is one of these:
   - A value that is none of those and none of `1`,
   `true`, `on`, `yes` also leaves it off, with one
   `compaction router: EVO_T1_FAST_COMPACTION=... is neither on nor off` warning per
-  distinct value: a typo'd off is read as off. Compose gives each of the five keys its
+  distinct value: a typo'd off is read as off.
+
+  - Compose gives each of the five keys its
   default in `docker-compose.yml`, and the value in force is the one interpolated from the
   env file when the container was created, so a stack that was already up when someone set
   the key is still running the old one. Clear the key (or set it back to `1`) and recreate:
@@ -839,7 +844,8 @@ bazelisk run //scripts:coder-agents -- --apply
 - The closing summary counts the auxiliary lanes that carry a pin. A `warning:` naming a
   lane means that lane falls back to Coder's own pick, and `title_generation` and
   `compaction` are the two an operator notices first: conversations stop getting titles,
-  then a long one stops at the compaction threshold. Re-run `--apply` once the alias behind that lane answers.
+  then a long one stops at the compaction threshold. Re-run `--apply` once the alias
+  behind that lane answers.
 
 - A `warning:` that a stored model config is disabled, is not the default, or compacts
   against the wrong window names a row this script found already in place. It reads
@@ -1040,7 +1046,8 @@ template push. With none of those set, a missing block is a defect, not a park.
 
 The **VS Code Web** button is the one app this stack still proxies: its URL is
 `/@<owner>/<ws>.<agent>/apps/code-server` on the coder hostname, because
-`coder_app.code_server` sets `subdomain = false`. So a failing app link is an app-lane failure, and a 200 from `litellm-gmktecbeast.` is not evidence about it.
+`coder_app.code_server` sets `subdomain = false`. So a failing app link is an
+app-lane failure, and a 200 from `litellm-gmktecbeast.` is not evidence about it.
 
 #### Two hops can answer 502
 
@@ -1183,7 +1190,8 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
   provider this stack pins (`~> 2.18`, locked 2.18.0 in
   `templates/workspace/.terraform.lock.hcl`) takes no log-size argument, `terraform plan`
   answering `An argument named "log_buffer_size" is not expected here.`, and the agent-side
-  constant is not read from the environment. The bound and the about-40-lines-per-body writing rule it forces are in
+  constant is not read from the environment. The bound and the
+  about-40-lines-per-body writing rule it forces are in
   [coder-templates.md](coder-templates.md#the-boot-log-each-body-prints).
 
 ### Image missing tools, or the build aborts mid-layer -> `curl: (22)`
@@ -1284,7 +1292,8 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   that seeds it: `coder_script.stack_skills` carries the authoring trio and
   `coder_script.stack_repo_skills` carries the repository-conversion family. That script's
   own log is where its seed body ran or failed, and the body is silent on a healthy
-  workspace, so an empty log with a missing file means the body did not run at all (restart the workspace and
+  workspace, so an empty log with a missing file means the body did not run at all
+  (restart the workspace and
   read that script's log).
   - The trio moved out of `startup.sh.tftpl` into that one body, so
   a startup-script log that says nothing no longer covers it. A `SKILL.md` that is present
@@ -1690,7 +1699,9 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
   literal `15`, so the `: var.grok_swarm_width` arm of
   `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
   (`templates/workspace/main.tf:553`, `templates/devcontainer/main.tf:581`) answers only a
-  caller that passes null on purpose. The ceiling beside it is that same `grok_swarm_width`,
+  caller that passes null on purpose.
+
+  The ceiling beside it is that same `grok_swarm_width`,
   on its own line (`templates/workspace/main.tf:558`). Measured:
   `terraform apply` with the shipped defaults prints `15`, and the same run with
   `-var grok_subagent_max_concurrent=4` prints `4`.
@@ -3031,7 +3042,8 @@ bazelisk run //scripts:infisical -- check
   - `note: no Infisical CLI installed; run: bazelisk run //scripts:infisical -- install-cli` when the binary is what is missing (`scripts/infisical.sh:346`)
   - `warning: the
   machine identity could not exchange a token; check the client id and secret, and that
-  the vault answers` when the vault is there but will not authenticate the identity (`scripts/infisical.sh:361`)
+  the vault answers` when the vault is there but will not authenticate the identity
+  (`scripts/infisical.sh:361`)
 
   Then retry the pull and bring the stack up again, because
   compose reads the file only when it recreates a container
@@ -3110,8 +3122,9 @@ infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps th
 
 #### Why the boot never dials the vault
 
-- Cause: the body's second gate, `templates/common/infisical-secrets.sh.tftpl:27-30`. Each
-  twin declares `infisical_pull_on_start` with `default = false`
+- Cause: the body's second gate, `templates/common/infisical-secrets.sh.tftpl:27-30`.
+
+  Each twin declares `infisical_pull_on_start` with `default = false`
   (`templates/workspace/coder.tf:270-274`, `templates/devcontainer/coder.tf:257-261`), and
   the push forwards
   `--var infisical_pull_on_start=true` only when `.env` carries a truthy
@@ -3510,7 +3523,9 @@ Work it in this order:
 3. Nothing anywhere: the scrape is the fault, so take the target entry above.
 4. Only then look at tenancy. Mimir is multi-tenant by design and keeps tenancy on until
    a config says otherwise; once it is on, every read and every write must carry an
-   `X-Scope-OrgID` header or be refused. This stack turns it off with
+   `X-Scope-OrgID` header or be refused.
+
+   This stack turns it off with
    `multitenancy_enabled: false` in `observability/mimir/mimir.yml`, so the provisioned
    datasource sends no tenancy header and the compose network is the trust boundary. A
    query that starts insisting on a header means that file changed, not that the data went
