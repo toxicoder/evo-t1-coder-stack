@@ -83,12 +83,11 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
   also the fail window that rule counts over.
 - There is no `allowed_fails` key in the config, and the absence is deliberate: naming it
   with a non-default number selects the counting branch of the cooldown decision instead
-  of the rate rule, and that branch counts inside a window of `cooldown_time`. The
-  `allowed_fails: 40` and
-  `cooldown_time: 5` this replaced therefore asked for 41 failures inside 5 s, which is
-  why it never fired. Without the key the vendor's rate rule decides when a box stops
-  being a candidate; see
-  [what `cooldown_time: 60` is for](#what-cooldown_time-60-is-for-now).
+  of the rate rule, and that branch counts inside a window of `cooldown_time`.
+  - The `allowed_fails: 40` and `cooldown_time: 5` this replaced therefore asked for 41
+    failures inside 5 s, which is why it never fired.
+  - Without the key the vendor's rate rule decides when a box stops being a candidate; see
+    [what `cooldown_time: 60` is for](#what-cooldown_time-60-is-for-now).
 
 #### What the health sweep does
 
@@ -193,9 +192,10 @@ Read these three facts before changing the block:
   returns 0 while any deployment is healthy, and on the five pinned groups the
   workspace-wide `x-litellm-session-id` pin sends every subagent of a workspace to one
   box anyway. The block makes a refusal less likely to surface. Relocation comes from the
-  box and the fan-out. The four unpinned lanes - `agent-swarm`, `agent-explore`,
-  `agent-review` and `agent-swarm-fast` - are the exception: with no pin to name a box,
-  each of their retries is re-placed by `least-busy` and can land on another one.
+  box and the fan-out.
+  - The four unpinned lanes - `agent-swarm`, `agent-explore`, `agent-review` and
+    `agent-swarm-fast` - are the exception: with no pin to name a box, each of their
+    retries is re-placed by `least-busy` and can land on another one.
 
 #### The two levers that move load
 
@@ -999,12 +999,14 @@ stopped passing would hold the host assistant down with the proxy.
   agent-xhigh -> coder, agent-swarm-fast -> agent-swarm -> coder.
 - `compaction-fast` degrades to a Spark rather than to another Arc alias -
   `- compaction-fast: ["agent-low", "coder"]`
-  (`litellm/config.yaml:893`) - and that direction is the point. `coder`, `coder-fast` and
-  `compaction-fast` all answer from the one Ollama container on the Arc, so a hop between
-  them is a hop to whatever is already down. `agent-low` is the quickest answer the fleet
-  has, which is what a summary was after on this lane in the first place. Acyclic:
-  compaction-fast -> agent-low -> coder. It is the one chain here that a user never picks:
-  it belongs to the group the callback moves traffic to, not to an alias anyone types.
+  (`litellm/config.yaml:893`) - and that direction is the point.
+  - `coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama container
+    on the Arc, so a hop between them is a hop to whatever is already down. `agent-low` is
+    the quickest answer the fleet has, which is what a summary was after on this lane in
+    the first place.
+  - Acyclic: compaction-fast -> agent-low -> coder. It is the one chain here that a user
+    never picks: it belongs to the group the callback moves traffic to, not to an alias
+    anyone types.
 
 ### History, caps, and what is deliberately absent
 
