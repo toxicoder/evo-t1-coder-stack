@@ -20,11 +20,14 @@ tags: [public, tls, traefik, authelia, hermes, operate]
 - Telling a router problem apart from an Authelia problem when a name fails
 - Putting the seven routers on the Traefik box without guessing its timeouts
 
-The default shape is LAN-only. `STACK_PUBLIC_HOSTS=auto` additionally serves the same
-seven services on public names over real TLS, each name composed from the parts you set
-once. It is purely additive: every LAN route keeps working. Grafana and Infisical are the
-two new services on this path: the observability backends behind Grafana (Prometheus,
-Loki, Tempo, Mimir) stay unexposed, because
+The default shape is LAN-only.
+
+`STACK_PUBLIC_HOSTS=auto` additionally serves the same seven services on public names over
+real TLS, each name composed from the parts you set once. It is purely additive: every LAN
+route keeps working.
+
+Grafana and Infisical are the two new services on this path: the observability backends
+behind Grafana (Prometheus, Loki, Tempo, Mimir) stay unexposed, because
 [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md) keeps
 metrics and logs off the LAN, let alone the WAN.
 
@@ -91,17 +94,23 @@ under the zone.
 The dev row is what `bazelisk run //scripts:dev-stack -- up` composes for the
 `evo-t1-dev` project: that command applies `STACK_ENV_LABEL=dev` when neither the shell
 nor the env file already sets a label, and only for that project, so
-`--project-name evo-t1-review` gets none. A label goes on every name, so that stack's
-dashboard is `dev-gmktecbeast.overeazy.io` too, and all seven need their own Traefik
-routers (see below). `bazelisk run //scripts:prod-stack -- up` never invents a label.
+`--project-name evo-t1-review` gets none.
+
+A label goes on every name, so that stack's dashboard is `dev-gmktecbeast.overeazy.io`
+too, and all seven need their own Traefik routers (see below).
+
+`bazelisk run //scripts:prod-stack -- up` never invents a label.
 
 Hermes is the same additive hop as the other four. Traefik forwards
 `http://<this-box-lan-ip>:8080` with the original Host, and the router sends that
-Host to `http://hermes:9119`. The LAN URL `http://<STACK_LAN_HOST>:9119` stays.
-HTTP basic auth on the dashboard stays too; Authelia is the extra public gate.
-See [hermes.md](hermes.md).
+Host to `http://hermes:9119`.
+
+The LAN URL `http://<STACK_LAN_HOST>:9119` stays. HTTP basic auth on the dashboard stays
+too; Authelia is the extra public gate. See [hermes.md](hermes.md).
 
 ## Getting the naming right
+
+### The parts that compose a name
 
 `scripts/lib/domain.sh` owns the grammar and every part is normalized before it is
 joined, so a value copied out of a browser bar cannot leak into an origin or a
@@ -138,6 +147,8 @@ joined, so a value copied out of a browser bar cannot leak into an origin or a
   request. Measured on this box - `coder-gmktecbeast.overeazy.io` completes the handshake
   with the zone's `*.overeazy.io` cert, while the dotted form fails with a TLS alert 40
   and presents no certificate at all.
+
+### The three states of `STACK_PUBLIC_HOSTS`
 
 `STACK_PUBLIC_HOSTS` has three states, and only the middle one composes:
 
@@ -185,16 +196,21 @@ rather than sent as an empty entry, and a missing zone keeps the whole stack LAN
 
 Set the naming parts in `.env` and put `auto` in `STACK_PUBLIC_HOSTS` (`.env.sample`
 documents every part and shows the explicit-list shape beside it), and in
-`dev-stack.env` too when a dev stack runs beside the stable one. Then re-run `bootstrap`
-and recreate the stack you switched. The commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
+`dev-stack.env` too when a dev stack runs beside the stable one.
+
+Then re-run `bootstrap` and recreate the stack you switched. The commands are in the [README](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md#public-subdomains-optional).
 
 ## Traefik configuration
 
+### The file to drop in
+
 Nothing in this repo configures Traefik. This is the file the other box needs: drop it
 in the directory that box's `providers.file.directory` watches and Traefik picks it up
-without a restart. The shape below is the one Traefik v2 and v3 both read; the
-entryPoint name, the certificate and the middleware name have to match what that box
-already defines, so treat those three as the values to align, not as new requirements.
+without a restart.
+
+The shape below is the one Traefik v2 and v3 both read; the entryPoint name, the
+certificate and the middleware name have to match what that box already defines, so treat
+those three as the values to align, not as new requirements.
 
 ```yaml
 # evo-t1.yml -- file-provider dynamic config for the EVO-T1 stack.
@@ -274,6 +290,8 @@ http:
         idleConnTimeout: "3600s"
 ```
 
+### The lines that have to match
+
 - `passHostHeader: true` is the line that makes this work at all. Without it Traefik
   sends the upstream URL's host, no `server_name` matches, and this box answers `421`.
 - **A published dev stack needs its own routers here.** The `dev-stack.env` behind
@@ -296,6 +314,9 @@ http:
   an ACME resolver instead. SNI has to be the public name itself - the wildcard covers
   exactly one label, which is why the hyphenated one-label form is the only one that
   handshakes.
+
+### Timeouts and WebSockets
+
 - **WebSockets need nothing here.** Traefik forwards `Upgrade` and `Connection`
   as-is; there is no `protocol: websocket` to set and no middleware to add. The Hermes
   Chat tab's `/api/pty` and `/api/ws` open on that alone. They fail only when
@@ -313,6 +334,9 @@ http:
   session dies at about a minute with the page still loaded, check the client-facing side
   too: an entryPoint's `transport.respondingTimeouts.readTimeout` (default 60s) and
   `idleTimeout` (default 180s) apply to the browser-to-Traefik hop.
+
+### What stays LAN-only
+
 - SearXNG is deliberately absent. It stays LAN-only on `:8181`, which is where the
   workspaces reach it through `host.docker.internal`; putting it behind Traefik would
   expose a search box that has no authentication of its own.

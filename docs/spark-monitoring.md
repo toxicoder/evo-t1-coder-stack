@@ -24,10 +24,11 @@ tags: [observability, prometheus, spark, dcgm, operate]
   from its neighbours'
 - Enrolling or un-enrolling the fleet with one key, without editing a compose file
 
-Run every command here in a **shell on the stack host**. The probe reaches each box over
-ssh, and a Coder workspace container is not a shell that resolves the LAN names the
-`SPARKn_HOST` keys hold - the workspace-side run in the examples below shows exactly what
-that costs.
+Run every command here in a **shell on the stack host**.
+
+The probe reaches each box over ssh, and a Coder workspace container is not a shell that
+resolves the LAN names the `SPARKn_HOST` keys hold - the workspace-side run in the examples
+below shows exactly what that costs.
 
 The whole bundle this depends on sits behind the Compose profile
 `profiles: ["observability"]`, and [observability.md](observability.md) is the page for
@@ -75,8 +76,8 @@ by Compose. Nothing in `docker-compose.yml` consults it, because the exporters d
 in the stack's project at all; they run on the boxes. With the key off:
 
 - `--apply` skips every box instead of installing a container nothing scrapes
-  (`scripts/spark-monitor.sh:541`),
-- `--targets` prints the empty document `[]` (`scripts/spark-monitor.sh:302`),
+  (`scripts/spark-monitor.sh:541`)
+- `--targets` prints the empty document `[]` (`scripts/spark-monitor.sh:302`)
 - `--status` still probes, because knowing what a box runs never needs the flag.
 
 The other keys, all in `.env.example`:
@@ -127,9 +128,11 @@ next: bazelisk run //scripts:spark-monitor -- --status to see what each box runs
 ```
 
 That run was made from a Coder workspace, which is why the fleet fell back to the
-placeholder trio. From the host shell, with the `SPARKn_HOST` keys in the checkout's
-`.env`, the same command prints three real boxes and no host warning, and adds the
-`docker run` lines the plan promises (`scripts/spark-monitor.sh:412-425`).
+placeholder trio.
+
+From the host shell, with the `SPARKn_HOST` keys in the checkout's `.env`, the same
+command prints three real boxes and no host warning, and adds the `docker run` lines the
+plan promises (`scripts/spark-monitor.sh:412-425`).
 
 ### Prove (`--status`)
 
@@ -174,9 +177,10 @@ run. The unreachable form is what was actually measured.
 bazelisk run //scripts:spark-monitor -- --apply
 ```
 
-The only mutator. Set `SPARK_MONITOR_ENABLED=true` first or every box is skipped. Per box
-it reports each container as `created`, `started` (an existing one), or `already running`,
-and the counter list as `same`, `updated` or `absent`
+The only mutator. Set `SPARK_MONITOR_ENABLED=true` first or every box is skipped.
+
+Per box it reports each container as `created`, `started` (an existing one), or
+`already running`, and the counter list as `same`, `updated` or `absent`
 (`scripts/spark-monitor.sh:662-700`).
 
 Exit status is 0 when every box answered or is simply not set up yet, and non-zero only
@@ -240,10 +244,12 @@ bazelisk run //scripts:spark-monitor -- --json
 One JSON object on **stdout** and nothing else; every `ok:` / `warning:` / `summary:` line
 routes to stderr while `--json` is set, so `| jq` sees a document.
 
-Verified: stdout was one line, 1397 bytes, parseable, carrying `mode`, `host_source`,
-`monitor_enabled`, both images, both ports, `ssh_port`, a `boxes` array with one object
-per box (`probed`, `docker`, `node_exporter`, `dcgm`, `dcgm_counter_count`, `gpu_count`,
-`gpu_names`, `probe_version`, `verdict`, `detail`) and a `summary` object.
+Verified: stdout was one line, 1397 bytes, parseable, carrying:
+
+- `mode`, `host_source`, `monitor_enabled`, both images, both ports, `ssh_port`
+- a `boxes` array with one object per box (`probed`, `docker`, `node_exporter`, `dcgm`,
+  `dcgm_counter_count`, `gpu_count`, `gpu_names`, `probe_version`, `verdict`, `detail`)
+- a `summary` object
 
 #### `--targets`
 
@@ -274,8 +280,9 @@ exclusive: `--status cannot be combined with --apply; pick one mode`.
 
 ## How the boxes get into Prometheus
 
-`--targets` prints the document; it never writes it (`scripts/spark-monitor.sh:340`). The
-file lives at `observability/spark-targets/sparks.json` on the **stack host**, and that
+`--targets` prints the document; it never writes it (`scripts/spark-monitor.sh:340`).
+
+The file lives at `observability/spark-targets/sparks.json` on the **stack host**, and that
 path is gitignored (`.gitignore:76`) precisely because it names your boxes - three
 addresses are not something this repo commits.
 
@@ -290,13 +297,16 @@ Because four kinds of target share the file, each job keeps only its own with a 
 scraped as metric endpoints and every box would carry two permanently failing targets.
 
 The two blackbox jobs take the address from the same file and pass it as `__param_target`,
-so the target label carries the box rather than the prober. The prober itself is scraped
-as a service of its own (`observability/prometheus/prometheus.yml:219`), which is what
-makes `up{job="blackbox"}` exist for `BlackboxProbeGap` to fire on.
+so the target label carries the box rather than the prober.
+
+The prober itself is scraped as a service of its own
+(`observability/prometheus/prometheus.yml:219`), which is what makes
+`up{job="blackbox"}` exist for `BlackboxProbeGap` to fire on.
 
 Spark alerts stamp `tier=spark` and `spark=<hostname>`.
 
 The consequence of the empty document above: **an unenrolled fleet reads as zero Sparks.**
+
 No group in `sparks.json` means no target, which means no `up` series, which means an
 empty panel rather than a red one - the symptom looks like "nothing is wrong" from
 Grafana.
@@ -334,6 +344,8 @@ unexpected:
 
 ## Failure modes
 
+### ssh reachability
+
 **ssh will not reach a box.** In `--status` this is a `warning:` naming the ssh error, and
 the exit status stays 0 (`scripts/spark-monitor.sh:566-576`): a box that is off, or one
 this shell has no credentials for, is a not-yet state.
@@ -350,16 +362,21 @@ If the box drops packets rather than refusing, you see
 guard)`; on a host without `timeout(1)` the CLI warns up front that the round trips run
 uncapped.
 
-**A port is already taken on a box.** `--apply` reports it per container as
-`<name> is not running (<state>): <what docker said>`
-(`scripts/spark-monitor.sh:675`, `scripts/spark-monitor.sh:685`) - the text after the
-colon is docker's, so `port is already allocated` names the process holding 9100 or 9400.
+### A port already in use
+
+**A port is already taken on a box.**
+
+`--apply` reports it per container as `<name> is not running (<state>): <what docker said>`
+(`scripts/spark-monitor.sh:675`, `scripts/spark-monitor.sh:685`) - the text after the colon
+is docker's, so `port is already allocated` names the process holding 9100 or 9400.
 
 The containers are idempotent by name, so this is a *different* process on the port, not
 this CLI double-booking itself.
 
 Move the port with `SPARK_NODE_EXPORTER_PORT` / `SPARK_DCGM_EXPORTER_PORT` - the target
 document and the scrape follow the key - and re-run `--apply`.
+
+### An exporter running but not answering
 
 **An exporter container exists and is not answering.** Two shapes, and they read
 differently:
@@ -370,14 +387,16 @@ gets nothing` and points at `--apply --box <n>`
 (`scripts/spark-monitor.sh:616-624`).
 
 - A container that *is* listed but does not serve still counts as running for
-node_exporter, and shows up one line later on the DCGM side: the probe counts counters
-from a live local scrape of `:<port>/metrics` and only falls back to the field list baked
-into the image when that scrape returns nothing
-(`scripts/lib/probes/spark-monitor.sh:196-206`), so a `note:` whose counter count matches
-the image's default list rather than this repo's file means the exporter is up and not
-serving your field list.
+  node_exporter, and shows up one line later on the DCGM side: the probe counts counters
+  from a live local scrape of `:<port>/metrics` and only falls back to the field list baked
+  into the image when that scrape returns nothing
+  (`scripts/lib/probes/spark-monitor.sh:196-206`), so a `note:` whose counter count matches
+  the image's default list rather than this repo's file means the exporter is up and not
+  serving your field list.
 
 `--restart` is the first thing to try; `--apply` re-ferries the CSV if the file changed.
+
+### A panel stays empty
 
 When a Spark panel stays empty, work outward in this order:
 

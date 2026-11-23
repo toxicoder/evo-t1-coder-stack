@@ -25,32 +25,46 @@ stack's own containers has to be run where the stack lives.
 ## Alerts
 
 Three rule files arrive with Prometheus and need no second registration:
-`observability/prometheus/rules/stack.rules.yml` carries the twelve host alerts,
-`spark.rules.yml` the eight Spark alerts, and `inference.rules.yml` the ten inference
-alerts - 30 in all. Prometheus evaluates them. The bundle now also runs Alertmanager
+
+- `observability/prometheus/rules/stack.rules.yml` carries the twelve host alerts
+- `spark.rules.yml` the eight Spark alerts
+- `inference.rules.yml` the ten inference alerts - 30 in all
+
+Prometheus evaluates them. The bundle now also runs Alertmanager
 (`prom/alertmanager:v0.35.0`) to group them, hold them, and decide who hears about them.
 
-Three of the host alerts exist because the obvious design has a blind spot. The two
-single-exporter gap alerts each wait for the *other* exporter to vouch for the box, so
-both exporters dying at once - a powered-off host, a restarted Docker - was silent;
-`HostExportersSilent` asks no second opinion and fires on the double absence. A dead
-blackbox prober produces no probe series at all, so nothing it probes can report it;
-`BlackboxProbeGap` reads `up{job="blackbox"}`, which is why Prometheus scrapes the prober
-as a service of its own. And the same argument one layer up: every rule pages *through*
-Alertmanager, and an Alertmanager that is gone loses no series that any other rule reads,
-so the bundle keeps evaluating and firing into nothing. `AlertmanagerGap` is critical
-where those two are warning, and asks both shapes of the fault - `absent()` for the
-service being gone and `up == 0` for a container that runs without answering.
+### The alerts that cover the blind spots
 
-One Spark alert closes the same shape on the other side. `SparkDown` needs the probe to
-fail as well as the scrape, so a box that is genuinely up and simply not reporting host
-metrics pages nothing, and `SparkGpuSeriesSilent` asks only the DCGM family.
+Three of the host alerts exist because the obvious design has a blind spot:
+
+- The two single-exporter gap alerts each wait for the *other* exporter to vouch for the
+  box, so both exporters dying at once - a powered-off host, a restarted Docker - was
+  silent; `HostExportersSilent` asks no second opinion and fires on the double absence.
+- A dead blackbox prober produces no probe series at all, so nothing it probes can report
+  it; `BlackboxProbeGap` reads `up{job="blackbox"}`, which is why Prometheus scrapes the
+  prober as a service of its own.
+- The same argument one layer up: every rule pages *through* Alertmanager, and an
+  Alertmanager that is gone loses no series that any other rule reads, so the bundle keeps
+  evaluating and firing into nothing.
+
+`AlertmanagerGap` is critical where those two are warning, and asks both shapes of the
+fault - `absent()` for the service being gone and `up == 0` for a container that runs
+without answering.
+
+### The Spark alert that closes the same shape
+
+One Spark alert closes the same shape on the other side.
+
+`SparkDown` needs the probe to fail as well as the scrape, so a box that is genuinely up
+and simply not reporting host metrics pages nothing, and `SparkGpuSeriesSilent` asks only
+the DCGM family.
+
 `SparkHostMetricsSilent` is the one that reads a box whose health probe succeeds while
 `spark:box_up` has never been 1 - the usual cause being a hand-edited file where the
 stamped `exporter` label lost its exact spelling, which drops that box's group out of
 every job's keep filter.
 
-What that means day to day:
+### What that means day to day
 
 - **An empty `ALERTMANAGER_WEBHOOK_URL` is the shipped state, and it pages nobody.**
   The rules still fire and stay readable on Prometheus's `/alerts` page and on Grafana's
@@ -64,20 +78,25 @@ What that means day to day:
   silences and the repeat interval, so a silence created anywhere else does not stop the
   route - and the two views then disagree about why nobody was paged.
 
+### The three exporters
+
 The three exporters feeding those rules sit beside the bundle on the same
-`observability` profile, all published to `127.0.0.1` only: node_exporter
-(`quay.io/prometheus/node-exporter:v1.12.1`) on `OBS_NODE_EXPORTER_PORT` (9101), cAdvisor
-(`ghcr.io/google/cadvisor:v0.61.0`) on `OBS_CADVISOR_PORT` (9290), and blackbox_exporter
-(`prom/blackbox-exporter:v0.29.1`) on `OBS_BLACKBOX_PORT` (9115). The data path behind
-them, and what each config file costs to change, is
+`observability` profile, all published to `127.0.0.1` only:
+
+- node_exporter (`quay.io/prometheus/node-exporter:v1.12.1`) on `OBS_NODE_EXPORTER_PORT` (9101)
+- cAdvisor (`ghcr.io/google/cadvisor:v0.61.0`) on `OBS_CADVISOR_PORT` (9290)
+- blackbox_exporter (`prom/blackbox-exporter:v0.29.1`) on `OBS_BLACKBOX_PORT` (9115)
+
+The data path behind them, and what each config file costs to change, is
 [observability.md](../observability.md).
 
 ## The Spark exporters
 
-The three DGX Sparks are not scrape targets until you make them one. Each box needs two
-containers - node_exporter on `SPARK_NODE_EXPORTER_PORT` (9100) and the NVIDIA DCGM
-exporter on `SPARK_DCGM_EXPORTER_PORT` (9400) - and neither exists on a box until
-`--apply` creates it:
+The three DGX Sparks are not scrape targets until you make them one.
+
+Each box needs two containers - node_exporter on `SPARK_NODE_EXPORTER_PORT` (9100) and the
+NVIDIA DCGM exporter on `SPARK_DCGM_EXPORTER_PORT` (9400) - and neither exists on a box
+until `--apply` creates it:
 
 ```sh
 bazelisk run //scripts:spark-monitor
@@ -91,19 +110,29 @@ bazelisk run //scripts:spark-monitor -- --status
 bazelisk run //scripts:spark-monitor -- --apply
 ```
 
+### The three modes
+
 Plan is the default and opens no ssh session and no docker call, so the first two are
-safe to run before anything is decided. `SPARK_MONITOR_ENABLED` (false as shipped) is the
-opt-in that decides whether `--targets` prints the three boxes or an empty array, and the
-DCGM image comes from `SPARK_DCGM_EXPORTER_IMAGE`. That one tag -
-`nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.0-ubuntu22.04` - is the pin this stack could
-not verify upstream, so `--apply` is what proves it: it surfaces whatever the registry
-answers when the pull fails, and `--status` prints the tag a box actually runs.
+safe to run before anything is decided.
+
+`SPARK_MONITOR_ENABLED` (false as shipped) is the opt-in that decides whether `--targets`
+prints the three boxes or an empty array, and the DCGM image comes from
+`SPARK_DCGM_EXPORTER_IMAGE`.
+
+That one tag - `nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.0-ubuntu22.04` - is the pin
+this stack could not verify upstream, so `--apply` is what proves it:
+
+- it surfaces whatever the registry answers when the pull fails
+- `--status` prints the tag a box actually runs
+
+### The targets file and the walkthrough
 
 `--targets` prints the `sparks.json` that Prometheus reads through `file_sd_configs`; the
 redirect that writes it on the host, the refresh interval, and what an absent file mean
-are in `observability/spark-targets/README.md`. The box-by-box walkthrough, the counter
-file the DCGM container is handed, and the failure modes are
-[spark-monitoring.md](../spark-monitoring.md).
+are in `observability/spark-targets/README.md`.
+
+The box-by-box walkthrough, the counter file the DCGM container is handed, and the failure
+modes are [spark-monitoring.md](../spark-monitoring.md).
 
 ## Where to look next
 
