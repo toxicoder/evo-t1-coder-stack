@@ -4,8 +4,10 @@
 
 This stack's default shape assumes a trusted LAN or VPN. Its own TLS is self-signed —
 the dashboard's proxy cert and the cert Coder serves on :3001; it has no reverse proxy
-or SSO of its own. Publishing the services on public names through the external
-Traefik (README, "Public subdomains (optional)") is a supported opt-in rather than a
+or SSO of its own.
+
+Publishing the services on public names through the external Traefik (README, "Public
+subdomains (optional)") is a supported opt-in rather than a
 prohibition, and it changes this threat model: TLS then comes from real certificates on
 that machine, and every access decision beyond the application's own credential is
 whatever Traefik, Cloudflare and Authelia are configured to enforce — none of which this
@@ -27,15 +29,16 @@ repo can verify.
 ### Public exposure
 
 - **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder, the dashboard,
-  Hermes and Grafana can be reachable from the WAN. Keep the Coder login strong: that account is the site admin
-  and the control plane it authenticates to creates containers on this host's docker
-  socket. The dashboard's NextAuth password (`HOMEPAGE_AUTH_PASSWORD`) stays the only
-  gate unless an Authelia policy covers the new names too, and that policy is an
-  Authelia-side choice, not something this stack configures. `LITELLM_MASTER_KEY` is
-  the sole credential on the public model endpoint — if Authelia is not exempting that
-  host (it must not gate `Authorization`-header API traffic), a leaked or weak master
-  key exposes the local iGPU models and the Spark boxes behind it, since that proxy was
-  LAN-oriented and is now WAN-reachable.
+  Hermes and Grafana can be reachable from the WAN.
+  - Keep the Coder login strong: that account is the site admin and the control plane
+    it authenticates to creates containers on this host's docker socket.
+  - The dashboard's NextAuth password (`HOMEPAGE_AUTH_PASSWORD`) stays the only gate
+    unless an Authelia policy covers the new names too, and that policy is an
+    Authelia-side choice, not something this stack configures.
+  - `LITELLM_MASTER_KEY` is the sole credential on the public model endpoint — if
+    Authelia is not exempting that host (it must not gate `Authorization`-header API
+    traffic), a leaked or weak master key exposes the local iGPU models and the Spark
+    boxes behind it, since that proxy was LAN-oriented and is now WAN-reachable.
 
 ### The router sidecar port
 
@@ -59,12 +62,13 @@ repo can verify.
   (`hermes-*`, which `STACK_PUBLIC_HOSTS=auto` composes as `hermes-<suffix>.<base>`, for
   example `hermes-gmktecbeast.overeazy.io`) follows the same Cloudflare → Traefik →
   Authelia → `:8080` path as the dashboard and Coder, and the router sends it to
-  `hermes:9119`. Leave Authelia on this name: it is an interactive session, not
-  an API bypass. HTTP basic auth (`HERMES_DASHBOARD_USER` /
-  `HERMES_DASHBOARD_PASSWORD`) stays. v0.22.5 refuses a `0.0.0.0` bind with no
-  provider (`HERMES_DASHBOARD_INSECURE` is a deprecated no-op). On the LAN,
-  `:9119` and `:8080` with a matching Host both skip Authelia, so that basic
-  auth is load-bearing.
+  `hermes:9119`.
+  - Leave Authelia on this name: it is an interactive session, not an API bypass.
+  - HTTP basic auth (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD`) stays.
+  - v0.22.5 refuses a `0.0.0.0` bind with no provider (`HERMES_DASHBOARD_INSECURE` is a
+    deprecated no-op).
+  - On the LAN, `:9119` and `:8080` with a matching Host both skip Authelia, so that
+    basic auth is load-bearing.
 
 ### Hermes host access and approvals
 
@@ -113,11 +117,12 @@ repo can verify.
   public API is gated by Authelia, which answers unauthenticated CLI probes with an
   HTML page), so it mints an API key by inserting a row into the stack's own Postgres
   — the same route `coder reset-password` takes, and it needs docker access to the
-  database container, which is already root-equivalent here. The key is scoped
-  `coder:all`, so treat it as you would an admin token: it is named
-  `stack-template-push`, lives for `CODER_PUSH_TOKEN_MINUTES` (default 10) minutes, is
-  deleted on the way out including on a failed or interrupted run, and is never
-  printed. If a run is SIGKILLed mid-push the row survives until it expires; check
+  database container, which is already root-equivalent here.
+  - The key is scoped `coder:all`, so treat it as you would an admin token: it is named
+    `stack-template-push`, lives for `CODER_PUSH_TOKEN_MINUTES` (default 10) minutes, is
+    deleted on the way out including on a failed or interrupted run, and is never
+    printed.
+- If a run is SIGKILLed mid-push the row survives until it expires; check
   with `docker compose exec db psql -U coder -d coder -c "select id, token_name,
   scopes, expires_at from api_keys where login_type = 'token';"`.
 
@@ -152,33 +157,33 @@ repo can verify.
   path inside the container, which is host filesystem content - every line every
   container printed - but not the daemon: the docker socket stays unmounted here as it
   does for the dashboard, so Alloy can read logs and cannot start, stop or inspect
-  anything. It runs as root (`user: "0:0"`) for that read alone, because those json-file
-  logs are mode 0600 and owned by the daemon's uid on a rootful host; the mount is the
-  only host path it gets and it is read-only. The volumes behind it (`alloy-data`,
-  `loki-data`, `mimir-data`, `tempo-data`)
-  hold that same text at rest, so a shell that can read them reads what the containers
-  said.
+  anything.
+  - It runs as root (`user: "0:0"`) for that read alone, because those json-file logs
+    are mode 0600 and owned by the daemon's uid on a rootful host; the mount is the only
+    host path it gets and it is read-only.
+  - The volumes behind it (`alloy-data`, `loki-data`, `mimir-data`, `tempo-data`) hold
+    that same text at rest, so a shell that can read them reads what the containers said.
 
 ### The LiteLLM scrape token
 
 - LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
   other LiteLLM endpoint — keep it that way, since the metrics name your model
-  aliases and traffic volumes, and LiteLLM's `:4000` is published to the LAN. The key
-  reaches Prometheus as a file, never as a variable: compose's `configs:` block renders
-  `litellm_metrics_token` from `${LITELLM_MASTER_KEY:-change-me-litellm}` and hands it to
-  the prometheus container at `/etc/prometheus-secrets/litellm_token`, mode 0444, and the
-  `litellm` job reads that path with `authorization.credentials_file`
-  (observability/prometheus/prometheus.yml). The pinned Prometheus (v3.16.0) expands
-  `$VAR` and `${VAR}` under `global.external_labels` -- measured at
-  `/api/v1/status/config`, where `$(VAR)` stays literal even there -- and leaves them
-  verbatim in a scrape target address and in `authorization.credentials`, measured at a
-  listener that logs its request headers, so that file is the only door
-  the token can come through -- and it is what keeps the key out of the committed scrape
-  config and out of `docker inspect`'s command line alike. If the `litellm` target goes
-  red, do not take the auth off. The 401 LiteLLM returns offers
-  `litellm_settings.require_auth_for_metrics_endpoint: false`, and that switch publishes
-  to the LAN exactly the model aliases and traffic volumes this bullet is protecting. Fix
-  the token file instead.
+  aliases and traffic volumes, and LiteLLM's `:4000` is published to the LAN.
+  - The key reaches Prometheus as a file, never as a variable: compose's `configs:`
+    block renders `litellm_metrics_token` from `${LITELLM_MASTER_KEY:-change-me-litellm}`
+    and hands it to the prometheus container at
+    `/etc/prometheus-secrets/litellm_token`, mode 0444, and the `litellm` job reads that
+    path with `authorization.credentials_file` (observability/prometheus/prometheus.yml).
+  - The pinned Prometheus (v3.16.0) expands `$VAR` and `${VAR}` under
+    `global.external_labels` -- measured at `/api/v1/status/config`, where `$(VAR)` stays
+    literal even there -- and leaves them verbatim in a scrape target address and in
+    `authorization.credentials`, measured at a listener that logs its request headers, so
+    that file is the only door the token can come through -- and it is what keeps the key
+    out of the committed scrape config and out of `docker inspect`'s command line alike.
+  - If the `litellm` target goes red, do not take the auth off. The 401 LiteLLM returns
+    offers `litellm_settings.require_auth_for_metrics_endpoint: false`, and that switch
+    publishes to the LAN exactly the model aliases and traffic volumes this bullet is
+    protecting. Fix the token file instead.
 
 ## Workspace credentials
 
@@ -208,8 +213,8 @@ repo can verify.
   connection can reach, usable from a workspace terminal and from Grok Build's
   Bash tool, because the startup script seeds `~/.gitconfig` with
   `credential.https://github.com.helper = !gh auth git-credential` and `gh`
-  prefers the environment variable, falling back to that auth-store copy. The
-  minted token is short-lived and per-host, so keep the GitHub-side grant narrow
+  prefers the environment variable, falling back to that auth-store copy.
+- The minted token is short-lived and per-host, so keep the GitHub-side grant narrow
   anyway: it decides which repositories the workspace can write to, and a
   connected-but-unscoped credential authenticates and is denied on every write to a
   repo it can read (reads prove nothing about write: a public repo answers read
@@ -220,16 +225,17 @@ repo can verify.
 - `scripts/github-auth.sh` reads that state
   from the host and from inside a workspace (inside a workspace, where docker
   reaches only the workspace's own DinD sidecar, `check` runs SELF mode with no
-  docker and probes this environment's own credential chain): `check` names which
-  credential a workspace's git/gh would present (env pair, auth-store copy, or
-  direct mint) and whether that credential can WRITE to a given repo - one
-  read-only GET of the `git-receive-pack` ref advertisement, the endpoint `git push`
-  negotiates through, printing sources and verdicts only, never token bytes; `auth`
-  pipes a PAT into one container's gh
-  credential store, where it stands in for a workspace whose owner connected no
-  account — with a connected account, the next `gh_token_refresh` run (start,
-  then every 20 minutes) rewrites that store with a minted pair. `gh auth logout`
-  inside the container — or a rebuild — removes it either way.
+  docker and probes this environment's own credential chain):
+  - `check` names which credential a workspace's git/gh would present (env pair,
+    auth-store copy, or direct mint) and whether that credential can WRITE to a given
+    repo - one read-only GET of the `git-receive-pack` ref advertisement, the endpoint
+    `git push` negotiates through, printing sources and verdicts only, never token
+    bytes;
+  - `auth` pipes a PAT into one container's gh credential store, where it stands in for
+    a workspace whose owner connected no account — with a connected account, the next
+    `gh_token_refresh` run (start, then every 20 minutes) rewrites that store with a
+    minted pair.
+  - `gh auth logout` inside the container — or a rebuild — removes it either way.
 
 ## Spark model endpoints
 
@@ -256,17 +262,18 @@ repo can verify.
   toggle on, a workspace gets its own `docker:29.8.1-dind` container running
   `privileged: true` — the same root-equivalent-on-the-host-kernel standing Kasm
   has, so a compromised workspace reaches the host kernel and the blast radius
-  widens from the workspace to the machine. The daemon is started with
-  `DOCKER_TLS_CERTDIR=`, which means no TLS and no authentication on
-  `tcp://0.0.0.0:2375`; what contains that is the per-workspace bridge network
-  (`coder-<wsid>-dind`) — no published host port, and two workspaces never share a
-  network, because a shared one would let each reach the other's daemon and
-  therefore each other's builds. That network is deliberately not `internal` — an
-  internal network has no NAT, which would break the workspace's
-  `host.docker.internal` route to the Coder agent listener — so the isolation is
-  simply that nothing else is attached to it and nothing is published to the host.
-  Keep the toggle off unless someone is actually building containers. See README,
-  "Coder workspace template".
+  widens from the workspace to the machine.
+  - The daemon is started with `DOCKER_TLS_CERTDIR=`, which means no TLS and no
+    authentication on `tcp://0.0.0.0:2375`; what contains that is the per-workspace
+    bridge network (`coder-<wsid>-dind`) — no published host port, and two workspaces
+    never share a network, because a shared one would let each reach the other's daemon
+    and therefore each other's builds.
+  - That network is deliberately not `internal` — an internal network has no NAT, which
+    would break the workspace's `host.docker.internal` route to the Coder agent
+    listener — so the isolation is simply that nothing else is attached to it and
+    nothing is published to the host.
+  - Keep the toggle off unless someone is actually building containers. See README,
+    "Coder workspace template".
 
 ## Workspace profile, MCP, and editor
 
@@ -276,13 +283,14 @@ repo can verify.
   host-wide.** That is the default mode (template variable `grok_profile_mode`; the
   create form's **Grok profile** field can drop one workspace to `private`), and in it
   each workspace mounts three of its owner's volumes read-write, each keyed by
-  workspace **owner** id: `grok-notes-<owner-id>` at `/home/coder/.grok/notes`,
-  `grok-memory-<owner-id>` at `/home/coder/.grok/memory`, and
-  `grok-sessions-<owner-id>` at `/home/coder/.grok/sessions`. Nothing else under
-  `~/.grok` crosses between that owner's workspaces: `config.toml`, the MCP caches and
-  the skills are per-workspace files on that workspace's own home volume, rendered from
-  the template on its own start, so no other user's workspace is ever configured to
-  mount any of them and no workspace can rewrite another's config.
+  workspace **owner** id:
+  - `grok-notes-<owner-id>` at `/home/coder/.grok/notes`
+  - `grok-memory-<owner-id>` at `/home/coder/.grok/memory`
+  - `grok-sessions-<owner-id>` at `/home/coder/.grok/sessions`.
+- Nothing else under `~/.grok` crosses between that owner's workspaces: `config.toml`,
+  the MCP caches and the skills are per-workspace files on that workspace's own home
+  volume, rendered from the template on its own start, so no other user's workspace is
+  ever configured to mount any of them and no workspace can rewrite another's config.
 
 ### private mode and the legacy volume
 
@@ -296,13 +304,14 @@ repo can verify.
 
 - The accepted cost in `shared` mode is that the SQLite memory/index files in the shared
   memory volume are opened live by every holder, so concurrent writers can race;
-  nothing credential-bearing lives in `~/.grok` either,
-  because `config.toml` names `LITELLM_API_KEY` through `env_key` — and `GH_TOKEN` by a
-  `${GH_TOKEN}` reference when the `github_mcp` server is on (the template default) —
-  while both keys travel in the workspace environment. So no secret bytes land in any
-  rendered file, but the trust boundary widens to GitHub, outside the LAN, as soon as
-  an owner connects a GitHub account. Park it with `GITHUB_MCP=false` and a template
-  re-push if a workspace must not gain GitHub tools. See [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
+- nothing credential-bearing lives in `~/.grok` either, because `config.toml` names
+  `LITELLM_API_KEY` through `env_key` — and `GH_TOKEN` by a `${GH_TOKEN}` reference when
+  the `github_mcp` server is on (the template default) — while both keys travel in the
+  workspace environment.
+- So no secret bytes land in any rendered file, but the trust boundary widens to GitHub,
+  outside the LAN, as soon as an owner connects a GitHub account.
+- Park it with `GITHUB_MCP=false` and a template re-push if a workspace must not gain
+  GitHub tools. See [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
 
 ### The context7 MCP server
 
@@ -328,17 +337,17 @@ repo can verify.
 ### Where the editor keeps the LiteLLM key
 
 - The shared editor-settings overlay lives on a per-owner volume, `vscode-settings-<owner-id>`,
-  mounted at `/home/coder/.shared/vscode` — every workspace that owner has reads it, and no
-  other user's workspace mounts it. The file code-server actually opens,
-  `~/.local/share/code-server/User/settings.json`, is a real per-workspace file:
-  the boot renders it, then layers that overlay on top so an API key entered in
-  any one workspace reaches all of them. The git seed does not contain the
-  LiteLLM master key. The startup script writes `LITELLM_API_KEY` into the
-  shared file at seed time, because Cline and Roo read the key from
-  `settings.json` and have no environment-key field, and the merge carries that
-  key into the per-workspace copy. So the key rests in two places, not one: the
-  owner's settings volume and each of that owner's workspace home volumes. Treat
-  a copy of either like a copy of the key.
+  mounted at `/home/coder/.shared/vscode` — every workspace that owner has reads it, and
+  no other user's workspace mounts it.
+- The file code-server actually opens, `~/.local/share/code-server/User/settings.json`,
+  is a real per-workspace file: the boot renders it, then layers that overlay on top so
+  an API key entered in any one workspace reaches all of them.
+- The git seed does not contain the LiteLLM master key. The startup script writes
+  `LITELLM_API_KEY` into the shared file at seed time, because Cline and Roo read the key
+  from `settings.json` and have no environment-key field, and the merge carries that key
+  into the per-workspace copy.
+- So the key rests in two places, not one: the owner's settings volume and each of that
+  owner's workspace home volumes. Treat a copy of either like a copy of the key.
 
 ## Reporting a vulnerability
 

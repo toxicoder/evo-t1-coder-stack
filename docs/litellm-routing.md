@@ -94,14 +94,16 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 
 - `background_health_checks: true` and `enable_health_check_routing: true` do the
   re-probing and then make the result decide routing, so recovery does not wait for
-  user traffic to rediscover it. They sit beside `health_check_interval: 120`,
-  `health_check_staleness_threshold: 900` and `health_check_concurrency: 2`. Those keys
-  have to sit in `general_settings:`; `health_check_interval` and
-  `health_check_concurrency` under `router_settings:` make the proxy raise `ValueError`
-  at boot. The concurrency is deliberately small: a probe is a real generation that
-  carries the lane's baked `reasoning_effort`, and on a box whose prompt cache sits
-  full it evicts a warm conversation to fit itself. See the TensorFold log section of
-  [troubleshooting.md](troubleshooting.md).
+  user traffic to rediscover it.
+  - They sit beside `health_check_interval: 120`, `health_check_staleness_threshold: 900`
+    and `health_check_concurrency: 2`.
+  - Those keys have to sit in `general_settings:`; `health_check_interval` and
+    `health_check_concurrency` under `router_settings:` make the proxy raise `ValueError`
+    at boot.
+  - The concurrency is deliberately small: a probe is a real generation that carries the
+    lane's baked `reasoning_effort`, and on a box whose prompt cache sits full it evicts
+    a warm conversation to fit itself. See the TensorFold log section of
+    [troubleshooting.md](troubleshooting.md).
 - `health_check_ignore_transient_errors: true` is load-bearing rather than tidy. A box
   that is merely busy can answer a 16-token probe with a 429 or a 408, and with the
   key on those endpoints are dropped before the state is written
@@ -233,15 +235,17 @@ The two levers that actually move load off a shedding box:
      shares. Past 15 across the fleet the boxes have no streams left to give, whatever the
      lane.
    - The same 15 is the budget of a whole tree, because `max_depth` (rendered from
-     `grok_subagent_max_depth`, default 2, validated 1..3) lets a child spawn. `reviewer`,
-     `security-auditor` and `tester` name `spawn_subagent` in their `tools`, and every
-     mapper such a child raises holds a stream the same way its parent does, so a parent
-     sums the in-flight `1 + spawns` over every task and keeps that total at or below the
-     fleet's stream count (`fleet:` in the plan, 15 by default,
-     `templates/common/ez-micro-plan.plan_check.py:42`). That checker refuses a wave whose
-     cost passes the fleet, and the sum is a separate figure from the session cap
-     `[subagents] max_concurrent` sets, because a grandchild opens its own session. The box
-     refuses an over-admitted stream the same way it refuses any other, with `NoRoom`.
+     `grok_subagent_max_depth`, default 2, validated 1..3) lets a child spawn.
+     - `reviewer`, `security-auditor` and `tester` name `spawn_subagent` in their `tools`,
+       and every mapper such a child raises holds a stream the same way its parent does, so
+       a parent sums the in-flight `1 + spawns` over every task and keeps that total at or
+       below the fleet's stream count (`fleet:` in the plan, 15 by default,
+       `templates/common/ez-micro-plan.plan_check.py:42`).
+     - That checker refuses a wave whose cost passes the fleet, and the sum is a separate
+       figure from the session cap `[subagents] max_concurrent` sets, because a grandchild
+       opens its own session.
+     - The box refuses an over-admitted stream the same way it refuses any other, with
+       `NoRoom`.
 
 #### Knobs that look right and do nothing
 
@@ -437,12 +441,13 @@ router_settings:
 At the pinned `v1.102.1` tag that key is a real `Router.__init__` argument and is not in
 `ROUTER_SETTINGS_MANAGED_OUTSIDE_CONFIG`, so `config.yaml` reaches it, and its valid flags
 are exactly `deployment_affinity`, `responses_api_deployment_check`, `session_affinity`
-and `encrypted_content_affinity`. An entry REPLACES the global flag list for the group it
-names rather than adding to it, so the empty list means no affinity check of any kind runs
-for `agent-swarm`. Every group absent from the map keeps falling back to the global
-`["session_affinity"]`, which is why the five lanes a conversation rides still pin exactly
-as they did. Setting the key also self-arms the affinity callback, so those groups keep
-pinning.
+and `encrypted_content_affinity`.
+
+An entry REPLACES the global flag list for the group it names rather than adding to it, so
+the empty list means no affinity check of any kind runs for `agent-swarm`. Every group
+absent from the map keeps falling back to the global `["session_affinity"]`, which is why
+the five lanes a conversation rides still pin exactly as they did. Setting the key also
+self-arms the affinity callback, so those groups keep pinning.
 
 This key is the opt-out; a client header is not. An empty or short `x-litellm-session-id`
 does not skip the pin at this tag - that header is read verbatim at any length, and only
@@ -527,19 +532,24 @@ variable, so either rolls back alone without moving the other or the writers'
 The variables are declared in `templates/workspace/coder.tf:24-52` and its devcontainer
 twin, and they are what fills `[subagents.models]` in
 `templates/workspace/grok-config.toml.tftpl`. The fan-out width rides a different variable
-and does not follow any of these three: it is `grok_subagent_max_concurrent`'s own shipped
-15. `main.tf` renders that through
+and does not follow any of these three: it is `grok_subagent_max_concurrent`'s own
+shipped 15.
+
+`main.tf` renders that through
 `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`,
 and the `: var.grok_swarm_width` arm of the ternary answers only a caller that passes null
-on purpose - the quote is the opt-in, not the source of the width. `grok_swarm_width`
-(default 15) is the fleet's own ceiling, rendered as the `# fleet-width:` line beside
-`max_concurrent`. The lane decides placement, not width - what a pinned lane
-changes is where those 15 land,
-and one box only ever admits `PARALLEL` (5) of them. The workspace side of that seam is
-[grok-build-and-agents.md](grok-build-and-agents.md#the-fan-out-seam). A contributor home
-names the same three lanes with `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and
-`GROK_REVIEW_LANE` for `//scripts:seed-dev-env`. Neither lane is registered as a Coder
-Agents chat model, so a pin is the only way onto either one.
+on purpose - the quote is the opt-in, not the source of the width.
+
+- `grok_swarm_width` (default 15) is the fleet's own ceiling, rendered as the
+  `# fleet-width:` line beside `max_concurrent`.
+- The lane decides placement, not width - what a pinned lane changes is where those 15
+  land, and one box only ever admits `PARALLEL` (5) of them.
+- The workspace side of that seam is
+  [grok-build-and-agents.md](grok-build-and-agents.md#the-fan-out-seam).
+- A contributor home names the same three lanes with `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE`
+  and `GROK_REVIEW_LANE` for `//scripts:seed-dev-env`.
+- Neither lane is registered as a Coder Agents chat model, so a pin is the only way onto
+  either one.
 
 ### The fast-compaction lanes: `agent-xhigh-fast` and `agent-swarm-fast`
 
@@ -737,11 +747,12 @@ LiteLLM and the other two are silent, which is why the silent two are what the g
 - `litellm_settings.callbacks` must name the *instance*,
   `compaction_router.proxy_handler_instance`, never the class. `ProxyLogging` dispatches
   `async_pre_call_hook` only to a callback that IS a `CustomLogger` and overrides that hook
-  in its own class dict. At the pinned `v1.102.1` a class entry fails loudly:
-  `litellm/proxy/common_utils/callback_utils.py` maps it to a `ValueError` that names
-  `proxy_handler_instance` and the config does not load. That check is recent, so the older
-  wording you may find in a comment - a class boots clean, the lanes keep working, the hop
-  never fires - describes what it used to do.
+  in its own class dict.
+  - At the pinned `v1.102.1` a class entry fails loudly:
+    `litellm/proxy/common_utils/callback_utils.py` maps it to a `ValueError` that names
+    `proxy_handler_instance` and the config does not load.
+  - That check is recent, so the older wording you may find in a comment - a class boots
+    clean, the lanes keep working, the hop never fires - describes what it used to do.
 - The module is mounted as a single file,
   `./litellm/compaction_router.py:/app/compaction_router.py:ro`. A directory mount over
   `/app` hides `config.yaml` beside it, and it has to sit in the same directory as the
@@ -969,14 +980,16 @@ stopped passing would hold the host assistant down with the proxy.
   coder, and `coder` declares no hop of its own.
 - The two fan-out lanes degrade the way the swarm lane does, one step further than the
   pinned lanes, and each hops through the lane that bakes its own level:
-  `agent-explore: ["agent-low", "coder"]` and `agent-review: ["agent-xhigh", "coder"]`
-  (`litellm/config.yaml:882-883`). The extra step is worth taking for the same reason -
-  these groups' own three deployments can all be cooling while the same boxes are healthy
-  under the pinned alias, since health state and cooldowns are kept per group - and the
-  hop is chosen so a parent that dispatched an explore child at `low` gets a `low` answer
-  from the fallback rather than an `xhigh` it did not ask for. Both chains are acyclic and
-  end at `coder`: agent-explore -> agent-low -> coder, agent-review -> agent-xhigh ->
-  coder, and neither fallback lane names a lane that hops back here.
+  - `agent-explore: ["agent-low", "coder"]` and `agent-review: ["agent-xhigh", "coder"]`
+    (`litellm/config.yaml:882-883`).
+  - The extra step is worth taking for the same reason - these groups' own three
+    deployments can all be cooling while the same boxes are healthy under the pinned alias,
+    since health state and cooldowns are kept per group - and the hop is chosen so a parent
+    that dispatched an explore child at `low` gets a `low` answer from the fallback rather
+    than an `xhigh` it did not ask for.
+  - Both chains are acyclic and end at `coder`: agent-explore -> agent-low -> coder,
+    agent-review -> agent-xhigh -> coder, and neither fallback lane names a lane that hops
+    back here.
 - Each fast lane hops to the lane it is the twin of:
   `- agent-xhigh-fast: ["agent-xhigh", "coder"]` and
   `- agent-swarm-fast: ["agent-swarm", "coder"]`
