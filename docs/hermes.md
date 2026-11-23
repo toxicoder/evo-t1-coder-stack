@@ -70,6 +70,7 @@ Related:
   4. `http://hermes:9119`, with the original Host preserved
 
   Traefik's backend is `:8080`, not `:9119`. See [public-access.md](public-access.md).
+
 ### Signing in
 
 - Sign-in is HTTP basic auth from `.env`: `HERMES_DASHBOARD_USER` (default `admin`) and
@@ -136,6 +137,7 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
 - **Options** (before the subcommand): `-p/--project-name` (`evo-t1-prod`; the dev
   sandbox is `evo-t1-dev`), `-f/--file`, `-e/--env-file`, `-m/--model <alias>` for one
   session, `-w/--writable <dir>`, `--one-shot`, `--dry-run`, `-h/--help`.
+
 ### One container, not two
 
 - **It enters the running container rather than starting a second one.** Hermes keeps
@@ -377,6 +379,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
 
   Use one when a run needs a different level; Qwen3.8-Flash-Next takes `low`, `medium`
   and `xhigh` and nothing else.
+
 ### The pinless aliases
 
 - **`agent-swarm`** is one of the nine Spark aliases, and one of four - with
@@ -400,6 +403,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   turn still runs on a Spark.
 
   See [litellm-routing.md](litellm-routing.md#the-swarm-lane-agent-swarm).
+
 ### The key and the fallbacks
 
 - The key is `LITELLM_MASTER_KEY`, substituted from the environment into the seeded
@@ -411,6 +415,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
     those weights write the tool call into the message body as plain text, so agent
     turns silently lose their tools. See
     [litellm-routing.md](litellm-routing.md#tool-calls-the-measured-limitation).
+
 ### How the providers block declares aliases
 
 - The models come from a `providers:` block in `hermes/config.yaml`. Its `litellm` row
@@ -426,6 +431,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
 
   `litellm/config.yaml` owns the set, so an alias is added there and a row follows; the
   gate fails when the two drift apart, or when one alias ends up on two rows.
+
 ### Route and model are separate switches
 
 - Route and model are two separate switches. A `providers:` row selects the route -
@@ -447,6 +453,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   A run with no flags sends the `model:` block's value (`agent`) whatever rows exist,
   and `hermes config set model.provider <row>` changes the route and leaves that value
   alone - the `default_model` pickup is gated on the CLI flag, not on the config key.
+
 ### The verbs that change the model
 
 - The verbs that do change the model:
@@ -465,6 +472,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   success line and changes nothing, and `hermes config get model.model` answers "Config
   key not set" for the same reason even when a model is set; read it back with
   `hermes config get model.default`.
+
 ### The Arc rows and the picker
 
 - The Arc's own weights also ship as named rows beside that catalogue - `arc-chat`,
@@ -496,6 +504,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   The rows go through LiteLLM rather than `http://ollama:11434` because the proxy is
   the stack's sole model transport, it is where the aliases and the Arc's context
   window are defined, and 11434 is deliberately unpublished.
+
 ### What the picker hides
 
 - Two parts of that list are deliberate. `compaction-fast` is served by the proxy and
@@ -509,6 +518,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   Read that as a hide rather than a wall: no row declares the id, and a name no row
   declares is *accepted* as an unknown hidden model on the current provider, so a typed
   `/model compaction-fast` still puts a turn on it. Nothing refuses it for you.
+
 ### The seed reaches the volume once
 
 - All of that lives in the seed, and the seed reaches the volume once:
@@ -738,6 +748,7 @@ recreate the container and the env applies.
   **new session** - a fresh Chat tab, or a new `hermes-shell` run - and the new skill is
   offered. Recreate only if it still does not show up, since `restart` keeps the old
   mounts.
+
 ### The identity file
 
 - `SOUL.md` is the identity - voice and stance, a short persona. It is not a fork of
@@ -759,6 +770,7 @@ recreate the container and the env applies.
   basic-auth provider is load-bearing. It is a provider, not a toggle.
 - `HERMES_DASHBOARD_INSECURE` does not remove that requirement. Leave
   `approvals.mode` on `manual`.
+
 ### Secrets and ad-hoc shell
 
 - Secrets live in gitignored `.env` and in the `hermes-data` volume. Never commit them,
@@ -769,6 +781,7 @@ recreate the container and the env applies.
 - No GitHub PAT in Hermes. GitHub auth in this stack is Coder External Auth only, and a
   token here would sit on a container that can both write to the checkout and drive the
   host daemon. See [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
+
 ### The extra doors
 
 - The terminal door adds a way in for someone who already has a shell on this host, and

@@ -21,6 +21,7 @@ For the agent system that wraps it, use `skills/reflect-and-evolve/references/ch
   `head -n 60 AGENTS.md`, `ls .grok/rules/*.md`
 - The conventions page and the docs page that already owns the area, so the rule lands where a reader already looks:
   `head -n 40 docs/project-conventions.md`, `ls docs/*.md docs/operate/ docs/contribute/ docs/workflows/`
+
 ### The session table, read the sanctioned way
 
 - The ranked session table, and the only sanctioned way into `~/.grok/sessions/`:
@@ -30,6 +31,7 @@ For the agent system that wraps it, use `skills/reflect-and-evolve/references/ch
 
   Defaults: `--home` is `$GROK_HOME` else `~/.grok`, `--repo` the cwd, `--limit` 20, `--since` 90.
   It reads the store's summary documents and prints counts and titles; nothing in this page authorizes reading a transcript.
+
 ### The gate baseline, the operator CLIs, and the Bazel graph
 
 - The gate baseline, run now, so a later red is yours or is not: `bazelisk test //:test-fast`,
@@ -43,6 +45,7 @@ For the agent system that wraps it, use `skills/reflect-and-evolve/references/ch
   `bazelisk run //scripts:bazel-map -- owners <path>`
 - The twin a template payload file owes, so a change to one copy is never the whole change:
   `bazelisk run //scripts:bazel-map -- twins <path>`
+
 ### Leftovers, scratch, and the hard limits
 
 - The last reflection's leftovers, and the scratch every later command here writes into, so create it once:
@@ -75,6 +78,7 @@ The top row is a candidate, not a verdict.
   `python3 skills/reflect-and-evolve/scripts/session_signals.py --repo . --json --limit 30 >
   /tmp/reflect-and-evolve-repo/signals.json` then
   `grep -o '"title": "[^"]*"' /tmp/reflect-and-evolve-repo/signals.json | sort | uniq -c | sort -rn | head -10`
+
 ### Gate reds and gate holes
 
 - A gate that goes red twice for one cause is one finding with two rows, not two findings. Name the repeated `FAILED` label, read
@@ -84,6 +88,7 @@ The top row is a candidate, not a verdict.
   fix is a script under `scripts/` with a Bats twin, or one line in the docs page that owns the task. Not a new global rule.
 - A directory that returns rows from `bazelisk run //scripts:bazel-map -- unlisted <dir>` is invisible to `//:test-fast` and
   `//:lint`; that is a gate hole before it is ever a code problem.
+
 ### Convention drift, and the evidence bar
 
 - Convention drift in the history itself: run both counts over the last thirty subjects and compare them yourself,

@@ -540,12 +540,14 @@ while the managed block is intact.
   mechanism, the five `EVO_T1_FAST_COMPACTION*` knobs, and the 107 s to 1915 s Spark-side
   compactions that motivated it are in
   [litellm-routing.md](litellm-routing.md#the-fast-compaction-lanes-agent-xhigh-fast-and-agent-swarm-fast).
+
 #### The session pin header
 
 - `[models]` also carries `extra_headers` with
   `x-litellm-session-id: ws-<workspace-id>` - the key LiteLLM uses to pin a
   workspace's traffic to one healthy Spark box. Each workspace renders its own
   key: `config.toml` is that workspace's own file.
+
 #### The subagent width and depth keys
 
 - `[subagents]` sets how wide a fan-out goes and `[subagents.models]` which lane each
@@ -633,6 +635,7 @@ while the managed block is intact.
   What those four variables decide is placement only: the in-flight width comes from `grok_subagent_max_concurrent`
   (its own shipped 15) on every lane, so `grok_subagents_lane` remains the knob a workspace
   turns on to fan out, and narrowing that width is the same variable rather than the lane.
+
 #### The three feature flags
 
 - `[features]` carries `telemetry = false`, `web_fetch = true` and
@@ -641,6 +644,7 @@ while the managed block is intact.
   keep its context, which is cheaper than killing it and dispatching a replacement. All
   three keys are static in `templates/workspace/grok-config.toml.tftpl:368-373` and none
   is rendered from a template variable.
+
 #### The two MCP server blocks
 
 - `github_mcp` (default `true`, so the block renders unless you park it with
@@ -660,10 +664,12 @@ while the managed block is intact.
   the sensitive template variable `context7_api_key`, filled by the push from
   `CONTEXT7_API_KEY` in the host `.env` - not from Coder External Auth, which is what
   fills `GH_TOKEN` above.
+
 #### The verbatim escape hatch
 
 - `grok_config_extra` appends whatever the create form's **Grok config extras** field
   holds, verbatim under its own comment header.
+
 #### The approval default is a stack decision
 
 - `[permission]` holds the guardrails the stack owns. The approval mode is a stack
@@ -694,6 +700,7 @@ while the managed block is intact.
 
   `.gitignore` carries the matching half on the git side: the whole family is
   ignored except the names `allow` lists.
+
 #### The git verbs the branch-first policy needs
 
 - `allow` also carries the verbs the branch-first, commit-per-unit policy needs:
@@ -717,6 +724,7 @@ while the managed block is intact.
 
   Both are prefix globs, so they narrow that door rather than seal it, and the
   `Stage by path` rule in the seed text is the rest of the defence.
+
 #### Why the recursive-delete deny catches benign cleanups
 
 - `Bash(rm -rf *)` is a prefix glob, so it catches a benign per-path scratch cleanup
@@ -730,6 +738,7 @@ while the managed block is intact.
   An `allow` entry cannot rescue `rm -rf`, because deny outranks allow. Narrowing the pattern
   is an operator call and a deliberate one: it is the only thing between an agent and a
   recursive delete on a path it got wrong.
+
 #### The self-teardown deny family
 
 - The self-teardown family is denied alongside it, because an agent that closes its own
@@ -750,6 +759,7 @@ while the managed block is intact.
   an abbreviated tmux verb (`tmux kill-sess`) or a bracketed pattern (`pkill -f [t]mux`)
   walks past them - the seed rule that names the prohibition is the other half, and the
   plain `bash` profile is how a session reaches a shell once they are all gone.
+
 #### The marker that keeps the config stack-owned
 
 - Stack ownership of the file rests on either marker spelling: the line-1
@@ -1292,11 +1302,13 @@ No guard exits non-zero on its own account, so a broken one cannot wedge a sessi
   It fails open on an event it cannot parse, and denies when
   the runner reports `toolInputTruncated`, because that is text the scan never saw
   (`templates/common/hooks.secret-guard.sh`).
+
 #### The command guard
 
 - `PreToolUse`, matcher `Bash|run_terminal_command` -> `bin/dangerous-command-guard.sh`: tests
   `toolInput.command` against the list beside itself and denies, naming the file, the line
   number and the pattern that matched.
+
 #### The post-edit formatter
 
 - `PostToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/post-edit-format.sh`: the
@@ -1312,6 +1324,7 @@ No guard exits non-zero on its own account, so a broken one cannot wedge a sessi
 
   It only ever answers, never blocks: a rewrite is reported as `additionalContext`, and silence
   means nothing changed or the formatter is not on PATH.
+
 #### The selective test runner
 
 - `PostToolUse`, matcher `Edit|Write|search_replace|write` -> `bin/selective-test-runner.sh`:
@@ -1555,6 +1568,7 @@ workspace on that daemon mounts the same volume, each writing under its own
 - Like the per-owner volumes it is a plain string name in `main.tf`, not a
   `docker_volume` resource, so Docker creates it on the first container start that
   names it and reuses it afterwards.
+
 #### How the archive is written
 
 - The copy is made by a background `rsync` that stage 9 of `startup.sh.tftpl` starts
@@ -1576,6 +1590,7 @@ workspace on that daemon mounts the same volume, each writing under its own
 - A fresh named volume arrives `root:root` while the agent runs as `coder`, so the
   stage chowns the mount point to the home owner first, exactly as the `~/.grok` and
   `~/.shared` volumes above do.
+
 #### Who may read the archive
 
 - **Nothing reads it back.** `~/.grok/sessions` stays the only session state the CLI,
@@ -1623,6 +1638,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   for itself: keyless engines only, no key, no account, no request logging. A
   workspace reaches it through the host gateway, so the workspace networks stay
   untouched.
+
 ### Why the native search tool is parked
 
 - It is **not** a model transport, and the native tool is parked: both twins render
@@ -1642,6 +1658,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   So `web_search = "agent"` and `supports_backend_search = false` stay as
   they are - the role stays filled so re-enabling is a one-key flip - but while the
   key reads `true` nothing dials it.
+
 ### The MCP search lane and its probe
 
 - The `searxng` MCP stdio server is what answers instead, and it is the search lane
@@ -1709,6 +1726,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   - `SEARXNG_DEFAULT_SAFESEARCH` (mirrors `search.safe_search` in `searxng/settings.yml`)
   - `SEARXNG_DEFAULT_LANGUAGE` (`all`, so an image bump cannot quietly start geo-filtering
     every agent search)
+
 ### The offline stdio servers stay undeclared
 
   The five offline stdio servers (`filesystem`, `memory`, `sequential-thinking`,
@@ -1718,6 +1736,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   their tools, and a declared-but-unused server still costs every session its
   handshake time and tool schemas. Declare one by hand and check a stubborn
   server with `grok mcp doctor <name>` inside a workspace.
+
 ### The github server
 
 - The `github` server (`https://api.githubcopilot.com/mcp/`) renders by default even
@@ -1726,6 +1745,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   renders with no credential and pays one failed handshake per session. `github_mcp`
   (default true) is the gate; `$GH_TOKEN` comes from Coder External Auth, never from a
   PAT.
+
 ### The context7 server and its cache
 
 - The `context7` server (library and API docs) also renders by default, and is the
@@ -1756,6 +1776,7 @@ workspace on that daemon mounts the same volume, each writing under its own
 
   Prove it
   with `grok mcp doctor context7` inside a workspace.
+
 ### Proving the lanes with mcp-check
 
 - Prove all three at once with `bazelisk run //scripts:mcp-check`: it reads the
@@ -1764,6 +1785,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   there, and what each server's handshake says. A binary the box cannot find is image
   drift (the running `evo-t1-dev` predates the npm bake), and the check prints the
   pinned `npm i -g --prefix /opt/npm-global` command that restores it.
+
 ### The three failure shapes
 
 - A lane an agent needs fails in exactly three shapes, and that check tells them
@@ -1786,6 +1808,7 @@ workspace on that daemon mounts the same volume, each writing under its own
     Auth (the **GitHub reauth** app) and start a new session. An empty
     `CONTEXT7_API_KEY` is not a gap - see the key's paragraph above, the lane answers
     keyless at the public rate limit.
+
 ### What the rulebook tells the agent
 
 - What the agent is told about all this lives in `~/.grok/AGENTS.md`, which
@@ -1810,6 +1833,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   tool use delegated work: the child returns a digest - numbered findings, each one
   claim, one source URL and at most two lines of support, no raw result dumps,
   confidence stated - and keeps the raw pages to itself.
+
 ### Cline, Roo, and the shared editor settings
 
 - Cline and Roo/Kilo are pre-wired to the LiteLLM proxy (endpoint from `litellm_url`,
@@ -1852,6 +1876,7 @@ workspace on that daemon mounts the same volume, each writing under its own
   inside a built dev container therefore survive neither a rebuild nor a look at the
   shared file. Everywhere else no settings map is passed at all, because a merge
   would replace the symlink.
+
 ### Installing the extensions by hand
 
 - Installing Cline, Roo, the Red Hat YAML extension and Material Icon Theme is a
@@ -1953,6 +1978,7 @@ drives the server's experimental chat API:
   `change-me-litellm` interpolation default, and that default is what gets sent.
   Created when absent, drift-patched when an existing provider carries a drifted
   `base_url` or key.
+
 #### The model config rows
 
 - chat model configs `agent` (context limit 262144, set as the default; LiteLLM bakes
@@ -1982,6 +2008,7 @@ drives the server's experimental chat API:
 
   The gate fails open: a proxy that will not answer leaves every alias
   registerable, and `CODER_AGENTS_LIVE_ALIASES="agent chat"` overrides it outright.
+
 #### The auxiliary pins
 
 - pins for the four auxiliary lanes - `general` and `explore` (the two subagent
@@ -1996,6 +2023,7 @@ drives the server's experimental chat API:
   Neither preference list names `agent-swarm`: that config is registered for the model picker only, because these lanes
   serve the control-plane chat agent, which is one conversation, and one conversation
   wants the pin.
+
 #### The read-only drift check
 
 - a read-only drift check on the stored configs: a config that is disabled, is not
@@ -2113,6 +2141,7 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   what `execute`-lane delegation drives. The chat agent dedupes skills by name,
   first match wins, home scope before a working-dir path, so one agent never loads a
   skill twice: the twins exist for the CLI, not as a second source for chat.
+
 #### Which body writes each family
 
 - 1-4 are written by `startup.sh.tftpl`. 5-10 are the stack's three skill commands and are
@@ -2129,6 +2158,7 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   that three of its four bodies invoke by `~/.agents` path. Same absent-only contract and
   the same `cp` twin rule; the helper directories are made by the body, so a workspace that
   already has the `SKILL.md` but lost a helper still gets the helper back.
+
 #### The memory and skill trio
 
 - 5 and 6 are `/ez-learn`: this stack's copy of the upstream memory commands `/flush`,
@@ -2161,6 +2191,7 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   The boot and the reseed delete a leftover
   marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
   above.
+
 #### The orchestration protocol text
 
 - The text of 1-4 is the orchestration protocol (fan-out / fan-in, the edit-conflict gate,
@@ -2183,6 +2214,7 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   cloned folder under `/srv/coder-devcontainers/...`, where a dev container built on
   the sidecar carries its own home and no seeded path is visible from inside it
   anyway).
+
 #### Where the marker sits in each seed
 
 - Each seeded file carries the stack marker - the `managed-by: evo-t1-coder-stack`

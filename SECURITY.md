@@ -23,6 +23,7 @@ repo can verify.
   proxy-side policy you configure — not by ad-hoc port-forwarding, which skips both.
   LiteLLM requires `LITELLM_MASTER_KEY` for every request; Coder has its own login, and
   once either name resolves publicly assume it is being probed.
+
 ### Public exposure
 
 - **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder, the dashboard,
@@ -43,6 +44,7 @@ repo can verify.
   Host: on the LAN, sending a matching Host header to that port reaches the same upstreams
   without Traefik or Authelia in the path, so treat 8080 as a LAN-only port. For Hermes
   that bypass still has HTTP basic auth; leave the Authelia policy on the public name.
+
 ## Per-service exposure
 
 ### Ollama is internal-only
@@ -50,6 +52,7 @@ repo can verify.
 - **Ollama is internal-only.** IPEX-LLM Ollama listens on 11434 inside the
   compose network only and is deliberately not published to the host.
   Never add a `11434:11434` port mapping.
+
 ### Hermes dashboard
 
 - **Hermes is root-equivalent, and a public name is supported.** The fifth name
@@ -80,6 +83,7 @@ repo can verify.
   search cannot fall through to a vendor's anonymous free tier. Secrets stay in
   `.env` and the `hermes-data` volume; there is no GitHub PAT in Hermes. See
   [docs/hermes.md](docs/hermes.md).
+
 ### Homepage dashboard
 
 - **Dashboard.** The Homepage container publishes no port; `homepage-proxy`
@@ -90,6 +94,7 @@ repo can verify.
   — leave it enabled, since the dashboard enumerates every service on the box.
   The dashboard is handed the LAN IP and `LITELLM_MASTER_KEY` in its
   environment, so treat the homepage container as holding LiteLLM credentials.
+
 ## Secrets and credentials
 
 ### Environment files and rotation
@@ -101,6 +106,7 @@ repo can verify.
   never enters git. `CODER_PG_PASSWORD` is re-applied on every db start
   (the image only honours it on first volume init), so rotating it in `.env`
   and running `bazelisk run //scripts:prod-stack -- up` is enough.
+
 ### The template push token
 
 - **The push token.** `scripts/push-template.sh` cannot use a CLI session (the
@@ -114,6 +120,7 @@ repo can verify.
   printed. If a run is SIGKILLed mid-push the row survives until it expires; check
   with `docker compose exec db psql -U coder -d coder -c "select id, token_name,
   scopes, expires_at from api_keys where login_type = 'token';"`.
+
 ## Metrics and the observability bundle
 
 ### Ports that are published and ports that are not
@@ -172,6 +179,7 @@ repo can verify.
   `litellm_settings.require_auth_for_metrics_endpoint: false`, and that switch publishes
   to the LAN exactly the model aliases and traffic volumes this bullet is protecting. Fix
   the token file instead.
+
 ## Workspace credentials
 
 ### The LiteLLM API key
@@ -222,12 +230,14 @@ repo can verify.
   account — with a connected account, the next `gh_token_refresh` run (start,
   then every 20 minutes) rewrites that store with a minted pair. `gh auth logout`
   inside the container — or a rebuild — removes it either way.
+
 ## Spark model endpoints
 
 - **Spark endpoints.** `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` point off-box at
   vLLM servers. vLLM accepts any non-empty bearer token unless it was started with
   `--api-key`, so an unset `SPARK_n_API_KEY` means the only thing gating that endpoint
   is LAN reachability. Set the keys to match how the servers were launched.
+
 ## Privileged containers
 
 ### Kasm
@@ -239,6 +249,7 @@ repo can verify.
   LAN-only — publishing its public name puts a privileged container behind nothing
   but Kasm's own login unless Authelia covers that host — and review image updates
   before pulling a new tag.
+
 ### Workspace DinD sidecars
 
 - **Workspace DinD sidecars are privileged too.** With the template's `dind`
@@ -256,6 +267,7 @@ repo can verify.
   simply that nothing else is attached to it and nothing is published to the host.
   Keep the toggle off unless someone is actually building containers. See README,
   "Coder workspace template".
+
 ## Workspace profile, MCP, and editor
 
 ### shared mode mounts state only
@@ -291,6 +303,7 @@ repo can verify.
   rendered file, but the trust boundary widens to GitHub, outside the LAN, as soon as
   an owner connects a GitHub account. Park it with `GITHUB_MCP=false` and a template
   re-push if a workspace must not gain GitHub tools. See [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
+
 ### The context7 MCP server
 
 - **The `context7` MCP server follows that same rule and the same default-on.**
@@ -301,6 +314,7 @@ repo can verify.
   failed handshake per session). Park it with `CONTEXT7_MCP=false` and a template
   re-push; with the flag on and a key present, the trust boundary widens outbound to
   Context7's API.
+
 ### The workspace editor
 
 - **Workspace code-server.** Each workspace runs Coder's code-server fork on
@@ -325,6 +339,7 @@ repo can verify.
   key into the per-workspace copy. So the key rests in two places, not one: the
   owner's settings volume and each of that owner's workspace home volumes. Treat
   a copy of either like a copy of the key.
+
 ## Reporting a vulnerability
 
 - **Reporting.** Report vulnerabilities by opening an issue marked
