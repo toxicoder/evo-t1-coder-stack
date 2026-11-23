@@ -205,7 +205,8 @@ Cross-check it:
 
 - `node_memory_MemAvailable_bytes` against total
 - `node_cpu_seconds_total{mode="iowait"}` for disk arriving as CPU
-- `node_network_receive_bytes_total` with `device!~"lo|veth.*|br.*|docker.*|virbr.*"` for the wire - there is no PSI series for network, so that one is `si` and retransmits
+- `node_network_receive_bytes_total` with `device!~"lo|veth.*|br.*|docker.*|virbr.*"`
+  for the wire - there is no PSI series for network, so that one is `si` and retransmits
 
 Memory and IO both hot means memory is the cause and IO the symptom.
 
