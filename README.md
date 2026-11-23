@@ -664,8 +664,6 @@ or `homepage/config/services.yaml` changes the file behind an unchanged bind mou
 
 ### Useful flags
 
-Useful flags:
-
 - `--dry-run` prints the plan and changes nothing
 - `--stack dev` drives the dev project
 - `--restart` forces a stop even for a docs-only pull
@@ -847,7 +845,7 @@ no `high` level on this runtime.
 ### The nine Spark aliases
 
 There are nine Spark aliases in all: `agent-swarm` is the fifth and, with the two after
-it and `agent-swarm-fast`, one of the four that carry no session pin -
+it and `agent-swarm-fast`, one of the four that carry no session pin:
 
 - same boxes
 - same baked `xhigh`
@@ -860,7 +858,7 @@ Rolling them back to one box is `--var grok_subagents_lane=agent`.
 ### The placement switch
 
 That one variable is the whole placement switch: it pins the writer types in
-`[subagents.models]` -
+`[subagents.models]`:
 
 - `general-purpose`, which is the type a spawn gets when it names none and the one every
   writer in a fan-out runs as, plus the seeded `implementer` and `tester`
@@ -902,7 +900,7 @@ number is the only way a rendered width lands under the fleet's.
 
 The two knobs are also independent going the other way: `grok_swarm_width` is what
 `subagent-check` and the boot compare against, and past the fleet's streams a box refuses
-the extra spawn with `NoRoom`, so shrinking a shared fleet is a two-knob job -
+the extra spawn with `NoRoom`, so shrinking a shared fleet is a two-knob job:
 
 - drop `grok_swarm_width`
 - move `grok_subagent_max_concurrent` in the same push, or a 15-wide session meets a

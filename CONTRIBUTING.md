@@ -63,13 +63,10 @@ GitHub — the same image the Coder workspaces boot. Pick either path; you insta
     writes that cache seam into `~/.bazelrc`, materializes the Grok config, editor settings, notes,
     tmux and helpers from the templates Coder uses (`scripts/seed-dev-env.sh`), installs the
     `.githooks`, then starts a detached warm-up (`//:test-fast` and the docs-site `npm ci`) you can
-    ignore.
+    ignore. Then run the commands below unchanged.
   - When you change the container config or the image, keep `.devcontainer/` in the same PR:
     `AGENTS.md` names what each kind of change owes it, and
     `bazelisk test //tests:bats_contributor_devcontainer_test` proves it.
-
-Then run the commands below unchanged.
-
 - **`test-in-image`.** From a machine that is not that container:
 
   - `bazelisk run //scripts:test-in-image --` docker-runs `evo-t1-dev:latest` and runs the

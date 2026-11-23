@@ -135,7 +135,7 @@ fetch and writes nothing.
 #### The reseed set
 
 The reseed set is the home-relative targets the templates seed, listed by
-`seed_seed_targets` in `scripts/lib/config_seed.sh` -
+`seed_seed_targets` in `scripts/lib/config_seed.sh`:
 
 - `~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
   `~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies

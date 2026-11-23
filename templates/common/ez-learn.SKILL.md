@@ -282,7 +282,7 @@ skipping` if it is held; the automatic pass also waits for `min_hours` 24 and
 `/ez-learn remember <note>` mirrors `/remember`, the one member with a confirmation
 step: show the note and get an explicit yes before saving.
 
-Normalize it first -
+Normalize it first:
 
 - keep the structure if it already starts with `#`
 - if it is one line the line becomes the heading

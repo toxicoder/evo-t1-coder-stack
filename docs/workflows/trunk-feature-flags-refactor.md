@@ -44,8 +44,6 @@ those rules.
 
 ### What the model rules out
 
-What the model rules out:
-
 - long-lived `development`/`staging`/`production` branches
 - "merge to development first"
 - a release branch that has to be kept forever

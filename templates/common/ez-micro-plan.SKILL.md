@@ -314,8 +314,6 @@ Two structural habits do most of the work:
 
 ### Hotspots stay with you
 
-Hotspots stay with you:
-
 - registries
 - barrel and index re-exports
 - BUILD files

@@ -441,8 +441,6 @@ routing with the filter off, not a bug to chase on the box.
 
 #### Confirm it in this order
 
-Confirm it in this order:
-
 - Who does the router hold right now? `GET /health` with the master key answers it, and
   because `background_health_checks: true` ships here the handler returns the cached
   probe results (`_health_endpoints.py:1218`) rather than firing a fresh generation at

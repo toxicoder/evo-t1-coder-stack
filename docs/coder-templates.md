@@ -631,9 +631,6 @@ What a create form shows, in `workspace` order.
    Anything you type is cloned into the workspace on the next start.
 4. **Git repositories (additional)** (`additional_repos`, textarea, mutable, default
    empty).
-
-### The four Grok fields
-
 5. **Grok profile** (`grok_profile_mode`, dropdown, immutable, default `shared`):
 
    - `shared` puts that workspace's notes, memory and sessions on one per-owner volume

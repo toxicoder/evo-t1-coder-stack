@@ -234,11 +234,9 @@ the direction. Once the keys are in place the same verb resolves the file, and
 Every new function additionally owes:
 
 - one `# @function` block
-- one asserting test in exactly one suite
-
-which [test-with-bazel.md](test-with-bazel.md) covers; `//tests:shell_inventory` and
-`//tests:doc_coverage` are the two gates, and both are test targets the graph can point you at
-before the gate does.
+- one asserting test in exactly one suite, which [test-with-bazel.md](test-with-bazel.md)
+  covers; `//tests:shell_inventory` and `//tests:doc_coverage` are the two gates, and both are
+  test targets the graph can point you at before the gate does.
 
 ## While you iterate: which tests, and when you still owe a full pass
 

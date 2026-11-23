@@ -439,10 +439,11 @@ mounted ro at
       the same choice as the `GROK_THEME` environment variable)
     - `[ui] permission_mode` from the `grok_permission_mode` create-form parameter (the seed
       takes it as `GROK_PERMISSION_MODE`, defaulting to `always-approve`)
-    - code-server's `~/.local/share/code-server/User/settings.json` is a real file too,
-      rendered per workspace with `workbench.colorTheme` from `vscode_color_theme` and the
-      shared `~/.shared/vscode/settings.json` layered over it as an overlay, the theme
-      re-asserted last.
+
+  - code-server's `~/.local/share/code-server/User/settings.json` is a real file too,
+    rendered per workspace with `workbench.colorTheme` from `vscode_color_theme` and the
+    shared `~/.shared/vscode/settings.json` layered over it as an overlay, the theme
+    re-asserted last.
 
 ### The project scaffold
 
