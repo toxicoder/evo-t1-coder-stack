@@ -4,6 +4,8 @@ Compose stack for GMKtec EVO-T1: Coder + LiteLLM + IPEX-LLM Ollama + Kasm + Home
 
 ## Where you run
 
+### What you address from a workspace
+
 You are usually editing this repo *from inside one of the workspaces it deploys*, not
 from the stack host. `CODER_WORKSPACE_ID` set means you are in a Coder workspace
 container (and, on the `devcontainer` template, inside a dev container built on that
@@ -12,83 +14,131 @@ workspace's own DinD sidecar). Assume all of this until you prove otherwise:
 - `docker` addresses that sidecar daemon (`DOCKER_HOST=tcp://dind:2375`) or nothing,
   never the daemon running Coder/LiteLLM/Ollama/Kasm. An empty `docker ps` here is
   normal; it does not mean the stack is down.
+
 - Whole-stack commands (`dev-stack`, `refresh-configs`, `storage-clean`, `pull-models`,
   `search-check`, `spark-verify`) work on the stack host or on the fleet, not on this
-  workspace, so run them in a host shell. `search-check` probes
-  `http://127.0.0.1:8181` by default and reads `$SEARXNG_URL` first; the agent env inside a
-  workspace carries `SEARXNG_URL` (default `http://host.docker.internal:8181`), so a
-  workspace-side probe needs no `--url`.
+  workspace, so run them in a host shell.
+
+  `search-check` probes `http://127.0.0.1:8181` by default and reads `$SEARXNG_URL` first;
+  the agent env inside a workspace carries `SEARXNG_URL` (default
+  `http://host.docker.internal:8181`), so a workspace-side probe needs no `--url`.
+
 - GitHub auth has one entry point and one bounded procedure; see **GitHub auth** below.
-  `github-auth check` works from either place: on the host it enumerates the labeled
-  workspace containers via docker, or probes a named container; inside a workspace it
-  runs SELF mode with no docker and no `DOCKER_HOST`, probing this environment's own
-  credential chain and printing one `self:` line per credential. Pass only the repo URL
-  there; a named container is refused with a pointer to the host shell.
-- `host.docker.internal` and `172.17.0.1` are the stack host: `:4000` LiteLLM,
-  `:3002` the Coder agent tunnel, `:8181` SearXNG, `:9119` Hermes dashboard
-  (LAN listener; the public name rides the router on `:8080`; the host
-  assistant, not a workspace agent).
+  `github-auth check` works from either place:
+
+  - on the host it enumerates the labeled workspace containers via docker, or probes a
+    named container;
+  - inside a workspace it runs SELF mode with no docker and no `DOCKER_HOST`, probing this
+    environment's own credential chain and printing one `self:` line per credential.
+
+  Pass only the repo URL there; a named container is refused with a pointer to the host
+  shell.
+
+- `host.docker.internal` and `172.17.0.1` are the stack host:
+
+  - `:4000` LiteLLM
+  - `:3002` the Coder agent tunnel
+  - `:8181` SearXNG
+  - `:9119` Hermes dashboard (LAN listener; the public name rides the router on `:8080`;
+    the host assistant, not a workspace agent).
+
+### Files and configuration you do not own
+
 - The host's dotenv file is unreadable from a workspace (`**/.env` and `**/.env.*`
-  are denied to the agent, and the deny has no exception for a benign read). Ask the
-  CLI that owns the value instead — `dev-stack -- status`, `bootstrap -- --check`,
+  are denied to the agent, and the deny has no exception for a benign read).
+
+  Ask the CLI that owns the value instead — `dev-stack -- status`, `bootstrap -- --check`,
   `update-configs`, `refresh-configs` — or read `.env.example` for the key's shape.
-- The `~/.grok` you see here shares STATE, not configuration. In `shared` mode
-  `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions` each ride their own per-owner
-  volume (`grok-notes-<owner-id>`, `grok-memory-<owner-id>`, `grok-sessions-<owner-id>`) and
-  match across that owner's workspaces, while `~/.grok/config.toml` is a real file on this
-  workspace's own home volume, rendered from the template on start, so a hand edit to it lasts
-  until that one workspace restarts and touches no other workspace. In `private` mode there is
-  no per-owner mount at all and all three directories are that workspace's alone. The old
-  whole-profile volume `grok-profile-<owner-id>` comes back read-only at `~/.grok-legacy`
-  purely for the one-time hoist of those three directories; a later `chore:` removes it.
-  A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, the
-  `"__evoT1Stack": true` JSON key, or the `__evoT1Stack = true` TOML key in
-  `~/.grok/config.toml`) is stack-owned: change the seed in this repo and
-  re-materialize it, never the copy that lives in a workspace. `~/.grok/notes-setup.sh`
-  and `~/.grok/notes/` (the canonical scratch file is `~/.grok/notes/<host/owner/repo>/notes.md`,
-  one directory per clone) are both stack-owned
-  and rewritten on every start; that start also sets `core.excludesFile` to
-  `~/.grok/notes/exclude` when you never set it, which is why `notes.md`,
-  `.scratch-notes.md` and `.grok/plans/` (the `ez-micro-plan` dispatch plan, its `ctx/`
-  briefs and its `results/` reports) are ignored in every repo here.
+
+- The `~/.grok` you see here shares STATE, not configuration.
+
+  - In `shared` mode `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions` each ride
+    their own per-owner volume (`grok-notes-<owner-id>`, `grok-memory-<owner-id>`,
+    `grok-sessions-<owner-id>`) and match across that owner's workspaces, while
+    `~/.grok/config.toml` is a real file on this workspace's own home volume, rendered from
+    the template on start, so a hand edit to it lasts until that one workspace restarts and
+    touches no other workspace.
+
+  - In `private` mode there is no per-owner mount at all and all three directories are that
+    workspace's alone.
+
+  - The old whole-profile volume `grok-profile-<owner-id>` comes back read-only at
+    `~/.grok-legacy` purely for the one-time hoist of those three directories; a later
+    `chore:` removes it.
+
+  - A file carrying the stack marker (`managed-by: evo-t1-coder-stack`, the
+    `"__evoT1Stack": true` JSON key, or the `__evoT1Stack = true` TOML key in
+    `~/.grok/config.toml`) is stack-owned: change the seed in this repo and re-materialize
+    it, never the copy that lives in a workspace.
+
+  - `~/.grok/notes-setup.sh` and `~/.grok/notes/` (the canonical scratch file is
+    `~/.grok/notes/<host/owner/repo>/notes.md`, one directory per clone) are both
+    stack-owned and rewritten on every start; that start also sets `core.excludesFile` to
+    `~/.grok/notes/exclude` when you never set it, which is why `notes.md`,
+    `.scratch-notes.md` and `.grok/plans/` (the `ez-micro-plan` dispatch plan, its `ctx/`
+    briefs and its `results/` reports) are ignored in every repo here.
+
+### Bazel and the contributor container
+
 - Bazel behaves the same here, so `//:test-fast`, `//:lint` and
   `bazelisk run //scripts:<stem>` all still run.
+
 - `EVO_T1_DEVCONTAINER=1` instead of `CODER_WORKSPACE_ID` means the **contributor** dev
-  container (laptop or the CI image built from `images/dev/`), not a Coder workspace: same
-  golden image, `github-auth check` runs SELF there too, and
-  `bazelisk run //scripts:test-in-image --` is the host ingress that docker-runs the gate in
-  `evo-t1-dev:latest`. Coder workspaces of *this* repo still stay on the `workspace`
-  template — `.devcontainer/contributor-env` makes `new-workspace`'s probe a miss, so never
-  copy that sentinel into another repo. `scripts/setup-host.sh` remains the stack-host
-  bootstrap only.
+  container (laptop or the CI image built from `images/dev/`), not a Coder workspace:
+
+  - same golden image, `github-auth check` runs SELF there too, and
+    `bazelisk run //scripts:test-in-image --` is the host ingress that docker-runs the gate
+    in `evo-t1-dev:latest`.
+  - Coder workspaces of *this* repo still stay on the `workspace` template —
+    `.devcontainer/contributor-env` makes `new-workspace`'s probe a miss, so never copy that
+    sentinel into another repo.
+  - `scripts/setup-host.sh` remains the stack-host bootstrap only.
 
 ## Agent fleet
 
+### Model lanes
+
 Local lanes only, every one of them an alias in `litellm/config.yaml` over the three Spark
-boxes (or the Arc): `agent` (xhigh, session-pinned), `agent-low` / `agent-medium` /
-`agent-xhigh` (that group at a baked thinking level), `agent-swarm` (xhigh, pin lifted: the
-fan-out lane), plus the two role lanes `agent-explore` (low, pin lifted: mapping and evidence)
-and `agent-review` (xhigh, pin lifted: the mandatory independent-review phase). The two
-`-fast` aliases, `agent-xhigh-fast` and `agent-swarm-fast`, are their namesake lane deployment
-for deployment and differ in one call: the LiteLLM proxy answers that session's conversation
-summary from the Arc group `compaction-fast`, because the Grok CLI has no compaction-model key
-of its own. They are operator-selected session models, so nothing pins a subagent role to them.
-No cloud model id belongs anywhere in this repo. Alias detail and the routing arithmetic:
+boxes (or the Arc):
+
+- `agent` (xhigh, session-pinned)
+- `agent-low` / `agent-medium` / `agent-xhigh` (that group at a baked thinking level)
+- `agent-swarm` (xhigh, pin lifted: the fan-out lane)
+
+plus the two role lanes:
+
+- `agent-explore` (low, pin lifted: mapping and evidence)
+- `agent-review` (xhigh, pin lifted: the mandatory independent-review phase)
+
+The two `-fast` aliases, `agent-xhigh-fast` and `agent-swarm-fast`, are their namesake lane
+deployment for deployment and differ in one call: the LiteLLM proxy answers that session's
+conversation summary from the Arc group `compaction-fast`, because the Grok CLI has no
+compaction-model key of its own.
+
+They are operator-selected session models, so nothing pins a subagent role to them. No cloud
+model id belongs anywhere in this repo. Alias detail and the routing arithmetic:
 `docs/litellm-routing.md`.
 
+### The seeded rulebook, roles, and skills
+
 The rulebook a workspace boots with is the seed `templates/common/GROK_BUILD_AGENTS.md`,
-rewritten into `~/.grok/AGENTS.md` on every start while it carries the stack marker. This file
-is repo operator documentation; the seed is the source of truth for agent behaviour. The rest
-of the suite the same boot seeds is `templates/common/*.AGENT.md` (seven role definitions:
-the fleet's six plus the advisor's `documenter`) and
+rewritten into `~/.grok/AGENTS.md` on every start while it carries the stack marker. This
+file is repo operator documentation; the seed is the source of truth for agent behaviour.
+
+The rest of the suite the same boot seeds is `templates/common/*.AGENT.md` (seven role
+definitions: the fleet's six plus the advisor's `documenter`) and
 `templates/common/*.PERSONA.toml` (three overlays) into `~/.grok/agents/` and
-`~/.grok/personas/`, and `templates/common/*.SKILL.md` into `~/.coder/skills/` with a `cp` twin
-in `~/.agents/skills/`. Change the seed in this repo and re-materialize it, never the copy that
-lives in a workspace. Which lane each role rides is rendered from the `grok_subagents_lane`,
-`grok_explore_lane`, `grok_plan_lane` and `grok_review_lane` template variables, and the
-checkpoints a fleet run has to clear are the skill trio `ez-micro-plan` (plan, lanes, dispatch
-check), `feature-implementation` (Plan Mode to verified change), and `skeptical-review` (the
-independent pass every multi-file change ends with).
+`~/.grok/personas/`, and `templates/common/*.SKILL.md` into `~/.coder/skills/` with a `cp`
+twin in `~/.agents/skills/`. Change the seed in this repo and re-materialize it, never the
+copy that lives in a workspace.
+
+Which lane each role rides is rendered from the `grok_subagents_lane`, `grok_explore_lane`,
+`grok_plan_lane` and `grok_review_lane` template variables, and the checkpoints a fleet run
+has to clear are the skill trio:
+
+- `ez-micro-plan` (plan, lanes, dispatch check)
+- `feature-implementation` (Plan Mode to verified change)
+- `skeptical-review` (the independent pass every multi-file change ends with)
 
 ## GitHub auth
 
@@ -96,15 +146,21 @@ Read this before you touch a credential. Across 222 past sessions in this worksp
 a GitHub auth error and the worst burned about 30 turns rediscovering one cause. It is
 almost never the grant.
 
+### Why the injected pair goes stale
+
 `GH_TOKEN`/`GITHUB_TOKEN` are the copy Coder injected when this workspace **started**. A
 GitHub App user-to-server token expires about an hour later, and no process can rewrite
 another process's environment, so the pair goes stale and stays stale for the life of the
-workspace. git never reads the pair itself: it asks its credential helpers and sends the
-first answer, and the stack's helper `!gh auth git-credential` echoes the pair. So git
+workspace.
+
+git never reads the pair itself: it asks its credential helpers and sends the first answer,
+and the stack's helper `!gh auth git-credential` echoes the pair. So git
 keeps sending a dead token while the gh auth store beside it, re-minted every 20 minutes by
 `gh_token_refresh`, is healthy and never asked. GitHub answers `remote: Invalid username
 or token. Password authentication is not supported for Git operations.`, which names
 neither the token nor its age, which is why it gets misread as a missing grant.
+
+### The procedure
 
 The procedure, in this order, with a hard budget of about five tool calls:
 
@@ -124,12 +180,21 @@ For `gh` commands use `env -u GH_TOKEN -u GITHUB_TOKEN gh ...`: gh consults the 
 directly and `fix` cannot repair an environment you do not own. `git` needs no prefix once
 `fix` has run.
 
+### Never do these
+
 Never do these. Each was tried in a past session here, and each cost turns without fixing
-the auth: hand-rolling a `GIT_ASKPASS` script; writing a `credential.helper` line by hand;
-running `gh auth login` interactively; switching the remote to a `git@github.com:` ssh URL
-(this stack provisions no ssh key); reading `.env`, which the deny does not except. A
-successful read proves nothing either - a public repo answers `api.github.com /repos` with
+the auth:
+
+- hand-rolling a `GIT_ASKPASS` script
+- writing a `credential.helper` line by hand
+- running `gh auth login` interactively
+- switching the remote to a `git@github.com:` ssh URL (this stack provisions no ssh key)
+- reading `.env`, which the deny does not except
+
+A successful read proves nothing either - a public repo answers `api.github.com /repos` with
 200 for any authenticated caller, which is why `check` asks the write question instead.
+
+### The sanctioned PAT
 
 `auth <container> -` installs a pasted PAT, from the stack host only, and only once `check`
 has answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`; everything else is a `fix` away.
@@ -137,7 +202,10 @@ Full usage: `bazelisk run //scripts:github-auth -- -h`. The measured background 
 per-verdict remedies live in `docs/troubleshooting.md`.
 
 ## Commands
+
 Prefer Bazelisk. Make is a shim.
+
+### The gate
 
 - test: `bazelisk test //:test-fast`
 - one suite: `bazelisk test //tests:bats_<stem>_test` (dashes → underscores)
@@ -147,10 +215,16 @@ Prefer Bazelisk. Make is a shim.
 - full gate (what pre-push and CI run): `bazelisk test //:test-all`
 - gate on demand: `bazelisk run //scripts:pre-commit -- [--all|--image]`
 - install the commit/push hooks once: `bazelisk run //scripts:install-hooks -- [--check|--uninstall]`
+
+### Coverage and script targets
+
 - coverage: `bazelisk test //tests:shell_coverage` (every production shell function
   executed), `//tests:py_coverage` (Python statements+branches),
   `//docs-site:unit_coverage` (docs-site functions)
 - scripts: `bazelisk run //scripts:<stem> -- <args>` (keep dashes)
+
+### Stack and workspace CLIs
+
 - dev stack: `bazelisk run //scripts:dev-stack -- up|down|status|logs|reset`
 - prod (stable) stack: `bazelisk run //scripts:prod-stack -- up|down|status|logs|reset`
 - pull + deploy in one step (host shell; `--dry-run` to plan):
@@ -161,39 +235,62 @@ Prefer Bazelisk. Make is a shim.
   offers the lane ids; the run prints what is available)
 - MCP lanes: `bazelisk run //scripts:mcp-check` (declared lanes, `command=` binaries,
   lane credentials, and each server's handshake; runs inside a workspace or on the host)
+
+### Cleanup, config, and the container
+
 - branch cleanup (run it before you delete anything, and after a merge round):
   `bazelisk run //scripts:branch-hygiene -- [--repo DIR] [--remote NAME] [--max-age DAYS] [--strict] [--fetch] [--plan]`
   — the machine check for `docs/branching.md`: an environment-named branch is an
   error, a merged-but-undeleted or past-lifetime branch a warning, each printed with
   its tip SHA because that is the record a deletion has to leave behind. It reports
-  and never deletes; `--plan` prints the commands for a human to run, and
-  `--fetch` (the run's only write: `git remote update --prune` over the selected
-  remotes, touching this checkout's remote-tracking refs and no branch on the remote)
-  is what makes the remote rows current before you act on them.
+  and never deletes;
+
+  - `--plan` prints the commands for a human to run
+  - `--fetch` (the run's only write: `git remote update --prune` over the selected
+    remotes, touching this checkout's remote-tracking refs and no branch on the remote)
+    is what makes the remote rows current before you act on them.
+
 - config refresh: `bazelisk run //scripts:update-configs -- env|workspace|all`
   (`workspace` addresses docker, and inside a workspace the CLI only reaches that
   workspace's own DinD sidecar — run it in a host shell or name `--container`/`--home`)
+
 - contributor seed (laptop/CI home, devcontainer postCreate):
   `bazelisk run //scripts:seed-dev-env -- [--home DIR] [--litellm-url URL] [--context7-mcp] [--devcontainer] [--force] [--dry-run]`
   (`--context7-mcp` keeps the `[mcp_servers.context7]` block even with no
   `CONTEXT7_API_KEY` in the environment, which is what the contributor
   devcontainer passes so a laptop home matches what a workspace gets)
+
 - gate inside the golden image, from a host that is not the contributor container:
   `bazelisk run //scripts:test-in-image --`
+
 - contributor container self-config (the Bazel cache seam, the home seed, the git hooks, the
   detached warm-up): `bash .devcontainer/library-scripts/configure.sh create|start|status`
   (`--dry-run` to plan). The Dev Containers `postCreateCommand`/`postStartCommand` run it; a
   contributor runs it by hand only to re-plan after editing the config, or to read `status`
   when a warm-up is the suspect (`/tmp/evo-t1-warmup.status`).
 
-`scripts/setup-host.sh` is the only script run from shell, and only on the stack host (installs Bazelisk; `--repair` recovers leftover runfiles so `bazelisk run` can start, and on Linux installs public DNS so host `git pull` still resolves github.com). The one exception is `.devcontainer/library-scripts/configure.sh`, run by the Dev Containers hooks inside the contributor container, where no Bazel build exists yet to run it. Everywhere else the toolchain comes from the golden image. Everything else is a Bazel target.
+### Running a script from the shell
+
+`scripts/setup-host.sh` is the only script run from shell, and only on the stack host (installs
+Bazelisk; `--repair` recovers leftover runfiles so `bazelisk run` can start, and on Linux installs
+public DNS so host `git pull` still resolves
+github.com).
+
+The one exception is `.devcontainer/library-scripts/configure.sh`, run by the Dev Containers hooks
+inside the contributor container, where no Bazel build exists yet to run it. Everywhere else the
+toolchain comes from the golden image. Everything else is a Bazel
+target.
+
+### What done means
 
 Done means `//:test-fast` + lint green — inside the contributor container or
 `evo-t1-dev:latest` (`//scripts:test-in-image`); a native Darwin run is convenience only.
+
 A Bazel summary reading `Executed 0 out of N tests: N tests pass.` is a cached pass over
 unchanged inputs, which is a real pass: take one uncached pass
 (`bazelisk test //:test-fast --nocache_test_results`) before you open a PR rather than
 re-running the gate on a hunch.
+
 Stack changes must be verified on the dev stack first.
 
 ## Read the graph before you grep
@@ -216,59 +313,172 @@ BUILD reads:
 - a target name you are not sure of: `bazelisk run //scripts:bazel-map -- targets <spec>`.
   A guessed label costs a wasted `ERROR: no such target` turn; the query costs none.
 
+### Scoping the run
+
 `--json` routes the prose to stderr, so stdout is a bare label list you can hand to
 `bazelisk test`. Scoping the run is the point: keep the full `//:test-fast` for the one
-uncached pass before the PR, and iterate on the derived list. For anything the verbs do
-not cover (predicates, `somepath`, `intersect`, the caveat that an empty query is not
-proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.md`.
+uncached pass before the PR, and iterate on the derived list.
+
+For anything the verbs do not cover (predicates, `somepath`, `intersect`, the caveat that an
+empty query is not proof that nothing depends on a file) see
+`docs/contribute/navigate-with-bazel.md`.
 
 ## Structure
+
+### Scripts and libraries
+
 - `scripts/*.sh` — operator CLIs; `scripts/lib/*.sh` — sourced helpers (do not copy log/die helpers). Python programs live in `scripts/lib/*.py`, awk programs in `scripts/lib/*.awk`, and POSIX remote probes in `scripts/lib/probes/`. Import them (`source`, `python3 file.py`, `awk -f`, `cat` + `sh -c` / `ssh`); do not embed a second language in the caller.
+
 - Operator CLIs source `scripts/lib/common.sh` and print `== section ==`, `-> phase`, `ok:`, `warning:`, `note:`, `error:`, and a closing `summary: N ok, W warnings, F failed`. CLIs without `--json` unset `JSON_MODE` after source.
-- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies (edit both twins when changing one). `coder_script` bodies are sibling `.tftpl` files rendered with `templatefile()`. `templates/common/` exists once instead and both templates consume it: `GROK_BUILD_AGENTS.md` with its `agents-seed.sh.tftpl` body (the
-  `coder_script "agents_seed"` that writes `~/.grok/AGENTS.md`, which keeps the rulebook out
-  of the startup argument's byte budget), `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`, `vscode-terminal-tmux.sh`, `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`, `ez-create-skill.SKILL.md`, `stack-skills.sh.tftpl` (the `coder_script "stack_skills"` body that seeds that trio), `ez-bazel-first.SKILL.md` with its `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py` helpers, `ez-strong-types.SKILL.md` with its `ez-strong-types.type_baseline.py` helper, `ez-trunk-based-repo.SKILL.md`, `ez-micro-plan.SKILL.md` with its `ez-micro-plan.plan_check.py` helper, `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body that seeds those four, each helper into a `scripts/` subdir of the same skill directory), `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`, and `infisical-secrets.sh.tftpl` (the
-`coder_script "infisical_secrets"` body that fetches the workspace's credentials at boot). The push stages all of them beside each staged `main.tf`; pushing without any one of them fails early by design. The SVG must produce a data URL of at most 256 characters (`workspace_apps.icon` is varchar(256) on Coder v2.36).
+
+### Template payloads and their twins
+
+- `templates/workspace/` and `templates/devcontainer/` keep independent `.tftpl` payload copies
+(edit both twins when changing one). `coder_script` bodies are sibling `.tftpl` files rendered with
+`templatefile()`.
+
+- `templates/common/` exists once instead and both templates consume it:
+
+  - `GROK_BUILD_AGENTS.md` with its `agents-seed.sh.tftpl` body (the
+    `coder_script "agents_seed"` that writes `~/.grok/AGENTS.md`, which keeps the rulebook out
+    of the startup argument's byte budget)
+  - `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`,
+    `vscode-terminal-tmux.sh`
+  - `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`,
+    `ez-create-skill.SKILL.md`
+  - `stack-skills.sh.tftpl` (the `coder_script "stack_skills"` body that seeds that trio)
+  - `ez-bazel-first.SKILL.md` with its `ez-bazel-first.owned_files_check.py` and
+    `ez-bazel-first.glob_budget.py` helpers
+  - `ez-strong-types.SKILL.md` with its `ez-strong-types.type_baseline.py` helper
+  - `ez-trunk-based-repo.SKILL.md`
+  - `ez-micro-plan.SKILL.md` with its `ez-micro-plan.plan_check.py` helper
+  - `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body that seeds those four,
+    each helper into a `scripts/` subdir of the same skill directory)
+  - `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`
+  - `infisical-secrets.sh.tftpl` (the `coder_script "infisical_secrets"` body that fetches the
+    workspace's credentials at boot)
+
+  The push stages all of them beside each staged `main.tf`; pushing without any one of them fails
+  early by design. The SVG must produce a data URL of at most 256 characters
+  (`workspace_apps.icon` is varchar(256) on Coder
+  v2.36).
+
+### Tests and the contributor container
+
 - `tests/bats/` — hermetic Bats; stubs in `tests/bats/tool_stubs/`.
+
 - `.devcontainer/` is the contributor entry point and is maintained *with* the project, not
-  beside it. `devcontainer.json` builds `images/dev/` directly (no overlay Dockerfile, no
-  `features`, no `persistentHome`) and `cacheFrom`s the image CI publishes, so bumping a pin
-  in `images/dev/tool-versions.env` is the dependency update and needs no container edit; a
-  new *gate* tool goes into the image plus its pin, a contributor-only convenience goes into
-  `library-scripts/configure.sh`, and nothing contributor-only goes into the image (it is
-  shared with Coder workspaces and CI). The editor lint and format pins in
-  `customizations.vscode` (`shellcheck.executablePath` + `shellcheck.customArgs`,
-  `shellformat.path` + `shellformat.flag`) carry the gate's own flags and must belong
-  to an extension the config installs — `bashIde.*` configures a different shellcheck
-  extension and is inert;
-  the `mounts` volumes and the block `configure.sh` writes into `~/.bazelrc` move together on
-  the shared `EVO_T1_BAZEL_CACHE_ROOT` — that pairing is the build-efficiency seam, since
-  Bazel's disk, repository and output caches live in named volumes while `$HOME` dies with
-  the container; and a new top-level directory of shell joins the
-  `lints/run_shellcheck.sh` / `lints/run_shfmt.sh` / `fix.sh` scan sets and `lints/BUILD.bazel`
-  (`.devcontainer` is already in all four). `//:devcontainer` ships the whole directory, and
-  `bazelisk test //tests:bats_contributor_devcontainer_test` reads the JSON as data, reads the
-  lint flags out of the two runners instead of repeating them, and drives `configure.sh`
-  against a fixture, so a renamed mount target, a missing `EVO_T1_DEVCONTAINER` marker, or a
-  lint pin that drifted from the gate is a failing test rather than a cold cache on someone's
-  laptop. Keep `contributor-env` tracked.
-- `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is mounted ro at `/opt/stack-skills`). `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host). Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys: `proxy/router.conf.template` is the source, `proxy/router.conf` is its render under the shipped defaults, and `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`. Edit the naming parts, never a rendered conf. A new top-level payload directory is invisible to `test-fast` and `lint` until it is added to `//:stack_data` (a new `scripts/*.sh` needs no filegroup edit — the `shell_sources` glob picks it up, and it instead needs a key in `_SCRIPT_LIBS` or `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than quietly inheriting the world; `//scripts:doc_sources` is the union of those sources), and `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, `hermes/config.yaml`, and `searxng/settings.yml`.
-- Workspace `~/.grok` is per-workspace configuration plus shared state: `shared` mode (the default) mounts three per-owner volumes at `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions`, and mounts the old whole-profile volume `grok-profile-<owner-id>` read-only at `~/.grok-legacy` for the one-time hoist only; `private` mode mounts none of them. `config.toml` is that workspace's own file, rendered on start, with `[ui] theme` from the `grok_theme` create-form parameter (the contributor seed takes the same choice as the `GROK_THEME` environment variable), `[ui] permission_mode` from the `grok_permission_mode` create-form parameter (the seed takes it as `GROK_PERMISSION_MODE`, defaulting to `always-approve`), and code-server's `~/.local/share/code-server/User/settings.json` is a real file too, rendered per workspace with `workbench.colorTheme` from `vscode_color_theme` and the shared `~/.shared/vscode/settings.json` layered over it as an overlay, the theme re-asserted last.
+  beside it.
+
+  - `devcontainer.json` builds `images/dev/` directly (no overlay Dockerfile, no
+    `features`, no `persistentHome`) and `cacheFrom`s the image CI publishes, so bumping a pin
+    in `images/dev/tool-versions.env` is the dependency update and needs no container edit; a
+    new *gate* tool goes into the image plus its pin, a contributor-only convenience goes into
+    `library-scripts/configure.sh`, and nothing contributor-only goes into the image (it is
+    shared with Coder workspaces and CI).
+  - The editor lint and format pins in
+    `customizations.vscode` (`shellcheck.executablePath` + `shellcheck.customArgs`,
+    `shellformat.path` + `shellformat.flag`) carry the gate's own flags and must belong
+    to an extension the config installs — `bashIde.*` configures a different shellcheck
+    extension and is inert.
+  - the `mounts` volumes and the block `configure.sh` writes into `~/.bazelrc` move together on
+    the shared `EVO_T1_BAZEL_CACHE_ROOT` — that pairing is the build-efficiency seam, since
+    Bazel's disk, repository and output caches live in named volumes while `$HOME` dies with
+    the container.
+  - a new top-level directory of shell joins the
+    `lints/run_shellcheck.sh` / `lints/run_shfmt.sh` / `fix.sh` scan sets and `lints/BUILD.bazel`
+    (`.devcontainer` is already in all four).
+  - `//:devcontainer` ships the whole directory, and
+    `bazelisk test //tests:bats_contributor_devcontainer_test` reads the JSON as data, reads the
+    lint flags out of the two runners instead of repeating them, and drives `configure.sh`
+    against a fixture, so a renamed mount target, a missing `EVO_T1_DEVCONTAINER` marker, or a
+    lint pin that drifted from the gate is a failing test rather than a cold cache on someone's
+    laptop.
+
+  Keep `contributor-env` tracked.
+
+### Mounted payloads and public names
+
+- `searxng/settings.yml`, `homepage/**`, `hermes/**`, `proxy/*.conf` — payloads bind-mounted
+read-only (`hermes/config.yaml` and `SOUL.md` are seeded into the named volume; `hermes/skills/` is
+mounted ro at
+`/opt/stack-skills`).
+
+- `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host).
+
+- Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` /
+  `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys:
+
+  - `proxy/router.conf.template` is the source
+  - `proxy/router.conf` is its render under the shipped defaults
+  - `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by
+    glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`
+
+  Edit the naming parts, never a rendered conf.
+
+- A new top-level payload directory is invisible to `test-fast` and `lint` until it is
+  added to `//:stack_data` (a new `scripts/*.sh` needs no filegroup edit — the
+  `shell_sources` glob picks it up, and it instead needs a key in `_SCRIPT_LIBS` or
+  `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than
+  quietly inheriting the world; `//scripts:doc_sources` is the union of those sources).
+
+- `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`,
+  `hermes/config.yaml`, and `searxng/settings.yml`.
+
+### Workspace state and editor configuration
+
+- Workspace `~/.grok` is per-workspace configuration plus shared state:
+
+  - `shared` mode (the default) mounts three per-owner volumes at `~/.grok/notes`,
+    `~/.grok/memory` and `~/.grok/sessions`, and mounts the old whole-profile volume
+    `grok-profile-<owner-id>` read-only at `~/.grok-legacy` for the one-time hoist only;
+    `private` mode mounts none of them.
+  - `config.toml` is that workspace's own file, rendered on start, with
+
+    - `[ui] theme` from the `grok_theme` create-form parameter (the contributor seed takes
+      the same choice as the `GROK_THEME` environment variable)
+    - `[ui] permission_mode` from the `grok_permission_mode` create-form parameter (the seed
+      takes it as `GROK_PERMISSION_MODE`, defaulting to `always-approve`)
+
+  - code-server's `~/.local/share/code-server/User/settings.json` is a real file too,
+    rendered per workspace with `workbench.colorTheme` from `vscode_color_theme` and the
+    shared `~/.shared/vscode/settings.json` layered over it as an overlay, the theme
+    re-asserted last.
+
+### The project scaffold
+
 - The project scaffold `scripts/new-repo.sh` renders is its own repository (`toxicoder/ezrepo`
   by default; `--template-url` / `$EZREPO_URL` point elsewhere) and is vendored nowhere here.
-  The CLI shallow-clones it into a scratch dir, overlays only the lanes the operator named, and
-  strips the scaffold's own paths (`.template-lanes/`, `.self-check/`, `.git`), so a new
-  language lane is a change to that repository alone: lane ids are discovered from the clone,
-  never listed here. The seven `__PROJECT_*__` tokens are named once, in `NEW_REPO_TOKENS`; the
-  scaffold may use any subset, and a token outside the set survives rendering into the new
-  repository. The scaffold's own invariants are pinned by its `.self-check/` suite; this repo's
-  `tests/bats/new-repo.bats` pins the renderer against the canned tree in
-  `tests/bats/fixtures/ezrepo-template/`. The `New project` preset in both template twins, plus
-  `--task`, is the hand-off that turns a render into a workspace.
+
+  - The CLI shallow-clones it into a scratch dir, overlays only the lanes the operator named,
+    and strips the scaffold's own paths (`.template-lanes/`, `.self-check/`, `.git`), so a new
+    language lane is a change to that repository alone: lane ids are discovered from the
+    clone, never listed here.
+  - The seven `__PROJECT_*__` tokens are named once, in `NEW_REPO_TOKENS`; the
+    scaffold may use any subset, and a token outside the set survives rendering into the new
+    repository.
+  - The scaffold's own invariants are pinned by its `.self-check/` suite; this repo's
+    `tests/bats/new-repo.bats` pins the renderer against the canned tree in
+    `tests/bats/fixtures/ezrepo-template/`.
+  - The `New project` preset in both template twins, plus
+    `--task`, is the hand-off that turns a render into a workspace.
+
+### Runtime and model transport
+
 - Runtime is `docker compose`. Do not add Kubernetes.
-- LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps. GitHub auth is only Coder External Auth (id `github` by default, or `CODER_EXTERNAL_AUTH_0_ID` from coder.env): no static token or PAT in a template, an env file, a remote URL, or a commit. The one sanctioned credential is a pasted PAT in a single workspace's gh store, installed by `github-auth auth` from the stack host, and only after `check` has answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`.
+
+- LiteLLM is the sole model transport. Never re-add per-deployment rpm/tpm caps.
+
+  GitHub auth is only Coder External Auth (id `github` by default, or
+  `CODER_EXTERNAL_AUTH_0_ID` from coder.env): no static token or PAT in a template, an env
+  file, a remote URL, or a commit.
+
+  The one sanctioned credential is a pasted PAT in a single workspace's gh store, installed
+  by `github-auth auth` from the stack host, and only after `check` has answered
+  `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`.
 
 ## Working rules
+
 - Short-lived branch from tip of `main` (`feat/`, `fix/`, `refactor/`, …), one change per branch,
   PR into `main`. Cut the branch before the first edit, commit each unit as it lands with that
   unit's check green, and let the push wait for the pull request.
@@ -279,9 +489,16 @@ proof that nothing depends on a file) see `docs/contribute/navigate-with-bazel.m
   stdin, after `check` proved the minted credential cannot write; see **GitHub auth**.
 
 ## Tests
-Ship tests with the shell they cover. New function needs a `# @function` block and an asserting Bats test. `//tests:shell_inventory` and `//tests:doc_coverage` enforce this. No `eval`. Prefer `"${var}"`, `[[ ]]`, `$(...)`.
+
+Ship tests with the shell they cover.
+
+- New function needs a `# @function` block and an asserting Bats test.
+  `//tests:shell_inventory` and `//tests:doc_coverage` enforce this.
+- No `eval`.
+- Prefer `"${var}"`, `[[ ]]`, `$(...)`.
 
 ## Branching
+
 Trunk-based: `main` is the only long-lived branch. Commits: `feat:`, `fix:`, `docs:`, `test:`, `chore:`, `ci:`, `refactor:` + imperative summary.
 
 Non-negotiables, in this repo and in any repo this agent converts:
@@ -289,10 +506,12 @@ Non-negotiables, in this repo and in any repo this agent converts:
 - `development` / `staging` / `production` are environments (GitHub Environments, compose
   project names + env files, namespaces, overlays, inventory groups), never git branches.
 - Work branches are short-lived, cut from the tip of `main`, merged by PR, deleted on merge.
+
   Cut the branch before the first edit, and commit each unit as it lands with that unit's check
   green: a local commit is free and reversible, so history is written as the work goes. The push is
   the boundary — it waits for the pull request, and a commit the remote already has is never
   rewritten.
+
 - Incomplete work lands on `main` behind a flag that defaults off — env var, compose profile,
   `config/flags.yaml`, template parameter, in that order. No flag service unless asked.
 - Promotion is the same commit/tag applied to another environment; nothing is rebuilt per

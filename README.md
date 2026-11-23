@@ -20,14 +20,16 @@ One `bazelisk run //scripts:prod-stack -- up` turns a GMKtec EVO-T1 (Intel Ultra
 - **Observability bundle** - Prometheus, Mimir, Loki, Tempo, Grafana and Alloy behind
   one Compose profile: metrics, container logs and traces, with Grafana as the single
   read path, plus the four exporters that feed them - node_exporter, cAdvisor,
-  blackbox_exporter and Alertmanager. On by default; `OBSERVABILITY_ENABLED=false`
-  drops all ten. The four new ones publish on loopback only, on
-  `OBS_NODE_EXPORTER_PORT` (9101), `OBS_CADVISOR_PORT` (9290), `OBS_BLACKBOX_PORT`
-  (9115) and `OBS_ALERTMANAGER_PORT` (9093), and with `ALERTMANAGER_WEBHOOK_URL`
-  empty nothing is paged. The three DGX Sparks are a second, separate opt-in:
-  `SPARK_MONITOR_ENABLED` ships false, and `bazelisk run //scripts:spark-monitor` is
-  what makes a box a target with node_exporter on 9100 and the DCGM exporter from
-  `SPARK_DCGM_EXPORTER_IMAGE` on 9400.
+  blackbox_exporter and Alertmanager.
+
+  - On by default; `OBSERVABILITY_ENABLED=false` drops all ten.
+  - The four new ones publish on loopback only, on `OBS_NODE_EXPORTER_PORT` (9101),
+    `OBS_CADVISOR_PORT` (9290), `OBS_BLACKBOX_PORT` (9115) and
+    `OBS_ALERTMANAGER_PORT` (9093), and with `ALERTMANAGER_WEBHOOK_URL` empty nothing
+    is paged.
+  - The three DGX Sparks are a second, separate opt-in: `SPARK_MONITOR_ENABLED` ships
+    false, and `bazelisk run //scripts:spark-monitor` is what makes a box a target with
+    node_exporter on 9100 and the DCGM exporter from `SPARK_DCGM_EXPORTER_IMAGE` on 9400.
 
 The box runs **two isolated copies** of the stack on purpose: a *stable* one you work
 in and a *dev* one you break. [Spin up the stack](#spin-up-the-stack) has the
@@ -36,7 +38,9 @@ commands; [Two stacks on one box](#two-stacks-on-one-box) explains the split.
 Everything is a Bazel target, addressed as `bazelisk run //scripts:<stem> -- <args>`
 (`<stem>` is the file name under `scripts/`). On the stack host,
 `scripts/setup-host.sh` is the one script meant to run straight from a shell, and it
-runs before Bazel exists. On a laptop, reopen this repo in the
+runs before Bazel exists.
+
+On a laptop, reopen this repo in the
 [contributor dev container](docs/contribute/devcontainer.md) or run
 `bazelisk run //scripts:test-in-image`.
 
@@ -61,19 +65,22 @@ runs before Bazel exists. On a laptop, reopen this repo in the
 
 The long version of each topic is a page of its own, published at
 [toxicoder.github.io/evo-t1-coder-stack/latest](https://toxicoder.github.io/evo-t1-coder-stack/latest/)
-and kept in `docs/` beside this file:
-[coder-templates.md](docs/coder-templates.md), [dashboard.md](docs/dashboard.md),
-[hermes.md](docs/hermes.md),
-[grok-build-and-agents.md](docs/grok-build-and-agents.md),
-[litellm-routing.md](docs/litellm-routing.md),
-[luks-unlock.md](docs/luks-unlock.md),
-[operate/secrets.md](docs/operate/secrets.md),
-[public-access.md](docs/public-access.md), [config-updates.md](docs/config-updates.md),
-[observability.md](docs/observability.md),
-[operate/monitoring.md](docs/operate/monitoring.md),
-[spark-monitoring.md](docs/spark-monitoring.md),
-[troubleshooting.md](docs/troubleshooting.md). Each page opens with what is on it and
-what reading it lets you do.
+and kept in `docs/` beside this file. Each page opens with what is on it and what
+reading it lets you do:
+
+- [coder-templates.md](docs/coder-templates.md)
+- [dashboard.md](docs/dashboard.md)
+- [hermes.md](docs/hermes.md)
+- [grok-build-and-agents.md](docs/grok-build-and-agents.md)
+- [litellm-routing.md](docs/litellm-routing.md)
+- [luks-unlock.md](docs/luks-unlock.md)
+- [operate/secrets.md](docs/operate/secrets.md)
+- [public-access.md](docs/public-access.md)
+- [config-updates.md](docs/config-updates.md)
+- [observability.md](docs/observability.md)
+- [operate/monitoring.md](docs/operate/monitoring.md)
+- [spark-monitoring.md](docs/spark-monitoring.md)
+- [troubleshooting.md](docs/troubleshooting.md)
 
 That address only serves once the repository's **Settings → Pages → Source** is set to
 `gh-pages` (root `/`) — a one-time flip, since the first successful *Deploy
@@ -197,20 +204,21 @@ LAN clients (laptops, phones, the EVO-T1 itself)
    the supported opt-in in that same list: Authelia in front, basic auth still on
    (LAN `:9119` and a matching Host on `:8080` never see Authelia), and the docker
    socket still root-equivalent. Traefik aims at `:8080`, not at `:9119`.
-8. **The observability bundle is one profile, not ten switches.** The flag it reads is
-   `OBSERVABILITY_ENABLED`, and one helper - `compose_observability_args` in
-   `scripts/lib/common.sh` - turns it into `--profile observability` for all ten
-   services; the host ports behind them are the `OBS_*_PORT` keys beside
-   `PROMETHEUS_PORT` and `GRAFANA_PORT`. Grafana is the only UI the bundle publishes
-   beyond loopback and the only one with a public name; Mimir, Loki, Tempo and Alloy
-   publish no port at all, and Prometheus, the three exporters and Alertmanager keep the
-   loopback rule the Coder `:2112` metrics port follows - Alertmanager included, because
-   that UI can silence a firing alert, and nothing is paged while
-   `ALERTMANAGER_WEBHOOK_URL` is empty. The Sparks' own two exporters are a second
-   opt-in (`SPARK_MONITOR_ENABLED`, off as shipped) that compose does not install:
-   `bazelisk run //scripts:spark-monitor -- --apply` does. Full pages:
-   [docs/observability.md](docs/observability.md) and
-   [docs/operate/monitoring.md](docs/operate/monitoring.md).
+8. **The observability bundle is one profile, not ten switches.**
+
+   - The flag it reads is `OBSERVABILITY_ENABLED`, and one helper -
+     `compose_observability_args` in `scripts/lib/common.sh` - turns it into
+     `--profile observability` for all ten services; the host ports behind them are the
+     `OBS_*_PORT` keys beside `PROMETHEUS_PORT` and `GRAFANA_PORT`.
+   - Grafana is the only UI the bundle publishes beyond loopback and the only one with a
+     public name; Mimir, Loki, Tempo and Alloy publish no port at all, and Prometheus,
+     the three exporters and Alertmanager keep the loopback rule the Coder `:2112`
+     metrics port follows - Alertmanager included, because that UI can silence a firing
+     alert, and nothing is paged while `ALERTMANAGER_WEBHOOK_URL` is empty.
+   - The Sparks' own two exporters are a second opt-in (`SPARK_MONITOR_ENABLED`, off as
+     shipped) that compose does not install: `bazelisk run //scripts:spark-monitor -- --apply`
+     does. Full pages: [docs/observability.md](docs/observability.md) and
+     [docs/operate/monitoring.md](docs/operate/monitoring.md).
 
 ## Ports
 
@@ -245,11 +253,12 @@ port binds once, so two stacks on one box need two sets.
 
 Change a port in `.env` for the stable stack and in `dev-stack.env` for the dev one. A
 dev stack still carrying the stable numbers cannot start beside it, and `.env` does not
-reach the dev stack when `dev-stack.env` exists. The Grafana, Prometheus, Alertmanager
-and exporter rows bind only while `OBSERVABILITY_ENABLED` selects the `observability`
-profile, and the Infisical
-row only while `INFISICAL_ENABLED` selects the `secrets` one - that profile is off as
-shipped, so `8182` answers nothing until a box opts in.
+reach the dev stack when `dev-stack.env` exists.
+
+The Grafana, Prometheus, Alertmanager and exporter rows bind only while
+`OBSERVABILITY_ENABLED` selects the `observability` profile, and the Infisical row only
+while `INFISICAL_ENABLED` selects the `secrets` one - that profile is off as shipped, so
+`8182` answers nothing until a box opts in.
 
 ## Spin up the stack
 
@@ -310,7 +319,9 @@ shipped, so `8182` answers nothing until a box opts in.
 
 6. Start the **stable** (production) stack. `prod-stack` addresses it by default, as the
    compose project `evo-t1-prod`, on the default ports and with the `.env` beside the
-   compose file read by compose itself. Postgres only honours `CODER_PG_PASSWORD` on
+   compose file read by compose itself.
+
+   Postgres only honours `CODER_PG_PASSWORD` on
    first volume init; the db wrapper re-applies it on every start, so a later secret
    rotation does not leave Coder crash-looping on `password authentication failed`.
 
@@ -367,10 +378,13 @@ shipped, so `8182` answers nothing until a box opts in.
    ```
 
    Target the address the server itself answers on: `https://<host>:3001` on the LAN,
-   or `http://127.0.0.1:3000` inside the coder container. Point it at a public
-   subdomain in public mode and it fails before it can prompt - Authelia answers the
-   CLI's unauthenticated first-user probe with its HTML sign-in page, which the CLI
-   reports as `unexpected non-JSON response "text/html; charset=utf-8"`.
+   or `http://127.0.0.1:3000` inside the coder container.
+
+   Point it at a public subdomain in public mode and it fails before it can prompt -
+   Authelia answers the CLI's unauthenticated first-user probe with its HTML sign-in
+   page, which the CLI reports as
+   `unexpected non-JSON response "text/html; charset=utf-8"`.
+
    `POST /api/v2/users/first` and `coder server create-admin-user` behave the same way.
 
 2. **Push the workspace templates** - both, `workspace` first and `devcontainer` last.
@@ -381,12 +395,19 @@ shipped, so `8182` answers nothing until a box opts in.
    ```
 
 3. **Wire the control-plane chat agent.** `prod-stack` / `dev-stack` `up` already start
-   this with `--wait` after compose is up, so registering the first account is enough:
-   the seeder writes the `litellm` AI provider, the `agent` default plus the
-   `agent-low` / `agent-medium` / `agent-xhigh` thinking aliases, the `agent-swarm`
-   fleet lane, the `chat` fallback, the subagent lane pins, and the system-prompt
-   addendum. No extra Coder UI setup. Re-run `--apply` if you skipped that, or print the
-   plan first:
+   this with `--wait` after compose is up, so registering the first account is enough.
+   The seeder writes:
+
+   - the `litellm` AI provider
+   - the `agent` default plus the `agent-low` / `agent-medium` / `agent-xhigh` thinking
+     aliases
+   - the `agent-swarm` fleet lane
+   - the `chat` fallback
+   - the subagent lane pins
+   - the system-prompt addendum
+
+   No extra Coder UI setup. Re-run `--apply` if you skipped that, or print the plan
+   first:
 
    ```sh
    bazelisk run //scripts:coder-agents -- --dry-run
@@ -512,9 +533,11 @@ the two observability ports to 13005 and 19090.
 6. **Scripts that run something inside a container pick the oldest match.**
    `pull-models`, `push-template`, `coder-agents` and `dashboard-password` look their
    service up by label across the whole daemon and use the oldest running container -
-   the stable stack's, as long as it came up first. None of the four takes a project
-   flag, so stop the stable stack first when a check has to run against the dev stack.
-   `storage-clean` is the exception: its `--project-name` defaults to `evo-t1-dev`.
+   the stable stack's, as long as it came up first.
+
+   None of the four takes a project flag, so stop the stable stack first when a check has
+   to run against the dev stack. `storage-clean` is the exception: its `--project-name`
+   defaults to `evo-t1-dev`.
 
 ## Develop
 
@@ -562,12 +585,14 @@ bazelisk run //:fix
   runs the suite against an instrumented mirror and proves it is *called*.
 - `//tests:owned_files_audit` asks the graph who owns every file `git ls-files`
   reports: each one is a target's source or data, Bazel's own control plane, or listed
-  in `unowned-files.txt` with a reason. A committed file no target can open is invisible
-  to `//:test-fast` and `//:lint` and fails nothing else, which is why pre-push and CI
-  run this too. It is a `bazel run` rather than a member of `//:test-fast` because it
-  asks `bazelisk query`, and a test action holds the server that query needs. The
-  deliberate exceptions live in `unowned-files.txt`; a file a target could own belongs
-  in a filegroup instead.
+  in `unowned-files.txt` with a reason.
+
+  - A committed file no target can open is invisible to `//:test-fast` and `//:lint` and
+    fails nothing else, which is why pre-push and CI run this too.
+  - It is a `bazel run` rather than a member of `//:test-fast` because it asks
+    `bazelisk query`, and a test action holds the server that query needs.
+  - The deliberate exceptions live in `unowned-files.txt`; a file a target could own
+    belongs in a filegroup instead.
 - `//scripts:install-hooks` points this checkout's `core.hooksPath` at `.githooks`,
   after which `.githooks/pre-commit` runs the hermetic gate on every commit and
   `.githooks/pre-push` runs `//:test-all` before anything is pushed. CI runs the
@@ -582,10 +607,12 @@ bazelisk run //:fix
 
 They delegate to the same targets (`test`, `lint`, `fix`, `validate`,
 `stack-up`/`stack-down`/`stack-status`/`stack-logs`/`stack-reset` and the five
-`prod-stack-*` twins). The `stack-*` shims pass `PROJECT` (default `evo-t1-dev`, the dev
-stack) and the `prod-stack-*` shims pass `PROD_PROJECT` (default `evo-t1-prod`, the
-stable stack, on default ports) as `--project-name`, so either family can be repointed
-at another project:
+`prod-stack-*` twins).
+
+The `stack-*` shims pass `PROJECT` (default `evo-t1-dev`, the dev stack) and the
+`prod-stack-*` shims pass `PROD_PROJECT` (default `evo-t1-prod`, the stable stack, on
+default ports) as `--project-name`, so either family can be repointed at another
+project:
 
 ```sh
 make stack-up PROJECT=evo-t1-coder-stack
@@ -599,8 +626,10 @@ is `bazelisk run //scripts:prod-stack -- up --project-name evo-t1-coder-stack`.
 
 `main` is the only long-lived branch and it stays green and deployable: every machine
 is built from `main`, so a merge to `main` is by definition deployable to a stack host.
+
 Feature work happens on short-lived `feat/`, `fix/`, `refactor/` and friends cut from
 the tip of `main`, integrate by pull request into `main`, and are deleted on merge.
+
 Rules, the branch protection behind them, and the commit prefixes are in
 [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/branching.md](docs/branching.md).
 
@@ -612,29 +641,49 @@ From a **host** shell, in the checkout, one command pulls and deploys:
 bazelisk run //scripts:update-stack
 ```
 
-It runs the whole sequence in the order that makes each step land: fast-forwards
-the checkout, re-enters the updated tree, runs the host repair, reconciles the env
-files, converges the compose project, restarts the services whose bind-mounted
-payload actually changed, pushes the Coder templates, reseeds the running
-workspaces, and prints the stack status. It stops the project first when the pull
-touched `docker-compose.yml` or an env file, because `up -d` leaves a service
-deleted from the compose file running. The payload restart is the part no other
-tool here does: editing `litellm/config.yaml` or `homepage/config/services.yaml`
-changes the file behind an unchanged bind mount, so `up -d` reports success and
-keeps the old process.
+### What the run does
 
-Useful flags: `--dry-run` prints the plan and changes nothing, `--stack dev`
-drives the dev project, `--restart` forces a stop even for a docs-only pull,
-`--pull-images` also runs `compose pull` (what advances the services pinned to a
-mutable `:latest` tag), `--branch <name>` deploys another branch, and
-`--skip-pull`, `--skip-repair`, `--skip-configs`, `--skip-templates`,
-`--skip-workspaces` drop single steps. `--litellm-url` names a remapped
-`LITELLM_PORT` for the reseed, the way `refresh-configs` does.
+It runs the whole sequence in the order that makes each step land:
+
+1. fast-forwards the checkout
+2. re-enters the updated tree
+3. runs the host repair
+4. reconciles the env files
+5. converges the compose project
+6. restarts the services whose bind-mounted payload actually changed
+7. pushes the Coder templates
+8. reseeds the running workspaces
+9. prints the stack status
+
+It stops the project first when the pull touched `docker-compose.yml` or an env file,
+because `up -d` leaves a service deleted from the compose file running.
+
+The payload restart is the part no other tool here does: editing `litellm/config.yaml`
+or `homepage/config/services.yaml` changes the file behind an unchanged bind mount, so
+`up -d` reports success and keeps the old process.
+
+### Useful flags
+
+- `--dry-run` prints the plan and changes nothing
+- `--stack dev` drives the dev project
+- `--restart` forces a stop even for a docs-only pull
+- `--pull-images` also runs `compose pull` (what advances the services pinned to a
+  mutable `:latest` tag)
+- `--branch <name>` deploys another branch
+- `--skip-pull`, `--skip-repair`, `--skip-configs`, `--skip-templates`,
+  `--skip-workspaces` drop single steps
+
+`--litellm-url` names a remapped `LITELLM_PORT` for the reseed, the way
+`refresh-configs` does.
+
+### What it refuses
 
 It refuses rather than guesses: a tree with uncommitted changes, a detached HEAD,
 and a branch that cannot fast-forward all stop the run before anything reaches the
 network (`--allow-dirty` is the way past the first). It never destroys a volume,
 never reaches `reset`, and never passes `--force` to a reseed.
+
+### The steps it replaces
 
 The steps it replaces, if you want to run them one at a time:
 
@@ -645,36 +694,51 @@ bazelisk run //scripts:update-configs -- all
 bazelisk run //scripts:prod-stack -- up
 ```
 
-`--repair` is the recovery Bazel cannot do itself. Leftover Docker bind-mounts in
-`bazel-out/.../prod-stack.runfiles` (a directory sitting where
-`homepage/assets/icons/evo-t1.svg` belongs, or a root-owned copy) make the next
+### The host repair
+
+`--repair` is the recovery Bazel cannot do itself.
+
+Leftover Docker bind-mounts in `bazel-out/.../prod-stack.runfiles` (a directory sitting
+where `homepage/assets/icons/evo-t1.svg` belongs, or a root-owned copy) make the next
 `bazelisk run //scripts:prod-stack` die with `FileAccessException ... Permission
-denied` before the stack script starts. On Linux it also installs public DNS
-(`1.1.1.1` / `8.8.8.8`) beside Tailscale MagicDNS so `git pull` still resolves
-`github.com`. `make prod-stack-up` runs `--repair` first. `--check` lists
-leftovers and whether `github.com` resolves, and writes nothing.
+denied` before the stack script starts.
+
+On Linux it also installs public DNS (`1.1.1.1` / `8.8.8.8`) beside Tailscale MagicDNS
+so `git pull` still resolves `github.com`. `make prod-stack-up` runs `--repair` first.
+`--check` lists leftovers and whether `github.com` resolves, and writes nothing.
+
+### The env files
 
 `update-configs env` on a TTY keeps every value you already set, reuses a sibling
 env file (`.env` filling `dev-stack.env`) for a new key, and walks you through new
 keys, placeholders (`change-me…`, `NOTSET`, `YOUR_LAN_IP`) and empty values.
-`--dry-run` is the report-only shape. `workspace` re-materialises the stack-owned
-copies inside running workspaces; a file you hand-edit is left alone. Run
-`workspace` from a **host** shell - inside a workspace the `docker` CLI only reaches
-that workspace's own DinD sidecar, which is why `status` there prints which daemon
-it asked.
+`--dry-run` is the report-only shape.
+
+`workspace` re-materialises the stack-owned copies inside running workspaces; a file you
+hand-edit is left alone. Run `workspace` from a **host** shell - inside a workspace the
+`docker` CLI only reaches that workspace's own DinD sidecar, which is why `status` there
+prints which daemon it asked.
+
+### When github.com will not resolve
 
 If `git pull` itself fails with `Could not resolve host: github.com`, Docker or
 Kasm has made Tailscale MagicDNS (`100.100.100.100`) unreachable and it was the
-only nameserver. Run the copy-paste under
-[troubleshooting.md](docs/troubleshooting.md) (`Could not resolve host: github.com`)
-on the current checkout, then `git pull`. After that, `bash scripts/setup-host.sh --repair`
+only nameserver.
+
+Run the copy-paste under [troubleshooting.md](docs/troubleshooting.md)
+(`Could not resolve host: github.com`) on the current checkout, then `git pull`.
+
+After that, `bash scripts/setup-host.sh --repair`
 is the durable path (Linux: resolved drop-in plus `tailscale set --accept-dns=false`,
 MagicDNS kept for `ts.net`).
+
+### A dev stack on a remapped LiteLLM port
 
 A dev stack that remapped `LITELLM_PORT` away from 4000 needs that address named
 too: `bazelisk run //scripts:refresh-configs -- --litellm-url http://host.docker.internal:<PORT>/v1`
 re-renders `settings.json` against that stack's own LiteLLM port, where the default
 `http://host.docker.internal:4000/v1` names the stable stack's.
+
 [config-updates.md](docs/config-updates.md) has both passes, the flags, and what the
 tool refuses to do. [troubleshooting.md](docs/troubleshooting.md) quotes both error
 strings.
@@ -684,12 +748,14 @@ strings.
 The default shape is LAN-only. Set the naming parts in `.env` (`STACK_DOMAIN_BASE`,
 `STACK_SUBDOMAIN_SUFFIX`, `STACK_ENV_LABEL`, the per-service `STACK_*_NAME` keys) and
 `STACK_PUBLIC_HOSTS=auto`, and `bazelisk run //scripts:bootstrap` composes the seven
-public names from them and serves the same seven services over real TLS. Grafana and
-Infisical are the last two and the only ones behind a Compose profile:
+public names from them and serves the same seven services over real TLS.
+
+Grafana and Infisical are the last two and the only ones behind a Compose profile:
 `scripts/lib/domain.sh` reads no flag, so each name composes with
 `OBSERVABILITY_ENABLED=false` and `INFISICAL_ENABLED=false` too and the router answers
-that Host with no container behind it. A
-comma-separated list in `STACK_PUBLIC_HOSTS` is still the way to pin a name by hand;
+that Host with no container behind it.
+
+A comma-separated list in `STACK_PUBLIC_HOSTS` is still the way to pin a name by hand;
 empty stays LAN-only. Full detail, including what `bootstrap` rewrites and how to check
 the Traefik side, is in [docs/public-access.md](docs/public-access.md).
 
@@ -711,16 +777,22 @@ Under the shipped defaults (`overeazy.io` + `gmktecbeast`) `auto` composes:
 The dev row is what `bazelisk run //scripts:dev-stack -- up` composes: it applies
 `STACK_ENV_LABEL=dev` for the `evo-t1-dev` project only, and only when neither the shell
 nor the env file already sets a label. A label goes on every name, so that stack's
-dashboard is `dev-gmktecbeast.overeazy.io` as well. `bazelisk run
+dashboard is `dev-gmktecbeast.overeazy.io` as well.
+
+`bazelisk run
 //scripts:prod-stack -- up` never invents one.
 
 The rules that make those names work, and what to check when one of them misbehaves,
-are on
-[docs/public-access.md](docs/public-access.md): the one-label-under-the-zone shape a
-wildcard certificate allows, the `bootstrap` run that composes the names and rewrites
-the card URLs, the recreate that applies it, the plain-HTTP hop to the `router` sidecar
-on `:8080` (every name, including Hermes - not `:9119`), and why the interactive names
-302 to Authelia while workspace agents never reach it and LiteLLM stays an API bypass.
+are on [docs/public-access.md](docs/public-access.md):
+
+- the one-label-under-the-zone shape a wildcard certificate allows
+- the `bootstrap` run that composes the names and rewrites the card URLs
+- the recreate that applies it
+- the plain-HTTP hop to the `router` sidecar on `:8080` (every name, including Hermes -
+  not `:9119`)
+- why the interactive names 302 to Authelia while workspace agents never reach it and
+  LiteLLM stays an API bypass
+
 The other machine needs one file: the paste-ready Traefik config - seven routers, TLS
 on all of them, `passHostHeader: true`, Authelia on the six interactive names and the
 long-lived timeouts - is
@@ -730,7 +802,9 @@ long-lived timeouts - is
 
 Workspaces and desktops always talk to one base URL -
 `http://host.docker.internal:4000/v1` with `LITELLM_MASTER_KEY` - and pick a model
-alias. The internals (pinning TTLs, `least-busy`, the `agent` -> `coder` fallback, the
+alias.
+
+The internals (pinning TTLs, `least-busy`, the `agent` -> `coder` fallback, the
 measured 30-request burst, the **Agent backend** card) are in
 [docs/litellm-routing.md](docs/litellm-routing.md).
 
@@ -750,138 +824,235 @@ measured 30-request burst, the **Agent backend** card) are in
 | `compaction-fast` | `qwen2.5-coder:14b` | local IPEX-LLM Ollama (Arc); the target of those two lanes' summary hop, and not a client choice - no `[model.*]` block in the templates and no `local.model_choices` entry names it | no (measured on these weights, as on `coder-fast`) |
 | `chat` | `qwen2.5:7b` | local IPEX-LLM Ollama | yes (measured) |
 
+### What the measured tool calls decide
+
 One measured fact decides what you can actually run: the Qwen2.5-Coder weights do not
 emit structured tool calls on this box's IPEX-LLM Ollama, so agent mode needs the Spark
-`agent` lane or the small `chat` model. The measurement, the TTL and `least-busy`
+`agent` lane or the small `chat` model.
+
+The measurement, the TTL and `least-busy`
 routing, the `agent` -> `coder` fallback, the burst that produced it, and the two
 `docker compose restart litellm` commands (one per stack) are on
-[docs/litellm-routing.md](docs/litellm-routing.md). `scripts/coder-agents.sh` registers
+[docs/litellm-routing.md](docs/litellm-routing.md).
+
+### The chat models Coder registers
+
+`scripts/coder-agents.sh` registers
 `agent` (default), the three thinking aliases, `agent-swarm`, and `chat` as the Coder
 Agents chat models, so an alias edited here moves in the Agents dropdowns too. There is
-no `high` level on this runtime. There are nine Spark aliases in all: `agent-swarm` is the
-fifth and, with the two after it and `agent-swarm-fast`, one of the four that carry no
-session pin - same boxes, same baked `xhigh`, each request placed on the box carrying the
-fewest in flight, which is the lane a parallel subagent fan-out wants, and the shipped
-default for the writers.
-Rolling them back to one box is `--var grok_subagents_lane=agent`. That one variable is
-the whole placement switch: it pins the writer
-types in `[subagents.models]` -
-`general-purpose`, which is the type a spawn gets when it names none and the one every
-writer in a fan-out runs as, plus the seeded `implementer` and `tester`, while the read-only
-`explore` and `plan` follow their own lane variables below. The width is a separate knob and
+no `high` level on this runtime.
+
+### The nine Spark aliases
+
+There are nine Spark aliases in all: `agent-swarm` is the fifth and, with the two after
+it and `agent-swarm-fast`, one of the four that carry no session pin:
+
+- same boxes
+- same baked `xhigh`
+- each request placed on the box carrying the fewest in flight
+- the lane a parallel subagent fan-out wants
+- the shipped default for the writers
+
+Rolling them back to one box is `--var grok_subagents_lane=agent`.
+
+### The placement switch
+
+That one variable is the whole placement switch: it pins the writer types in
+`[subagents.models]`:
+
+- `general-purpose`, which is the type a spawn gets when it names none and the one every
+  writer in a fan-out runs as, plus the seeded `implementer` and `tester`
+- the read-only `explore` and `plan` follow their own lane variables below
+
+### Two sizing knobs
+
+The width is a separate knob and
 does not follow the lane: `grok_subagent_max_concurrent` is the variable's own shipped 15 and
 `main.tf` renders that number into `[subagents] max_concurrent` on every lane, because
-`agent-swarm` stays selectable on any spawn even when the default lane is pinned. That 15 is
-the fleet ceiling - `PARALLEL` per box (`scripts/spark-configure.sh`, 5 by default) x 3 boxes
-= 15 - so it asks every box for all of its streams. `grok_swarm_width` (default 15) is the
-fleet's own ceiling, rendered as the `# fleet-width:` line beside `max_concurrent`, and the
-width a workspace gets only when it sets `grok_subagent_max_concurrent = null` on purpose.
+`agent-swarm` stays selectable on any spawn even when the default lane is pinned.
+
+That 15 is the fleet ceiling - `PARALLEL` per box (`scripts/spark-configure.sh`, 5 by
+default) x 3 boxes = 15 - so it asks every box for all of its streams.
+
+`grok_swarm_width` (default 15) is the fleet's own ceiling, rendered as the
+`# fleet-width:` line beside `max_concurrent`, and the width a workspace gets only when
+it sets `grok_subagent_max_concurrent = null` on purpose.
+
 On a pinned lane only one box is reachable, so what is usable there is that box's `PARALLEL`
 minus the parent's own stream: past about 4 in flight you deepen
 LiteLLM's queue rather than buying capacity, and an operator who pins every lane narrows
 the number by hand.
-`--var grok_subagent_max_concurrent=N` overrules that shipped 15 whenever one workspace wants
-a number of its own, `--var grok_subagent_max_depth=N` sets how deep
-the tree may go, and
-[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers the
-seam, the three readings of the rendered pair, and the `/ez-micro-plan` plan that fills the
-slots. Nothing else moves that width: the
+
+### Overriding the pair
+
+`--var grok_subagent_max_concurrent=N` overrules that shipped 15 whenever one workspace
+wants a number of its own, `--var grok_subagent_max_depth=N` sets how deep the tree may
+go.
+
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-fan-out-seam) covers
+the seam, the three readings of the rendered pair, and the `/ez-micro-plan` plan that
+fills the slots.
+
+Nothing else moves that width: the
 variable ships its 15 itself, `grok_swarm_width` feeds the ceiling line alone, and only an
 explicit `grok_subagent_max_concurrent = null` hands the width to that ceiling, so naming a
-number is the only way a rendered width lands under the fleet's. The two knobs are also
-independent going the other way: `grok_swarm_width` is what `subagent-check` and the boot
-compare against, and past the fleet's streams a box refuses the extra spawn with `NoRoom`,
-so shrinking a shared fleet is a two-knob job - drop `grok_swarm_width` and move
-`grok_subagent_max_concurrent` in the same push, or a 15-wide session meets a 10-stream
-fleet. The profile keeps both
-numbers side by side: `[subagents]` carries `# fleet-width: 15` directly above
-`max_concurrent` (`templates/workspace/grok-config.toml.tftpl:427`, fed from
-`var.grok_swarm_width` at `templates/workspace/main.tf:558`), so 15 printed over 4 reads as a
-`--var` that outlived
-its template - on the template, or on the workspace, whose copy sits in the Coder database
-and is out of reach from inside the container.
+number is the only way a rendered width lands under the fleet's.
+
+The two knobs are also independent going the other way: `grok_swarm_width` is what
+`subagent-check` and the boot compare against, and past the fleet's streams a box refuses
+the extra spawn with `NoRoom`, so shrinking a shared fleet is a two-knob job:
+
+- drop `grok_swarm_width`
+- move `grok_subagent_max_concurrent` in the same push, or a 15-wide session meets a
+  10-stream fleet
+
+The profile keeps both numbers side by side: `[subagents]` carries `# fleet-width: 15`
+directly above `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:427`, fed
+from `var.grok_swarm_width` at `templates/workspace/main.tf:558`), so 15 printed over 4
+reads as a `--var` that outlived its template - on the template, or on the workspace,
+whose copy sits in the Coder database and is out of reach from inside the container.
+
+### Reading a rendered profile
+
 `bazelisk run //scripts:subagent-check` reads the pair and names which one you have,
-beside the writers' lane and the depth. `bazelisk run //scripts:subagent-check -- --all`
-does the same read over the whole stack from a stack-host shell, where `docker`
-addresses the daemon holding the workspace containers, and prints one verdict per
-workspace so the few still rendering a width under the fleet's surface in one command
-instead of one visit each. That read is one `docker ps -a` on the `coder.workspace_id`
-label, then a read-only `cat` of each running container's own rendered profile through
-`docker exec --`: like `//scripts:branch-hygiene` the sweep starts nothing, stops nothing,
-rewrites nothing, and runs no `coder` command, and it needs the docker CLI and `timeout(1)`
-on that host. A row the daemon listed that the sweep could not judge is counted and named in
+beside the writers' lane and the depth.
+
+`bazelisk run //scripts:subagent-check -- --all` does the same read over the whole stack
+from a stack-host shell, where `docker` addresses the daemon holding the workspace
+containers.
+
+It prints one verdict per workspace so the few still rendering a width under the fleet's
+surface in one command instead of one visit each.
+
+That read is one `docker ps -a` on the `coder.workspace_id` label, then a read-only `cat`
+of each running container's own rendered profile through `docker exec --`: like
+`//scripts:branch-hygiene` the sweep starts nothing, stops nothing, rewrites nothing, and
+runs no `coder` command, and it needs the docker CLI and `timeout(1)` on that host.
+
+A row the daemon listed that the sweep could not judge is counted and named in
 a closing `note:` rather than dropped in silence, and the DinD sidecar row is excluded from
-that count. Each offender it names keeps the number Coder stored for that
+that count.
+
+Each offender it names keeps the number Coder stored for that
 workspace, not one off the template, and the fix is the
 `coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=15` line it
-prints, run on that same host shell. Depth 2, the shipped default,
+prints, run on that same host shell.
+
+### Depth, spawns and the review panel
+
+Depth 2, the shipped default,
 lets a child spawn read-only mappers of its own, so a skeptic scopes out its own evidence
 and the parent skips a round trip; 1 keeps nesting off, which is the rollback, and 3 is
-the operator's experiment ceiling. Only `reviewer`, `security-auditor` and `tester` name
-`spawn_subagent` in their `tools`, so a deeper wave is read-only work. Every in-flight
+the operator's experiment ceiling.
+
+Only `reviewer`, `security-auditor` and `tester` name
+`spawn_subagent` in their `tools`, so a deeper wave is read-only work.
+
+Every in-flight
 child holds one of the fleet's 15 streams, so a parent sums `1 + spawns` per task and
 keeps that total at or below the fleet's stream count (the `fleet:` figure in a
-micro-plan), a separate figure from the session's `slots`. The mandatory review that ends
+micro-plan), a separate figure from the session's `slots`.
+
+The mandatory review that ends
 a multi-file change is a panel of skeptics dispatched in one turn - requirements, proof,
 adversary - each on `agent-review`, each owning no file, each allowed up to 3 read-only
 mappers of its own.
 
+### The two role lanes
+
 The sixth and seventh, `agent-explore` and `agent-review`, are that same pin lift cut for
 the two one-shot roles a fleet dispatches rather than for a conversation: a child that
 answers once carries no warm prefix into a next turn, so the pin protects nothing here and
-only costs a box's admission slots. The read-only mappers - the built-in `explore` type and
-the seeded `explorer` agent - ride `agent-explore`, which bakes `low` because mapping work
-is a lookup; the skeptical roles `reviewer` and `security-auditor`, which carry the
-mandatory independent review of a multi-file change, ride `agent-review`, which bakes the
-`xhigh` that `agent` itself carries. Both defaults are template variables
-(`--var grok_explore_lane=`, `--var grok_review_lane=`, declared in
-`templates/workspace/coder.tf`), and each is the single seam for its role's cost: name
-`agent-low` or `agent-xhigh` there to put that role back on a pinned lane at the same
-thinking level. Neither is registered as a Coder Agents chat model, because neither is
-meant to be typed into the Agents dropdown, and each degrades one step deeper than a pinned
-lane, hopping through the alias that bakes its own level before Arc - `agent-explore` ->
-`agent-low` -> `coder`, `agent-review` -> `agent-xhigh` -> `coder`
-(`litellm/config.yaml:882-883`) - so a parent that dispatched a mapper at `low` gets a
-`low` answer from the fallback rather than an `xhigh` it did not ask for.
+only costs a box's admission slots.
+
+The read-only mappers - the built-in `explore` type and the seeded `explorer` agent - ride
+`agent-explore`, which bakes `low` because mapping work is a lookup.
+
+The skeptical roles `reviewer` and `security-auditor`, which carry the mandatory
+independent review of a multi-file change, ride `agent-review`, which bakes the `xhigh`
+that `agent` itself carries.
+
+Both defaults are template variables (`--var grok_explore_lane=`,
+`--var grok_review_lane=`, declared in `templates/workspace/coder.tf`).
+
+Each is the single seam for its role's cost: name `agent-low` or `agent-xhigh` there to
+put that role back on a pinned lane at the same thinking level.
+
+Neither is registered as a Coder Agents chat model, because neither is meant to be typed
+into the Agents dropdown.
+
+Each degrades one step deeper than a pinned lane, hopping through the alias that bakes its
+own level before Arc - `agent-explore` -> `agent-low` -> `coder`, `agent-review` ->
+`agent-xhigh` -> `coder` (`litellm/config.yaml:882-883`) - so a parent that dispatched a
+mapper at `low` gets a `low` answer from the fallback rather than an `xhigh` it did not ask
+for.
+
+### The two fast compaction aliases
 
 The eighth and ninth, `agent-xhigh-fast` and `agent-swarm-fast`, are not new
 lanes: each is its parent deployment for deployment - `agent-xhigh` with the
 session pin kept, `agent-swarm` with the pin lifted for it alone - and what
-differs is where one call of the conversation is answered. The Grok Build CLI has
-no compaction-model key, so the summary it asks for when a session nears its
-context window rides the session model and inherits that model's thinking level: a
-long session's summary is Qwen3.8-Flash-Next answering at `xhigh`, measured at 107
-s to 1915 s, with 18 of the 36 sampled successes running past the CLI's 300 s
-wall-clock budget. A summary needs no thinking, so these two aliases ask the proxy
+differs is where one call of the conversation is answered.
+
+The Grok Build CLI has no compaction-model key, so the summary it asks for when a
+session nears its context window rides the session model and inherits that model's
+thinking level: a long session's summary is Qwen3.8-Flash-Next answering at `xhigh`,
+measured at 107 s to 1915 s, with 18 of the 36 sampled successes running past the CLI's
+300 s wall-clock budget.
+
+#### Why the summary call moves
+
+A summary needs no thinking, so these two aliases ask the proxy
 callback `litellm/compaction_router.py` to move that one call to `compaction-fast`
 - the small Ollama-served coding weight on the Arc - before the router picks a
-deployment. Every other call of the same conversation stays on its Spark box, and
+deployment.
+
+Every other call of the same conversation stays on its Spark box, and
 a session on any other alias compacts exactly as it always has: the hop is a
 property of the alias, so picking one of these two is the opt-in, and
-`EVO_T1_FAST_COMPACTION=0` is the kill switch beside it. It stops at the Arc's
-window: those weights answer inside 32768 tokens, so a summary estimated above
-`EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) goes to `agent-low` instead - a Spark
-group with the 262144-token window a full-size summary needs, at thinking baked
-`low` - rather than be handed to Ollama to clamp, because a slow summary beats a
-truncated one. That window also caps the key: a guard set above the
+`EVO_T1_FAST_COMPACTION=0` is the kill switch beside it.
+
+#### The Arc window and its guard rails
+
+It stops at the Arc's window: those weights answer inside 32768 tokens.
+
+A summary estimated above `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (24000) goes to
+`agent-low` instead - a Spark group with the 262144-token window a full-size summary
+needs, at thinking baked `low` - rather than be handed to Ollama to clamp, because a slow
+summary beats a truncated one.
+
+That window also caps the key: a guard set above the
 `max_input_tokens` the target group declares is overruled and forks at the
 declared window, with one warning line naming both numbers. A group that
-declares no window leaves the key whole, and prints one line saying so. Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized
+declares no window leaves the key whole, and prints one line saying so.
+
+Blank `EVO_T1_FAST_COMPACTION_SPARK_TARGET` and an oversized
 summary stays on the lane it arrived on, which is the pre-hop behaviour.
 Nothing has been measured on the new lane yet, so no speed-up figure is quoted
-here; what changes without a stopwatch is who answers. Each fast lane degrades to
-the lane it is the twin of - `agent-xhigh-fast` -> `agent-xhigh` -> `coder`,
-`agent-swarm-fast` -> `agent-swarm` -> `coder` (`litellm/config.yaml:887-888`) -
-keeping its baked level and its pin behaviour, while `compaction-fast` is the one
-chain nobody types: it hops to a Spark rather than to another Arc alias,
-`compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:893`), because
-`coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama
-container and a hop between them is a hop to whatever is already down. The other
-four `EVO_T1_FAST_COMPACTION*` keys - the kill switch, `EVO_T1_FAST_COMPACTION_LANES`
-(default `agent-xhigh-fast,agent-swarm-fast`), `EVO_T1_FAST_COMPACTION_TARGET`
-(default `compaction-fast`) and the input limit above - are read in that module
-and nowhere else, which makes the litellm service's `environment:` block the whole
-policy. Neither fast lane is registered as a Coder Agents chat model: the hop keys
+here; what changes without a stopwatch is who answers.
+
+#### The degradation chains
+
+Each fast lane degrades to the lane it is the twin of - `agent-xhigh-fast` ->
+`agent-xhigh` -> `coder`, `agent-swarm-fast` -> `agent-swarm` -> `coder`
+(`litellm/config.yaml:887-888`) - keeping its baked level and its pin behaviour.
+
+`compaction-fast` is the one chain nobody types: it hops to a Spark rather than to
+another Arc alias, `compaction-fast` -> `agent-low` -> `coder` (`litellm/config.yaml:893`),
+because `coder`, `coder-fast` and `compaction-fast` all answer from the one Ollama
+container and a hop between them is a hop to whatever is already down.
+
+#### The keys and the Agents dropdown
+
+The other four `EVO_T1_FAST_COMPACTION*` keys are read in that module and nowhere else,
+which makes the litellm service's `environment:` block the whole policy:
+
+- the kill switch
+- `EVO_T1_FAST_COMPACTION_LANES` (default `agent-xhigh-fast,agent-swarm-fast`)
+- `EVO_T1_FAST_COMPACTION_TARGET` (default `compaction-fast`)
+- the input limit above
+
+Neither fast lane is registered as a Coder Agents chat model: the hop keys
 on the summary instruction the CLI appends, that dropdown's aibridge never sends
 one, and an Agents chat there would be its parent lane under a longer name.
 
@@ -890,7 +1061,9 @@ one, and an Agents chat there would be its parent lane under a longer name.
 Two templates live under `templates/`, and the push covers both: `workspace` (the plain
 dev container, `templates/workspace/`) goes first and `devcontainer` (the DinD-backed
 one, `templates/devcontainer/`) last - a dependent template pushes last so a partial
-failure leaves the base template usable. What each one puts inside a workspace, the
+failure leaves the base template usable.
+
+What each one puts inside a workspace, the
 template variables and their defaults, and the create-form fields are in
 [docs/coder-templates.md](docs/coder-templates.md).
 
@@ -916,17 +1089,19 @@ as a tar on stdin:
 
 ### Also worth knowing
 
-- `templates/common/` exists once and both templates consume it:
-  `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline),
-  `vscode-alt.svg` (the editor icon) and `notes-setup.sh` (the library behind each
-  clone's private `notes.md`, which also leaves one background watcher per container
-  copying those files to the owner's notes volume (`grok-notes-<owner-id>`, mounted
-  at `~/.grok/notes`) between boots), staged beside
-  each staged `main.tf` and read
-  there with `file()` / `filebase64()`. The SVG stays small enough that the
-  inlined data URL fits Coder v2.36's 256-character `workspace_apps.icon` column.
-  A push missing any payload, or an SVG that would overflow that column, fails
-  early by design. Every other `.tftpl` payload is copied per template - edit both twins.
+- `templates/common/` exists once and both templates consume it, staged beside each
+  staged `main.tf` and read there with `file()` / `filebase64()`:
+
+  - `GROK_BUILD_AGENTS.md` (the seed text the startup scripts inline)
+  - `vscode-alt.svg` (the editor icon)
+  - `notes-setup.sh` (the library behind each clone's private `notes.md`, which also
+    leaves one background watcher per container copying those files to the owner's notes
+    volume (`grok-notes-<owner-id>`, mounted at `~/.grok/notes`) between boots)
+
+  The SVG stays small enough that the inlined data URL fits Coder v2.36's 256-character
+  `workspace_apps.icon` column. A push missing any payload, or an SVG that would overflow
+  that column, fails early by design. Every other `.tftpl` payload is copied per template
+  - edit both twins.
 - `bootstrap.sh` calls the same push, and skips with a one-line reason while the coder
   or db container is down or nobody has registered yet.
 - A template whose push or verification failed is counted in the
@@ -943,11 +1118,14 @@ Deep detail: [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md) and
 The repository template is a separate GitHub repository,
 `https://github.com/toxicoder/ezrepo`: governance files, a pinned toolchain, three CI
 workflows, a test dispatcher, an agent contract, and per-language lane overlays.
+
 `bazelisk run //scripts:new-repo -- <name>` clones it, substitutes the `__PROJECT_*__`
 tokens in contents and paths, overlays the lanes you asked for, creates the GitHub
 repository, applies the settings the template asks for, and can queue a Coder task so
-a workspace exists the moment you open it. `--template-ref <ref>` pins a branch or tag;
-`--template-dir <dir>` renders a local tree you already hold and fetches nothing.
+a workspace exists the moment you open it.
+
+`--template-ref <ref>` pins a branch or tag; `--template-dir <dir>` renders a local tree
+you already hold and fetches nothing.
 
 Plan without touching GitHub:
 
@@ -962,10 +1140,14 @@ Deep detail: [docs/new-repo.md](docs/new-repo.md).
 `bazelisk run //scripts:new-workspace -- <git-url> [name]` picks the template by
 shallow-cloning the repository on the host and looking for a dev container:
 `.devcontainer/`, `.github/devcontainers/`, or a `devcontainer.json`/`.yml` anywhere in
-the tree. Found: `devcontainer`. Not found: `workspace`. A tracked
-`.devcontainer/contributor-env` is a miss even when `devcontainer.json` sits beside it,
-so a Coder workspace of *this* repo stays on `workspace` (the `.devcontainer/` here is
-the laptop/CI contributor env). Probe failed: `workspace`, with a warning.
+the tree.
+
+Found: `devcontainer`. Not found: `workspace`.
+
+A tracked `.devcontainer/contributor-env` is a miss even when `devcontainer.json` sits
+beside it, so a Coder workspace of *this* repo stays on `workspace` (the
+`.devcontainer/` here is the laptop/CI contributor env). Probe failed: `workspace`, with
+a warning.
 
 Decision only, creates nothing:
 
@@ -1026,35 +1208,56 @@ The list format, the two clone paths, and what `--dry-run` prints:
 
 ### Terminals, Grok Build state and Coder Agents
 
-The `tmux` terminal profiles and the app-bar buttons, what `grok doctor` should report
-inside a workspace and which findings are expected there, the three per-owner state
-volumes `shared` mode mounts under `~/.grok` (notes, memory, sessions) beside that
-workspace's own `config.toml` (and what `shared` vs `private` costs on a rebuild), the
-host-wide `grok-session-archive` volume the boot mirrors sessions into for later
-out-of-band inspection (read by nothing inside the workspace), the
-pre-installed MCP
-servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP` toggles, and the
-control-plane Coder Agents chat that needs nothing enabled:
-[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md). The seven stack-seeded skill commands at the
-Grok Build prompt are `/ez-learn` (flush this session into a memory log, dream those logs
-into organized memory, remember one note, or browse and clear the store - this stack's copy
-of the upstream `/flush`, `/dream`, `/remember` and `/memory`), `/ez-skillify` (capture the
-session that just worked) and `/ez-create-skill` (scaffold one from a description); the
-payloads to edit are `templates/common/ez-learn.SKILL.md`,
+[docs/grok-build-and-agents.md](docs/grok-build-and-agents.md):
+
+- the `tmux` terminal profiles and the app-bar buttons
+- what `grok doctor` should report inside a workspace and which findings are expected
+  there
+- the three per-owner state volumes `shared` mode mounts under `~/.grok` (notes, memory,
+  sessions) beside that workspace's own `config.toml` (and what `shared` vs `private`
+  costs on a rebuild)
+- the host-wide `grok-session-archive` volume the boot mirrors sessions into for later
+  out-of-band inspection (read by nothing inside the workspace)
+- the pre-installed MCP servers and the `search_mcp` / `GITHUB_MCP` / `CONTEXT7_MCP`
+  toggles
+- the control-plane Coder Agents chat that needs nothing enabled
+
+#### The seven stack-seeded skill commands
+
+The seven stack-seeded skill commands at the Grok Build prompt are:
+
+- `/ez-learn` (flush this session into a memory log, dream those logs into organized
+  memory, remember one note, or browse and clear the store - this stack's copy of the
+  upstream `/flush`, `/dream`, `/remember` and `/memory`)
+- `/ez-skillify` (capture the session that just worked)
+- `/ez-create-skill` (scaffold one from a description)
+
+The payloads to edit are `templates/common/ez-learn.SKILL.md`,
 `templates/common/ez-skillify.SKILL.md` and `templates/common/ez-create-skill.SKILL.md`,
-seeded into both skill homes by `coder_script "stack_skills"`. Three more convert whatever
-repository the workspace is sitting in: `/ez-bazel-first` (every tracked file owned by a
-target, `glob()` budgeted, one umbrella gate), `/ez-strong-types` (a strict checker profile
-per language and a broad-type census wired as a ratchet), and `/ez-trunk-based-repo`
-(environment branches become environments, unfinished work lands behind a flag, and the
-stray branches get inventoried for deletion); their payloads are
-`templates/common/ez-bazel-first.SKILL.md`, `templates/common/ez-strong-types.SKILL.md` and
+seeded into both skill homes by `coder_script "stack_skills"`.
+
+#### The repository converters
+
+Three more convert whatever repository the workspace is sitting in:
+
+- `/ez-bazel-first` (every tracked file owned by a target, `glob()` budgeted, one
+  umbrella gate)
+- `/ez-strong-types` (a strict checker profile per language and a broad-type census
+  wired as a ratchet)
+- `/ez-trunk-based-repo` (environment branches become environments, unfinished work
+  lands behind a flag, and the stray branches get inventoried for deletion)
+
+Their payloads are `templates/common/ez-bazel-first.SKILL.md`,
+`templates/common/ez-strong-types.SKILL.md` and
 `templates/common/ez-trunk-based-repo.SKILL.md`, plus three `*.py` helpers that ride
-alongside, seeded into both skill homes by `coder_script "stack_repo_skills"`. A fourth
-command rides that same body and converts nothing: `/ez-micro-plan` cuts one multi-file
-change into micro tasks (one deliverable, three files or fewer, a 15-call budget, an
-`owns` set) for a fleet of subagents, in a repo-local plan at `.grok/plans/<slug>/plan.md`
-with layered `ctx/` briefs beside it. Its dispatch gate prints the wave to spawn:
+alongside, seeded into both skill homes by `coder_script "stack_repo_skills"`.
+
+A fourth command rides that same body and converts nothing: `/ez-micro-plan` cuts one
+multi-file change into micro tasks (one deliverable, three files or fewer, a 15-call
+budget, an `owns` set) for a fleet of subagents, in a repo-local plan at
+`.grok/plans/<slug>/plan.md` with layered `ctx/` briefs beside it.
+
+Its dispatch gate prints the wave to spawn:
 
 ```sh
 python3 ~/.agents/skills/ez-micro-plan/scripts/plan_check.py \
@@ -1062,18 +1265,24 @@ python3 ~/.agents/skills/ez-micro-plan/scripts/plan_check.py \
 ```
 
 That command refuses two live tasks sharing an owned path, a dependency cycle, a missing
-brief, and a first wave too narrow to fill the session's subagent slots. The payloads are
-`templates/common/ez-micro-plan.SKILL.md` and
+brief, and a first wave too narrow to fill the session's subagent slots.
+
+The payloads are `templates/common/ez-micro-plan.SKILL.md` and
 `templates/common/ez-micro-plan.plan_check.py`, the helper landing under `scripts/` in the
 same skill directory as the family's other three.
 
-Five more commands advise rather than convert: `/documenter` (make the pages match a change
-that already exists, then let a skeptic run every command the new prose names),
-`/performance-optimizer` (baseline, one change, re-measure), `/debugger` (no fix until the
-failing command and its real output are quoted), `/migrator` (one dependency or API move, plan
-and rollback written first), and `/ez-code-index`, which writes a map of the clone beside that
-repository's notes file, outside the clone, so the next session reads a map instead of grepping
-the tree again:
+#### The advisor commands
+
+Five more commands advise rather than convert:
+
+- `/documenter` (make the pages match a change that already exists, then let a skeptic
+  run every command the new prose names)
+- `/performance-optimizer` (baseline, one change, re-measure)
+- `/debugger` (no fix until the failing command and its real output are quoted)
+- `/migrator` (one dependency or API move, plan and rollback written first)
+
+`/ez-code-index` writes a map of the clone beside that repository's notes file, outside
+the clone, so the next session reads a map instead of grepping the tree again:
 
 ```sh
 python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo <clone>
@@ -1081,14 +1290,22 @@ python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo <clone>
 
 That prints one `ok:` line and leaves `code-index.json` and `code-index.md` under
 `~/.grok/notes/<host>/<owner>/<repo>/`; compare the `sha` the markdown records against
-`git rev-parse HEAD` before trusting a line the map gives you. The four advisors and the index
-ride `coder_script "stack_advisors"` into both skill homes, with
-`templates/common/documenter.AGENT.md` landing beside the fleet roles as
-`~/.grok/agents/documenter.md`. The guard family under `~/.grok/hooks/` - secret guard,
-dangerous-command guard reading `hooks/bin/deny-patterns.txt`, the post-edit formatter, and the
-selective test runner that is off until `EVO_T1_HOOK_TESTS=1` - rides
-`coder_script "stack_hooks"`, and the two `.grok/workflows/` files added alongside
-`fleet-verify.js` are `implement-reviewed` and `debug-fix`. Detail:
+`git rev-parse HEAD` before trusting a line the map gives you.
+
+#### The advisor seed, the hooks and the workflows
+
+The four advisors and the index ride `coder_script "stack_advisors"` into both skill
+homes, with `templates/common/documenter.AGENT.md` landing beside the fleet roles as
+`~/.grok/agents/documenter.md`.
+
+The guard family under `~/.grok/hooks/` - secret guard, dangerous-command guard reading
+`hooks/bin/deny-patterns.txt`, the post-edit formatter, and the selective test runner that
+is off until `EVO_T1_HOOK_TESTS=1` - rides `coder_script "stack_hooks"`.
+
+The two `.grok/workflows/` files added alongside `fleet-verify.js` are
+`implement-reviewed` and `debug-fix`.
+
+Detail:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-five-advisor-commands).
 
 ## Kasm
@@ -1111,12 +1328,14 @@ service with live status from each service's own API (Coder version, LiteLLM hea
 alias count, Ollama version, SearXNG release and limiter state), plus a header of boxed
 tiles - host CPU, memory, CPU temperature, disk, `eth0` throughput - beside the clock
 (date and 24-hour time), local weather (open-meteo, keyless) and a search box that asks
-the stack's own SearXNG, the same instance the workspace agents and Hermes dial. With the
-observability bundle on, an **Observability** group adds five cards - Grafana, Prometheus
-and the three stores - each badged by its own health path over compose DNS. Four of the
-six bundle containers are distroless and ship no healthcheck, so for those the badge is
-the only automatic liveness read the stack has; Alloy has no card, and its container log
-is the read there.
+the stack's own SearXNG, the same instance the workspace agents and Hermes dial.
+
+With the observability bundle on, an **Observability** group adds five cards - Grafana,
+Prometheus and the three stores - each badged by its own health path over compose DNS.
+
+Four of the six bundle containers are distroless and ship no healthcheck, so for those the
+badge is the only automatic liveness read the stack has; Alloy has no card, and its
+container log is the read there.
 
 - **URL:** `https://<host>/` - self-signed cert, so expect a one-time browser warning;
   port 80 redirects to HTTPS.
@@ -1156,26 +1375,40 @@ Full detail (mounts, `custom.css`, widget URLs, the wallpaper trick):
 
 [Hermes Agent](https://github.com/nousresearch/hermes-agent) is the on-device assistant
 for this host, and it has two doors: the official Web Dashboard on `:9119` (dev
-`:19119`), Chat tab with approval prompts, and this machine's own terminal. Both doors
-reach one agent, one memory store, and one approval gate, with models going through
-LiteLLM. It mounts the stack checkout at `STACK_HOST_PATH` and
+`:19119`), Chat tab with approval prompts, and this machine's own terminal.
+
+Both doors reach one agent, one memory store, and one approval gate, with models going
+through LiteLLM.
+
+It mounts the stack checkout at `STACK_HOST_PATH` and
 the docker socket (root-equivalent, same standing as Coder), so approvals stay `manual`.
 
-- **Models:** the default is the LiteLLM `agent` alias. Every client-selectable
-  alias in `litellm/config.yaml` ships declared as a pickable model in the seed's
-  `providers:` block, and that file owns the list. Pick one for a session with
-  `hermes ... --model <alias>` (or `//scripts:hermes-shell -- -m <alias>`),
-  switch in-session with `/model <alias>`, and keep it across restarts with
-  `hermes config set model.default <alias>`. The Arc rows `arc-chat`, `arc-coder`
-  and `arc-coder-fast` stay as named routes that take their row's alias with them
-  (`hermes --provider arc-coder` runs `coder`), and `chat` is the Arc alias that
-  still emits real `tool_calls`.
+### Models and how to pick one
+
+- **Models:** the default is the LiteLLM `agent` alias.
+
+  - Every client-selectable alias in `litellm/config.yaml` ships declared as a pickable
+    model in the seed's `providers:` block, and that file owns the list.
+  - Pick one for a session with `hermes ... --model <alias>` (or
+    `//scripts:hermes-shell -- -m <alias>`), switch in-session with `/model <alias>`, and
+    keep it across restarts with `hermes config set model.default <alias>`.
+  - The Arc rows `arc-chat`, `arc-coder` and `arc-coder-fast` stay as named routes that
+    take their row's alias with them (`hermes --provider arc-coder` runs `coder`), and
+    `chat` is the Arc alias that still emits real `tool_calls`.
+
+### The dashboard URL and the public name
+
 - **URL:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, basic auth
   (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` in `.env`). The LAN
-  port stays. The public name (`hermes-<suffix>.<base>`, so
+  port stays.
+
+  The public name (`hermes-<suffix>.<base>`, so
   `https://hermes-gmktecbeast.overeazy.io` under the shipped defaults) is
   opt-in with `STACK_PUBLIC_HOSTS=auto`: Authelia in front, the same basic
   auth behind it, Traefik pointed at `:8080`.
+
+### The terminal door and the audit
+
 - **Terminal door:** `bazelisk run //scripts:hermes-shell` opens the same agent in the
   terminal you are already in - `exec` into the running container, so both doors are one
   agent on one memory store, with inline `[o]nce | [s]ession | [a]lways | [d]eny`
@@ -1183,17 +1416,32 @@ the docker socket (root-equivalent, same standing as Coder), so approvals stay `
   `commands`, `--model` and `--writable` cover the rest.
 - **Audit:** `bazelisk run //scripts:hermes-doctor` reads what readiness does not - the
   config the container actually loads, the environment it was created with, its mounts,
-  and the seed beside the checkout - and reports whether approvals, the working
-  directory, the web lane, the write fence, the image pin, the dashboard door, the
-  anywhere door (the gateway API server and the push channel) and the coding-agent
-  verbs are still what this repo ships. Read-only, and it prints key names with no value.
+  and the seed beside the checkout - and reports whether these are still what this repo
+  ships:
+
+  - approvals
+  - the working directory
+  - the web lane
+  - the write fence
+  - the image pin
+  - the dashboard door
+  - the anywhere door (the gateway API server and the push channel)
+  - the coding-agent verbs
+
+  Read-only, and it prints key names with no value.
+
+### Skills, approvals and the web lane
+
 - **Skills:** eight tracked under `hermes/skills/` - stack ops, Coder workspaces,
   the coding-agent door (`coding-agents`: watch, answer, launch, and stop the Grok
   Build sessions inside a running workspace, over `//scripts:coder-sessions`),
   model routing, the web lane (`web-research`: what to look up and what the lane refuses),
-  plus the host-ops trio: `host-linux-ops` (the right command, and what each
-  flag does), `host-diagnostics` (read-only triage playbooks) and
-  `deploy-from-github` (a repository to running, in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`).
+  plus the host-ops trio:
+
+  - `host-linux-ops` (the right command, and what each flag does)
+  - `host-diagnostics` (read-only triage playbooks)
+  - `deploy-from-github` (a repository to running, in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`)
+
 - **Approvals:** seeded `manual`; never `off`. `terminal.backend: local` keeps the
   dangerous-command checker on. The docker socket stays root-equivalent.
 - **Web research:** `web_search` dials the stack's own SearXNG on the compose network
@@ -1225,7 +1473,9 @@ keeps them in RAM until they age out.
   assumes a trusted LAN or VPN: the dashboard has an nginx sidecar with a self-signed
   cert and its own password gate, which is far short of a real reverse proxy, and
   nothing at all stands in front of Coder, LiteLLM, Hermes or Kasm until
-  `STACK_PUBLIC_HOSTS` is set. Public Hermes is that supported opt-in: Authelia
+  `STACK_PUBLIC_HOSTS` is set.
+
+  Public Hermes is that supported opt-in: Authelia
   plus Hermes basic auth, Traefik aimed at this box's `:8080`, and the container
   still root-equivalent on the docker socket.
 - **Heavy video encode or render.** The Arc 140T is strong for LLM inference; do not
@@ -1239,6 +1489,7 @@ keeps them in RAM until they age out.
 - **IPEX-LLM over vanilla Ollama (CPU/Vulkan):** the IPEX-LLM runtime is Intel's XPU
   path (oneAPI / Level Zero) for the Arc stack. `OLLAMA_NUM_GPU=999` offloads every
   layer to the 140T, and the iGPU pulls weights straight out of the 96 GB DDR5.
+
   Vanilla Ollama on an Intel iGPU is effectively CPU-bound and several times slower on
   a 32B coder model. `runners=[ipex_llm]` in the ollama logs is that GPU backend
   confirming itself:
@@ -1370,11 +1621,14 @@ operator hits most:
   [How do I read the workspace start log?](docs/troubleshooting.md#how-do-i-read-the-workspace-start-log--the-body-header-the-last-stage-line-and-the-truncated-tail).
 - **Any `git push` or `gh` failure inside a workspace** - start with
   `bazelisk run //scripts:github-auth -- check <repo-url>`, once, and read its last line.
+
   `push would FAIL` means one command: `bazelisk run //scripts:github-auth -- fix <repo-url>`,
   which mints a live token, writes the gh auth store, and points git's credential helper at
   the store so the stale `GH_TOKEN` Coder injected at workspace start can no longer shadow a
-  healthy credential. A line beginning `HANDOFF` is the three clicks a human owes it in the
-  Coder UI. The doctor answers "can the credential git would really send WRITE to that
+  healthy credential.
+
+  A line beginning `HANDOFF` is the three clicks a human owes it in the Coder UI. The
+  doctor answers "can the credential git would really send WRITE to that
   repo?"; on the stack host it takes a container slot (`check [container] [repo-url]`) and
   enumerates the fleet with none.
 - **Private-repo clone or push denied while a credential is present** - the grant is the

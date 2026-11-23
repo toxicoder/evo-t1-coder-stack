@@ -25,9 +25,11 @@ tags: [types, mypy, typescript, terraform, contributing]
 ## The rule
 
 Every value has a declared shape at the boundary where it enters a module, and a
-broad type is a design smell rather than a shortcut. Where a language has a type
-system, the strictest setting that compiles is the setting the repo uses. Where it
-has none, the convention is the gate.
+broad type is a design smell rather than a shortcut.
+
+- Where a language has a type system, the strictest setting that compiles is the setting the
+  repo uses.
+- Where it has none, the convention is the gate.
 
 Two gates carry most of it, and both are members of `//lints:all`, so `//:lint`,
 `//:test-all`, and the `bazel` job of `.github/workflows/ci.yml` run them:
@@ -42,6 +44,8 @@ Two gates carry most of it, and both are members of `//lints:all`, so `//:lint`,
 
 ## Python
 
+### The profile
+
 `mypy.ini` at the repo root is the whole policy. It is `--strict` written out option
 by option, plus the two that make this a rule rather than a preference:
 
@@ -50,11 +54,15 @@ disallow_any_explicit = True
 disallow_any_generics = True
 ```
 
-`disallow_any_explicit` refuses `Any` typed into a signature by a person.
-`disallow_any_generics` refuses `list` and `dict` written without their element
-type, which are the same hole reached by a different spelling. The binary is the
-`MYPY_VERSION` pin from `images/dev/tool-versions.env`, baked into the golden image
-by `images/dev/Dockerfile`, so the gate needs no network and no `pip install`.
+- `disallow_any_explicit` refuses `Any` typed into a signature by a person.
+- `disallow_any_generics` refuses `list` and `dict` written without their element
+  type, which are the same hole reached by a different spelling.
+
+The binary is the `MYPY_VERSION` pin from `images/dev/tool-versions.env`, baked into
+the golden image by `images/dev/Dockerfile`, so the gate needs no network and no
+`pip install`.
+
+### Running it
 
 Run it directly when you want the error text without Bazel in the way:
 
@@ -63,6 +71,8 @@ bazelisk test //lints:mypy
 bazelisk test //lints:mypy --test_output=all   # the mypy diagnostics themselves
 bash lints/run_mypy.sh                          # same checks, no Bazel
 ```
+
+### The patterns the profile pushes
 
 The pattern the profile pushes you toward is a named alias for anything unstructured.
 `scripts/lib/mcp_lane_report.py` reads TOML and JSON, so rather than widen a
@@ -75,60 +85,95 @@ TomlArray = list["TomlValue"]
 ```
 
 The same file writes its two fixed vocabularies as `Literal`s, which is what makes a
-typo in a check name a gate failure rather than a line an operator never sees. A
-record that travels between functions gets a `NamedTuple`, a `@dataclass`, or a
+typo in a check name a gate failure rather than a line an operator never sees.
+
+A record that travels between functions gets a `NamedTuple`, a `@dataclass`, or a
 `TypedDict` — `tests/bazel_deps.py` names its Starlark map `LabelMap` and its
 `drift()` result `Drift`, and `tests/coverage/py_report.py` types the slice of
 `coverage report --json` it reads with three `total=False` TypedDicts.
 
+### The escape hatches
+
 `# type: ignore` needs a specific error code and a reason that names the real cause.
 `warn_unused_ignores` makes a stale one an error, so an ignore cannot quietly
-outlive the problem it papered over. Where the value is unstructured but an
-`isinstance` guard already decides what it is, a `cast` is the honest instrument:
-narrowing there would change what happens to the malformed input.
+outlive the problem it papered over.
+
+Where the value is unstructured but an `isinstance` guard already decides what it
+is, a `cast` is the honest instrument: narrowing there would change what happens to
+the malformed input.
 
 ## TypeScript
 
-`docs-site/tsconfig.json` starts at `strict: true` and adds the switches that find
-real defects at no churn cost: `noUncheckedIndexedAccess`, `noImplicitOverride`,
-`noImplicitReturns`, `noFallthroughCasesInSwitch`, `noUnusedLocals`, and
-`noUnusedParameters`. Each carries a comment naming the class of bug it catches.
+### The compiler switches
 
-Two well-known switches are deliberately off. `exactOptionalPropertyTypes` collides
-with React's optional DOM props and with fumadocs' `StaticOptions`;
-`noPropertyAccessFromIndexSignature` collides with how the unit tests read the
-fumadocs source config. Both would be paid for in casts, which is the wrong
-direction.
+`docs-site/tsconfig.json` starts at `strict: true` and adds the switches that find
+real defects at no churn cost:
+
+- `noUncheckedIndexedAccess`
+- `noImplicitOverride`
+- `noImplicitReturns`
+- `noFallthroughCasesInSwitch`
+- `noUnusedLocals`
+- `noUnusedParameters`
+
+Each carries a comment naming the class of bug it catches.
+
+Two well-known switches are deliberately off:
+
+- `exactOptionalPropertyTypes` collides with React's optional DOM props and with
+  fumadocs' `StaticOptions`
+- `noPropertyAccessFromIndexSignature` collides with how the unit tests read the
+  fumadocs source config
+
+Both would be paid for in casts, which is the wrong direction.
+
+### Checked JavaScript
 
 `allowJs` and `checkJs` are on, which is how the two operator CLIs
 `docs-site/scripts/serve_static.mjs` and `verify_site.mjs` are type-checked: each
 opens with `// @ts-check` and carries JSDoc `@param`/`@returns` on every function,
-with `@typedef`s for the shapes it reads out of `lib/nav.json`. `zod` already
-validates the frontmatter at the content boundary in `docs-site/lib/content.ts`, so
-parsed pages arrive as typed `PageNode`s rather than as `unknown`.
+with `@typedef`s for the shapes it reads out of `lib/nav.json`.
+
+`zod` already validates the frontmatter at the content boundary in
+`docs-site/lib/content.ts`, so parsed pages arrive as typed `PageNode`s rather than
+as `unknown`.
 
 ```bash
 cd docs-site && npm run typecheck   # next typegen + tsc --noEmit
 bazelisk test //docs-site:typecheck # the same, as a gate target
 ```
 
+### Absent from every tracked file
+
 `any`, `@ts-ignore`, `@ts-expect-error`, and `@ts-nocheck` are absent from every
 tracked file. The one exclusion is `docs-site/.source/`, the code fumadocs-mdx
-generates, which is gitignored. `docs-site/tests/unit/helpers/fumadocs-stub.ts` is
+generates, which is gitignored.
+
+`docs-site/tests/unit/helpers/fumadocs-stub.ts` is
 where a dependency's shape gets stated once when a test needs one.
 
 ## Terraform
 
+### Why an undeclared variable is a runtime bug
+
 A `variable` block is the only place a Coder template can declare what an input is,
 and an undeclared one takes whatever HCL guessed. `search_mcp = "flase"` then reaches
 a `== "true"` comparison and reads as false, so the operator gets a workspace that
-came up wrong and a plan that said nothing. A declared constraint turns that into a
-plan-time error.
+came up wrong and a plan that said nothing.
+
+A declared constraint turns that into a plan-time error.
+
+### What the checker reports
 
 `scripts/lib/tf_types.awk` is run by `//:validate` over both template twins and
-reports three findings: `missing-type`, `broad-any`, and `bare-container` (a `list`,
-`set`, or `map` with no element type, which is `any` wearing a different hat). Only
-the `type` attribute of a top-level `variable` block is read, so a `type` key inside
+reports three findings:
+
+- `missing-type`
+- `broad-any`
+- `bare-container` (a `list`, `set`, or `map` with no element type, which is `any`
+  wearing a different hat)
+
+Only the `type` attribute of a top-level `variable` block is read, so a `type` key inside
 a `default` body is never mistaken for the constraint, and `any` is matched as a word
 so `company_mcp` is not a finding.
 
@@ -137,12 +182,17 @@ bazelisk run //:validate                       # includes the variable-type gate
 awk -f scripts/lib/tf_types.awk templates/workspace/main.tf   # just the gate
 ```
 
+### Both twins today
+
 Both twins conform today: every `variable` carries a `type` and a `description`, and
-neither uses `any`, `list(any)`, or a bare container. `//tests:bats_tf_types_test`
-holds that, with fixtures that prove the gate still reports each finding rather than
-having quietly stopped looking.
+neither uses `any`, `list(any)`, or a bare container.
+
+`//tests:bats_tf_types_test` holds that, with fixtures that prove the gate still
+reports each finding rather than having quietly stopped looking.
 
 ## Bash, awk, and Bats
+
+### Bash
 
 Bash has no type system, and no annotation comment buys one. What the repo does
 instead is put the checking where the language can actually be checked:
@@ -160,10 +210,13 @@ instead is put the checking where the language can actually be checked:
 - `set -euo pipefail` is the floor, so an unset parameter is a failure rather than
   an empty string.
 
+### awk and Bats
+
 awk is POSIX-subset and single-purpose: a program in `scripts/lib/*.awk` takes its
 input in `ARGV`, its configuration in `ENVIRON`, and prints tab-separated fields the
 caller reads line by line. The types are that line shape, and they are documented in
 the program's header block — see `scripts/lib/tf_types.awk` for the shape to copy.
+
 Bats suites are bash and follow the same rules as their shell.
 
 ## Adding a file

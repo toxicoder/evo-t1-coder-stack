@@ -18,8 +18,12 @@ metadata:
 # Convert a repository to trunk-based development
 
 Cut each work branch (`feat/`, `fix/`, `refactor/`, `docs/`, `chore/`, `ci/`) from the tip of trunk before the
-first edit, merge it by pull request within days, delete it on merge. Run every command below with your shell tool
-(`run_terminal_command`); inline text runs nothing by itself. `--dry-run`: Phase 0 and the report only.
+first edit, merge it by pull request within days, delete it on merge.
+
+Run every command below with your shell tool
+(`run_terminal_command`); inline text runs nothing by itself.
+
+`--dry-run`: Phase 0 and the report only.
 
 ## Ideal State Criteria
 
@@ -44,8 +48,15 @@ Binary. Unproven is a fail with its reason; each needs command output in the rep
 
 ## Phase 0 -- Inventory (read-only)
 
-Write findings to `/tmp/ez-trunk-based-repo/inventory.md` and reuse them verbatim in the report. No edits, commits,
-or ref moves. Budget 20 shell calls; at 20 stop probing and start deciding. Run the branch trio per non-trunk
+### Ground rules
+
+Write findings to `/tmp/ez-trunk-based-repo/inventory.md` and reuse them verbatim in the report.
+
+No edits, commits, or ref moves.
+
+Budget 20 shell calls; at 20 stop probing and start deciding.
+
+Run the branch trio per non-trunk
 branch (`-` in `git cherry` means the patch is already upstream, so real work shows as `+`):
 
 ```bash
@@ -59,10 +70,18 @@ ls -d compose*.y*ml k8s overlays helm ansible inventories terraform envs argocd 
 grep -rlE 'FEATURE_|_ENABLED|profiles:' --include='*.y*ml' --include='*.tf' --include='*.sh' . | head -20
 ```
 
+### Name the gate
+
 Name the gate you must not break (`package.json` scripts, `Makefile` targets, `MODULE.bazel`, CI steps; e.g.
-`npm test`, `pytest`, `bazelisk test //:test-fast`) and run it now, so a later red is yours to attribute. Record
+`npm test`, `pytest`, `bazelisk test //:test-fast`)
+and run it now, so a later red is yours to attribute.
+
+Record
 how the repo deploys and each environment's gaps in hosts, ports, namespaces, project names, sizes, secrets: value
 gaps to Phase 2, code gaps to Phase 3.
+
+### Exit -- Phase 0 inventory report
+
 Exit: trunk; branches with age, author, unique count, verdict; deploy mechanism; gate and result; flag surface;
 environment list.
 
@@ -82,12 +101,19 @@ Edit the doc that exists; add no parallel one.
   that review is the gate a branch name used to fake (`gh api` or the UI).
 
 Move no ref here; a default-branch rename is its own confirmed step, in Phase 4.
+
+### Exit -- Phase 1 docs and CI
+
 Exit: three docs state one model, CI gates trunk, no deploy path reads a branch name.
 
 ## Phase 2 -- Environments without environment branches
 
 An environment differs in values, secrets, and where it runs; split each environment branch's diff three ways:
-value, secret, flag. Keep parameter names identical across environments.
+value, secret, flag.
+
+Keep parameter names identical across environments.
+
+### One knob per stack
 
 **Docker Compose.** Knob: project name plus env file; `-p` isolates networks, volumes and names, so two stacks
 share a host. Run `docker compose -p app-dev --env-file .env.dev up -d`, then the same with `-p app-stable`.
@@ -116,14 +142,24 @@ published image tag is the promotion lever.
 **Coder templates.** Knob: a template `variable` plus each workspace's values; bump the template revision instead
 of forking a template per environment. A flag reaching a workspace belongs in every template copy the repo renders.
 
-Write promotion as pasteable commands: dev, merge, stable, against one ref or tag. Delete an environment branch only
+### Promotion block
+
+Write promotion as pasteable commands: dev, merge, stable, against one ref or tag.
+
+Delete an environment branch only
 in Phase 4, once its content is provably elsewhere.
+
+### Exit -- Phase 2 value home and promotion block
+
 Exit: one value home per environment, promotion block written, no deploy path takes a branch name.
 
 ## Phase 3 -- Lightweight feature flags
 
-Climb as far as the need reaches, then stop. A flag service, SDK, or database table needs an explicit operator
-request.
+Climb as far as the need reaches, then stop.
+
+A flag service, SDK, or database table needs an explicit operator request.
+
+### Flag options
 
 1. **Env var plus dotenv sample.** The default answer: read at one seam, document the key in `.env.example` with
    its off default.
@@ -153,11 +189,22 @@ flags:
 4. **The platform's parameter surface** when the flag selects infrastructure: Coder template variables, Terraform
    variables, Helm values, Ansible vars.
 
-Every flag: named exactly as the process reads it, so grep audits completely; off by default on trunk, since an
-on-by-default flag is an unfinished feature that became load-bearing; owned, with an expiry (a date, or a condition
-a human can check); read at one seam and branched there, so retiring is one edit and a grep; deleted with its
-off-path and any branch still carrying it, in one later `chore:` pull request. Both states are real code: run the
-plain gate, then the gate and your smoke command with `FEATURE_EXPERIMENTAL_INDEXER=1`, quoting all three.
+### Flag rules
+
+Every flag:
+
+- named exactly as the process reads it, so grep audits completely
+- off by default on trunk, since an on-by-default flag is an unfinished feature
+  that became load-bearing
+- owned, with an expiry (a date, or a condition a human can check)
+- read at one seam and branched there, so retiring is one edit and a grep
+- deleted with its off-path and any branch still carrying it, in one later `chore:` pull request
+
+Both states are real code: run the plain gate, then the gate and your smoke command with
+`FEATURE_EXPERIMENTAL_INDEXER=1`, quoting all three.
+
+### Exit -- Phase 3 flag declared with owner and expiry
+
 Exit: every flag declared with owner, expiry, false default, one reader, on/off output quoted.
 
 ## Phase 4 -- Branch cleanup and preservation
@@ -173,17 +220,32 @@ One verdict per non-trunk branch, from the Phase 0 inventory.
 | dead | no value, or abandoned | list for deletion with the evidence |
 | release-bearing | carries a version nobody tagged | tag the tip, push it, then list it |
 
-Porting is re-adaptation, not cherry-pick archaeology. Run `git switch -c feat/<slug>-port "origin/$TRUNK"`, then
-`git checkout "origin/$BRANCH" -- <paths>`, read every file, and delete what trunk does better; use
-`git cherry-pick -x <first-sha>..<last-sha>` only for a coherent run you want verbatim. Wire anything unfinished
-behind a flag and run the gate before opening the pull request.
+### Porting
 
-Deletion is a human action. Record `git rev-parse origin/<branch>` per proposed branch first: a recorded SHA
-survives until garbage collection, an unrecorded one does not. Present the table (branch, age, author, unique
-commits, verdict, evidence, recovery SHA) with `git push origin --delete <branch>` and
-`git fetch --all --prune`, then wait for explicit confirmation: hand the commands over, do not run them. When the
-real trunk is a rename (work lives on `development`), converge content first, then propose the rename as its own
-confirmed step.
+Porting is re-adaptation, not cherry-pick archaeology.
+
+1. Run `git switch -c feat/<slug>-port "origin/$TRUNK"`
+2. `git checkout "origin/$BRANCH" -- <paths>`, read every file, and delete what trunk does better
+3. Use `git cherry-pick -x <first-sha>..<last-sha>` only for a coherent run you want verbatim
+4. Wire anything unfinished behind a flag and run the gate before opening the pull request
+
+### Deletion
+
+Deletion is a human action.
+
+1. Record `git rev-parse origin/<branch>` per proposed branch first: a recorded SHA
+   survives until garbage
+   collection, an unrecorded one does not
+2. Present the table (branch, age, author, unique commits, verdict, evidence, recovery SHA) with
+   `git push origin --delete <branch>` and `git fetch --all --prune`,
+   then wait for explicit confirmation: hand
+   the commands over, do not run them
+3. When the real trunk is a rename (work lives on `development`), converge content first,
+   then propose the rename
+   as its own confirmed step
+
+### Exit -- Phase 4 branch verdict and recorded tip SHA
+
 Exit: every branch has a verdict and a recorded tip SHA, nothing deleted without a yes, each port has its pull
 request open.
 
@@ -197,12 +259,17 @@ request open.
 4. Confirm no secret landed: the criterion 8 grep, then `git diff --name-only "$TRUNK"`, then read each new file
    looking for a real value.
 
+### Exit -- Phase 5 criteria and gates quoted green
+
 Exit: each criterion passes or is reported unmet with its reason, gates quoted green, `git status --short` empty.
 
 ## Stack adaptation notes
 
 Phase 0 discovers the specifics; these four named users are orientation, not fact, and the checkout outranks the
-note. A branch `0` ahead is a cleanup with a confirmation in front of it; hundreds ahead is a porting programme.
+note.
+
+A branch `0` ahead is a cleanup with a confirmation in front of it;
+hundreds ahead is a porting programme.
 
 - **`toxicoder/evo-t1-coder-stack`** (Bazel, trunk `main`): confirm the gate labels (`//:test-fast`, `//:lint`,
   `//:test-all`) from `BUILD.bazel` and CI before quoting them. Environment branches are already forbidden

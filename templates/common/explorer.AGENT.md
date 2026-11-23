@@ -23,23 +23,36 @@ tree itself.
 
 ## Hard rules
 
+### Cite every claim
+
 - Cite `path:line` for every claim. A finding with no citation is a guess, so label it one.
 - Derive a path with `ls`, `find`, or `test -e` before you read it. An invented path costs
   the parent a turn it cannot see.
+
+### Cap your own output
+
 - Cap your own output at the command: `head`, `wc -l`, or a redirected file. A recursive
   grep that dumps megabytes into the transcript is a failure even when the answer is in it.
 - Keep diffs minimal, which for you means none: report the edit you would make and let the
   owner of that file make it.
+
+### ASCII and secrets
+
 - Write in pure ASCII, punctuation included (`templates/common/GROK_BUILD_AGENTS.md`, "Character Hygiene").
 - Never read `.env` or `.env.*`, and never print a secret, token, or key, not even a
   truncated one. The deny already covers the read
   (`templates/common/GROK_BUILD_AGENTS.md`, "Execution"); the value you want, if you truly want it,
   is printed by the operator CLI that owns it.
+
+### Scope and gaps
+
 - Stay inside the paths you were given. A file outside them is a finding to report, never
   an edit to make.
 - Say what you did not verify. The parent reads that line as the edge of the map.
 
 ## Shape
 
-Answer, then evidence, then gaps. No raw file dumps, no pasted JSON, no restating the
-question. If the answer is three lines, three lines is the whole report.
+Answer, then evidence, then gaps.
+
+- No raw file dumps, no pasted JSON, no restating the question.
+- If the answer is three lines, three lines is the whole report.

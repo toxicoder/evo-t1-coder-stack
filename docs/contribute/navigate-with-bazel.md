@@ -24,24 +24,34 @@ tags: [bazel, contributing, tooling, graph]
 - Telling a rule class from a target name without opening a BUILD file
 - Stopping the late-gate discovery of a coupling rule the graph already recorded
 
-This repo keeps its coupling in BUILD files: `scripts/BUILD.bazel` names the libs and payload
-groups each CLI reads, `tests/BUILD.bazel` names what each Bats suite opens, and the root
-`BUILD.bazel` aggregates every payload group into `//:stack_data`. `//tests:bats_bazel_deps_test`
-fails when those maps drift from the sources, so the graph is a record an automated reader can
-trust, and "which suites cover this file" has a ground truth sitting in it. Answering that from
-`grep` re-derives what one `bazelisk query` prints.
+This repo keeps its coupling in BUILD files. Three of them carry the record:
 
-[building-with-bazel.md](building-with-bazel.md) explains the maps, runfiles, and the daily
-commands; [test-with-bazel.md](test-with-bazel.md) explains the suites those queries name and the
-two inventory gates; [../project-conventions.md](../project-conventions.md) the CLI vocabulary this
-tool prints in.
+- `scripts/BUILD.bazel` names the libs and payload groups each CLI reads
+- `tests/BUILD.bazel` names what each Bats suite opens
+- the root `BUILD.bazel` aggregates every payload group into `//:stack_data`
+
+`//tests:bats_bazel_deps_test` fails when those maps drift from the sources, so the graph is a
+record an automated reader can trust, and "which suites cover this file" has a ground truth sitting
+in it. Answering that from `grep` re-derives what one `bazelisk query` prints.
+
+Three pages this one leans on:
+
+- [building-with-bazel.md](building-with-bazel.md) explains the maps, runfiles,
+  and the daily commands
+- [test-with-bazel.md](test-with-bazel.md) explains the suites those queries name
+  and the two inventory gates; [../project-conventions.md](../project-conventions.md)
+  the CLI vocabulary this tool prints in
 
 ## Why a query, not a grep
 
-A sweep of this repo's own agent session logs measured the habits the graph is meant to
-replace. Corpus: the 199 parent sessions recorded for this checkout under
-`~/.grok/sessions/` before 2026-11-01, counted with `jq` and `grep -c` over each session's
-`chat_history.jsonl`. Every count is a floor, because a truncated tool result hides a call.
+### What the logs measured
+
+A sweep of this repo's own agent session logs measured the habits the graph is meant to replace.
+
+- Corpus: the 199 parent sessions recorded for this checkout under `~/.grok/sessions/`
+  before 2026-11-01
+- Counted with `jq` and `grep -c` over each session's `chat_history.jsonl`
+- Every count is a floor, because a truncated tool result hides a call
 
 | Habit | Measured |
 | --- | --- |
@@ -52,11 +62,14 @@ replace. Corpus: the 199 parent sessions recorded for this checkout under
 | Reading the checker's own source to learn why a gate failed | 19 sessions |
 | Guessing a target name into `ERROR: no such target` | 4 to 7 sessions, depending on how strictly a match is counted |
 
+### What not querying costs
+
 The cost of not querying shows up late. In the sessions that hit a coupling rule, the first
 `FAIL: //` line appeared only after a hundred or more messages of editing: the rule was
-discoverable in the graph on message 1, and was instead discovered by running the gate. One agent
-audited `//:stack_data` by listing the repo's top-level directories rather than diffing the graph
-against `git ls-files`, which is the same question asked in a way that cannot answer it.
+discoverable in the graph on message 1, and was instead discovered by running the gate.
+
+One agent audited `//:stack_data` by listing the repo's top-level directories rather than diffing
+the graph against `git ls-files`, which is the same question asked in a way that cannot answer it.
 
 The verbs below are the shapes of those questions.
 
@@ -64,7 +77,9 @@ The verbs below are the shapes of those questions.
 
 `bazel-map` is a thin shell over `bazelisk query`. It reads nothing and writes nothing; each verb
 is one query, run from the real checkout, with Bazel's stderr kept so a miss is reported instead of
-swallowed. Run it through Bazel like every other CLI:
+swallowed.
+
+Run it through Bazel like every other CLI:
 
 ```bash
 bazelisk run //scripts:bazel-map -- targets [pattern]
@@ -76,10 +91,18 @@ bazelisk run //scripts:bazel-map -- scope [--staged] [--untracked] [--ref <ref>]
 bazelisk run //scripts:bazel-map -- unlisted <dir>...
 ```
 
+### Flags and exit codes
+
 Flags, accepted anywhere in argv: `--staged`, `--untracked`, `--ref <ref>`, `--all`,
-`--label-kind`, `--json`, `-h|--help`. Exit codes: 0 when every named thing resolved, 1 on a query
-failure, 2 on a usage error (an unknown verb or flag, or a verb invoked without the argument it
-needs).
+`--label-kind`, `--json`, `-h|--help`.
+
+Exit codes:
+
+- 0 when every named thing resolved
+- 1 on a query failure
+- 2 on a usage error (an unknown verb or flag, or a verb invoked without the argument it needs)
+
+### Act on the answer with `--json`
 
 **Use `--json` when you want to act on the answer.** Prose (`== section ==`, `ok:`, `note:`,
 `summary:`) rides stderr and stdout carries only labels, one per line, which is the shape
@@ -91,9 +114,10 @@ bazelisk run //scripts:bazel-map -- --json tests-for tests/bats/common.bats 2>/d
 ```
 
 Without `--json` the same labels are interleaved with the report lines, so piping them straight into
-another command feeds it `ok: tests-for` as an argument. Paths are repo-relative, and a batch costs
-one query: when a batch fails, the verb re-runs it per path and names the path the graph does not
-know instead of hiding every other answer.
+another command feeds it `ok: tests-for` as an argument.
+
+Paths are repo-relative, and a batch costs one query: when a batch fails, the verb re-runs it per
+path and names the path the graph does not know instead of hiding every other answer.
 
 ## Before a large edit: what moves with this file?
 
@@ -121,10 +145,15 @@ of them and the same verb in the other direction tells you what it covers.
 
 ### The twin template copies
 
-`templates/workspace/` and `templates/devcontainer/` keep independent payload copies that must move
-together, and `templates/common/` holds the files both consume as one shared copy. The verb matches
-basenames over the union of the three payload groups, so the twin set is the graph's answer rather
-than a convention you have to remember:
+Three payload trees are in play:
+
+- `templates/workspace/` and `templates/devcontainer/` keep independent payload copies
+  that must move
+  together
+- `templates/common/` holds the files both consume as one shared copy
+
+The verb matches basenames over the union of the three payload groups, so the twin set is the
+graph's answer rather than a convention you have to remember:
 
 ```bash
 bazelisk run //scripts:bazel-map -- twins templates/workspace/main.tf
@@ -152,10 +181,16 @@ bazelisk run //scripts:bazel-map -- owners docs/contribute/building-with-bazel.m
 ```
 
 An empty list is the finding: no filegroup carries the file, so `test-fast` and `lint` never open it.
+
 The pair verb, `unlisted`, asks it per directory by diffing `git ls-files` against the graph's own
-source list. It skips Bazel's own declaration files (`BUILD.bazel`, `*.bzl`, `MODULE.bazel`), which
-Bazel reads implicitly and which only appear in the graph when a package deliberately exports them,
-so a directory holding nothing but a BUILD file reads as clean.
+source list. It skips Bazel's own declaration files:
+
+- `BUILD.bazel`
+- `*.bzl`
+- `MODULE.bazel`
+
+Bazel reads them implicitly and they only appear in the graph when a package deliberately exports
+them, so a directory holding nothing but a BUILD file reads as clean.
 
 ```bash
 bazelisk run //scripts:bazel-map -- unlisted hermes proxy searxng
@@ -163,16 +198,23 @@ bazelisk run //scripts:bazel-map -- unlisted hermes proxy searxng
 # -> summary: 1 ok, 0 warnings, 0 failed
 ```
 
-A new top-level payload directory belongs in its own package with its own `filegroup` targets, joins
-`//:stack_data` by label, and is named in the map of every target that reads it, as
-[building-with-bazel.md](building-with-bazel.md) spells out. `unlisted` is how you find out you have
-not done that, rather than finding out that the gate never noticed.
+A new top-level payload directory, as [building-with-bazel.md](building-with-bazel.md) spells out:
+
+- belongs in its own package with its own `filegroup` targets
+- joins `//:stack_data` by label
+- is named in the map of every target that reads it
+
+`unlisted` is how you find out you have not done that, rather than finding out that the gate never
+noticed.
 
 ### The map key a new `scripts/*.sh` needs, and the test a new function needs
 
 A new `scripts/*.sh` is a Bazel target automatically (the package is generated from the directory),
-but it is not wired automatically: it needs a `_SCRIPT_LIBS` key (the `scripts/lib` closure it
-sources) and a `_SCRIPT_PAYLOAD` key (the payload groups it opens), both in `scripts/BUILD.bazel`.
+but it is not wired automatically. It needs two keys, both in `scripts/BUILD.bazel`:
+
+- a `_SCRIPT_LIBS` key (the `scripts/lib` closure it sources)
+- a `_SCRIPT_PAYLOAD` key (the payload groups it opens)
+
 Until those keys land the graph does not know the file at all, which is worth saying out loud:
 `rdeps` reads the graph, not the filesystem.
 
@@ -192,10 +234,14 @@ bazelisk test //tests:bats_bazel_deps_test --test_output=errors
 A script missing its key outright fails `//scripts` analysis before any test runs, and a script
 whose declared map disagrees with its sources is what that checker reports, naming the pairing and
 the direction. Once the keys are in place the same verb resolves the file, and
-`tests-for scripts/bazel-map.sh` lists `//tests:bats_bazel_deps_test` among its consumers. Every new function additionally owes one `# @function` block and one asserting test in exactly
-one suite, which [test-with-bazel.md](test-with-bazel.md) covers; `//tests:shell_inventory` and
-`//tests:doc_coverage` are the two gates, and both are test targets the graph can point you at
-before the gate does.
+`tests-for scripts/bazel-map.sh` lists `//tests:bats_bazel_deps_test` among its consumers.
+
+Every new function additionally owes:
+
+- one `# @function` block
+- one asserting test in exactly one suite, which [test-with-bazel.md](test-with-bazel.md)
+  covers; `//tests:shell_inventory` and `//tests:doc_coverage` are the two gates, and both are
+  test targets the graph can point you at before the gate does.
 
 ## While you iterate: which tests, and when you still owe a full pass
 
@@ -214,12 +260,19 @@ bazelisk run //scripts:bazel-map -- scope --untracked
 # -> note: run them with: bazelisk test <labels>; keep one uncached //:test-fast pass before the PR
 ```
 
-Default scope reads `git diff HEAD`; add `--staged` for the index, `--untracked` to count files git
-does not track yet (a file you just created is exactly the case worth covering), or `--ref <ref>` for
-what this branch adds over a base. `--all` also lists the aggregate suites that reach everything
-(`//:test`, `//:test-fast`, `//:test-all` and `//tests:bats`), which is useful when you want the full
-set named explicitly rather than the leaf suites you can invoke. The default already includes the
-lint targets: every test rule here, `//lints:shell` and `//lints:shfmt` among them, is an `sh_test`.
+Default scope reads `git diff HEAD`. Add:
+
+- `--staged` for the index
+- `--untracked` to count files git does not track yet (a file you just created is exactly the case
+  worth covering)
+- `--ref <ref>` for what this branch adds over a base
+
+`--all` also lists the aggregate suites that reach everything (`//:test`, `//:test-fast`,
+`//:test-all` and `//tests:bats`), which is useful when you want the full set named explicitly
+rather than the leaf suites you can invoke.
+
+The default already includes the lint targets: every test rule here, `//lints:shell` and
+`//lints:shfmt` among them, is an `sh_test`.
 
 Two things scope tells you that a habit of `bazelisk test //:test-fast` hides:
 
@@ -232,11 +285,17 @@ Two things scope tells you that a habit of `bazelisk test //:test-fast` hides:
 - **An empty result means run everything.** Nothing changed against HEAD, or the change touches no
   file the graph tracks, and `scope` says so and points at `//:test-fast`.
 
-The uncached pass is not replaced. `bazelisk test` replays a cached PASS for an action whose inputs
-did not change, so the derived list proves your change against whatever actually rebuilds, and one
+### Keep the uncached pass
+
+The uncached pass is not replaced.
+
+`bazelisk test` replays a cached PASS for an action whose inputs did not change, so the derived list
+proves your change against whatever actually rebuilds, and one
 `bazelisk test //:test-fast --nocache_test_results` remains the pass you owe before the PR, per
-[building-with-bazel.md](building-with-bazel.md). Use the derived list for the loop and keep the full
-uncached pass for the end, instead of paying for sixty suites to learn one thing per edit.
+[building-with-bazel.md](building-with-bazel.md).
+
+Use the derived list for the loop and keep the full uncached pass for the end, instead of paying for
+sixty suites to learn one thing per edit.
 
 ## Enumerate targets instead of guessing them
 
@@ -255,8 +314,10 @@ bazelisk run //scripts:bazel-map -- targets //docs-site:* --label-kind
 
 The rule class is the part that saves the round trip. `//docs-site:app` looks like the site's test
 target and is a `filegroup`, so `bazelisk test` on it fails to start; the real test targets are the
-`sh_test` rows. The same listing filtered by a name fragment is how you find a Bats suite's target
-without knowing the stem convention:
+`sh_test` rows.
+
+The same listing filtered by a name fragment is how you find a Bats suite's target without knowing
+the stem convention:
 
 ```bash
 bazelisk query 'attr("name","bazel_deps",//tests:*)' --output=label_kind
@@ -266,8 +327,10 @@ bazelisk query 'attr("name","bazel_deps",//tests:*)' --output=label_kind
 ## What a target reads, and why an unlisted directory is invisible
 
 `//:test-fast` runs in a sandbox: an action sees its declared inputs and its runfiles tree, not the
-checkout. So "what does this target read" is a real question with a printed answer, and the answer has
-two depths worth keeping separate.
+checkout. So "what does this target read" is a real question with a printed answer, and the answer
+has two depths worth keeping separate.
+
+### The direct inputs
 
 The direct inputs are the `data` the dependency maps write, which is what you edit when a target
 needs one more payload group:
@@ -276,6 +339,8 @@ needs one more payload group:
 bazelisk query 'labels("data", //tests:bats_bazel_deps_test)' | wc -l
 # -> 25
 ```
+
+### The transitive closure
 
 The files it can actually open are the transitive closure of those groups, which is what the verb
 prints:
@@ -299,16 +364,21 @@ That target resolves to 198 source files through 25 declarations: the gap is the
 the BUILD file say"), `files` is the wider one ("what is in the sandbox"), and the two disagreeing is
 usually the bug.
 
+### Why an unlisted directory stays invisible
+
 This is why an unlisted payload directory stays invisible rather than being checked loosely: a file
 that travels in no runfiles tree is a file no sandboxed action can open, so `test-fast` and `lint`
-never read it and never fail. Nothing prints a warning about that. `owners <path>` and
-`unlisted <dir>` are the two ways to ask, and they are the difference between a payload the harness
-guards and a payload nobody has ever executed.
+never read it and never fail. Nothing prints a warning about that.
+
+`owners <path>` and `unlisted <dir>` are the two ways to ask, and they are the difference between a
+payload the harness guards and a payload nobody has ever executed.
 
 ## Raw query recipes when a verb does not fit
 
 Every verb is one of these, so a question outside the verb set needs one predicate, not a grep plan.
 All of these run warm in about 50 to 70 ms.
+
+### The predicates
 
 | Predicate | Question it answers |
 | --- | --- |
@@ -320,6 +390,8 @@ All of these run warm in about 50 to 70 ms.
 | `somepath(a, b)` | is there any path from this suite to that file |
 | `A intersect B`, `A except B` | combine two result sets |
 
+### Narrow an rdeps with the `kind` filter
+
 The `kind` filter is what makes an `rdeps` usable. A bare `rdeps(//..., "litellm/config.yaml")`
 includes `//:test-fast`, which reaches every file and therefore tells you nothing about this one:
 
@@ -327,6 +399,8 @@ includes `//:test-fast`, which reaches every file and therefore tells you nothin
 bazelisk query 'kind("sh_test", rdeps(//..., "litellm/config.yaml"))'      # 7 suites to run
 bazelisk query 'kind("filegroup", rdeps(//..., "litellm/config.yaml"))'    # 2 owners
 ```
+
+### Excluding the aggregates and the lint targets
 
 Two exclusions earn their place. `except kind("test_suite", //...)` drops the aggregates, which is
 what the CLI filters on so `//:test-fast` cannot answer a per-file question, and
@@ -337,6 +411,8 @@ what the CLI filters on so `//:test-fast` cannot answer a per-file question, and
 bazelisk query 'kind("sh_test", rdeps(//..., "scripts/lib/common.sh")) except kind("test_suite", //...) except kind("sh_test", //lints:*)'
 ```
 
+### Proving a gate sits on a file
+
 A reachability proof, for when you must know that a gate really does sit on top of a file:
 
 ```bash
@@ -346,6 +422,8 @@ bazelisk query 'somepath(//:test-all, "tests/shell_inventory.sh")'
 # -> //tests:shell_inventory_exec
 # -> //tests:shell_inventory.sh
 ```
+
+### Counting what the gates can see
 
 The whole-graph enumeration `unlisted` is built from, which is also the answer to "how much of the
 repo do the gates actually see":
@@ -358,6 +436,8 @@ bazelisk query 'kind("source file", deps(//...))' | wc -l
 
 The `//` half is the honest measure of what the gates can see, and it moves as files are added, so
 treat any absolute total in a document as a snapshot rather than a fact to assert.
+
+### Set algebra
 
 And set algebra, for "is this payload covered by the suite I trust with it":
 
@@ -378,8 +458,14 @@ bazelisk query 'kind("sh_test", rdeps(//..., "litellm/config.yml"))'
 # package 'litellm' defined by .../litellm/BUILD.bazel (did you mean config.yaml?)
 ```
 
+### Before you believe an empty list
+
 One mistyped character, an empty stdout, and a shell that tests only `-z "$out"` reports a clean
-result. So before you believe an empty list: check the exit status (Bazel exits non-zero here), read
-stderr, and confirm the operand resolved at all with `bazelisk query '"litellm/config.yaml"'`, which
-prints its label back. A miss you can see is a finding; a miss you cannot see is a green gate over a
-file nobody tests.
+result. So before you believe an empty list:
+
+1. check the exit status (Bazel exits non-zero here)
+2. read stderr
+3. confirm the operand resolved at all with `bazelisk query '"litellm/config.yaml"'`, which prints
+   its label back
+
+A miss you can see is a finding; a miss you cannot see is a green gate over a file nobody tests.

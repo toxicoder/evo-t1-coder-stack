@@ -50,6 +50,8 @@ Two templates live under `templates/`, and a push covers both.
 `template_push_one` stages every file in this list beside the staged `main.tf`; a
 missing one fails the push before the CLI runs.
 
+#### Boot identity: rulebook, icon, notes, and terminal
+
 - `GROK_BUILD_AGENTS.md` is the orchestration-protocol seed text that becomes every
   workspace's `~/.grok/AGENTS.md` (read with `file()`, chomped). It rides
   `coder_script.agents_seed` rather than the startup script, for the reason that section
@@ -59,16 +61,18 @@ missing one fails the push before the CLI runs.
   v2.36's `workspace_apps.icon` column (`varchar(256)`).
 - `notes-setup.sh` is the library behind each clone's private `notes.md`. The
   startup script inlines it with `file()` the same way, writes it into
-  `~/.grok/`, sources it, and calls `notes_materialize` per clone. That call also
-  seeds the ignore entries that keep the file uncommitted; see "What is shared" in
-  `docs/grok-build-and-agents.md` for what it writes into git config.
-  Once every clone has been through it the same script calls `run_notes_watch`, which
-  reaches `notes_sync_start` on the home owner's uid and leaves the container with one
-  background watcher (`NOTES_SYNC_INTERVAL` seconds, 30 by default; one instance per
-  container behind a `flock` on `$HOME/.notes-sync.lock`) copying each clone's notes back
-  to the owner's notes volume between boots. The workspace twin watches
-  `$HOME/workspace`; the devcontainer twin passes its `$dc_dir`, because those clones sit
-  on the `/srv/coder-devcontainers` bind.
+  `~/.grok/`, sources it, and calls `notes_materialize` per clone.
+
+  - That call also seeds the ignore entries that keep the file uncommitted; see "What is
+    shared" in `docs/grok-build-and-agents.md` for what it writes into git config.
+  - Once every clone has been through it the same script calls `run_notes_watch`, which
+    reaches `notes_sync_start` on the home owner's uid and leaves the container with one
+    background watcher (`NOTES_SYNC_INTERVAL` seconds, 30 by default; one instance per
+    container behind a `flock` on `$HOME/.notes-sync.lock`) copying each clone's notes back
+    to the owner's notes volume between boots.
+
+    - The workspace twin watches `$HOME/workspace`; the devcontainer twin passes its
+      `$dc_dir`, because those clones sit on the `/srv/coder-devcontainers` bind.
 - `tmux.conf` is the fidelity config the startup script writes. `grok-build-terminal.sh`
   and `vscode-terminal-tmux.sh` are the two terminal launchers, and they ride
   `coder_script "terminal_launchers"` with the shared body
@@ -76,28 +80,44 @@ missing one fails the push before the CLI runs.
   is the one execve that runs out of room: nothing at boot runs either script, the
   code-server terminal profile is their only consumer. Helpers use `$folder` (not
   `$${folder}`) because `file()` contents are not re-interpolated.
+
+#### The skill command seeds and the body that writes them
+
 - `grok-build-delegation.SKILL.md` and `coder-agents.md` are the Coder Agents
   skill and instruction seeds (chomped `file()`).
 - `ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and `ez-create-skill.SKILL.md` are the
-  stack's three skill commands: `/ez-learn` writes memory files, reproducing the upstream
-  memory family `/flush`, `/dream`, `/remember` and `/memory`; `/ez-skillify` captures the
-  session that just worked into a skill; `/ez-create-skill` scaffolds one from what the
-  operator describes. Skill authoring is those last two - `/ez-learn` stores facts, not
-  procedures. They ride `coder_script.stack_skills` rather than the startup argument (see
+  stack's three skill commands:
+
+  - `/ez-learn` writes memory files, reproducing the upstream memory family `/flush`,
+    `/dream`, `/remember` and `/memory`;
+  - `/ez-skillify` captures the session that just worked into a skill;
+  - `/ez-create-skill` scaffolds one from what the operator describes.
+
+  Skill authoring is those last two - `/ez-learn` stores facts, not procedures. They ride
+  `coder_script.stack_skills` rather than the startup argument (see
   "The one-argument ceiling"), which writes each absent skill into
-  `~/.coder/skills/<name>/SKILL.md` and twin-copies it to `~/.agents/skills/<name>/SKILL.md`,
-  each only while absent. Upstream there is no `/learn` and no `/skillify` to shadow: no
-  published source names either one. `/create-skill` is real, but only as a *bundled*
-  platform skill whose catalog is fetched per identity/team behind an x.ai sign-in this
-  stack does not have; and the memory family `/ez-learn` copies is no skill at all but the
-  CLI's own `/flush`, `/dream` and `/memory` registry entries plus the pager's `/remember`,
-  with the registry three gated on a memory store, which is off by default and never
-  configured here. So these payloads are what make the three commands exist, and the `ez-`
-  prefix is what keeps them clear of those upstream names.
+  `~/.coder/skills/<name>/SKILL.md` and twin-copies it to
+  `~/.agents/skills/<name>/SKILL.md`, each only while absent.
+
+  Upstream there is no `/learn` and no `/skillify` to shadow: no published source names
+  either one.
+
+  - `/create-skill` is real, but only as a *bundled* platform skill whose catalog is
+    fetched per identity/team behind an x.ai sign-in this stack does not have;
+  - the memory family `/ez-learn` copies is no skill at all but the CLI's own `/flush`,
+    `/dream` and `/memory` registry entries plus the pager's `/remember`, with the
+    registry three gated on a memory store, which is off by default and never configured
+    here.
+
+  So these payloads are what make the three commands exist, and the `ez-` prefix is what
+  keeps them clear of those upstream names.
 - `stack-skills.sh.tftpl` is the `coder_script "stack_skills"` body that seeds that trio,
   rendered with `templatefile()` from the three `chomp(file())` entries `main.tf` passes it.
   It is absent-only and silent on a healthy workspace, because its log is what an operator
   reads when a skill is missing.
+
+#### The rulebook body and the repository-conversion family
+
 - `agents-seed.sh.tftpl` is the `coder_script "agents_seed"` body that writes
   `~/.grok/AGENTS.md` from `GROK_BUILD_AGENTS.md`. Marker-aware rather than absent-only: a
   copy still carrying the stack marker is rewritten on every start, and one whose marker
@@ -105,29 +125,42 @@ missing one fails the push before the CLI runs.
   target for the host-side reseed.
 - `ez-bazel-first.SKILL.md`, `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`
   are the stack's three repository-conversion commands, and they stand in for nothing
-  upstream: `/ez-bazel-first` puts every tracked file behind a target and budgets the
-  `glob()`s, `/ez-strong-types` pins a strict checker profile per language and ratchets the
-  broad-type census, and `/ez-trunk-based-repo` turns environment branches into
-  environments and unfinished work into flags. The family's fourth member,
-  `ez-micro-plan.SKILL.md`, converts nothing: it is the parent's dispatch protocol, the one
-  that cuts a change into micro tasks a fleet of subagents can each finish alone. It writes
-  the dispatch plan to `.grok/plans/<slug>/plan.md` (Goal, Dispatch, Lanes, Tasks, Ledger,
-  Not doing) with `ctx/` briefs and `results/` reports beside it, in the same shape the
-  rulebook at `~/.grok/AGENTS.md` tells the parent to expect, and the plan tree is
-  git-ignored by `templates/common/notes-setup.sh` beside the two scratch note names.
-  Unlike the authoring trio these are not single files: three of the four shell out to a
-  python helper, so `ez-bazel-first` carries
-  `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py`,
-  `ez-strong-types` carries `ez-strong-types.type_baseline.py`, and `ez-micro-plan` carries
-  `ez-micro-plan.plan_check.py`, each written to a `scripts/`
-  subdirectory of the same skill directory. The bodies name the `~/.agents` spelling of
-  those helpers, which is why the twin copy is not optional.
+  upstream:
+
+  - `/ez-bazel-first` puts every tracked file behind a target and budgets the `glob()`s
+  - `/ez-strong-types` pins a strict checker profile per language and ratchets the
+    broad-type census
+  - `/ez-trunk-based-repo` turns environment branches into environments and unfinished
+    work into flags.
+
+  - The family's fourth member, `ez-micro-plan.SKILL.md`, converts nothing: it is the
+  parent's dispatch protocol, the one that cuts a change into micro tasks a fleet of
+  subagents can each finish alone.
+
+  - It writes the dispatch plan to `.grok/plans/<slug>/plan.md` (Goal, Dispatch, Lanes,
+  Tasks, Ledger, Not doing) with `ctx/` briefs and `results/` reports beside it, in the
+  same shape the rulebook at `~/.grok/AGENTS.md` tells the parent to expect, and the plan
+  tree is git-ignored by `templates/common/notes-setup.sh` beside the two scratch note
+  names.
+
+  - Unlike the authoring trio these are not single files: three of the four shell out to a
+  python helper, so `ez-bazel-first` carries `ez-bazel-first.owned_files_check.py` and
+  `ez-bazel-first.glob_budget.py`, `ez-strong-types` carries
+  `ez-strong-types.type_baseline.py`, and `ez-micro-plan` carries
+  `ez-micro-plan.plan_check.py`, each written to a `scripts/` subdirectory of the same
+  skill directory.
+
+  - The bodies name the `~/.agents` spelling of those helpers, which is why the twin copy is
+  not optional.
 - `stack-repo-skills.sh.tftpl` is the `coder_script "stack_repo_skills"` body that seeds
   that family, from eight `chomp(file())` entries: one `SKILL.md` per command plus the four
   python helpers. It is a second body rather than eight
   more heredocs in the first one for the reason this whole file keeps repeating: each
   `coder_script.script` is its own `execve` argument with its own ceiling, and a family
   that ships helpers grows faster than one that ships a `SKILL.md` each.
+
+#### The advisor commands and their body
+
 - `documenter.SKILL.md`, `performance-optimizer.SKILL.md`, `debugger.SKILL.md` and
   `migrator.SKILL.md` are the stack's four advisor commands (`/documenter`,
   `/performance-optimizer`, `/debugger`, `/migrator`), `ez-code-index.SKILL.md` is the fifth
@@ -140,6 +173,9 @@ missing one fails the push before the CLI runs.
   `~/.agents/skills/<name>/`, with `documenter.md` written under `~/.grok/agents/` beside the
   skill that needs it so a start has the command and its role or has neither. Absent-only and
   silent on a healthy workspace, the way the two skill bodies above are.
+
+#### Hooks, the MCP cache proxy, token refresh, and the vault fetch
+
 - `hooks.evo-t1-hooks.json` is the hook manifest Grok Build reads at
   `~/.grok/hooks/evo-t1-hooks.json`, and five more files land under `hooks/bin/` beside it:
   the four handlers it names (`hooks.secret-guard.sh`, `hooks.dangerous-command-guard.sh`,
@@ -148,13 +184,17 @@ missing one fails the push before the CLI runs.
   parseable JSON, so its stack marker is the `"__evoT1Stack": true` key rather than a comment
   line.
 - `stack-hooks.sh.tftpl` is the `coder_script "stack_hooks"` body that seeds that family, from
-  six `chomp(file())` entries, on its own body for the usual ceiling reason. Unlike the three
-  skill bodies above it is **marker-aware** rather than absent-only: a copy still carrying the
-  marker is rewritten on every start, because a guard that drifted from the seed silently
-  changes what a session may run and what it may write. The four `.sh` files are written
-  executable, with the payload's `#!` line kept on row 1, because the runner starts a relative
-  command out of the manifest directly; the manifest and the deny list are data and carry no
-  executable bit. What the four guards decide, and how an operator extends the deny list, is
+  six `chomp(file())` entries, on its own body for the usual ceiling reason.
+
+  Unlike the three skill bodies above it is **marker-aware** rather than absent-only: a
+  copy still carrying the marker is rewritten on every start, because a guard that drifted
+  from the seed silently changes what a session may run and what it may write.
+
+  The four `.sh` files are written executable, with the payload's `#!` line kept on row 1,
+  because the runner starts a relative command out of the manifest directly; the manifest
+  and the deny list are data and carry no executable bit.
+
+  What the four guards decide, and how an operator extends the deny list, is
   [grok-build-and-agents.md](grok-build-and-agents.md#hooks).
 - `mcp-cache-proxy.json` is the context7 MCP cache-proxy blob the startup script
   writes, into `~/.grok/mcp-cache-proxy/config.json` and only while that file is absent
@@ -166,15 +206,20 @@ missing one fails the push before the CLI runs.
   `${coder_github_app_install_url}` interpolate.
 - `infisical-secrets.sh.tftpl` is the `coder_script "infisical_secrets"` body that fetches
   that workspace's own copy of the stack's credentials from the self-hosted vault on start
-  (`templates/workspace/main.tf:771-786`). Its map is a single key, **`boot_log_lib`**
-  (`templates/workspace/main.tf:783-785`): it declares no Terraform variable of its own, so
-  the rendered text is identical for every workspace and carries no secret, because Coder
-  stores a rendered `coder_script.script` as text on the server, and the one value it does
-  take is the same library text everywhere. Everything else it needs arrives as an agent-env
-  variable. The vault itself - its three services, the operator CLI, the managed
-  key inventory and rotation - is [operate/secrets.md](operate/secrets.md); what the
-  templates have to keep true about it is
-  [The Infisical boot fetch](#the-infisical-boot-fetch).
+  (`templates/workspace/main.tf:771-786`).
+
+  Its map is a single key, **`boot_log_lib`** (`templates/workspace/main.tf:783-785`): it
+  declares no Terraform variable of its own, so the rendered text is identical for every
+  workspace and carries no secret, because Coder stores a rendered `coder_script.script`
+  as text on the server, and the one value it does take is the same library text
+  everywhere. Everything else it needs arrives as an agent-env variable.
+
+  The vault itself - its three services, the operator CLI, the managed key inventory and
+  rotation - is [operate/secrets.md](operate/secrets.md); what the templates have to keep
+  true about it is [The Infisical boot fetch](#the-infisical-boot-fetch).
+
+#### What the staged copy does to the template dir
+
 - Editing the common copy changes both templates; the staged copy overwrites any
   same-named file the template dir still carries.
 
@@ -240,16 +285,24 @@ The agent runs `coder_agent.startup_script`, and every `coder_script.script`, as
 `bash -c <body>`. The whole body therefore travels as **one** argument to `execve(2)`,
 and Linux caps a single argument at `MAX_ARG_STRLEN`, 32 pages = 131072 bytes. Measured
 on this host: an argument of 131071 bytes execs and one of 131072 fails with `E2BIG`.
-Past the wall the agent logs `fork/exec /bin/bash: argument list too long` with
-`exit_code=255` a few milliseconds in, the home directory never seeds, and the workspace
-banner reads "A startup script has failed". Coder puts no limit there and the plan
-reports no error, so the wall only announces itself on a live recreate.
+Past the wall:
+
+- the agent logs `fork/exec /bin/bash: argument list too long` with `exit_code=255` a few
+  milliseconds in
+- the home directory never seeds
+- the workspace banner reads "A startup script has failed"
+
+Coder puts no limit there and the plan reports no error, so the wall only announces
+itself on a live recreate.
+
+#### Which bytes make up the argument
 
 The size that matters is not `startup.sh.tftpl`. `main.tf` composes the body from that
 template plus every `templates/common/` payload it inlines, so any edit to the rulebook,
-the skills, the tmux config, the notes seeder, or the Grok config moves the number. That
-is how six commits crept from 104 KB to 130 KB and one documentation commit crossed the
-wall at 135 KB.
+the skills, the tmux config, the notes seeder, or the Grok config moves the number.
+
+That is how six commits crept from 104 KB to 130 KB and one documentation commit crossed
+the wall at 135 KB.
 
 Two things follow from the mechanism:
 
@@ -257,18 +310,24 @@ Two things follow from the mechanism:
   two `coder_script` resources relocates the wall; it does not raise it. On this server
   (v2.36) the start scripts fan out concurrently in an errgroup and `ready` is set only
   after all of them return, so splitting does not reduce a peak either.
-  `coder_script_order` needs Coder `>= v2.39`. This is the escape the stack now uses: the
-  three skill payloads ride `coder_script.stack_skills` rather than the startup argument,
-  because the devcontainer twin had 491 bytes of headroom left and three more inlined
-  payloads could not fit there. The same move later made room for the rulebook:
-  `GROK_BUILD_AGENTS.md` is the largest payload the twins inline, and it left the startup
-  argument for `coder_script.agents_seed` when that twin stood 196 bytes from the budget
-  and one more instruction section could not land. `grok-build-delegation.SKILL.md` still
-  rides the startup
-  argument - it predates the split, it fits, and its own tests pin it there.
+  `coder_script_order` needs Coder `>= v2.39`.
+
+  - This is the escape the stack now uses: the three skill payloads ride
+  `coder_script.stack_skills` rather than the startup argument, because the devcontainer
+  twin had 491 bytes of headroom left and three more inlined payloads could not fit there.
+
+  - The same move later made room for the rulebook: `GROK_BUILD_AGENTS.md` is the largest
+  payload the twins inline, and it left the startup argument for
+  `coder_script.agents_seed` when that twin stood 196 bytes from the budget and one more
+  instruction section could not land.
+
+  - `grok-build-delegation.SKILL.md` still rides the startup argument - it predates the
+  split, it fits, and its own tests pin it there.
 - **A `#!` line does not help.** The body still becomes
   `execve(env, [env, bash, -c, body])`; the interpreter line is content inside the
   argument.
+
+#### How the push enforces the bound
 
 `startup_size_guard` in `scripts/push-template.sh` enforces this before the CLI runs,
 beside the icon and preset-description guards. It sums each body's composed bytes and
@@ -281,26 +340,38 @@ measuring something else goes red in review.
 The guard also says the number while it is still a warning: a body within
 `STARTUP_SIZE_WARN` (4096) of the bound prints its composed total and the bytes left,
 because the distance to the budget is what a reviewer needs and a hard failure only
-ever reports the crossing. Measured on 2026-11-06 with the byte algorithm in
-`tests/bats/startup-script-size.bats`: the widest body is now the devcontainer startup
-script at 115967 bytes, 6913 clear of the bound, with the workspace twin at 113767 and
-9113 clear. Before the trio moved out that same devcontainer body measured 122389 with
-only 491 clear, and `ez-learn.SKILL.md` plus its heredoc accounted for roughly 7 KB of
-it. The three payloads now travel in their own body, `coder_script.stack_skills`, which
-composes to 36847 bytes. Measured again on 2026-11-09 after the repository-conversion
-family landed: `coder_script.stack_repo_skills`, carrying three `SKILL.md` payloads and
-three python helpers, composes to 60336 bytes, 62544 clear of the bound, and neither
-startup twin moved. Measured again on 2026-11-14 after the family's fourth member
-landed: that same body now carries four `SKILL.md` payloads and four python helpers and
-composes to 91203 bytes, 31677 clear of the bound, and neither startup twin moved -
-which is the point of giving a payload family its own `coder_script` instead of feeding
-it to `startup_script`. Measured again on 2026-11-16 with the same reader
+ever reports the crossing.
+
+#### Measured sizes of the composed bodies
+
+Measured on 2026-11-06 with the byte algorithm in `tests/bats/startup-script-size.bats`:
+
+- the widest body is now the devcontainer startup script at 115967 bytes, 6913 clear of
+  the bound, with the workspace twin at 113767 and 9113 clear.
+- Before the trio moved out that same devcontainer body measured 122389 with only 491
+  clear, and `ez-learn.SKILL.md` plus its heredoc accounted for roughly 7 KB of it.
+- The three payloads now travel in their own body, `coder_script.stack_skills`, which
+  composes to 36847 bytes.
+
+Measured again on 2026-11-09 after the repository-conversion family landed:
+`coder_script.stack_repo_skills`, carrying three `SKILL.md` payloads and three python
+helpers, composes to 60336 bytes, 62544 clear of the bound, and neither startup twin
+moved.
+
+Measured again on 2026-11-14 after the family's fourth member landed: that same body now
+carries four `SKILL.md` payloads and four python helpers and composes to 91203 bytes,
+31677 clear of the bound, and neither startup twin moved - which is the point of giving
+a payload family its own `coder_script` instead of feeding it to `startup_script`.
+
+Measured again on 2026-11-16 with the same reader
 (`awk -f scripts/lib/startup_size.awk templates/workspace/main.tf`, bytes summed per body)
 after the advisor and guard families landed: `coder_script.stack_advisors`, carrying four
 advisor `SKILL.md` payloads, the `documenter` role, the code-index skill and its helper,
-composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four guards
-and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively, with neither
-startup twin touched.
+composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four
+guards and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively,
+with neither startup twin touched.
+
+#### Escape hatches when a body outgrows the bound
 
 When a body really does need to grow past the budget, the options are:
 
@@ -369,10 +440,12 @@ The script mints a short-lived token by inserting a row into the stack's own Pos
 - A push is also the only thing that *registers* a template: Coder stores the source as a
   Filestore row, not as files it scans on disk.
 - The tar is built from a throwaway staging copy, not from the template dir itself.
-  `.terraform/` is excluded (pushing it would put the plan's provider binaries into the
-  version's Filestore row), symlinks are dumped as their targets (`tar -h`), and the
-  `templates/common/` payloads are copied in beside `main.tf`. A staged copy that still
-  holds a symlink is refused before the CLI runs.
+  - `.terraform/` is excluded (pushing it would put the plan's provider binaries into the
+    version's Filestore row)
+  - symlinks are dumped as their targets (`tar -h`)
+  - the `templates/common/` payloads are copied in beside `main.tf`
+
+  A staged copy that still holds a symlink is refused before the CLI runs.
 - Then, per template, it confirms an **active** template version. A push can exit 0 and
   still leave the template inactive if its Terraform run failed, which shows up as the
   template missing from the create dropdown.
@@ -402,6 +475,8 @@ Nothing else about GitHub travels in a `--var`.
 | `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` | `--var infisical_client_secret=...` | same; handled exactly as `context7_api_key` is, so the value reaches the CLI as an argument and appears in no log line, including the line that says it was passed |
 | `INFISICAL_ENVIRONMENT` | `--var infisical_environment=...` | same reader and same condition |
 
+#### The three MCP switches and the search port
+
 - `GITHUB_MCP`, `CONTEXT7_MCP` and `SEARCH_MCP` share one polarity: all three MCP blocks
   ship from the template default (`true`), so the only value worth setting is `false`,
   and `true`/unset/empty pushes nothing at all.
@@ -417,6 +492,9 @@ Nothing else about GitHub travels in a `--var`.
   `dev-stack.env` carries `18181` still names `8181` unless the key is set in `.env`
   too. A workspace dials the host gateway, where the compose network does not help,
   so the port in the rendered `SEARXNG_URL` has to be the one actually published.
+
+#### The clone and the agent URL
+
 - `repo_url` prefills the Git repository field on both create forms. The Terraform
   default is still no clone (`workspace`) or the coder/coder demo (`devcontainer`).
   `.env.sample` sets `REPO_URL` to this stack's GitHub URL, so a normal push prefills
@@ -426,16 +504,23 @@ Nothing else about GitHub travels in a `--var`.
   token. See [GitHub credentials for a workspace](#github-credentials-for-a-workspace).
 - `coder_agent_url` exists so agents keep dialing the local plain listener when
   `CODER_ACCESS_URL` is a public name.
+
+#### The vault keys and their two gates
+
 - The five values the boot reads the vault with are forwarded **whether or not the flag is
   on** (`scripts/push-template.sh:696-730`), so adopting the vault later is a re-push of one
   word rather than a re-config of five, and a stack that never adopted Infisical pushes none
-  of them. None of the five is echoed either: a project id and a machine identity id both end
-  up transcribed into whoever's CI log this output lands in, so the log line names only the
-  key a value came from (`scripts/push-template.sh:696-700`). The sixth value, the instance
-  URL, is the one a workspace cannot do without and the one this script composes rather than
-  forwards, inside the flag gate (`scripts/push-template.sh:652-661`): `.env`'s
-  `INFISICAL_URL` is the address the *host* dials, and a container handed that spelling reaches
-  its own loopback, where nothing listens.
+  of them.
+
+  None of the five is echoed either: a project id and a machine identity id both end up
+  transcribed into whoever's CI log this output lands in, so the log line names only the
+  key a value came from (`scripts/push-template.sh:696-700`).
+
+  The sixth value, the instance URL, is the one a workspace cannot do without and the one
+  this script composes rather than forwards, inside the flag gate
+  (`scripts/push-template.sh:652-661`): `.env`'s `INFISICAL_URL` is the address the *host*
+  dials, and a container handed that spelling reaches its own loopback, where nothing
+  listens.
 - Both gates are read with this script's own `env_get`, not with `infisical_enabled` from
   `scripts/lib/infisical.sh`: no push variable there reads the process environment, so a
   stray exported `INFISICAL_ENABLED` cannot change what gets pushed
@@ -472,11 +557,15 @@ in `.env`. The raw equivalent below is what that script does internally — it s
 same tar and makes the same CLI call the script makes for each template, execing into the
 daemon's `coder` container by name.
 
+### Why the raw form differs from the script
+
 That form addresses the stack through `docker compose` instead, so it names the
 project with `-p`. From the checkout root the folder name would have said the same thing.
 
 The service appears twice by necessity: the first `coder` selects the compose service, the
 second is the CLI binary inside it.
+
+### The token, then the tar
 
 Set a token first. `CODER_SESSION_TOKEN` is any token from the Coder **Tokens** page or
 from `coder tokens create`.
@@ -530,6 +619,8 @@ Check it in the Coder UI afterwards: **Default autostop** must read *Disabled* (
 
 What a create form shows, in `workspace` order.
 
+### The image, the daemon, and the repositories
+
 1. **Workspace image** (`workspace_image`, dropdown, immutable). `--var image=` seeds its
    default and is also injected as its own option, so a custom tag still reaches the
    container while the form stays honest about what it is building.
@@ -540,11 +631,15 @@ What a create form shows, in `workspace` order.
    Anything you type is cloned into the workspace on the next start.
 4. **Git repositories (additional)** (`additional_repos`, textarea, mutable, default
    empty).
-5. **Grok profile** (`grok_profile_mode`, dropdown, immutable, default `shared`).
-   `shared` puts that workspace's notes, memory and sessions on one per-owner volume
-   each; `private` mounts no per-owner volume, so all three live on that workspace's
-   own home volume and die with it. `config.toml` is that workspace's own file in both
-   modes. Switching needs a rebuild.
+5. **Grok profile** (`grok_profile_mode`, dropdown, immutable, default `shared`):
+
+   - `shared` puts that workspace's notes, memory and sessions on one per-owner volume
+     each
+   - `private` mounts no per-owner volume, so all three live on that workspace's own
+     home volume and die with it
+
+   `config.toml` is that workspace's own file in both modes, and switching needs a
+   rebuild.
 6. **Grok default model** (`grok_default_model`, dropdown, immutable, default `agent`).
 7. **Grok config extras** (`grok_config_extra`, textarea, mutable, default empty).
    Whatever you type is appended verbatim, under a comment header, to that workspace's
@@ -553,24 +648,40 @@ What a create form shows, in `workspace` order.
 8. **Grok theme** (`grok_theme`, free-form, mutable, default `grokbuild`). Rendered as
    `[ui] theme` in that workspace's `~/.grok/config.toml`; the literal `auto` renders the
    CLI's `groknight`/`grokday` pair instead of a fixed theme. Each workspace keeps its own.
+
+### The theme and the approval mode
+
 9. **Editor colour theme** (`vscode_color_theme`, free-form, mutable, default
    `Default Dark Modern`). Written as `workbench.colorTheme` in that workspace's
    code-server User settings, where it wins over the shared editor-settings overlay.
 10. **Grok approval mode** (`grok_permission_mode`, dropdown, mutable, default
     `always-approve`). How much that workspace's Grok sessions stop and ask before they
     act, rendered as `[ui] permission_mode` in that workspace's `~/.grok/config.toml`.
-    The dropdown offers exactly four values: `default` (the CLI's own policy, which does
-    prompt), `ask` (a tool call waits for a person), `auto` (prompts less than `ask`) and
-    `always-approve` (nothing prompts; the product name for `bypassPermissions`). What it
+    The dropdown offers exactly four values:
+
+    - `default` (the CLI's own policy, which does prompt)
+    - `ask` (a tool call waits for a person)
+    - `auto` (prompts less than `ask`)
+    - `always-approve` (nothing prompts; the product name for `bypassPermissions`).
+
+    - What it
     relaxes is prompting only - the `[permission]` deny list the render ships still
     refuses the dotenv reads, the `Bash(rm -rf *)` form and the commit guards in every
-    mode. `order = 10`, so it sorts after the editor theme rather than beside the two
-    themes. Each workspace keeps its own and a change applies on the next start. Those
+    mode.
+
+    - `order = 10`, so it sorts after the editor theme rather than beside the two
+    themes.
+
+    - Each workspace keeps its own and a change applies on the next start.
+
+    - Those
     four are what the `[ui] permission_mode` key documents, not the whole vocabulary the
     CLI speaks: its own `--permission-mode` flag spells more, so a mode outside this
     dropdown belongs in the `[ui]` block of `~/.grok/config.toml` by hand, and the next
     start replaces it with what this field says - and says so on the boot log, naming the
     value it dropped.
+
+### The `devcontainer` form's two questions
 
 `devcontainer` asks two questions instead: **Git repository** and **Build repo's dev
 container** (`use_devcontainer`, Yes/No, immutable), plus the same Grok and theme fields.
@@ -578,10 +689,14 @@ container** (`use_devcontainer`, Yes/No, immutable), plus the same Grok and them
 ## Template variables
 
 Template variables are pushed defaults; the create form can still override them per
-workspace. The four `grok_*_lane` knobs below are `--var` only, and each moves one role, so
-a single role can be put back on the parent's pinned lane without moving the others - the
-rollback an operator needs when a workspace is older than the LiteLLM config that registers
-its alias (`templates/workspace/coder.tf:19-22`).
+workspace.
+
+The four `grok_*_lane` knobs below are `--var` only, and each moves one role, so a single
+role can be put back on the parent's pinned lane without moving the others - the rollback
+an operator needs when a workspace is older than the LiteLLM config that registers its
+alias (`templates/workspace/coder.tf:19-22`).
+
+### Every variable, its default, and its notes
 
 | Variable | Default | Notes |
 | --- | --- | --- |
@@ -615,29 +730,30 @@ its alias (`templates/workspace/coder.tf:19-22`).
 | `infisical_environment` | `prod` | → `INFISICAL_ENVIRONMENT`. Which Infisical environment the export reads; the CLI takes `--env` on every read, so a fork that keeps another environment slug has no default that fits it (`templates/workspace/coder.tf:254-261`). |
 | `infisical_pull_on_start` | `false` | The second gate, under `infisical_enabled`, and it decides only whether a start *waits* on the vault. Forwarded only when both `.env` keys are truthy (`scripts/push-template.sh:636`, `:668-671`). Off leaves the script present but idle: one log line naming the gate and exit 0 (`templates/common/infisical-secrets.sh.tftpl:27-30`). Handed over as the string `"true"`/`"false"`, because a `coder_agent` env value has to be a string and the body compares it against a literal (`templates/workspace/main.tf:649-652`). |
 
-Notes on the two dropdowns that take a custom value:
+### Notes on the two dropdowns that take a custom value
 
 - The `grok_default_model` aliases are `agent`, `agent-low`, `agent-medium`,
   `agent-xhigh`, `agent-xhigh-fast`, `agent-swarm`, `agent-swarm-fast`, `coder`,
-  `coder-fast` and `chat`, plus a **Custom** entry when the variable names another one. The
-  two `-fast` entries are the Spark lane each is named after, unchanged, with one call
+  `coder-fast` and `chat`, plus a **Custom** entry when the variable names another one.
+- The two `-fast` entries are the Spark lane each is named after, unchanged, with one call
   moved: the proxy re-serves that session's conversation summary from the Arc group
   `compaction-fast`, which is the whole difference, because the CLI has no compaction-model
   key of its own.
 - The provider requires a parameter default to be one of its options, which is why a
   custom `--var` value is injected as its own option instead of being dropped.
 - A `github_mcp` of `true` with no GitHub account connected gives that workspace a server
-  that fails its handshake once per session, because `$GH_TOKEN` is empty. A
-  `context7_mcp` of `true` with an empty `context7_api_key` is *not* the same shape:
+  that fails its handshake once per session, because `$GH_TOKEN` is empty.
+- A `context7_mcp` of `true` with an empty `context7_api_key` is *not* the same shape:
   the key is optional, the block renders either way, and the server handshakes and
   answers without one - no `Authorization` header goes out, so the lane runs at the
-  public rate limit and private libraries are the only thing out of reach. That keyless
-  block is the pushed default and what a fresh deploy gets, since nothing in git
-  carries a key, and `bazelisk run //scripts:mcp-check` only warns about it. Park a
-  lane deliberately with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` in `.env` (relayed
+  public rate limit and private libraries are the only thing out of reach.
+- That keyless block is the pushed default and what a fresh deploy gets, since nothing in git
+  carries a key, and `bazelisk run //scripts:mcp-check` only warns about it.
+- Park a lane deliberately with `GITHUB_MCP=false` / `CONTEXT7_MCP=false` in `.env` (relayed
   by `push-template.sh`) or `--var github_mcp=false` / `--var context7_mcp=false` on
   the push; a block missing from a render that got neither of those is a defect, not a
-  park. Fill the context7 key with `CONTEXT7_API_KEY` in `.env` plus a re-push when a
+  park.
+- Fill the context7 key with `CONTEXT7_API_KEY` in `.env` plus a re-push when a
   session needs private libraries or a higher rate limit.
 
 ## Autostop and TTLs
@@ -659,12 +775,14 @@ Autostart, autostop and TTLs are template *metadata*, so they stay out of the Te
 - A workspace owner can still tick the box for one workspace: `allow_user_autostop`
   stays on, because CE cannot turn it off -- `--allow-user-autostop=false` is marked
   "can only be disabled in enterprise".
-- Keep the other licensed flags out of the CE stack too. `--failure-ttl` (Failure
-  cleanup), `--dormancy-threshold` and `--dormancy-auto-deletion` are all marked "This
-  licensed feature's default is 0h (off)" in `templates edit --help` on v2.36.6, and
-  `--allow-user-autostart` works the same way. Older notes also list `--inactivityTTL`
-  among the rejected names; v2.36.6 has no flag of that name, and `--default-ttl` and
-  `--activity-bump` are the closest.
+- Keep the other licensed flags out of the CE stack too.
+
+  - `--failure-ttl` (Failure cleanup), `--dormancy-threshold` and
+    `--dormancy-auto-deletion` are all marked "This licensed feature's default is 0h
+    (off)" in `templates edit --help` on v2.36.6, and `--allow-user-autostart` works
+    the same way.
+  - Older notes also list `--inactivityTTL` among the rejected names; v2.36.6 has no
+    flag of that name, and `--default-ttl` and `--activity-bump` are the closest.
 
 Check it in the Coder UI: the template editor's **Default autostop** reads *Disabled*
 (0 h), and a workspace's **Schedule** tab shows **Enable Autostop** unchecked.
@@ -674,6 +792,8 @@ Check it in the Coder UI: the template editor's **Default autostop** reads *Disa
 Opt-in in `workspace` (the **Docker-in-docker** Yes/No question, preset *AI workspace +
 DinD*, template variable `dind`). With the toggle off, `docker` in that workspace fails
 the normal way rather than against a daemon that does not exist.
+
+### What the toggle creates
 
 With it on, per workspace:
 
@@ -688,7 +808,7 @@ With it on, per workspace:
   *AI workspace + DinD* preset is the usual way to get this shape, since the client
   binaries ship only in the golden image.
 
-Details that matter:
+### Details that matter
 
 - The toggle is `mutable = false`: turning it on or off means a workspace **rebuild**,
   because a network, a volume and a second container appear or vanish. The preset makes
@@ -701,9 +821,11 @@ Details that matter:
   `tcp://0.0.0.0:2375` with no TLS and no auth. (`DOCKER_TLS_CERTSIZE=0` does not do
   this: the daemon would listen on 2376 with TLS and the client fails against 2375.)
 - Nothing is published to the host, and 2375 is reachable only from that workspace's own
-  network - which is also why the network is not `internal`. An internal network gets no
-  gateway route or NAT, so `host.docker.internal` would resolve and never answer, and the
-  agent would strand. See [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
+  network - which is also why the network is not `internal`.
+
+  An internal network gets no gateway route or NAT, so `host.docker.internal` would
+  resolve and never answer, and the agent would strand. See
+  [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
 - The daemon image is resolved with `data "docker_image"`, which inspects the host store
   and **never pulls**, so `docker:29.8.1-dind` must already be there. `bootstrap.sh`
   pre-arms it; to do it manually:
@@ -841,23 +963,28 @@ bazelisk run //scripts:new-workspace -- --plain git@git.example.com:org/private.
 - It looks for a dev container in `.devcontainer/`, `.github/devcontainers/`, or a
   `devcontainer.json`/`devcontainer.yml` anywhere in the tree.
 - A tracked `.devcontainer/contributor-env` outranks every other signal: the probe is a
-  **miss** even when the same clone also tracks `.devcontainer/devcontainer.json`. That is
-  how this repo keeps its own Coder workspaces on `workspace` — the `.devcontainer/` it
+  **miss** even when the same clone also tracks `.devcontainer/devcontainer.json`.
+
+  That is how this repo keeps its own Coder workspaces on `workspace` — the `.devcontainer/` it
   ships is the contributor one for a laptop and CI, not a nested toolchain to rebuild
   inside the workspace's own DinD sidecar (see
-  [contribute/devcontainer.md](contribute/devcontainer.md)). Application repositories do
-  not carry the sentinel, so their dev containers stay a hit.
+  [contribute/devcontainer.md](contribute/devcontainer.md)).
+
+  Application repositories do not carry the sentinel, so their dev containers stay a hit.
 - Found means `devcontainer`; not found means `workspace`. A probe that fails **entirely**
   is also a `workspace` answer, with a warning.
 - The clone is a plain `git clone` from the host, so it consults the host's own git
   credentials. A private repository therefore needs a grant covering it **on the machine
   you run this from**.
-- It then assembles `coder create` with the template's parameters: `repo_url=<url>`
-  always, `use_devcontainer=false` whenever `devcontainer` was chosen but no dev
-  container was found (forced with `--devcontainer` onto a repo that has none, or a probe
-  that could not check the repo - the cases where leaving the toggle at its default would
-  build nothing anyway), `dind=true` on `--dind`, and `additional_repos=<list>` whenever
-  `--additional-repos` named at least one extra URL.
+- It then assembles `coder create` with the template's parameters:
+
+  - `repo_url=<url>` always
+  - `use_devcontainer=false` whenever `devcontainer` was chosen but no dev container was
+    found (forced with `--devcontainer` onto a repo that has none, or a probe that could
+    not check the repo - the cases where leaving the toggle at its default would build
+    nothing anyway)
+  - `dind=true` on `--dind`
+  - `additional_repos=<list>` whenever `--additional-repos` named at least one extra URL
 - It names no `--stop-after`, so a script-made workspace gets no autostop deadline.
 - It either runs the command (`--no-wait`; watch with `coder ls` / `coder logs <name>`)
   or, with no usable `coder` login, prints the same command to run by hand and exits 0.
@@ -872,15 +999,20 @@ bazelisk run //scripts:new-workspace -- --plain git@git.example.com:org/private.
 
 ## Inside the workspace container
 
-Each template creates one Docker container per workspace. Extra named volumes
-(`vscode-settings-<owner-id>` at `~/.shared/vscode`, in shared mode the three state
-volumes `grok-notes-<owner-id>` at `~/.grok/notes`, `grok-memory-<owner-id>` at
-`~/.grok/memory` and `grok-sessions-<owner-id>` at `~/.grok/sessions`, and the host-wide
-`grok-session-archive` at `/var/lib/grok-session-archive`) are chowned to the home owner
-by `startup.sh.tftpl` - the first four at its start, the archive by its own stage -
-because Docker creates an empty named volume as `root:root`
-755 and the agent runs as `coder`. The archive volume sits outside `~/.grok` on purpose
-and is read by nothing in the workspace: see
+Each template creates one Docker container per workspace.
+
+Extra named volumes are chowned to the home owner by `startup.sh.tftpl` - the first four
+at its start, the archive by its own stage - because Docker creates an empty named volume
+as `root:root` 755 and the agent runs as `coder`:
+
+- `vscode-settings-<owner-id>` at `~/.shared/vscode`
+- in shared mode the three state volumes `grok-notes-<owner-id>` at `~/.grok/notes`,
+  `grok-memory-<owner-id>` at `~/.grok/memory` and `grok-sessions-<owner-id>` at
+  `~/.grok/sessions`
+- the host-wide `grok-session-archive` at `/var/lib/grok-session-archive`
+
+The archive volume sits outside `~/.grok` on purpose and is read by nothing in the
+workspace: see
 [the out-of-band session archive](grok-build-and-agents.md#the-out-of-band-session-archive).
 
 - Image from `images/dev/Dockerfile` (overridable with the `image` variable) carrying:
@@ -913,7 +1045,9 @@ and is read by nothing in the workspace: see
    (see [The Infisical boot fetch](#the-infisical-boot-fetch)).
 4. The two terminal-profile tmux helpers are written by their own
    `coder_script "terminal_launchers"` body, which runs after this one returns (see
-   below). Nothing at boot executes either script -- the code-server terminal profile is
+   below).
+
+   Nothing at boot executes either script -- the code-server terminal profile is
    the only consumer -- so landing them a step later costs an operator nothing, and each
    body names itself in the start log. The default one gives each visible terminal its
    own pane: it re-joins a folder's session only while nothing is attached to it, and
@@ -923,16 +1057,22 @@ and is read by nothing in the workspace: see
 6. Renders `~/.grok/config.toml` (the three gated MCP servers ship by default; the five
    offline stdio ones are not declared).
 7. **Clones a non-empty Git repository field** into `/home/coder/workspace/<repo-name>`
-   (in `devcontainer`, onto the `/srv/coder-devcontainers/<workspace-id>` bind). The
-   script creates that folder first (`mkdir -p` plus a chown to the workspace user) so
-   the editor's wait loop can see it, then clones into it. This is idempotent, runs as
+   (in `devcontainer`, onto the `/srv/coder-devcontainers/<workspace-id>` bind).
+
+   The script creates that folder first (`mkdir -p` plus a chown to the workspace user) so
+   the editor's wait loop can see it, then clones into it.
+
+   This is idempotent, runs as
    the workspace user so their git credentials are consulted, and refuses to touch an
    existing non-empty non-git folder there. An empty pre-created target still clones.
 8. **Starts the out-of-band session archive mirror** (boot stage 9). It chowns
    `/var/lib/grok-session-archive` to the home owner, folds the container hostname into a
    safe leaf name under `workspaces/`, then leaves a backgrounded loop that `rsync`s
    `~/.grok/sessions/` into that leaf every 180 seconds, without `--delete`, for the life
-   of the container. `flock -n` keeps it to one loop per leaf across repeated starts.
+   of the container.
+
+   `flock -n` keeps it to one loop per leaf across repeated starts.
+
    Best-effort and invisible to the CLI: nothing in the workspace reads the volume back,
    and the hooks deny list refuses an agent command that names it. See
    [the out-of-band session archive](grok-build-and-agents.md#the-out-of-band-session-archive).
@@ -940,38 +1080,56 @@ and is read by nothing in the workspace: see
 The repository leaf is derived the same way in `main.tf` and in `startup.sh.tftpl`:
 split on `/`, drop empty segments, take the last, drop a trailing `.git`, map every
 character outside `[A-Za-z0-9._-]` to `-`, and fall back to `repo` when that leaves no
-leading alphanumeric. Both derivations must agree, or the editor and the terminal
-helpers point at a folder that was never cloned.
+leading alphanumeric.
+
+Both derivations must agree, or the editor and the terminal helpers point at a folder that
+was never cloned.
 
 ### Why the stages sit where they do
 
 The order above is not incidental; each line is a constraint the script has to keep.
 
+#### The tmux seed and the clipboard route
+
 - `~/.tmux.conf` is seeded *before* the two terminal helpers, which their own
   `coder_script` writes after this body returns. `tmux` reads that file once
   at server start and every terminal (plus an SSH client that reattaches) shares that one
   server, so seeding after the first `tmux new-session -A` could run would leave that
-  session unconfigured for the whole boot. `mouse off` is what keeps every click with
+  session unconfigured for the whole boot.
+
+  - `mouse off` is what keeps every click with
   the terminal client: tmux requests no mouse reporting, so a drag is the client's own
   highlight, the settings seed's `copyOnSelection` puts it on the machine clipboard,
-  and right-click and middle-click paste it back. Measured on the shipped tmux 3.4, an
+  and right-click and middle-click paste it back.
+
+  - Measured on the shipped tmux 3.4, an
   attach with `mouse on` writes `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the
-  client and an attach with it off writes none of them. tmux keeps no clipboard of its
+  client and an attach with it off writes none of them.
+
+  - tmux keeps no clipboard of its
   own next to that: the copy-mode copies, the prefix paste `]`, the buffer picker `=`
   and the root-table middle-click paste are unbound, and `Prefix m` is only the switch
   that hands the wheel to tmux for a long scroll and hands it back.
-  `set-clipboard on` and `allow-passthrough on` stay for the one copy route that is
+
+  - `set-clipboard on` and `allow-passthrough on` stay for the one copy route that is
   not tmux's own - an app inside a pane (vim's `+` register, anything that emits
   OSC 52) drives the machine clipboard through them, which is what a native terminal
   hands that app - and a client that blocks OSC 52 (iTerm2 by default) gets nothing at
-  all, because there is no tmux buffer left to fall back to. The browser build of VS
+  all, because there is no tmux buffer left to fall back to.
+
+  - The browser build of VS
   Code drops that escape as well
   ([microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254)), so a
   pane app's OSC 52 copy is silent in the tab and lands over ssh from a real terminal
   app, while the operator's own copy in the tab is the plain drag.
+
+#### The clone, the chown, and the best-effort tail
+
 - The clone folder is created before git runs, and before the `coder_script.code_server`
   script's own `mkdir`: the editor starts in parallel with the startup script, and an
-  empty tree is a folder VS Code can open while the clone is still writing. An empty
+  empty tree is a folder VS Code can open while the clone is still writing.
+
+  An empty
   directory is also what `git clone` accepts, so pre-creating it does not change what gets
   cloned - the emptiness guard still refuses a folder holding anything.
 - `notes_materialize` runs *before* the recursive chown of a fresh clone: the notes file
@@ -989,7 +1147,9 @@ The order above is not incidental; each line is a constraint the script has to k
   container, which is how a whole workspace's notes went missing on a recreate.
 - Every stage from the Coder Agents seeds onward is best-effort: an offline first boot has
   to leave a working terminal, and a repository that will not clone has to leave a
-  workspace someone can fix, so nothing there may abort the script. In `devcontainer` a
+  workspace someone can fix, so nothing there may abort the script.
+
+  In `devcontainer` a
   missing or half-cloned folder is not silent either: `coder_devcontainer` fails on its own
   with a visible error naming the folder it looked in, and the clone stage warns first when
   a clone arrives with no devcontainer configuration in it.
@@ -1005,7 +1165,9 @@ The order above is not incidental; each line is a constraint the script has to k
   the workspace without a CLI.
 - `GROK_FRESH_INSTALL` records that an install *completed* this boot - the second
   `command -v` probe inside the install branch is what sets it, so a failed download leaves
-  the flag at `0`. The installer writes its own `~/.grok/config.toml` (a
+  the flag at `0`.
+
+  The installer writes its own `~/.grok/config.toml` (a
   `[cli] installer = ...` stub) that is indistinguishable from a user's config, so the
   config stage may treat that stub as stack-owned only on a completed install: a download
   that failed must never wipe a user-owned config in its place. Without that flag a
@@ -1021,16 +1183,25 @@ decided by a marker - never by mtime and never by first boot:
 - `~/.tmux.conf` and `~/.grok/AGENTS.md` are rewritten while the
   `managed-by: evo-t1-coder-stack` line is present; editing the file away from the marker
   hands it to the user for good, and each prints one warning line when it is marker-free.
-- The guard family under `~/.grok/hooks/` follows the same rule for a sharper reason. The
-  manifest and the five files under `hooks/bin/` are rewritten on every start while they carry
+
+#### The hooks family, and why it is stricter
+
+- The guard family under `~/.grok/hooks/` follows the same rule for a sharper reason.
+
+  The manifest and the five files under `hooks/bin/` are rewritten on every start while they carry
   the marker - the `"__evoT1Stack": true` key in the JSON, the only spelling that leaves it
   parseable, and the `managed-by: evo-t1-coder-stack` comment in the four scripts and the deny
-  list. A hook decides what a session may run and what it may write, so a copy that drifted
+  list.
+
+  A hook decides what a session may run and what it may write, so a copy that drifted
   from the seed is a silent behaviour change, while a stale `SKILL.md` misleads one run; that
   difference is why the skills stay absent-only (the advisors' twelve copies and their
   `~/.grok/agents/documenter.md` included) and this family does not. Each write ends by
   appending the marker line if the payload lost its own, so a rewritten file never becomes
   unrecognisable as stack-owned on the next boot.
+
+#### The config render and its two markers
+
 - `~/.grok/config.toml` is re-rendered when it is absent, when
   `GROK_FRESH_INSTALL` is set, or while *either* marker is present: the `managed-by`
   comment or the top-level `__evoT1Stack = true` key.
@@ -1039,13 +1210,16 @@ decided by a marker - never by mtime and never by first boot:
   (`templates/workspace/grok-config.toml.tftpl:427`, fed from `var.grok_swarm_width` at
   `templates/workspace/main.tf:558`), while `max_concurrent` carries the width variable's
   own shipped 15 - two variables, so a `--var` that narrows the width never erases the
-  number the fleet was sized at. Stage 6 reads the pair the moment the render
+  number the fleet was sized at.
+
+  - Stage 6 reads the pair the moment the render
   lands: right after `boot_ok "config.toml re-materialized with the stack markers"`
   (`templates/workspace/startup.sh.tftpl:258`) it compares them and, when the width is the
   narrower of the two, prints one `note:` line naming the gap through `boot_note`
   (`templates/common/boot-log.lib.sh:51`, the verb that carries no counter), pointing at
   [the rendered width is below fleet-width](troubleshooting.md#the-rendered-width-is-below-fleet-width).
-  `bazelisk run //scripts:subagent-check` is the same comparison for a shell, and the same
+
+  - `bazelisk run //scripts:subagent-check` is the same comparison for a shell, and the same
   two numbers answer it: a profile whose marker the operator removed gets neither the line
   nor the note, because both are products of this render.
 - The key is what makes the rule hold. The CLI's own settings writer (`grok mcp add` and
@@ -1053,18 +1227,27 @@ decided by a marker - never by mtime and never by first boot:
   touching the file.
 - The config file usually already exists, because an earlier start of this workspace
   wrote it, so the marker rather than first boot is what decides.
+
+#### What the re-render carries over
+
 - Re-rendering carries over the tables the CLI owns instead of wiping them: `[cli]` holds
   `cli.installer`, which picks the CLI's update path; `[ui]` carries over the keys the
-  operator added; and `[marketplace]` is CLI settings the stack never owns. The `[ui]`
-  carry-over is filtered, not copied: the render owns `theme` and `permission_mode` in
-  that table, so the startup drops those keys - the alternation
+  operator added; and `[marketplace]` is CLI settings the stack never owns.
+
+  - The `[ui]` carry-over is filtered, not copied: the render owns `theme` and
+  `permission_mode` in that table, so the startup drops those keys - the alternation
   `(theme|auto_dark_theme|auto_light_theme|ui_theme|permission_mode)` at
-  `templates/workspace/startup.sh.tftpl:238` - from what it carries across. The strip is
-  what makes the render's answer the only one in the file: an operator's
-  `permission_mode` left beside the render's own line gives one `[ui]` table two
-  identical keys, which is invalid TOML. So the create form's **Grok approval mode** is
+  `templates/workspace/startup.sh.tftpl:238` - from what it carries across.
+
+  - The strip is what makes the render's answer the only one in the file: an operator's
+  `permission_mode` left beside the render's own line gives one `[ui]` table two identical
+  keys, which is invalid TOML.
+
+  - So the create form's **Grok approval mode** is
   the seam for that key, and an approval mode hand-written into the file does not
-  survive a re-render, while every other `[ui]` key the operator set still does. The drop
+  survive a re-render, while every other `[ui]` key the operator set still does.
+
+  - The drop
   leaves a trace: when the strip removes a `permission_mode` the body prints one
   `warning:` line naming the value it dropped
   (`templates/workspace/startup.sh.tftpl:248`), and `boot_warn` counts it into the
@@ -1074,7 +1257,9 @@ decided by a marker - never by mtime and never by first boot:
   a workspace's model catalog and MCP lanes are ever written.
 - `~/.grok/notes-setup.sh` is the exception to the absent-only rule: it is stack-owned code
   and the copy in this workspace has to be the one this template shipped, so it
-  is rewritten every start. It is written beside its target and `mv`'d in - and `chmod
+  is rewritten every start.
+
+  It is written beside its target and `mv`'d in - and `chmod
   0644`'d first, because `mktemp` makes 0600 and `mv` keeps that mode - so the rename is the
   first moment the file exists for anyone to source, and a process that starts seconds
   later never reads a half-written library.
@@ -1087,11 +1272,15 @@ rules above.
 - In `shared` mode (the default `grok_profile_mode`) the container mounts three of the
   owner's Docker volumes read-write, nested inside that workspace's own `/home/coder`
   volume: `grok-notes-<owner-id>` at `~/.grok/notes`, `grok-memory-<owner-id>` at
-  `~/.grok/memory` and `grok-sessions-<owner-id>` at `~/.grok/sessions`. Those three
+  `~/.grok/memory` and `grok-sessions-<owner-id>` at `~/.grok/sessions`.
+
+  Those three
   trees are then the same files every other workspace this owner has reads and writes,
   and they survive a rebuild.
 - Everything else under `~/.grok` - `config.toml` above all - is a regular file on this
-  workspace's own home volume. Each start re-renders `config.toml` for this workspace
+  workspace's own home volume.
+
+  Each start re-renders `config.toml` for this workspace
   alone, so its default model (or, in `devcontainer`, its model alias), its theme and
   its config extras are its own, and a hand edit there lasts until that one workspace
   restarts.
@@ -1099,7 +1288,9 @@ rules above.
   `grok-profile-<owner-id>`, is still mounted in `shared` mode, but **read-only** and at
   `~/.grok-legacy`, only so the first start after the split can hoist its `notes/`,
   `memory/` and `sessions/` across (`notes_hoist_legacy` in
-  `templates/common/notes-setup.sh`). Nothing reads it afterwards, and a later `chore:`
+  `templates/common/notes-setup.sh`).
+
+  Nothing reads it afterwards, and a later `chore:`
   removes that mount.
 - `private` mounts no per-owner volume at all: the three state directories then live on
   this workspace's own home volume too, so they are its own and die with it.
@@ -1115,42 +1306,61 @@ rules above.
 
 The swap file's own persistence turns a killed editor into a permanent nuisance. Open
 `vim ~/.grok/config.toml`, stop the workspace with the editor still up, and the agent's
-process tree dies while the swap file stays on the home volume. The next `vim` on that name stops with `E325: ATTENTION` and a question about a
+process tree dies while the swap file stays on the home volume.
+
+The next `vim` on that name stops with `E325: ATTENTION` and a question about a
 session whose container has been gone for days, and because "(E)dit anyway" leaves the
 swap in place and mints `.swo`, `.swn`, `.swm` beside it, an operator who keeps answering
 the prompt ends up with four of them and a prompt that never goes away.
 
+#### Why the sweep lives in that body
+
 The boot clears them, from `grok_sweep_config_swaps` in
-`templates/common/agents-seed.sh.tftpl`. It runs there rather than in `startup.sh.tftpl`
+`templates/common/agents-seed.sh.tftpl`.
+
+It runs there rather than in `startup.sh.tftpl`
 because the startup argument sits under a byte gate that holds the composed body to 110592
 bytes (12288 of room under the 122880 budget this repo sets for itself, which is itself
 8 KiB under the kernel's measured 131072 one-argument ceiling; see
 [The one-argument ceiling](#the-one-argument-ceiling)), and the `devcontainer` twin already
-composes 110242 of those, leaving 350 bytes for everything else. It also runs there because
+composes 110242 of those, leaving 350 bytes for everything else.
+
+It also runs there because
 that body is already where a stack-owned file under `~/.grok` is refreshed against its
-marker. It does not lean on running after
+marker.
+
+It does not lean on running after
 the `startup_script`: a `coder_script` runs in no promised order with it
-(`templates/workspace/coder.tf:272`), so the argument is the marker itself. A
+(`templates/workspace/coder.tf:272`), so the argument is the marker itself.
+
+A
 `config.toml` that still carries the marker is one every start replaces from
 `grok-config.toml.tftpl`, whichever of the two runs first, so what an orphaned swap holds
 is doomed either way.
+
+#### What makes the step safe
 
 What makes the step safe is that it destroys nothing it cannot prove. Neither of its two
 checks establishes that a writer is gone. vim writes the swap once about four seconds after
 a change and then stays quiet while you read, so a live session idling over the file looks
 like a crashed one; and each workspace runs in its own PID namespace, so the `/proc` scan
 sees this container's descriptors only, which leaves a sibling workspace holding the same
-file open on the shared volume invisible from here. So an orphan is moved into
+file open on the shared volume invisible from here.
+
+So an orphan is moved into
 `~/.grok/stale-swaps/` under a name the sweep gives itself, and stays recoverable with
 `vim -r` for a month. The archived copy is re-dated to the moment it was set down: `mv`
 carries the swap's own mtime, and a workspace stopped for six weeks leaves a swap older
 than the retention, which that same boot would otherwise archive and prune in one breath.
+
 A wrong call is one `ls` from undone.
 
 - It only runs when `config.toml` still carries a stack marker, either spelling of it, by
   the same contract as
   [Marker ownership of the seeded files](#marker-ownership-of-the-seeded-files). A config
-  that lost its marker is the operator's file, swap and all. The usual way one loses the
+  that lost its marker is the operator's file, swap and all.
+
+  The usual way one loses the
   marker is `grok mcp add` rewriting the file, and the remedy there is
   `bazelisk run //scripts:seed-dev-env -- --force`.
 - A swap written within the last hour stays. The hour is a courtesy toward a session that
@@ -1158,12 +1368,18 @@ A wrong call is one `ls` from undone.
 - A swap some process in this container still holds open stays, read straight off
   `/proc/*/fd` and compared by exact path. Comparing it as a glob would let one bracket in
   `$HOME` hide a live holder.
-- Every path that cannot decide leaves the file where it is and says nothing: a `find` or
-  `basename` that is missing or errors, a `readlink` that cannot answer (the body runs it
-  and checks the result instead of just looking for the binary, since an empty answer
-  reads exactly as "no descriptor points here"), a `/proc` with nothing to scan, an
-  archive directory that cannot be made, an archive name already taken, and a `mv` that is
-  refused. The E325 prompt then waits for a person, which is a visible nuisance with no
+- Every path that cannot decide leaves the file where it is and says nothing:
+
+  - a `find` or `basename` that is missing or errors
+  - a `readlink` that cannot answer (the body runs it
+    and checks the result instead of just looking for the binary, since an empty answer
+    reads exactly as "no descriptor points here")
+  - a `/proc` with nothing to scan
+  - an archive directory that cannot be made
+  - an archive name already taken
+  - a `mv` that is refused
+
+  The E325 prompt then waits for a person, which is a visible nuisance with no
   data behind it, while a wrong deletion is quiet and has data behind it.
 - Only vim's own `.sw?` suffix on that one name is a candidate, and a symlink at that name
   is left alone, since archiving a link would move the name and strand the bytes behind it.
@@ -1174,12 +1390,18 @@ A wrong call is one `ls` from undone.
   `~/.grok/stale-swaps/` and no deeper, so a person who reads this page and parks a file in
   that directory keeps it.
 
+#### The blind spot the design accepts
+
 The blind spot the design accepts is a holder this process cannot see in `/proc` at all: a
 sibling container's vim, which the PID namespace hides, or a process whose `/proc/<pid>/fd`
 is unreadable from here. Its buffer and the archived bytes both survive, and the move is
 reversible for a month; what goes missing is the E325 prompt that would have warned the
-next person to open the file. That window is narrow, it sits on a file every start
+next person to open the file.
+
+That window is narrow, it sits on a file every start
 overwrites anyway, and it is why the sweep stops at one name here.
+
+#### Do not hand-edit that file
 
 This is not an invitation to hand-edit the file. `config.toml` is re-rendered from
 `grok-config.toml.tftpl` on every start of this workspace, so an edit a person makes
@@ -1187,7 +1409,9 @@ there is overwritten by the next boot and touches no other workspace. The keys
 a person actually wants are template variables: `grok_subagent_max_concurrent`,
 `grok_subagent_max_depth` and `grok_subagents_lane` for the fan-out
 ([the fan-out seam](grok-build-and-agents.md#the-fan-out-seam)), and `grok_config_extra`
-for anything the managed block does not set. Change the seed or push the variable, then
+for anything the managed block does not set.
+
+Change the seed or push the variable, then
 restart; `bazelisk run //scripts:seed-dev-env -- --force` re-materializes the file from
 this checkout when the intent really is to rewrite it.
 
@@ -1221,16 +1445,25 @@ this checkout when the intent really is to rewrite it.
   injected instruction file the marker is pure provenance, because injected content has its
   HTML comments stripped anyway. The stage is best-effort: a read-only or missing `$HOME`
   changes nothing observable.
+
+#### The `/ez-learn` seed and the bundled catalog
+
 - `/ez-learn` is seeded on the same absent-only contract because nothing here supplies the
   command: no published source ships an upstream `/learn` at all, and the built-in memory
   family it copies is gated behind a memory store that is off by default, so those names
-  stay hidden. The bundle is a separate thing, and a real one: the CLI extracts
+  stay hidden.
+
+  - The bundle is a separate thing, and a real one: the CLI extracts
   platform skills such as `create-skill` into `~/.grok/bundled/`, read back with
   `SkillScope::Bundled`, and that catalog is fetched per identity/team behind an x.ai
   sign-in this stack deliberately does not have - LiteLLM is the only transport - so the
-  directory is never created and none of those skills ever lands. Writing the file is what
+  directory is never created and none of those skills ever lands.
+
+  - Writing the file is what
   makes each command exist, and it is seeded under the `ez-` name, which exists to stay
-  clear of the upstream ones. The same stage deletes a leftover `skills/learn/SKILL.md` from
+  clear of the upstream ones.
+
+  - The same stage deletes a leftover `skills/learn/SKILL.md` from
   before the rename, but only while it still carries the stack marker; a marker-free one is
   user-owned and stays. Deleting a seeded copy never keeps your own - the boot writes it
   back - so only dropping that marker does.
@@ -1242,17 +1475,24 @@ wall of file copies. The verbs are `scripts/lib/common.sh`'s own words - `== sec
 `-> phase`, `ok:`, `warning:`, `note:`, `error:`, and a closing `summary:` - so one
 vocabulary covers the host CLIs and the workspace boot.
 
+#### One library, handed to every body
+
 - The verbs live in one payload, `templates/common/boot-log.lib.sh`, and both twins hand it
   to every exec'd body as the `boot_log_lib` key of that body's `templatefile()` map: the
   startup body plus ten `coder_script`s in `workspace`
   (`templates/workspace/main.tf:509-510`), and eleven in the `devcontainer` twin, which adds
-  one body, `dind-bootstrap.sh.tftpl`. The two bodies nothing execs, `settings.json.tftpl` and
+  one body, `dind-bootstrap.sh.tftpl`.
+
+  The two bodies nothing execs, `settings.json.tftpl` and
   `grok-config.toml.tftpl`, take no such key.
 - A body takes the library as one bare line under its `set -u`. Terraform does not
   re-interpolate a map value, so the library's own dollar-brace shell text lands verbatim -
   no here-doc, no temp file, no second copy to drift. That is also why the escape rule below
   is absolute rather than a style preference: Terraform reads an interpolation token wherever
   it sits, a `.tftpl` comment included, so no comment in one of these files may spell one.
+
+#### The verbs and the shapes they print
+
 - The shapes, verbatim from `templates/common/boot-log.lib.sh:22-63`:
 
 ```text
@@ -1266,20 +1506,29 @@ error: <text>                                      boot_err <text>   (stderr)
 summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
 ```
 
+#### A writable directory under `$HOME`
+
 - The one precondition a body cannot inherit from another body is a writable directory
   under `$HOME`. The three per-owner Grok volumes mount *under* `~/.grok`, and the Docker
   daemon creates a bind mount's target path as `root:root`, so `~/.grok` arrives
-  root-owned on any boot where those mount points are new. The startup script chowns it
+  root-owned on any boot where those mount points are new.
+
+  - The startup script chowns it
   back to the home owner, and nothing orders that before a sibling body: the start
   scripts fan out in one errgroup, startup script included, which is the same
   `script_count=10` burst [The one-argument ceiling](#the-one-argument-ceiling) counts.
-  So a body that writes under `~/.grok` calls `boot_ensure_dir <dir>`
+
+  - So a body that writes under `~/.grok` calls `boot_ensure_dir <dir>`
   (`templates/common/boot-log.lib.sh:65-140`) rather than a bare `mkdir -p`. It creates
   the directory and takes back the ownership of each component of it that is not this
   boot's to write, walking from `$HOME` down, stopping below `$HOME` itself, and never
-  recursing into the mounted volumes that sit beside the target. It returns 1 and prints
+  recursing into the mounted volumes that sit beside the target.
+
+  - It returns 1 and prints
   `error:` when the directory stays unwritable, which is what lets a body refuse its own
-  `ok:`. `templates/common/terminal-launchers.sh.tftpl` is the case that earned it: a
+  `ok:`.
+
+  - `templates/common/terminal-launchers.sh.tftpl` is the case that earned it: a
   launcher that never landed is a code-server tab that dies with `exit code: 127`, and
   the body closed at `summary: 2 ok, 0 warnings, 0 failed` while writing nothing. The
   bodies that seed the two skill homes under `~/.coder` and `~/.agents` still `mkdir -p`
@@ -1289,17 +1538,24 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
   tellable apart by the name in those two lines (`boot_begin`'s first argument, echoed again in
   the `summary:`). `note:` is the only verb nothing counts, which is how a gated-off body
   reads: notes, then `summary: 0 ok, 0 warnings, 0 failed`.
+
+#### The 1 MiB log budget
+
 - The bound every body is written against: one agent's whole log stream - `startup_script`
   and every `coder_script` on it together - is 1 MiB. It is a Postgres check,
   `CONSTRAINT max_logs_length CHECK ((logs_length <= 1048576))` on `workspace_agents`
   ([dump.sql, v2.36.6](https://github.com/coder/coder/blob/v2.36.6/coderd/database/dump.sql#L2996)),
   and `workspace_agents` is the only table in that schema that carries agent logs at all, so
-  a script's lines draw on the same budget as the startup script's. The agent's uploader
+  a script's lines draw on the same budget as the startup script's.
+
+  - The agent's uploader
   holds the same number as a constant
   ([`codersdk/agentsdk/logs.go`](https://github.com/coder/coder/blob/v2.36.6/codersdk/agentsdk/logs.go),
   `maxBytesQueued = 1048576`) and counts it across every log source at once, returning before
   it appends when the queue is full: the lines you lose are the NEWEST ones, and once the
-  server answers `LogLimitExceeded: true` the uploader drops everything still queued. Hence
+  server answers `LogLimitExceeded: true` the uploader drops everything still queued.
+
+  - Hence
   the about-40-lines-per-body rule, and hence a command with a stream of its own is aimed at
   a file rather than at the log - the editor launch redirects to `/tmp/code-server.log`
   (`templates/workspace/code-server.sh.tftpl:67`) while the narration says the same thing in
@@ -1307,7 +1563,9 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
 - Nothing on the template side raises that budget, so do not re-add an argument for it.
   `coder_agent` in the provider this stack pins (`~> 2.18`, locked 2.18.0 in
   `templates/workspace/.terraform.lock.hcl`) has no log-size argument: `terraform plan`
-  answers `An argument named "log_buffer_size" is not expected here.` The agent-side constant
+  answers `An argument named "log_buffer_size" is not expected here.`
+
+  The agent-side constant
   is not read from the environment either - its own comment records the number as "taken from
   dump.sql `max_logs_length` constraint". Where to read the log and what a truncated one
   means is
@@ -1315,45 +1573,63 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
 
 ### Startup script templatefile rules
 
+#### The bodies and their braced escapes
+
 - Every script the template renders is a `templatefile()` body: the agent's
   `startup_script` (`startup.sh.tftpl`) and one body per `coder_script` -
   `agents-seed.sh.tftpl`, `code-server.sh.tftpl`, `gh-token-refresh.sh.tftpl`,
   `infisical-secrets.sh.tftpl`, `stack-fleet.sh.tftpl`, `stack-advisors.sh.tftpl`,
   `stack-hooks.sh.tftpl`, the two skill
-  families, and `dind-bootstrap.sh.tftpl` in the devcontainer twin. Every braced shell
-  expansion in one has to be written `$${name}`; the
-  one-dollar braced form is swallowed as an interpolation, in a comment or a `for` loop as
-  readily as in a command. The unbraced form (`$name`) needs no escape.
-  `infisical-secrets.sh.tftpl` is the sparsest body: its map is the single `boot_log_lib`
+  families, and `dind-bootstrap.sh.tftpl` in the devcontainer twin.
+
+  - Every braced shell expansion in one has to be written `$${name}`; the one-dollar braced
+  form is swallowed as an interpolation, in a comment or a `for` loop as readily as in a
+  command. The unbraced form (`$name`) needs no escape.
+
+  - `infisical-secrets.sh.tftpl` is the sparsest body: its map is the single `boot_log_lib`
   key (`templates/workspace/main.tf:783-785`), so apart from the one line that takes it every
   braced expansion in it is shell text, none of it interpolates, and the rendered bytes are
   the same for every workspace.
+
+#### What may interpolate
+
 - Only the variables `main.tf` passes interpolate. The `workspace` startup script gets
   eleven: `boot_log_lib`, `grok_config`, `notes_setup`, `tmux_conf`,
   `grok_build_delegation_skill`, `coder_agents`,
   `mcp_cache_proxy`, `repo_url`, `additional_repos`, `vscode_settings`, `infisical_hook`.
-  The `devcontainer` twin adds `dc_dir` and `build_devcontainer`. The payloads of the other
-  families are not among them: `ez_learn_skill`, `ez_skillify_skill` and
-  `ez_create_skill_skill` belong to the `coder_script.stack_skills` map,
-  `grok_build_agents` to `coder_script.agents_seed`, the fleet's thirteen to
-  `coder_script.stack_fleet`, the advisors' seven (`documenter_skill`, `documenter_agent`,
-  `performance_optimizer_skill`, `debugger_skill`, `migrator_skill`, `ez_code_index_skill`,
-  `ez_code_index_py`) to `coder_script.stack_advisors`, and the guards' six
-  (`evo_t1_hooks_json`, `secret_guard_sh`, `dangerous_command_guard_sh`,
-  `post_edit_format_sh`, `selective_test_runner_sh`, `deny_patterns_txt`) to
-  `coder_script.stack_hooks`. Each of those `chomp(file())` calls sits inside its own block
+  The `devcontainer` twin adds `dc_dir` and `build_devcontainer`.
+
+  The payloads of the other families are not among them:
+
+  - `ez_learn_skill`, `ez_skillify_skill` and `ez_create_skill_skill` belong to the
+    `coder_script.stack_skills` map
+  - `grok_build_agents` to `coder_script.agents_seed`
+  - the fleet's thirteen to `coder_script.stack_fleet`
+  - the advisors' seven (`documenter_skill`, `documenter_agent`,
+    `performance_optimizer_skill`, `debugger_skill`, `migrator_skill`,
+    `ez_code_index_skill`, `ez_code_index_py`) to `coder_script.stack_advisors`
+  - the guards' six (`evo_t1_hooks_json`, `secret_guard_sh`,
+    `dangerous_command_guard_sh`, `post_edit_format_sh`, `selective_test_runner_sh`,
+    `deny_patterns_txt`) to `coder_script.stack_hooks`.
+
+  Each of those `chomp(file())` calls sits inside its own block
   rather than behind a `local.`, because a size reader credits a payload by the
   `chomp(file("${path.module}/name"))` literal it can see in the body's own block, and
   follows a `local.` exactly one hop (`scripts/lib/startup_size.awk`, invariants).
 - The list above is checked, not trusted: `//tests:bats_tftpl_interpolation_test` pulls the
   keys of the `workspace` `startup_script` map out of the checker's own reading of
-  `main.tf` and diffs them against the names this page lists. The same suite reads every
+  `main.tf` and diffs them against the names this page lists.
+
+  The same suite reads every
   `templatefile()` call in both twins, takes the keys each map declares and the names each
   body interpolates, and fails on either direction of drift. Run the checker directly to
   see the offending body and line:
   `python3 scripts/lib/tftpl_interpolation.py templates --strict`.
 - That is why the `.git` suffix is stripped with `sed` rather than the shorter
   `${leaf%.git}`: a braced expansion would add an interpolation `main.tf` does not pass.
+
+#### How values arrive
+
 - The repository URLs arrive as rendered literals and are read through a *quoted* heredoc,
   so no shell quoting has to survive and the value is only ever expanded as data. An empty
   Git repository field means a home-directory workspace, so the whole clone stage is
@@ -1378,7 +1654,9 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
   alongside this one and are not ours to take over. The clone folder itself is chowned too,
   or a root agent leaves it root-owned and the clone dies writing `.git` inside it.
 - git never runs as root, so the credentials it consults - a helper, `~/.git-credentials`,
-  ssh keys - are the workspace user's. `HOME` is passed explicitly through `env` because
+  ssh keys - are the workspace user's.
+
+  `HOME` is passed explicitly through `env` because
   `runuser` keeps the invoker's environment; a root agent would otherwise hand git `/root`
   and miss those files entirely. An empty prefix means "run git directly", which is correct
   for a non-root agent and for a root agent with no derivable workspace user.
@@ -1413,17 +1691,22 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
 - Nothing here changes what the build does. With the toggle on, a clone carrying no
   devcontainer configuration fails the build either way, and the editor hangs off the dev
   container, so no dev container also means no editor and no in-container terminal; the
-  warning is only early notice in the same log the clone warnings use. With the toggle off
-  the same miss is expected and the editor opens the clone directly.
+  warning is only early notice in the same log the clone warnings use.
+
+  With the toggle off the same miss is expected and the editor opens the clone directly.
 
 ### The Infisical boot fetch
 
 What the vault is, how to adopt it, and how to rotate a key in it is
 [operate/secrets.md](operate/secrets.md). This is only what the two templates do about it.
 
+#### The two gates
+
 - Two gates, both `default = false`: `infisical_enabled` decides whether the vault is part
   of the workspace at all, `infisical_pull_on_start` only whether a start waits on it
-  (`templates/workspace/coder.tf:207-274`). Neither is inferred from absence the way
+  (`templates/workspace/coder.tf:207-274`).
+
+  Neither is inferred from absence the way
   `OBSERVABILITY_ENABLED` is: that bundle ships on and an explicit `false` drops it, while
   here an absent key is off, and `push-template.sh` therefore passes no `--var` at all
   rather than passing `false` (`scripts/push-template.sh:623-630`).
@@ -1436,31 +1719,52 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   reason every credential in `main.tf` rides it: Coder stores a rendered
   `coder_script.script` as text on the server, so a value interpolated into one would sit in
   Coder's database in plain sight, while an agent-env value is rendered per start and never
-  written to disk (`templates/workspace/main.tf:687-691`). The body accordingly declares no
+  written to disk (`templates/workspace/main.tf:687-691`).
+
+  The body accordingly declares no
   Terraform variable of its own - its `templatefile()` map is the single `boot_log_lib` key
   - and the seven keys the
   `env = merge({...})` block hands it are its whole interface
   (`templates/workspace/main.tf:692-706`, `:778-780`).
+
+#### The body's steps, in order
+
 - The body runs in this order, and every step that cannot proceed prints what it needs and
-  exits 0: no `infisical` binary in the image (`templates/common/infisical-secrets.sh.tftpl:8` - the golden image bakes the pinned release, so that is an image older than `INFISICAL_CLI_VERSION`),
-  the six-name not-configured guard (`:14-20`), the `INFISICAL_PULL_ON_START` gate
-  (`:27-30`), no `HOME` to write into (`:32-36`), the Universal Auth login as the machine
-  identity (`:61-65`), the dotenv export into a `mktemp` dump (`:45`, `:67`), and the publish
-  (`:245`). Both temp files die in the `EXIT` trap whatever happens between the `mktemp` and
-  the `mv` (`:45-52`).
+  exits 0:
+
+  1. no `infisical` binary in the image (`templates/common/infisical-secrets.sh.tftpl:8` -
+     the golden image bakes the pinned release, so that is an image older than
+     `INFISICAL_CLI_VERSION`)
+  2. the six-name not-configured guard (`:14-20`)
+  3. the `INFISICAL_PULL_ON_START` gate (`:27-30`)
+  4. no `HOME` to write into (`:32-36`)
+  5. the Universal Auth login as the machine identity (`:61-65`)
+  6. the dotenv export into a `mktemp` dump (`:45`, `:67`)
+  7. the publish (`:245`)
+
+  Both temp files die in the `EXIT` trap whatever happens between the `mktemp` and the
+  `mv` (`:45-52`).
 - A CLI error is scrubbed before it is printed. The CLI can echo the bearer token back in an
   error line, and that line lands in the workspace's script log, so both the token and the
   client secret are replaced with `<token>` / `<secret>` on their way to stderr
   (`templates/common/infisical-secrets.sh.tftpl:68-77`).
+
+#### What a successful fetch writes
+
 - `~/.infisical/agent.env` is what a successful fetch produces: mode `0600` inside a `0700`
   `~/.infisical` (`templates/common/infisical-secrets.sh.tftpl:37-40`, `:92`, `:244-246`), written by nobody
   else, staged as `~/.infisical/.agent.env.XXXXXX` in that same directory and `mv`'d in, so
   a reader never sees a half-written file - the same write-then-rename discipline
-  `~/.grok/notes-setup.sh` uses above. Its one reader is `~/.bashrc`, which sources it under
+  `~/.grok/notes-setup.sh` uses above.
+
+  Its one reader is `~/.bashrc`, which sources it under
   `set -a` (`templates/workspace/startup.sh.tftpl:76-80`), and that login shell is what every
   terminal, tmux pane and command in the workspace inherits from. The file sits on the
   workspace's own home volume (`templates/workspace/main.tf:1379-1382`), where every shell
   that workspace runs can read it.
+
+#### Re-emitting the export
+
 - Nothing is copied out of the export line by line: each value is taken apart and re-emitted
   as `export KEY='value'` under quoting with no escape hatch, because the CLI's own dotenv
   writer leaves an embedded single quote raw, which makes its output either unsources or
@@ -1472,7 +1776,9 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   line (`templates/common/infisical-secrets.sh.tftpl:180`): the vault's own address and
   Universal Auth pair are plausible keys in the very project being exported, and they must
   not be republished as workspace environment through a file, when the agent environment is
-  the place Coder renders them per start (`:86-87`). The log line that follows reports a key
+  the place Coder renders them per start (`:86-87`).
+
+  The log line that follows reports a key
   *count*, never a value, and counts what the publish loop actually wrote (`:249-251`).
 - The `[ -f ... ]` test for that file lives **inside** the appended `.bashrc` line rather
   than around it, because the startup script and the fetch are two `coder_script`s with no
@@ -1480,13 +1786,20 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   [The one-argument ceiling](#the-one-argument-ceiling)): a first boot whose startup script
   wins the race still ends up with a working hook, and the leading `grep -qs` keeps a later
   start from appending the block twice (`templates/workspace/startup.sh.tftpl:64-80`).
+
+#### Best-effort, and bounded
+
 - The fetch is best-effort and cannot fail a workspace start. `timeout = 120`
   (`templates/workspace/main.tf:730`) bounds the realistic slow case, a vault container
   still coming up, and every failure path - a refused login, an export that came back empty,
   an `mv` that did not land - prints one line, exits 0, and leaves the boot running on
   whatever `agent.env` the previous start wrote
   (`templates/common/infisical-secrets.sh.tftpl:62-65`, `:68-77`, `:252-254`).
+
   [operate/secrets.md](operate/secrets.md) states the same bound from the other side.
+
+#### Changing the body
+
 - To change the body, edit `templates/common/infisical-secrets.sh.tftpl` and re-materialise
   it with `bazelisk run //scripts:push-template`. It is not one of the twins:
   `scripts/lib/template-push.sh:188` stages the common copy beside each `main.tf` and
@@ -1508,7 +1821,9 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   in this Coder release and are not reorderable.
 - A **GitHub reauth** external app (`order = 7`, `/icon/github.svg`) opens Coder's
   `/external-auth/<id>` page in a slim window on the user's Coder session: connect, or
-  **Reauthenticate** when the account is already linked. It stays on the main agent so
+  **Reauthenticate** when the account is already linked.
+
+  It stays on the main agent so
   a failed clone (or a `devcontainer` subagent that never starts) still leaves the
   button on the workspace page. Device-flow login is not the App install: with the
   injected App (id `github`) that page prints "You must install the GitHub App to
@@ -1523,14 +1838,18 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   metadata tiles sampled every 30s - four `coder stat` calls (`cpu --host`,
   `mem --host`, `disk --path /home/coder`, `cpu --host`) and two awk one-liners for swap
   and load average.
-- Those four are the whole bar. The proxy address reaches the operator as the `litellm`
+- Those four are the whole bar.
+
+  The proxy address reaches the operator as the `litellm`
   item on the `workspace_info` tile below (`value = var.litellm_url`), a read-out
   rather than a proxied app, so health-checking the proxy is
   `curl http://host.docker.internal:4000/health/liveliness` on the stack host.
 - `coder_metadata.workspace_info` shows the image, the cloned repository (in `workspace`,
   or `none` when the Git repository field is empty), the LiteLLM URL, the default Grok
   model, whether DinD is `on (tcp://dind:2375)` or `off`, and - redacted - which key is
-  wired in. A misconfigured workspace is therefore visible in the UI without shell
+  wired in.
+
+  A misconfigured workspace is therefore visible in the UI without shell
   access. `devcontainer` adds a `devcontainer folder` tile and always reads
   `on (tcp://dind:2375)` for Docker-in-docker.
 
@@ -1542,39 +1861,60 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   lives in a sibling `code-server.sh.tftpl` and is rendered with `templatefile()`
   (workspace: `{ editor_folder, code_server_version }`; devcontainer: that plus
   `settings_b64`). Do not wrap that `templatefile()` in `chomp()`.
+
+#### The pinned release
+
 - Both twins pin the editor release in one `code_server_version` local in their own
   `main.tf`, and the script hands that value to the upstream installer as
   `--version`. Without the flag `https://code-server.dev/install.sh` follows
   `latest`, so a release nobody reviewed would reach every new workspace with no
   commit in this repo - the same reason the Registry module was forked out. The two
-  locals carry the same value and `//tests:bats_coder_apps_test` fails a drift. To
+  locals carry the same value and `//tests:bats_coder_apps_test` fails a drift.
+
+  To
   bump: read `https://github.com/coder/code-server/releases`, edit both locals,
   `bazelisk test //tests:bats_coder_apps_test`, `bazelisk run //scripts:push-template`,
   then restart the workspaces. The pin is a template value and deliberately stays out
   of `images/dev/tool-versions.env`, where every key has to be an `images/dev/Dockerfile`
   `ARG` and this tool ships in no image at all.
+
+#### The workspace fork: the install guard and the launch
+
 - The `workspace` fork installs code-server **only when the pinned release is
   missing** from `/home/coder/.local/share/code-server`, and starts it with
   `--auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened <folder>`,
-  passing no settings payload. The guard tests
+  passing no settings payload.
+
+  - The guard tests
   `/home/coder/.local/share/code-server/lib/code-server-<version>/bin/code-server`,
   the directory the installer unpacks, because `bin/code-server` beside it is a
   symlink to whatever release was installed last: a guard on that symlink would keep
-  a warm volume running its first release after a bump. A bump therefore re-downloads
+  a warm volume running its first release after a bump.
+
+  - A bump therefore re-downloads
   on the next start and leaves the previous release under `lib/`; removing that old
-  directory by hand is what reclaims the space. Before that launch it `mkdir -p`s the
+  directory by hand is what reclaims the space.
+
+  - Before that launch it `mkdir -p`s the
   folder and, when the folder is not `/home/coder`, waits up to 60 s for
   `<folder>/.git` so a first-start
-  clone and the editor no longer race. That wait loop increments with
+  clone and the editor no longer race.
+
+  - That wait loop increments with
   `waited=$((waited + 1))` (one dollar) inside the tftpl: `templatefile()` interpolates
   `${…}` and leaves `$((` alone. `$$((` would expand `$$` to the PID. `coder_agent.dir` stays unset: the agent would
-  chdir there before `startup.sh`, and a missing clone folder would fail the agent. The
+  chdir there before `startup.sh`, and a missing clone folder would fail the agent.
+
+  - The
   editor's settings are a per-start merge: the boot
   (`templates/workspace/startup.sh.tftpl`) writes `~/.local/share/code-server/User/settings.json`
   as a real file from this workspace's render, then layers the per-owner
   `vscode-settings-<owner-id>` seed (`~/.shared/vscode/settings.json`, where an
   operator's API keys live) over it, then re-asserts `workbench.colorTheme` from the
   render last so the seed cannot veto this workspace's own theme.
+
+#### The devcontainer fork, and the app URL
+
 - The `devcontainer` fork has no persistent prefix to reuse - both toggle modes rebuild
   the container that hosts the editor - so it installs the pinned release fresh under
   `/tmp/code-server` on every start, and bakes the settings seed as base64 into `settings_b64` (empty when the
@@ -1591,13 +1931,20 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   stay gated.
 - The `devcontainer` editor cannot set `agent_id` with
   `local.use_dc ? coder_devcontainer.repo[0].subagent_id : coder_agent.main.id`.
-  `coder_devcontainer.repo` is also gated on `start_count`, so the stop /
-  template-import ephemeral plan has an empty tuple even with the toggle on
-  (the default), and that ternary then fails with `Invalid index` / `empty
-  tuple`. `local.code_server_agent_id` is
-  `concat(coder_devcontainer.repo[*].subagent_id, [coder_agent.main.id])[0]`:
-  the sub-agent when that resource exists, the parent agent on the stopped
-  page. The start-gated `coder_script.code_server` uses the same local.
+
+  `coder_devcontainer.repo` is also gated on `start_count`, so the stop / template-import
+  ephemeral plan has an empty tuple even with the toggle on (the default), and that
+  ternary then fails with `Invalid index` / `empty
+  tuple`.
+
+  `local.code_server_agent_id` is
+  `concat(coder_devcontainer.repo[*].subagent_id, [coder_agent.main.id])[0]`: the
+  sub-agent when that resource exists, the parent agent on the stopped page.
+
+  The start-gated `coder_script.code_server` uses the same local.
+
+#### The icon and its 256-byte column
+
 - The custom icon `templates/common/vscode-alt.svg` travels as a
   `data:image/svg+xml;base64` data URL read from `templates/common/`. Coder serves icons
   only from its bundled `/icon/*` set or from a full `https`/`data` URL, and that icon is
@@ -1612,14 +1959,19 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   is missing, onto the per-owner volume `vscode-settings-<owner-id>`, where it stays as
   the overlay below. Startup chowns that volume (and the three `~/.grok` state volumes)
   to the home owner before the write: an empty Docker named volume is `root:root` 755, and the agent runs
-  as `coder`. A failed write logs a warning instead of running `jq`/`python`
+  as `coder`.
+
+  A failed write logs a warning instead of running `jq`/`python`
   against a file that was never created.
 - code-server's User settings file, `~/.local/share/code-server/User/settings.json`, is
   a real file on this workspace's own home volume. Each start writes it in three passes:
-  the per-workspace render (which carries `workbench.colorTheme` from the **Editor colour
-  theme** field), then every key from that shared overlay on top so an API key entered
-  once stays, then the theme re-asserted last so the overlay can never veto this
-  workspace's own theme. The write is atomic (`<path>.tmp` then `mv`).
+
+  1. the per-workspace render (which carries `workbench.colorTheme` from the **Editor
+     colour theme** field)
+  2. every key from that shared overlay on top so an API key entered once stays
+  3. the theme re-asserted last so the overlay can never veto this workspace's own theme
+
+  The write is atomic (`<path>.tmp` then `mv`).
 - A symlink you made yourself at that path is left alone and named on stdout: the stack
   creates no symlink, and it never replaces one.
 - A built dev container sees neither the volume nor that overlay, so it is the one place
@@ -1642,6 +1994,9 @@ Template-side facts only; the long prose lives in
 - `terminal.integrated.defaultProfile.linux` is `"tmux"`. The automation profile stays
   `/bin/bash`, so build/tasks commands never wait on tmux. Plain `bash` and **Grok
   Build** stay available as extra profiles.
+
+### The two launcher helpers
+
 - Two helpers are seeded into `~/.grok/bin` on every start, both `chmod +x`:
   `vscode-terminal-tmux` (the default profile) and `grok-build-terminal`. The two
   profiles in `settings.json` exec exactly those paths, so the seed body reads both
@@ -1652,21 +2007,28 @@ Template-side facts only; the long prose lives in
   re-joins one of that folder's sessions while no client is attached to it, oldest
   first (the closed-tab rejoin: an unattached session is reused even while sibling
   terminals are live); it takes the next numbered sibling, `vscode-<folder>-<hash>-2`,
-  `-3`, ... only when every session of the folder already has a client. With no
+  `-3`, ... only when every session of the folder already has a client.
+
+  With no
   `tmux` on PATH it falls back to a plain login shell.
   Before it reads who is attached it detaches any client on those sessions that has
   reported no activity for over 6 hours (`EVO_TMUX_STALE_AFTER`, in seconds): a tab
   whose browser side went away can leave its client attached and draining nothing,
   and one such client is enough to keep a free session looking busy forever.
+
   Because the profile runs inside a session rather than in the tab's own process,
   closing a tab detaches the client and leaves whatever was running alive.
 - `grok-build-terminal` keeps its own session, `grok-build-<folder>-<hash>`, keyed off
   the repository root found with `git rev-parse --show-toplevel` (or the terminal's own
-  `$PWD` outside a clone) and runs `grok --cwd <that root>` inside it. It is the
+  `$PWD` outside a clone) and runs `grok --cwd <that root>` inside it.
+
+  It is the
   always-reattach case on purpose: every tab of the clone watches the one agent run.
   The session is created detached and attached in a second call, so the tab that
   brings the server up never takes a running agent down with it, and it makes the same
-  stale-client sweep its sibling does. With no `tmux` on PATH, and on any create or
+  stale-client sweep its sibling does.
+
+  With no `tmux` on PATH, and on any create or
   attach it cannot complete, it hands the tab a plain login shell.
 - The seed also pins `terminal.integrated.cwd` and `terminal.integrated.splitCwd` to the
   opened folder, adds a `terminal.integrated.env.linux` block, and carries a
@@ -1681,9 +2043,13 @@ Template-side facts only; the long prose lives in
   target, `/workspaces/<repo-name>`.
 - Keep it that way unless a workspace genuinely needs two trees open at once.
 
+### The `--additional-repos` escape hatch
+
 `--additional-repos` is the opt-in escape hatch for the service-and-the-library-it-uses
 case. It takes a comma-separated list (`"url1,url2"`), one URL per line works too, and
-the spaces around each entry are trimmed. It joins the list into one `additional_repos`
+the spaces around each entry are trimmed.
+
+It joins the list into one `additional_repos`
 parameter, so `"a , b"` and `"a\nb"` both arrive in the template as `a,b`.
 
 Without the flag the script passes exactly the parameters it used to pass, and the create
@@ -1717,7 +2083,9 @@ repeating it.
 - An `ssh://` or `git@` URL reaches nothing here - this stack provisions no SSH keys.
 - The path is Coder's external-auth broker. With no `coder.env`, Coder CE injects
   a GitHub App whose id is `github`, and both templates declare that id by
-  default. A custom OAuth app lives in `coder.env` (beside `docker-compose.yml`);
+  default.
+
+  A custom OAuth app lives in `coder.env` (beside `docker-compose.yml`);
   `push-template.sh` forwards `CODER_EXTERNAL_AUTH_0_ID` so the templates declare
   the same id. Link that provider to **both** templates.
 - Fill every `CODER_EXTERNAL_AUTH_0_*` key or omit them all. A defined-but-empty key
@@ -1725,14 +2093,20 @@ repeating it.
 - Then connect your GitHub account. On a running workspace, click **GitHub reauth** on
   the agent bar (Coder v2.36's `/external-auth/<id>` page; use **Reauthenticate** if the
   page says you are already authenticated). First-time connect also works from the
-  workspace create/update form and from Settings -> Tokens / external auth. Device-flow
+  workspace create/update form and from Settings -> Tokens / external auth.
+
+  - Device-flow
   login is not enough for private repos: install Coder's GitHub App with **Install
   GitHub App** on the same bar (or open
   [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new)),
-  grant those repositories, then restart. An empty
+  grant those repositories, then restart.
+
+  - An empty
   [github.com/settings/apps](https://github.com/settings/apps) page is not a misconfiguration:
   with `auth_type=client_secret` Coder has no App to install, and Coder's built-in GitHub
-  App only earns a page there once it is installed on the account. Until something is
+  App only earns a page there once it is installed on the account.
+
+  - Until something is
   installed and granted, that page simply has nothing to **Configure**, and the credential
   the provider mints still authenticates - it just cannot write to a private repository.
 - Each workspace's agent injects a `GIT_ASKPASS` helper pointing at the `coder` binary it
@@ -1754,6 +2128,8 @@ git never reads `GH_TOKEN` itself: it asks its credential helpers in order and s
 answers wins outright - everything under it exists but a real push never reaches it, which
 is the whole difference between a credential that works and a push that works.
 
+#### The five slots, in order
+
 1. The credential helper configured for `https://github.com`. Both template twins seed
    `~/.gitconfig` at startup, for `github.com` and `gist.github.com` alike:
 
@@ -1765,6 +2141,7 @@ is the whole difference between a credential that works and a push that works.
 
    The blank first value is git's reset marker: it drops any helper inherited from a
    lower-precedence config file, and git takes the **last** value it finds for that host.
+
    The startup seed rewrites both keys every start (idempotent), and `github-auth fix`
    installs the same form, leaving a helper that already ignores the pair alone. This
    helper is the slot that wins, and the clearing is the subject of the paragraph below.
@@ -1772,7 +2149,9 @@ is the whole difference between a credential that works and a push that works.
    demand; where it answers `unrecognized subcommand` git gets no answer at all and falls
    through to prompting, which is where `could not read Username` comes from.
 3. The `GH_TOKEN`/`GITHUB_TOKEN` pair - reached through the helper, because
-   `gh auth git-credential` echoes either name whenever one is set. A helper that does not
+   `gh auth git-credential` echoes either name whenever one is set.
+
+   A helper that does not
    clear the pair therefore answers with the injected copy and never asks the store: that
    is the shadow, and it is why a hand-edited helper or a hand-rolled askpass script is the
    wrong instrument (see
@@ -1784,13 +2163,19 @@ is the whole difference between a credential that works and a push that works.
    to be certainly fresh.
 
 **Why the env pair goes stale.** Coder injects `GH_TOKEN`/`GITHUB_TOKEN` into the agent
-environment when the workspace starts. That is a GitHub App user-to-server token, it
+environment when the workspace starts.
+
+That is a GitHub App user-to-server token, it
 expires about an hour later, and the injected copy is never refreshed for the life of the
 workspace: `gh_token_refresh` re-mints on start and every 20 minutes into the gh auth store
 and the gitconfig helper, never into the environment, and no process can rewrite another
-process's environment anyway. So for most of a workspace's life the helper echoes a dead
+process's environment anyway.
+
+So for most of a workspace's life the helper echoes a dead
 token, github.com answers `remote: Invalid username or token. Password authentication is
-not supported for Git operations.`, and the healthy store beside it is never asked. `gh`
+not supported for Git operations.`, and the healthy store beside it is never asked.
+
+`gh`
 consults the same pair before its own store, so inside that workspace `gh` needs
 `env -u GH_TOKEN -u GITHUB_TOKEN gh <args>` for the whole of its life; `git` needs no
 prefix once the helper is the env-proof form above, which is what `fix` installs.
@@ -1799,16 +2184,22 @@ prefix once the helper is the env-proof form above, which is what `fix` installs
 store goes stale: it re-mints on demand and answers with a live token, or with the
 re-authentication URL and exit 1; with no connected account the refresh script prints its
 one note (pointing at **GitHub reauth**, and at **Install GitHub App** when the injected
-App is in use) and exits 0, and mints nothing. After a reconnect, restart the workspace (or
+App is in use) and exits 0, and mints nothing.
+
+After a reconnect, restart the workspace (or
 wait for the next `gh_token_refresh`) so the injected pair and the store match the new
-grant. The refresh script unsets `GH_TOKEN`/`GITHUB_TOKEN` before
+grant.
+
+The refresh script unsets `GH_TOKEN`/`GITHUB_TOKEN` before
 `gh auth login --with-token`, because gh refuses stdin while those names are set.
 
 **A token that authenticates still has to be granted.** A credential that was never
 GRANTED the repository fails clone and push, and reads prove nothing about write: a private
 repository hidden from the credential answers 403 or 404 on both lanes, and a public one
 answers a read probe with 200 for any authenticated caller, so a read-only credential
-passes a read test while every write to that repo is denied. `check` therefore asks the
+passes a read test while every write to that repo is denied.
+
+`check` therefore asks the
 write question directly: one GET of `<repo>.git/info/refs?service=git-receive-pack`, the
 endpoint `git push` itself negotiates through.
 
@@ -1817,14 +2208,20 @@ endpoint `git push` itself negotiates through.
 Every one prints slot names, credential kinds and verdicts, and none of them prints a
 token. Repo convention: `bazelisk run //scripts:github-auth -- <subcommand> ...`.
 
+#### Reading the chain, and repairing it
+
 - `bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<slot>]` -
   read-only. Inside a workspace or the contributor devcontainer it runs SELF mode with no
   docker and prints `self:` lines for this environment's own chain; on the stack host it
   enumerates the labeled workspace containers, or probes a named container alone.
   `--source=chain|env|gh|mint` names one slot (chain is the default), and flags may go
-  before or after the positionals. The last line is `push would WORK` or
+  before or after the positionals.
+
+  The last line is `push would WORK` or
   `push would FAIL`, keyed to the credential git would really send, and check exits
-  non-zero on FAIL. The verdicts are PUSH-READY (200 advertising refs), REFUSED-GRANT
+  non-zero on FAIL.
+
+  The verdicts are PUSH-READY (200 advertising refs), REFUSED-GRANT
   (403, it authenticates and every write is denied), NOT VISIBLE (404, hidden or absent),
   REJECTED (401, the credential itself is refused, as an expired mint is), or no useful
   answer (offline).
@@ -1835,17 +2232,25 @@ token. Repo convention: `bazelisk run //scripts:github-auth -- <subcommand> ...`
   external-auth, writes the gh auth store, points git's `github.com` and `gist.github.com`
   credential helper at that store through a form that clears the env pair first, then
   re-runs the write probe and prints the verdict again, so it proves itself. Idempotent.
+
   When nothing can be minted AND the store is empty its line begins `HANDOFF` and names the
   three clicks the human owes it.
+
+#### Installing a pasted PAT, and the full usage
+
 - `bazelisk run //scripts:github-auth -- auth <container> [-]` - STACK HOST ONLY (it
   drives `docker exec`). Installs a pasted PAT on stdin into that one workspace, then
   re-installs the env-proof helper that `gh auth setup-git` would otherwise overwrite.
   Legitimate only once `check` has already answered REFUSED-GRANT, NOT VISIBLE or REJECTED:
   the repo rule is that a workspace's credential comes from the External Auth provider, so
-  no verdict short of those justifies a pasted token. It REPLACES the per-start minted
+  no verdict short of those justifies a pasted token.
+
+  It REPLACES the per-start minted
   credential, the next `gh_token_refresh` rewrites the store while an account is connected,
   and `gh auth logout` or a rebuild clears it - treat it as a stand-in and rotate or remove
-  it in GitHub -> Settings -> Applications when the work ends. The PAT arrives on stdin only
+  it in GitHub -> Settings -> Applications when the work ends.
+
+  The PAT arrives on stdin only
   (the `-` form, or the hidden prompt): argv is readable through `ps` and keeps the token in
   shell history.
 - `bazelisk run //scripts:github-auth -- -h` - full usage: the verdict kinds, both argument
@@ -1855,6 +2260,7 @@ The lines `check` prints are documented with the failures they explain, in
 [troubleshooting.md](troubleshooting.md#private-repo-clone-or-push-denied-while-a-credential-is-present---the-grant-not-the-format):
 `git would send this credential (source: ...)`, `NO GitHub credential ...`,
 `[shadowed: ...]`, `push would WORK` / `push would FAIL`, and the dead-`GIT_ASKPASS` note.
+
 `gh` refusing a healthy store is its own entry there, at
 [`gh` answers `Bad credentials`](troubleshooting.md#gh-answers-bad-credentials---the-stale-env-pair-not-the-store),
 and a workspace with no `gh` binary at

@@ -3,9 +3,14 @@
 <!-- managed-by: evo-t1-coder-stack -->
 
 These constraints apply to every change in this repository and to any repository this agent is
-asked to convert. The full procedure is the `trunk-refactor` skill
-(`skills/trunk-refactor/SKILL.md`, reachable as `/trunk-refactor`); the prose is
-`docs/workflows/trunk-feature-flags-refactor.md`; the rule of record is `docs/branching.md`.
+asked to convert.
+
+- The full procedure is the `trunk-refactor` skill
+  (`skills/trunk-refactor/SKILL.md`, reachable as `/trunk-refactor`)
+- The prose is `docs/workflows/trunk-feature-flags-refactor.md`
+- The rule of record is `docs/branching.md`
+
+## Branches, not environments
 
 1. `main` is the only long-lived branch and is always deployable. A merge to `main` is a
    deployable state.
@@ -18,6 +23,9 @@ asked to convert. The full procedure is the `trunk-refactor` skill
    the agreed branch lifetime is a cleanup candidate, not a backlog. Commit each unit as it lands
    with that unit's check green: a local commit is free, so the history is written while the work
    happens. The push is the boundary and waits for the pull request.
+
+## Flags carry the incomplete work
+
 4. Incomplete or experimental work lands on `main` behind a flag that defaults off. Use the
    first mechanism that fits, in this order: environment variable with a dotenv sample, compose
    `profiles:`, a checked-in `config/flags.yaml` (see `config/flags.yaml.example`), then the
@@ -25,13 +33,22 @@ asked to convert. The full procedure is the `trunk-refactor` skill
    database needs an explicit operator request.
 5. Every flag carries an owner and an expiry, is read at one seam, is exercised on and off by the
    gate, and is deleted with its off-path in a later `chore:` change.
+
+## Promotion and cleanup
+
 6. Promotion applies the same commit or tag to a different environment. Two environments never
    build two artifacts.
 7. Branch cleanup is part of the work: inventory every non-trunk branch, port what is valuable
    (behind a flag when it is unfinished), and present the rest for deletion with its tip SHA
    recorded.
+
+## Never do these
+
 8. Never force-push, never rewrite history on a shared branch, never delete a remote branch
    without explicit confirmation, never merge your own pull request.
+
+## Secrets, gates, and scope
+
 9. No secret in a committed file - the flags file included. Samples carry key names and inert
    defaults; read a value with the operator CLI that prints it.
 10. Keep the existing gates green (`bazelisk test //:test-fast`, `//:lint`, `//:test-all`) and

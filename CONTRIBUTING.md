@@ -28,20 +28,23 @@ deployable to the stack host.
   to cherry-pick.
 - `fix/…` means a defect that is already on `main`.
 
-GitHub is where that is enforced, and it is configured in two layers. Branch
-protection on `main` is what keeps those rules honest: it is set to require a pull
-request before a push, and to require the Bazel status checks to pass before the
-merge button unlocks — `bazelisk test //:test-fast`,
-`bazelisk test //:lint --test_tag_filters=manual` and the full gate
-`bazelisk test //:test-all`, the same commands CI runs, with `--config=ci`, inside
-the golden image. `bazelisk run //scripts:pre-commit` is that gate one step earlier,
-on your machine, and `.githooks/pre-push` runs the full `//:test-all` for you.
-`development`, `staging` and `production` are GitHub *Environments*, not branches:
-each one is where a future protected secret and its protection rules would live,
-and `production` stays restricted to `main` (or to tags cut on it) with required
-reviewers, so it can only ever deploy what `main` already proved. Nothing in this
-repo declares an environment or a deploy job today, so an environment branch would
-buy nothing and cost a re-test.
+### Where GitHub enforces it
+
+GitHub is where that is enforced, and it is configured in two layers.
+
+- Branch protection on `main` is what keeps those rules honest: it is set to require a pull
+  request before a push, and to require the Bazel status checks to pass before the merge button
+  unlocks — `bazelisk test //:test-fast`, `bazelisk test //:lint --test_tag_filters=manual` and
+  the full gate `bazelisk test //:test-all`, the same commands CI runs, with `--config=ci`, inside
+  the golden image.
+- `bazelisk run //scripts:pre-commit` is that gate one step earlier, on your machine, and
+  `.githooks/pre-push` runs the full `//:test-all` for you.
+- `development`, `staging` and `production` are GitHub *Environments*, not branches: each one is
+  where a future protected secret and its protection rules would live, and `production` stays
+  restricted to `main` (or to tags cut on it) with required reviewers, so it can only ever deploy
+  what `main` already proved.
+- Nothing in this repo declares an environment or a deploy job today, so an environment branch
+  would buy nothing and cost a re-test.
 
 ## How to develop
 
@@ -50,30 +53,38 @@ One Linux golden image (`images/dev/Dockerfile`, pins in
 GitHub — the same image the Coder workspaces boot. Pick either path; you install nothing:
 
 - **Contributor dev container.** Open the checkout in VS Code (or a compatible editor) with
-  Dev Containers and *Reopen in Container*. `.devcontainer/devcontainer.json` builds
-  `../images/dev/Dockerfile` and pulls BuildKit's layer cache from the image CI publishes,
-  runs as `coder`, sets `EVO_T1_DEVCONTAINER=1`, mounts the docker socket, and keeps
-  Bazel's disk, repository and output caches plus the package-manager download caches in
-  named volumes so a rebuild does not repay a cold cache. Its `postCreateCommand` runs
-  `bash .devcontainer/library-scripts/configure.sh create`, which writes that cache seam
-  into `~/.bazelrc`, materializes the Grok config, editor settings, notes, tmux and helpers
-  from the templates Coder uses (`scripts/seed-dev-env.sh`), installs the `.githooks`, then
-  starts a detached warm-up (`//:test-fast` and the docs-site `npm ci`) you can ignore.
-  Then run the commands below unchanged. When you change the container config or the
-  image, keep `.devcontainer/` in the same PR: `AGENTS.md` names what each kind of change
-  owes it, and `bazelisk test //tests:bats_contributor_devcontainer_test` proves it.
-- **`test-in-image`.** From a machine that is not that container,
-  `bazelisk run //scripts:test-in-image --` docker-runs `evo-t1-dev:latest` and runs the
-  same suites inside it — the fastest way to reproduce a CI failure. Build the tag first
-  with `bazelisk run //scripts:build-dev-image` if your daemon lacks it.
+  Dev Containers and *Reopen in Container*.
+
+  - `.devcontainer/devcontainer.json` builds `../images/dev/Dockerfile` and pulls BuildKit's layer
+    cache from the image CI publishes, runs as `coder`, sets `EVO_T1_DEVCONTAINER=1`, mounts the
+    docker socket, and keeps Bazel's disk, repository and output caches plus the package-manager
+    download caches in named volumes so a rebuild does not repay a cold cache.
+  - Its `postCreateCommand` runs `bash .devcontainer/library-scripts/configure.sh create`, which
+    writes that cache seam into `~/.bazelrc`, materializes the Grok config, editor settings, notes,
+    tmux and helpers from the templates Coder uses (`scripts/seed-dev-env.sh`), installs the
+    `.githooks`, then starts a detached warm-up (`//:test-fast` and the docs-site `npm ci`) you can
+    ignore. Then run the commands below unchanged.
+  - When you change the container config or the image, keep `.devcontainer/` in the same PR:
+    `AGENTS.md` names what each kind of change owes it, and
+    `bazelisk test //tests:bats_contributor_devcontainer_test` proves it.
+- **`test-in-image`.** From a machine that is not that container:
+
+  - `bazelisk run //scripts:test-in-image --` docker-runs `evo-t1-dev:latest` and runs the
+    same suites inside it — the fastest way to reproduce a CI failure.
+  - Build the tag first with `bazelisk run //scripts:build-dev-image` if your daemon lacks it.
+
+### What CI runs
 
 CI builds that same image with buildx and the Actions cache and docker-runs `//:test-fast`,
-`//:lint`, `//:validate` and the docs-site Node checks inside it, so the local and the
-merge-time run are the same run. A native `bazelisk test` on macOS is a convenience, not a
-merge path (BSD versus GNU userland). `docs/contribute/devcontainer.md` is the full page;
-`bash scripts/setup-host.sh` stays the **stack host** bootstrap and is not part of this
-path. The repo's `.devcontainer/contributor-env` sentinel is what keeps a Coder workspace
-of *this* repo on the `workspace` template — do not copy it into another repository.
+`//:lint`, `//:validate` and the docs-site Node checks inside it, so the local and the merge-time
+run are the same run.
+
+A native `bazelisk test` on macOS is a convenience, not a merge path (BSD versus GNU userland).
+`docs/contribute/devcontainer.md` is the full page; `bash scripts/setup-host.sh` stays the
+**stack host** bootstrap and is not part of this path.
+
+The repo's `.devcontainer/contributor-env` sentinel is what keeps a Coder workspace of *this* repo
+on the `workspace` template — do not copy it into another repository.
 
 ## Pull requests
 
@@ -83,24 +94,35 @@ of *this* repo on the `workspace` template — do not copy it into another repos
   file.
 - No CI that downloads models: this repo has no pipeline that pulls
   multi-gigabyte weights.
+
+### Test on the stacks before you open
+
 - Test a stack-affecting change on the **dev stack** before opening the PR:
   `bazelisk run //scripts:dev-stack -- up` (README "Two stacks on one box"). It is a
   second compose project with its own name, volumes and host ports, so the stable
-  instance keeps running while you test. `--project-name evo-t1-coder-stack` addresses
-  the production one instead, and `dev-stack` then names no env file, leaving that run
-  on the `.env` beside the compose file.
+  instance keeps running while you test.
+
+  - `--project-name evo-t1-coder-stack` addresses the production one instead, and `dev-stack`
+    then names no env file, leaving that run on the `.env` beside the compose file.
 - Test against the **stable** stack with `bazelisk run //scripts:prod-stack -- up`,
   which addresses the `evo-t1-prod` project by default (`PROD_PROJECT` on the `make`
   shim, or `--project-name`, names another; `evo-t1-coder-stack` is the project a
-  stable stack brought up by hand lives under). With both stacks up, the
-  container-level CLIs (`pull-models`, `push-template`, `coder-agents`,
-  `dashboard-password`) address the oldest matching container, so stop the dev stack
-  first when a check has to run against it.
+  stable stack brought up by hand lives under).
+
+  - With both stacks up, the container-level CLIs (`pull-models`, `push-template`,
+    `coder-agents`, `dashboard-password`) address the oldest matching container, so stop the
+    dev stack first when a check has to run against it.
+
+### One repository per workspace
+
 - A workspace takes ONE repository by default. `--additional-repos` on
   `//scripts:new-workspace` (and the `additional_repos` template parameter it fills)
   exists for the case where a workspace genuinely needs siblings beside the primary
   clone; a change that adds another repository to a workspace without being asked
   for is a defect, not a convenience.
+
+### Run the gate locally
+
 - Validate locally before opening, in the contributor container or through
   `bazelisk run //scripts:test-in-image --`. Bazelisk is the ingress:
 
@@ -132,11 +154,12 @@ of *this* repo on the `workspace` template — do not copy it into another repos
   bazelisk run //scripts:install-hooks -- --check
   ```
 
-  `.githooks/pre-commit` then runs the hermetic three on every commit, and
-  `.githooks/pre-push` runs `//:test-all` before anything reaches GitHub, where
-  CI runs the same set again. `//:test-all` is the gate a PR is reviewed against;
-  git's own `--no-verify` is the only way around it, and it skips the check on
-  your side only.
+  - `.githooks/pre-commit` then runs the hermetic three on every commit, and
+    `.githooks/pre-push` runs `//:test-all` before anything reaches GitHub, where
+    CI runs the same set again.
+
+  - `//:test-all` is the gate a PR is reviewed against; git's own `--no-verify` is
+    the only way around it, and it skips the check on your side only.
 
   `//:validate` runs the suite above and then:
 
@@ -163,14 +186,17 @@ bazelisk test //docs-site:unit_coverage # every docs-site function, and >=95% li
 
 `//tests:shell_coverage` runs the whole Bats suite against an instrumented mirror
 of the production shell (`tests/coverage/instrument.py`) and lists every function
-whose body never ran. It exists because `//tests:shell_inventory` can only prove a
-function NAME appears somewhere under `tests/` — a name inside a stub, a fixture or
-a quoted grep pattern satisfies that gate while the function is never called. Write
-the test that actually calls it.
+whose body never ran.
+
+It exists because `//tests:shell_inventory` can only prove a function NAME appears
+somewhere under `tests/` — a name inside a stub, a fixture or a quoted grep pattern
+satisfies that gate while the function is never called. Write the test that actually
+calls it.
 
 `//tests:py_coverage` needs coverage.py, which is pinned in
 `images/dev/tool-versions.env` and baked into the golden image; on a machine
 without it the target says so and points at `//scripts:test-in-image`.
+
 `//docs-site:unit_coverage` needs `docs-site/node_modules`, which the npm runner
 installs on demand.
 
@@ -198,15 +224,15 @@ image. `scripts/build-dev-image.sh` refuses to build if a pin has no matching
 - `go install` wants the version as a suffix of the full package path
   (`…/cmd/protoc-gen-go@v1.36.12`). `module@version/cmd/tool` is rejected as a
   disallowed version string.
-- The Docker client layer must stay **client-only**: the smoke checks end with
-  `test ! -x /usr/local/bin/dockerd` (plus `containerd`, `runc`,
-  `docker-proxy`) because the static tarball ships all of them and unpacking it
-  wholesale passes every positive check while putting a daemon in the image.
-  The daemon belongs to the per-workspace `docker:29.8.1-dind` sidecar; keep
-  those `test ! -x` guards when touching that layer, and bump
-  `DOCKER_CLI_VERSION` together with the `dind_image` tag in
-  `templates/workspace/main.tf` and `templates/devcontainer/main.tf` — they are the
-  same engine line.
+- The Docker client layer must stay **client-only**.
+
+  - The smoke checks end with `test ! -x /usr/local/bin/dockerd` (plus `containerd`, `runc`,
+    `docker-proxy`) because the static tarball ships all of them and unpacking it wholesale passes
+    every positive check while putting a daemon in the image.
+  - The daemon belongs to the per-workspace `docker:29.8.1-dind` sidecar; keep those `test ! -x`
+    guards when touching that layer, and bump `DOCKER_CLI_VERSION` together with the `dind_image`
+    tag in `templates/workspace/main.tf` and `templates/devcontainer/main.tf` — they are the
+    same engine line.
 - After editing pins, `bazelisk run //scripts:build-dev-image` and then
   `docker image inspect evo-t1-dev:latest` — the script proves the tag is in the
   local store, which is what the Coder docker provider needs to avoid a pull.

@@ -42,14 +42,21 @@ those rules.
    per environment, because a per-environment build is a per-environment bug surface.
 6. Branch cleanup is part of the work, not a chore someone does later.
 
-What the model rules out: long-lived `development`/`staging`/`production` branches; "merge to
-development first"; a release branch that has to be kept forever; cherry-picking a fix from one
-environment branch to another; and a flag platform nobody asked for.
+### What the model rules out
 
-The failure that motivates all of this is the merge that goes the wrong way. A `development`
-branch that is 134 commits ahead of `main` (a real number from a real repository in this fleet)
-is not a staging area, it is a second product whose differences nobody is reconciling, and the
-day someone finally merges it, the review is unreviewable.
+- long-lived `development`/`staging`/`production` branches
+- "merge to development first"
+- a release branch that has to be kept forever
+- cherry-picking a fix from one environment branch to another
+- a flag platform nobody asked for
+
+### The failure this prevents
+
+The failure that motivates all of this is the merge that goes the wrong way.
+
+A `development` branch that is 134 commits ahead of `main` (a real number from a real repository
+in this fleet) is not a staging area, it is a second product whose differences nobody is
+reconciling, and the day someone finally merges it, the review is unreviewable.
 
 ## Ideal-state checklist
 
@@ -79,6 +86,8 @@ Before any edit, answer five questions and keep the answers in a scratch file:
       --format='%(refname:short)\t%(committerdate:short)\t%(authorname)' refs/remotes/origin
     git remote show origin | sed -n '/HEAD branch/p'
 
+### The five inventory questions
+
 1. **Which branches exist, how old are they, who owns them?**
 2. **What does each non-trunk branch hold that the trunk does not?**
 
@@ -90,9 +99,21 @@ Before any edit, answer five questions and keep the answers in a scratch file:
 
    `git cherry` marks a commit `-` when an equivalent patch is already upstream. A branch that
    is `ahead=0` behind trunk is done, and its row reads "delete" without further argument.
-3. **How is anything deployed here?** Look, do not assume: `compose*.yml`, `docker-compose*.yml`,
-   `kustomization.yaml`, `values.yaml`, `inventories/`, `*.tf`, `argocd/`, `manage.sh`,
-   `Makefile`, `MODULE.bazel`, `.github/workflows/`, `templates/*/main.tf`.
+3. **How is anything deployed here?** Look, do not assume:
+
+   - `compose*.yml`
+   - `docker-compose*.yml`
+   - `kustomization.yaml`
+   - `values.yaml`
+   - `inventories/`
+   - `*.tf`
+   - `argocd/`
+   - `manage.sh`
+   - `Makefile`
+   - `MODULE.bazel`
+   - `.github/workflows/`
+   - `templates/*/main.tf`
+
 4. **What flags already exist?** `grep -rnE 'FEATURE_|_ENABLED|^\s*profiles:'` over the compose
    files, dotenv samples, Terraform variables and scripts.
 5. **What is the gate you must not break?** `bazelisk test //:test-fast`, `npm test`,
@@ -127,7 +148,9 @@ This fleet's own dev-versus-stable split is the reference implementation: separa
 names, separate dotenv files, and a subdomain composed from parts rather than from a branch
 name, driven by `bazelisk run //scripts:dev-stack -- up`,
 `bazelisk run //scripts:prod-stack -- up`, and `bazelisk run //scripts:update-stack` for the
-pull-and-deploy pair. In that repository the environment branches were still sitting on the
+pull-and-deploy pair.
+
+In that repository the environment branches were still sitting on the
 remote (`dev`, `development`, `staging`, `uat`, `prod`) while every one of them reported
 `ahead=0` against `main`: five branches, zero unique commits, waiting for someone to confirm the
 delete.
@@ -176,8 +199,9 @@ changes is a file under `group_vars/`.
 Environment is a workspace or an `envs/<env>/` directory that instantiates one shared module;
 `terraform plan` against `envs/staging` and `envs/production` is the same module revision twice.
 ArgoCD gets one `Application` per environment, all pointing at the same Kustomize or chart path,
-and promotion is a commit that bumps the image tag (by hand, or by the Image Updater). A
-per-environment ArgoCD branch is a sync-drift generator and a rollback trap.
+and promotion is a commit that bumps the image tag (by hand, or by the Image Updater).
+
+A per-environment ArgoCD branch is a sync-drift generator and a rollback trap.
 
 ### Coder and template parameters
 
@@ -201,9 +225,13 @@ Climb as far as you need and stop.
 4. **The platform's parameters** (Terraform variables, Helm values, Ansible vars, Coder template
    variables) when the flag selects infrastructure.
 
+### A flag service is an operator decision
+
 A flag service, an SDK, or a database-backed flag table is a decision an operator makes
 explicitly. It is not the default for a home lab or a single-node host, and it is never what a
 first pass should add.
+
+### Rules that keep flags removable
 
 Rules that keep flags alive long enough to be removed:
 
@@ -218,6 +246,8 @@ Rules that keep flags alive long enough to be removed:
 
 ## Branch cleanup cookbook
 
+### The verdict table
+
 One verdict per branch, with the evidence beside it.
 
 | Verdict | Test | What you do |
@@ -229,6 +259,8 @@ One verdict per branch, with the evidence beside it.
 | dead | no value, or explicitly abandoned | list for deletion with the reason |
 | release-bearing | carries an untagged version | tag the tip, push the tag, then list the branch |
 
+### Port a branch by re-adapting it
+
 Porting is re-adaptation. Take the files, then fix them against today's trunk:
 
     git switch -c feat/tunnel-v2-port origin/main
@@ -237,6 +269,8 @@ Porting is re-adaptation. Take the files, then fix them against today's trunk:
     # wire the unfinished path behind FEATURE_AGENT_TUNNEL_V2 (default off)
     <repo gate>
 
+### Cherry-pick a coherent run
+
 Cherry-picking is for a coherent run of commits you want verbatim, and `-x` keeps the source SHA
 in the message so the provenance survives:
 
@@ -244,6 +278,8 @@ in the message so the provenance survives:
 
 A port that also reformats is two pull requests. A port of a whole branch at once is a review
 nobody does properly.
+
+### Hand the deletions to a human
 
 Then hand the deletions to a human:
 
@@ -256,6 +292,8 @@ with the commands they will run:
 
     git push origin --delete staging uat prod
     git fetch --all --prune
+
+### Record the tip SHA first
 
 Record the tip SHA of every branch in that table before anything goes. A recorded SHA is
 recoverable until garbage collection; an unrecorded one is not.
@@ -272,11 +310,15 @@ rather than trusting this table.
 | `toxicoder/ez-comfy-stack` | `main` | `development` (+ `dev`), `development` 523 ahead / 19 behind, plus `feat/`, `fix/`, `feature/`, `docs/` families | Compose (`docker/docker-compose.yml`), `scripts/manage.sh`, Makefile, an image-publish workflow | Port in themed slices; the published image tag is the promotion lever, so land the tag story first and normalise the `feature/` prefix to `feat/` |
 | `toxicoder/inkorporated` | `main` | `development` (+ `dev`), `development` 0 ahead / 2 behind | Bazel, Ansible and Terraform under `infrastructure/`, CI plus presubmit workflows | `development` is already merged: list it for deletion, then fix the naming families |
 
-Two patterns worth reading across those rows. A branch family that is `ahead=0` (this repo,
-`inkorporated`) is a cleanup with no risk once a human confirms it. A branch family that is
-hundreds of commits ahead (`nvidia-dgx-spark-lab`, `ez-comfy-stack`) is a porting programme:
-slice by area, land each slice green, and let the flags hold what is not finished. Both begin
-with the same inventory, and both end with a table a person signs off on.
+Two patterns worth reading across those rows.
+
+- A branch family that is `ahead=0` (this repo, `inkorporated`) is a cleanup with no risk once a
+  human confirms it.
+- A branch family that is hundreds of commits ahead (`nvidia-dgx-spark-lab`, `ez-comfy-stack`) is
+  a porting programme: slice by area, land each slice green, and let the flags hold what is not
+  finished.
+
+Both begin with the same inventory, and both end with a table a person signs off on.
 
 ## Safety lines
 

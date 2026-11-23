@@ -24,21 +24,26 @@ tags: [secrets, infisical, operate, credentials]
 - Rotating a key without opening an editor, and knowing when the running service picks it up
 - Deciding whether adopting the vault is worth it, from what is actually wired
 
+## What the integration is
+
 Self-hosted Infisical is the source of record for twelve of this stack's credentials,
 behind a flag that defaults off. Three Compose services under profile `secrets` hold the
 vault, its Postgres and its Redis; one operator CLI moves keys between the vault and the
 host's dotenv file; and every service keeps reading credentials the way it always did.
 
-That last sentence is the design, so it is worth stating exactly. Compose interpolates
-`${VAR:-default}` against the `.env` beside `docker-compose.yml`, and nothing in the
-compose layer ever opens a connection to a secrets service. An unreachable vault must not
-be able to stop `up`, so the integration does not replace the dotenv chain - it feeds it.
-`pull` writes the managed keys into `.env` and compose reads that file exactly as it
-always has. The vault is an editor for `.env`, not a dependency of the project. Read that
-as the whole delivery path: a credential change reaches a service through the env file and
-a recreate, never through a live call to the vault. The one place the deploy path dials the
-vault at all is the runners' own refresh before compose interpolates, and that call is
-best-effort - one `warning:` and the bring-up continues on whatever the file already held.
+That last sentence is the design, so it is worth stating exactly:
+
+- Compose interpolates `${VAR:-default}` against the `.env` beside `docker-compose.yml`,
+  and nothing in the compose layer ever opens a connection to a secrets service.
+- An unreachable vault must not be able to stop `up`, so the integration does not replace
+  the dotenv chain - it feeds it.
+- `pull` writes the managed keys into `.env` and compose reads that file exactly as it
+  always has. The vault is an editor for `.env`, not a dependency of the project.
+- Read that as the whole delivery path: a credential change reaches a service through the
+  env file and a recreate, never through a live call to the vault.
+- The one place the deploy path dials the vault at all is the runners' own refresh before
+  compose interpolates, and that call is best-effort - one `warning:` and the bring-up
+  continues on whatever the file already held.
 
 This is the **free self-hosted tier**. No dynamic secrets, no cross-project sharing, and
 no `LICENSE_KEY` anywhere in the checkout: both of those features are paid, and the
@@ -50,14 +55,23 @@ dotenv.
 One key decides whether the bundle exists: `INFISICAL_ENABLED`, default `false`, in
 `.env.example` beside its own comment block. Owner: `platform`. Expiry: `2026-12-31`.
 
+### The truthiness rule
+
 Unlike `OBSERVABILITY_ENABLED`, which ships on, **an unset key means off**. The
 acceptance test is `truthy()` in `scripts/lib/common.sh` - `on`, `1`, `true`, `yes` - and
-anything else, including the key being absent entirely, is off. Off means the three
-containers are never selected (`profiles: ["secrets"]`), the runner CLIs pass no profile
-argv (`compose_infisical_args` in `scripts/lib/infisical.sh` prints nothing, mirroring
-`compose_observability_args`), and every mutating verb of the CLI refuses with a `note:`
-that names the key to set. That is deliberate: a subsystem nobody opted into must not be
-able to hold the stack's credentials hostage.
+anything else, including the key being absent entirely, is off.
+
+Off means:
+
+- the three containers are never selected (`profiles: ["secrets"]`)
+- the runner CLIs pass no profile argv (`compose_infisical_args` in
+  `scripts/lib/infisical.sh` prints nothing, mirroring `compose_observability_args`)
+- every mutating verb of the CLI refuses with a `note:` that names the key to set
+
+That is deliberate: a subsystem nobody opted into must not be able to hold the stack's
+credentials hostage.
+
+### Turning the flag on
 
 To adopt it, set the key in the env file that belongs to the project you run - `.env` for
 the stable stack, `dev-stack.env` for the dev one - and bring the stack up as usual:
@@ -67,20 +81,25 @@ bazelisk run //scripts:dev-stack -- up
 ```
 
 The runner appends the profile argv, so the three services come up with the rest of the
-project. A profile selects services; it does not delete what is already running, so
-flipping the key back off needs a `down` (or deleting the three by name) before the
-containers actually go away. Their named volumes survive that, and `reset` is the verb
-that destroys them.
+project.
+
+A profile selects services; it does not delete what is already running, so flipping the
+key back off needs a `down` (or deleting the three by name) before the containers actually
+go away. Their named volumes survive that, and `reset` is the verb that destroys them.
+
+### The second gate
 
 There is a **second gate** under the first: `INFISICAL_PULL_ON_START`, default `false`.
-It decides only whether a workspace's boot fetch dials the vault at all. It is off by
-default so a workspace never waits on the vault, and it does nothing while
+It decides only whether a workspace's boot fetch dials the vault at all.
+
+It is off by default so a workspace never waits on the vault, and it does nothing while
 `INFISICAL_ENABLED` is off. Both gates are read inside the boot body itself, so the rendered
 script is one text for every workspace and the flag pair arrives on the agent environment.
 
 Both gates reach the templates through `bazelisk run //scripts:push-template`: the CLI forwards
 `--var infisical_enabled=true` and `--var infisical_pull_on_start=true` only for a truthy value in
 `.env`, so the shipped state pushes neither word and each template's own `default = false` stands.
+
 With the flag off the `coder_script` resource is absent outright - no script, no boot log line,
 no `INFISICAL_*` key on the agent environment - and the `.bashrc` hook is not written either,
 because that line is gated on `infisical_hook`, which both twins set from `var.infisical_enabled`.
@@ -88,32 +107,53 @@ because that line is gated on `infisical_hook`, which both twins set from `var.i
 ## The workspace boot fetch
 
 `templates/common/infisical-secrets.sh.tftpl` is the body both twins render into
-`coder_script "infisical_secrets"` (`run_on_start`, 120s timeout). One fact about its output
-decides everything else in this section: `~/.infisical/agent.env` is sourced by every shell the
-workspace starts, under `set -a`, from the line the startup script appends to `~/.bashrc`. It is
-not a config file one process reads; it is an `export` line per key in the environment of every
-terminal, tmux pane and command from then on, and it outlives the start that wrote it.
+`coder_script "infisical_secrets"` (`run_on_start`, 120s timeout).
 
-Two kinds of volume meet in that path and they are not the same thing. What rides per owner is
-state only: `~/.grok/notes`, `~/.grok/memory` and `~/.grok/sessions` on `grok-notes-<owner-id>`,
-`grok-memory-<owner-id>` and `grok-sessions-<owner-id>`, plus the `vscode-settings-<owner-id>`
-overlay at `~/.shared/vscode`. Everything else under `~/.grok` is a real file on that workspace's
-own home volume, `config.toml` above all - it carries this workspace's own model lanes, its
-session-affinity key and its Grok theme. `~/.infisical` rides no per-owner mount at all, so
-`agent.env` sits on this workspace's own home and only this workspace reads it. That asymmetry is
-why the body filters rather than trusting a share boundary: a file a workspace can read is a file
-anything running inside it can read.
+One fact about its output decides everything else in this section: `~/.infisical/agent.env`
+is sourced by every shell the workspace starts, under `set -a`, from the line the startup
+script appends to `~/.bashrc`.
+
+It is not a config file one process reads; it is an `export` line per key in the environment
+of every terminal, tmux pane and command from then on, and it outlives the start that wrote
+it.
+
+### Which volume the file rides
+
+Two kinds of volume meet in that path and they are not the same thing.
+
+What rides per owner is state only: `~/.grok/notes`, `~/.grok/memory` and
+`~/.grok/sessions` on `grok-notes-<owner-id>`, `grok-memory-<owner-id>` and
+`grok-sessions-<owner-id>`, plus the `vscode-settings-<owner-id>` overlay at
+`~/.shared/vscode`.
+
+Everything else under `~/.grok` is a real file on that workspace's own home volume,
+`config.toml` above all - it carries this workspace's own model lanes, its session-affinity
+key and its Grok theme.
+
+`~/.infisical` rides no per-owner mount at all, so `agent.env` sits on this workspace's own
+home and only this workspace reads it.
+
+That asymmetry is why the body filters rather than trusting a share boundary: a file a
+workspace can read is a file anything running inside it can read.
+
+### The two self-gates
 
 The body gates itself twice before it dials anything. First the **six configured names**:
 `INFISICAL_DOMAIN`, `INFISICAL_PROJECT_ID`, `INFISICAL_MACHINE_IDENTITY_ID`,
 `INFISICAL_ENVIRONMENT`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` and
-`INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`. Any one of them empty prints which names are missing and
-where they come from, and exits 0. Then `INFISICAL_PULL_ON_START`, whose off path prints that the
-boot "keeps the credentials it already has" and also exits 0. Every other failure path - no
-`infisical` binary in the image, no `HOME`, a refused Universal Auth login, an empty export, a
-refused publish - exits 0 as well. The golden image bakes the pinned CLI (`images/dev/Dockerfile`,
-`INFISICAL_CLI_VERSION` in `images/dev/tool-versions.env`), so the missing-binary path is what an
-image older than that pin hits. A vault outage has never once stopped a workspace.
+`INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`.
+
+Any one of them empty prints which names are missing and where they come from, and exits 0.
+
+Then `INFISICAL_PULL_ON_START`, whose off path prints that the boot "keeps the credentials it
+already has" and also exits 0. Every other failure path - no `infisical` binary in the image,
+no `HOME`, a refused Universal Auth login, an empty export, a refused publish - exits 0 as well.
+
+The golden image bakes the pinned CLI (`images/dev/Dockerfile`, `INFISICAL_CLI_VERSION` in
+`images/dev/tool-versions.env`), so the missing-binary path is what an image older than that pin
+hits. A vault outage has never once stopped a workspace.
+
+### What gets published
 
 What gets published is whatever the workspace's own machine identity can read in the project,
 which is what the vault scopes - the twelve-key inventory is a host-side list
@@ -126,24 +166,34 @@ not limited to those twelve names, and two filters run on the key name before a 
   per start and never writes to disk.
 - Every name on the body's deny list is dropped, compared on the key upper-cased so `BASH_ENV`,
   `bash_env` and `Bash_Env` all fall in one arm. The list is what a shell, the dynamic loader, an
-  interpreter or git treats as code or as loader configuration rather than as data: `BASH_ENV` and
-  `ENV` (executed by every non-interactive bash), `PROMPT_COMMAND` (by every interactive one),
-  `PS4` and `IFS` (how the sourcing shell parses itself), `PATH` and `HOME` (which binary and
-  which config the next command reads), the `LD_*` group (`LD_PRELOAD`, `LD_LIBRARY_PATH`,
-  `LD_AUDIT`, `LD_DEBUG`), the interpreter-option group (`NODE_OPTIONS`, `PYTHONPATH`,
-  `PYTHONSTARTUP`, `PERL5OPT`, `PERL5LIB`, `RUBYOPT`), the `GIT_*` group (`GIT_SSH_COMMAND`,
-  `GIT_CONFIG_GLOBAL`, `GIT_EXTERNAL_DIFF`, `GIT_DIR`), and the program-choice group (`PAGER`,
-  `LESS`, `EDITOR`, `VISUAL`, `SSH_ASKPASS`, `SUDO_ASKPASS`).
+  interpreter or git treats as code or as loader configuration rather than as data:
+
+    - `BASH_ENV` and `ENV` (executed by every non-interactive bash), `PROMPT_COMMAND` (by every
+      interactive one)
+    - `PS4` and `IFS` (how the sourcing shell parses itself), `PATH` and `HOME` (which binary
+      and which config the next command reads)
+    - the `LD_*` group (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`)
+    - the interpreter-option group (`NODE_OPTIONS`, `PYTHONPATH`, `PYTHONSTARTUP`, `PERL5OPT`,
+      `PERL5LIB`, `RUBYOPT`)
+    - the `GIT_*` group (`GIT_SSH_COMMAND`, `GIT_CONFIG_GLOBAL`, `GIT_EXTERNAL_DIFF`, `GIT_DIR`)
+    - the program-choice group (`PAGER`, `LESS`, `EDITOR`, `VISUAL`, `SSH_ASKPASS`,
+      `SUDO_ASKPASS`)
+
+### The pre-publish refusal
 
 After the loop the staged file is read once more against one alternation built from that same
 variable, and a match makes the body **refuse to publish**: it removes the staged file, prints
 `infisical: refused to publish <home>/.infisical/agent.env; the staged file names a
-shell-control variable. Nothing was written and no secret value is shown.` and exits 0. The
-`agent.env` a previous boot wrote then stays exactly as it was, which is the point of refusing
-rather than correcting. The obvious alternative - appending `unset PATH HOME IFS` lines to the
-file - is the wrong shape: those names would be gone from every shell that sourced the file and
-from everything those shells then launch. A refusal costs one refresh; that would cost the
-workspace.
+shell-control variable. Nothing was written and no secret value is shown.` and exits 0.
+
+The `agent.env` a previous boot wrote then stays exactly as it was, which is the point of
+refusing rather than correcting.
+
+The obvious alternative - appending `unset PATH HOME IFS` lines to the file - is the wrong
+shape: those names would be gone from every shell that sourced the file and from everything
+those shells then launch. A refusal costs one refresh; that would cost the workspace.
+
+### Values are rewritten, not copied
 
 Every value is rewritten rather than copied, and that is a security step, not a stylistic one -
 see the last bullet of [The credential boundary](#the-credential-boundary) for the upstream
@@ -162,27 +212,38 @@ thing for each:
   success line, `ok: infisical: loaded N secret keys into <home>/.infisical/agent.env`, and it
   counts what the publish loop actually wrote.
 
+### The trust boundary
+
 **The security boundary**, stated so no operator has to guess at it: because `agent.env` is
 sourced by every shell a workspace starts, a vault key that the shell, the dynamic loader, an
-interpreter or git would treat as code is not a secret, it is a command line chosen by whoever can
-write a secret in the project. The two defences are the deny list above, matched on the
-normalised case, and the pre-publish pass that refuses to write the file at all and leaves the
-previous `agent.env` in place.
+interpreter or git would treat as code is not a secret, it is a command line chosen by whoever
+can write a secret in the project.
+
+The two defences are the deny list above, matched on the normalised case, and the pre-publish
+pass that refuses to write the file at all and leaves the previous `agent.env` in place.
+
+### Write access to the vault project
 
 **The residual, honestly.** That list names what a shell or a loader *executes*. It is not a list
-of every environment variable that changes what a program does, and it cannot be one. Anyone with
-write access to the Infisical project still chooses which ordinary variables a workspace boots
-with, and because the fetch's line is appended to `~/.bashrc` and runs under `set -a`, one of
-those names can overwrite whatever that file set earlier in it. Treat write access
-to the vault project as the trust boundary it is: it is shell access to every workspace that boots
-with the fetch on. Read access is a much smaller grant than write, and the machine identity the
-workspaces authenticate as should hold only the former.
+of every environment variable that changes what a program does, and it cannot be one.
+
+Anyone with write access to the Infisical project still chooses which ordinary variables a
+workspace boots with, and because the fetch's line is appended to `~/.bashrc` and runs under
+`set -a`, one of those names can overwrite whatever that file set earlier in it.
+
+Treat write access to the vault project as the trust boundary it is: it is shell access to
+every workspace that boots with the fetch on. Read access is a much smaller grant than write,
+and the machine identity the workspaces authenticate as should hold only the former.
+
+### The file's own mode
 
 The file itself is written mode 600 inside a mode 700 `~/.infisical`, staged beside its
 destination and moved into place in one step rather than appended, so a reader never sees a
-half-written file. `docs/coder-templates.md` carries the template side of all of this: the eight
-`infisical_*` variables, why the credential pair rides the agent environment rather than the
-rendered script body, and the order the boot body runs in.
+half-written file.
+
+`docs/coder-templates.md` carries the template side of all of this: the eight `infisical_*`
+variables, why the credential pair rides the agent environment rather than the rendered script
+body, and the order the boot body runs in.
 
 ## The three services
 
@@ -194,19 +255,22 @@ rendered script body, and the order the boot body runs in.
 
 All three carry `restart: unless-stopped`, the `secrets` profile, and the same three-line
 `json-file` logging block the rest of the stack uses, with `tag:` equal to the service
-name so Alloy ships each container to Loki under `container=<name>`. None of the three is
-a Prometheus target - Infisical publishes no `/metrics` endpoint the stack can rely on and
-neither alpine image ships one - so they are recorded as log-only in
+name so Alloy ships each container to Loki under `container=<name>`.
+
+None of the three is a Prometheus target - Infisical publishes no `/metrics` endpoint the
+stack can rely on and neither alpine image ships one - so they are recorded as log-only in
 [observability.md](../observability.md).
 
 The `infisical` container takes `ENCRYPTION_KEY`, `AUTH_SECRET`, `SITE_URL`,
 `DB_CONNECTION_URI`, `REDIS_URL`, `HOST=0.0.0.0` and `PORT=8080` from the environment.
+
 `DB_CONNECTION_URI` and the db service's `POSTGRES_PASSWORD` both interpolate
 `INFISICAL_DB_PASSWORD`, which is the only thing keeping the role and its pointer in step
-across a rotation. The public name, when you turn one on, is `STACK_INFISICAL_NAME`
-(default label `infisical`) composed by `scripts/lib/domain.sh` like every other name;
-the router sends that Host to `http://infisical:8080`. See
-[public-access.md](../public-access.md).
+across a rotation.
+
+The public name, when you turn one on, is `STACK_INFISICAL_NAME` (default label `infisical`)
+composed by `scripts/lib/domain.sh` like every other name; the router sends that Host to
+`http://infisical:8080`. See [public-access.md](../public-access.md).
 
 ## The operator CLI
 
@@ -215,6 +279,8 @@ Everything an operator does goes through one CLI, from any cwd:
 ```sh
 bazelisk run //scripts:infisical -- <verb>
 ```
+
+### The verbs
 
 | Verb | What it does | Writes |
 |---|---|---|
@@ -229,6 +295,8 @@ bazelisk run //scripts:infisical -- <verb>
 
 `--env-file PATH` points the verb at a dotenv file other than the `.env` compose itself
 reads. `--help` prints the usage block above.
+
+### Exit codes
 
 Exit codes, which are how a script tells "the vault said no" from "the vault is switched
 off":
@@ -246,31 +314,45 @@ off":
 There is deliberately no `--json` mode: a JSON answer about a credential is an answer that
 leaks it in a different font.
 
-Nothing else in the repo shells out to this CLI. The three runners that address the compose
+### The runners' own pull
+
+Nothing else in the repo shells out to this CLI.
+
+The three runners that address the compose
 project - `bazelisk run //scripts:dev-stack`, `//scripts:prod-stack` and `//scripts:update-stack` -
 source `scripts/lib/infisical.sh` and call `infisical_pull` themselves, immediately before compose
 interpolates the env file, so a key rotated in the vault lands on the bring-up in front of you
-instead of waiting for a human to run the verb. Each prints one `-> vault: refreshing the env file
+instead of waiting for a human to run the verb.
+
+Each prints one `-> vault: refreshing the env file
 from Infisical` phase line when the flag is on, and each treats a failed pull as one `warning:`
 naming the retry - `the env file was not refreshed from Infisical; <file> keeps the credentials it
-already has - retry with bazelisk run //scripts:infisical -- pull` - and then continues. The
-branch never runs while the flag is off, so a stack that never adopted the vault reads and prints
-exactly what it did before. `bazelisk run //scripts:update-stack -- --dry-run` plans that fetch
-(`note: dry run: would refresh <file> from Infisical`) and writes nothing; the two stack runners
-have no dry-run mode, so their refresh happens only on a real `up`.
+already has - retry with bazelisk run //scripts:infisical -- pull` - and then continues.
+
+The branch never runs while the flag is off, so a stack that never adopted the vault reads and
+prints exactly what it did before.
+
+`bazelisk run //scripts:update-stack -- --dry-run` plans that fetch
+(`note: dry run: would refresh <file> from Infisical`) and writes nothing; the two stack
+runners have no dry-run mode, so their refresh happens only on a real `up`.
 
 ## Adopting the vault
 
 The sequence, in this order. Each step names what it changes.
 
+### Prepare the env file and the flag
+
 1.  Give the vault its own bootstrap credentials and its admin address in `.env`.
     `INFISICAL_DB_PASSWORD`, `INFISICAL_ENCRYPTION_KEY` and `INFISICAL_AUTH_SECRET` ship
     as `change-me-*` placeholders in `.env.example`, and `INFISICAL_ADMIN_EMAIL` ships
     empty while `INFISICAL_ADMIN_PASSWORD` ships as a placeholder - `bootstrap` refuses
-    either if it is still empty or still starts with `change-me`. These four cannot come
-    from the vault, because the vault needs them to start.
+    either if it is still empty or still starts with `change-me`.
+
+    These four cannot come from the vault, because the vault needs them to start.
 
 2.  Turn the flag on: `INFISICAL_ENABLED=true` in the project's env file.
+
+### Install the CLI and start the services
 
 3.  Install the CLI binary on the host.
 
@@ -290,14 +372,19 @@ The sequence, in this order. Each step names what it changes.
     ```
 
     That creates `infisical`, `infisical-db` and `infisical-redis`, on the image tags the
-    `image:` lines in `docker-compose.yml` pin (`infisical/infisical:v0.167.10` as shipped). The
-    vault answers on `http://127.0.0.1:8182` (`INFISICAL_PORT`) on the stack host, and on the
-    published LAN face. Expect the two alpine containers to read `running` rather than `healthy`:
-    neither declares a healthcheck, because the only consumer waits on `service_started`. With
-    the flag already on, this first `up` also tries the env-file refresh and gets nothing: there
-    is no `INFISICAL_PROJECT_ID` yet, so the seam prints `note: the pull was refused before it
+    `image:` lines in `docker-compose.yml` pin (`infisical/infisical:v0.167.10` as shipped).
+
+    The vault answers on `http://127.0.0.1:8182` (`INFISICAL_PORT`) on the stack host, and on
+    the published LAN face. Expect the two alpine containers to read `running` rather than
+    `healthy`: neither declares a healthcheck, because the only consumer waits on
+    `service_started`.
+
+    With the flag already on, this first `up` also tries the env-file refresh and gets nothing:
+    there is no `INFISICAL_PROJECT_ID` yet, so the seam prints `note: the pull was refused before it
     ran; <file> keeps the values it has` and the runner follows with its `warning:` line. That
     pair is noise until step 5 writes the identifiers - it is not a failed bring-up.
+
+### Bootstrap the instance
 
 5.  Bootstrap the instance:
 
@@ -306,19 +393,28 @@ The sequence, in this order. Each step names what it changes.
     ```
 
     This creates the super admin, the organization and the machine identity **inside the
-    `infisical` container**, and writes the returned identifiers into `.env`. It is
-    idempotent in the safe direction: if `INFISICAL_PROJECT_ID` or
+    `infisical` container**, and writes the returned identifiers into `.env`.
+
+    It is idempotent in the safe direction: if `INFISICAL_PROJECT_ID` or
     `INFISICAL_MACHINE_IDENTITY_ID` is already set it prints a `note:` and refuses to run
-    again. It needs `python3` on PATH to parse the response, and the CLI from step 3. The
+    again.
+
+    It needs `python3` on PATH to parse the response, and the CLI from step 3. The
     machine identity's own token is checked for presence and deliberately not stored: it stays
     inside Infisical and every later run exchanges the pair below for a fresh one.
+
+### Paste the Universal Auth pair
 
 6.  Paste the machine identity's Universal Auth pair into `.env`. `bootstrap` prints the `note:`
     that says so once it has written the identifiers, and nothing downstream guesses:
     `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` and `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` are two of
     the six keys `check` reports as empty, and a `push` or `pull` with either blank is refused
-    before it authenticates. Create the credentials for that identity in the Infisical UI and put
-    both values in the env file; neither belongs in a commit.
+    before it authenticates.
+
+    Create the credentials for that identity in the Infisical UI and put both values in the env
+    file; neither belongs in a commit.
+
+### Seed the vault and prove the round trip
 
 7.  Adopt what is already in `.env`:
 
@@ -340,6 +436,8 @@ The sequence, in this order. Each step names what it changes.
     With the vault and `.env` agreeing this writes nothing new. It is the read path, so it
     is the one to run before you trust `push`.
 
+### Recreate the consumers
+
 9.  Recreate the consumers so they pick up what the vault holds:
 
     ```sh
@@ -348,8 +446,9 @@ The sequence, in this order. Each step names what it changes.
 
     Compose reads `.env` when it creates a container, and this `up` refreshes that file from
     the vault first (see [The operator CLI](#the-operator-cli) for the runners' own pull).
-    Nothing is recreated until
-    you ask for it, so the `pull` in step 8 alone changes no running service - this step does.
+
+    Nothing is recreated until you ask for it, so the `pull` in step 8 alone changes no running
+    service - this step does.
 
 Then, any time after, `check` is the single command that asks every precondition at once:
 
@@ -360,10 +459,13 @@ bazelisk run //scripts:infisical -- check
 ## The twelve managed keys
 
 The inventory is data, not code: `infisical/managed-secrets.txt`, read through
-`infisical_managed_keys()`. Never re-hardcode the list. The count is asserted - `check`
-warns when the inventory is not exactly twelve, because a silently-short list would leave
-a credential outside the vault while still reporting a clean sync. Every key must also
-exist in `.env.example`, since compose keeps interpolating that file.
+`infisical_managed_keys()`. Never re-hardcode the list.
+
+The count is asserted - `check` warns when the inventory is not exactly twelve, because a
+silently-short list would leave a credential outside the vault while still reporting a clean
+sync.
+
+Every key must also exist in `.env.example`, since compose keeps interpolating that file.
 
 | Key | Consumed by | What breaks if it is wrong |
 |---|---|---|
@@ -387,6 +489,8 @@ is what this inventory replaced.
 
 Two lists sit outside the inventory, and they are outside for different reasons.
 
+### The four compose-interpolated keys
+
 Four secret-shaped keys compose interpolates are among them, and each one is
 outside for a reason worth knowing before you add it:
 
@@ -394,6 +498,8 @@ outside for a reason worth knowing before you add it:
   vault's own bootstrap credentials. By definition they cannot come from the vault: it
   needs them to start. They live in `.env`, and you set them.
 - `CODER_DEFAULT_TOKEN_LIFETIME` - a duration, not a secret.
+
+### The three that travel by CLI
 
 Three more are credentials that never appear in a compose interpolation, so they
 travel to their consumer through a CLI rather than through `${VAR}`:
@@ -427,8 +533,10 @@ whose failure is one `warning:` line.
   that interpolation and a failed one costs a line, not the bring-up - `warning: the env file
   was not refreshed from Infisical; <file> keeps the credentials it already has - retry with
   bazelisk run //scripts:infisical -- pull` - and compose recreates against what the file
-  already held. `//scripts:prod-stack` and `//scripts:update-stack` behave the same way; the
-  latter plans the fetch instead of running it under `--dry-run`.
+  already held.
+
+  `//scripts:prod-stack` and `//scripts:update-stack` behave the same way; the latter plans
+  the fetch instead of running it under `--dry-run`.
 - **`pull` leaves `.env` alone and says so.** A failed export is an `error:` line naming
   the file as untouched, and the verb exits 1. An export that comes back empty is a
   `warning:` and the same untouched file. A key the vault does not carry, or carries
@@ -446,14 +554,20 @@ whose failure is one `warning:` line.
   case prints the recovery in the error line: if the vault took the new value and the env
   write failed, re-run `pull` to converge.
 
+### The case that corrupts state
+
 So neither side can fail to *start* over a vault that is down. The workspace is the one that
 never can: every path in the boot body, refusals included, exits 0 and the agent goes on with
-the environment it already had. The stack is the one with state to corrupt, and the way it
-breaks is the opposite of an outage - the refresh succeeds by writing, so a vault that answers
-but holds a value nothing authenticates with is what brings `coder`, `litellm`, `homepage`,
-`hermes`, `grafana` or `searxng` up unable to log in. That is a converge-and-recreate problem,
-not a start problem: fix the value in the vault, run `up` again, and read the `db` and `coder`
-logs if Coder takes longer than a recreate to come back.
+the environment it already had.
+
+The stack is the one with state to corrupt, and the way it breaks is the opposite of an
+outage - the refresh succeeds by writing, so a vault that answers but holds a value nothing
+authenticates with is what brings `coder`, `litellm`, `homepage`, `hermes`, `grafana` or
+`searxng` up unable to log in.
+
+That is a converge-and-recreate problem, not a start problem: fix the value in the vault, run
+`up` again, and read the `db` and `coder` logs if Coder takes longer than a recreate to come
+back.
 
 ## Rotating CODER_PG_PASSWORD
 
@@ -461,24 +575,36 @@ logs if Coder takes longer than a recreate to come back.
 bazelisk run //scripts:infisical -- rotate CODER_PG_PASSWORD
 ```
 
+### What the verb writes
+
 The verb mints a fresh value, writes the **vault first**, and only touches `.env` once the
 vault accepted it - so there is no moment where `.env` holds a password the vault does not
 know about. `rotate` names one managed key; naming anything outside the inventory is an
 `error:` and exit 1.
 
+### Why the predicate reads the inventory in-shell
+
 Whether a name counts as managed is decided by `infisical_is_managed_key` in
 `scripts/lib/infisical.sh`, which reads the inventory and compares the names inside the
-shell. The first version piped the reader into `grep -qx` instead, and under the CLI's
+shell.
+
+The first version piped the reader into `grep -qx` instead, and under the CLI's
 `set -euo pipefail` that lost: `grep -q` exits on its first match, the reader then died of
 SIGPIPE, the pipeline reported 141, and the verb called a genuinely managed key unmanaged
-on 195 of 200 attempts. Two suites now hold the line - one drives all twelve names through
-the predicate inside a `pipefail` shell, the other runs the verb against each of them - so
-the shape cannot come back unnoticed. A name outside the inventory is still an `error:` and
-exit 1, and the inventory itself stays the only list.
+on 195 of 200 attempts.
+
+Two suites now hold the line - one drives all twelve names through the predicate inside a
+`pipefail` shell, the other runs the verb against each of them - so the shape cannot come
+back unnoticed. A name outside the inventory is still an `error:` and exit 1, and the
+inventory itself stays the only list.
+
+### The next up is what applies it
 
 Then the note the CLI prints is the real edge, and it is worth repeating here: compose
 reads `.env` only when a container is recreated, so the rotated password reaches Coder on
 the next `up`. Nothing hot-reloads it.
+
+### The Postgres first-init trap
 
 Under that sits one trap. The Postgres image honours `POSTGRES_PASSWORD` **only at first
 volume init**, so changing it in `.env` and recreating `db` would leave the stored
@@ -498,6 +624,8 @@ Both run as part of `up`, so the operator's job is one `up` after the rotate. Re
 bazelisk run //scripts:dev-stack -- logs --tail 200 coder
 ```
 
+### Rotating INFISICAL_DB_PASSWORD
+
 `INFISICAL_DB_PASSWORD` has the same first-init behaviour and no reconciler beside it - the
 compose block says so at its own comment - so rotating it needs the `infisical-db-data`
 volume reset, not a recreate.
@@ -507,18 +635,30 @@ volume reset, not a recreate.
 The rules that shape every write in this subsystem, inherited from
 `scripts/dashboard-password.sh`:
 
+### Where a value may travel
+
 - A value does not travel in argv except where upstream offers no other channel. The seam's
   header names the exceptions: `--client-secret=` on the Universal Auth login and `--password=`
   on `bootstrap`, because that CLI takes neither on stdin; and the `KEY=@<file>` form for a
   single write, which names a file rather than the value, as `--file=<tmp600>` does for a bulk
-  set. Everything else that carries a managed value crosses the seam by redirect into a
-  mode-600 file, never through `$( )`, a pipeline, or a variable the CLI fills.
+  set.
+
+  Everything else that carries a managed value crosses the seam by redirect into a mode-600
+  file, never through `$( )`, a pipeline, or a variable the CLI fills.
+
+### What a log line may say
+
 - A value never appears in a log line, including a failure line. Every ok, warning and
-  error names the **key**, never the value, and counts rather than listing. The one function
-  allowed to put a credential on a stream is `infisical_login`, whose whole job is handing the
-  access token to its caller on stdout while its commentary goes to stderr; the callers that do
-  not need it send that stream to `/dev/null`. The boot body scrubs the token and the client
-  secret out of the CLI's own error text before it prints what the export said.
+  error names the **key**, never the value, and counts rather than listing.
+
+  The one function allowed to put a credential on a stream is `infisical_login`, whose whole
+  job is handing the access token to its caller on stdout while its commentary goes to stderr;
+  the callers that do not need it send that stream to `/dev/null`. The boot body scrubs the
+  token and the client secret out of the CLI's own error text before it prints what the export
+  said.
+
+### Files, traps, and verification
+
 - A file that holds one is mode 600 and is removed on the failure path too, by the `EXIT`
   trap the seam installs - export, push payload, verify read-back and rotate value all go
   through it. bash keeps one `EXIT` handler, so the seam captures whatever the caller had
@@ -527,15 +667,20 @@ The rules that shape every write in this subsystem, inherited from
   failure path.
 - A write is verified by hashing the value read back before anything claims `ok:`.
 - A key the vault does not carry is a warning, never a blanked line.
+
+### Never source the CLI's own dotenv output
+
 - **A vault value is never sourced in the shape the CLI wrote it.** Measured against
   `infisical/infisical:v0.167.10` with CLI v0.45.8: `secrets export --format=dotenv` wraps
   each value in single quotes and leaves an embedded quote raw, so a secret carrying an
   apostrophe closes its quote early and the rest of the line is shell - sourcing it either
-  aborts or runs the tail as a command. `--format=dotenv-export` uses the same writer and
-  fails the same way. The boot body therefore takes every value apart and re-emits it under
-  quoting that has no escape hatch, which is what makes `~/.bashrc`'s `set -a; . agent.env`
-  safe to keep. Anything else that reads that file inherits the guarantee; nothing should
-  feed the CLI's own dotenv output to a shell.
+  aborts or runs the tail as a command.
+
+  `--format=dotenv-export` uses the same writer and fails the same way. The boot body
+  therefore takes every value apart and re-emits it under quoting that has no escape hatch,
+  which is what makes `~/.bashrc`'s `set -a; . agent.env` safe to keep. Anything else that
+  reads that file inherits the guarantee; nothing should feed the CLI's own dotenv output to
+  a shell.
 
 There is no reason to open `.env` by hand while this subsystem is adopted, and no command
 here prints a credential. If you are cat-ing the env file to debug a sync, you are reading
@@ -548,8 +693,10 @@ the wrong file: `status` and `check` answer the same question.
   static shared secrets exported as dotenv.
 - **No vault dependency in the deploy path.** Compose reads `.env`, and the one call the
   runners make before it is best-effort: warn, continue, bring the stack up on the values the
-  file already held. The follow-up that would change that is a compose-secrets rewrite of every
-  service block, and it would make every bring-up wait on a server nothing here waits on today.
+  file already held.
+
+  The follow-up that would change that is a compose-secrets rewrite of every service block,
+  and it would make every bring-up wait on a server nothing here waits on today.
 - **No multi-line value reaches a workspace.** The boot fetch publishes single-line values only
   and drops the rest with one note; see
   [The workspace boot fetch](#the-workspace-boot-fetch).

@@ -45,12 +45,16 @@ files. If you pass 80 without Step 2 green, you are exploring instead of convert
 
 ## Step 0 -- probe, then stop probing (5 calls, `run_terminal_command`)
 
+### The four probes
+
 Run these four and record the answers. Do not re-derive them later.
 
     cd <repo> && git rev-parse --show-toplevel && git ls-files | wc -l
     bazelisk --version
     bazelisk query '//...' --output=label_kind 2>&1 | head -40
     bazelisk query 'kind("source file", deps(//...))' --output=label 2>/dev/null | wc -l
+
+### What the repo already has
 
 Then find out what the repo already has before you build anything, because a
 duplicate mechanism costs a whole phase:
@@ -59,12 +63,16 @@ duplicate mechanism costs a whole phase:
     git ls-files 'scripts/*' 'tools/*' | grep -iE 'map|invent|coverage|deps' | head
 
 Look for an existing "which files are unclaimed" verb (here it is
-`bazelisk run //scripts:bazel-map -- unlisted <dir>`). Use the repo's own when it
-exists and wire it into the gate; reach for the shipped
-`scripts/owned_files_check.py` only when nothing asks the question. A guessed target
-label wastes a turn on `ERROR: no such target`; a query costs none.
+`bazelisk run //scripts:bazel-map -- unlisted <dir>`).
+
+Use the repo's own when it exists and wire it into the gate; reach for the shipped
+`scripts/owned_files_check.py` only when nothing asks the question.
+
+A guessed target label wastes a turn on `ERROR: no such target`; a query costs none.
 
 ## Step 1 -- bootstrap the host so the gate can be trusted
+
+### Confirm the bootstrap script
 
 The toolchain usually ships as a golden image plus one shell-run bootstrap script.
 Confirm it exists and is honest; `//:lint`-style gates commonly SKIP a missing linter
@@ -72,24 +80,40 @@ and go green having checked nothing.
 
     grep -n 'command -v\|check_tool\|REQUIRE_LINT_TOOLS\|CI' lints/*.sh scripts/*.sh 2>/dev/null | head -20
 
-A bootstrap script must be idempotent, pinned by version, and have a `--check` mode
-that prints what is missing without installing. Give the umbrella target a `doctor`
-verb that reports the same facts. The rule that makes this worth having: a check that
-silently skips locally must fail under `CI=true` or `REQUIRE_LINT_TOOLS=1`, and the CI
-lane must install every tool the strict lane demands, including the ones that live in a
-sub-project's package manager. Run it with `run_terminal_command` and quote the output.
+### What the bootstrap script must do
+
+A bootstrap script must be:
+
+- idempotent, pinned by version.
+- have a `--check` mode that prints what is missing without installing.
+
+Give the umbrella target a `doctor` verb that reports the same facts.
+
+The rule that makes this worth having:
+
+- a check that silently skips locally must fail under `CI=true` or `REQUIRE_LINT_TOOLS=1`.
+- the CI lane must install every tool the strict lane demands, including the ones that
+  live in a sub-project's package manager.
+
+Run it with `run_terminal_command` and quote the output.
 
 ## Step 2 -- prove file ownership, with a ledger for the honest exceptions
+
+### Run the check first
 
 Start with the check, not the fix.
 
     python3 ~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py --root <repo>
 
 It maps labels to paths and reports `summary: N tracked | M target-owned | K
-control-plane | L ledger-excluded (reasoned) | U unowned`. Mapping a label by
-replacing every `:` with `/` is the classic bug: `//:file` becomes `/file`, and
-almost every file looks unowned. The root package has no package directory, and that
-is what `label_to_path` handles.
+control-plane | L ledger-excluded (reasoned) | U unowned`.
+
+Mapping a label by replacing every `:` with `/` is the classic bug: `//:file` becomes
+`/file`, and almost every file looks unowned.
+
+The root package has no package directory, and that is what `label_to_path` handles.
+
+### Create the ledger
 
 Then create `<repo>/bazel-unowned.txt`, one entry per deliberate exception:
 
@@ -97,29 +121,42 @@ Then create `<repo>/bazel-unowned.txt`, one entry per deliberate exception:
     Makefile           shim that forwards to //:targets
     .vscode/tasks.json editor convenience, no build meaning
 
-Two rules keep the ledger from becoming the place files go to hide: an entry with no
-reason is a failure, and `--strict-ledger` fails an entry that matches nothing, so a
-deletion cannot leave a claim behind. Bazel's own control plane (`.bazelrc`,
-`.bazelversion`, `MODULE.bazel`, every `BUILD.bazel`) is exempt in code, because no
-rule can be its owner.
+Two rules keep the ledger from becoming the place files go to hide:
+
+- an entry with no reason is a failure.
+- `--strict-ledger` fails an entry that matches nothing, so a deletion cannot leave a
+  claim behind.
+
+Bazel's own control plane (`.bazelrc`, `.bazelversion`, `MODULE.bazel`, every
+`BUILD.bazel`) is exempt in code, because no rule can be its owner.
+
+### Register the check as a test target
 
 Register the check as a test target so drift fails a build rather than waiting for a
-human. Follow the repo's own recipe for a new gate, which normally means: the rule in
-the lints or tests package, the runner added to the runners filegroup, the suite added
-to `//lints:all` or the aggregate suite, and any payload the runner reads added to
-both the data filegroup and the manifest the dependency test pins. Omit the manifest
-and the check passes while reading nothing.
+human. Follow the repo's own recipe for a new gate, which normally means:
+
+- the rule in the lints or tests package.
+- the runner added to the runners filegroup.
+- the suite added to `//lints:all` or the aggregate suite.
+- any payload the runner reads added to both the data filegroup and the manifest the
+  dependency test pins.
+
+Omit the manifest and the check passes while reading nothing.
 
 ## Step 3 -- make targets explicit, and ratchet the globs
 
     python3 ~/.agents/skills/ez-bazel-first/scripts/glob_budget.py --root <repo> --max <count>
 
 Set `--max` to the count it reports, so the budget can only shrink. Every surviving
-`glob(` needs `# glob-policy: <reason>` nearby. A glob is right when the directory is
-the contract and new files are meant to be picked up silently, such as a payload tree
-mounted into a container; a glob is wrong for sources, test suites, and anything whose
-addition should force a review. Prefer an explicit list wherever a new file must be a
-conscious act.
+`glob(` needs `# glob-policy: <reason>` nearby.
+
+A glob is right when the directory is the contract and new files are meant to be picked
+up silently, such as a payload tree mounted into a container.
+
+A glob is wrong for sources, test suites, and anything whose addition should force a
+review.
+
+Prefer an explicit list wherever a new file must be a conscious act.
 
 ## Step 4 -- one entry point
 
@@ -129,8 +166,9 @@ There is one command for "did everything pass", and the fast loop beside it:
     bazelisk test //<fast-target> --nocache_test_results
 
 Suites tagged `manual` stay out of `bazelisk test //...` on purpose; pass an empty
-`--test_tag_filters=` or name the suite directly to run one. Iterate on the derived
-scope, never on the whole suite:
+`--test_tag_filters=` or name the suite directly to run one.
+
+Iterate on the derived scope, never on the whole suite:
 
     bazelisk query 'rdeps(//..., <path>)' --output=label   # or the repo's own map verb
 
@@ -138,6 +176,8 @@ scope, never on the whole suite:
 which is a real pass. Take exactly one uncached pass before the pull request.
 
 ## Step 5 -- make the docs and the outputs speak in targets
+
+### Enumerate the surfaces
 
 A human should never need a script path. Enumerate the surfaces from the build rather
 than guessing which files are docs:
@@ -147,16 +187,26 @@ than guessing which files are docs:
       --include='*.md' --include='*.mdx' --include='*.py' --include='*.sh' . \
       | grep -v '^tests/' | head -40
 
+### Rewrite every hit
+
 Rewrite each hit to `bazelisk run //scripts:<stem> -- <args>`. Cover the four surfaces
-the request asks for: prose docs, docstrings and `# @function` blocks, inline comments,
-and the text a CLI prints, which includes help output, `error:` lines, and retry hints.
+the request asks for:
+
+- prose docs.
+- docstrings and `# @function` blocks.
+- inline comments.
+- the text a CLI prints, which includes help output, `error:` lines, and retry hints.
+
 A message like `failed; retry with: ./scripts/manage.sh restart` is the bug; the fixed
 form names the target.
 
+### Gate the docs too
+
 Where docs are generated, edit the seed and re-run the generate target; hand-editing a
-generated file trips the committed-render test. Finish with a gate that keeps it true:
-a test fails when a doc names a script path or cites a target that `bazelisk query`
-cannot resolve.
+generated file trips the committed-render test.
+
+Finish with a gate that keeps it true: a test fails when a doc names a script path or
+cites a target that `bazelisk query` cannot resolve.
 
 ## Step 6 -- drive coverage through the gate
 
@@ -167,11 +217,17 @@ Read the report line, not the pass line: a suite can pass at 99.5%. Every uncove
 function gets a test, and a genuinely unreachable one gets an exclusion with a reason
 in the same place the ledger keeps its reasons.
 
+### One trap: the coverage denominator
+
 One trap worth its own bullet: adding a `data` edge to reach a new runner widens the
 denominator of any xtrace-based shell coverage suite, because the denominator is the
-union of declared payloads. Functions that were never reachable become newly measured
-and the number drops on a green local run. When that happens, write the missing tests;
-a lowered floor that nobody noticed is the failure this gate exists to catch.
+union of declared payloads.
+
+Functions that were never reachable become newly measured and the number drops on a
+green local run.
+
+When that happens, write the missing tests; a lowered floor that nobody noticed is the
+failure this gate exists to catch.
 
 ## Step 7 -- verify, commit, PR
 
@@ -180,21 +236,41 @@ Run the full gate uncached once, then the same command CI runs, before you push:
     bazelisk test //<aggregate-target> --test_tag_filters= --test_output=errors --nocache_test_results
 
 Branch from the tip of the default branch, commit in an order where no commit is red,
-and open the pull request per the repo's convention. On any push or `gh` auth error,
-run the repo's one auth probe once and read its last line; do not improvise a
-credential helper.
+and open the pull request per the repo's convention.
+
+On any push or `gh` auth error, run the repo's one auth probe once and read its last
+line; do not improvise a credential helper.
 
 ## Fan-out
 
+### Assign the work
+
 Census first with one read-only child, then at most four writers in a single turn.
-Hotspots stay with you: the root and per-package `BUILD` files, aggregate suites,
-payload manifests, the ledger, and generated docs. Give each writer an OWN list, a
-MUST-NOT-TOUCH list naming its siblings, the pinned contract text, and a literal
-definition-of-done command.
+
+Hotspots stay with you:
+
+- the root and per-package `BUILD` files.
+- aggregate suites.
+- payload manifests.
+- the ledger.
+- generated docs.
+
+Give each writer:
+
+- an OWN list.
+- a MUST-NOT-TOUCH list naming its siblings.
+- the pinned contract text.
+- a literal definition-of-done command.
+
+### Isolate the writers
 
 Writers on a shared checkout collide in time even when their file sets are disjoint.
+
 Either isolate them, or forbid `git stash` and `git checkout` for baselining and have
-them read `git show HEAD:<path>` into `/tmp`. A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own.
+them read `git show HEAD:<path>` into `/tmp`.
+
+A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when
+it ships no file of its own.
 
 ## Pitfalls, each with the fix
 

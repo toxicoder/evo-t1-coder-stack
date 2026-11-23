@@ -15,8 +15,9 @@ description: "Delegate big multi-file work to the Grok Build CLI (`grok`, also o
 Single-file or short-readable work (read a file, tweak one file, run one
 command): do it yourself with the tools your host names - `read_file` /
 `edit_files` / `execute` for the Coder Agents chat agent, `read_file` /
-`search_replace` / `write` / `run_terminal_command` for the Grok Build CLI. Do
-not delegate - delegation costs a review pass and buys nothing on a small ask.
+`search_replace` / `write` / `run_terminal_command` for the Grok Build CLI.
+
+Do not delegate - delegation costs a review pass and buys nothing on a small ask.
 
 ## Big task -- delegate through your shell tool
 
@@ -45,12 +46,19 @@ Rules:
 
 ## Environment facts
 
+### Which grok binary a run uses
+
 - The golden image bakes `grok` at `/usr/local/bin/grok`, with an `agent` symlink
-  beside it. A workspace may shadow it: `~/.grok/bin/grok` (what `grok update`
+  beside it.
+- A workspace may shadow it: `~/.grok/bin/grok` (what `grok update`
   installs) sits earlier on PATH, so check `command -v grok` before assuming which
   binary a delegated run will use, and compare both `--version` outputs when they
   matter.
+
+### The model transport
+
 - LiteLLM is already exported into workspace shells: `LITELLM_BASE_URL` plus
   the key in `LITELLM_API_KEY`; the CLI's default model alias `agent` is the
-  tool-call-capable one. Never print or embed `$LITELLM_API_KEY` in a command,
-  file or reply - reference it by name only.
+  tool-call-capable one.
+- Never print or embed `$LITELLM_API_KEY` in a command, file or reply -
+  reference it by name only.

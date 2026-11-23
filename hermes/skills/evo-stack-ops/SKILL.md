@@ -23,6 +23,8 @@ restart a service, or read logs.
 
 ## Preferred: Bazel targets (stack host)
 
+### The bazelisk commands
+
 ```sh
 bazelisk run //scripts:prod-stack -- status
 bazelisk run //scripts:prod-stack -- up
@@ -31,11 +33,16 @@ bazelisk run //scripts:prod-stack -- logs --tail 200 coder
 bazelisk run //scripts:dev-stack  -- status        # the evo-t1-dev sandbox
 ```
 
+### Which project each CLI drives
+
 `prod-stack` addresses compose project `evo-t1-prod` (stable, default ports);
-`dev-stack` addresses `evo-t1-dev`. Both take `-p/--project-name`,
-`-f/--file`, `-e/--env-file`.
+`dev-stack` addresses `evo-t1-dev`.
+
+Both take `-p/--project-name`, `-f/--file`, `-e/--env-file`.
 
 ## Fallback: compose directly
+
+### The docker compose commands
 
 The official image has no bazelisk. Same project, same file, same `.env` beside
 that file:
@@ -48,35 +55,54 @@ docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" restart litellm
 docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" logs --tail 100 coder
 ```
 
-Services: `coder`, `db`, `litellm`, `ollama`, `searxng`, `kasm`, `homepage`,
-`homepage-proxy`, `router`, `hermes`, `hermes-init`, `prometheus`, `mimir`, `loki`,
-`tempo`, `grafana`, `alloy`, `node_exporter` (host CPU, memory, disk and process
-metrics), `cadvisor` (per-container CPU, memory and the process table; the one
-privileged container in this stack), `blackbox_exporter` (outbound HTTP prober,
-called by Prometheus on the compose network), `alertmanager` (deduplication,
-grouping and silencing of the alerts the rule files define), `infisical`,
-`infisical-db`, `infisical-redis`. `node_exporter`, `cadvisor`,
-`blackbox_exporter` and `alertmanager` sit behind the observability compose profile
-and publish on the host's loopback only, so reaching them is a host-shell act, not
-a workspace one.
+### Service names
+
+Services:
+
+- `coder`, `db`, `litellm`, `ollama`, `searxng`, `kasm`, `homepage`, `homepage-proxy`,
+  `router`, `hermes`, `hermes-init`
+- `prometheus`, `mimir`, `loki`, `tempo`, `grafana`, `alloy`
+- `node_exporter` (host CPU, memory, disk and process metrics)
+- `cadvisor` (per-container CPU, memory and the process table; the one privileged
+  container in this stack)
+- `blackbox_exporter` (outbound HTTP prober, called by Prometheus on the compose
+  network)
+- `alertmanager` (deduplication, grouping and silencing of the alerts the rule files
+  define)
+- `infisical`, `infisical-db`, `infisical-redis`
+
+`node_exporter`, `cadvisor`, `blackbox_exporter` and `alertmanager` sit behind the
+observability compose profile and publish on the host's loopback only, so reaching them
+is a host-shell act, not a workspace one.
+
+### The Spark boxes
 
 The Sparks run their own node_exporter on 9100 and DCGM exporter on 9400, and
 `bazelisk run //scripts:spark-monitor -- --apply` is the only thing that installs
-them. Same CLI: no flag or `--dry-run` plans only, `--status` prints the per-box
-probe table, `--targets` the sparks.json it expects, `--restart` restarts both
-containers, `--box <n>` narrows it to one box. Detail in docs/spark-monitoring.md;
-the metrics themselves are `host-diagnostics`.
+them.
+
+Same CLI:
+
+- no flag or `--dry-run` plans only
+- `--status` prints the per-box probe table
+- `--targets` the sparks.json it expects
+- `--restart` restarts both containers
+- `--box <n>` narrows it to one box
+
+Detail in docs/spark-monitoring.md; the metrics themselves are `host-diagnostics`.
+
+### The stack's own health
 
 The stack's own health, from the host: `bazelisk run //scripts:hermes-shell -- check`
 reports this container's state, its seed, and the model lane.
 
 ## Related skills
 
-`host-linux-ops` for the right Linux command and what each flag means,
-`host-diagnostics` when something is broken and nobody knows why, `web-research`
-when the answer is off this box, and
-`deploy-from-github` when the request is about a third-party repository — that
-one belongs in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}` and never in this checkout.
+- `host-linux-ops` for the right Linux command and what each flag means
+- `host-diagnostics` when something is broken and nobody knows why
+- `web-research` when the answer is off this box
+- `deploy-from-github` when the request is about a third-party repository — that one
+  belongs in `${STACK_DEPLOY_PATH:-/opt/stack-deploy}` and never in this checkout
 
 ## Do not
 

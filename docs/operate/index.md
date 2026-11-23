@@ -28,10 +28,13 @@ bazelisk run //scripts:prod-stack -- status
 bazelisk run //scripts:update-configs -- all
 ```
 
-`prod-stack` addresses the stable project by name from any directory; `dev-stack` does the
-same for the dev one. `update-configs` is what a `git pull` cannot do for you, because the
-files that go stale are not tracked — see
-[config-updates.md](../config-updates.md).
+### What each name addresses
+
+- `prod-stack` addresses the stable project by name from any directory
+- `dev-stack` does the same for the dev one
+
+`update-configs` is what a `git pull` cannot do for you, because the files that go stale are
+not tracked — see [config-updates.md](../config-updates.md).
 
 ## Where to look
 
@@ -51,7 +54,12 @@ files that go stale are not tracked — see
 
 ## Before you reach for a hammer
 
-`storage-clean` is the janitor for the persistent layer and asks before it deletes; the
-dev-stack `reset` and a Kasm reset both destroy state that has no backup. The cost of each
-is spelled out on the entry in [troubleshooting.md](../troubleshooting.md) — read that line
-first.
+`storage-clean` is the janitor for the persistent layer and asks before it deletes.
+
+Two commands destroy state that has no backup:
+
+- the dev-stack `reset`
+- a Kasm reset
+
+The cost of each is spelled out on the entry in [troubleshooting.md](../troubleshooting.md) —
+read that line first.

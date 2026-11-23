@@ -39,6 +39,8 @@ never against a daemon, a network, or the operator's real `.env`.
 
 ## Two gates, one rule
 
+### What each gate checks
+
 `tests/shell_inventory.sh` fails when a function under `scripts/` is not named under
 `tests/`; `tests/doc_coverage.sh` fails when a `# @function` block (or the file header) is
 missing or incomplete. So every new function needs, in the same change as the function:
@@ -50,6 +52,8 @@ missing or incomplete. So every new function needs, in the same change as the fu
 
 Name it in exactly one suite. A chain test that happens to mention the name also satisfies
 the inventory, but the owning suite is the one that asserts its behaviour.
+
+### Where the name has to live
 
 The inventory strips comment lines before it looks for a name, so a name that only ever
 appears in a `# @function` block or in prose is still untested: it has to sit in a code line
@@ -74,10 +78,12 @@ bash tests/bats/workspace.bats                    # same suite, straight from a 
 A suite is one cached action. Its `.bats` file, `test_helper.bash`, `test_helpers.sh`,
 `bats_runner.sh` and the `scripts/**.sh` plus stub/fixture files it declares as `data` are
 its inputs, so editing one script re-runs only the suites that read it, and an unchanged
-suite replays its cached PASS. Beyond that common set each suite names only the payload
-groups it opens, in `_SUITE_PAYLOAD` in `tests/BUILD.bazel`; a suite whose target does not
-declare a payload it reads finds that payload missing under its own target, and
-`//tests:bats_bazel_deps_test` is the gate that keeps the map honest.
+suite replays its cached PASS.
+
+Beyond that common set each suite names only the payload groups it opens, in
+`_SUITE_PAYLOAD` in `tests/BUILD.bazel`; a suite whose target does not declare a payload it
+reads finds that payload missing under its own target, and `//tests:bats_bazel_deps_test`
+is the gate that keeps the map honest.
 
 ## Which runtime gates
 
@@ -101,13 +107,18 @@ bazelisk run //scripts:test-in-image --                        # from any host w
   defect and a green one is not the run that unlocks the merge button. CI and branch
   protection gate on the image result either way.
 
+### The npm-backed gates
+
 The npm-backed gates (`//docs-site:typecheck`, `:unit`, `:unit_coverage`, `:verify`) are
 `manual` for the same reason, and they all run out of `docs-site/node_modules` in the
 checkout: `run_npm.sh` resolves its own runfiles copy back into it, so a cold checkout
-installs once for the whole family, under `docs-site/.npm-ci.lock`. Without that lock
-every test action ran its own `npm ci`, and a gate that started while another was still
-writing the tree died on a SIGBUS reading a short esbuild binary. A box with no `flock`
-(a macOS laptop) installs unlocked, since nothing else is running there.
+installs once for the whole family, under `docs-site/.npm-ci.lock`.
+
+Without that lock every test action ran its own `npm ci`, and a gate that started while
+another was still writing the tree died on a SIGBUS reading a short esbuild binary.
+
+A box with no `flock` (a macOS laptop) installs unlocked, since nothing else is running
+there.
 
 ## Measured coverage
 
@@ -121,15 +132,21 @@ bazelisk test //tests:py_coverage         # every Python statement and branch?
 bazelisk test //docs-site:unit_coverage   # every docs-site function, >=95% lines?
 ```
 
+### What the shell ledger records
+
 `//tests:shell_coverage` is the one to understand before you write a shell test.
 It builds a mirror of the checkout with `tests/coverage/instrument.py`: every
 production `.sh` is copied with one extra statement at the top of each function
 body that appends `<path>\t<function>` to `$EVO_COV_LEDGER`, and every other path
-stays a symlink into the real tree. `tests/bats_runner.sh` points `REPO_ROOT` at
+stays a symlink into the real tree.
+
+`tests/bats_runner.sh` points `REPO_ROOT` at
 that mirror when `EVO_COV_MIRROR` is set, so the suites execute the instrumented
 copies through whichever access pattern they already use — run the CLI, source the
 lib, or `load_shell_function`. Then `tests/coverage/aggregate.py` names every
 function whose body never ran.
+
+### Why not xtrace
 
 Why a ledger and not `bash -x`: xtrace traces bats-core itself, wrote 3.4 GB of log
 for one suite, and leaked trace lines into the stderr bats captures per test, which
@@ -140,12 +157,16 @@ The consequence for a test author: a function counts when something calls it. A
 name in a comment, a stub, a fixture or a quoted grep pattern satisfies
 `//tests:shell_inventory` and satisfies nothing here.
 
+### The Python and docs-site targets
+
 `//tests:py_coverage` discovers `tests/python/test_*.py` and
 `docs-site/test_gen_nav.py` under coverage.py 7.17, pinned in
 `images/dev/tool-versions.env` and baked into the golden image; without it the
 target fails with a pointer to `//scripts:test-in-image` rather than passing while
 measuring nothing. `//docs-site:unit_coverage` is `npm run unit:coverage`
 (vitest v8 provider, thresholds in `docs-site/vitest.config.ts`).
+
+### Traps that fail silently
 
 Three runfiles traps bit this gate, and all fail *silently*, so they are worth
 naming:
@@ -167,11 +188,14 @@ naming:
   `startup-script-size.bats` builds a real instrumented mirror to prove it still
   measures what ships.
 
+### The vitest gate
+
 The same "empty looks like green" rule applies to the vitest gate: it must measure
-files no test imported. Vitest 4 made that the default and removed the `all` key
-from `CoverageOptions`. To prove the default still holds after a vitest bump, drop
-a `lib/__cov_probe.ts` exporting one uncalled function and confirm the run reports
-it at 0% and fails; then delete the file.
+files no test imported.
+
+Vitest 4 made that the default and removed the `all` key from `CoverageOptions`. To prove
+the default still holds after a vitest bump, drop a `lib/__cov_probe.ts` exporting one
+uncalled function and confirm the run reports it at 0% and fails; then delete the file.
 
 ## The three paths a suite may use
 
@@ -207,6 +231,8 @@ setup() {
 }
 ```
 
+### The stub helpers
+
 - `stub_bin <tool…>` copies each stub out of `STUB_BIN_DIR` into `${BATS_TEST_TMPDIR}/bin`
   and `chmod 755`s it; `use_stubs` = `stub_bin` + a fresh `STUB_LOG` + the PATH shadow.
   The copy-plus-chmod is load-bearing: the Bazel sandbox and some tar extractions strip the
@@ -218,6 +244,9 @@ setup() {
   from the script under test as well, and a script that pipes its answer through
   `grep | wc | tr` then fails for a reason that has nothing to do with the contract the
   suite means to check.
+
+### How run behaves
+
 - **`run` keeps stdout in `$output`.** With `run --separate-stderr` there is no `$stdout`:
   `$output` is stdout and `$stderr` is stderr. An assertion written against `$stdout`
   compares against an empty string and fails, which is how a whole suite of real
@@ -226,6 +255,9 @@ setup() {
   `run --separate-stderr usage_error '…'` followed by `[ "${status}" -eq 2 ]` works even
   though `usage_error` ends in `exit 2`. Pass a real command (`bash "${SCRIPT}" …`) when
   the script is what is under test.
+
+### Reading the stub log, and the assertions
+
 - `stub_log <tool>`, `stub_log_last`, `stub_log_count` read back what the stub recorded from
   `$STUB_LOG/<tool>.log`; assert on the argv, not on prose.
 - `real_bin <tool>` resolves a tool with the stub directory removed from PATH. That is the
@@ -250,6 +282,8 @@ declares as `data`; under `bazel run` it is wherever the operator typed `bazelis
 daemon, an `ssh`, or a reachable Spark box — a sandboxed action usually has none of them on
 PATH.
 
+### Resolve, then prove
+
 So resolve the root from the environment first, then prove it, and fail loudly when the
 proof fails. `resolve_checkout` in `scripts/lib/common.sh` is that resolver and every CLI that
 reads a file the checkout alone holds calls it, so do not write a second one. It takes the calling
@@ -264,8 +298,15 @@ ROOT_DIR="$(resolve_checkout "${SELF_DIR}")" || exit 5
 cd "${ROOT_DIR}"
 ```
 
-It tries `${REPO_ROOT:-}`, then `${BUILD_WORKSPACE_DIRECTORY:-}`, then `${GITHUB_WORKSPACE:-}`,
-then `${PWD}`, then `${SELF_DIR}/..`, and prints the first candidate that proves out.
+It tries these candidates in order, and prints the first candidate that proves out:
+
+1. `${REPO_ROOT:-}`
+2. `${BUILD_WORKSPACE_DIRECTORY:-}`
+3. `${GITHUB_WORKSPACE:-}`
+4. `${PWD}`
+5. `${SELF_DIR}/..`
+
+### Why each part is there
 
 - The `${REPO_ROOT:-}` / `${GITHUB_WORKSPACE:-}` default is not decoration: these scripts run
   under `set -euo pipefail`, and a bare `${REPO_ROOT?}` aborts with `REPO_ROOT: parameter not

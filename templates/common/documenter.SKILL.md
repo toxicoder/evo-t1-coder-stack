@@ -26,10 +26,17 @@ metadata:
 # Documenter
 
 The unit of work is a change, never a topic: the diff is the source and a document is a claim
-to check against it. Scope the change, map the docs against it, write, then let someone who
-wrote none of it run every command the prose now names. This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own,
-so the writing fan-out is still yours to run. Budget 12 to 25 of your own calls plus
-the lanes, and run every block with `run_terminal_command` (Grok Build CLI) or `execute` (Coder
+to check against it.
+
+Scope the change, map the docs against it, write, then let someone who
+wrote none of it run every command the prose now names.
+
+This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent`
+for read-only mappers only, and only when it ships no file of its own,
+so the writing fan-out is still yours to run.
+
+Budget 12 to 25 of your own calls plus the lanes, and run every block with `run_terminal_command`
+(Grok Build CLI) or `execute` (Coder
 Agents chat agent): a command written inline in this body runs nothing on its own.
 
 Local references only: the diff, the code, the tests, the docs. Models are the local aliases
@@ -43,9 +50,17 @@ Take the change itself, whichever form the argument named -- no lane, your own r
     git diff main...HEAD                               # a branch or a path set
     env -u GH_TOKEN -u GITHUB_TOKEN gh pr diff <n>     # a pull request
 
-Then list, from that diff alone, every user-visible thing it adds, renames, removes, or
-renumbers: commands and flags, Bazel labels, paths, ports, env keys, defaults. That ledger is
-what the docs must answer. Given only a wish to document something, stop and ask which change.
+### The ledger the docs must answer
+
+Then list, from that diff alone, every user-visible thing it adds, renames, removes, or renumbers:
+
+- commands and flags
+- Bazel labels
+- paths, ports, env keys, defaults
+
+That ledger is what the docs must answer.
+
+Given only a wish to document something, stop and ask which change.
 
 ## Step 2 -- Read: one mapper per documentation surface (1 call per surface, one turn)
 
@@ -59,7 +74,11 @@ returns numbered claims carrying `path:line` and the document that is now wrong,
 - the inline comments and `# @function` blocks in `scripts/**/*.sh`, gated by
   `//tests:doc_coverage` (`tests/BUILD.bazel:737-743`)
 
-A mapper that quotes no line did not read the file; send it back. Ask each one for the twin and
+### The twin and the owner
+
+A mapper that quotes no line did not read the file; send it back.
+
+Ask each one for the twin and
 the owner too: `bazelisk run //scripts:bazel-map -- twins <path>` names the payload copy that
 moves with a template file, and `-- owners <new-page>` proves a gate can see the new page.
 
@@ -67,20 +86,38 @@ moves with a template file, and `-- owners <new-page>` proves a gate can see the
 
 One writer on `agent-swarm` per documentation file, which spreads them over every Spark box;
 below three writers keep them on `agent` and launch them in one turn anyway. Every path sits in
-exactly one writer's set -- overlapping globs are a collision, not a race. The hotspot stays with
-the parent: `README.md`, `templates/common/GROK_BUILD_AGENTS.md`, and any file two writers both
-name. A writer that wants a path outside its set is resliced, not told to share it.
+exactly one writer's set -- overlapping globs are a collision, not a race.
 
-Each writer gets the diff, only the claims naming its file, its owned path, and the voice to
-match: an operator doc says what the thing is, what it costs, and which command proves it, and
+### Hotspots and the writer brief
+
+The hotspot stays with the parent:
+
+- `README.md`
+- `templates/common/GROK_BUILD_AGENTS.md`
+- any file two writers both name
+
+A writer that wants a path outside its set is resliced, not told to share it.
+
+Each writer gets:
+
+- the diff
+- only the claims naming its file
+- its owned path
+- the voice to match
+
+An operator doc says what the thing is, what it costs, and which command proves it, and
 it is not a changelog. Correct a stale fact, add a new one, leave a limitation nobody removed.
 
 ## Step 4 -- Check: the skeptic runs the documentation (2 to 5 calls)
 
 Hand the changed files -- the files, not your summary -- to one child on `agent-review` that
-wrote none of it, never the producer, the rule `templates/common/GROK_BUILD_AGENTS.md` carries in
-its Delegation section. Its one job is to execute every command a doc tells a reader to run and
-report each kept or broken with its `path:line`; then you fix what broke and it re-runs it:
+wrote none of it, never the producer, the rule
+`templates/common/GROK_BUILD_AGENTS.md` carries in its Delegation section.
+
+Its one job is to execute every command a doc tells a reader to run and report each kept
+or broken with its `path:line`.
+
+Then you fix what broke and it re-runs it:
 
     <the exact line the doc gives the reader> 2>&1 | tail -20
 

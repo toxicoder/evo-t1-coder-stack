@@ -32,6 +32,8 @@ daemon that runs Coder.
 
 ## First boot
 
+### Clone the repository
+
 ```sh
 git clone https://github.com/toxicoder/evo-t1-coder-stack.git ~/evo-t1-coder-stack
 ```
@@ -39,6 +41,8 @@ git clone https://github.com/toxicoder/evo-t1-coder-stack.git ~/evo-t1-coder-sta
 ```sh
 cd ~/evo-t1-coder-stack
 ```
+
+### The secrets file
 
 Create the one file that holds real secrets, and lock it down before anything else reads
 it:
@@ -51,6 +55,8 @@ cp .env.sample .env
 chmod 600 .env
 ```
 
+### Install the toolchain
+
 Bootstrap the toolchain — the only step that runs before Bazel exists, because it is what
 installs Bazelisk:
 
@@ -58,24 +64,46 @@ installs Bazelisk:
 bash scripts/setup-host.sh
 ```
 
-Then look before you change anything. `--check` is read-only: missing tools, placeholder
-secrets, certificates, images.
+### Look before you change anything
+
+Then look before you change anything. `--check` is read-only:
+
+- missing tools
+- placeholder secrets
+- certificates
+- images
 
 ```sh
 bazelisk run //scripts:bootstrap -- --check
 ```
 
-Prepare the box: rotate the secrets, set `CODER_ACCESS_URL`, issue the self-signed
-certificates, build `evo-t1-dev:latest`, pull the DinD image. With `INFISICAL_ENABLED` on
-in `.env`, a minted secret goes to the vault first and into `.env` only once Infisical has
-accepted it; if the vault refuses, that key keeps its `change-me` placeholder, the run
-warns, and a later re-run picks it up. [operate/secrets.md](operate/secrets.md) covers the
-vault itself. It is idempotent, so re-run it after changing `docker-compose.yml`,
-`litellm/config.yaml`, `searxng/settings.yml`, `infisical/` or `proxy/*.conf`.
+### Prepare the box
+
+- rotate the secrets
+- set `CODER_ACCESS_URL`
+- issue the self-signed certificates
+- build `evo-t1-dev:latest`
+- pull the DinD image
+
+With `INFISICAL_ENABLED` on in `.env`, a minted secret goes to the vault first and into
+`.env` only once Infisical has accepted it; if the vault refuses, that key keeps its
+`change-me` placeholder, the run warns, and a later re-run picks it up.
+
+[operate/secrets.md](operate/secrets.md) covers the vault itself.
+
+It is idempotent, so re-run it after changing:
+
+- `docker-compose.yml`
+- `litellm/config.yaml`
+- `searxng/settings.yml`
+- `infisical/`
+- `proxy/*.conf`
 
 ```sh
 bazelisk run //scripts:bootstrap
 ```
+
+### Start the stack and pull the models
 
 Start the stable stack, and pull the models `OLLAMA_MODELS` names (a large download):
 
@@ -89,6 +117,8 @@ bazelisk run //scripts:pull-models
 
 ## Once Coder answers
 
+### Register the first account
+
 Register the first account — that account is the site admin. Browsers only expose
 `crypto.randomUUID()` in a secure context, so this points at the TLS listener:
 
@@ -100,6 +130,8 @@ coder login https://<host>:3001 \
   --first-user-trial=false
 ```
 
+### Push both templates
+
 Push both templates (`workspace` first, `devcontainer` last). The source travels as a tar
 on stdin and the credential is minted, used and deleted in the same run, so there is no
 host `coder` CLI and no login here:
@@ -107,6 +139,8 @@ host `coder` CLI and no login here:
 ```sh
 bazelisk run //scripts:push-template
 ```
+
+### Wire the chat agent
 
 Wire the control-plane chat agent — print the intended end state, then apply it:
 
@@ -118,6 +152,8 @@ bazelisk run //scripts:coder-agents -- --dry-run
 bazelisk run //scripts:coder-agents -- --apply
 ```
 
+### Create the first workspace
+
 Create the first workspace. One repository per workspace is the default, and the template
 picks itself from the URL:
 
@@ -125,9 +161,13 @@ picks itself from the URL:
 bazelisk run //scripts:new-workspace -- https://github.com/org/repo.git
 ```
 
-Then finish the two browser-only steps: run the Kasm wizard once at `https://<host>:3000`
-and use `https://<host>:4443` after it, and open the dashboard at `https://<host>/` with
-the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap` printed.
+### Finish in a browser
+
+Then finish the two browser-only steps:
+
+1. run the Kasm wizard once at `https://<host>:3000` and use `https://<host>:4443` after it
+2. open the dashboard at `https://<host>/` with the `HOMEPAGE_AUTH_PASSWORD` that `bootstrap`
+   printed
 
 ## What to read next
 

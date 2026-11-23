@@ -26,29 +26,52 @@ metadata:
 # Migrator
 
 One version moves per run, plus the proof that it moves; the rename you also wanted belongs on
-another branch. This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own,
-so the writer fan-out is still yours, and each block below runs only when you run it with `run_terminal_command` or `execute`.
+another branch.
+
+This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent`
+for read-only mappers only, and only when it ships no file of its own,
+so the writer fan-out is still yours.
+
+Each block below runs only when you run it with `run_terminal_command` or `execute`.
 
 Models are the local aliases this run uses -- `agent`, `agent-explore`, `agent-swarm`,
-`agent-review` -- and no cloud id. Budget 20 to 35 of your own calls plus the migrate wave, and
-never read `.env` or `.env.*`: a key's shape comes from `.env.example` or the CLI that prints it.
+`agent-review` -- and no cloud id.
+
+Budget 20 to 35 of your own calls plus the migrate wave, and never read `.env` or `.env.*`: a key's
+shape comes from `.env.example` or the CLI that prints it.
 
 ## Phase 1 -- pin: where the version actually lives (read-only, `agent-explore`, 2 to 5 calls)
 
 A version is rarely one number in one file. Send one read-only child per disjoint area on
 `agent-explore`, the lane for pure mapping, and take back `path:line` for every place the old string
-appears: manifest, lockfile, base image tag, the test that asserts it, the doc that quotes it.
+appears:
 
-Here the pin lives in `images/dev/tool-versions.env` and its mirror in `images/dev/Dockerfile`: each
-key there must also be an `ARG` in the Dockerfile or `//tests:bats_image_test` fails
-(`tests/bats/image.bats:25`), and `scripts/lib/tool_pins.sh` turns the same keys into host download
-URLs, so a rename strands CI. Bumping those two files is the whole dependency update -- the
-contributor container needs no edit because `devcontainer.json` `cacheFrom`s the image built there.
+- manifest
+- lockfile
+- base image tag
+- the test that asserts it
+- the doc that quotes it
+
+### Where the pin lives here
+
+Here the pin lives in `images/dev/tool-versions.env` and its mirror in `images/dev/Dockerfile`:
+
+- each key there must also be an `ARG` in the Dockerfile
+  or `//tests:bats_image_test` fails (`tests/bats/image.bats:25`)
+- `scripts/lib/tool_pins.sh` turns the same keys into host download URLs, so a rename strands CI
+
+Bumping those two files is the whole dependency update -- the contributor container needs no edit
+because `devcontainer.json` `cacheFrom`s the image built there.
 
 ## Phase 2 -- the delta, from a lane and not from memory (1 to 3 calls)
 
-Read what upstream actually changed: the notes for every version you are skipping, the deprecations
-since removed, the minimum runtime the release demands. Use a research lane -- context7 for an API
+Read what upstream actually changed:
+
+- the notes for every version you are skipping
+- the deprecations since removed
+- the minimum runtime the release demands
+
+Use a research lane -- context7 for an API
 surface, resolved to a library id first, or searxng `search` / `fetch_content` for a release note.
 
 A current fact carries its source URL or is labelled unverified; an unverified delta stops a major
@@ -56,11 +79,20 @@ bump, and a labelled patch or minor may proceed with that label carried into the
 
 ## Phase 3 -- plan before you touch anything (mandatory)
 
-A migration is exactly the case Plan Mode exists for. Write the plan ahead of the first edit: the
-files from Phase 1, the order they move in, the rollback, and the one command that proves the
-upgrade. Five files or one wave of writers is `/ez-micro-plan` territory -- `.grok/plans/<slug>/`,
-with `plan_check.py --ready` green before wave 1. Run the proving command on the untouched tree
-first, so the baseline is quoted; a red baseline is `/bug-hunt`. Write the rollback as a command.
+A migration is exactly the case Plan Mode exists for. Write the plan ahead of the first edit:
+
+- the files from Phase 1
+- the order they move in
+- the rollback
+- the one command that proves the upgrade
+
+Five files or one wave of writers is `/ez-micro-plan` territory -- `.grok/plans/<slug>/`,
+with `plan_check.py --ready` green before wave 1.
+
+Run the proving command on the untouched tree
+first, so the baseline is quoted; a red baseline is `/bug-hunt`.
+
+Write the rollback as a command.
 
 ## Phase 4 -- migrate: one writer per disjoint file set (`agent-swarm`)
 
@@ -69,9 +101,19 @@ globs, no new shared symbols. At or above three independent writers the wave goe
 which spreads it over every Spark box; below three, run them on `agent` in one turn. Each writer
 gets its owns list, a must-not-touch list, the old and new version strings, a literal done command.
 
-Hotspots stay with the parent: lockfiles, generated artifacts, snapshots, a barrel or registry,
-migration order, and here the `tool-versions.env` plus `Dockerfile` pair, which move as one unit.
+### What each writer gets, and what stays with you
+
+Hotspots stay with the parent:
+
+- lockfiles
+- generated artifacts
+- snapshots
+- a barrel or registry
+- migration order
+- here the `tool-versions.env` plus `Dockerfile` pair, which move as one unit
+
 Bump only; take the call-site changes the new API forces and leave the rest for the next branch.
+
 Then rehearse the rollback before you build on the new pin:
 
     git diff main...HEAD > /tmp/pin.patch && git apply -R /tmp/pin.patch

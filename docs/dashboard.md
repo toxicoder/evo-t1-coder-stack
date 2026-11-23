@@ -26,62 +26,87 @@ landing page) and Kasm Workspaces (streamed desktops).
 
 ### What it shows
 
+#### Service cards
+
 A card per service, with status pulled from each service's own API over the compose
 network - `http://coder:3000`, `http://litellm:4000`, `http://ollama:11434`,
-`http://hermes:9119/api/status` - so nothing here needs a daemon credential. The
-header carries boxed tiles for host CPU, memory, CPU temperature, disk and `eth0`
+`http://hermes:9119/api/status` - so nothing here needs a daemon credential.
+
+The header carries boxed tiles for host CPU, memory, CPU temperature, disk and `eth0`
 throughput, beside the clock (date and 24-hour time), local weather (open-meteo,
 keyless) and a search box.
 
+#### The search box and the SearXNG card
+
 That box asks the stack's own SearXNG rather than a public engine, so a search from the
-dashboard goes to the same instance the workspace agents and Hermes dial. The **Host**
-group carries the matching card: its badge probes `http://searxng:8181/healthz`, which
+dashboard goes to the same instance the workspace agents and Hermes dial.
+
+The **Host** group carries the matching card: its badge probes `http://searxng:8181/healthz`, which
 answers from the instance's own state without querying an upstream engine, and its three
 fields come from `GET /config` on the same port - the release tag, and the two switches
-that decide whether the box is a public instance (`limiter`, `public_instance`). The
-dashboard never asks the instance for result rows: a polled `/search` would park engines
+that decide whether the box is a public instance (`limiter`, `public_instance`).
+
+The dashboard never asks the instance for result rows: a polled `/search` would park engines
 on the rate-limit and CAPTCHA walls, which is why that probe is
 `bazelisk run //scripts:search-check`'s job, run on demand. See
 [troubleshooting.md](troubleshooting.md).
+
+#### The secrets vault card
 
 The **Host** group carries one more card, for the secrets vault: its badge probes
 `http://infisical:8080/` - the container port, not the published `INFISICAL_PORT`,
 because this dashboard reaches every service over compose DNS - and `/` is the path the
 pinned image's own healthcheck calls live. Its `href` rides
 `{{HOMEPAGE_VAR_INFISICAL_URL}}`, which bootstrap fills from `STACK_INFISICAL_URL` when
-the public names are set. The bundle is one flag, `INFISICAL_ENABLED`, off as shipped:
+the public names are set.
+
+The bundle is one flag, `INFISICAL_ENABLED`, off as shipped:
 with it off compose starts none of the three containers and the badge reads down with
 them, so run `bazelisk run //scripts:infisical -- status` before chasing the card.
+
+#### Card links
 
 Card `href`s come from `STACK_CODER_URL` / `STACK_KASM_URL` / `STACK_LITELLM_URL` /
 `STACK_HERMES_URL`, which default to LAN URLs built from `STACK_LAN_HOST` and the
 port variables. Change a port or re-detect the LAN IP and the links follow; set `auto`
 in `STACK_PUBLIC_HOSTS` and the cards follow the names bootstrap composes from the
-naming parts ([public-access.md](public-access.md)). The Hermes card
+naming parts ([public-access.md](public-access.md)).
+
+The Hermes card
 follows `STACK_HERMES_URL` when bootstrap sets it, and stays on
 `http://<STACK_LAN_HOST>:9119` when that key is empty. See [hermes.md](hermes.md).
+
 The search card and the header box share `STACK_SEARCH_URL`. The router composes public
 names for the dashboard, coder, kasm, litellm and hermes only, so search has no public
 name to fall to: leave the key empty and both stay on the LAN, where the card's status
 still reports for anyone who can reach the dashboard.
 
+#### The Observability group
+
 The **Observability** group is the one group that reports on services publishing no port.
+
 Its five cards - Grafana, Prometheus, Loki, Tempo, Mimir - carry a `siteMonitor` on
 compose DNS (`http://grafana:3000/api/health`, `http://prometheus:9090/-/healthy`,
 `http://loki:3100/ready`, `http://tempo:3200/ready`, `http://mimir:8080/ready`), which is
 what proves the bundle is wired up: four of those six containers ship no healthcheck at
-all (distroless image, no shell), so the badge is the only automatic signal they have. The
-bundle's four other services - `node_exporter`, `cadvisor`, `blackbox_exporter` and
+all (distroless image, no shell), so the badge is the only automatic signal they have.
+
+The bundle's four other services - `node_exporter`, `cadvisor`, `blackbox_exporter` and
 `alertmanager` - carry no card and publish nothing beyond the stack host's loopback, so
 their liveness is read there, not here.
+
 The hrefs go through `HOMEPAGE_VAR_GRAFANA_URL` and `HOMEPAGE_VAR_PROMETHEUS_URL`, which
 default to the LAN URLs built from `STACK_LAN_HOST`, `GRAFANA_PORT` and
 `PROMETHEUS_PORT`, and follow `STACK_GRAFANA_URL` once bootstrap composes the public name
 - so the card that opens Grafana Explore for Loki and Tempo opens the same Grafana the
-datasources point at. The Grafana card also carries a `customapi` widget on
+datasources point at.
+
+The Grafana card also carries a `customapi` widget on
 `/api/health` - the one endpoint that needs no session or API key - so the tile shows the
 storage state and the running version, which is what you compare against the image pin in
-`docker-compose.yml` after a pull. Only Grafana has a URL a browser can resolve; the
+`docker-compose.yml` after a pull.
+
+Only Grafana has a URL a browser can resolve; the
 three backends are reached from inside it. See [observability.md](observability.md).
 
 ### Login
@@ -91,7 +116,9 @@ three backends are reached from inside it. See [observability.md](observability.
 to HTTPS.
 
 The password gate is homepage v2's built-in one, and it is worth keeping: the page
-lists every service on the box. `HOMEPAGE_AUTH_PASSWORD` holds the plaintext, because
+lists every service on the box.
+
+`HOMEPAGE_AUTH_PASSWORD` holds the plaintext, because
 homepage hashes that env var itself but still needs the value.
 
 ```sh
@@ -102,7 +129,12 @@ bazelisk run //scripts:dashboard-password
 bazelisk run //scripts:dashboard-password -- --prompt
 ```
 
-Either form rewrites `.env`, recreates the container and verifies the new value landed.
+Either form:
+
+1. rewrites `.env`
+2. recreates the container
+3. verifies the new value landed
+
 The script's job is keeping the secret out of shell history, `ps` and git, and leaving
 `.env` at mode 600.
 
@@ -110,7 +142,9 @@ The script's job is keeping the secret out of shell history, `ps` and git, and l
 
 `homepage/config/*.yaml` plus `custom.css` are bind-mounted read-only, so `git diff`
 stays the record of dashboard changes, and the directory itself has to stay writable
-because the app creates `logs/` inside it. A new config file (`kubernetes.yaml`, ...)
+because the app creates `logs/` inside it.
+
+A new config file (`kubernetes.yaml`, ...)
 needs its own mount line in `docker-compose.yml` before the app sees it.
 
 `custom.css` lives in `/app/config` and is served by the allow-listed
@@ -119,12 +153,16 @@ hostnames out of it.
 
 ### What the gate checks
 
+#### What the check runs
+
 `//:validate` proves these files parse. `tests/homepage_config_check.py` reads them the
 way the app does and fails on the mistakes that parse happily:
 
 ```sh
 bazelisk test //tests:bats_homepage_config_test
 ```
+
+#### Invariants across the configs
 
 - every `{{HOMEPAGE_VAR_*}}` token has a key in `docker-compose.yml`, and every
   `HOMEPAGE_VAR_*` key is used by some config file
@@ -134,6 +172,9 @@ bazelisk test //tests:bats_homepage_config_test
   cannot resolve `http://coder:3000`, only the dashboard server can
 - a `siteMonitor` or widget `url` names a compose service or a token, never a loopback
   or LAN-address literal, which would bake the LAN into git
+
+#### The Observability group, card by card
+
 - the **Observability** group, card by card: five cards, one per bundle service, each
   probing its own health path over compose DNS - `http://grafana:3000/api/health`,
   `http://prometheus:9090/-/healthy`, `http://loki:3100/ready`,
@@ -147,6 +188,9 @@ bazelisk test //tests:bats_homepage_config_test
 - the group's place on the page: `Observability` has its own `layout` entry, renders as
   one `style: row` band whose `columns` equals the cards it holds, and sits after the
   **Host** group
+
+#### Widgets, bookmarks, icons, and search hosts
+
 - no `block` customapi widget declares more than four mappings - the shipped bundle
   slices the list, so a fifth row silently never renders
 - a bookmark's value is a list of single-key mappings carrying both `abbr` and `href`;
@@ -190,15 +234,21 @@ now, as the dashboard sees it" and the Grafana board answers "and what was it at
 The tile survives the bundle being off; the board does not.
 
 Which board, exactly, is catalogued in [observability.md](observability.md) under
-`## The dashboards` - four families of them: the stack host (`evo-host-taskmanager`,
-`evo-containers`), the DGX Sparks (`evo-sparks-overview`, `evo-spark-host`,
-`evo-sparks-fleet`), the inference backends (`evo-inference-models`,
-`evo-inference-backends`), and the bundle itself (`evo-home`, `evo-stack-overview`,
-`evo-alerts`, `evo-stack-logs`, `evo-stack-traces`, `evo-litellm`). The question-to-page
-table lives there; this page stays about the dashboard and the desktops.
+`## The dashboards` - four families of them:
+
+- the stack host (`evo-host-taskmanager`, `evo-containers`)
+- the DGX Sparks (`evo-sparks-overview`, `evo-spark-host`, `evo-sparks-fleet`)
+- the inference backends (`evo-inference-models`, `evo-inference-backends`)
+- the bundle itself (`evo-home`, `evo-stack-overview`, `evo-alerts`, `evo-stack-logs`,
+  `evo-stack-traces`, `evo-litellm`)
+
+The question-to-page table lives there; this page stays about the dashboard and the
+desktops.
 
 The docker socket stays unmounted: service status comes from each service's API, which
-avoids handing the dashboard a root-equivalent host credential. The Hermes card in the
+avoids handing the dashboard a root-equivalent host credential.
+
+The Hermes card in the
 **Host** group is the same pattern (`siteMonitor` of `http://hermes:9119/api/status`);
 the Hermes container itself *does* mount the socket — that credential lives there, not
 here. See [hermes.md](hermes.md).
@@ -206,16 +256,21 @@ here. See [hermes.md](hermes.md).
 ### Look
 
 The layout follows the upstream README example - logo plus greeting top-left, boxed
-resource tiles, clock, weather and search top-right, cards on a wallpaper. The
+resource tiles, clock, weather and search top-right, cards on a wallpaper.
+
+The
 wallpaper (`background.webp`) and the logo (`evo-t1.svg`) live in
 `homepage/assets/icons/`, mounted at `/app/public/icons` and served as `/icons/...`.
+
 Homepage's auth middleware exempts only that path from the sign-in redirect, which is
 what lets the same wallpaper render on the login page, and is why `favicon` points at
 `/icons/evo-t1.svg` too: a tab icon from anywhere else 307s to `/auth/signin`.
 
 `disableIndexing: true` is the whole anti-crawler measure: the app then serves
 `/robots.txt` with `User-agent: *` / `Disallow: /`, and writes no robots meta tag into
-the page. It matters only when `STACK_PUBLIC_HOSTS` gives the dashboard a public name -
+the page.
+
+It matters only when `STACK_PUBLIC_HOSTS` gives the dashboard a public name -
 the page already sits behind the password, and its paths should not reach a crawler
 either.
 

@@ -17,21 +17,31 @@ argument-hint: "[flush|dream|remember <note>|browse|clear]"
 # Learn: turn a session into durable memory
 
 `/ez-learn` reproduces the four upstream Grok Build commands that persist what a
-session learned: `/flush`, `/dream`, `/remember`, and `/memory`. Upstream ships
-those as built-ins, not as files on disk: `/flush`, `/dream`, and `/memory` are
-entries in the shell's built-in command table and `/remember` is a pager command.
+session learned: `/flush`, `/dream`, `/remember`, and `/memory`.
+
+Upstream ships those as built-ins, not as files on disk: `/flush`, `/dream`, and
+`/memory` are entries in the shell's built-in command table
+and `/remember` is a pager command.
+
 The first three are gated behind cross-session memory, which is **off by default**
 and needs a configured memory store before `/flush` and `/dream` even advertise;
-`/remember` is the least gated of the four. This skill runs the same two passes from
-its own body and lands the same files, so the behaviour is there without turning the
-gated feature on: the stack seeds this file instead, and the `ez-` prefix keeps it
-clear of the built-in names.
+`/remember` is the least gated of the four.
+
+This skill runs the same two passes from its own body and lands the same files, so
+the behaviour is there without turning the gated feature on:
+
+- the stack seeds this file instead
+- the `ez-` prefix keeps it clear of the built-in names
 
 Skill authoring is a different pair. `/ez-create-skill` stands in for `create-skill`,
 one of the platform skills upstream serves through the skills bundle and extracts
-under `~/.grok/bundled/skills/`. `/ez-skillify` captures the same artifact out of a
-session that already worked, and no published source names that command upstream.
+under `~/.grok/bundled/skills/`.
+
+`/ez-skillify` captures the same artifact out of a session that already worked, and
+no published source names that command upstream.
+
 That bundle sync wants an x.ai sign-in this stack does not have.
+
 LiteLLM is the sole model transport here, so `~/.grok/bundled/` is never created and
 the stack seeds those two files instead.
 
@@ -41,14 +51,18 @@ its own.
 
 `/ez-learn` stores durable facts. It is not skill authoring: to turn a repeated
 procedure into a skill use `/ez-skillify`, and `/ez-create-skill` to scaffold one
-from a description. Those two write skill files; this one writes memory files.
+from a description.
+
+Those two write skill files; this one writes memory files.
 
 ## Default: report-only, then apply on request
 
 `/ez-learn` with no argument reports and writes nothing: it prints the resolved
 root, the workspace directory name, the session-log files it would fold, and the
-exact markdown it proposes to write. Nothing touches disk until you ask for the
-subcommand, and a write names the path it touched. Pass `--force` only to
+exact markdown it proposes to write.
+
+Nothing touches disk until you ask for the subcommand, and
+a write names the path it touched. Pass `--force` only to
 overwrite a memory file whose contents you have already read.
 
 ## Step 0 -- resolve the root, the scope, and the gate
@@ -90,10 +104,12 @@ you detect that, say so instead of writing.
 ## Step 1 -- name the workspace directory
 
 The directory is `<slug>-<hash8>`: `slug` is the lowercase repo or directory name
-and `hash8` is the first 8 hex chars of a blake3 digest. The hash input is the
-normalized `org/repo` from the `origin` remote with any `.git` and trailing slash
-stripped; with no git remote it is the canonical absolute cwd. Slug rules:
-lowercase, every run of non-`[a-z0-9]` becomes a single `-`, truncated to 40
+and `hash8` is the first 8 hex chars of a blake3 digest.
+
+The hash input is the normalized `org/repo` from the `origin` remote with any `.git`
+and trailing slash stripped; with no git remote it is the canonical absolute cwd.
+
+Slug rules: lowercase, every run of non-`[a-z0-9]` becomes a single `-`, truncated to 40
 chars, edge dashes stripped, and empty becomes `workspace`.
 
     git -C "$PWD" remote get-url origin 2>/dev/null || echo "no origin: hash the canonical cwd"
@@ -101,10 +117,14 @@ chars, edge dashes stripped, and empty becomes `workspace`.
 
 Never invent the digest. **Reuse the directory that already exists**: match an
 existing `<slug>-*` under the workspace root and use it, so a note you write lands
-where the CLI's own writes land. Only when nothing matches do you create one, and
-then compute the digest rather than guess it.
+where the CLI's own writes land.
+
+Only when nothing matches do you create one, and then compute the digest rather than
+guess it.
 
 ## Step 2 -- flush this conversation into a session log
+
+### The extraction instruction
 
 Feed the conversation to this extraction instruction, which is the upstream
 `FLUSH_SYSTEM_PROMPT` with its wording kept:
@@ -136,9 +156,13 @@ Feed the conversation to this extraction instruction, which is the upstream
     or discoveries are not worth persisting. Only write content that a future session
     would concretely benefit from.
 
+### The delta form
+
 A second and later flush in the same session uses the delta form: same sections,
 but "Extract ONLY information that is NEW since the previous flush", and the
 previous flush output is appended under a `--- Previous flush content ---` rule.
+
+### The acceptance rules
 
 Then apply the acceptance rules, in this order, before anything is written:
 
@@ -149,12 +173,19 @@ Then apply the acceptance rules, in this order, before anything is written:
 3. A body with no `## ` and no `# ` is `Rejected`: "flush response lacks markdown
    structure (no ## headers)". Do not write a body that fails this.
 
+### Dedup before writing
+
 Dedup before writing: compare the candidate against the chunks already stored and
-skip a near-verbatim rephrasing. Upstream embeds and asks sqlite-vec for 3 nearest
+skip a near-verbatim rephrasing.
+
+Upstream embeds and asks sqlite-vec for 3 nearest
 neighbours and calls it a duplicate above cosine similarity 0.92 (`[compaction.
-memory_flush] semantic_dedup_threshold`, 0.92 when unset). Without an embedding
-provider upstream skips dedup entirely, so do the honest equivalent: diff against
-the existing sections and drop what is already said.
+memory_flush] semantic_dedup_threshold`, 0.92 when unset).
+
+Without an embedding provider upstream skips dedup entirely, so do the honest
+equivalent: diff against the existing sections and drop what is already said.
+
+### The session log path
 
 Write to the workspace session log, created on first flush and appended after:
 
@@ -169,12 +200,19 @@ dream pass later splits entries on.
 
 Dream is the reflective pass, and it is the step that actually learns.
 
+### What dream reads
+
 Read every `sessions/*.md` in the workspace directory **except** the current
-session's, sorted by name, plus the existing workspace `MEMORY.md`. Skip scaffold
-files: shorter than 500 chars and containing `Auto-populated by dream consolidation`,
-`Add project-specific knowledge here`, or `Add any cross-project preferences here`.
+session's, sorted by name, plus the existing workspace `MEMORY.md`.
+
+Skip scaffold files: shorter than 500 chars and containing
+`Auto-populated by dream consolidation`, `Add project-specific knowledge here`, or
+`Add any cross-project preferences here`.
+
 Stop adding files once the assembled input reaches 32000 chars, and leave the unread
 tail alone so a later pass can reach it.
+
+### The reflective prompt
 
 Apply the upstream `DREAM_SYSTEM_PROMPT`, wording kept:
 
@@ -210,10 +248,14 @@ Apply the upstream `DREAM_SYSTEM_PROMPT`, wording kept:
 
     If the session logs contain nothing worth persisting, respond with NO_REPLY.
 
+### Assemble the prompt
+
 Assemble the prompt as `--- Existing Memory (merge with new sessions) ---`, the
 existing document capped at 16000 chars, then one
 `--- Session: <stem> ---` block per log in sorted order. Cap the finished document
 at 16000 chars. No `## ` headers means no write.
+
+### What dream writes
 
 Then, in this order:
 
@@ -229,6 +271,8 @@ Then, in this order:
    `> Generated by Grok. Do not edit this file directly.` and hand-editing it is
    lost on the next pass.
 
+### The lock
+
 Take a lock before the model pass and skip with `lock held by another process,
 skipping` if it is held; the automatic pass also waits for `min_hours` 24 and
 `min_sessions` 5, and an explicit dream bypasses those two gates only.
@@ -236,16 +280,24 @@ skipping` if it is held; the automatic pass also waits for `min_hours` 24 and
 ## Step 4 -- one note, the browser, and the purge
 
 `/ez-learn remember <note>` mirrors `/remember`, the one member with a confirmation
-step: show the note and get an explicit yes before saving. Normalize it first -
-keep the structure if it already starts with `#`; if it is one line the line
-becomes the heading; if the first line is at most 80 chars it becomes `## <line>`
-over the rest; otherwise it goes under `## Note`. User preferences belong in
-**global** memory: legacy appends to `~/.grok/memory/MEMORY.md`, v2 publishes an
-observation into the global `observations/_inbox/`. v2 rejects a note over 64 KiB.
-Images do not travel with a note.
+step: show the note and get an explicit yes before saving.
+
+Normalize it first:
+
+- keep the structure if it already starts with `#`
+- if it is one line the line becomes the heading
+- if the first line is at most 80 chars it becomes `## <line>` over the rest
+- otherwise it goes under `## Note`
+
+User preferences belong in **global** memory: legacy appends to
+`~/.grok/memory/MEMORY.md`, v2 publishes an observation into the global
+`observations/_inbox/`.
+
+v2 rejects a note over 64 KiB. Images do not travel with a note.
 
 `/ez-learn browse` mirrors `/memory`: list the files with source, size, and mtime,
 and print `No memory files have been recorded yet.` for a genuinely empty store.
+
 An empty list can also mean a listing error, so report the error rather than
 presenting a broken store as a fresh one. `/memory` takes no arguments.
 
@@ -268,19 +320,29 @@ The dream pass folds the memory session logs it already owns. Reaching past thos
 into the raw transcripts is extra depth, and it happens **only when the user asks**
 for it, never as a default.
 
+### Session transcripts
+
 Session transcripts live under `~/.grok/sessions/`, one directory per escaped
 working directory, each holding small `summary.json` files beside large
-`chat_history.jsonl` and `events.jsonl`. Index the summaries first
-(`session_summary`, `num_chat_messages`, `head_branch`) and read only the sessions
-that rank. A `jsonl` file is many megabytes: count and select with `jq` or `grep -c`
-into a scratch file under `/tmp`, and never paste a transcript into the reply.
-Clean the scratch files up when you are done.
+`chat_history.jsonl` and `events.jsonl`.
+
+Index the summaries first (`session_summary`, `num_chat_messages`, `head_branch`)
+and read only the sessions that rank.
+
+A `jsonl` file is many megabytes: count and select with `jq` or `grep -c` into a
+scratch file under `/tmp`, and never paste a transcript into the reply. Clean the
+scratch files up when you are done.
+
+### What survives Step 2
 
 What you mine must survive the acceptance rules in Step 2 before it becomes memory.
+
 A fact that only describes the course of a session is not memory; a mechanism, a
 rule, or a root cause is.
 
 Two things decide whether a number taken from those transcripts means anything.
+
+### The first: where the text actually is
 
 The first is where the text actually is. `chat_history.jsonl` keeps assistant
 entries with an empty `content` array: the reasoning is in `updates.jsonl`, under
@@ -288,13 +350,18 @@ entries with an empty `content` array: the reasoning is in `updates.jsonl`, unde
 `.params.update.content.text`. A sweep that opens only `chat_history.jsonl` recovers
 the questions and none of the answers.
 
+### The second: what a count also counts
+
 The second is that counting an error string across transcripts also counts the
 stack's own guidance, which quotes the very string it warns about, because that
-guidance is re-injected into every conversation. Measured over 271 sessions for
-`Unknown Task.model slug`: 106 hits in 83 sessions as raw `grep -c` over
-`chat_history.jsonl`, and 30 hits in 8 sessions once the lines carrying the quoted
-guidance are dropped - one session alone contributed 18 of the 106. So a count
-becomes a claim only after:
+guidance is re-injected into every conversation.
+
+Measured over 271 sessions for `Unknown Task.model slug`: 106 hits in 83 sessions as
+raw `grep -c` over `chat_history.jsonl`, and 30 hits in 8 sessions once the lines
+carrying the quoted guidance are dropped - one session alone contributed 18 of the
+106.
+
+So a count becomes a claim only after:
 
 1. The session you are in is excluded, and so is every child session you spawned.
    Their prompts carry the literal patterns you are counting.
@@ -342,14 +409,18 @@ Singularize the merge line (`1 observation`, `3 topics`). A skipped run reports
 
 Every claim above comes from the upstream Rust source at
 `crates/codegen/xai-grok-memory/` and `crates/codegen/xai-grok-shell/src/session/`.
+
 When a claim drifts, fix the seed at `templates/common/ez-learn.SKILL.md` and let
 `refresh-configs` re-materialize it; **never edit the copy in a home** - a deletion
-is undone by the next boot, so only the seed survives. This command is itself a
-seeded skill: the Grok Build CLI reads `~/.agents/skills/<name>/SKILL.md` and the
-Coder Agents chat agent reads only `~/.coder/skills/<name>/SKILL.md`, which is why a
-skill that serves both consumers ships in both homes. Re-seed with
-`bazelisk run //scripts:refresh-configs -- workspace`, prove the change with
-`bazelisk test //:test-fast`, and add a Bats assertion in
+is undone by the next boot, so only the seed survives.
+
+This command is itself a seeded skill: the Grok Build CLI reads
+`~/.agents/skills/<name>/SKILL.md` and the Coder Agents chat agent reads only
+`~/.coder/skills/<name>/SKILL.md`, which is why a skill that serves both consumers
+ships in both homes.
+
+Re-seed with `bazelisk run //scripts:refresh-configs -- workspace`, prove the change
+with `bazelisk test //:test-fast`, and add a Bats assertion in
 `tests/bats/ez-learn-skill.bats` that fails when the claim drifts again.
 
 Prove the command is actually wired up with `grok inspect` (or `grok inspect --json`
