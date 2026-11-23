@@ -25,9 +25,11 @@ metadata:
 
 # Migrator
 
-One version moves per run, plus the proof that it moves; the rename you also wanted belongs on another branch.
+One version moves per run, plus the proof that it moves; the rename you also wanted belongs on
+another branch.
 
-This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own,
+This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent`
+for read-only mappers only, and only when it ships no file of its own,
 so the writer fan-out is still yours.
 
 Each block below runs only when you run it with `run_terminal_command` or `execute`.
@@ -35,12 +37,14 @@ Each block below runs only when you run it with `run_terminal_command` or `execu
 Models are the local aliases this run uses -- `agent`, `agent-explore`, `agent-swarm`,
 `agent-review` -- and no cloud id.
 
-Budget 20 to 35 of your own calls plus the migrate wave, and never read `.env` or `.env.*`: a key's shape comes from `.env.example` or the CLI that prints it.
+Budget 20 to 35 of your own calls plus the migrate wave, and never read `.env` or `.env.*`: a key's
+shape comes from `.env.example` or the CLI that prints it.
 
 ## Phase 1 -- pin: where the version actually lives (read-only, `agent-explore`, 2 to 5 calls)
 
 A version is rarely one number in one file. Send one read-only child per disjoint area on
-`agent-explore`, the lane for pure mapping, and take back `path:line` for every place the old string appears:
+`agent-explore`, the lane for pure mapping, and take back `path:line` for every place the old string
+appears:
 
 - manifest
 - lockfile
@@ -55,7 +59,8 @@ Here the pin lives in `images/dev/tool-versions.env` and its mirror in `images/d
 - each key there must also be an `ARG` in the Dockerfile or `//tests:bats_image_test` fails (`tests/bats/image.bats:25`)
 - `scripts/lib/tool_pins.sh` turns the same keys into host download URLs, so a rename strands CI
 
-Bumping those two files is the whole dependency update -- the contributor container needs no edit because `devcontainer.json` `cacheFrom`s the image built there.
+Bumping those two files is the whole dependency update -- the contributor container needs no edit
+because `devcontainer.json` `cacheFrom`s the image built there.
 
 ## Phase 2 -- the delta, from a lane and not from memory (1 to 3 calls)
 
@@ -83,7 +88,8 @@ A migration is exactly the case Plan Mode exists for. Write the plan ahead of th
 Five files or one wave of writers is `/ez-micro-plan` territory -- `.grok/plans/<slug>/`,
 with `plan_check.py --ready` green before wave 1.
 
-Run the proving command on the untouched tree first, so the baseline is quoted; a red baseline is `/bug-hunt`.
+Run the proving command on the untouched tree
+first, so the baseline is quoted; a red baseline is `/bug-hunt`.
 
 Write the rollback as a command.
 

@@ -60,7 +60,8 @@ Budget: 20 to 35 of your own calls plus the waves.
 
 A single file or one obvious edit: do it yourself and stop here.
 
-Otherwise read your real slot count once, and set up the branch, since it exists before the first edit and children
+Otherwise read your real slot count once, and set up the branch, since it exists before the first
+edit and children
 never cut one (trunk-based, one logical change, `docs/branching.md`):
 
     grep -A4 '^\[subagents\]' ~/.grok/config.toml
@@ -133,12 +134,14 @@ A delegated result is a claim, not a fact: never merge on the producer's own rep
 never let the producer review its own work. Send the testers and the skeptics out together
 in one turn, so the phase costs the slowest check rather than the sum of them.
 
-The reviewers ride `agent-review`, the lane for the independent pass; a tester runs `agent-swarm` when
+The reviewers ride `agent-review`, the lane for the independent pass;
+a tester runs `agent-swarm` when
 several independent checks are pending and `agent` otherwise.
 
 ### What each member gets and re-runs
 
-Each member owns no file, gets the diff, the tests, and the acceptance list rather than the author's summary, and re-runs the
+Each member owns no file, gets
+the diff, the tests, and the acceptance list rather than the author's summary, and re-runs the
 producer's own `done:` command rather than trusting its report. The default panel is the three
 angles `/skeptical-review` runs -- requirements, proof, adversary -- and a single-file fix
 saves the streams by putting one skeptic over all three. Each skeptic scopes its own read-only
@@ -150,7 +153,8 @@ Decide that width here, against the whole tree: sum the in-flight `1 + spawns` o
 and keep that total at or below the fleet's stream count (`fleet:` in the plan, 15 by default).
 That total is a separate number from `slots`, which caps your own children in flight. The panel
 is where nesting is cheapest -- the writers have all landed by review time, so those streams
-are free. Every finding cites `path:line`; an uncited finding is an opinion and does not block a merge.
+are free. Every finding cites `path:line`; an uncited finding is an opinion and does not block
+a merge.
 
 ### Run the gate in your own shell
 
