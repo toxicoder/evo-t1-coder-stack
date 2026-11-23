@@ -37,8 +37,7 @@ in it. Answering that from `grep` re-derives what one `bazelisk query` prints.
 Three pages this one leans on:
 
 - [building-with-bazel.md](building-with-bazel.md) explains the maps, runfiles, and the daily commands
-- [test-with-bazel.md](test-with-bazel.md) explains the suites those queries name and the two inventory gates
-- [../project-conventions.md](../project-conventions.md) the CLI vocabulary this tool prints in
+- [test-with-bazel.md](test-with-bazel.md) explains the suites those queries name and the two inventory gates; [../project-conventions.md](../project-conventions.md) the CLI vocabulary this tool prints in
 
 ## Why a query, not a grep
 

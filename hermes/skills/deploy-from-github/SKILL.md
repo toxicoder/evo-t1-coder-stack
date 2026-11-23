@@ -170,11 +170,11 @@ docker compose -p <project> down --volumes          # destroys them: only on req
 
 ### Update by tag, not by `latest`
 
-1. `git -C "$ROOT" fetch --tags`
-2. check out the new tag
-3. `up -d --build`
-4. verify with the same two commands as step 4
-5. keep the previous tag one checkout away
+- `git -C "$ROOT" fetch --tags`
+- check out the new tag
+- `up -d --build`
+- verify with the same two commands as step 4
+- keep the previous tag one checkout away
 
 ## Do not
 

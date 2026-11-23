@@ -4,12 +4,12 @@ Compose stack for GMKtec EVO-T1: Coder + LiteLLM + IPEX-LLM Ollama + Kasm + Home
 
 ## Where you run
 
+### What you address from a workspace
+
 You are usually editing this repo *from inside one of the workspaces it deploys*, not
 from the stack host. `CODER_WORKSPACE_ID` set means you are in a Coder workspace
 container (and, on the `devcontainer` template, inside a dev container built on that
 workspace's own DinD sidecar). Assume all of this until you prove otherwise:
-
-### What you address from a workspace
 
 - `docker` addresses that sidecar daemon (`DOCKER_HOST=tcp://dind:2375`) or nothing,
   never the daemon running Coder/LiteLLM/Ollama/Kasm. An empty `docker ps` here is
@@ -339,17 +339,24 @@ empty query is not proof that nothing depends on a file) see
 
 - `templates/common/` exists once instead and both templates consume it:
 
-  - `GROK_BUILD_AGENTS.md` with its `agents-seed.sh.tftpl` body (the `coder_script "agents_seed"` that writes `~/.grok/AGENTS.md`, which keeps the rulebook out of the startup argument's byte budget)
-  - `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`, `vscode-terminal-tmux.sh`
-  - `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`, `ez-create-skill.SKILL.md`
+  - `GROK_BUILD_AGENTS.md` with its `agents-seed.sh.tftpl` body (the
+    `coder_script "agents_seed"` that writes `~/.grok/AGENTS.md`, which keeps the rulebook out
+    of the startup argument's byte budget)
+  - `vscode-alt.svg`, `notes-setup.sh`, `tmux.conf`, `grok-build-terminal.sh`,
+    `vscode-terminal-tmux.sh`
+  - `grok-build-delegation.SKILL.md`, `ez-learn.SKILL.md`, `ez-skillify.SKILL.md`,
+    `ez-create-skill.SKILL.md`
   - `stack-skills.sh.tftpl` (the `coder_script "stack_skills"` body that seeds that trio)
-  - `ez-bazel-first.SKILL.md` with its `ez-bazel-first.owned_files_check.py` and `ez-bazel-first.glob_budget.py` helpers
+  - `ez-bazel-first.SKILL.md` with its `ez-bazel-first.owned_files_check.py` and
+    `ez-bazel-first.glob_budget.py` helpers
   - `ez-strong-types.SKILL.md` with its `ez-strong-types.type_baseline.py` helper
   - `ez-trunk-based-repo.SKILL.md`
   - `ez-micro-plan.SKILL.md` with its `ez-micro-plan.plan_check.py` helper
-  - `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body that seeds those four, each helper into a `scripts/` subdir of the same skill directory)
+  - `stack-repo-skills.sh.tftpl` (the `coder_script "stack_repo_skills"` body that seeds those four,
+    each helper into a `scripts/` subdir of the same skill directory)
   - `coder-agents.md`, `mcp-cache-proxy.json`, and `gh-token-refresh.sh.tftpl`
-  - `infisical-secrets.sh.tftpl` (the `coder_script "infisical_secrets"` body that fetches the workspace's credentials at boot)
+  - `infisical-secrets.sh.tftpl` (the `coder_script "infisical_secrets"` body that fetches the
+    workspace's credentials at boot)
 
   The push stages all of them beside each staged `main.tf`; pushing without any one of them fails
   early by design. The SVG must produce a data URL of at most 256 characters
@@ -399,11 +406,13 @@ mounted ro at
 
 - `proxy/certs/` is `.bazelignored` (bootstrap issues those on the host).
 
-- Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` / `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys:
+- Public names are composed by `scripts/lib/domain.sh` from `STACK_DOMAIN_BASE` /
+  `STACK_SUBDOMAIN_SUFFIX` / `STACK_ENV_LABEL` / the `*_NAME` keys:
 
   - `proxy/router.conf.template` is the source
   - `proxy/router.conf` is its render under the shipped defaults
-  - `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`
+  - `bootstrap` writes `proxy/router.gen.conf` (gitignored, and excluded from `//:stack_data` by
+    glob `exclude`, since `.bazelignore` only covers directories) selected by `STACK_ROUTER_CONF`
 
   Edit the naming parts, never a rendered conf.
 
@@ -413,7 +422,8 @@ mounted ro at
   `_SCRIPT_PAYLOAD` in `scripts/BUILD.bazel`, or `//scripts` fails analysis rather than
   quietly inheriting the world; `//scripts:doc_sources` is the union of those sources).
 
-- `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`, `hermes/config.yaml`, and `searxng/settings.yml`.
+- `//:validate` parses YAML under `homepage/config/*.yaml`, `litellm/config.yaml`,
+  `hermes/config.yaml`, and `searxng/settings.yml`.
 
 ### Workspace state and editor configuration
 

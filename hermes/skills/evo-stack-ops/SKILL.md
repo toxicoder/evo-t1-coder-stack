@@ -23,7 +23,7 @@ restart a service, or read logs.
 
 ## Preferred: Bazel targets (stack host)
 
-### The commands
+### The bazelisk commands
 
 ```sh
 bazelisk run //scripts:prod-stack -- status
@@ -42,7 +42,7 @@ Both take `-p/--project-name`, `-f/--file`, `-e/--env-file`.
 
 ## Fallback: compose directly
 
-### The commands
+### The docker compose commands
 
 The official image has no bazelisk. Same project, same file, same `.env` beside
 that file:

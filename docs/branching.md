@@ -99,10 +99,10 @@ same way in `git log`.
 
 ## Commits, and when they happen
 
+### While the work happens
+
 The branch and the commits are in place while the work happens, and the push waits. This is the
 order the agent seed teaches and the order a human contributor gets the most out of:
-
-### While the work happens
 
 - **Branch first, then edit.** The work branch is cut as the first action of the change, off the
   tip of `main`.

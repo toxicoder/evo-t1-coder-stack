@@ -79,7 +79,7 @@ Record
 how the repo deploys and each environment's gaps in hosts, ports, namespaces, project names, sizes, secrets: value
 gaps to Phase 2, code gaps to Phase 3.
 
-### Exit
+### Exit -- Phase 0 inventory report
 
 Exit: trunk; branches with age, author, unique count, verdict; deploy mechanism; gate and result; flag surface;
 environment list.
@@ -101,7 +101,7 @@ Edit the doc that exists; add no parallel one.
 
 Move no ref here; a default-branch rename is its own confirmed step, in Phase 4.
 
-### Exit
+### Exit -- Phase 1 docs and CI
 
 Exit: three docs state one model, CI gates trunk, no deploy path reads a branch name.
 
@@ -148,7 +148,7 @@ Write promotion as pasteable commands: dev, merge, stable, against one ref or ta
 Delete an environment branch only
 in Phase 4, once its content is provably elsewhere.
 
-### Exit
+### Exit -- Phase 2 value home and promotion block
 
 Exit: one value home per environment, promotion block written, no deploy path takes a branch name.
 
@@ -201,7 +201,7 @@ Every flag:
 Both states are real code: run the plain gate, then the gate and your smoke command with
 `FEATURE_EXPERIMENTAL_INDEXER=1`, quoting all three.
 
-### Exit
+### Exit -- Phase 3 flag declared with owner and expiry
 
 Exit: every flag declared with owner, expiry, false default, one reader, on/off output quoted.
 
@@ -239,7 +239,7 @@ Deletion is a human action.
 3. When the real trunk is a rename (work lives on `development`), converge content first, then propose the rename
    as its own confirmed step
 
-### Exit
+### Exit -- Phase 4 branch verdict and recorded tip SHA
 
 Exit: every branch has a verdict and a recorded tip SHA, nothing deleted without a yes, each port has its pull
 request open.
@@ -254,7 +254,7 @@ request open.
 4. Confirm no secret landed: the criterion 8 grep, then `git diff --name-only "$TRUNK"`, then read each new file
    looking for a real value.
 
-### Exit
+### Exit -- Phase 5 criteria and gates quoted green
 
 Exit: each criterion passes or is reported unmet with its reason, gates quoted green, `git status --short` empty.
 

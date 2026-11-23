@@ -123,7 +123,8 @@ stack.
 **Public name 502 or wrong page.** The chain is Cloudflare → Traefik → `router`
 on `:8080` → the service. Ask each hop in turn:
 
-1. does the Host header route (`docker exec`-free check: read `proxy/router.gen.conf` / `proxy/router.conf` for
+1. does the Host header route
+   (`docker exec`-free check: read `proxy/router.gen.conf` / `proxy/router.conf` for
    that `server_name`)
 2. is the upstream name resolvable on the compose network
 3. is the upstream answering (`curl -fsS http://<service>:<port>/`)?
