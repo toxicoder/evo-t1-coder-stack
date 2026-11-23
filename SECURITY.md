@@ -1,5 +1,7 @@
 # Security
 
+## Threat model
+
 This stack's default shape assumes a trusted LAN or VPN. Its own TLS is self-signed —
 the dashboard's proxy cert and the cert Coder serves on :3001; it has no reverse proxy
 or SSO of its own. Publishing the services on public names through the external
@@ -9,6 +11,10 @@ that machine, and every access decision beyond the application's own credential 
 whatever Traefik, Cloudflare and Authelia are configured to enforce — none of which this
 repo can verify.
 
+## Network and public exposure
+
+### Network exposure
+
 - **Network exposure.** Coder (:3001) and LiteLLM (:4000) bind to the host for
   LAN use. Coder's published port carries TLS (the self-signed cert
   `bootstrap.sh` issues); LiteLLM stays plain HTTP, so its traffic is not
@@ -17,6 +23,8 @@ repo can verify.
   proxy-side policy you configure — not by ad-hoc port-forwarding, which skips both.
   LiteLLM requires `LITELLM_MASTER_KEY` for every request; Coder has its own login, and
   once either name resolves publicly assume it is being probed.
+### Public exposure
+
 - **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder, the dashboard,
   Hermes and Grafana can be reachable from the WAN. Keep the Coder login strong: that account is the site admin
   and the control plane it authenticates to creates containers on this host's docker
@@ -26,14 +34,24 @@ repo can verify.
   the sole credential on the public model endpoint — if Authelia is not exempting that
   host (it must not gate `Authorization`-header API traffic), a leaked or weak master
   key exposes the local iGPU models and the Spark boxes behind it, since that proxy was
-  LAN-oriented and is now WAN-reachable. The `router` sidecar itself publishes plain HTTP
+  LAN-oriented and is now WAN-reachable.
+
+### The router sidecar port
+
+- The `router` sidecar itself publishes plain HTTP
   (`${STACK_PROXY_HTTP_PORT:-8080}`) and enforces no policy beyond refusing an unknown
   Host: on the LAN, sending a matching Host header to that port reaches the same upstreams
   without Traefik or Authelia in the path, so treat 8080 as a LAN-only port. For Hermes
   that bypass still has HTTP basic auth; leave the Authelia policy on the public name.
+## Per-service exposure
+
+### Ollama is internal-only
+
 - **Ollama is internal-only.** IPEX-LLM Ollama listens on 11434 inside the
   compose network only and is deliberately not published to the host.
   Never add a `11434:11434` port mapping.
+### Hermes dashboard
+
 - **Hermes is root-equivalent, and a public name is supported.** The fifth name
   (`hermes-*`, which `STACK_PUBLIC_HOSTS=auto` composes as `hermes-<suffix>.<base>`, for
   example `hermes-gmktecbeast.overeazy.io`) follows the same Cloudflare → Traefik →
@@ -43,17 +61,27 @@ repo can verify.
   `HERMES_DASHBOARD_PASSWORD`) stays. v0.22.5 refuses a `0.0.0.0` bind with no
   provider (`HERMES_DASHBOARD_INSECURE` is a deprecated no-op). On the LAN,
   `:9119` and `:8080` with a matching Host both skip Authelia, so that basic
-  auth is load-bearing. The container mounts the host docker socket (same
+  auth is load-bearing.
+
+### Hermes host access and approvals
+
+- The container mounts the host docker socket (same
   standing as a public `coder`) and the stack checkout at `STACK_HOST_PATH`, so
   a command it runs can affect the real host. The seeded config keeps
   `approvals.mode: manual`, `cron_mode: deny`, `unattended_mode: deny`, and
   `terminal.backend: local` (the `docker` backend skips dangerous-command
-  checks). Never set the mode to `off`. Its web lane is local too:
+  checks). Never set the mode to `off`.
+
+### Hermes web search lane
+
+- Its web lane is local too:
   `web.search_backend: searxng` dials the stack's own SearXNG over the compose
   network, and `web.keyless_fallback` / `web.keyless_rescue` stay false so a
   search cannot fall through to a vendor's anonymous free tier. Secrets stay in
   `.env` and the `hermes-data` volume; there is no GitHub PAT in Hermes. See
   [docs/hermes.md](docs/hermes.md).
+### Homepage dashboard
+
 - **Dashboard.** The Homepage container publishes no port; `homepage-proxy`
   owns :80 / :443 with a self-signed cert that `bootstrap.sh` issues, so the
   encryption is real but untrusted, and the redirect on :80 is the only thing
@@ -62,6 +90,10 @@ repo can verify.
   — leave it enabled, since the dashboard enumerates every service on the box.
   The dashboard is handed the LAN IP and `LITELLM_MASTER_KEY` in its
   environment, so treat the homepage container as holding LiteLLM credentials.
+## Secrets and credentials
+
+### Environment files and rotation
+
 - **Secrets.** `.env` is git-ignored. `.env.sample` / `.env.example` ship
   only `change-me-*` placeholders. `scripts/bootstrap.sh` generates fresh
   values; rotate any value that was ever shared. Never commit `.env`, API
@@ -69,6 +101,8 @@ repo can verify.
   never enters git. `CODER_PG_PASSWORD` is re-applied on every db start
   (the image only honours it on first volume init), so rotating it in `.env`
   and running `bazelisk run //scripts:prod-stack -- up` is enough.
+### The template push token
+
 - **The push token.** `scripts/push-template.sh` cannot use a CLI session (the
   public API is gated by Authelia, which answers unauthenticated CLI probes with an
   HTML page), so it mints an API key by inserting a row into the stack's own Postgres
@@ -80,6 +114,10 @@ repo can verify.
   printed. If a run is SIGKILLed mid-push the row survives until it expires; check
   with `docker compose exec db psql -U coder -d coder -c "select id, token_name,
   scopes, expires_at from api_keys where login_type = 'token';"`.
+## Metrics and the observability bundle
+
+### Ports that are published and ports that are not
+
 - **Metrics stay on the host, and the observability bundle keeps that rule.** The Coder
   control plane publishes Prometheus metrics on 2112, mapped to `127.0.0.1` only, so a
   scrape needs a shell on the stack host, and Prometheus' own UI binds `127.0.0.1` on
@@ -87,15 +125,22 @@ repo can verify.
   model alias and its traffic volume. The bundle adds exactly one new published port and
   no other new door. Mimir, Loki, Tempo and Alloy declare no `ports:` at all and answer on
   the compose network only - Mimir's query API in particular has no auth of its own once
-  tenancy is off, which is why publishing it would be publishing the whole metric set. The
-  one LAN-published UI is Grafana on `GRAFANA_PORT` (3005). Grafana is also the only one
+  tenancy is off, which is why publishing it would be publishing the whole metric set.
+
+### Grafana, the one published UI
+
+- The one LAN-published UI is Grafana on `GRAFANA_PORT` (3005). Grafana is also the only one
   of the six that can take a public name, and it is credentialed - anonymous access is
   off (`GF_AUTH_ANONYMOUS_ENABLED=false`) and the admin login comes from
   `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` in `.env`, which is git-ignored and
   never committed; `scripts/bootstrap.sh` replaces the `change-me-grafana` placeholder
   with a generated value the way it does the other secrets, and no output prints it. Treat
-  `grafana-data` as holding whatever is rendered into a dashboard from it. What a reviewer
-  has to know about the collector: Alloy mounts the host's container log directory
+  `grafana-data` as holding whatever is rendered into a dashboard from it.
+
+### What the Alloy collector can read
+
+- What a reviewer has to know about the collector: Alloy mounts the host's container log
+  directory (`STACK_DOCKER_LOG_DIR`, default `/var/lib/docker/containers`) read-only at the same
   (`STACK_DOCKER_LOG_DIR`, default `/var/lib/docker/containers`) read-only at the same
   path inside the container, which is host filesystem content - every line every
   container printed - but not the daemon: the docker socket stays unmounted here as it
@@ -105,7 +150,11 @@ repo can verify.
   only host path it gets and it is read-only. The volumes behind it (`alloy-data`,
   `loki-data`, `mimir-data`, `tempo-data`)
   hold that same text at rest, so a shell that can read them reads what the containers
-  said. LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
+  said.
+
+### The LiteLLM scrape token
+
+- LiteLLM's `/metrics` sits behind `LITELLM_MASTER_KEY` like every
   other LiteLLM endpoint — keep it that way, since the metrics name your model
   aliases and traffic volumes, and LiteLLM's `:4000` is published to the LAN. The key
   reaches Prometheus as a file, never as a variable: compose's `configs:` block renders
@@ -123,13 +172,20 @@ repo can verify.
   `litellm_settings.require_auth_for_metrics_endpoint: false`, and that switch publishes
   to the LAN exactly the model aliases and traffic volumes this bullet is protecting. Fix
   the token file instead.
+## Workspace credentials
+
+### The LiteLLM API key
+
 - **Workspace credentials.** The LiteLLM master key reaches each workspace as the
   `LITELLM_API_KEY` environment variable, which the startup script injects into the
   rendered `~/.grok/config.toml` (the key lives in the file as an `env_key`
   reference, so nothing secret is written to disk by the template). It is also shown
   redacted in `coder_metadata.workspace_info`. Anyone with that key can use every
   alias, including the Spark boxes, so treat a workspace as holding LAN credentials.
-  A workspace may also hold `GH_TOKEN` / `GITHUB_TOKEN` in that environment, but only
+
+### The GitHub token pair
+
+- A workspace may also hold `GH_TOKEN` / `GITHUB_TOKEN` in that environment, but only
   for a workspace whose owner has connected a GitHub account to the External Auth
   provider (id `github` by default) — there is no GitHub-token template variable and no PAT in
   `.env`, so an owner who connected nothing has no GitHub credential anywhere. The
@@ -137,7 +193,10 @@ repo can verify.
   per workspace that the `gh_token_refresh` script writes into the gh auth store
   (0600, under the home volume) so shells launched outside the agent environment
   resolve it too; nothing git-tracked carries the token and no output prints it.
-  That one is a GitHub WRITE credential: push and PR rights for whatever the
+
+### The minted GitHub write credential
+
+- That one is a GitHub WRITE credential: push and PR rights for whatever the
   connection can reach, usable from a workspace terminal and from Grok Build's
   Bash tool, because the startup script seeds `~/.gitconfig` with
   `credential.https://github.com.helper = !gh auth git-credential` and `gh`
@@ -146,7 +205,11 @@ repo can verify.
   anyway: it decides which repositories the workspace can write to, and a
   connected-but-unscoped credential authenticates and is denied on every write to a
   repo it can read (reads prove nothing about write: a public repo answers read
-  probes for any authenticated caller). `scripts/github-auth.sh` reads that state
+  probes for any authenticated caller).
+
+### Checking a workspace credential
+
+- `scripts/github-auth.sh` reads that state
   from the host and from inside a workspace (inside a workspace, where docker
   reaches only the workspace's own DinD sidecar, `check` runs SELF mode with no
   docker and probes this environment's own credential chain): `check` names which
@@ -159,10 +222,16 @@ repo can verify.
   account — with a connected account, the next `gh_token_refresh` run (start,
   then every 20 minutes) rewrites that store with a minted pair. `gh auth logout`
   inside the container — or a rebuild — removes it either way.
+## Spark model endpoints
+
 - **Spark endpoints.** `SPARK1_OPENAI_URL` / `SPARK2_OPENAI_URL` point off-box at
   vLLM servers. vLLM accepts any non-empty bearer token unless it was started with
   `--api-key`, so an unset `SPARK_n_API_KEY` means the only thing gating that endpoint
   is LAN reachability. Set the keys to match how the servers were launched.
+## Privileged containers
+
+### Kasm
+
 - **Kasm is privileged (DinD).** Kasm runs with `privileged: true` because it
   uses Docker-in-Docker to stream containers, which makes it root-equivalent on
   the host kernel. It is the only *always-on* privileged service here; the other
@@ -170,6 +239,8 @@ repo can verify.
   LAN-only — publishing its public name puts a privileged container behind nothing
   but Kasm's own login unless Authelia covers that host — and review image updates
   before pulling a new tag.
+### Workspace DinD sidecars
+
 - **Workspace DinD sidecars are privileged too.** With the template's `dind`
   toggle on, a workspace gets its own `docker:29.8.1-dind` container running
   `privileged: true` — the same root-equivalent-on-the-host-kernel standing Kasm
@@ -185,6 +256,10 @@ repo can verify.
   simply that nothing else is attached to it and nothing is published to the host.
   Keep the toggle off unless someone is actually building containers. See README,
   "Coder workspace template".
+## Workspace profile, MCP, and editor
+
+### shared mode mounts state only
+
 - **What `shared` mode shares is state, not configuration, and it is per-user, not
   host-wide.** That is the default mode (template variable `grok_profile_mode`; the
   create form's **Grok profile** field can drop one workspace to `private`), and in it
@@ -195,13 +270,19 @@ repo can verify.
   `~/.grok` crosses between that owner's workspaces: `config.toml`, the MCP caches and
   the skills are per-workspace files on that workspace's own home volume, rendered from
   the template on its own start, so no other user's workspace is ever configured to
-  mount any of them and no workspace can rewrite another's config. `private` mode
-  mounts none of them: that workspace's notes, memory and sessions sit on its own home
-  volume with the rest of `~/.grok` and die with it. The one leftover is the owner's
+  mount any of them and no workspace can rewrite another's config.
+
+### private mode and the legacy volume
+
+- `private` mode mounts none of them: that workspace's notes, memory and sessions sit on its own
+  home volume with the rest of `~/.grok` and die with it. The one leftover is the owner's
   old whole-profile volume `grok-profile-<owner-id>`, mounted READ-ONLY at
   `/home/coder/.grok-legacy` purely so the boot can copy those three directories across
-  once; nothing reads it afterwards, and a later `chore:` removes the mount. The
-  accepted cost in `shared` mode is that the SQLite memory/index files in the shared
+  once; nothing reads it afterwards, and a later `chore:` removes the mount.
+
+### What the shared volumes widen
+
+- The accepted cost in `shared` mode is that the SQLite memory/index files in the shared
   memory volume are opened live by every holder, so concurrent writers can race;
   nothing credential-bearing lives in `~/.grok` either,
   because `config.toml` names `LITELLM_API_KEY` through `env_key` — and `GH_TOKEN` by a
@@ -210,6 +291,8 @@ repo can verify.
   rendered file, but the trust boundary widens to GitHub, outside the LAN, as soon as
   an owner connects a GitHub account. Park it with `GITHUB_MCP=false` and a template
   re-push if a workspace must not gain GitHub tools. See [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
+### The context7 MCP server
+
 - **The `context7` MCP server follows that same rule and the same default-on.**
   `CONTEXT7_API_KEY`, when it is set, also travels in the workspace environment, and the
   rendered `config.toml` only names `$CONTEXT7_API_KEY` - never the value. The push
@@ -218,15 +301,20 @@ repo can verify.
   failed handshake per session). Park it with `CONTEXT7_MCP=false` and a template
   re-push; with the flag on and a key present, the trust boundary widens outbound to
   Context7's API.
+### The workspace editor
+
 - **Workspace code-server.** Each workspace runs Coder's code-server fork on
   13337 with `--auth none`, published as a `coder_app` with `share = "owner"`
   and `subdomain = false` (this stack sets no `CODER_WILDCARD_ACCESS_URL`, so
   only path-based routing is available). It listens on all interfaces inside
   the workspace; access control is the Coder app proxy plus Authelia/Cloudflare
   in front of the public URL. Extension installs are manual from Open VSX;
-  neither editor auto-installs them. The shared editor-settings overlay lives on
-  a per-owner volume, `vscode-settings-<owner-id>`, mounted at
-  `/home/coder/.shared/vscode` — every workspace that owner has reads it, and no
+  neither editor auto-installs them.
+
+### Where the editor keeps the LiteLLM key
+
+- The shared editor-settings overlay lives on a per-owner volume, `vscode-settings-<owner-id>`,
+  mounted at `/home/coder/.shared/vscode` — every workspace that owner has reads it, and no
   other user's workspace mounts it. The file code-server actually opens,
   `~/.local/share/code-server/User/settings.json`, is a real per-workspace file:
   the boot renders it, then layers that overlay on top so an API key entered in
@@ -237,5 +325,7 @@ repo can verify.
   key into the per-workspace copy. So the key rests in two places, not one: the
   owner's settings volume and each of that owner's workspace home volumes. Treat
   a copy of either like a copy of the key.
+## Reporting a vulnerability
+
 - **Reporting.** Report vulnerabilities by opening an issue marked
   `security`; please do not disclose working exploits publicly.
