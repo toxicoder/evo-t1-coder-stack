@@ -208,6 +208,7 @@ body that seeds the four-command repository family `ez-bazel-first` / `ez-strong
 beside its `SKILL.md`)
 are the three that live in
 `templates/common/` instead, so both twins share one copy of them.
+
 ### The push and the SVG
 
 The SVG stays small enough that the resulting data URL fits Coder v2.36's 256-character

@@ -260,9 +260,9 @@ on this host: an argument of 131071 bytes execs and one of 131072 fails with `E2
 Past the wall:
 
 - the agent logs `fork/exec /bin/bash: argument list too long` with `exit_code=255` a few
-  milliseconds in,
-- the home directory never seeds,
-- the workspace banner reads "A startup script has failed".
+  milliseconds in
+- the home directory never seeds
+- the workspace banner reads "A startup script has failed"
 
 Coder puts no limit there and the plan reports no error, so the wall only announces
 itself on a live recreate.

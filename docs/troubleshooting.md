@@ -103,11 +103,11 @@ The path in the message tells the two apart: a
 
 The same bug had:
 
-- `pull-models` pulling its default list instead of the checkout's `OLLAMA_MODELS`,
+- `pull-models` pulling its default list instead of the checkout's `OLLAMA_MODELS`
 - `coder-agents` provisioning the compose placeholder `LITELLM_MASTER_KEY` instead of the
-  checkout's,
-- and `spark-configure` / `spark-verify` writing `sparks/` output into a tree Bazel
-  recreates.
+  checkout's
+- `spark-configure` / `spark-verify` writing `sparks/` output into a tree Bazel
+  recreates
 
 Fix: those six CLIs (`dashboard-password`, `pull-models`, `coder-agents`,
 `spark-verify`, `spark-configure`, `build-dev-image`) resolve the checkout with
@@ -141,9 +141,9 @@ When it is, **every** lookup dies, including `github.com`, so
 
 On Linux, `bash scripts/setup-host.sh --repair`:
 
-- writes `/etc/systemd/resolved.conf.d/evo-t1-public-dns.conf` (`DNS=1.1.1.1 8.8.8.8`),
-- runs `sudo tailscale set --accept-dns=false`,
-- and keeps MagicDNS for `ts.net` via `resolvectl` split-DNS.
+- writes `/etc/systemd/resolved.conf.d/evo-t1-public-dns.conf` (`DNS=1.1.1.1 8.8.8.8`)
+- runs `sudo tailscale set --accept-dns=false`
+- keeps MagicDNS for `ts.net` via `resolvectl` split-DNS
 
 `--check` still writes nothing.
 
@@ -384,9 +384,9 @@ text contains `APIConnectionError` (`litellm/router_utils/cooldown_handlers.py:2
 
 All three of these surface as that exception:
 
-- a closed port,
-- a dead engine process,
-- and a TensorFold box that refuses with the status-less `NoRoom` value.
+- a closed port
+- a dead engine process
+- a TensorFold box that refuses with the status-less `NoRoom` value
 
 So no `allowed_fails` number and no `cooldown_time` cools a box that is simply gone --
 which is why `litellm/config.yaml` ships no `allowed_fails` key at all, and why
