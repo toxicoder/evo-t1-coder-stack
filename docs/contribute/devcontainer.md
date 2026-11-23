@@ -26,11 +26,15 @@ tags: [contributing, devcontainer, bazel, ci, docker]
 - Telling the contributor container, the Coder workspace and the stack host apart in one look
 
 One image — `images/dev/Dockerfile`, built as `evo-t1-dev:latest` — is the contributor and
-test runtime on macOS, on Linux, and on GitHub. The same Dockerfile serves the Coder
-workspaces the stack provisions, the contributor dev container on a laptop, and the
-container CI docker-runs its checks inside. Every version in it comes from
-`images/dev/tool-versions.env`; [../coder-templates.md](../coder-templates.md) covers the
-workspace side, and [CONTRIBUTING.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/CONTRIBUTING.md)
+test runtime on macOS, on Linux, and on GitHub. The same Dockerfile serves three things:
+
+- the Coder workspaces the stack provisions
+- the contributor dev container on a laptop
+- the container CI docker-runs its checks inside
+
+Every version in it comes from `images/dev/tool-versions.env`;
+[../coder-templates.md](../coder-templates.md) covers the workspace side, and
+[CONTRIBUTING.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/CONTRIBUTING.md)
 is the checklist the PR follows.
 
 ## The one image, the one pin file
@@ -57,12 +61,16 @@ docker image inspect evo-t1-dev:latest
 
 ## Open it on a laptop
 
+### Reopen the repo in a container
+
 Use VS Code, Cursor, or any editor with the Dev Containers extension, and reopen this
 repository **in a container**.
 
 ```text
 Command Palette → Dev Containers: Reopen in Container
 ```
+
+### What devcontainer.json declares
 
 `.devcontainer/devcontainer.json` is what that reads:
 
@@ -81,28 +89,44 @@ Command Palette → Dev Containers: Reopen in Container
 | `postStartCommand` | `bash .devcontainer/library-scripts/configure.sh start` | Runs on every start, not just the first: cheap checks, the socket ACL again (host-side perms change), and a warm-up a previous start skipped or failed. |
 | `customizations.vscode.extensions` | Bazel, shellcheck, shell-format, Terraform, Docker, YAML, Python, Ruff, Tailwind | shellcheck and shfmt are the two `//:lint` runners, wired into the editor beside the Terraform, Docker, YAML, Python and Tailwind helpers this tree holds. Nothing else is installed: the list is the languages under `git ls-files`, because every extension is a download at container start. |
 
-`customizations.vscode.settings` carries container-scoped settings only: the two
-lint-and-format tool pins (`shellcheck.executablePath` with
-`shellcheck.customArgs`, `shellformat.path` with `shellformat.flag`), the
-`bazel-*` and `node_modules` watcher excludes, and `git.branchProtection` for
-`main`. Each key belongs to an extension the row above installs, which is what
-makes the pin do something. Editor taste (theme, minimap, word wrap) still
-arrives from `seed-dev-env.sh` through `~/.shared/vscode/settings.json`, so the
-two never fight.
+### The container-scoped editor settings
 
-Nothing in this table belongs in the image. `images/dev/Dockerfile` is shared with
-the Coder workspaces and the CI gate, so it carries the toolchain and stays
-unaware that a contributor container exists; everything above is container shape,
-read from the checkout on every start. That is what makes the whole thing editable
-without a rebuild.
+`customizations.vscode.settings` carries container-scoped settings only:
+
+- the two lint-and-format tool pins (`shellcheck.executablePath` with
+  `shellcheck.customArgs`, `shellformat.path` with `shellformat.flag`)
+- the `bazel-*` and `node_modules` watcher excludes
+- `git.branchProtection` for `main`
+
+Each key belongs to an extension the row above installs, which is what makes the pin do
+something.
+
+Editor taste (theme, minimap, word wrap) still arrives from `seed-dev-env.sh` through
+`~/.shared/vscode/settings.json`, so the two never fight.
+
+### Why none of this is in the image
+
+Nothing in this table belongs in the image. `images/dev/Dockerfile` is shared with the
+Coder workspaces and the CI gate, so it carries the toolchain and stays unaware that a
+contributor container exists.
+
+Everything above is container shape, read from the checkout on every start. That is what
+makes the whole thing editable without a rebuild.
 
 ## The cache seam
+
+### What dies with the container
 
 `.bazelrc` points `--disk_cache` and `--repository_cache` at `~/.cache`, and Bazel's
 output base lives under `~/.cache/bazel` as well. Inside a container `$HOME` is the
 image's own filesystem, so all three die with the container, and a recreation - which
 is what every edit to this config or the Dockerfile causes - repays the whole cost:
-re-fetch every external archive, re-analyze the graph, re-run every action.
+
+- re-fetch every external archive
+- re-analyze the graph
+- re-run every action
+
+### The block configure.sh writes
 
 The config mounts three named volumes under `/var/cache/evo-t1-bazel`, and
 `.devcontainer/library-scripts/configure.sh` writes this block into `~/.bazelrc`:
@@ -117,16 +141,23 @@ startup --output_user_root=/var/cache/evo-t1-bazel/root
 
 `~/.bazelrc` is the seam because Bazel reads it after the repo's `.bazelrc`, and
 because it reaches only this container: a Coder workspace booted from the same image
-keeps using its own `~/.cache`. Everything outside the two marker lines belongs to
-the developer and survives every run, and a re-run replaces the block rather than
-stacking a second one. `EVO_T1_BAZEL_CACHE_ROOT` is the one value both halves read,
-so the mount targets and the block move together, and
-`bazelisk test //tests:bats_contributor_devcontainer_test` fails if they drift.
+keeps using its own `~/.cache`.
+
+Everything outside the two marker lines belongs to the developer and survives every run,
+and a re-run replaces the block rather than stacking a second one.
+
+`EVO_T1_BAZEL_CACHE_ROOT` is the one value both halves read, so the mount targets and the
+block move together, and `bazelisk test //tests:bats_contributor_devcontainer_test` fails
+if they drift.
+
+### Dropping the caches
 
 Docker creates a named volume once and reuses it, so the caches survive recreations
-until you deliberately drop them. The volumes belong to the host's daemon, so a host
-shell is the reliable place to run this: from inside the container the same commands
-work only while the config's socket mount is in place.
+until you deliberately drop them.
+
+The volumes belong to the host's daemon, so a host shell is the reliable place to run
+this: from inside the container the same commands work only while the config's socket
+mount is in place.
 
 ```sh
 docker volume ls --filter name=evo-t1-dev-
@@ -140,12 +171,22 @@ routine cleanup - deleting them costs one cold gate run each.
 
 `configure.sh` finishes by starting `library-scripts/warmup.sh` detached (`setsid`, so
 the Dev Containers CLI's teardown of the postCreate process group does not take it
-with it). It runs `bazelisk test //:test-fast` and then `bazelisk run
-//docs-site:install`, which is where a cold container actually spends its time: the
-Bazelisk download, every `MODULE.bazel` fetch, and the site's `npm ci`. The editor is
-usable the whole time; the first real gate run then reads a warm cache. A warm-up that
-did not finish is not skipped forever: `postStartCommand` re-runs it whenever the status
-file still says `failed: <step>`, and only an `ok` one is left alone.
+with it). It runs two commands, in this order:
+
+1. `bazelisk test //:test-fast`
+2. `bazelisk run
+//docs-site:install`
+
+That is where a cold container actually spends its time:
+
+- the Bazelisk download
+- every `MODULE.bazel` fetch
+- the site's `npm ci`
+
+The editor is usable the whole time; the first real gate run then reads a warm cache.
+
+A warm-up that did not finish is not skipped forever: `postStartCommand` re-runs it
+whenever the status file still says `failed: <step>`, and only an `ok` one is left alone.
 
 ```sh
 tail -f /tmp/evo-t1-warmup.log
@@ -156,6 +197,7 @@ export EVO_T1_WARMUP=off           # in the host shell, before Reopen in Contain
 `EVO_T1_WARMUP=off` is the only knob. It reaches the container through
 `containerEnv`'s `${localEnv:EVO_T1_WARMUP}`, so a laptop can opt out permanently from
 its own shell profile without editing the config, and an unset value keeps the default.
+
 A skipped or failed warm-up costs a slow first command and nothing else: every gate
 still runs, and `//:lint` does not depend on it.
 
@@ -176,20 +218,30 @@ These are the moments that oblige a contributor to touch it, and each has a gate
 `.devcontainer/library-scripts/*.sh` is first-party shell: it carries
 `# @function` blocks, is linted by `//:lint` (shellcheck `-x --severity=warning`, shfmt
 `-s -i 2 -ci`), and its behaviour is pinned by
-`bazelisk test //tests:bats_contributor_devcontainer_test`. That suite reads
-`devcontainer.json` as data, so renaming a mount target, dropping the
-`EVO_T1_DEVCONTAINER` marker from one env layer, or pointing the build at something
-other than `images/dev` is a failing test rather than a surprise on someone's laptop.
+`bazelisk test //tests:bats_contributor_devcontainer_test`.
+
+That suite reads `devcontainer.json` as data, so each of these is a failing test rather
+than a surprise on someone's laptop:
+
+- renaming a mount target
+- dropping the `EVO_T1_DEVCONTAINER` marker from one env layer
+- pointing the build at something other than `images/dev`
 
 ## Seeding the contributor home
 
+### How the container seeds it
+
 `scripts/seed-dev-env.sh` materializes, into a laptop or CI home, the same stack-owned
 files a Coder workspace writes at startup — from the same template payloads, with no
-Terraform and no docker. The contributor container runs it for you: `postCreateCommand`
-calls `configure.sh create`, which calls this script with `--devcontainer --context7-mcp`
+Terraform and no docker.
+
+The contributor container runs it for you: `postCreateCommand` calls
+`configure.sh create`, which calls this script with `--devcontainer --context7-mcp`
 and nothing else, so a rebuilt container re-materializes every stack-marked file from the
-current seed and leaves anything you own alone. Everything below is what that one call
-does, and what to re-run by hand after a seed change:
+current seed and leaves anything you own alone.
+
+Everything below is what that one call does, and what to re-run by hand after a seed
+change:
 
 ```sh
 bazelisk run //scripts:seed-dev-env -- --dry-run --home /tmp/contributor-home
@@ -197,6 +249,8 @@ bazelisk run //scripts:seed-dev-env -- --home "${HOME}"
 bazelisk run //scripts:seed-dev-env -- --litellm-url http://host.docker.internal:14000/v1
 bazelisk run //scripts:seed-dev-env -- --devcontainer --context7-mcp
 ```
+
+### The flags it takes
 
 | Flag | Effect |
 | --- | --- |
@@ -207,36 +261,59 @@ bazelisk run //scripts:seed-dev-env -- --devcontainer --context7-mcp
 | `--force` | Re-materialize files a user owns. |
 | `--dry-run` | Print the plan; write nothing, create no directory, call no `gh`. |
 
-The two research lanes that config can render are split by question type: a library,
-framework, CLI or setup question goes to `context7` (resolve the library id first, then
-query docs on that id), anything else on the web goes to the `searxng` `search` tool,
-and a URL already in hand goes to `searxng`'s `fetch_content` - Grok's native
-`web_search` is parked here and native `web_fetch` needs an egress proxy endpoint this
-stack does not run, so neither is a lane. Prove what this home declares with:
+### The two research lanes
+
+The two research lanes that config can render are split by question type:
+
+- a library, framework, CLI or setup question goes to `context7` (resolve the library id
+  first, then query docs on that id)
+- anything else on the web goes to the `searxng` `search` tool
+- a URL already in hand goes to `searxng`'s `fetch_content` - Grok's native `web_search`
+  is parked here and native `web_fetch` needs an egress proxy endpoint this stack does not
+  run, so neither is a lane
+
+Prove what this home declares with:
 
 ```sh
 bazelisk run //scripts:mcp-check -- --lanes context7 --config /tmp/contributor-home/.grok/config.toml
 ```
 
+### Repairing a missing context7 block
+
 A missing `[mcp_servers.context7]` block in that file means the seed ran keyless and
 without `--context7-mcp`: re-run the seeder with the flag, adding `--force` when the
-existing file carries no stack marker and the seeder left it alone. On a Coder
-workspace the same repair runs from the stack host:
+existing file carries no stack marker and the seeder left it alone.
+
+On a Coder workspace the same repair runs from the stack host:
 `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>`.
 
-What it writes: `~/.tmux.conf`, the shared `~/.shared/vscode/settings.json` (with the
-code-server and desktop VS Code User settings symlinked to it), `~/.grok/AGENTS.md`,
-`~/.coder/AGENTS.md`, the rendered `~/.grok/config.toml`, the two terminal helpers in
-`~/.grok/bin`, `~/.grok/notes-setup.sh` plus this clone's `notes.md`, and the
-`~/.grok/bin` line in `~/.bashrc`.
+### The files it writes
+
+What it writes:
+
+- `~/.tmux.conf`
+- the shared `~/.shared/vscode/settings.json` (with the code-server and desktop VS Code
+  User settings symlinked to it)
+- `~/.grok/AGENTS.md`
+- `~/.coder/AGENTS.md`
+- the rendered `~/.grok/config.toml`
+- the two terminal helpers in `~/.grok/bin`
+- `~/.grok/notes-setup.sh` plus this clone's `notes.md`
+- the `~/.grok/bin` line in `~/.bashrc`
+
+### The notes.md back-copy
 
 That `notes.md` is `notes_materialize` from the same library: it restores the canonical copy
 under `~/.grok/notes/<host>/<owner>/<repo>/` over a live file that is empty or still the
 seeded stub, and copies a real live file back there, so a stub never walks over written
-notes. Here that runs once, at seed time - the background watcher that repeats the back-copy
+notes.
+
+Here that runs once, at seed time - the background watcher that repeats the back-copy
 about every 30 seconds is a workspace-startup thing (`NOTES_SYNC_INTERVAL`; see
 [../grok-build-and-agents.md](../grok-build-and-agents.md#what-is-shared)) - so re-run the
 seeder to push a fresh edit to the canonical copy in this container.
+
+### Stack-owned and user-owned files
 
 Two rules decide every write, and they are the same rules the workspace startup applies:
 
@@ -251,9 +328,10 @@ Two rules decide every write, and they are the same rules the workspace startup 
   every boot, so this script does too.
 
 It never writes a secret, never writes a GitHub token or a PAT, and never installs the
-Grok CLI — the golden image already carries `/usr/local/bin/grok`. Exit `5` means no
-proven checkout was found (it wants `docker-compose.yml` where it is looking), which is the
-same repo-root probe every other script in the repo makes.
+Grok CLI — the golden image already carries `/usr/local/bin/grok`.
+
+Exit `5` means no proven checkout was found (it wants `docker-compose.yml` where it is
+looking), which is the same repo-root probe every other script in the repo makes.
 
 ## GitHub auth in the container
 
@@ -272,16 +350,23 @@ bazelisk run //scripts:github-auth -- check https://github.com/toxicoder/evo-t1-
 - Pass only the repository URL. A named container argument is refused with a pointer to the
   host shell, because that container lives on a daemon this environment cannot enumerate.
 - Credentials still arrive by the one supported path: Coder External Auth mints them, and
-  the gh auth store is what git actually reads. That store is the target because
-  `GH_TOKEN`/`GITHUB_TOKEN` are the copy injected when the container started and expire
-  about an hour later, and the plain `!gh auth git-credential` helper echoes that pair, so
-  git would keep sending a dead token. The helper this stack installs clears the pair first,
-  which is why `gh auth setup-git` alone is not enough. There is no static token and no PAT
-  in this repo's tooling.
+  the gh auth store is what git actually reads.
+- That store is the target because `GH_TOKEN`/`GITHUB_TOKEN` are the copy injected when the
+  container started and expire about an hour later, and the plain
+  `!gh auth git-credential` helper echoes that pair, so git would keep sending a dead token.
+- The helper this stack installs clears the pair first, which is why
+  `gh auth setup-git` alone is not enough. There is no static token and no PAT in this
+  repo's tooling.
 - `push would FAIL` from the check above means one command:
   `bazelisk run //scripts:github-auth -- fix https://github.com/toxicoder/evo-t1-coder-stack.git`.
-  It mints a live token, writes the store, installs that helper, and re-proves the verdict.
-  For `gh` itself, prefix `env -u GH_TOKEN -u GITHUB_TOKEN`: no process can rewrite another
+  It:
+
+  - mints a live token
+  - writes the store
+  - installs that helper
+  - re-proves the verdict
+
+- For `gh` itself, prefix `env -u GH_TOKEN -u GITHUB_TOKEN`: no process can rewrite another
   process's environment.
 
 ## Running the gate here
@@ -294,6 +379,8 @@ bazelisk test //:lint --test_tag_filters=manual
 bazelisk run //:validate
 ```
 
+### From the host, with test-in-image
+
 From a machine that is **not** inside the container, ask the image to run them instead of
 installing the toolchain onto that machine:
 
@@ -301,34 +388,56 @@ installing the toolchain onto that machine:
 bazelisk run //scripts:test-in-image --
 ```
 
-That is the host ingress: it `docker run`s `evo-t1-dev:latest` as this process's uid:gid
-(`$(id -u):$(id -g)`), with `HOME=/tmp` and `USER=$(id -un)` so Bazel has a writable home
-and a name for a uid the image passwd file does not list, and runs the same suites CI
-runs. A macOS laptop gets the Linux result without a Linux box. Build the tag first with
-`bazelisk run //scripts:build-dev-image` if the daemon does not have it.
+That is the host ingress:
+
+- it `docker run`s `evo-t1-dev:latest` as this process's uid:gid (`$(id -u):$(id -g)`)
+- sets `HOME=/tmp` and `USER=$(id -un)` so Bazel has a writable home and a name for a uid
+  the image passwd file does not list
+- runs the same suites CI runs
+
+A macOS laptop gets the Linux result without a Linux box.
+
+Build the tag first with `bazelisk run //scripts:build-dev-image` if the daemon does not
+have it.
+
+### Typed inside the container
 
 Typed *inside* the contributor container that same target touches no docker:
 `EVO_T1_DEVCONTAINER=1` tells it this environment already is the golden image, so it
-execs `bazelisk` in place. The command is the same on both sides of the seam, and a
-container never nests inside itself.
+execs `bazelisk` in place.
+
+The command is the same on both sides of the seam, and a container never nests inside
+itself.
+
+### Native macOS runs are convenience only
 
 Native `bazelisk test` on macOS is a convenience, not a merge path. The suites run there,
 but the BSD userland differs from the GNU one the image ships (`sed`, `date`, `find`,
 `sort`), so a green Darwin run is not the run that gates the merge and a red one is not
-proof of a defect. The container, or `test-in-image`, is the answer
+proof of a defect.
+
+The container, or `test-in-image`, is the answer
 [test-with-bazel.md](test-with-bazel.md) and [../branching.md](../branching.md) gate on.
 
 ## What CI does
 
 `.github/workflows/ci.yml` builds `images/dev` with `docker buildx build` and the GitHub
 Actions layer cache (`type=gha`), then `docker run`s that image and runs the checks inside
-it: `//:test-fast`, `//:lint`, `//:validate`, and the `docs-site/` Node checks.
+it:
+
+- `//:test-fast`
+- `//:lint`
+- `//:validate`
+- the `docs-site/` Node checks
 
 - No Actions `container:` key is involved. The job runs on a plain runner and reaches the
   toolchain through `docker run --user "$(id -u):$(id -g)"` with `HOME=/tmp` and
-  `USER=$(id -un)`, so what gates the merge is an image tag, the bind-mounted checkout
-  stays writable, permission tests see a non-root identity, and Bazel can name a uid the
-  image passwd file does not list.
+  `USER=$(id -un)`, so:
+
+  - what gates the merge is an image tag
+  - the bind-mounted checkout stays writable
+  - permission tests see a non-root identity
+  - Bazel can name a uid the image passwd file does not list
 - The Bazel job no longer installs the pins onto the runner: the image already has them at
   the pinned versions.
 - A pull request that does not touch `images/dev/**` replays the cached layers instead of
@@ -339,9 +448,10 @@ reproducible without a Linux box or a workflow rerun.
 
 ## Why this repo's own workspaces stay on `workspace`
 
-`.devcontainer/contributor-env` is a sentinel, not a config file. It is tracked in this
-repository, and `probe_repo` (in `scripts/lib/workspace.sh`) treats a clone that tracks it
-as a **miss** — exit `3` — even when the same clone also tracks
+`.devcontainer/contributor-env` is a sentinel, not a config file.
+
+It is tracked in this repository, and `probe_repo` (in `scripts/lib/workspace.sh`) treats a
+clone that tracks it as a **miss** — exit `3` — even when the same clone also tracks
 `.devcontainer/devcontainer.json`.
 
 ```sh
