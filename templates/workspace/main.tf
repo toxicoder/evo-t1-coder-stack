@@ -366,6 +366,55 @@ data "coder_parameter" "grok_theme" {
   order        = 8
 }
 
+# The approval mode is a per-workspace answer, the same way the two themes are:
+# one text file, re-rendered on every start, so it is mutable with no rebuild.
+# The stack default is always-approve because an agent that stops to ask before
+# each tool call cannot run a fleet unattended, and this workspace's owner
+# already holds a shell in that container. What relaxes is prompting, not the
+# guardrails: the [permission] deny list the template ships still outranks every
+# allow rule in every mode, so a prompting mode buys back the prompt and a
+# non-prompting mode does not buy back the dotenv reads or the rm -rf form.
+data "coder_parameter" "grok_permission_mode" {
+  name         = "grok_permission_mode"
+  display_name = "Grok approval mode"
+  description  = "How much this workspace's Grok Build sessions stop and ask before they act, written into the rendered ~/.grok/config.toml as [ui] permission_mode. The stack ships always-approve so an unattended agent is not blocked on a question nobody is watching; the three prompting modes are here for a workspace you sit with. Applies on the next start, and it is this workspace's own setting - the owner's other workspaces keep theirs."
+  type         = "string"
+  form_type    = "dropdown"
+  mutable      = true
+  default      = var.grok_permission_mode
+  order        = 10
+
+  # These are the four values the [ui] permission_mode key documents, and the
+  # seed refuses anything else, so the dropdown is the only place a mode is
+  # chosen rather than a free-text field that can be mistyped. The CLI's own
+  # --permission-mode flag spells more modes than these four; one of those
+  # belongs in the operator's [ui] block by hand, and the boot says so when the
+  # carry-over drops it, since the render owns the key either way.
+  option {
+    name        = "CLI default"
+    value       = "default"
+    description = "No stack opinion: the CLI applies its own built-in approval policy, which does prompt. Pick this to opt out of the stack default entirely."
+  }
+
+  option {
+    name        = "Ask (prompts before a tool runs)"
+    value       = "ask"
+    description = "The prompting end of the set: a tool call waits for a person. Right for a workspace you watch rather than one that runs unattended."
+  }
+
+  option {
+    name        = "Auto (prompts only where unsure)"
+    value       = "auto"
+    description = "Between the two: the CLI prompts less than ask and more than always-approve. Use it when the stack default is too loose and ask is too slow."
+  }
+
+  option {
+    name        = "Always approve (stack default)"
+    value       = "always-approve"
+    description = "The product name for bypassPermissions: nothing prompts, so a tool call runs the moment the agent asks for it. The [permission] deny list still refuses secrets and destructive rm here as in every mode."
+  }
+}
+
 data "coder_parameter" "vscode_color_theme" {
   name         = "vscode_color_theme"
   display_name = "Editor colour theme"
@@ -528,8 +577,12 @@ resource "coder_agent" "main" {
       # The per-workspace theme, rendered as the one [ui] table the template
       # owns. It is a coder_parameter rather than a --var for the same reason
       # the editor theme is one: a person changes a theme on a whim, per
-      # workspace, and the file it lands in is re-rendered on every start.
+      # workspace, and the file it lands in is re-rendered on every start. The
+      # approval mode below travels the same route into that same table, and the
+      # startup render strips it from the operator's copy of [ui] with the theme
+      # keys, because one table carrying the key twice is not valid TOML.
       grok_theme             = data.coder_parameter.grok_theme.value
+      grok_permission_mode   = data.coder_parameter.grok_permission_mode.value
       github_mcp             = var.github_mcp
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
       search_mcp             = var.search_mcp
@@ -1177,6 +1230,14 @@ resource "coder_metadata" "workspace_info" {
   item {
     key   = "editor theme"
     value = data.coder_parameter.vscode_color_theme.value
+  }
+
+  # The approval mode is this workspace's own answer as well, and it is the one
+  # here that decides whether the agent asks before it runs a command, so the
+  # page is where to read it rather than infer it from behaviour.
+  item {
+    key   = "grok approval mode"
+    value = data.coder_parameter.grok_permission_mode.value
   }
 
   # Which topology this workspace actually got. Without it the only way to tell

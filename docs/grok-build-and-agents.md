@@ -560,8 +560,14 @@ while the managed block is intact.
   fills `GH_TOKEN` above.
 - `grok_config_extra` appends whatever the create form's **Grok config extras** field
   holds, verbatim under its own comment header.
-- `[permission]` holds the guardrails the stack owns; the approval mode itself stays
-  a per-user call (`[ui] permission_mode`). `Bash(rm -rf *)` blocks the destructive
+- `[permission]` holds the guardrails the stack owns. The approval mode is a stack
+  default now rather than a per-user call: the render writes
+  `[ui] permission_mode = "always-approve"` unless the create form's **Grok approval
+  mode** field (`grok_permission_mode`, whose accepted values are `default`, `ask`,
+  `auto`, `always-approve`) names another, and the contributor seed takes the same
+  choice from `GROK_PERMISSION_MODE`. What relaxes is prompting, not the guardrails: a
+  `deny` rule still outranks every other list under always-approve, so the dotenv reads
+  and the `rm -rf` deny still refuse. `Bash(rm -rf *)` blocks the destructive
   form, and the dotenv family is split by what a file actually holds: the live
   `.env` and the populated suffixed shapes (`.env.local`, `.env.*.local`,
   `.env.production` / `.env.prod`, `.env.staging` / `.env.stage`,
@@ -620,8 +626,19 @@ while the managed block is intact.
   default lanes silently stopped arriving. A hand-edited config is left alone only
   while it carries one of them, so takeover means deleting **both** lines; delete the
   file and restart to hand it back. When the guard does re-render, the CLI-owned tables
-  `[cli]`, `[ui]` and `[marketplace]` are carried over rather than wiped, because the
-  stack owns no approval mode - `[ui] permission_mode` / yolo stays a per-user call.
+  `[cli]`, `[ui]` and `[marketplace]` are carried over rather than wiped. The `[ui]`
+  copy comes across minus the keys the render owns, and `permission_mode` is one of
+  them now: the startup strips it from the operator's copy so the render's own line
+  cannot land beside it, which would hand one `[ui]` table two identical keys and the
+  CLI an invalid TOML file. The strip says what it took - when it drops a mode the start
+  prints one `warning:` line naming the value it dropped
+  (`templates/workspace/startup.sh.tftpl:248`), so an approval mode lost at a restart is
+  lost in the open. A workspace that quietly starts prompting, or stops prompting, is
+  otherwise a report nobody can reproduce. And the create form's four are what the
+  `[ui] permission_mode` key documents, not the whole vocabulary: the CLI's own
+  `--permission-mode` flag spells more (`templates/workspace/main.tf:389-392`). One of
+  those belongs in the operator's `[ui]` block by hand, and the next start replaces it
+  with the form's answer and says so on the startup log.
 
 ## The fan-out seam
 

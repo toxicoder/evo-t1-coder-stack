@@ -86,7 +86,9 @@ user-owned files too), --dry-run (report only; do not call gh), -h/--help.
 Environment: GROK_THEME (default grokbuild) is the theme name written to
 [ui] theme in ~/.grok/config.toml; the literal auto also emits
 auto_dark_theme and auto_light_theme, the same rule the workspace template
-renders.
+renders. GROK_PERMISSION_MODE (default always-approve) is the approval mode
+written to [ui] permission_mode; the accepted values are default, ask, auto
+and always-approve, and anything else falls back to always-approve.
 
 Examples (each line is the whole command, run from the repo root):
   bazelisk run //scripts:seed-dev-env -- --dry-run --home /tmp/contributor-home
@@ -140,15 +142,15 @@ resolve_repo_root() {
 # the alias its template variable defaults to: writers on agent-swarm, the
 # planner on agent, readers on agent-explore, the skeptic on agent-review.
 # Globals:
-#   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181,
-#   a concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the context7
-#   block), HOME (the home default when $3 is not given), GROK_THEME (the [ui]
-#   theme name, default grokbuild; the literal auto also emits the
-#   auto_dark_theme/auto_light_theme pair, as the template's gate does), and the
-#   seven fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE, GROK_PLAN_LANE,
-#   GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT, GROK_SWARM_WIDTH and
-#   GROK_SUBAGENT_MAX_DEPTH (1 off, 2 the default, 3 the ceiling). An unusable
-#   value falls back to its default and is noted on stderr.
+#   STACK_LITELLM_URL, SEARXNG_URL (default http://host.docker.internal:8181, a
+#   concrete TOML string), CONTEXT7_API_KEY (non-empty keeps the context7 block), HOME
+#   (the home default when $3 is not given), GROK_THEME (the [ui] theme name, default
+#   grokbuild; the literal auto also emits the auto_dark_theme/auto_light_theme pair, as
+#   the template's gate does), GROK_PERMISSION_MODE (the [ui] approval mode, default
+#   always-approve), and the seven fan-out knobs GROK_SUBAGENTS_LANE, GROK_EXPLORE_LANE,
+#   GROK_PLAN_LANE, GROK_REVIEW_LANE, GROK_SUBAGENT_MAX_CONCURRENT, GROK_SWARM_WIDTH and
+#   GROK_SUBAGENT_MAX_DEPTH (1 off, 2 the default, 3 the ceiling). An unusable value
+#   falls back to its default and is noted on stderr.
 # Arguments:
 #   $1 - the grok-config.toml.tftpl source
 #   $2 - the destination file to write
@@ -164,7 +166,7 @@ seed_render_grok_config() {
   local src="${1:-}" dest="${2:-}" rendered="" lbrace="" dollar='$' search=""
   local home="${3:-${HOME:-/home/coder}}" keep_ctx7="${4:-0}" keep7="0"
   local proxy_lit="" proxy_path="" lane="" slots="" depth="" fleet_width=""
-  local explore_lane="" plan_lane="" review_lane="" theme=""
+  local explore_lane="" plan_lane="" review_lane="" theme="" mode=""
   local -a theme_sed=()
   # The fan-out knobs. The width is this seeder's own shipped 15 - what coder.tf defaults
   # grok_subagent_max_concurrent to - and the fleet ceiling (3 boxes x PARALLEL 5 = 15) it
@@ -245,6 +247,14 @@ seed_render_grok_config() {
   else
     theme_sed=(-e '/^%{if grok_theme == "auto"~}$/,/^%{else~}$/d')
   fi
+  # The Grok approval mode: the same [ui] permission_mode key and the same
+  # default the workspace create form ships, so a laptop approves the way a
+  # workspace does. The set is that form's own option list, nothing wider.
+  mode="${GROK_PERMISSION_MODE:-always-approve}"
+  if [[ ! ${mode} =~ ^(default|ask|auto|always-approve)$ ]]; then
+    note "GROK_PERMISSION_MODE='${mode}' is not an approval mode - using always-approve"
+    mode="always-approve"
+  fi
   # Octal keeps a literal brace out of this file so extract_fn's brace scan
   # stays balanced. The sed below unfolds a doubled dollar into one.
   lbrace="$(printf '\173')"
@@ -287,6 +297,7 @@ seed_render_grok_config() {
     -e "s|\${grok_subagent_max_depth}|${depth}|g" \
     -e "s|\${grok_theme}|${theme}|g" \
     "${theme_sed[@]}" \
+    -e "s|\${grok_permission_mode}|${mode}|g" \
     -e "s|\${search_url}|${search}|g" \
     -e "s|${proxy_lit}|${proxy_path}|g" \
     >"${rendered}"; then

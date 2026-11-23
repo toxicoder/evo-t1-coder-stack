@@ -219,6 +219,52 @@ data "coder_parameter" "grok_theme" {
   order        = 7
 }
 
+# The approval mode becomes a create-form field so it stops being a per-user call
+# made in the terminal after the first prompt: the render writes [ui]
+# permission_mode on every start, so the stack ships the default and a person
+# disagrees per workspace. Mutable because it writes one text file and nothing
+# about topology, so a restart re-renders it with no rebuild.
+data "coder_parameter" "grok_permission_mode" {
+  name         = "grok_permission_mode"
+  display_name = "Grok approval mode"
+  description  = "How much this workspace's Grok Build sessions stop and ask before they act, written into the rendered ~/.grok/config.toml as [ui] permission_mode. The stack ships always-approve so an unattended agent is not blocked on a question nobody is watching; the three prompting modes are here for a workspace you sit with. Applies on the next start, and it is this workspace's own setting - the owner's other workspaces keep theirs."
+  type         = "string"
+  # "dropdown", not a text field: these are the four values the [ui]
+  # permission_mode key documents, the seed refuses anything else, and a typo
+  # here would render a mode nothing recognises. The CLI's own --permission-mode
+  # flag spells more modes than these four; one of those belongs in the
+  # operator's [ui] block by hand, and the boot says so when the carry-over
+  # drops it, since the render owns the key either way.
+  form_type = "dropdown"
+  mutable   = true
+  default   = var.grok_permission_mode
+  order     = 10
+
+  option {
+    name        = "CLI default"
+    value       = "default"
+    description = "No stack opinion: the CLI applies its own built-in approval policy, which does prompt. Pick this to opt out of the stack default entirely."
+  }
+
+  option {
+    name        = "Ask (prompts before a tool runs)"
+    value       = "ask"
+    description = "The prompting end of the set: a tool call waits for a person. Right for a workspace you watch rather than one that runs unattended."
+  }
+
+  option {
+    name        = "Auto (prompts only where unsure)"
+    value       = "auto"
+    description = "Between the two: the CLI prompts less than ask and more than always-approve. Use it when the stack default is too loose and ask is too slow."
+  }
+
+  option {
+    name        = "Always approve (stack default)"
+    value       = "always-approve"
+    description = "The product name for bypassPermissions: nothing prompts, so a tool call runs the moment the agent asks for it. The [permission] deny list still refuses secrets and destructive rm here as in every mode."
+  }
+}
+
 data "coder_parameter" "vscode_color_theme" {
   name         = "vscode_color_theme"
   display_name = "Editor colour theme"
@@ -553,11 +599,13 @@ resource "coder_agent" "main" {
       litellm_url        = var.litellm_url
       grok_default_model = data.coder_parameter.grok_default_model.value
       grok_config_extra  = data.coder_parameter.grok_config_extra.value
-      # The per-workspace theme, rendered as the one [ui] table the template
-      # owns. A coder_parameter rather than a --var for the same reason the
-      # editor theme is one: a person changes a theme on a whim, per workspace,
-      # and the file it lands in is re-rendered on every start.
+      # The per-workspace theme and approval mode, rendered as the one [ui] table
+      # the template owns: the theme (plus the auto pair it expands to), then
+      # permission_mode. A coder_parameter rather than a --var for the same
+      # reason the editor theme is one: a person changes these on a whim, per
+      # workspace, and the file they land in is re-rendered on every start.
       grok_theme             = data.coder_parameter.grok_theme.value
+      grok_permission_mode   = data.coder_parameter.grok_permission_mode.value
       github_mcp             = var.github_mcp
       workspace_affinity_key = "ws-${data.coder_workspace.me.id}"
       search_mcp             = var.search_mcp
@@ -1313,6 +1361,14 @@ resource "coder_metadata" "workspace_info" {
   item {
     key   = "editor theme"
     value = data.coder_parameter.vscode_color_theme.value
+  }
+
+  # The approval mode is this workspace's own answer as well, and it is the one
+  # here that decides whether the agent asks before it runs a command, so the
+  # page is where to read it rather than infer it from behaviour.
+  item {
+    key   = "grok approval mode"
+    value = data.coder_parameter.grok_permission_mode.value
   }
 
   # Same redaction stance as the litellm key item below: this says only whether a
