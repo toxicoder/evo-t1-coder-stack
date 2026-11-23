@@ -160,14 +160,14 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   `--version`: without that flag `https://code-server.dev/install.sh` follows `latest`,
   and the editor would move under every workspace with no commit in this repo.
 
-  `workspace` installs code-server only while that pinned release is missing from
+  - `workspace` installs code-server only while that pinned release is missing from
   `/home/coder/.local/share/code-server` (the guard names
   `lib/code-server-<version>/bin/code-server`, the directory the installer unpacks, not
   the `bin/code-server` symlink, which points at the last release installed and would
   hold a warm volume on its first one) and starts it with `--auth none --port 13337
   --app-name "VS Code Web" --ignore-last-opened <folder>`, passing no settings payload.
 
-  `devcontainer` has no persistent prefix to reuse, so it installs the pinned release
+  - `devcontainer` has no persistent prefix to reuse, so it installs the pinned release
   fresh under `/tmp/code-server` on every start.
 
 ### The editor folder and its icon
@@ -301,12 +301,12 @@ plain drag is due the same pass before it is restated as measured under `mouse o
     xterm.js builds `new Array(rows + scrollback)` for it up front
     ([CircularList.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/CircularList.ts),
     [Buffer.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/Buffer.ts))
-  - and the cell data lands one `BufferLine` at a time as output arrives, at 3
+  - The cell data lands one `BufferLine` at a time as output arrives, at 3
     `Uint32` words per column per line
     ([BufferLine.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/BufferLine.ts)),
     against a VS Code default of 1000
     ([terminalConfiguration.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts)).
-  - So the setting costs a pointer array per terminal in the tab either way, and real
+  - The setting costs a pointer array per terminal in the tab either way, and real
     memory only for the lines a pane actually emits - which is why a busy build log is
     where a large value is felt, and an idle prompt is not.
   - tmux holds its history once per pane, in the server, and every client of that pane
@@ -403,27 +403,27 @@ report for a script. What the report should read here:
   docs.x.ai, every first-party changelog under `x.ai/cli/changelogs/`, and the public
   `xai-org/plugin-marketplace` catalog carry zero occurrences of it.
 
-  The bundled platform skills are a separate set, enumerated by
+  - The bundled platform skills are a separate set, enumerated by
   `FORMER_PLATFORM_SKILL_HASHES` in `crates/codegen/xai-grok-shell/src/builtin.rs`
   (help, imagine, create-skill, check-work, check, xlsx, pptx, docx, code-review,
   best-of-n, create-workflow), and neither `learn` nor `skillify` is among them.
 
-  That set is downloaded at runtime through the CLI's proxy endpoints config
+  - That set is downloaded at runtime through the CLI's proxy endpoints config
   (`cli-chat-proxy.grok.com`, gated by `GROK_SKILLS_BASE_URL`) and needs an x.ai
   sign-in: the upstream `product_skills*` fetch in
   `crates/codegen/xai-grok-shell/src/session/slash_commands.rs` is gated on
   `xai_grok_login::GrokAuth`.
 
-  This stack has no x.ai credential: LiteLLM is the sole model transport, with
+  - This stack has no x.ai credential: LiteLLM is the sole model transport, with
   `env_key = "LITELLM_API_KEY"` and `base_url` `http://host.docker.internal:4000/v1`, so
   `~/.grok/bundled/` is never created and there is no bundled copy for `grok inspect` to
   label.
 
-  The one surface nobody can read anonymously is the authenticated skills
+  - The one surface nobody can read anonymously is the authenticated skills
   feed (`x.ai/skills/*` answers 403), so the honest claim is that no published
   source names `/learn`, not that it cannot exist behind that feed.
 
-  Nothing writes `~/.grok/skills/` either, but
+  - Nothing writes `~/.grok/skills/` either, but
   that is a stack choice, not a CLI limit: the upstream user guide
   (`crates/codegen/xai-grok-pager/docs/user-guide/08-skills.md`) documents both tiers -
   `~/.grok/skills/` is the User scope and `<repo_root>/.grok/skills/` the Repo one, and
@@ -431,7 +431,7 @@ report for a script. What the report should read here:
   `bundled`) - and startup discovery skips project skills and commands in untrusted
   folders, so a project-tier folder has to be trusted first or its skill is withheld.
 
-  What separates the two consumers is that the **Coder Agents** chat agent reads
+  - What separates the two consumers is that the **Coder Agents** chat agent reads
   `~/.coder/skills/` only, so reaching both means shipping both homes.
 
 ### The stack's own skill commands
@@ -443,27 +443,27 @@ report for a script. What the report should read here:
   `/flush`, `/dream`, `/remember`, `/memory` are its built-in memory commands, while no
   published source names a `/learn` or a `/skillify` at all.
 
-  A user-scope skill overrides a same-named bundled one, so a seed named
+  - A user-scope skill overrides a same-named bundled one, so a seed named
   `create-skill` would have hidden the bundled copy.
 
-  `/ez-learn` writes memory files - it reproduces the upstream `/flush`, `/dream`,
+  - `/ez-learn` writes memory files - it reproduces the upstream `/flush`, `/dream`,
   `/remember` and `/memory`; the other two write skill files.
 
-  The three payloads - `templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
+  - The three payloads - `templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
   `ez-create-skill.SKILL.md` - are seeded at workspace start by
   `coder_script.stack_skills`: each is written into `~/.coder/skills/<name>/SKILL.md` and
   twin-copied to `~/.agents/skills/<name>/SKILL.md`, each only while that file is absent.
 
-  To take a copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker
+  - To take a copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker
   line: a marker-free file is user-owned, and the seeder leaves it alone unless you pass
   `--force`. A deletion is undone - the boot writes the file again whenever it is absent,
   and `refresh-configs` re-seeds an absent target, so the next boot restores the stack's
   copy.
 
-  To hide the slash command, set `disabled = ["ez-learn"]` under `[skills]` in
+  - To hide the slash command, set `disabled = ["ez-learn"]` under `[skills]` in
   `~/.grok/config.toml`.
 
-  A seeded `SKILL.md` shows up in `grok inspect --json` as `userInvocable: true`, and a
+  - A seeded `SKILL.md` shows up in `grok inspect --json` as `userInvocable: true`, and a
   live session advertises it in both `slash_commands` and `skills`, so it works on
   whichever CLI the image baked at `/usr/local/bin/grok` and this needs no image rebuild;
   the **Grok Build** terminal profile gets it because that profile execs the same binary.
@@ -592,7 +592,7 @@ while the managed block is intact.
   fleet's own ceiling), and `grok_subagent_max_depth` (default 2,
   validated 1..3) sets how deep the tree of children may go.
 
-  The width and the ceiling are two numbers on purpose, and `main.tf` is where they meet:
+  - The width and the ceiling are two numbers on purpose, and `main.tf` is where they meet:
   `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
   So the width is the variable's own shipped 15 whichever lane the writers ride, and the
   `: var.grok_swarm_width` arm answers only a caller that passes null on purpose;
@@ -600,7 +600,7 @@ while the managed block is intact.
   the parent's pinned box and leaves that width alone, and an explicit
   `--var grok_subagent_max_concurrent=N` always wins.
 
-  The variable's own validation accepts any whole number 1..32 it is given, plus that
+  - The variable's own validation accepts any whole number 1..32 it is given, plus that
   explicit null,
   because past the fleet's ceiling a bigger number is only a longer queue.
 
@@ -650,23 +650,25 @@ while the managed block is intact.
   mappers, `grok_plan_lane` (default `agent`) for the planner, and `grok_review_lane`
   (default `agent-review`) for the skeptics.
 
-  Concretely the block renders `general-purpose`, `implementer` and `tester` from the
+  - Concretely the block renders `general-purpose`, `implementer` and `tester` from the
   writers' lane, `explore` and
   `explorer` from the reader's, `plan` and `architect` from the planner's, and `reviewer`
   and `security-auditor` from the skeptic's - the last six keys are the seeded role
   definitions named in [the seeded fleet suite](#the-seeded-fleet-suite), and a key no
   session selects is inert.
 
-  Splitting the block that way is what lets one role go back on the parent's lane without
+  - Splitting the block that way is what lets one role go back on the parent's lane without
   moving the others: a wave of mappers can spread over the whole
   fleet while the planner that steers the next wave stays pinned to one box.
 
-  Pinning only the two read-only types was the defect this block fixes: a spawn that names no type gets
+  - Pinning only the two read-only types was the defect
+    this block fixes: a spawn that names no type gets
   `general-purpose`, and that is the type every writer in a fan-out runs as, so those
   children inherited the parent's model and queued behind the one box a pinned parent
   resolves to while the swarm-named readers spread over three.
 
-  What those four variables decide is placement only: the in-flight width comes from `grok_subagent_max_concurrent`
+  - What those four variables decide is placement only:
+    the in-flight width comes from `grok_subagent_max_concurrent`
   (its own shipped 15) on every lane, so `grok_subagents_lane` remains the knob a workspace
   turns on to fan out, and narrowing that width is the same variable rather than the lane.
 
@@ -758,8 +760,8 @@ while the managed block is intact.
   - `Bash(git commit --no-verify *)` / `-n`, past the hermetic pre-commit hook
   - `Bash(git add -f *)` / `--force`, past `.gitignore`
 
-  Both are prefix globs, so they narrow that door rather than seal it, and the
-  `Stage by path` rule in the seed text is the rest of the defence.
+Both are prefix globs, so they narrow that door rather than seal it, and the
+`Stage by path` rule in the seed text is the rest of the defence.
 
 #### Why the recursive-delete deny catches benign cleanups
 
@@ -808,22 +810,22 @@ while the managed block is intact.
   comment-only marker handed the config to the user with no human in the loop, and the
   default lanes silently stopped arriving.
 
-  A hand-edited config is left alone only
+  - A hand-edited config is left alone only
   while it carries one of them, so takeover means deleting **both** lines; delete the
   file and restart to hand it back.
 
-  When the guard does re-render, the CLI-owned tables `[cli]`, `[ui]` and `[marketplace]` are
+  - When the guard does re-render, the CLI-owned tables `[cli]`, `[ui]` and `[marketplace]` are
   carried over rather than wiped. The `[ui]` copy comes across minus the keys the render owns,
   and `permission_mode` is one of them now: the startup strips it from the operator's copy so
   the render's own line cannot land beside it, which would hand one `[ui]` table two identical
   keys and the CLI an invalid TOML file.
 
-  The strip says what it took - when it drops a mode the start prints one `warning:` line
+  - The strip says what it took - when it drops a mode the start prints one `warning:` line
   naming the value it dropped (`templates/workspace/startup.sh.tftpl:248`), so an approval
   mode lost at a restart is lost in the open. A workspace that quietly starts prompting, or
   stops prompting, is otherwise a report nobody can reproduce.
 
-  And the create form's four are what the `[ui] permission_mode` key documents, not the whole
+  - And the create form's four are what the `[ui] permission_mode` key documents, not the whole
   vocabulary: the CLI's own `--permission-mode` flag spells more
   (`templates/workspace/main.tf:389-392`). One of those belongs in the operator's `[ui]` block
   by hand, and the next start replaces it with the form's answer and says so on the startup
@@ -1329,22 +1331,22 @@ No guard exits non-zero on its own account, so a broken one cannot wedge a sessi
   password, or a credential-keyword assignment (`api_key`, `secret`, `token`, `password`, and
   their upper-case SDK spellings) whose value carries a digit.
 
-  It sweeps the fields a write puts text into - the flat `new_string`, `content`, `contents`,
+  - It sweeps the fields a write puts text into - the flat `new_string`, `content`, `contents`,
   `command` and `text`, and
   `new_string`, `new_text`, `content`, `contents` and `text` inside each entry of a batched
   `edits` array - one level deep and no deeper, so an unknown nesting is not swept and the
   truncation check is what covers it.
 
-  It leaves the read-side `old_string`/`old_text` alone, so a secret an older commit wrote
+  - It leaves the read-side `old_string`/`old_text` alone, so a secret an older commit wrote
   cannot convict every later edit beside it.
 
-  A value that names the environment instead of carrying a secret is the correct pattern, not a
+  - A value that names the environment instead of carrying a secret is the correct pattern, not a
   hit, so
   `os.environ/X`, `os.environ["X"]`, `process.env.X` and `getenv("X")` are folded to one short
   token before the scan. The deny reason names the pattern
   class and never the matched text.
 
-  It fails open on an event it cannot parse, and denies when
+  - It fails open on an event it cannot parse, and denies when
   the runner reports `toolInputTruncated`, because that is text the scan never saw
   (`templates/common/hooks.secret-guard.sh`).
 
@@ -1702,17 +1704,17 @@ workspace on that daemon mounts the same volume, each writing under its own
   tool at all. Measured 2026-10-25: no model transport this box ships serves that
   tool type.
 
-  The `agent` group is LiteLLM in front of the Spark boxes
+  - The `agent` group is LiteLLM in front of the Spark boxes
   (`openai/Qwen3.8-Flash-Next`), and it refuses the request before anything is
   fetched - `tools of type 'web_search' are not supported: this server runs function
   tools only`, HTTP 400.
 
-  `supports_backend_search = false` does not route around it, because the client-side
+  - `supports_backend_search = false` does not route around it, because the client-side
   fallback still hands the model alias a `web_search`-typed tool, which is the exact
   shape that endpoint rejects. The fallback lane fails too: it is the `coder` alias,
   Ollama `qwen2.5-coder:32b`, and that model is not pulled on the host.
 
-  So `web_search = "agent"` and `supports_backend_search = false` stay as
+  - So `web_search = "agent"` and `supports_backend_search = false` stay as
   they are - the role stays filled so re-enabling is a one-key flip - but while the
   key reads `true` nothing dials it.
 
@@ -1734,21 +1736,21 @@ workspace on that daemon mounts the same volume, each writing under its own
   bazelisk run //scripts:search-check
   ```
 
-  An empty result page and "no answer" are different answers, which is why the probe
+  - An empty result page and "no answer" are different answers, which is why the probe
   reports which one it got.
 
-  It also names every engine the instance has parked and
+  - It also names every engine the instance has parked and
   the reason its backend gave (`parked by its backend: google: access denied`),
   read out of the reply body whether or not that reply found results - an instance
   running on half its engines is visible there before it starts answering empty.
 
-  A park is temporary: SearXNG holds an engine out for `search.suspended_times`
+  - A park is temporary: SearXNG holds an engine out for `search.suspended_times`
   seconds after it refuses, so re-run before writing one off.
 
-  `--json` adds `engines_parked`. It checks the service hop; `grok mcp doctor searxng`
+  - `--json` adds `engines_parked`. It checks the service hop; `grok mcp doctor searxng`
   inside the workspace checks the MCP hop.
 
-  The binary it launches
+  - The binary it launches
   (`/opt/npm-global/bin/searxng-mcp-server`) is baked into the golden image, so a
   probe that answers with results plus a failed handshake is a server, URL or port
   problem, not a missing package.
@@ -1816,26 +1818,26 @@ workspace on that daemon mounts the same volume, each writing under its own
   or restoring it is a flag plus a template push, while changing the packages
   themselves takes an image rebuild.
 
-  The proxy keeps its SQLite cache under
+  - The proxy keeps its SQLite cache under
   `~/.grok/mcp-cache-proxy/`, which sits on this workspace's own
   home volume, so each workspace warms its own cache, and the cache TTL is 12 h: the first
   lookup of a
   library reaches the Context7 API and needs network, while an identical lookup inside
   the TTL is answered locally.
 
-  `CONTEXT7_API_KEY` is optional and the lane does not
+  - `CONTEXT7_API_KEY` is optional and the lane does not
   depend on it: an empty value sends no `Authorization` header at all, so the server
   handshakes and answers at the public rate limit, with private libraries the only
   thing out of reach. A key in `.env` plus a re-push fills the env.
 
-  What *parks* the
+  - What *parks* the
   lane on purpose is `CONTEXT7_MCP=false` in `.env` (relayed by `push-template.sh`) or
   `--var context7_mcp=false` on a template push; a `[mcp_servers.context7]` block
   missing from a render that got neither of those is a defect, not a park. The lookup
-  order is fixed - `resolve-library-id` first, then `query-docs` on the id it returns
-  - and `search_tool` lists the live tool names rather than a hardcoded list.
+  order is fixed - `resolve-library-id` first, then `query-docs` on the id it returns -
+  and `search_tool` lists the live tool names rather than a hardcoded list.
 
-  Prove it
+  - Prove it
   with `grok mcp doctor context7` inside a workspace.
 
 ### Proving the lanes with mcp-check
@@ -1912,17 +1914,17 @@ workspace on that daemon mounts the same volume, each writing under its own
   rewrites on every start in three passes:
 
   - the per-workspace render as the base
-  - then every key of that overlay on top so an API key entered once still wins
-  - then `workbench.colorTheme` re-asserted from the render last, so a theme put in the
+  - Every key of that overlay on top so an API key entered once still wins
+  - `workbench.colorTheme` re-asserted from the render last, so a theme put in the
     shared overlay loses to this workspace's own theme (the **Editor colour theme** field,
     `vscode_color_theme`, default `Default Dark Modern`)
 
-  Startup chowns that volume to the home owner before the first write (empty named volumes
-  are `root:root` 755).
+Startup chowns that volume to the home owner before the first write (empty named volumes
+are `root:root` 755).
 
-  Edits to the overlay stick, and every workspace that owner has gets them layered over its
-  own render; delete it to copy the template in again. From the
-  host it is the volume's `settings.json`:
+Edits to the overlay stick, and every workspace that owner has gets them layered over its
+own render; delete it to copy the template in again. From the
+host it is the volume's `settings.json`:
 
   ```sh
   docker run --rm -it -v vscode-settings-<owner-id>:/vscode alpine vi /vscode/settings.json
@@ -2050,31 +2052,31 @@ drives the server's experimental chat API:
   baked level with the session pin lifted for that group, not default), and `chat`
   (32768), for models not already registered.
 
-  `coder` and `coder-fast` stay out on purpose: on this stack's IPEX-LLM runtime those
+  - `coder` and `coder-fast` stay out on purpose: on this stack's IPEX-LLM runtime those
   weights return tool calls as plain text with no `tool_calls`, and an agent turn without
   callable tools cannot browse or edit, so registering them would only add a silently
   broken model to the pickers.
 
-  `context_limit` is the agent's own compaction budget (a 70 per cent default
+  - `context_limit` is the agent's own compaction budget (a 70 per cent default
   compaction threshold applies), which is why it is pinned per alias. The
   two fast-compaction lanes are absent too, for a mechanical reason rather than a measured
   one: the hop keys on the summary instruction the Grok CLI appends, the aibridge behind
   these pickers never sends one, and `compaction-fast` is no client alias at all, so an
   Agents chat on `agent-xhigh-fast` would be a chat on `agent-xhigh` under a longer name.
 
-  Before that sweep the script asks the proxy `GET /v1/model/info` and `GET /health`
+  - Before that sweep the script asks the proxy `GET /v1/model/info` and `GET /health`
   and joins them on `model_id`, so it knows which aliases still have a healthy
   deployment.
 
-  An alias with none is not registered: `chat` goes unhealthy the moment
+  - An alias with none is not registered: `chat` goes unhealthy the moment
   `qwen2.5:7b` is not pulled on the Arc, and a dead entry in the model picker is a chat
   that errors on the first send.
 
-  `/health` is read without `?check_deployments=true` because that form fires a live
+  - `/health` is read without `?check_deployments=true` because that form fires a live
   completion per deployment and evicts the Spark prompt caches the health-check notes
   in `litellm/config.yaml` warn about.
 
-  The gate fails open: a proxy that will not answer leaves every alias
+  - The gate fails open: a proxy that will not answer leaves every alias
   registerable, and `CODER_AGENTS_LIVE_ALIASES="agent chat"` overrides it outright.
 
 #### The auxiliary pins
@@ -2245,28 +2247,30 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   `~/.grok/sessions/` is opt-in depth, done only when the operator asks for it. Its
   default mode is report-only, and it writes memory files, never a skill.
 
-  7 and 8 are `/ez-skillify`, which turns the session that just worked into a skill from its
-  own transcript, and 9 and 10 are `/ez-create-skill`, which scaffolds one from what the
-  operator describes.
+- 7 and 8 are `/ez-skillify`, which turns the session that just worked into a skill from its
+own transcript, and 9 and 10 are `/ez-create-skill`, which scaffolds one from what the
+operator describes.
 
-  The three payloads are
-  `templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
-  `ez-create-skill.SKILL.md`, on the same absent-only contract.
+The three payloads are
+`templates/common/ez-learn.SKILL.md`, `ez-skillify.SKILL.md` and
+`ez-create-skill.SKILL.md`, on the same absent-only contract.
 
-  `/ez-create-skill` stands in for the bundled platform skill `create-skill`, which arrives only in the skills
-  bundle behind an x.ai sign-in this stack does not have; `/ez-skillify` has no published
-  upstream counterpart at all; and the memory family `/ez-learn` copies is upstream
-  *built-ins*: `/flush`, `/dream` and `/memory` are gated behind cross-session memory,
-  which is off by default, while `/remember` is a pager command with no such gate. Either
-  way the seed is what makes the three commands exist.
+`/ez-create-skill` stands in for the bundled platform skill
+`create-skill`, which arrives only in the skills
+bundle behind an x.ai sign-in this stack does not have; `/ez-skillify` has no published
+upstream counterpart at all; and the memory family `/ez-learn` copies is upstream
+*built-ins*: `/flush`, `/dream` and `/memory` are gated behind cross-session memory,
+which is off by default, while `/remember` is a pager command with no such gate. Either
+way the seed is what makes the three commands exist.
 
-  Each ships under its own `ez-` name to stay clear of those upstream names, since a user-scope skill overrides a
-  same-named bundled one and a seed named `create-skill` would hide the bundled copy on a
-  workspace that ever does sign in.
+Each ships under its own `ez-` name to stay clear
+of those upstream names, since a user-scope skill overrides a
+same-named bundled one and a seed named `create-skill` would hide the bundled copy on a
+workspace that ever does sign in.
 
-  The boot and the reseed delete a leftover
-  marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
-  above.
+The boot and the reseed delete a leftover
+marker-carrying `skills/learn/SKILL.md` from before the rename. See the CLI section
+above.
 
 #### The orchestration protocol text
 

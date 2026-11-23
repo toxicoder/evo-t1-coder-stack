@@ -133,24 +133,24 @@ missing one fails the push before the CLI runs.
   - `/ez-trunk-based-repo` turns environment branches into environments and unfinished
     work into flags.
 
-  The family's fourth member, `ez-micro-plan.SKILL.md`, converts nothing: it is the
+  - The family's fourth member, `ez-micro-plan.SKILL.md`, converts nothing: it is the
   parent's dispatch protocol, the one that cuts a change into micro tasks a fleet of
   subagents can each finish alone.
 
-  It writes the dispatch plan to `.grok/plans/<slug>/plan.md` (Goal, Dispatch, Lanes,
+  - It writes the dispatch plan to `.grok/plans/<slug>/plan.md` (Goal, Dispatch, Lanes,
   Tasks, Ledger, Not doing) with `ctx/` briefs and `results/` reports beside it, in the
   same shape the rulebook at `~/.grok/AGENTS.md` tells the parent to expect, and the plan
   tree is git-ignored by `templates/common/notes-setup.sh` beside the two scratch note
   names.
 
-  Unlike the authoring trio these are not single files: three of the four shell out to a
+  - Unlike the authoring trio these are not single files: three of the four shell out to a
   python helper, so `ez-bazel-first` carries `ez-bazel-first.owned_files_check.py` and
   `ez-bazel-first.glob_budget.py`, `ez-strong-types` carries
   `ez-strong-types.type_baseline.py`, and `ez-micro-plan` carries
   `ez-micro-plan.plan_check.py`, each written to a `scripts/` subdirectory of the same
   skill directory.
 
-  The bodies name the `~/.agents` spelling of those helpers, which is why the twin copy is
+  - The bodies name the `~/.agents` spelling of those helpers, which is why the twin copy is
   not optional.
 - `stack-repo-skills.sh.tftpl` is the `coder_script "stack_repo_skills"` body that seeds
   that family, from eight `chomp(file())` entries: one `SKILL.md` per command plus the four
@@ -312,16 +312,16 @@ Two things follow from the mechanism:
   after all of them return, so splitting does not reduce a peak either.
   `coder_script_order` needs Coder `>= v2.39`.
 
-  This is the escape the stack now uses: the three skill payloads ride
+  - This is the escape the stack now uses: the three skill payloads ride
   `coder_script.stack_skills` rather than the startup argument, because the devcontainer
   twin had 491 bytes of headroom left and three more inlined payloads could not fit there.
 
-  The same move later made room for the rulebook: `GROK_BUILD_AGENTS.md` is the largest
+  - The same move later made room for the rulebook: `GROK_BUILD_AGENTS.md` is the largest
   payload the twins inline, and it left the startup argument for
   `coder_script.agents_seed` when that twin stood 196 bytes from the budget and one more
   instruction section could not land.
 
-  `grok-build-delegation.SKILL.md` still rides the startup argument - it predates the
+  - `grok-build-delegation.SKILL.md` still rides the startup argument - it predates the
   split, it fits, and its own tests pin it there.
 - **A `#!` line does not help.** The body still becomes
   `execve(env, [env, bash, -c, body])`; the interpreter line is content inside the
@@ -667,17 +667,17 @@ What a create form shows, in `workspace` order.
     - `auto` (prompts less than `ask`)
     - `always-approve` (nothing prompts; the product name for `bypassPermissions`).
 
-    What it
+    - What it
     relaxes is prompting only - the `[permission]` deny list the render ships still
     refuses the dotenv reads, the `Bash(rm -rf *)` form and the commit guards in every
     mode.
 
-    `order = 10`, so it sorts after the editor theme rather than beside the two
+    - `order = 10`, so it sorts after the editor theme rather than beside the two
     themes.
 
-    Each workspace keeps its own and a change applies on the next start.
+    - Each workspace keeps its own and a change applies on the next start.
 
-    Those
+    - Those
     four are what the `[ui] permission_mode` key documents, not the whole vocabulary the
     CLI speaks: its own `--permission-mode` flag spells more, so a mode outside this
     dropdown belongs in the `[ui]` block of `~/.grok/config.toml` by hand, and the next
@@ -1004,17 +1004,15 @@ bazelisk run //scripts:new-workspace -- --plain git@git.example.com:org/private.
 
 Each template creates one Docker container per workspace.
 
-Extra named volumes (
+Extra named volumes are chowned to the home owner by `startup.sh.tftpl` - the first four
+at its start, the archive by its own stage - because Docker creates an empty named volume
+as `root:root` 755 and the agent runs as `coder`:
 
 - `vscode-settings-<owner-id>` at `~/.shared/vscode`
 - in shared mode the three state volumes `grok-notes-<owner-id>` at `~/.grok/notes`,
   `grok-memory-<owner-id>` at `~/.grok/memory` and `grok-sessions-<owner-id>` at
   `~/.grok/sessions`
 - the host-wide `grok-session-archive` at `/var/lib/grok-session-archive`
-
-) are chowned to the home owner by `startup.sh.tftpl` - the first four at its start, the
-archive by its own stage - because Docker creates an empty named volume as `root:root`
-755 and the agent runs as `coder`.
 
 The archive volume sits outside `~/.grok` on purpose and is read by nothing in the
 workspace: see
@@ -1102,27 +1100,27 @@ The order above is not incidental; each line is a constraint the script has to k
   server, so seeding after the first `tmux new-session -A` could run would leave that
   session unconfigured for the whole boot.
 
-  `mouse off` is what keeps every click with
+  - `mouse off` is what keeps every click with
   the terminal client: tmux requests no mouse reporting, so a drag is the client's own
   highlight, the settings seed's `copyOnSelection` puts it on the machine clipboard,
   and right-click and middle-click paste it back.
 
-  Measured on the shipped tmux 3.4, an
+  - Measured on the shipped tmux 3.4, an
   attach with `mouse on` writes `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the
   client and an attach with it off writes none of them.
 
-  tmux keeps no clipboard of its
+  - tmux keeps no clipboard of its
   own next to that: the copy-mode copies, the prefix paste `]`, the buffer picker `=`
   and the root-table middle-click paste are unbound, and `Prefix m` is only the switch
   that hands the wheel to tmux for a long scroll and hands it back.
 
-  `set-clipboard on` and `allow-passthrough on` stay for the one copy route that is
+  - `set-clipboard on` and `allow-passthrough on` stay for the one copy route that is
   not tmux's own - an app inside a pane (vim's `+` register, anything that emits
   OSC 52) drives the machine clipboard through them, which is what a native terminal
   hands that app - and a client that blocks OSC 52 (iTerm2 by default) gets nothing at
   all, because there is no tmux buffer left to fall back to.
 
-  The browser build of VS
+  - The browser build of VS
   Code drops that escape as well
   ([microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254)), so a
   pane app's OSC 52 copy is silent in the tab and lands over ssh from a real terminal
@@ -1217,14 +1215,14 @@ decided by a marker - never by mtime and never by first boot:
   own shipped 15 - two variables, so a `--var` that narrows the width never erases the
   number the fleet was sized at.
 
-  Stage 6 reads the pair the moment the render
+  - Stage 6 reads the pair the moment the render
   lands: right after `boot_ok "config.toml re-materialized with the stack markers"`
   (`templates/workspace/startup.sh.tftpl:258`) it compares them and, when the width is the
   narrower of the two, prints one `note:` line naming the gap through `boot_note`
   (`templates/common/boot-log.lib.sh:51`, the verb that carries no counter), pointing at
   [the rendered width is below fleet-width](troubleshooting.md#the-rendered-width-is-below-fleet-width).
 
-  `bazelisk run //scripts:subagent-check` is the same comparison for a shell, and the same
+  - `bazelisk run //scripts:subagent-check` is the same comparison for a shell, and the same
   two numbers answer it: a profile whose marker the operator removed gets neither the line
   nor the note, because both are products of this render.
 - The key is what makes the rule hold. The CLI's own settings writer (`grok mcp add` and
@@ -1239,20 +1237,20 @@ decided by a marker - never by mtime and never by first boot:
   `cli.installer`, which picks the CLI's update path; `[ui]` carries over the keys the
   operator added; and `[marketplace]` is CLI settings the stack never owns.
 
-  The `[ui]` carry-over is filtered, not copied: the render owns `theme` and
+  - The `[ui]` carry-over is filtered, not copied: the render owns `theme` and
   `permission_mode` in that table, so the startup drops those keys - the alternation
   `(theme|auto_dark_theme|auto_light_theme|ui_theme|permission_mode)` at
   `templates/workspace/startup.sh.tftpl:238` - from what it carries across.
 
-  The strip is what makes the render's answer the only one in the file: an operator's
+  - The strip is what makes the render's answer the only one in the file: an operator's
   `permission_mode` left beside the render's own line gives one `[ui]` table two identical
   keys, which is invalid TOML.
 
-  So the create form's **Grok approval mode** is
+  - So the create form's **Grok approval mode** is
   the seam for that key, and an approval mode hand-written into the file does not
   survive a re-render, while every other `[ui]` key the operator set still does.
 
-  The drop
+  - The drop
   leaves a trace: when the strip removes a `permission_mode` the body prints one
   `warning:` line naming the value it dropped
   (`templates/workspace/startup.sh.tftpl:248`), and `boot_warn` counts it into the
@@ -1460,17 +1458,17 @@ this checkout when the intent really is to rewrite it.
   family it copies is gated behind a memory store that is off by default, so those names
   stay hidden.
 
-  The bundle is a separate thing, and a real one: the CLI extracts
+  - The bundle is a separate thing, and a real one: the CLI extracts
   platform skills such as `create-skill` into `~/.grok/bundled/`, read back with
   `SkillScope::Bundled`, and that catalog is fetched per identity/team behind an x.ai
   sign-in this stack deliberately does not have - LiteLLM is the only transport - so the
   directory is never created and none of those skills ever lands.
 
-  Writing the file is what
+  - Writing the file is what
   makes each command exist, and it is seeded under the `ez-` name, which exists to stay
   clear of the upstream ones.
 
-  The same stage deletes a leftover `skills/learn/SKILL.md` from
+  - The same stage deletes a leftover `skills/learn/SKILL.md` from
   before the rename, but only while it still carries the stack marker; a marker-free one is
   user-owned and stays. Deleting a seeded copy never keeps your own - the boot writes it
   back - so only dropping that marker does.
@@ -1520,22 +1518,22 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
   daemon creates a bind mount's target path as `root:root`, so `~/.grok` arrives
   root-owned on any boot where those mount points are new.
 
-  The startup script chowns it
+  - The startup script chowns it
   back to the home owner, and nothing orders that before a sibling body: the start
   scripts fan out in one errgroup, startup script included, which is the same
   `script_count=10` burst [The one-argument ceiling](#the-one-argument-ceiling) counts.
 
-  So a body that writes under `~/.grok` calls `boot_ensure_dir <dir>`
+  - So a body that writes under `~/.grok` calls `boot_ensure_dir <dir>`
   (`templates/common/boot-log.lib.sh:65-140`) rather than a bare `mkdir -p`. It creates
   the directory and takes back the ownership of each component of it that is not this
   boot's to write, walking from `$HOME` down, stopping below `$HOME` itself, and never
   recursing into the mounted volumes that sit beside the target.
 
-  It returns 1 and prints
+  - It returns 1 and prints
   `error:` when the directory stays unwritable, which is what lets a body refuse its own
   `ok:`.
 
-  `templates/common/terminal-launchers.sh.tftpl` is the case that earned it: a
+  - `templates/common/terminal-launchers.sh.tftpl` is the case that earned it: a
   launcher that never landed is a code-server tab that dies with `exit code: 127`, and
   the body closed at `summary: 2 ok, 0 warnings, 0 failed` while writing nothing. The
   bodies that seed the two skill homes under `~/.coder` and `~/.agents` still `mkdir -p`
@@ -1555,14 +1553,14 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
   and `workspace_agents` is the only table in that schema that carries agent logs at all, so
   a script's lines draw on the same budget as the startup script's.
 
-  The agent's uploader
+  - The agent's uploader
   holds the same number as a constant
   ([`codersdk/agentsdk/logs.go`](https://github.com/coder/coder/blob/v2.36.6/codersdk/agentsdk/logs.go),
   `maxBytesQueued = 1048576`) and counts it across every log source at once, returning before
   it appends when the queue is full: the lines you lose are the NEWEST ones, and once the
   server answers `LogLimitExceeded: true` the uploader drops everything still queued.
 
-  Hence
+  - Hence
   the about-40-lines-per-body rule, and hence a command with a stream of its own is aimed at
   a file rather than at the log - the editor launch redirects to `/tmp/code-server.log`
   (`templates/workspace/code-server.sh.tftpl:67`) while the narration says the same thing in
@@ -1589,11 +1587,11 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
   `stack-hooks.sh.tftpl`, the two skill
   families, and `dind-bootstrap.sh.tftpl` in the devcontainer twin.
 
-  Every braced shell expansion in one has to be written `$${name}`; the one-dollar braced
+  - Every braced shell expansion in one has to be written `$${name}`; the one-dollar braced
   form is swallowed as an interpolation, in a comment or a `for` loop as readily as in a
   command. The unbraced form (`$name`) needs no escape.
 
-  `infisical-secrets.sh.tftpl` is the sparsest body:
+  - `infisical-secrets.sh.tftpl` is the sparsest body:
   `infisical-secrets.sh.tftpl` is the sparsest body: its map is the single `boot_log_lib`
   key (`templates/workspace/main.tf:783-785`), so apart from the one line that takes it every
   braced expansion in it is shell text, none of it interpolates, and the rendered bytes are
@@ -1893,27 +1891,27 @@ What the vault is, how to adopt it, and how to rotate a key in it is
   `--auth none --port 13337 --app-name "VS Code Web" --ignore-last-opened <folder>`,
   passing no settings payload.
 
-  The guard tests
+  - The guard tests
   `/home/coder/.local/share/code-server/lib/code-server-<version>/bin/code-server`,
   the directory the installer unpacks, because `bin/code-server` beside it is a
   symlink to whatever release was installed last: a guard on that symlink would keep
   a warm volume running its first release after a bump.
 
-  A bump therefore re-downloads
+  - A bump therefore re-downloads
   on the next start and leaves the previous release under `lib/`; removing that old
   directory by hand is what reclaims the space.
 
-  Before that launch it `mkdir -p`s the
+  - Before that launch it `mkdir -p`s the
   folder and, when the folder is not `/home/coder`, waits up to 60 s for
   `<folder>/.git` so a first-start
   clone and the editor no longer race.
 
-  That wait loop increments with
+  - That wait loop increments with
   `waited=$((waited + 1))` (one dollar) inside the tftpl: `templatefile()` interpolates
   `${…}` and leaves `$((` alone. `$$((` would expand `$$` to the PID. `coder_agent.dir` stays unset: the agent would
   chdir there before `startup.sh`, and a missing clone folder would fail the agent.
 
-  The
+  - The
   editor's settings are a per-start merge: the boot
   (`templates/workspace/startup.sh.tftpl`) writes `~/.local/share/code-server/User/settings.json`
   as a real file from this workspace's render, then layers the per-owner
@@ -2003,7 +2001,7 @@ Template-side facts only; the long prose lives in
   `/bin/bash`, so build/tasks commands never wait on tmux. Plain `bash` and **Grok
   Build** stay available as extra profiles.
 
-#### The two launcher helpers
+### The two launcher helpers
 
 - Two helpers are seeded into `~/.grok/bin` on every start, both `chmod +x`:
   `vscode-terminal-tmux` (the default profile) and `grok-build-terminal`. The two
@@ -2103,18 +2101,18 @@ repeating it.
   page says you are already authenticated). First-time connect also works from the
   workspace create/update form and from Settings -> Tokens / external auth.
 
-  Device-flow
+  - Device-flow
   login is not enough for private repos: install Coder's GitHub App with **Install
   GitHub App** on the same bar (or open
   [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new)),
   grant those repositories, then restart.
 
-  An empty
+  - An empty
   [github.com/settings/apps](https://github.com/settings/apps) page is not a misconfiguration:
   with `auth_type=client_secret` Coder has no App to install, and Coder's built-in GitHub
   App only earns a page there once it is installed on the account.
 
-  Until something is
+  - Until something is
   installed and granted, that page simply has nothing to **Configure**, and the credential
   the provider mints still authenticates - it just cannot write to a private repository.
 - Each workspace's agent injects a `GIT_ASKPASS` helper pointing at the `coder` binary it
