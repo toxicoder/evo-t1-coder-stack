@@ -401,8 +401,9 @@ report for a script. What the report should read here:
 - **No published source names an upstream `/learn`, and the bundled skill set never
   lands here**: the `xai-org/grok-build` built-in command table, all 240 pages of
   docs.x.ai, every first-party changelog under `x.ai/cli/changelogs/`, and the public
-  `xai-org/plugin-marketplace` catalog carry zero occurrences of it. The bundled
-  platform skills are a separate set, enumerated by
+  `xai-org/plugin-marketplace` catalog carry zero occurrences of it.
+
+  The bundled platform skills are a separate set, enumerated by
   `FORMER_PLATFORM_SKILL_HASHES` in `crates/codegen/xai-grok-shell/src/builtin.rs`
   (help, imagine, create-skill, check-work, check, xlsx, pptx, docx, code-review,
   best-of-n, create-workflow), and neither `learn` nor `skillify` is among them.
@@ -440,9 +441,10 @@ report for a script. What the report should read here:
   to install, and the `ez-` prefix keeps them clear of the upstream names they sit
   beside: `/create-skill` is one of the CLI's bundled platform skills and
   `/flush`, `/dream`, `/remember`, `/memory` are its built-in memory commands, while no
-  published source names a `/learn` or a `/skillify` at all. A user-scope skill overrides
-  a same-named bundled one, so a seed named `create-skill` would have hidden the bundled
-  copy.
+  published source names a `/learn` or a `/skillify` at all.
+
+  A user-scope skill overrides a same-named bundled one, so a seed named
+  `create-skill` would have hidden the bundled copy.
 
   `/ez-learn` writes memory files - it reproduces the upstream `/flush`, `/dream`,
   `/remember` and `/memory`; the other two write skill files.
@@ -471,7 +473,9 @@ report for a script. What the report should read here:
 - **The stack ships its own three repository-conversion commands as `/ez-bazel-first`,
   `/ez-strong-types` and `/ez-trunk-based-repo`**, and these stand in for nothing upstream:
   they convert whatever repository the workspace happens to hold, which is why they carry no
-  path that only exists in this stack. They are seeded the same way, by
+  path that only exists in this stack.
+
+  They are seeded the same way, by
   `coder_script.stack_repo_skills`, from `templates/common/ez-bazel-first.SKILL.md`,
   `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`, plus the three python
   helpers they shell out to. Same absent-only contract, same marker-based takeover rule,
@@ -707,7 +711,9 @@ while the managed block is intact.
   `[ui] permission_mode = "always-approve"` unless the create form's **Grok approval
   mode** field (`grok_permission_mode`, whose accepted values are `default`, `ask`,
   `auto`, `always-approve`) names another, and the contributor seed takes the same
-  choice from `GROK_PERMISSION_MODE`. What relaxes is prompting, not the guardrails: a
+  choice from `GROK_PERMISSION_MODE`.
+
+  What relaxes is prompting, not the guardrails: a
   `deny` rule still outranks every other list under always-approve, so the dotenv reads
   and the `rm -rf` deny still refuse.
 
@@ -800,7 +806,9 @@ while the managed block is intact.
   Both twins emit both, because the comment alone does not last - `grok mcp add`
   persists its own settings by rewriting the file and deletes every comment line, so a
   comment-only marker handed the config to the user with no human in the loop, and the
-  default lanes silently stopped arriving. A hand-edited config is left alone only
+  default lanes silently stopped arriving.
+
+  A hand-edited config is left alone only
   while it carries one of them, so takeover means deleting **both** lines; delete the
   file and restart to hand it back.
 
@@ -1419,6 +1427,7 @@ an oversight.
 - The command guard matches the whole command string, case-sensitively and byte-wise, so a
   command that *quotes* a denied form is refused the same way a real one is: `awk '/dd if=/'
   notes.txt` denies, and so does a commit message that names `rm -rf` followed by a space.
+
   Stripping quoted regions before matching would clear those and would catch a quoted dot
   (`find "." -type f -delete`) for free, and it would equally blind the guard to `sh -c "..."`
   and `bash -c "..."`, the indirection a command actually travels through most - so the string
@@ -1925,9 +1934,10 @@ workspace on that daemon mounts the same volume, each writing under its own
   place the seed is **baked** rather than layered: the inlined
   `coder_script.code_server` fork bakes a base64 copy of it and writes it over the
   dev container's private `User/settings.json` (or merges over a copy that survived a
-  rebuild, when `jq` is on PATH; without `jq` the existing file is kept). Edits
-  inside a built dev container therefore survive neither a rebuild nor a look at the
-  shared file. Everywhere else no settings map is passed at all, because a merge
+  rebuild, when `jq` is on PATH; without `jq` the existing file is kept).
+
+  Edits inside a built dev container therefore survive neither a rebuild nor a look at
+  the shared file. Everywhere else no settings map is passed at all, because a merge
   would replace the symlink.
 
 ### Installing the extensions by hand
@@ -2038,10 +2048,12 @@ drives the server's experimental chat API:
   `reasoning_effort` `xhigh`), `agent-low` / `agent-medium` / `agent-xhigh` (same
   lane with a baked thinking level, not default), `agent-swarm` (same lane and the same
   baked level with the session pin lifted for that group, not default), and `chat`
-  (32768), for models not already registered. `coder` and `coder-fast` stay out on
-  purpose: on this stack's IPEX-LLM runtime those weights return tool calls as plain
-  text with no `tool_calls`, and an agent turn without callable tools cannot browse or
-  edit, so registering them would only add a silently broken model to the pickers.
+  (32768), for models not already registered.
+
+  `coder` and `coder-fast` stay out on purpose: on this stack's IPEX-LLM runtime those
+  weights return tool calls as plain text with no `tool_calls`, and an agent turn without
+  callable tools cannot browse or edit, so registering them would only add a silently
+  broken model to the pickers.
 
   `context_limit` is the agent's own compaction budget (a 70 per cent default
   compaction threshold applies), which is why it is pinned per alias. The
@@ -2071,8 +2083,12 @@ drives the server's experimental chat API:
   types) prefer `agent`, `compaction` and `title_generation` (the helper calls)
   prefer `chat` - chosen only from the aliases the health gate left standing, and
   written when a lane carries no pin or is pinned to one of these configs whose alias
-  has since gone unhealthy. A pin aimed at a config the script did not create is the
-  admin's and is left alone. Both helper lanes landing on a dead `chat` is what made
+  has since gone unhealthy.
+
+  A pin aimed at a config the script did not create is the
+  admin's and is left alone.
+
+  Both helper lanes landing on a dead `chat` is what made
   conversations lose their titles and die at the compaction threshold, which is why a
   stale pin now moves instead of being kept forever.
 
@@ -2270,8 +2286,9 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
 - Both `main.tf` files deliberately set **no** `CODER_AGENT_EXP_*` env keys on
   `coder_agent.main`: those keys *replace* the agent's discovery defaults, and the
   defaults already cover exactly the seeded paths - the `~/.coder` roots plus a
-  working-dir-relative `.agents/skills`, which resolves inside the agent's working
-  dir (`/home/coder` in `workspace`; in `devcontainer` with the toggle on, the
+  working-dir-relative `.agents/skills`, which resolves inside the agent's working dir
+
+  (`/home/coder` in `workspace`; in `devcontainer` with the toggle on, the
   cloned folder under `/srv/coder-devcontainers/...`, where a dev container built on
   the sidecar carries its own home and no seeded path is visible from inside it
   anyway).
