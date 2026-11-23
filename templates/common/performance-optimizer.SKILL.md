@@ -25,18 +25,31 @@ metadata:
 
 # Performance optimizer
 
+### The one rule, and who runs the blocks
+
 One number before, one number after, one change between them: a speed-up nobody measured is an
-opinion with a commit attached, so no baseline means no run. This is the parent's runbook -- A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no file of its own,
-so the writer fan-out is still yours; run each block with `run_terminal_command` or
+opinion with a commit attached, so no baseline means no run. This is the parent's runbook --
+
+A depth-1 child may spawn `spawn_subagent` for read-only mappers only, and only when it ships no
+file of its own, so the writer fan-out is still yours; run each block with `run_terminal_command` or
 `execute`, since a block written inline here runs nothing on its own.
 
-Two consumers, one file: the CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under
+### Two consumers, one file
+
+The CLI reads `~/.agents/skills/<name>/SKILL.md`, and a copy under
 `<repo_root>/.grok/skills/` is CLI-only because the chat agent reads only that other home.
 
+### Models and the four hard rules
+
 Models are the local aliases this run uses -- `agent`, `agent-explore`, `agent-swarm`,
-`agent-review` -- and no cloud id. Four hard rules, none of them bend: one change per run, so the
-delta has one cause; no new dependency, no framework, no micro-optimising code that runs once;
-report a regression even when the headline improved; and pure ASCII in everything you write.
+`agent-review` -- and no cloud id.
+
+Four hard rules, none of them bend:
+
+- one change per run, so the delta has one cause
+- no new dependency, no framework, no micro-optimising code that runs once
+- report a regression even when the headline improved
+- pure ASCII in everything you write
 
 ## Step 1 -- baseline, or the run stops (mandatory, on `agent-explore`, 3 to 6 calls)
 
@@ -48,11 +61,15 @@ Measure the program as it stands, on the input it actually sees, and name the in
     bazelisk test //:test-fast --profile=/tmp/perf-profile.gz --explain=/tmp/perf-explain.txt
     cat /proc/loadavg /proc/meminfo /proc/self/io   # Linux: is it even the CPU
 
-A single run under a second is noise: quote the median of at least seven with its spread. If no
-baseline can be taken -- no runnable input, nothing to time, a box too noisy to separate 5 percent
-from jitter -- stop and say so in those words: an optimisation with no before number is a guess.
+A single run under a second is noise: quote the median of at least seven with its spread.
+
+If no baseline can be taken -- no runnable input, nothing to time, a box too noisy to separate 5
+percent from jitter -- stop and say so in those words: an optimisation with no before number is a
+guess.
 
 ## Step 2 -- hunt with two mappers on disjoint suspicions (2 children, `agent-explore`)
+
+### Pick two suspicions that do not price the same line
 
 Spawn two read-only children in one turn on `agent-explore`, the cheap mapping lane, over disjoint
 suspicions so the pair does not price the same line twice:
@@ -62,40 +79,71 @@ suspicions so the pair does not price the same line twice:
 - work done twice, and IO: files re-read, config re-parsed, a subprocess or a round trip per item,
   uncached stat and directory walks, plus startup and cold-cache cost.
 
-Each finding carries its `path:line`, the cost it believes it sees, and how it got that cost: the
-loop bound, the subprocess count, bytes from `/proc/self/io`, seconds from a timed sub-run. A mapper
-that cites no line did not read the file; one that names no cost is guessing. Neither child edits.
+### What each finding must carry
+
+Each finding carries:
+
+- its `path:line`
+- the cost it believes it sees
+- how it got that cost: the loop bound, the subprocess count, bytes from `/proc/self/io`, seconds
+  from a timed sub-run
+
+A mapper that cites no line did not read the file; one that names no cost is guessing. Neither child
+edits.
 
 ## Step 3 -- rank by measured cost and falsify each proposal (on `agent`, 2 to 3 calls)
 
+### Rank by measurement, not by ugliness
+
 Rank the findings by what the measurement says each one costs, not by how bad the code looks: the
 ugly loop the profile never mentions is not a hotspot, and the plain one holding 60 percent of the
-wall time is. Then write the top three proposals, one line each, each with the experiment that would
-falsify it -- same command, same input, the number expected to move and by how much. A proposal with
-no falsifying experiment is a preference, not a candidate. Take the one whose experiment is cheapest
-and whose predicted move is largest; with `--no-change`, report the ranked list and stop.
+wall time is.
+
+### Write three proposals, each falsifiable
+
+Then write the top three proposals, one line each, each with the experiment that would falsify it --
+same command, same input, the number expected to move and by how much. A proposal with no falsifying
+experiment is a preference, not a candidate.
+
+Take the one whose experiment is cheapest and whose predicted move is largest; with `--no-change`,
+report the ranked list and stop.
 
 ## Step 4 -- one change, one writer (1 to 3 calls, the writer on `agent-swarm`)
 
+### One writer, one change
+
 Land at most one change per run, with one writer, so the after number belongs to that change alone.
+
 Spawn it on `agent-swarm` with the baseline, the proposal, its falsifying experiment, and an `owns`
 set narrowed to the files it needs, plus the instruction to keep the diff that proposal's size: no
-drive-by reformat, no new dependency. Hotspots stay parent-owned (the registry, the BUILD file, the
-shared fixture), and you make those edits yourself once the writer lands.
+drive-by reformat, no new dependency.
+
+### Hotspots stay parent-owned
+
+Hotspots stay parent-owned (the registry, the BUILD file, the shared fixture), and you make those
+edits yourself once the writer lands.
 
 ## Step 5 -- re-measure, then a skeptic who ran both numbers decides (3 to 6 calls)
 
+### Set the two numbers side by side
+
 Re-run the baseline command on the changed tree -- same input, same box, same repeat count -- and
-set the two numbers side by side. Then hand the change to an independent skeptic on `agent-review`,
-never the writer and never you, with both commands and the base ref, and require it to run both:
+set the two numbers side by side.
+
+Then hand the change to an independent skeptic on `agent-review`, never the writer and never you,
+with both commands and the base ref, and require it to run both:
 
     git worktree add --detach /tmp/perf-base <base-ref> && (cd /tmp/perf-base && <the command>)
     <the exact same command>           # then git worktree remove /tmp/perf-base
     bazelisk test //:test-fast
 
-The skeptic answers one question: does the delta survive its own runs? Quote a regression even when
-the headline improved: median down with the tail up, or wall time down with user time doubled. When
-the delta does not survive, revert and report the measurement that killed it.
+### Let the skeptic's own runs decide
+
+The skeptic answers one question: does the delta survive its own runs?
+
+Quote a regression even when the headline improved: median down with the tail up, or wall time down
+with user time doubled. When the delta does not survive, revert and report the measurement that
+killed it.
 
 ## Done means
 
