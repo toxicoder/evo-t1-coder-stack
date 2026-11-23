@@ -673,13 +673,16 @@ docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
 ```
 
 - Both `templates/*/main.tf` twins carry `GROK_COMPACTION_WALL_CLOCK_SECS = "1200"` in
-  the agent `env` merge, next to `GROK_MAX_MCP_OUTPUT_BYTES`. The CLI reads that budget
+  the agent `env` merge, next to `GROK_MAX_MCP_OUTPUT_BYTES`.
+  - The CLI reads that budget
   from the environment only (resolver
   `crates/codegen/xai-grok-shell/src/util/config/resolve/compaction.rs`, remote-settings
   key `compaction_wall_clock_budget_secs`); no TOML table accepts it, so a line pasted
   into `grok-config.toml` is silently ignored, the same trap `[mcp] max_output_bytes`
-  already documents. It is honoured: setting it to `1` makes `/compact` fail with
-  `exceeded wall-clock budget 1s`. Push, then stop and start the workspace so the new
+  already documents.
+  - It is honoured: setting it to `1` makes `/compact` fail with
+  `exceeded wall-clock budget 1s`.
+  - Push, then stop and start the workspace so the new
   agent env lands:
 
 ```sh
@@ -771,7 +774,7 @@ bazelisk run //scripts:prod-stack -- up
   `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000` still forks at 32768 and logs one
   `compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 is above the 32768 tokens
   config.yaml declares for 'compaction-fast'; forking at the declared window instead`.
-  A target group that declares no `max_input_tokens` at all leaves the key whole, and says
+  - A target group that declares no `max_input_tokens` at all leaves the key whole, and says
   so once with `compaction router: 'compaction-fast' declares no max_input_tokens in
   config.yaml; forking at EVO_T1_FAST_COMPACTION_INPUT_LIMIT alone` - that line is the
   signal to go declare the window, because it is the one state where the fork can still
@@ -783,11 +786,12 @@ bazelisk run //scripts:prod-stack -- up
   - A summary that comes back short of the history it should cover has one remaining path
   that explains it: with all three Sparks cooled, the fallback chains end at `coder` -
   `agent-low: ["coder"]` for the oversized tier, and the same for the pair's own chains -
-  and that Arc group answers from an input Ollama clamps down to its 32k window. That is every Spark
+  and that Arc group answers from an input Ollama clamps down to its 32k window.
+  - That is every Spark
   lane's standing last resort rather than a defect of the hop, and
   `bazelisk run //scripts:prod-stack -- logs --tail 200 litellm` carries the health lines for
   that window - the `fallbacks:` block of `litellm/config.yaml` is the map it followed.
-  Blanking works only because compose passes that key as `${VAR-default}`: the colon form
+  - Blanking works only because compose passes that key as `${VAR-default}`: the colon form
   substitutes its default for an empty value too, and the parked tier comes back.
 - **The tier names a group nobody declared.** Neither target is validated by LiteLLM, so the
   hook checks both against the `model_name:` entries in `litellm/config.yaml` and refuses a
@@ -1150,7 +1154,8 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
 - Which stage it died in: the last `== <body>: stage i/N: <title> ==` line above the failure.
   On every path that got past its header a body's final act is `boot_summary`, so a body that
   printed a header and no closing `summary:` never reached the end of its own script - it died
-  in the stage that line names, or Coder stopped it at the script's `timeout`. The startup
+  in the stage that line names, or Coder stopped it at the script's `timeout`.
+  - The startup
   body's eight stage titles (`workspace startup`
   stages 1-8, `templates/workspace/startup.sh.tftpl:37-326`) are the map for anything about
   tmux, the CLI, the shell profile, the skills and the notes library, the editor settings,
@@ -1166,7 +1171,7 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
   `startup_script` plus every `coder_script` on it - is 1 MiB, a Postgres check on
   `workspace_agents.logs_length`
   ([dump.sql, v2.36.6](https://github.com/coder/coder/blob/v2.36.6/coderd/database/dump.sql#L2996)).
-  When it fills the agent's uploader drops the NEWEST lines
+  - When it fills the agent's uploader drops the NEWEST lines
   ([`codersdk/agentsdk/logs.go`](https://github.com/coder/coder/blob/v2.36.6/codersdk/agentsdk/logs.go),
   `maxBytesQueued = 1048576`, the `log queue full; truncating new logs` path), and once the
   server answers `LogLimitExceeded: true` nothing further is uploaded.
@@ -1307,12 +1312,15 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   stack's copy. Copy the payload back from `templates/common/<name>.SKILL.md` to give
   the file back to the stack.
 - `ls ~/.grok/bundled/skills` printing nothing is the expected answer, not a symptom:
-  without the sign-in there is no bundled cache at all, on any version. Because a
+  without the sign-in there is no bundled cache at all, on any version.
+  - Because a
   user-scope skill overrides a same-named bundled one, and the built-in memory names are
-  the CLI's, this stack's seeds deliberately carry `ez-` names; the boot and the reseed
+  the CLI's, this stack's seeds deliberately carry `ez-` names;
+  - the boot and the reseed
   retire a marker-carrying `skills/learn/SKILL.md` that predates the rename rather
   than relying on you to delete it, since deleting a seeded copy would not retire the
-  old command name anyway - the boot and the reseed write it again. What works: keep a
+  old command name anyway - the boot and the reseed write it again.
+  - What works: keep a
   marker-free local copy only if you also stop the stack from seeding it, or disable
   the lane with `disabled = ["<name>"]` under `[skills]` in `~/.grok/config.toml`.
 - `command -v grok` answering `~/.grok/bin/grok` is the normal answer, not a leftover
@@ -1637,7 +1645,8 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
 grep -m1 'x-litellm-session-id' ~/.grok/config.toml
 ```
 
-  A `ws-...` value means Terraform rendered it; `contributor` means
+  - A `ws-...` value means Terraform rendered it;
+  - `contributor` means
   `bazelisk run //scripts:seed-dev-env` did, and that path takes the lane from the
   `GROK_SUBAGENTS_LANE` environment variable (`scripts/seed-dev-env.sh`), defaulting to
   `agent-swarm`, the width from `GROK_SUBAGENT_MAX_CONCURRENT`
@@ -1703,7 +1712,8 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
     `coder templates push` flag and that pair has no `--var` to give it - on
     Coder v2.36.6 `coder start --help` lists `--parameter`, `--parameter-default`,
     `--rich-parameter-file`, `--use-parameter-defaults` and `--no-wait`, and no
-    `--var`.) A workspace value survives every template push and is re-applied on every
+    `--var`.)
+    - A workspace value survives every template push and is re-applied on every
     start, which is how a number typed in for one experiment months ago still caps a
     fan-out today.
 
@@ -1729,13 +1739,17 @@ note: a rendered width below fleet-width is a value that outlived its template -
 
   #### The near-misses read differently
 
-  Two near-misses read differently on purpose. A profile whose `[subagents]` table
+  Two near-misses read differently on purpose.
+
+  - A profile whose `[subagents]` table
   is simply absent answers `warning: no 'max_concurrent' line - this profile has no
   [subagents] table; restart the workspace to re-materialize`, and a restart is the
-  right order there. A table that lost only its width line answers `warning: the
+  right order there.
+  - A table that lost only its width line answers `warning: the
   [subagents] table carries no 'max_concurrent' line - a hand edit, which no restart
   undoes`, because the render writes that line and a file the render still owns
-  never loses it on its own. A profile that answers `warning: no '# fleet-width:'
+  never loses it on its own.
+  - A profile that answers `warning: no '# fleet-width:'
   line above max_concurrent - this profile predates it; restart the workspace to
   re-materialize` has no ceiling to compare against yet, so that one is a restart
   too.
@@ -1804,10 +1818,13 @@ coder start <workspace> --parameter grok_subagent_max_concurrent=15
 ```
 
   `coder start` takes `--parameter name=value` and has no `--var`; `--var` belongs to
-  `coder templates push`, which is the command above. The start itself re-renders
+  `coder templates push`, which is the command above.
+
+  The start itself re-renders
   `config.toml`, so that one line is enough to see the number move; it is also one-shot, so
   clear the stored value with `coder update <workspace> --parameter
   grok_subagent_max_concurrent=15` or the Variables tab, or the next start narrows it again.
+
   That `15` is the variable's own shipped default, and the shipped recipe makes it the
   fleet's ceiling too - 3 Spark boxes x `PARALLEL` 5 (`scripts/spark-configure.sh:92`) - so
   the two numbers agree only while nobody shrinks the fleet. `--var grok_swarm_width` on the
@@ -1824,7 +1841,8 @@ coder start <workspace> --parameter grok_subagent_max_concurrent=15
   carries `10` over `15` and the check answers
   `max_concurrent = <n> is above the fleet width <fleet> - past the fleet's streams the
   extra spawns queue in LiteLLM` - a note the sweep counts among its ok rows, because a
-  hand-set number is not a fault. The fleet still has to hold the wave: past its streams
+  hand-set number is not a fault.
+  - The fleet still has to hold the wave: past its streams
   the box refuses the spawn with `NoRoom`
   ([litellm-routing.md](litellm-routing.md#when-a-box-answers-noroom)), so the two knobs
   move together and the width is the half that keeps a fan-out inside the fleet.
@@ -1910,11 +1928,15 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
   reason the sweep keeps the daemon's raw answer rather than filtering inside the call:
   before it, one stray tab inside a `coder.workspace_name` label was enough to drop that
   workspace out of the report with nothing said about it, and `summary: 1 ok, 0 warnings, 0
-  failed` read as a healthy fleet that simply had no third workspace. The DinD sidecar row is
+  failed` read as a healthy fleet that simply had no third workspace.
+
+  The DinD sidecar row is
   excluded from the listed count as well as from the verdicts, so a host running one sidecar
   per workspace never sees this note; a daemon holding nothing but sidecars closes with
   `note: no workspace containers on this daemon - nothing to sweep` and `summary: 0 ok, 0
-  warnings, 0 failed`, exit 0, exactly like an empty one. Under `--json` the note rides
+  warnings, 0 failed`, exit 0, exactly like an empty one.
+
+  Under `--json` the note rides
   stderr with the rest of the prose, so stdout stays the per-workspace objects alone.
 
 #### What it judges, and what a stopped container gives you
@@ -1957,12 +1979,14 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
     `timeout(1)`'s 124, or 137 once the kill landed. The container is up and hung.
   - `warning: <container> could not be read (docker exec returned <rc>) - its profile says nothing`
     is the exec itself failing for a reason that is not a missing file and not the timeout:
-    any status outside 0, 1, 2, 124 and 137 lands here. Some of those are docker refusing
+    any status outside 0, 1, 2, 124 and 137 lands here.
+    - Some of those are docker refusing
     the exec (`126`), and `127` is as likely to be the in-container `sh` not finding `cat`
     as it is docker - the read is `docker exec -- <container> sh -c 'cat "${HOME:-/home/coder}/.grok/config.toml" 2>/dev/null' sh`
     (`scripts/subagent-check.sh:751-752`), so a container whose image has no `cat` answers
     through this same branch. What stays out of it is 1 and 2, which are `cat`'s own answer
-    rather than the exec's. The `--` before the container name is load-bearing: that name is
+    rather than the exec's.
+    - The `--` before the container name is load-bearing: that name is
     a label value the sweep never chose, and one that parses as a `docker exec` flag would
     have docker read a different container while the sweep went on attributing that profile
     to the workspace it was actually sweeping.
@@ -1996,11 +2020,16 @@ warning: max_concurrent = 99999999999999999999 against fleet-width = 15 is not a
   branch used to clear the field and fall through into the missing-line verdict the
   single-profile check quotes above, printing `the [subagents] table carries no
   'max_concurrent' line - a hand edit, which no restart undoes` for a line that was present
-  and correct, while `--config` on the very same file said it was an un-comparable width. One
-  profile, two stories, and neither one the fault in the file - which is how a session gets
-  burned: the operator hand-edits a render that needed no edit, or restarts a workspace whose
-  boot runs fine, or follows the sweep's "no restart undoes it" and rules out the one action
-  that would have helped. The two paths now say the same thing, so one read of either is
+  and correct, while `--config` on the very same file said it was an un-comparable width.
+
+  One profile, two stories, and neither one the fault in the file - which is how a session gets
+  burned:
+  - the operator hand-edits a render that needed no edit
+  - restarts a workspace whose boot runs fine
+  - follows the sweep's "no restart undoes it" and rules out the one action
+    that would have helped.
+
+  The two paths now say the same thing, so one read of either is
   enough to act on.
 
 #### Clear the stored parameter
@@ -2037,7 +2066,8 @@ warning: max_concurrent = 99999999999999999999 against fleet-width = 15 is not a
     space: `error: PROBE_TIMEOUT='<value>' is not a whole number of seconds`. That cap bounds every
     docker call through `timeout(1)`, which refuses to start on a non-numeric one, so the
     sweep checks it before it asks the daemon anything and prints this instead of letting a
-    failed `timeout` read as an unreachable daemon. An empty value never reaches that check:
+    failed `timeout` read as an unreachable daemon.
+    - An empty value never reaches that check:
     `scripts/lib/coder_api.sh:43` is `PROBE_TIMEOUT="${PROBE_TIMEOUT:-20}"`, and `:-`
     substitutes on empty as well as unset, so an empty cap silently takes the library default
     of 20 seconds and the sweep runs;
@@ -2374,11 +2404,12 @@ tmux show-options -g set-clipboard   # on: the tmux end of the pane app's OSC 52
 
 Fix: there is nothing to turn on in tmux.
 
-Copy the text the way the rest of the tab
+- Copy the text the way the rest of the tab
 does - a plain drag is the client's own highlight, because tmux asks for no mouse
 reporting (measured on the shipped tmux 3.4: an attach with `mouse on` writes
 `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the client, one with it off writes
-none), and the settings seed's `terminal.integrated.copyOnSelection: true` puts
+none)
+- the settings seed's `terminal.integrated.copyOnSelection: true` puts
 that highlight on the machine clipboard with no chord (the headless harness on
 4.145.0 recorded `navigator.clipboard.writeText` firing on a client selection,
 before this switch).
@@ -2524,11 +2555,11 @@ turns `cursorBlinking` off, and `templates/common/tmux.conf` sets
 `set -s escape-time 10` and `set -g focus-events on`.
 
 The first is the freeze:
-3.4 holds back any Escape it reads for 500 ms to decide whether a sequence
+- 3.4 holds back any Escape it reads for 500 ms to decide whether a sequence
 follows, so Alt and the arrow keys feel like dropped input and a focus-in can
-wait that long - twice, with `set-timing` - before tmux repaints. Upstream cut
-the default to 10 ms in 3.5, and 0 - the value vim guides suggest - is the one
-to avoid: measured on this build, a throttled tab that delivers Esc and the next
+wait that long - twice, with `set-timing` - before tmux repaints.
+- Upstream cut the default to 10 ms in 3.5, and 0 - the value vim guides suggest - is the
+one to avoid: measured on this build, a throttled tab that delivers Esc and the next
 character more than 10 ms apart loses its Alt chords, and 0 makes that far
 likelier.
 
@@ -3262,8 +3293,9 @@ curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: hermes-gmktecbeast.overeazy.i
   recognises is a part problem, not a router problem: an empty `STACK_DOMAIN_BASE`
   composes nothing (the stack stays LAN-only) and a mistyped `STACK_SUBDOMAIN_SUFFIX`
   or `STACK_ENV_LABEL` composes a name no vhost, no DNS and no certificate serves.
-  Read the composed list back from `STACK_PUBLIC_HOSTS` in `.env`, fix the part, and
-  re-run `bazelisk run //scripts:bootstrap`, then recreate. Editing the rendered
+  - Read the composed list back from `STACK_PUBLIC_HOSTS` in `.env`, fix the part, and
+  re-run `bazelisk run //scripts:bootstrap`, then recreate.
+  - Editing the rendered
   `proxy/router.gen.conf` instead only survives until the next bootstrap, which
   re-renders it from the parts.
 - A part carrying an extra dot is the other failure this table cannot catch: the
@@ -3361,10 +3393,12 @@ curl -s http://127.0.0.1:9090/api/v1/targets
 - **Absent from the list entirely**: the job is not in
   `observability/prometheus/prometheus.yml`. Add it there and let the collector read it
   again: that file arrives through a bind mount, which follows the *path*, so the edit is
-  already inside the container and only the running process is behind it. Restarting the
+  already inside the container and only the running process is behind it.
+  - Restarting the
   service picks it up, and `POST /-/reload` answers 200 on this one
   (`--web.enable-lifecycle`, `docker-compose.yml:854`) without dropping the scrape loop's
-  in-flight state. A recreate is what you need when the mount line or another compose
+  in-flight state.
+  - A recreate is what you need when the mount line or another compose
   setting changed, not for an edit to a file that is already mounted.
 - **Present and `down`**: the app is not answering on the name Prometheus dials. The
   scrapes are compose-DNS (`coder:2112`, `litellm:4000`), not the host mappings - a
@@ -3413,8 +3447,8 @@ them means anything.
 - `GET /apis/quotas.grafana.app/v0alpha1/namespaces/default/usage?group=dashboard.grafana.app&resource=dashboards`
   answering `501 (Not Implemented)` is upstream grafana/grafana#136271: with
   `unified_storage.overrides_path` unset the resource server's quota service is nil and
-  refuses the call, while the browse-dashboards view fires it on every page load. This
-  bundle closes it by pointing Grafana at `observability/grafana/unified-storage/overrides.yml`
+  refuses the call, while the browse-dashboards view fires it on every page load.
+  - This bundle closes it by pointing Grafana at `observability/grafana/unified-storage/overrides.yml`
   through `GF_UNIFIED_STORAGE_OVERRIDES_PATH`, so the call answers `200`. The file sets
   no limit; its presence is the whole fix, and what the endpoint then reports is
   Grafana's own default - `{"usage":0,"limit":1000}` for both dashboards and folders on

@@ -42,36 +42,35 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 ### How a new terminal picks its tmux session
 
 - The `tmux` profile gives each terminal of a folder its own pane. The base session
-  name is unchanged: `vscode-<folder>-<hash>`. A new terminal walks into one of
-  that folder's sessions only while no client is attached to it, oldest first -
-  that is the closed-tab rejoin, so a tab you closed or reloaded leaves its
-  session unattached and the next terminal finds it with its history intact, and
-  `ssh` + `tmux attach -t <session>` lands there too. A terminal opened when
-  every session of the folder already has a client takes the next numbered
-  sibling instead: `vscode-<folder>-<hash>-2`, `-3`, ... Sessions persist
-  unattached until the container restarts, so a reattached terminal still
-  reaches the output a closed tab produced. `tmux ls` lists the names and
-  `tmux list-clients` says who is looking at each. Every target the helper
-  gives tmux carries the `=` exact-match prefix (a bare name is answered by any
-  session starting with it, so a closed `foo` could be answered by a live
-  `foo-2` and re-create the mirror), and a reopen whose session vanished
-  mid-attach raises a fresh session rather than exiting along with the tab.
-  Two tmux behaviors shape that path: a session raised by a tab's own
-  foreground `new-session` has its first pane closed when that client exits
-  ([superuser#575909](https://superuser.com/questions/575909/optionally-run-several-commands-when-starting-tmux)),
-  which is why the helper creates detached and attaches separately; and with
-  the default `exit-empty` the server itself leaves when its last session does
-  ([tmux#2081](https://github.com/tmux/tmux/issues/2081)), which is why a
-  reopen probes the server before raising anything - a tab whose server is gone
-  has ended normally, and re-raising there would boot a server for a terminal
-  nobody is looking at (tmux has no server probe: `has-session` answers the same
-  for a missing session and a missing server, which is why upstream declined to
-  add `check-server`, [tmux#2523](https://github.com/tmux/tmux/issues/2523)).
-  No upstream issue accounts for the session loss: `destroy-unattached` is off,
-  so a detached session is meant to survive, and tmux gives a session no grace
-  period after it loses its last client
-  ([tmux#5821](https://github.com/tmux/tmux/issues/5821) is an open request for
-  one).
+  name is unchanged: `vscode-<folder>-<hash>`.
+  - A new terminal walks into one of that folder's sessions only while no client is
+    attached to it, oldest first - that is the closed-tab rejoin, so a tab you closed
+    or reloaded leaves its session unattached and the next terminal finds it with its
+    history intact, and `ssh` + `tmux attach -t <session>` lands there too.
+  - A terminal opened when every session of the folder already has a client takes the
+    next numbered sibling instead: `vscode-<folder>-<hash>-2`, `-3`, ...
+  - Sessions persist unattached until the container restarts, so a reattached terminal
+    still reaches the output a closed tab produced.
+  - `tmux ls` lists the names and `tmux list-clients` says who is looking at each.
+  - Every target the helper gives tmux carries the `=` exact-match prefix (a bare name
+    is answered by any session starting with it, so a closed `foo` could be answered by
+    a live `foo-2` and re-create the mirror), and a reopen whose session vanished
+    mid-attach raises a fresh session rather than exiting along with the tab.
+  - Two tmux behaviors shape that path: a session raised by a tab's own foreground
+    `new-session` has its first pane closed when that client exits
+    ([superuser#575909](https://superuser.com/questions/575909/optionally-run-several-commands-when-starting-tmux)),
+    which is why the helper creates detached and attaches separately
+    - With the default `exit-empty` the server itself leaves when its last session
+      does ([tmux#2081](https://github.com/tmux/tmux/issues/2081)), which is why a
+      reopen probes the server before raising anything - a tab whose server is gone has
+      ended normally, and re-raising there would boot a server for a terminal nobody is
+      looking at (tmux has no server probe: `has-session` answers the same for a
+      missing session and a missing server, which is why upstream declined to add
+      `check-server`, [tmux#2523](https://github.com/tmux/tmux/issues/2523)).
+  - No upstream issue accounts for the session loss: `destroy-unattached` is off, so a
+    detached session is meant to survive, and tmux gives a session no grace period
+    after it loses its last client
+    ([tmux#5821](https://github.com/tmux/tmux/issues/5821) is an open request for one).
 
 ### What a mirrored pane costs
 
@@ -81,26 +80,31 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   full xterm.js in the Chrome tab re-parsing the same stream (each holding a
   line-slot array sized from `terminal.integrated.scrollback`, with the cell
   data allocated per line as output arrives), and another full copy of the
-  rendered stream through the pty. Measured on one flooding pane, 16 mirrors
-  took 78.7 MB out of the server over an 8 s window where a single mirror took
-  4.9 MB, while the server's own CPU only moved from 420 ms to 630 ms - it
-  renders the pane once, so a mirror is paid for in the tab. A client
-  activating or resizing repaints the window's other clients too. Measured on
-  this workspace: 14 attached clients against 2 real panes. Two terminals
-  opening in the same instant can still land on one session - that same
-  mirror, and rarer than a keystroke.
+  rendered stream through the pty.
+  - Measured on one flooding pane, 16 mirrors took 78.7 MB out of the server over an
+    8 s window where a single mirror took 4.9 MB, while the server's own CPU only moved
+    from 420 ms to 630 ms - it renders the pane once, so a mirror is paid for in the
+    tab.
+  - A client activating or resizing repaints the window's other clients too.
+  - Measured on this workspace: 14 attached clients against 2 real panes.
+  - Two terminals opening in the same instant can still land on one session - that same
+    mirror, and rarer than a keystroke.
 - **An attached client is not the same thing as a viewer.** code-server's pty
   host keeps the pty open after the browser side of a tab goes away, so the tmux
   client stays attached, keeps its session's `session_attached` at 1, and
-  receives nothing at all. Measured on this workspace's live server: 7 of its 9
-  clients received 0 bytes across a 4 s window of continuous pane output while
-  the 2 tabs actually on screen each received all 12858 of them, and the quiet
-  ones had reported no input for 30 minutes to 36 hours. That number is the
-  whole reuse decision in the attach helper, so one of these is enough to make a
-  free session look watched forever, and the folder pays a new session for every
-  later tab. Both helpers now sweep their own sessions for a client that has been
-  quiet past a 6 h grace before they read the snapshot;
-  `EVO_TMUX_STALE_AFTER` (seconds) moves the number. Seeing the state yourself:
+  receives nothing at all.
+  - Measured on this workspace's live server: 7 of its 9 clients received 0 bytes
+    across a 4 s window of continuous pane output while the 2 tabs actually on screen
+    each received all 12858 of them, and the quiet ones had reported no input for 30
+    minutes to 36 hours.
+  - That number is the whole reuse decision in the attach helper, so one of these is
+    enough to make a free session look watched forever, and the folder pays a new
+    session for every later tab.
+  - Both helpers now sweep their own sessions for a client that has been quiet past a
+    6 h grace before they read the snapshot; `EVO_TMUX_STALE_AFTER` (seconds) moves the
+    number.
+
+  Seeing the state yourself:
 
   ```sh
   # Two reads a few seconds apart: a client whose written count does not move
@@ -119,16 +123,18 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   terminal's `$PWD` outside a clone), names the session `grok-build-<folder>-<hash>`
   after that root, and runs `grok --cwd <repo root>` inside it. A terminal opened
   anywhere inside the clone rejoins the one session the repository shares, and starts
-  Grok Build at the repository root. That profile is deliberately the old
-  always-reattach shape: watching the same agent run from several tabs is the
-  feature, and the mirrors pay what mirrors pay. What the seed gives them is
-  `focus-events on`, so a TUI in the pane can idle its animations while its tab
-  is blurred, and `escape-time 10`, which keeps typing responsive on each of
-  them. Two things it does borrow from the attach helper: the session is created
-  detached and attached in a second call, because the tab that brings the server
-  up is otherwise the one that can take a running agent down with it (the same
-  9-of-20 loss the helper documents), and the stale viewers above are detached on
-  the way in, which is where the 8-clients-on-one-pane count came from.
+  Grok Build at the repository root.
+  - That profile is deliberately the old always-reattach shape: watching the same agent
+    run from several tabs is the feature, and the mirrors pay what mirrors pay. What the
+    seed gives them is `focus-events on`, so a TUI in the pane can idle its animations
+    while its tab is blurred, and `escape-time 10`, which keeps typing responsive on
+    each of them.
+  - Two things it does borrow from the attach helper:
+    - the session is created detached and attached in a second call, because the tab
+      that brings the server up is otherwise the one that can take a running agent down
+      with it (the same 9-of-20 loss the helper documents)
+    - The stale viewers above are detached on the way in, which is where the
+      8-clients-on-one-pane count came from.
 
 ### When tmux is not available
 
@@ -153,12 +159,14 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
   release in one `code_server_version` local and pass it to the upstream installer as
   `--version`: without that flag `https://code-server.dev/install.sh` follows `latest`,
   and the editor would move under every workspace with no commit in this repo.
+
   `workspace` installs code-server only while that pinned release is missing from
   `/home/coder/.local/share/code-server` (the guard names
   `lib/code-server-<version>/bin/code-server`, the directory the installer unpacks, not
   the `bin/code-server` symlink, which points at the last release installed and would
   hold a warm volume on its first one) and starts it with `--auth none --port 13337
   --app-name "VS Code Web" --ignore-last-opened <folder>`, passing no settings payload.
+
   `devcontainer` has no persistent prefix to reuse, so it installs the pinned release
   fresh under `/tmp/code-server` on every start.
 
@@ -167,15 +175,16 @@ Related: [coder-templates.md](coder-templates.md) (the template files themselves
 - The editor opens on `http://localhost:13337/?folder=<urlencoded>`: the
   `coder_app` resource in `coder/coder` `~> 2.18` has no `folder` argument, so the
   folder rides in the URL and as a positional argument to the code-server binary
-  with `--ignore-last-opened`. `workspace` uses `/home/coder/workspace/<repo>` (and
-  `/home/coder` with no repository); `devcontainer` uses `/workspaces/<repo>` inside a
-  built dev container and `/srv/coder-devcontainers/<workspace-id>/<repo>` on the
-  plain container. On first start the inlined `coder_script.code_server` creates that
-  folder and waits up to 60 s for `.git` (skipped when the folder is `/home/coder`) so
-  the clone can land before code-server launches. `coder_agent.dir` stays unset: the
-  agent would chdir there before `startup.sh`, and a missing clone folder would fail
-  the agent. With the sample `REPO_URL` that folder is
-  `/home/coder/workspace/evo-t1-coder-stack`.
+  with `--ignore-last-opened`.
+  - `workspace` uses `/home/coder/workspace/<repo>` (and `/home/coder` with no
+    repository); `devcontainer` uses `/workspaces/<repo>` inside a built dev container
+    and `/srv/coder-devcontainers/<workspace-id>/<repo>` on the plain container.
+  - On first start the inlined `coder_script.code_server` creates that folder and waits
+    up to 60 s for `.git` (skipped when the folder is `/home/coder`) so the clone can
+    land before code-server launches.
+  - `coder_agent.dir` stays unset: the agent would chdir there before `startup.sh`, and
+    a missing clone folder would fail the agent. With the sample `REPO_URL` that folder
+    is `/home/coder/workspace/evo-t1-coder-stack`.
 - The icon travels as a `data:image/svg+xml;base64` data URL read from
   `templates/common/vscode-alt.svg`: Coder serves icons only from its bundled
   `/icon/*` set or a full `https`/`data` URL, and that icon is not bundled.
@@ -212,11 +221,11 @@ plain drag is due the same pass before it is restated as measured under `mouse o
 - **Out of a pane: drag, and it is already on the clipboard.** tmux asks the outer
   terminal for mouse reporting only while `mouse` is on: measured on tmux 3.4, an
   attach with `mouse on` writes `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the
-  client, and an attach with it off writes none of them. With the seed's
-  `mouse off` tmux never sees a button, so a plain drag is the client's own
-  highlight and the seed's `terminal.integrated.copyOnSelection: true` puts that
-  highlight on the machine clipboard with no chord (the harness recorded
-  `navigator.clipboard.writeText` firing on a client selection, before this switch).
+  client, and an attach with it off writes none of them.
+  - With the seed's `mouse off` tmux never sees a button, so a plain drag is the
+    client's own highlight and the seed's `terminal.integrated.copyOnSelection: true`
+    puts that highlight on the machine clipboard with no chord (the harness recorded
+    `navigator.clipboard.writeText` firing on a client selection, before this switch).
 - **Right-click and middle-click paste that clipboard.** The seed sets
   `terminal.integrated.rightClickBehavior: "copyPaste"` - copy while there is a
   selection, paste when there is none - and pins
@@ -227,51 +236,58 @@ plain drag is due the same pass before it is restated as measured under `mouse o
 - **tmux keeps no buffer, so there is nothing to paste out of one.** `Prefix-[`
   still enters vi copy-mode and it is a viewer: the cursor keys, `PPage`/`NPage`,
   `Ctrl-u`/`Ctrl-d` and `k`/`j` walk history, `q` leaves, and `Escape` clears a
-  selection. Every copy that used to end a selection is unbound - Enter, `C-j`, `D`,
-  `A`, the word and line copies a double- or triple-click fires, the copy a drag
-  release ran, and the `y` the earlier seed bound itself - along with the prefix
-  paste `]` and the buffer picker `=`. Selecting inside copy-mode with `Space`, `V`
-  or the cursor keys stays bound and is inert, with no copy command left for it to
-  end on. Proof: sourcing the payload on a scratch server leaves `list-keys` with no
-  copy command in `copy-mode-vi`, no `paste-buffer` or `choose-buffer` in `prefix`,
-  and no `MouseDown2Pane` in `root`. The pointer's other jobs keep their prefix
-  keys: `Prefix-o` or `Prefix-q` to select a pane, and `Prefix-Alt-arrow` to resize
-  (plain `Prefix-arrow` selects a pane in the shipped 3.4's own default table).
+  selection.
+  - Every copy that used to end a selection is unbound - Enter, `C-j`, `D`, `A`, the
+    word and line copies a double- or triple-click fires, the copy a drag release ran,
+    and the `y` the earlier seed bound itself - along with the prefix paste `]` and the
+    buffer picker `=`.
+  - Selecting inside copy-mode with `Space`, `V` or the cursor keys stays bound and is
+    inert, with no copy command left for it to end on.
+  - Proof: sourcing the payload on a scratch server leaves `list-keys` with no copy
+    command in `copy-mode-vi`, no `paste-buffer` or `choose-buffer` in `prefix`, and no
+    `MouseDown2Pane` in `root`.
+  - The pointer's other jobs keep their prefix keys: `Prefix-o` or `Prefix-q` to select
+    a pane, and `Prefix-Alt-arrow` to resize (plain `Prefix-arrow` selects a pane in the
+    shipped 3.4's own default table).
 - **`Prefix m` is the wheel, not a copy route.** One press hands the pointer to
-  tmux so the wheel walks pane history, the next hands it back. It is the escape
-  hatch for a long scroll, because tmux paints in the alternate screen - it sends
-  `ESC[?1049h` either way - so the client holds no scrollback of its own and a wheel
-  over a pane has nothing to walk. Output that has scrolled away is copied by
-  bringing it on screen first: `Prefix-[`, scroll it into view, select it with a
-  client drag, `q`. A drag while `Prefix m` has the pointer on selects nothing,
-  since the copy bindings stay unbound either way.
+  tmux so the wheel walks pane history, the next hands it back.
+  - It is the escape hatch for a long scroll, because tmux paints in the alternate
+    screen - it sends `ESC[?1049h` either way - so the client holds no scrollback of its
+    own and a wheel over a pane has nothing to walk.
+  - Output that has scrolled away is copied by bringing it on screen first: `Prefix-[`,
+    scroll it into view, select it with a client drag, `q`.
+  - A drag while `Prefix m` has the pointer on selects nothing, since the copy bindings
+    stay unbound either way.
 - **An app inside the pane drives the machine clipboard over OSC 52; the browser
   build drops it.** `set -g set-clipboard on` with `set -g allow-passthrough on`
   stay in the seed for that one route: vim's `+` register, and anything else that
   emits the escape, reach the machine clipboard the way a native terminal hands them
-  to it. Over ssh from Ghostty, kitty, WezTerm or iTerm2 that copy lands.
-  code-server's browser build drops the escape before any clipboard call: a
-  hand-written `printf '\033]52;c;<base64>\a'` was just as silent with
-  `set-clipboard off` as with it on, which puts the drop in the browser and not in
-  tmux. Upstream
-  [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
-  open with two unmerged fixes, and the shipped 4.145.0 registers no OSC 52 setting
-  at all, so there is nothing here to turn on. Nothing on the tmux side can spoil
-  that clipboard either: tmux has no copy left to send, so an accidental selection
-  in the pane cannot overwrite what the client just put there.
+  to it.
+  - Over ssh from Ghostty, kitty, WezTerm or iTerm2 that copy lands.
+  - code-server's browser build drops the escape before any clipboard call: a
+    hand-written `printf '\033]52;c;<base64>\a'` was just as silent with
+    `set-clipboard off` as with it on, which puts the drop in the browser and not in
+    tmux.
+  - Upstream
+    [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
+    open with two unmerged fixes, and the shipped 4.145.0 registers no OSC 52 setting
+    at all, so there is nothing here to turn on.
+  - Nothing on the tmux side can spoil that clipboard either: tmux has no copy left to
+    send, so an accidental selection in the pane cannot overwrite what the client just
+    put there.
 - **Into the pane: `Ctrl+Shift+V` or right-click, on a secure context.** Both
   arrive bracketed (`ESC[200~ ... ESC[201~`) in a bash terminal and in a tmux
-  pane alike, and a three-line paste arrives whole without a warning dialog. Both
-  chords ask the browser's clipboard API, which the browser only exposes to a
-  secure context, so the URL the tab was opened on decides it. On the TLS public
-  name they work; on `http://<LAN-address>` `navigator.clipboard` is absent,
-  right-click stops with VS Code's own toast ("This browser doesn't support the
-  clipboard.readText API needed to trigger a paste, try Ctrl+V instead."), and
-  the browser's native paste event is what still delivers. A Clipboard site
-  permission that was once denied breaks both API chords the same way, with
-  `NotAllowedError: Read permission denied`. Neither is a tmux route: the prefix
-  paste `]` and the buffer picker `=` are unbound, so the client's own clipboard is
-  what arrives in the pane.
+  pane alike, and a three-line paste arrives whole without a warning dialog.
+  - Both chords ask the browser's clipboard API, which the browser only exposes to a
+    secure context, so the URL the tab was opened on decides it.
+  - On the TLS public name they work; on `http://<LAN-address>` `navigator.clipboard`
+    is absent, right-click stops with VS Code's own toast ("This browser doesn't support
+    the clipboard.readText API needed to trigger a paste, try Ctrl+V instead."), and the
+    browser's native paste event is what still delivers.
+  - A Clipboard site permission that was once denied breaks both API chords the same
+    way, with `NotAllowedError: Read permission denied`.
+  - Neither is a tmux route: the prefix paste `]` and the buffer picker `=` are
+    unbound, so the client's own clipboard is what arrives in the pane.
 - **`Ctrl+V` on a secure origin is not a paste.** VS Code binds terminal paste to
   `Ctrl+Shift+V` on Linux and `Cmd+V` on macOS, so `Ctrl+V` reaches the pane as
   the `\x16` byte (readline's quoted-insert, vim's visual-block). The seed
@@ -280,33 +296,35 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   in the settings seed is the xterm.js buffer, which is what a plain `bash`
   profile scrolls through; tmux's `history-limit` is what `Prefix-[` walks
   inside a pane. They read 2000 and 100000 lines here, and the two numbers
-  differ on purpose because the two stores are billed differently. What VS Code
-  preallocates from the setting is the buffer's array of line slots - xterm.js
-  builds `new Array(rows + scrollback)` for it up front
-  ([CircularList.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/CircularList.ts),
-  [Buffer.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/Buffer.ts))
-  - and the cell data lands one `BufferLine` at a time as output arrives, at
-  3 `Uint32` words per column per line
-  ([BufferLine.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/BufferLine.ts)),
-  against a VS Code default of 1000
-  ([terminalConfiguration.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts)).
-  So the setting costs a pointer array per terminal in the tab either way, and
-  real memory only for the lines a pane actually emits - which is why a busy
-  build log is where a large value is felt, and an idle prompt is not. tmux
-  holds its history once per pane, in the server, and every client of that pane
-  shares the one buffer. Hence the split: the deep store is tmux's and the
-  browser keeps a short viewport. Inside a tmux pane the client's wheel has nothing
-  to walk - tmux paints in the alternate screen, so that buffer holds no pane
-  history - and the 100000 lines live behind `Prefix-[`, paid for in the server and
-  not in the tab. Measured on tmux 3.4 with one pane pushed to its limit, 100000
-  lines of 120-column output holds the tmux server at 381 MB RSS; the same 100000
-  lines of plain 80-column output costs 60 MB. The same sweep repeated at 120
-  columns came out close to linear at about 3 KB of server per history line -
-  10 MB at 2000, 35 MB at 10000, 160 MB at 50000, 308 MB at 100000 - so this is
-  the one terminal number that turns a chatty pane into real container memory,
-  and it is a deliberate trade: the deep store is what lets `Prefix-[` still
-  reach the start of a build. tmux reads `history-limit` when a pane is created,
-  so an existing pane keeps the number it was born with.
+  differ on purpose because the two stores are billed differently.
+  - What VS Code preallocates from the setting is the buffer's array of line slots -
+    xterm.js builds `new Array(rows + scrollback)` for it up front
+    ([CircularList.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/CircularList.ts),
+    [Buffer.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/Buffer.ts))
+  - and the cell data lands one `BufferLine` at a time as output arrives, at 3
+    `Uint32` words per column per line
+    ([BufferLine.ts](https://github.com/xtermjs/xterm.js/blob/master/src/common/buffer/BufferLine.ts)),
+    against a VS Code default of 1000
+    ([terminalConfiguration.ts](https://github.com/microsoft/vscode/blob/main/src/vs/workbench/contrib/terminal/common/terminalConfiguration.ts)).
+  - So the setting costs a pointer array per terminal in the tab either way, and real
+    memory only for the lines a pane actually emits - which is why a busy build log is
+    where a large value is felt, and an idle prompt is not.
+  - tmux holds its history once per pane, in the server, and every client of that pane
+    shares the one buffer. Hence the split: the deep store is tmux's and the browser
+    keeps a short viewport.
+  - Inside a tmux pane the client's wheel has nothing to walk - tmux paints in the
+    alternate screen, so that buffer holds no pane history - and the 100000 lines live
+    behind `Prefix-[`, paid for in the server and not in the tab.
+  - Measured on tmux 3.4 with one pane pushed to its limit, 100000 lines of 120-column
+    output holds the tmux server at 381 MB RSS; the same 100000 lines of plain 80-column
+    output costs 60 MB.
+  - The same sweep repeated at 120 columns came out close to linear at about 3 KB of
+    server per history line - 10 MB at 2000, 35 MB at 10000, 160 MB at 50000, 308 MB at
+    100000 - so this is the one terminal number that turns a chatty pane into real
+    container memory, and it is a deliberate trade: the deep store is what lets
+    `Prefix-[` still reach the start of a build.
+  - tmux reads `history-limit` when a pane is created, so an existing pane keeps the
+    number it was born with.
 
 ### `grok doctor` findings in a workspace
 
@@ -318,16 +336,17 @@ report for a script. What the report should read here:
 - **tmux options.** `templates/common/tmux.conf` seeds the four options Doctor's
   own fixes write, `set -g set-clipboard on`, `set -g allow-passthrough on`,
   `set -g extended-keys on` and the `*:RGB` `terminal-features` entry, plus the
-  `xterm*:extkeys` entry Doctor leaves to the operator. Those last two decide
-  what survives the multiplexer: tmux rewrites 24-bit color down to the palette
-  an attached client advertises, which is what makes a theme look washed out in
-  the browser, and extkeys is what makes Shift+Enter and Ctrl+. arrive distinct
-  from Enter. A client picks up `terminal-features` when it attaches, so after a
-  reseed run `tmux source-file ~/.tmux.conf` and then detach and reattach
-  (a `refresh-client` keeps the client on its old features). Proof:
-  `tmux display -p '#{client_termfeatures}'` lists `RGB` and `extkeys`.
-  `tests/bats/tmux-fidelity.bats` boots a scratch server on the seed and reads
-  all of it back.
+  `xterm*:extkeys` entry Doctor leaves to the operator.
+  - Those last two decide what survives the multiplexer: tmux rewrites 24-bit color down
+    to the palette an attached client advertises, which is what makes a theme look
+    washed out in the browser, and extkeys is what makes Shift+Enter and Ctrl+. arrive
+    distinct from Enter.
+  - A client picks up `terminal-features` when it attaches, so after a reseed run
+    `tmux source-file ~/.tmux.conf` and then detach and reattach (a `refresh-client`
+    keeps the client on its old features).
+  - Proof: `tmux display -p '#{client_termfeatures}'` lists `RGB` and `extkeys`.
+    `tests/bats/tmux-fidelity.bats` boots a scratch server on the seed and reads all of
+    it back.
 - **`terminal.limited-color` during an agent turn.** A tool command launched by a
   running Grok session inherits `NO_COLOR=1`, `FORCE_COLOR=0`, `CLICOLOR=0` and
   `CARGO_TERM_COLOR=never` from that session, so a `grok doctor` run from inside
@@ -336,14 +355,15 @@ report for a script. What the report should read here:
   capability: the line reads `color truecolor` and `themes all`.
 - **`voice.no-input-device`.** Expected in a workspace. The container has no
   capture device at all (`/dev/snd` and `/proc/asound` are absent) and no
-  recorder on PATH. The probe only looks for a recorder binary, so installing
-  `alsa-utils` moves the line to `available` while capture still has nowhere to
-  read from, and `features.voice_mode = false` leaves the finding in place.
-  Neither would be a fix, so the stack ships neither and the finding stands as an
-  accurate report of a headless container. Dictation belongs on a laptop-side
-  `grok`. To give a workspace dictation instead: run PulseAudio on the workstation
-  with its TCP module enabled, export `PULSE_SERVER=tcp=<workstation>:4713` into
-  the workspace, and install `pulseaudio-utils` there for `parec`.
+  recorder on PATH.
+  - The probe only looks for a recorder binary, so installing `alsa-utils` moves the
+    line to `available` while capture still has nowhere to read from, and
+    `features.voice_mode = false` leaves the finding in place.
+  - Neither would be a fix, so the stack ships neither and the finding stands as an
+    accurate report of a headless container. Dictation belongs on a laptop-side `grok`.
+  - To give a workspace dictation instead: run PulseAudio on the workstation with its
+    TCP module enabled, export `PULSE_SERVER=tcp=<workstation>:4713` into the workspace,
+    and install `pulseaudio-utils` there for `parec`.
 - **`terminal.ssh-wrap`** is a recommendation about the computer you type `ssh`
   on, since the wrapper has to sit in front of that client: run
   `grok doctor fix ssh-wrap` there, or `grok wrap ssh <host>` per connection. It
@@ -391,10 +411,12 @@ report for a script. What the report should read here:
   (`cli-chat-proxy.grok.com`, gated by `GROK_SKILLS_BASE_URL`) and needs an x.ai
   sign-in: the upstream `product_skills*` fetch in
   `crates/codegen/xai-grok-shell/src/session/slash_commands.rs` is gated on
-  `xai_grok_login::GrokAuth`. This stack has no x.ai credential:
-  LiteLLM is the sole model transport, with `env_key = "LITELLM_API_KEY"` and
-  `base_url` `http://host.docker.internal:4000/v1`, so `~/.grok/bundled/` is never
-  created and there is no bundled copy for `grok inspect` to label.
+  `xai_grok_login::GrokAuth`.
+
+  This stack has no x.ai credential: LiteLLM is the sole model transport, with
+  `env_key = "LITELLM_API_KEY"` and `base_url` `http://host.docker.internal:4000/v1`, so
+  `~/.grok/bundled/` is never created and there is no bundled copy for `grok inspect` to
+  label.
 
   The one surface nobody can read anonymously is the authenticated skills
   feed (`x.ai/skills/*` answers 403), so the honest claim is that no published
@@ -429,16 +451,20 @@ report for a script. What the report should read here:
   `ez-create-skill.SKILL.md` - are seeded at workspace start by
   `coder_script.stack_skills`: each is written into `~/.coder/skills/<name>/SKILL.md` and
   twin-copied to `~/.agents/skills/<name>/SKILL.md`, each only while that file is absent.
-  To take a copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a
-  marker-free file is user-owned, and the seeder leaves it alone unless you pass
-  `--force`. A deletion is undone - the boot writes the file again whenever it is
-  absent, and `refresh-configs` re-seeds an absent target, so the next boot restores
-  the stack's copy. To hide the slash command, set `disabled = ["ez-learn"]` under
-  `[skills]` in `~/.grok/config.toml`. A seeded `SKILL.md` shows up in
-  `grok inspect --json` as `userInvocable: true`, and a live session advertises it in
-  both `slash_commands` and `skills`, so it works on whichever CLI the image baked at
-  `/usr/local/bin/grok` and this needs no image rebuild; the **Grok Build** terminal
-  profile gets it because that profile execs the same binary.
+
+  To take a copy over, edit it and delete the `managed-by: evo-t1-coder-stack` marker
+  line: a marker-free file is user-owned, and the seeder leaves it alone unless you pass
+  `--force`. A deletion is undone - the boot writes the file again whenever it is absent,
+  and `refresh-configs` re-seeds an absent target, so the next boot restores the stack's
+  copy.
+
+  To hide the slash command, set `disabled = ["ez-learn"]` under `[skills]` in
+  `~/.grok/config.toml`.
+
+  A seeded `SKILL.md` shows up in `grok inspect --json` as `userInvocable: true`, and a
+  live session advertises it in both `slash_commands` and `skills`, so it works on
+  whichever CLI the image baked at `/usr/local/bin/grok` and this needs no image rebuild;
+  the **Grok Build** terminal profile gets it because that profile execs the same binary.
 
 ### The repository-conversion commands
 
@@ -457,28 +483,32 @@ report for a script. What the report should read here:
   the parent's dispatch protocol for a fan-out of subagents: a repo-local plan at
   `.grok/plans/<slug>/plan.md`, the change split into micro tasks, layered context briefs
   beside it, and a check that refuses a plan too narrow to fill the session's subagent
-  slots. It shares the body because that body exists to stay under the one-argument
-  ceiling ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)), not because
-  the four commands do the same job; three of the four carry a python helper next to their
-  `SKILL.md` and `ez-trunk-based-repo` carries none. Its payloads are
-  `templates/common/ez-micro-plan.SKILL.md` and
-  `templates/common/ez-micro-plan.plan_check.py`, seeded into `~/.coder/skills/` and its
-  `~/.agents` twin on the same absent-only contract, the helper under `scripts/` like the
-  trio's. What the plan carries and what the check prints is under
-  [The fan-out seam](#the-fan-out-seam).
+  slots.
+  - It shares the body because that body exists to stay under the one-argument ceiling
+    ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)), not because the
+    four commands do the same job; three of the four carry a python helper next to their
+    `SKILL.md` and `ez-trunk-based-repo` carries none.
+  - Its payloads are `templates/common/ez-micro-plan.SKILL.md` and
+    `templates/common/ez-micro-plan.plan_check.py`, seeded into `~/.coder/skills/` and
+    its `~/.agents` twin on the same absent-only contract, the helper under `scripts/`
+    like the trio's.
+  - What the plan carries and what the check prints is under
+    [The fan-out seam](#the-fan-out-seam).
 
 ### The retired `/learn` seed
 
 - **A leftover `/learn` seed retires itself.** This skill was seeded under the name
   `learn` until it moved, and a copy left standing keeps offering that old name beside
   `/ez-learn` for the life of the volume; there is no bundled `learn` for it to hide,
-  because no published source names one. Both startup scripts delete
-  `~/.coder/skills/learn/SKILL.md` and `~/.agents/skills/learn/SKILL.md` and prune the
-  directory each leaves, but only while the file still carries the
-  `managed-by: evo-t1-coder-stack` marker; a marker-free `learn/SKILL.md` is user-owned
-  and stays. `refresh-configs`, `storage-clean` and `seed-dev-env` retire the same two
-  paths on reseed. That removal only finishes the rename: there is no upstream `/learn`
-  waiting on the name, because no published source names one.
+  because no published source names one.
+  - Both startup scripts delete `~/.coder/skills/learn/SKILL.md` and
+    `~/.agents/skills/learn/SKILL.md` and prune the directory each leaves, but only while
+    the file still carries the `managed-by: evo-t1-coder-stack` marker; a marker-free
+    `learn/SKILL.md` is user-owned and stays.
+  - `refresh-configs`, `storage-clean` and `seed-dev-env` retire the same two paths on
+    reseed.
+  - That removal only finishes the rename: there is no upstream `/learn` waiting on the
+    name, because no published source names one.
 
 ## The rendered `~/.grok` config
 
@@ -655,15 +685,15 @@ while the managed block is intact.
   workspace whose owner connected no GitHub account renders the block anyway and pays
   one failed handshake per session.
 - `context7_mcp` (default `true`, parked the same way with `CONTEXT7_MCP=false`) adds
-  the cached `context7` stdio MCP server. Grok launches
-  `/opt/npm-global/bin/mcp-cache-proxy` with
-  `--config /home/coder/.grok/mcp-cache-proxy/config.json`, and that proxy fronts the
-  official `/opt/npm-global/bin/context7-mcp`; both are pre-installed in the golden
-  image, so nothing is fetched with `npx` at launch. The proxy config names
-  `$CONTEXT7_API_KEY` and nothing else: the key reaches the workspace environment from
-  the sensitive template variable `context7_api_key`, filled by the push from
-  `CONTEXT7_API_KEY` in the host `.env` - not from Coder External Auth, which is what
-  fills `GH_TOKEN` above.
+  the cached `context7` stdio MCP server.
+  - Grok launches `/opt/npm-global/bin/mcp-cache-proxy` with
+    `--config /home/coder/.grok/mcp-cache-proxy/config.json`, and that proxy fronts the
+    official `/opt/npm-global/bin/context7-mcp`; both are pre-installed in the golden
+    image, so nothing is fetched with `npx` at launch.
+  - The proxy config names `$CONTEXT7_API_KEY` and nothing else: the key reaches the
+    workspace environment from the sensitive template variable `context7_api_key`, filled
+    by the push from `CONTEXT7_API_KEY` in the host `.env` - not from Coder External Auth,
+    which is what fills `GH_TOKEN` above.
 
 #### The verbatim escape hatch
 
@@ -684,15 +714,15 @@ while the managed block is intact.
 #### The dotenv deny and the template allow list
 
 - `Bash(rm -rf *)` blocks the destructive
-  form, and the dotenv family is split by what a file actually holds: the live
-  `.env` and the populated suffixed shapes (`.env.local`, `.env.*.local`,
-  `.env.production` / `.env.prod`, `.env.staging` / `.env.stage`,
-  `.env.development` / `.env.dev`, `.env.test` / `.env.testing`, `.env.ci`,
-  `.env.override`) are denied for `Read` and `Edit`, while the secret-free
-  templates a repo ships (`.env.example`, `.env.sample`, `.env.template`,
-  `.env.dist`, `.env.defaults`, plus the `.env.*.example` / `.env.*.sample`
-  spellings) are named in `allow`, so an agent maintains the env key list without a
-  prompt in any mode.
+  form, and the dotenv family is split by what a file actually holds:
+  - the live `.env` and the populated suffixed shapes (`.env.local`, `.env.*.local`,
+    `.env.production` / `.env.prod`, `.env.staging` / `.env.stage`, `.env.development` /
+    `.env.dev`, `.env.test` / `.env.testing`, `.env.ci`, `.env.override`) are denied for
+    `Read` and `Edit`
+  - the secret-free templates a repo ships (`.env.example`, `.env.sample`,
+    `.env.template`, `.env.dist`, `.env.defaults`, plus the `.env.*.example` /
+    `.env.*.sample` spellings) are named in `allow`, so an agent maintains the env key
+    list without a prompt in any mode.
 
   Neither list is the old blanket `**/.env.*`: deny outranks
   allow, so the blanket form blocked the templates along with the live files and
@@ -750,15 +780,18 @@ while the managed block is intact.
   - the shell forms that signal a whole process group (`kill 0`, `kill -- -<pgid>`,
     `kill -9 -1`)
 
-  The reason is the shape of the workspace: the Bash tool runs inside the tmux session the agent was
-  launched in, so a sweep that tidies up "stray" sessions or processes takes the agent,
-  its tool shell and the in-flight reply down together, and the editor tab dies with
-  `terminated with exit code: 1` over work left half-done. An agent stops one process it
-  started with the `kill_command_or_subagent` tool; bringing down a whole tmux server or
-  editor host stays an operator call. These are globs over the parsed command text, so
-  an abbreviated tmux verb (`tmux kill-sess`) or a bracketed pattern (`pkill -f [t]mux`)
-  walks past them - the seed rule that names the prohibition is the other half, and the
-  plain `bash` profile is how a session reaches a shell once they are all gone.
+  The reason is the shape of the workspace: the Bash tool runs inside the tmux session
+  the agent was launched in, so a sweep that tidies up "stray" sessions or processes
+  takes the agent, its tool shell and the in-flight reply down together, and the editor
+  tab dies with `terminated with exit code: 1` over work left half-done.
+
+  An agent stops one process it started with the `kill_command_or_subagent` tool; bringing
+  down a whole tmux server or editor host stays an operator call.
+
+  These are globs over the parsed command text, so an abbreviated tmux verb
+  (`tmux kill-sess`) or a bracketed pattern (`pkill -f [t]mux`) walks past them - the seed
+  rule that names the prohibition is the other half, and the plain `bash` profile is how a
+  session reaches a shell once they are all gone.
 
 #### The marker that keeps the config stack-owned
 
@@ -1188,12 +1221,16 @@ for a cloud model id, which is the rule in
 
 Five more commands ride a `coder_script` of their own, `stack_advisors`
 (`templates/workspace/main.tf:784`, `templates/devcontainer/main.tf:835`), whose body is
-`templates/common/stack-advisors.sh.tftpl`. Four are advisors that each gate a different kind
-of work, and the fifth writes the local map described at the end of this section. Same contract
-and same two homes as the four above: `~/.coder/skills/<name>/SKILL.md` for the chat and the
-`cp` twin at `~/.agents/skills/<name>/SKILL.md` for the CLI, each written only while absent,
-and `//scripts:seed-dev-env` seeds the same copies into a contributor home through the twelve
-advisor rows of `seed_seed_targets` (`scripts/lib/config_seed.sh:148-159`).
+`templates/common/stack-advisors.sh.tftpl`.
+Four are advisors that each gate a different kind of work, and the fifth writes the local
+map described at the end of this section.
+
+Same contract and same two homes as the four above:
+`~/.coder/skills/<name>/SKILL.md` for the chat and the
+`cp` twin at `~/.agents/skills/<name>/SKILL.md` for the CLI, each written only while
+absent, and `//scripts:seed-dev-env` seeds the same copies into a contributor home
+through the twelve advisor rows of `seed_seed_targets`
+(`scripts/lib/config_seed.sh:148-159`).
 
 - `/documenter <commit-ish|path|PR-number> [--surface docs|readme|rulebook|comments]` documents
   a change that already exists: read the diff, fan read-only mappers over every documentation
@@ -1362,16 +1399,23 @@ Three limits are worth knowing before you trust a clean scan, and each is a choi
 an oversight.
 
 - The secret guard's generic assignment scan requires a digit on the matched line, which is
-  what keeps a variable name from reading as a credential. The cost runs in both directions:
-  `api_key = XyZaBcDeFgHiJk` (a name the list carries, no digit) walks through, and so does
-  `github_token_string = Abcd1234EFGH5678` (a digit, a name the list does not carry). Only the
-  five known-format scans (AWS, GitHub, Slack, Google, private-key block) plus the
-  credential-bearing URL are exact, and they run on the text before the environment-reference
-  fold, so a vendor key pasted inside `getenv("...")` still denies. What the fold does excuse
-  is entropy sitting in the name position of a reference - `os.environ/KEY_XyZaBc12345678` -
-  because that position is where the correct pattern lives and the guard's whole job is to
-  keep it writable. A missed shape is a line in `hooks.secret-guard.sh`, not a reason to trust
-  the ones it does catch.
+  what keeps a variable name from reading as a credential.
+
+  - The cost runs in both directions: `api_key = XyZaBcDeFgHiJk` (a name the list
+    carries, no digit) walks through, and so does
+    `github_token_string = Abcd1234EFGH5678` (a digit, a name the list does not carry).
+
+  - Only the five known-format scans (AWS, GitHub, Slack, Google, private-key block)
+    plus the credential-bearing URL are exact, and they run on the text before the
+    environment-reference fold, so a vendor key pasted inside `getenv("...")` still
+    denies.
+
+  - What the fold does excuse is entropy sitting in the name position of a reference -
+    `os.environ/KEY_XyZaBc12345678` - because that position is where the correct
+    pattern lives and the guard's whole job is to keep it writable.
+
+  - A missed shape is a line in `hooks.secret-guard.sh`, not a reason to trust the ones
+    it does catch.
 - The command guard matches the whole command string, case-sensitively and byte-wise, so a
   command that *quotes* a denied form is refused the same way a real one is: `awk '/dd if=/'
   notes.txt` denies, and so does a commit message that names `rm -rf` followed by a space.
@@ -1512,15 +1556,18 @@ edit is the regular file at the clone root: that is what the editor, the termina
 nested dev container all see, since the inner container mounts the clone bind and has
 its own `~/.grok`.
 
-The copy runs both ways, and not only at boot. Startup copies the live file here and
-restores it when a recreate leaves the clone with nothing or with only the seeded stub
-line, and then leaves **one background watcher per container** that repeats
-the back-copy about every 30 seconds (`NOTES_SYNC_INTERVAL`, in seconds) over every clone
-under `$HOME/workspace`; the devcontainer template watches its `/srv/coder-devcontainers`
-bind root instead, since those clones sit there rather than under the workspace home. The
-watcher is single-instance behind a non-blocking `flock` on `$HOME/.notes-sync.lock`, in
-the container's own home rather than the shared volume, because each of the owner's
-workspaces needs its own.
+The copy runs both ways, and not only at boot.
+
+Startup copies the live file here and restores it when a recreate leaves the clone with
+nothing or with only the seeded stub line, and then leaves **one background watcher per
+container** that repeats the back-copy about every 30 seconds (`NOTES_SYNC_INTERVAL`, in
+seconds) over every clone under `$HOME/workspace`; the devcontainer template watches its
+`/srv/coder-devcontainers` bind root instead, since those clones sit there rather than
+under the workspace home.
+
+The watcher is single-instance behind a non-blocking `flock` on
+`$HOME/.notes-sync.lock`, in the container's own home rather than the shared volume,
+because each of the owner's workspaces needs its own.
 
 #### What a recreate keeps
 
@@ -1649,11 +1696,12 @@ workspace on that daemon mounts the same volume, each writing under its own
   The `agent` group is LiteLLM in front of the Spark boxes
   (`openai/Qwen3.8-Flash-Next`), and it refuses the request before anything is
   fetched - `tools of type 'web_search' are not supported: this server runs function
-  tools only`, HTTP 400. `supports_backend_search = false` does not route around it,
-  because the client-side fallback still hands the model alias a `web_search`-typed
-  tool, which is the exact shape that endpoint rejects. The fallback lane fails too:
-  it is the `coder` alias, Ollama `qwen2.5-coder:32b`, and that model is not pulled on
-  the host.
+  tools only`, HTTP 400.
+
+  `supports_backend_search = false` does not route around it, because the client-side
+  fallback still hands the model alias a `web_search`-typed tool, which is the exact
+  shape that endpoint rejects. The fallback lane fails too: it is the `coder` alias,
+  Ollama `qwen2.5-coder:32b`, and that model is not pulled on the host.
 
   So `web_search = "agent"` and `supports_backend_search = false` stay as
   they are - the role stays filled so re-enabling is a one-key flip - but while the
@@ -1665,7 +1713,9 @@ workspace on that daemon mounts the same volume, each writing under its own
   rather than a fallback: both templates render that block gated on `search_mcp`,
   which defaults to true. It dials `$SEARXNG_URL` (default
   `http://host.docker.internal:8181`), the same key `main.tf` puts in the agent
-  environment. It carries nine tools - `search`, `image_search`, `news_search`,
+  environment.
+
+  It carries nine tools - `search`, `image_search`, `news_search`,
   `video_search`, `music_search`, `paper_search`, `fetch_content`, `autocomplete`,
   `list_engines` - and an agent's two workhorses are the first and the seventh:
   `search` for anything that is not a library question, `fetch_content` for a URL
@@ -1709,9 +1759,11 @@ workspace on that daemon mounts the same volume, each writing under its own
   gated `searxng` server, which is the search lane itself.** Each is a boolean gate in
   the template, so one env flag parks exactly one block and a template re-push applies
   it fleet-wide: `GITHUB_MCP=false`, `CONTEXT7_MCP=false`, `SEARCH_MCP=false`.
+
   The `searxng` block names the pre-installed `searxng-mcp-server` binary (pinned in
   `images/dev/tool-versions.env` and baked into the golden image), is gated on
   `search_mcp` (default true) and dials the service above through `SEARXNG_URL`.
+
   That URL is one of six keys the render sets in `[mcp_servers.searxng.env]`; the
   others pin the bridge's own tuning rather than taking its compiled-in defaults:
 
@@ -1793,8 +1845,9 @@ workspace on that daemon mounts the same volume, each writing under its own
   - **The block is missing from the rendered config.** That is a failure, not a
     warning: the default render declares the lane, so something took it away - a push
     passed its gate `false`, the workspace runs an older template, or the file lost
-    its stack marker and nothing re-renders it. Remedy: clear the gate and re-push,
-    then re-materialize the file with
+    its stack marker and nothing re-renders it.
+
+    Remedy: clear the gate and re-push, then re-materialize the file with
     `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>` from
     the stack host, or `bazelisk run //scripts:seed-dev-env -- --home <dir>` for a
     host home.
@@ -1999,12 +2052,15 @@ drives the server's experimental chat API:
 
   Before that sweep the script asks the proxy `GET /v1/model/info` and `GET /health`
   and joins them on `model_id`, so it knows which aliases still have a healthy
-  deployment. An alias with none is not registered: `chat` goes unhealthy the moment
-  `qwen2.5:7b` is not pulled on the Arc, and a dead entry in the model picker is a
-  chat that errors on the first send. `/health` is read without
-  `?check_deployments=true` because that form fires a live completion per deployment
-  and evicts the Spark prompt caches the health-check notes in `litellm/config.yaml`
-  warn about.
+  deployment.
+
+  An alias with none is not registered: `chat` goes unhealthy the moment
+  `qwen2.5:7b` is not pulled on the Arc, and a dead entry in the model picker is a chat
+  that errors on the first send.
+
+  `/health` is read without `?check_deployments=true` because that form fires a live
+  completion per deployment and evicts the Spark prompt caches the health-check notes
+  in `litellm/config.yaml` warn about.
 
   The gate fails open: a proxy that will not answer leaves every alias
   registerable, and `CODER_AGENTS_LIVE_ALIASES="agent chat"` overrides it outright.
@@ -2042,14 +2098,18 @@ which is why no AI-Gateway keys exist in `docker-compose.yml`.
 
 ### Whose compaction is whose
 
-The `compaction` pin above belongs to Coder's chat agent and to nothing else. It is one
-of the four auxiliary lanes the seeder writes into Coder's own model-config store, so it
-decides which alias serves *that* agent's summariser and title call. It never reaches a
-Grok Build CLI: the CLI reads no Coder table, and its compaction summary is an
-**in-session call on the session model** - the `[models] default` alias, `agent` here -
-which is why the summary inherits that lane's output ceiling (measured on the wire at
-`max_tokens: 32768`) instead of a cheap helper lane's. `[models] session_summary` is not
-that call either; the key serves titles and the session recap.
+The `compaction` pin above belongs to Coder's chat agent and to nothing else.
+
+It is one of the four auxiliary lanes the seeder writes into Coder's own model-config
+store, so it decides which alias serves *that* agent's summariser and title call.
+
+It never reaches a Grok Build CLI: the CLI reads no Coder table, and its compaction
+summary is an **in-session call on the session model** - the `[models] default` alias,
+`agent` here - which is why the summary inherits that lane's output ceiling (measured
+on the wire at `max_tokens: 32768`) instead of a cheap helper lane's.
+
+`[models] session_summary` is not that call either; the key serves titles and the
+session recap.
 
 So the two compactions fail for unrelated reasons, and the fix for one is not the fix
 for the other:
@@ -2199,6 +2259,7 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
   cuts the branch before the first edit and commits each unit as it lands, holding the push
   for the pull request, and the issue etiquette that reads the report before planning, puts a
   single closing keyword in the pull request body, and leaves the actual close to the merge).
+
   It travels as
   `templates/common/GROK_BUILD_AGENTS.md`, staged beside the staged `main.tf` and
   read back with `file()` / `filebase64()`; `templates/common/` keeps one copy for
@@ -2220,12 +2281,15 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
 - Each seeded file carries the stack marker - the `managed-by: evo-t1-coder-stack`
   comment, or the `"__evoT1Stack": true` / `__evoT1Stack = true` key in a JSON or TOML
   file - in `SKILL.md` directly under the `---` frontmatter, since the agent's skill
-  parser requires frontmatter on line 1 and silently drops anything else. Delete a file
-  to take it over; edit it and the stack leaves it alone. `~/.grok/config.toml` is the
-  one seed where deleting a file is not the way: it needs both marker lines gone, see
-  [The rendered `~/.grok` config](#the-rendered-grok-config). Either way the marker
-  never reaches the model: the agent strips HTML comments from injected instruction
-  text.
+  parser requires frontmatter on line 1 and silently drops anything else.
+
+  Delete a file to take it over; edit it and the stack leaves it alone.
+  `~/.grok/config.toml` is the one seed where deleting a file is not the way: it needs
+  both marker lines gone, see
+  [The rendered `~/.grok` config](#the-rendered-grok-config).
+
+  Either way the marker never reaches the model: the agent strips HTML comments from
+  injected instruction text.
 - The seeds live per workspace, on that workspace's own home volume, and seeding
   does not care whether the three shared state mounts exist.
 
@@ -2295,14 +2359,20 @@ the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by `tests/bats/re
 
 #### The repository reviewer
 
-`/reflect-and-evolve-repo` is its sibling against a different subject: where `/reflect-and-evolve` improves
-the agent setup, this one reviews past work in *this repository* and turns what it finds into planned
-improvements to code, project conventions, scripts, docs and configs. It reads the same ranked `signals.json`
-table through the same bundled `skills/reflect-and-evolve/scripts/session_signals.py`, which stays the only
-sanctioned way into `~/.grok/sessions/`, and it adds what a repo run has and a session run does not: git
-history, and the repo's own tooling and gate. Repo-scoped like `/trunk-refactor` and not seeded into a
-workspace home: canonical at `skills/reflect-and-evolve-repo/SKILL.md`, discovered through the
-`.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink, pinned by `tests/bats/reflect-and-evolve-repo-skill.bats`.
+`/reflect-and-evolve-repo` is its sibling against a different subject: where
+`/reflect-and-evolve` improves the agent setup, this one reviews past work in *this
+repository* and turns what it finds into planned improvements to code, project
+conventions, scripts, docs and configs.
+
+It reads the same ranked `signals.json` table through the same bundled
+`skills/reflect-and-evolve/scripts/session_signals.py`, which stays the only sanctioned
+way into `~/.grok/sessions/`, and it adds what a repo run has and a session run does
+not: git history, and the repo's own tooling and gate.
+
+Repo-scoped like `/trunk-refactor` and not seeded into a workspace home: canonical at
+`skills/reflect-and-evolve-repo/SKILL.md`, discovered through the
+`.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink, pinned by
+`tests/bats/reflect-and-evolve-repo-skill.bats`.
 
 ### What this is not
 
@@ -2340,11 +2410,14 @@ assistant can follow with a push. Global options
 **Why the daemon and not the Coder API.** A workspace that can host a session is a
 *running* one, and a running workspace is a labelled container: both templates stamp
 `coder.workspace_id` and `coder.workspace_name`, the same labels
-`scripts/github-auth.sh` enumerates. Reading the daemon needs no credential, which
-matters because the only Coder token this stack mints is the root-equivalent one
-`scripts/push-template.sh` creates for the length of a push and deletes on the way
-out. A chat turn should not mint one to answer "what is running", so where a verb
-belongs to Coder rather than to the daemon the CLI prints the hand-off command.
+`scripts/github-auth.sh` enumerates.
+
+Reading the daemon needs no credential, which matters because the only Coder token this
+stack mints is the root-equivalent one `scripts/push-template.sh` creates for the length
+of a push and deletes on the way out.
+
+A chat turn should not mint one to answer "what is running", so where a verb belongs
+to Coder rather than to the daemon the CLI prints the hand-off command.
 
 ### Reading the right container
 
