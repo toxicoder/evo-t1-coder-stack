@@ -21,6 +21,7 @@ repo can verify.
   LAN use. Coder's published port carries TLS (the self-signed cert
   `bootstrap.sh` issues); LiteLLM stays plain HTTP, so its traffic is not
   encrypted in transit. Reach them from outside the LAN through the supported path —
+
   the `router` sidecar behind the external Traefik, which brings real TLS and whatever
   proxy-side policy you configure — not by ad-hoc port-forwarding, which skips both.
   LiteLLM requires `LITELLM_MASTER_KEY` for every request; Coder has its own login, and
@@ -94,8 +95,10 @@ repo can verify.
   owns :80 / :443 with a self-signed cert that `bootstrap.sh` issues, so the
   encryption is real but untrusted, and the redirect on :80 is the only thing
   keeping the dashboard off plain HTTP. Homepage v2's password gate
+
   (`HOMEPAGE_AUTH_PASSWORD`) is a single shared password with no rate limiting
   — leave it enabled, since the dashboard enumerates every service on the box.
+
   The dashboard is handed the LAN IP and `LITELLM_MASTER_KEY` in its
   environment, so treat the homepage container as holding LiteLLM credentials.
 
@@ -135,6 +138,7 @@ repo can verify.
   scrape needs a shell on the stack host, and Prometheus' own UI binds `127.0.0.1` on
   `PROMETHEUS_PORT` (9090) for the same reason: the series there name every LiteLLM
   model alias and its traffic volume. The bundle adds exactly one new published port and
+
   no other new door. Mimir, Loki, Tempo and Alloy declare no `ports:` at all and answer on
   the compose network only - Mimir's query API in particular has no auth of its own once
   tenancy is off, which is why publishing it would be publishing the whole metric set.
@@ -202,6 +206,7 @@ repo can verify.
   for a workspace whose owner has connected a GitHub account to the External Auth
   provider (id `github` by default) — there is no GitHub-token template variable and no PAT in
   `.env`, so an owner who connected nothing has no GitHub credential anywhere. The
+
   pair reaches the workspace as environment, like `LITELLM_API_KEY`, plus one copy
   per workspace that the `gh_token_refresh` script writes into the gh auth store
   (0600, under the home volume) so shells launched outside the agent environment
@@ -318,8 +323,10 @@ repo can verify.
 - **The `context7` MCP server follows that same rule and the same default-on.**
   `CONTEXT7_API_KEY`, when it is set, also travels in the workspace environment, and the
   rendered `config.toml` only names `$CONTEXT7_API_KEY` - never the value. The push
+
   forwards it as the sensitive `context7_api_key` template variable and does not log
   what it carries. An empty key still renders the block (public rate limit / one
+
   failed handshake per session). Park it with `CONTEXT7_MCP=false` and a template
   re-push; with the flag on and a key present, the trust boundary widens outbound to
   Context7's API.
