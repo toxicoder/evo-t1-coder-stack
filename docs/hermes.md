@@ -26,19 +26,26 @@ tags: [hermes, dashboard, terminal, operate, safety]
 
 Hermes is the Nous Research Hermes Agent running as the interactive assistant **on the
 stack host itself**: not inside a workspace, not in a streamed desktop, but with the
-checkout, the compose project and the docker socket in reach. It adds an official Web
-Dashboard with a Chat tab that carries approval prompts, so the assistant can plan a
-change, show the plan, and wait for you to approve it before it touches anything.
+checkout, the compose project and the docker socket in reach.
 
-That is the whole point of the service: stack ops by conversation. "Recreate the dev
-stack and tell me which container restarts", "why is the coder agent offline", "run the
-gate and fix what it reports" - each one runs with a plan first and an approval card
-before the mutating command.
+It adds an official Web Dashboard with a Chat tab that carries approval prompts, so the
+assistant can plan a change, show the plan, and wait for you to approve it before it
+touches anything.
 
-Related: [dashboard.md](dashboard.md) (the card that links here),
-[litellm-routing.md](litellm-routing.md) (the aliases Hermes calls),
-[public-access.md](public-access.md) (the public name, which `auto` composes),
-[SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
+That is the whole point of the service: stack ops by conversation.
+
+- "Recreate the dev stack and tell me which container restarts"
+- "why is the coder agent offline"
+- "run the gate and fix what it reports"
+
+Each one runs with a plan first and an approval card before the mutating command.
+
+Related:
+
+- [dashboard.md](dashboard.md) (the card that links here)
+- [litellm-routing.md](litellm-routing.md) (the aliases Hermes calls)
+- [public-access.md](public-access.md) (the public name, which `auto` composes)
+- [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md)
 
 ## Access
 
@@ -47,34 +54,58 @@ Related: [dashboard.md](dashboard.md) (the card that links here),
 - **LAN:** `http://<STACK_LAN_HOST>:9119` - plain HTTP, exactly like LiteLLM on `:4000`.
   There is no self-signed cert for this port and no redirect to HTTPS. This URL stays
   when the public name is on. Tailscale reaches it the same way, on that port.
+
+### The public name
+
 - **Public name, opt-in:** `hermes-<suffix>.<base>`, so
   `https://hermes-gmktecbeast.overeazy.io` under the shipped defaults, when
   `STACK_PUBLIC_HOSTS=auto` composes it or an explicit list names it. Bootstrap
-  classifies `hermes-*` and `hermes.*` and writes `STACK_HERMES_URL`. The path is the
-  same as the other public names: Cloudflare
-  (orange cloud, WebSockets on by default), Traefik on the other LAN server (TLS
-  `*.overeazy.io`, Authelia), the `router` on this box `:8080`, then
-  `http://hermes:9119`, with the original Host preserved. Traefik's backend is
-  `:8080`, not `:9119`. See [public-access.md](public-access.md).
+  classifies `hermes-*` and `hermes.*` and writes `STACK_HERMES_URL`.
+
+  The path is the same as the other public names:
+
+  1. Cloudflare (orange cloud, WebSockets on by default)
+  2. Traefik on the other LAN server (TLS `*.overeazy.io`, Authelia)
+  3. the `router` on this box `:8080`
+  4. `http://hermes:9119`, with the original Host preserved
+
+  Traefik's backend is `:8080`, not `:9119`. See [public-access.md](public-access.md).
+### Signing in
+
 - Sign-in is HTTP basic auth from `.env`: `HERMES_DASHBOARD_USER` (default `admin`) and
   `HERMES_DASHBOARD_PASSWORD`. Bootstrap generates the password; it is **not** the
   Homepage password, and `bazelisk run //scripts:dashboard-password` does not rotate it.
+
   That basic auth stays on every door. Hermes v0.22.5 refuses to bind `0.0.0.0` with no
-  provider. On the public URL Authelia challenges first and basic auth challenges
-  second; two logins are expected. LAN `:9119`, and LAN `:8080` with this name's Host
-  header, never see Authelia, so basic auth is the credential on those paths.
+  provider.
+
+  On the public URL Authelia challenges first and basic auth challenges second; two
+  logins are expected. LAN `:9119`, and LAN `:8080` with this name's Host header, never
+  see Authelia, so basic auth is the credential on those paths.
+
+### The Chat tab
+
 - The **Chat tab** is the primary UX. It embeds the Hermes TUI - a PTY over WebSocket
   on `/api/pty` and `/api/ws` - so the terminal agent and the browser are the same
   process, and approval prompts render as cards in the chat rather than vanishing into
-  a detached tty. Hermes sends a keepalive every 20 seconds. Traefik and Authelia have
-  to pass the `Upgrade` hop. A close code **4403** is the Host / Origin / peer guard.
+  a detached tty.
+
+  Hermes sends a keepalive every 20 seconds. Traefik and Authelia have to pass the
+  `Upgrade` hop. A close code **4403** is the Host / Origin / peer guard.
+
   Compose sets `HERMES_DASHBOARD_PUBLIC_URL` from `STACK_HERMES_URL` (the seed file
   does not carry `public_url`). The seeded `dashboard.trusted_proxies` is
   `["172.16.0.0/12"]`, which is what makes Hermes honour `X-Forwarded-Proto` from the
-  router (the Secure cookie and `wss`). `HERMES_DASHBOARD_PUBLIC_URL` is environment
-  and applies when the container is recreated. An existing `hermes-data` volume does
-  not pick up `trusted_proxies` until a reseed or `hermes config set` - the volume
-  seed is copy-once. The reseed command is below.
+  router (the Secure cookie and `wss`).
+
+  `HERMES_DASHBOARD_PUBLIC_URL` is environment and applies when the container is
+  recreated.
+
+  An existing `hermes-data` volume does not pick up `trusted_proxies` until a reseed or
+  `hermes config set` - the volume seed is copy-once. The reseed command is below.
+
+### The Homepage card
+
 - The Homepage card in the **Host** group links to `STACK_HERMES_URL` (the public
   origin when set, otherwise the LAN URL). Its `siteMonitor` is
   `http://hermes:9119/api/status`, which resolves over compose DNS, so the card stays
@@ -96,6 +127,8 @@ bazelisk run //scripts:hermes-shell -- shell        # a shell in its container
 bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command, run nothing
 ```
 
+### Subcommands and options
+
 - **Subcommands:** `chat` (the default), `ask TEXT` for one question and exit, `shell`
   for a shell with the container's mounts and socket, `check` for the readiness report,
   `commands` for the assistant's own help. Every word after the subcommand is handed to
@@ -103,38 +136,58 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
 - **Options** (before the subcommand): `-p/--project-name` (`evo-t1-prod`; the dev
   sandbox is `evo-t1-dev`), `-f/--file`, `-e/--env-file`, `-m/--model <alias>` for one
   session, `-w/--writable <dir>`, `--one-shot`, `--dry-run`, `-h/--help`.
+### One container, not two
+
 - **It enters the running container rather than starting a second one.** Hermes keeps
   its sessions and memory in a SQLite store under `/opt/data`, and two containers on one
   data directory is the documented way to corrupt it - the WAL sidecars and the lock
-  only mean something inside one container. So while the gateway is up this is
-  `docker compose exec`, and the terminal agent and the dashboard agent are literally
-  the same process on the same store. Only when nothing is running does it
-  `docker compose run --rm --no-deps` a lone container. `--one-shot` forces the second
-  container anyway and says out loud what it risks.
-- **`check` is the first thing to run when an answer looks impossible.** It reports the
-  daemon, the compose CLI, the project, the container state, whether the service
-  resolves, the image, whether the data volume is seeded, whether the model key is set
-  or still a shipped placeholder, whether LiteLLM answers `/health/liveliness`, and the
-  work directory. It prints key names and never a value, and it launches nothing.
+  only mean something inside one container.
+
+  So while the gateway is up this is `docker compose exec`, and the terminal agent and
+  the dashboard agent are literally the same process on the same store. Only when
+  nothing is running does it `docker compose run --rm --no-deps` a lone container.
+  `--one-shot` forces the second container anyway and says out loud what it risks.
+
+### check, the approval gate, and the tty
+
+- **`check` is the first thing to run when an answer looks impossible.** It reports:
+
+  - the daemon, the compose CLI, the project, the container state
+  - whether the service resolves, the image
+  - whether the data volume is seeded, whether the model key is set or still a shipped
+    placeholder
+  - whether LiteLLM answers `/health/liveliness`, the work directory
+
+  It prints key names and never a value, and it launches nothing.
+
 - **Approvals are the same gate, inline.** A dangerous command stops in your tty with
-  `[o]nce | [s]ession | [a]lways | [d]eny`, deny by default. There is no browser card
-  here and nothing to approve elsewhere; the terminal door does not loosen
-  `approvals.mode: manual`, and `--yolo` / `HERMES_YOLO_MODE` have no place in this
-  stack. See [Approvals](#approvals).
+  `[o]nce | [s]ession | [a]lways | [d]eny`, deny by default.
+
+  There is no browser card here and nothing to approve elsewhere; the terminal door does
+  not loosen `approvals.mode: manual`, and `--yolo` / `HERMES_YOLO_MODE` have no place in
+  this stack. See [Approvals](#approvals).
+
 - **An interactive session needs a real tty** (the TUI draws on a pty compose allocates
   from your terminal), so `chat` and `shell` refuse from a pipe or a cron line - that is
   what `ask` is for.
+
+### What it can see, and where it may write
+
 - **What it can see:** the checkout at `$STACK_HOST_PATH`, the deploy workspace at
   `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`, `/opt/stack-skills`, the data volume, and
-  the docker socket. **What it cannot:** `/home` is not mounted, so no dotfiles, SSH
-  keys or shell history - by design. The image carries git and the Docker CLI but not
-  bazelisk, so inside the container the same operations go through
+  the docker socket.
+
+  **What it cannot:** `/home` is not mounted, so no dotfiles, SSH keys or shell history
+  - by design. The image carries git and the Docker CLI but not bazelisk, so inside the
+  container the same operations go through
   `docker compose -p evo-t1-prod -f "$STACK_HOST_PATH/docker-compose.yml"`.
+
 - **`--writable` matters more than it looks.** The official image sets
   `HERMES_WRITE_SAFE_ROOT=/opt/data`, so a file-tool write anywhere else is refused
-  outright and no approval card even appears. To have the assistant edit files on the
-  host, name the directory: `--writable "${STACK_DEPLOY_PATH:-/opt/stack-deploy}"` or
-  the checkout path.
+  outright and no approval card even appears.
+
+  To have the assistant edit files on the host, name the directory:
+  `--writable "${STACK_DEPLOY_PATH:-/opt/stack-deploy}"` or the checkout path.
 
 ## From a phone, or anywhere
 
@@ -143,12 +196,16 @@ working for them. Four doors reach the same agent, the same seeded config, the s
 skills and the same memory store; which one is open is a decision in `.env`, not a
 rebuild.
 
+### The four doors
+
 | door | what it is | shipped state | open it with |
 |---|---|---|---|
 | Dashboard | browser chat + PTY, basic auth, LAN `:9119` or the public name | on | `STACK_PUBLIC_HOSTS` for remote |
 | Terminal | `hermes-shell` on the host: `ask`, `chat`, `shell`, `check` | always | nothing |
 | API server | `POST /v1/chat/completions`, `/v1/runs`, `/api/sessions/*` on `:8642` | **off** | `HERMES_API_SERVER_ENABLED=true` |
 | Push | ntfy notifications to a phone app | **off** | keys in `/opt/data/.env` |
+
+### The API server door
 
 **The API server** is the headless door: an iOS Shortcut or a Tasker profile can
 POST a prompt and read the answer with no browser and no dashboard login.
@@ -162,13 +219,22 @@ curl -sS -X POST "http://<host>:8642/v1/chat/completions" \
 
 It ships off and the published mapping binds **loopback**, because this server
 "adds full access to the toolset, including terminal commands" per upstream, on a
-container that holds the docker socket. Turning it on is two deliberate edits: the
-flag, and `HERMES_API_BIND` if something off this host should reach it.
+container that holds the docker socket.
+
+Turning it on is two deliberate edits:
+
+1. the flag
+2. `HERMES_API_BIND` if something off this host should reach it
+
 `API_SERVER_KEY` is generated by bootstrap with the other secrets and is required
 whenever the server is on; upstream fails closed rather than serving unauthenticated.
+
 `API_SERVER_MODEL_NAME` (default `hermes`) is what a model-listing frontend shows.
+
 `API_SERVER_CORS_ORIGINS` stays unset: a browser calls the dashboard, not this port,
 and an origin allowlist is only for a client you named on purpose.
+
+### The push door
 
 **Push** is what makes a phone viable, because pull means opening a dashboard every
 time. It rides upstream's ntfy adapter and is configured in the assistant's own
@@ -181,15 +247,21 @@ printf '%s\n' 'NTFY_TOPIC=<a-topic-nobody-can-guess>' \
   'NTFY_SERVER_URL=https://ntfy.<your-domain>' >> /opt/data/.env
 ```
 
-Two reasons it lives on the volume: the gateway registers the adapter from the
-*presence* of `NTFY_TOPIC`, so an empty `NTFY_TOPIC=` in compose would hand it a
-half-configured platform, and a token in a container's environment is readable by
-anyone who can `docker inspect` it. Leave `NTFY_ALLOWED_USERS` unset and the channel
-is push-only - your phone gets the notices, and nobody can talk back to the agent
-through the topic. Set it (to the topic name) only for inbound, and only on a topic
-no one else can guess: upstream's own warning is that every publisher to a topic is
-treated as the same user. `NTFY_SERVER_URL` defaults to `https://ntfy.sh`; a
-self-hosted ntfy keeps the notices on your hardware.
+Two reasons it lives on the volume:
+
+- the gateway registers the adapter from the *presence* of `NTFY_TOPIC`, so an empty
+  `NTFY_TOPIC=` in compose would hand it a half-configured platform
+- a token in a container's environment is readable by anyone who can `docker inspect` it
+
+Leave `NTFY_ALLOWED_USERS` unset and the channel is push-only - your phone gets the
+notices, and nobody can talk back to the agent through the topic. Set it (to the topic
+name) only for inbound, and only on a topic no one else can guess: upstream's own
+warning is that every publisher to a topic is treated as the same user.
+
+`NTFY_SERVER_URL` defaults to `https://ntfy.sh`; a self-hosted ntfy keeps the notices
+on your hardware.
+
+### What to ask from a phone
 
 **What to ask from a phone** is the same list you would run at the desk, and the
 `coding-agents` skill is what teaches the assistant to answer it:
@@ -211,8 +283,12 @@ daemon by workspace label. See
 `hermes-shell -- check` answers "can I open the assistant". It cannot answer "is this
 still the assistant this repo describes", and the two come apart on a long-lived box:
 an operator edits the config inside the volume, a recreate reads a stale `.env`, a
-merge changes the seed and a seed-only-when-absent copy never takes it. `hermes-doctor`
-answers the second question. It is read-only and prints key names with no value.
+merge changes the seed and a seed-only-when-absent copy never takes it.
+
+`hermes-doctor` answers the second question. It is read-only and prints key names with
+no value.
+
+### The commands
 
 ```sh
 bazelisk run //scripts:hermes-doctor              # every check
@@ -223,32 +299,49 @@ bazelisk run //scripts:hermes-doctor -- --check approvals --check web-lane
 bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, inspect nothing
 ```
 
+### What it reads
+
 - **What it reads:** the config the container actually loads, the environment it was
   created with, the mounts it was given, and the two seed files beside the checkout.
+
   The created environment is the fact and the `.env` beside the compose file is the
   intention: compose interpolated the former at create time, so a key can be right in
-  the file and stale in the container until the next recreate. Every container-level
-  fact comes from `docker inspect` or `docker compose ps`; nothing writes, restarts,
-  recreates, or execs.
-- **The fourteen checks:** `approvals` (manual, with cron and unattended both deny),
-  `terminal-cwd`, `write-root`, `web-lane`, `keyless-egress`, `mcp-servers`,
-  `seed-drift`, `mount-identity`, `image-pin`, `model-key`, `dashboard`, `memories`,
-  `anywhere-door` (the API server's enabled/keyed/bound state and whether the push
-  channel can be answered by strangers), and `agent-verbs` (whether the assistant can
-  still reach `scripts/coder-sessions.sh` and the socket those verbs read). The last
-  two are the ones that keep the phone story honest: an open door nobody configured,
-  and a closed door nobody can find, are the same class of surprise.
+  the file and stale in the container until the next recreate.
+
+  Every container-level fact comes from `docker inspect` or `docker compose ps`; nothing
+  writes, restarts, recreates, or execs.
+
+### The fourteen checks
+
+- **The fourteen checks:**
+
+  - `approvals` (manual, with cron and unattended both deny)
+  - `terminal-cwd`, `write-root`, `web-lane`, `keyless-egress`, `mcp-servers`,
+    `seed-drift`, `mount-identity`, `image-pin`, `model-key`, `dashboard`, `memories`
+  - `anywhere-door` (the API server's enabled/keyed/bound state and whether the push
+    channel can be answered by strangers)
+  - `agent-verbs` (whether the assistant can still reach `scripts/coder-sessions.sh`
+    and the socket those verbs read)
+
+  The last two are the ones that keep the phone story honest: an open door nobody
+  configured, and a closed door nobody can find, are the same class of surprise.
+
 - **It reports, it does not gate.** Exit 0 on a clean bill (warnings allowed), 1 when a
   check failed, 2 on a bad invocation, 5 when it cannot find a checkout.
   `hermes-shell -- check` stays the thing that decides whether to launch a session.
+
+### The findings it exists to catch
+
 - **Three findings it exists to catch**, each one measured on a live box:
-  `terminal.cwd` still carrying the `${STACK_HOST_PATH}` token (Hermes validates that
-  value with `expanduser()` alone, so the token reads as a missing directory while
-  `hermes config get` prints it looking healthy), `STACK_HOST_PATH` naming a directory
-  with no checkout (compose mounts an empty directory over the repo and every
-  container-level check still reads healthy), and a `web` block that stopped pinning
-  `searxng` or flipped a keyless switch back on, which routes a search to a vendor's
-  free tier while the config still looks local.
+
+  - `terminal.cwd` still carrying the `${STACK_HOST_PATH}` token (Hermes validates that
+    value with `expanduser()` alone, so the token reads as a missing directory while
+    `hermes config get` prints it looking healthy)
+  - `STACK_HOST_PATH` naming a directory with no checkout (compose mounts an empty
+    directory over the repo and every container-level check still reads healthy)
+  - a `web` block that stopped pinning `searxng` or flipped a keyless switch back on,
+    which routes a search to a vendor's free tier while the config still looks local
+
 - **`--data DIR`** points the two volume checks at a directory instead of asking the
   daemon where the volume is mounted, so the audit can be run against a copy of one.
 - **Run it before a `--force` re-seed and after a merge.** The drift check names the
@@ -265,8 +358,9 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
 - Compose supplies the provider: `HERMES_DASHBOARD_BASIC_AUTH_USERNAME`,
   `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD` and `HERMES_DASHBOARD_BASIC_AUTH_SECRET`,
   interpolated from `.env` with the same non-empty fallbacks `.env.sample`
-  carries (`admin` / `change-me-hermes` / `change-me-hermes-secret`). An empty
-  interpolation default is a boot error on `0.0.0.0`: the plugin skips
+  carries (`admin` / `change-me-hermes` / `change-me-hermes-secret`).
+
+  An empty interpolation default is a boot error on `0.0.0.0`: the plugin skips
   registration and the gateway refuses to bind.
 - The result fails closed: no credentials, no dashboard. There is no unauthenticated
   read-only mode to fall back to.
@@ -279,23 +373,35 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
 - `agent` also thinks hard by default: it bakes `reasoning_effort: xhigh`.
   **`agent-low`**, **`agent-medium`** and **`agent-xhigh`** are the thinking variants of
   it - the same Qwen3.8-Flash-Next on the same three Spark boxes, with real
-  `tool_calls` and that level baked into the alias instead. Use one when a run needs a
-  different level; Qwen3.8-Flash-Next takes `low`, `medium` and `xhigh` and nothing else.
+  `tool_calls` and that level baked into the alias instead.
+
+  Use one when a run needs a different level; Qwen3.8-Flash-Next takes `low`, `medium`
+  and `xhigh` and nothing else.
+### The pinless aliases
+
 - **`agent-swarm`** is one of the nine Spark aliases, and one of four - with
   **`agent-explore`**, **`agent-review`** and **`agent-swarm-fast`** - that the LiteLLM
   session pin does not cover: same model, same three boxes, same baked `xhigh`, but each
-  request is placed on the least-busy healthy box. It is the lane for a parallel fan-out,
-  not for one long Hermes session - a single thread would give up the pin's prefix-cache
-  locality and could be prefilled on a different box each turn. Hermes keeps `agent` as its
-  default.
+  request is placed on the least-busy healthy box.
+
+  It is the lane for a parallel fan-out, not for one long Hermes session - a single
+  thread would give up the pin's prefix-cache locality and could be prefilled on a
+  different box each turn. Hermes keeps `agent` as its default.
+
   The other three pinless groups serve a Grok Build subagent fleet rather than a chat:
-  `agent-explore` bakes `low` for a wave of read-only mappers, `agent-review` bakes `xhigh`
-  for the skeptics that check what that fleet wrote, and `agent-swarm-fast` is `agent-swarm`
-  again for a wave of writers. The two `-fast` aliases, that one and its pinned twin
-  **`agent-xhigh-fast`**, differ from their parents in one call only: the proxy, not the
-  client, re-serves that session's conversation summary from the Arc group
-  `compaction-fast`, and every other turn still runs on a Spark. See
-  [litellm-routing.md](litellm-routing.md#the-swarm-lane-agent-swarm).
+
+  - `agent-explore` bakes `low` for a wave of read-only mappers
+  - `agent-review` bakes `xhigh` for the skeptics that check what that fleet wrote
+  - `agent-swarm-fast` is `agent-swarm` again for a wave of writers
+
+  The two `-fast` aliases, that one and its pinned twin **`agent-xhigh-fast`**, differ
+  from their parents in one call only: the proxy, not the client, re-serves that
+  session's conversation summary from the Arc group `compaction-fast`, and every other
+  turn still runs on a Spark.
+
+  See [litellm-routing.md](litellm-routing.md#the-swarm-lane-agent-swarm).
+### The key and the fallbacks
+
 - The key is `LITELLM_MASTER_KEY`, substituted from the environment into the seeded
   `config.yaml`. Do not copy the key into a Hermes file - one secret, one owner.
 - Fallbacks, in the order worth trying them:
@@ -305,50 +411,77 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
     those weights write the tool call into the message body as plain text, so agent
     turns silently lose their tools. See
     [litellm-routing.md](litellm-routing.md#tool-calls-the-measured-limitation).
+### How the providers block declares aliases
+
 - The models come from a `providers:` block in `hermes/config.yaml`. Its `litellm` row
   declares the shared catalogue - the aliases that are not one of the Arc's own three
-  weights - and each Arc row declares its weight with its `default_model`. Between
-  them those declarations are every client-selectable alias in
-  `litellm/config.yaml`, and a declaration is what makes an alias routable: Hermes
-  matches a typed `/model <alias>` against the ids each row declares and routes it to
-  the row that declares it, while a name no row declares is left on the current
-  provider as an unknown hidden model. `litellm/config.yaml` owns the set, so an alias
-  is added there and a row follows; the gate fails when the two drift apart, or when
-  one alias ends up on two rows.
+  weights - and each Arc row declares its weight with its `default_model`.
+
+  Between them those declarations are every client-selectable alias in
+  `litellm/config.yaml`, and a declaration is what makes an alias routable.
+
+  Hermes matches a typed `/model <alias>` against the ids each row declares and routes
+  it to the row that declares it, while a name no row declares is left on the current
+  provider as an unknown hidden model.
+
+  `litellm/config.yaml` owns the set, so an alias is added there and a row follows; the
+  gate fails when the two drift apart, or when one alias ends up on two rows.
+### Route and model are separate switches
+
 - Route and model are two separate switches. A `providers:` row selects the route -
   base URL, api key, api mode - and the model for a turn is otherwise the value in
-  the `model:` block. Measured on the shipped image, `--provider <row>` moves the
-  route and takes that row's `default_model` with it: `--provider arc-chat` sends
-  `"model":"chat"`, `--provider arc-coder` sends `"model":"coder"`,
-  `--provider arc-coder-fast` sends `"model":"coder-fast"`, and `--provider litellm`
-  sends `"model":"agent"` - that row's `default_model` is `agent`, which is also what
-  the `model:` block holds. `-m/--model <alias>` overrides it: `--model agent-swarm`
-  sends `"model":"agent-swarm"`, and `--provider litellm --model chat` sends
-  `"model":"chat"`. A run with no flags sends the `model:` block's value (`agent`)
-  whatever rows exist, and `hermes config set model.provider <row>` changes the route
-  and leaves that value alone - the `default_model` pickup is gated on the CLI flag,
-  not on the config key.
-- The verbs that do change the model: `/model <alias>` inside a session,
-  `bazelisk run //scripts:hermes-shell -- -m <alias>` from the host, which sets
-  `HERMES_MODEL` in the container, and `hermes config set model.default <alias>` to
-  persist it in the live config under `/opt/data`. `model.model` is the legacy
-  spelling of that same value: the loader copies it to `default` only while the block
-  carries none, and drops it after that - which is the shape a persisted `/model`
-  writes. So after one in-session switch, `hermes config set model.model <alias>`
-  prints a success line and changes nothing, and `hermes config get model.model`
-  answers "Config key not set" for the same reason even when a model is set; read it
-  back with `hermes config get model.default`.
+  the `model:` block.
+
+  Measured on the shipped image, `--provider <row>` moves the route and takes that
+  row's `default_model` with it:
+
+  - `--provider arc-chat` sends `"model":"chat"`
+  - `--provider arc-coder` sends `"model":"coder"`
+  - `--provider arc-coder-fast` sends `"model":"coder-fast"`
+  - `--provider litellm` sends `"model":"agent"` - that row's `default_model` is
+    `agent`, which is also what the `model:` block holds
+
+  `-m/--model <alias>` overrides it: `--model agent-swarm` sends `"model":"agent-swarm"`,
+  and `--provider litellm --model chat` sends `"model":"chat"`.
+
+  A run with no flags sends the `model:` block's value (`agent`) whatever rows exist,
+  and `hermes config set model.provider <row>` changes the route and leaves that value
+  alone - the `default_model` pickup is gated on the CLI flag, not on the config key.
+### The verbs that change the model
+
+- The verbs that do change the model:
+
+  - `/model <alias>` inside a session
+  - `bazelisk run //scripts:hermes-shell -- -m <alias>` from the host, which sets
+    `HERMES_MODEL` in the container
+  - `hermes config set model.default <alias>` to persist it in the live config under
+    `/opt/data`
+
+  `model.model` is the legacy spelling of that same value: the loader copies it to
+  `default` only while the block carries none, and drops it after that - which is the
+  shape a persisted `/model` writes.
+
+  So after one in-session switch, `hermes config set model.model <alias>` prints a
+  success line and changes nothing, and `hermes config get model.model` answers "Config
+  key not set" for the same reason even when a model is set; read it back with
+  `hermes config get model.default`.
+### The Arc rows and the picker
+
 - The Arc's own weights also ship as named rows beside that catalogue - `arc-chat`,
-  `arc-coder` and `arc-coder-fast` - each pointing at the same LiteLLM door. The
-  picker does not show them beside it: Hermes folds rows that share an endpoint,
+  `arc-coder` and `arc-coder-fast` - each pointing at the same LiteLLM door.
+
+  The picker does not show them beside it: Hermes folds rows that share an endpoint,
   credential and wire protocol into one group, so a single `litellm` entry lists
   every alias those rows declare, and the Arc rows stay reachable as `--provider`
-  routes and as a typed `/model <alias>`. Each row's `default_model` is its weight's
-  one declaration, and that declaration is what makes `/model chat` routable: two
-  rows declaring the same id makes `switch_model` refuse the name outright, so
-  `chat`, `coder` and `coder-fast` are declared only by their Arc rows. These are the
-  route verbs, and `arc-chat` is the row to route through when a session wants the
-  Arc's tool-capable model:
+  routes and as a typed `/model <alias>`.
+
+  Each row's `default_model` is its weight's one declaration, and that declaration is
+  what makes `/model chat` routable: two rows declaring the same id makes `switch_model`
+  refuse the name outright, so `chat`, `coder` and `coder-fast` are declared only by
+  their Arc rows.
+
+  These are the route verbs, and `arc-chat` is the row to route through when a session
+  wants the Arc's tool-capable model:
 
   ```sh
   hermes --provider arc-chat                  # route one session through arc-chat
@@ -358,28 +491,38 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   `hermes --provider arc-chat` does not need the model named beside it - it sends
   `chat` on its own, and `-m <alias>` is there only to send something else through
   that row. A run that names no flag is untouched by any of this, so the default stays
-  `agent` and a healthy Spark box behaves exactly as before. The rows go through
-  LiteLLM rather than `http://ollama:11434` because the proxy is the stack's sole model
-  transport, it is where the aliases and the Arc's context window are defined, and
-  11434 is deliberately unpublished.
+  `agent` and a healthy Spark box behaves exactly as before.
+
+  The rows go through LiteLLM rather than `http://ollama:11434` because the proxy is
+  the stack's sole model transport, it is where the aliases and the Arc's context
+  window are defined, and 11434 is deliberately unpublished.
+### What the picker hides
+
 - Two parts of that list are deliberate. `compaction-fast` is served by the proxy and
   kept out of the picker on purpose: it is the Arc summariser the two `-fast` lanes hop
   to for one conversation summary, it carries no tool support, and a session must not
-  drive itself with it. `discover_models: false` on the `litellm` row is what keeps it
-  out of the list - left on, Hermes probes the proxy's `/v1/models` and adopts whatever
-  it advertises. Read that as a hide rather than a wall: no row declares the id, and a
-  name no row declares is *accepted* as an unknown hidden model on the current
-  provider, so a typed `/model compaction-fast` still puts a turn on it. Nothing
-  refuses it for you.
+  drive itself with it.
+
+  `discover_models: false` on the `litellm` row is what keeps it out of the list - left
+  on, Hermes probes the proxy's `/v1/models` and adopts whatever it advertises.
+
+  Read that as a hide rather than a wall: no row declares the id, and a name no row
+  declares is *accepted* as an unknown hidden model on the current provider, so a typed
+  `/model compaction-fast` still puts a turn on it. Nothing refuses it for you.
+### The seed reaches the volume once
+
 - All of that lives in the seed, and the seed reaches the volume once:
   `scripts/hermes-bootstrap.sh` copies `hermes/config.yaml` into the data volume only
-  when the file is absent. A box that ran an earlier seed therefore has no `litellm`
-  row at all - `--provider litellm` names a row its config does not have, the eleven
-  catalogue aliases are undeclared there, and with no row carrying
-  `discover_models: false` the picker adopts `compaction-fast` off the proxy. Check it
-  with `bazelisk run //scripts:hermes-doctor -- diff`, which names the file that
-  differs and prints the `hermes-bootstrap --data <mount> --force` line that re-seeds
-  it; a hand-edited volume copy is worth reading before you overwrite it.
+  when the file is absent.
+
+  A box that ran an earlier seed therefore has no `litellm` row at all -
+  `--provider litellm` names a row its config does not have, the eleven catalogue
+  aliases are undeclared there, and with no row carrying `discover_models: false` the
+  picker adopts `compaction-fast` off the proxy.
+
+  Check it with `bazelisk run //scripts:hermes-doctor -- diff`, which names the file
+  that differs and prints the `hermes-bootstrap --data <mount> --force` line that
+  re-seeds it; a hand-edited volume copy is worth reading before you overwrite it.
 - Nous Portal is an optional upstream, not a default, and this page does not document it.
   Nothing here needs an account.
 
@@ -389,35 +532,45 @@ The assistant can look things up, and the query leaves through your own SearXNG.
 
 - `web_search` goes to the stack's SearXNG container: the seeded config sets
   `web.search_backend: searxng`, and compose gives the container
-  `SEARXNG_URL=${STACK_HERMES_SEARCH_URL:-http://searxng:8181}`. The variable's
-  presence is what registers the provider (`plugins/web/searxng` reads
+  `SEARXNG_URL=${STACK_HERMES_SEARCH_URL:-http://searxng:8181}`.
+
+  The variable's presence is what registers the provider (`plugins/web/searxng` reads
   `SEARXNG_URL` as its key env), and it is the only bundled web provider that
   needs no API key. The name resolves on the compose network, so this adds no
   published port.
 - **Both keyless switches stay off, and that is the part that keeps the promise.**
   `agent/web_search_registry.py` resolves a backend in five steps, and its last
   one is an anonymous free-tier ring - `exa`, `parallel`, `firecrawl`,
-  `keenable` - reached with no key at all. A seed that named no backend and left
-  `web.keyless_fallback` and `web.keyless_rescue` at their shipped `true` would
-  answer a search from a vendor's public endpoint while looking local. With both
-  false, a query either goes to your instance or fails on the box.
+  `keenable` - reached with no key at all.
+
+  A seed that named no backend and left `web.keyless_fallback` and `web.keyless_rescue`
+  at their shipped `true` would answer a search from a vendor's public endpoint while
+  looking local. With both false, a query either goes to your instance or fails on the
+  box.
 - `web_extract` is deliberately unconfigured. SearXNG aggregates engine results
   and does not fetch pages, so the seed leaves `web.backend` and
   `web.extract_backend` empty and page extraction fails with "no extract provider
-  configured". Set `web.extract_backend` yourself when you decide a fetch is
-  worth a third-party extractor; nothing reaches one by default.
+  configured".
+
+  Set `web.extract_backend` yourself when you decide a fetch is worth a third-party
+  extractor; nothing reaches one by default.
 - Query the lane the same way the agent does:
-  `bazelisk run //scripts:search-check` from a host shell counts results per
-  engine, which is how an empty answer stays distinguishable from no answer.
-  Inside the container,
-  `curl -s -H 'Accept: application/json' "$SEARXNG_URL/search?q=hermes&format=json"`
-  is the exact request the provider makes. The instance only answers JSON
-  because `searxng/settings.yml` adds `json` to `search.formats`; without it the
-  request is refused with 403 before the query is parsed.
+
+  - `bazelisk run //scripts:search-check` from a host shell counts results per
+    engine, which is how an empty answer stays distinguishable from no answer
+  - inside the container,
+    `curl -s -H 'Accept: application/json' "$SEARXNG_URL/search?q=hermes&format=json"`
+    is the exact request the provider makes
+
+  The instance only answers JSON because `searxng/settings.yml` adds `json` to
+  `search.formats`; without it the request is refused with 403 before the query is
+  parsed.
 - Re-point the lane with `STACK_HERMES_SEARCH_URL` in `.env` (a sibling box, say)
-  and recreate. An operator who wants a keyed provider sets
-  `web.search_backend` plus that vendor's key env in the container themselves -
-  the seed carries neither, and adding one is a decision with a privacy cost.
+  and recreate.
+
+  An operator who wants a keyed provider sets `web.search_backend` plus that vendor's
+  key env in the container themselves - the seed carries neither, and adding one is a
+  decision with a privacy cost.
 
 ## Mounts and "be the host"
 
@@ -429,44 +582,74 @@ The assistant can look things up, and the query leaves through your own SearXNG.
 | `./hermes/skills` | `/opt/stack-skills` (ro) | git-tracked skills |
 | `/var/run/docker.sock` | `/var/run/docker.sock` | compose and container control |
 
+### The data volume and the checkout
+
 - `/opt/data` is a **named volume on purpose**. Hermes keeps a SQLite database there in
   WAL mode, and WAL on a virtiofs bind mount is not safe. Bind-mounting that path is how
   you corrupt the assistant's own memory.
+
 - `STACK_HOST_PATH` is the checkout's `pwd -P`, or, from a subdirectory or a linked
   worktree, its git top-level. Compose bind-mounts that host path at
   the same path inside the container, so `docker compose -f $STACK_HOST_PATH/docker-compose.yml`
-  talking through the socket names bind sources the daemon can find. Empty (CI
-  `compose config`) falls back to `.:/opt/stack`. `bootstrap` refreshes the key only
-  after checking the path holds this `docker-compose.yml`: compose mounts whatever the
-  key names, so a stale value leaves the assistant working an empty directory while
-  every container-level check still reads healthy.
+  talking through the socket names bind sources the daemon can find.
+
+  Empty (CI `compose config`) falls back to `.:/opt/stack`.
+
+  `bootstrap` refreshes the key only after checking the path holds this
+  `docker-compose.yml`: compose mounts whatever the key names, so a stale value leaves
+  the assistant working an empty directory while every container-level check still reads
+  healthy.
+
+### The working directory must be a literal path
+
 - The working directory the agent runs in is `terminal.cwd`, and it has to be a literal
-  path. Hermes validates it in `agent/runtime_cwd.py` with `expanduser()` alone, so a
-  `${VAR}` left in the file is reported as `does not exist` and the agent works somewhere
-  else, while `hermes config get terminal.cwd` still prints the token because the config
-  *loader* does expand `${VAR}` - the two paths disagree, and only the runtime one runs
-  commands. `hermes-bootstrap` renders the placeholder in the seeded `config.yaml` at
-  seed time (`--cwd DIR` overrides what it renders), which is the part that fixes a
-  long-lived box. compose also sets `TERMINAL_CWD` from the same key, as the backstop for
-  a config that names no `terminal.cwd`: `apply_terminal_config_to_env` lets an explicit
+  path. Hermes validates it in `agent/runtime_cwd.py` with `expanduser()` alone:
+
+  - a `${VAR}` left in the file is reported as `does not exist` and the agent works
+    somewhere else
+  - `hermes config get terminal.cwd` still prints the token because the config *loader*
+    does expand `${VAR}`
+
+  The two paths disagree, and only the runtime one runs commands.
+
+  `hermes-bootstrap` renders the placeholder in the seeded `config.yaml` at seed time
+  (`--cwd DIR` overrides what it renders), which is the part that fixes a long-lived box.
+
+  compose also sets `TERMINAL_CWD` from the same key, as the backstop for a config that
+  names no `terminal.cwd`: `apply_terminal_config_to_env` lets an explicit
   `terminal.cwd` in the file own that variable, so the file decides wherever it carries
-  one. Re-seed a volume that predates the render with
+  one.
+
+  Re-seed a volume that predates the render with
   `hermes-bootstrap --data <mount> --force`.
+
+### The skills directory
+
 - `hermes/skills/` is tracked in git. Add a skill by editing the repo, never by editing
   the volume; the volume copy is not the record.
+
+### The deploy workspace
+
 - `STACK_DEPLOY_PATH` (default `/opt/stack-deploy`) is the **deploy workspace**: the one
   directory meant for clones, builds, and the compose project of a third-party project
-  the assistant brings up. It is mounted at its own absolute path for the same reason
-  `STACK_HOST_PATH` is - a bind source inside a project file the assistant writes has to
-  resolve on the host daemon - and bootstrap fills it in without overwriting a path you
-  set yourself. It is deliberately outside `/home`, so giving the assistant somewhere to
-  work did not mean giving it your dotfiles. An existing container gains the mount on
-  recreate, since `restart` keeps the old mounts.
+  the assistant brings up.
+
+  It is mounted at its own absolute path for the same reason `STACK_HOST_PATH` is - a
+  bind source inside a project file the assistant writes has to resolve on the host
+  daemon - and bootstrap fills it in without overwriting a path you set yourself.
+
+  It is deliberately outside `/home`, so giving the assistant somewhere to work did not
+  mean giving it your dotfiles. An existing container gains the mount on recreate, since
+  `restart` keeps the old mounts.
+
+### What the docker socket costs
+
 - `group_add: ${DOCKER_GID}` plus the socket is the same credential the `coder` service
-  already holds: root-equivalent on the host. Nothing new is exposed here that the Coder
-  container does not already have - which is precisely why approvals, below, are the
-  control rather than the mount list. A public Hermes name has that same standing as
-  public Coder.
+  already holds: root-equivalent on the host.
+
+  Nothing new is exposed here that the Coder container does not already have - which is
+  precisely why approvals, below, are the control rather than the mount list. A public
+  Hermes name has that same standing as public Coder.
 - `HERMES_UID` / `HERMES_GID` are set to the host operator, so a file Hermes writes into
   `$STACK_HOST_PATH` is yours to commit and not owned by uid 10000.
 - `/home` is **not** mounted in v1. Hermes cannot see your dotfiles, your SSH keys or
@@ -486,22 +669,34 @@ The assistant can look things up, and the query leaves through your own SearXNG.
   is acting without one, stop it and re-read the mode.
 - From the terminal door the same gate is inline in your tty: a dangerous command stops
   with `[o]nce | [s]ession | [a]lways | [d]eny` and does not proceed until you answer,
-  with deny the default. An approval is scoped to the session you answer in, so a yes
-  given over there does not cover a fresh session opened at this door.
-  `--yolo` and `HERMES_YOLO_MODE` bypass the gate entirely; they have no place here.
+  with deny the default.
+
+  An approval is scoped to the session you answer in, so a yes given over there does not
+  cover a fresh session opened at this door. `--yolo` and `HERMES_YOLO_MODE` bypass the
+  gate entirely; they have no place here.
 
 ## Bootstrap and skills
+
+### What the first up seeds
 
 - The first `compose up` runs `hermes-init`, which is the in-container equivalent of
   `bazelisk run //scripts:hermes-bootstrap`: it runs
   `scripts/hermes-bootstrap.sh --in-container` and copies `hermes/config.yaml` and
-  `hermes/SOUL.md` into `/opt/data` **only when those files are missing**. Editing the
-  copy in the volume is how an operator ends up with a config no one can reproduce.
+  `hermes/SOUL.md` into `/opt/data` **only when those files are missing**.
+
+  Editing the copy in the volume is how an operator ends up with a config no one can
+  reproduce.
+
 - The seed is a template for one key: `${STACK_HOST_PATH}` in `terminal.cwd` is rendered
   to a literal path on the way into the volume, from `--cwd`, then `STACK_HOST_PATH`,
-  then `/opt/stack` (announced when it falls back). `${LITELLM_MASTER_KEY}` stays a token
-  on purpose - Hermes expands it at boot, and a byte of the key in a volume copy is what
+  then `/opt/stack` (announced when it falls back).
+
+  `${LITELLM_MASTER_KEY}` stays a token on purpose - Hermes expands it at boot, and a
+  byte of the key in a volume copy is what
   [Mounts and "be the host"](#mounts-and-be-the-host) argues against.
+
+### Reseed the volume deliberately
+
 - To reseed deliberately:
 
 ```sh
@@ -512,39 +707,51 @@ bazelisk run //scripts:hermes-bootstrap -- --data <mount> --force
 `/opt/data`). `--force` is how an existing volume picks up the seeded
 `dashboard.trusted_proxies`, and `--cwd /absolute/path/to/checkout` is how a host re-seed
 names the working directory when the shell running it carries no `STACK_HOST_PATH`.
+
 Setting that key with `hermes config set` is the
 in-container alternative. `HERMES_DASHBOARD_PUBLIC_URL` is not in the volume;
 recreate the container and the env applies.
 
+### Adding a skill
+
 - A skill is one directory: `hermes/skills/<name>/SKILL.md`, with
   [agentskills.io](https://agentskills.io) frontmatter for the name and description.
   Commit it, and the next `up` has it.
-- What ships, and which question each one answers: `evo-stack-ops` (pull, status,
-  restart, logs for this stack), `coder-workspace` (workspaces and their GitHub auth),
-  `coding-agents` (what the coding agents in those workspaces are doing right now,
-  and how to answer, start, or stop one — the `//scripts:coder-sessions` verbs),
-  `model-routing` (which LiteLLM alias, and how to switch it), `host-linux-ops` (the
-  right Linux command, what each flag does, and the blast radius before it runs),
-  `host-diagnostics` (read-only triage for a slow, hot, full or failing box),
-  `web-research` (what is worth looking up, how to read an empty answer from the
-  lane above, and what that lane refuses to do), and
-  `deploy-from-github` (a named repository to running, with the read-first, pin-the-ref,
-  isolate, preflight, health-check, keep-a-rollback order). The last four are what make
-  the terminal door worth opening: they carry the mentoring stance - inspect, explain,
-  propose, then act on the yes.
+- What ships, and which question each one answers:
+
+  - `evo-stack-ops` (pull, status, restart, logs for this stack)
+  - `coder-workspace` (workspaces and their GitHub auth)
+  - `coding-agents` (what the coding agents in those workspaces are doing right now,
+    and how to answer, start, or stop one — the `//scripts:coder-sessions` verbs)
+  - `model-routing` (which LiteLLM alias, and how to switch it)
+  - `host-linux-ops` (the right Linux command, what each flag does, and the blast
+    radius before it runs)
+  - `host-diagnostics` (read-only triage for a slow, hot, full or failing box)
+  - `web-research` (what is worth looking up, how to read an empty answer from the
+    lane above, and what that lane refuses to do)
+  - `deploy-from-github` (a named repository to running, with the read-first,
+    pin-the-ref, isolate, preflight, health-check, keep-a-rollback order)
+
+  The last four are what make the terminal door worth opening: they carry the mentoring
+  stance - inspect, explain, propose, then act on the yes.
 - A bind-mounted skill needs no recreate when the agent reloads skills from disk; start a
   **new session** - a fresh Chat tab, or a new `hermes-shell` run - and the new skill is
   offered. Recreate only if it still does not show up, since `restart` keeps the old
   mounts.
+### The identity file
+
 - `SOUL.md` is the identity - voice and stance, a short persona. It is not a fork of
   [AGENTS.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/AGENTS.md): the repo's shell conventions stay in that file, where the
   writers and the linters read them.
 
 ## Security notes
 
+### The public name and its doors
+
 - The public name is opt-in (`hermes-*`, which `auto` composes from the naming parts or
   an explicit list pins). It does not change what the container can do: local terminal,
   host mounts and the docker socket still mean this agent can affect the real host.
+
   Treat its approvals the way you treat a root shell. That is the same standing as
   public Coder.
 - HTTP basic auth stays, including on the public URL. Authelia is the gate in front of
@@ -552,6 +759,8 @@ recreate the container and the env applies.
   basic-auth provider is load-bearing. It is a provider, not a toggle.
 - `HERMES_DASHBOARD_INSECURE` does not remove that requirement. Leave
   `approvals.mode` on `manual`.
+### Secrets and ad-hoc shell
+
 - Secrets live in gitignored `.env` and in the `hermes-data` volume. Never commit them,
   and never paste `LITELLM_MASTER_KEY` into a chat to prove a route works.
 - Prefer structured commands - the existing Bazel scripts and `docker compose` - over
@@ -560,17 +769,22 @@ recreate the container and the env applies.
 - No GitHub PAT in Hermes. GitHub auth in this stack is Coder External Auth only, and a
   token here would sit on a container that can both write to the checkout and drive the
   host daemon. See [SECURITY.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/SECURITY.md).
+### The extra doors
+
 - The terminal door adds a way in for someone who already has a shell on this host, and
   opens no new listener, no new port and no new credential. `hermes-shell` authenticates
   nothing of its own: `docker` on that host is the credential, and it was always
-  root-equivalent here. Its one guard is that the assistant's approvals stay `manual` on
-  both doors.
+  root-equivalent here.
+
+  Its one guard is that the assistant's approvals stay `manual` on both doors.
 - The API server is the widest door here and ships closed. It carries the same
   toolset as the dashboard, terminal included, and its only gate is the bearer key,
   so it is off in compose and its host mapping binds loopback until an operator
-  names both. Treat `HERMES_API_SERVER_KEY` as a root credential: rotate it by
-  editing `.env` and recreating the container, and give a phone a Shortcut that
-  holds it rather than a URL that carries it.
+  names both.
+
+  Treat `HERMES_API_SERVER_KEY` as a root credential: rotate it by editing `.env` and
+  recreating the container, and give a phone a Shortcut that holds it rather than a URL
+  that carries it.
 - A push channel is an inbound door even when you only use it to listen. Every
   publisher to an ntfy topic is one identity to the gateway, so the push-only
   posture - `NTFY_TOPIC` and `NTFY_PUBLISH_TOPIC` set, `NTFY_ALLOWED_USERS` not -
@@ -616,7 +830,9 @@ bazelisk run //scripts:dev-stack -- up
 ```
 
 The stack runners take `up`, `down`, `status`, `logs`, `reset`; `status` and `logs` are
-where a Hermes that will not bind its port is diagnosed first. Status across the whole
-box, including this card, is in [dashboard.md](dashboard.md); the LAN and public
-routing rules are in [public-access.md](public-access.md), and the service inventory is
-in [README.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md).
+where a Hermes that will not bind its port is diagnosed first.
+
+Status across the whole box, including this card, is in
+[dashboard.md](dashboard.md); the LAN and public routing rules are in
+[public-access.md](public-access.md), and the service inventory is in
+[README.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md).

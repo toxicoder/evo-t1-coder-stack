@@ -46,105 +46,165 @@ not the runfiles copy, so the env pass rewrites the live `.env` beside
 
 ## What goes stale
 
-**The env files.** `docker-compose.yml` builds its variable references in two
-steps: `${VAR}` inside `expose` expands during the shell phase, so compose
-never sees those variables and a changed value needs a rebuild, and an unset
-variable collapses to `127.0.0.1:57620:57620/tcp`, which fails to bind. So the
-host ports and addresses live in a key=value env file - `.env` for the stable
+**The env files.** `docker-compose.yml` builds its variable references in two steps:
+
+- `${VAR}` inside `expose` expands during the shell phase, so compose never sees those
+  variables and a changed value needs a rebuild
+- an unset variable collapses to `127.0.0.1:57620:57620/tcp`, which fails to bind
+
+So the host ports and addresses live in a key=value env file - `.env` for the stable
 stack, `dev-stack.env` for the dev one - and each has a checked-in twin beside
-it that carries the keys and explains them in the comment lines above. A pull
-that renames, adds or retires a key silently changes what the stack runs on.
+it that carries the keys and explains them in the comment lines above.
+
+A pull that renames, adds or retires a key silently changes what the stack runs on.
 
 **The workspace config.** `~/.grok/AGENTS.md`, `~/.tmux.conf` and the `~/.coder`
 and `~/.agents` seeds are materialised inside each workspace when it first boots
-and are never revisited after that. `~/.grok/config.toml` and the code-server
-`~/.local/share/code-server/User/settings.json` are the two rendered files: each
-is that workspace's own, written from the template on every start, so a temporary
-hand-edit there survives until that workspace restarts and reaches no other
-workspace, while a re-push plus a restart re-renders it from the latest template.
+and are never revisited after that.
+
+`~/.grok/config.toml` and the code-server `~/.local/share/code-server/User/settings.json`
+are the two rendered files: each is that workspace's own, written from the template on every
+start, so a temporary hand-edit there survives until that workspace restarts and reaches no
+other workspace, while a re-push plus a restart re-renders it from the latest template.
+
 The shared overlay `~/.shared/vscode/settings.json` is a rendered file too, but
 the boot writes it only while absent, so the API keys an operator put there
-survive every restart. A re-pushed template only reaches workspaces
+survive every restart.
+
+A re-pushed template only reaches workspaces
 that have been **start**ed or **restart**ed since the push - **stop** and
 **start** is what re-runs the provisioning script and therefore re-runs
 `before_config`.
 
 ## The two passes
 
-`env` reconciles one env file with its twin. It keeps every value you have set,
-fills a key the twin adds with the twin's default (or a reusable value already
-set in a sibling live file - `.env` filling `dev-stack.env`), and moves a key
-the twin no longer declares into a commented trailer at the end of the file -
-parked, with its value and its explanation still readable, rather than deleted.
+### The env pass
+
+`env` reconciles one env file with its twin. It:
+
+- keeps every value you have set
+- fills a key the twin adds with the twin's default (or a reusable value already
+  set in a sibling live file - `.env` filling `dev-stack.env`)
+- moves a key the twin no longer declares into a commented trailer at the end of the
+  file - parked, with its value and its explanation still readable, rather than deleted
+
 Comment lines always come from the twin, even when every value stays as you
 set it, so a pull that only rewrote an explanation still lands in `.env`. The
 rewrite lands in a staging file and replaces the live file only at the end,
-with mode `600` kept. On a TTY the pass then walks every key that is new this
-pull or still a placeholder (`change-me…`, `NOTSET`, `YOUR_LAN_IP`). An empty
-value whose example default is also empty is the intended value (LAN-only
-`STACK_PUBLIC_HOSTS`, a parked MCP flag) and is not asked again. Enter keeps a
-sibling's value or the example default. A missing live file is created from
-the twin only after a `Y/n` confirm. `--non-interactive` (and `--dry-run`)
-list those keys and write no answers. A `summary:` line closes the pass.
+with mode `600` kept.
 
-One other writer touches the env files, and it is not this tool. With
-`INFISICAL_ENABLED` on, `bazelisk run //scripts:dev-stack -- up`,
+On a TTY the pass then walks every key that is new this pull or still a placeholder
+(`change-me…`, `NOTSET`, `YOUR_LAN_IP`).
+
+- An empty value whose example default is also empty is the intended value (LAN-only
+  `STACK_PUBLIC_HOSTS`, a parked MCP flag) and is not asked again.
+- Enter keeps a sibling's value or the example default.
+
+A missing live file is created from the twin only after a `Y/n` confirm.
+`--non-interactive` (and `--dry-run`) list those keys and write no answers. A
+`summary:` line closes the pass.
+
+### The other writer of the env files
+
+One other writer touches the env files, and it is not this tool.
+
+With `INFISICAL_ENABLED` on, `bazelisk run //scripts:dev-stack -- up`,
 `bazelisk run //scripts:prod-stack -- up` and `bazelisk run //scripts:update-stack` each
 pull the env file from the vault immediately before compose interpolates it, through
-`infisical_pull` in `scripts/lib/infisical.sh`. That pass **does** overwrite values you
-set, and only the twelve it manages: the keys listed in `infisical/managed-secrets.txt`,
-which are the stack's service credentials. Every other key in the file - the ports, the
-hosts, the naming parts, the URLs, the feature flags - keeps what you set. A managed key
-the vault does not hold, or holds empty, is left alone too, with one `warning:` naming
-the key instead of a blanked line, and a failed export leaves the file untouched so the
-bring-up runs on the credentials it already has. With the flag off - the shipped default
-- that branch never runs and the file keeps every value it has, and
-`bazelisk run //scripts:update-stack -- --dry-run` plans the fetch and writes nothing.
+`infisical_pull` in `scripts/lib/infisical.sh`.
+
+That pass **does** overwrite values you set, and only the twelve it manages: the keys
+listed in `infisical/managed-secrets.txt`, which are the stack's service credentials.
+Every other key in the file - the ports, the hosts, the naming parts, the URLs, the
+feature flags - keeps what you set.
+
+A managed key the vault does not hold, or holds empty, is left alone too, with one
+`warning:` naming the key instead of a blanked line, and a failed export leaves the
+file untouched so the bring-up runs on the credentials it already has.
+
+With the flag off - the shipped default - that branch never runs and the file keeps
+every value it has, and `bazelisk run //scripts:update-stack -- --dry-run` plans the
+fetch and writes nothing.
+
 [operate/secrets.md](operate/secrets.md) owns the vault, its inventory and its verbs.
 
+### The workspace pass
+
 `workspace` re-materialises the stack-owned config inside the targets you name.
+
+#### The reseed set
+
 The reseed set is the home-relative targets the templates seed, listed by
 `seed_seed_targets` in `scripts/lib/config_seed.sh` -
-`~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
-`~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies, the six
-`ez-learn`, `ez-skillify` and `ez-create-skill` `SKILL.md` copies (two homes each), the
-sixteen `ez-bazel-first`, `ez-strong-types`, `ez-trunk-based-repo` and `ez-micro-plan`
-copies (four `SKILL.md` and four python helpers, two homes each), and
-`~/.shared/vscode/settings.json` - and the same rule
-applies as in `refresh-configs`: a file is replaced only while it still carries its
-stack marker - the `managed-by: evo-t1-coder-stack` comment, the
-`"__evoT1Stack": true` JSON key (settings files) or the `__evoT1Stack = true` TOML
-key (`~/.grok/config.toml`) - so a config you hand-edit in a terminal is your
+
+- `~/.tmux.conf`, `~/.grok/AGENTS.md`, `~/.coder/AGENTS.md`,
+  `~/.agents/INSTRUCTIONS.md`, the two `grok-build-delegation/SKILL.md` copies
+- the six `ez-learn`, `ez-skillify` and `ez-create-skill` `SKILL.md` copies
+  (two homes each)
+- the sixteen `ez-bazel-first`, `ez-strong-types`, `ez-trunk-based-repo` and
+  `ez-micro-plan` copies (four `SKILL.md` and four python helpers, two homes each)
+- `~/.shared/vscode/settings.json`
+
+The same rule applies as in `refresh-configs`: a file is replaced only while it
+still carries its stack marker:
+
+- the `managed-by: evo-t1-coder-stack` comment
+- the `"__evoT1Stack": true` JSON key (settings files) or the `__evoT1Stack = true` TOML
+  key (`~/.grok/config.toml`)
+
+So a config you hand-edit in a terminal is your
 file and this tool will not move it. `--force` overrides that, per run, and says
-so. The six skill copies are the stack's three skill commands, each seeded at
+so.
+
+#### The seeded skill commands
+
+The six skill copies are the stack's three skill commands, each seeded at
 `~/.coder/skills/<name>/SKILL.md` and twin-copied to its `~/.agents` twin:
-`/ez-learn`, which turns a session into durable memory (this stack's copy of the
-upstream `/flush`, `/dream`, `/remember` and `/memory` - the CLI's own commands, not
-skills: flush the conversation into a session log, dream those logs into organized
-memory, save one note, browse or manage the store. Three of the four are gated on a
-memory store that is off by default, so they stay hidden until one is configured);
-`/ez-skillify`, which captures the session that just worked; and
-`/ez-create-skill`, which scaffolds one from a description. The sixteen other skill copies
-are four more commands, seeded the same way into the same two homes - `/ez-bazel-first`,
-`/ez-strong-types` and `/ez-trunk-based-repo`, which convert whatever repository the
-workspace is sitting in, and `/ez-micro-plan`, which cuts one change into micro tasks for a
-fleet of subagents and checks the cut before wave 1 - and eight of those sixteen are the
-python helpers three of them run, under a `scripts/` subdirectory of the same skill
-directory;
-a reseed recreates that directory when a workspace lost it. To take a seeded copy
-over, edit it and
+
+- `/ez-learn`, which turns a session into durable memory (this stack's copy of the
+  upstream `/flush`, `/dream`, `/remember` and `/memory` - the CLI's own commands, not
+  skills: flush the conversation into a session log, dream those logs into organized
+  memory, save one note, browse or manage the store. Three of the four are gated on a
+  memory store that is off by default, so they stay hidden until one is configured)
+- `/ez-skillify`, which captures the session that just worked
+- `/ez-create-skill`, which scaffolds one from a description
+
+The sixteen other skill copies are four more commands, seeded the same way into
+the same two homes:
+
+- `/ez-bazel-first`, `/ez-strong-types` and `/ez-trunk-based-repo`, which convert
+  whatever repository the workspace is sitting in
+- `/ez-micro-plan`, which cuts one change into micro tasks for a fleet of subagents
+  and checks the cut before wave 1
+
+Eight of those sixteen are the python helpers three of them run, under a `scripts/`
+subdirectory of the same skill directory; a reseed recreates that directory when
+a workspace lost it.
+
+#### Taking a seeded copy over
+
+To take a seeded copy over, edit it and
 delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free file is
-user-owned, and the seeder leaves it alone unless you pass `--force`. A deletion is
-undone - the workspace boot writes the file again whenever it is absent, and
+user-owned, and the seeder leaves it alone unless you pass `--force`.
+
+A deletion is undone - the workspace boot writes the file again whenever it is absent, and
 `refresh-configs` re-seeds an absent target, so the next boot restores the stack's
-copy. To hide one of the slash commands, set `disabled = ["ez-learn"]` (or
+copy.
+
+To hide one of the slash commands, set `disabled = ["ez-learn"]` (or
 `ez-skillify`, `ez-create-skill`, `ez-bazel-first`, `ez-strong-types`,
 `ez-trunk-based-repo`, or `ez-micro-plan`) under `[skills]` in
-`~/.grok/config.toml`. An edited copy which keeps its marker is still rewritten
-back to its `templates/common/ez-<name>.SKILL.md` by this tool. The pass also retires the two
+`~/.grok/config.toml`.
+
+An edited copy which keeps its marker is still rewritten
+back to its `templates/common/ez-<name>.SKILL.md` by this tool.
+
+The pass also retires the two
 `skills/learn/SKILL.md` paths this skill occupied before the rename, and only while
 each still carries the stack marker, so a leftover copy cannot keep offering a `/learn` the
 stack no longer maintains, and a file someone took over stays.
+
+### The all pass
 
 `all` runs `env` and then `workspace`.
 
@@ -160,8 +220,12 @@ stack no longer maintains, and a file someone took over stays.
 | `--home <dir>` | treat that host directory as a workspace `HOME` |
 | `--container <name>` | address one container by name |
 
+### Flag position
+
 Every flag goes **after** the subcommand, so `update-configs --dry-run env` is a
 usage error and prints the usage rather than guessing.
+
+### A bare target is a container
 
 A target named without a flag is a container, the same reading `refresh-configs`
 gives a bare word, so these two lines address the same container:
@@ -175,23 +239,31 @@ Anything that carries a prefix other than `c:` (container) or `h:` (host
 directory) is reported as unrecognized and counted in the closing summary's
 skipped tally. A target never leaves the pass unheard.
 
+### Prompting on a TTY
+
 On a TTY the env pass asks by default (`-i`/`--interactive` is then a no-op;
-`--non-interactive` turns it off). For every key that is new this pull or still
+`--non-interactive` turns it off).
+
+For every key that is new this pull or still
 `change-me…`/`NOTSET`/`YOUR_LAN_IP` it prints the explanation the twin carries
-above that key and prompts for a value. Enter keeps a reusable value already
-set in a sibling env file, or the example default. A key whose
-name carries `KEY`, `SECRET`, `TOKEN` or `PASSWORD` is echoed nowhere - the
-report says `set` or `empty` and the prompt does not echo what you type - so a
-screenful of this output is safe to paste into an issue. With no terminal to
-prompt through the pass warns and leaves those keys alone, which is why
-`--dry-run` / `--non-interactive` is the shape that belongs in a script or CI.
+above that key and prompts for a value:
+
+- Enter keeps a reusable value already set in a sibling env file, or the example default.
+- A key whose name carries `KEY`, `SECRET`, `TOKEN` or `PASSWORD` is echoed nowhere -
+  the report says `set` or `empty` and the prompt does not echo what you type - so a
+  screenful of this output is safe to paste into an issue.
+
+With no terminal to prompt through the pass warns and leaves those keys alone, which is
+why `--dry-run` / `--non-interactive` is the shape that belongs in a script or CI.
 
 ## Where to run it
 
 `workspace` addresses docker, so run it from a **host** shell. A terminal inside a
 workspace is not a host shell: the `docker` CLI there is only installed so you can
 drive that workspace's own DinD sidecar, so `docker ps` answers empty and an empty
-`docker ps` means "wrong vantage", not "stack down". The pass now prints which
+`docker ps` means "wrong vantage", not "stack down".
+
+The pass now prints which
 daemon it addressed and tells you to use a host shell, or to name the target:
 
 ```sh
@@ -210,53 +282,78 @@ you try a change on a scratch tree before pointing a live stack at it. See
   in place.
 - It does not touch `~/.grok/config.toml`. That file is rendered *inside* the
   workspace, and it is a per-workspace file on that workspace's own home volume:
-  the model list, the session-affinity key, the `[ui]` theme and the `[ui]`
-  approval mode belong to one workspace, so a copy pushed from the host would
-  stamp this checkout's defaults over what that workspace's own create-form
-  answers rendered - the approval mode is one of those answers
-  (`grok_permission_mode`, default `always-approve`). A
-  **start/restart** re-renders it from this checkout, which is the only way a
-  per-workspace value gets in, and the pass says so after it reseeds.
+
+  - the model list, the session-affinity key, the `[ui]` theme and the `[ui]`
+    approval mode belong to one workspace, so a copy pushed from the host would
+    stamp this checkout's defaults over what that workspace's own create-form
+    answers rendered - the approval mode is one of those answers
+    (`grok_permission_mode`, default `always-approve`)
+  - A **start/restart** re-renders it from this checkout, which is the only way a
+    per-workspace value gets in, and the pass says so after it reseeds.
+
 - `~/.shared/vscode/settings.json` is the one rendered target it does reseed, and
   it re-*renders* rather than copies: `${litellm_url}` and the `$${...}`
   dollar-brace unfoldings are rewritten, and that workspace's own `cline.apiKey`
   and `roo.openaiApiKey` are carried forward.
 
+### The other two seeders
+
 Inside a running container the same targets are `refresh-configs`'s job too: same reseed set, same marker rule, `--json` for a machine-readable
 answer, and `--litellm-url <url>` for a stack environment that publishes
 LiteLLM on a port other than 4000 (the reseeded `settings.json` then still
-names that stack's own model transport). A third tool covers the same set on a
-host home rather than a container:
-`bazelisk run //scripts:seed-dev-env -- --home <dir>` materialises it into a
-laptop or CI home, and it takes the fan-out knobs from the environment
-while it renders the config - `GROK_SUBAGENTS_LANE` names the lane the
-writers ride, `GROK_SUBAGENT_MAX_CONCURRENT` the width,
-`GROK_SUBAGENT_MAX_DEPTH` the nesting depth (the `grok_subagent_max_depth` template
-variable), and
-`GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
-reader, the planner and the skeptic ride, and `GROK_THEME` (default `grokbuild`)
-the `[ui]` theme name, and `GROK_PERMISSION_MODE` (default `always-approve`) the
-`[ui]` approval mode - the same choice the create form makes with
-`grok_permission_mode`, over the same accepted set (`default`, `ask`, `auto`,
-`always-approve`). The width default is this knob's
+names that stack's own model transport).
+
+A third tool covers the same set on a host home rather than a container:
+`bazelisk run //scripts:seed-dev-env -- --home <dir>` materialises it into a laptop or
+CI home, and it takes the fan-out knobs from the environment while it renders the config:
+
+- `GROK_SUBAGENTS_LANE` names the lane the writers ride
+- `GROK_SUBAGENT_MAX_CONCURRENT` the width
+- `GROK_SUBAGENT_MAX_DEPTH` the nesting depth (the `grok_subagent_max_depth` template
+  variable)
+- `GROK_EXPLORE_LANE`, `GROK_PLAN_LANE` and `GROK_REVIEW_LANE` the aliases the
+  reader, the planner and the skeptic ride
+- `GROK_THEME` (default `grokbuild`) the `[ui]` theme name
+- `GROK_PERMISSION_MODE` (default `always-approve`) the `[ui]` approval mode - the
+  same choice the create form makes with `grok_permission_mode`, over the same accepted
+  set (`default`, `ask`, `auto`, `always-approve`)
+
+#### The width, the fleet ceiling, and the depth
+
+The width default is this knob's
 own shipped 15 (three Spark boxes at `PARALLEL` 5), the same literal 15 the
 templates ship on `grok_subagent_max_concurrent`, on every lane rather than one
-number per lane; a pinned lane only ever keeps one box's streams busy, so an
+number per lane.
+
+A pinned lane only ever keeps one box's streams busy, so an
 operator who pins everything sets `GROK_SUBAGENT_MAX_CONCURRENT` by hand.
+
 `GROK_SWARM_WIDTH` is the fleet's own ceiling, and here it feeds only the
 `# fleet-width:` line the seeder renders beside `max_concurrent` - the same line
 the templates render from `grok_swarm_width`, so the two agree because each one
-ships 15, not because the seeder falls back to the fleet. Dropping
+ships 15, not because the seeder falls back to the fleet.
+
+Dropping
 `GROK_SWARM_WIDTH` alone now moves that ceiling line and leaves a 15-wide home, so
 set `GROK_SUBAGENT_MAX_CONCURRENT` with it: 15 streams over a 10-stream fleet is
-refused by the box with `NoRoom`. The depth default is 2, which
+refused by the box with `NoRoom`.
+
+The depth default is 2, which
 lets a child spawn read-only mappers of its own, and the seeder holds the value to 1..3,
-with 1 putting nesting back off (`scripts/seed-dev-env.sh:187-197`). A value the seeder
-cannot use - a lane that is not a bare model id, a width that is not a count or sits past
-32, a depth that is not a count or sits past 3, an approval mode outside `default` /
-`ask` / `auto` / `always-approve` - is refused with
+with 1 putting nesting back off (`scripts/seed-dev-env.sh:187-197`).
+
+#### A value the seeder cannot use
+
+A value the seeder cannot use is refused with
 a `note:` line naming the key, and the derived default goes in, so a typo lands as output
-you read rather than as an unusable key in the rendered `~/.grok/config.toml`.
+you read rather than as an unusable key in the rendered `~/.grok/config.toml`. It cannot
+use:
+
+- a lane that is not a bare model id
+- a width that is not a count or sits past 32
+- a depth that is not a count or sits past 3
+- an approval mode outside `default` / `ask` / `auto` / `always-approve`
+
 [grok-build-and-agents.md](grok-build-and-agents.md) covers the profile
 volume and what seeds on first boot.
 
@@ -267,19 +364,29 @@ pass has nothing to reconcile here: the twin declares no `CODER_EXTERNAL_AUTH_0_
 key and `update-configs` will never add one. Those keys belong in `coder.env`
 beside `docker-compose.yml` (gitignored), which is not a file this tool touches.
 
+### An empty key is still a configured provider
+
 **A defined-but-empty key crash-loops the server.** Any `CODER_EXTERNAL_AUTH_0_*`
 counts as a configured provider even when its value is empty, and an empty key
 makes `coder server` exit at boot with `external auth provider "" doesn't have a
-valid id` - which the compose restart policy turns into a crash loop. Do not set
+valid id` - which the compose restart policy turns into a crash loop.
+
+Do not set
 only `CODER_EXTERNAL_AUTH_0_APP_INSTALL_URL` either: it suppresses the injected
-App like any other key in the set. A custom GitHub App belongs in `coder.env`
+App like any other key in the set.
+
+A custom GitHub App belongs in `coder.env`
 fully filled, including
 `APP_INSTALL_URL=https://github.com/apps/<slug>/installations/new`.
+
+### The usual case: no coder.env
 
 **Leave `coder.env` absent for the usual case.** Coder CE injects its own GitHub
 App (provider id `github`, device flow) and both templates declare that id by
 default, so `bazelisk run //scripts:push-template` works with no extra file.
 Workspace owners connect GitHub under Settings -> Tokens / external auth.
+
+### A custom GitHub OAuth app
 
 **Create `coder.env` only for a *custom* GitHub OAuth app**, and fill EVERY key -
 `ID` names the provider and `TYPE` says what kind it is. Restart coder to apply
@@ -306,33 +413,51 @@ CODER_EXTERNAL_AUTH_0_REVOKE_URL=https://github.com/settings/connections/applica
   `<CODER_ACCESS_URL>/external-auth/<id>/callback` - `github` for the injected
   App, `primary-github` for the sample app above.
 
+### Installing the Coder GitHub App
+
 **Device-flow login is not the App install.** Private repos need the Coder GitHub
 App installed from
 [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new)
 (the workspace "Install GitHub App" button), then a restart so `GH_TOKEN` remints.
+
 The grant must include the repos you clone, or a connected credential authenticates
 and is still 403.
+
+### The token in the agent environment
 
 **How the token reaches a workspace.** It arrives as `GH_TOKEN` and `GITHUB_TOKEN`
 in the agent environment, and that pair is a snapshot: Coder mints it when the
 workspace starts and never refreshes it, so it expires about an hour later while
-the workspace keeps running. The template's `gh_token_refresh` coder_script
+the workspace keeps running.
+
+The template's `gh_token_refresh` coder_script
 re-mints on start and every 20 minutes (`0 */20 * * * *`) into the **gh auth store**,
-which is the copy that stays live. git asks its credential helper, and the
+which is the copy that stays live.
+
+git asks its credential helper, and the
 stack's helper reads the store through a form that clears the stale pair first,
-so push follows the store and not the frozen environment. Check it with
+so push follows the store and not the frozen environment.
+
+Check it with
 `bazelisk run //scripts:github-auth -- check <repo-url>` - pass the repository,
 because without it the doctor lists credentials and never asks the write
-question. `bazelisk run //scripts:github-auth -- fix <repo-url>` repairs a
+question.
+
+`bazelisk run //scripts:github-auth -- fix <repo-url>` repairs a
 workspace that cannot push.
+
 [coder-templates.md](coder-templates.md#github-credentials-for-a-workspace) owns
 the template-side detail.
 
+### A PAT installed per workspace
+
 **Never a static PAT in `.env`.** `.env.sample` used to carry a `GITHUB_TOKEN=`
 line holding a long-lived fine-grained PAT, which `push-template.sh` forwarded to
-both templates as a template variable, into every workspace's environment. That
-path is gone: there is no such template variable and no such key in the twin. A
-workspace's GitHub credential comes from the External Auth provider alone, so an
+both templates as a template variable, into every workspace's environment.
+
+That path is gone: there is no such template variable and no such key in the twin.
+
+A workspace's GitHub credential comes from the External Auth provider alone, so an
 owner who connected nothing has no GitHub credential anywhere - and the only way
 to add one by hand is per workspace, after `check` has answered `REFUSED-GRANT`,
 `NOT VISIBLE` or `REJECTED` (a passing read is not that answer):
@@ -350,7 +475,9 @@ installation was granted.
 
 `GROK_PROFILE_MODE` in the twin is the default for the template variable
 `grok_profile_mode`, which the create form also shows per workspace as the **Grok
-profile** dropdown. Read once per push, so changing the default here needs
+profile** dropdown.
+
+Read once per push, so changing the default here needs
 `bazelisk run //scripts:push-template`. Overriding it for one workspace happens on
 that dropdown and needs a rebuild, like `dind`.
 
@@ -358,10 +485,13 @@ that dropdown and needs a rebuild, like `dind`.
   volumes nested inside `/home/coder` - `grok-notes-<owner-id>` at `~/.grok/notes`,
   `grok-memory-<owner-id>` at `~/.grok/memory`, `grok-sessions-<owner-id>` at
   `~/.grok/sessions` - so the notes, the memory and the sessions are one set of state
-  that account's workspaces share, and they survive a rebuild. `config.toml` is not
-  part of the share: each workspace renders its own on every start, so this
-  workspace's model, theme and extras are its own and no sibling's boot overwrites
-  them.
+  that account's workspaces share, and they survive a rebuild.
+
+  - `config.toml` is not
+    part of the share: each workspace renders its own on every start, so this
+    workspace's model, theme and extras are its own and no sibling's boot overwrites
+    them.
+
 - `private`: no per-owner volume at all. Notes, memory and sessions then live on that
   workspace's own home volume, differ per workspace, and die with the workspace;
   `config.toml` is per workspace either way.
@@ -371,17 +501,23 @@ that dropdown and needs a rebuild, like `dind`.
 
 Switching either way is a **rebuild**, not a stop/start, because the nested mount
 is decided when the workspace is built.
+
 [grok-build-and-agents.md](grok-build-and-agents.md) covers what the state volumes
 hold and what seeds on first boot; the `workspace` pass above never
 reseeds `~/.grok/config.toml` for exactly that reason.
 
 ## Public hosts and the dashboard
 
-`STACK_PUBLIC_HOSTS` is the one switch, and it has three states. Empty keeps everything
-below LAN-only and every derived `STACK_*_URL` stays empty. `auto` composes the seven
-names from the naming parts - `STACK_DOMAIN_BASE`, `STACK_SUBDOMAIN_SUFFIX`,
-`STACK_ENV_LABEL` and the per-service `STACK_*_NAME` prefixes, all documented in
-`.env.sample`. A comma-separated list is the hand-pin: those names are used verbatim.
+`STACK_PUBLIC_HOSTS` is the one switch, and it has three states:
+
+- Empty keeps everything below LAN-only and every derived `STACK_*_URL` stays empty.
+- `auto` composes the seven names from the naming parts - `STACK_DOMAIN_BASE`,
+  `STACK_SUBDOMAIN_SUFFIX`,
+  `STACK_ENV_LABEL` and the per-service `STACK_*_NAME` prefixes, all documented in
+  `.env.sample`.
+- A comma-separated list is the hand-pin: those names are used verbatim.
+
+### Rules for the entries
 
 - Entries are DNS names, not URLs: no scheme, no port, no path. The entry with no
   prefix is the dashboard.
@@ -393,16 +529,23 @@ names from the naming parts - `STACK_DOMAIN_BASE`, `STACK_SUBDOMAIN_SUFFIX`,
   `STACK_PUBLIC_HOSTS_MODE=auto`, so a later run re-composes and a list edited by hand
   in `STACK_PUBLIC_HOSTS` is ignored. Bootstrap prints a `note:` naming the key to
   clear when that happens.
+
+### What the names feed
+
 - `bootstrap.sh` derives `STACK_DASHBOARD_URL` / `STACK_CODER_URL` /
   `STACK_KASM_URL` / `STACK_LITELLM_URL` / `STACK_HERMES_URL` / `STACK_GRAFANA_URL` /
   `STACK_INFISICAL_URL` from the prefix on each entry (`coder-` / `kasm-` / `litellm-` /
   `hermes-` / `grafana-` / `infisical-`, dotted form still
   recognised) and upgrades `CODER_ACCESS_URL` to the coder name, so Coder builds
-  workspace links on a secure context with a real certificate. Compose sets
+  workspace links on a secure context with a real certificate.
+- Compose sets
   `HERMES_DASHBOARD_PUBLIC_URL` from `STACK_HERMES_URL` (the Chat tab's Host and
   Origin).
 - The names also go into `HOMEPAGE_ALLOWED_HOSTS` (compose appends this raw value)
   and into the Coder certificate's subjectAltName.
+
+### The Traefik on the other box
+
 - The Traefik on the other box owns TLS for those names and must forward plain
   HTTP to this box's router container **with the original Host header intact** -
   `STACK_ROUTER_CONF` names the conf that container mounts (`proxy/router.gen.conf`,
@@ -410,19 +553,26 @@ names from the naming parts - `STACK_DOMAIN_BASE`, `STACK_SUBDOMAIN_SUFFIX`,
   `proxy/router.conf` while the key is empty), and it picks the service from
   `$http_host` on `STACK_PROXY_HTTP_PORT` (default 8080). A rewritten Host comes back
   as `421`.
-  That box needs one file, and the paste-ready version of it - one `loadBalancer`
-  at `:8080`, a router per name, Authelia on the six interactive names, the
-  long-lived timeouts - is
-  [public-access.md#traefik-configuration](public-access.md#traefik-configuration).
+
+  - That box needs one file, and the paste-ready version of it - one `loadBalancer`
+    at `:8080`, a router per name, Authelia on the six interactive names, the
+    long-lived timeouts - is
+    [public-access.md#traefik-configuration](public-access.md#traefik-configuration).
+
+### Applying the rename
 
 Set the parts in `.env`, and in `dev-stack.env` too when a dev stack runs beside
 the stable one, then re-run `bazelisk run //scripts:bootstrap` and recreate the
-stack you switched. That one command is the whole rename: it re-renders the router's
+stack you switched.
+
+That one command is the whole rename: it re-renders the router's
 vhost table and rewrites the derived URLs, so a hostname is no longer an edit split
-across `proxy/router.conf`, `scripts/bootstrap.sh` and `docker-compose.yml`. A
-`hermes-*` or `hermes.*` entry is part of that list:
+across `proxy/router.conf`, `scripts/bootstrap.sh` and `docker-compose.yml`.
+
+A `hermes-*` or `hermes.*` entry is part of that list:
 bootstrap writes `STACK_HERMES_URL`, and the LAN `:9119` listener stays either
 way. Leave the hermes name out and the Homepage card keeps the LAN URL.
+
 [public-access.md](public-access.md) owns the naming rule, the measured
 `ERR_SSL_VERSION_OR_CIPHER_MISMATCH` on the dotted form, the request path and the
 checks to run on the Traefik box.
@@ -432,29 +582,42 @@ checks to run on the Traefik box.
 The `agent` model group is three deployments behind one LiteLLM alias, one per
 Spark box, and these are the keys that fill it:
 
+### The keys that fill the group
+
 - `SPARKn_HOST` is where each box is named - once. docker-compose.yml composes
   every Spark URL from it plus the port below, so a box that gets a new
   DHCP name or a static IP is edited in this one place and the LiteLLM
   deployments, the dashboard's per-box cards, and the host list
   `//scripts:spark-verify` / `//scripts:spark-configure` probe all move
-  together. The shipped placeholders do not resolve on purpose: leave a box you
-  do not run empty and its alias and its card both report down.
+  together.
+
+  - The shipped placeholders do not resolve on purpose: leave a box you
+    do not run empty and its alias and its card both report down.
+
 - `SPARK_HTTP_PORT` (default 8888) is the port every box of the recipe answers
   on - TensorFold's `/v1` and `/health`, for the `agent` lane and the cards.
 - `SPARKn_OPENAI_URL` is the OpenAI-compatible `/v1` endpoint. It is an
   override, kept commented in the twin: set it when that box answers somewhere
   the host plus port cannot express (https behind a reverse proxy, two boxes on
-  one host). A value set there wins outright, and that box's dashboard card does
-  not follow it - name the same host in `SPARKn_HEALTH_URL` too. A workspace
-  pins its session to one healthy `/v1` box; fresh session-id-less traffic fans
-  out by `least-busy`, shortest in-flight queue first.
+  one host).
+
+  - A value set there wins outright, and that box's dashboard card does
+    not follow it - name the same host in `SPARKn_HEALTH_URL` too.
+  - A workspace
+    pins its session to one healthy `/v1` box; fresh session-id-less traffic fans
+    out by `least-busy`, shortest in-flight queue first.
+
 - `SPARK_n_API_KEY` is the bearer token for each endpoint. TensorFold is
   vLLM-lineage, so treat it like vLLM/SGLang: any non-empty string is accepted
   unless the server was started with `--api-key`, in which case set the REAL key
-  per box. Empty is not a working value - LiteLLM v1.102.1 fails every request at
-  client construction (`AuthenticationError`, before reaching the box) and `agent`
-  falls back to `coder`. The placeholder `local-spark` is not a secret and is
-  ignored by a keyless backend.
+  per box.
+
+  - Empty is not a working value - LiteLLM v1.102.1 fails every request at
+    client construction (`AuthenticationError`, before reaching the box) and `agent`
+    falls back to `coder`.
+  - The placeholder `local-spark` is not a secret and is
+    ignored by a keyless backend.
+
 - `SPARKn_HEALTH_URL` (kept commented in the twin) feed the dashboard's per-box
   Spark cards - one widget per box, so no card assumes one "usual" box. Compose
   builds each from `SPARKn_HOST` plus `SPARK_HTTP_PORT`; nothing but the
@@ -463,31 +626,51 @@ Spark box, and these are the keys that fill it:
   for both its browser link and its status probe. It defaults to box 2 - same
   `SPARK2_HOST`, same `SPARK_HTTP_PORT` - and all three boxes serve the same
   model id, so point it at any reachable one when you want the card to follow a
-  particular box; the per-box health keys are what tell you which one answered.
+  particular box.
+
+  - The per-box health keys are what tell you which one answered.
+
+### When no Spark host is set
 
 With no `SPARKn_HOST` and no `SPARKn_OPENAI_URL` set, compose takes the host from
 `STACK_LAN_HOST`, which is at least a machine this stack owns: `agent` stays
-defined but unusable and LiteLLM falls back to `coder`, the Arc alias. That
+defined but unusable and LiteLLM falls back to `coder`, the Arc alias.
+
+That
 fallback is what the "Agent backend" card exists to catch - Grok Build, Cline and
 Roo need structured tool calls, which the Arc IPEX-LLM Ollama returns as plain text
-for the Qwen2.5-Coder weights. [litellm-routing.md](litellm-routing.md) owns the alias
+for the Qwen2.5-Coder weights.
+
+[litellm-routing.md](litellm-routing.md) owns the alias
 table, the picker, the pin, and the measured tool-call limitation (including which
 aliases do emit real calls).
 
+### The fast-compaction hop
+
 **The fast-compaction hop has five keys of its own.** On `agent-xhigh-fast` and
-`agent-swarm-fast` only, the proxy callback `litellm/compaction_router.py`
-recognises the CLI's conversation-summary call and re-serves it from somewhere
-cheaper than the Spark box it arrived on, in one of two tiers: the Arc group
-`compaction-fast` for a summary small enough for that window, or the Spark group
-`agent-low` for one too big for it. A summary needs no extra-high thinking, which is what
-the Spark lane charges for it. The Grok Build CLI has no compaction-model
+`agent-swarm-fast` only, the proxy callback `litellm/compaction_router.py` recognises
+the CLI's conversation-summary call and re-serves it from somewhere cheaper than the
+Spark box it arrived on, in one of two tiers:
+
+- the Arc group `compaction-fast` for a summary small enough for that window
+- the Spark group `agent-low` for one too big for it
+
+A summary needs no extra-high thinking, which is what
+the Spark lane charges for it.
+
+The Grok Build CLI has no compaction-model
 setting, so nothing in a client config points that call anywhere and the hop can
 only live in the proxy - with the flag off, both lanes behave exactly like their
-non-fast parents. All five are read in that one module and set in the compose
+non-fast parents.
+
+All five are read in that one module and set in the compose
 litellm service, the three that read a blank as unset as `${KEY:-default}` and the
 two tier targets as `${KEY-default}` so a blanked target stays blank, which is how
 a tier is parked. A dotenv line overrides each one.
+
 [litellm-routing.md](litellm-routing.md) owns the mechanism.
+
+#### The five keys
 
 - `EVO_T1_FAST_COMPACTION` (default on) is the kill switch: `0`, `false`, `off` or
   `no` stop the hop outright, and a value that is none of those nor `1`, `true`,
@@ -498,31 +681,42 @@ a tier is parked. A dotenv line overrides each one.
 - `EVO_T1_FAST_COMPACTION_TARGET` (default `compaction-fast`) is the tier a
   summary under the guard is moved to.
 - `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default `24000`) is the guard, and it
-  picks a tier rather than ending the hop. The Arc weights are a 32768-token
-  model and Ollama clamps an over-long input instead of refusing it, so a
-  summary above that estimate is never handed over to be quietly truncated.
-  The guard is a ceiling the module may lower and never raise: the Arc target
-  group's own `max_input_tokens` in `litellm/config.yaml` caps it, and a value
-  set above that window forks there anyway with one warning line naming both
-  numbers. A group that declares no window leaves the guard whole, and the
-  module logs one line saying the fork runs on this key alone.
+  picks a tier rather than ending the hop.
+
+  - The Arc weights are a 32768-token
+    model and Ollama clamps an over-long input instead of refusing it, so a
+    summary above that estimate is never handed over to be quietly truncated.
+  - The guard is a ceiling the module may lower and never raise: the Arc target
+    group's own `max_input_tokens` in `litellm/config.yaml` caps it, and a value
+    set above that window forks there anyway with one warning line naming both
+    numbers. A group that declares no window leaves the guard whole, and the
+    module logs one line saying the fork runs on this key alone.
+
 - `EVO_T1_FAST_COMPACTION_SPARK_TARGET` (default `agent-low`) is where a summary
   above the guard goes instead: a Spark group, so it carries the 262144-token
   window a full-size summary needs, at thinking baked `low` rather than `xhigh`.
-  Blank it, or name the lane the call arrived on, and an oversized summary stays
-  where it is - the pre-hop behaviour.
+
+  - Blank it, or name the lane the call arrived on, and an oversized summary stays
+    where it is - the pre-hop behaviour.
+
+### The guard and the client threshold
 
 **Read the guard beside the client threshold: that pairing picks the tier.** Both fast
 aliases declare a `context_window` of 262144 and the shipped `[session]` block sets
 `auto_compact_threshold_percent` to 70, so a session on either one reaches its
 auto-compaction at about 183,500 tokens - over the guard, so the Arc was never going to read
-it and the call goes to the Spark tier instead. `agent-low` is what makes that work cheaper
+it and the call goes to the Spark tier instead.
+
+`agent-low` is what makes that work cheaper
 than its parent: the 262144-token window stays and the baked `xhigh` thinking goes, which is
 the cost the hop exists to stop paying. That is a routing choice with its own trade, not a
-free win - the summary still runs on a Spark box, at a thinking level turned down. Neither
-tier has a timing of its own yet: the hop has not served a summary on a running stack, so
-the only numbers attached to this feature are the 107 s to 1915 s and 18-of-36 figures for
-the Spark lane before it existed, both swept out of the session logs in
-[troubleshooting.md](troubleshooting.md). `bazelisk test //tests:bats_litellm_config_test`
+free win - the summary still runs on a Spark box, at a thinking level turned down.
+
+Neither tier has a timing of its own yet: the hop has not served a summary on a running
+stack, so the only numbers attached to this feature are the 107 s to 1915 s and 18-of-36
+figures for the Spark lane before it existed, both swept out of the session logs in
+[troubleshooting.md](troubleshooting.md).
+
+`bazelisk test //tests:bats_litellm_config_test`
 pins the config and the compose passthrough, and `docs/troubleshooting.md` names the one log
 line that shows the hop firing.
