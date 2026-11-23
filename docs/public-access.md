@@ -190,8 +190,9 @@ rather than sent as an empty entry, and a missing zone keeps the whole stack LAN
   (`__EVO_HOST_INFISICAL__` among them: a name that will not compose refuses the render
   rather than writing half a table): `proxy/router.conf.template` is rendered into
   `proxy/router.gen.conf` (gitignored) and `STACK_ROUTER_CONF=router.gen.conf` is
-  written, because compose mounts `./proxy/${STACK_ROUTER_CONF:-router.conf}`. The
-  `warn_missing_router_hosts` check runs against that rendered file, so a name the
+  written, because compose mounts `./proxy/${STACK_ROUTER_CONF:-router.conf}`.
+
+  The `warn_missing_router_hosts` check runs against that rendered file, so a name the
   table does not answer is reported before the recreate rather than as a `421` after
   it.
 

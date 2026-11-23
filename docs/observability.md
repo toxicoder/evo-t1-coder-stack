@@ -145,8 +145,9 @@ every container stays up:
 - **Traces arrive over OTLP only, and one client already speaks it.** Anything that wants
   traces in this stack sends OTLP gRPC to `tempo:4317`. Grafana is the one shipped
   caller: `GF_TRACING_ENABLED` points its own exporter at `tempo:4317`, so the trace
-  viewer has the product's own spans before any workspace emits one. Tempo's
-  metrics_generator then computes span-metrics and service-graph series and
+  viewer has the product's own spans before any workspace emits one.
+
+  Tempo's metrics_generator then computes span-metrics and service-graph series and
   `remote_write`s them back into Prometheus, which is why Prometheus carries
   `--web.enable-remote-write-receiver`: without that flag the write is refused with a 404
   and the traces dashboard has nothing to plot.
