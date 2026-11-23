@@ -15,7 +15,7 @@ repo can verify.
 
 ## Network and public exposure
 
-### Network exposure
+### Coder and LiteLLM bind to the host for LAN use
 
 - **Network exposure.** Coder (:3001) and LiteLLM (:4000) bind to the host for
   LAN use. Coder's published port carries TLS (the self-signed cert
@@ -27,7 +27,7 @@ repo can verify.
   LiteLLM requires `LITELLM_MASTER_KEY` for every request; Coder has its own login, and
   once either name resolves publicly assume it is being probed.
 
-### Public exposure
+### What STACK_PUBLIC_HOSTS exposes and what gates each name
 
 - **Public exposure.** With `STACK_PUBLIC_HOSTS` set, Coder, the dashboard,
   Hermes and Grafana can be reachable from the WAN.
@@ -51,7 +51,7 @@ repo can verify.
 
 ## Per-service exposure
 
-### Ollama is internal-only
+### Port 11434 is not published to the host
 
 - **Ollama is internal-only.** IPEX-LLM Ollama listens on 11434 inside the
   compose network only and is deliberately not published to the host.
@@ -313,7 +313,7 @@ repo can verify.
   `LITELLM_API_KEY` through `env_key` — and `GH_TOKEN` by a `${GH_TOKEN}` reference when
   the `github_mcp` server is on (the template default) — while both keys travel in the
   workspace environment.
-- So no secret bytes land in any rendered file, but the trust boundary widens to GitHub,
+- No secret bytes land in any rendered file, but the trust boundary widens to GitHub,
   outside the LAN, as soon as an owner connects a GitHub account.
 - Park it with `GITHUB_MCP=false` and a template re-push if a workspace must not gain
   GitHub tools. See [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md).
