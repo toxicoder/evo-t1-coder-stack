@@ -16,14 +16,19 @@ argument-hint: "[skill-name]"
 
 # Create a skill
 
+## What a skill is
+
 A skill is a folder holding one `skills/<name>/SKILL.md` plus optional `scripts/` and
-`references/` siblings. It runs as `/name` when typed, and the model may invoke it when a
-prompt matches `description` or `when-to-use`. It is not `AGENTS.md` (always-loaded project
-rules) and not the memory system (`/remember`, `/memory`, `/dream`), which stores facts; a
-skill stores a procedure. Upstream `/create-skill` is bundled and unfetchable here: that
-download needs an x.ai sign-in this stack lacks (LiteLLM is the sole model transport), so
-`~/.grok/bundled/` never exists. Hence the `ez-` prefix, which also clears that
-skill's own slash name.
+`references/` siblings.
+
+It runs as `/name` when typed, and the model may invoke it when a prompt matches `description`
+or `when-to-use`. It is not `AGENTS.md` (always-loaded project rules) and not the memory system
+(`/remember`, `/memory`, `/dream`), which stores facts; a skill stores a procedure.
+
+Upstream `/create-skill` is bundled and unfetchable here: that download needs an x.ai sign-in
+this stack lacks (LiteLLM is the sole model transport), so `~/.grok/bundled/` never exists.
+
+Hence the `ez-` prefix, which also clears that skill's own slash name.
 
 Run each block with `run_terminal_command` (Grok Build CLI) or `execute` (Coder Agents chat
 agent). A command written inline in a skill body runs nothing -- which is why the skill you
@@ -32,10 +37,20 @@ are about to write needs numbered steps that name their tool.
 ## Step 1 -- gather requirements
 
 Ask for the name, the scope (Step 3 and the table at the end), and a plain-language
-description of the workflow to capture. The name is lowercase letters, digits and hyphens,
-2-64 characters, starting and ending with a letter or a digit. Spaces and underscores
-normalize to hyphens; a bad name costs you a command you did not choose, reachable only by a
-qualified name, and a rename in every home it was copied into.
+description of the workflow to capture.
+
+### The name rule
+
+The name is:
+
+- lowercase letters, digits and hyphens
+- 2-64 characters
+- starting and ending with a letter or a digit
+
+Spaces and underscores normalize to hyphens; a bad name costs you a command you did not
+choose, reachable only by a qualified name, and a rename in every home it was copied into.
+
+### Check the name is free first
 
 Check the name is free BEFORE writing:
 
@@ -43,16 +58,20 @@ Check the name is free BEFORE writing:
     ls "$(git rev-parse --show-toplevel)/.grok/skills" 2>/dev/null
     grok inspect
 
-A name contested with a built-in or another skill is not an error: the built-in keeps the
-bare name and yours is pushed to its qualified `scope:name` form. `grok inspect` tags it
-`collides with /x -> scope:x`. Fix it with an `ez-` prefix or a rename.
+A name contested with a built-in or another skill is not an error: the built-in keeps the bare
+name and yours is pushed to its qualified `scope:name` form.
+
+`grok inspect` tags it `collides with /x -> scope:x`. Fix it with an `ez-` prefix or a rename.
 
 ## Step 2 -- draft the description and get approval
 
 Write a `description` that states what the skill does, the phrases that trigger it, and the
-slash-command name, plus matching `when-to-use` text. Show BOTH and wait for approval or
-edits before touching disk: the description drives automatic invocation, so vague text makes
-the skill dead weight. Too vague, nothing to match on:
+slash-command name, plus matching `when-to-use` text.
+
+Show BOTH and wait for approval or edits before touching disk: the description drives
+automatic invocation, so vague text makes the skill dead weight.
+
+Too vague, nothing to match on:
 
     description: Create git commits
 
@@ -72,7 +91,11 @@ Add `scripts/` or `references/` only if the skill needs them:
 ## Step 4 -- write skills/<name>/SKILL.md
 
 Line 1 is exactly `---`, the closing `---` sits alone on its own line, multi-word keys are
-kebab-case. These are the only documented keys; the rest is drift the CLI ignores.
+kebab-case.
+
+### The frontmatter keys
+
+These are the only documented keys; the rest is drift the CLI ignores.
 
 | Key | Use it when |
 |---|---|
@@ -89,14 +112,27 @@ kebab-case. These are the only documented keys; the rest is drift the CLI ignore
 | `compatibility` | Named binaries, as `Requires git, docker, jq`. |
 | `metadata` | String pairs; `author`, `short-description` are promoted. |
 
-Ask about two of them: `disable-model-invocation: true` when only an explicit slash command
-should run it, and `user-invocable: false` when only the model should reach it. Never both.
+### The two invocation keys
 
-Body rules: ordered numbered steps; the verification command written as a step the agent
-runs; tools named (`read_file`, `search_replace`, `run_terminal_command`); conventions
-stated outright; one workflow per skill. Stay under the 25,000-token inline cap: only that
-much is read, so long reference material goes in a sibling under `references/`, read with an
-offset and limit.
+Ask about two of them:
+
+- `disable-model-invocation: true` when only an explicit slash command should run it
+- `user-invocable: false` when only the model should reach it
+
+Never both.
+
+### The body, and its cap
+
+Body rules:
+
+- ordered numbered steps
+- the verification command written as a step the agent runs
+- tools named (`read_file`, `search_replace`, `run_terminal_command`)
+- conventions stated outright
+- one workflow per skill
+
+Stay under the 25,000-token inline cap: only that much is read, so long reference material goes
+in a sibling under `references/`, read with an offset and limit.
 
 A minimal complete skill:
 
@@ -120,8 +156,13 @@ description: "Clear this repo's /tmp scratch files and report what went. Use whe
 
 ## Step 5 -- verify and hand over
 
-Read it back and prove what a parser checks: line 1 exactly `---`, the fence closes, the
-frontmatter parses.
+### Prove it parses
+
+Read it back and prove what a parser checks:
+
+- line 1 exactly `---`
+- the fence closes
+- the frontmatter parses
 
     f="$HOME/.agents/skills/<name>/SKILL.md"
     head -n 1 "$f"
@@ -133,13 +174,20 @@ Then report what the CLI resolved -- the `source` path and `userInvocable`:
     grok inspect
     grok inspect --json
 
+### Hand it to the user
+
 Tell the user to invoke `/name` in a new turn, arguments typed after the name; it lands in
-the slash menu within seconds because skills reload from disk. If it is missing, `[skills]`
-in `~/.grok/config.toml` explains: `paths` scans an extra directory, `ignore` hides a skill
-entirely, `disabled` keeps it listed but inactive. `/skills` opens the same set as a menu,
-where each skill shows with its source and a toggle takes it out of the slash menu.
+the slash menu within seconds because skills reload from disk.
+
+If it is missing, `[skills]` in `~/.grok/config.toml` explains: `paths` scans an extra
+directory, `ignore` hides a skill entirely, `disabled` keeps it listed but inactive.
+
+`/skills` opens the same set as a menu, where each skill shows with its source and a toggle
+takes it out of the slash menu.
 
 ## Where it goes in this stack
+
+### Where the tiers sit
 
 | Path | Tier | Read by |
 |---|---|---|
@@ -149,17 +197,24 @@ where each skill shows with its source and a toggle takes it out of the slash me
 | `~/.agents/skills/<name>/` | User, CLI side | Grok Build CLI |
 | `~/.coder/skills/<name>/` | Chat side | the Coder Agents chat agent only |
 
+### The two-home rule
+
 The stack's rule: a user-scope skill that should work on both consumers ships in BOTH
-`~/.agents/skills/<name>/SKILL.md` (CLI side) and `~/.coder/skills/<name>/SKILL.md`
-(chat side). The chat agent reads `~/.coder/skills/` only, never `~/.grok/skills/` or a
-repo's `.grok/skills/`, and dedupe is first-match-wins, so one home means one blind
-consumer. A repo-scoped skill is the team choice because it travels with git; add the
-two-home pair when the chat agent needs it too.
+`~/.agents/skills/<name>/SKILL.md` (CLI side) and `~/.coder/skills/<name>/SKILL.md` (chat side).
+
+The chat agent reads `~/.coder/skills/` only, never `~/.grok/skills/` or a repo's
+`.grok/skills/`, and dedupe is first-match-wins, so one home means one blind consumer.
+
+A repo-scoped skill is the team choice because it travels with git; add the two-home pair when
+the chat agent needs it too.
+
+### The stack marker
 
 A file carrying the stack marker `managed-by: evo-t1-coder-stack` is stack-owned and the boot
 rewrites an absent copy: edit the seed in this repo's `templates/common/` and re-materialize
-with `bazelisk run //scripts:refresh-configs`, never write a home by hand. See
-`docs/grok-build-and-agents.md`.
+with `bazelisk run //scripts:refresh-configs`, never write a home by hand.
+
+See `docs/grok-build-and-agents.md`.
 
 ## Boundaries
 

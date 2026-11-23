@@ -41,30 +41,46 @@ Follow these steps in order. Be thorough. Prefer evidence from actual past work 
 
 ### 1. Gather Evidence
 
+#### Collect the real signal first
+
 Collect as much real signal as possible before proposing changes:
 
 - Read the current `AGENTS.md` (project root and any nested or global versions).
 - List existing skills (`ls .grok/skills/` or equivalent) and note their purposes from frontmatter.
 - Review recent conversation transcripts, session logs, or memory if available. In this stack
-  that is, in order: the session sweeper
-  (`python3 skills/reflect-and-evolve/scripts/session_signals.py --limit 20`) to rank sessions
-  by friction, then `~/.grok/memory/<slug>-<hash8>/sessions/*.md` for the session logs written
-  by `/ez-learn`, and `~/.grok/notes/<host>/<owner>/<repo>/notes.md` for stored notes. Look
-  for:
+  that is, in order:
+
+  - the session sweeper
+    (`python3 skills/reflect-and-evolve/scripts/session_signals.py --limit 20`) to rank
+    sessions by friction
+  - `~/.grok/memory/<slug>-<hash8>/sessions/*.md` for the session logs written
+    by `/ez-learn`
+  - `~/.grok/notes/<host>/<owner>/<repo>/notes.md` for stored notes
+
+  Look for:
+
   - Repeated user corrections or "don't do that" patterns
   - Tasks that required many tool calls or back-and-forth
   - Places the agent went down the wrong path
   - Manual steps that were repeated across sessions
   - Missing knowledge that caused delays
-- Three caps on that sweep: never `cat` a `chat_history.jsonl`, `prompt_history.jsonl`, or
-  `events.jsonl` into the transcript; never list, read, or cite `/var/lib/grok-session-archive`;
-  never read `.env` or `.env.*`, and name the operator CLI that prints the value instead
-  (`dev-stack -- status`, `bootstrap -- --check`, `update-configs`). Derive such paths with
-  `find`/`ls`, and cap everything else with `head -n`, `--limit`, or a `/tmp` scratch file.
+- Three caps on that sweep:
+
+  - never `cat` a `chat_history.jsonl`, `prompt_history.jsonl`, or `events.jsonl` into the
+    transcript
+  - never list, read, or cite `/var/lib/grok-session-archive`
+  - never read `.env` or `.env.*`, and name the operator CLI that prints the value instead
+    (`dev-stack -- status`, `bootstrap -- --check`, `update-configs`)
+
+  Derive such paths with `find`/`ls`, and cap everything else with `head -n`, `--limit`, or a
+  `/tmp` scratch file.
 - Check configs (e.g. `.grok/`, tool configs, shell aliases, editor settings) for friction.
 - Note any previous CHANGELOG entries or improvement notes.
 
-If session history is limited, state the limitation clearly and work from available artifacts (current AGENTS.md, skills, recent files).
+#### When the history is thin
+
+If session history is limited, state the limitation clearly and work from available artifacts
+(current AGENTS.md, skills, recent files).
 
 ### 2. Analyze for High-Leverage Opportunities
 
@@ -102,28 +118,41 @@ scope is large, implement the highest-value subset and note the rest for a futur
 
 ### 4. Implement
 
+#### Make the changes
+
 Make the changes directly:
 
-- **AGENTS.md**: Edit with precise, actionable rules. Prefer imperative language and concrete examples. Remove or update conflicting older rules.
+- **AGENTS.md**: Edit with precise, actionable rules. Prefer imperative language
+  and concrete examples. Remove or update conflicting older rules.
 - **Skills**: Create or update skills with proper frontmatter, workflow, and evals. Use
   `/ez-create-skill` to scaffold a new skill and `/ez-skillify` to mine the session that just
   worked; a skill's gate in this repo is an asserting Bats suite, the
   `tests/bats/trunk-refactor-skill.bats` pattern.
 - **Scripts / tools**: Add reusable scripts in an appropriate location (`scripts/`, skill
-  `scripts/`, or project tools). Make them robust and document usage in AGENTS.md or the skill.
-- **Configs**: Update relevant config files. Prefer changes that are committed and reproducible.
+  `scripts/`, or project tools). Make them robust and document usage in AGENTS.md or the
+  skill.
+- **Configs**: Update relevant config files. Prefer changes that are committed and
+  reproducible.
 - Record significant changes in the commit message and the pull request: this repo keeps no
   first-party `CHANGELOG.md`. A fact worth keeping past the change goes to the notes file
   through `/ez-learn`.
 
-After each substantial change, briefly verify it (read the file back, run a script with sample input, check frontmatter, etc.).
+#### Verify each change
+
+After each substantial change, briefly verify it (read the file back, run a script with
+sample input, check frontmatter, etc.).
+
+#### Seeds, not workspace copies
 
 The agent rulebook and the skill suite are seeds in *this* repository -
 `templates/common/GROK_BUILD_AGENTS.md`, `templates/common/*.SKILL.md`,
 `templates/common/*.AGENT.md`, `templates/common/*.PERSONA.toml` - that the workspace boot
-re-materialize into `~/.grok/`. A reflection run edits the seed and re-materialize it; it
-never hand-edits the copy living in a workspace. The same rule covers the operator CLIs under
-`scripts/`. Run the gate after: `bazelisk test //:test-fast` and
+re-materialize into `~/.grok/`.
+
+A reflection run edits the seed and re-materialize it; it never hand-edits the copy living in
+a workspace. The same rule covers the operator CLIs under `scripts/`.
+
+Run the gate after: `bazelisk test //:test-fast` and
 `bazelisk test //:lint --test_tag_filters=manual`.
 
 ### 5. Validate and Summarize
@@ -141,9 +170,12 @@ never hand-edits the copy living in a workspace. The same rule covers the operat
 
 - **Evidence over intuition**: Prefer patterns observed in actual sessions.
 - **High leverage**: One good AGENTS.md rule or script is better than many small notes.
-- **Bold but planned**: Large changes are encouraged when justified. Do not make them carelessly.
-- **Steer faster**: The goal is not just correctness but reducing the number of steps and corrections needed next time.
-- **Leave the system better**: Every run of this skill should result in a measurable improvement in future agent performance.
+- **Bold but planned**: Large changes are encouraged when justified. Do not make them
+  carelessly.
+- **Steer faster**: The goal is not just correctness but reducing the number of steps and
+  corrections needed next time.
+- **Leave the system better**: Every run of this skill should result in a measurable
+  improvement in future agent performance.
 
 ## Common Targets
 
