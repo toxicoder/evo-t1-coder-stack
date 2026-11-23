@@ -26,9 +26,12 @@ tags: [litellm, models, routing, spark]
 - Moving a workload between the Arc iGPU and a Spark box without touching a workspace
 - Diagnosing a wrong-backend answer from the routing rather than from the client
 
-Deep reference for the model lane: the aliases in `litellm/config.yaml`, how a request
-picks a backend, what a pinned conversation does, and what happens when a Spark box goes
-down.
+Deep reference for the model lane:
+
+- the aliases in `litellm/config.yaml`
+- how a request picks a backend
+- what a pinned conversation does
+- what happens when a Spark box goes down
 
 Short version lives in [README.md](https://github.com/toxicoder/evo-t1-coder-stack/blob/main/README.md) ("LiteLLM model aliases"); this file is
 the long version behind it. Symptom-first checks live in
@@ -63,23 +66,32 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 
 ### Config keys that gate all of this
 
+#### The two top-level blocks
+
 - `model_list:` is the alias list; `router_settings:` is the routing.
 - `routing_strategy: least-busy` is the picker;
   `optional_pre_call_checks: ["session_affinity"]` is the pinning layer above it.
+
+#### Fallbacks and the cooldown rule
+
 - `fallbacks:` carries the degrade path `agent: ["coder"]`, repeated for each thinking
   alias, because those groups go down with exactly the same boxes. The four unpinned
   lanes and the two fast-compaction lanes hop one step further, through the lane that
   bakes their own level, so a lane that asked for `low` is not served an `xhigh` answer
   by its fallback.
 - `cooldown_time: 60` is how long a box that tripped the rate rule sits out, and it is
-  also the fail window that rule counts over. There is no `allowed_fails` key in the
-  config, and the absence is deliberate: naming it with a non-default number selects
-  the counting branch of the cooldown decision instead of the rate rule, and that
-  branch counts inside a window of `cooldown_time`. The `allowed_fails: 40` and
+  also the fail window that rule counts over.
+- There is no `allowed_fails` key in the config, and the absence is deliberate: naming it
+  with a non-default number selects the counting branch of the cooldown decision instead
+  of the rate rule, and that branch counts inside a window of `cooldown_time`. The
+  `allowed_fails: 40` and
   `cooldown_time: 5` this replaced therefore asked for 41 failures inside 5 s, which is
   why it never fired. Without the key the vendor's rate rule decides when a box stops
   being a candidate; see
   [what `cooldown_time: 60` is for](#what-cooldown_time-60-is-for-now).
+
+#### What the health sweep does
+
 - `background_health_checks: true` and `enable_health_check_routing: true` do the
   re-probing and then make the result decide routing, so recovery does not wait for
   user traffic to rediscover it. They sit beside `health_check_interval: 120`,
@@ -99,35 +111,40 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
   slow probe.
 - The four Arc deployments - `coder`, `coder-fast`, `chat`, `compaction-fast` - carry
   `model_info.disable_background_health_check: true`, so the sweep drops them
-  (`proxy_server.py:4116-4118`). A group's only deployment can never be pulled out by
-  the health filter anyway - dropping it empties the candidate list, which is the
-  `router.py:14177` fail-open - so the mark buys no routing, and it is not free: the
-  same cycle cools what it marked (`proxy_server.py:4013`) and the cooldown list has
-  no fail-open under this config, because the bypass at `router.py:12774` needs a
-  policy the file refuses to set. `coder` is the terminal hop of every Spark lane, so
-  a 401 or a 404 from a probe would park the fallback for `cooldown_time` with no user
-  request having failed. Read the two functions in order and the family is exact: that
-  pair clears `_is_cooldown_required` on its own named arms (`cooldown_handlers.py:239`
-  and `:243`), and the arm at `:400-401` then cools it on the bare question of whether
-  LiteLLM would retry the status, with no single-deployment guard -- `_should_retry`
-  returns False for everything outside 408/409/429/5xx (`utils.py:6854-6880`). No other
-  probe reply strands anything: 429 and 408 are skipped at the call site by
+  (`proxy_server.py:4116-4118`).
+- A group's only deployment can never be pulled out by the health filter anyway - dropping
+  it empties the candidate list, which is the `router.py:14177` fail-open - so the mark buys
+  no routing, and it is not free: the same cycle cools what it marked
+  (`proxy_server.py:4013`) and the cooldown list has no fail-open under this config, because
+  the bypass at `router.py:12774` needs a policy the file refuses to set.
+- `coder` is the terminal hop of every Spark lane, so a 401 or a 404 from a probe would park
+  the fallback for `cooldown_time` with no user request having failed.
+- Read the two functions in order and the family is exact: that pair clears
+  `_is_cooldown_required` on its own named arms (`cooldown_handlers.py:239` and `:243`), and
+  the arm at `:400-401` then cools it on the bare question of whether LiteLLM would retry
+  the status, with no single-deployment guard -- `_should_retry` returns False for
+  everything outside 408/409/429/5xx (`utils.py:6854-6880`).
+- No other probe reply strands anything: 429 and 408 are skipped at the call site by
   `health_check_ignore_transient_errors` (`proxy_server.py:4001-4004`), any other 4xx is
-  refused at `:248`, and a genuine 5xx clears the catch-all at `:252` only to fall
-  through every base-case arm. That reading is the source's, not the harness's -- the
-  arm which recorded `exception_status` 500 had the Arc unreachable, and
-  `proxy_server.py:3999` derives the status with `getattr(original_exception,
-  "status_code", 500)`, so a box answering no HTTP at all arrives pre-labelled
-  retryable, and is vetoed at `:223-227` on its `APIConnectionError` text besides. The
-  consequence that is measured, and which stands without the stranding argument: those
-  four no longer appear in the cached `/health` report at all, and four of the 31 probes
-  a cycle stop being paid.
+  refused at `:248`, and a genuine 5xx clears the catch-all at `:252` only to fall through
+  every base-case arm.
+- That reading is the source's, not the harness's -- the arm which recorded
+  `exception_status` 500 had the Arc unreachable, and `proxy_server.py:3999` derives the
+  status with `getattr(original_exception,
+  "status_code", 500)`, so a box answering no HTTP at all arrives pre-labelled retryable, and is
+  vetoed at `:223-227` on its `APIConnectionError` text besides.
+- The consequence that is measured, and which stands without the stranding argument: those
+  four no longer appear in the cached `/health` report at all, and four of the 31 probes a
+  cycle stop being paid.
 - `health_check_staleness_threshold` has to be named because the shipped default does
   not follow the interval: it is `DEFAULT_HEALTH_CHECK_INTERVAL * 2`, 600 s whatever
   `health_check_interval` says (`router.py:993`), and it is the window the health filter
   trusts before it stops filtering. 900 s is what keeps a slow sweep from opening that
   window; see [how long it takes, and how it comes
   back](#how-long-it-takes-and-how-it-comes-back).
+
+#### Retries and timeouts
+
 - `num_retries: 2` covers a transient blip; moving off a busy box is routing's job, not
   the retry chain's. `request_timeout: 1200` is now the tightest deadline on the chain -
   the CLI's streaming idle allowance (`inference_idle_timeout_secs`) sits at 1800 s - so
@@ -137,13 +154,18 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 
 ### When a box answers `NoRoom`
 
+#### Why the router sees a connection error
+
 TensorFold on the Spark boxes refuses an over-admitted stream with the Zig error value
-`NoRoom`, delivered as an HTTP 500 body. The OpenAI SDK hands that to LiteLLM with no
-int `status_code`, which at the pinned `v1.102.1` puts it on the status-less branch of
+`NoRoom`, delivered as an HTTP 500 body.
+
+The OpenAI SDK hands that to LiteLLM with no int
+`status_code`, which at the pinned `v1.102.1` puts it on the status-less branch of
 `exception_mapping_utils`, so the router sees `APIConnectionError`.
 
-`RetryPolicy` in that tag has no `APIConnectionErrorRetries` field. `DefaultRetries` is
-the only field that can reach the error, which is why each agent lane declares one:
+`RetryPolicy` in that tag has no `APIConnectionErrorRetries` field.
+
+`DefaultRetries` is the only field that can reach the error, which is why each agent lane declares one:
 
 ```yaml
 model_group_retry_policy:
@@ -153,6 +175,8 @@ model_group_retry_policy:
     DefaultRetries: 2
     ...
 ```
+
+#### What to read before changing the block
 
 Read these three facts before changing the block:
 
@@ -171,6 +195,8 @@ Read these three facts before changing the block:
   `agent-review` and `agent-swarm-fast` - are the exception: with no pin to name a box,
   each of their retries is re-placed by `least-busy` and can land on another one.
 
+#### The two levers that move load
+
 The two levers that actually move load off a shedding box:
 
 1. The box-side reclaim switch. The recipe measured the same refusal going from
@@ -179,49 +205,53 @@ The two levers that actually move load off a shedding box:
    override file those settings belong in, and `//scripts:spark-verify` already fails a
    box whose `streams.max` drifts from the fleet's `PARALLEL`. Asserting the
    admit-reclaim setting itself is still open work: neither script names that key today.
-2. Keep what one workspace puts on one box at or under that box's `PARALLEL` (5). A
-   pinned lane sends the whole fan-out to the box its session key resolves to, so the
-   width worth asking for there is 4: one box's streams, minus the parent's own request.
-   The unpinned `agent-swarm` lane is what the writers ride by default, and the one that
-   can afford a wider wave - 15 subagents spread by `least-busy` over three boxes fill each
-   box's `PARALLEL` exactly, which is the
-   difference between buying wall-clock and buying queue depth. That default asks every box
-   for all of its streams, and it reserves nothing for the parent's own request the way
-   the one-box width of 4 does. That is a deliberate trade rather than an
-   oversight: the parent's conversation, the reader waves and the review pass all arrive
-   on the same three boxes and share those `PARALLEL` streams, so at 15 a single busy
-   workspace can have the fleet fully subscribed and the last arrivals wait. What makes
-   that survivable is `limit_behavior = "queue"` holding the overflow instead of failing
-   the spawn, so the cost of overshoot is a subagent's latency. That 15 is
-   `grok_subagent_max_concurrent`'s own shipped default, the same on every lane whatever
-   the operator picks there. `grok_swarm_width` (3 boxes x `PARALLEL` 5) is the fleet's
-   own ceiling, rendered as the `# fleet-width:` line beside `max_concurrent`, and the
-   width a workspace gets only when it sets `grok_subagent_max_concurrent = null` on
-   purpose. So an operator who shares the fleet shrinks it with two knobs, not one:
-   `grok_swarm_width` moves the ceiling and `grok_subagent_max_concurrent` moves the
-   width. Drop the first alone and the session still ships 15, and 15 streams over a
-   10-stream fleet is refused by the box with `NoRoom`. The
-   two reader lanes
-   spread the same way, and each group counts its own in-flight requests, but the box's
-   `PARALLEL` streams are one pool that every alias arriving on it shares.
-   Past 15 across the fleet the boxes have no
-   streams left to give, whatever the lane.
-   The same 15 is the budget of a whole tree, because `max_depth` (rendered from
-   `grok_subagent_max_depth`, default 2, validated 1..3) lets a child spawn. `reviewer`,
-   `security-auditor` and `tester` name `spawn_subagent` in their `tools`, and every mapper
-   such a child raises holds a stream the same way its parent does, so a parent sums the
-   in-flight `1 + spawns` over every task and keeps that total at or below the fleet's
-   stream count (`fleet:` in the plan, 15 by default,
-   `templates/common/ez-micro-plan.plan_check.py:42`). That checker refuses a wave whose
-   cost passes the fleet, and the sum is a separate figure from the session cap
-   `[subagents] max_concurrent` sets, because a grandchild opens its own session. The box
-   refuses an over-admitted stream the same way it refuses any other, with `NoRoom`.
+2. Keep what one workspace puts on one box at or under that box's `PARALLEL` (5). A pinned
+   lane sends the whole fan-out to the box its session key resolves to, so the width worth
+   asking for there is 4: one box's streams, minus the parent's own request.
+   - The unpinned `agent-swarm` lane is what the writers ride by default, and the one that
+     can afford a wider wave - 15 subagents spread by `least-busy` over three boxes fill
+     each box's `PARALLEL` exactly, which is the difference between buying wall-clock and
+     buying queue depth.
+   - That default asks every box for all of its streams, and it reserves nothing for the
+     parent's own request the way the one-box width of 4 does. That is a deliberate trade
+     rather than an oversight: the parent's conversation, the reader waves and the review
+     pass all arrive on the same three boxes and share those `PARALLEL` streams, so at 15 a
+     single busy workspace can have the fleet fully subscribed and the last arrivals wait.
+   - What makes that survivable is `limit_behavior = "queue"` holding the overflow instead
+     of failing the spawn, so the cost of overshoot is a subagent's latency.
+   - That 15 is `grok_subagent_max_concurrent`'s own shipped default, the same on every lane
+     whatever the operator picks there.
+   - `grok_swarm_width` (3 boxes x `PARALLEL` 5) is the fleet's own ceiling, rendered as the
+     `# fleet-width:` line beside `max_concurrent`, and the width a workspace gets only when
+     it sets `grok_subagent_max_concurrent = null` on purpose. So an operator who shares the
+     fleet shrinks it with two knobs, not one: `grok_swarm_width` moves the ceiling and
+     `grok_subagent_max_concurrent` moves the width. Drop the first alone and the session
+     still ships 15, and 15 streams over a 10-stream fleet is refused by the box with
+     `NoRoom`.
+   - The two reader lanes spread the same way, and each group counts its own in-flight
+     requests, but the box's `PARALLEL` streams are one pool that every alias arriving on it
+     shares. Past 15 across the fleet the boxes have no streams left to give, whatever the
+     lane.
+   - The same 15 is the budget of a whole tree, because `max_depth` (rendered from
+     `grok_subagent_max_depth`, default 2, validated 1..3) lets a child spawn. `reviewer`,
+     `security-auditor` and `tester` name `spawn_subagent` in their `tools`, and every
+     mapper such a child raises holds a stream the same way its parent does, so a parent
+     sums the in-flight `1 + spawns` over every task and keeps that total at or below the
+     fleet's stream count (`fleet:` in the plan, 15 by default,
+     `templates/common/ez-micro-plan.plan_check.py:42`). That checker refuses a wave whose
+     cost passes the fleet, and the sum is a separate figure from the session cap
+     `[subagents] max_concurrent` sets, because a grandchild opens its own session. The box
+     refuses an over-admitted stream the same way it refuses any other, with `NoRoom`.
 
-Two knobs that look right and do nothing here: `retry_after` is only a `min_timeout` and
-is never consulted while the group has healthy deployments, and `fallbacks_by_model`
-does not exist in this tag (the proxy warns and ignores an unknown `router_settings`
-key, so a config that looks correct silently does nothing, which is why
-`//tests:bats_litellm_config_test` rejects it by name).
+#### Knobs that look right and do nothing
+
+Two knobs that look right and do nothing here:
+
+- `retry_after` is only a `min_timeout` and is never consulted while the group has healthy
+  deployments.
+- `fallbacks_by_model` does not exist in this tag (the proxy warns and ignores an unknown
+  `router_settings` key, so a config that looks correct silently does nothing, which is why
+  `//tests:bats_litellm_config_test` rejects it by name).
 
 ## The alias table
 
@@ -243,28 +273,28 @@ key, so a config that looks correct silently does nothing, which is why
 
 ### Reading the table
 
+#### The Spark rows
+
 - The `agent` row is ONE model group with three deployments, one per Spark box,
   all equal.
 - The eight `agent-*` rows are that same lane with a thinking level baked into
-  `litellm_params.reasoning_effort`. Qwen3.8-Flash-Next takes `low`, `medium` and
-  `xhigh` and nothing else - there is no `high` - so the level is a name to pick
-  rather than a knob to turn, and `agent-low` / `agent-medium` / `agent-xhigh` are
-  how the level reaches Coder Agents: its model dropdown chooses an alias, not a
-  request parameter. The `agent-explore` and `agent-review` rows are the same idea aimed
-  at a fleet role rather than at a person in that dropdown - see
-  [the fan-out lanes](#the-fan-out-lanes-agent-explore-and-agent-review).
+  `litellm_params.reasoning_effort`. Qwen3.8-Flash-Next takes `low`, `medium` and `xhigh`
+  and nothing else - there is no `high` - so the level is a name to pick rather than a knob
+  to turn, and `agent-low` / `agent-medium` / `agent-xhigh` are how the level reaches Coder
+  Agents: its model dropdown chooses an alias, not a request parameter.
+- The `agent-explore` and `agent-review` rows are the same idea aimed at a fleet role rather
+  than at a person in that dropdown - see [the fan-out lanes](#the-fan-out-lanes-agent-explore-and-agent-review).
 - `agent` is not the unthinking default. It bakes `reasoning_effort: xhigh`, so a
   Coder Agents chat on the default alias thinks hard, and `agent-xhigh` asks the
   box for the same level by name. A `reasoning_effort` the client sends in the
   request still wins over the baked one.
-- Those eight groups reuse the same `SPARK1/2/3_OPENAI_URL` / `SPARK_n_API_KEY`
-  pairs as `agent`. They are separate model groups on the same hardware, not eight
-  more boxes: routing state is per group, so least-busy's counters and the session
-  pin are computed inside a group and two chats on different aliases can land on the
-  same box at once. What does not change is the box - 5 full 262144-token streams in
-  total, whichever aliases arrive on it. This is not the "two deployments on one
-  box" mistake below, which is about a single group counting two URLs on one machine
-  as two machines.
+- Those eight groups reuse the same `SPARK1/2/3_OPENAI_URL` / `SPARK_n_API_KEY` pairs as
+  `agent`. They are separate model groups on the same hardware, not eight more boxes:
+  routing state is per group, so least-busy's counters and the session pin are computed
+  inside a group and two chats on different aliases can land on the same box at once.
+- What does not change is the box - 5 full 262144-token streams in total, whichever aliases
+  arrive on it. This is not the "two deployments on one box" mistake below, which is about a
+  single group counting two URLs on one machine as two machines.
 - The three rows after `agent-xhigh` differ from the four above them in routing state
   only: same model, same three boxes, the thinking level each row names, and no session
   pin. See
@@ -276,10 +306,16 @@ key, so a config that looks correct silently does nothing, which is why
   proxy callback re-serves from `compaction-fast` on the Arc when the summary fits that
   window, and from a Spark group at thinking `low` when it does not. See
   [the fast-compaction lanes](#the-fast-compaction-lanes-agent-xhigh-fast-and-agent-swarm-fast).
+
+#### The Arc summary row
+
 - `compaction-fast` is that hop's small-summary target, and a row no template offers a client: no
   `reasoning_effort` line, no tool-calling flags, and `max_input_tokens: 32768` rather
   than the Spark rows' 262144, because a summary is prose and 32768 is the honest
   window of those weights.
+
+#### What the backend has to match
+
 - The Spark boxes serve TensorFold's OpenAI-compatible `/v1` and nothing else: Ollama
   runs on the Arc, so a Spark box never sees the Ollama protocol.
 - `model:` is sent to the backend verbatim, so `Qwen3.8-Flash-Next` has to match the
@@ -305,18 +341,19 @@ key, so a config that looks correct silently does nothing, which is why
 
 - Agent mode therefore needs either the Spark `agent` lane or the small `chat` model.
 - Grok Build, Cline, Roo and Kilo all default to `agent`.
-- `scripts/coder-agents.sh` registers `agent` (the default, with `chat` standing in when the Spark lane is dark),
-  `agent-low`/`agent-medium`/`agent-xhigh`, `agent-swarm`, and `chat` as Coder Agents chat
-  model configs, for the same reason: an agent turn without callable tools cannot browse or
-  edit, so registering `coder` or `coder-fast` would only add a visibly broken model to
-  the pickers. Nine Spark aliases drive tools, so nine could be registered; only the
-  five above are - the thinking aliases are there to make the level selectable from that
-  picker, while `agent-explore` and `agent-review` answer a parent's dispatch rather than
-  a person at the dropdown, so registering them would add two names nobody types. The two
-  fast-compaction lanes are absent for a mechanical reason of the same kind: the hop keys
-  on the summary instruction the Grok CLI appends, and the aibridge behind this dropdown
-  never sends one, so a chat on `agent-xhigh-fast` is a chat on `agent-xhigh` wearing a
-  longer name.
+- `scripts/coder-agents.sh` registers `agent` (the default, with `chat` standing in when the
+  Spark lane is dark), `agent-low`/`agent-medium`/`agent-xhigh`, `agent-swarm`, and `chat`
+  as Coder Agents chat model configs, for the same reason: an agent turn without callable
+  tools cannot browse or edit, so registering `coder` or `coder-fast` would only add a
+  visibly broken model to the pickers.
+- Nine Spark aliases drive tools, so nine could be registered; only the five above are - the
+  thinking aliases are there to make the level selectable from that picker, while
+  `agent-explore` and `agent-review` answer a parent's dispatch rather than a person at the
+  dropdown, so registering them would add two names nobody types.
+- The two fast-compaction lanes are absent for a mechanical reason of the same kind: the hop
+  keys on the summary instruction the Grok CLI appends, and the aibridge behind this
+  dropdown never sends one, so a chat on `agent-xhigh-fast` is a chat on `agent-xhigh`
+  wearing a longer name.
 
 ## Routing inside the `agent` group
 
@@ -336,11 +373,11 @@ key, so a config that looks correct silently does nothing, which is why
   the one thing to know before trusting it to spread load.
 - Its counters are raised before the call (`router_strategy/least_busy.py:120`) and given
   back on the failure hook (`:129`, `:143`), so a box that refuses every request sits at
-  zero -- and `_least_busy` (`:83`) returns the FIRST deployment at the minimum. A dead
-  box listed first in a group is therefore the preferred target, not the avoided one:
-  unfiltered, `least-busy` prefers it over a healthy box. What pulls it out is the health
-  filter that runs ahead of the strategy, which is the whole subject of
-  [when a Spark box goes down](#when-a-spark-box-goes-down-and-comes-back).
+  zero -- and `_least_busy` (`:83`) returns the FIRST deployment at the minimum. A dead box
+  listed first in a group is therefore the preferred target, not the avoided one:
+  unfiltered, `least-busy` prefers it over a healthy box.
+- What pulls it out is the health filter that runs ahead of the strategy, which is the whole
+  subject of [when a Spark box goes down](#when-a-spark-box-goes-down-and-comes-back).
 - Its counters are per deployment and expire after a hardcoded 3600 s; there is no
   `routing_strategy_args` block to set, and `ttl` there would be a paste from newer docs.
 - It decides only for unpinned traffic: the affinity pin below resolves first, and
@@ -350,16 +387,15 @@ key, so a config that looks correct silently does nothing, which is why
   which is the whole of those four lanes.
 - Health checks, cooldowns and those counters all attribute per deployment through
   `model_info.id`, which is why each box carries a unique id: `agent-spark-1`,
-  `agent-spark-2`, `agent-spark-3`. Each thinking group, the swarm group, the two
-  fan-out groups and the two fast groups carry their own triple -
-  `agent-low-spark-1/2/3`,
-  `agent-medium-spark-1/2/3`,
-  `agent-xhigh-spark-1/2/3`, `agent-swarm-spark-1/2/3`,
-  `agent-explore-spark-1/2/3`, `agent-review-spark-1/2/3`,
-  `agent-xhigh-fast-spark-1/2/3`, `agent-swarm-fast-spark-1/2/3` - so the same physical
-  box is a separate deployment, with its own health state and its own in-flight counter,
-  inside every group it belongs to. `compaction-fast` needs no triple: the Arc is one box
-  and its single deployment is `compaction-fast-arc`.
+  `agent-spark-2`, `agent-spark-3`.
+- Each thinking group, the swarm group, the two fan-out groups and the two fast groups carry
+  their own triple - `agent-low-spark-1/2/3`, `agent-medium-spark-1/2/3`,
+  `agent-xhigh-spark-1/2/3`, `agent-swarm-spark-1/2/3`, `agent-explore-spark-1/2/3`,
+  `agent-review-spark-1/2/3`, `agent-xhigh-fast-spark-1/2/3`, `agent-swarm-fast-spark-1/2/3`
+  - so the same physical box is a separate deployment, with its own health state and its own
+  in-flight counter, inside every group it belongs to.
+- `compaction-fast` needs no triple: the Arc is one box and its single deployment is
+  `compaction-fast-arc`.
 - A cooled box therefore stays visibly out of `healthy_deployments` instead of blending
   into the group's aggregate stats.
 
@@ -379,11 +415,15 @@ key, so a config that looks correct silently does nothing, which is why
 
 ### The swarm lane: `agent-swarm`
 
+#### Why this lane carries no pin
+
 The fifth Spark group, and the first of the four that carry no pin. Same
 `openai/Qwen3.8-Flash-Next` on the same three boxes, same baked `xhigh`, same tool-calling
 flags and 262144 window - the
 difference is routing state only, so no pin resolves and every request goes to the global
 `least-busy` picker, landing on the healthy box with the fewest requests in flight.
+
+#### The one key that lifts the pin
 
 One key lifts the pin; apart from that key and the group's own deployment, retry-policy
 and fallback entries, nothing in the config distinguishes it from the five pinned lanes:
@@ -429,20 +469,27 @@ key resolves to.
 
 ### The fan-out lanes: `agent-explore` and `agent-review`
 
+#### Why a child does not need the pin
+
 The sixth and seventh Spark groups, `agent-explore` and `agent-review`, lift the same pin
 the swarm lane lifts, and for the same reason taken one step further: both serve a child
 that answers once. The `explore` type and the seeded `explorer` agent dig for evidence and
 return a digest; `reviewer` and `security-auditor` read what landed and return findings.
+
 Neither carries a long warm prefix into a next turn, so the prefix-cache warmth the pin
 protects is worth nothing here, while its cost is paid in full - the parent loop and every
 child it spawns carry that workspace's one `x-litellm-session-id`, so a pinned wave of six
 resolves to a single deployment and waits on that box's `PARALLEL` admission slots while
 the other two boxes sit reachable and under-offered.
 
+#### The review panel is a wave too
+
 That check is a panel of three skeptics dispatched in one turn - the requirements angle,
 the proof angle that re-runs the producers' own `done:` commands, and the adversary angle -
 each riding `agent-review`, each owning no file, and each allowed up to three read-only
-mappers of its own under `max_depth` 2. Three spawners with three mappers each is twelve of
+mappers of its own under `max_depth` 2.
+
+Three spawners with three mappers each is twelve of
 the fifteen streams the fleet owns, which fits beside a parent still holding its own
 conversation, and the panel is cheap precisely because the writers have all landed by the
 time it runs: the fleet is then idle, and both the skeptics and the mappers they spawn are
@@ -454,11 +501,17 @@ true, so it takes the `xhigh` `agent` itself carries. Each names itself with an 
 list beside the swarm lane's (`litellm/config.yaml:721-729`) and declares its own six-key
 `model_group_retry_policy` block, because a group inherits nothing from its siblings.
 
+#### What the lift costs
+
 What the lift costs is what it costs the swarm lane, said plainly: a second turn of the
 same conversation is not sticky, so it may be prefilled on a different box and pay prefill
 again. For a child that answers once there is no second turn to pay for; point a
-conversation at these aliases and there is. A long single-thread chat, an orchestrator, or
-anything whose turns share a warm prefix belongs on `agent`.
+conversation at these aliases and there is.
+
+A long single-thread chat, an orchestrator, or anything whose turns share a warm
+prefix belongs on `agent`.
+
+#### Rolling one lane back alone
 
 Each reader lane is the default for its own role and is set by its own template
 variable, so either rolls back alone without moving the other or the writers'
@@ -468,6 +521,8 @@ variable, so either rolls back alone without moving the other or the writers'
 |---|---|---|---|
 | `agent-explore` | the built-in `explore` type and the seeded `explorer` | `agent-explore` | `--var grok_explore_lane=agent-low` keeps the level and the pin; `=agent` sends mapping work at full depth |
 | `agent-review` | the seeded `reviewer` and `security-auditor`, which carry the independent review of a multi-file change | `agent-review` | `--var grok_review_lane=agent-xhigh` keeps the level and the pin; `=agent` matches the parent exactly |
+
+#### Where the lane variables live
 
 The variables are declared in `templates/workspace/coder.tf:24-52` and its devcontainer
 twin, and they are what fills `[subagents.models]` in
