@@ -68,8 +68,9 @@ the **stack host's** bootstrap — it installs Bazelisk, the shell/Starlark lint
 (shellcheck, shfmt, buildifier) and Terraform — so it has to run before Bazel exists, and
 stays the single documented `bash scripts/setup-host.sh`.
 
-On a laptop you do not run it: the contributor container or `bazelisk run //scripts:test-in-image` brings the same pinned
-toolchain in from `images/dev/` instead
+On a laptop you do not run it: the contributor container or
+`bazelisk run //scripts:test-in-image` brings the same pinned toolchain in from
+`images/dev/` instead
 ([contribute/devcontainer.md](contribute/devcontainer.md)).
 
 `--repair` is the other half of
@@ -190,7 +191,7 @@ payloads both templates consume:
 - `stack-repo-skills.sh.tftpl`
 - `coder-agents.md`
 - `mcp-cache-proxy.json`
-- `gh-token-refresh.sh.tftpl`.
+- `gh-token-refresh.sh.tftpl`
 
 ### How Terraform reads them
 
@@ -224,8 +225,10 @@ templates; a staged copy that lacks any one of them fails the push early by desi
 
 Dollar escaping differs across those two layers:
 
-- A `templatefile()` `.tftpl` treats `$$` as an escaped `$` everywhere (`$name` or `$${name}`), and leaves `$((` arithmetic alone.
-- An HCL heredoc in `main.tf` (`<<-EOT`) only escapes `$${name}` to `${name}`; a lone `$` is already literal, so shell arithmetic is `$((...))` with one dollar.
+- A `templatefile()` `.tftpl` treats `$$` as an escaped `$` everywhere
+  (`$name` or `$${name}`), and leaves `$((` arithmetic alone.
+- An HCL heredoc in `main.tf` (`<<-EOT`) only escapes `$${name}` to `${name}`; a lone `$`
+  is already literal, so shell arithmetic is `$((...))` with one dollar.
 
 `$$((` is two dollars, and Coder runs `coder_script` bodies as `bash -c`, which
 expands `$$` to the PID. Do not wrap `templatefile()` in `chomp()`.
