@@ -56,7 +56,8 @@ appears:
 
 Here the pin lives in `images/dev/tool-versions.env` and its mirror in `images/dev/Dockerfile`:
 
-- each key there must also be an `ARG` in the Dockerfile or `//tests:bats_image_test` fails (`tests/bats/image.bats:25`)
+- each key there must also be an `ARG` in the Dockerfile
+  or `//tests:bats_image_test` fails (`tests/bats/image.bats:25`)
 - `scripts/lib/tool_pins.sh` turns the same keys into host download URLs, so a rename strands CI
 
 Bumping those two files is the whole dependency update -- the contributor container needs no edit

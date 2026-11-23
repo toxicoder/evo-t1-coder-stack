@@ -36,8 +36,11 @@ in it. Answering that from `grep` re-derives what one `bazelisk query` prints.
 
 Three pages this one leans on:
 
-- [building-with-bazel.md](building-with-bazel.md) explains the maps, runfiles, and the daily commands
-- [test-with-bazel.md](test-with-bazel.md) explains the suites those queries name and the two inventory gates; [../project-conventions.md](../project-conventions.md) the CLI vocabulary this tool prints in
+- [building-with-bazel.md](building-with-bazel.md) explains the maps, runfiles,
+  and the daily commands
+- [test-with-bazel.md](test-with-bazel.md) explains the suites those queries name
+  and the two inventory gates; [../project-conventions.md](../project-conventions.md)
+  the CLI vocabulary this tool prints in
 
 ## Why a query, not a grep
 
@@ -45,7 +48,8 @@ Three pages this one leans on:
 
 A sweep of this repo's own agent session logs measured the habits the graph is meant to replace.
 
-- Corpus: the 199 parent sessions recorded for this checkout under `~/.grok/sessions/` before 2026-11-01
+- Corpus: the 199 parent sessions recorded for this checkout under `~/.grok/sessions/`
+  before 2026-11-01
 - Counted with `jq` and `grep -c` over each session's `chat_history.jsonl`
 - Every count is a floor, because a truncated tool result hides a call
 
@@ -143,7 +147,8 @@ of them and the same verb in the other direction tells you what it covers.
 
 Three payload trees are in play:
 
-- `templates/workspace/` and `templates/devcontainer/` keep independent payload copies that must move
+- `templates/workspace/` and `templates/devcontainer/` keep independent payload copies
+  that must move
   together
 - `templates/common/` holds the files both consume as one shared copy
 

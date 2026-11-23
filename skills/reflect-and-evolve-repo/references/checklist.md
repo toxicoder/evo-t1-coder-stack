@@ -1,6 +1,7 @@
 # Reflect and Evolve (Repo) - Working Checklist for the Repository
 
-Read this before proposing anything, and again when the evidence is ambiguous. Every item names the command or path that answers it; a check you did not run is not evidence.
+Read this before proposing anything, and again when the evidence is ambiguous. Every item
+names the command or path that answers it; a check you did not run is not evidence.
 
 The subject here is the repository:
 
@@ -60,7 +61,8 @@ For the agent system that wraps it, use `skills/reflect-and-evolve/references/ch
 
 ## Signal reading
 
-Rank friction by what it says about the repository, never by its size, and read the table in the sweeper's own order:
+Rank friction by what it says about the repository, never by its size, and read the table
+in the sweeper's own order:
 
 - the score `2*toolFailureCount + 2*errorCount + regenerationCount + compactionCount` descending
 - then recency

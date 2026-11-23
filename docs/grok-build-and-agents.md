@@ -633,7 +633,8 @@ while the managed block is intact.
   `spawn_subagent` in their `tools` (`templates/common/reviewer.AGENT.md:5`), so a skeptic
   or a tester can fan read-only mappers out one level under itself.
 
-  Each of those grandchildren is its own session with its own `max_concurrent`, and what it costs the
+  Each of those grandchildren is its own session with its own `max_concurrent`, and what
+  it costs the
   fleet is one model stream, so a tree is budgeted by summing the in-flight `1 + spawns`
   over every task and keeping that total at or below the fleet's stream count (`fleet:` in
   the plan, 15 by default, `templates/common/ez-micro-plan.plan_check.py:42`). That total
@@ -1018,7 +1019,8 @@ children write only their own `results/T<nn>.md`, never a brief, and the parent 
 only thing that moves a fact sideways from one child to the next (a child reports
 `found:`, the parent writes it into the lane brief before the next wave).
 
-`ctx/L0.md` is frozen before wave 1, because children already running read the copy that was there when
+`ctx/L0.md` is frozen before wave 1, because children already running read the copy that
+was there when
 they started - editing it mid-run is a re-dispatch, not an edit.
 
 A task is micro when all of this holds:
@@ -1055,7 +1057,8 @@ The bare ids after the summary are the wave to spawn - `--ready` prints the task
 `needs:` are all satisfied, capped at `slots`, and the parent takes that set rather than
 the plan's order and spawns the whole wave in one turn.
 
-The refusals are the collisions a fan-out otherwise discovers at wave 3; a plan with two ready tasks on the same file and a
+The refusals are the collisions a fan-out otherwise discovers at wave 3; a plan with two
+ready tasks on the same file and a
 read-only role handed that file prints:
 
 ```text
@@ -1467,7 +1470,8 @@ Every multi-file change ends with an independent review panel that wrote none of
 (requirements, proof, adversary), each owning no file, where one skeptic over all three
 angles is enough for a single-file fix.
 
-The rulebook states it as a requirement, not a suggestion (`templates/common/GROK_BUILD_AGENTS.md`, "Mandatory independent review"),
+The rulebook states it as a requirement, not a suggestion
+(`templates/common/GROK_BUILD_AGENTS.md`, "Mandatory independent review"),
 and its reasoning is one sentence: a delegated result is a claim, and a review that trusts
 the claim rather than the artifact is not a review.
 
@@ -1588,7 +1592,8 @@ workspace to pick up what was typed since the last boot. What is not promised is
 - a file written in the last two seconds is left for the next tick, because copying it
 whole could archive a half-saved file.
 
-Going the other way, two guards stop a recreate from erasing notes: a live file that is empty or still holds only the seeded stub never replaces
+Going the other way, two guards stop a recreate from erasing notes: a live file that is
+empty or still holds only the seeded stub never replaces
 a canonical copy carrying real notes, and a real canonical copy restores over such a stub
 in a clone.
 
@@ -2001,7 +2006,8 @@ config takes the default in its place. That matters because a chat opened withou
 explicit model pick has only the default to resolve to, so a stack that comes up while
 the Spark lane is dark still gets an Agents chat that answers.
 
-An existing config is left as it stands, since this API surface has no PATCH: the script names the Admin
+An existing config is left as it stands, since this API surface has no PATCH: the
+script names the Admin
 screen to correct it when a stored row drifted.
 
 The closing summary counts how many of the four auxiliary lanes carry a pin, and a lane
@@ -2094,7 +2100,8 @@ drives the server's experimental chat API:
   conversations lose their titles and die at the compaction threshold, which is why a
   stale pin now moves instead of being kept forever.
 
-  Neither preference list names `agent-swarm`: that config is registered for the model picker only, because these lanes
+  Neither preference list names `agent-swarm`: that config is registered for the model picker
+  only, because these lanes
   serve the control-plane chat agent, which is one conversation, and one conversation
   wants the pin.
 

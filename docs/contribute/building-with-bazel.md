@@ -68,7 +68,8 @@ Everything else is a Bazel target, including every `scripts/*.sh`.
 
 ### CI repeats the gate
 
-CI repeats the gate from a clean runner inside the same golden image: `.github/workflows/ci.yml` builds
+CI repeats the gate from a clean runner inside the same golden image:
+`.github/workflows/ci.yml` builds
 `images/dev` with buildx and the Actions layer cache and docker-runs the two suites below in
 it, so the bazel job does not install the pins onto the runner at all — the image already
 carries them.
@@ -150,7 +151,8 @@ The repository cache is the one worth persisting in CI, and `EVO_T1_BAZEL_CACHE=
 is the seam: `//scripts:test-in-image` bind-mounts that directory into the gate container and
 points `--repository_cache` at it, so each external archive downloads once per key.
 
-Each CI gate step exports it as `${RUNNER_TEMP}/bazel-repo-cache` and is wrapped in an `actions/cache`
+Each CI gate step exports it as `${RUNNER_TEMP}/bazel-repo-cache`
+and is wrapped in an `actions/cache`
 pair keyed on `MODULE.bazel`, `MODULE.bazel.lock` and `.bazelrc`, with the save under
 `if: always()` — the archives fetched before a red gate are exactly what the next run would
 otherwise pay for again.

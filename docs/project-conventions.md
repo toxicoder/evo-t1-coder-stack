@@ -129,7 +129,8 @@ bazelisk run //scripts:new-workspace -- --dry-run https://github.com/org/repo.gi
   - `section` prints `== name ==`
   - `phase` prints `-> text`
   - `ok` prints `ok: text`
-  - `summary` prints `summary: N ok, W warnings, F failed` plus `  failed: …` and optional `next: cmd`
+  - `summary` prints `summary: N ok, W warnings, F failed`
+    plus `  failed: …` and optional `next: cmd`
 
   `JSON_MODE` set sends prose to stderr. CLIs without `--json` unset `JSON_MODE` after source.
   Keep prefixes `warning:` / `note:` / `error:`.

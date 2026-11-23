@@ -73,7 +73,8 @@ grep -rlE 'FEATURE_|_ENABLED|profiles:' --include='*.y*ml' --include='*.tf' --in
 ### Name the gate
 
 Name the gate you must not break (`package.json` scripts, `Makefile` targets, `MODULE.bazel`, CI steps; e.g.
-`npm test`, `pytest`, `bazelisk test //:test-fast`) and run it now, so a later red is yours to attribute.
+`npm test`, `pytest`, `bazelisk test //:test-fast`)
+and run it now, so a later red is yours to attribute.
 
 Record
 how the repo deploys and each environment's gaps in hosts, ports, namespaces, project names, sizes, secrets: value
@@ -193,7 +194,8 @@ flags:
 Every flag:
 
 - named exactly as the process reads it, so grep audits completely
-- off by default on trunk, since an on-by-default flag is an unfinished feature that became load-bearing
+- off by default on trunk, since an on-by-default flag is an unfinished feature
+  that became load-bearing
 - owned, with an expiry (a date, or a condition a human can check)
 - read at one seam and branched there, so retiring is one edit and a grep
 - deleted with its off-path and any branch still carrying it, in one later `chore:` pull request
@@ -231,12 +233,15 @@ Porting is re-adaptation, not cherry-pick archaeology.
 
 Deletion is a human action.
 
-1. Record `git rev-parse origin/<branch>` per proposed branch first: a recorded SHA survives until garbage
+1. Record `git rev-parse origin/<branch>` per proposed branch first: a recorded SHA
+   survives until garbage
    collection, an unrecorded one does not
 2. Present the table (branch, age, author, unique commits, verdict, evidence, recovery SHA) with
-   `git push origin --delete <branch>` and `git fetch --all --prune`, then wait for explicit confirmation: hand
+   `git push origin --delete <branch>` and `git fetch --all --prune`,
+   then wait for explicit confirmation: hand
    the commands over, do not run them
-3. When the real trunk is a rename (work lives on `development`), converge content first, then propose the rename
+3. When the real trunk is a rename (work lives on `development`), converge content first,
+   then propose the rename
    as its own confirmed step
 
 ### Exit -- Phase 4 branch verdict and recorded tip SHA
@@ -263,7 +268,8 @@ Exit: each criterion passes or is reported unmet with its reason, gates quoted g
 Phase 0 discovers the specifics; these four named users are orientation, not fact, and the checkout outranks the
 note.
 
-A branch `0` ahead is a cleanup with a confirmation in front of it; hundreds ahead is a porting programme.
+A branch `0` ahead is a cleanup with a confirmation in front of it;
+hundreds ahead is a porting programme.
 
 - **`toxicoder/evo-t1-coder-stack`** (Bazel, trunk `main`): confirm the gate labels (`//:test-fast`, `//:lint`,
   `//:test-all`) from `BUILD.bazel` and CI before quoting them. Environment branches are already forbidden

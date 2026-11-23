@@ -166,7 +166,8 @@ The OpenAI SDK hands that to LiteLLM with no int
 
 `RetryPolicy` in that tag has no `APIConnectionErrorRetries` field.
 
-`DefaultRetries` is the only field that can reach the error, which is why each agent lane declares one:
+`DefaultRetries` is the only field that can reach the error,
+which is why each agent lane declares one:
 
 ```yaml
 model_group_retry_policy:
@@ -287,7 +288,8 @@ Two knobs that look right and do nothing here:
   to turn, and `agent-low` / `agent-medium` / `agent-xhigh` are how the level reaches Coder
   Agents: its model dropdown chooses an alias, not a request parameter.
 - The `agent-explore` and `agent-review` rows are the same idea aimed at a fleet role rather
-  than at a person in that dropdown - see [the fan-out lanes](#the-fan-out-lanes-agent-explore-and-agent-review).
+  than at a person in that dropdown - see
+  [the fan-out lanes](#the-fan-out-lanes-agent-explore-and-agent-review).
 - `agent` is not the unthinking default. It bakes `reasoning_effort: xhigh`, so a
   Coder Agents chat on the default alias thinks hard, and `agent-xhigh` asks the
   box for the same level by name. A `reasoning_effort` the client sends in the

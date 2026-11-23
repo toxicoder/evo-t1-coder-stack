@@ -3018,7 +3018,8 @@ warning: the env file was not refreshed from Infisical; <checkout>/.env keeps th
   untouched` when the CLI could not reach the vault
   - `warning: the Infisical export
   produced an empty file; <file> is untouched` when it answered with nothing
-  - `note: the pull was refused before it ran; <file> keeps the values it has` when a required key is still empty.
+  - `note: the pull was refused before it ran; <file> keeps the values it has`
+  when a required key is still empty.
 - Nothing is broken yet and nothing repairs itself by waiting: the stack is up, on values
   the vault may no longer hold. Ask the vault and the inventory first - `check` is a
   diagnostic and always exits `0`:
@@ -3031,7 +3032,8 @@ bazelisk run //scripts:infisical -- check
 
   - `note: <KEY> is empty; set it in <file> before this verb can
   reach the vault` per key that is not filled (`scripts/infisical.sh:215`)
-  - `note: no Infisical CLI installed; run: bazelisk run //scripts:infisical -- install-cli` when the binary is what is missing (`scripts/infisical.sh:346`)
+  - `note: no Infisical CLI installed; run: bazelisk run //scripts:infisical -- install-cli`
+  when the binary is what is missing (`scripts/infisical.sh:346`)
   - `warning: the
   machine identity could not exchange a token; check the client id and secret, and that
   the vault answers` when the vault is there but will not authenticate the identity
@@ -3453,7 +3455,8 @@ them means anything.
   answering `501 (Not Implemented)` is upstream grafana/grafana#136271: with
   `unified_storage.overrides_path` unset the resource server's quota service is nil and
   refuses the call, while the browse-dashboards view fires it on every page load.
-  - This bundle closes it by pointing Grafana at `observability/grafana/unified-storage/overrides.yml`
+  - This bundle closes it by pointing Grafana at
+  `observability/grafana/unified-storage/overrides.yml`
   through `GF_UNIFIED_STORAGE_OVERRIDES_PATH`, so the call answers `200`. The file sets
   no limit; its presence is the whole fix, and what the endpoint then reports is
   Grafana's own default - `{"usage":0,"limit":1000}` for both dashboards and folders on
