@@ -574,11 +574,16 @@ why a fleet that answers at all can still be answering badly; see the fallback c
 ### Sessions log `compact failed: exceeded wall-clock budget 300s (runaway generation)` -> a compaction stream that never sent a token, bought three times
 
 Cause: the auto-compaction summary hung before its first token and nothing abandoned it.
+
 The CLI's 300 s wall-clock budget does not abort a call in flight - it is evaluated only
 after the response returns - so at 300 s its entire effect was to reject a summary that
-had already streamed in and make the session generate it again. Meanwhile the proxy
+had already streamed in and make the session generate it again.
+
+Meanwhile the proxy
 re-dispatched every hung attempt to the same session-pinned Spark box, so one hang cost
 up to three `request_timeout` periods. Both halves are fixed here.
+
+#### Prove the recurrence first
 
 - Prove recurrence before you touch anything. The events are in each session's
   `updates.jsonl`, so one pass over the store counts attempts against outcomes. The
@@ -606,6 +611,8 @@ grep -rc --include=updates.jsonl \
   awk -F: '$NF+0 > 0 {print $NF, $0}' | sort -rn | head -5
 ```
 
+#### What the measurements showed
+
 Each link in the chain, measured:
 
 - Auto-compaction always fired at about 75 per cent of the 262144-token window, the
@@ -623,7 +630,8 @@ Each link in the chain, measured:
   past 300 s, which is the summary the budget was discarding.
 - Nothing on the client aborts the hang. `signals.json` reports `inferenceIdleTimeouts`
   at 0 or 1 across the failing sessions, and no hung call was ever cut off at the idle
-  deadline, so `inference_idle_timeout_secs` (then 1200 s) is not on this path. The key
+  deadline, so `inference_idle_timeout_secs` (then 1200 s) is not on this path.
+  - The key
   now ships at 1800 s in both template twins, which does not put it on this path either:
   the CLI still does not apply it to compaction. Reproduced directly: with an upstream
   held open and no byte sent, the CLI was still waiting at 3000 s.
@@ -635,11 +643,15 @@ Each link in the chain, measured:
   `MidStreamFallbackError`, which subclasses `ServiceUnavailableError`
   (`litellm/exceptions.py:1114` at that tag), and `get_num_retries_from_retry_policy` walks the
   exception MRO most-specific first, so it lands on `ServiceUnavailableErrorRetries` and
-  never reaches `DefaultRetries`. A hung request never cools the box either: cooldown
+  never reaches `DefaultRetries`.
+  - A hung request never cools the box either: cooldown
   hard-excludes any exception whose string contains `APIConnectionError`, and
   `_deployment_ids_to_skip_on_retry` only skips deployments that answered a non-retryable
-  int status code. Under the workspace-wide `x-litellm-session-id` pin every attempt
+  int status code.
+  - Under the workspace-wide `x-litellm-session-id` pin every attempt
   therefore returned to the same saturated box.
+
+#### Land the fix
 
 What the fix changed, and how to land it:
 
@@ -674,6 +686,8 @@ docker compose -p evo-t1-coder-stack -f docker-compose.yml restart litellm
 bazelisk run //scripts:push-template
 ```
 
+#### What the fix leaves alone
+
 What it deliberately does not do:
 
 - It does not stop the upstream from hanging. It stops the hang being bought three times,
@@ -693,11 +707,16 @@ What it deliberately does not do:
 Cause: the hop is a proxy behaviour, not a client one, and it needs four things true in the
 same moment. With any one of them false the summary rides a Spark box exactly as it did
 before these two aliases existed - the 107 s to 1915 s measured above - and that is the slow
-path, not a fault. The Grok Build CLI has no compaction-model key, so there is nothing
+path, not a fault.
+
+The Grok Build CLI has no compaction-model key, so there is nothing
 client-side to point elsewhere: the alias the session started on is the whole decision, and
-`[models] session_summary` is still not the compaction lane (see the entry above). The
-decision lives in `litellm/compaction_router.py`, and the five `EVO_T1_FAST_COMPACTION*`
+`[models] session_summary` is still not the compaction lane (see the entry above).
+
+The decision lives in `litellm/compaction_router.py`, and the five `EVO_T1_FAST_COMPACTION*`
 knobs named below are read there and nowhere else.
+
+#### Read the proxy's own line first
 
 Start with the proxy's own line for the call:
 
@@ -709,13 +728,18 @@ bazelisk run //scripts:prod-stack -- logs --tail 200 litellm | grep -m3 'compact
 hop firing, once per summary, onto the tier it landed on: `EVO_T1_FAST_COMPACTION_TARGET`
 for a summary within the guard (default `compaction-fast`, which degrades to `agent-low`
 then `coder`) or `EVO_T1_FAST_COMPACTION_SPARK_TARGET` for one above it (default
-`agent-low`). No line at all is one of these:
+`agent-low`).
+
+#### When no line appears at all
+
+No line at all is one of these:
 
 - **Not a fast lane.** The hop is armed by the alias alone, so a session on `agent`,
   `agent-xhigh` or `agent-swarm` compacts on Spark by design. The groups allowed to hop are
   `EVO_T1_FAST_COMPACTION_LANES`, default `agent-xhigh-fast,agent-swarm-fast`.
 - **The kill switch.** `EVO_T1_FAST_COMPACTION` ships on, and `0`, `false`, `off` or `no`
-  stops the hop on every lane at once. A value that is none of those and none of `1`,
+  stops the hop on every lane at once.
+  - A value that is none of those and none of `1`,
   `true`, `on`, `yes` also leaves it off, with one
   `compaction router: EVO_T1_FAST_COMPACTION=... is neither on nor off` warning per
   distinct value: a typo'd off is read as off. Compose gives each of the five keys its
@@ -732,7 +756,8 @@ bazelisk run //scripts:prod-stack -- up
   reads it there: one of the two asks the CLI sends, from a `user` or `system` role, in a
   turn no longer than the instruction itself. It does not read the system prompt, which
   rides every turn of the session, so a rulebook that quotes the sentence cannot move an
-  ordinary turn. A request that merely mentions one of the two asks is not a compaction
+  ordinary turn.
+  - A request that merely mentions one of the two asks is not a compaction
   call and stays on its lane.
 - **Too big for the Arc, and the Spark tier was blanked.** The estimate covers the whole
   request, the tool schemas included, and charges a base64 payload and a non-ASCII reply at
@@ -740,7 +765,8 @@ bazelisk run //scripts:prod-stack -- up
   `EVO_T1_FAST_COMPACTION_INPUT_LIMIT` (default 24000) goes to
   `EVO_T1_FAST_COMPACTION_SPARK_TARGET` rather than to the Arc: the
   Arc weights answer inside a 32k window and Ollama would clamp such an input rather than
-  fail it. Raising that key does not open the Arc tier: the fork takes the smaller of the
+  fail it.
+  - Raising that key does not open the Arc tier: the fork takes the smaller of the
   key and the `max_input_tokens` the target group declares in `litellm/config.yaml`, so
   `EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000` still forks at 32768 and logs one
   `compaction router: EVO_T1_FAST_COMPACTION_INPUT_LIMIT=100000 is above the 32768 tokens
@@ -750,11 +776,11 @@ bazelisk run //scripts:prod-stack -- up
   config.yaml; forking at EVO_T1_FAST_COMPACTION_INPUT_LIMIT alone` - that line is the
   signal to go declare the window, because it is the one state where the fork can still
   hand an oversized summary to a model that reads it clamped.
-  A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
+  - A shipped auto-compaction arrives near 183,500 tokens, so it is the Spark tier
   that answers it. Blank that key, or name the lane the call arrived on, and an oversized
   summary stays on its Spark lane at the lane's own thinking level - the pre-hop behaviour,
   and the one case where the 107 s to 1915 s above is the documented limit of the feature.
-  A summary that comes back short of the history it should cover has one remaining path
+  - A summary that comes back short of the history it should cover has one remaining path
   that explains it: with all three Sparks cooled, the fallback chains end at `coder` -
   `agent-low: ["coder"]` for the oversized tier, and the same for the pair's own chains -
   and that Arc group answers from an input Ollama clamps down to its 32k window. That is every Spark
@@ -770,6 +796,8 @@ bazelisk run //scripts:prod-stack -- up
   rather than a summary that hard-fails. `grep -E '^  - model_name: ' litellm/config.yaml` is
   the list of legal answers for both keys.
 
+#### When it moved but stayed slow
+
 A summary that moved and still came back slowly is the fallback rather than the hop: each
 fast lane degrades to the lane it is the twin of (`agent-xhigh-fast` to `agent-xhigh`,
 `agent-swarm-fast` to `agent-swarm`), and a twin is not in the lane list, so a session that
@@ -779,6 +807,8 @@ alias-health case further down this page.
 ### Coder Agents chat refuses every prompt, or its model dropdown is empty -> no model config
 
 Cause: that chat has no model config on this deployment, so there is nothing to route to.
+
+#### Run the seeder
 
 - First run this to see the plan, then run it again without the flag to apply it:
 
@@ -800,11 +830,12 @@ bazelisk run //scripts:coder-agents -- --apply
   re-running it repairs a provider that drifted and moves a model pin whose alias has
   since gone unhealthy.
 
+#### Read the closing warnings
+
 - The closing summary counts the auxiliary lanes that carry a pin. A `warning:` naming a
   lane means that lane falls back to Coder's own pick, and `title_generation` and
   `compaction` are the two an operator notices first: conversations stop getting titles,
-  then a long one stops at the compaction threshold. Re-run `--apply` once the alias
-  behind that lane answers.
+  then a long one stops at the compaction threshold. Re-run `--apply` once the alias behind that lane answers.
 
 - A `warning:` that a stored model config is disabled, is not the default, or compacts
   against the wrong window names a row this script found already in place. It reads
@@ -866,22 +897,32 @@ The checks that apply:
 ### Search never answers (or answers empty) -> prove the search lane before blaming the MCP hop
 
 The self-hosted SearXNG MCP stdio server is the search lane, declared by default
-(`search_mcp` defaults to true). Grok's native `web_search` is parked: the render sets
+(`search_mcp` defaults to true).
+
+Grok's native `web_search` is parked: the render sets
 `disable_web_search = true`, because no model transport this box ships serves that
 tool type - LiteLLM's `agent` group answers `tools of type 'web_search' are not
 supported: this server runs function tools only` (HTTP 400) before anything is
-fetched, and `supports_backend_search = false` does not route around it. An agent that
+fetched, and `supports_backend_search = false` does not route around it.
+
+An agent that
 still spends a turn on a native search call and comes back with that message behaved
-as configured; there is no native lane to fall back to. Two probes split a SearXNG
+as configured; there is no native lane to fall back to.
+
+#### Prove the lane with two probes
+
+Two probes split a SearXNG
 fault in half:
 
 - `bazelisk run //scripts:search-check` (or `scripts/search-check.sh` from a shell that
   can reach the host gateway) dials the service directly. It reads `$SEARXNG_URL`
   before its `http://127.0.0.1:8181` default, and every workspace's agent env carries
-  that key, so a workspace-side probe needs no `--url`. It separates engines that
+  that key, so a workspace-side probe needs no `--url`.
+  - It separates engines that
   answered, engines that were unresponsive, and an empty result page, and it names
   each engine the instance has parked together with the reason the backend gave
-  (`parked by its backend: google: access denied`). A park expires after
+  (`parked by its backend: google: access denied`.
+  - A park expires after
   `search.suspended_times` in `searxng/settings.yml`, so re-run before writing an
   engine off. `--json` adds `engines_parked` for a dashboard to trend.
 - An agent whose searches come back empty while the service answers 200 is nearly
@@ -895,17 +936,26 @@ fault in half:
   pass: the declared lanes, whether each `command=` binary is there, whether
   `~/.grok/config.toml` is still stack-managed, whether the lane's credential is
   set, whether the search lane returns results for a plain lookup rather than just
-  an HTTP 200, and each server's handshake. A missing binary prints the exact
+  an HTTP 200, and each server's handshake.
+  - A missing binary prints the exact
   `npm i -g --prefix /opt/npm-global` command that puts it back.
 
 There is no second lane behind this one, so run these probes before touching anything
-else. A service that answers but a server that will not handshake is the MCP hop; a
+else.
+
+A service that answers but a server that will not handshake is the MCP hop; a
 server that cannot launch at all usually means no
 `/opt/npm-global/bin/searxng-mcp-server`, and that binary is baked into the golden
 image - an image that predates it needs a rebuild and a workspace recreate, not a
-config edit. Park the lane with `search_mcp = false` on the next template push
+config edit.
+
+#### Park the lane, or restore the native tool
+
+Park the lane with `search_mcp = false` on the next template push
 (`SEARCH_MCP=false` in `.env` applies it to every new workspace) when a session should
-have no search tool at all. To restore the native tool, flip `disable_web_search` to
+have no search tool at all.
+
+To restore the native tool, flip `disable_web_search` to
 false in both template twins and re-push - only for an endpoint that really serves the
 tool, or the 400 comes straight back.
 
@@ -914,29 +964,41 @@ tool, or the 400 comes straight back.
 The three MCP servers (`github`, `context7`, `searxng`) ship by default, so a lane
 missing from a session has one of three shapes: the block absent from the rendered
 config, the `command=` binary absent from the golden image, or the credential absent.
+
+#### Start with mcp-check
+
 Run `bazelisk run //scripts:mcp-check` first - it reports the declared lanes, their
 binaries, their credentials and their handshake in one pass, and it names which shape
 you are in (an undeclared lane is a failure, a missing binary a warning).
+
 `grok mcp doctor` inside the workspace lists the declared servers and their handshake.
+
+#### A park is not a defect
+
 A *park* is deliberate and looks like this: `GITHUB_MCP=false` / `CONTEXT7_MCP=false` /
 `SEARCH_MCP=false` in `.env` (relayed by `push-template.sh`) or
 `--var github_mcp=false` / `--var context7_mcp=false` / `--var search_mcp=false` on a
 template push. With none of those set, a missing block is a defect, not a park.
 
+#### The shapes, one by one
+
 - A missing `[mcp_servers.github]` or `[mcp_servers.context7]` in
   `~/.grok/config.toml` means the last push passed `--var ...=false`, or the
   workspace started from an older template, or the file carries no stack marker at all
-  (next bullet). No sibling can blank it: `~/.grok/config.toml` is this workspace's own
+  (next bullet).
+  - No sibling can blank it: `~/.grok/config.toml` is this workspace's own
   file, so an absent block is this workspace's own render, not another workspace's.
   Clear the gate and re-push, then re-materialize the file and restart the workspace so
-  the managed `config.toml` re-renders. Two routes re-materialize it:
+  the managed `config.toml` re-renders.
+  - Two routes re-materialize it:
   `bazelisk run //scripts:refresh-configs -- --container coder-<owner>-<ws>` from the
   stack host, for a running workspace container, and
   `bazelisk run //scripts:seed-dev-env -- --home <dir>` for a host home (a laptop, CI,
   or the contributor container).
 - A declared server whose `command=` the box cannot find is image drift: the
   templates declare a binary the running image never got, because it predates the
-  npm bake in `images/dev/Dockerfile`. Rebuild `evo-t1-dev` and recreate the
+  npm bake in `images/dev/Dockerfile`.
+  - Rebuild `evo-t1-dev` and recreate the
   workspace, or install the pinned package into the running box (`npm i -g --prefix
   /opt/npm-global searxng-mcp-server@<pin>`, the pins live in
   `images/dev/tool-versions.env`).
@@ -945,7 +1007,8 @@ template push. With none of those set, a missing block is a defect, not a park.
   the startup script nor the seed writes it again and its default lanes never arrive.
   The usual cause is not a hand edit: `grok mcp add` persists its own settings by
   rewriting that file and deletes every comment line, which used to revoke stack
-  ownership by itself. The TOML key is what survives that write, so a config rendered
+  ownership by itself.
+  - The TOML key is what survives that write, so a config rendered
   by the current templates keeps its marker through `grok mcp add`. Take the file
   over deliberately by removing both lines. To give it back: delete the file and
   restart the workspace, or re-materialize it with
@@ -973,8 +1036,9 @@ template push. With none of those set, a missing block is a defect, not a park.
 
 The **VS Code Web** button is the one app this stack still proxies: its URL is
 `/@<owner>/<ws>.<agent>/apps/code-server` on the coder hostname, because
-`coder_app.code_server` sets `subdomain = false`. So a failing app link is an app-lane
-failure, and a 200 from `litellm-gmktecbeast.` is not evidence about it.
+`coder_app.code_server` sets `subdomain = false`. So a failing app link is an app-lane failure, and a 200 from `litellm-gmktecbeast.` is not evidence about it.
+
+#### Two hops can answer 502
 
 Two hops can answer 502 on that path: this box's nginx, when `coder:3000` will not
 resolve or connect, and Coder's own Go proxy, whose `ReverseProxy` ErrorHandler
@@ -989,6 +1053,8 @@ docker logs --tail 400 coder | grep -i 'failed to proxy request to application'
 docker logs --tail 200 router | grep -Ei 'error|502|upstream'
 ```
 
+#### What each read means
+
 - A hit in the first means Coder tried the upstream and gave up, so the fault sits on
   this box: check the devcontainer or workspace container first, then `DOCKER_HOST`.
 - `X-Coder-Request-Id` on the response, beside `X-Coder-Build-Version`, means Coder's
@@ -998,6 +1064,8 @@ docker logs --tail 200 router | grep -Ei 'error|502|upstream'
   `homepage` or `hermes`. Its absence means the request never reached this box's nginx.
 - Neither header, and a `Server: cloudflare` with a `cf-ray` instead: Traefik or
   Cloudflare answered, and there is nothing on this box to read.
+
+#### Replay it from inside the workspace
 
 To take the same reading from inside the workspace, replay the path on `:8080`, the
 published `router` port. That reaches `coder:3000` through the sidecar while
@@ -1016,6 +1084,8 @@ curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: coder-gmktecbeast.overeazy.io
 
 `--noproxy '*'` matters: with a proxy set in the environment curl hands the name to the
 proxy instead of resolving it, and `000` or a 5xx then describes the proxy.
+
+#### What each reply means
 
 - `000` on the first probe means nothing listened on 4000. A `200 application/json`
   means LiteLLM answered, so the model lane is healthy and the app lane failed
@@ -1044,12 +1114,17 @@ coder logs <workspace>
 
 ### How do I read the workspace start log? -> the body header, the last stage line, and the truncated tail
 
+#### Where the log is
+
 - Where it is: open the workspace in the Coder UI and read its start log, and from a host
   shell the same text is `coder logs <workspace>`. The agent's `startup_script` output is the
   body of that log, and each `coder_script` prints under the name Coder labels it with -
   **Seed the Grok Build rulebook**, **Seed the fleet agents, personas and skills**, **Fetch
   stack secrets from Infisical**, and the rest, which are the `display_name` values at
   `templates/workspace/main.tf:731-1015`.
+
+#### The shapes every body prints
+
 - Every body speaks the same shapes (`templates/common/boot-log.lib.sh`, handed to each body
   as the `boot_log_lib` key of its `templatefile()` map):
 
@@ -1063,6 +1138,8 @@ note: <commentary that decides nothing>
 error: <what failed>                                          (stderr)
 summary: N ok, W warnings, F failed (+Ns, <body>)
 ```
+
+#### Which body, and which stage
 
 - Which body failed: the `== <body>: start ==` header names it, and that name is
   `boot_begin`'s first argument rather than the file's. The eleven in the shipped `workspace`
@@ -1082,6 +1159,9 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
   before it opens its run when the image carries no `infisical` binary
   (`templates/common/infisical-secrets.sh.tftpl:15`), which is silent by design because the
   vault is optional.
+
+#### When the log stops mid-boot
+
 - A log that stops mid-boot is a spent budget, not lost scrollback. One agent's whole stream -
   `startup_script` plus every `coder_script` on it - is 1 MiB, a Postgres check on
   `workspace_agents.logs_length`
@@ -1089,7 +1169,8 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
   When it fills the agent's uploader drops the NEWEST lines
   ([`codersdk/agentsdk/logs.go`](https://github.com/coder/coder/blob/v2.36.6/codersdk/agentsdk/logs.go),
   `maxBytesQueued = 1048576`, the `log queue full; truncating new logs` path), and once the
-  server answers `LogLimitExceeded: true` nothing further is uploaded. So the head of the boot
+  server answers `LogLimitExceeded: true` nothing further is uploaded.
+  - So the head of the boot
   survives and the tail is what you lost: read from the top, and treat a body whose `summary:`
   is missing at the bottom of the log as unproven rather than as a failure - it may have
   finished after the budget ran out.
@@ -1097,8 +1178,7 @@ summary: N ok, W warnings, F failed (+Ns, <body>)
   provider this stack pins (`~> 2.18`, locked 2.18.0 in
   `templates/workspace/.terraform.lock.hcl`) takes no log-size argument, `terraform plan`
   answering `An argument named "log_buffer_size" is not expected here.`, and the agent-side
-  constant is not read from the environment. The bound and the about-40-lines-per-body writing
-  rule it forces are in
+  constant is not read from the environment. The bound and the about-40-lines-per-body writing rule it forces are in
   [coder-templates.md](coder-templates.md#the-boot-log-each-body-prints).
 
 ### Image missing tools, or the build aborts mid-layer -> `curl: (22)`
@@ -1135,31 +1215,42 @@ docker exec -u coder -i <workspace-container> sh -c 'curl -fsSL --http1.1 --retr
 ### A stack skill command missing from Grok Build on code-server web -> the stack's own seed is what provides it
 
 Covers all six stack-shipped skill commands: `/ez-learn`, `/ez-skillify`,
-`/ez-create-skill`, `/ez-bazel-first`, `/ez-strong-types` and `/ez-trunk-based-repo`. The
-diagnosis and the commands below are identical for each one; only the name changes, so read
+`/ez-create-skill`, `/ez-bazel-first`, `/ez-strong-types` and `/ez-trunk-based-repo`.
+
+The diagnosis and the commands below are identical for each one; only the name changes, so read
 `<name>` as whichever of the six you are chasing. The last three are the
 repository-conversion family and ride `coder_script.stack_repo_skills` rather than
 `coder_script.stack_skills`, so a missing one of those points at that body's log.
+
+#### Why there is no upstream to miss
 
 Cause: no published source names an upstream `/learn`, so there is none to miss. The
 `xai-org/grok-build` built-in command table, all 240 pages of docs.x.ai, every
 first-party changelog under `x.ai/cli/changelogs/`, and the public
 `xai-org/plugin-marketplace` catalog all carry zero occurrences of it, so there is no
-published copy to vendor in. The memory family
+published copy to vendor in.
+
+The memory family
 `/ez-learn` copies (`/flush`, `/dream`, `/remember`, `/memory`) is a different case:
 those are upstream commands the CLI ships itself - `/flush`, `/dream` and `/memory` are
 *built-in* registry entries gated behind cross-session memory, which is off by default
-here, and `/remember` is a pager command with no such gate. The CLI does download its
+here, and `/remember` is a pager command with no such gate.
+
+The CLI does download its
 bundled platform skills at runtime (`GROK_SKILLS_BASE_URL`, `cli-chat-proxy.grok.com`)
 and that route needs an x.ai sign-in: from a workspace `api.x.ai` answers 404 and
 `cli-chat-proxy.grok.com`
 answers 401 anonymously, and a session started with `--sandbox off` still leaves
 `~/.grok/bundled/` uncreated. LiteLLM is the sole model transport here, there is no
-x.ai credential, and the fetch never runs. So each slash command this stack ships is its
+x.ai credential, and the fetch never runs.
+
+So each slash command this stack ships is its
 own seed, written at workspace start by `coder_script.stack_skills` into
 `~/.coder/skills/<name>/SKILL.md` with a twin copy at
 `~/.agents/skills/<name>/SKILL.md`, and a missing command means that seed is
-missing, not that the image is stale. Each carries its own `ez-` name to stay clear of
+missing, not that the image is stale.
+
+Each carries its own `ez-` name to stay clear of
 the upstream names: a user-scope skill overrides a same-named bundled one, so a seed
 named `create-skill` would hide the CLI's bundled platform skill of that name on any
 CLI that does sign in.
@@ -1172,9 +1263,14 @@ ls ~/.agents/skills/<name>/SKILL.md ~/.coder/skills/<name>/SKILL.md
 ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
 ```
 
+#### Read the probes
+
 - An entry for `<name>` with `userInvocable: true` in the `grok inspect --json` output is
   the pass condition: the slash command exists on that CLI, and the **Grok Build**
   terminal profile shows it because that profile execs the same binary.
+
+#### When the seed never landed
+
 - No `<name>` entry and both `ls` paths missing: the seed never landed, which means the
   workspace booted from templates pushed before the seed existed. Re-push the templates
   and restart the workspace, or reseed into the running container from the stack host:
@@ -1183,23 +1279,30 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   that seeds it: `coder_script.stack_skills` carries the authoring trio and
   `coder_script.stack_repo_skills` carries the repository-conversion family. That script's
   own log is where its seed body ran or failed, and the body is silent on a healthy
-  workspace, so an empty
-  log with a missing file means the body did not run at all (restart the workspace and
-  read that script's log). The trio moved out of `startup.sh.tftpl` into that one body, so
+  workspace, so an empty log with a missing file means the body did not run at all (restart the workspace and
+  read that script's log).
+  - The trio moved out of `startup.sh.tftpl` into that one body, so
   a startup-script log that says nothing no longer covers it. A `SKILL.md` that is present
   while its `scripts/*.py` helper is missing is the same story on the helper's own absent
   guard: the family seeds six payloads, each guarded on its own path.
+
+#### When the file is present but the command is not
+
 - Both `ls` paths present but no `<name>` entry: the loader dropped the file. Frontmatter
   must start on line 1, so anything above the opening `---` silently kills the skill.
 - A `learn` directory still listed by the last `ls` is a copy someone took over: the boot
   and the reseed delete that path only while it still carries the stack marker, and a
-  marker-free file is user-owned, so it stays. A marker-carrying leftover is retired on
+  marker-free file is user-owned, so it stays.
+  - A marker-carrying leftover is retired on
   the next boot or reseed, and that removal only finishes the rename: no published source
   names an upstream `/learn` for the name to free.
+
+#### Keep your own copy, or give the file back
+
 - A file you deleted or edited on purpose is not a fault. To keep your own version,
   edit it and delete the `managed-by: evo-t1-coder-stack` marker line: a marker-free
-  file is user-owned, and the seeder leaves it alone unless you pass `--force`. A
-  deletion is undone - the workspace boot writes the file again whenever it is absent,
+  file is user-owned, and the seeder leaves it alone unless you pass `--force`.
+  - A deletion is undone - the workspace boot writes the file again whenever it is absent,
   and `refresh-configs` re-seeds an absent target, so the next boot restores the
   stack's copy. Copy the payload back from `templates/common/<name>.SKILL.md` to give
   the file back to the stack.
@@ -1216,10 +1319,12 @@ ls -d ~/.coder/skills/learn ~/.agents/skills/learn 2>/dev/null
   installer copy: the workspace `PATH` lists `~/.grok/bin` before `/usr/local/bin`, and
   that entry is a symlink into `~/.grok/downloads/`, which holds one file per downloaded
   release and is where `grok update` installs - so moving it aside does not outlast the
-  next self-update. Compare `command -v grok` and both `--version` outputs
+  next self-update.
+  - Compare `command -v grok` and both `--version` outputs
   (`~/.grok/bin/grok --version`, `/usr/local/bin/grok --version`) against `GROK_VERSION`
   in `images/dev/tool-versions.env`: the profile copy follows `grok update`, the image
-  copy follows the pin. Neither copy gates the three seeded commands, and the two
+  copy follows the pin.
+  - Neither copy gates the three seeded commands, and the two
   disagreeing is never on
   its own a reason to rebuild the image.
 - A golden image that predates a pin bump reports an older `/usr/local/bin/grok` than
@@ -1256,9 +1361,13 @@ echo "NO_COLOR=[${NO_COLOR-unset}]"         # set inside an agent tool command o
 ### `The terminal process "/bin/bash '-lc', 'exec "$HOME/.grok/bin/grok-build-terminal"'" terminated with exit code: 1` -> something closed the tmux session under the tab
 
 - Cause: the profile asks tmux questions before it hands the tab to anything, and tmux
-  exits 1 whenever it refuses. When a running agent meets it, the usual cause is the
+  exits 1 whenever it refuses.
+
+  When a running agent meets it, the usual cause is the
   agent's own cleanup sweep - `tmux kill-server`, `tmux kill-session`, `pkill -f tmux` -
-  closing the session the agent is typing in. The tab's process is that session's
+  closing the session the agent is typing in.
+
+  The tab's process is that session's
   client, so the command takes the agent, its tool call and the in-flight reply down
   together.
 - Other refusals answer with the same exit code: `sessions should be nested with care`
@@ -1266,9 +1375,13 @@ echo "NO_COLOR=[${NO_COLOR-unset}]"         # set inside an agent tool command o
   naming a directory that is gone.
 - What the seed does about it, in the payload itself: the profile creates its session
   detached and attaches in a second call, so the tab that brings the server up is not
-  the one whose close can take a running agent with it; every control call is bounded
-  by `timeout`; and a create or attach that still fails lands the tab in a plain login
-  shell rather than in VS Code's terminated-process message. So the message above names
+  the one whose close can take a running agent with it.
+  - Every control call is bounded
+  by `timeout`.
+  - A create or attach that still fails lands the tab in a plain login
+  shell rather than in VS Code's terminated-process message.
+
+  So the message above names
   tmux itself failing, not the profile's logic. Confirm with:
 
 ```sh
@@ -1289,34 +1402,55 @@ tmux new-session -d -s probe && tmux attach -t probe; echo "exit=$?"   # replay 
 
 - 127 is the shell saying the file it was told to exec is not there. Both editor terminal
   profiles exec a launcher under `~/.grok/bin`, and `coder_script "terminal_launchers"`
-  (`templates/common/terminal-launchers.sh.tftpl`) is what writes those two files. The
-  profile, `tmux` and the tab are all fine; the file is missing. The same message naming
+  (`templates/common/terminal-launchers.sh.tftpl`) is what writes those two files.
+
+  The profile, `tmux` and the tab are all fine; the file is missing.
+
+  The same message naming
   `grok-build-terminal` is this same fault in the other profile, and the one naming
   neither is [the exit code 1 case above](#the-terminal-process-binbash--lc-exec-homegrokbingrok-build-terminal-terminated-with-exit-code-1---something-closed-the-tmux-session-under-the-tab),
   where the file exists and tmux refuses.
+
+#### Why the file is missing
+
 - Cause: the three per-owner Grok volumes mount *under* `~/.grok` - `grok-notes-<owner-id>`
   at `~/.grok/notes`, with the memory and sessions pair beside it - and the Docker daemon
   creates a bind mount's target path as `root:root` 755. Whenever those mount points are
   new, `~/.grok` arrives owned by root and the workspace user cannot create anything in
-  it. This is the same daemon behaviour the
+  it.
+
+  This is the same daemon behaviour the
   [`~/.shared/vscode/settings.json` entry](#permission-denied--jq-error-could-not-open-file-on-sharedvscodesettingsjson---empty-named-volume-is-root-owned)
   covers one directory over.
+
+#### Why the repair missed
+
 - Why the repair missed: the startup script does chown `~/.grok` to the home owner, and
   nothing orders that before this body. On Coder v2.36 the startup script and every
   `run_on_start` body fan out in one concurrent errgroup - ten bodies launched inside the
   same millisecond in the start log - so the seeds run first and meet a directory they
-  cannot write. They then said nothing about it: `mkdir -p ... 2>/dev/null` swallowed the
+  cannot write.
+
+  They then said nothing about it: `mkdir -p ... 2>/dev/null` swallowed the
   refusal, `cat >` failed, and the run printed `ok:` for each launcher and closed at
   `summary: 2 ok, 0 warnings, 0 failed`.
+
+#### Read the start log first
+
 - Read the start log before touching the profile. The same boot takes the rest of the
   `~/.grok` family with it, because those bodies raced the same chown: `~/.grok/AGENTS.md`,
   `~/.grok/agents/`, `~/.grok/personas/` and `~/.grok/hooks/`. An affected workspace is
   missing all of them at once, which is how to tell this from one payload that drifted.
+
+#### What the seed does now
+
 - What the seed does about it now: each body that writes under `~/.grok` asks for its own
   directory through `boot_ensure_dir` (`templates/common/boot-log.lib.sh`), which creates
   it and takes back the ownership of each component that is not this boot's to write, and
   the launcher body reads its two files back and prints `error:` naming the 127 when one
-  did not land. A boot that cannot write now says so in its own summary line.
+  did not land.
+
+  A boot that cannot write now says so in its own summary line.
 - Confirm with:
 
 ```sh
@@ -1327,6 +1461,8 @@ test -f ~/.grok/AGENTS.md && echo rulebook || echo "rulebook missing too"
 Then look at the `== terminal launchers: start ==` run in the workspace start log and
 read its `summary:` line: a green `2 ok, 0 warnings, 0 failed` with no files is the old
 template, and `3 failed` with two `error:` lines is a boot that still cannot write.
+
+#### Fix it
 
 - Fix: push the templates from the stack host and restart the workspace - the bodies are
   template text, so a workspace on an older template version keeps the race.
@@ -1354,8 +1490,12 @@ bazelisk run //scripts:build-dev-image
 
 Cause: Docker creates an empty named volume as `root:root` 755. The
 `vscode-settings-<owner-id>` volume is empty on first use (the image has no
-files there to copy in), so `coder` cannot write `settings.json`. `jq` and
-`python` then fail because the file was never created. `already cloned, skipping`
+files there to copy in), so `coder` cannot write `settings.json`.
+
+`jq` and
+`python` then fail because the file was never created.
+
+`already cloned, skipping`
 on the next line is informational: the clone already exists.
 
 Fix: the template chowns that volume (and the three per-owner state volumes `shared`
@@ -1378,16 +1518,19 @@ coder restart <workspace>
 ### `E325: ATTENTION / Found a swap file by the name "~/.grok/.config.toml.swp"` -> a vim the last workspace stop killed
 
 - `~/.grok/config.toml` is a real file on this workspace's own home volume, so a swap
-  file outlives a stop of that workspace and nothing else. The usual history is:
+  file outlives a stop of that workspace and nothing else.
+
+  The usual history is:
   someone opened the config in vim, the workspace was stopped with the editor still
   up, and the swap is now asking about a session whose container no longer exists.
 - Read the prompt's own lines before choosing. `modified: no` means it holds no
-  unsaved work. The `host name` names the container whose vim wrote it, and each
+  unsaved work.
+  - The `host name` names the container whose vim wrote it, and each
   workspace renders its own `config.toml` now, so a name that is not this
   workspace's means the swap predates that split - it is left over from when
   `~/.grok` was one whole-profile per-owner volume, which a current boot mounts
   read-only at `~/.grok-legacy` for the one-time state copy and reads nowhere else.
-  A name that is this workspace's own is the ordinary case: the home volume outlives
+  - A name that is this workspace's own is the ordinary case: the home volume outlives
   every stop and recreate.
 - `(D)elete it` is the right answer for an orphan. Do not pick `(R)ecover`: every start
   re-renders `config.toml` from `grok-config.toml.tftpl`, so recovery would restore bytes
@@ -1395,9 +1538,11 @@ coder restart <workspace>
 - A current workspace clears these at boot by itself. `grok_sweep_config_swaps` in the
   `agents-seed.sh.tftpl` body moves a swap of that name into `~/.grok/stale-swaps/` once
   nothing in the container holds it open and it is over an hour old. The boot log prints
-  the archived name, and `vim -r` on that path gets the bytes back for a month; the files
+  the archived name, and `vim -r` on that path gets the bytes back for a month.
+  - The files
   in there are named `sweep-...orphan...` and only those names are ever pruned, so a file
-  you put in that directory yourself stays. Two reasons the sweep may stay silent, both
+  you put in that directory yourself stays.
+  - Two reasons the sweep may stay silent, both
   worth checking before you blame it: the config lost its stack marker, since the sweep
   deliberately stands down on an unmanaged config (`grep -cE
   'managed-by: evo-t1-coder-stack|__evoT1Stack = true' ~/.grok/config.toml` answers it, and
@@ -1407,7 +1552,9 @@ coder restart <workspace>
 - The reason the prompt keeps coming back is that the file is being hand-edited at all.
   This workspace re-renders its own copy on every start, so an edit made there survives
   until that workspace restarts and touches no other workspace - no sibling's boot
-  overwrites it any more. The keys live in the template instead:
+  overwrites it any more.
+
+  The keys live in the template instead:
   `grok_subagent_max_concurrent`, `grok_subagents_lane`, and `grok_config_extra`.
   docs/coder-templates.md#stale-editor-swap-files.
 
@@ -1420,35 +1567,55 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
 grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
 ```
 
+#### What the two numbers mean
+
 - That first block prints two numbers now: the fleet's own ceiling as `# fleet-width:`,
   above this session's cap as `max_concurrent`
   (`templates/workspace/grok-config.toml.tftpl:427-428`, devcontainer twin
-  `templates/devcontainer/grok-config.toml.tftpl:428-429`). `15` over `15` is this entry -
+  `templates/devcontainer/grok-config.toml.tftpl:428-429`).
+
+  `15` over `15` is this entry -
   the number is right and the placement is not. `15` over `4` is a different fault, where
   the width itself was set, and
   [the rendered-width entry](#the-rendered-width-is-below-fleet-width)
-  is the one that answers it. So is the third reading this default creates, `10` over `15`:
+  is the one that answers it.
+
+  So is the third reading this default creates, `10` over `15`:
   the ceiling shrunk by an operator's `--var grok_swarm_width`, under a width that kept the
   variable's own shipped `15`.
+
+#### Why a pinned lane caps you at about 4
 
 - `max_concurrent` is how many a session may have in flight. `[subagents.models]` is
   where each type's traffic goes, and a writer pinned to `agent` carries the workspace's
   own `x-litellm-session-id`, so the whole fan-out lands on the one Spark box that key
   resolves to. That box admits `PARALLEL` (5 by default, `scripts/spark-configure.sh`)
   full-length streams and the parent session holds one of them, which is why the useful
-  width there is about 4 no matter what the number above it says. The rest queue:
+  width there is about 4 no matter what the number above it says.
+
+  The rest queue:
   `limit_behavior = "queue"` holds the overflow rather than failing the spawn.
+
+#### The depth, and what it costs
+
 - Read those same four lines for the depth, because the block now prints `max_depth`
   beside `max_concurrent` (`templates/workspace/grok-config.toml.tftpl:428-429`), rendered
   from the `grok_subagent_max_depth` variable whose default is 2. At 2 a child spawns
   read-only mappers of its own, so a wave can be wider than the parent's own `slots`, and
   each in-flight child holds one of the fleet's 15 streams: a parent sums `1 + spawns` per
   task and keeps that total at or below the fleet's stream count, because a stream past 15
-  is refused by the box. At 1 nothing nests, which is the rollback.
+  is refused by the box.
+
+  At 1 nothing nests, which is the rollback.
+
+#### The review panel queues too
+
 - A review panel that arrives one at a time is the same queueing. The panel is three
   skeptics dispatched in one turn - requirements, proof, adversary - each on
   `agent-review`, each owning no file, each allowed up to 3 read-only mappers of its own,
-  and all of them want the fleet's streams at once. While writers are still in flight the
+  and all of them want the fleet's streams at once.
+
+  While writers are still in flight the
   panel waits behind them, so dispatch it once the writers have landed.
 - `GROK_SUBAGENTS_MAX_DEPTH` in the agent environment outranks what `config.toml` says, so
   a workspace that nests differently from its rendered config is carrying that key;
@@ -1456,8 +1623,13 @@ grep -A10 '^\[subagents.models\]' ~/.grok/config.toml
 - The shipped default puts the writers on the unpinned `agent-swarm` lane, where the
   least-busy picker spreads them over every box and the 15 is the fleet's real width
   (3 boxes x `PARALLEL` 5). Four keys come from that one variable: `general-purpose`,
-  `implementer`, `documenter`, `tester`. If those read `agent`, the template was pushed
+  `implementer`, `documenter`, `tester`.
+
+  If those read `agent`, the template was pushed
   with `--var grok_subagents_lane=agent`, which is the documented rollback to one box.
+
+#### Which producer wrote the lane
+
 - First work out which producer wrote the file, because there are two and they take the
   lane from different places:
 
@@ -1503,6 +1675,8 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
   is this entry; `15` over `15` is
   [the pinned-lane entry above](#only-about-4-subagents-run-at-once-though-subagents-max_concurrent-says-15---the-writers-are-on-a-pinned-lane).
 
+#### Nothing in this repo renders a 4
+
 - Nothing in this repo renders a `4`. Both twins ship the width as the variable's own
   literal `15`, so the `: var.grok_swarm_width` arm of
   `grok_subagent_max_concurrent = var.grok_subagent_max_concurrent != null ? var.grok_subagent_max_concurrent : var.grok_swarm_width`
@@ -1510,8 +1684,12 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
   caller that passes null on purpose. The ceiling beside it is that same `grok_swarm_width`,
   on its own line (`templates/workspace/main.tf:558`). Measured:
   `terraform apply` with the shipped defaults prints `15`, and the same run with
-  `-var grok_subagent_max_concurrent=4` prints `4`. So a rendered `4` is a number somebody
+  `-var grok_subagent_max_concurrent=4` prints `4`.
+
+  So a rendered `4` is a number somebody
   set, and a `4` still there is one that outlived what set it.
+
+#### Where the number can sit
 
 - It can sit in two places, and they clear differently:
   - the **template**, from a raw `coder templates push --var grok_subagent_max_concurrent=4`.
@@ -1528,6 +1706,8 @@ grep -A4 '^\[subagents\]' ~/.grok/config.toml
     `--var`.) A workspace value survives every template push and is re-applied on every
     start, which is how a number typed in for one experiment months ago still caps a
     fan-out today.
+
+#### Read it from inside the workspace
 
 - One command reads both numbers and names the case, from inside the workspace:
 
@@ -1547,6 +1727,8 @@ note: a rendered width below fleet-width is a value that outlived its template -
   the same database on the host, and neither is readable over the agent token. The
   second run of the check is what settles it, which is why the note asks for it.
 
+  #### The near-misses read differently
+
   Two near-misses read differently on purpose. A profile whose `[subagents]` table
   is simply absent answers `warning: no 'max_concurrent' line - this profile has no
   [subagents] table; restart the workspace to re-materialize`, and a restart is the
@@ -1557,6 +1739,8 @@ note: a rendered width below fleet-width is a value that outlived its template -
   line above max_concurrent - this profile predates it; restart the workspace to
   re-materialize` has no ceiling to compare against yet, so that one is a restart
   too.
+
+  #### The whole surface, for a script or CI
 
   The whole surface, for a script or a CI step that wants the answer rather than the prose
   (`--help` prints the same):
@@ -1592,6 +1776,8 @@ bazelisk run //scripts:subagent-check -- --all [--json] [--strict]
                   workspace that needs nothing, a stopped one, and a below-width one whose
                   coder.owner label is empty
 ```
+
+#### The same finding arrives at every start
 
 - The same finding arrives by itself at every start: the profile stage of the boot compares
   the two numbers right after re-materializing the config
@@ -1657,20 +1843,28 @@ bazelisk run //scripts:subagent-check -- --all
   It enumerates every container labelled `coder.workspace_id` on the daemon (the DinD
   sidecar carries that label as well and is left out), reads each container's rendered
   profile, and prints the width verdict for it beside the one `coder update` line that
-  clears the stored value. Enumeration is one `docker ps -a` on that label, cut into four
+  clears the stored value.
+
+  Enumeration is one `docker ps -a` on that label, cut into four
   tab-separated columns - workspace, owner, container, state - and a row is judged only when
   it is exactly those four columns, the workspace, container and state each say something,
   and no one of the four runs past 255 characters (`scripts/subagent-check.sh:894-896`). A
   field that long is no Coder name, and a container whose state nobody read is neither the
   running one nor the stopped one, so exec-ing into it would print a verdict built on
-  nothing. The owner column alone is exempt from the say-something test, and on purpose: a
+  nothing.
+
+  The owner column alone is exempt from the say-something test, and on purpose: a
   container whose `coder.owner` label is absent is still a workspace whose width deserves a
   verdict, and it is the missing-label case below. It still has to be a column and still has
-  to be under 255 characters. Like `//scripts:branch-hygiene` it reports and never
+  to be under 255 characters.
+
+  Like `//scripts:branch-hygiene` it reports and never
   writes: it starts nothing, stops nothing, rewrites nothing, and runs no `coder` command,
   and the one thing it does to a running container is `docker exec` a read-only `cat` of the
   profile that workspace's own boot already rendered. The report and the commands it prints
-  are the deliverable, and you run those yourself, on the host. Reading one profile needs no
+  are the deliverable, and you run those yourself, on the host.
+
+  Reading one profile needs no
   docker-facing library either: `--config` never loads `scripts/lib/coder_api.sh`, which the
   `--all` branch sources for itself (`scripts/subagent-check.sh:1097-1101`) to get `stack_timeout`
   and `DOCKER_BIN`.
@@ -1684,6 +1878,8 @@ note: coder update alice/evo --parameter grok_subagent_max_concurrent=15
 ok: max_concurrent = 15, the fleet's own width
 summary: 1 ok, 1 warnings, 0 failed
 ```
+
+#### A row the sweep cannot use
 
 - A row the sweep cannot use says so at the foot of the report instead of vanishing out of
   it. Nothing is printed for the row itself - no `->` phase line, no exec, no verdict,
@@ -1703,10 +1899,14 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
 ```
 
   Both counts come off the one call, so a second `docker ps` seeing a slightly different
-  fleet cannot turn an honest report into an arithmetic accident. The answer the counters
+  fleet cannot turn an honest report into an arithmetic accident.
+
+  The answer the counters
   read is the daemon's stdout and nothing more: its stderr goes straight to the terminal,
   so the reason a daemon refused is heard while a CLI or `sudo docker` notice is never
-  tallied as a container this sweep failed to judge. This note is the whole
+  tallied as a container this sweep failed to judge.
+
+  This note is the whole
   reason the sweep keeps the daemon's raw answer rather than filtering inside the call:
   before it, one stray tab inside a `coder.workspace_name` label was enough to drop that
   workspace out of the report with nothing said about it, and `summary: 1 ok, 0 warnings, 0
@@ -1717,20 +1917,27 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
   warnings, 0 failed`, exit 0, exactly like an empty one. Under `--json` the note rides
   stderr with the rest of the prose, so stdout stays the per-workspace objects alone.
 
+#### What it judges, and what a stopped container gives you
+
 - What it judges is the rendered profile of the running workspaces: it execs into the
   container and reads the file that workspace's agent actually boots with, not what the
   template would render on the next start. A stopped container has nothing to exec into,
   so it cannot be read and is reported as such rather than guessed at:
   `warning: coder-alice-evo is stopped (exited) - its profile is unreachable and its width
-  comes from the stored parameter`. That warning is the whole of what a stopped workspace
+  comes from the stored parameter`.
+
+  That warning is the whole of what a stopped workspace
   gets: no `note:` remedy line follows it, and under `--json` that workspace's `remedy` is
-  `null`, because the sweep has read no number to fill the command with. What clears a
+  `null`, because the sweep has read no number to fill the command with.
+
+  What clears a
   width that has sat stale for weeks is the same update every other offender takes,
   `coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=<n>`, and you
   compose that line yourself - `<n>` is the width you want that workspace to boot with, the
   variable's own shipped `15` unless you shrank the fleet on purpose, and neither that
   number nor the `# fleet-width:` beside it is readable through a stopped container.
   Start it and the next sweep reads the profile and prints the line for you.
+
   A running container that carries no `coder.owner` label is the other case where the sweep
   hands you the command: `coder update /<workspace> --parameter ...` is not a target, and a
   command that cannot run is worse than none, so it prints the flag it knows and leaves the
@@ -1738,6 +1945,8 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
   `note: no coder.owner label on <container> - run coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=<n>`
   There you compose the owner rather than the number - the profile was read, so `<n>` is
   already filled with the `# fleet-width:` it carries.
+
+#### Two verdicts for a profile it could not read
 
 - Two verdicts cover a running container whose profile the sweep could not get at, and both
   are kept apart from the missing-render warning on purpose. `docker exec` passes `cat`'s
@@ -1763,11 +1972,15 @@ note: the daemon listed 2 row(s), none of which was a workspace this sweep could
   Call a hung or refused exec a missing render and the operator restarts a workspace whose
   boot ran fine.
 
+#### A width that is not a comparable number
+
 - A width that is not a number the shell can compare gets its own verdict rather than the
   missing-line one. A `max_concurrent`, or a `# fleet-width:`, carrying a digit run too long
   to hold is unreadable and incomparable: bash errors on the numeric test and both the
   below-width and the above-width comparison fall through, which would report a corrupted
-  file as the shipped state. For a profile carrying `max_concurrent = 99999999999999999999`
+  file as the shipped state.
+
+  For a profile carrying `max_concurrent = 99999999999999999999`
   under `# fleet-width: 15` the sweep prints this, and `--config` on the same bytes prints
   the identical line (`scripts/subagent-check.sh:797-798` in the sweep, `:571-572` in the
   single-profile check):
@@ -1777,7 +1990,9 @@ warning: max_concurrent = 99999999999999999999 against fleet-width = 15 is not a
 ```
 
   It counts as the row's one warning and both JSON fields come back `null`, because there is
-  no number left to report. This is a fix to the sweep's wording and not to the finding: the
+  no number left to report.
+
+  This is a fix to the sweep's wording and not to the finding: the
   branch used to clear the field and fall through into the missing-line verdict the
   single-profile check quotes above, printing `the [subagents] table carries no
   'max_concurrent' line - a hand edit, which no restart undoes` for a line that was present
@@ -1788,12 +2003,16 @@ warning: max_concurrent = 99999999999999999999 against fleet-width = 15 is not a
   that would have helped. The two paths now say the same thing, so one read of either is
   enough to act on.
 
+#### Clear the stored parameter
+
 - The stored parameter is the thing to clear. Every start re-renders `config.toml`, so a
   restart on its own re-applies the same stored number; what moves it is
   `coder update <owner>/<workspace> --parameter grok_subagent_max_concurrent=<n>`, or the
   Variables tab. The sweep prints that line per offender with the owner and the
   `# fleet-width:` it read off that profile already filled in, which is why reading the
   fleet is the part worth scripting and the update is the part you run by hand.
+
+#### Where it refuses to run
 
 - It runs on the stack host and refuses everywhere else, because a workspace's `docker`
   addresses its own sidecar (see the preamble at the top of this page):
@@ -1842,7 +2061,9 @@ created with DinD off.
 - `DOCKER_HOST` is injected per template, not per toggle. `templates/workspace` sets
   it only while the toggle is on; `templates/devcontainer` sets it always, because
   that template always provisions the sidecar and the `devcontainer` CLI has to
-  reach its daemon either way. So a set `DOCKER_HOST` tells you the template; the
+  reach its daemon either way.
+
+  So a set `DOCKER_HOST` tells you the template; the
   *docker-in-docker* metadata tile tells you the state (the devcontainer template
   always reads `on (tcp://dind:2375)`, the workspace one reads `off` when unset).
 - Three separate reads, from the stack host. The first prints `unhealthy` rather than
@@ -1880,22 +2101,32 @@ docker pull docker:29.8.1-dind
   "Initializing Terraform Directory". `workspace` cannot list versions for
   `coder/coder` and `kreuzwerker/docker` on `registry.terraform.io`;
   `devcontainer` cannot fetch `module "devcontainers_cli"` from
-  `registry.coder.com`. Both lookups fail with
+  `registry.coder.com`.
+
+  Both lookups fail with
   `dial tcp: lookup … on 127.0.0.11:53: server misbehaving`. Coder itself
   stays up; `bazelisk run //scripts:prod-stack -- logs coder` repeats the same Terraform
   lines.
 - Cause: provisionerd runs `terraform init` inside the `coder` container.
   Docker's embedded DNS (`127.0.0.11`) forwards names it does not know to
-  the host resolver. When that resolver is Tailscale MagicDNS only, or
+  the host resolver.
+
+  When that resolver is Tailscale MagicDNS only, or
   Docker/Kasm iptables has made `100.100.100.100` unreachable from a
-  container, every public lookup SERVFAILs. The host CLI is fine; only the
-  provisioner job dies. The lockfile reuse lines (`Reusing previous version
+  container, every public lookup SERVFAILs.
+
+  The host CLI is fine; only the
+  provisioner job dies.
+
+  The lockfile reuse lines (`Reusing previous version
   from the dependency lock file`) do not skip the registry: Terraform still
   fetches the discovery document.
 - Fix: `docker-compose.yml` sets `dns: [1.1.1.1, 8.8.8.8]` on the `coder`
   service (embedded DNS still answers `db` and other compose names). Both
   templates pin the same resolvers on the workspace and DinD containers so
-  a later `git clone` of `github.com` does not hit the same SERVFAIL. Recreate
+  a later `git clone` of `github.com` does not hit the same SERVFAIL.
+
+  Recreate
   `coder` so the new upstreams apply, then push:
 
 ```sh
@@ -1913,12 +2144,15 @@ template version is active.
 - Symptom: `coder templates push` plans, then dies during "Cleaning Up" with
   `internal provisionerserver error: execute transaction: insert resource: insert
   agent app: upsert app: pq: value too long for type character varying(256)`.
+
   Coder logs `coder_app's id was unexpectedly empty` and then that Postgres error
   at `inserting template import job resource`.
 - Cause: both templates inline `templates/common/vscode-alt.svg` as a
   `data:image/svg+xml;base64` URL on `coder_app.code_server`. Coder v2.36 stores
   `workspace_apps.icon` as `varchar(256)`. A multi-kilobyte SVG produces a data
-  URL thousands of characters long, and the insert fails. The provisioner
+  URL thousands of characters long, and the insert fails.
+
+  The provisioner
   reports it at `insert agent app: upsert app`.
 - Fix: the SVG is a compact ribbon whose data URL fits the column, and
   `push-template` rejects a too-large copy locally before talking to the server.
@@ -1936,7 +2170,9 @@ bazelisk run //scripts:push-template
   ~120 KB of real `.tf` / `.tftpl` contents).
 - Cause: `bazelisk run` executes from the runfiles tree, where `templates/**` are
   symlinks into the execroot. A tar that stores those links unpacks in the
-  provisioner as dangling paths, so Terraform sees no `.tf` files. The two
+  provisioner as dangling paths, so Terraform sees no `.tf` files.
+
+  The two
   `templates/common/` payloads still land (copied with `cp`, which follows
   links), which is why the archive is small rather than empty.
 - Fix: `push-template` now prefers `BUILD_WORKSPACE_DIRECTORY` (the live
@@ -1956,8 +2192,12 @@ bazelisk run //scripts:push-template
 - Cause: `startup_size_guard` looks up a payload the twin does not keep beside its
   own `main.tf` under `templates/common/`, and it did that by reading an ambient
   `REPO_ROOT`. Nothing in `scripts/` ever sets that variable: the checkout is the
-  `root` the script resolved and `cd`'d into at startup. Under the script's own
-  `set -u` the read aborts the run. It only fires for a template that inlines a
+  `root` the script resolved and `cd`'d into at startup.
+
+  Under the script's own
+  `set -u` the read aborts the run.
+
+  It only fires for a template that inlines a
   canonical payload, which is why a twin carrying its own copy never showed it.
 - Fix: the guard measures against the resolved `root`, and a parser it cannot open
   is now a hard stop rather than a silent "everything fits". Pull this commit onto
@@ -2006,8 +2246,12 @@ correct and is coder accessible from your browser?`
 ### `Unexpanded count argument on block "coder_app.github_app_install"` -> apps were gated on start_count
 
 Cause: `coder/preview` warns when a `coder_app` `count` is not expanded at
-workspace-create preview. `start_count` is that value. The default is then
-assumed to be 1. The only `coder_app` carrying a `count` today is
+workspace-create preview. `start_count` is that value.
+
+The default is then
+assumed to be 1.
+
+The only `coder_app` carrying a `count` today is
 `coder_app.github_app_install`, and it counts on `github_auth_id`, which the
 preview does expand.
 
@@ -2025,7 +2269,9 @@ bazelisk run //scripts:push-template
 Cause: Coder runs every `coder_script` as `bash -c`. HCL heredocs in `main.tf` only
 escape `$${name}` to `${name}`; `$$((` is two literal dollars. The editor wait loop
 then becomes `waited=<pid>((waited + 1))`, which is the syntax error. The echo
-before the loop still prints. `already cloned, skipping` on the next line is the
+before the loop still prints.
+
+`already cloned, skipping` on the next line is the
 concurrent clone stage, not the failure.
 
 Fix: the increment is `waited=$((waited + 1))` (one dollar). Push the templates and
@@ -2111,10 +2357,14 @@ bazelisk run //scripts:new-workspace -- <git-url>
 Cause: an app inside the pane - vim's `+` register, anything that emits OSC 52 -
 pushes its copy out through the pane, `set-clipboard on` with
 `allow-passthrough on` forwards it, and code-server's terminal hands the escape to
-nobody. There is no setting for it: the shipped 4.145.0 registers no OSC 52 key,
+nobody.
+
+There is no setting for it: the shipped 4.145.0 registers no OSC 52 key,
 and upstream
 [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
-open with two unmerged fixes. Over ssh from Ghostty, kitty, WezTerm or iTerm2 the
+open with two unmerged fixes.
+
+Over ssh from Ghostty, kitty, WezTerm or iTerm2 the
 same copy lands, which puts the drop in the browser and not in tmux.
 
 ```sh
@@ -2122,22 +2372,33 @@ tmux show-options -g mouse           # off: the client keeps the click, so a dra
 tmux show-options -g set-clipboard   # on: the tmux end of the pane app's OSC 52 route
 ```
 
-Fix: there is nothing to turn on in tmux. Copy the text the way the rest of the tab
+Fix: there is nothing to turn on in tmux.
+
+Copy the text the way the rest of the tab
 does - a plain drag is the client's own highlight, because tmux asks for no mouse
 reporting (measured on the shipped tmux 3.4: an attach with `mouse on` writes
 `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the client, one with it off writes
 none), and the settings seed's `terminal.integrated.copyOnSelection: true` puts
 that highlight on the machine clipboard with no chord (the headless harness on
 4.145.0 recorded `navigator.clipboard.writeText` firing on a client selection,
-before this switch). Right-click pastes
+before this switch).
+
+Right-click pastes
 it back (`terminal.integrated.rightClickBehavior: "copyPaste"` pastes when nothing
 is selected) and middle-click pastes it too (`middleClickBehavior` pinned to
-`"paste"`). tmux keeps no buffer of its own, so `Prefix-]` is unbound and there is
+`"paste"`.
+
+tmux keeps no buffer of its own, so `Prefix-]` is unbound and there is
 no `tmux show-buffer` to read: the machine clipboard is the only clipboard here.
+
 `Prefix m` is the wheel switch, not a copy route: one press hands the wheel to tmux
-for a long scroll, the next hands it back. Paste is `Ctrl+Shift+V` or right-click in
+for a long scroll, the next hands it back.
+
+Paste is `Ctrl+Shift+V` or right-click in
 a bash terminal and a tmux pane alike, and `Ctrl+V` is not a paste on a secure
-origin (the pane gets the `\x16` byte). Both directions, and what a pane app may
+origin (the pane gets the `\x16` byte).
+
+Both directions, and what a pane app may
 still do over ssh, are in
 [Copy and paste between a tmux pane and the machine you type on](grok-build-and-agents.md#copy-and-paste-between-a-tmux-pane-and-the-machine-you-type-on).
 
@@ -2156,11 +2417,14 @@ still do over ssh, are in
 
 Cause: the browser exposes `navigator.clipboard` to a secure context only, and
 Coder's LAN door is plain HTTP by default (`CODER_ACCESS_URL` is the LAN
-address). Opened that way the editor has no clipboard API to call, so
+address).
+
+Opened that way the editor has no clipboard API to call, so
 right-click paste stops with VS Code's own toast - "This browser doesn't support
 the clipboard.readText API needed to trigger a paste, try Ctrl+V instead." - and
-`Ctrl+Shift+V` only works at all through the browser's native paste event. A
-Clipboard site permission that was once denied does the same damage on an https
+`Ctrl+Shift+V` only works at all through the browser's native paste event.
+
+A Clipboard site permission that was once denied does the same damage on an https
 origin, and there VS Code answers `NotAllowedError: Read permission denied`.
 
 ```js
@@ -2172,9 +2436,13 @@ typeof navigator.clipboard        // "undefined" on http, "object" on https
 Fix: open the editor on the TLS public name (the `coder-<host>.<domain>` door
 Traefik holds a real certificate for) rather than `http://<LAN-address>`, and
 give the site Clipboard permission - Chrome: the lock icon in the address bar,
-Site settings, Clipboard, Allow. The templates are not the variable here: both
+Site settings, Clipboard, Allow.
+
+The templates are not the variable here: both
 doors serve the same payload, so a workspace that pastes on one URL and does not
-on the other is an origin problem. What still works on plain HTTP: copy with a
+on the other is an origin problem.
+
+What still works on plain HTTP: copy with a
 drag - the selection is the client's own, since tmux asks for no mouse reporting,
 and `copyOnSelection`'s `document.execCommand('copy')` fallback really lands - and
 paste with `Ctrl+V`, the browser's own paste event - which is exactly what VS Code's
@@ -2186,21 +2454,33 @@ Cause: each client attached to a tmux session is a full xterm.js in its own
 Chrome tab re-parsing the same stream, each holding a line-slot array sized
 from `terminal.integrated.scrollback`, and each taking its own copy of the
 rendered stream out of the server - 16 mirrors of one pane pulled 78.7 MB
-through an 8 s window in which a single mirror pulled 4.9 MB. The server
+through an 8 s window in which a single mirror pulled 4.9 MB.
+
+The server
 renders the pane once, so a mirror is paid for in the tab rather than in server
-CPU: those same 16 moved the server only from 420 ms to 630 ms. A client
+CPU: those same 16 moved the server only from 420 ms to 630 ms.
+
+A client
 activating or resizing repaints the window's other clients as well.
 
-All of that applies to a client actually being read. Measured on this
+#### The clients that are no longer being read
+
+All of that applies to a client actually being read.
+
+Measured on this
 workspace, 7 of 9 attached clients received 0 bytes over a 4 s window in which
 the pane produced 12858, because code-server's pty host keeps the pty open
 after the browser side of the tab goes away and nothing drains it any more;
 tmux stops feeding a client it cannot write to, which is why 15 such clients
-against the same flooding pane took the server only from 450 ms to 730 ms. What
+against the same flooding pane took the server only from 450 ms to 730 ms.
+
+What
 a ghost really costs is the reuse decision. It holds `session_attached` at 1,
 and that is the number the attach helper reads, so the folder pays a whole new
 session - another pane, another xterm.js, another history - for every later
-tab. Count the clients against the panes, and count what each one is taking in:
+tab.
+
+Count the clients against the panes, and count what each one is taking in:
 
 ```sh
 tmux list-clients
@@ -2214,36 +2494,56 @@ More clients than you have visible terminals means the tabs are mirrors, and a
 client whose `#{client_written}` stands still while its pane is busy is a tab
 whose browser side is already gone.
 
+#### The fix: one pane per visible terminal
+
 Fix: the seed keeps one pane per visible terminal, and both launchers sweep their own
 sessions for a client that has reported no activity past a 6 h grace before they read
 `session_attached` - `EVO_TMUX_STALE_AFTER` (seconds) moves the
-number. tmux 3.4 only lets you detach by the client's tty path
+number.
+
+tmux 3.4 only lets you detach by the client's tty path
 (`detach-client -t /dev/pts/N`): it refuses a pid with `can't find client` and
-has no `kill-client`. `vscode-terminal-tmux`
+has no `kill-client`.
+
+`vscode-terminal-tmux`
 reattaches a folder's session only while nothing is attached to it, and opens a
 numbered sibling (`vscode-<folder>-<hash>-2`, `-3`, ...) beside live ones, so an
 extra tab is a new pane rather than a mirror. Every session target in that
 helper carries tmux's `=` exact-match prefix, because a bare name is also
 answered by any session starting with it - once `foo` is closed, `foo-2` would
-otherwise answer for it and put a second client on a live pane. And when tmux
+otherwise answer for it and put a second client on a live pane.
+
+And when tmux
 3.4 does take a session down under a tab that is reopening it, the helper raises
-a fresh one rather than letting the tab exit with it. The settings seed drops
+a fresh one rather than letting the tab exit with it.
+
+The settings seed drops
 `terminal.integrated.scrollback` to 2000 - the browser keeps a short viewport
 and tmux's `history-limit 100000` behind `Prefix-[` holds the deep history - and
 turns `cursorBlinking` off, and `templates/common/tmux.conf` sets
-`set -s escape-time 10` and `set -g focus-events on`. The first is the freeze:
+`set -s escape-time 10` and `set -g focus-events on`.
+
+The first is the freeze:
 3.4 holds back any Escape it reads for 500 ms to decide whether a sequence
 follows, so Alt and the arrow keys feel like dropped input and a focus-in can
 wait that long - twice, with `set-timing` - before tmux repaints. Upstream cut
 the default to 10 ms in 3.5, and 0 - the value vim guides suggest - is the one
 to avoid: measured on this build, a throttled tab that delivers Esc and the next
 character more than 10 ms apart loses its Alt chords, and 0 makes that far
-likelier. `focus-events` is what gives tmux a focused client to work with at
+likelier.
+
+`focus-events` is what gives tmux a focused client to work with at
 all. `aggressive-resize` stays at its default on purpose: its own entry in
 `options-table.c` scopes it to the `smallest` and `manual` `window-size` modes,
 the shipped default is `latest`, and tmux(1) calls it "poor for interactive
-programs such as shells". Both files reseed on the next start only while they
-still carry the stack marker, so delete either one you edited by hand. Before
+programs such as shells".
+
+Both files reseed on the next start only while they
+still carry the stack marker, so delete either one you edited by hand.
+
+#### Before debugging a setting that will not take
+
+Before
 debugging a setting that will not take: tmux reads `~/.tmux.conf` and then
 `$XDG_CONFIG_HOME/tmux/tmux.conf` and `~/.config/tmux/tmux.conf`, last file read
 wins, so either of those quietly outranks everything the seed writes.
@@ -2267,14 +2567,17 @@ coder restart <workspace>
   Neither does tmux: 3.4 has no per-client output limit, and an ordinary
   attached client that stops draining its pty is never dropped (measured here:
   one stayed attached past 15 minutes while the server kept serving commands).
+
   The only "too far behind" disconnect is in control mode, behind a hardcoded
   300 s age in `control.c`, which a VS Code tab never uses.
+
   [microsoft/vscode#327437](https://github.com/microsoft/vscode/issues/327437)
   is open (a heap snapshot showed ~38 live terminals holding ~80 MB of a 484 MB
   renderer heap) and
   [coder/code-server#6413](https://github.com/coder/code-server/discussions/6413)
   reports browser-tab RAM reaching several GB with a continuous-output terminal
   left running after the tab is closed; neither has a maintainer mitigation.
+
   Closing the tab is the mitigation, and the numbered sessions are what make the
   live set match the tabs you can see.
 
@@ -2289,10 +2592,16 @@ coder restart <workspace>
 bazelisk run //scripts:github-auth -- check [repo-url]
 ```
 
-- What its answers mean here: `REJECTED` beside `env token (GITHUB_TOKEN/GH_TOKEN)` is an
+#### Read the verdict
+
+- What its answers mean here:
+
+  - `REJECTED` beside `env token (GITHUB_TOKEN/GH_TOKEN)` is an
   expired mint (401 refuses the credential itself, which is what an hour-old injected
-  copy is); `NO GitHub credential in the chain slot` means nothing is connected and
-  nothing can be minted; `PUSH-READY` means the credential is fine and you want
+  copy is)
+  - `NO GitHub credential in the chain slot` means nothing is connected and
+  nothing can be minted
+  - `PUSH-READY` means the credential is fine and you want
   [the push-denied entry](#private-repo-clone-or-push-denied-while-a-credential-is-present---the-grant-not-the-format)
   instead.
 - The one command, whichever of the two it was:
@@ -2303,15 +2612,25 @@ bazelisk run //scripts:github-auth -- fix [repo-url]
 
   Inside a workspace it repairs that workspace; on the stack host `fix <container>
   [repo-url]` names the one workspace it repairs, and a host run with no container is
-  refused for exactly that reason. It mints a live token through Coder external-auth (the
+  refused for exactly that reason.
+
+  It mints a live token through Coder external-auth (the
   injected pair is never trusted, because it is the frozen copy that expired), writes the
   gh auth store, points git's `github.com` and `gist.github.com` credential helper at that
   store through a form that clears the env pair first, then re-runs the write probe and
-  prints the verdict again, so it proves itself. It is idempotent and it never prints a
+  prints the verdict again, so it proves itself.
+
+  It is idempotent and it never prints a
   token.
+
+#### When a human owes the three clicks
+
 - When nothing can be minted AND the store is empty its line begins `HANDOFF` and names
   the three clicks below. That line is the boundary: no command run in that workspace can
   do them.
+
+#### Connect the account, then restart
+
 - On the workspace page, click **GitHub reauth**. Coder opens `/external-auth/<id>`
   (device flow for the injected App, OAuth for a custom app in `coder.env`). If the
   page says you are already authenticated, click **Reauthenticate**.
@@ -2319,7 +2638,9 @@ bazelisk run //scripts:github-auth -- fix [repo-url]
   and lists no accounts, the device-flow login already succeeded. Click **Install
   GitHub App** on the workspace (or open
   [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new)),
-  grant the private repos, then restart. Coder's injected provider omits
+  grant the private repos, then restart.
+
+  Coder's injected provider omits
   `AppInstallURL`, so the warning on `/external-auth/github` is unlinked plaintext.
 - Restart the workspace afterwards so `GH_TOKEN` and the gh auth store match the new
   grant. `fix` makes git push work without the restart; the injected pair itself only
@@ -2338,9 +2659,13 @@ gh would not store the minted GitHub token.
 next: inside the workspace run: GH_TOKEN= GITHUB_TOKEN= gh auth status
 ```
 
+#### Why the store stays empty
+
 - Cause: the refresh script inherits `GH_TOKEN`/`GITHUB_TOKEN` from the agent, and
   `gh auth login --with-token` refuses stdin while those names are set (`The value of the
-  GH_TOKEN environment variable is being used for authentication`). Current templates
+  GH_TOKEN environment variable is being used for authentication`).
+
+  Current templates
   unset the pair, log out, then log in with `--git-protocol https`, and print gh's
   stderr (token redacted) if that still fails - which is the line above.
 - The one command does the same three steps and then proves them:
@@ -2349,6 +2674,8 @@ next: inside the workspace run: GH_TOKEN= GITHUB_TOKEN= gh auth status
 bazelisk run //scripts:github-auth -- fix [repo-url]
 ```
 
+#### Prove the store
+
 - Then read the store with the pair cleared, because `gh auth status` on its own reports
   the env pair rather than what is stored:
 
@@ -2356,26 +2683,38 @@ bazelisk run //scripts:github-auth -- fix [repo-url]
 env -u GH_TOKEN -u GITHUB_TOKEN gh auth status
 ```
 
-- What each answer means: a store that now holds a token means git is repaired and the
-  refresh script keeps it fresh (start, then every 20 minutes); `gh refused the token, so the
+- What each answer means:
+
+  - A store that now holds a token means git is repaired and the
+  refresh script keeps it fresh (start, then every 20 minutes).
+  - `gh refused the token, so the
   store is unchanged` means the credential is revoked or the account disconnected, so run
   `check` to see what github.com says about it, then take the clicks from
-  [the reauth entry](#github-token-expired-or-the-workspace-has-no-github-account---github-reauth);
-  `cannot install the credential helper - gh is not installed` is
+  [the reauth entry](#github-token-expired-or-the-workspace-has-no-github-account---github-reauth).
+  - `cannot install the credential helper - gh is not installed` is
   [the gh-not-installed entry](#gh-command-not-found-inside-a-workspace---the-helper-needs-gh).
 - `HANDOFF` means there is no credential anywhere in reach: click **GitHub reauth**,
   finish device-code login, install the Coder GitHub App if the reauth page says to, and
-  restart. Those clicks are in
+  restart.
+
+  Those clicks are in
   [the reauth entry](#github-token-expired-or-the-workspace-has-no-github-account---github-reauth),
   and the script's own note on a workspace with no connected account points at the same
   two buttons.
 
 ### Private-repo clone or push denied while a credential is present -> the grant, not the format
 
-- What you see is one of: `remote: Invalid username or token. Password authentication is
-  not supported for Git operations.`, `remote: Repository not found.`, `fatal:
-  Authentication failed for 'https://github.com/...'`, or `fatal: could not read Username
-  for 'https://github.com'`. None of them names the token or its age, and the first is
+- What you see is one of:
+
+  - `remote: Invalid username or token. Password authentication is
+  not supported for Git operations.`
+  - `remote: Repository not found.`
+  - `fatal:
+  Authentication failed for 'https://github.com/...'`
+  - `fatal: could not read Username
+  for 'https://github.com'`
+
+  None of them names the token or its age, and the first is
   what a refused token plus a silent askpass looks like, not anything to do with
   passwords.
 - The one command, run where the push was attempted, naming the repository:
@@ -2387,11 +2726,15 @@ bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<sl
   It does not ask "is there a credential" and it does not trust the environment: it runs
   git's own configured helper the way git runs it, takes the password that would go on the
   wire, and probes THAT credential against the endpoint `git push` negotiates through -
-  one GET of `<repo>.git/info/refs?service=git-receive-pack`. A read-only credential
+  one GET of `<repo>.git/info/refs?service=git-receive-pack`.
+
+  A read-only credential
   prints REFUSED-GRANT, never a pass; a healthy-but-shadowed one prints `push would FAIL`,
   never `ok`. Inside a workspace (or the contributor devcontainer) it runs SELF mode with
   no docker and prints one `self:` line per credential; on the stack host it enumerates
-  the labeled workspace containers, or probes a named container alone. Flags may go before
+  the labeled workspace containers, or probes a named container alone.
+
+  Flags may go before
   or after the positionals, and a path below `owner/repo` is refused rather than probed.
 - The repair is also one command, and every `push would FAIL` line names it:
 
@@ -2399,31 +2742,51 @@ bazelisk run //scripts:github-auth -- check [container] [repo-url] [--source=<sl
 bazelisk run //scripts:github-auth -- fix [container] [repo-url]
 ```
 
+#### Read the report by its last line
+
 - Read the report by its last line, then by these. `git would send this credential
   (source: <slots>)` is the credential a real push uses, in git's consult order; the same
-  token held by several slots is named once, as one credential with several names. A plain
+  token held by several slots is named once, as one credential with several names.
+
+  A plain
   `credential present (source: <slots>)` is a credential that exists and that git never
   reaches.
+
+#### The most misread line
+
 - `[shadowed: the credential above outranks this slot, ...]` is the most misread line in
   the report: the credential under it is healthy and git will not use it while the env
-  pair stands. `env -u GH_TOKEN -u GITHUB_TOKEN <command>` makes git or gh use that slot
+  pair stands.
+
+  `env -u GH_TOKEN -u GITHUB_TOKEN <command>` makes git or gh use that slot
   for one command; `fix` makes it permanent for git. See
   [the Bad credentials entry](#gh-answers-bad-credentials---the-stale-env-pair-not-the-store).
 - `NO GitHub credential in the <slot> slot (git will prompt and be refused)` means there
   is nothing to send, so the account comes first:
   [the reauth entry](#github-token-expired-or-the-workspace-has-no-github-account---github-reauth).
+
+#### Why a silent askpass turns this into a password error
+
 - The note line, `note: GIT_ASKPASS is set but answers no credential, which is what turns
   a refused token into "Password authentication is not supported for Git operations."; a
-  working credential helper makes it moot`, is the second half of the story. The agent env
+  working credential helper makes it moot`, is the second half of the story.
+
+  The agent env
   exports `GIT_ASKPASS` pointing at the `coder` binary the agent staged under
   `/tmp/coder.<rand>/`, and in a measured workspace that binary answered every prompt, and
   `coder gitaskpass` itself, with `unrecognized subcommand` and no output, so git got no
-  answer at all and fell through to prompting. Clearing `GH_TOKEN`/`GITHUB_TOKEN` helps
+  answer at all and fell through to prompting.
+
+  Clearing `GH_TOKEN`/`GITHUB_TOKEN` helps
   only while the helper answers; with a silent helper it changes nothing.
 - `push would WORK (the credential git consults writes <repo>)` and `push would FAIL` are
   the lines to gate on, keyed to the credential git would really send; `check` exits
   non-zero on FAIL so a script or an agent can refuse to push on it.
+
+#### The verdicts, and what each one costs you
+
 - The verdicts, and what each one costs you:
+
 - `PUSH-READY` (200 advertising refs): a push would negotiate. If the push still fails,
   the credential is not the failing thing.
 - `REFUSED-GRANT` (403): that credential authenticates and every write to the repo is
@@ -2434,9 +2797,15 @@ bazelisk run //scripts:github-auth -- fix [container] [repo-url]
   revoked token - the fate of the injected pair about an hour after start. `fix` re-mints.
 - `no useful answer`: github.com gave nothing useful (offline? probe again). A 200 that
   does not advertise refs is this verdict too: a push is not proven.
+
+#### Which slot you probed
+
 - `--source=chain` (the default) probes every credential that could answer for that
   repository; `--source=env`, `--source=gh` or `--source=mint` answers one slot and says
   beside the answer that git and gh consult the env pair first.
+
+#### Reads prove nothing
+
 - Reads prove nothing about push, so nothing here asks a read question: a public repo
   answers a read for any authenticated caller, so a credential that READS a repo can still
   be refused every WRITE to it. Go to the GitHub side only after the report says
@@ -2448,7 +2817,9 @@ bazelisk run //scripts:github-auth -- fix [container] [repo-url]
 - An empty [github.com/settings/apps](https://github.com/settings/apps) page is the usual
   surprise here: it means no App is installed under your account, so there is no
   **Configure** link to click and nothing to grant, while the provider itself stays
-  configured and keeps minting tokens that authenticate. Install Coder's App from the
+  configured and keeps minting tokens that authenticate.
+
+  Install Coder's App from the
   workspace **Install GitHub App** button, or at
   [github.com/apps/coder/installations/new](https://github.com/apps/coder/installations/new),
   grant the repo, then restart. A private repository is never visible to a credential
@@ -2461,8 +2832,12 @@ bazelisk run //scripts:github-auth -- fix [container] [repo-url]
   about the scheme. `api.github.com` and `gh` accept `Authorization: Bearer <token>`. The
   git data endpoint refuses it: one token answered `/user` with `200` and
   `<repo>.git/info/refs?service=git-receive-pack` with `401` plus
-  `remote: invalid credentials` while the token rode a bearer header. git has to send it
-  as **Basic** auth with the token as the password. The username text is not checked
+  `remote: invalid credentials` while the token rode a bearer header.
+
+  git has to send it
+  as **Basic** auth with the token as the password.
+
+  The username text is not checked
   (measured on Coder v2.36.6: `toxicoder`, `x-access-token`, `somebody-else` and `octocat`
   each returned `200`), but an empty username or an empty password is refused, and the
   empty password is what produces the misleading `Invalid username or token. Password
@@ -2471,10 +2846,17 @@ bazelisk run //scripts:github-auth -- fix [container] [repo-url]
   workspace: 29 hit a GitHub auth error (`Bad credentials` 19, `Password authentication is
   not supported` 11, `could not read Username` 5, `unrecognized subcommand` 4), and agents
   hand-rolled their own askpass scripts in 5 sessions and hand-edited `credential.helper`
-  in 4. Both were wrong the same way: they fought the credential-helper precedence that
+  in 4.
+
+  Both were wrong the same way: they fought the credential-helper precedence that
   `fix` repairs, and they put a live token where `ps` could read it, while the line that
-  names the real cause was one `check` away. `fix` is idempotent, keeps every token off
+  names the real cause was one `check` away.
+
+  `fix` is idempotent, keeps every token off
   argv and out of any file it creates, and repairs the helper plus the store it reads.
+
+#### Install your own credential, if the report earned it
+
 - Your own credential stays gated on the report: install one only after `check` has
   answered `REFUSED-GRANT`, `NOT VISIBLE` or `REJECTED`. No verdict short of those
   justifies a pasted token, and the repo rule is that a workspace's GitHub credential
@@ -2488,11 +2870,15 @@ bazelisk run //scripts:github-auth -- auth <container> - < PAT
   It installs that credential into that one workspace's gh auth store and then
   re-installs the env-proof helper that `gh auth setup-git` would otherwise leave behind,
   since that helper goes straight back to echoing a stale env pair over the token just
-  pasted. A PAT is never typed as an argument: argv is readable through `ps` and the
+  pasted.
+
+  A PAT is never typed as an argument: argv is readable through `ps` and the
   token lands in shell history. Pipe it in (`echo "$TOKEN" | bazelisk run
   //scripts:github-auth -- auth <container> -`) or run `auth <container>` alone and
   answer the hidden prompt. In the line above, `-` is the only argument after the
-  container and `< PAT` is a shell redirect, not an argument. It REPLACES the per-start
+  container and `< PAT` is a shell redirect, not an argument.
+
+  It REPLACES the per-start
   minted credential for that workspace, and while the account stays connected the next
   `gh_token_refresh` run rewrites the store, so treat a pasted PAT as a stand-in and
   rotate or remove it in GitHub -> Applications when the work ends.
@@ -2506,7 +2892,9 @@ bazelisk run //scripts:github-auth -- auth <container> - < PAT
   `gh auth status` still insists you are logged in. This is the most frequent GitHub
   failure here: 19 of 222 past sessions in this workspace hit `Bad credentials`.
 - Cause: Coder injects `GH_TOKEN`/`GITHUB_TOKEN` into the agent environment when the
-  workspace starts. That GitHub App user-to-server token expires about an hour later and
+  workspace starts.
+
+  That GitHub App user-to-server token expires about an hour later and
   the injected copy is never refreshed for the life of the workspace. `gh` consults that
   pair before it reads its own auth store, so it sends the dead token while the store
   beside it, re-minted by the `gh_token_refresh` coder_script, is healthy and unreachable.
@@ -2547,7 +2935,9 @@ bazelisk run //scripts:github-auth -- fix [repo-url]
 - Install gh, then run `fix` again. The golden image ships a pinned copy (`gh 2.101.0`,
   from the release tarball, at `/usr/local/bin/gh`); apt's `gh` is 2.45 and predates
   subcommands the agent experience uses, so the durable fix is the image, not the distro
-  package. Rebuild the image, then rebuild the workspace: the image is fixed at create
+  package.
+
+  Rebuild the image, then rebuild the workspace: the image is fixed at create
   time.
 
 ```sh
@@ -2579,16 +2969,22 @@ something in that path does not answer.
 warning: the env file was not refreshed from Infisical; <checkout>/.env keeps the credentials it already has - retry with bazelisk run //scripts:infisical -- pull
 ```
 
+#### Why the refresh is best-effort
+
 - Cause: that refresh is best-effort on purpose. With the flag on, `up` pulls the managed
   keys into the very file compose is about to interpolate
   (`scripts/dev-stack.sh:677-683`), and a vault that cannot be reached must not hold the
   stack down - so a failed pull costs one warning and the bring-up continues on the
-  credentials the file already held. The reason sits directly above it
-  (`scripts/lib/infisical.sh:984-992`): `error: the Infisical export failed; <file> is
-  untouched` when the CLI could not reach the vault, `warning: the Infisical export
-  produced an empty file; <file> is untouched` when it answered with nothing, or
-  `note: the pull was refused before it ran; <file> keeps the values it has` when a
-  required key is still empty.
+  credentials the file already held.
+
+  The reason sits directly above it
+  (`scripts/lib/infisical.sh:984-992`):
+
+  - `error: the Infisical export failed; <file> is
+  untouched` when the CLI could not reach the vault
+  - `warning: the Infisical export
+  produced an empty file; <file> is untouched` when it answered with nothing
+  - `note: the pull was refused before it ran; <file> keeps the values it has` when a required key is still empty.
 - Nothing is broken yet and nothing repairs itself by waiting: the stack is up, on values
   the vault may no longer hold. Ask the vault and the inventory first - `check` is a
   diagnostic and always exits `0`:
@@ -2597,13 +2993,16 @@ warning: the env file was not refreshed from Infisical; <checkout>/.env keeps th
 bazelisk run //scripts:infisical -- check
 ```
 
-- Each answer is one line: `note: <KEY> is empty; set it in <file> before this verb can
-  reach the vault` per key that is not filled (`scripts/infisical.sh:215`),
-  `note: no Infisical CLI installed; run: bazelisk run //scripts:infisical -- install-cli`
-  when the binary is what is missing (`scripts/infisical.sh:346`), and `warning: the
+- Each answer is one line:
+
+  - `note: <KEY> is empty; set it in <file> before this verb can
+  reach the vault` per key that is not filled (`scripts/infisical.sh:215`)
+  - `note: no Infisical CLI installed; run: bazelisk run //scripts:infisical -- install-cli` when the binary is what is missing (`scripts/infisical.sh:346`)
+  - `warning: the
   machine identity could not exchange a token; check the client id and secret, and that
-  the vault answers` when the vault is there but will not authenticate the identity
-  (`scripts/infisical.sh:361`). Then retry the pull and bring the stack up again, because
+  the vault answers` when the vault is there but will not authenticate the identity (`scripts/infisical.sh:361`)
+
+  Then retry the pull and bring the stack up again, because
   compose reads the file only when it recreates a container
   (`scripts/infisical.sh:527`):
 
@@ -2622,16 +3021,25 @@ bazelisk run //scripts:prod-stack -- up
 infisical: vault not configured for this stack. These six names arrive on the coder_agent environment - INFISICAL_DOMAIN, INFISICAL_PROJECT_ID, INFISICAL_MACHINE_IDENTITY_ID, INFISICAL_ENVIRONMENT, INFISICAL_UNIVERSAL_AUTH_CLIENT_ID and INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET - and the push composes INFISICAL_DOMAIN itself, from INFISICAL_PORT, so the name missing here is one of the other five: each is read from the key of the same spelling in the stack host's .env, and one that is empty or still spells change-me is skipped rather than sent: set it there and re-run bazelisk run //scripts:push-template.
 ```
 
+#### Why the name never arrived
+
 - Cause: the body's first gate, `templates/common/infisical-secrets.sh.tftpl:14-20` - any
   one of those six empty on the agent environment prints this and exits `0`, so the
-  workspace boots with no vault secrets and nothing else complains. The resource exists at
+  workspace boots with no vault secrets and nothing else complains.
+
+  The resource exists at
   all only while `infisical_enabled` is true (`templates/workspace/main.tf:721`), so this
-  is not the flag being off; it is one value that never arrived. The push forwards each of
+  is not the flag being off; it is one value that never arrived.
+
+  The push forwards each of
   the five read-side values only when `.env` carries something real - `env_get_forwardable` drops an
   empty value and one still spelling `change-me*` (`scripts/push-template.sh:198-205`, the five
   forwards at `:696-730`) - and the template variable then keeps its own empty default
   (`templates/workspace/coder.tf:223-227`), which hands the boot body a key that is
   present and empty.
+
+#### Fill the five read-side keys
+
 - Fix it on the stack host: fill the five read-side keys (`INFISICAL_PROJECT_ID`,
   `INFISICAL_MACHINE_IDENTITY_ID`, `INFISICAL_ENVIRONMENT`,
   `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET`) in
@@ -2649,10 +3057,14 @@ bazelisk run //scripts:push-template
   (`templates/workspace/main.tf:549`, `:639-653`) and the body is `run_on_start` (`:720`),
   so a running workspace keeps the empty set until it starts again.
 
+#### What the push log does not prove
+
 - The push prints only the key each value came from, never the value
   (`scripts/push-template.sh:696-700`), so a CI log that shows
   `infisical_project_id passed from INFISICAL_PROJECT_ID in .env (value not shown)` proves
-  the key was read, not that it was right. `check` is the read that answers. The instance
+  the key was read, not that it was right. `check` is the read that answers.
+
+  The instance
   URL is the one vault value the log does print, because the push composes it rather than
   forwarding it: a workspace is handed `http://host.docker.internal:<INFISICAL_PORT>`
   (`scripts/push-template.sh:652-661`), never the host's own `INFISICAL_URL`.
@@ -2665,6 +3077,8 @@ bazelisk run //scripts:push-template
 infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps the credentials it already has. Run bazelisk run //scripts:infisical -- pull on the stack host to load them now, or set the key to true to fetch at every start.
 ```
 
+#### Why the boot never dials the vault
+
 - Cause: the body's second gate, `templates/common/infisical-secrets.sh.tftpl:27-30`. Each
   twin declares `infisical_pull_on_start` with `default = false`
   (`templates/workspace/coder.tf:270-274`, `templates/devcontainer/coder.tf:257-261`), and
@@ -2672,7 +3086,9 @@ infisical: pull-on-start is off (INFISICAL_PULL_ON_START), so this boot keeps th
   `--var infisical_pull_on_start=true` only when `.env` carries a truthy
   `INFISICAL_PULL_ON_START` *under* a truthy `INFISICAL_ENABLED`
   (`scripts/push-template.sh:636`, `:668-671`), so an adopted vault still ships a boot that never
-  waits on the network. That off is the safe side of a real trade: a fetch that reaches the
+  waits on the network.
+
+  That off is the safe side of a real trade: a fetch that reaches the
   vault is a fetch bounded by the script's own `timeout = 120`
   (`templates/workspace/main.tf:730`), and the exit is `0` either way because no secret
   manager gets to fail a workspace start.
@@ -2704,13 +3120,17 @@ infisical: refused to publish /home/coder/.infisical/agent.env; the staged file 
 - Cause: after the publish loop the body reads the staged file once more against one
   alternation built from its own deny list, and a match deletes the staged file, prints
   that, and exits `0` - it refuses rather than correcting, and the `agent.env` an earlier
-  boot wrote stays exactly as it was. That is why the workspace keeps working, and why the
+  boot wrote stays exactly as it was.
+
+  That is why the workspace keeps working, and why the
   line names neither a key nor a value.
 - This is the belt, not the filter. The loop already drops every deny-listed name before a
   line is staged (`templates/common/infisical-secrets.sh.tftpl:181-189`), compared
   upper-cased so `BASH_ENV`, `bash_env` and `Bash_Env` fall in one arm, and the body's own
   comment reserves the second pass for a filter that regressed or a staged file edited by
-  hand (`templates/common/infisical-secrets.sh.tftpl:219-229`). A vault key that is simply
+  hand (`templates/common/infisical-secrets.sh.tftpl:219-229`).
+
+  A vault key that is simply
   on that list is therefore *not* this entry: it disappears from `agent.env` with no line
   at all, which is the quiet path.
 - Cost of the refusal is one refresh - unlike the loop's filter, which would have cost the
@@ -2736,7 +3156,9 @@ infisical: skipped a secret whose value spans more than one line; only single-li
   (`templates/common/infisical-secrets.sh.tftpl:190-209`). A value that opens a single
   quote without closing it on the same line is a multi-line secret - a PEM, say - and its
   continuation lines would be republished as keys of their own, which corrupts the value
-  and puts secret bytes into key names. So the whole entry goes, including every line up
+  and puts secret bytes into key names.
+
+  So the whole entry goes, including every line up
   to the one that closes the quote (`:146-153`). The vault stores such a value happily;
   only the workspace publish drops it, and the host-side pull of the twelve managed keys
   is a different path that never passes through this loop
@@ -2804,10 +3226,16 @@ Cause: this box's `router` answers `421` when the Host matches no `server_name`.
 The hermes vhost is not typed by hand: `STACK_ROUTER_CONF` in `.env` names the conf
 compose mounts (`proxy/router.gen.conf`, which bootstrap renders from
 `proxy/router.conf.template`, or the checked-in `proxy/router.conf` while that key is
-empty), and every `server_name` in it is composed from the naming parts. Under
+empty), and every `server_name` in it is composed from the naming parts.
+
+Under
 `STACK_PUBLIC_HOSTS=auto` a missing or mistyped part is what produces a name nothing
-answers. Traefik pointed at `:9119` never hits that file. A rewritten Host also
+answers.
+
+Traefik pointed at `:9119` never hits that file. A rewritten Host also
 misses every block.
+
+#### Replay it from a workspace
 
 The public backend is the same hop as the other names. Replay it from a
 workspace, which reaches the published router and skips Cloudflare, Traefik and
@@ -2818,6 +3246,8 @@ curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: hermes-gmktecbeast.overeazy.i
   http://host.docker.internal:8080/
 ```
 
+#### What each answer means
+
 - `421` means this box has no vhost for that Host. `STACK_ROUTER_CONF` in `.env` is
   what tells you which conf compose actually mounted, so read that file's
   `server_name` lines first, then recreate `router` so it picks up the one that
@@ -2825,6 +3255,9 @@ curl -sS --noproxy '*' -o /dev/null -D - -H 'Host: hermes-gmktecbeast.overeazy.i
 - Anything else means the router matched (Hermes basic auth is `401` until you
   send credentials). A `421` only on the public URL, with this probe succeeding,
   is a rewritten Host or a Traefik backend that is not `:8080`.
+
+#### Fix the part, not the rendered conf
+
 - Under `auto` both sides come from the same parts, so a `421` on a name nobody
   recognises is a part problem, not a router problem: an empty `STACK_DOMAIN_BASE`
   composes nothing (the stack stays LAN-only) and a mistyped `STACK_SUBDOMAIN_SUFFIX`
@@ -2940,28 +3373,42 @@ curl -s http://127.0.0.1:9090/api/v1/targets
 - **`litellm` alone is `down` with a 401**: the scrape sends the master key as a bearer
   token that it reads from a file, `/etc/prometheus-secrets/litellm_token`
   (`observability/prometheus/prometheus.yml`), which Compose writes from
-  `LITELLM_MASTER_KEY` when it creates the container. Measured on v3.16.0, the collector
+  `LITELLM_MASTER_KEY` when it creates the container.
+
+  Measured on v3.16.0, the collector
   expands environment variables under `global.external_labels` - they come back filled
   in at `/api/v1/status/config` - and nowhere a credential could hide: a scrape target
   address and an `authorization` block send the written text back verbatim, so a value
-  it could not substitute is rejected. That file is the one credential in the bundle a rotate can strand, and it
+  it could not substitute is rejected.
+
+  That file is the one credential in the bundle a rotate can strand, and it
   behaves the opposite way from the bind mounts above: it is a Compose `configs` entry,
-  and Compose writes those when it *creates* the container. Measured with the compose
+  and Compose writes those when it *creates* the container.
+
+  Measured with the compose
   this repo ships, `up -d` after a rotate prints `Running`, keeps the same container and
   the same `com.docker.compose.config-hash`, and the file inside still holds the old key;
-  a `restart` matches it. The recreate that works names the service -
+  a `restart` matches it.
+
+  The recreate that works names the service -
   `docker compose -p evo-t1-prod --profile observability -f docker-compose.yml up -d
   --force-recreate prometheus`, the invocation `prod-stack` itself prints with the
-  recreate added, since `prod-stack up` passes no flags through. The response body names the fault: LiteLLM answers a
+  recreate added, since `prod-stack up` passes no flags through.
+
+  The response body names the fault: LiteLLM answers a
   missing bearer with "Malformed API Key passed in", and a wrong one with
   `No connected db.` - which is an auth failure at v1.102.1, not a database complaint
-  (this bundle runs LiteLLM with no DB at all). `bazelisk run //scripts:observability-check`
+  (this bundle runs LiteLLM with no DB at all).
+
+  `bazelisk run //scripts:observability-check`
   prints that target's `lastError`, so it names the 401 without a `docker logs` read.
 
 ### Grafana's dashboard page logs a quotas `501` and `skipping rendering` -> two separate upstream lines, one of them closed here
 
 Cause: both show up in the browser console on every dashboard page, and only one of
 them means anything.
+
+#### The quotas 501 from the unified-storage resource server
 
 - `GET /apis/quotas.grafana.app/v0alpha1/namespaces/default/usage?group=dashboard.grafana.app&resource=dashboards`
   answering `501 (Not Implemented)` is upstream grafana/grafana#136271: with
@@ -2971,21 +3418,32 @@ them means anything.
   through `GF_UNIFIED_STORAGE_OVERRIDES_PATH`, so the call answers `200`. The file sets
   no limit; its presence is the whole fix, and what the endpoint then reports is
   Grafana's own default - `{"usage":0,"limit":1000}` for both dashboards and folders on
-  `grafana/grafana:13.3.1`. No cap is known to take effect there: four plausible shapes
+  `grafana/grafana:13.3.1`.
+
+  No cap is known to take effect there: four plausible shapes
   written under `overrides:` left that 1000 untouched, and three other shapes stop the
   container at boot, so the file's own header says to prove a limit on the pinned image
-  before committing one. If the `501` is back, the bind or the variable went missing -
+  before committing one.
+
+  If the `501` is back, the bind or the variable went missing -
   and the knob cuts both ways: pointed at a path that is not there, Grafana does not
   fall back to the 501, it exits 1 with `Error: overrides file does not exist`
-  (measured on 13.3.1), and `restart: unless-stopped` loops it. A missing bind source
+  (measured on 13.3.1), and `restart: unless-stopped` loops it.
+
+  A missing bind source
   makes that shape on its own, since Docker mounts a directory where the file should
   be, so a checkout that never got `observability/grafana/unified-storage/overrides.yml`
   costs the whole dashboard rather than one console line.
+
+#### The skipping rendering console line
+
 - `DashboardScenePage.tsx:171 skipping rendering` is a leftover `console.log` in
   Grafana's own bundle (`public/app/features/dashboard-scene/pages/DashboardScenePage.tsx`,
   read out of the pinned image's source map). It prints when the page declines to render
   for one pass because the route's dashboard uid changed under it, which is the normal
-  path for any navigation between dashboards and for a trip to or from Home. It carries
+  path for any navigation between dashboards and for a trip to or from Home.
+
+  It carries
   no diagnostic value, shares no cause with the `501`, and keeps printing after that one
   is fixed. Nothing in this stack can silence it, and nothing needs to.
 
@@ -2996,6 +3454,7 @@ is empty is not this line's fault - take the datasource path below.
 
 Cause: the `mimir` datasource is `http://mimir:8080/prometheus`, and that suffix is
 Mimir's Prometheus-compatible query namespace - not its root and not its write endpoint.
+
 `/api/v1` on its own is the write-side namespace and answers 404 to a `query_range`, so a
 datasource pointed there still reads green in the UI and returns nothing in a panel. That
 URL is the single most common cause of this symptom.
@@ -3054,6 +3513,8 @@ and recreate the service:
 ```sh
 bazelisk run //scripts:prod-stack -- up
 ```
+
+#### The second cause: the logging driver
 
 The second cause is the logging driver: a container not using `json-file` has no such
 file to tail, so its logs are missing from Loki while every other service's arrive. The
