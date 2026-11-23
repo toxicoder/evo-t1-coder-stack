@@ -11,16 +11,21 @@ argument-hint: "[repo-path] [--dry-run]"
 
 Collapse a repository onto one long-lived branch, move every environment out of git and
 into config, put unfinished work behind a flag that defaults off, then deal with the
-branches that are left. The contributor-facing prose, with the worked examples this body
-leaves out, is `docs/workflows/trunk-feature-flags-refactor.md` in the repository that ships
-this skill. It is a convenience: this body is self-contained, so a session pointed at some
-other repository needs nothing beside it but its own shell.
+branches that are left.
+
+The contributor-facing prose, with the worked examples this body leaves out, is
+`docs/workflows/trunk-feature-flags-refactor.md` in the repository that ships this skill.
+
+It is a convenience: this body is self-contained, so a session pointed at some other
+repository needs nothing beside it but its own shell.
 
 Run every command with your shell tool (`run_terminal_command`) and read files with
 `read_file`. A command written in this body runs nothing until you run it.
 
-Two numbers to keep in view: the phase count (6) and the criteria count (12). Nothing is
-done until all 12 criteria pass, and the report at the end is a deliverable, not a summary.
+Two numbers to keep in view: the phase count (6) and the criteria count (12).
+
+Nothing is done until all 12 criteria pass, and the report at the end is a deliverable, not
+a summary.
 
 ## The model
 
@@ -41,6 +46,8 @@ Each is binary. Prove it with the command, in the phase that creates it, and pas
 result into the final report. A criterion you could not prove is reported as unmet with
 the reason; "should be fine" is a fail.
 
+### Trunk, branches, and CI
+
 1. **One trunk.** `git ls-remote --heads origin` lists the trunk plus only branches on the
    approved-keep list. No `development`, `staging`, `qa`, `prod`, `production`, or
    `release/*` branch is live.
@@ -53,12 +60,18 @@ the reason; "should be fine" is a fail.
 4. **Naming enforced.** Every open branch matches `^(feat|fix|refactor|docs|chore|ci|test|perf|build)/`
    and `git for-each-ref --sort=-committerdate --format='%(refname:short) %(committerdate:short)' refs/remotes/origin`
    shows nothing older than the agreed branch lifetime (default 14 days).
+
+### Environments and artifacts
+
 5. **Environments are config.** Each environment has exactly one named home for its values.
    Proof: `ls .env.* overlays/ inventories/ envs/ 2>/dev/null` (whichever the stack uses)
    names one home per environment, and every environment deploys from a trunk checkout.
 6. **One artifact, many targets.** Proof: the promotion block pastes into a shell as written,
    and the same ref or image digest appears on both the dev and the stable side -
    `git rev-parse HEAD` on trunk equals the ref the stable deploy names.
+
+### Flags
+
 7. **Off by default.** Every unfinished or experimental path is guarded by a named flag whose
    default is off on trunk: `grep -rn '<FLAG>' config/ .env.example .env.sample` shows the
    default as false.
@@ -66,12 +79,18 @@ the reason; "should be fine" is a fail.
    expiry: `ls config/flags*.yaml` finds it, and for each declared name
    `grep -rn "<FLAG>" .` finds a reader, while every read name has a declaration. No orphan in
    either direction.
+
+### Secrets and docs
+
 9. **No secrets committed.** `git ls-files | grep -E '(^|/)\.env($|\.[a-z]+$)'` returns only
    sample/template names. Real secrets live in GitHub Environments or an untracked env file.
 10. **Docs agree.** The branching doc, `CONTRIBUTING.md`, and `AGENTS.md` (or `CLAUDE.md`)
     all state the trunk model, and
     `grep -rn -w '<retired-branch>' docs/ CONTRIBUTING.md AGENTS.md` returns only the
     retirement note that mentions it.
+
+### Gates and recovery
+
 11. **Gates green.** The repo's own pre-existing gate command
     (`bazelisk test //:test-fast`, `npm test`, `make test`, `./manage.sh <check>`, `pytest`)
     passes on the final commit, quoted with its summary line.
@@ -83,6 +102,8 @@ the reason; "should be fine" is a fail.
 
 Read-only. Make no edits and no commits. Write findings to a scratch file
 (`/tmp/trunk-refactor/inventory.md`) and reuse them verbatim in the report.
+
+### What to gather
 
 1. Branches and their real state:
 
@@ -119,35 +140,61 @@ Read-only. Make no edits and no commits. Write findings to a scratch file
        grep -rnE '^\s*profiles:' --include='compose*.y*ml' --include='docker-compose*.y*ml' .
        ls config/flags* flags.* 2>/dev/null
 
-   Read `.env.example` or `.env.sample` for key names. A populated `.env` is off-limits:
-   name the operator CLI that prints the value instead.
+   Read `.env.example` or `.env.sample` for key names.
 
-5. The gate to keep green, from what is on disk: Bazel (`bazelisk test //:test-fast` then
-   `//:lint`), npm (`npm test`, `npm run lint`), `make test`, `./manage.sh <check>`,
-   `pytest`, `go test ./...`, `cargo test`. Record the exact command and run it now, before
-   you touch anything, so a later failure is yours or is not.
+   A populated `.env` is off-limits: name the operator CLI that prints the value instead.
+
+### The gate and the environments
+
+5. The gate to keep green, from what is on disk:
+
+   - Bazel (`bazelisk test //:test-fast` then `//:lint`)
+   - npm (`npm test`, `npm run lint`)
+   - `make test`
+   - `./manage.sh <check>`
+   - `pytest`
+   - `go test ./...`
+   - `cargo test`
+
+   Record the exact command and run it now, before you touch anything, so a later failure is
+   yours or is not.
 
 6. Environments in use today, and how each differs from the others: values, secrets, hosts,
-   namespaces, ports, resource sizes. Where two environments differ by *code*, that is the
-   work of Phase 2 and Phase 3.
+   namespaces, ports, resource sizes.
 
-Record in the inventory file: trunk name, every branch with age/author/unique-commit count/
+   Where two environments differ by *code*, that is the work of Phase 2 and Phase 3.
+
+### Record in the inventory file
+
+trunk name, every branch with age/author/unique-commit count/
 classification draft, deployment mechanism, gate command, flag surface, environment list.
 
 ## Phase 1 - Establish the trunk-based rules in writing
 
 Docs first: a branch model nobody wrote down gets re-litigated by the next session.
 
-- `docs/branching.md` (create or rewrite): trunk is the only long-lived branch; branch
-  prefixes and their meaning; cut from the tip of trunk; lifetime target and what to do when
-  trunk moves under you (rebase your own branch, never a shared one); merge by pull request;
-  delete on merge; commit prefixes with an imperative summary.
+### The docs to write
+
+- `docs/branching.md` (create or rewrite):
+
+  - trunk is the only long-lived branch
+  - branch prefixes and their meaning
+  - cut from the tip of trunk
+  - lifetime target and what to do when trunk moves under you (rebase your own branch, never
+    a shared one)
+  - merge by pull request
+  - delete on merge
+  - commit prefixes with an imperative summary
+
 - `CONTRIBUTING.md`: the same rules for humans, plus two sentences the branching doc states
   in full - environments are not branches, and unfinished work ships behind a flag that
   defaults off.
 - `AGENTS.md` (or `CLAUDE.md`): a short non-negotiable block, eight lines at most, that
   states the model and points at the skill and this doc. Future agent sessions load this file
   every turn; it is where the model becomes durable.
+
+### Environments and CI
+
 - Environments as GitHub Environments: name them (`development`, `staging`, `production`),
   attach protection rules and secrets per environment, and have the deploy job declare
   `environment: <name>`. Configure in the UI or with `gh api`; the commands are in the docs
@@ -155,14 +202,17 @@ Docs first: a branch model nobody wrote down gets re-litigated by the next sessi
 - CI: one job runs the full gate on `pull_request` and on `push` to trunk; deploy jobs pick
   their environment by `environment:` and a ref or tag input, never by branch name.
 
+### What not to do in this phase
+
 Do not rename the trunk or delete anything in this phase. A default-branch rename is its own
 confirmed step (Phase 4) because GitHub rewrites links, PRs, and protections when it happens.
 
 ## Phase 2 - Environments without environment branches
 
-Pick the row that matches what Phase 0 found. An environment may differ from another in three
-things only: values, secrets, and where it runs. Any other difference is code, and code goes
-to Phase 3 behind a flag.
+Pick the row that matches what Phase 0 found.
+
+An environment may differ from another in three things only: values, secrets, and where it
+runs. Any other difference is code, and code goes to Phase 3 behind a flag.
 
 | Stack | The environment is | Its values live in | Promotion |
 | --- | --- | --- | --- |
@@ -174,7 +224,7 @@ to Phase 3 behind a flag.
 | Plain hosts | host plus env file | one env file and one unit per host, templated from trunk | redeploy the same release tag |
 | Coder / template params | template variable | `variable` in the template plus the workspace's own values | bump the template revision, not a branch |
 
-Steps:
+### Steps
 
 1. List what each environment branch changed versus trunk. Each change becomes either a value
    in that environment's file, a secret in the environment store, or a flag.
@@ -185,14 +235,18 @@ Steps:
    merge, then the stable stack command, all against one ref or tag.
 4. Delete the environment branch only in Phase 4, after its content is provably elsewhere.
 
-Compose details that matter: a distinct `-p <project>` per environment isolates networks,
-volumes, and container names; parameterize every published port (`"${APP_PORT:-3000}:3000"`)
-so two environments can coexist on one host; put optional services under `profiles:` and a
-flag.
+### Compose details that matter
+
+- a distinct `-p <project>` per environment isolates networks, volumes, and container names
+- parameterize every published port (`"${APP_PORT:-3000}:3000"`) so two environments can
+  coexist on one host
+- put optional services under `profiles:` and a flag
 
 ## Phase 3 - Lightweight feature flags
 
 Use the first mechanism that carries the need. Stop there.
+
+### Mechanisms, in preference order
 
 1. **Environment variable plus dotenv sample.** The default for any code path. Read it at one
    seam, document the key in `.env.example` / `.env.sample` with its off default.
@@ -205,10 +259,12 @@ Use the first mechanism that carries the need. Stop there.
 4. **The platform's own parameter surface** when the flag selects infrastructure: Coder
    template variables, Terraform variables, Helm values, Ansible vars.
 
+### What not to add
+
 Do not add a flag service, an SDK, a database-backed flag table, or per-request flag plumbing
 unless the operator asks for it by name.
 
-Rules that make flags survivable:
+### Rules that make flags survivable
 
 - One naming convention repo-wide; `FEATURE_<THING>` for behaviour, a plain value for a
   setting. The key in the flags file is the exact name the process reads.
@@ -235,7 +291,7 @@ Classify every non-trunk branch from the Phase 0 inventory. One row each, one ve
 | dead | no value, or explicitly abandoned | list for deletion with the evidence that says so |
 | release-bearing | carries a version nobody tagged | tag the tip, push the tag, then list the branch |
 
-Porting is re-adaptation, not cherry-pick archaeology:
+### Porting is re-adaptation, not cherry-pick archaeology
 
     git switch -c feat/<slug>-port origin/trunk
     git checkout origin/<branch> -- <paths>       # take the files, then read and fix them
@@ -245,7 +301,7 @@ Porting is re-adaptation, not cherry-pick archaeology:
 Adapt the ported code to trunk's current structure, wire it behind a flag when incomplete, and
 keep one logical change per pull request. A port that drags in a reformat is two pull requests.
 
-Deletion is a human action:
+### Deletion is a human action
 
 - Never delete a remote branch on your own initiative. Present the list, with tip SHA, age,
   author, and the reason, and wait for explicit confirmation.
@@ -253,6 +309,8 @@ Deletion is a human action:
   recorded stays recoverable until garbage collection.
 - Hand over the exact commands rather than running them, unless the operator tells you to.
 - Never force-push, never rewrite a shared branch, never touch the trunk ref.
+
+### The default-branch rename
 
 When the trunk itself is a rename (the working branch is `development` and the trunk should be
 `main`): converge the content first, then propose the default-branch rename as a separate
@@ -265,16 +323,22 @@ local clones need `git fetch --all --prune` afterwards.
 2. Run the repo's own gates, quoted with their summary lines. Keep existing gates green;
    extend a script or target that already exists rather than adding a new one.
 3. Docs: the branching doc, contributing, agent rules, the flags inventory, and the promotion
-   commands all describe what the tree now does. Grep for the retired branch names one last
-   time and confirm only the retirement note mentions them.
+   commands all describe what the tree now does.
+
+   Grep for the retired branch names one last time and confirm only the retirement note
+   mentions them.
 4. Check every relative link you added resolves, and every code fence names its language.
 
 ## Stack adaptation notes
 
 These are orientation, measured against the remotes on 2026-11-08. Re-run Phase 0 before you
 trust them: these repositories move, and a note in a skill is a hint while the checkout is the
-fact. Where the prose page is reachable, its per-repository table carries the same notes with
-the commands spelled out.
+fact.
+
+Where the prose page is reachable, its per-repository table carries the same notes with the
+commands spelled out.
+
+### Per-repository notes
 
 - **`toxicoder/evo-t1-coder-stack`** (trunk `main`): Bazelisk is the ingress and the gate
   (`bazelisk test //:test-fast`, `//:lint`, `//:validate`). Environments are already dev versus
@@ -301,22 +365,35 @@ the commands spelled out.
   Before you list any branch here, check whether it is holding an unreleased migration - that is
   a port, not a delete.
 
-The general shape: a branch that is `ahead=0` is a cleanup with a confirmation in front of it; a
-branch that is hundreds of commits ahead is a porting programme that needs slicing, flags, and
-several pull requests.
+### The general shape
+
+- a branch that is `ahead=0` is a cleanup with a confirmation in front of it
+- a branch that is hundreds of commits ahead is a porting programme that needs slicing, flags,
+  and several pull requests
 
 ## Safety constraints
+
+### Git and history
 
 - No force-push, no history rewrite on a shared branch, no merge of your own pull request
   unless the operator asks.
 - No remote branch deleted without explicit confirmation; deliver the list and commands.
+
+### Secrets
+
 - No secrets in a committed file, including the flags file and any per-environment value file.
   Samples carry key names and inert defaults.
 - Never read `.env` or `.env.*`: use the CLI that prints the value, or read the sample for the
   key's shape.
+
+### Scope and tooling
+
 - Prefer extending an existing script, target, or gate over adding a tool, a CI system, a
   platform, or a dependency. No Kubernetes, no flag service, no new framework.
 - One logical change per branch and per pull request; docs and tests move with the behaviour.
+
+### Reporting
+
 - If the tree is dirty when you arrive, say so and work around it. Do not "tidy" changes that
   are not yours.
 - A step you cannot complete is reported as incomplete with the reason. A criterion quietly
@@ -324,8 +401,9 @@ several pull requests.
 
 ## Required output format
 
-Finish with exactly these sections, in this order. Tables stay tables; quote command output, do
-not paraphrase it.
+Finish with exactly these sections, in this order.
+
+Tables stay tables; quote command output, do not paraphrase it.
 
     ## Summary
     <repo, trunk name, what changed in one paragraph, gate command with its summary line>
