@@ -210,14 +210,14 @@ bazelisk run //scripts:bazel-map -- unlisted hermes proxy searxng
 # -> summary: 1 ok, 0 warnings, 0 failed
 ```
 
-A new top-level payload directory:
+A new top-level payload directory, as [building-with-bazel.md](building-with-bazel.md) spells out:
 
 - belongs in its own package with its own `filegroup` targets
 - joins `//:stack_data` by label
 - is named in the map of every target that reads it
 
-as [building-with-bazel.md](building-with-bazel.md) spells out. `unlisted` is how you find out you
-have not done that, rather than finding out that the gate never noticed.
+`unlisted` is how you find out you have not done that, rather than finding out that the gate never
+noticed.
 
 ### The map key a new `scripts/*.sh` needs, and the test a new function needs
 

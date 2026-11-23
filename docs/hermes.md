@@ -179,9 +179,9 @@ bazelisk run //scripts:hermes-shell -- --dry-run    # print the compose command,
   `${STACK_DEPLOY_PATH:-/opt/stack-deploy}`, `/opt/stack-skills`, the data volume, and
   the docker socket.
 
-  **What it cannot:** `/home` is not mounted, so no dotfiles, SSH keys or shell history
-  - by design. The image carries git and the Docker CLI but not bazelisk, so inside the
-  container the same operations go through
+  **What it cannot:** `/home` is not mounted, so no dotfiles, SSH keys or shell
+  history - by design. The image carries git and the Docker CLI but not bazelisk, so
+  inside the container the same operations go through
   `docker compose -p evo-t1-prod -f "$STACK_HOST_PATH/docker-compose.yml"`.
 
 - **`--writable` matters more than it looks.** The official image sets
@@ -263,7 +263,7 @@ warning is that every publisher to a topic is treated as the same user.
 `NTFY_SERVER_URL` defaults to `https://ntfy.sh`; a self-hosted ntfy keeps the notices
 on your hardware.
 
-### What to ask from a phone
+### The questions you ask, and the verbs that answer them
 
 **What to ask from a phone** is the same list you would run at the desk, and the
 `coding-agents` skill is what teaches the assistant to answer it:
@@ -301,7 +301,7 @@ bazelisk run //scripts:hermes-doctor -- --check approvals --check web-lane
 bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, inspect nothing
 ```
 
-### What it reads
+### Where its facts come from
 
 - **What it reads:** the config the container actually loads, the environment it was
   created with, the mounts it was given, and the two seed files beside the checkout.
@@ -313,7 +313,7 @@ bazelisk run //scripts:hermes-doctor -- --dry-run # print the compose line, insp
   Every container-level fact comes from `docker inspect` or `docker compose ps`; nothing
   writes, restarts, recreates, or execs.
 
-### The fourteen checks
+### The check names, and the exit codes
 
 - **The fourteen checks:**
 
