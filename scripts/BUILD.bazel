@@ -181,6 +181,14 @@ _SCRIPT_LIBS = {
         "lib/probes/github-auth.sh",
         "lib/probes/github-auth-fix.sh",
     ],
+    # The mint answers three service-account endpoints and writes one file. The rules
+    # (the token alphabet the reader accepts, the refuse-to-rotate decision, the curl
+    # config the admin credential travels in) live in the lib; the CLI keeps only the
+    # report vocabulary and the container transport beside them.
+    "grafana-agent-token": [
+        "lib/common.sh",
+        "lib/grafana_agent_token.sh",
+    ],
     "hermes-bootstrap": [
         "lib/common.sh",
     ],
@@ -221,6 +229,10 @@ _SCRIPT_LIBS = {
     "observability-check": [
         "lib/common.sh",
     ],
+    # The scan derives an empty closure: obsq_find_lib resolves both libraries at run
+    # time from the script's own directory, so no line of the entry script spells a
+    # lib/ path. They ride in _SCRIPT_PAYLOAD_ALLOW below, where runfiles still see them.
+    "observability-query": [],
     "pre-commit": [
         "lib/common.sh",
     ],
@@ -371,6 +383,11 @@ _SCRIPT_PAYLOAD = {
     "github-auth": [
         "//:compose_file",
     ],
+    # It reads docker-compose.yml for the resolve_checkout marker and for the project
+    # name the one-shot curl container joins, and opens no payload of its own.
+    "grafana-agent-token": [
+        "//:compose_file",
+    ],
     "hermes-bootstrap": [
         "//:compose_file",
         "//hermes:seed",
@@ -431,6 +448,16 @@ _SCRIPT_PAYLOAD = {
     "observability-check": [
         "//:compose_file",
         "//observability:payload",
+    ],
+    # It roots itself on the compose file (resolve_checkout's marker, plus the project
+    # name the in-network curl container joins) and reads the provisioned datasource
+    # and dashboard trees by name when it answers what the bundle registers.
+    # //proxy:confs is the token the scan raises for the /api/datasources/proxy/uid/
+    # path Grafana's API puts in every query URL: a URL shape, not a file this opens.
+    "observability-query": [
+        "//:compose_file",
+        "//observability:payload",
+        "//proxy:confs",
     ],
     "pre-commit": [
         "//:compose_file",
@@ -534,6 +561,15 @@ _SCRIPT_PAYLOAD = {
 }
 
 _SCRIPT_PAYLOAD_ALLOW = {
+    # The two libraries this CLI sources through obsq_find_lib, which resolves them
+    # from the script directory at run time. Neither is a payload file; both must be
+    # in runfiles or the script exits before its first line of real work, and the
+    # scan cannot derive either because no code line of the entry script names a
+    # lib/ path.
+    "observability-query": [
+        "lib/common.sh",
+        "lib/observability_query.sh",
+    ],
     # Neither path is opened. The `templates/` hits are the three group labels
     # cmd_twins puts in its pool expression, and the `BUILD.bazel` hits are the
     # `case` globs cmd_unlisted skips so a package's own declaration file is

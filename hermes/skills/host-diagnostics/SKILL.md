@@ -166,6 +166,109 @@ credential chain (host command: it enumerates the labeled workspace containers
 through the daemon), `docker logs --tail 100 coder-<owner>-<ws>` for the agent
 tunnel, and remember the `dind` sidecar inside it is not a workspace.
 
+## Asking the observability plane
+
+When this box is clean and the question is about the stack's own behaviour - what did that
+container actually say, did the scrape land, is anything alerting - the `observability`
+bundle already holds the answer, and one CLI is the door:
+
+```sh
+bazelisk run //scripts:observability-query -- <logs|metrics|alerts|dashboards|search> [ARGS]
+```
+
+It is read-only end to end, and it is a **host command**: this image has no bazelisk, and
+its four credential-bearing verbs (`search`, `dashboards`, `logs`, `metrics`) dial
+`127.0.0.1:3005`, which is the stack host's loopback and not this container's. Check
+`command -v bazelisk`, then print the line and hand it over. Never read the token file to
+"just check it" - it is `/var/lib/evo-t1-observability/grafana-query-token`, `0600`, and the
+path is the only part anyone needs from you.
+
+Work it in this order, one command at a time, and stop at the first answer that explains
+the symptom.
+
+**1. Can the plane be asked at all.**
+
+```sh
+bazelisk run //scripts:observability-query -- --self-test
+```
+
+Proves the token authenticates and that each of the four provisioned datasources
+(`prometheus`, `mimir`, `loki`, `tempo`) answers through Grafana's proxy. It returns no
+payload, so it is the one line safe to paste into a transcript. A token failure here makes
+everything below it untrustworthy - say that before you read any of it.
+
+**2. What is registered.**
+
+```sh
+bazelisk run //scripts:observability-query -- search litellm
+bazelisk run //scripts:observability-query -- dashboards
+```
+
+`dashboards` is the API that says whether a committed JSON became a screen, so "that board
+is missing" settles here rather than in a browser.
+
+**3. The container's own words, in the window that hurts.**
+
+```sh
+bazelisk run //scripts:observability-query -- logs '{container="litellm"}' --since 30m
+bazelisk run //scripts:observability-query -- logs '{container="litellm", stream="stderr"} |~ "(?i)(error|panic|refused)"' --since 30m
+```
+
+`container=` first, always. Loki carries four labels and no others - `container`, `stream`,
+`job`, `stack` - so a selector written `{service="litellm"}` is not slow, it is empty, and
+an empty result is shaped exactly like an empty box. The CLI refuses a fifth label before
+it asks anything; if it refuses, you invented a label, and `container` values are the
+compose log tags. Filters after the pipe (`|~ "..."`) are line text, not labels, and are
+free.
+
+**4. The same window in numbers.**
+
+```sh
+bazelisk run //scripts:observability-query -- metrics 'up' --since 30m
+bazelisk run //scripts:observability-query -- metrics 'rate(container_cpu_usage_seconds_total{container="litellm"}[5m])' --since 30m
+bazelisk run //scripts:observability-query -- metrics 'up' --source mimir --since 7d
+```
+
+Ask the same window of both signals: a log line with no matching series is a scrape fault, a
+series with no matching log line is the app rather than the container. `--source mimir` is
+how you ask whether it started before Prometheus stopped remembering.
+
+**5. What the bundle already thinks is wrong.**
+
+```sh
+bazelisk run //scripts:observability-query -- alerts
+```
+
+Alertmanager needs no credential and binds loopback on the host, so this one verb travels
+inside the project network in a one-shot curl container - the only one you can drive from
+here (`--no-docker` is the host-shell path).
+
+### Two answers you must not paper over
+
+Every verb answers `off`, `nodata`, `error` or `data`, and the first two are the two people
+get wrong:
+
+- **`off`** means the `observability` compose profile is not up, so nothing was ever
+  listening and there is nothing to query. Nothing is broken. The next move is a sentence to
+  the operator: bring the profile up (`OBSERVABILITY_ENABLED=true`, then `//scripts:dev-stack
+  -- up`). Reporting "no logs" or "no metrics" off an `off` is a wrong answer with a clean
+  exit code, and it sends someone to debug an app that was never the problem.
+- **`nodata`** means the bundle is up, accepted the query, and matched no row. That is an
+  answer, and often it *is* the bug: the scrape is down, Prometheus' `remote_write` to Mimir
+  stopped landing, or Alloy was pointed at an empty log root. Name which writer you now
+  suspect and ask the one question that confirms it - `//scripts:observability-check` walks
+  those seams, and `docker compose -p evo-t1-prod -f "$ROOT/docker-compose.yml" logs --tail
+  200 alloy` reads the tail of the writer.
+
+`error` is the only one that means a request failed: read the line, it names the URL, the
+status, and the token's *path*. Exit code 2 is not any of these - it means you wrote a
+command the CLI will not run, and it prints the fix.
+
+Nothing here changes anything. There is no verb that writes, and the provisioned folder
+carries `disableDeletion: true`, so a panel "fixed" in the UI is not fixed: the board is the
+JSON under `observability/grafana/dashboards/` and it comes back on the next reload. Name the
+file and the panel you would change instead.
+
 ## The host and Spark metrics surface
 
 ### The four exporters

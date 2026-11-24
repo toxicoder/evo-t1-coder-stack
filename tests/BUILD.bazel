@@ -311,6 +311,10 @@ _SUITE_PAYLOAD = {
         "//:entry_docs",
         "//docs:content",
     ],
+    # The suite drives the mint itself against one private docker stub, and opens
+    # nothing beyond the common set: the compose file the CLI names to derive the
+    # project network is already every suite's data.
+    "grafana-agent-token.bats": [],
     "github-auth.bats": [],
     "hermes-bootstrap.bats": [
         "//hermes:seed",
@@ -488,6 +492,13 @@ _SUITE_PAYLOAD = {
         # auth: the refused switch is absent from that file, so the file has to be in
         # the runfiles or the case can only ever report its own absence.
         "//litellm:config",
+    ],
+    # The suite drives the query CLI, so that script's reads are this suite's reads:
+    # the provisioned datasources and dashboards every answer names, and the proxy/
+    # token its asserted URLs raise.
+    "observability-query.bats": [
+        "//observability:payload",
+        "//proxy:confs",
     ],
     # Every fact here is read out of the provisioned dashboard tree, and the metric
     # allow-list reads the recording rules this repo ships so a new rule never needs

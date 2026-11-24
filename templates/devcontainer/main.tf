@@ -1782,6 +1782,22 @@ resource "docker_container" "workspace" {
     read_only      = false
   }
 
+  # The read-only Grafana credential the coding agents query the observability
+  # stack with, at the same container path the workspace container above mounts
+  # it at. //scripts:grafana-agent-token mints it on the stack host, and this bind
+  # is the only way in: the token is a host file, so no named volume would carry
+  # it, and the mint's own --owner coder is what makes the 0600 file readable by
+  # this container's user. Read-only both ways on purpose - the workspace consumes
+  # the credential and never rotates it, which stays the operator's act on the
+  # host. A host that never ran the mint gets an empty root-owned directory here,
+  # and //scripts:observability-query answers with its own "no token" line rather
+  # than a 401, so the absence is legible.
+  volumes {
+    container_path = "/var/lib/evo-t1-observability"
+    host_path      = "/var/lib/evo-t1-observability"
+    read_only      = true
+  }
+
   # Only the sidecar reference matters: it makes Terraform attach the daemon to
   # the network before starting the workspace, so `dind` already resolves in the
   # embedded DNS the moment someone types a docker command. The daemon's own

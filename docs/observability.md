@@ -704,6 +704,262 @@ And the shipped payload checks, which cover the dashboard group and its card URL
 bazelisk test //tests:bats_homepage_config_test
 ```
 
+## Asking the plane from a shell
+
+Everything above is written for someone standing at the UI on `:3005`. A coding agent has
+no browser and no admin login, and the walls that keep a person out keep an agent out
+harder: `loki`, `mimir` and `tempo` publish no host port at all, `prometheus` and
+`alertmanager` bind the stack host's `127.0.0.1`, and Grafana - the one published surface -
+answers only to a credential.
+
+The door is one CLI, and it is read-only end to end:
+
+```sh
+bazelisk run //scripts:observability-query -- VERB [ARGS] [OPTIONS]
+```
+
+`scripts/observability-query.sh` is this page's `scripts/observability-check.sh`
+counterpart: that one proves the bundle is wired, this one asks it questions. Every query
+goes to a provisioned datasource by UID through Grafana's datasource proxy
+(`/api/datasources/proxy/uid/<uid>/...`), so the query language is the one the panel already
+uses and the read-only service-account token is the only credential involved. The backends
+that need no credential and bind loopback are reached with a one-shot
+`curlimages/curl:8.10.1` container on `${PROJECT_NAME}_default` - the same transport
+`scripts/observability-check.sh:454` uses, and the only transport that works from a
+workspace container, which cannot see the host's loopback. `--no-docker` switches that verb
+to the host's own loopback, for a run in a host shell.
+
+### The verbs, and one call each
+
+Six ways to ask. All of them take `--since` (default `1h`; a whole number with `s`, `m`,
+`h` or `d`), `--limit` (default 50, capped at 500), `--timeout` (default 5 s), and `--json`,
+which sends the payload alone to stdout and every report line to stderr - the channel a
+machine parses.
+
+**`search TERM`** - Grafana's `/api/search?query=TERM`: dashboards, folders, panels and
+datasources that match. This is the verb that finds the UID or panel title a sharper
+question needs.
+
+```sh
+bazelisk run //scripts:observability-query -- search litellm
+```
+
+**`dashboards`** - `/api/search?type=dash-db`: what the file provider actually registered.
+A JSON committed under `observability/grafana/dashboards/` is not a screen until this
+answers for it, so "the dashboard is missing" is a `dashboards` question, not a browser
+question.
+
+```sh
+bazelisk run //scripts:observability-query -- dashboards
+```
+
+**`logs QUERY`** - LogQL over the `loki` datasource (`observability/grafana/provisioning/
+datasources/stack.yaml:46`), as a range query over the window. `QUERY` is one LogQL
+expression in single quotes.
+
+```sh
+bazelisk run //scripts:observability-query -- logs '{container="litellm", stream="stderr"} |~ "(?i)error"' --since 30m
+```
+
+**`metrics QUERY`** - PromQL over the `prometheus` datasource
+(`observability/grafana/provisioning/datasources/stack.yaml:15`), which is the datasource
+the shipped panels use. `--source mimir` runs the identical string against
+`observability/grafana/provisioning/datasources/stack.yaml:32` instead, and that is the only
+thing that changes; reach for it when the window is past Prometheus' retention.
+
+```sh
+bazelisk run //scripts:observability-query -- metrics 'rate(litellm_requests_total[5m])' --since 30m
+bazelisk run //scripts:observability-query -- metrics 'up' --source mimir --since 7d
+```
+
+`--step` adds a range step; without it Prometheus returns one point per series, which is
+what a "what is up right now" question wants.
+
+**`alerts`** - Alertmanager's `/api/v2/alerts`, from inside the project network. Alertmanager
+needs no token, so this is the one verb that works before anyone has minted one.
+
+```sh
+bazelisk run //scripts:observability-query -- alerts
+```
+
+**`--self-test`** - proves the token authenticates and that each of the four provisioned
+datasources answers through the proxy, by asking each for its label names. It pulls back no
+sample and prints no payload, so it is the line to paste into a transcript. It takes no
+verb.
+
+```sh
+bazelisk run //scripts:observability-query -- --self-test
+```
+
+### The four labels, and why a fifth is refused
+
+A LogQL selector may filter on exactly four labels - `container`, `stream`, `job`, `stack` -
+the whitelist at `scripts/lib/observability_query.sh:34`:
+
+- `container` is the compose log tag, which Alloy lifts out of each json-file line
+  (`observability/alloy/config.alloy:71`, with one `options: { tag: ... }` per service,
+  e.g. `docker-compose.yml:263` for `litellm`). The set of valid values is the set of tags
+  in `docker-compose.yml`, nothing more and nothing less.
+- `stream` is the json-file driver's own field, `stdout` or `stderr`
+  (`observability/alloy/config.alloy:72`).
+- `job` is `docker` and `stack` is `evo-t1`, both stamped on at discovery
+  (`observability/alloy/config.alloy:35-36`).
+
+A selector naming any other label is **refused before the first request**, with exit 2 and
+the allowed set printed back (`obsq_logql_rejects` at
+`scripts/lib/observability_query.sh:142`, enforced at `scripts/observability-query.sh:960-964`).
+It is not ignored, and not because an unknown label is expensive: Loki never carried that
+label, so the query cannot fail, it can only come back empty - and an empty result is the
+exact shape of "this box has no logs", which is the one answer an agent must never be
+handed by a typo. `{service="litellm"}` and `{container="litellm"}` look the same to type
+and mean completely different things.
+
+What the check does *not* touch is the part after the pipe: `|~ "error"`, `!=`, `=~` and
+`!~` there compare the line's own text and are not labels, so any filter text is allowed
+(`obsq_logql_label_names`, `scripts/lib/observability_query.sh:100-125`). A query also has
+to be printable ASCII (`scripts/observability-query.sh:955-958`): a multibyte or control
+byte in it is a quoting mistake at the call site, and a newline in a query is a header
+injection waiting for the wrong transport.
+
+### The four answers, and what each one means next
+
+Every verb answers one of four shapes (`obsq_answer_shape` in
+`scripts/lib/observability_query.sh`), and the whole point of the split is that the first
+three must never collapse into each other:
+
+| answer | what happened | what the next step is | exit |
+|---|---|---|---|
+| `off` | the `observability` compose profile is not up, so nothing was ever listening | ask the operator to bring it up; the report line names `OBSERVABILITY_ENABLED` and `//scripts:dev-stack -- up`. Nothing here is broken | 0 |
+| `nodata` | the bundle is up, the query was accepted, and this window or filter matched no row | widen `--since`, drop a filter, then suspect the writer: the scrape, the `remote_write`, or Alloy's log root | 0 |
+| `error` | a query or the credential actually failed - a 4xx/5xx, a timeout, a dead backend | read the line: it names the URL, the code and the token *path*. Fix that, then re-run | 1 |
+| `data` | rows came back | check the count against `--limit` before concluding you saw everything | 0 |
+
+`off` is decided before the first request, from the one seam that owns the profile
+(`profile_switched_off` calls `compose_observability_args`), and again from the transport: a
+refused socket is `off`, not `error`, because on a box that never enabled the bundle that is
+what a socket does. A 401 or a 403 is deliberately **not** `off` (`scripts/observability-query.sh:507`) -
+something is listening and it is refusing the credential, which is a fault with a fix.
+
+The mistake this exists to prevent is an agent that gets `nodata`, prints "no logs found",
+and moves on while the answer was `off`: the profile was never up and no log exists to find.
+`bazelisk run //scripts:prod-stack -- status` answers the same question from the other side,
+and costs no credential.
+
+### The token: one file, one read, never printed
+
+The credential is a **read-only Grafana service-account token**, and the CLI takes it from a
+file and nowhere else (`scripts/observability-query.sh:170`):
+
+- default `/var/lib/evo-t1-observability/grafana-query-token`, overridable with
+  `GRAFANA_QUERY_TOKEN_FILE` or `--token-file`
+- `scripts/grafana-agent-token.sh` mints it and writes that file: one
+  line, one token, mode `0600`, readable by the agent user only, on the named volume. That
+  step is what `scripts/observability-query.sh:360` and `:363` tell you has not run when the
+  file is unreadable or holds something that is not one token-shaped line
+  (`obsq_read_token`, which refuses a value carrying a CR or LF rather than forwarding an
+  injectable second header)
+- it never enters argv, so it never reaches a process listing, a shell history line, or a
+  test stub's argv log; it reaches curl through a `--config` file written under `umask 077`,
+  not `-H`
+- it is never printed, and every string the CLI prints - the report lines, curl's complaint,
+  and the response body - passes through `obsq_redact` first, because a log line is free to
+  quote the request that wrote it and a token that comes back in a body is still a token
+
+So: never copy the token into a command, a flag, a URL, an issue, a commit, or a reply. Name
+its **path**, which is the thing an operator can act on. A missing token is an `error` and not
+`off`, precisely because the profile check already answered "never enabled" - a box that is
+enabled and has no credential has a boot step that did not run.
+
+### Minting it: scripts/grafana-agent-token.sh
+
+Nothing file-provisions this credential, and nothing can. Grafana file-provisions
+datasources, dashboards and alerting - the three trees mounted at
+`docker-compose.yml:1089-1090` - while a service account is a row in its database and a
+token is a secret generated at creation time: there is no provisioning schema for either,
+and a token checked into `observability/` would be a committed credential, which this
+stack never ships. So the account and its token are created through the same API the
+console uses.
+
+```sh
+# on the stack host, with the two keys compose already interpolates exported
+export GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD
+bazelisk run //scripts:grafana-agent-token -- --help
+bazelisk run //scripts:grafana-agent-token -- --dry-run
+bazelisk run //scripts:grafana-agent-token -- --owner coder
+```
+
+In order, and each one is a thing the CLI will not let you skip:
+
+1. **it refuses before anything else** if the target file already holds a live credential.
+   A second run without `--rotate` is an `error` naming the path and the flag: rotation is
+   something an operator asks for, never a side effect of re-running setup. A file that
+   exists but holds nothing token-shaped is a repair and is written over (`gat_refuses_overwrite`).
+2. **it reuses the service account `evo-t1-agent`, or creates it with role `Viewer`.**
+   The role is a constant in the script, not a flag, so there is no way to ask for an
+   editor, and a role the answer disagrees with is a failure rather than a warning
+   (`gat_ensure_service_account`). `--rotate` also revokes the account's previous tokens,
+   so ten rotations leave one live credential behind instead of ten.
+3. **it validates the answer before it writes**: one line, the alphabet
+   `obsq_read_token` accepts, nothing else - a truncated response or a whole body fails
+   and leaves the previous credential in place (`gat_write_token_file`).
+4. **it writes the path, mode `0600`, and keeps the value out of everything else.** The
+   admin credential travels in a curl `--config` file and both bodies behind a bind mount
+   of a `0700` scratch directory, so nothing credential-shaped is ever an argument to
+   docker or to curl, and every string the CLI prints is scrubbed by `gat_redact`.
+   `--help` and `--dry-run` answer with no docker and no request at all.
+
+The request is made the way the rest of the bundle reaches the plane: a one-shot
+`curlimages/curl:8.10.1` container on `${PROJECT_NAME}_default` calling
+`http://grafana:3000` (`scripts/observability-check.sh:454` is the same transport), so a
+box where `GRAFANA_PORT` is taken mints just the same. The token is never printed, in any
+mode, and never taken back: to change it, re-run with `--rotate`.
+
+### The path to follow when something is broken
+
+Work outward from what exists, and stop at the first answer that explains the symptom:
+
+```sh
+# 1. does the plane answer at all, and does the credential work
+bazelisk run //scripts:observability-query -- --self-test
+
+# 2. what is registered, and what matches the word you have
+bazelisk run //scripts:observability-query -- search coder
+bazelisk run //scripts:observability-query -- dashboards
+
+# 3. the container's own words, in the window the symptom covers
+bazelisk run //scripts:observability-query -- logs '{container="coder"}' --since 30m
+bazelisk run //scripts:observability-query -- logs '{container="coder", stream="stderr"} |~ "(?i)(error|panic|refused)"' --since 30m
+
+# 4. the same window in numbers, so a missing log line becomes a rate
+bazelisk run //scripts:observability-query -- metrics 'up' --since 30m
+bazelisk run //scripts:observability-query -- metrics 'rate(container_cpu_usage_seconds_total{container="coder"}[5m])' --since 30m
+
+# 5. what the bundle already thinks is wrong
+bazelisk run //scripts:observability-query -- alerts
+```
+
+`logs` filtered by `container=` before anything else is the step that pays: it is the label
+the pipeline guarantees, it is the one every shipped log panel filters on, and it narrows a
+whole host down to one service in one request. Then ask the same window of `metrics` - a log
+line with no matching series is a scrape problem, and a series with no matching log line is
+usually the container not the app. `--source mimir` on step 4 is how you ask "did this start
+before Prometheus still remembers".
+
+Print the command you ran and the line it said, one at a time, rather than firing all five
+and reading the wall.
+
+### Read-only, all of it
+
+Every verb above is a read: a range query, a search, or an alert list. There is no verb that
+creates, edits, moves or deletes a dashboard, a folder, a datasource, a rule, or a receiver -
+and the plane itself refuses that even to the admin UI: the provisioned folder is mounted
+with `disableDeletion: true`
+(`observability/grafana/provisioning/dashboards/stack.yaml:16`), so a dashboard that exists
+here came from a committed file and comes back on the next reload. A panel an agent "fixes"
+in the browser is unfixable in the only place that matters: the JSON under
+`observability/grafana/dashboards/`, which the gate parses
+(`scripts/validate.sh:104`). Change the file, or say what needs changing.
+
 ## What is deliberately not here
 
 - **No destination is configured, so nothing pages anyone as shipped.** The rules, the
