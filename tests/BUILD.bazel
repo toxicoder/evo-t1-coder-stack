@@ -527,6 +527,10 @@ _SUITE_PAYLOAD = {
     "stack-hooks.bats": [
         "//:stack_data",
     ],
+    # The suite drives the CLI against a stubbed `gh`, and both the entry script and its
+    # library ride //scripts:doc_sources in the common set. No payload file is opened:
+    # every answer comes from the stubbed stacks API.
+    "stack-prs.bats": [],
     # The advisor family's gate: the five skills, the one role definition, the two
     # main.tf twins that feed them, and the seed manifest that names their homes.
     "stack-advisors.bats": [

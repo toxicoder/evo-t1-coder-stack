@@ -285,6 +285,10 @@ _SCRIPT_LIBS = {
         "lib/probes/spark-verify.sh",
         "lib/spark.sh",
     ],
+    "stack-prs": [
+        "lib/common.sh",
+        "lib/stack_prs.sh",
+    ],
     "storage-clean": [
         "lib/common.sh",
         "lib/config_seed.sh",
@@ -484,6 +488,13 @@ _SCRIPT_PAYLOAD = {
         "//:compose_file",
     ],
     "spark-verify": [
+        "//:compose_file",
+    ],
+    # The compose file arrives with lib/common.sh, which names it while it looks for the
+    # project root. The CLI itself opens no file in this repository: every answer comes
+    # from the stacks API through a stubbed `gh`. The one `docs/` it names is a pointer in
+    # its own header to the "Stacked pull requests" section of docs/branching.md.
+    "stack-prs": [
         "//:compose_file",
     ],
     "storage-clean": [
