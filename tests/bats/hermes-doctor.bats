@@ -35,8 +35,9 @@
 # compose file plus its own hermes/ seed pair), a scratch data directory, a
 # scratch dotenv, and a scratch docker CLI that answers the four questions this
 # audit asks from environment knobs. Nothing reaches a daemon, a socket, or the
-# stack's real hermes/ tree — except the two tests that bless the shipped seed,
-# which point REPO_ROOT at the checkout on purpose.
+# stack's real hermes/ tree -- except the tests that bless the shipped tree:
+# two point REPO_ROOT at the checkout on purpose, and the two pin units read the
+# real docker-compose.yml and scripts/hermes-doctor.sh by path.
 #
 # Usage: bazelisk test //tests:bats_hermes_doctor_test   (from any cwd)
 # Safety: scratch directories only. No Docker, no daemon, no network.
@@ -1125,6 +1126,68 @@ load_cli_fn() {
   load_cli_fn doctor_pinned_image || fail "could not load doctor_pinned_image"
   printf 'services:\n  coder:\n    image: coder/coder:v2.36.0\n' >"${CHECKOUT}/docker-compose.yml"
   assert_eq "the pin this repo ships" "nousresearch/hermes-agent:v0.23.2" "$(doctor_pinned_image)"
+}
+
+# -- the pin, read off the tree rather than off a fixture ---------------------
+#
+# Every pin above is compared against a value this suite wrote itself: the
+# compose line in setup(), the fallback load_cli_fn assigns, or a printf in the
+# test. A tag that is wrong in docker-compose.yml and in scripts/hermes-doctor.sh
+# in the same way passes all of them. These two units state the tag once, as a
+# literal, and hold every real source of it to that literal.
+
+@test "pin: the real compose file tags both assistant services with the literal" {
+  local compose="${CANONICAL_ROOT}/docker-compose.yml"
+  local want="nousresearch/hermes-agent:v0.23.2"
+  local svc got tagged
+  [ -f "${compose}" ] || fail "docker-compose.yml is not in this suite's runfiles"
+  for svc in hermes-init hermes; do
+    got="$(awk -v svc="  ${svc}:" '
+      $0 == svc { inblk = 1; next }
+      inblk && /^  [A-Za-z0-9_-]+:/ { exit }
+      inblk && /^[[:space:]]+image:/ { print $2; exit }
+    ' "${compose}")"
+    [ "${got}" = "${want}" ] || {
+      echo "${svc}: image is '${got:-none}', this stack ships ${want}" >&2
+      return 1
+    }
+  done
+  # Only those two entries may carry the tag: a third service on a stale tag
+  # boots an assistant nobody audited, and a missing one drops the initializer.
+  tagged="$(grep -c "^[[:space:]]*image: ${want}\$" "${compose}" || true)"
+  [ "${tagged}" = "2" ] || {
+    echo "${compose}: ${tagged} image lines carry ${want}, expected exactly two" >&2
+    return 1
+  }
+}
+
+@test "pin: hermes-doctor.sh's expected version is that same literal" {
+  local compose="${CANONICAL_ROOT}/docker-compose.yml"
+  local want="nousresearch/hermes-agent:v0.23.2"
+  local shipped live
+  # The fallback the audit calls the pin when compose is unreadable. load_cli_fn
+  # overrides this global with a fixture value, so read the shipped bytes.
+  shipped="$(grep -oE '^HERMES_IMAGE_DEFAULT="[^"]+"' "${SCRIPT}" |
+    head -n 1 | sed -E 's/.*"([^"]+)".*/\1/')"
+  [ "${shipped}" = "${want}" ] || {
+    echo "${SCRIPT}: HERMES_IMAGE_DEFAULT is '${shipped:-none}', this stack ships ${want}" >&2
+    return 1
+  }
+  # The parser the audit actually runs, pointed at the real compose file rather
+  # than at the scratch one setup() writes.
+  load_cli_fn doctor_pinned_image || fail "could not load doctor_pinned_image"
+  COMPOSE_FILE="${compose}"
+  live="$(doctor_pinned_image)"
+  [ "${live}" = "${want}" ] || {
+    echo "${compose}: doctor_pinned_image reads '${live}', this stack ships ${want}" >&2
+    return 1
+  }
+  # And the fixture every other unit in this file is driven on: a pin that only
+  # the suite still believes in would let those units pass against nothing.
+  [ "${HERMES_IMAGE_DEFAULT}" = "${want}" ] || {
+    echo "this suite's fixture pin '${HERMES_IMAGE_DEFAULT}' drifted from ${want}" >&2
+    return 1
+  }
 }
 
 @test "doctor_same_file: the render is forgiven and a flipped switch is not" {
