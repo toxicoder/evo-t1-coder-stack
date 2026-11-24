@@ -246,6 +246,10 @@ _SUITE_PAYLOAD = {
     "contributor-devcontainer.bats": [
         "//:devcontainer",
         "//:githooks",
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//images/dev:context",
     ],
     "dashboard-password.bats": [],
@@ -299,6 +303,10 @@ _SUITE_PAYLOAD = {
         "//docs:content",
     ],
     "grok-subagent-slots.bats": [
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
         "//:entry_docs",
         "//docs:content",
@@ -414,6 +422,10 @@ _SUITE_PAYLOAD = {
     # SKILL.md payloads and the four python helpers all arrive with the
     # template payload, and the suite reads scripts/lib/ through _BATS_COMMON.
     "ez-repo-skill-authoring.bats": [
+        # The trunk-refactor row of GLOBAL_TARGETS below: the suite builds the
+        # home-relative pair from it and opens the payload the matching row of
+        # GLOBAL_PAYLOADS names, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "litellm-config.bats": [
@@ -507,12 +519,20 @@ _SUITE_PAYLOAD = {
     ],
     "py_helpers.bats": [],
     "refresh-configs.bats": [
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "run-npm.bats": [],
     "search-check.bats": [],
     "seed-dev-env.bats": [
         "//:devcontainer",
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     # The CLI half runs against the docker stub and a fixture tree; the twin half reads
@@ -580,6 +600,10 @@ _SUITE_PAYLOAD = {
         "//docs:content",
     ],
     "storage-clean.bats": [
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "test-in-image.bats": [
@@ -634,12 +658,19 @@ _SUITE_PAYLOAD = {
         "//:agent_rules",
         "//:flags_example",
         "//:skill_sources",
+        # The canonical body moved to templates/common/trunk-refactor.SKILL.md,
+        # which this suite opens and pins the .grok/ link against.
+        "//:templates_payload",
         "//docs-site:sources",
         "//docs:content",
     ],
     "update-configs.bats": [
         "//:env_example",
         "//:env_sample",
+        # The six reseed rows scripts/lib/config_seed.sh lists for the reflection
+        # runbooks and trunk-refactor: the seeder this suite drives opens those six
+        # payloads from templates/common, which this group carries.
+        "//:stack_data",
         "//:templates_payload",
     ],
     "update-stack.bats": [

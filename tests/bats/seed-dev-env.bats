@@ -200,20 +200,35 @@ assert_contributor_home() {
   assert_file_exists "agents skill" "${home}/.agents/skills/grok-build-delegation/SKILL.md"
   assert_file_exists "coder skill" "${home}/.coder/skills/ez-learn/SKILL.md"
   assert_file_exists "agents skill" "${home}/.agents/skills/ez-learn/SKILL.md"
-  # The two helper-carrying command skills need their SKILL.md in both homes,
-  # and the helper programs they call sit one level deeper in the skill's own
-  # scripts/ directory. Nothing in an empty home pre-creates that nesting, so
-  # these assertions are what prove the seeder makes the parent directory too.
-  assert_file_exists "coder skill" "${home}/.coder/skills/ez-bazel-first/SKILL.md"
-  assert_file_exists "agents skill" "${home}/.agents/skills/ez-bazel-first/SKILL.md"
-  assert_file_exists "coder helper" \
-    "${home}/.coder/skills/ez-bazel-first/scripts/owned_files_check.py"
-  assert_file_exists "agents helper" \
-    "${home}/.agents/skills/ez-bazel-first/scripts/owned_files_check.py"
-  assert_file_exists "coder helper" \
-    "${home}/.coder/skills/ez-bazel-first/scripts/glob_budget.py"
-  assert_file_exists "agents helper" \
-    "${home}/.agents/skills/ez-bazel-first/scripts/glob_budget.py"
+  # ez-bazel-first belongs to the repository it converts, so a seeded home must
+  # hold no copy of it at all: the global one advertised a Bazel gate to a session
+  # working on a project that has none. Absence on its own would also pass a
+  # manifest that merely lost the rows, so the retire list has to carry all six
+  # paths -- that list is what turns a stack-owned leftover into one a reseed
+  # deletes, and the marker guard that lets it is scripts/lib/config_seed.sh:485.
+  local stale_target
+  for stale_target in \
+    '.coder/skills/ez-bazel-first/SKILL.md' \
+    '.agents/skills/ez-bazel-first/SKILL.md' \
+    '.coder/skills/ez-bazel-first/scripts/owned_files_check.py' \
+    '.agents/skills/ez-bazel-first/scripts/owned_files_check.py' \
+    '.coder/skills/ez-bazel-first/scripts/glob_budget.py' \
+    '.agents/skills/ez-bazel-first/scripts/glob_budget.py'; do
+    if [ -e "${home}/${stale_target}" ]; then
+      printf 'FAIL: ez-bazel-first has no global home, %s/%s exists\n' \
+        "${home}" "${stale_target}" >&2
+      return 1
+    fi
+  done
+  # shellcheck source=/dev/null
+  source "${REPO_ROOT}/scripts/lib/config_seed.sh"
+  local retired_lines
+  retired_lines="$(seed_retired_targets)"
+  [ "$(printf '%s\n' "${retired_lines}" | grep -c 'ez-bazel-first')" -eq 6 ] || {
+    printf 'FAIL: seed_retired_targets does not carry the six global ez-bazel-first paths\n%s\n' \
+      "${retired_lines}" >&2
+    return 1
+  }
   assert_file_exists "coder skill" "${home}/.coder/skills/ez-strong-types/SKILL.md"
   assert_file_exists "agents skill" "${home}/.agents/skills/ez-strong-types/SKILL.md"
   assert_file_exists "coder helper" \
@@ -233,6 +248,110 @@ assert_contributor_home() {
   assert_settings_link "${home}/.config/Code/User/settings.json" \
     "${home}/.shared/vscode/settings.json"
   assert_contains_file "bashrc path" "${home}/.bashrc" 'grok/bin'
+}
+
+# render_repo_body <dest> - the repository-tier seed body with its payload
+# here-docs filled the way main.tf's interpolation fills them, written to
+# <dest>/body.sh ready to run. The body discovers repositories under the literal
+# /home/coder/workspace, so the fixture repoints that one literal at
+# <dest>/workspace: writing into the real path would test the machine this test
+# happens to run on, not the payload. The shipped literal is pinned by the grep
+# in the test below, so the substitution cannot drift away from what boots.
+render_repo_body() {
+  local dest="$1" common="${REPO_ROOT}/templates/common"
+  python3 - "${common}" "${dest}" <<'EVO_RENDER_REPO_BODY'
+import pathlib
+import sys
+
+common, dest = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+body = (common / "stack-repo-skills.sh.tftpl").read_text()
+# Terraform renders a template's `$${` as a literal `${` before it interpolates
+# anything, and the body relies on that escape to keep its own shell braces out of
+# the map. Undo it first, and through a sentinel, so a payload's own braces survive
+# interpolation untouched exactly as they do on a real plan: leaving the escape in
+# place hands sh `$$` (the pid) glued to a variable name, and every path it builds
+# misses.
+ESCAPED = "\x00terraform-escaped-brace\x00"
+body = body.replace("$${", ESCAPED)
+payloads = {
+    "boot_log_lib": "boot-log.lib.sh",
+    "ez_bazel_first_skill": "ez-bazel-first.SKILL.md",
+    "ez_bazel_first_owned_files_check": "ez-bazel-first.owned_files_check.py",
+    "ez_bazel_first_glob_budget": "ez-bazel-first.glob_budget.py",
+}
+for token, name in payloads.items():
+    body = body.replace("${" + token + "}", (common / name).read_text().rstrip("\n"))
+body = body.replace(ESCAPED, "${")
+if "/home/coder/workspace/*/" not in body:
+    sys.exit("FAIL: the body no longer discovers repos under the /home/coder/workspace literal")
+(dest / "body.sh").write_text(
+    body.replace("/home/coder/workspace", str(dest / "workspace")))
+EVO_RENDER_REPO_BODY
+}
+
+@test "seed-dev-env: ez-bazel-first seeds the repository tier and nowhere else" {
+  # The one home this skill has left. alpha is a bzlmod repository, beta a git
+  # folder with no Bazel module, gamma a Bazel repository whose SKILL.md someone
+  # planted as a symlink -- the case cp must not follow.
+  local scratch ws body
+  scratch="$(make_scratch)"
+  render_repo_body "${scratch}"
+  body="${scratch}/body.sh"
+  ws="${scratch}/workspace"
+  mkdir -p "${ws}/alpha/.git" "${ws}/beta/.git" "${ws}/gamma/.git" \
+    "${ws}/gamma/.grok/skills/ez-bazel-first" "${scratch}/home"
+  : >"${ws}/alpha/MODULE.bazel"
+  : >"${ws}/gamma/WORKSPACE"
+  printf 'the repository owns this file\n' >"${ws}/gamma/keep.txt"
+  ln -s "${ws}/gamma/keep.txt" "${ws}/gamma/.grok/skills/ez-bazel-first/SKILL.md"
+
+  run env HOME="${scratch}/home" TMPDIR="${scratch}" sh "${body}"
+  [ "${status}" -eq 0 ] || { printf '%s\n' "${output}" >&2; return 1; }
+
+  # The Bazel repository gets the skill plus both helpers, nested under the skill
+  # directory's own scripts/, and they are the payloads rather than placeholders.
+  assert_contains_file "repo tier SKILL.md" \
+    "${ws}/alpha/.grok/skills/ez-bazel-first/SKILL.md" 'name: ez-bazel-first'
+  assert_contains_file "owned_files_check is the payload" \
+    "${ws}/alpha/.grok/skills/ez-bazel-first/scripts/owned_files_check.py" 'def '
+  assert_contains_file "glob_budget is the payload" \
+    "${ws}/alpha/.grok/skills/ez-bazel-first/scripts/glob_budget.py" 'def '
+  assert_match "the seed reports the copy" \
+    'ok: ez-bazel-first SKILL.md into alpha' "${output}"
+
+  # A git folder that names no Bazel module is skipped out loud, and nothing is
+  # created under it -- not even the .grok directory.
+  assert_match "the non-bazel folder is named" \
+    'note: ez-bazel-first: beta is not a bazel repository, seeded nowhere' "${output}"
+  [ ! -e "${ws}/beta/.grok" ] || {
+    printf 'FAIL: the tier wrote into the non-bazel folder\n' >&2
+    return 1
+  }
+
+  # A planted link is refused, and counted: cp follows links, so writing through
+  # one would replace a file this body does not own. The count is what proves the
+  # guard reported rather than quietly skipped.
+  assert_match "the planted link is refused" \
+    'warning: .*sits behind a symlink - left alone' "${output}"
+  assert_match "the warning reaches the summary" \
+    'summary: .*[1-9][0-9]* warnings, 0 failed' "${output}"
+  assert_contains_file "the linked file is untouched" "${ws}/gamma/keep.txt" \
+    'the repository owns this file'
+
+  # Absent-only, per repository: a second boot writes nothing anywhere in the
+  # tier and says so, so a repository that tracked its own copy is never clobbered.
+  local before="${scratch}/before.sha" after="${scratch}/after.sha"
+  ( cd "${ws}" && find . -type f -exec sha256sum {} + | sort ) >"${before}"
+  run env HOME="${scratch}/home" TMPDIR="${scratch}" sh "${body}"
+  [ "${status}" -eq 0 ] || { printf '%s\n' "${output}" >&2; return 1; }
+  ( cd "${ws}" && find . -type f -exec sha256sum {} + | sort ) >"${after}"
+  cmp -s "${before}" "${after}" || {
+    printf 'FAIL: the second run wrote into the repository tier\n' >&2
+    diff "${before}" "${after}" >&2
+    return 1
+  }
+  assert_match "the second run leaves the copy alone" \
+    "ez-bazel-first SKILL.md in alpha is the repository's own" "${output}"
 }
 
 @test "seed-dev-env: usage, an unknown option, and a bare --litellm-url" {

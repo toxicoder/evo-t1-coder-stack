@@ -105,12 +105,14 @@ Run the exact command the producer reported, in your own shell, and compare its 
 line to the one the producer claimed. Do not read the producer's report before you run the
 check, or you will read the conclusion into the evidence.
 
-    bazelisk test //:test-fast
-    bazelisk test //:lint --test_tag_filters=manual
+    <the repo's own fast test command>
+    <the repo's own lint command>
 
-Quote the summary line you got. `Executed 0 out of N tests: N tests pass.` is a cached pass
-over unchanged inputs, so re-run with `--nocache_test_results` before you accept a green you
-did not earn.
+Take those two from the repository under review -- its `AGENTS.md`, `README`, CI workflow,
+Makefile, or build file -- not from the toolchain you happen to work in, and quote the summary
+line you got. A run whose summary reports everything cached is a pass over unchanged inputs, so
+use that repo's own no-cache flag (`--nocache_test_results` for Bazel) before you accept a
+green you did not earn.
 
 A claim you did not run is a claim you did not check.
 

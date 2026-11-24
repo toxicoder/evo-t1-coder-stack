@@ -20,11 +20,17 @@
 #     seed payloads (GROK_BUILD_AGENTS.md, vscode-alt.svg, notes-setup.sh,
 #     tmux.conf, the two terminal helpers, the Coder Agents skill/instructions,
 #     the ez- skill trio (ez-learn.SKILL.md, ez-skillify.SKILL.md,
-#     ez-create-skill.SKILL.md) and its stack-skills.sh.tftpl seed body, the
-#     repository-command skills (ez-bazel-first.SKILL.md with its two helpers,
-#     ez-strong-types.SKILL.md with its one, ez-micro-plan.SKILL.md with its
-#     one, ez-trunk-based-repo.SKILL.md with none) and their
-#     stack-repo-skills.sh.tftpl seed body, the fleet suite (six agent
+#     ez-create-skill.SKILL.md), the reflect pair (reflect-and-evolve.SKILL.md
+#     with its checklist and its session_signals.py helper,
+#     reflect-and-evolve-repo.SKILL.md with its checklist) and their
+#     stack-skills.sh.tftpl seed body, the repository-command skills
+#     (ez-bazel-first.SKILL.md with its two helpers, ez-strong-types.SKILL.md
+#     with its one, ez-micro-plan.SKILL.md with its one, and
+#     ez-trunk-based-repo.SKILL.md with none) and their
+#     stack-repo-skills.sh.tftpl seed body, trunk-refactor.SKILL.md and its
+#     trunk-refactor-seed.sh.tftpl seed body, which that family needs of its own
+#     because the five payloads together pass the one-argument ceiling, the fleet
+#     suite (six agent
 #     definitions *.AGENT.md, three persona overlays *.PERSONA.toml, four
 #     parent-side skills *.SKILL.md) and its stack-fleet.sh.tftpl seed body,
 #     mcp-cache-proxy.json, the agents-seed.sh.tftpl body that writes
@@ -78,6 +84,9 @@ fi
 # ez-bazel-first.glob_budget.py, ez-strong-types.SKILL.md,
 # ez-strong-types.type_baseline.py, ez-trunk-based-repo.SKILL.md,
 # ez-micro-plan.SKILL.md, ez-micro-plan.plan_check.py,
+# reflect-and-evolve.SKILL.md, reflect-and-evolve.session_signals.py,
+# reflect-and-evolve.checklist.md, reflect-and-evolve-repo.SKILL.md,
+# reflect-and-evolve-repo.checklist.md, trunk-refactor.SKILL.md,
 # explorer.AGENT.md, architect.AGENT.md, implementer.AGENT.md, tester.AGENT.md,
 # reviewer.AGENT.md, security-auditor.AGENT.md,
 # thorough-researcher.PERSONA.toml, senior-implementer.PERSONA.toml,
@@ -156,6 +165,12 @@ template_push_one() {
     ez-trunk-based-repo.SKILL.md \
     ez-micro-plan.SKILL.md \
     ez-micro-plan.plan_check.py \
+    reflect-and-evolve.SKILL.md \
+    reflect-and-evolve.session_signals.py \
+    reflect-and-evolve.checklist.md \
+    reflect-and-evolve-repo.SKILL.md \
+    reflect-and-evolve-repo.checklist.md \
+    trunk-refactor.SKILL.md \
     explorer.AGENT.md \
     architect.AGENT.md \
     implementer.AGENT.md \
@@ -191,6 +206,7 @@ template_push_one() {
     boot-log.lib.sh \
     terminal-launchers.sh.tftpl \
     stack-repo-skills.sh.tftpl \
+    trunk-refactor-seed.sh.tftpl \
     stack-advisors.sh.tftpl \
     stack-hooks.sh.tftpl \
     stack-fleet.sh.tftpl; do

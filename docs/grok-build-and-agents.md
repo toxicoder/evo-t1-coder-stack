@@ -470,14 +470,16 @@ report for a script. What the report should read here:
 
 ### The repository-conversion commands
 
-- **The stack ships its own three repository-conversion commands as `/ez-bazel-first`,
-  `/ez-strong-types` and `/ez-trunk-based-repo`**, and these stand in for nothing upstream:
-  they convert whatever repository the workspace happens to hold, which is why they carry no
-  path that only exists in this stack.
+- **The stack ships its own four repository-conversion commands as `/ez-bazel-first`,
+  `/ez-strong-types`, `/ez-trunk-based-repo` and `/trunk-refactor`**, and these stand in for
+  nothing upstream: they convert whatever repository the workspace happens to hold, which is
+  why they carry no path and no gate command that exists in only one repository - each one
+  discovers the target repo's own gate and quotes what it found.
 
   They are seeded the same way, by
   `coder_script.stack_repo_skills`, from `templates/common/ez-bazel-first.SKILL.md`,
-  `ez-strong-types.SKILL.md` and `ez-trunk-based-repo.SKILL.md`, plus the three python
+  `ez-strong-types.SKILL.md`, `ez-trunk-based-repo.SKILL.md` and
+  `templates/common/trunk-refactor.SKILL.md`, plus the three python
   helpers they shell out to. Same absent-only contract, same marker-based takeover rule,
   same `[skills] disabled` escape hatch.
 
@@ -2202,22 +2204,22 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
 8. `~/.agents/skills/ez-skillify/SKILL.md`
 9. `~/.coder/skills/ez-create-skill/SKILL.md`
 10. `~/.agents/skills/ez-create-skill/SKILL.md`
-11. `~/.coder/skills/ez-bazel-first/SKILL.md`
-12. `~/.agents/skills/ez-bazel-first/SKILL.md`
-13. `~/.coder/skills/ez-bazel-first/scripts/owned_files_check.py`
-14. `~/.agents/skills/ez-bazel-first/scripts/owned_files_check.py`
-15. `~/.coder/skills/ez-bazel-first/scripts/glob_budget.py`
-16. `~/.agents/skills/ez-bazel-first/scripts/glob_budget.py`
-17. `~/.coder/skills/ez-strong-types/SKILL.md`
-18. `~/.agents/skills/ez-strong-types/SKILL.md`
-19. `~/.coder/skills/ez-strong-types/scripts/type_baseline.py`
-20. `~/.agents/skills/ez-strong-types/scripts/type_baseline.py`
-21. `~/.coder/skills/ez-trunk-based-repo/SKILL.md`
-22. `~/.agents/skills/ez-trunk-based-repo/SKILL.md`
-23. `~/.coder/skills/ez-micro-plan/SKILL.md`
-24. `~/.agents/skills/ez-micro-plan/SKILL.md`
-25. `~/.coder/skills/ez-micro-plan/scripts/plan_check.py`
-26. `~/.agents/skills/ez-micro-plan/scripts/plan_check.py`
+11. `~/.coder/skills/reflect-and-evolve/SKILL.md`
+12. `~/.agents/skills/reflect-and-evolve/SKILL.md`
+13. `~/.coder/skills/reflect-and-evolve-repo/SKILL.md`
+14. `~/.agents/skills/reflect-and-evolve-repo/SKILL.md`
+15. `~/.coder/skills/ez-strong-types/SKILL.md`
+16. `~/.agents/skills/ez-strong-types/SKILL.md`
+17. `~/.coder/skills/ez-strong-types/scripts/type_baseline.py`
+18. `~/.agents/skills/ez-strong-types/scripts/type_baseline.py`
+19. `~/.coder/skills/ez-trunk-based-repo/SKILL.md`
+20. `~/.agents/skills/ez-trunk-based-repo/SKILL.md`
+21. `~/.coder/skills/ez-micro-plan/SKILL.md`
+22. `~/.agents/skills/ez-micro-plan/SKILL.md`
+23. `~/.coder/skills/ez-micro-plan/scripts/plan_check.py`
+24. `~/.agents/skills/ez-micro-plan/scripts/plan_check.py`
+25. `~/.coder/skills/trunk-refactor/SKILL.md`
+26. `~/.agents/skills/trunk-refactor/SKILL.md`
 
 #### What each numbered path is for
 
@@ -2229,20 +2231,23 @@ absent (the fleet family adds seventeen more paths under `~/.grok/agents`,
 
 #### Which body writes each family
 
-- 1-4 are written by `startup.sh.tftpl`. 5-10 are the stack's three skill commands and are
-  written by `coder_script.stack_skills`, whose own `execve` carries the three payloads;
+- 1-4 are written by `startup.sh.tftpl`. 5-14 are the stack's five single-agent skill
+  commands and are written by `coder_script.stack_skills`, whose own `execve` carries the
+  five payloads;
   they ride their own script body rather than the startup argument because that argument
   has a single-argument ceiling of its own
   ([coder-templates.md](coder-templates.md#the-one-argument-ceiling)). Each `.agents`
   copy is a `cp` of the managed `.coder` copy, never a second inline body, so the pair
   cannot drift.
-- 11-26 are the four commands of that second family - the three repository conversions
+- 15-26 are the five commands of that second family - the four repository conversions
   plus the `/ez-micro-plan` dispatcher - and are written by
   `coder_script.stack_repo_skills`, a second body with its own ceiling, for the same
-  reason and because this family also ships the python helpers 13-14, 16, 19-20 and 25-26
-  that three of its four bodies invoke by `~/.agents` path. Same absent-only contract and
+  reason and because this family also ships the python helpers 17-18 and 23-24
+  that two of its five commands invoke by `~/.agents` path. Same absent-only contract and
   the same `cp` twin rule; the helper directories are made by the body, so a workspace that
-  already has the `SKILL.md` but lost a helper still gets the helper back.
+  already has the `SKILL.md` but lost a helper still gets the helper back. The sixth
+  command of that body, `/ez-bazel-first`, is absent from this list on purpose: it is
+  seeded into each Bazel repository's own checkout rather than into the two skill homes.
 
 #### The memory and skill trio
 
@@ -2353,7 +2358,9 @@ One line each: `/ez-bazel-first` puts every tracked file behind a build target, 
 checker profile per language and turns the broad-type census into a ratchet that fails on
 any widening; `/ez-trunk-based-repo` retires environment branches, lands unfinished work
 behind a flag that defaults off, and presents the leftover branches for deletion with their
-tip SHAs. All three take a repository path and work on that checkout, so they are useful in
+tip SHAs; `/trunk-refactor` is the deep version of that same model - six phases, twelve
+criteria, and a report that carries every branch it proposes for deletion with its tip SHA.
+All four take a repository path and work on that checkout, so they are useful in
 a workspace cloned against any of the fleet's repositories.
 
 They differ from the authoring trio in one structural way: two of them shell out to a
@@ -2363,29 +2370,34 @@ everything else here, which means the copy in a workspace is stack-owned while i
 marker, and the way to fix a helper is to fix the seed under `templates/common/` and
 re-materialize, never to patch the copy that is running.
 
-This repo keeps its own project-scoped `/trunk-refactor` under
-`skills/trunk-refactor/SKILL.md`, which is the rule of record for *this* repository and
-cites its gates by label. `/ez-trunk-based-repo` is the portable version of the same model:
-it discovers a target repo's own gates at inventory time rather than assuming Bazel, so it
-works in a Compose, K3s, Ansible or Terraform repository too.
+`/trunk-refactor` and `/ez-trunk-based-repo` cover one model at two depths, and both
+discover a target repo's own gates at inventory time rather than assuming Bazel, so each
+works in a Compose, K3s, Ansible or Terraform repository too. The canonical body is
+`templates/common/trunk-refactor.SKILL.md`; the repository that ships it keeps a tracked
+symlink at `.grok/skills/trunk-refactor/SKILL.md`, which is what makes it a slash command
+there, and its prose twin is `docs/workflows/trunk-feature-flags-refactor.md`.
 
-The fourth payload `coder_script.stack_repo_skills` seeds is not a converter.
+The fifth payload `coder_script.stack_repo_skills` seeds is not a converter.
 `/ez-micro-plan` is the parent's protocol for splitting one change across a fleet of
 subagents and proving the split dispatches; how its slots, lane and check fit together is
 [The fan-out seam](#the-fan-out-seam).
 
-### The repo-scoped runbook
+### The reflection runbooks
 
 #### The session reviewer
 
 `/reflect-and-evolve` reviews past Grok Build sessions and turns what it finds into planned changes.
 It reads the per-session `signals.json` under `~/.grok/sessions/<escaped-cwd>/`, ranked by the bundled
-`skills/reflect-and-evolve/scripts/session_signals.py`, plus the `/ez-learn` session logs and the notes file.
-It changes the seeds in this repo, never the copies a workspace booted with. Repo-scoped like `/trunk-refactor`
-and not seeded into a workspace home: canonical at `skills/reflect-and-evolve/SKILL.md`, discovered through
-the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by `tests/bats/reflect-and-evolve-skill.bats`.
+sweeper `~/.agents/skills/reflect-and-evolve/scripts/session_signals.py` - in the repository
+that ships it, `templates/common/reflect-and-evolve.session_signals.py`, which is still the only
+sanctioned way into `~/.grok/sessions/` - plus the `/ez-learn` session logs and the notes file.
+It changes the seeds in the shipping repository, never the copies a workspace booted with.
+Seeded like the rest of the suite by `coder_script.stack_skills`: canonical at
+`templates/common/reflect-and-evolve.SKILL.md`, and discovered in the shipping repository
+through the `.grok/skills/reflect-and-evolve/SKILL.md` symlink, pinned by
+`tests/bats/reflect-and-evolve-skill.bats`.
 
-#### The repository reviewer
+### The repo-scoped runbook
 
 `/reflect-and-evolve-repo` is its sibling against a different subject: where
 `/reflect-and-evolve` improves the agent setup, this one reviews past work in *this
@@ -2393,13 +2405,15 @@ repository* and turns what it finds into planned improvements to code, project
 conventions, scripts, docs and configs.
 
 It reads the same ranked `signals.json` table through the same bundled
-`skills/reflect-and-evolve/scripts/session_signals.py`, which stays the only sanctioned
-way into `~/.grok/sessions/`, and it adds what a repo run has and a session run does
+`~/.agents/skills/reflect-and-evolve/scripts/session_signals.py` (in the shipping
+repository, `templates/common/reflect-and-evolve.session_signals.py`, which is the
+canonical source the seed reads), which stays the only
+sanctioned way into `~/.grok/sessions/`, and it adds what a repo run has and a session run does
 not: git history, and the repo's own tooling and gate.
 
-Repo-scoped like `/trunk-refactor` and not seeded into a workspace home: canonical at
-`skills/reflect-and-evolve-repo/SKILL.md`, discovered through the
-`.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink, pinned by
+Seeded like the rest of the suite by `coder_script.stack_skills`: canonical at
+`templates/common/reflect-and-evolve-repo.SKILL.md`, and discovered in the shipping
+repository through the `.grok/skills/reflect-and-evolve-repo/SKILL.md` symlink, pinned by
 `tests/bats/reflect-and-evolve-repo-skill.bats`.
 
 ### What this is not

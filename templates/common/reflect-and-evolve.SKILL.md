@@ -8,8 +8,8 @@ when-to-use: "Use when the user asks to reflect and evolve, to review past sessi
   scripts, docs and configs - use /reflect-and-evolve-repo."
 argument-hint: "[repo-path] [--since <days>] [--dry-run]"
 compatibility: "Requires python3 for the session sweeper and read access to
-  `~/.grok/sessions/` for the evidence; what it changes is gated by the repository's own gate
-  (`bazelisk test //:test-fast`, `bazelisk test //:lint --test_tag_filters=manual`)."
+  `~/.grok/sessions/` for the evidence; what it changes is gated by the repository's own gate,
+  whose test and lint commands you discover at inventory time and paste into the plan."
 metadata:
   author: "operator"
   short-description: "Review past sessions and land high-leverage improvements to the agent setup"
@@ -24,6 +24,14 @@ metadata:
 Review past sessions, identify systemic friction or failures, and make high-leverage changes
 to the agent's instructions, skills, tools, and configuration. Be willing to make large,
 well-justified changes rather than small tweaks.
+
+Two files ride beside this body: the session sweeper and the evidence checklist. Their
+canonical sources are `templates/common/reflect-and-evolve.session_signals.py` and
+`templates/common/reflect-and-evolve.checklist.md`, and `coder_script.stack_skills` lays the
+managed copy of each under `~/.coder/skills/reflect-and-evolve/` (the home the Coder Agents
+chat reads) and copies the twin into `~/.agents/skills/reflect-and-evolve/` (the home the
+Grok Build CLI reads) as `scripts/session_signals.py` and `references/checklist.md`. Use
+whichever home holds them - `ls` both before you run the sweeper.
 
 ## When to Use
 
@@ -51,7 +59,7 @@ Collect as much real signal as possible before proposing changes:
   that is, in order:
 
   - the session sweeper
-    (`python3 skills/reflect-and-evolve/scripts/session_signals.py --limit 20`) to rank
+    (`python3 ~/.agents/skills/reflect-and-evolve/scripts/session_signals.py --limit 20`) to rank
     sessions by friction
   - `~/.grok/memory/<slug>-<hash8>/sessions/*.md` for the session logs written
     by `/ez-learn`
@@ -126,15 +134,16 @@ Make the changes directly:
   and concrete examples. Remove or update conflicting older rules.
 - **Skills**: Create or update skills with proper frontmatter, workflow, and evals. Use
   `/ez-create-skill` to scaffold a new skill and `/ez-skillify` to mine the session that just
-  worked; a skill's gate in this repo is an asserting Bats suite, the
-  `tests/bats/trunk-refactor-skill.bats` pattern.
+  worked; a skill earns an asserting test of the repository's own kind, following the pattern of
+  the suites already in that repo's test directory.
 - **Scripts / tools**: Add reusable scripts in an appropriate location (`scripts/`, skill
   `scripts/`, or project tools). Make them robust and document usage in AGENTS.md or the
   skill.
 - **Configs**: Update relevant config files. Prefer changes that are committed and
   reproducible.
-- Record significant changes in the commit message and the pull request: this repo keeps no
-  first-party `CHANGELOG.md`. A fact worth keeping past the change goes to the notes file
+- Record significant changes in the commit message and the pull request body: this stack keeps no
+  first-party `CHANGELOG.md`, so the commit and the pull request are the record. Add an entry only
+  where the repository already keeps one. A fact worth keeping past the change goes to the notes file
   through `/ez-learn`.
 
 #### Verify each change
@@ -150,10 +159,13 @@ The agent rulebook and the skill suite are seeds in *this* repository -
 re-materialize into `~/.grok/`.
 
 A reflection run edits the seed and re-materialize it; it never hand-edits the copy living in
-a workspace. The same rule covers the operator CLIs under `scripts/`.
+a workspace. The same rule covers the repository's own operator CLIs and shared libraries.
 
-Run the gate after: `bazelisk test //:test-fast` and
-`bazelisk test //:lint --test_tag_filters=manual`.
+Run the repository's own gate after the run: the test and lint commands you discovered at
+inventory time, each quoted with the summary line it printed. In this stack that gate is
+`bazelisk test //:test-fast` plus `bazelisk test //:lint --test_tag_filters=manual`; in any
+other repository it is the pair its own build file, Makefile, or CI workflow declares. A
+command you did not run is not a claim.
 
 ### 5. Validate and Summarize
 
@@ -187,10 +199,14 @@ Run the gate after: `bazelisk test //:test-fast` and
 
 ## References
 
-- `skills/reflect-and-evolve/references/checklist.md` - checklist and heuristics for evidence
-  gathering, analysis, and change quality. Read when planning or when evidence is ambiguous.
-- `skills/reflect-and-evolve/scripts/session_signals.py` - the session sweeper step 1 runs,
-  which ranks sessions by friction without reading a transcript.
+- `~/.agents/skills/reflect-and-evolve/references/checklist.md` - checklist and heuristics for evidence
+  gathering, analysis, and change quality. Read when planning or when evidence is ambiguous. Its
+  twin under `~/.coder/skills/reflect-and-evolve/references/checklist.md` is the copy the chat agent
+  reads, and both are seeded from `templates/common/reflect-and-evolve.checklist.md`.
+- `~/.agents/skills/reflect-and-evolve/scripts/session_signals.py` - the session sweeper step 1 runs,
+  which ranks sessions by friction without reading a transcript. Its twin under
+  `~/.coder/skills/reflect-and-evolve/scripts/session_signals.py` and this one are both seeded from
+  `templates/common/reflect-and-evolve.session_signals.py`.
 - For skill creation and improvement details, consult `/ez-create-skill` and `/ez-skillify`
   and their references (workflows, output patterns).
 

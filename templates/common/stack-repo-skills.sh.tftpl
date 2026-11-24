@@ -3,8 +3,8 @@
 # the map main.tf passes, each into a quoted here-doc so no shell text inside one is
 # expanded. Why these seeds ride their own script instead of stack-skills.sh.tftpl: the
 # agent execs every body as one argument, so a second body buys a second ceiling, and
-# three of this family's four members carry helper scripts beside their SKILL.md while
-# the fourth does not;
+# three of these four members carry helper scripts beside their SKILL.md while the
+# other one does not;
 # docs/coder-templates.md#the-one-argument-ceiling.
 set -u
 
@@ -25,52 +25,108 @@ boot_begin "repo skills" 1
 
 boot_stage 1 "the four repository-command skills"
 
-if [ ! -f "$HOME/.coder/skills/ez-bazel-first/SKILL.md" ]; then
-  mkdir -p "$HOME/.coder/skills/ez-bazel-first" 2>/dev/null
-  cat >"$HOME/.coder/skills/ez-bazel-first/SKILL.md" <<'EZ_BAZEL_FIRST_SKILL_MD_EOF'
+# ez-bazel-first converts a repository, so it lands in the repository it converts rather
+# than in every workspace's global skill home: a copy under ~/.coder/skills advertises a
+# Bazel gate to a session working on a project that has none. The tier it goes to is
+# <repo>/.grok/skills/, the repo tier the Grok Build CLI reads and the Coder Agents chat
+# does not (ez-create-skill.SKILL.md lays the homes out), and only for a folder under
+# /home/coder/workspace/ that is already a Bazel repository. A workspace holding no Bazel
+# repository gets no copy of this skill anywhere.
+#
+# Two guards carry over unchanged. Absent-only: each target is tested per repository, so
+# a copy the repository itself tracks -- a real file, or a symlink into templates/common/
+# the way this repo keeps its skill set -- is the repository's own, and a person who took
+# a copy over by deleting its managed-by marker line is never overwritten. The twin
+# idiom keeps its single-source rule: one quoted here-doc per payload fills the staging
+# dir and every repository copy is a cp of that one managed copy, never a second inline
+# body.
+boot_phase "seeding the bazel-first skill into each bazel repository"
+
+# True when this body may create path $1: nothing sits there yet, and neither the path
+# nor the directory above it is a link. cp follows a link, so a planted one would have
+# this body replace a file it does not own -- which is why this cannot be just "[ ! -e ]",
+# a test a dangling link passes.
+evo_t1_repo_writable() {
+  if [ -L "$1" ] || [ -L "$(dirname "$1")" ]; then
+    boot_warn "$1 sits behind a symlink - left alone"
+    return 1
+  fi
+  [ ! -e "$1" ]
+}
+
+bazel_first_stage=""
+if [ -d /home/coder/workspace ]; then
+  bazel_first_stage=$(mktemp -d "$${TMPDIR:-/tmp}/evo-t1-bazel-first.XXXXXX" 2>/dev/null) \
+    || bazel_first_stage=""
+fi
+
+if [ -n "$bazel_first_stage" ]; then
+  cat >"$bazel_first_stage/SKILL.md" <<'EZ_BAZEL_FIRST_SKILL_MD_EOF'
 ${ez_bazel_first_skill}
 EZ_BAZEL_FIRST_SKILL_MD_EOF
-  boot_ok "ez-bazel-first SKILL.md"
-else
-  boot_note "ez-bazel-first SKILL.md is the operator's own"
-fi
-
-if [ ! -f "$HOME/.agents/skills/ez-bazel-first/SKILL.md" ]; then
-  mkdir -p "$HOME/.agents/skills/ez-bazel-first" 2>/dev/null
-  cp "$HOME/.coder/skills/ez-bazel-first/SKILL.md" \
-    "$HOME/.agents/skills/ez-bazel-first/SKILL.md" 2>/dev/null
-fi
-
-if [ ! -f "$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" ]; then
-  mkdir -p "$HOME/.coder/skills/ez-bazel-first/scripts" 2>/dev/null
-  cat >"$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" <<'EZ_BAZEL_FIRST_OWNED_FILES_CHECK_PY_EOF'
+  cat >"$bazel_first_stage/owned_files_check.py" <<'EZ_BAZEL_FIRST_OWNED_FILES_CHECK_PY_EOF'
 ${ez_bazel_first_owned_files_check}
 EZ_BAZEL_FIRST_OWNED_FILES_CHECK_PY_EOF
-  boot_ok "ez-bazel-first owned_files_check.py"
-else
-  boot_note "ez-bazel-first owned_files_check.py is the operator's own"
-fi
-
-if [ ! -f "$HOME/.agents/skills/ez-bazel-first/scripts/owned_files_check.py" ]; then
-  mkdir -p "$HOME/.agents/skills/ez-bazel-first/scripts" 2>/dev/null
-  cp "$HOME/.coder/skills/ez-bazel-first/scripts/owned_files_check.py" \
-    "$HOME/.agents/skills/ez-bazel-first/scripts/owned_files_check.py" 2>/dev/null
-fi
-
-if [ ! -f "$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" ]; then
-  mkdir -p "$HOME/.coder/skills/ez-bazel-first/scripts" 2>/dev/null
-  cat >"$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" <<'EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF'
+  cat >"$bazel_first_stage/glob_budget.py" <<'EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF'
 ${ez_bazel_first_glob_budget}
 EZ_BAZEL_FIRST_GLOB_BUDGET_PY_EOF
-  boot_ok "ez-bazel-first glob_budget.py"
-else
-  boot_note "ez-bazel-first glob_budget.py is the operator's own"
 fi
 
-if [ ! -f "$HOME/.agents/skills/ez-bazel-first/scripts/glob_budget.py" ]; then
-  mkdir -p "$HOME/.agents/skills/ez-bazel-first/scripts" 2>/dev/null
-  cp "$HOME/.coder/skills/ez-bazel-first/scripts/glob_budget.py" \
-    "$HOME/.agents/skills/ez-bazel-first/scripts/glob_budget.py" 2>/dev/null
+bazel_first_repos=0
+for evo_t1_repo in /home/coder/workspace/*/; do
+  [ -d "$${evo_t1_repo}" ] || continue
+  [ -d "$${evo_t1_repo}.git" ] || continue
+
+  # A repository is a Bazel one when its root names the module; the two WORKSPACE
+  # spellings are the pre-bzlmod form a repo this skill has not converted yet still has.
+  if [ ! -f "$${evo_t1_repo}MODULE.bazel" ] && [ ! -f "$${evo_t1_repo}WORKSPACE" ] \
+     && [ ! -f "$${evo_t1_repo}WORKSPACE.bazel" ]; then
+    boot_note "ez-bazel-first: $(basename "$${evo_t1_repo}") is not a bazel repository, seeded nowhere"
+    continue
+  fi
+
+  if [ -z "$bazel_first_stage" ]; then
+    boot_warn "no staging dir - ez-bazel-first not seeded"
+    break
+  fi
+
+  evo_t1_skill_dir="$${evo_t1_repo}.grok/skills/ez-bazel-first"
+  mkdir -p "$${evo_t1_skill_dir}/scripts" 2>/dev/null
+
+  if evo_t1_repo_writable "$${evo_t1_skill_dir}/SKILL.md"; then
+    cp "$bazel_first_stage/SKILL.md" "$${evo_t1_skill_dir}/SKILL.md" 2>/dev/null
+    boot_ok "ez-bazel-first SKILL.md into $(basename "$${evo_t1_repo}")"
+  else
+    boot_note "ez-bazel-first SKILL.md in $(basename "$${evo_t1_repo}") is the repository's own"
+  fi
+
+  for evo_t1_helper in owned_files_check.py glob_budget.py; do
+    if evo_t1_repo_writable "$${evo_t1_skill_dir}/scripts/$${evo_t1_helper}"; then
+      cp "$bazel_first_stage/$${evo_t1_helper}" \
+        "$${evo_t1_skill_dir}/scripts/$${evo_t1_helper}" 2>/dev/null
+      boot_ok "ez-bazel-first $${evo_t1_helper} into $(basename "$${evo_t1_repo}")"
+    else
+      boot_note "ez-bazel-first $${evo_t1_helper} in $(basename "$${evo_t1_repo}") is the repository's own"
+    fi
+  done
+
+  # The cp runs with its errors quieted, so the outcome is read back instead of trusted:
+  # a copy that failed to land must not leave this log reporting a clean run.
+  for evo_t1_artifact in SKILL.md scripts/owned_files_check.py scripts/glob_budget.py; do
+    [ -f "$${evo_t1_skill_dir}/$${evo_t1_artifact}" ] \
+      || boot_warn "no repo copy of ez-bazel-first/$${evo_t1_artifact} in $${evo_t1_repo}"
+  done
+
+  bazel_first_repos=$((bazel_first_repos + 1))
+done
+
+if [ "$bazel_first_repos" -eq 0 ]; then
+  boot_note "no bazel repository under /home/coder/workspace, ez-bazel-first seeded nowhere"
+fi
+
+if [ -n "$bazel_first_stage" ]; then
+  find "$bazel_first_stage" -type f -delete 2>/dev/null
+  rmdir "$bazel_first_stage" 2>/dev/null
 fi
 
 if [ ! -f "$HOME/.coder/skills/ez-strong-types/SKILL.md" ]; then
@@ -155,10 +211,7 @@ fi
 
 # The twin cp runs with its errors quieted, so the outcome is read back instead of
 # trusted: an artifact missing from either home here is a seed that failed quietly.
-for f in ez-bazel-first/SKILL.md \
-         ez-bazel-first/scripts/owned_files_check.py \
-         ez-bazel-first/scripts/glob_budget.py \
-         ez-strong-types/SKILL.md \
+for f in ez-strong-types/SKILL.md \
          ez-strong-types/scripts/type_baseline.py \
          ez-trunk-based-repo/SKILL.md \
          ez-micro-plan/SKILL.md \

@@ -92,9 +92,11 @@ You cannot scope tasks from a guess. Enumerate what must change and what might:
 
     git ls-files | grep -Ei '<pattern>' | head -50
 
-Use the repo's own map verbs where it has them (here:
-`bazelisk run //scripts:bazel-map -- scope --untracked`, `-- twins <path>`,
-`-- files <target>`).
+Use the repo's own map verbs where it has them -- the build-graph or index command that answers
+who reads a file and what moves with it -- and write the exact command you found into
+`ctx/L0.md`, so every child quotes the same one. With none, index the clone:
+
+    python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo .
 
 When the surface is bigger than five calls, spawn one `explore` child per disjoint area
 and have it answer:
@@ -122,7 +124,9 @@ fixed because the check parses it:
 
 ### The plan skeleton
 
-Skeleton (keep the headings; the check keys on them):
+Skeleton (keep the headings; the check keys on them). Every `done:` is the current repository's
+own command for that file -- discover it from the repo's gate and quote it verbatim; never carry
+a build target in from another repository:
 
     # Micro-plan: <slug>
     <!-- ez-micro-plan v1 -->
@@ -156,7 +160,7 @@ Skeleton (keep the headings; the check keys on them):
     - reads: L0, L1-src-core
     - needs: none
     - calls: 12
-    - done: `bazelisk test //tests:bats_search_test`
+    - done: `<the repo gate command that covers scripts/lib/search.sh>`
     - report: results/T01.md
 
     ### T02 -- map the search surface with three read-only mappers

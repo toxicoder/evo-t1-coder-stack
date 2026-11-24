@@ -63,6 +63,12 @@ COMMON_PAYLOADS=(
   ez-trunk-based-repo.SKILL.md
   ez-micro-plan.SKILL.md
   ez-micro-plan.plan_check.py
+  reflect-and-evolve.SKILL.md
+  reflect-and-evolve.session_signals.py
+  reflect-and-evolve.checklist.md
+  reflect-and-evolve-repo.SKILL.md
+  reflect-and-evolve-repo.checklist.md
+  trunk-refactor.SKILL.md
   explorer.AGENT.md
   architect.AGENT.md
   implementer.AGENT.md
@@ -98,6 +104,7 @@ COMMON_PAYLOADS=(
   boot-log.lib.sh
   terminal-launchers.sh.tftpl
   stack-repo-skills.sh.tftpl
+  trunk-refactor-seed.sh.tftpl
   stack-advisors.sh.tftpl
   stack-hooks.sh.tftpl
   stack-fleet.sh.tftpl
@@ -126,6 +133,12 @@ write_common_payloads() {
   printf '%s\n' '# skill' >"${dest}/ez-trunk-based-repo.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/ez-micro-plan.SKILL.md"
   printf '%s\n' 'pass' >"${dest}/ez-micro-plan.plan_check.py"
+  printf '%s\n' '# skill' >"${dest}/reflect-and-evolve.SKILL.md"
+  printf '%s\n' 'pass' >"${dest}/reflect-and-evolve.session_signals.py"
+  printf '%s\n' '# checklist' >"${dest}/reflect-and-evolve.checklist.md"
+  printf '%s\n' '# skill' >"${dest}/reflect-and-evolve-repo.SKILL.md"
+  printf '%s\n' '# checklist' >"${dest}/reflect-and-evolve-repo.checklist.md"
+  printf '%s\n' '# skill' >"${dest}/trunk-refactor.SKILL.md"
   printf '%s\n' '# agent' >"${dest}/explorer.AGENT.md"
   printf '%s\n' '# agent' >"${dest}/architect.AGENT.md"
   printf '%s\n' '# agent' >"${dest}/implementer.AGENT.md"
@@ -161,6 +174,7 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/sh' >"${dest}/boot-log.lib.sh"
   printf '%s\n' '#!/bin/sh' >"${dest}/terminal-launchers.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/trunk-refactor-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-advisors.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-hooks.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-fleet.sh.tftpl"

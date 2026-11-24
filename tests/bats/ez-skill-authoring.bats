@@ -52,11 +52,19 @@ load 'test_helper'
 REPO_ROOT=""
 SEED=""
 FLEET_SEED=""
+REPO_SEED=""
+TRUNK_SEED=""
 
 # The trio, and the heredoc tag plus the main.tf map key each travels under.
 SKILLS=(ez-learn ez-skillify ez-create-skill)
 TAGS=(EZ_LEARN_SKILL_MD_EOF EZ_SKILLIFY_SKILL_MD_EOF EZ_CREATE_SKILL_SKILL_MD_EOF)
 KEYS=(ez_learn_skill ez_skillify_skill ez_create_skill_skill)
+
+# Every skill the stack seed ships a SKILL.md heredoc for. The trio works on this stack and
+# the reflection pair joined it, so the heredoc count below is read off THIS list rather than
+# from a literal: a payload that joins the seed without joining the list is a red test, which
+# is the only thing that keeps the count honest as the seed grows.
+SEED_SKILLS=(ez-learn ez-skillify ez-create-skill reflect-and-evolve reflect-and-evolve-repo)
 
 # The fleet quartet: four parent-side runbooks seeded by coder_script
 # "stack_fleet" from templates/common/stack-fleet.sh.tftpl. That body is a
@@ -68,6 +76,16 @@ FLEET_KEYS=(feature_implementation_skill skeptical_review_skill security_audit_s
 
 # Every payload the shared shape invariants apply to: the trio plus the quartet.
 ALL_SKILLS=("${SKILLS[@]}" "${FLEET_SKILLS[@]}")
+
+# The three bodies that moved out of skills/<name>/SKILL.md into templates/common/, which is
+# why the label guard below covers them even though the shape loops above do not: the reflection
+# pair rides the stack seed and trunk-refactor rides the repository seed, and every target a
+# payload prints is a command an operator is told to run.
+TEMPLATED_SKILLS=(reflect-and-evolve reflect-and-evolve-repo trunk-refactor)
+
+# What the tier-and-label guard walks: the seven shared-shape payloads plus the three moved
+# bodies.
+GUARD_SKILLS=("${ALL_SKILLS[@]}" "${TEMPLATED_SKILLS[@]}")
 
 # The frontmatter keys Grok Build documents: the whole set a payload may carry.
 DOC_KEYS=(name description when-to-use allowed-tools argument-hint user-invocable
@@ -117,6 +135,11 @@ setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SEED="${REPO_ROOT}/templates/common/stack-skills.sh.tftpl"
   FLEET_SEED="${REPO_ROOT}/templates/common/stack-fleet.sh.tftpl"
+  REPO_SEED="${REPO_ROOT}/templates/common/stack-repo-skills.sh.tftpl"
+  # The fifth seed body, and the reason this ladder is a ladder: /trunk-refactor
+  # shares the repository tier with the family above and rides its own body only
+  # because that family's map passed the single-argument ceiling.
+  TRUNK_SEED="${REPO_ROOT}/templates/common/trunk-refactor-seed.sh.tftpl"
   local f
   for f in "${SKILLS[@]}"; do
     [[ -f "${REPO_ROOT}/templates/common/${f}.SKILL.md" ]] ||
@@ -222,13 +245,14 @@ main_block() {
   # The two homes are two consumers of ONE file. If the ~/.agents side grows its
   # own heredoc body the two drift the moment one is edited, and first-match-wins
   # dedupe decides which of the two the CLI actually runs. So the twin must be a
-  # cp of the managed ~/.coder file, and the file must carry exactly three
-  # heredocs total - one per skill, all on the coder side.
+  # cp of the managed ~/.coder file, and the file must carry exactly one heredoc per
+  # seeded skill, all on the coder side.
   local i name n
   n="$(grep -cE -- "$(hdoc_open)'[A-Z_]+_SKILL_MD_EOF'" "${SEED}" || true)"
-  assert_eq "the body holds exactly three quoted heredocs" "3" "${n}"
-  for i in "${!SKILLS[@]}"; do
-    name="${SKILLS[i]}"
+  assert_eq "the body holds one quoted heredoc per seeded skill" \
+    "${#SEED_SKILLS[@]}" "${n}"
+  for i in "${!SEED_SKILLS[@]}"; do
+    name="${SEED_SKILLS[i]}"
     assert_contains_file "${name} agents guard" "${SEED}" \
       '^if \[ ! -f "\$HOME/\.agents/skills/'"${name}"'/SKILL\.md" \]; then$'
     assert_contains_file "${name} agents mkdir" "${SEED}" \
@@ -524,53 +548,108 @@ main_block() {
   done
 }
 
-@test "payload: every bazel label a skill cites still resolves" {
+@test "payload: every bazel label a skill cites still resolves, and only the stack tier owes one" {
   # These payloads tell an operator to run what they print. A label the tree
   # stopped declaring is a dead end in the first minute, and the only way to
   # catch it before a user does is to resolve every citation against the tree:
   # the root BUILD file carries the //:labels and scripts/<stem>.sh carries the
   # CLI targets, which are the two places a target can come from here.
+  #
+  # Two tiers, and the seed body that delivers a payload decides which one it is -
+  # this file names no tier list of its own. The trio comes off
+  # templates/common/stack-skills.sh.tftpl and works ON this stack, so it names
+  # this stack's own CLIs and is answerable for them. The quartet comes off
+  # stack-fleet.sh.tftpl and is seeded into every workspace of every repository, so
+  # no target this repo declares can be its requirement: a runbook that demanded
+  # //:test-fast was a runbook that only worked in one repository. What the general
+  # tier owes instead is a way to a gate - it either tells the reader where a
+  # repository keeps its own, or it spells the label as a placeholder the reader
+  # fills in. Never one fixed label as THE gate.
+  #
+  # A third tier, same rule as the general one: a payload off
+  # templates/common/stack-repo-skills.sh.tftpl is staged once here and copied into each
+  # repository's own .grok/skills/, so this repo's targets are not its requirement either.
+  # It owes the same thing - a way to the reader's own gate, or a placeholder label - and it
+  # never owes a label this repo happens to declare.
   [[ -f "${REPO_ROOT}/BUILD.bazel" ]] ||
     skip "the root BUILD file is not in this suite's runfiles (//:bazel_files)"
 
-  local i f tokens resolvable token stem label bad missing required
-  for i in "${!ALL_SKILLS[@]}"; do
-    f="$(payload_path "${ALL_SKILLS[i]}")"
+  local i name f tokens resolvable token stem label bad missing required tier prose
+  for i in "${!GUARD_SKILLS[@]}"; do
+    name="${GUARD_SKILLS[i]}"
+    f="$(payload_path "${name}")"
+    if grep -qF -- "${name}/SKILL.md" "${SEED}"; then
+      tier=stack
+    elif grep -qF -- "${name}/SKILL.md" "${FLEET_SEED}"; then
+      tier=general
+    elif grep -qF -- "${name}/SKILL.md" "${REPO_SEED}"; then
+      tier=repository
+    elif grep -qF -- "${name}/SKILL.md" "${TRUNK_SEED}"; then
+      tier=repository
+    else
+      printf 'FAIL: %s is seeded by none of %s, %s or %s, so its tier cannot be read off the tree\n' \
+        "${f}" "${SEED}" "${FLEET_SEED}" "${REPO_SEED}" >&2
+      return 1
+    fi
+
     # The guard rejects a // preceded by a colon or a word char, so an https://
     # URL is not mistaken for a label, and the class carries <> so the generic
     # //scripts:<stem> spelling survives capture.
     tokens="$(grep -oE '(^|[^:/A-Za-z])//([A-Za-z0-9_.-]*):([A-Za-z0-9_.<>-]+)' "${f}" |
       grep -oE '//[A-Za-z0-9_.-]*:[A-Za-z0-9_.<>-]+' | sort -u)"
-    if [ -z "${tokens}" ]; then
-      printf 'FAIL: %s cites no bazel target at all\n' "${f}" >&2
-      return 1
-    fi
 
-    # The targets each skill is answerable for: the loop below would otherwise
-    # pass vacuously on a payload that had quietly dropped every one of them.
-    case "${ALL_SKILLS[i]}" in
-      ez-skillify)
-        required="$(printf '%s\n' //:test-fast //scripts:mcp-check //scripts:refresh-configs | sort -u)" ;;
-      ez-create-skill)
-        required="$(printf '%s\n' //scripts:refresh-configs | sort -u)" ;;
-      feature-implementation)
-        # The map verb it tells you to run before grepping, and the full gate it
-        # owes the pull request.
-        required="$(printf '%s\n' //:test-fast //:test-all //scripts:bazel-map | sort -u)" ;;
-      skeptical-review | security-audit)
-        # The reviewer and the auditor both re-run the gate in their own shell.
-        required="$(printf '%s\n' //:test-fast //:lint | sort -u)" ;;
-      bug-hunt)
-        # The bats target a failing test is run under: quoted, because <stem> is
-        # the payload's placeholder, not a redirection.
-        required="$(printf '%s\n' //:test-fast "//tests:bats_<stem>_test" | sort -u)" ;;
-      *)
-        required="$(printf '%s\n' //:test-fast | sort -u)" ;;
+    case "${tier}" in
+      stack)
+        # The stack tier is answerable for the targets it exists to drive: the loop
+        # below would otherwise pass vacuously on a payload that had quietly dropped
+        # every one of them.
+        if [ -z "${tokens}" ]; then
+          printf 'FAIL: %s is a stack-tier skill and cites no bazel target at all\n' "${f}" >&2
+          return 1
+        fi
+        case "${name}" in
+          ez-skillify)
+            required="$(printf '%s\n' //:test-fast //scripts:mcp-check //scripts:refresh-configs | sort -u)" ;;
+          ez-create-skill)
+            required="$(printf '%s\n' //scripts:refresh-configs | sort -u)" ;;
+          *)
+            required="$(printf '%s\n' //:test-fast | sort -u)" ;;
+        esac
+        ;;
+      general | repository)
+        # Nothing this repo declares can be this payload's requirement, so it has to
+        # leave the reader holding a gate they can reach: an instruction naming where
+        # a repository keeps its own (its CI workflow, Makefile, package.json scripts,
+        # or a bazelisk query that reads them out of BUILD files), or a command whose
+        # label carries a placeholder. Either is honest; "run the gate" with neither
+        # is the sentence that made these runbooks unusable outside this repo.
+        prose="$(payload_prose "${f}")"
+        if printf '%s\n' "${prose}" | grep -Eiq -- \
+          'discover[^.]{0,140}(gate|command|target|test)|read[^.]{0,140}(BUILD\.bazel|package\.json|Makefile|CI workflow)|(repo|repository).s own (gate|test|lint|command)|CI workflow|Makefile|package\.json|bazelisk query'; then
+          required=""
+        elif [ -z "${tokens}" ]; then
+          printf 'FAIL: %s is seeded %s-tier but says nothing about how the reader finds this repository'"'"'s own gate, and prints no command either\n' \
+            "${f}" "${tier}" >&2
+          return 1
+        else
+          case "${tokens}" in
+            *'<'*)
+              required="" ;;
+            *)
+              printf 'FAIL: %s is seeded %s-tier and states %sas its gate with neither a discovery instruction nor a placeholder label the reader fills in\n' \
+                "${f}" "${tier}" "$(printf '%s ' "${tokens}")" >&2
+              return 1 ;;
+          esac
+        fi
+        ;;
     esac
-    missing="$(comm -23 <(printf '%s\n' "${required}") <(printf '%s\n' "${tokens}"))"
-    if [ -n "${missing}" ]; then
-      printf 'FAIL: %s no longer cites: %s\n' "${f}" "$(printf '%s ' "${missing}")" >&2
-      return 1
+
+    if [ -n "${required}" ]; then
+      missing="$(comm -23 <(printf '%s\n' "${required}") <(printf '%s\n' "${tokens}"))"
+      if [ -n "${missing}" ]; then
+        printf 'FAIL: %s no longer cites: %s\n' "${f}" "$(printf '%s ' "${missing}")" >&2
+        return 1
+      fi
     fi
 
     # //scripts:<stem> and //tests:bats_<stem>_test are the payloads' generic
@@ -605,9 +684,13 @@ main_block() {
     fi
 
     # A cited target has to travel in the runnable form, not as a bare mention:
-    # `bazelisk test` / `bazelisk run` is what makes it a step an agent runs.
-    assert_contains_file "${ALL_SKILLS[i]} shows the labels as commands to run" "${f}" \
-      'bazelisk (test|run) //'
+    # `bazelisk test` / `bazelisk run` is what makes it a step an agent runs. A
+    # general-tier payload that names no label owes no such line - it owes the
+    # discovery instruction checked above instead.
+    if [ -n "${tokens}" ]; then
+      assert_contains_file "${ALL_SKILLS[i]} shows the labels as commands to run" "${f}" \
+        'bazelisk (test|run) //'
+    fi
   done
 }
 

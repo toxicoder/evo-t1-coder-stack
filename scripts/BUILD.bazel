@@ -559,6 +559,34 @@ _SCRIPT_PAYLOAD_ALLOW = {
     "mcp-check": [
         "//searxng:settings",
     ],
+    # None of these four CLIs opens a file under skills/. The six strings live in
+    # exactly one place in the tree: the destination column of the reflect-pair and
+    # trunk-refactor rows of seed_seed_targets in scripts/lib/config_seed.sh, which
+    # all four source through _SCRIPT_LIBS, so the token scan sees them there. Those
+    # destinations are where the trio used to land in a workspace or laptop home
+    # before it moved to templates/common/, and the boot still removes a stale copy
+    # it finds there. //:skill_sources is named because its glob is what covers a
+    # `skills/...` token; it is empty on disk since the move, so this entry claims
+    # no read that happens. seed_retired_targets is a separate, shorter list - the
+    # learn and ez-bazel-first rows - and carries none of these six.
+    "refresh-configs": [
+        "//:skill_sources",
+    ],
+    # Same six strings through the same sourced lib: the contributor seed converges
+    # a laptop home on the shape a workspace gets, and opens none of them.
+    "seed-dev-env": [
+        "//:skill_sources",
+    ],
+    # The sweep reaches them the same way: it removes stale copies of the trio from
+    # a home and lists what it will remove, with no skills/ tree left in the repo to
+    # open.
+    "storage-clean": [
+        "//:skill_sources",
+    ],
+    # Same source, seen from the config-refresh side.
+    "update-configs": [
+        "//:skill_sources",
+    ],
     # These paths appear only inside `case` globs over `git diff --name-only`
     # output, so the script never opens them.
     "update-stack": [

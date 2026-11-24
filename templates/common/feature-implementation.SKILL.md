@@ -77,9 +77,11 @@ that must not, the pattern to copy, and the command that proves it. Pure mapping
 
 ### Use the repo's own map verbs
 
-Use the repo's own map verbs (`-- twins <path>`, `-- owners <path>`) before grepping:
+Find the current repository's own map verbs before grepping -- the target, script, or index
+that answers who reads a file and what must move with it -- and quote the command you found
+and the line it printed. Where the repo has none, index the clone and read that:
 
-    bazelisk run //scripts:bazel-map -- scope --untracked
+    python3 ~/.agents/skills/ez-code-index/scripts/code_index.py --repo .
 
 ## Step 2 -- plan the split with /ez-micro-plan (parent only, on `agent`, 4 to 6 calls)
 
@@ -158,10 +160,14 @@ a merge.
 
 ### Run the gate in your own shell
 
-Then run the gate in your own shell, so the green you quote is yours:
+Then run the gate in your own shell, so the green you quote is yours. Discover the current
+repository's own gate first -- its `AGENTS.md`, `README`, CI workflow, Makefile, or build file
+names it -- and run the fast test command and the lint command it declares, pasting both
+exactly as that repo states them. A target carried over from another repository is not this
+repo's gate:
 
-    bazelisk test //:test-fast
-    bazelisk test //:lint --test_tag_filters=manual
+    <the repo's own fast test command>
+    <the repo's own lint command>
 
 ## Step 5 -- merge, hotspots, and the derived artifacts (parent only, 3 to 5 calls)
 
@@ -173,9 +179,10 @@ codegen, lockfiles, snapshots, and migrations are parent-side steps, never a chi
 
 ### Re-run the gate before the pull request
 
-Re-run `//:test-fast` after the merge, then one uncached pass over the full gate
-(`bazelisk test //:test-all`) before the pull request; a tree left broken costs every later
-child its `done` check, so fix it before dispatching again.
+Re-run the repo's fast gate after the merge, then one uncached pass over its full gate -- the
+wider command the repo names beside the fast one, with its CI job as the authority on which
+that is -- before the pull request; a tree left broken costs every later child its `done`
+check, so fix it before dispatching again.
 
 ## Step 6 -- close it out (2 to 4 calls)
 

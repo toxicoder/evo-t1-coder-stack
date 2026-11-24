@@ -158,6 +158,11 @@ missing one fails the push before the CLI runs.
   more heredocs in the first one for the reason this whole file keeps repeating: each
   `coder_script.script` is its own `execve` argument with its own ceiling, and a family
   that ships helpers grows faster than one that ships a `SKILL.md` each.
+- `trunk-refactor.SKILL.md` is the `/trunk-refactor` command, the procedure form that
+  converts a repository onto trunk-based development, and `trunk-refactor-seed.sh.tftpl`
+  is its `coder_script "trunk_refactor_command"` body. It is the one command of that
+  family with a body to itself: the four above already fill most of one argument, and
+  adding a fifth `SKILL.md` to that map is what crossed the bound the first time.
 
 #### The advisor commands and their body
 
@@ -370,6 +375,14 @@ advisor `SKILL.md` payloads, the `documenter` role, the code-index skill and its
 composes to 71032 bytes, and `coder_script.stack_hooks`, carrying the manifest, four
 guards and the deny list, to 39399 - 51848 and 83481 clear of the bound respectively,
 with neither startup twin touched.
+
+Measured again on 2026-11-24, after `/trunk-refactor` joined the repository-command
+family as its fifth member. That pushed `coder_script.stack_repo_skills` to 136684
+bytes, past the 122880 budget, so the fifth member now seeds from its own
+`trunk-refactor-seed.sh.tftpl` body under `coder_script.trunk_refactor_command`: the
+family body is back to 113597 (9283 clear) and the new body composes to 30210 (92670
+clear). This is the ceiling behaving as documented - the fifth payload did not raise
+the wall, it bought a second one.
 
 #### Escape hatches when a body outgrows the bound
 

@@ -859,7 +859,8 @@ resource "coder_script" "agents_seed" {
   })
 }
 
-# The stack's three skill commands, seeded by their own body rather than by the startup
+# The stack's five skill commands, with the sweeper and the two checklists the two
+# reflection runbooks shell out to, seeded by their own body rather than by the startup
 # script: every coder_script.script is a separate execve with its own single-argument
 # ceiling, which is what keeps the payloads above inside the budget. The body writes
 # each absent skill into ~/.coder/skills (the Coder Agents chat) and copies the twin
@@ -874,10 +875,15 @@ resource "coder_script" "stack_skills" {
   # Inlined here, not through a local: the size readers credit a body by the
   # path.module names inside its own block.
   script = templatefile("${path.module}/stack-skills.sh.tftpl", {
-    boot_log_lib          = chomp(file("${path.module}/boot-log.lib.sh"))
-    ez_learn_skill        = chomp(file("${path.module}/ez-learn.SKILL.md"))
-    ez_skillify_skill     = chomp(file("${path.module}/ez-skillify.SKILL.md"))
-    ez_create_skill_skill = chomp(file("${path.module}/ez-create-skill.SKILL.md"))
+    boot_log_lib                       = chomp(file("${path.module}/boot-log.lib.sh"))
+    ez_learn_skill                     = chomp(file("${path.module}/ez-learn.SKILL.md"))
+    ez_skillify_skill                  = chomp(file("${path.module}/ez-skillify.SKILL.md"))
+    ez_create_skill_skill              = chomp(file("${path.module}/ez-create-skill.SKILL.md"))
+    reflect_and_evolve_skill           = chomp(file("${path.module}/reflect-and-evolve.SKILL.md"))
+    reflect_and_evolve_repo_skill      = chomp(file("${path.module}/reflect-and-evolve-repo.SKILL.md"))
+    reflect_and_evolve_session_signals = chomp(file("${path.module}/reflect-and-evolve.session_signals.py"))
+    reflect_and_evolve_checklist       = chomp(file("${path.module}/reflect-and-evolve.checklist.md"))
+    reflect_and_evolve_repo_checklist  = chomp(file("${path.module}/reflect-and-evolve-repo.checklist.md"))
   })
 }
 
@@ -925,6 +931,24 @@ resource "coder_script" "stack_repo_skills" {
     ez_trunk_based_repo_skill        = chomp(file("${path.module}/ez-trunk-based-repo.SKILL.md"))
     ez_micro_plan_skill              = chomp(file("${path.module}/ez-micro-plan.SKILL.md"))
     ez_micro_plan_plan_check         = chomp(file("${path.module}/ez-micro-plan.plan_check.py"))
+  })
+}
+
+# /trunk-refactor seeds in a body of its own for one reason: the five payloads above
+# compose past the single-argument ceiling the agent execs a body under, and a second
+# resource is what buys a second ceiling. Same absent-only contract, same two homes.
+resource "coder_script" "trunk_refactor_command" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the repository conversion command"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/trunk-refactor-seed.sh.tftpl", {
+    boot_log_lib         = chomp(file("${path.module}/boot-log.lib.sh"))
+    trunk_refactor_skill = chomp(file("${path.module}/trunk-refactor.SKILL.md"))
   })
 }
 

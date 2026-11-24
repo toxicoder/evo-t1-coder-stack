@@ -153,10 +153,12 @@ When the operator asks for the fix, take the normal path:
 - the smallest patch that closes the sink
 - a test that fails before it and passes after, with the failing output quoted in the pull request
 
-Then run the gate yourself:
+Then run the gate yourself -- discover the current repository's own fast test command and lint
+command from its `AGENTS.md`, `README`, CI workflow, Makefile, or build file, and paste both
+exactly as that repo states them:
 
-    bazelisk test //:test-fast
-    bazelisk test //:lint --test_tag_filters=manual
+    <the repo's own fast test command>
+    <the repo's own lint command>
 
 ### Re-run the greps and the proof line
 

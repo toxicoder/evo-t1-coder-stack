@@ -24,7 +24,7 @@ tags: [git, branching, ci, feature-flags, environments, refactor]
 - Running the same procedure in any of this fleet's repositories with `/trunk-refactor`
 
 This is the human-readable twin of the `trunk-refactor` skill
-(`skills/trunk-refactor/SKILL.md`). The skill is what an agent session follows; this page is
+(`templates/common/trunk-refactor.SKILL.md`). The skill is what an agent session follows; this page is
 what a person reads, with the examples the skill leaves out to stay short. The branch rules
 themselves live in [Branching](../branching.md) - this page is about getting a repository *onto*
 those rules.
@@ -335,13 +335,20 @@ Both begin with the same inventory, and both end with a table a person signs off
 
 ## Running it
 
-The skill is `skills/trunk-refactor/SKILL.md`. A session in this repository reaches it through
-`AGENTS.md`; any other repository gets it by installing it into the two skill homes the agents
-read:
+The skill body is `templates/common/trunk-refactor.SKILL.md`, the one tracked copy. A session
+in this repository reaches it through the tracked link at
+`.grok/skills/trunk-refactor/SKILL.md`, which is what makes `/trunk-refactor` a discoverable
+slash command here, and through `AGENTS.md`; any other repository gets it by installing the
+body into the two skill homes the agents read, the coder copy first and the agents copy as a
+`cp` of it:
 
-    mkdir -p ~/.agents/skills ~/.coder/skills
-    cp -r skills/trunk-refactor ~/.agents/skills/
-    cp -r skills/trunk-refactor ~/.coder/skills/
+    mkdir -p ~/.coder/skills/trunk-refactor ~/.agents/skills/trunk-refactor
+    cp templates/common/trunk-refactor.SKILL.md ~/.coder/skills/trunk-refactor/SKILL.md
+    cp ~/.coder/skills/trunk-refactor/SKILL.md ~/.agents/skills/trunk-refactor/SKILL.md
+
+A repository under this stack does not need the copy: the `stack_repo_skills` coder script,
+whose body is `templates/common/stack-repo-skills.sh.tftpl`, writes both homes absent-only and
+stages the repository's own `.grok/skills/trunk-refactor/SKILL.md` link beside the body.
 
 Then, in a new session in the repository you want to convert:
 

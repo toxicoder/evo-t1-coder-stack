@@ -540,14 +540,22 @@ boot_body_list() {
   local bodies="${BATS_TEST_TMPDIR}/bodies" f refs
   # Each twin is floored on its own, and not at one shared number: a key dropped from the
   # workspace copy of a body that the devcontainer also declares would leave the union
-  # intact and quietly un-narrate half the fleet. The floors are the shipped counts, so a
-  # body wired in later only ever raises them, and a key dropped from either twin is red.
-  local twin count
+  # intact and quietly un-narrate half the fleet. The floors are the shipped counts read
+  # off both main.tf files as they stand: 12 bodies in the workspace twin (every
+  # coder_script that renders a templatefile plus startup.sh.tftpl, which the agent runs
+  # as its startup_script and main.tf hands the library to as well), and 13 in the
+  # devcontainer twin, which adds dind-bootstrap. A body wired in later only ever raises
+  # them, and a key dropped from either twin is red.
+  local twin count want
   for twin in workspace devcontainer; do
+    case "${twin}" in
+      workspace) want=12 ;;
+      devcontainer) want=13 ;;
+    esac
     count="$(boot_body_list "${twin}" | wc -l)"
-    [ "${count}" -ge 11 ] || {
+    [ "${count}" -ge "${want}" ] || {
       boot_body_list "${twin}" >&2
-      fail "templates/${twin}/main.tf hands boot_log_lib to ${count} bodies, under the 11 it must"
+      fail "templates/${twin}/main.tf hands boot_log_lib to ${count} bodies, under the ${want} it must"
     }
   done
   boot_body_list >"${bodies}"
