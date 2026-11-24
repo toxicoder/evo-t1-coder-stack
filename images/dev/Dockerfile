@@ -71,6 +71,7 @@ ARG NODE_VERSION_DEFAULT=24 \
     TFLINT_VERSION=0.64.0 \
     TERRAGRUNT_VERSION=1.1.6 \
     GH_VERSION=2.101.0 \
+    GH_STACK_VERSION=v1.0.0 \
     CODER_CLI_VERSION=v2.36.6 \
     INFISICAL_CLI_VERSION=0.45.8 \
     BAZELISK_VERSION=v1.25.0 \
@@ -422,6 +423,37 @@ RUN case "${TARGETARCH}" in \
     && test ! -x /usr/local/bin/containerd \
     && test ! -x /usr/local/bin/runc \
     && test ! -x /usr/local/bin/docker-proxy
+
+# gh-stack (the GitHub stacked-pull-request extension), OFF by default.
+#
+# github.com/github/gh-stack is the official gh extension for stacked PRs. It is
+# a build-time choice rather than an image default, so GH_STACK_ENABLED ships
+# false and CI's buildx build takes the guard's exit 0 exactly as it did before
+# this layer existed -- the same off-by-default posture the stack's other
+# optional pieces take. The value --pin receives is GH_STACK_VERSION in the
+# block above, mirrored from images/dev/tool-versions.env, so an enabled build
+# never follows the extension's default branch.
+#
+# The extension lands under /home/coder because that is where gh looks for it
+# (default $HOME/.local/share/gh/extensions): the per-workspace volume is seeded
+# from this directory when it is first created, which is how the coder user gets
+# `gh stack` with no first-run download. That is user-scoped state, not a tool
+# home, so it does not contradict the /usr/local and /opt rule above -- the
+# binary the extension runs is still fetched by gh, and gh itself lives in
+# /usr/local/bin.
+ARG GH_STACK_ENABLED=false
+RUN if [[ "${GH_STACK_ENABLED}" != "true" ]]; then \
+      echo "note: gh-stack not installed (GH_STACK_ENABLED=${GH_STACK_ENABLED})"; \
+      exit 0; \
+    fi; \
+    # HOME is set per call, not baked as ENV: a global GH_EXTENSIONS_DIR or HOME
+    # would redirect every later `gh extension install` a workspace runs into
+    # root-owned paths. The chown undoes the ownership a root build leaves on
+    # what the coder user now owns.
+    mkdir -p /home/coder/.local/share/gh \
+    && HOME=/home/coder gh extension install github/gh-stack --pin "${GH_STACK_VERSION}" \
+    && chown -R coder:coder /home/coder/.local/share/gh \
+    && HOME=/home/coder gh extension list
 
 # ── Grok Build CLI (the coding agent this stack exists to serve) ────────────
 # The binary is fetched pinned (GROK_VERSION; the default here mirrors
