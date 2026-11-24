@@ -70,6 +70,10 @@
 # the image's own interpreter (the image ships no curl and no wget) against the port the
 # service itself publishes.
 #
+# And it pins the map that catches a group whose every deployment cooled at once: every
+# group with a deployment on each box has a fallbacks entry, every hop names a group the
+# file actually declares, and no chain comes back around on itself.
+#
 # Usage: bazelisk test //tests:bats_litellm_config_test   (from any cwd)
 # Safety: reads litellm/config.yaml, litellm/compaction_router.py, docker-compose.yml
 # and the two template dirs; writes nothing.
@@ -751,6 +755,18 @@ spark_lane_groups() {
     agent-explore agent-review agent-xhigh-fast agent-swarm-fast
 }
 
+# litellm_settings_block - everything under that top-level key up to the next one,
+# comments dropped, in the same slice shape as general_settings_block and
+# router_settings_block. The retry keys below repeat as prose in this file, so a
+# slicer that kept the comments would let a sentence satisfy a presence assertion.
+litellm_settings_block() {
+  awk '
+    /^litellm_settings:/ { keep = 1; next }
+    /^[^[:space:]#]/ { keep = 0 }
+    keep && $0 !~ /^[[:space:]]*#/ { print }
+  ' "${CONFIG}"
+}
+
 @test "retry: every agent lane carries the policy that reaches NoRoom" {
   local group fields
   while read -r group; do
@@ -820,6 +836,15 @@ spark_lane_groups() {
   # The policy complements num_retries; replacing it would change every lane.
   run grep -Eq '^[[:space:]]*num_retries: 2$' "${CONFIG}"
   [ "${status}" -eq 0 ]
+  # Presence and value together, and scoped: the grep above is also satisfied by the same
+  # key parked under any other block, and this is the count the proxy hands the Router
+  # when it builds one from this file -- the attempts a request gets inside its own group
+  # before the fallbacks hop carries it to another box.
+  local block
+  block="$(litellm_settings_block)"
+  [ -n "${block}" ] || { echo "litellm_settings is missing" >&2; return 1; }
+  assert_eq "litellm_settings carries num_retries: 2 exactly once" "1" \
+    "$(printf '%s\n' "${block}" | grep -Ec '^[[:space:]]*num_retries:[[:space:]]*2[[:space:]]*$' || true)"
 }
 
 # Print the general_settings block: everything after that top-level key up to the next
@@ -1063,6 +1088,12 @@ require_compose() {
   local cooldown
   cooldown="$(block_int cooldown_time "$(router_settings_block)")"
   assert_eq "cooldown_time is exactly one integer" "1" "$(printf '%s\n' "${cooldown}" | grep -c .)"
+  # The shipped literal as well as the bound above: this is the window a recovered Spark
+  # still sits out after a green probe cleared its mark, and docs/litellm-routing.md
+  # quotes 60 both in its prose and in the anchor a section above links to, so a silent
+  # retune would leave that page describing a window the router no longer applies.
+  assert_eq "cooldown_time is the shipped 60, at router_settings depth" "1" \
+    "$(grep -Ec '^  cooldown_time: 60$' "${CONFIG}" || true)"
   [[ "${cooldown}" -ge 30 ]] ||
     fail "cooldown_time is ${cooldown}s: the probe loop cools a marked-unhealthy deployment for exactly this long, and under 30 s it is back in rotation before the failure it was pulled for has been noticed"
   [[ "${cooldown}" -le 300 ]] ||
@@ -1212,4 +1243,90 @@ require_compose() {
     assert_not_match "no background_health_check_model_groups" \
       '^[[:space:]]*background_health_check_model_groups:' "${section}"
   done
+}
+
+# fallbacks_map - the `fallbacks:` list under router_settings, one `- <group>: [ ... ]`
+# line per entry, comments dropped. The map's own prose spells out chains it does not
+# declare, so a slicer that kept the comments would let a sentence pass for an entry.
+fallbacks_map() {
+  awk '
+    /^  fallbacks:/ { keep = 1; next }
+    /^[^[:space:]#]/ { keep = 0 }
+    keep && $0 !~ /^[[:space:]]*#/ { print }
+  ' "${CONFIG}"
+}
+
+# targets_of - read one fallback entry on stdin, print the groups it names, one per line.
+targets_of() {
+  sed -e 's/^[^[]*\[//' -e 's/\][[:space:]]*$//' -e 's/[[:space:]]//g' |
+    tr ',' '\n' | tr -d ' "' | grep -v '^$' || true
+}
+
+@test "failover: every group that can cool as a set has somewhere to fall back to" {
+  # Health state, cooldowns and the least-busy counters are all kept per group, so every
+  # deployment of one lane can be out at once while the same three boxes answer under
+  # another alias. That is the moment the fallback chain is the only thing standing
+  # between the request and an error, so a group with a deployment on each box and no
+  # entry here is a lane that dies with its Sparks. Derived from model_list rather than
+  # from a list of aliases written here: every other fallback assertion in this suite
+  # names the lanes it already knows about, so a tenth Spark group could join the file
+  # with no hop of its own and nothing would go red.
+  local map alias deps missing=""
+  map="$(fallbacks_map)"
+  [ -n "${map}" ] || { echo "router_settings declares no fallbacks: list" >&2; return 1; }
+  while read -r alias; do
+    [[ -n "${alias}" ]] || continue
+    deps="$(grep -Ec "^[[:space:]]*-[[:space:]]+model_name:[[:space:]]*${alias}[[:space:]]*$" "${CONFIG}")"
+    # A group of one cannot cool as a set, and the health filter can never pull its only
+    # deployment anyway (router.py:14177). It may still carry a hop -- compaction-fast
+    # does -- and the test below reads those.
+    [[ "${deps}" -gt 1 ]] || continue
+    printf '%s\n' "${map}" |
+      grep -Eq "^[[:space:]]*-[[:space:]]+${alias}:[[:space:]]*\[" || missing="${missing:+${missing} }${alias}"
+  done <<<"$(model_aliases)"
+  [[ -z "${missing}" ]] ||
+    fail "these groups have a deployment on every box and no fallbacks entry: ${missing}"
+  # coder is where every chain is meant to end, so it is the one group that must carry no
+  # entry: a hop out of the terminal target is a hop off the fleet.
+  assert_not_match "the terminal group coder declares no hop of its own" \
+    '^[[:space:]]*-[[:space:]]*coder:' "${map}"
+}
+
+# fallback_chain_acyclic <group> <path> <map> - walk one group's hops and refuse to meet
+# the same group twice on one path. The proxy walks the list in order once the first
+# target fails, so a cycle is a chain that never runs out rather than a longer detour.
+fallback_chain_acyclic() {
+  local group="$1" path="$2" map="$3" target
+  while read -r target; do
+    [[ -n "${target}" ]] || continue
+    case " ${path} " in
+      *" ${target} "*) return 1 ;;
+    esac
+    fallback_chain_acyclic "${target}" "${path} ${target}" "${map}" || return 1
+  done <<<"$(printf '%s\n' "${map}" |
+    grep -E "^[[:space:]]*-[[:space:]]+${group}:[[:space:]]*\[" | targets_of)"
+}
+
+@test "failover: every hop lands on a declared group and no chain loops" {
+  # Two ways the map can read right and still not degrade anyone. A target that is not a
+  # declared alias resolves only after the first deployment has already failed, so the
+  # typo surfaces as the very outage the hop was meant to answer; and a chain that comes
+  # back around spends the retry budget walking it instead of arriving at coder. Both
+  # are one paste apart from the shipped map, and neither is visible from an entry's own
+  # line, which is why both are read across the whole list here.
+  local map line key target
+  map="$(fallbacks_map)"
+  [ -n "${map}" ] || { echo "router_settings declares no fallbacks: list" >&2; return 1; }
+  while read -r line; do
+    [[ -n "${line}" ]] || continue
+    key="$(printf '%s\n' "${line}" | sed -e 's/^[[:space:]]*-[[:space:]]*//' -e 's/:.*$//')"
+    [ -n "${key}" ] || continue
+    while read -r target; do
+      [[ -n "${target}" ]] || continue
+      model_aliases | grep -qx -- "${target}" ||
+        fail "${line##*(} hops to ${target}, which model_list does not declare"
+    done <<<"$(printf '%s\n' "${line}" | targets_of)"
+    fallback_chain_acyclic "${key}" "${key}" "${map}" ||
+      fail "the fallback chain from ${key} comes back around on itself"
+  done <<<"${map}"
 }

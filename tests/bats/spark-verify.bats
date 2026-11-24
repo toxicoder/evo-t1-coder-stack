@@ -319,3 +319,53 @@ transferred_assignments() {
   assert_match "the verdict says why" 'is a shipped spark-<n>\.lan placeholder, not an address' "${output}"
   assert_contains_file "the box reads as a skip, not a down" "${scratch}/sparks/spark-1.lan.jsonl" '"verdict":"SKIP"'
 }
+
+@test "spark-verify: the DOWN line names the box and the two probes that came back empty" {
+  # The verdict has to be actionable from the one line the operator is reading: which
+  # box, and which probe drew the blank. The model port is where the proxy sends
+  # traffic and ssh is the second, independent observation, so a DOWN that names
+  # neither cannot be told apart from a port somebody retuned. --port is deliberately
+  # not the shipped 8888 here: the line has to name the port this run dialled, and the
+  # stub's log is the record of what it actually dialled.
+  local scratch
+  scratch="$(scratch_checkout)"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests --port 9999 10.0.0.1
+  [ "${status}" -eq 1 ]
+  assert_match "the verdict names the box" '10\.0\.0\.1 .*DOWN' "${output}"
+  assert_match "the verdict names the model port that did not answer" \
+    'nothing answered on :9999' "${output}"
+  assert_match "the verdict names the ssh probe that never opened" \
+    'no ssh session opened either' "${output}"
+  assert_match "and quotes ssh's own first complaint" 'ssh: stub failure' "${output}"
+  assert_match "the announced probe is the one that ran" \
+    '^-> probing http://10\.0\.0\.1:9999$' "${output}"
+  assert_match "the FAIL line carries the box and the port together" \
+    'FAIL: 1 box\(es\) answered nothing on :9999 and are DOWN \(10\.0\.0\.1\)' "${output}"
+  [[ "$(stub_log_last curl)" == "curl -fsS -m 5 http://10.0.0.1:9999/health" ]]
+  assert_contains_file "the per-host object is the same verdict" \
+    "${scratch}/sparks/10.0.0.1.jsonl" '"verdict":"DOWN"'
+}
+
+@test "spark-verify: --expect-down is the documented way to assert an intended outage" {
+  # What makes a DOWN verdict safe to act on is that the planned-outage escape is
+  # findable without reading the script: --help prints the script's own header, and the
+  # FAIL block of a run that just failed points at the same flag and spells the command.
+  local scratch
+  scratch="$(scratch_checkout)"
+
+  run --separate-stderr env REPO_ROOT="${REPO_ROOT}" bash "${SCRIPT}" --help
+  [ "${status}" -eq 0 ]
+  assert_match "the help names the flag" '--expect-down <host>' "${output}"
+  assert_match "the help calls it the outage taken on purpose" 'on purpose' "${output}"
+  assert_match "and says the box is skipped rather than failed" 'skipped, not failed' "${output}"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests 10.0.0.1
+  [ "${status}" -eq 1 ]
+  assert_match "a failing run points at the documented flag" 'took one out on purpose' "${output}"
+  assert_match "and hands over the exact invocation" \
+    'spark-verify -- --no-tests --expect-down <host>' "${output}"
+  assert_match "with the unnamed allowance named beside it" \
+    'allow N unnamed with --tolerate-unreachable' "${output}"
+}

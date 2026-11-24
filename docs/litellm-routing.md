@@ -74,11 +74,11 @@ the control-plane chat), [project-conventions.md](project-conventions.md).
 
 #### Fallbacks and the cooldown rule
 
-- `fallbacks:` carries the degrade path `agent: ["coder"]`, repeated for each thinking
-  alias, because those groups go down with exactly the same boxes. The four unpinned
-  lanes and the two fast-compaction lanes hop one step further, through the lane that
-  bakes their own level, so a lane that asked for `low` is not served an `xhigh` answer
-  by its fallback.
+- `fallbacks:` is ten entries: one for each of the nine Spark groups plus
+  `compaction-fast`, which hops to `agent-low` because the other Arc aliases are its own
+  box. The four pinned lanes hop straight to `coder`, because those groups go down with
+  exactly the same boxes; the other five hop one step further, through the lane that
+  bakes their own level, so a lane that asked for `low` is not served an `xhigh` answer.
 - `cooldown_time: 60` is how long a box that tripped the rate rule sits out, and it is
   also the fail window that rule counts over.
 - There is no `allowed_fails` key in the config, and the absence is deliberate: naming it
@@ -895,9 +895,9 @@ open: it returns the whole candidate list:
 
 - when the health state is missing
 - when it is older than that threshold
-- when filtering would leave no candidate at all So a fleet whose probe state has gone
-  stale routes to every box rather than to none - a stale sweep costs the filter, never
-  the traffic.
+- when filtering would leave no candidate at all. A fleet whose probe state has gone
+  stale therefore routes to every box rather than to none - a stale sweep costs the
+  filter, never the traffic.
 
 The threshold is set explicitly because the
 shipped default is `DEFAULT_HEALTH_CHECK_INTERVAL * 2` = 600 s whatever
