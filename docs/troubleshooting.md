@@ -2398,8 +2398,10 @@ pushes its copy out through the pane, `set-clipboard on` with
 `allow-passthrough on` forwards it, and code-server's terminal hands the escape to
 nobody.
 
-There is no setting for it: the shipped 4.145.0 registers no OSC 52 key,
-and upstream
+There is no setting for it: no OSC 52 key was registered in the 4.145.0 build
+that was inspected, and that reading has not been repeated on the 4.145.2 the
+templates pin now - treat it as a 4.145.0 measurement, not as a claim about the
+current build. Upstream
 [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
 open with two unmerged fixes.
 
@@ -2419,9 +2421,10 @@ reporting (measured on the shipped tmux 3.4: an attach with `mouse on` writes
 `ESC[?1000h`, `ESC[?1002h` and `ESC[?1006h` to the client, one with it off writes
 none)
 - the settings seed's `terminal.integrated.copyOnSelection: true` puts
-that highlight on the machine clipboard with no chord (the headless harness on
-4.145.0 recorded `navigator.clipboard.writeText` firing on a client selection,
-before this switch).
+that highlight on the machine clipboard with no chord (the headless harness
+recorded `navigator.clipboard.writeText` firing on a client selection, before
+this switch - that pass ran on 4.145.0 and has not been repeated on the 4.145.2
+the templates pin now).
 
 Right-click pastes
 it back (`terminal.integrated.rightClickBehavior: "copyPaste"` pastes when nothing

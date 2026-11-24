@@ -206,14 +206,16 @@ Where each claim below comes from:
 
 - the tmux ones were read off the shipped tmux 3.4 on this box (what an attach
   writes to the client, and what `list-keys` still holds once the payload is sourced)
-- the setting names, values and defaults were read out of the shipped code-server
-  4.145.0's own config registry (VS Code base 1.145.0)
+- the setting names, values and defaults were read out of code-server 4.145.0's
+  own config registry (VS Code base 1.145.0). Both twins pin 4.145.2 now and that
+  registry has not been re-read against it, so every default named below is a
+  4.145.0 reading
 - the two Clipboard-API observations -- that a client selection fires
   `navigator.clipboard.writeText`, and that `document.execCommand('copy')` is the
   fallback that still lands on an insecure origin -- come from the earlier
-  headless-Chromium pass over that build with the rendered `settings.json` twin and
-  the tmux payload loaded, when `mouse` was still on and the copy out was a
-  Shift+drag
+  headless-Chromium pass over that same 4.145.0 build with the rendered
+  `settings.json` twin and the tmux payload loaded, when `mouse` was still on and
+  the copy out was a Shift+drag; neither has been repeated on 4.145.2
 
 That path is the client's own selection, which is what a plain drag drives now; the
 plain drag is due the same pass before it is restated as measured under `mouse off`.
@@ -230,9 +232,10 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   `terminal.integrated.rightClickBehavior: "copyPaste"` - copy while there is a
   selection, paste when there is none - and pins
   `terminal.integrated.middleClickBehavior: "paste"`, because the config registry in
-  the shipped 4.145.0 gives that setting the default `"default"`, which pastes only
-  on the Linux build. tmux has no middle-click paste of its own to answer first:
-  `MouseDown2Pane` is unbound in the root table.
+  code-server 4.145.0 gives that setting the default `"default"`, which pastes only
+  on the Linux build - a reading off that build, not re-checked against the
+  4.145.2 the twins pin now. tmux has no middle-click paste of its own to answer
+  first: `MouseDown2Pane` is unbound in the root table.
 - **tmux keeps no buffer, so there is nothing to paste out of one.** `Prefix-[`
   still enters vi copy-mode and it is a viewer: the cursor keys, `PPage`/`NPage`,
   `Ctrl-u`/`Ctrl-d` and `k`/`j` walk history, `q` leaves, and `Escape` clears a
@@ -270,8 +273,9 @@ plain drag is due the same pass before it is restated as measured under `mouse o
     tmux.
   - Upstream
     [microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254) is
-    open with two unmerged fixes, and the shipped 4.145.0 registers no OSC 52 setting
-    at all, so there is nothing here to turn on.
+    open with two unmerged fixes, and code-server 4.145.0 registers no OSC 52
+    setting at all -- read off that build, not re-read on the 4.145.2 the twins
+    pin now -- so there is nothing here to turn on.
   - Nothing on the tmux side can spoil that clipboard either: tmux has no copy left to
     send, so an accidental selection in the pane cannot overwrite what the client just
     put there.
