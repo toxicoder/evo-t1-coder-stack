@@ -1349,17 +1349,34 @@ id in them is a local alias:
   hypotheses (one bisecting when a known-good ref is given), one writer on `agent-swarm` lands
   the fix with the test that is red before the change and green after, and a skeptic on
   `agent-review` re-runs both runs.
-- `open-bugs` (`{ issue, label, labelInProgress, limit }`) is the queue shape: **Discover**
-  reads the open `bug`-labelled issues off the tracker with gh on `agent-explore` (an empty
-  queue is a reported outcome, not a failure), **Triage** puts one read-only explorer per
-  candidate on that lane to reproduce the report or say what it saw instead, **Fix** puts one
-  writer per reproducible issue on `agent-swarm` with the test red before the change and green
-  after, and **Review** puts a skeptic per fix on `agent-review` that re-runs the producer's own
-  command. The issues go out as one wave and each runs its phases in order. **Write back** posts
-  every outcome through one seam that keeps both tracker rules - `gh issue comment <n>
-  --body-file`, the body never in argv, and the issue labelled in progress - and it never closes
-  an issue, opens a pull request, or pushes: the close belongs to the pull request and the human
-  who merges. Pick by what you have in front of you - `open-bugs` is the discovery half,
+- `open-bugs` (`{ issue, label, labelInProgress, limit, openPr, scratchDir }`) is the queue
+  shape: **Discover** reads the open `bug`-labelled issues off the tracker with gh on
+  `agent-explore` (an empty queue is a reported outcome, not a failure), **Triage** puts one
+  read-only explorer per candidate on that lane to reproduce the report or say what it saw
+  instead, **Fix** puts one writer per reproducible issue on `agent-swarm` with the test red
+  before the change and green after, and **Review** puts a skeptic per fix on `agent-review`
+  that re-runs the producer's own command. The issues go out as one wave and each runs its
+  phases in order. **Write back** posts every outcome through one seam that keeps both tracker
+  rules - `gh issue comment <n> --body-file`, the body never in argv, and the in-progress label
+  only after `gh label list` proves the repository already declares it - and it never closes,
+  reopens, reassigns, labels beyond that one label, or milestones an issue. **Associate** is
+  what keeps a bug tied to its fix: the run writes the pull-request body to
+  `/tmp/open-bugs/pr-body-issue-<n>.md` (`scratchDir` moves it), prints that path in its report,
+  and posts the issue comment that names the branch, the tip sha `git rev-parse` reports, and
+  that path. The keyword is decided, not typed: `Closes #<n>` only when the fixer reported
+  PR-ready and the skeptic kept every claim it tested, `Refs #<n>` for everything else, and it
+  lives in that body file alone - never in a commit subject, never in an issue comment, never on
+  a number this run did not work. If a pull request already exists for the branch, the comment
+  names its number and url, which is the link back onto the issue.
+- **The push and the pull request are the operator's.** `openPr` is off, so a run reports
+  `push and pull request: NOT run - the operator's action` rather than going quiet, and the
+  hand-off agent is told not to push and to print the two commands instead. The checklist for
+  that step, per issue row in the report: read `pr-body:` and open that file, fill the two
+  lines it asks for, then run the printed `git push -u origin fix/<n>-<slug>` and
+  `gh pr create --head fix/<n>-<slug> --body-file <that path>`, both through
+  `env -u GH_TOKEN -u GITHUB_TOKEN`. Passing `openPr: true` hands those two commands to the
+  run's own hand-off agent, and each row then reports what it really did under `pushed:`.
+  Pick by what you have in front of you - `open-bugs` is the discovery half,
   `debug-fix` is the single-symptom half, and `bug-hunt` is the skill an agent follows by hand.
 
 ### Hooks

@@ -210,6 +210,31 @@ Post the reproduction output verbatim, the verdict, and the branch name. "Cannot
 a finding to post with what you ran and what you actually saw, not a fix -- the report stays
 open either way.
 
+### Make the association an artifact, not a sentence
+
+The link between the bug and the fix is a file you write and a path you record, so it survives
+the session. Write the pull-request body to a path outside the repository, name that path in
+the issue comment beside the branch and the tip sha (`git rev-parse <branch>`, not the sha you
+remembered), and read the number back if a pull request already exists for the branch:
+
+    env -u GH_TOKEN -u GITHUB_TOKEN gh pr list --head <branch> --state all --json number,url,state
+
+Post that number onto the issue as a comment from a file. A comment that names the pull request
+is the cross-reference; nothing in this step closes, reopens, or relabels the issue.
+
+### The push and the open are the operator's, so hand over a checklist
+
+Never push or open the pull request on your own. Hand the operator the two commands, with the
+body file already in the second one, and say plainly that you skipped both:
+
+    git push -u origin fix/<n>-<slug>
+    env -u GH_TOKEN -u GITHUB_TOKEN gh pr create --head fix/<n>-<slug> --body-file <path>
+
+The checklist they run: open the body file, fill the two lines it asks for, check the keyword
+line is the one the evidence earns, run both commands, then read the new number back onto the
+issue. Only a run the operator explicitly asked to ship may run those two itself, and then it
+reports whether the push really happened.
+
 ### You are not the maintainer
 
 Never close, reopen, reassign, label, or milestone someone else's issue, and never answer a

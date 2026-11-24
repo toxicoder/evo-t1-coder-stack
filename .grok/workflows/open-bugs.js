@@ -1,12 +1,13 @@
 /**
  * ---
  * name: open-bugs
- * description: Sweep the tracker's open bug issues, triage each one with a read-only explorer that reproduces it, fix the reproducible ones on the swarm lane with a test that is red before the change, post the progress back to each issue with gh, then have one independent skeptic per fix re-run the producer's own command
+ * description: Sweep the tracker's open bug issues, triage each one with a read-only explorer that reproduces it, fix the reproducible ones on the swarm lane with a test that is red before the change, post the progress back to each issue with gh, have one independent skeptic per fix re-run the producer's own command, and leave every fix associated - the pull-request body file written and printed with its Refs or Closes keyword, and the issue comment that names the branch, the tip sha and that path
  * when_to_use: When the bug queue has open issues nobody has picked up and you want the whole sweep done at once - discovery, reproduction, fix, tracker write-back, and an independent review per issue - rather than one hand-run session over a report you already have in front of you.
  * phase: Discover -- Read the open bug-labelled issues off the tracker with gh; an empty queue is a reported outcome, not a failure
  * phase: Triage -- One read-only explorer per candidate on agent-explore reads the body and every comment, reproduces or states why it cannot, and returns a structured verdict
  * phase: Fix -- One writer per reproducible issue on the swarm lane, working that issue number, with the test red first and green after
- * phase: Write back -- Post progress to each issue with gh issue comment and the body in a file, label it in progress, and never close it
+ * phase: Associate -- Write the pull-request body file at a path the run prints and records, with Refs or Closes decided by the skeptic's verdict, and link a pull request that already exists for the branch back onto the issue; the push and the pull request stay the operator's unless openPr is passed
+ * phase: Write back -- Post progress to each issue with gh issue comment and the body in a file, read the labels before adding the in-progress one, and never close it
  * phase: Review -- One skeptic per fix on agent-review re-runs the producer's own command rather than trusting its report
  * ---
  */
@@ -25,6 +26,14 @@ export default async function openBugs(args) {
     ? Math.max(1, Math.floor(Number(args?.limit)))
     : 5;
 
+  // The push and the pull request stay an operator action: this is off unless the caller passes
+  // it, and a run that skips it says so in its report instead of staying quiet about the step.
+  const openPr = ["1", "true", "yes", "on"].includes(String(args?.openPr ?? "").toLowerCase());
+  // The pull-request body is an artifact of the run, so its path is the workflow's, never a
+  // scratch name one child invents: the run asks for that path, prints it, and records it.
+  const scratchDir = String(args?.scratchDir ?? "/tmp/open-bugs").replace(/\/+$/, "");
+  const prBodyPath = (number) => `${scratchDir}/pr-body-issue-${number}.md`;
+
   // The gh prefix is not decoration: the token pair Coder injects at workspace start expires
   // about an hour later and gh consults it directly, so an unprefixed gh call is a 401 waiting
   // to happen mid-fan-out.
@@ -36,6 +45,18 @@ export default async function openBugs(args) {
     `env -u GH_TOKEN -u GITHUB_TOKEN gh issue view ${number} --comments`;
   const commentCommand = (number, file) =>
     `env -u GH_TOKEN -u GITHUB_TOKEN gh issue comment ${number} --body-file ${file}`;
+  // The label is read before it is ever written, so an in-progress label this repository does
+  // not declare stays a reported absence rather than something a run invents on someone's issue.
+  const labelListCommand = "env -u GH_TOKEN -u GITHUB_TOKEN gh label list --json name";
+  const issueLabelsCommand = (number) =>
+    `env -u GH_TOKEN -u GITHUB_TOKEN gh issue view ${number} --json number,title,labels,state`;
+  const prForBranchCommand = (branch) =>
+    `env -u GH_TOKEN -u GITHUB_TOKEN gh pr list --head ${branch} --state all --json number,url,state`;
+  const prViewCommand = (number) =>
+    `env -u GH_TOKEN -u GITHUB_TOKEN gh pr view ${number} --json number,url,state`;
+  const pushCommand = (branch) => `git push -u origin ${branch}`;
+  const prCreateCommand = (branch, file) =>
+    `env -u GH_TOKEN -u GITHUB_TOKEN gh pr create --head ${branch} --title "<one-line summary>" --body-file ${file}`;
 
   // One auth path, and it is a checker with a verdict, not a guess. A HANDOFF line is three
   // clicks a human owes the Coder UI, so it ends the run instead of starting a workaround.
@@ -141,15 +162,23 @@ export default async function openBugs(args) {
           ` - the body never goes in argv, because a multi-line body in a shell argument is ` +
           `mangled. ${
             addLabel
-              ? `Then mark it in progress with ` +
+              ? `Read the labels before you touch one: run ` + cmd(labelListCommand) + ` and ` +
+                cmd(issueLabelsCommand(issue.number)) + ` first, then add the in-progress label with ` +
                 cmd(`env -u GH_TOKEN -u GITHUB_TOKEN gh issue edit ${issue.number} --add-label ${workingLabel}`) +
-                `. If that label does not exist in this repository, report that instead of ` +
-                `creating one: never create, rename, or delete a label. `
+                ` only if both lists already carry ${workingLabel}. The operator running this ` +
+                `workflow asked for the queue to be worked, and that is the whole permission: it ` +
+                `covers that one label on this one issue. If either list does not carry it, report ` +
+                `the absence and post no label at all - never create, rename, or delete a label, ` +
+                `and never add a second one. `
               : ""
           }` +
           `Hard rules: never close, reopen, reassign, or milestone this issue, and never write a ` +
           `closing keyword (Closes #, Fixes #) in the comment - the close belongs to the pull ` +
-          `request and to the human who merges it. Keep every line pure ASCII. Report the comment ` +
+          `request and to the human who merges it. Name only #${issue.number} here; any other issue ` +
+          `is a bare #<n> or a url, never a keyword, because a keyword closes whatever number it ` +
+          `sits on and this run did not open that one. A sentence that answers or asks something of ` +
+          `another person is not yours to send either: hand it back in note as a draft for the ` +
+          `operator. Keep every line pure ASCII. Report the comment ` +
           `url gh printed, or the error it printed. ` + authRule +
           `\n\nBody to post, verbatim:\n\n${body}`,
         {
@@ -173,6 +202,7 @@ export default async function openBugs(args) {
     const row = {
       number: issue.number, url: issue.url, verdict: "unchecked", branch: "(none)",
       commit: "(none)", prReady: "no", posted: "not-posted", review: "not-run",
+      prBody: "(not written)", keyword: "(none)", pr: "none", pushed: "not-pushed",
     };
     const setPosted = (reply) => {
       row.posted = reply.status === "completed" ? (reply.structured?.posted ?? "failed") : "failed";
@@ -256,8 +286,9 @@ export default async function openBugs(args) {
           `Risk: ${triage.structured.risk}\n\n` +
           (acceptance ? `The reporter's acceptance wording, which this run answers to:\n${acceptance}\n\n` : "") +
           `Cut a short-lived branch off the tip of main named fix/${issue.number}-<slug>, and ` +
-          `commit there. Do not push and do not open a pull request - that hand-off belongs to ` +
-          `the parent and the human reviewer. Required: add the test that is red on the pre-fix ` +
+          `commit there. Do not push, do not open a pull request, and do not write a ` +
+          `pull-request body: a separate hand-off agent owns that association. ` +
+          `Required: add the test that is red on the pre-fix ` +
           `tree and green after your fix, in the suite that already covers the area. Run it first ` +
           `and quote the failing output verbatim, then make the smallest change that passes it and ` +
           `quote the passing output verbatim. Keep the diff to exactly what this issue asks: no ` +
@@ -339,18 +370,155 @@ export default async function openBugs(args) {
     row.review = panel.verdict;
     if (panel.verdict === "not-fixed") row.prReady = "no";
 
+    const fence = (text) => "```\n" + (text ?? "(not captured)") + "\n```";
+    const findingLine = (f) => `- [${f.status}] ${f.claim} (${f.evidence})`;
+
+    // The association is the artifact this run owes the tracker, and the keyword is decided by
+    // what the independent skeptic actually kept rather than by how the fix reads: Closes only
+    // when this run settles the report, Refs for everything else. One number can carry it - the
+    // one this run worked - because a keyword closes whatever number it sits on.
+    const settles = row.prReady === "yes" && panel.verdict === "fixed" && !problems.length;
+    const keyword = settles ? `Closes #${issue.number}` : `Refs #${issue.number}`;
+    const bodyPath = prBodyPath(issue.number);
+    row.keyword = keyword;
+    row.prBody = bodyPath;
+
+    const prBody = [
+      `Fix: ${issue.title}`,
+      "",
+      keyword,
+      "",
+      `Answers ${issue.url}. Worked on ${row.branch} at ${row.commit}.`,
+      "",
+      "Reporter's acceptance wording, which this pull request answers to:",
+      acceptance ? `> ${acceptance}` : "(the report carried none)",
+      "",
+      "Reproduction, as an independent read-only agent saw it:",
+      fence(reproBlock),
+      "",
+      `Test that is red before the change and green after it: ` +
+        `${fix.structured?.test_path ?? "(not reported)"}`,
+      "",
+      "Red before the fix:",
+      fence(fix.structured?.red_output),
+      "",
+      "Green after the fix:",
+      fence(fix.structured?.green_output),
+      "",
+      `Independent review: ${panel.verdict}`,
+      ...(problems.length
+        ? ["", "Claims the skeptic did not keep:", ...problems.map(findingLine)]
+        : ["", "The independent skeptic kept every claim it tested."]),
+      "",
+      settles
+        ? "Nothing is owed: this run reproduced the report, fixed it, and the skeptic kept every " +
+          "claim it tested, so this pull request settles the report."
+        : `Still owed, which is why this says ${keyword.split(" ")[0]} and not a close: ` +
+          `${problems.length ? "the claims listed above" : "the independent review did not return fixed"}.`,
+      "",
+      "<Fill in here: the two or three lines of what changed that a reviewer needs. Anything this",
+      "body would answer of the reporter goes to the operator as a draft, not into this pull",
+      "request or into the issue.>",
+    ].join("\n");
+
+    // One agent owns the hand-off: it writes the body where the run said to, reads what the
+    // tracker already holds for the branch, and stops there unless the operator asked for more.
+    const pushStep = openPr
+      ? `The operator passed \`openPr: true\`, so make the hand-off real: run ` +
+        cmd(pushCommand(row.branch)) + `, then ` +
+        cmd(prCreateCommand(row.branch, bodyPath)) + `, then read the result back with ` +
+        cmd(prViewCommand("<that number>")) + ` and report pr as opened with that number and url, ` +
+        `and pushed as pushed.`
+      : `Do not push and do not open the pull request: those two are the operator's. Report pushed ` +
+        `as not-pushed, say in note that \`openPr\` was not passed, and print the two commands the ` +
+        `operator runs so the hand-off is one paste away - ` + cmd(pushCommand(row.branch)) + ` and ` +
+        cmd(prCreateCommand(row.branch, bodyPath)) + `. Never pretend either happened, and never ` +
+        `run either anyway.`;
+
+    const handoff = await host
+      .agent(
+        `Make the fix for open bug issue #${issue.number} ("${issue.title}", ${issue.url}) ` +
+          `associated, so the branch, the sha, and the pull request all point back at the number. ` +
+          `Change no file in the repository, commit nothing, and push nothing.\n\n` +
+          `First write this body verbatim to ${bodyPath}, creating the parent directory if it is ` +
+          `missing, and report that exact path in body_path - it is the artifact this run prints, ` +
+          `so the file has to exist at exactly that path. Its keyword line stands on its own and ` +
+          `is ${keyword}: ${
+            settles
+              ? `this run reproduced the report, fixed it, and the independent skeptic kept every ` +
+                `claim, so this pull request settles it.`
+              : `this run did not settle the report (pr-ready ${row.prReady}, independent review ` +
+                `${panel.verdict}), so the issue stays open and the body says what is still owed.`
+          } Only #${issue.number} may carry a keyword in this body, never a number this run did ` +
+          `not open, and the keyword lives in this file alone - not in a commit subject, not in an ` +
+          `issue comment. Keep every line pure ASCII.\n\n` +
+          `Then read what the tracker already holds, through gh with the env prefix: run ` +
+          cmd(prForBranchCommand(row.branch)) + ` to see whether a pull request already exists for ` +
+          `${row.branch}, and if one does read it back with ` + cmd(prViewCommand("<that number>")) +
+          `. Report pr as exists with that number and url, opened if you created one, or none. Open ` +
+          `nothing and merge nothing unless told to below, and never close, reopen, reassign, ` +
+          `label, or milestone the issue.\n\n` +
+          `Confirm the tip of ${row.branch} with \`git rev-parse ${row.branch}\` and report it as ` +
+          `tip_commit, so the tracker names a sha rather than a word.\n\n` +
+          pushStep + `\n\nBody to write, verbatim:\n\n${prBody}`,
+        {
+          label: `Handoff/issue-${issue.number}`,
+          model: "agent-swarm",
+          schema: {
+            type: "object",
+            required: ["wrote_body", "body_path"],
+            properties: {
+              wrote_body: { type: "string", enum: ["wrote", "failed"] },
+              body_path: { type: "string" },
+              keyword: { type: "string" },
+              tip_commit: { type: "string" },
+              pr: { type: "string", enum: ["exists", "opened", "none", "unknown"] },
+              pr_number: { type: "string" }, pr_url: { type: "string" },
+              pushed: { type: "string", enum: ["pushed", "not-pushed", "failed"] },
+              note: { type: "string" },
+            },
+          },
+        },
+      )
+      .wait();
+
+    const wroteBody = handoff.status === "completed" && handoff.structured?.wrote_body === "wrote";
+    if (!wroteBody) {
+      row.prBody = `${bodyPath} (NOT written: ${handoff.structured?.wrote_body ?? handoff.status})`;
+    }
+    // The branch tip the tracker gets is the one git reports, not the one the fixer remembered.
+    if (handoff.structured?.tip_commit) row.commit = handoff.structured.tip_commit;
+    row.pr = handoff.structured?.pr ?? "unknown";
+    if (handoff.structured?.pr_number) row.pr = `${row.pr} #${handoff.structured.pr_number}`;
+    row.pushed = handoff.structured?.pushed ?? (openPr ? "failed" : "not-pushed");
+
     setPosted(await postBack(
       issue,
       `## Bug hunt: fix attempt for #${issue.number}\n\n` +
-        `Branch: ${row.branch}\nCommit: ${row.commit}\nTest: ${fix.structured?.test_path ?? "(not reported)"}\n` +
+        `Branch: ${row.branch}\nTip commit: ${row.commit}\n` +
+        `Test: ${fix.structured?.test_path ?? "(not reported)"}\n` +
         `PR-ready: ${row.prReady} | Independent review: ${panel.verdict}\n\n` +
         `Red before the fix:\n` + "```\n" + (fix.structured?.red_output ?? "(not captured)") + "\n```\n" +
         `Green after the fix:\n` + "```\n" + (fix.structured?.green_output ?? "(not captured)") + "\n```\n" +
         `Reproduction command: ${triage.structured.command ?? "(not reported)"}\n\n` +
         (problems.length
-          ? `Unchecked or broken claims:\n${problems.map((f) => `- [${f.status}] ${f.claim} (${f.evidence})`).join("\n")}\n\n`
+          ? `Unchecked or broken claims:\n${problems.map(findingLine).join("\n")}\n\n`
           : "The independent skeptic kept every claim it tested.\n\n") +
-        `No pull request is open yet and this comment closes nothing: closing this issue happens ` +
+        `Pull-request body: ${wroteBody ? bodyPath : row.prBody}\n` +
+        `Keyword in that body: ${keyword}\n` +
+        `Pushed: ${row.pushed}\n` +
+        (handoff.structured?.pr_number
+          ? `Pull request: #${handoff.structured.pr_number} ${handoff.structured.pr_url ?? ""} ` +
+            `(${handoff.structured.pr === "opened" ? "opened by this run" : "already open for this " +
+              "branch"}) - this comment is the link back onto the issue.\n`
+          : "Pull request: none is open for this branch yet, so the body file above is the whole " +
+            "association until one is.\n") +
+        (openPr
+          ? `openPr was passed, so this run was told to push and open the pull request itself, and ` +
+            `pushed: above is what its hand-off reported.\n`
+          : `This run pushed nothing and opened nothing: the push and the pull request are the ` +
+            `operator's, with that body file.\n`) +
+        `\nThis comment closes nothing: closing this issue happens ` +
         `on the pull request, at a human merge.`,
     ));
 
@@ -373,6 +541,11 @@ export default async function openBugs(args) {
     `label: ${label}`,
     `open bug issues swept: ${rows.length}`,
     `reproduced: ${reproduced.length}   fixed and PR-ready: ${ready.length}`,
+    openPr
+      ? "push and pull request: openPr was passed, so each hand-off agent was told to run them - " +
+        "read pushed: on every row for what it really did"
+      : "push and pull request: NOT run - the operator's action; pass { openPr: true } to let a " +
+        "run push and open the pull request from the body file it prints",
     "closing is not this workflow's job: every issue stays open for the pull request and the merge",
     "",
   ];
@@ -380,7 +553,8 @@ export default async function openBugs(args) {
     lines.push(
       `- #${row.number} ${row.url} verdict: ${row.verdict} | branch: ${row.branch} | ` +
         `commit: ${row.commit} | pr-ready: ${row.prReady} | posted: ${row.posted} | ` +
-        `review: ${row.review}`,
+        `review: ${row.review} | pr-body: ${row.prBody} | keyword: ${row.keyword} | ` +
+        `pr: ${row.pr} | pushed: ${row.pushed}`,
     );
   }
   return lines.join("\n");
