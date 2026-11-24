@@ -707,6 +707,10 @@ _SUITE_PAYLOAD = {
         "//templates/common:payload",
         "//templates/devcontainer:payload",
         "//templates/workspace:payload",
+        # The suite reads both dotenv samples as data: the shipped TZ line has to be
+        # commented, and an uncommented empty value is the defect the suite pins.
+        "//:env_example",
+        "//:env_sample",
     ],
     "workspace.bats": [
         "//:devcontainer",
