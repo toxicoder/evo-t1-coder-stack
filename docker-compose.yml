@@ -1261,8 +1261,13 @@ services:
       - --collector.filesystem.fs-types-exclude=^(tmpfs|overlay|squashfs|autofs|fuse.*)$$
       # The Arc host card's four evo_t1_host_gpu_* gauges are not collected here:
       # they are written into this directory by host-gpu-sampler below, and this
-      # flag is what makes the exporter parse them. The path is named as the
-      # container sees it, deliberately: --path.rootfs=/host relocates the paths
+      # flag is what makes the exporter parse them. What lands in the directory is
+      # one file named host_gpu.prom plus two dot-prefixed siblings the sampler uses
+      # while it works (.host_gpu.prom.building, and .host_gpu.prom.lock for the
+      # flock that serialises writers), and the collector parses none of those
+      # because it only ever reads *.prom - which is why the lock and the temp are
+      # named that way and not as .prom files. The path is named as the container
+      # sees it, deliberately: --path.rootfs=/host relocates the paths
       # the built-in collectors read, but the textfile collector's own directory
       # is not under that relocation, so /host/textfile would parse a directory
       # that can never hold a file and the card would stay blank with the target
@@ -1270,7 +1275,9 @@ services:
       - --collector.textfile.directory=/textfile
     volumes:
       - /:/host:ro,rslave
-      # The same host directory host-gpu-sampler writes, one service below. Read
+      # The same host directory host-gpu-sampler writes, one service below: exactly
+      # one host_gpu.prom to parse, plus the sampler's dot-prefixed build sibling and
+      # flock path, neither named *.prom and so neither ever parsed here. Read
       # only: this container parses what is there and a collector that could
       # delete a drop file is a collector that can blank the card by itself.
       - /var/lib/node_exporter/textfile_collector:/textfile:ro
@@ -1281,8 +1288,9 @@ services:
       - "127.0.0.1:${OBS_NODE_EXPORTER_PORT:-9101}:9101"
 
   # The writer for the drop directory node_exporter mounts above: without this
-  # service the `evo-t1 host GPU` card on the dashboard queries four series that
-  # nothing produces, and an empty vector is not an error anywhere in the stack.
+  # service the `evo-t1 host GPU busy ratio` card on the dashboard queries four
+  # series that nothing produces, and an empty vector is not an error anywhere in
+  # the stack.
   # It is a sampler, not a server: nothing publishes it and nothing scrapes it.
   host-gpu-sampler:
     # Reused rather than newly pinned: this is the one-shot image
@@ -1304,6 +1312,35 @@ services:
     hostname: host-gpu-sampler
     restart: unless-stopped
     profiles: ["observability"]
+    # A sampler that parks looks exactly like a sampler that works from the
+    # outside: the loop below never exits, so `restart: unless-stopped` has nothing
+    # to notice, `docker ps` says Up, and the dashboard keeps graphing the last
+    # number the probe managed to write. Before the read was bounded, one wedged
+    # intel_gpu_top put the service in exactly that state. The only fact that
+    # distinguishes the two is whether the drop is still advancing, so that is what
+    # this asks: 180s is three of the loop's own 60s intervals, tolerating one
+    # missed sample and failing on a stopped sampler, and start_period covers the
+    # boot before the first sample lands.
+    #
+    # stat and date are both busybox applets in this image; the age is compared in
+    # shell rather than with `find -newermt` because that applet's timestamp parser
+    # is the one thing here not guaranteed to be compiled in. Each `$$` is compose's
+    # escape for a literal `$` - unescaped, every one of them would read as a
+    # compose variable and the check would test nothing.
+    healthcheck:
+      interval: 90s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+      test:
+        - CMD-SHELL
+        - |
+          f=/textfile/host_gpu.prom
+          [ -f "$$f" ] || exit 1
+          now=$$(date +%s)
+          age=$$(( now - $$(stat -c %Y "$$f") ))
+          [ "$$age" -le 180 ] || exit 1
+          exit 0
     # Root, for one reason: the shared drop directory under /var/lib on the host is
     # created by the daemon root-owned 0755, and this image runs as uid 1000, which
     # cannot write it. The probe exits non-zero on an unwritable textfile dir, so
@@ -1338,6 +1375,20 @@ services:
       # The drop this container writes and node_exporter reads, from one seam.
       HOST_GPU_TEXTFILE_DIR: /textfile
       HOST_GPU_STATE_DIR: /var/tmp/evo-t1-host-gpu
+      # HOST_GPU_INTEL_GPU_TOP is deliberately left unset, and that unset is the
+      # opt-in for the measured busy ratio rather than the clock ratio. Setting it
+      # is not enough on its own and none of what it needs is granted here, on
+      # purpose: the host owes intel_gpu_top bind-mounted read-only into this
+      # container at a path that seam names, CAP_PERFMON (CAP_SYS_ADMIN below
+      # kernel 5.8), a seccomp posture that does not errno perf_event_open back, an
+      # AppArmor that leaves unprivileged perf_event alone plus a host
+      # kernel.perf_event_paranoid this container's uid 0 satisfies, and the card's
+      # /dev/dri node. Grant all of it and the probe labels the gauge
+      # source="intel_gpu_top" and the card reads a measured engine percentage;
+      # grant none of it and the probe runs intel_gpu_top, gets nothing, says so on
+      # one warning: line per sample, and publishes the clock ratio as
+      # source="freq_ratio" - never silently, and never as a utilisation. The
+      # operator recipe is in docs/dashboard.md.
     volumes:
       # The probe itself, read-only: it is stack-owned payload, and a container
       # that could edit the script it runs could fake the card.

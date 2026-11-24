@@ -208,13 +208,34 @@ bazelisk test //tests:bats_homepage_config_test
   every group with `hostname`, so `box 1` / `box 2` / `box 3` are positions in Prometheus'
   own sort of that label, not machines. It is the same rule that keeps `SPARKn_HOST` in
   `.env` instead of a `spark-1.lan` literal in a committed file (see the last bullet below)
-- the **evo-t1 host GPU** card reads the four `evo_t1_host_gpu_*` gauges the host sampler
-  (`scripts/lib/probes/host_gpu.sh`) writes into the node_exporter textfile directory:
+- the **evo-t1 host GPU busy ratio** card reads the four `evo_t1_host_gpu_*` gauges the host
+  sampler (`scripts/lib/probes/host_gpu.sh`) writes into the node_exporter textfile directory:
   `evo_t1_host_gpu_utilisation_pct`, `evo_t1_host_gpu_clock_mhz`,
   `evo_t1_host_gpu_power_watts`, `evo_t1_host_gpu_temp_celsius`. The Arc exports no DCGM
-  series, so none of these can ride the fleet queries, and `utilisation` is the row that
-  may honestly stay blank - the sampler reads it from `intel_gpu_top`, which the box may
-  not carry
+  series, so none of these can ride the fleet queries
+- the busy row is a **ratio, not a measured utilisation**, and the card is titled for that.
+  The gauge carries a `source` label with exactly two values. `source="intel_gpu_top"` is
+  the busiest engine percentage, a measured reading. `source="freq_ratio"` is
+  `gt_cur_freq_mhz` over `gt_max_freq_mhz` - the card's own clock against its own ceiling -
+  which reads 100 for an idle GPU pinned at max and reads low for a busy one held down. The
+  shipped sampler container holds no perf permission at all, so `freq_ratio` is what it
+  produces every run; the row prints the label Prometheus reports (`from`), so the reader
+  sees which of the two they are looking at rather than assuming the flattering one
+- the real path is an operator grant, not a compose setting, and `docker-compose.yml`
+  grants none of it: `intel_gpu_top` bind-mounted read-only into the sampler at the path
+  `HOST_GPU_INTEL_GPU_TOP` names (the opt-in, unset by default), `CAP_PERFMON`
+  (`CAP_SYS_ADMIN` below kernel 5.8), a seccomp posture that does not errno
+  `perf_event_open` back, an AppArmor that leaves unprivileged perf_event alone with a host
+  `kernel.perf_event_paranoid` that container's uid satisfies, and the card's `/dev/dri`
+  node. With the grant the gauge flips to `source="intel_gpu_top"` with no change to this
+  file; without it the probe runs the binary, gets nothing, logs one `warning:` naming
+  `perf_event_open`, and publishes the labelled ratio
+- the drop directory carries three names, not one: `host_gpu.prom` and the sampler's two
+  dot-prefixed siblings `.host_gpu.prom.building` and `.host_gpu.prom.lock`. node_exporter
+  parses only `*.prom`, which is why neither helper is named that way. `host-gpu-sampler`
+  ships a healthcheck that goes unhealthy when `host_gpu.prom` stops advancing for more
+  than 180 seconds, because a parked sampler otherwise stays `Up` and the card keeps
+  graphing its last sample
 - that sampler is not a daemon the host has to run: the `host-gpu-sampler` compose
   service, in the same `observability` profile, runs the script every 60 seconds and
   writes `/var/lib/node_exporter/textfile_collector`, which `node_exporter` mounts

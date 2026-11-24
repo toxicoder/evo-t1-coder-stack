@@ -71,7 +71,13 @@ Services:
   define)
 - `host-gpu-sampler` (writes the Arc's four `evo_t1_host_gpu_*` gauges into the
   node_exporter textfile drop directory the host GPU card reads; a sampler, so nothing
-  publishes a port on it and nothing scrapes it)
+  publishes a port on it and nothing scrapes it). Its healthcheck goes unhealthy when
+  the drop stops advancing rather than when the container stops, because the sampling
+  loop never exits. The busy gauge it writes carries `source="freq_ratio"` - the clock
+  over the card's ceiling, not measured utilisation - unless the operator granted the
+  host side `intel_gpu_top` plus `perf_event_open`, which flips it to
+  `source="intel_gpu_top"`; the card says which one you are looking at. Recipe in
+  docs/dashboard.md.
 - `infisical`, `infisical-db`, `infisical-redis`
 
 `node_exporter`, `cadvisor`, `blackbox_exporter`, `alertmanager` and `host-gpu-sampler`

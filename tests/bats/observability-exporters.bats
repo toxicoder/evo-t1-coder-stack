@@ -541,6 +541,37 @@ for arg in service.get("command") or []:
 PY
 }
 
+# compose_health_facts <file> <service> - hc|<key>|<value> per scalar healthcheck key
+# and hc|cmd|<text> per test entry; nothing at all for a service with no healthcheck.
+# The absence is the fact worth having: every exporter image in this bundle ships no
+# shell and no healthcheck, so "watched" is a property one service has and the others
+# do not, and a sampler is the one case where it matters - its loop never exits, so a
+# parked sample is invisible to the restart policy and to `docker ps` alike.
+compose_health_facts() {
+  python3 - "${1}" "${2}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+service = (doc.get("services") or {}).get(sys.argv[2]) or {}
+health = service.get("healthcheck")
+if not isinstance(health, dict):
+    sys.exit(0)
+for key in ("interval", "timeout", "retries", "start_period", "start_interval"):
+    if key in health:
+        print("hc|%s|%s" % (key, health[key]))
+test = health.get("test")
+if isinstance(test, str):
+    print("hc|cmd|%s" % test)
+else:
+    for item in test or []:
+        print("hc|cmd|%s" % item)
+PY
+}
+
 # compose_config_facts <file> - top|<name>|<content> per top-level configs entry, and
 # attach|<service>|<source>|<target>|<mode> per configs[] entry of one service. The two
 # halves of the token seam are ~600 lines apart in this one file and joined by nothing a
@@ -1588,4 +1619,52 @@ LISTEN_CONTRACT=(
   local extra
   extra="$(comm -23 <(printf '%s\n' "${queries}") <(printf '%s\n' "${GPU_METRICS[@]}" | sort))"
   assert_eq "and for nothing the probe does not emit" "" "${extra}"
+}
+
+@test "the host GPU sampler is watched: its healthcheck fails when the drop stops advancing" {
+  local facts joined key value
+  facts="$(compose_health_facts "${COMPOSE}" "${GPU_SAMPLER_SERVICE}")"
+  [[ -n ${facts} ]] ||
+    fail "${GPU_SAMPLER_SERVICE} declares no healthcheck: its loop never exits, so a sampler parked on one wedged read stays Up forever and the card keeps graphing the last sample it wrote"
+  # The CMD-SHELL body is one YAML record that spans many lines, so only its first
+  # line carries the prefix: strip the prefix and keep every line after it.
+  joined="$(printf '%s\n' "${facts}" | sed 's/^hc|cmd|//')"
+  # Naming the file is not enough. A check that only asks whether host_gpu.prom
+  # exists passes for as long as the stale file sits there, which is the exact state
+  # this service reaches by wedging; the question has to be whether it is still
+  # being rewritten.
+  [[ ${joined} == *"${TEXTFILE_CONTAINER_DIR}/host_gpu.prom"* ]] ||
+    fail "the healthcheck does not name the published drop, so it proves nothing about it: ${joined}"
+  [[ ${joined} == *'stat -c %Y'* ]] ||
+    fail "the healthcheck does not read the drop's mtime, so a file that stopped advancing still passes: ${joined}"
+  [[ ${joined} == *'-le '* ]] ||
+    fail "the healthcheck reads the mtime but bounds it against nothing: ${joined}"
+  [[ ${joined} == *'$$'* ]] ||
+    fail "the healthcheck carries bare \$: compose interpolates it and the shell never sees the substitution: ${joined}"
+  for key in interval timeout retries; do
+    value="$(printf '%s\n' "${facts}" | awk -F'|' -v k="${key}" '$2==k{print $3}')"
+    [[ -n ${value} ]] ||
+      fail "the healthcheck sets no ${key}, so one hung probe can hold the container's health open indefinitely"
+  done
+}
+
+@test "the host GPU card is titled for the ratio and shows which source produced the number" {
+  local services all
+  services="${REPO_ROOT}/homepage/config/services.yaml"
+  [[ -f ${services} ]] ||
+    fail "homepage/config/services.yaml is not in this run's tree - it rides //homepage:config, which this suite's _SUITE_PAYLOAD entry in tests/BUILD.bazel has to declare"
+  all="$(<"${services}")"
+  # The gauge has two producers and only one of them measures anything: a busiest
+  # engine percentage, or the current clock over the card's own ceiling. The shipped
+  # sampler container has no perf permission, so the ceiling ratio is what it writes
+  # every run, and a card that called that "util %" would have an operator reading a
+  # GPU idle at its ceiling as a saturated one.
+  [[ ${all} == *'evo-t1 host GPU busy ratio:'* ]] ||
+    fail "the card is not titled for the ratio, so the fallback reads as a measured utilisation"
+  [[ ${all} != *'evo-t1 host GPU:'* ]] ||
+    fail "the old title is still in the file alongside the new one"
+  [[ ${all} == *'max by (source)(evo_t1_host_gpu_utilisation_pct)'* ]] ||
+    fail "the busy query does not group by source, so the label the probe writes is dropped before the card can show it"
+  [[ ${all} == *'field: data.result.0.metric.source'* ]] ||
+    fail "the card never maps the source field, so a reader cannot tell freq_ratio from intel_gpu_top"
 }

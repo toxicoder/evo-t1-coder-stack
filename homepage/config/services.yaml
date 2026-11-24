@@ -405,21 +405,32 @@
     # One widget per gauge rather than one widget with four mappings, because four
     # different metric names are four different series and a widget has one endpoint. The
     # cost is four queries a minute against a Prometheus that also serves Grafana; the
-    # gain is that a gauge nobody is writing blanks only its own row. util is the row
-    # that may honestly stay blank: the sampler reads it from intel_gpu_top, which the
-    # box may not carry.
-    - evo-t1 host GPU:
+    # gain is that a gauge nobody is writing blanks only its own row. The busy row is the
+    # row that has to be titled honestly: it carries a `source` label with two values, and
+    # only one of them measures anything. source="intel_gpu_top" is the busiest engine
+    # percentage, a measured reading. source="freq_ratio" is gt_cur_freq_mhz over
+    # gt_max_freq_mhz - the card's own clock against its own ceiling, which reads 100 for
+    # an idle GPU pinned at max and reads low for a busy one held down - and it is what
+    # the shipped sampler produces, because that container holds no perf permission at
+    # all. The card is named for the ratio rather than for utilisation, the description
+    # says which is which, and the second mapping prints the source label Prometheus
+    # reports, so a reader sees which number they are looking at instead of assuming the
+    # flattering one. A host whose operator granted the perf path shows
+    # source="intel_gpu_top" in that same slot with no file change here.
+    - evo-t1 host GPU busy ratio:
         icon: mdi-chip
         href: "{{HOMEPAGE_VAR_GRAFANA_URL}}/d/evo-host-taskmanager"
-        description: Arc GPU on the stack host - iGPU load, clocks, package watts, temp
+        description: Arc GPU on the stack host - busy is the clock ratio unless from reads intel_gpu_top, plus clocks, package watts, temp
         siteMonitor: http://prometheus:9090/-/healthy
         widgets:
           - type: customapi
-            url: 'http://prometheus:9090/api/v1/query?query=round(max(evo_t1_host_gpu_utilisation_pct),1)'
+            url: 'http://prometheus:9090/api/v1/query?query=round(max by (source)(evo_t1_host_gpu_utilisation_pct),1)'
             refreshInterval: 60000
             mappings:
               - field: data.result.0.value.1
-                label: util %
+                label: busy %
+              - field: data.result.0.metric.source
+                label: from
           - type: customapi
             url: 'http://prometheus:9090/api/v1/query?query=round(max(evo_t1_host_gpu_clock_mhz),1)'
             refreshInterval: 60000
