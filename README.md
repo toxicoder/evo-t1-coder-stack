@@ -1302,8 +1302,8 @@ The guard family under `~/.grok/hooks/` - secret guard, dangerous-command guard 
 `hooks/bin/deny-patterns.txt`, the post-edit formatter, and the selective test runner that
 is off until `EVO_T1_HOOK_TESTS=1` - rides `coder_script "stack_hooks"`.
 
-The two `.grok/workflows/` files added alongside `fleet-verify.js` are
-`implement-reviewed` and `debug-fix`.
+The three `.grok/workflows/` files added alongside `fleet-verify.js` are
+`implement-reviewed`, `debug-fix`, and `open-bugs`.
 
 Detail:
 [docs/grok-build-and-agents.md](docs/grok-build-and-agents.md#the-five-advisor-commands).

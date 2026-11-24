@@ -115,9 +115,9 @@ PY
 
 # ---------------------------------------------------------------------------
 
-@test "workflows: the three named workflows are present" {
+@test "workflows: the four named workflows are present" {
   local name
-  for name in fleet-verify implement-reviewed debug-fix; do
+  for name in fleet-verify implement-reviewed debug-fix open-bugs; do
     assert_file_exists "the ${name} workflow" "${WORKDIR}/${name}.js"
   done
 }
@@ -147,10 +147,10 @@ PY
 }
 
 @test "workflows: the skeptic phase runs on agent-review" {
-  # The whole point of these two is the independent pass. A workflow that quietly drops
+  # The whole point of these three is the independent pass. A workflow that quietly drops
   # it would still run, and the change would land unreviewed.
   local name
-  for name in implement-reviewed debug-fix; do
+  for name in implement-reviewed debug-fix open-bugs; do
     grep -q 'agent-review' "${WORKDIR}/${name}.js" || {
       printf 'FAIL: %s.js names no agent-review pass, so its result is self-graded\n' "${name}" >&2; return 1; }
   done
@@ -158,7 +158,7 @@ PY
 
 @test "workflows: the read-only mapping runs on agent-explore" {
   local name
-  for name in implement-reviewed debug-fix; do
+  for name in implement-reviewed debug-fix open-bugs; do
     grep -q 'agent-explore' "${WORKDIR}/${name}.js" || {
       printf 'FAIL: %s.js maps nothing on the explore lane, so the reads ride a full-depth stream\n' "${name}" >&2; return 1; }
   done

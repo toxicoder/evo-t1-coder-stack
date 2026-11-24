@@ -1336,7 +1336,7 @@ procedure an agent follows by hand: **Map** puts two read-only explorers on `age
 aliases in `litellm/config.yaml`, so `grok inspect` is the check after an alias edit - a name
 the catalog no longer carries fails the run rather than degrading it.
 
-Two more sit beside it in the same directory, invocable by name under the same rule that every
+Three more sit beside it in the same directory, invocable by name under the same rule that every
 id in them is a local alias:
 
 - `implement-reviewed` (`{ goal, question, verify }`) is `fleet-verify` with the repair round
@@ -1349,6 +1349,18 @@ id in them is a local alias:
   hypotheses (one bisecting when a known-good ref is given), one writer on `agent-swarm` lands
   the fix with the test that is red before the change and green after, and a skeptic on
   `agent-review` re-runs both runs.
+- `open-bugs` (`{ issue, label, labelInProgress, limit }`) is the queue shape: **Discover**
+  reads the open `bug`-labelled issues off the tracker with gh on `agent-explore` (an empty
+  queue is a reported outcome, not a failure), **Triage** puts one read-only explorer per
+  candidate on that lane to reproduce the report or say what it saw instead, **Fix** puts one
+  writer per reproducible issue on `agent-swarm` with the test red before the change and green
+  after, and **Review** puts a skeptic per fix on `agent-review` that re-runs the producer's own
+  command. The issues go out as one wave and each runs its phases in order. **Write back** posts
+  every outcome through one seam that keeps both tracker rules - `gh issue comment <n>
+  --body-file`, the body never in argv, and the issue labelled in progress - and it never closes
+  an issue, opens a pull request, or pushes: the close belongs to the pull request and the human
+  who merges. Pick by what you have in front of you - `open-bugs` is the discovery half,
+  `debug-fix` is the single-symptom half, and `bug-hunt` is the skill an agent follows by hand.
 
 ### Hooks
 
