@@ -284,11 +284,11 @@ data "coder_parameter" "vscode_color_theme" {
 # preset never silently picks a Grok profile or a model for the person clicking it.
 data "coder_workspace_preset" "devcontainer_default" {
   name        = "Devcontainer default"
-  description = "Clone the template's default repository and start its .devcontainer/devcontainer.json on the DinD sidecar."
+  description = "Build the dev container of the repository you name, on the DinD sidecar. No repository is preselected."
   default     = true
 
   parameters = {
-    (data.coder_parameter.repo_url.name) = var.repo_url
+    (data.coder_parameter.use_devcontainer.name) = "true"
   }
 }
 
@@ -296,11 +296,10 @@ data "coder_workspace_preset" "devcontainer_default" {
 # own (and for anyone who wants the editor on the plain container regardless).
 data "coder_workspace_preset" "plain_clone" {
   name        = "Plain clone"
-  description = "Clone the default repository and open the editor on it in the plain workspace container; no dev container build."
+  description = "Open the editor on the repository you name in the plain workspace container; no dev container build. No repository is preselected."
   default     = false
 
   parameters = {
-    (data.coder_parameter.repo_url.name)         = var.repo_url
     (data.coder_parameter.use_devcontainer.name) = "false"
   }
 }

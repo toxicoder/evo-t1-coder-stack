@@ -714,6 +714,9 @@ _SUITE_PAYLOAD = {
     ],
     "workspace.bats": [
         "//:devcontainer",
+        # The suite renders the clone stage out of the startup template and executes it
+        # against a logging git stub, so it reads both twins, not just the container tree.
+        "//:templates_payload",
     ],
 }
 

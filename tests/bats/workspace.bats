@@ -283,6 +283,25 @@ source_libs() {
   assert_match "bare clone" 'clone --quiet --depth 1 --no-checkout' "$(stub_log git)"
 }
 
+@test "new-workspace.sh: a named repo is always passed as repo_url and clones to the documented path" {
+  # Both coder.tf twins default repo_url to the empty string, so this CLI is the
+  # only thing that names the repository for a create made here: drop the
+  # parameter and the workspace boots on /home/coder with no clone at all. The
+  # two templates document their own target (docs/coder-templates.md:1059) and
+  # the leaf keeps the case git clones into.
+  export STUB_GIT_TREE_OUT=".devcontainer/devcontainer.json"
+  run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run https://github.com/foo/ImageSharp.git
+  [ "${status}" -eq 0 ]
+  assert_match "repo_url parameter" 'parameter repo_url=https://github\.com/foo/ImageSharp\.git' "${output}"
+  assert_match "devcontainer clone path" '/srv/coder-devcontainers/<workspace-id>/ImageSharp' "${output}"
+
+  export STUB_GIT_TREE_OUT="README.md"
+  run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run https://github.com/foo/ImageSharp.git
+  [ "${status}" -eq 0 ]
+  assert_match "repo_url parameter" 'parameter repo_url=https://github\.com/foo/ImageSharp\.git' "${output}"
+  assert_match "workspace clone path" '/home/coder/workspace/ImageSharp' "${output}"
+}
+
 @test "new-workspace.sh: --additional-repos with no value of its own is an error" {
   export STUB_GIT_TREE_OUT="README.md"
   run --separate-stderr bash "${REPO_ROOT}/scripts/new-workspace.sh" --dry-run \
@@ -291,5 +310,46 @@ source_libs() {
   # `die` reports on stderr (scripts/lib/common.sh), and `run --separate-stderr`
   # keeps stderr out of $output — so the error text is read from $stderr here.
   assert_match "usage" 'needs one or more git URLs' "${stderr}"
+  [ "$(stub_log_count git)" -eq 0 ]
+}
+
+@test "startup render: an empty repository name performs no git clone" {
+  # Both coder.tf twins default repo_url to "", so the create form starts blank
+  # and that empty field is what a fresh workspace actually boots on. Drive the
+  # clone stage instead of reading it: render it the way templatefile() would
+  # (the primary if closes at column 0, so the first unindented fi ends the
+  # slice), hand it the suite's logging git, and count what git saw. The two
+  # run_clone lines prove the slice carries both clones, so the zero below
+  # answers the empty-field guard rather than an empty render. The additional
+  # list is nested inside that guard, so it stays uncloned too.
+  local tpl stage runner
+  tpl="${REPO_ROOT}/templates/workspace/startup.sh.tftpl"
+  [[ -f ${tpl} ]] || skip "workspace startup template is absent"
+  stage="${BATS_TEST_TMPDIR}/clone-stage.sh"
+  # shellcheck disable=SC2016
+  awk -v url='' -v extra='https://github.com/foo/lib.git' '
+    index($0, "repo_url_raw=\"$(cat <<") == 1 { on = 1 }
+    on && $0 == "${repo_url}" { print url; next }
+    on && $0 == "${additional_repos}" { print extra; next }
+    on { print }
+    on && $0 == "fi" { exit }
+  ' "${tpl}" >"${stage}"
+  [[ -s ${stage} ]] || { echo "${tpl}: the render produced nothing" >&2; return 1; }
+  # grep -F, not assert_contains_file: the pattern carries a literal "$repo_url_raw"
+  # and that helper hands its needle to grep as a regular expression.
+  run grep -F 'run_clone clone -- "$repo_url_raw" "$target"' "${stage}"
+  [ "${status}" -eq 0 ]
+  run grep -F 'run_clone clone -- "$extra_url" "$extra_target"' "${stage}"
+  [ "${status}" -eq 0 ]
+
+  # The boot helpers and set -u live above this slice in the real script; the
+  # no-ops stand in so the stage runs alone.
+  runner="${BATS_TEST_TMPDIR}/clone-stage-run.sh"
+  {
+    printf '%s\n' 'set -u' 'boot_phase() { :; }' 'boot_ok() { :; }' \
+      'boot_note() { :; }' 'boot_err() { :; }' 'notes_materialize() { :; }'
+    cat "${stage}"
+  } >"${runner}"
+  PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" bash "${runner}"
   [ "$(stub_log_count git)" -eq 0 ]
 }
