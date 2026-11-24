@@ -299,6 +299,146 @@
         description: Secrets manager - source of record for the managed credential keys
         siteMonitor: http://infisical:8080/
 
+    # Both GPU cards talk to the Prometheus HTTP API over the compose network, and both
+    # badge on Prometheus itself rather than on a GPU endpoint: the whole bundle sits
+    # behind one flag (OBSERVABILITY_ENABLED, see README "Observability"), so with the
+    # profile off there is no querier to answer and each card reads DOWN together with a
+    # stack that was never asked to run it - the same honest signal the Observability
+    # band gives, for the same reason. A metric the sampler never wrote is a different
+    # answer: the query succeeds with an empty vector, so that row stays blank while the
+    # badge still says UP, which is how "Prometheus is up, the sampler is not" separates
+    # itself from "the bundle is off".
+    #
+    # No box is named here, and that is load-bearing. The fleet target list is generated
+    # on the host by //scripts:spark-monitor into observability/spark-targets/sparks.json
+    # (nothing committed names a box - see the header of
+    # observability/prometheus/rules/spark.rules.yml), and that generator stamps every
+    # group with `hostname`. So each band below is one PromQL over the whole fleet, and
+    # "box 1/2/3" is a position in Prometheus' own sort of that stamped label, not a
+    # machine name: box 1 is the alphabetically first reporting hostname. The per-band
+    # count row is what says whether the three rows line up with three boxes at all -
+    # fewer reporting shifts the rows up, and a DCGM exporter that died on one box shows
+    # up as a short band in just the metrics that exporter field feeds.
+    #
+    # Each band is one widget because one widget is one endpoint, and the four DCGM
+    # fields come from four queries; the count row is the same response reduced with
+    # `format: size` rather than a fifth query. PromQL is written without spaces so the
+    # query string needs no percent-encoding on its way to /api/v1/query.
+    - Spark fleet GPU:
+        icon: mdi-gpu
+        href: "{{HOMEPAGE_VAR_GRAFANA_URL}}/d/evo-sparks-fleet"
+        description: DGX Spark fleet - DCGM util, VRAM, temp and watts per box
+        siteMonitor: http://prometheus:9090/-/healthy
+        widgets:
+          # DCGM_FI_DEV_GPU_UTIL is the percentage of time the GPU had kernels running,
+          # which on these boxes is the "is a stream on this Spark" read. Averaged over
+          # the GPUs a box reports; round(x, 1) keeps the float noise out of the tile.
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=avg by(hostname)(round(DCGM_FI_DEV_GPU_UTIL,1))'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result
+                label: util boxes
+                format: size
+              - field: data.result.0.value.1
+                label: util box 1 %
+              - field: data.result.1.value.1
+                label: util box 2 %
+              - field: data.result.2.value.1
+                label: util box 3 %
+          # FB_USED is MiB of frame buffer in use (DCGM pairs it with FB_FREE; the fill
+          # ratio the Grafana fleet board shows is recorded from both in spark.rules.yml).
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=sum by(hostname)(DCGM_FI_DEV_FB_USED)'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result
+                label: vram boxes
+                format: size
+              - field: data.result.0.value.1
+                label: vram box 1 MiB
+              - field: data.result.1.value.1
+                label: vram box 2 MiB
+              - field: data.result.2.value.1
+                label: vram box 3 MiB
+          # Max, not avg: one hot GPU on a box is the thing that throttles that box's
+          # clocks, and 95 C is the slowdown point the headroom rules measure against.
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=max by(hostname)(round(DCGM_FI_DEV_GPU_TEMP,1))'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result
+                label: temp boxes
+                format: size
+              - field: data.result.0.value.1
+                label: temp box 1 C
+              - field: data.result.1.value.1
+                label: temp box 2 C
+              - field: data.result.2.value.1
+                label: temp box 3 C
+          # Summed over the GPUs: a box pulling its full package budget while the fleet
+          # util stays low is the idle-but-powered state spark-verify is asked about.
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=sum by(hostname)(round(DCGM_FI_DEV_POWER_USAGE,1))'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result
+                label: watts boxes
+                format: size
+              - field: data.result.0.value.1
+                label: watts box 1 W
+              - field: data.result.1.value.1
+                label: watts box 2 W
+              - field: data.result.2.value.1
+                label: watts box 3 W
+
+    # The Arc's own GPU: the Sparks' DCGM series answer nothing here, so this card reads
+    # the four `evo_t1_host_gpu_*` gauges the host sampler writes (scripts/lib/probes/
+    # host_gpu.sh) into the directory node_exporter collects with its textfile collector.
+    # The badge is Prometheus again, and for a different reason than the fleet card above:
+    # node_exporter is a compose service in the same profile, but the exporter images ship
+    # no healthcheck and no shell (see the exporter band header in docker-compose.yml), so
+    # there is no endpoint of its own to badge on, while this card's rows come from
+    # Prometheus - which is the dependency the badge has to prove. With the profile off
+    # neither runs and the card reads DOWN with them.
+    #
+    # One widget per gauge rather than one widget with four mappings, because four
+    # different metric names are four different series and a widget has one endpoint. The
+    # cost is four queries a minute against a Prometheus that also serves Grafana; the
+    # gain is that a gauge nobody is writing blanks only its own row. util is the row
+    # that may honestly stay blank: the sampler reads it from intel_gpu_top, which the
+    # box may not carry.
+    - evo-t1 host GPU:
+        icon: mdi-chip
+        href: "{{HOMEPAGE_VAR_GRAFANA_URL}}/d/evo-host-taskmanager"
+        description: Arc GPU on the stack host - iGPU load, clocks, package watts, temp
+        siteMonitor: http://prometheus:9090/-/healthy
+        widgets:
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=round(max(evo_t1_host_gpu_utilisation_pct),1)'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result.0.value.1
+                label: util %
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=round(max(evo_t1_host_gpu_clock_mhz),1)'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result.0.value.1
+                label: clock MHz
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=round(sum(evo_t1_host_gpu_power_watts),1)'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result.0.value.1
+                label: package W
+          - type: customapi
+            url: 'http://prometheus:9090/api/v1/query?query=round(max(evo_t1_host_gpu_temp_celsius),1)'
+            refreshInterval: 60000
+            mappings:
+              - field: data.result.0.value.1
+                label: hot spot C
+
 - Observability:
     # The whole bundle is one flag (OBSERVABILITY_ENABLED, see README "Observability"):
     # off, compose brings up none of these containers, and all five cards read `down`

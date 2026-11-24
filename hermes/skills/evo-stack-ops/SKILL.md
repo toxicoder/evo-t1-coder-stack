@@ -69,11 +69,14 @@ Services:
   network)
 - `alertmanager` (deduplication, grouping and silencing of the alerts the rule files
   define)
+- `host-gpu-sampler` (writes the Arc's four `evo_t1_host_gpu_*` gauges into the
+  node_exporter textfile drop directory the host GPU card reads; a sampler, so nothing
+  publishes a port on it and nothing scrapes it)
 - `infisical`, `infisical-db`, `infisical-redis`
 
-`node_exporter`, `cadvisor`, `blackbox_exporter` and `alertmanager` sit behind the
-observability compose profile and publish on the host's loopback only, so reaching them
-is a host-shell act, not a workspace one.
+`node_exporter`, `cadvisor`, `blackbox_exporter`, `alertmanager` and `host-gpu-sampler`
+sit behind the observability compose profile and publish on the host's loopback only or
+on no port at all, so reaching them is a host-shell act, not a workspace one.
 
 ### The Spark boxes
 

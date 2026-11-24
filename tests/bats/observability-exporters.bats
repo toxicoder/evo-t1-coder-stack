@@ -103,6 +103,32 @@ LITELLM_TOKEN_CONTENT='${LITELLM_MASTER_KEY:-change-me-litellm}'
 GRAFANA_OVERRIDES_CONTAINER_PATH="/etc/grafana/stack-overrides.yml"
 GRAFANA_OVERRIDES_SOURCE="observability/grafana/unified-storage/overrides.yml"
 
+# The host-GPU drop, as one contract stated in two service blocks. The Arc box runs
+# no DCGM exporter, so its four gauges come from scripts/lib/probes/host_gpu.sh
+# writing one .prom file that node_exporter's textfile collector parses. Nothing
+# joins the writer to the reader but these strings, and both failure shapes are
+# silent: a flag aimed at a directory no container mounts, or a mount nobody writes,
+# each leave a target reporting `up` while the homepage card renders empty rows.
+GPU_SAMPLER_SERVICE="host-gpu-sampler"
+TEXTFILE_HOST_DIR="/var/lib/node_exporter/textfile_collector"
+TEXTFILE_CONTAINER_DIR="/textfile"
+GPU_PROBE_SOURCE="./scripts/lib/probes"
+GPU_PROBE_DEST="/probe"
+# The image the sampler reuses. It is the one-shot container
+# scripts/observability-check.sh already dials (:454, :1038), so the bundle gains no
+# new pull, and it is busybox-based, which is what puts /bin/sh and awk under the
+# probe. A running `docker compose up` on the host is the only true proof of that.
+GPU_SAMPLER_IMAGE="curlimages/curl:8.10.1"
+# The gauges the probe emits, one unlabeled series each, and the names the homepage
+# card and docs/dashboard.md query. The producer is the seam, so a name here is
+# pinned against the card rather than the card being free to invent one.
+GPU_METRICS=(
+  evo_t1_host_gpu_clock_mhz
+  evo_t1_host_gpu_utilisation_pct
+  evo_t1_host_gpu_power_watts
+  evo_t1_host_gpu_temp_celsius
+)
+
 # Keys Prometheus v3.16.0 decodes in an alerting.alertmanagers[] entry. Derived by
 # planting each candidate at that level and asking promtool on the pinned image, so it
 # is the decoder's own answer rather than a reading of config/config.go: accepted are
@@ -426,7 +452,11 @@ PY
 }
 
 # compose_mount_facts <file> <service> - mount|<source>|<dest>|<mode> per host-path
-# bind of one service, plus confdir|<dir> for the directory --config.file= sits in.
+# bind of one service, plus confdir|<dir> for the directory --config.file= sits in,
+# plus textdir|<dir> for the directory --collector.textfile.directory= parses. Both
+# extra lines exist for the same reason: a flag that names a path only a bind can
+# make real is unreadable from the flag alone, and the two halves live in different
+# keys of the same service block.
 # Only a source with no slash at all is a named volume (prometheus-data) and skipped;
 # relative, absolute and variable-rooted host paths all stay in, so an absolute source
 # cannot slip out of the nesting check. The nesting question is the load-bearing one:
@@ -465,6 +495,49 @@ for arg in service.get("command") or []:
     match = re.match(r"^--config\.file=(.+)$", str(arg))
     if match:
         print("confdir|%s" % os.path.dirname(match.group(1)))
+    match = re.match(r"^--collector\.textfile\.directory=(.+)$", str(arg))
+    if match:
+        print("textdir|%s" % match.group(1))
+    match = re.match(r"^--path\.rootfs=(.+)$", str(arg))
+    if match:
+        print("rootfs|%s" % match.group(1))
+PY
+}
+
+# compose_service_facts <file> <service> - image|<image>, profile|<p> per profile,
+# logtag|<tag>, entry|<item> per entrypoint item, and cmd|<item> per command item.
+# These four decide whether a container can do the job its own service block claims:
+# the image is what supplies sh and awk to a shell probe, the profile is what keeps a
+# sampler off a bundle the operator never asked for, the tag is the only name it has
+# in Loki, and the entrypoint is what stands between a shell loop and the image's own
+# argv. The command items come back whole, newlines included, so they are matched
+# rather than read field by field.
+compose_service_facts() {
+  python3 - "${1}" "${2}" <<'PY'
+import sys
+
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    doc = yaml.safe_load(handle) or {}
+
+service = (doc.get("services") or {}).get(sys.argv[2])
+if not isinstance(service, dict):
+    sys.exit(0)
+print("image|%s" % (service.get("image") or ""))
+for profile in service.get("profiles") or []:
+    print("profile|%s" % profile)
+logging = service.get("logging")
+options = logging.get("options") if isinstance(logging, dict) else None
+tag = str(options.get("tag") or "") if isinstance(options, dict) else ""
+print("logtag|%s" % tag)
+entrypoint = service.get("entrypoint")
+if isinstance(entrypoint, str):
+    entrypoint = entrypoint.split()
+for item in entrypoint or []:
+    print("entry|%s" % item)
+for arg in service.get("command") or []:
+    print("cmd|%s" % arg)
 PY
 }
 
@@ -1357,4 +1430,162 @@ LISTEN_CONTRACT=(
   # had been renamed or dropped would satisfy the absence above by carrying nothing.
   printf '%s\n' "${facts}" | grep -qx 'map|litellm_settings' ||
     fail "litellm/config.yaml carries no litellm_settings: mapping, so it is not the shape that switch would live under"
+}
+
+# The host GPU drop. These four gauges are the only host-tier series no exporter
+# collects: the Arc box runs no DCGM, so scripts/lib/probes/host_gpu.sh writes them
+# into a directory node_exporter parses. Two service blocks have to agree on that
+# directory and nothing joins them but the strings in this file - a flag aimed at a
+# path no container mounts, a mount nobody writes, or a sampler left off the profile
+# each leave the target reporting `up` while the dashboard's card renders blank rows.
+
+@test "node_exporter enables the textfile collector and mounts it read-only" {
+  local mounts dirs rootfs src dest mode findings="" found=0
+  mounts="$(compose_mount_facts "${COMPOSE}" node_exporter)"
+  [[ -n ${mounts} ]] ||
+    fail "the node_exporter service declares no bind, so this proved nothing"
+  dirs="$(printf '%s\n' "${mounts}" | awk -F'|' '$1=="textdir"{print $2}' | sort -u)"
+  assert_eq "the textfile collector is switched on at the container-side path" \
+    "${TEXTFILE_CONTAINER_DIR}" "${dirs}"
+  # The flag's value is the trap, and it is invisible from the flag alone:
+  # --path.rootfs=/host relocates the paths the built-in collectors read, but the
+  # textfile collector is not one of them, so a /host-prefixed directory parses
+  # nothing at all. The scrape stays green either way.
+  rootfs="$(printf '%s\n' "${mounts}" | awk -F'|' '$1=="rootfs"{print $2}')"
+  [[ -n ${rootfs} ]] ||
+    fail "node_exporter sets no --path.rootfs, so the read-only bind of / above has no consumer"
+  [[ ${TEXTFILE_CONTAINER_DIR} != "${rootfs}"/* ]] ||
+    fail "the textfile directory sits under --path.rootfs=${rootfs}, which the textfile collector does not relocate"
+  while IFS='|' read -r _ src dest mode; do
+    [[ ${dest} == "${TEXTFILE_CONTAINER_DIR}" ]] || continue
+    found=1
+    [[ ${src} == "${TEXTFILE_HOST_DIR}" ]] ||
+      findings+="the exporter parses ${dest} from ${src}, not the sampler's ${TEXTFILE_HOST_DIR}; "
+    [[ ${mode} == ro ]] ||
+      findings+="${src} is mounted ${mode}; the collector only ever parses a drop another container wrote; "
+  done <<<"${mounts}"
+  [[ ${found} -eq 1 ]] ||
+    fail "nothing mounts ${TEXTFILE_CONTAINER_DIR} into node_exporter, so the collector parses an empty in-container directory"
+  assert_eq "the exporter reads the sampler's host directory and cannot write it" "" "${findings}"
+}
+
+@test "the host GPU sampler is on the observability profile and loops the probe" {
+  local facts image profiles entry
+  facts="$(compose_service_facts "${COMPOSE}" "${GPU_SAMPLER_SERVICE}")"
+  [[ -n ${facts} ]] ||
+    fail "no ${GPU_SAMPLER_SERVICE} service in docker-compose.yml, so nothing writes the four evo_t1_host_gpu_* gauges the dashboard card queries"
+  image="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="image"{print $2}')"
+  # Reuse is the requirement, not a preference: a new image is a new pull on a box
+  # whose disk also holds model weights, and this one is already in the bundle.
+  [[ ${image} == "${GPU_SAMPLER_IMAGE}" ]] ||
+    fail "${GPU_SAMPLER_SERVICE} runs on ${image:-nothing}; ${GPU_SAMPLER_IMAGE} is the image scripts/observability-check.sh already dials and the only one whose sh and awk the probe is meant to run under"
+  profiles="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="profile"{print $2}')"
+  [[ " ${profiles} " == *" observability "* ]] ||
+    fail "${GPU_SAMPLER_SERVICE} is not on the observability profile: a sampler off it samples on every boot of a box that asked for no metrics bundle"
+  entry="$(printf '%s\n' "${facts}" | awk -F'|' '$1=="entry"{print $2}' | paste -sd' ' -)"
+  [[ ${entry} == */bin/sh* ]] ||
+    fail "${GPU_SAMPLER_SERVICE} execs ${entry:-nothing}, not /bin/sh, so the probe script never runs"
+  assert_match "it runs the probe this tree ships, by its container path" \
+    'sh /probe/host_gpu\.sh' "${facts}"
+  assert_match "and repeats, because a sampler that exits after one sample leaves the scrape serving that number until the container is recreated" \
+    'sleep ' "${facts}"
+  assert_eq "and it carries a log tag of its own, which is the only name Loki knows it by" \
+    "${GPU_SAMPLER_SERVICE}" "$(printf '%s\n' "${facts}" | awk -F'|' '$1=="logtag"{print $2}')"
+}
+
+@test "the sampler mounts the probe, the host it measures, and the drop it writes" {
+  local mounts env src dest mode seam value inside d findings=""
+  local -a dests=()
+  mounts="$(compose_mount_facts "${COMPOSE}" "${GPU_SAMPLER_SERVICE}")"
+  [[ -n ${mounts} ]] ||
+    fail "${GPU_SAMPLER_SERVICE} declares no bind, so it can reach neither the probe nor the machine"
+  while IFS='|' read -r _ src dest mode; do
+    case ${dest} in
+      "${GPU_PROBE_DEST}")
+        [[ ${src} == "${GPU_PROBE_SOURCE}" ]] ||
+          findings+="${dest} comes from ${src}, not ${GPU_PROBE_SOURCE}; "
+        [[ ${mode} == ro ]] ||
+          findings+="the probe is mounted ${mode}; it is stack-owned payload and this container must not be able to edit what it runs; "
+        ;;
+      /host/sys|/host/proc)
+        [[ ${mode} == ro || ${mode} == ro,* ]] ||
+          findings+="${dest} is mounted ${mode}; the host tree is read, never written, from here; "
+        ;;
+      "${TEXTFILE_CONTAINER_DIR}")
+        [[ ${src} == "${TEXTFILE_HOST_DIR}" ]] ||
+          findings+="${dest} comes from ${src}, not ${TEXTFILE_HOST_DIR}; "
+        [[ ${mode} == rw ]] ||
+          findings+="the drop is mounted ${mode} for its only writer, so every sample fails; "
+        ;;
+    esac
+  done <<<"${mounts}"
+  # Each of the three has to appear: an absent mount is the same empty card as a
+  # wrong one, and the loop above cannot tell those apart on its own.
+  for dest in "${GPU_PROBE_DEST}" /host/sys /host/proc "${TEXTFILE_CONTAINER_DIR}"; do
+    [[ ${mounts} == *"mount|"*"|${dest}|"* ]] ||
+      findings+="${GPU_SAMPLER_SERVICE} declares no bind on ${dest}; "
+  done
+  assert_eq "the probe, the host's /sys and /proc, and the drop are all bound" "" "${findings}"
+
+  # A seam that names a path no bind delivers is the quieter version of the same bug:
+  # the probe starts, finds the container's own two-process /sys, and warns its way to
+  # an empty file. So every seam is checked against the bind set rather than against
+  # the compose author's intent.
+  env="$(compose_env_facts "${COMPOSE}" "${GPU_SAMPLER_SERVICE}")"
+  mapfile -t dests < <(printf '%s\n' "${mounts}" | awk -F'|' '$1=="mount"{print $3}')
+  findings=""
+  for seam in HOST_GPU_SYSFS_ROOT HOST_GPU_UPTIME_FILE HOST_GPU_TEXTFILE_DIR HOST_GPU_STATE_DIR; do
+    value="$(printf '%s\n' "${env}" | awk -F'|' -v k="${seam}" '$1=="env" && $2==k{print $3}')"
+    [[ -n ${value} ]] || {
+      findings+="${seam} is unset, so the probe reads this container's own path; "
+      continue
+    }
+    inside=0
+    for d in "${dests[@]}"; do
+      [[ ${value} == "${d}" || ${value} == "${d}"/* ]] && inside=1
+    done
+    [[ ${inside} -eq 1 ]] ||
+      findings+="${seam}=${value} is outside every bind ${GPU_SAMPLER_SERVICE} declares; "
+  done
+  assert_eq "every probe seam points inside a mount, not at the container's own /sys or /proc" \
+    "" "${findings}"
+}
+
+@test "the sampler's write mount and the exporter's read mount are one host directory" {
+  # The pairing is the feature. Each side is valid on its own, compose starts, the
+  # target stays up, and the card is empty forever, because the writer dropped its
+  # file somewhere the reader was never told about.
+  local sampler_writes="" exporter_reads="" src dest mode
+  while IFS='|' read -r _ src dest mode; do
+    [[ ${dest} == "${TEXTFILE_CONTAINER_DIR}" && ${mode} == rw ]] && sampler_writes="${src}"
+  done < <(compose_mount_facts "${COMPOSE}" "${GPU_SAMPLER_SERVICE}")
+  while IFS='|' read -r _ src dest mode; do
+    [[ ${dest} == "${TEXTFILE_CONTAINER_DIR}" && ${mode} == ro ]] && exporter_reads="${src}"
+  done < <(compose_mount_facts "${COMPOSE}" node_exporter)
+  [[ -n ${sampler_writes} ]] ||
+    fail "${GPU_SAMPLER_SERVICE} mounts no writable ${TEXTFILE_CONTAINER_DIR}, so nothing writes the drop"
+  [[ -n ${exporter_reads} ]] ||
+    fail "node_exporter mounts no read-only ${TEXTFILE_CONTAINER_DIR}, so nothing parses the drop"
+  assert_eq "the directory the sampler writes is the directory the exporter parses" \
+    "${exporter_reads}" "${sampler_writes}"
+  assert_eq "and that directory is the pinned host path, not a container-local one" \
+    "${TEXTFILE_HOST_DIR}" "${sampler_writes}"
+}
+
+@test "the dashboard card queries the four names the probe emits" {
+  local services queries missing="" metric
+  services="${REPO_ROOT}/homepage/config/services.yaml"
+  [[ -f ${services} ]] ||
+    fail "homepage/config/services.yaml is not in this run's tree - it rides //homepage:config, which this suite's _SUITE_PAYLOAD entry in tests/BUILD.bazel has to declare"
+  queries="$(grep -o 'evo_t1_host_gpu_[a-z][a-z_]*' "${services}" | sort -u)"
+  [[ -n ${queries} ]] || fail "no evo_t1_host_gpu_* query survives in the card, so the card reads nothing"
+  for metric in "${GPU_METRICS[@]}"; do
+    printf '%s\n' "${queries}" | grep -qx "${metric}" || missing+="${metric}; "
+  done
+  assert_eq "the card asks for each gauge scripts/lib/probes/host_gpu.sh emits, by name" "" "${missing}"
+  # The other direction matters as much: a query left on a renamed gauge is a blank
+  # row no gate notices, because an empty vector is a successful response.
+  local extra
+  extra="$(comm -23 <(printf '%s\n' "${queries}") <(printf '%s\n' "${GPU_METRICS[@]}" | sort))"
+  assert_eq "and for nothing the probe does not emit" "" "${extra}"
 }

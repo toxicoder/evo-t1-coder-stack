@@ -1259,13 +1259,102 @@ services:
       # it here keeps the fix in one place rather than in every dashboard query.
       - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|run|var/lib/docker/overlay2)($$|/)
       - --collector.filesystem.fs-types-exclude=^(tmpfs|overlay|squashfs|autofs|fuse.*)$$
+      # The Arc host card's four evo_t1_host_gpu_* gauges are not collected here:
+      # they are written into this directory by host-gpu-sampler below, and this
+      # flag is what makes the exporter parse them. The path is named as the
+      # container sees it, deliberately: --path.rootfs=/host relocates the paths
+      # the built-in collectors read, but the textfile collector's own directory
+      # is not under that relocation, so /host/textfile would parse a directory
+      # that can never hold a file and the card would stay blank with the target
+      # reporting healthy.
+      - --collector.textfile.directory=/textfile
     volumes:
       - /:/host:ro,rslave
+      # The same host directory host-gpu-sampler writes, one service below. Read
+      # only: this container parses what is there and a collector that could
+      # delete a drop file is a collector that can blank the card by itself.
+      - /var/lib/node_exporter/textfile_collector:/textfile:ro
     ports:
       # Loopback only: the series name mountpoints, devices, and interface names
       # on this box, and the read path for anyone off the box is Grafana. Same
       # reasoning as prometheus above.
       - "127.0.0.1:${OBS_NODE_EXPORTER_PORT:-9101}:9101"
+
+  # The writer for the drop directory node_exporter mounts above: without this
+  # service the `evo-t1 host GPU` card on the dashboard queries four series that
+  # nothing produces, and an empty vector is not an error anywhere in the stack.
+  # It is a sampler, not a server: nothing publishes it and nothing scrapes it.
+  host-gpu-sampler:
+    # Reused rather than newly pinned: this is the one-shot image
+    # scripts/observability-check.sh already dials from the host (:454 and :1038),
+    # so the bundle pulls nothing it does not already have. What makes it the right
+    # reuse is that it is Alpine/busybox, and the probe is a POSIX /bin/sh script
+    # whose only external is awk, both of which busybox ships. That is a reading of
+    # the image, not a proof: the first real `docker compose up` on the host is what
+    # proves sh and awk are here, and a probe whose sources are unreadable says so
+    # with its own warning: lines rather than inventing a zero.
+    image: curlimages/curl:8.10.1
+    # Named log stream, so Loki's `container` label carries this service's own name
+    # (observability/alloy/config.alloy:29-71 reads the tag out of each json-file
+    # line). It ships this container's sample failures, which are the only evidence
+    # an operator gets that the Arc card went blank.
+    logging:
+      driver: json-file
+      options: { tag: host-gpu-sampler, max-size: "5m", max-file: "2" }
+    hostname: host-gpu-sampler
+    restart: unless-stopped
+    profiles: ["observability"]
+    # Root, for one reason: the shared drop directory under /var/lib on the host is
+    # created by the daemon root-owned 0755, and this image runs as uid 1000, which
+    # cannot write it. The probe exits non-zero on an unwritable textfile dir, so
+    # the unprivileged form is a restart loop rather than a quiet card. What it does
+    # write is chmod 0644, which is how node_exporter's nobody reads it.
+    user: "0:0"
+    # Replaced outright, not fed a shell argument: this image's entrypoint is a curl
+    # wrapper script, so `command:` alone would reach curl as argv.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      # One loop rather than a host cron or a systemd timer: setup-host.sh installs
+      # neither, and a container restart policy already gives the retry a cron would
+      # have to re-implement. No `set -e` in front of it - a sample that finds no
+      # sensor is a result the probe reports as a warning:, and the next interval is
+      # the retry. 60s matches the card's own refreshInterval, so the widget never
+      # re-queries a gauge that has not moved.
+      - |
+        while :; do
+          sh /probe/host_gpu.sh
+          sleep 60
+        done
+    environment:
+      # Every seam here is the path as this container sees it, which is the same
+      # trick node_exporter plays with --path.rootfs=/host: the host's /sys and
+      # /proc arrive under /host, so the probe measures the machine rather than
+      # this container's handful of processes.
+      HOST_GPU_SYSFS_ROOT: /host/sys
+      # The power gauge is a joule delta over an uptime delta, so the clock it
+      # measures against has to be the host's too, or the watts are a rate over a
+      # window that never starts.
+      HOST_GPU_UPTIME_FILE: /host/proc/uptime
+      # The drop this container writes and node_exporter reads, from one seam.
+      HOST_GPU_TEXTFILE_DIR: /textfile
+      HOST_GPU_STATE_DIR: /var/tmp/evo-t1-host-gpu
+    volumes:
+      # The probe itself, read-only: it is stack-owned payload, and a container
+      # that could edit the script it runs could fake the card.
+      - ./scripts/lib/probes:/probe:ro
+      # The machine. rslave matches node_exporter's own /host mount so a drm card
+      # that re-registers after a driver reload shows up in both containers.
+      - /sys:/host/sys:ro,rslave
+      - /proc:/host/proc:ro,rslave
+      # Same host directory as node_exporter's read-only bind above, and the only
+      # writable one here: this service owns the writes, the exporter owns the
+      # reads. tests/bats/observability-exporters.bats pins the two sources are
+      # one string, because a typo in either is a silent empty card.
+      - /var/lib/node_exporter/textfile_collector:/textfile
+      # The power baseline (previous run's joules and uptime). Left at the probe's
+      # own host default path so a run from the host shell and a run from here
+      # continue the same window instead of each starting from no baseline.
+      - /var/tmp/evo-t1-host-gpu:/var/tmp/evo-t1-host-gpu
 
   cadvisor:
     image: ghcr.io/google/cadvisor:v0.61.0

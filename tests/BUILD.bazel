@@ -391,6 +391,11 @@ _SUITE_PAYLOAD = {
     "host-state.bats": [
         "//homepage:icons",
     ],
+    # It drives the one POSIX probe at scripts/lib/probes/host_gpu.sh against a scratch
+    # sysfs tree and reads docker-compose.yml only to prove that probe's mount exists.
+    # Both arrive with _BATS_COMMON, which carries //:compose_file and
+    # //scripts:doc_sources, so the probe needs no group of its own.
+    "host_gpu.bats": [],
     "image.bats": [
         "//images/dev:context",
     ],
@@ -492,6 +497,9 @@ _SUITE_PAYLOAD = {
         # auth: the refused switch is absent from that file, so the file has to be in
         # the runfiles or the case can only ever report its own absence.
         "//litellm:config",
+        # The suite compares the gauge names in the Arc host GPU card against the names
+        # the probe emits, which needs the card file itself in the runfiles.
+        "//homepage:config",
     ],
     # The suite drives the query CLI, so that script's reads are this suite's reads:
     # the provisioned datasources and dashboards every answer names, and the proxy/

@@ -189,6 +189,40 @@ bazelisk test //tests:bats_homepage_config_test
   one `style: row` band whose `columns` equals the cards it holds, and sits after the
   **Host** group
 
+#### The two GPU cards in the Host group
+
+- both cards query the Prometheus HTTP API over the compose network - `http://prometheus:9090/api/v1/query`
+  with the PromQL carried inline - and both badge on `http://prometheus:9090/-/healthy`.
+  Neither badges an exporter: `OBSERVABILITY_ENABLED=false` starts no Prometheus, so both
+  cards read `down` together with a stack that was never asked to run the bundle, which is
+  the same honest signal the **Observability** band gives. A gauge nobody writes is a
+  different answer - the query succeeds with an empty vector, so that one row stays blank
+  while the badge still says `UP`
+- the **Spark fleet GPU** card reads the DCGM series per box: `DCGM_FI_DEV_GPU_UTIL`,
+  `DCGM_FI_DEV_FB_USED`, `DCGM_FI_DEV_GPU_TEMP`, `DCGM_FI_DEV_POWER_USAGE`. One `customapi`
+  widget per field, because one widget is one endpoint, and four mappings each: the number
+  of boxes reporting that field, reduced from the same response with `format: size`, then
+  the three box rows
+- no box is named in the file: the fleet target list is generated on the host by
+  `//scripts:spark-monitor` into `observability/spark-targets/sparks.json`, which stamps
+  every group with `hostname`, so `box 1` / `box 2` / `box 3` are positions in Prometheus'
+  own sort of that label, not machines. It is the same rule that keeps `SPARKn_HOST` in
+  `.env` instead of a `spark-1.lan` literal in a committed file (see the last bullet below)
+- the **evo-t1 host GPU** card reads the four `evo_t1_host_gpu_*` gauges the host sampler
+  (`scripts/lib/probes/host_gpu.sh`) writes into the node_exporter textfile directory:
+  `evo_t1_host_gpu_utilisation_pct`, `evo_t1_host_gpu_clock_mhz`,
+  `evo_t1_host_gpu_power_watts`, `evo_t1_host_gpu_temp_celsius`. The Arc exports no DCGM
+  series, so none of these can ride the fleet queries, and `utilisation` is the row that
+  may honestly stay blank - the sampler reads it from `intel_gpu_top`, which the box may
+  not carry
+- that sampler is not a daemon the host has to run: the `host-gpu-sampler` compose
+  service, in the same `observability` profile, runs the script every 60 seconds and
+  writes `/var/lib/node_exporter/textfile_collector`, which `node_exporter` mounts
+  read-only at `/textfile` under `--collector.textfile.directory=/textfile`. So the
+  bundle being up is what puts numbers on this card: with the profile off every row
+  answers an empty vector, which is the same blank the card shows for a sensor the box
+  does not carry
+
 #### Widgets, bookmarks, icons, and search hosts
 
 - no `block` customapi widget declares more than four mappings - the shipped bundle
