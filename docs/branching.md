@@ -13,12 +13,14 @@ tags: [git, branching, ci]
 - Where a hotfix branches from and where it lands first
 - How an issue is read, referenced by the branch, and closed by the merge that fixes it
 - What CI runs, what branch protection should require, and where secrets go
+- How a stacked pull request chains its base, merges bottom-up, and is turned on per repository
 
 **What this enables**
 
 - Naming a branch and a commit so CI and `git log` read the way the rest of the repo does
 - Recovering a half-finished change with one revert, because each landed step was committed as it landed
 - Knowing which green check actually gates a merge into `main`
+- Landing one change as a chain of layers a reviewer reads alone, without bypassing the gate
 
 Trunk-based, GitHub-Flow shaped: one long-lived branch, short-lived work branches, and a pull
 request as the only way back into `main`.
@@ -241,6 +243,73 @@ first segment of a path - is an error and exits 1.
 
 It is an operator CLI rather than a CI step on purpose: the branches that break the rule
 live on the remote, where a job checked out at `main` cannot see them.
+
+## Stacked pull requests
+
+A stack is one change cut into layers that each review alone, where a layer's pull request
+names the branch below it as its base instead of `main`. Every layer is still an ordinary
+short-lived work branch, so everything under [Work branches](#work-branches) keeps applying
+to it.
+
+### The base chain
+
+- Each layer names the branch below it as its base, and only the bottom layer names `main`.
+  A reviewer then reads that layer's own commits rather than the change as a whole, which is
+  the reason to stack at all.
+
+- Open every layer as a draft, and mark one ready only when its own diff is complete and the
+  layer below is green. A layer whose parent is still moving is a diff that keeps changing
+  under the reviewer.
+
+- Name the chain in the bodies. A layer states which pull request it depends on and names that
+  pull request's base branch, and the pull request below says a child is stacked on it. The
+  body's own sections still carry the change.
+
+- A stack stays inside one repository: it cannot cross a fork or reach a second repository, so
+  a change that genuinely spans two is two stacks whose bodies link each other.
+
+- One logical change per stack. A stack splits a change a reviewer would read together; it is
+  not a way to bundle unrelated work behind one review.
+
+### Protection, merging, and deletion
+
+- Protection is inherited, never duplicated. Branch protection and CODEOWNERS apply from the
+  base of the bottom pull request - `main` - so a layer carries no rules of its own, and a
+  layer is never a place to relax one.
+
+- The gate runs on every layer. See [The CI workflow](#the-ci-workflow) for why the workflow
+  has to match the work-branch prefixes rather than `main` alone.
+
+- Merge bottom-up, and only through the asynchronous merge endpoint: `PUT` on
+  `/repos/{o}/{r}/pulls/{n}/merge-async`, then poll the matching
+  `GET .../pulls/{n}/merge-async/{uuid}` until it reports the result. Each merge hands the
+  layer above a new base, so the stack unwinds one layer at a time from the bottom.
+
+- Never merge a layer with the plain merge call and never merge out of order: the layer above
+  is left pointing at a base that no longer exists, carrying commits that belong to its
+  parent.
+
+- Record a layer's tip SHA before it is deleted - the same record any deletion leaves behind,
+  per [Work branches](#work-branches) - and delete only the layers the trunk already
+  contains.
+
+### Enabling it, and the two CLIs
+
+- Stacks are enabled per repository, and that is an operator action in the repository's
+  settings: no script can turn it on. A stack call against a repository that has them off is
+  reported as a note naming that setting, so the reader knows a person has to act rather than
+  the command being worth retrying.
+
+- Every call goes through `env -u GH_TOKEN -u GITHUB_TOKEN gh api`, for the reason in
+  [troubleshooting.md](troubleshooting.md).
+
+- `bazelisk run //scripts:stack-prs` is the CLI for the chain: it records the layers in order,
+  bottom to top, and performs the bottom-up merges through `merge-async` and nothing else.
+
+- `bazelisk run //scripts:branch-hygiene` still audits the topology, because the layers are
+  branches: a merged-but-undeleted layer, or one past the branch lifetime, is still its
+  finding, and an environment-named layer is still the error [Environments](#environments)
+  already refuses.
 
 ## Scope
 
