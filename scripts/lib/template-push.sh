@@ -94,9 +94,9 @@ fi
 # skeptical-reviewer.PERSONA.toml, feature-implementation.SKILL.md,
 # skeptical-review.SKILL.md, security-audit.SKILL.md, bug-hunt.SKILL.md,
 # stack-repo-skills.sh.tftpl, terminal-launchers.sh.tftpl, stack-fleet.sh.tftpl,
-# stack-workflows.sh.tftpl (the coder_script "stack_workflows" body) with the three
+# stack-workflows.sh.tftpl (the coder_script "stack_workflows" body) with the four
 # workflow modules it inlines (debug-fix.workflow.js, fleet-verify.workflow.js,
-# implement-reviewed.workflow.js),
+# implement-reviewed.workflow.js, open-bugs.workflow.js),
 # coder-agents.md,
 # mcp-cache-proxy.json, agents-seed.sh.tftpl (the coder_script "agents_seed" body) and
 # gh-token-refresh.sh.tftpl and infisical-secrets.sh.tftpl (the
@@ -220,6 +220,7 @@ template_push_one() {
     debug-fix.workflow.js \
     fleet-verify.workflow.js \
     implement-reviewed.workflow.js \
+    open-bugs.workflow.js \
     stack-fleet.sh.tftpl; do
     if [ ! -f "${common}/${payload}" ]; then
       printf 'error: %s: %s/%s is missing - main.tf reads it from the pushed copy, so no push works without it\n' \

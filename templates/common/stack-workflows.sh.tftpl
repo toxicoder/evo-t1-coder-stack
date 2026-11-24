@@ -1,10 +1,10 @@
 #!/bin/sh
-# tftpl: coder_script body; the three workflow payloads are interpolated from the map
+# tftpl: coder_script body; the four workflow payloads are interpolated from the map
 # main.tf passes, each into a quoted here-doc so no shell text inside one is expanded --
 # a workflow is a JavaScript module full of dollar-brace template literals, and an
 # unquoted here-doc would have the shell try to evaluate every one of them.
 # Why this family rides a body of its own: the agent execs every body as ONE argument to
-# execve(2), Linux caps one argument at 131072 bytes, and this body inlines three modules
+# execve(2), Linux caps one argument at 131072 bytes, and this body inlines four modules
 # on top of the seed families already at their own ceiling in this tree's twins
 # (stack-skills, stack-repo-skills, trunk-refactor-seed, stack-fleet, stack-advisors,
 # stack-hooks); docs/coder-templates.md#the-one-argument-ceiling.
@@ -12,9 +12,9 @@
 # What this seeds is the USER tier, and that is the whole point. Grok Build reads a project
 # workflow from .grok/workflows/<name>.js in the repository it has trusted and a user
 # workflow from ~/.grok/workflows/<name>.js ($GROK_HOME/workflows), and it loads a
-# workspace's project workflows only from that clone's own tree. So the three
+# workspace's project workflows only from that clone's own tree. So the four
 # general-purpose workflows this repo carries -- fleet-verify, implement-reviewed,
-# debug-fix -- are invisible to a workspace that cloned some other repository, which is
+# debug-fix, open-bugs -- are invisible to a workspace that cloned some other repository, which is
 # every workspace this stack creates except this one. The user tier is the only home that
 # travels, so that is where the seed writes. Project names still beat user names, so
 # adding a workflow of your own under .grok/workflows/ keeps overriding this copy, and a
@@ -41,9 +41,9 @@ ${boot_log_lib}
 # reads its name: out of. The spelling is the one config_seed.sh keeps for a comment
 # carrier: STACK_MARKER_TEXT in scripts/lib/config_seed.sh.
 #
-# The three writes below stage each payload into one scratch directory and a single loop
+# The four writes below stage each payload into one scratch directory and a single loop
 # then seeds everything in it, so the marker test, the symlink refusal, the note: and the
-# marker backstop are spelled once for any number of workflows. A fourth module needs one
+# marker backstop are spelled once for any number of workflows. A fifth module needs one
 # more here-doc and one more map key in both twins -- the loop below never changes.
 #
 # Beyond the boot verbs this body stays quiet on a healthy workspace. Its log is what an
@@ -87,6 +87,10 @@ EVO_T1_WORKFLOW_FLEET_VERIFY_EOF
 cat >"$${evo_t1_dir}/implement-reviewed.js" <<'EVO_T1_WORKFLOW_IMPLEMENT_REVIEWED_EOF'
 ${implement_reviewed_workflow}
 EVO_T1_WORKFLOW_IMPLEMENT_REVIEWED_EOF
+
+cat >"$${evo_t1_dir}/open-bugs.js" <<'EVO_T1_WORKFLOW_OPEN_BUGS_EOF'
+${open_bugs_workflow}
+EVO_T1_WORKFLOW_OPEN_BUGS_EOF
 
 boot_stage 3 "the modules into $HOME/.grok/workflows"
 boot_phase "seeding each staged module into the user workflow home"

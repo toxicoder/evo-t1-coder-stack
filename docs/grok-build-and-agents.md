@@ -1390,7 +1390,7 @@ tier is the one that travels, so it is the one this stack seeds.
 The reason is the first tier's load rule: project workflows come from the clone in front of
 the session, so the workflows this repo carries are visible in this repo and nowhere else -
 a workspace that cloned some other repository never sees them. `coder_script
-"stack_workflows"` therefore writes the three general-purpose ones into the user home on
+"stack_workflows"` therefore writes all four general-purpose ones into the user home on
 every start, from `templates/common/stack-workflows.sh.tftpl`, the route the agent
 definitions and the personas already take. Where each piece lives:
 

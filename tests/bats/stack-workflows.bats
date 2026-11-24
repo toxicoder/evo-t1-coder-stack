@@ -45,7 +45,7 @@ COMMON=""
 WORKDIR=""
 SEED=""
 
-WORKFLOW_NAMES="debug-fix fleet-verify implement-reviewed"
+WORKFLOW_NAMES="debug-fix fleet-verify implement-reviewed open-bugs"
 
 setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
@@ -77,6 +77,7 @@ keys = {
     "debug_fix_workflow": "debug-fix.workflow.js",
     "fleet_verify_workflow": "fleet-verify.workflow.js",
     "implement_reviewed_workflow": "implement-reviewed.workflow.js",
+    "open_bugs_workflow": "open-bugs.workflow.js",
 }
 ESC = "\x00ESC{"
 text = pathlib.Path(tpl).read_text(encoding="utf-8")
@@ -184,7 +185,7 @@ run_seed() {
     printf 'FAIL: the seed removes something: %s\n' "${lines[0]}" >&2; return 1; }
 }
 
-@test "seed: every shell brace is escaped, so templatefile has only its four keys" {
+@test "seed: every shell brace is escaped, so templatefile has only its five keys" {
   # A single-dollar brace reference anywhere in a .tftpl is an interpolation, and the plan
   # fails when main.tf does not pass that key. render_seed asserts the exact ref set.
   local rendered="${BATS_TEST_TMPDIR}/escape-check.sh"
@@ -304,7 +305,7 @@ run_seed() {
     printf 'FAIL: the run closed without a summary: %s\n' "${output}" >&2; return 1; }
 }
 
-@test "twins: both templates declare coder_script stack_workflows with the four payloads" {
+@test "twins: both templates declare coder_script stack_workflows with the five payloads" {
   local twin key
   for twin in "${REPO_ROOT}/templates/workspace/main.tf" "${REPO_ROOT}/templates/devcontainer/main.tf"; do
     assert_file_exists "the template twin" "${twin}"
@@ -312,24 +313,26 @@ run_seed() {
       printf 'FAIL: %s declares no stack_workflows coder_script, so that template never seeds the user tier\n' "${twin}" >&2; return 1; }
     grep -qF 'stack-workflows.sh.tftpl' "${twin}" || {
       printf 'FAIL: %s does not render the seed body\n' "${twin}" >&2; return 1; }
-    for key in boot_log_lib debug_fix_workflow fleet_verify_workflow implement_reviewed_workflow; do
+    for key in boot_log_lib debug_fix_workflow fleet_verify_workflow \
+      implement_reviewed_workflow open_bugs_workflow; do
       grep -qE "${key}[[:space:]]*=" "${twin}" || {
         printf 'FAIL: %s passes no %s to the seed body\n' "${twin}" "${key}" >&2; return 1; }
     done
-    for key in debug-fix fleet-verify implement-reviewed; do
+    for key in debug-fix fleet-verify implement-reviewed open-bugs; do
       grep -qF "file(\"\${path.module}/${key}.workflow.js\")" "${twin}" || {
         printf 'FAIL: %s never reads %s.workflow.js from the pushed copy\n' "${twin}" "${key}" >&2; return 1; }
     done
   done
 }
 
-@test "push: template-push.sh names all four new payloads in both its lists" {
+@test "push: template-push.sh names all five new payloads in both its lists" {
   # The loop is the hard stop that saves the server's Terraform; the header docstring is
   # the list a person reads to know what a push stages. Both have to carry the name.
   local push="${REPO_ROOT}/scripts/lib/template-push.sh" payload
   assert_file_exists "the push lib" "${push}"
   for payload in stack-workflows.sh.tftpl debug-fix.workflow.js \
-    fleet-verify.workflow.js implement-reviewed.workflow.js; do
+    fleet-verify.workflow.js implement-reviewed.workflow.js \
+    open-bugs.workflow.js; do
     # The loop is the guard that stops a push before the CLI runs; the docstring is the
     # list a person reads to know what a push stages. Two shapes, so two reads: a token on
     # a non-comment line is the loop, one on a comment line is the docstring.

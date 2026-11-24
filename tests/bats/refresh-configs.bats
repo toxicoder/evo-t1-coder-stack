@@ -102,7 +102,7 @@ scratch_home() {
   source "${LIB}"
   local lines target
   lines="$(seed_seed_targets)"
-  # Seventy-one reseed targets: the five non-skill targets, then grok-build-delegation,
+  # Seventy-five reseed targets: the five non-skill targets, then grok-build-delegation,
   # ez-learn, ez-skillify and ez-create-skill as one SKILL.md per home (8), then the two
   # reflection runbooks as one SKILL.md per home (4) with the session sweeper under
   # scripts/ and each evidence checklist under references/ (6), then
@@ -118,9 +118,11 @@ scratch_home() {
   # the documenter role as the one definition that rides with that skill (1), and the
   # hook family -- the manifest, the deny list, and the four guards the runner execs
   # (6), which are the only rows the seeder has to carry as exec: rather than file:.
+  # Then the workflow family: the four saved workflow modules the picker reads out of
+  # ~/.grok/workflows (4), each a module the runner imports rather than execs.
   # The count is a claim about the manifest, so a target that quietly
   # disappears from config_seed.sh fails here before anything else notices.
-  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 71 ]
+  [ "$(printf '%s\n' "${lines}" | grep -c .)" -eq 75 ]
   # ~/.grok is per workspace now, so config.toml (the model list, the
   # session-affinity key, the Grok theme) is rendered by the workspace itself and
   # has no row here: a shared reseed of it is precisely what the per-workspace
@@ -496,14 +498,14 @@ coder-ws2-dind-sidecar'
 import json, sys
 d = json.load(sys.stdin)
 assert d["dry_run"] is False and d["force"] is False, d
-# The seventy-one reseed targets, plus the seven stale stack-owned copies this
+# The seventy-five reseed targets, plus the seven stale stack-owned copies this
 # home was planted with and the reseed retired: the /learn copy (its ~/.agents
 # twin is user-owned, so it earns no entry) and the six global ez-bazel-first
 # files the earlier boot left behind. Every target earns exactly one entry, the
 # user-owned tmux.conf included, so this count is the size of the manifest read
 # back through the JSON channel: a target dropped from config_seed.sh drops an
 # entry and fails here, and so does a retire list row that stops reporting.
-assert len(d["entries"]) == 78, [e["target"] for e in d["entries"]]
+assert len(d["entries"]) == 82, [e["target"] for e in d["entries"]]
 # A seeded entry names its target home-relative but already stripped the tilde
 # (the seeder prints the path it rooted at the home), while a retired entry
 # keeps the ~/ spelling it is listed under. Check the nested helpers and the

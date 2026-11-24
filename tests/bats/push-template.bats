@@ -110,6 +110,11 @@ COMMON_PAYLOADS=(
   trunk-refactor-seed.sh.tftpl
   stack-advisors.sh.tftpl
   stack-hooks.sh.tftpl
+  stack-workflows.sh.tftpl
+  debug-fix.workflow.js
+  fleet-verify.workflow.js
+  implement-reviewed.workflow.js
+  open-bugs.workflow.js
   stack-fleet.sh.tftpl
 )
 
@@ -183,6 +188,11 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/bash' >"${dest}/trunk-refactor-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-advisors.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-hooks.sh.tftpl"
+  printf '%s\n' '#!/bin/bash' >"${dest}/stack-workflows.sh.tftpl"
+  printf '%s\n' '// workflow' >"${dest}/debug-fix.workflow.js"
+  printf '%s\n' '// workflow' >"${dest}/fleet-verify.workflow.js"
+  printf '%s\n' '// workflow' >"${dest}/implement-reviewed.workflow.js"
+  printf '%s\n' '// workflow' >"${dest}/open-bugs.workflow.js"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-fleet.sh.tftpl"
 }
 

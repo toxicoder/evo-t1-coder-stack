@@ -1095,6 +1095,7 @@ resource "coder_script" "stack_workflows" {
     debug_fix_workflow          = chomp(file("${path.module}/debug-fix.workflow.js"))
     fleet_verify_workflow       = chomp(file("${path.module}/fleet-verify.workflow.js"))
     implement_reviewed_workflow = chomp(file("${path.module}/implement-reviewed.workflow.js"))
+    open_bugs_workflow          = chomp(file("${path.module}/open-bugs.workflow.js"))
   })
 }
 

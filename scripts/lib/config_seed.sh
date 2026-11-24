@@ -186,7 +186,11 @@ seed_seed_targets() {
     '~/.grok/hooks/bin/secret-guard.sh	exec:templates/common/hooks.secret-guard.sh' \
     '~/.grok/hooks/bin/dangerous-command-guard.sh	exec:templates/common/hooks.dangerous-command-guard.sh' \
     '~/.grok/hooks/bin/post-edit-format.sh	exec:templates/common/hooks.post-edit-format.sh' \
-    '~/.grok/hooks/bin/selective-test-runner.sh	exec:templates/common/hooks.selective-test-runner.sh'
+    '~/.grok/hooks/bin/selective-test-runner.sh	exec:templates/common/hooks.selective-test-runner.sh' \
+    '~/.grok/workflows/debug-fix.js	file:templates/common/debug-fix.workflow.js' \
+    '~/.grok/workflows/fleet-verify.js	file:templates/common/fleet-verify.workflow.js' \
+    '~/.grok/workflows/implement-reviewed.js	file:templates/common/implement-reviewed.workflow.js' \
+    '~/.grok/workflows/open-bugs.js	file:templates/common/open-bugs.workflow.js'
 }
 
 # @function seed_retired_targets
