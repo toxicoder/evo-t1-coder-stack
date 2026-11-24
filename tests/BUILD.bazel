@@ -594,6 +594,13 @@ _SUITE_PAYLOAD = {
     "agent-workflows.bats": [
         "//:stack_data",
     ],
+    # The completeness gate for the workflow family, and it reads the family from both ends
+    # at once: the canonical bodies and the seed body under templates/common, both main.tf
+    # twins, and the repo-tier links under .grok/workflows that carry the same bytes to this
+    # checkout's CLI. Only //:stack_data ships the payload tree and the .grok tier together.
+    "stack-workflows.bats": [
+        "//:stack_data",
+    ],
     # The suite reads both twins and every payload main.tf inlines into them, which
     # is exactly what has to be summed to know how big the exec'd argument gets.
     "startup-script-size.bats": [

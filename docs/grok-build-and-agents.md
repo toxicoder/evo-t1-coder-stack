@@ -1379,6 +1379,35 @@ id in them is a local alias:
   Pick by what you have in front of you - `open-bugs` is the discovery half,
   `debug-fix` is the single-symptom half, and `bug-hunt` is the skill an agent follows by hand.
 
+### The seeded workflow tier
+
+A workflow has two homes and Grok reads both. A *project* workflow is
+`.grok/workflows/<name>.js` at the root of the trusted clone, and a *user* workflow is
+`~/.grok/workflows/<name>.js` (`$GROK_HOME/workflows`); only `.js` files run, a built-in
+keeps its name over both, and a project name keeps its name over a user one. That second
+tier is the one that travels, so it is the one this stack seeds.
+
+The reason is the first tier's load rule: project workflows come from the clone in front of
+the session, so the workflows this repo carries are visible in this repo and nowhere else -
+a workspace that cloned some other repository never sees them. `coder_script
+"stack_workflows"` therefore writes the three general-purpose ones into the user home on
+every start, from `templates/common/stack-workflows.sh.tftpl`, the route the agent
+definitions and the personas already take. Where each piece lives:
+
+- the canonical body: `templates/common/<name>.workflow.js`, one per workflow;
+- the repo-tier entry: `.grok/workflows/<name>.js`, a symlink to `../../templates/common/`
+  like `.grok/agents/architect.md` is, so there is one copy of each to edit;
+- the seed: `templates/common/stack-workflows.sh.tftpl`, declared in both template twins.
+
+The seed is marker-aware, the hooks contract rather than the absent-only one the skills
+keep: a written file carries `// managed-by: evo-t1-coder-stack`, a copy still carrying it
+gets the current bytes on every boot, a copy whose marker you deleted is yours and the boot
+leaves it alone with a `note:`. Nothing is ever deleted. A workflow you write yourself under
+`~/.grok/workflows/` under a name the stack does not use is untouched, and a project
+workflow of the same name still overrides the user copy - which is why the four names here
+are reserved and yours should differ. `//tests:bats_stack_workflows_test` pins the links,
+the marker pair, and both twins.
+
 ### Hooks
 
 Six payloads in `templates/common/` become one manifest and five files under `~/.grok/hooks/`:

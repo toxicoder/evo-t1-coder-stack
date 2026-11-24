@@ -1,0 +1,144 @@
+#!/bin/sh
+# tftpl: coder_script body; the three workflow payloads are interpolated from the map
+# main.tf passes, each into a quoted here-doc so no shell text inside one is expanded --
+# a workflow is a JavaScript module full of dollar-brace template literals, and an
+# unquoted here-doc would have the shell try to evaluate every one of them.
+# Why this family rides a body of its own: the agent execs every body as ONE argument to
+# execve(2), Linux caps one argument at 131072 bytes, and this body inlines three modules
+# on top of the seed families already at their own ceiling in this tree's twins
+# (stack-skills, stack-repo-skills, trunk-refactor-seed, stack-fleet, stack-advisors,
+# stack-hooks); docs/coder-templates.md#the-one-argument-ceiling.
+#
+# What this seeds is the USER tier, and that is the whole point. Grok Build reads a project
+# workflow from .grok/workflows/<name>.js in the repository it has trusted and a user
+# workflow from ~/.grok/workflows/<name>.js ($GROK_HOME/workflows), and it loads a
+# workspace's project workflows only from that clone's own tree. So the three
+# general-purpose workflows this repo carries -- fleet-verify, implement-reviewed,
+# debug-fix -- are invisible to a workspace that cloned some other repository, which is
+# every workspace this stack creates except this one. The user tier is the only home that
+# travels, so that is where the seed writes. Project names still beat user names, so
+# adding a workflow of your own under .grok/workflows/ keeps overriding this copy, and a
+# name collision is a thing to avoid rather than a thing that silently misfires:
+# docs/grok-build-and-agents.md#the-seeded-workflow-tier.
+set -u
+
+# The library arrives as a map value and Terraform does not re-interpolate one, so its own
+# dollar-brace text lands verbatim; no here-doc and no temp file carries it.
+${boot_log_lib}
+
+# The contract is the hooks contract, not the skills contract: a copy that carries the
+# stack marker is stack-owned and gets the current text on every start, while a copy whose
+# marker lines a person deleted is theirs and the boot leaves it alone with a note:. The
+# skills home uses absent-only because a stale SKILL.md is a stale suggestion; a workflow
+# is a program a session invokes by name and expects to behave as documented, so a copy
+# that drifted from the seed is a silent behaviour change and gets refreshed. Nothing here
+# ever deletes a file: an absent-only seed leaves an orphan, and a seed that pruned would
+# be one bad boot away from erasing a person's own workflow.
+#
+# The marker is the JS comment spelling -- these are modules the runner imports, not shell
+# the runner execs -- so it is appended after the write rather than prepended, the way the
+# guards do it, so row 1 of every file stays the payload's own frame comment the runner
+# reads its name: out of. The spelling is the one config_seed.sh keeps for a comment
+# carrier: STACK_MARKER_TEXT in scripts/lib/config_seed.sh.
+#
+# The three writes below stage each payload into one scratch directory and a single loop
+# then seeds everything in it, so the marker test, the symlink refusal, the note: and the
+# marker backstop are spelled once for any number of workflows. A fourth module needs one
+# more here-doc and one more map key in both twins -- the loop below never changes.
+#
+# Beyond the boot verbs this body stays quiet on a healthy workspace. Its log is what an
+# operator reads when a workflow is missing from the picker.
+boot_begin "stack workflows" 3
+
+# One symlinked root would aim every write below at a directory outside the home this body
+# owns, so bail before the first of them. Every reference to a shell variable carries the
+# double-dollar escape: templatefile() reads a single-dollar brace reference anywhere in
+# this file as an interpolation, and the plan fails when main.tf does not pass that key.
+boot_stage 1 "the symlink guard"
+for evo_t1_root in "$HOME/.grok" "$HOME/.grok/workflows"; do
+  if [ -L "$${evo_t1_root}" ]; then
+    boot_warn "$${evo_t1_root} is a symlink - the workflow family is left alone"
+    boot_summary
+    exit 0
+  fi
+done
+
+boot_stage 2 "stage the managed workflow modules"
+boot_phase "writing each module into a scratch directory"
+# The scratch dir is the loop's input, so it is staged under TMPDIR rather than under
+# $HOME: a body that seeded straight into ~/.grok/workflows would leave a staging file
+# behind beside the real ones every time it declined a destination, and a stray .js in that
+# directory is a workflow the picker lists.
+evo_t1_dir="$(mktemp -d "$${TMPDIR:-/tmp}/evo-t1-workflows.XXXXXX" 2>/dev/null)" || evo_t1_dir=""
+if [ -z "$${evo_t1_dir}" ]; then
+  boot_warn "no scratch directory, so no workflow was seeded this boot"
+  boot_summary
+  exit 0
+fi
+
+cat >"$${evo_t1_dir}/debug-fix.js" <<'EVO_T1_WORKFLOW_DEBUG_FIX_EOF'
+${debug_fix_workflow}
+EVO_T1_WORKFLOW_DEBUG_FIX_EOF
+
+cat >"$${evo_t1_dir}/fleet-verify.js" <<'EVO_T1_WORKFLOW_FLEET_VERIFY_EOF'
+${fleet_verify_workflow}
+EVO_T1_WORKFLOW_FLEET_VERIFY_EOF
+
+cat >"$${evo_t1_dir}/implement-reviewed.js" <<'EVO_T1_WORKFLOW_IMPLEMENT_REVIEWED_EOF'
+${implement_reviewed_workflow}
+EVO_T1_WORKFLOW_IMPLEMENT_REVIEWED_EOF
+
+boot_stage 3 "the modules into $HOME/.grok/workflows"
+boot_phase "seeding each staged module into the user workflow home"
+evo_t1_seeded=0
+for evo_t1_src in "$${evo_t1_dir}"/*.js; do
+  # An unmatched glob stays the literal pattern, so test the file rather than the loop.
+  [ -f "$${evo_t1_src}" ] || continue
+  evo_t1_name="$(basename "$${evo_t1_src}")"
+  evo_t1_dst="$HOME/.grok/workflows/$${evo_t1_name}"
+
+  # A link a person left in place stays theirs: the marker test would read through it and
+  # the write would replace a file this body does not own.
+  if [ -L "$${evo_t1_dst}" ]; then
+    boot_warn "$${evo_t1_name} is a symlink - that workflow is not installed"
+    continue
+  fi
+
+  if [ -f "$${evo_t1_dst}" ] &&
+    ! grep -qs 'managed-by: evo-t1-coder-stack' "$${evo_t1_dst}"; then
+    boot_note "$${evo_t1_name} left alone - the operator deleted its marker"
+    continue
+  fi
+
+  if ! boot_ensure_dir "$HOME/.grok/workflows"; then
+    boot_warn "$HOME/.grok/workflows is not writable, so no workflow was seeded this boot"
+    break
+  fi
+
+  if ! cat <"$${evo_t1_src}" >"$${evo_t1_dst}"; then
+    boot_warn "$${evo_t1_name} did not land in the user workflow home"
+    continue
+  fi
+
+  # The backstop for a payload that lost its own marker line: without it the test above
+  # would treat the rewritten file as a person's and never seed it again.
+  if ! grep -qs 'managed-by: evo-t1-coder-stack' "$${evo_t1_dst}"; then
+    printf '// %s\n' 'managed-by: evo-t1-coder-stack' >>"$${evo_t1_dst}"
+  fi
+  evo_t1_seeded=$((evo_t1_seeded + 1))
+  boot_ok "$${evo_t1_name} is in place in the user workflow home"
+done
+
+if [ "$${evo_t1_seeded}" -eq 0 ]; then
+  boot_note "no workflow needed seeding - every managed copy is already current"
+fi
+
+# Per-path cleanup, not a recursive one: this is the body's own scratch tree, and a
+# directory it did not create stays untouched.
+for evo_t1_src in "$${evo_t1_dir}"/*.js; do
+  [ -f "$${evo_t1_src}" ] && rm -f "$${evo_t1_src}"
+done
+rmdir "$${evo_t1_dir}" 2>/dev/null
+
+boot_summary
+exit 0

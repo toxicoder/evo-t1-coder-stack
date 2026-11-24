@@ -1117,6 +1117,30 @@ resource "coder_script" "stack_hooks" {
   })
 }
 
+# The three general-purpose workflows, seeded into the USER tier at ~/.grok/workflows/ by
+# its own body for the same ceiling reason. The repo's own .grok/workflows/ is not enough:
+# Grok reads project workflows only out of the trusted clone's own tree, so a workspace
+# that cloned some other repository never sees them, while $GROK_HOME/workflows is read in
+# every folder. Marker-aware like the hooks above and for the same reason - a workflow is a
+# program a session invokes by name, so a copy that drifted from the seed is a silent
+# behaviour change. docs/grok-build-and-agents.md#the-seeded-workflow-tier.
+resource "coder_script" "stack_workflows" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Seed the saved workflows"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/stack-workflows.sh.tftpl", {
+    boot_log_lib                = chomp(file("${path.module}/boot-log.lib.sh"))
+    debug_fix_workflow          = chomp(file("${path.module}/debug-fix.workflow.js"))
+    fleet_verify_workflow       = chomp(file("${path.module}/fleet-verify.workflow.js"))
+    implement_reviewed_workflow = chomp(file("${path.module}/implement-reviewed.workflow.js"))
+  })
+}
+
 # Ordering guard, not a starter. The agent runs every run_on_start script — the
 # startup_script alias included — concurrently, and only afterwards calls
 # containerAPI.Start() and creates the dev containers (agent.go: ExecuteStartScripts
