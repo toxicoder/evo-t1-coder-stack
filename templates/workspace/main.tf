@@ -1143,7 +1143,7 @@ locals {
   # code-server.sh.tftpl is versioned, so an older copy already on the home
   # volume does not hold the pin. Each bump leaves its predecessor under
   # ~/.local/share/code-server/lib/code-server-<version>/ on that volume.
-  code_server_version = "4.145.0"
+  code_server_version = "4.145.2"
 }
 
 resource "coder_script" "code_server" {

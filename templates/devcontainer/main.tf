@@ -1269,7 +1269,7 @@ locals {
   # value as the workspace twin (both twins move together; the coder-apps
   # suite fails a drift). Nothing to clean up on a bump: this copy installs
   # into /tmp of a container that is rebuilt on every start.
-  code_server_version = "4.145.0"
+  code_server_version = "4.145.2"
 }
 
 resource "coder_script" "code_server" {
