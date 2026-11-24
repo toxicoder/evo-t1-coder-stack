@@ -103,6 +103,8 @@ COMMON_PAYLOADS=(
   agents-seed.sh.tftpl
   stack-skills.sh.tftpl
   boot-log.lib.sh
+  tz-setup.sh.tftpl
+  tz.sh
   terminal-launchers.sh.tftpl
   stack-repo-skills.sh.tftpl
   trunk-refactor-seed.sh.tftpl
@@ -174,6 +176,8 @@ write_common_payloads() {
   printf '%s\n' '#!/bin/bash' >"${dest}/agents-seed.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-skills.sh.tftpl"
   printf '%s\n' '#!/bin/sh' >"${dest}/boot-log.lib.sh"
+  printf '%s\n' '#!/bin/bash' >"${dest}/tz-setup.sh.tftpl"
+  printf '%s\n' '#!/bin/sh' >"${dest}/tz.sh"
   printf '%s\n' '#!/bin/sh' >"${dest}/terminal-launchers.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/stack-repo-skills.sh.tftpl"
   printf '%s\n' '#!/bin/bash' >"${dest}/trunk-refactor-seed.sh.tftpl"

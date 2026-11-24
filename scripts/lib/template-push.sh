@@ -206,6 +206,8 @@ template_push_one() {
     agents-seed.sh.tftpl \
     stack-skills.sh.tftpl \
     boot-log.lib.sh \
+    tz-setup.sh.tftpl \
+    tz.sh \
     terminal-launchers.sh.tftpl \
     stack-repo-skills.sh.tftpl \
     trunk-refactor-seed.sh.tftpl \
