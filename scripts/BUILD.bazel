@@ -514,8 +514,13 @@ _SCRIPT_PAYLOAD = {
         "//observability:payload",
         "//:compose_file",
     ],
+    # The `DOWN` verdict and the all-boxes-unreachable note each cite
+    # docs/litellm-routing.md:806 as the source of the claim that the health filter, and
+    # not cooldown, is what pulls a dead box out of rotation. The source scan that
+    # re-derives this map reads such a citation as a dependency.
     "spark-verify": [
         "//:compose_file",
+        "//docs:content",
     ],
     # The compose file arrives with lib/common.sh, which names it while it looks for the
     # project root. The CLI itself opens no file in this repository: every answer comes

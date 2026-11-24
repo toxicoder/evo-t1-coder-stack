@@ -564,7 +564,12 @@ _SUITE_PAYLOAD = {
         "//images/dev:tool_versions",
     ],
     "spark-configure.bats": [],
-    "spark-verify.bats": [],
+    # Nothing beyond _BATS_COMMON except the docs tree: the DOWN-verdict assertions quote
+    # the routing page the CLI cites as the source of the health-filter claim, and the
+    # source scan reads that citation in an assertion string as a read.
+    "spark-verify.bats": [
+        "//docs:content",
+    ],
     "stack-data.bats": [],
     # The guard family is five payload files plus the manifest, and the suite drives
     # each script by piping an event at it, so the payloads are the suite's whole

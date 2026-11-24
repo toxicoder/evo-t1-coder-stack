@@ -748,7 +748,7 @@ else
   phase "verify Spark fleet"
   bash "${ROOT_DIR}/scripts/spark-verify.sh" --no-tests || verify_rc=$?
   if [ "${verify_rc}" != "0" ]; then
-    warn "the Spark fleet check failed (exit ${verify_rc}) — either a box disagrees with its peers or its model id is spelled differently from the one litellm/config.yaml declares, and the proxy routes to it either way. Re-run bazelisk run //scripts:spark-verify -- --no-tests for the per-box detail, and bazelisk run //scripts:spark-configure -- --apply <host> to write the fix."
+    warn "the Spark fleet check failed (exit ${verify_rc}) — one of three things: a box is DOWN (an address someone wrote down that answers nothing, and not one you accounted for with --expect-down), a reachable box disagrees with its peers, or its model id is spelled differently from the one litellm/config.yaml declares. A DOWN box is the case failover exists for, and the proxy is what pulls it out of rotation: the health filter behind enable_health_check_routing in litellm/config.yaml, not cooldown, which ignores APIConnectionError. Re-run bazelisk run //scripts:spark-verify -- --no-tests for the per-box detail and the proxy's /health/readiness for what the router currently believes, and bazelisk run //scripts:spark-configure -- --apply <host> to write a model-id fix."
   fi
 fi
 

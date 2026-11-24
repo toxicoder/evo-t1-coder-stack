@@ -5,10 +5,12 @@
 # The entry script is the fleet's drift check; scripts/lib/probes/spark-verify.sh
 # (the remote half) has its own suite in probes.bats, and the pure helpers this
 # file also exercises live beside these cases in entry-fns.bats. What is pinned
-# here is the policy the operator reads: a box that answers nothing is a skip
-# with an exit of 0, the ssh session's own first complaint is what gets quoted,
-# --json keeps stdout to one object per host, and a bad flag is refused before
-# any probe leaves the box.
+# here is the policy the operator reads: a box that answers nothing is a DOWN
+# verdict that fails the run unless --expect-down or --tolerate-unreachable
+# accounts for it; a host list that is nothing but the shipped spark-<n>.lan
+# placeholders stays a not-yet skip at exit 0; the ssh session's own first
+# complaint is what gets quoted; --json keeps stdout to one object per host; and
+# a bad flag is refused before any probe leaves the box.
 #
 # It also pins what travels to the far side in the assignment block the ssh
 # session carries: the recipe-probe flag has to arrive spelled the way the
@@ -46,21 +48,27 @@ scratch_checkout() {
   printf '%s' "${scratch}"
 }
 
-@test "spark-verify: a box that answers nothing is a skip and still exits 0" {
+@test "spark-verify: a box that answers nothing is DOWN and fails the run" {
   local scratch
   scratch="$(scratch_checkout)"
   # The curl stub's default answer is an empty body with exit 22 (nothing
   # answered) and the ssh stub refuses with one stderr line, which is what the
-  # caller quotes through first_line.
+  # caller quotes through first_line. 10.0.0.1 is an address somebody wrote
+  # down, so an unanswered probe there is a box the proxy is routing around,
+  # not a "not yet" state, and the run has to say so in its exit code.
   run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
     bash "${SCRIPT}" --no-tests 10.0.0.1
-  [ "${status}" -eq 0 ]
+  [ "${status}" -eq 1 ]
   assert_match "the host is named as a section" '^== host 10\.0\.0\.1 ==$' "${output}"
   assert_match "the http probe is announced" '^-> probing http://10\.0\.0\.1:8888$' "${output}"
   assert_match "ssh's own first line is quoted as the note" 'ssh: stub failure' "${output}"
-  assert_match "the unreachable summary" 'summary: no Spark answered on :8888' "${output}"
-  assert_match "the note calls it a not-yet state" 'so the exit code stays 0' "${output}"
-  assert_contains_file "the per-host verdict was written" "${scratch}/sparks/10.0.0.1.jsonl" '"verdict":"SKIP"'
+  assert_match "the per-host verdict reads DOWN" '10\.0\.0\.1 .*DOWN \(nothing answered' "${output}"
+  assert_match "the FAIL line names the count and the box" 'FAIL: 1 box\(es\) answered nothing on :8888 and are DOWN \(10\.0\.0\.1\)' "${output}"
+  assert_match "the note names the health filter that pulls a dead box out" 'enable_health_check_routing in general_settings' "${output}"
+  assert_match "the note says cooldown cannot do it" 'APIConnectionError' "${output}"
+  assert_match "the all-down summary" 'summary: no Spark answered on :8888' "${output}"
+  assert_match "the note calls the whole fleet down" 'every box in the fleet is DOWN' "${output}"
+  assert_contains_file "the per-host verdict was written" "${scratch}/sparks/10.0.0.1.jsonl" '"verdict":"DOWN"'
   [[ "$(stub_log_last curl)" == "curl -fsS -m 5 http://10.0.0.1:8888/health" ]]
 }
 
@@ -69,9 +77,10 @@ scratch_checkout() {
   scratch="$(scratch_checkout)"
   run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
     bash "${SCRIPT}" --json --no-tests 10.0.0.1
-  [ "${status}" -eq 0 ]
+  [ "${status}" -eq 1 ]
   [ "$(printf '%s\n' "${output}" | wc -l | tr -d ' ')" -eq 1 ]
-  assert_match "one parseable object" '^\{"host":"10\.0\.0\.1","reachable":false,"verdict":"SKIP"' "${output}"
+  assert_match "one parseable object" '^\{"host":"10\.0\.0\.1","reachable":false,"verdict":"DOWN"' "${output}"
+  assert_match "the object carries the excuse flag too" '"expected_down":false' "${output}"
   # The commentary is what --json moves to stderr, so the same lines are still
   # there, just off stdout.
   assert_match "the commentary moved to stderr" '^== host 10\.0\.0\.1 ==$' "${stderr}"
@@ -114,6 +123,14 @@ scratch_checkout() {
 # server's and parameterised on the one figure the needle gate reads.
 spark_body() {
   printf '{"models":["qwen3.8-flash-next"],"streams": {"max": 5}, "requests_running": %s}' "$1"
+}
+
+# The body a box that satisfies the fleet contract answers with: the exact served id the
+# entry script compares, five streams, and the running count. spark_body above is
+# deliberately the wrong spelling, which is enough for the probes that read only
+# requests_running and wrong for a test that needs a box to pass.
+spark_ok_body() {
+  printf '{"data":[{"id":"Qwen3.8-Flash-Next"}],"streams": {"max": 5}, "requests_running": %s}' "$1"
 }
 
 # The assignment block the entry script prepends to the remote probe body, decoded out of
@@ -175,7 +192,7 @@ transferred_assignments() {
   assert_match "the operator's word wins over the busy gate" 'NEEDLE_WANTED="yes"' "${assignments}"
 }
 
-@test "spark-verify: a .env that names a box only by SPARKn_OLLAMA_URL warns and still exits 0" {
+@test "spark-verify: a .env that names a box only by SPARKn_OLLAMA_URL warns about it" {
   # The key stopped feeding the host list, so a box named only there left the fleet in
   # silence. The advisory names the key and the host it lost; the fleet, the verdict and
   # the exit code stay the ones the surviving keys give, which is what the two runs
@@ -193,7 +210,9 @@ transferred_assignments() {
   printf '%s\n' 'SPARK2_OLLAMA_URL=http://10.9.8.6:11434' 'SPARK2_HOST=10.9.8.6' >"${scratch}/.env"
   run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
     bash "${SCRIPT}" --no-tests
-  [ "${status}" -eq 0 ]
+  # The advisory itself changes nothing; the exit code differs only because the box now
+  # rides the fleet, and a real address that answers nothing is DOWN (pinned above).
+  [ "${status}" -eq 1 ]
   assert_match "the same box now rides the fleet" 'in \.env: 10\.9\.8\.6' "${output}"
   assert_not_match "a host the fleet already names is not warned about" 'SPARK2_OLLAMA_URL=' "${output}"
 }
@@ -210,4 +229,93 @@ transferred_assignments() {
     bash "${SCRIPT}" --no-tests
   [ "${status}" -eq 0 ]
   assert_not_match "no warning is printed for a host it cannot name" 'is no longer read' "${output}"
+}
+
+@test "spark-verify: --expect-down excuses a box the operator took out" {
+  # The escape for a deliberate outage. The box is still probed, still printed,
+  # still counted unreachable -- it just cannot fail the run, and the summary says
+  # in so many words that the green came from a flag and not from the fleet.
+  local scratch
+  scratch="$(scratch_checkout)"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests --expect-down 10.0.0.1 10.0.0.1
+  [ "${status}" -eq 0 ]
+  assert_match "the verdict detail names the flag" 'named with --expect-down' "${output}"
+  assert_match "the summary says the outage was accounted for" 'accounted for by --expect-down' "${output}"
+  assert_not_match "no down verdict is printed" 'FAIL: .*are DOWN' "${output}"
+  assert_contains_file "the box is still reported, as a skip" "${scratch}/sparks/10.0.0.1.jsonl" '"verdict":"SKIP"'
+  assert_contains_file "and the object says it was expected down" "${scratch}/sparks/10.0.0.1.jsonl" '"expected_down":true'
+}
+
+@test "spark-verify: --expect-down on a box that answered says it is back" {
+  # The excuse going stale is the dangerous direction: a run that trusts it would
+  # ride a dead box. Advisory, and the box is still judged on its answer.
+  local scratch
+  scratch="$(scratch_checkout)"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    STUB_CURL_OUT="$(spark_ok_body 0)" \
+    bash "${SCRIPT}" --no-tests --expect-down 10.0.0.1 10.0.0.1
+  [ "${status}" -eq 0 ]
+  assert_match "the stale excuse is warned about" 'warning: 10\.0\.0\.1 was named with --expect-down but answered on :8888' "${output}"
+  assert_contains_file "the box is judged on its answer, not the flag" "${scratch}/sparks/10.0.0.1.jsonl" '"verdict":"OK"'
+}
+
+@test "spark-verify: --expect-down naming no host in the fleet excuses nothing" {
+  # A typo in the flag must not read as "accounted for": the operator believes the
+  # outage is covered while the dead box still fails the run, so it says so.
+  local scratch
+  scratch="$(scratch_checkout)"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests --expect-down 10.9.9.9 10.0.0.1
+  [ "${status}" -eq 1 ]
+  assert_match "the name that matched nothing is reported" 'warning: --expect-down 10\.9\.9\.9 names no host in this fleet' "${output}"
+  assert_match "the real box still reads DOWN" '10\.0\.0\.1 .*DOWN \(nothing answered' "${output}"
+}
+
+@test "spark-verify: --tolerate-unreachable lets a counted outage pass" {
+  # One box answers, one is dead, so the mixed summary carries all four counters and
+  # the exit code turns on the allowance alone.
+  local scratch map
+  scratch="$(scratch_checkout)"
+  map="${scratch}/curl-map"
+  printf '10.0.0.1:\t%s\n' "$(spark_ok_body 0)" >"${map}"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 STUB_CURL_OUT_MAP="${map}" \
+    bash "${SCRIPT}" --no-tests 10.0.0.1 10.0.0.2
+  [ "${status}" -eq 1 ]
+  assert_match "the summary counts down beside unreachable" 'summary: 2 of 2 host\(s\) checked \(1 unreachable, 1 down, 0 expected down\) and 0 failed' "${output}"
+  assert_match "the dead box is named" 'FAIL: 1 box\(es\) answered nothing on :8888 and are DOWN \(10\.0\.0\.2\)' "${output}"
+
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 STUB_CURL_OUT_MAP="${map}" \
+    bash "${SCRIPT}" --no-tests --tolerate-unreachable 1 10.0.0.1 10.0.0.2
+  [ "${status}" -eq 0 ]
+  assert_not_match "the tolerated box is not called a failure" 'FAIL: .*are DOWN' "${output}"
+  assert_match "the counter still reports it down" '1 unreachable, 1 down, 0 expected down' "${output}"
+  assert_contains_file "and the per-host object still reads DOWN" "${scratch}/sparks/10.0.0.2.jsonl" '"verdict":"DOWN"'
+}
+
+@test "spark-verify: --tolerate-unreachable refuses a non-number before any probe" {
+  local scratch
+  scratch="$(scratch_checkout)"
+  run --separate-stderr env REPO_ROOT="${scratch}" bash "${SCRIPT}" \
+    --tolerate-unreachable two 10.0.0.1
+  [ "${status}" -eq 1 ]
+  assert_match "the flag is named" 'tolerate-unreachable needs a whole number of hosts' "${stderr}"
+  [ "$(stub_log_count curl)" -eq 0 ]
+  [ "$(stub_log_count ssh)" -eq 0 ]
+}
+
+@test "spark-verify: the shipped placeholder trio is still a not-yet skip at exit 0" {
+  # No .env, no SPARK_HOSTS, no argument: every name is one .env.sample ships, none
+  # of them resolves, and nothing routes to them, so an unanswered probe there is
+  # "not configured yet" rather than traffic failing over, and it stays green.
+  local scratch
+  scratch="$(scratch_checkout)"
+  run --separate-stderr env REPO_ROOT="${scratch}" STUB_SSH_RC=1 \
+    bash "${SCRIPT}" --no-tests
+  [ "${status}" -eq 0 ]
+  assert_match "the placeholder trio is the fleet" 'checking the placeholder trio spark-1\.lan spark-2\.lan spark-3\.lan' "${output}"
+  assert_match "the note calls it a not-yet state" 'so the exit code stays 0' "${output}"
+  assert_match "the verdict says why" 'is a shipped spark-<n>\.lan placeholder, not an address' "${output}"
+  assert_contains_file "the box reads as a skip, not a down" "${scratch}/sparks/spark-1.lan.jsonl" '"verdict":"SKIP"'
 }
