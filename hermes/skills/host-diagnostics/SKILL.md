@@ -176,10 +176,14 @@ bundle already holds the answer, and one CLI is the door:
 bazelisk run //scripts:observability-query -- <logs|metrics|alerts|dashboards|search> [ARGS]
 ```
 
-It is read-only end to end, and it is a **host command**: this image has no bazelisk, and
-its four credential-bearing verbs (`search`, `dashboards`, `logs`, `metrics`) dial
-`127.0.0.1:3005`, which is the stack host's loopback and not this container's. Check
-`command -v bazelisk`, then print the line and hand it over. Never read the token file to
+It is read-only end to end, and it is a **host command**: this image has no bazelisk. Its
+four credential-bearing verbs (`search`, `dashboards`, `logs`, `metrics`) dial the Grafana
+origin the CLI resolves - `--base-url`, then `GRAFANA_URL`, then `GRAFANA_BASE_URL`, else
+the loopback default `http://127.0.0.1:<GRAFANA_PORT>`. That default is the stack host's
+loopback and is unreachable from this container, so a hand-over line has to carry
+`--base-url http://host.docker.internal:3005` (or the operator sets `GRAFANA_BASE_URL`) or
+the run only proves nobody can reach Grafana from here. Check `command -v bazelisk`, then
+print the line and hand it over. Never read the token file to
 "just check it" - it is `/var/lib/evo-t1-observability/grafana-query-token`, `0600`, and the
 path is the only part anyone needs from you.
 
@@ -248,11 +252,14 @@ here (`--no-docker` is the host-shell path).
 Every verb answers `off`, `nodata`, `error` or `data`, and the first two are the two people
 get wrong:
 
-- **`off`** means the `observability` compose profile is not up, so nothing was ever
-  listening and there is nothing to query. Nothing is broken. The next move is a sentence to
-  the operator: bring the profile up (`OBSERVABILITY_ENABLED=true`, then `//scripts:dev-stack
-  -- up`). Reporting "no logs" or "no metrics" off an `off` is a wrong answer with a clean
-  exit code, and it sends someone to debug an app that was never the problem.
+- **`off`** means the `observability` compose profile key says the bundle was never started,
+  read before any request was made - so nothing was asked and nothing is claimed about the
+  bundle. The next move is a sentence to the operator: bring the profile up
+  (`OBSERVABILITY_ENABLED=true`, then `//scripts:dev-stack -- up`). Reporting "no logs" or
+  "no metrics" off an `off` is a wrong answer with a clean exit code, and it sends someone to
+  debug an app that was never the problem. An endpoint that could not be reached is **not**
+  `off`: it is `error`, exit 1, naming the URL it tried - from here that is usually the
+  missing `--base-url`, not a dead bundle.
 - **`nodata`** means the bundle is up, accepted the query, and matched no row. That is an
   answer, and often it *is* the bug: the scrape is down, Prometheus' `remote_write` to Mimir
   stopped landing, or Alloy was pointed at an empty log root. Name which writer you now
@@ -261,8 +268,11 @@ get wrong:
   200 alloy` reads the tail of the writer.
 
 `error` is the only one that means a request failed: read the line, it names the URL, the
-status, and the token's *path*. Exit code 2 is not any of these - it means you wrote a
-command the CLI will not run, and it prints the fix.
+status, and the token's *path*, and for a refused socket the base-URL knob that answered.
+"nothing here is broken" is printed only by `nodata`, where the bundle really did answer.
+Exit code 2 is not any of these - it means you wrote a command the CLI will not run
+(including a `--base-url` that is not an origin and a `--timeout` of `0` or `00`), and it
+prints the fix.
 
 Nothing here changes anything. There is no verb that writes, and the provisioned folder
 carries `disableDeletion: true`, so a panel "fixed" in the UI is not fixed: the board is the

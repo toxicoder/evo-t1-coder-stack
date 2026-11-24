@@ -60,13 +60,14 @@ PLAN_DEFAULT='*	0	200	{"data":{"result":[{"stream":{"container":"coder"},"values
 # reachable by name: tests/shell_inventory.sh fails the gate for a production
 # function no test names, and this list is where this CLI's are named.
 CLI_HELPERS=(obsq_resolve_root obsq_find_lib usage usage_error obsq_key
-  profile_switched_off obsq_report_profile_off obsq_require_token obsq_fetch
+  obsq_resolve_base_url profile_switched_off obsq_report_profile_off
+  obsq_require_token obsq_fetch
   obsq_fetch_in_network obsq_emit obsq_read_body obsq_report_answer
   run_logs run_metrics run_alerts run_dashboards run_search run_self_test finish)
 LIB_HELPERS=(obsq_allowed_labels obsq_assert_ascii obsq_logql_label_names
-  obsq_logql_rejects obsq_urlencode obsq_since_seconds obsq_datasource
-  obsq_query_path obsq_labels_path obsq_read_token obsq_redact obsq_is_refused
-  obsq_is_no_data obsq_answer_shape obsq_result_count)
+  obsq_logql_rejects obsq_urlencode obsq_since_seconds obsq_validate_base_url
+  obsq_datasource obsq_query_path obsq_labels_path obsq_read_token obsq_redact
+  obsq_is_refused obsq_is_no_data obsq_answer_shape obsq_result_count)
 
 # setup - resolve the checkout, write the two stubs, mint the fixture credential,
 # and lay out the one shape every test starts from: the profile on, the dotenv
@@ -100,6 +101,7 @@ setup() {
 
   unset OBSERVABILITY_ENABLED ENV_FILE COMPOSE_FILE JSON_MODE
   unset GRAFANA_PORT OBS_ALERTMANAGER_PORT GRAFANA_QUERY_TOKEN_FILE
+  unset GRAFANA_URL GRAFANA_BASE_URL
   unset CURL_PLAN DOCKER_PLAN DOCKER_UNAVAILABLE DOCKER_ERR CURL_ERR
   unset FAKE_BODY FAKE_CODE FAKE_RC STUB_CURL_OUT STUB_CURL_RC
 
@@ -394,6 +396,23 @@ plan_for() {
   assert_err 'dashboards takes no argument'
 }
 
+@test 'a zero timeout or limit is refused as the unbounded request it is' {
+  run_cli logs '{container="coder"}' --timeout 0
+  [ "${status}" -eq 2 ]
+  assert_err '--timeout needs a whole number of seconds above zero'
+  assert_err "'0'"
+  run_cli logs '{container="coder"}' --timeout 00
+  [ "${status}" -eq 2 ]
+  assert_err "'00'"
+  run_cli logs '{container="coder"}' --limit 0
+  [ "${status}" -eq 2 ]
+  assert_err '--limit needs a whole number of rows above zero'
+  run_cli logs '{container="coder"}' --limit 00
+  [ "${status}" -eq 2 ]
+  assert_err "'00'"
+  [ ! -f "${STUB_LOG}/curl.log" ]
+}
+
 @test 'a bad window, limit or source is answered as the typo it is' {
   run_cli metrics 'up' --since 7x
   [ "${status}" -eq 2 ]
@@ -463,13 +482,63 @@ plan_for() {
   [ ! -f "${STUB_LOG}/docker.log" ]
 }
 
-@test 'a refused socket is the same profile-off answer, not an error' {
+@test 'an endpoint that cannot be reached is an error, never an all-clear' {
   plan_for '*' 7 000 ''
   run_cli dashboards
+  [ "${status}" -eq 1 ]
+  assert_err 'error:'
+  assert_err 'reached nothing at http://127.0.0.1:3005/api/search'
+  # The phrase that lets an agent stop looking belongs to a real answer only.
+  refute_out 'nothing here is broken'
+  refute_err 'nothing here is broken'
+  refute_out 'profile off'
+  refute_err 'profile off'
+  assert_out 'summary: 0 ok, 0 warnings, 1 failed'
+}
+
+@test 'the base URL comes from --base-url, then GRAFANA_URL, then GRAFANA_BASE_URL' {
+  plan_for 'api/search' 0 200 '[{"title":"x","type":"dash","uid":"x"}]'
+  run_cli dashboards
+  stub_said 'http://127.0.0.1:3005/api/search?type=dash-db'
+
+  export GRAFANA_URL='https://grafana.example.test'
+  run_cli dashboards
+  stub_said 'https://grafana.example.test/api/search?type=dash-db'
+
+  unset GRAFANA_URL
+  export GRAFANA_BASE_URL='http://host.docker.internal:3005'
+  run_cli dashboards
+  stub_said 'http://host.docker.internal:3005/api/search?type=dash-db'
+
+  run_cli dashboards --base-url 'http://127.0.0.1:3999/'
+  stub_said 'http://127.0.0.1:3999/api/search?type=dash-db'
+}
+
+@test 'a base URL from the dotenv is honoured, and its source is named' {
+  plan_for 'api/search' 0 200 '[{"title":"x","type":"dash","uid":"x"}]'
+  printf '%s\n' 'GRAFANA_URL=http://grafana.lan:3005' >>"${PROJ}/.env"
+  run_cli dashboards
   [ "${status}" -eq 0 ]
-  refute_out 'error:'
-  refute_err 'error:'
-  assert_out 'profile off'
+  stub_said 'http://grafana.lan:3005/api/search?type=dash-db'
+
+  : >"${PLAN_LIST}"
+  plan_for '*' 7 000 ''
+  run_cli dashboards
+  [ "${status}" -eq 1 ]
+  assert_err 'GRAFANA_URL'
+}
+
+@test 'a base URL that is not an origin is refused before the first request' {
+  for bad in 'http://grafana.test/api' 'ftp://grafana.test' 'grafana.test' \
+    'http://user:pw@grafana.test' 'https://grafana.test?x=1' ''; do
+    run_cli dashboards --base-url "${bad}"
+    [ "${status}" -eq 2 ] || {
+      printf 'accepted %s\n' "${bad}" >&2
+      return 1
+    }
+    assert_err 'not one this CLI can dial'
+  done
+  [ ! -f "${STUB_LOG}/curl.log" ]
 }
 
 @test 'logs prints the payload and counts the streams it got back' {
@@ -487,6 +556,9 @@ plan_for() {
   run_cli logs '{container="coder"}'
   [ "${status}" -eq 0 ]
   assert_out 'no data:'
+  # The all-clear is earned only where the bundle actually answered and matched
+  # nothing, which is this state and no other.
+  assert_out 'nothing here is broken'
   refute_out 'error:'
   refute_err 'error:'
   assert_out 'summary: 0 ok, 0 warnings, 0 failed'
@@ -534,13 +606,14 @@ plan_for() {
   [ ! -f "${STUB_LOG}/docker.log" ]
 }
 
-@test 'a missing daemon is the profile-off answer for alerts' {
+@test 'a missing daemon for alerts is an error that names the transport' {
   export DOCKER_UNAVAILABLE=1
   run_cli alerts
-  [ "${status}" -eq 0 ]
-  assert_out 'profile off'
-  refute_out 'error:'
-  refute_err 'error:'
+  [ "${status}" -eq 1 ]
+  assert_err 'error:'
+  assert_err 'http://alertmanager:9093/api/v2/alerts'
+  refute_out 'profile off'
+  refute_err 'profile off'
 }
 
 @test 'dashboards and search both go through the Grafana search API' {
@@ -695,22 +768,58 @@ plan_for() {
 }
 
 @test 'the lib separates the four answer shapes the CLI promises apart' {
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 7 '' 'Connection refused' ''"
-  [ "${lines[0]}" = 'off' ]
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 1 '' 'Cannot connect to the Docker daemon' ''"
-  [ "${lines[0]}" = 'off' ]
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '401' '' 'no'"
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 7 '000' ''"
   [ "${lines[0]}" = 'error' ]
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '500' '' 'boom'"
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 1 '000' ''"
   [ "${lines[0]}" = 'error' ]
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 1 '' 'SSL wrong' ''"
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '' ''"
   [ "${lines[0]}" = 'error' ]
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '200' '' '{\"data\":{\"result\":[]}}'"
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '401' 'no'"
+  [ "${lines[0]}" = 'error' ]
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '500' 'boom'"
+  [ "${lines[0]}" = 'error' ]
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 1 '' 'SSL wrong'"
+  [ "${lines[0]}" = 'error' ]
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '200' '{\"data\":{\"result\":[]}}'"
   [ "${lines[0]}" = 'nodata' ]
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '200' '' '[]'"
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '200' '[]'"
   [ "${lines[0]}" = 'nodata' ]
-  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '200' '' '[{\"labels\":{}}]'"
+  run --separate-stderr bash -c "source '${LIB}'; obsq_answer_shape 0 '200' '[{\"labels\":{}}]'"
   [ "${lines[0]}" = 'data' ]
+}
+
+@test 'the lib separates an unreachable endpoint from every other failure' {
+  run --separate-stderr bash -c "source '${LIB}'; obsq_is_refused 7 'Connection refused'"
+  [ "${status}" -eq 0 ]
+  run --separate-stderr bash -c "source '${LIB}'; obsq_is_refused 1 'Cannot connect to the Docker daemon'"
+  [ "${status}" -eq 0 ]
+  run --separate-stderr bash -c "source '${LIB}'; obsq_is_refused 1 'SSL wrong'"
+  [ "${status}" -eq 1 ]
+  run --separate-stderr bash -c "source '${LIB}'; obsq_is_refused 0 'nonsense'"
+  [ "${status}" -eq 1 ]
+}
+
+@test 'the lib accepts an origin and refuses everything that is not one' {
+  local pair
+  for pair in 'http://127.0.0.1:3005|http://127.0.0.1:3005' \
+    'https://grafana.example.test|https://grafana.example.test' \
+    'http://host.docker.internal:3005/|http://host.docker.internal:3005' \
+    'http://a//|http://a' 'https://[::1]:3005|https://[::1]:3005'; do
+    run --separate-stderr bash -c "source '${LIB}'; obsq_validate_base_url '${pair%%|*}'"
+    [ "${status}" -eq 0 ] || {
+      printf 'refused %s\n' "${pair%%|*}" >&2
+      return 1
+    }
+    [ "${lines[0]}" = "${pair##*|}" ] || return 1
+  done
+  for bad in '' 'grafana.test' 'http://' 'http://h/p' 'http://h?q=1' 'http://u@h' \
+    'http://h x' 'ftp://h' 'HTTP://h'; do
+    run --separate-stderr bash -c "source '${LIB}'; obsq_validate_base_url '${bad}'"
+    [ "${status}" -eq 1 ] || {
+      printf 'accepted %s\n' "${bad}" >&2
+      return 1
+    }
+  done
 }
 
 @test 'the lib counts each payload shape by the field every row must carry' {

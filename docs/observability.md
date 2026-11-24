@@ -732,9 +732,20 @@ to the host's own loopback, for a run in a host shell.
 ### The verbs, and one call each
 
 Six ways to ask. All of them take `--since` (default `1h`; a whole number with `s`, `m`,
-`h` or `d`), `--limit` (default 50, capped at 500), `--timeout` (default 5 s), and `--json`,
-which sends the payload alone to stdout and every report line to stderr - the channel a
-machine parses.
+`h` or `d`), `--limit` (default 50, capped at 500, whole number above zero), `--timeout`
+(default 5 s, whole number above zero - `0` and `00` are refused, because both would
+lift the cap rather than set it), and `--json`, which sends the payload alone to stdout
+and every report line to stderr - the channel a machine parses.
+
+Where Grafana answers is configuration, never a hard-coded dial: `--base-url`, then the
+`GRAFANA_URL` key, then `GRAFANA_BASE_URL` (both read from the environment, then the
+dotenv), then the loopback default `http://127.0.0.1:$GRAFANA_PORT`. That order is what
+makes the same CLI work from the two places it is run. A host shell takes the default.
+**A workspace container does not**: host loopback is unreachable from inside it, so from
+there point it at the LAN origin or at `http://host.docker.internal:<GRAFANA_PORT>`
+(`--base-url http://host.docker.internal:3005`, or `GRAFANA_BASE_URL` in the env the
+agent runs with). The value is checked before the first request - an origin, not a path,
+query, or credentials - and the report line names which knob answered.
 
 **`search TERM`** - Grafana's `/api/search?query=TERM`: dashboards, folders, panels and
 datasources that match. This is the verb that finds the UID or panel title a sharper
@@ -829,16 +840,19 @@ three must never collapse into each other:
 
 | answer | what happened | what the next step is | exit |
 |---|---|---|---|
-| `off` | the `observability` compose profile is not up, so nothing was ever listening | ask the operator to bring it up; the report line names `OBSERVABILITY_ENABLED` and `//scripts:dev-stack -- up`. Nothing here is broken | 0 |
-| `nodata` | the bundle is up, the query was accepted, and this window or filter matched no row | widen `--since`, drop a filter, then suspect the writer: the scrape, the `remote_write`, or Alloy's log root | 0 |
-| `error` | a query or the credential actually failed - a 4xx/5xx, a timeout, a dead backend | read the line: it names the URL, the code and the token *path*. Fix that, then re-run | 1 |
+| `off` | the `observability` compose profile key says the bundle was never started, and no request was made at all | ask the operator to bring it up; the report line names `OBSERVABILITY_ENABLED` and `//scripts:dev-stack -- up`. Nothing was asked, so nothing is claimed about the bundle | 0 |
+| `nodata` | the query was accepted and this window or filter matched no row - the only answer allowed to say nothing here is broken | widen `--since`, drop a filter, then suspect the writer: the scrape, the `remote_write`, or Alloy's log root | 0 |
+| `error` | a query, a credential or the transport failed - a 4xx/5xx, a timeout, a dead backend, or an endpoint that could not be reached at all | read the line: it names the URL, the code and the token *path*, and for a refused socket the base-URL knob that answered. Fix that, then re-run | 1 |
 | `data` | rows came back | check the count against `--limit` before concluding you saw everything | 0 |
 
-`off` is decided before the first request, from the one seam that owns the profile
-(`profile_switched_off` calls `compose_observability_args`), and again from the transport: a
-refused socket is `off`, not `error`, because on a box that never enabled the bundle that is
-what a socket does. A 401 or a 403 is deliberately **not** `off` (`scripts/observability-query.sh:507`) -
-something is listening and it is refusing the credential, which is a fault with a fix.
+`off` is decided once, before the first request, from the one seam that owns the profile
+(`profile_switched_off` calls `compose_observability_args`) - and from nothing else. A
+refused socket is `error`, not `off`: a connection that reached nothing cannot say whether
+the profile is on, and from a workspace container the usual cause is the base URL, not the
+bundle. An all-clear for a query that reached nothing is the failure this split exists to
+kill, so `nothing here is broken` is printed only where the bundle actually answered and
+matched no row. A 401 or a 403 is deliberately **not** `off` either - something is listening
+and it is refusing the credential, which is a fault with a fix.
 
 The mistake this exists to prevent is an agent that gets `nodata`, prints "no logs found",
 and moves on while the answer was `off`: the profile was never up and no log exists to find.
@@ -890,15 +904,21 @@ bazelisk run //scripts:grafana-agent-token -- --owner coder
 
 In order, and each one is a thing the CLI will not let you skip:
 
-1. **it refuses before anything else** if the target file already holds a live credential.
-   A second run without `--rotate` is an `error` naming the path and the flag: rotation is
-   something an operator asks for, never a side effect of re-running setup. A file that
-   exists but holds nothing token-shaped is a repair and is written over (`gat_refuses_overwrite`).
+1. **it refuses before anything else** unless the write is the one the operator asked for
+   (`gat_refuses_overwrite`). A target that already holds a live credential is refused
+   without `--rotate`: rotation is never a side effect of re-running setup. A target that
+   is **absent or holds nothing token-shaped** is refused without `--repair`, because this
+   path (`/var/lib/evo-t1-observability/grafana-query-token`) is box-wide and read by every
+   agent on the box - establishing a credential there is an act, not a fall-out. `--dry-run`
+   prints what the missing file means instead of refusing.
 2. **it reuses the service account `evo-t1-agent`, or creates it with role `Viewer`.**
    The role is a constant in the script, not a flag, so there is no way to ask for an
    editor, and a role the answer disagrees with is a failure rather than a warning
-   (`gat_ensure_service_account`). `--rotate` also revokes the account's previous tokens,
-   so ten rotations leave one live credential behind instead of ten.
+   (`gat_ensure_service_account`). Then, **every run and not only under `--rotate`**, it
+   revokes the account's tokens that this CLI's own naming scheme owns
+   (`${ACCOUNT_NAME}-token`, or that name with a `-<n>` suffix - `gat_token_name_owned`),
+   so ten reruns leave one live credential behind instead of ten, while a token another
+   tool minted against the same account is left alone.
 3. **it validates the answer before it writes**: one line, the alphabet
    `obsq_read_token` accepts, nothing else - a truncated response or a whole body fails
    and leaves the previous credential in place (`gat_write_token_file`).
@@ -907,6 +927,12 @@ In order, and each one is a thing the CLI will not let you skip:
    of a `0700` scratch directory, so nothing credential-shaped is ever an argument to
    docker or to curl, and every string the CLI prints is scrubbed by `gat_redact`.
    `--help` and `--dry-run` answer with no docker and no request at all.
+
+The mint has a lifetime by default: 30 days (`2592000` s), changed with `--ttl SECONDS` or
+the `GRAFANA_AGENT_TOKEN_TTL` key and refused unless it is a whole number above zero. A
+credential that outlives its operator is the thing this defaults against, so the endless
+token is an explicit opt-in - `--no-expiry`, which conflicts with `--ttl` and prints a
+`warning:` line saying so when it is used.
 
 The request is made the way the rest of the bundle reaches the plane: a one-shot
 `curlimages/curl:8.10.1` container on `${PROJECT_NAME}_default` calling

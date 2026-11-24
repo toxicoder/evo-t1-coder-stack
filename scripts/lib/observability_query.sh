@@ -3,10 +3,11 @@
 # ## lib/observability_query.sh - the answers observability-query.sh builds on.
 #
 # Sourced, never run. Everything here is a pure question: what does this LogQL
-# selector filter on, is this duration one this CLI accepts, which of the four
-# shapes did that HTTP answer take, does this string still carry the token. The
-# report vocabulary stays in the CLI that sources this, and the compose profile
-# decision stays in compose_observability_args, the one seam that owns it.
+# selector filter on, is this duration one this CLI accepts, which of the three
+# shapes did that HTTP answer take, is this base URL one to hand a credential to,
+# does this string still carry the token. The report vocabulary stays in the CLI
+# that sources this, and the compose profile decision stays in
+# compose_observability_args, the one seam that owns it.
 #
 # Two things here are load-bearing for a caller that is a machine rather than a
 # person standing at a dashboard:
@@ -217,6 +218,47 @@ obsq_since_seconds() {
   return 0
 }
 
+# @function obsq_validate_base_url
+# Decide whether one string is an origin this CLI may hand its credential to, and
+# print it normalised. The base URL is the only address in this CLI an operator
+# controls, and the bearer token is sent to it, so the check is deliberately
+# narrow: an http or https scheme, a host, an optional port, and nothing else. A
+# path, a query, a fragment or userinfo in the value is refused rather than
+# trimmed, because each one is a request the caller did not mean to make - and
+# credentials in the URL would put a second secret in front of the same transport
+# that already carries the token in a config file. Trailing slashes are folded
+# away, since this CLI appends the API paths itself and //api/search is not a path.
+# Globals:
+#   None
+# Arguments:
+#   $1 - the candidate origin
+# Outputs:
+#   The normalised origin on stdout, with no trailing newline
+# Returns:
+#   0 with the origin, 1 when it is not one this CLI can dial
+obsq_validate_base_url() {
+  local url="${1:-}" rest=""
+  while [[ ${url} == */ ]]; do
+    url="${url%/}"
+  done
+  [ -n "${url}" ] || return 1
+  case "${url}" in
+    http://?* | https://?*) : ;;
+    *) return 1 ;;
+  esac
+  rest="${url#*://}"
+  if [[ ${rest} =~ ^[A-Za-z0-9._~:-]+$ ]]; then
+    printf '%s' "${url}"
+    return 0
+  fi
+  # A bracketed IPv6 literal is the only address form holding bytes outside that set.
+  if [[ ${rest} =~ ^\[[0-9A-Fa-f:.]+\](:[0-9]+)?$ ]]; then
+    printf '%s' "${url}"
+    return 0
+  fi
+  return 1
+}
+
 # @function obsq_datasource
 # Resolve one datasource name to its provisioned uid and type. The CLI addresses
 # datasources by UID through Grafana's proxy, so a name nobody provisioned has to
@@ -353,13 +395,14 @@ obsq_redact() {
 }
 
 # @function obsq_is_refused
-# Succeed for the answers that mean the bundle is simply not running, which for a
-# query CLI is the profile-off look and never a fault. Three shapes say it:
-# nothing listening on the published port (curl exit 7 and its two complaints),
-# no daemon for the in-network transport to join, and a project network that does
-# not exist because no compose up ever ran. The whole bundle rides the
-# observability profile, so a refused connection is the normal answer on a box
-# that never enabled it.
+# Succeed when a transport answer says the endpoint was never reached at all:
+# nothing listening on the port dialed (curl exit 7 and its two complaints), no
+# daemon for the in-network transport to join, and a project network that does not
+# exist because no compose up ever ran. This names a class of failure for the
+# error line - it is no longer the profile-off answer. The off state is decided
+# from the one seam that owns the profile (compose_observability_args) before any
+# request is made; a refused socket is decided from nothing at all, so it is an
+# error that has to name the URL it tried.
 # Globals:
 #   None
 # Arguments:
@@ -367,7 +410,7 @@ obsq_redact() {
 # Outputs:
 #   None
 # Returns:
-#   0 when nothing is up, 1 for every other failure
+#   0 when nothing was reached, 1 for every other failure
 obsq_is_refused() {
   local rc="${1:-}" err="${2:-}"
   if [ "${rc}" = "7" ]; then
@@ -410,26 +453,27 @@ obsq_is_no_data() {
 }
 
 # @function obsq_answer_shape
-# Name which of the four shapes one transport answer is, which is the whole
-# contract of this CLI: a box that never enabled the bundle, a box that enabled it
-# and holds nothing, and a box that is broken are three different answers and must
-# never collapse into one. A 401 and a 403 are errors rather than the off state:
+# Name which of the three shapes one transport answer took: a request that failed,
+# a request that was accepted and matched no row, and a request that brought rows.
+# A box that never enabled the bundle is not decided here - that is the profile
+# key, read once by profile_switched_off before any request, and it is the only
+# thing allowed to say "nothing here is broken". A transport that reached nothing
+# is an error, whatever its cause: on a box where the profile says the bundle is
+# up, a refused socket means the base URL is wrong or the container cannot route
+# to the host, and both are faults with fixes. A 401 and a 403 are errors too:
 # something is up, and it is refusing the credential.
 # Globals:
 #   None
 # Arguments:
-#   $1 - the transport's exit status; $2 - the HTTP status code; $3 - the
-#   transport's first complaint; $4 - the response body
+#   $1 - the transport's exit status; $2 - the HTTP status code; $3 - the response
+#   body. The transport's own complaint is not asked here: it belongs to the error
+#   line obsq_report_answer writes, which is where a caller reads it.
 # Outputs:
-#   One of off, error, nodata, data on stdout, with no trailing newline
+#   One of error, nodata, data on stdout, with no trailing newline
 # Returns:
 #   0, always: the shape is a result, never an abort
 obsq_answer_shape() {
-  local rc="${1:-}" code="${2:-}" err="${3:-}" body="${4:-}"
-  if obsq_is_refused "${rc}" "${err}"; then
-    printf 'off'
-    return 0
-  fi
+  local rc="${1:-}" code="${2:-}" body="${3:-}"
   if [ "${rc}" != "0" ] || [ -z "${code}" ] || [ "${code}" = "000" ]; then
     printf 'error'
     return 0

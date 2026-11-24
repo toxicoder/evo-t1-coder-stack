@@ -55,10 +55,18 @@
 #   --rotate            replace a credential that is already live. Without it a second
 #                       run refuses rather than silently invalidating the token a
 #                       running agent is holding
+#   --repair            write even when the target file is absent or holds nothing
+#                       token-shaped. That path is box-wide and read by every agent on
+#                       it, so establishing a credential on it is something an operator
+#                       asks for rather than a side effect of running the CLI once
 #   --owner NAME        chown the token file to this user after writing it, for the
 #                       box where the mint runs as root and the agent reads as coder
 #   --account-name NAME the service account to create or reuse. Default evo-t1-agent
-#   --ttl SECONDS       give the token a lifetime. Default empty: no expiry
+#   --ttl SECONDS       lifetime of the minted token, in whole seconds above zero.
+#                       Default: $GRAFANA_AGENT_TOKEN_TTL, else 2592000 (30 days)
+#   --no-expiry         mint a token with no expiry at all. An explicit opt-out, and
+#                       the only way this CLI writes a credential that outlives its
+#                       operator; it conflicts with --ttl
 #   --timeout SECS      per-request curl budget. Default 5
 #   --compose-file PATH compose file the project network is named after. Default:
 #                       $COMPOSE_FILE, else ./docker-compose.yml
@@ -111,7 +119,15 @@ GAT_SA_ROLE="Viewer"
 ACCOUNT_NAME="evo-t1-agent"
 TOKEN_NAME=""
 OWNER=""
+# A minted credential that never dies is the default nobody meant to choose, so the
+# default here is a lifetime and the endless one is the opt-in (--no-expiry). The
+# number is a month: long enough that no agent's read path breaks between one
+# operator visit and the next, short enough that a forgotten box stops presenting a
+# credential. GRAFANA_AGENT_TOKEN_TTL or --ttl changes it.
+TTL_DEFAULT_SECONDS=2592000
 TTL=""
+NO_EXPIRY=0
+REPAIR=0
 ROTATE=0
 DRY_RUN=0
 NO_DOCKER=0
@@ -161,9 +177,14 @@ Options:
   --rotate            replace a credential that is already live. Without it a
                       second run refuses instead of invalidating a token an
                       agent is holding
+  --repair            write even when the target file is absent or holds nothing
+                      token-shaped: the flag that says this run is the mint
+                      meant to establish the credential on this box
   --owner NAME        chown the token file to this user after writing it
   --account-name NAME service account to create or reuse. Default evo-t1-agent
-  --ttl SECONDS       give the token a lifetime. Default empty: no expiry
+  --ttl SECONDS       token lifetime, whole seconds above zero. Default:
+                      $GRAFANA_AGENT_TOKEN_TTL, else 2592000 (30 days)
+  --no-expiry         mint with no expiry. Explicit opt-out; conflicts with --ttl
   --timeout SECS      per-request curl budget. Default 5
   --compose-file PATH compose file the project network is named after
   --no-docker         stop before any container runs
@@ -173,6 +194,10 @@ Options:
 The admin credential comes from GRAFANA_ADMIN_USER and GRAFANA_ADMIN_PASSWORD
 in the environment, the two keys docker-compose.yml already interpolates. The
 minted token is never printed, in any mode.
+
+Every run revokes the account's tokens that this CLI's own naming scheme owns
+before minting, so a rerun cannot leave two live credentials behind; a token
+named by anything else is left alone.
 
 Exit: 0 minted or planned, 1 a check or request failed, 2 a usage error.
 EOF
@@ -212,24 +237,33 @@ gat_usage_error() {
 gat_preflight() {
   local rc=0
   section "Preflight"
-  if gat_refuses_overwrite "${TOKEN_FILE}" "${ROTATE}"; then
-    :
-  else
-    case "$?" in
-      1)
-        fail_item "a live credential is already in ${TOKEN_FILE}: a second mint would invalidate the token an agent is holding. Re-run with --rotate to replace it deliberately"
+  local refused=0
+  gat_refuses_overwrite "${TOKEN_FILE}" "${ROTATE}" "${REPAIR}" || refused=$?
+  case "${refused}" in
+    0) : ;;
+    1)
+      fail_item "a live credential is already in ${TOKEN_FILE}: a second mint would invalidate the token an agent is holding. Re-run with --rotate to replace it deliberately"
+      return 1
+      ;;
+    2)
+      fail_item "${TOKEN_FILE} exists and cannot be read by this user: check its owner and mode before minting over it"
+      return 1
+      ;;
+    3)
+      # --dry-run writes nothing, so the missing credential is printed as part of
+      # the plan rather than refused: the plan is the thing an operator wants here.
+      if [ "${DRY_RUN}" = "1" ]; then
+        warn "no credential in ${TOKEN_FILE} yet: a real run needs --repair to write it"
+      else
+        fail_item "nothing to replace in ${TOKEN_FILE}: it is absent or holds no credential, and this CLI does not silently establish one at a box-wide path every agent on the box reads. Re-run with --repair to say this mint is the one meant to write it"
         return 1
-        ;;
-      2)
-        fail_item "${TOKEN_FILE} exists and cannot be read by this user: check its owner and mode before minting over it"
-        return 1
-        ;;
-      *)
-        fail_item "could not decide whether ${TOKEN_FILE} holds a live credential"
-        return 1
-        ;;
-    esac
-  fi
+      fi
+      ;;
+    *)
+      fail_item "could not decide whether ${TOKEN_FILE} holds a live credential"
+      return 1
+      ;;
+  esac
 
   if [ "${DRY_RUN}" = "1" ]; then
     note "dry run: nothing is created, requested or written"
@@ -381,15 +415,20 @@ gat_ensure_service_account() {
 # live credential behind rather than one per rotation. A token that cannot be listed is
 # a warning and not a fault: minting still succeeds, and the operator is told the old
 # one may still be live.
+# Delete every token whose name this CLI's naming scheme owns, before any new one is
+# minted, so that no run leaves a previous credential of its own live. Tokens named by
+# anything else are not this CLI's to delete and are left alone. A token list that
+# cannot be read is a warning and not a fault: minting still succeeds, and the operator
+# is told the old one may still be live.
 # Globals:
-#   ACCOUNT_NAME, GAT_SA_ID, GAT_CODE, GAT_ERR, WORK_DIR
+#   ACCOUNT_NAME, TOKEN_NAME, GAT_SA_ID, GAT_CODE, GAT_ERR, WORK_DIR
 # Arguments:
 #   None
 # Outputs:
 #   ok:, warning: and error: lines
 # Returns:
-#   0 when the account holds no live token afterwards or the list could not be read,
-#   1 when a deletion Grafana was asked for failed
+#   0 when the account holds no token of this CLI's own afterwards, or the list could
+#   not be read, 1 when a deletion Grafana was asked for failed
 gat_revoke_existing_tokens() {
   local base="http://${GRAFANA_SERVICE}:${GRAFANA_CONTAINER_PORT}" ids="" deleted=0 id=""
   phase "GET ${base}/api/serviceaccounts/${GAT_SA_ID}/tokens (what to revoke)"
@@ -402,9 +441,9 @@ gat_revoke_existing_tokens() {
     warn "Grafana answered ${GAT_CODE:-no code} to the token list: the previous token may still be live"
     return 0
   fi
-  ids="$(gat_list_token_ids "${WORK_DIR}/tokens.json")"
+  ids="$(gat_list_token_ids "${WORK_DIR}/tokens.json" "${TOKEN_NAME}")"
   if [ -z "${ids}" ]; then
-    ok "${ACCOUNT_NAME} holds no token to revoke"
+    ok "${ACCOUNT_NAME} holds no token of this CLI's own to revoke"
     return 0
   fi
   while IFS= read -r id; do
@@ -480,7 +519,9 @@ gat_mint_token() {
     fi
   fi
   if [ -z "${TTL}" ]; then
-    note "this token does not expire; revoke it from Grafana's service-account page or re-run with --rotate"
+    warn "this token never expires: --no-expiry was asked for explicitly. Revoke it from Grafana's service-account page or re-run with --rotate when the agent is done with it"
+  else
+    note "this token expires in ${TTL} seconds; re-run with --rotate before then to hand the agent a fresh one"
   fi
   return 0
 }
@@ -508,10 +549,19 @@ gat_plan() {
   else
     note "a credential already in place would be refused (pass --rotate to replace it)"
   fi
+  if gat_refuses_overwrite "${TOKEN_FILE}" "${ROTATE}" "${REPAIR}"; then
+    note "the target file needs no further flag"
+  else
+    case "$?" in
+      3) note "no credential in ${TOKEN_FILE} yet: a real run needs --repair to write it" ;;
+      *) : ;;
+    esac
+  fi
+  note "revocation: the account's tokens named ${TOKEN_NAME}* are revoked before the mint; anything named by another tool is left alone"
   if [ -n "${TTL}" ]; then
     note "lifetime: ${TTL} seconds"
   else
-    note "lifetime: none"
+    note "lifetime: none (--no-expiry)"
   fi
   if [ -n "${OWNER}" ]; then
     note "owner after the write: ${OWNER}"
@@ -567,6 +617,14 @@ while [ "$#" -gt 0 ]; do
       ROTATE=1
       shift
       ;;
+    --repair)
+      REPAIR=1
+      shift
+      ;;
+    --no-expiry)
+      NO_EXPIRY=1
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -585,12 +643,18 @@ done
   gat_usage_error "--account-name must be letters, digits, dot, dash or underscore: it names a Grafana object and goes into a JSON body"
 [[ ${OWNER} =~ ^[A-Za-z0-9._-]*$ ]] ||
   gat_usage_error "--owner must be a plain user name"
-[[ ${TIMEOUT} =~ ^[0-9]+$ ]] && [ "${TIMEOUT}" -gt 0 ] ||
-  gat_usage_error "--timeout must be a positive integer"
-[ -z "${TTL}" ] || [[ ${TTL} =~ ^[0-9]+$ ]] ||
-  gat_usage_error "--ttl must be a number of seconds, or left out"
-[ -z "${TTL}" ] || [ "${TTL}" -gt 0 ] ||
-  gat_usage_error "--ttl must be greater than zero"
+[[ ${TIMEOUT} =~ ^[1-9][0-9]*$ ]] ||
+  gat_usage_error "--timeout must be a whole number of seconds above zero, got '${TIMEOUT}' (0 and 00 both mean no cap, and this CLI does not run uncapped requests)"
+[ -z "${TTL}" ] || [[ ${TTL} =~ ^[1-9][0-9]*$ ]] ||
+  gat_usage_error "--ttl must be a whole number of seconds above zero, got '${TTL}' (0 and 00 are not lifetimes)"
+if [ "${NO_EXPIRY}" = "1" ] && [ -n "${TTL}" ]; then
+  gat_usage_error "--no-expiry and --ttl ask for opposite things: pick one"
+fi
+if [ "${NO_EXPIRY}" != "1" ] && [ -z "${TTL}" ]; then
+  TTL="${GRAFANA_AGENT_TOKEN_TTL:-${TTL_DEFAULT_SECONDS}}"
+  [[ ${TTL} =~ ^[1-9][0-9]*$ ]] ||
+    gat_usage_error "GRAFANA_AGENT_TOKEN_TTL must be a whole number of seconds above zero, got '${TTL}'"
+fi
 [ "${DRY_RUN}" != "1" ] || [ "${NO_DOCKER}" != "1" ] ||
   gat_usage_error "--dry-run and --no-docker ask the same thing twice; pick one"
 
@@ -634,11 +698,14 @@ if ! gat_curl_config "${WORK_DIR}/curlrc" "${GRAFANA_ADMIN_USER:-admin}" "${GRAF
   exit 1
 fi
 
-# Ensure, revoke what --rotate replaces, then mint. A revoke Grafana refused stops the
-# run: minting on top of a token that is still live is the drift --rotate exists to avoid.
+# Ensure, revoke, then mint - in that order, every run. Revoking is not gated on
+# --rotate: --rotate guards the file on disk, while this guards the plane, where a
+# rerun that left its previous credential live would mean two working credentials for
+# one agent and no way to tell which one a 401 is about. A revoke Grafana refused
+# stops the run rather than minting on top of it.
 proceed=1
 gat_ensure_service_account || proceed=0
-if [ "${proceed}" = "1" ] && [ "${ROTATE}" = "1" ]; then
+if [ "${proceed}" = "1" ]; then
   gat_revoke_existing_tokens || proceed=0
 fi
 if [ "${proceed}" = "1" ]; then

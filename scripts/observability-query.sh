@@ -8,9 +8,15 @@
 # five verbs, one read-only service-account token read from a file, and one
 # answer shape a machine can branch on.
 #
-# Every query goes to a provisioned datasource by UID through Grafana's datasource
-# proxy (/api/datasources/proxy/uid/<uid>/...), so the token is the only
-# credential this needs and the query language is the one the panel already uses.
+# Every query that needs the credential goes to a provisioned datasource by UID
+# through Grafana's datasource proxy (/api/datasources/proxy/uid/<uid>/...), so the
+# token is the only credential this needs and the query language is the one the
+# panel already uses. Where Grafana answers is configuration, never an assumption:
+# --base-url, then the GRAFANA_URL key, then GRAFANA_BASE_URL, then the loopback
+# default on GRAFANA_PORT. That order is what makes this usable from the two places
+# it is run: a host shell reaches its own 127.0.0.1, and a workspace container -
+# which cannot see the host's loopback at all - is pointed at the LAN origin or at
+# http://host.docker.internal:<GRAFANA_PORT> by whoever set the key.
 # The two backends that need no credential and bind loopback only - Alertmanager
 # on 127.0.0.1:9093 - are reached the way scripts/observability-check.sh:454
 # reaches everything it cannot publish: a one-shot curlimages/curl container on
@@ -27,8 +33,13 @@
 #
 # Three states are answered apart, because collapsing them is how a working bundle
 # gets declared broken: the profile is off (the normal look of a box that never
-# enabled it, so exit 0 and a note), the bundle is up and holds nothing for that
-# query (exit 0 and a note), and something is actually wrong (exit 1 and an error).
+# enabled it, read from the compose key before any request, so exit 0 and a note),
+# the bundle is up and the query was accepted but holds nothing (exit 0 and a note,
+# and the only case allowed to say nothing here is broken), and something is
+# actually wrong (exit 1 and an error naming the URL it tried). An endpoint that
+# could not be reached is the third state, never the first: a refused socket says
+# nothing about whether the bundle is running, and an agent handed an all-clear for
+# a query that reached nothing stops looking.
 #
 # Usage (Bazel is the entry point; every example is the whole command):
 #   bazelisk run //scripts:observability-query -- logs '{container="coder"} |~ "error"'
@@ -40,6 +51,13 @@
 #   bazelisk run //scripts:observability-query -- --self-test
 #
 # Options (accepted anywhere in argv):
+#   --base-url URL      the Grafana origin to query: http or https, host and
+#                       optional port, no path. Default order: --base-url, then
+#                       GRAFANA_URL, then GRAFANA_BASE_URL (each read from the
+#                       environment, then the dotenv), then the loopback default
+#                       http://127.0.0.1:$GRAFANA_PORT. From a workspace container
+#                       the loopback default reaches nothing: point it at the LAN
+#                       origin or at http://host.docker.internal:<GRAFANA_PORT>
 #   --env-file PATH     dotenv the ports are read from. Default: $ENV_FILE, else
 #                       ./.env beside $COMPOSE_FILE, else ./.env
 #   --token-file PATH   the service-account token file. Default: $GRAFANA_QUERY_TOKEN_FILE,
@@ -47,10 +65,12 @@
 #   --since DUR         window for logs and metrics. Default 1h. Whole number with
 #                       s, m, h or d
 #   --step DUR          metrics range step. Default: none, one point per series
-#   --limit N           rows asked for. Default 50, max 500
+#   --limit N           rows asked for. Default 50, max 500, whole number above zero
 #   --source NAME       metrics datasource: prometheus or mimir. Default prometheus;
 #                       use mimir for windows past Prometheus' retention
-#   --timeout SECS      per-request curl budget. Default 5.
+#   --timeout SECS      per-request curl budget. Default 5, whole number above zero.
+#                       Both this and curl's own --max-time are enforced, so an
+#                       accepted value is the ceiling on every request
 #   --no-docker         reach the unpublished backends over the host's loopback
 #                       instead of a one-shot container on the project network
 #   --json              payload only on stdout; the report goes to stderr
@@ -65,9 +85,10 @@
 #   "note:", "error:", and a closing "summary: N ok, W warnings, F failed" as the
 #   last line of the run. With --json every one of those lines goes to stderr and
 #   stdout carries only the payload.
-# Exit codes: 0 on data, on no data, and on the profile being off; 1 when a query
-#   or the credential actually failed; 2 on a usage error, always answered before
-#   the first request, including a label outside the allowed set.
+# Exit codes: 0 on data, on no data, and on the profile being off; 1 when a query,
+#   a credential or the transport failed; 2 on a usage error, always answered before
+#   the first request, including a label outside the allowed set and a --base-url
+#   that is not an origin.
 #
 # Related: scripts/observability-check.sh (proves the bundle is wired; this one
 #   asks it questions), scripts/lib/observability_query.sh (the label rule, the
@@ -175,6 +196,17 @@ GRAFANA_TOKEN=""
 
 ENV_FILE_ARG=""
 TOKEN_FILE_ARG=""
+# The Grafana origin, resolved once by obsq_resolve_base_url. BASE_URL_ARG is the
+# flag; BASE_URL_SOURCE names where the accepted value came from, so an error can
+# tell the operator which knob to fix, and BASE_URL_RAW keeps the unnormalised
+# value for that same line.
+BASE_URL_ARG=""
+# Whether --base-url was passed at all: an explicit empty value is a refusal, and
+# only an absent flag falls through to the keys and the loopback default.
+BASE_URL_SEEN=0
+BASE_URL=""
+BASE_URL_SOURCE=""
+BASE_URL_RAW=""
 TIMEOUT=5
 LIMIT=50
 SINCE="1h"
@@ -224,6 +256,11 @@ Verbs:
                       without returning any data
 
 Options:
+  --base-url URL      the Grafana origin to query (http/https + host + optional
+                      port, no path). Order: --base-url, GRAFANA_URL,
+                      GRAFANA_BASE_URL, then http://127.0.0.1:$GRAFANA_PORT.
+                      From a workspace container the loopback default reaches
+                      nothing - pass --base-url or set GRAFANA_BASE_URL
   --env-file PATH     dotenv the ports are read from. Default: $ENV_FILE, else
                       ./.env beside $COMPOSE_FILE, else ./.env
   --token-file PATH   the service-account token file. Default:
@@ -231,9 +268,9 @@ Options:
                       /var/lib/evo-t1-observability/grafana-query-token
   --since DUR         window for logs and metrics. Default 1h (s, m, h, d)
   --step DUR          metrics range step. Default: none
-  --limit N           rows asked for. Default 50, max 500
+  --limit N           rows asked for. Default 50, max 500, above zero
   --source NAME       metrics datasource: prometheus or mimir. Default prometheus
-  --timeout SECS      per-request curl budget. Default 5.
+  --timeout SECS      per-request curl budget. Default 5, above zero.
   --no-docker         reach unpublished backends over the host loopback instead
                       of a one-shot curlimages/curl container
   --json              payload only on stdout; the report goes to stderr
@@ -241,12 +278,14 @@ Options:
 
 The token is read from a file and never from argv, is never printed, and is
 scrubbed out of anything the bundle echoes back. Three states are answered
-apart: the observability compose profile being off, a bundle that is up and
-holds nothing for this query, and a real failure.
+apart: the observability compose profile being off (read from the compose key,
+before any request), a bundle that accepted the query and holds nothing for it,
+and a real failure - including an endpoint that could not be reached, which is
+an error naming the URL it tried and never an all-clear.
 
-Exit codes: 0 on data, on no data and on the profile being off; 1 when a query
-or the credential failed; 2 on a usage error, including a log label outside
-container, stream, job, stack.
+Exit codes: 0 on data, on no data and on the profile being off; 1 when a query,
+a credential or the transport failed; 2 on a usage error, including a log label
+outside container, stream, job, stack, and a base URL that is not an origin.
 USAGE
 }
 
@@ -293,6 +332,51 @@ obsq_key() {
   return 0
 }
 
+# @function obsq_resolve_base_url
+# Set BASE_URL to the one Grafana origin every credential-bearing verb dials, in the
+# documented order: --base-url, then the GRAFANA_URL key, then GRAFANA_BASE_URL (each
+# read from the environment and then the dotenv by obsq_key), then the loopback
+# default on GRAFANA_PORT. Nothing here assumes where Grafana lives: the loopback
+# default is right for a host shell and wrong for a workspace container, and the
+# operator's key is what makes the second one work. The value goes through
+# obsq_validate_base_url, because the bearer token is handed to whatever this
+# resolves to, so a path, a query or credentials in the value is refused here rather
+# than dialled. BASE_URL_SOURCE says which knob answered, for the error line.
+# Globals:
+#   BASE_URL_ARG, BASE_URL, BASE_URL_SOURCE, BASE_URL_RAW, ENV_SRC
+# Arguments:
+#   None
+# Outputs:
+#   Nothing on stdout: BASE_URL, BASE_URL_SOURCE and BASE_URL_RAW are set here
+# Returns:
+#   0 with BASE_URL set to a usable origin, 1 when the value found is not one
+obsq_resolve_base_url() {
+  local raw="" source="" normalized=""
+  if [ "${BASE_URL_SEEN}" = "1" ]; then
+    raw="${BASE_URL_ARG}"
+    source="--base-url"
+  else
+    raw="$(obsq_key GRAFANA_URL '')"
+    source="GRAFANA_URL"
+    if [ -z "${raw}" ]; then
+      raw="$(obsq_key GRAFANA_BASE_URL '')"
+      source="GRAFANA_BASE_URL"
+    fi
+    if [ -z "${raw}" ]; then
+      raw="http://127.0.0.1:$(obsq_key GRAFANA_PORT 3005)"
+      source="the loopback default on GRAFANA_PORT"
+    fi
+  fi
+  BASE_URL_RAW="${raw}"
+  BASE_URL_SOURCE="${source}"
+  normalized="$(obsq_validate_base_url "${raw}")" || {
+    BASE_URL=""
+    return 1
+  }
+  BASE_URL="${normalized}"
+  return 0
+}
+
 # @function profile_switched_off
 # Succeed when the observability compose profile is switched off, which is the
 # answer that has to be reached before any request is made: the whole bundle rides
@@ -314,10 +398,11 @@ profile_switched_off() {
 }
 
 # @function obsq_report_profile_off
-# Print the one note that answers "this box never started the bundle", used for
-# both ways that shows up: the key that decides the profile says off, and the
-# transport answering nothing because nothing is listening. Neither is a fault, so
-# neither is allowed to fail the run.
+# Print the one note that answers "this box never started the bundle". It is reached
+# exactly one way: the compose key that decides the profile says off, read before any
+# request was made. It deliberately does not claim that nothing is broken - nothing
+# was asked, so nothing is known - and a transport that reached nothing never reaches
+# this line, because a refused socket cannot tell you whether the profile is on.
 # Globals:
 #   ENV_SRC
 # Arguments:
@@ -328,7 +413,7 @@ profile_switched_off() {
 #   0, always
 obsq_report_profile_off() {
   local what="${1:-query}"
-  note "${what}: profile off - the whole observability bundle rides the observability compose profile, so its services were never started on this box and there is nothing to query. Nothing here is broken: set OBSERVABILITY_ENABLED=true in ${ENV_SRC} and bring it up with //scripts:dev-stack -- up"
+  note "${what}: profile off - the whole observability bundle rides the observability compose profile, so its services were never started on this box and this CLI made no request at all. That is the profile, not a verdict on the bundle: set OBSERVABILITY_ENABLED=true in ${ENV_SRC} and bring it up with //scripts:dev-stack -- up, then ask again"
   return 0
 }
 
@@ -479,9 +564,13 @@ obsq_read_body() {
 
 # @function obsq_report_answer
 # Turn one transport answer into the report it deserves, and print the payload when
-# the caller wants it. This is where the three states are kept apart: off is a note
-# and a clean exit, nodata is a note that says the bundle is up and simply holds
-# nothing, and error names what to fix. The 401 and 403 lines name the token file
+# the caller wants it. This is where the states are kept apart: nodata is a note that
+# says the query was accepted and simply matched no row - the one state allowed to
+# say nothing here is broken, because that is the only one where the bundle actually
+# answered - and error names the URL it tried and what to fix. An endpoint that could
+# not be reached is an error, never the off note: only the compose key may say the
+# bundle was never started, and a refused socket is just as likely to be the wrong
+# base URL seen from a workspace container. The 401 and 403 lines name the token file
 # rather than the token, because the file is the thing the operator can act on.
 # Globals:
 #   GRAFANA_TOKEN, GRAFANA_QUERY_TOKEN_FILE
@@ -496,23 +585,23 @@ obsq_read_body() {
 obsq_report_answer() {
   local what="$1" url="$2" shape="$3" rc="$4" code="$5" err="$6" body="$7" kind="$8" emit="${9:-1}"
   case "${shape}" in
-    off)
-      obsq_report_profile_off "${what}"
-      return 0
-      ;;
     error)
       local detail=""
-      case "${code}" in
-        401 | 403)
-          detail="${what} was refused by Grafana (${code}): the read-only service-account token in ${GRAFANA_QUERY_TOKEN_FILE} is expired, deleted, or lacks the role the query needs - re-run the minting step that writes that file"
-          ;;
-        '')
-          detail="${what} got no HTTP answer from ${url}: ${err:-no answer} (transport exit ${rc})"
-          ;;
-        *)
-          detail="${what} answered ${code} from ${url}: $(first_line "${body}")${err:+ / ${err}}"
-          ;;
-      esac
+      if obsq_is_refused "${rc}" "${err}"; then
+        detail="${what} reached nothing at ${url}: ${err:-connection refused} (transport exit ${rc}) - nothing is listening on that origin or this container cannot route to it. Check the base URL (it came from ${BASE_URL_SOURCE:-the default}; the knobs are --base-url, GRAFANA_URL, GRAFANA_BASE_URL), then that the bundle is up with //scripts:dev-stack -- status"
+      else
+        case "${code}" in
+          401 | 403)
+            detail="${what} was refused by Grafana (${code}): the read-only service-account token in ${GRAFANA_QUERY_TOKEN_FILE} is expired, deleted, or lacks the role the query needs - re-run the minting step that writes that file"
+            ;;
+          '' | '000')
+            detail="${what} got no HTTP answer from ${url}: ${err:-no answer} (transport exit ${rc})"
+            ;;
+          *)
+            detail="${what} answered ${code} from ${url}: $(first_line "${body}")${err:+ / ${err}}"
+            ;;
+        esac
+      fi
       fail_item "$(obsq_redact "${detail}")"
       return 0
       ;;
@@ -520,7 +609,7 @@ obsq_report_answer() {
       if [ "${emit}" = "1" ] && [ -n "${body}" ]; then
         obsq_emit "${body}"
       fi
-      note "no data: ${what} reached ${url} and got ${code} back with nothing in it, so the bundle is up and this window or filter matched no row - that is an answer, not a broken bundle"
+      note "no data: ${what} reached ${url} and got ${code} back with nothing in it, so the query was accepted and this window or filter matched no row - nothing here is broken, that is an answer. Widen --since or drop a filter, then suspect the writer"
       return 0
       ;;
     *)
@@ -541,7 +630,7 @@ obsq_report_answer() {
 # shipped cannot match, and an empty result from a typo is the failure mode this
 # CLI exists to avoid.
 # Globals:
-#   SINCE, LIMIT, WORK_DIR, GRAFANA_TOKEN
+#   SINCE, LIMIT, WORK_DIR, GRAFANA_TOKEN, BASE_URL
 # Arguments:
 #   $1 - the LogQL expression
 # Outputs:
@@ -565,7 +654,7 @@ run_logs() {
   uid="${resolved%%$'\t'*}"
   type="${resolved##*$'\t'}"
   path="$(obsq_query_path "${type}")"
-  base="http://127.0.0.1:$(obsq_key GRAFANA_PORT 3005)"
+  base="${BASE_URL}"
   secs="$(obsq_since_seconds "${SINCE}")"
   now="$(date +%s)"
   start=$((now - secs))
@@ -576,7 +665,7 @@ run_logs() {
   local body="${WORK_DIR}/logs.json" content="" shape=""
   obsq_fetch "${url}" "${body}" auth
   content="$(obsq_read_body "${body}")"
-  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${FETCH_ERR}" "${content}")"
+  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${content}")"
   obsq_report_answer "logs" "${url}" "${shape}" "${FETCH_RC}" "${FETCH_CODE}" \
     "${FETCH_ERR}" "${content}" "streams" 1
   return 0
@@ -588,7 +677,7 @@ run_logs() {
 # UID, so the same query string runs against a short or a long retention window
 # with nothing but --source changing.
 # Globals:
-#   SINCE, STEP, LIMIT, WORK_DIR, GRAFANA_TOKEN, SOURCE
+#   SINCE, STEP, LIMIT, WORK_DIR, GRAFANA_TOKEN, SOURCE, BASE_URL
 # Arguments:
 #   $1 - the PromQL expression
 # Outputs:
@@ -616,7 +705,7 @@ run_metrics() {
     return 0
   fi
   path="$(obsq_query_path "${type}")"
-  base="http://127.0.0.1:$(obsq_key GRAFANA_PORT 3005)"
+  base="${BASE_URL}"
   secs="$(obsq_since_seconds "${SINCE}")"
   now="$(date +%s)"
   start=$((now - secs))
@@ -631,7 +720,7 @@ run_metrics() {
   local body="${WORK_DIR}/metrics.json" content="" shape=""
   obsq_fetch "${url}" "${body}" auth
   content="$(obsq_read_body "${body}")"
-  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${FETCH_ERR}" "${content}")"
+  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${content}")"
   obsq_report_answer "metrics" "${url}" "${shape}" "${FETCH_RC}" "${FETCH_CODE}" \
     "${FETCH_ERR}" "${content}" "series" 1
   return 0
@@ -669,7 +758,7 @@ run_alerts() {
     obsq_fetch_in_network "${url}" "${body}"
   fi
   content="$(obsq_read_body "${body}")"
-  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${FETCH_ERR}" "${content}")"
+  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${content}")"
   obsq_report_answer "alerts" "${url}" "${shape}" "${FETCH_RC}" "${FETCH_CODE}" \
     "${FETCH_ERR}" "${content}" "alerts" 1
   return 0
@@ -679,7 +768,7 @@ run_alerts() {
 # Ask Grafana which dashboards its file provider actually registered. A JSON on
 # disk is not a screen; this is the API that says whether it became one.
 # Globals:
-#   LIMIT, WORK_DIR, GRAFANA_TOKEN
+#   LIMIT, WORK_DIR, GRAFANA_TOKEN, BASE_URL
 # Arguments:
 #   None
 # Outputs:
@@ -694,13 +783,13 @@ run_dashboards() {
   fi
   obsq_require_token || return 0
   local base="" url=""
-  base="http://127.0.0.1:$(obsq_key GRAFANA_PORT 3005)"
+  base="${BASE_URL}"
   url="${base}/api/search?type=dash-db&limit=${LIMIT}"
   phase "GET ${url}"
   local body="${WORK_DIR}/dashboards.json" content="" shape=""
   obsq_fetch "${url}" "${body}" auth
   content="$(obsq_read_body "${body}")"
-  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${FETCH_ERR}" "${content}")"
+  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${content}")"
   obsq_report_answer "dashboards" "${url}" "${shape}" "${FETCH_RC}" "${FETCH_CODE}" \
     "${FETCH_ERR}" "${content}" "dashboards" 1
   return 0
@@ -711,7 +800,7 @@ run_dashboards() {
 # panels and datasources. This is how a caller finds the panel or datasource UID it
 # needs before it can ask a sharper question.
 # Globals:
-#   LIMIT, WORK_DIR, GRAFANA_TOKEN
+#   LIMIT, WORK_DIR, GRAFANA_TOKEN, BASE_URL
 # Arguments:
 #   $1 - the search term
 # Outputs:
@@ -727,13 +816,13 @@ run_search() {
   fi
   obsq_require_token || return 0
   local base="" url=""
-  base="http://127.0.0.1:$(obsq_key GRAFANA_PORT 3005)"
+  base="${BASE_URL}"
   url="${base}/api/search?query=$(obsq_urlencode "${term}")&limit=${LIMIT}"
   phase "$(obsq_redact "GET ${url} (term: ${term})")"
   local body="${WORK_DIR}/search.json" content="" shape=""
   obsq_fetch "${url}" "${body}" auth
   content="$(obsq_read_body "${body}")"
-  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${FETCH_ERR}" "${content}")"
+  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${content}")"
   obsq_report_answer "search" "${url}" "${shape}" "${FETCH_RC}" "${FETCH_CODE}" \
     "${FETCH_ERR}" "${content}" "dashboards" 1
   return 0
@@ -747,7 +836,8 @@ run_search() {
 # reachability and authorization while pulling back no sample. Nothing here prints
 # a payload: an operator running this from a transcript needs the verdicts only.
 # Globals:
-#   WORK_DIR, GRAFANA_TOKEN, GRAFANA_QUERY_TOKEN_FILE, OBSQ_DATASOURCES
+#   WORK_DIR, GRAFANA_TOKEN, GRAFANA_QUERY_TOKEN_FILE, OBSQ_DATASOURCES, BASE_URL,
+#   BASE_URL_SOURCE
 # Arguments:
 #   None
 # Outputs:
@@ -763,24 +853,24 @@ run_self_test() {
   obsq_require_token || return 0
 
   local base="" url="" body="${WORK_DIR}/self-token.json"
-  base="http://127.0.0.1:$(obsq_key GRAFANA_PORT 3005)"
+  base="${BASE_URL}"
   url="${base}/api/search?limit=1"
   local content="" shape="" entry="" name="" resolved="" uid="" type="" path=""
-  phase "GET ${url} (prove the token in ${GRAFANA_QUERY_TOKEN_FILE})"
+  phase "GET ${url} (prove the token in ${GRAFANA_QUERY_TOKEN_FILE}, base from ${BASE_URL_SOURCE:-the default})"
   obsq_fetch "${url}" "${body}" auth
   content="$(obsq_read_body "${body}")"
-  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${FETCH_ERR}" "${content}")"
+  shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${content}")"
   case "${shape}" in
-    off)
-      obsq_report_profile_off "self-test"
-      return 0
-      ;;
     error)
-      fail_item "the token in ${GRAFANA_QUERY_TOKEN_FILE} does not authenticate: Grafana answered ${FETCH_CODE:-nothing}${FETCH_ERR:+ / ${FETCH_ERR}} - nothing below this line can be trusted until the minting step writes a live read-only token"
+      if obsq_is_refused "${FETCH_RC}" "${FETCH_ERR}"; then
+        fail_item "nothing answered at ${url}: ${FETCH_ERR:-connection refused} (transport exit ${FETCH_RC}) - the credential cannot be judged until the origin is right, and the token is only ever read from ${GRAFANA_QUERY_TOKEN_FILE}. Check --base-url / GRAFANA_URL / GRAFANA_BASE_URL (this run used ${BASE_URL_SOURCE:-the loopback default}), then //scripts:dev-stack -- status"
+      else
+        fail_item "the token in ${GRAFANA_QUERY_TOKEN_FILE} does not authenticate: Grafana answered ${FETCH_CODE:-nothing}${FETCH_ERR:+ / ${FETCH_ERR}} - nothing below this line can be trusted until the minting step writes a live read-only token"
+      fi
       return 0
       ;;
     *)
-      ok "the read-only token in ${GRAFANA_QUERY_TOKEN_FILE} authenticates against Grafana"
+      ok "the read-only token in ${GRAFANA_QUERY_TOKEN_FILE} authenticates against Grafana at ${base}"
       ;;
   esac
 
@@ -798,14 +888,14 @@ run_self_test() {
     phase "GET ${url} (prove the ${name} datasource)"
     obsq_fetch "${url}" "${body}" auth
     content="$(obsq_read_body "${body}")"
-    shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${FETCH_ERR}" "${content}")"
+    shape="$(obsq_answer_shape "${FETCH_RC}" "${FETCH_CODE}" "${content}")"
     case "${shape}" in
-      off)
-        obsq_report_profile_off "self-test"
-        return 0
-        ;;
       error)
-        fail_item "the ${name} datasource (uid ${uid}) did not answer through the Grafana proxy: ${FETCH_CODE:-nothing}${FETCH_ERR:+ / ${FETCH_ERR}} - the datasource is provisioned, so this is its backend being down or its URL in observability/grafana/provisioning/datasources/stack.yaml being wrong"
+        if obsq_is_refused "${FETCH_RC}" "${FETCH_ERR}"; then
+          fail_item "nothing answered at ${url} for the ${name} datasource: ${FETCH_ERR:-connection refused} (transport exit ${FETCH_RC}) - the base URL this run used came from ${BASE_URL_SOURCE:-the loopback default}"
+        else
+          fail_item "the ${name} datasource (uid ${uid}) did not answer through the Grafana proxy: ${FETCH_CODE:-nothing}${FETCH_ERR:+ / ${FETCH_ERR}} - the datasource is provisioned, so this is its backend being down or its URL in observability/grafana/provisioning/datasources/stack.yaml being wrong"
+        fi
         ;;
       nodata)
         ok "${name} (uid ${uid}) answers through the proxy and holds no labels yet: the backend is reachable, the token covers it, and nothing has been written to it"
@@ -846,6 +936,12 @@ finish() {
 declare -a POSITIONAL=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --base-url)
+      [ "$#" -ge 2 ] || usage_error "unknown option: $1 (--base-url needs an origin like http://host:3005)"
+      BASE_URL_ARG="$2"
+      BASE_URL_SEEN=1
+      shift 2
+      ;;
     --env-file)
       [ "$#" -ge 2 ] || usage_error "unknown option: $1 (--env-file needs a path)"
       ENV_FILE_ARG="$2"
@@ -936,8 +1032,14 @@ else
   esac
 fi
 
-case "${TIMEOUT}" in '' | *[!0-9]* | 0) usage_error "unknown option: --timeout needs a whole number of seconds, got '${TIMEOUT}'" ;; esac
-case "${LIMIT}" in '' | *[!0-9]* | 0) usage_error "unknown option: --limit needs a whole number above zero, got '${LIMIT}'" ;; esac
+# Both caps are only caps when they hold a number: the shell treats "00" as zero and
+# curl treats --max-time 0 as "no limit", so the guard is a positive-integer regex
+# rather than a pattern that lets a leading zero through. The rejected value is
+# printed back, because the caller is the one who wrote it.
+[[ ${TIMEOUT} =~ ^[1-9][0-9]*$ ]] ||
+  usage_error "--timeout needs a whole number of seconds above zero, got '${TIMEOUT}' (0 and 00 both mean no cap, which this CLI will not run with)"
+[[ ${LIMIT} =~ ^[1-9][0-9]*$ ]] ||
+  usage_error "--limit needs a whole number of rows above zero, got '${LIMIT}' (0 and 00 ask for no rows at all)"
 if [ "${LIMIT}" -gt 500 ]; then
   usage_error "--limit is capped at 500 rows, got ${LIMIT} - narrow the window or the filter instead"
 fi
@@ -977,6 +1079,16 @@ else
 fi
 if [ -n "${TOKEN_FILE_ARG}" ]; then
   GRAFANA_QUERY_TOKEN_FILE="${TOKEN_FILE_ARG}"
+fi
+# The Grafana origin, resolved once here rather than per verb, and after ENV_SRC so
+# the two keys are read from the dotenv the operator actually set. alerts is the one
+# verb that never dials Grafana, so a base URL it cannot use never refuses a run it
+# could answer. Refusing here, before the first request, is what keeps the exit-2
+# contract: a value that is not an origin is a mistake at the call site, not a
+# result from the bundle.
+if [ "${SELF_TEST}" = "1" ] || [ "${VERB}" != "alerts" ]; then
+  obsq_resolve_base_url ||
+    usage_error "the Grafana base URL from ${BASE_URL_SOURCE} is not one this CLI can dial: '${BASE_URL_RAW}' - give an http or https origin with a host and an optional port, and no path, query, or credentials"
 fi
 # The network the unpublished backends are probed on: compose names it after the
 # project, and the project is named after the directory the compose file sits in.

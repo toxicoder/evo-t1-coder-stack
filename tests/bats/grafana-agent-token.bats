@@ -40,7 +40,12 @@ MINT_TARGET=""
 BASH_BIN=""
 
 setup() {
-  REPO_ROOT="$(cd "$(dirname "${BATS_TEST_FILENAME}")/../.." && pwd)"
+  # The checkout is the runner's, never a path rebuilt off BATS_TEST_FILENAME: under
+  # //tests:shell_coverage that would name the real tree while the runner points
+  # REPO_ROOT at the instrumented mirror, and the suite would exercise copies that
+  # no coverage ledger ever sees.
+  REPO_ROOT="$(bats_canonical_repo_root)" ||
+    skip "cannot locate the repo root (no docker-compose.yml marker)"
   SCRIPT="${REPO_ROOT}/scripts/grafana-agent-token.sh"
   LIB="${REPO_ROOT}/scripts/lib/grafana_agent_token.sh"
   [ -f "${SCRIPT}" ] || skip "scripts/grafana-agent-token.sh does not exist yet"
@@ -63,6 +68,7 @@ setup() {
 
   local compose_fixture="${SCRATCH}/docker-compose.yml"
   : >"${compose_fixture}"
+  export STUB_NO_TOKENS=
   MINT_TARGET="${SCRATCH}/var/lib/evo-t1-observability/grafana-query-token"
   BASH_BIN="$(command -v bash)"
 
@@ -125,7 +131,9 @@ case "${url}" in
     printf '%s' "{\"id\":11,\"name\":\"${STUB_SA_NAME}\",\"role\":\"Viewer\"}" >"${host}/${out}"
     ;;
   */tokens)
-    if [ "${method}" = "POST" ]; then
+    if [ "${method}" != "POST" ] && [ -n "${STUB_NO_TOKENS:-}" ]; then
+      printf '%s' '[]' >"${host}/${out}"
+    elif [ "${method}" = "POST" ]; then
       if [ -n "${STUB_FAIL_MINT:-}" ]; then
         code=500
         printf '%s' '{"message":"mint refused"}' >"${host}/${out}"
@@ -133,7 +141,9 @@ case "${url}" in
         printf '%s' "{\"id\":21,\"name\":\"${STUB_SA_NAME}-token\",\"key\":\"$(cat "${dir}/value")\"}" >"${host}/${out}"
       fi
     else
-      printf '%s' '[{"id":21,"name":"first"},{"id":22,"name":"second"}]' >"${host}/${out}"
+      # One token this CLI's own naming scheme minted, and one that belongs to
+      # another tool sharing the account: only the first may be revoked.
+      printf '%s' "[{\"id\":21,\"name\":\"${STUB_SA_NAME}-token\"},{\"id\":22,\"name\":\"other-tool-token\"}]" >"${host}/${out}"
     fi
     ;;
   */tokens/*)
@@ -156,6 +166,8 @@ STUB
   [ "${status}" -eq 0 ]
   [[ ${output} == *"grafana-agent-token.sh"* ]]
   [[ ${output} == *"--rotate"* ]]
+  [[ ${output} == *"--repair"* ]]
+  [[ ${output} == *"--no-expiry"* ]]
   [[ ${output} == *"never printed"* ]]
   [ ! -s "${STUB_LOG}" ]
 }
@@ -175,6 +187,15 @@ STUB
   [ "${status}" -eq 2 ]
   run "${BASH_BIN}" "${SCRIPT}" --timeout 0 --dry-run
   [ "${status}" -eq 2 ]
+  run "${BASH_BIN}" "${SCRIPT}" --timeout 00 --dry-run
+  [ "${status}" -eq 2 ]
+  [[ ${output} == *"--timeout"*"00"* ]]
+  run "${BASH_BIN}" "${SCRIPT}" --ttl 00 --dry-run
+  [ "${status}" -eq 2 ]
+  [[ ${output} == *"--ttl"*"00"* ]]
+  run "${BASH_BIN}" "${SCRIPT}" --ttl 60 --no-expiry --dry-run
+  [ "${status}" -eq 2 ]
+  [[ ${output} == *"--no-expiry and --ttl"* ]]
   [ ! -s "${STUB_LOG}" ]
 }
 
@@ -202,7 +223,10 @@ STUB
   printf '%s\n' "${STUB_MINT_VALUE}" >"${MINT_TARGET}"
   chmod 600 "${MINT_TARGET}"
   run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
-  [ "${status}" -eq 1 ]
+  [ "${status}" -eq 1 ] || {
+    printf '%s\n' "${output}" >&2
+    return 1
+  }
   [[ ${output} == *"error:"* ]]
   [[ ${output} == *"${MINT_TARGET}"* ]]
   [[ ${output} == *"--rotate"* ]]
@@ -211,60 +235,147 @@ STUB
   [ ! -s "${STUB_LOG}" ]
 }
 
-@test "a stray file that is not a credential is repaired, not refused" {
+@test "an absent token file is refused until --repair says this mint establishes it" {
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  [ "${status}" -eq 1 ]
+  [[ ${output} == *"error:"* ]]
+  [[ ${output} == *"${MINT_TARGET}"* ]]
+  [[ ${output} == *"--repair"* ]]
+  [ ! -e "${MINT_TARGET}" ]
+  # A refusal at the preflight is not a request: the plane never heard from us.
+  [ ! -s "${STUB_LOG}" ]
+}
+
+@test "--repair lets the mint establish the credential on a box that has none" {
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"ok: wrote the read-only credential"* ]]
+  [ "$(cat "${MINT_TARGET}")" = "${STUB_MINT_VALUE}" ]
+}
+
+@test "an empty token file is refused, and repaired only on the flag" {
+  mkdir -p "$(dirname "${MINT_TARGET}")"
+  : >"${MINT_TARGET}"
+  chmod 600 "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  [ "${status}" -eq 1 ]
+  [[ ${output} == *"--repair"* ]]
+  [ ! -s "${STUB_LOG}" ]
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
+  [ "${status}" -eq 0 ]
+  [ "$(cat "${MINT_TARGET}")" = "${STUB_MINT_VALUE}" ]
+}
+
+@test "a stray file that is not a credential needs --repair, not a guessed rm" {
   mkdir -p "$(dirname "${MINT_TARGET}")"
   printf 'not a token, just a placeholder\n' >"${MINT_TARGET}"
   run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  [ "${status}" -eq 1 ]
+  [[ ${output} == *"--repair"* ]]
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   [[ ${output} == *"ok: wrote the read-only credential"* ]]
 }
 
+@test "--dry-run plans a missing credential instead of refusing it" {
+  run "${BASH_BIN}" "${SCRIPT}" --dry-run --token-file "${MINT_TARGET}"
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"needs --repair"* ]]
+  [[ ${output} == *"summary: 1 ok,"* ]]
+  [ ! -e "${MINT_TARGET}" ]
+  [ ! -s "${STUB_LOG}" ]
+}
+
 @test "a fresh box creates the account and writes one line at 0600" {
   export STUB_SA_EXISTS=0
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   [[ ${output} == *"created service account evo-t1-agent (id 11) with role Viewer"* ]]
-  [[ ${output} == *"summary: 2 ok, 0 warnings, 0 failed"* ]]
+  [[ ${output} == *"summary: 3 ok, 0 warnings, 0 failed"* ]]
 }
 
 @test "an existing account is reused rather than duplicated" {
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   [[ ${output} == *"reusing service account evo-t1-agent (id 11)"* ]]
   ! grep -q -- '--request POST /api/serviceaccounts ' "${STUB_LOG}"
 }
 
 @test "the mint writes one line at 0600 with the value the plane returned" {
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   [ -f "${MINT_TARGET}" ]
   [ "$(cat "${MINT_TARGET}")" = "${STUB_MINT_VALUE}" ]
   [ "$(wc -l <"${MINT_TARGET}" | tr -d ' ')" -eq 1 ]
   [ "$(stat -c '%a' "${MINT_TARGET}")" = "600" ]
-  [[ ${output} == *"summary: 2 ok, 0 warnings, 0 failed"* ]]
+  [[ ${output} == *"summary: 3 ok, 0 warnings, 0 failed"* ]]
 }
 
-@test "--rotate revokes what the account holds before minting" {
+@test "every run revokes its own previous token, not only a --rotate one" {
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"revoked 1 previous token(s) of evo-t1-agent"* ]]
+  [ "$(grep -c -- '--request DELETE' "${STUB_LOG}")" -eq 1 ]
+  # Only the token this CLI's naming scheme owns: another tool's is left live.
+  ! grep -q -- '/tokens/22' "${STUB_LOG}"
+  grep -q -- '/tokens/21' "${STUB_LOG}"
+}
+
+@test "a rerun that revokes nothing still reports the account as clean" {
+  export STUB_NO_TOKENS=1
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
+  [ "${status}" -eq 0 ]
+  [[ ${output} == *"holds no token of this CLI's own to revoke"* ]]
+  [ ! -s "${STUB_LOG}" ] || ! grep -q -- '--request DELETE' "${STUB_LOG}"
+}
+
+@test "--rotate replaces a live credential and still revokes its own" {
   mkdir -p "$(dirname "${MINT_TARGET}")"
   printf '%s\n' "old.live.value-1" >"${MINT_TARGET}"
   run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --rotate
   [ "${status}" -eq 0 ]
   [ "$(cat "${MINT_TARGET}")" = "${STUB_MINT_VALUE}" ]
   [[ ${output} == *"summary: 3 ok, 0 warnings, 0 failed"* ]]
-  [ "$(grep -c -- '--request DELETE' "${STUB_LOG}")" -eq 2 ]
-  [[ ${output} == *"revoked 2 previous token(s)"* ]]
+  [ "$(grep -c -- '--request DELETE' "${STUB_LOG}")" -eq 1 ]
+  [[ ${output} == *"revoked 1 previous token(s)"* ]]
+}
+
+@test "the mint expires by default, at a month, and says so" {
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
+  [ "${status}" -eq 0 ]
+  grep -qF -- '"secondsToLive":2592000' "${SENT_LOG}"
+  [[ ${output} == *"this token expires in 2592000 seconds"* ]]
+}
+
+@test "--ttl and GRAFANA_AGENT_TOKEN_TTL both move the expiry" {
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair --ttl 3600
+  [ "${status}" -eq 0 ]
+  grep -qF -- '"secondsToLive":3600' "${SENT_LOG}"
+  rm -f "${MINT_TARGET}"
+  export GRAFANA_AGENT_TOKEN_TTL=604800
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
+  [ "${status}" -eq 0 ]
+  grep -qF -- '"secondsToLive":604800' "${SENT_LOG}"
+}
+
+@test "--no-expiry is the only way to mint a credential that never dies" {
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair --no-expiry
+  [ "${status}" -eq 0 ]
+  ! grep -qF -- 'secondsToLive' "${SENT_LOG}"
+  [[ ${output} == *"warning:"* ]]
+  [[ ${output} == *"this token never expires"* ]]
 }
 
 @test "the account is created as Viewer and nothing else" {
   export STUB_SA_EXISTS=0
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   grep -q -- '"role":"Viewer"' "${SENT_LOG}"
   grep -q -- '"name":"evo-t1-agent"' "${SENT_LOG}"
 }
 
 @test "the request rides the project network and a config file, never an argument" {
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   grep -q -- '--network evotest_default' "${STUB_LOG}"
   grep -q -- 'curlimages/curl:8.10.1' "${STUB_LOG}"
@@ -276,7 +387,7 @@ STUB
 # -- the credential stays in the file ---------------------------------------
 
 @test "the minted value and the admin value appear in no output and no argv" {
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   [[ ${output} != *"${STUB_MINT_VALUE}"* ]]
   [[ ${output} != *"${STUB_ADMIN_VALUE}"* ]]
@@ -286,7 +397,7 @@ STUB
 
 @test "a failing mint prints a redacted complaint and writes no credential" {
   export STUB_FAIL_MINT=1
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 1 ]
   [[ ${output} == *"error:"* ]]
   [[ ${output} == *"refused to mint"* ]]
@@ -296,7 +407,7 @@ STUB
 
 @test "a missing admin credential is an error that asks for nothing" {
   run env -u GRAFANA_ADMIN_USER -u GRAFANA_ADMIN_PASSWORD "${BASH_BIN}" \
-    "${SCRIPT}" --token-file "${MINT_TARGET}"
+    "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 1 ]
   [[ ${output} == *"GRAFANA_ADMIN_PASSWORD"* ]]
   [ ! -s "${STUB_LOG}" ]
@@ -304,7 +415,7 @@ STUB
 
 @test "the shipped placeholder password is a warning, not a fault" {
   export GRAFANA_ADMIN_PASSWORD="change-me-grafana"
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 0 ]
   [[ ${output} == *"warning:"* ]]
   [[ ${output} == *"placeholder"* ]]
@@ -315,7 +426,7 @@ STUB
   if command -v docker >/dev/null 2>&1; then
     skip "a real docker is on PATH in this sandbox, so the absence cannot be staged"
   fi
-  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}"
+  run "${BASH_BIN}" "${SCRIPT}" --token-file "${MINT_TARGET}" --repair
   [ "${status}" -eq 1 ]
   [[ ${output} == *"docker is not on PATH"* ]]
 }
@@ -337,12 +448,18 @@ STUB
   local existing="${SCRATCH}/live" missing="${SCRATCH}/none" stray="${SCRATCH}/stray"
   # shellcheck source=/dev/null
   source "${LIB}"
-  gat_refuses_overwrite "${missing}" 0
+  # Absent and empty are neither a credential nor a free write: 3 without --repair.
+  run gat_refuses_overwrite "${missing}" 0 0
+  [ "${status}" -eq 3 ]
+  gat_refuses_overwrite "${missing}" 0 1
   printf '%s\n' "${STUB_MINT_VALUE}" >"${existing}"
-  ! gat_refuses_overwrite "${existing}" 0
-  gat_refuses_overwrite "${existing}" 1
+  run gat_refuses_overwrite "${existing}" 0 1
+  [ "${status}" -eq 1 ]
+  gat_refuses_overwrite "${existing}" 1 1
   printf '%s\n' 'a stray line that is not a token' >"${stray}"
-  gat_refuses_overwrite "${stray}" 0
+  run gat_refuses_overwrite "${stray}" 0 0
+  [ "${status}" -eq 3 ]
+  gat_refuses_overwrite "${stray}" 0 1
 }
 
 @test "gat_write_token_file refuses a value that is not a token" {
@@ -388,6 +505,30 @@ STUB
   [ -z "$(gat_list_token_ids "${body}")" ]
 }
 
+@test "gat_list_token_ids with a scheme lists only the tokens that scheme owns" {
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  local body="${SCRATCH}/owned.json"
+  printf '%s' '[{"id":21,"name":"evo-t1-agent-token"},{"id":22,"name":"other-tool-token"},{"id":23,"name":"evo-t1-agent-token-2"},{"id":24,"name":"evo-t1-agent-tokenner"}]' >"${body}"
+  [ "$(gat_list_token_ids "${body}" "evo-t1-agent-token" | tr '\n' ',')" = "21,23," ]
+  printf '%s' '[{"id":22,"name":"other-tool-token"}]' >"${body}"
+  [ -z "$(gat_list_token_ids "${body}" "evo-t1-agent-token")" ]
+}
+
+@test "gat_token_name_owned matches the minted name and its -n shape only" {
+  # shellcheck source=/dev/null
+  source "${LIB}"
+  gat_token_name_owned "evo-t1-agent-token" "evo-t1-agent-token"
+  gat_token_name_owned "evo-t1-agent-token-3" "evo-t1-agent-token"
+  ! gat_token_name_owned "evo-t1-agent-tokenner" "evo-t1-agent-token"
+  ! gat_token_name_owned "other-tool-token" "evo-t1-agent-token"
+  ! gat_token_name_owned "" "evo-t1-agent-token"
+  # A dot in the scheme is a literal, not "any character".
+  ! gat_token_name_owned "evo!t1-agent-token" "evo.t1-agent-token"
+  # A scheme that is not a plain name owns nothing at all.
+  ! gat_token_name_owned "x" 'a"b'
+}
+
 @test "gat_redact scrubs the credential out of anything about to be printed" {
   # shellcheck source=/dev/null
   source "${LIB}"
@@ -402,7 +543,7 @@ STUB
   local fn
   for fn in gat_is_token_shape gat_refuses_overwrite gat_write_token_file \
     gat_curl_config gat_json_field gat_find_service_account_id \
-    gat_list_token_ids gat_redact; do
+    gat_token_name_owned gat_list_token_ids gat_redact; do
     # shellcheck source=/dev/null
     source "${LIB}"
     declare -F "${fn}" >/dev/null
@@ -412,4 +553,12 @@ STUB
     gat_mint_token gat_plan; do
     grep -q "^${fn}()" "${SCRIPT}"
   done
+}
+
+@test "the suite drives the script the runner handed it, not a path it rebuilt" {
+  # The coverage mirror is reachable only through REPO_ROOT: a suite that derived the
+  # root off BATS_TEST_FILENAME would run copies no ledger ever counts, and pass.
+  [ -f "${REPO_ROOT}/scripts/grafana-agent-token.sh" ]
+  [ -f "${REPO_ROOT}/scripts/lib/grafana_agent_token.sh" ]
+  grep -q 'bats_canonical_repo_root' "${BATS_TEST_FILENAME}"
 }
