@@ -483,6 +483,43 @@ report for a script. What the report should read here:
   helpers they shell out to. Same absent-only contract, same marker-based takeover rule,
   same `[skills] disabled` escape hatch.
 
+#### The four seed tiers
+
+One row per tier, the destination it writes, and the body that writes it. The boot
+implements these four by destination directory, and nothing crosses over:
+
+| Tier | Destination | Written by |
+| ---- | ----------- | ---------- |
+| A - global rulebook, roles, hooks | `~/.grok/AGENTS.md`, `~/.grok/agents/`, `~/.grok/personas/`, `~/.grok/hooks/` | `agents-seed.sh.tftpl`, `stack-fleet.sh.tftpl`, `stack-advisors.sh.tftpl`, `stack-hooks.sh.tftpl` |
+| B - global skill pair | `~/.coder/skills/<x>/SKILL.md` plus the `cp` twin in `~/.agents/skills/<x>/` | `stack-skills.sh.tftpl`, `stack-repo-skills.sh.tftpl`, `trunk-refactor-seed.sh.tftpl` |
+| C - per clone | `<clone>/.grok/skills/<x>/SKILL.md` for a folder under `/home/coder/workspace/`, absent-only and link-guarded | `stack-repo-skills.sh.tftpl`, which gates each member of the tier on its own predicate |
+| D - per owner | `~/.grok/notes`, `~/.grok/memory`, `~/.grok/sessions`, on the per-owner volumes | the volumes themselves, not a boot body |
+
+- Tier C is the tier that keeps one repository's own commands out of every other
+  workspace's session, and it now carries two artifacts. `/ez-bazel-first` is seeded
+  into every Bazel repository (the `MODULE.bazel` / `WORKSPACE` predicate) because that
+  command converts whatever repository it sits in. `/stack-repo-commands` is seeded
+  only into a clone that tracks the `.evo-t1-stack-repo` sentinel at its root, from
+  `templates/common/stack-repo-commands.SKILL.md`. That sentinel is tracked by the
+  stack repository and by no other, so it must never be copied into another repo: its
+  presence is what tells the boot the clone *is* the stack.
+
+- Which commands moved, and which stayed. `bazelisk run //:fix` (this clone's formatter
+  target), `bazelisk run //scripts:bazel-map -- tests-for` (this clone's Bazel graph
+  reader) and `.githooks/pre-commit` (a hook only this repo installs) are true only
+  inside a checkout of this repository, so they are Tier C: `~/.grok/AGENTS.md` no
+  longer names them and points at `<clone>/.grok/skills/stack-repo-commands/SKILL.md`
+  instead. The operator CLIs - `//scripts:dev-stack`, `//scripts:update-configs`,
+  `//scripts:refresh-configs`, `//scripts:bootstrap`, `//scripts:github-auth`,
+  `//scripts:search-check`, `//scripts:mcp-check` - live in that same checkout, but an
+  agent in any workspace has to be able to ask for them, so they stay in the Tier-A
+  rulebook, which now carries one sentence saying to run them from the stack
+  repository's own checkout or a host shell. Stripping them would be a regression.
+
+- Tier C is not home-relative, so it is not a reseed target: `config_seed.sh` lists
+  destinations it re-roots at `$HOME`, which is why both of its members are absent from
+  that manifest, the way `/ez-bazel-first` already is.
+
 ### The dispatch plan command
 
 - **A fourth command rides that same body: `/ez-micro-plan`.** It converts nothing - it is

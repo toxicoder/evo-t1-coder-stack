@@ -84,6 +84,7 @@ fi
 # ez-bazel-first.glob_budget.py, ez-strong-types.SKILL.md,
 # ez-strong-types.type_baseline.py, ez-trunk-based-repo.SKILL.md,
 # ez-micro-plan.SKILL.md, ez-micro-plan.plan_check.py,
+# stack-repo-commands.SKILL.md,
 # reflect-and-evolve.SKILL.md, reflect-and-evolve.session_signals.py,
 # reflect-and-evolve.checklist.md, reflect-and-evolve-repo.SKILL.md,
 # reflect-and-evolve-repo.checklist.md, trunk-refactor.SKILL.md,
@@ -165,6 +166,7 @@ template_push_one() {
     ez-trunk-based-repo.SKILL.md \
     ez-micro-plan.SKILL.md \
     ez-micro-plan.plan_check.py \
+    stack-repo-commands.SKILL.md \
     reflect-and-evolve.SKILL.md \
     reflect-and-evolve.session_signals.py \
     reflect-and-evolve.checklist.md \

@@ -1,0 +1,1 @@
+# Stack-repository sentinel: tracked by evo-t1-coder-stack and by no other repository. Do not copy this file into another repo -- its presence tells the boot seed this clone is the stack itself, and the stack's own command recipes would land in a checkout that has none.

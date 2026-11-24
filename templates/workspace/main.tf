@@ -931,6 +931,7 @@ resource "coder_script" "stack_repo_skills" {
     ez_trunk_based_repo_skill        = chomp(file("${path.module}/ez-trunk-based-repo.SKILL.md"))
     ez_micro_plan_skill              = chomp(file("${path.module}/ez-micro-plan.SKILL.md"))
     ez_micro_plan_plan_check         = chomp(file("${path.module}/ez-micro-plan.plan_check.py"))
+    stack_repo_commands_skill        = chomp(file("${path.module}/stack-repo-commands.SKILL.md"))
   })
 }
 

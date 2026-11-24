@@ -278,6 +278,7 @@ payloads = {
     "ez_bazel_first_skill": "ez-bazel-first.SKILL.md",
     "ez_bazel_first_owned_files_check": "ez-bazel-first.owned_files_check.py",
     "ez_bazel_first_glob_budget": "ez-bazel-first.glob_budget.py",
+    "stack_repo_commands_skill": "stack-repo-commands.SKILL.md",
 }
 for token, name in payloads.items():
     body = body.replace("${" + token + "}", (common / name).read_text().rstrip("\n"))
@@ -1175,4 +1176,41 @@ EVO_RENDER_REPO_BODY
   assert_match "postCreate seeds the home" 'seed-dev-env\.sh' "${output}"
   assert_match "as a devcontainer" '\-\-devcontainer' "${output}"
   assert_match "with the docs lane kept" '\-\-context7-mcp' "${output}"
+}
+
+@test "seed-dev-env: stack-repo-commands seeds only the clone that carries the sentinel" {
+  # The tier the rulebook points at instead of filling: only a checkout of the stack
+  # repository itself owns the formatter target, the Bazel graph reader and the commit
+  # hook, so the sentinel that one clone tracks is the whole gate. plain is a git
+  # folder with no sentinel, stackrepo the same folder carrying it.
+  local scratch ws body out rc
+  scratch="$(make_scratch)"
+  render_repo_body "${scratch}"
+  body="${scratch}/body.sh"
+  ws="${scratch}/workspace"
+  mkdir -p "${ws}/plain/.git" "${ws}/stackrepo/.git" "${scratch}/home"
+  : >"${ws}/stackrepo/.evo-t1-stack-repo"
+
+  run env "HOME=${scratch}/home" bash "${body}"
+  rc="${status}"
+  out="${output}"
+  assert_eq "the body exits 0" "0" "${rc}"
+
+  assert_file_exists "the sentinel clone got the recipe sheet" \
+    "${ws}/stackrepo/.grok/skills/stack-repo-commands/SKILL.md"
+  assert_contains_file "and it is the managed payload, marker and all" \
+    "${ws}/stackrepo/.grok/skills/stack-repo-commands/SKILL.md" \
+    'managed-by: evo-t1-coder-stack'
+  assert_eq "the clone without the sentinel got nothing anywhere" "0" \
+    "$(find "${ws}/plain" -path '*/.grok/*' -type f | wc -l | tr -d ' ')"
+
+  # Absent-only: a copy the clone tracks itself survives the next boot untouched.
+  printf 'the repository owns this copy\n' >"${ws}/stackrepo/.grok/skills/stack-repo-commands/SKILL.md"
+  run env "HOME=${scratch}/home" bash "${body}"
+  assert_eq "a second boot exits 0" "0" "${status}"
+  assert_contains_file "the repository's own copy is left alone" \
+    "${ws}/stackrepo/.grok/skills/stack-repo-commands/SKILL.md" \
+    'the repository owns this copy'
+  printf '%s\n' "${out}" | grep -qF -- "stack-repo-commands SKILL.md into" || {
+    printf 'FAIL: the boot log never named the copy it wrote:\n%s\n' "${out}" >&2; return 1; }
 }

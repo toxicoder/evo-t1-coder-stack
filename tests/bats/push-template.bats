@@ -63,6 +63,7 @@ COMMON_PAYLOADS=(
   ez-trunk-based-repo.SKILL.md
   ez-micro-plan.SKILL.md
   ez-micro-plan.plan_check.py
+  stack-repo-commands.SKILL.md
   reflect-and-evolve.SKILL.md
   reflect-and-evolve.session_signals.py
   reflect-and-evolve.checklist.md
@@ -133,6 +134,7 @@ write_common_payloads() {
   printf '%s\n' '# skill' >"${dest}/ez-trunk-based-repo.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/ez-micro-plan.SKILL.md"
   printf '%s\n' 'pass' >"${dest}/ez-micro-plan.plan_check.py"
+  printf '%s\n' 'recipes' >"${dest}/stack-repo-commands.SKILL.md"
   printf '%s\n' '# skill' >"${dest}/reflect-and-evolve.SKILL.md"
   printf '%s\n' 'pass' >"${dest}/reflect-and-evolve.session_signals.py"
   printf '%s\n' '# checklist' >"${dest}/reflect-and-evolve.checklist.md"

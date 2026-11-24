@@ -36,7 +36,7 @@
 # body, none of the family leaks back into startup.sh.tftpl, the repository-tier
 # copy of ez-bazel-first is guarded per repository and behind a link test, and the
 # reseed list names both homes of every family target, the trunk-refactor pair from
-# that other body included, and the push guard names all eight payload files of this
+# that other body included, and the push guard names all nine payload files of this
 # body beside the body itself.
 #
 # The authoring trio's own seam is tests/bats/ez-skill-authoring.bats; this suite
@@ -80,7 +80,10 @@ GLOBAL_PAYLOADS=(
 # payloads once and copies them into the repo tier at
 # <repo>/.grok/skills/ez-bazel-first/ for every Bazel repository under the workspace
 # root - a tier its own test below pins. It still rides the body as a here-doc and
-# still has to be pushed, so it stays in the three eight-long arrays.
+# still has to be pushed, so it stays in the three arrays. stack-repo-commands is
+# absent from GLOBAL_TARGETS for the same reason: it is seeded per clone, into the
+# checkout that carries the .evo-t1-stack-repo sentinel, and
+# tests/bats/seed-dev-env.bats runs that path for real.
 PAYLOADS=(
   "ez-bazel-first.SKILL.md"
   "ez-bazel-first.owned_files_check.py"
@@ -90,6 +93,7 @@ PAYLOADS=(
   "ez-trunk-based-repo.SKILL.md"
   "ez-micro-plan.SKILL.md"
   "ez-micro-plan.plan_check.py"
+  "stack-repo-commands.SKILL.md"
 )
 TAGS=(
   EZ_BAZEL_FIRST_SKILL_MD_EOF
@@ -100,6 +104,7 @@ TAGS=(
   EZ_TRUNK_BASED_REPO_SKILL_MD_EOF
   EZ_MICRO_PLAN_SKILL_MD_EOF
   EZ_MICRO_PLAN_PLAN_CHECK_PY_EOF
+  STACK_REPO_COMMANDS_SKILL_MD_EOF
 )
 KEYS=(
   ez_bazel_first_skill
@@ -110,6 +115,7 @@ KEYS=(
   ez_trunk_based_repo_skill
   ez_micro_plan_skill
   ez_micro_plan_plan_check
+  stack_repo_commands_skill
 )
 
 # The whole family, both bodies: trunk-refactor is absent from the five arrays above
@@ -168,7 +174,7 @@ setup() {
   REPO_ROOT="$(bats_canonical_repo_root)" || skip "cannot locate the repo root (no docker-compose.yml marker)"
   SEED="${REPO_ROOT}/templates/common/stack-repo-skills.sh.tftpl"
   # Only the subject of the suite may skip it: with no seed body or no twin there is
-  # nothing left to claim. The eight payloads deliberately are NOT gated here - a
+  # nothing left to claim. The nine payloads deliberately are NOT gated here - a
   # payload renamed away must fail the tests that police it, not skip them quietly.
   [[ -f "${SEED}" ]] || skip "the repository-command seed body is not reachable from ${REPO_ROOT}"
   [[ -f "${REPO_ROOT}/templates/workspace/main.tf" &&
@@ -216,7 +222,7 @@ ascii_gate() {
 }
 
 # ---------------------------------------------------------------------------
-# The delivery seam: one body, eight payloads, two homes.
+# The delivery seam: one body, nine payloads, two homes.
 # ---------------------------------------------------------------------------
 
 @test "stack-repo-skills seed: the body seeds all five global-home targets into the coder home only while absent" {
@@ -270,7 +276,7 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the eight payload keys and the boot logger" {
+@test "stack-repo-skills seed: each here-doc body is its own rendered interpolation, and the body consumes exactly the nine payload keys and the boot logger" {
   # A here-doc that quietly stopped receiving its payload still has a legal opener
   # and closer, so the tag checks above pass vacuously: the file that lands on disk
   # would be empty and the command simply missing. Pin the line right after each
@@ -289,8 +295,8 @@ ascii_gate() {
     printf 'FAIL: %s interpolates no map key at all\n' "${SEED}" >&2
     return 1; }
   want="$(printf '%s\n' "${KEYS[@]}" boot_log_lib | sed 's/^/${/; s/$/}/' | sort -u)"
-  assert_eq "the body reads the eight payload keys plus the boot logger" "${want}" "${got}"
-  assert_eq "and each key is interpolated exactly once" "9" \
+  assert_eq "the body reads the nine payload keys plus the boot logger" "${want}" "${got}"
+  assert_eq "and each key is interpolated exactly once" "10" \
     "$(grep -cE '^\$\{[a-z_]+\}$' "${SEED}" || true)"
   # The ninth key carries no payload: main.tf passes the TEXT of
   # templates/common/boot-log.lib.sh for it, and the body drops that text in as one
@@ -318,7 +324,7 @@ ascii_gate() {
   # total - one per payload, all on the coder side.
   local i tgt n
   n="$(grep -cE -- "$(hdoc_open)'[A-Z_]+_EOF'" "${SEED}" || true)"
-  assert_eq "the body holds exactly eight quoted here-docs" "8" "${n}"
+  assert_eq "the body holds exactly nine quoted here-docs" "9" "${n}"
   for i in "${!GLOBAL_TARGETS[@]}"; do
     tgt="${GLOBAL_TARGETS[i]}"
     assert_contains_file "${tgt} agents guard" "${SEED}" \
@@ -421,7 +427,7 @@ ascii_gate() {
   assert_contains_file "and the guard still requires the target to be absent" "${SEED}" \
     '\[ ! -e "\$1" \]$'
   n="$(grep -cE '^ *if evo_t1_repo_writable ' "${SEED}" || true)"
-  assert_eq "both repository copies sit behind that guard" "2" "${n}"
+  assert_eq "every repository-tier copy sits behind that guard" "3" "${n}"
 }
 
 # ---------------------------------------------------------------------------
@@ -457,7 +463,7 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills feed: the eight payloads are chomped and live inside that block alone" {
+@test "stack-repo-skills feed: the nine payloads are chomped and live inside that block alone" {
   # Two load-bearing details. chomp: the here-doc closes on its own line, so a
   # trailing newline in the payload adds a blank line to every seeded file and
   # drifts the marker comment off the shape the parser and these tests expect.
@@ -514,13 +520,13 @@ ascii_gate() {
   done
 }
 
-@test "stack-repo-skills size: the body, its boot logger and all eight payloads are measured in both twins" {
+@test "stack-repo-skills size: the body, its boot logger and all nine payloads are measured in both twins" {
   # This is the guard that keeps the escape hatch honest. startup_size.awk is what
   # the push reads to refuse an argument past MAX_ARG_STRLEN before the workspace
   # ever boots; a body it does not emit a record for is a body nobody measures, and
   # it shows up as a workspace that fails to boot with "A startup script has failed"
-  # instead of as a failed push. Ten records per twin: the body itself, the boot
-  # logger main.tf hands it, and the eight payloads it inlines, and none of them may
+  # instead of as a failed push. Eleven records per twin: the body itself, the boot
+  # logger main.tf hands it, and the nine payloads it inlines, and none of them may
   # fall through to a catch-all.
   local twin out want tab records
   tab="$(printf '\t')"
@@ -534,7 +540,7 @@ ascii_gate() {
         "^stack-repo-skills\.sh\.tftpl${tab}${want//./\\.}\$" "${out}"
     done
     records="$(printf '%s\n' "${out}" | grep -c "^stack-repo-skills\.sh\.tftpl${tab}" || true)"
-    assert_eq "${twin} emits exactly ten records for the body" "10" "${records}"
+    assert_eq "${twin} emits exactly eleven records for the body" "11" "${records}"
     # A body this reader cannot name is one it cannot size.
     assert_not_match "${twin} never reports the new body as unmeasurable" \
       "^stack-repo-skills\.sh\.tftpl${tab}(HEREDOC|OTHER|CLASH)\$" "${out}"
@@ -545,7 +551,7 @@ ascii_gate() {
 # Invariants every payload of the family shares.
 # ---------------------------------------------------------------------------
 
-@test "payload: each of the eight exists, is non-empty, plain ASCII, CR-free and marker-carrying" {
+@test "payload: each of the nine exists, is non-empty, plain ASCII, CR-free and marker-carrying" {
   # The marker is what makes a seeded file reclaimable and what the boot's ownership
   # probe reads; a payload that lost it is a file the seeder may treat as the user's,
   # and a non-ASCII byte or a CR reaches every workspace of both templates as text a
@@ -677,7 +683,7 @@ ascii_gate() {
   assert_eq "the retire list names all six retired global paths" "6" "${n}"
 }
 
-@test "stack-repo-skills seams: the push guard refuses without all eight payloads and the body" {
+@test "stack-repo-skills seams: the push guard refuses without all nine payloads and the body" {
   # main.tf reads each of these out of the pushed copy, so a push that shipped
   # without one produces a template that renders garbage or fails to plan on every
   # workspace made from it afterwards. The guard has to live in template_push_one -

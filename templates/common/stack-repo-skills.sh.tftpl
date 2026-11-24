@@ -129,6 +129,70 @@ if [ -n "$bazel_first_stage" ]; then
   rmdir "$bazel_first_stage" 2>/dev/null
 fi
 
+# stack-repo-commands is the other repository tier: the recipe sheet a checkout of the
+# stack repository itself needs, because the formatter target, the Bazel graph reader and
+# the commit hook it names exist only in that one clone. The rulebook stopped naming them
+# and points here instead, so the gate is a sentinel the stack repository tracks --
+# .evo-t1-stack-repo -- and not the Bazel predicate above: a clone of any other repository
+# gets no copy anywhere, and a clone of this one gets it whatever else it is. Same
+# absent-only guard as the runbook, so a copy the repository tracks or a person took over
+# is left alone.
+boot_phase "seeding the stack-repo-commands recipes into each stack checkout"
+
+stack_cmd_stage=""
+if [ -d /home/coder/workspace ]; then
+  stack_cmd_stage=$(mktemp -d "$${TMPDIR:-/tmp}/evo-t1-stack-repo-commands.XXXXXX" 2>/dev/null) \
+    || stack_cmd_stage=""
+fi
+
+if [ -n "$stack_cmd_stage" ]; then
+  cat >"$stack_cmd_stage/SKILL.md" <<'STACK_REPO_COMMANDS_SKILL_MD_EOF'
+${stack_repo_commands_skill}
+STACK_REPO_COMMANDS_SKILL_MD_EOF
+fi
+
+stack_cmd_repos=0
+for evo_t1_repo in /home/coder/workspace/*/; do
+  [ -d "$${evo_t1_repo}" ] || continue
+
+  # Absent sentinel, absent tier: the file is tracked by the stack repository and by no
+  # other, so a workspace holding some other project is seeded nothing and never learns a
+  # build target that its checkout does not have.
+  if [ ! -f "$${evo_t1_repo}.evo-t1-stack-repo" ]; then
+    continue
+  fi
+
+  if [ -z "$stack_cmd_stage" ]; then
+    boot_warn "no staging dir - stack-repo-commands not seeded"
+    break
+  fi
+
+  evo_t1_cmd_dir="$${evo_t1_repo}.grok/skills/stack-repo-commands"
+  mkdir -p "$${evo_t1_cmd_dir}" 2>/dev/null
+
+  if evo_t1_repo_writable "$${evo_t1_cmd_dir}/SKILL.md"; then
+    cp "$stack_cmd_stage/SKILL.md" "$${evo_t1_cmd_dir}/SKILL.md" 2>/dev/null
+    boot_ok "stack-repo-commands SKILL.md into $(basename "$${evo_t1_repo}")"
+  else
+    boot_note "stack-repo-commands SKILL.md in $(basename "$${evo_t1_repo}") is the repository's own"
+  fi
+
+  # The cp runs with its errors quieted, so the outcome is read back instead of trusted.
+  [ -f "$${evo_t1_cmd_dir}/SKILL.md" ] \
+    || boot_warn "no repo copy of stack-repo-commands/SKILL.md in $${evo_t1_repo}"
+
+  stack_cmd_repos=$((stack_cmd_repos + 1))
+done
+
+if [ "$stack_cmd_repos" -eq 0 ]; then
+  boot_note "no stack repository checkout under /home/coder/workspace, stack-repo-commands seeded nowhere"
+fi
+
+if [ -n "$stack_cmd_stage" ]; then
+  find "$stack_cmd_stage" -type f -delete 2>/dev/null
+  rmdir "$stack_cmd_stage" 2>/dev/null
+fi
+
 if [ ! -f "$HOME/.coder/skills/ez-strong-types/SKILL.md" ]; then
   mkdir -p "$HOME/.coder/skills/ez-strong-types" 2>/dev/null
   cat >"$HOME/.coder/skills/ez-strong-types/SKILL.md" <<'EZ_STRONG_TYPES_SKILL_MD_EOF'
