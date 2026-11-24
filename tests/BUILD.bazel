@@ -703,6 +703,11 @@ _SUITE_PAYLOAD = {
     "workspace-notes.bats": [
         "//:templates_payload",
     ],
+    "workspace-tz.bats": [
+        "//templates/common:payload",
+        "//templates/devcontainer:payload",
+        "//templates/workspace:payload",
+    ],
     "workspace.bats": [
         "//:devcontainer",
     ],

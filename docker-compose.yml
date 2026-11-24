@@ -135,6 +135,15 @@ services:
       # Autostop deadlines are clamped to quiet hours, so the timezone is not
       # optional: UTC here force-stops workspaces at the wrong wall-clock hour.
       CODER_QUIET_HOURS_DEFAULT_SCHEDULE: ${CODER_QUIET_HOURS:-CRON_TZ=UTC 0 3 * * *}
+      # Pin the zone every workspace inherits, rather than following the host. Both
+      # templates/*/main.tf resolve the agent env's TZ as
+      # coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC"),
+      # and Terraform reads that env inside THIS container, so a value set here
+      # outranks the two read-only timezone binds under volumes: use it on a host
+      # whose own zone is wrong or missing. ${TZ:-} keeps the key empty when .env
+      # leaves it out, and coalesce skips an empty string, so the unset form falls
+      # through to the mounted host file instead of injecting a blank zone.
+      TZ: ${TZ:-}
       # STUN defaults point at Google and buy nothing on a LAN; agents reach
       # each other directly over WireGuard and DERP stays the fallback.
       CODER_DERP_SERVER_STUN_ADDRESSES: ${CODER_DERP_STUN:-disable}
@@ -190,6 +199,16 @@ services:
       # Plain listener on 3000 stays container-internal; browsers get the TLS port.
       - ./proxy/certs/coder.crt:/etc/coder/certs/coder.crt:ro
       - ./proxy/certs/coder.key:/etc/coder/certs/coder.key:ro
+      # The host's own zone, handed to the server read-only. This is what makes
+      # file("/etc/timezone") in both templates/*/main.tf read the machine under the
+      # container instead of the coder image's baked default, and every workspace's
+      # agent env TZ resolves from it. Read-only because the server has no business
+      # rewriting the host clock config. A host that ships only /etc/localtime (some
+      # distros have no /etc/timezone) still resolves: the absent source becomes an
+      # unreadable path, Terraform's try() answers "", coalesce skips it, and the
+      # boot probe reads the zone off the localtime link mounted on the next line.
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
     # SIGINT is what makes the server drain in-flight provisioner jobs; the
     # 30s window keeps `compose down` from SIGKILLing a build mid-apply.
     stop_grace_period: 30s

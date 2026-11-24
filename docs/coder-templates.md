@@ -1047,6 +1047,38 @@ workspace: see
 
 ### What the startup script does, in order
 
+The container's clock is not a stage of this body: `coder_script "tz_setup"` settles it,
+from the shared body `templates/common/tz-setup.sh.tftpl`, because the startup argument is
+the one `execve` that runs out of room (see
+[The one-argument ceiling](#the-one-argument-ceiling)). The body writes the `tz_probe`
+payload (`templates/common/tz.sh`, inlined by `main.tf`) to a temp path, runs it with `sh`,
+and takes one IANA name from it - the `TZ` the agent env injects first, then the timezone
+file, then the localtime link - writes that name to `/etc/timezone`, repoints
+`/etc/localtime` at the matching file under the zoneinfo tree, and exports `TZ`.
+
+The `TZ` that env injects is resolved on the stack host, where the provisioner runs, from
+the three sources compose hands it:
+
+```hcl
+TZ = coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC")
+```
+
+`docker-compose.yml` publishes `TZ` on the `coder` service and bind-mounts the host's
+`/etc/timezone` and `/etc/localtime` into it read-only, which is what those two reads see.
+Without them the probe would answer the *workspace image's* own `/etc/timezone`, the baked
+default, and the feature would do nothing. `try()` is there because an image carrying no
+`/etc/timezone` fails that `file()` read outright rather than answering empty; `try()`
+answers `""` for it and `coalesce` skips an empty string, so the read falls through to
+`Etc/UTC`.
+
+Coder starts every `run_on_start` body in one concurrent errgroup and sets *ready* only
+once all of them return, so moving the stage out of the startup body cost no ordering: the
+clock is settled before the workspace is ready, and before any terminal or shell the agent
+opens reads it. It never fails the boot: an image with no tzdata, or an `/etc` this user
+cannot write, is one `boot_warn` line, because all the boot bodies share one 1 MiB agent
+log. The probe reads its three paths from the environment, which is how
+`tests/bats/workspace-tz.bats` aims it at a scratch tree.
+
 1. Installs `tmux` if it is missing, then seeds `~/.tmux.conf` (only while that file is
    absent or still carries the `managed-by: evo-t1-coder-stack` marker).
 2. Ensures the **Grok Build CLI** is on PATH. The golden image ships it, so the
@@ -1616,6 +1648,7 @@ summary: N ok, W warnings, F failed (+Ns, <body>)   boot_summary
 
   - `ez_learn_skill`, `ez_skillify_skill` and `ez_create_skill_skill` belong to the
     `coder_script.stack_skills` map
+  - `tz_probe` to `coder_script.tz_setup`
   - `grok_build_agents` to `coder_script.agents_seed`
   - the fleet's thirteen to `coder_script.stack_fleet`
   - the advisors' seven (`documenter_skill`, `documenter_agent`,

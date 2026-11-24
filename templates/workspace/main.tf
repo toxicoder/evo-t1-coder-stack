@@ -653,6 +653,18 @@ resource "coder_agent" "main" {
   # These environment variables allow you to make Git commits right away
   # after creating a workspace. They take precedence over ~/.gitconfig.
   env = merge({
+    # The container's clock, resolved here, on the host that runs the provisioner.
+    # Three sources in order: TZ in this process's environment (compose publishes
+    # it on the coder service), then the host's /etc/timezone, which compose
+    # bind-mounts into that container read-only, then Etc/UTC. try() is there
+    # because an image that ships no /etc/timezone makes that file() read fail
+    # outright rather than answer empty; try() answers "" for it, and coalesce
+    # skips an empty string, so the read falls through to Etc/UTC. The agent
+    # inherits the answer as TZ, which is source 1 of the probe coder_script
+    # .tz_setup runs -- without it the probe would read the workspace image's own
+    # /etc/timezone and answer the baked default instead of the host's.
+    TZ = coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC")
+
     GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
     GIT_AUTHOR_EMAIL    = "${data.coder_workspace_owner.me.email}"
     GIT_COMMITTER_NAME  = coalesce(data.coder_workspace_owner.me.full_name, data.coder_workspace_owner.me.name)
@@ -1011,6 +1023,28 @@ resource "coder_script" "stack_advisors" {
     migrator_skill              = chomp(file("${path.module}/migrator.SKILL.md"))
     ez_code_index_skill         = chomp(file("${path.module}/ez-code-index.SKILL.md"))
     ez_code_index_py            = chomp(file("${path.module}/ez-code-index.code_index.py"))
+  })
+}
+
+# The container's clock, in a body of its own for the reason every family here has one:
+# each coder_script.script is a separate execve with its own single-argument ceiling,
+# and coder_agent.startup_script is the argument that runs out
+# (docs/coder-templates.md#the-one-argument-ceiling). Coder starts every run_on_start
+# body in one concurrent errgroup and sets the workspace ready only after all of them
+# return, so moving the stage out costs no ordering: the zone still lands before ready.
+resource "coder_script" "tz_setup" {
+  count        = data.coder_workspace.me.start_count
+  agent_id     = coder_agent.main.id
+  display_name = "Set the workspace timezone from the host"
+  icon         = "/icon/code.svg"
+  run_on_start = true
+  timeout      = 60
+
+  # Inlined here, not through a local: the size readers credit a body by the
+  # path.module names inside its own block.
+  script = templatefile("${path.module}/tz-setup.sh.tftpl", {
+    boot_log_lib = chomp(file("${path.module}/boot-log.lib.sh"))
+    tz_probe     = chomp(file("${path.module}/tz.sh"))
   })
 }
 

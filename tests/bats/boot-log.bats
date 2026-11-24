@@ -594,8 +594,10 @@ boot_body_list() {
   # past it (coderd max_logs_length; codersdk/agentsdk/logs.go maxBytesQueued), and every
   # boot body on that agent draws from the same budget. The acceptance rule is about 40
   # narrated lines per body; the busiest shipped body (the devcontainer startup twin)
-  # makes 42 verb calls, so the cap is that plus a small allowance for the stage a later
-  # change legitimately adds. The fleet total is the tripwire on the aggregate: at a
+  # makes 48 verb calls, two fewer than the timezone stage cost it before that stage
+  # became coder_script "tz_setup", so the cap is that plus a small allowance for the
+  # stage a later change legitimately adds. The fifteen shipped bodies make 323 verb
+  # calls between them today. The fleet total is the tripwire on the aggregate: at a
   # pessimistic 120 bytes a line it stays a small fraction of the ceiling, and it exists
   # so the sum cannot drift upward while every member looks fine on its own.
   #
@@ -606,7 +608,7 @@ boot_body_list() {
   # "summary: N ok, 0 warnings, 0 failed" from a real run), so a loop that suddenly emits
   # hundreds of lines shows up there as a count nobody expected.
   local bodies="${BATS_TEST_TMPDIR}/budget" f calls total=0
-  local per_body=48 fleet_total=400
+  local per_body=50 fleet_total=400
   boot_body_list >"${bodies}"
   while IFS= read -r f; do
     calls="$(grep -cE '^[[:space:]]*(boot_begin|boot_stage|boot_phase|boot_ok|boot_warn|boot_note|boot_err|boot_summary)([[:space:]]|$)' "${f}")"
