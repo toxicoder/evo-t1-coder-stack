@@ -47,6 +47,16 @@ is the checklist the PR follows.
 - `bazelisk run //scripts:build-dev-image` refuses to build when a pin has no matching
   `ARG`, or when an `ARG` default drifted from the pin. Add both sides of a new pin in the
   same change.
+- `GH_STACK_ENABLED` is the one build-time choice that sits outside that file, because it
+  is a flag rather than a pin. The image installs the official `github/gh-stack` GitHub CLI
+  extension (stacked pull requests, invoked as `gh stack`) only for a build that passes
+  `GH_STACK_ENABLED=true`, so it ships **off by default** and a normal build says nothing
+  about it. Turn it on with `GH_STACK_ENABLED=true bazelisk run //scripts:build-dev-image`:
+  the script forwards the flag to the guarded `RUN` in `images/dev/Dockerfile`, only an
+  exact `true` enables the layer, and what it installs stays pinned by `GH_STACK_VERSION` in
+  `tool-versions.env`. Owner: the stack image build (that script and that layer). Expiry:
+  2027-02-23, by which point the extension is either on by default or the flag and its
+  off-path are deleted in one `chore:`.
 - The image ships the Docker client only. The build ends with `test ! -x
   /usr/local/bin/dockerd` (plus `containerd`, `runc`, `docker-proxy`), so the merge-gate
   container drives a daemon it is given rather than owning one.
