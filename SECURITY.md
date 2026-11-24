@@ -66,8 +66,13 @@ repo can verify.
   `hermes:9119`.
   - Leave Authelia on this name: it is an interactive session, not an API bypass.
   - HTTP basic auth (`HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD`) stays.
-  - v0.22.5 refuses a `0.0.0.0` bind with no provider (`HERMES_DASHBOARD_INSECURE` is a
-    deprecated no-op).
+  - Hermes refuses a `0.0.0.0` bind with no provider (measured at v0.22.5; the
+    release notes through v0.23.2 record no change to it). `HERMES_DASHBOARD_INSECURE`
+    is a deprecated no-op.
+  - v0.23.0 added the Webapp: `webapp.enabled: true` makes the gateway serve the
+    Desktop workspace on its own listener, single-user and acting as the signed-in
+    operator. It is off by default and this stack never sets it - a Webapp left on
+    would be a second door no basic auth covers.
   - On the LAN, `:9119` and `:8080` with a matching Host both skip Authelia, so that
     basic auth is load-bearing.
 

@@ -3215,8 +3215,9 @@ infisical: skipped a secret whose value spans more than one line; only single-li
 
 ### `Refusing to bind dashboard to 0.0.0.0` -> empty Hermes basic-auth env
 
-Cause: Hermes v0.22.5 refuses a non-loopback bind when no
-`DashboardAuthProvider` is registered. The bundled basic-auth plugin skips
+Cause: Hermes refuses a non-loopback bind when no `DashboardAuthProvider` is
+registered (measured at v0.22.5; the release notes through v0.23.2 record no
+change to it). The bundled basic-auth plugin skips
 registration when the password is empty. Compose interpolation
 `${HERMES_DASHBOARD_PASSWORD:-}` (empty default) did that after a pull that
 added the Hermes keys: `.env` never gained them, so `prod-stack up` without
@@ -3229,6 +3230,18 @@ Fix: compose interpolation defaults now match `.env.sample`
 ```sh
 bazelisk run //scripts:prod-stack -- up
 ```
+
+The other door is the one v0.23.0 added: the Webapp (`webapp.enabled`), which
+serves the Desktop workspace from the gateway on its own listener and is not
+behind this triple. It ships off and nothing in this stack sets it, so an
+open one is an operator edit rather than a default, and the audit refuses it:
+
+```sh
+bazelisk run //scripts:hermes-doctor -- --check webapp-door
+```
+
+It reads the seed and the volume copy of `hermes/config.yaml`, plus the
+container's own environment, and never prints a value.
 
 Sign-in is `HERMES_DASHBOARD_USER` / `HERMES_DASHBOARD_PASSWORD` from `.env`
 (default `admin` / `change-me-hermes` until bootstrap rotates the

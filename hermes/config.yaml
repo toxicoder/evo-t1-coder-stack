@@ -1,6 +1,6 @@
 # managed-by: evo-t1-coder-stack
 #
-# Seed config for the on-device Hermes assistant (hermes-agent v0.22.5). It is
+# Seed config for the on-device Hermes assistant (hermes-agent v0.23.2). It is
 # copied into the Hermes data volume as $HERMES_HOME/config.yaml, so edit it here
 # and re-materialize the volume — never edit the copy the container reads.
 #
@@ -38,9 +38,10 @@ model:
 # derives both sides and fails on a drift or a duplicate.
 #
 # `--provider <row>` and `--model <alias>` are two switches, and a row's
-# `default_model` is read by the first: measured against the shipped image,
+# `default_model` is read by the first: measured against the v0.22.5 image,
 # `hermes --provider arc-coder` with no `-m` sends `"model": "coder"`
-# (hermes_cli/cli_init_mixin.py:263 takes the row's `default_model` through
+# (hermes_cli/cli_init_mixin.py:263 is a source reading at v0.22.5, not a line
+# re-verified against v0.23.2; it takes the row's `default_model` through
 # `_get_named_custom_provider`), and `-m <alias>` overrides it. A run with no flags
 # sends the `model:` block above. So an Arc row really does travel its alias, and
 # this row's `default_model: agent` keeps a `--provider litellm` run on the lane a
@@ -48,7 +49,8 @@ model:
 #
 # To keep an alias across restarts, `hermes config set model.default <alias>`.
 # `model.model` is the legacy spelling of the same value and is dropped at load
-# once the block carries `default:` (hermes_cli/config.py:1797-1802) - which is
+# once the block carries `default:` (hermes_cli/config.py:1797-1802, a source
+# reading at v0.22.5, not re-verified against v0.23.2) - which is
 # what a persisted `/model` writes - so after one in-session switch a
 # `set model.model` reports success and changes nothing.
 #
@@ -59,7 +61,8 @@ model:
 # session, so it stays out of the catalogue and litellm/config.yaml remains the one
 # owner of that lane. Hermes folds rows sharing an endpoint, credential and wire
 # protocol into one group and reads that flag from the group's first member alone
-# (hermes_cli/model_switch_providers.py:1010-1018), so this row has to stay the
+# (hermes_cli/model_switch_providers.py:1010-1018, a source reading at v0.22.5, not
+# re-verified against v0.23.2), so this row has to stay the
 # first key under `providers:`; the bats gate pins it there.
 #
 # Why through LiteLLM and not at http://ollama:11434 directly: the proxy is the
@@ -176,3 +179,14 @@ dashboard:
   # public_url is env HERMES_DASHBOARD_PUBLIC_URL, not this file (the
   # volume seed is copy-once).
   trusted_proxies: ["172.16.0.0/12"]
+
+webapp:
+  # Named here on purpose, unlike the keys above that ride their upstream default.
+  # Upstream v0.23.0 added this second gateway listener: with enabled: true the gateway
+  # serves the Desktop workspace on its own port, single-user, acting as the signed-in
+  # operator. The dashboard basic-auth triple in docker-compose.yml guards the dashboard
+  # door only, so a Webapp left on would be a listener this stack has no credential on.
+  # It is off upstream; pinning it here makes the posture a fact in the file rather than
+  # an assumption about a default, and //scripts:hermes-doctor --check webapp-door
+  # refuses a true in the seed, in the volume copy, or in the container env.
+  enabled: false

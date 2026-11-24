@@ -746,7 +746,7 @@ services:
   # gateway's s6 drops to that uid. The gateway service itself has no user:
   # key — s6 needs root to drop.
   hermes-init:
-    image: nousresearch/hermes-agent:v0.22.5
+    image: nousresearch/hermes-agent:v0.23.2
     # Named log stream: Alloy ships this container to Loki under `container=hermes-init`
     # (observability/alloy/config.alloy reads the tag out of each json-file line),
     # which is how a Loki query says `coder` without anyone mounting the daemon
@@ -784,7 +784,7 @@ services:
   # sources on the daemon; empty STACK_HOST_PATH (CI `compose config`) falls
   # back to .:/opt/stack.
   hermes:
-    image: nousresearch/hermes-agent:v0.22.5
+    image: nousresearch/hermes-agent:v0.23.2
     # Named log stream: Alloy ships this container to Loki under `container=hermes`
     # (observability/alloy/config.alloy reads the tag out of each json-file line),
     # which is how a Loki query says `coder` without anyone mounting the daemon
@@ -802,8 +802,9 @@ services:
       # Empty on LAN-only. bootstrap writes STACK_HERMES_URL from a public
       # hermes-* name; the seed config does not carry public_url.
       HERMES_DASHBOARD_PUBLIC_URL: ${STACK_HERMES_URL:-}
-      # v0.22.5 fail-closed: a 0.0.0.0 bind with no DashboardAuthProvider is a
-      # boot error. The bundled basic-auth plugin skips registration when
+      # Fail-closed: a 0.0.0.0 bind with no DashboardAuthProvider is a boot
+      # error (measured at v0.22.5; the release notes through v0.23.2 record no
+      # change to it). The bundled basic-auth plugin skips registration when
       # username or password is empty, so these interpolation defaults must
       # stay non-empty (same shape as LITELLM_MASTER_KEY). They match
       # .env.sample; bootstrap replaces the change-me-* placeholders in .env.

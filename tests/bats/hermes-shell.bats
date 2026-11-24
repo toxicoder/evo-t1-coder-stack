@@ -46,7 +46,7 @@ setup() {
   mkdir -p "${STUB_LOG}" "${SCRATCH}/bin" "${SCRATCH}/none" "${SCRATCH}/deploy"
 
   # A scratch compose project, so nothing in these tests reads the real stack.
-  printf 'services:\n  hermes:\n    image: nousresearch/hermes-agent:v0.22.5\n' >"${SCRATCH}/compose.yml"
+  printf 'services:\n  hermes:\n    image: nousresearch/hermes-agent:v0.23.2\n' >"${SCRATCH}/compose.yml"
   printf 'LITELLM_MASTER_KEY=sekret-value\nLITELLM_PORT=4000\nSTACK_DEPLOY_PATH=%s/deploy\n' \
     "${SCRATCH}" >"${SCRATCH}/stack.env"
 
@@ -287,7 +287,7 @@ run_shell() {
 }
 
 @test "hermes-shell: check reports the box and launches nothing" {
-  export STUB_PS_OUT="abc123" STUB_IMAGE_REF="nousresearch/hermes-agent:v0.22.5"
+  export STUB_PS_OUT="abc123" STUB_IMAGE_REF="nousresearch/hermes-agent:v0.23.2"
   export STUB_VOLUME_NAME="evo-t1-prod_hermes-data" STUB_VOLUME_MOUNT="${SCRATCH}/volume"
   export STUB_CURL_RC=0
   mkdir -p "${SCRATCH}/volume"
@@ -300,7 +300,7 @@ run_shell() {
   assert_match "project line" 'project: evo-t1-prod' "${output}"
   assert_match "container line" 'container: running' "${output}"
   assert_match "service line" 'service: hermes' "${output}"
-  assert_match "image line" 'image: nousresearch/hermes-agent:v0.22.5 \(present\)' "${output}"
+  assert_match "image line" 'image: nousresearch/hermes-agent:v0.23.2 \(present\)' "${output}"
   assert_match "seeded volume" "data volume: ${SCRATCH}/volume \(seeded\)" "${output}"
   assert_match "key is present" 'litellm key: set in' "${output}"
   assert_match "model door answers" 'model door: LiteLLM answers' "${output}"
@@ -432,9 +432,9 @@ run_shell() {
   PROJECT="evo-t1-prod"
   COMPOSE_FILE="${SCRATCH}/compose.yml"
   ENV_FILE=""
-  export STUB_IMAGE_REF="nousresearch/hermes-agent:v0.22.5"
+  export STUB_IMAGE_REF="nousresearch/hermes-agent:v0.23.2"
   run image_ref
-  assert_eq "resolved image" "nousresearch/hermes-agent:v0.22.5" "${output}"
+  assert_eq "resolved image" "nousresearch/hermes-agent:v0.23.2" "${output}"
   # The neighbours in the same render are not the answer: postgres and litellm both
   # declare an image, and one label value reads like one.
   assert_not_match "no neighbour image" 'postgres' "${output}"
@@ -444,7 +444,7 @@ run_shell() {
   export STUB_IMAGE_REF=""
   run image_ref
   assert_eq "unresolvable is empty, not a guess" "" "${output}"
-  export STUB_IMAGE_REF="nousresearch/hermes-agent:v0.22.5" STUB_CONFIG_ERR=1
+  export STUB_IMAGE_REF="nousresearch/hermes-agent:v0.23.2" STUB_CONFIG_ERR=1
   run image_ref
   assert_eq "a compose that cannot render answers empty" "" "${output}"
 }

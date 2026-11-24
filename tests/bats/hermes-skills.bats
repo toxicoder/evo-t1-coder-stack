@@ -580,11 +580,12 @@ PY
 
 # --- 6. what the pinned image actually ships ------------------------------
 
-# Read off the pinned image (`docker run --rm --entrypoint /bin/bash
-# nousresearch/hermes-agent:v0.22.5`, then `command -v <tool>`), not remembered:
-# each of these answers MISSING there, while git, curl, rg, vmstat, df, du and the
-# Docker CLI are present. `ollama` is left out because it is also a compose service
-# name, and a skill naming the service is not naming a command.
+# Read off the image this stack pinned before the bump (`docker run --rm
+# --entrypoint /bin/bash nousresearch/hermes-agent:v0.22.5`, then `command -v
+# <tool>`), not remembered: each of these answers MISSING there, while git, curl,
+# rg, vmstat, df, du and the Docker CLI are present. The pin is v0.23.2 now and
+# these answers are not re-read against it. `ollama` is left out because it is also
+# a compose service name, and a skill naming the service is not naming a command.
 HS_IMAGE_MISSING_TOOLS=(bazelisk jq sqlite3 sensors iotop sar)
 
 @test "hermes skills: a file that names a tool the image lacks also says the image lacks it" {
