@@ -1190,17 +1190,67 @@ The order above is not incidental; each line is a constraint the script has to k
   and the root-table middle-click paste are unbound, and `Prefix m` is only the switch
   that hands the wheel to tmux for a long scroll and hands it back.
 
-  - `set-clipboard on` and `allow-passthrough on` stay for the one copy route that is
+  - `set-clipboard on` stays for the one copy route that is
   not tmux's own - an app inside a pane (vim's `+` register, anything that emits
-  OSC 52) drives the machine clipboard through them, which is what a native terminal
+  OSC 52) drives the machine clipboard through it, which is what a native terminal
   hands that app - and a client that blocks OSC 52 (iTerm2 by default) gets nothing at
   all, because there is no tmux buffer left to fall back to.
+
+  - `allow-passthrough` ships off. What that option carries is the DCS-wrapped kind
+  alone: a pane app's own sequences in tmux's `ESC Ptmux;` form,
+  which the server hands to every attached client when it is on, and which is the
+  class that turns into garbage on screen when a client downstream stops draining.
+  The OSC 52 copy needs none of it (measured on the shipped tmux 3.4: that escape
+  reaches a read-only client with passthrough off). `Prefix p` switches it for the
+  one window that really wants its own sequences, and
+  `tmux show-options -gw allow-passthrough` reads the value back.
 
   - The browser build of VS
   Code drops that escape as well
   ([microsoft/vscode#318254](https://github.com/microsoft/vscode/issues/318254)), so a
   pane app's OSC 52 copy is silent in the tab and lands over ssh from a real terminal
   app, while the operator's own copy in the tab is the plain drag.
+
+  - `history-limit 100000` is priced, not guessed. Measured on the shipped tmux 3.4
+  with one saturated pane: 50000 lines of 120-column output holds the server at 193 MB,
+  100000 at 381 MB, and the same 100000 lines of plain 80-column output costs 60 MB.
+  tmux applies the number to panes created from then on, so an existing pane keeps the
+  limit it was born with (tmux(1)) and a new pane or a `tmux kill-server` is what takes
+  a raise.
+
+  - `status-interval` is the server's own periodic work: each tick re-expands the status
+  line and runs the redraw pass for every attached client, the ones that stopped
+  draining included. This tmux ships it at 15. Measured on the shipped tmux 3.4 with one
+  attached client on a pane that writes nothing, over 16 seconds the stock status line
+  took the same 1102 bytes at 1 and at 60, while the same client on a status line that
+  changes every second took 6102 bytes at 1 against 1352 at 60. The stock `status-right`
+  is `%H:%M %d-%b-%y`, so 3 of the stock 4 ticks a minute re-expand a string that cannot
+  have changed; 60 is the finest step that string can show. The scope flag matters and
+  only `-g` works: the same number written `set -s status-interval` is dropped at config
+  load (measured -- the server keeps the stock 15 and reads nothing back), and a live
+  server takes the value on `tmux source-file ~/.tmux.conf`.
+
+  - `set-titles off` is a pin rather than a change: measured on a scratch server booted
+  with `-f /dev/null`, off is what this build already defaults to, and the seed states
+  it in the file the operator reads. One fewer string is pushed at every client each
+  time a pane's title moves.
+
+  - `escape-time 10` is upstream's 3.5 default (CHANGES), chosen over the 0 that vim
+  guides recommend. Measured on this build: `Esc`, 300 ms, `q` fires `M-q` at 500 and
+  not at 10, while 0 splits an Esc from the character behind it whenever a throttled
+  background tab delivers the two more than 10 ms apart. It is a server option, so
+  `tmux source-file ~/.tmux.conf` moves it for live panes.
+
+  - No option in the 3.4 set bounds a client that stops draining: `client_output`,
+  `client_buffer` and `client_last_activity` all expand to nothing on this build, and the
+  two pruning options are unusable here. Measured on a scratch server,
+  `destroy-unattached on` (which accepts only `off` and `on`; `dead` comes back
+  `unknown value`) destroys the session the moment its last client detaches, taking
+  everything running in it, and `exit-unattached` drops the server the same way -- the
+  opposite of what both launchers need, since a closed tab leaves its session unattached
+  for the next tab to rejoin. The stale-client sweep in the two launcher payloads is what
+  reaps a client like this; see
+  [grok-build-and-agents.md](grok-build-and-agents.md).
 
 #### The clone, the chown, and the best-effort tail
 

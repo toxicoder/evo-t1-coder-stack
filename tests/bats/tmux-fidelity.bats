@@ -26,11 +26,16 @@
 # config_seed.sh seeds the same paths from the repo bytes, so a feed that
 # chomps differently gives the same file two writers with different bytes.
 #
-# Four of the seeded options are the fixes `grok doctor` offers: set-clipboard
-# and allow-passthrough for the one copy route that is left (an app inside a pane
-# driving the machine clipboard over OSC 52), extended-keys, and the RGB
-# terminal-features entry; the extkeys entry is the one Doctor leaves to the
-# operator. tmux rewrites 24-bit color down to what the attached client
+# Three of the seeded options are the fixes `grok doctor` offers: set-clipboard for
+# the one copy route that is left (an app inside a pane driving the machine
+# clipboard over OSC 52), extended-keys, and the RGB terminal-features entry; the
+# extkeys entry is the one Doctor leaves to the operator. Doctor's
+# allow-passthrough fix is seeded off instead and scoped to one window by Prefix p,
+# because OSC 52 reaches a read-only client with passthrough off (measured on the
+# shipped tmux 3.4) while with it on every DCS-wrapped pane sequence is copied to
+# every attached client, the ones that stopped draining included. The same suite
+# pins the two options that bound what the server pushes per tick: status-interval
+# at the finest step the stock clock can show, and set-titles off. tmux rewrites 24-bit color down to what the attached client
 # advertises, so a missing RGB entry washes a theme out in the browser while the
 # app inside still emits truecolor. tmux only warns about an unknown option name
 # and starts anyway, so when tmux is on PATH the suite also boots a scratch
@@ -111,7 +116,20 @@ runnable_tmux_seed() {
   # A drifted twin would seed a different terminal for one hosting mode.
   grep -Fc 'set -g mouse off' "${COMMON_TMUX}" | grep -qx 1
   grep -Fc 'set -g set-clipboard on' "${COMMON_TMUX}" | grep -qx 1
-  grep -Fc 'set -g allow-passthrough on' "${COMMON_TMUX}" | grep -qx 1
+  # Off by default, with the switch back scoped to one window: the clipboard
+  # survives without it (the live OSC 52 read below), and every DCS-wrapped pane
+  # sequence would otherwise go to every attached client.
+  grep -Fc 'set -g allow-passthrough off' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc "bind-key p if-shell -F '#{==:#{allow-passthrough},on}'" "${COMMON_TMUX}" | grep -qx 1
+  # Server option at the finest step the stock clock shows; -g leaves the shipped 15.
+  grep -Fc 'set -g status-interval 60' "${COMMON_TMUX}" | grep -qx 1
+  grep -Fc 'set -g set-titles off' "${COMMON_TMUX}" | grep -qx 1
+  # Neither pruning option 3.4 carries can ship here: destroy-unattached on (and
+  # exit-unattached) reaps an unattached session, which is the closed-tab rejoin
+  # both launchers depend on.
+  [ "$(grep -Ec '^[[:space:]]*set[[:space:]].*(destroy-unattached|exit-unattached)' "${COMMON_TMUX}")" = "0" ] || {
+    echo "the payload ships a session-pruning option: $(grep -n -E '^[[:space:]]*set[[:space:]].*(destroy-unattached|exit-unattached)' "${COMMON_TMUX}")" >&2
+    return 1; }
   grep -Fc "set -g extended-keys on" "${COMMON_TMUX}" | grep -qx 1
   grep -Fc "set -as terminal-features ',*:RGB'" "${COMMON_TMUX}" | grep -qx 1
   grep -Fc "set -as terminal-features 'xterm*:extkeys'" "${COMMON_TMUX}" | grep -qx 1
@@ -343,7 +361,10 @@ twin_name() {
   [ "${status}" -eq 0 ]
   assert_contains_file "the client keeps the click" "${home}/.tmux.conf" '^set -g mouse off$'
   assert_contains_file "OSC 52 clipboard" "${home}/.tmux.conf" '^set -g set-clipboard on$'
-  assert_contains_file "passthrough" "${home}/.tmux.conf" '^set -g allow-passthrough on$'
+  assert_contains_file "passthrough scoped off" "${home}/.tmux.conf" '^set -g allow-passthrough off$'
+  assert_contains_file "per-window passthrough switch" "${home}/.tmux.conf" '^bind-key p if-shell'
+  assert_contains_file "status timer at the clock step" "${home}/.tmux.conf" '^set -g status-interval 60$'
+  assert_contains_file "no client title churn" "${home}/.tmux.conf" '^set -g set-titles off$'
   assert_contains_file "extended keys" "${home}/.tmux.conf" '^set -g extended-keys on$'
   assert_contains_file "truecolor survives the multiplexer" "${home}/.tmux.conf" "^set -as terminal-features '\\,\\*:RGB'\$"
   assert_contains_file "extkeys for Shift+Enter" "${home}/.tmux.conf" "^set -as terminal-features 'xterm\\*:extkeys'\$"
@@ -437,7 +458,24 @@ teardown() {
     echo "aggressive-resize came up on: inert under window-size latest, and tmux(1) calls it poor for shells" >&2
     return 1; }
   run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -wg allow-passthrough
-  [ "${output}" = "allow-passthrough on" ]
+  [ "${output}" = "allow-passthrough off" ] || {
+    echo "passthrough is not scoped off, so every DCS-wrapped pane sequence goes to every client: ${output}" >&2
+    return 1; }
+  # Both of these are per-tick work the server does for every attached client, and
+  # both are easy to ship into the wrong table: status-interval written -s is
+  # dropped at config load and leaves the stock 15, and set-titles reads back -g.
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -g status-interval
+  [ "${output}" = "status-interval 60" ] || {
+    echo "status-interval did not take as a server option: ${output}" >&2
+    return 1; }
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -g set-titles
+  [ "${output}" = "set-titles off" ]
+  # The one option that must stay at its default: a pruned session is the closed
+  # tab's work gone, and the next tab has nothing to rejoin.
+  run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -g destroy-unattached
+  [ "${output}" = "destroy-unattached off" ] || {
+    echo "destroy-unattached is not off: ${output}" >&2
+    return 1; }
   run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -wg extended-keys
   [ "${output}" = "extended-keys on" ]
   run tmux -L "${SCRATCH_TMUX_SOCKET}" show-options -s terminal-features
@@ -489,10 +527,14 @@ teardown() {
   assert_contains_file "the drag report" "${COMMON_TMUX}" 'ESC\[\?1002h'
   assert_contains_file "the SGR mouse report" "${COMMON_TMUX}" 'ESC\[\?1006h'
   assert_contains_file "the alternate screen report" "${COMMON_TMUX}" 'ESC\[\?1049h'
-  # The one copy route left is the app's own, and the two options that carry it.
+  # The one copy route left is the app's own, and set-clipboard alone carries it:
+  # the payload has to say so, because that measurement is what lets passthrough go
+  # off by default. Passthrough then reads as the scoped option it is.
   assert_contains_file "an app still copies over OSC 52" "${COMMON_TMUX}" 'OSC 52'
   assert_contains_file "the clipboard route stays on" "${COMMON_TMUX}" 'set-clipboard on'
-  assert_contains_file "passthrough stays on" "${COMMON_TMUX}" 'allow-passthrough on'
+  assert_contains_file "passthrough defaults off" "${COMMON_TMUX}" 'the default here is off'
+  assert_contains_file "the passthrough switch is Prefix p" "${COMMON_TMUX}" 'Prefix p'
+  assert_contains_file "what passthrough carries" "${COMMON_TMUX}" 'DCS-wrapped'
   # The retired browser-copy claims stay out of the file an operator reads: tmux
   # binds no copy any more, so the payload must not teach a tmux-side copy route.
   local retired
@@ -615,6 +657,31 @@ boot_scratch() {
   run tmux -L "${sock}" show-options -g mouse
   [ "${output}" = "mouse off" ] || {
     echo "the second run left the option at: ${output}" >&2; return 1; }
+  scratch_tmux_reap
+}
+
+@test "tmux seed: a live server scopes passthrough off and carries the window switch" {
+  command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"
+  boot_scratch "bats-pt-$$-${BATS_TEST_NUMBER}" pt
+  local sock="${SCRATCH_TMUX_SOCKET}" bound
+  # The payload's default is the window global, which an untouched window carries no
+  # local copy of, so the default reads -wg and only a pressed switch writes a window.
+  run tmux -L "${sock}" show-options -wg allow-passthrough
+  [ "${output}" = "allow-passthrough off" ] || {
+    echo "the payload did not scope passthrough off: ${output}" >&2; return 1; }
+  # The route back has to be the line the payload binds, with both branches present:
+  # a bind-key that tmux refuses to parse leaves the option stuck at off. A press
+  # needs a tty for its client, which a sandboxed run has none of, so this reads the
+  # table the running server built from the line.
+  bound="$(tmux -L "${sock}" list-keys -T prefix | sed -n 's/^[[:space:]]*bind-key[[:space:]]*-T prefix[[:space:]]*p[[:space:]]\{1,\}//p' | head -1)"
+  [[ "${bound}" == *"if-shell"* && "${bound}" == *"setw allow-passthrough off"* \
+    && "${bound}" == *"setw allow-passthrough on"* ]] || {
+    echo "Prefix p is bound to: ${bound}" >&2; return 1; }
+  # And the switch is the only writer: the window inherits the off global rather than
+  # carrying a value of its own out of the payload.
+  run tmux -L "${sock}" show-options -t pt:0 -w allow-passthrough
+  [ -z "${output}" ] || {
+    echo "the window came up with its own passthrough value: ${output}" >&2; return 1; }
   scratch_tmux_reap
 }
 
@@ -982,14 +1049,23 @@ run_grok_helper() {
   local tmpdir="$1" cwd="$2" label="$3" grace="${4:-3600}" bindir="${5:-}"
   local path="${PATH}"
   [ -n "${bindir}" ] && path="${bindir}:${PATH}"
+  # `default` as the grace leaves the variable out of the environment entirely,
+  # which is the only way to drive the shipped default rather than the override.
+  # It has to be an env option ahead of the assignments, not another operand.
+  local grace_env=()
+  local grace_set=("EVO_TMUX_STALE_AFTER=${grace}")
+  if [ "${grace}" = "default" ]; then
+    grace_env=("-u" "EVO_TMUX_STALE_AFTER")
+    grace_set=()
+  fi
   (
     local fd
     for fd in $(seq 3 64); do
       # shellcheck disable=SC2294
       eval "exec ${fd}>&-" 2>/dev/null
     done
-    exec setsid --fork env -u TMUX -C "${cwd}" TERM=xterm-256color TMUX_TMPDIR="${tmpdir}" \
-      HOME="${tmpdir}/home" PATH="${path}" EVO_TMUX_STALE_AFTER="${grace}" \
+    exec setsid --fork env -u TMUX "${grace_env[@]}" -C "${cwd}" TERM=xterm-256color TMUX_TMPDIR="${tmpdir}" \
+      HOME="${tmpdir}/home" PATH="${path}" "${grace_set[@]}" \
       script -qec "bash '${GROK_HELPER}'" "${tmpdir}/grok-ts.${label}" >/dev/null 2>&1
   )
 }
@@ -1010,6 +1086,14 @@ grok_wait() {
   done
   return 1
 }
+
+# --- the no-progress client sweep ---------------------------------------------
+#
+# The sweep both launchers carry detaches a client that has stopped taking any
+# bytes at all while its session keeps producing them, so these tests need a
+# client that genuinely does not read its socket, a client that genuinely does,
+# and a pane that keeps writing. All three are built for real here against a
+# `tmux -f /dev/null` scratch server.
 
 @test "attach helper: a client that stopped draining stops holding its session busy" {
   command -v tmux >/dev/null 2>&1 || skip "tmux not on PATH (the golden image ships it)"

@@ -262,10 +262,12 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   - A drag while `Prefix m` has the pointer on selects nothing, since the copy bindings
     stay unbound either way.
 - **An app inside the pane drives the machine clipboard over OSC 52; the browser
-  build drops it.** `set -g set-clipboard on` with `set -g allow-passthrough on`
-  stay in the seed for that one route: vim's `+` register, and anything else that
-  emits the escape, reach the machine clipboard the way a native terminal hands them
-  to it.
+  build drops it.** `set -g set-clipboard on` stays in the seed for that one route
+  alone: vim's `+` register, and anything else that emits the escape, reach the
+  machine clipboard the way a native terminal hands them to it. Passthrough is no
+  part of that route - measured on the shipped tmux 3.4 with a read-only client
+  attached, the escape arrives with `allow-passthrough off` and arrives nowhere with
+  `set-clipboard off`.
   - Over ssh from Ghostty, kitty, WezTerm or iTerm2 that copy lands.
   - code-server's browser build drops the escape before any clipboard call: a
     hand-written `printf '\033]52;c;<base64>\a'` was just as silent with
@@ -279,6 +281,16 @@ plain drag is due the same pass before it is restated as measured under `mouse o
   - Nothing on the tmux side can spoil that clipboard either: tmux has no copy left to
     send, so an accidental selection in the pane cannot overwrite what the client just
     put there.
+- **`allow-passthrough` is off, and `Prefix p` switches it for one window.** What
+  that option governs is the DCS-wrapped kind: a pane app's own sequences in tmux's
+  `ESC Ptmux;` form, which the server copies to every attached client when it is on,
+  the ones that stopped draining included. That is the class that reaches the screen
+  as garbage over a TUI, so the seed ships it off and the clipboard needs none of it.
+  - Press `Prefix p` in the window that genuinely wants to pass a DCS through, and
+    that window alone takes them.
+  - Proof: `tmux show-options -gw allow-passthrough` reads `allow-passthrough off`,
+    and `tests/bats/tmux-fidelity.bats` boots a scratch server on the seed and reads
+    that value and the `Prefix p` binding back.
 - **Into the pane: `Ctrl+Shift+V` or right-click, on a secure context.** Both
   arrive bracketed (`ESC[200~ ... ESC[201~`) in a bash terminal and in a tmux
   pane alike, and a three-line paste arrives whole without a warning dialog.
@@ -338,9 +350,12 @@ item in the **Findings** list carries its own fix, and `--json` prints the same
 report for a script. What the report should read here:
 
 - **tmux options.** `templates/common/tmux.conf` seeds the four options Doctor's
-  own fixes write, `set -g set-clipboard on`, `set -g allow-passthrough on`,
+  own fixes write, `set -g set-clipboard on`, `set -g allow-passthrough off`,
   `set -g extended-keys on` and the `*:RGB` `terminal-features` entry, plus the
   `xterm*:extkeys` entry Doctor leaves to the operator.
+  - Of those four, `set-clipboard` alone carries the OSC 52 copy; `allow-passthrough`
+    ships off and `Prefix p` flips it for one window, because what it governs is the
+    DCS-wrapped kind, not the clipboard (see **`allow-passthrough` is off** above).
   - Those last two decide what survives the multiplexer: tmux rewrites 24-bit color down
     to the palette an attached client advertises, which is what makes a theme look
     washed out in the browser, and extkeys is what makes Shift+Enter and Ctrl+. arrive
