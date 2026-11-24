@@ -6,7 +6,9 @@
 # Nothing in the stack ever set a timezone, so every workspace answered in the
 # golden image's default while the stack host ran on its own zone: date, the
 # terminals the agent opens, and the agent process itself all read the container's
-# localtime, which no boot stage had touched. Two halves are pinned here.
+# localtime, which no boot stage had touched. Three halves are pinned here: the seam
+# that hands the coder container a zone at all, the probe that resolves one, and the
+# boot body that applies it.
 #
 # The resolver is templates/common/tz.sh, a POSIX probe. It is ferried to a remote
 # and run with sh, so every case below runs it with sh and never sources it: a probe
@@ -412,4 +414,162 @@ CASE_TAIL
   run_apply devcontainer
   [ "${status}" -eq 0 ]
   [[ ${output} == *"no host timezone applied"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# The seam above the probe: what the coder container is handed.
+#
+# Everything above drives the probe and the boot body against a scratch tree they are
+# pointed at. This section reads docker-compose.yml and the two twins' main.tf as data,
+# because the zone the probe is handed is decided three files away from it: compose
+# publishes TZ on the coder service and mounts the host's own two zone files into that
+# container, and both twins resolve the agent env's TZ from what it can see there. Until
+# now nothing in the gate opened those lines, so a compose edit that quietly
+# reintroduced an empty TZ, or a bind that regrew a missing host file as a directory,
+# stayed green. Both were measured against compose v5.5.1 on docker 29.8.1 before the
+# form below was picked:
+#
+#   TZ: ${TZ:-}    -> the container gets TZ present and empty, and Go's initLocal reads
+#                     that as UTC without ever opening /etc/localtime;
+#   TZ: ~          -> the key is dropped when nothing set it, so Go reads the mounted
+#                     /etc/localtime and Terraform's env("TZ") falls through to the
+#                     mounted /etc/timezone -- both answer the host, and a set value
+#                     still answers both;
+#   short bind of a source the host lacks -> /etc/timezone arrives as a root-owned
+#                     DIRECTORY, in the container and on the host, and the host copy
+#                     is still there after compose down;
+#   create_host_path: false -> the daemon refuses at create and creates nothing.
+#
+# docker-compose.yml is already in every suite's runfiles (it is the marker
+# bats_canonical_repo_root walks up to), so this section needs no new payload.
+# ---------------------------------------------------------------------------
+
+# compose_block <service> - print that service's body. services: is flat, so the next
+# two-space key ends it.
+compose_block() {
+  awk -v svc="  ${1}:" '
+    $0 == svc { inside = 1; next }
+    inside && /^  [a-z0-9_-]+:$/ { inside = 0 }
+    inside { print }
+  ' "${REPO_ROOT}/docker-compose.yml"
+}
+
+# compose_sub_block <service> <key> - print the body of one key of one service.
+compose_sub_block() {
+  compose_block "${1}" | awk -v key="    ${2}:" '
+    $0 == key { inside = 1; next }
+    inside && /^    [a-z0-9_-]+:$/ { inside = 0 }
+    inside { print }
+  '
+}
+
+# compose_bind_record <service> <source> - print the whole long-syntax volume record
+# whose source: is <source>, so a case asserts against one item rather than the file.
+compose_bind_record() {
+  compose_sub_block "${1}" volumes | awk -v src="${2}" '
+    /^      - / {
+      if (have) printf "%s", rec
+      have = 0
+      rec = ""
+    }
+    {
+      rec = rec $0 "\n"
+      line = $0
+      sub(/^[[:space:]-]+/, "", line)
+      if (line ~ /^source:[[:space:]]/) {
+        sub(/^source:[[:space:]]*/, "", line)
+        if (line == src) { have = 1 }
+      }
+    }
+    END { if (have) printf "%s", rec }
+  '
+}
+
+@test "compose: the coder service publishes TZ as a null, never as an empty default" {
+  # The one key two readers share, and both read an empty value as a decision rather
+  # than as silence: Go as UTC, and coalesce as a zone name it must not skip. A null is
+  # the only compose form that can answer "the operator set nothing" with "no key at
+  # all", which is the only thing Go reads as "ask /etc/localtime".
+  local env_block
+  env_block="$(compose_sub_block coder environment)"
+  [[ -n ${env_block} ]] || fail "docker-compose.yml: the coder service has no environment: block"
+  grep -qE '^[[:space:]]*TZ:[[:space:]]*~$' <<<"${env_block}" ||
+    fail "the coder service no longer publishes TZ as a null (TZ: ~); any form that resolves to an empty string puts the server on UTC and defeats the /etc/localtime bind"
+  [ "$(grep -cE '^[[:space:]]*TZ:' <<<"${env_block}")" -eq 1 ] ||
+    fail "the coder service declares TZ more than once in environment:"
+  ! grep -qE "^[[:space:]]*TZ:[[:space:]]*(\\\$\\{|\"\"|'')" <<<"${env_block}" ||
+    fail "the coder service defaults TZ to a value compose resolves to the empty string"
+  ! grep -qE '^[[:space:]]*TZ:[[:space:]]*\$\{TZ' "${REPO_ROOT}/docker-compose.yml" ||
+    fail "docker-compose.yml reintroduced a \${TZ:-} style default on TZ"
+}
+
+@test "compose: both host zone binds refuse to create a host file that is missing" {
+  # Long syntax plus bind.create_host_path: false, on both files. The short form does
+  # not fail when the host lacks the source, it invents one: a root-owned directory, at
+  # the container target (where file("/etc/timezone") then reads a directory) and on the
+  # host, where it outlives compose down and misleads the next dpkg-reconfigure tzdata.
+  # create_host_path also has to nest under bind: -- compose refuses it as an additional
+  # property at the top of the record, so the nesting is pinned rather than assumed.
+  local volumes src rec bind_col chp_col
+  volumes="$(compose_sub_block coder volumes)"
+  [[ -n ${volumes} ]] || fail "docker-compose.yml: the coder service has no volumes: block"
+  ! grep -qE '^[[:space:]]*- /etc/(timezone|localtime):' <<<"${volumes}" ||
+    fail "a host zone bind went back to the KEY:TARGET:ro short form, which auto-creates a missing source as a root-owned directory"
+  for src in /etc/timezone /etc/localtime; do
+    rec="$(compose_bind_record coder "${src}")"
+    [[ -n ${rec} ]] || fail "the coder service no longer mounts the host's ${src}, so the workspace can no longer learn the host's zone"
+    grep -qE '^[[:space:]-]*type:[[:space:]]*bind$' <<<"${rec}" || fail "${src}: not a long-syntax bind"
+    grep -qE "^[[:space:]]*target:[[:space:]]*${src}\$" <<<"${rec}" || fail "${src}: not mounted at its own path"
+    grep -qE '^[[:space:]]*read_only:[[:space:]]*true$' <<<"${rec}" || fail "${src}: mounted writable, and the server can rewrite the host clock config"
+    grep -qE '^[[:space:]]*bind:[[:space:]]*$' <<<"${rec}" || fail "${src}: no bind: table to carry create_host_path"
+    chp_col="$(awk '/^[[:space:]]*create_host_path:/{match($0,/^ */); print RLENGTH; exit}' <<<"${rec}")"
+    [[ -n ${chp_col} ]] ||
+      fail "${src}: no create_host_path, so a host that ships no ${src} gets a root-owned directory instead of an error"
+    grep -qE '^[[:space:]]*create_host_path:[[:space:]]*false$' <<<"${rec}" ||
+      fail "${src}: create_host_path is not false"
+    bind_col="$(awk '/^[[:space:]]*bind:/{match($0,/^ */); print RLENGTH; exit}' <<<"${rec}")"
+    [ "${chp_col}" -gt "${bind_col}" ] ||
+      fail "${src}: create_host_path is not nested under bind:, and compose refuses it there"
+  done
+}
+
+@test "twins: the agent env resolves TZ from that container's env and mounted files" {
+  # The compose null is only half the seam: both twins have to keep reading that same
+  # env, then the same mounted file, then Etc/UTC. Pin the whole line, in both twins,
+  # because the three sources are an order and a contract, not a call that can drift.
+  local want='TZ = coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC")'
+  local twin tf agent
+  for twin in workspace devcontainer; do
+    tf="${REPO_ROOT}/templates/${twin}/main.tf"
+    grep -qF "${want}" "${tf}" ||
+      fail "templates/${twin}/main.tf no longer resolves the agent env TZ through the pinned coalesce chain, which is what keeps it consistent with the compose null"
+    agent="$(sed -n '/^resource "coder_agent" "main" {/,/^}/p' "${tf}")"
+    grep -qF "${want}" <<<"${agent}" ||
+      fail "templates/${twin}/main.tf: the TZ resolution is not inside coder_agent \"main\", so the agent would not inherit it"
+  done
+}
+
+@test "dotenv: the sample documents TZ and never ships it as an empty value" {
+  # The shipped default is itself a vector: bootstrap copies every uncommented key of
+  # .env.sample into .env, so an active TZ= there reproduces the UTC server on every
+  # host that follows the docs. The key is documented commented-out, and the two copies
+  # have to stay byte-identical for //:validate.
+  local example="${REPO_ROOT}/.env.example" sample="${REPO_ROOT}/.env.sample"
+  # The two dotenv payloads are not in this suite's runfiles yet; the pin is real the
+  # moment tests/BUILD.bazel declares them, and a skip says so loudly rather than
+  # reporting a green suite that never opened the files.
+  [[ -f ${example} && -f ${sample} ]] ||
+    skip "the two dotenv payload groups are not in this suite's runfiles; declaring them in the suite payload map makes this case assert"
+  cmp -s "${example}" "${sample}" || fail ".env.example and .env.sample drifted; //:validate fails on that too"
+  local f
+  for f in "${example}" "${sample}"; do
+    ! grep -qE '^TZ=' "${f}" ||
+      fail "${f#"${REPO_ROOT}/"} ships an active TZ=, which compose hands the coder container as a present-and-empty value and Go reads as UTC"
+    grep -qE '^[[:space:]]*#[[:space:]]*TZ=[A-Za-z_]+/[A-Za-z_]+$' "${f}" ||
+      fail "${f#"${REPO_ROOT}/"} no longer shows a commented TZ=Area/City an operator can copy"
+    grep -qE '^[[:space:]]*#[[:space:]].*IANA zone name' "${f}" ||
+      fail "${f#"${REPO_ROOT}/"} no longer says what TZ is set to"
+    grep -qE '^[[:space:]]*#[[:space:]].*Unset and empty are two different things' "${f}" ||
+      fail "${f#"${REPO_ROOT}/"} no longer warns that an empty TZ is not the same as an unset one"
+  done
 }

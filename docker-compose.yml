@@ -135,15 +135,30 @@ services:
       # Autostop deadlines are clamped to quiet hours, so the timezone is not
       # optional: UTC here force-stops workspaces at the wrong wall-clock hour.
       CODER_QUIET_HOURS_DEFAULT_SCHEDULE: ${CODER_QUIET_HOURS:-CRON_TZ=UTC 0 3 * * *}
-      # Pin the zone every workspace inherits, rather than following the host. Both
-      # templates/*/main.tf resolve the agent env's TZ as
-      # coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC"),
-      # and Terraform reads that env inside THIS container, so a value set here
-      # outranks the two read-only timezone binds under volumes: use it on a host
-      # whose own zone is wrong or missing. ${TZ:-} keeps the key empty when .env
-      # leaves it out, and coalesce skips an empty string, so the unset form falls
-      # through to the mounted host file instead of injecting a blank zone.
-      TZ: ${TZ:-}
+      # The zone this server's clock runs in, and the one every workspace inherits.
+      # Two readers share this one key and neither can tolerate an empty value, so
+      # the value here is a deliberate null, not an omission of the default:
+      #   - Go reads a PRESENT-AND-EMPTY TZ as UTC and ignores /etc/localtime
+      #     entirely (time.initLocal: "$TZ=\"\" means use UTC"), which would defeat
+      #     the /etc/localtime bind under volumes: below and print a UTC clock on a
+      #     host that runs in another zone;
+      #   - both templates/*/main.tf resolve the agent env's TZ as
+      #     coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC"),
+      #     and Terraform reads that env inside THIS container, so a real value set
+      #     here outranks the two read-only timezone binds below.
+      # A null takes its value from the environment compose was handed, .env
+      # included, and DROPS the key when nothing set it. That is the pair this needs:
+      # unset -> no TZ in the container, so Go reads the mounted /etc/localtime and
+      # Terraform's env("TZ") answers "" and coalesce falls through to the mounted
+      # /etc/timezone, both answering the host; set -> one real IANA name, both
+      # readers follow the pin. Use the pin on a host whose own zone is wrong.
+      # Do NOT restore a default here. ${TZ:-} and ${TZ-} both render TZ: "", and a
+      # .env carrying `TZ=` resolves to the same present-and-empty string, so either
+      # form silently puts the server on UTC; measured with compose v5.5.1. A host
+      # that ships no /etc/timezone (Fedora, Arch, an alpine-based host) has to grow
+      # that file before it can come up at all: see the binds under volumes: and
+      # docs/coder-templates.md. The pin answers the zone, not the missing file.
+      TZ: ~
       # STUN defaults point at Google and buy nothing on a LAN; agents reach
       # each other directly over WireGuard and DERP stays the fallback.
       CODER_DERP_SERVER_STUN_ADDRESSES: ${CODER_DERP_STUN:-disable}
@@ -203,12 +218,36 @@ services:
       # file("/etc/timezone") in both templates/*/main.tf read the machine under the
       # container instead of the coder image's baked default, and every workspace's
       # agent env TZ resolves from it. Read-only because the server has no business
-      # rewriting the host clock config. A host that ships only /etc/localtime (some
-      # distros have no /etc/timezone) still resolves: the absent source becomes an
-      # unreadable path, Terraform's try() answers "", coalesce skips it, and the
-      # boot probe reads the zone off the localtime link mounted on the next line.
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
+      # rewriting the host clock config.
+      #
+      # Long syntax on purpose, for the create_host_path: false that ends each one.
+      # The short KEY:TARGET:ro form auto-creates a source the host does not have,
+      # as a root-owned DIRECTORY rather than the file, on both ends: measured with
+      # compose v5.5.1 against docker 29.8.1, binding a host path that did not exist
+      # left /etc/timezone inside the container a directory owned by root, and left
+      # the whole source path created root-owned on the host, still there after
+      # `compose down`. That is the bad half of the trade: a directory sitting at
+      # /etc/timezone makes the file() read above fail quietly, and it survives to
+      # mislead the next `dpkg-reconfigure tzdata`, which then writes onto a
+      # directory. With create_host_path: false the daemon refuses instead -
+      # `bind source path does not exist: /etc/timezone` at create, and nothing
+      # created anywhere - so a host that ships no /etc/timezone fails loudly at
+      # `up` and fixes it in one command on the host:
+      #   printf '%s\n' Area/City >| /etc/timezone   (root; or dpkg-reconfigure tzdata)
+      # Note the nesting: create_host_path belongs under bind:, and compose refuses
+      # it as an additional property at the top level.
+      - type: bind
+        source: /etc/timezone
+        target: /etc/timezone
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/localtime
+        target: /etc/localtime
+        read_only: true
+        bind:
+          create_host_path: false
     # SIGINT is what makes the server drain in-flight provisioner jobs; the
     # 30s window keeps `compose down` from SIGKILLing a build mid-apply.
     stop_grace_period: 30s

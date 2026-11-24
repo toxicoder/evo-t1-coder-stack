@@ -1063,13 +1063,47 @@ the three sources compose hands it:
 TZ = coalesce(env("TZ"), try(trimspace(file("/etc/timezone")), ""), "Etc/UTC")
 ```
 
-`docker-compose.yml` publishes `TZ` on the `coder` service and bind-mounts the host's
-`/etc/timezone` and `/etc/localtime` into it read-only, which is what those two reads see.
-Without them the probe would answer the *workspace image's* own `/etc/timezone`, the baked
-default, and the feature would do nothing. `try()` is there because an image carrying no
-`/etc/timezone` fails that `file()` read outright rather than answering empty; `try()`
-answers `""` for it and `coalesce` skips an empty string, so the read falls through to
-`Etc/UTC`.
+`docker-compose.yml` carries `TZ` on the `coder` service as a **null** (`TZ: ~`) and
+bind-mounts the host's `/etc/timezone` and `/etc/localtime` into that container read-only,
+which is what the two reads above see. Without them the probe would answer the *workspace
+image's* own `/etc/timezone`, the baked default, and the feature would do nothing.
+
+The null is the whole shape of the seam, because two readers share that one key and
+neither tolerates an empty value:
+
+- the server itself, which is Go, and Go reads a **present-and-empty** `TZ` as UTC and
+  ignores `/etc/localtime` outright (`time.initLocal`: `$TZ="" means use UTC`);
+- the resolver above, which runs in that same container and asks `env("TZ")`.
+
+A null takes its value from the environment compose was handed, `.env` included, and drops
+the key entirely when nothing set it. Unset, and neither reader sees a `TZ` at all: Go
+loads the mounted `/etc/localtime`, `coalesce` falls through to the mounted
+`/etc/timezone`, and both answer the host. Set, and one IANA name answers both. An
+`TZ: ${TZ:-}` default, or an `.env` carrying a bare `TZ=`, is the failure mode that shape
+avoids - compose resolves either of them to a present-and-empty value and the server
+quietly runs on UTC while the host runs somewhere else. `.env.example` therefore ships the
+key commented out rather than empty, and `tests/bats/workspace-tz.bats` pins the null, the
+two binds, and this line.
+
+**A host that ships no `/etc/timezone`.** That file is a Debian-derivative convention: a
+Fedora, Arch, or alpine-based host carries only `/etc/localtime`. Both binds use the long
+syntax with `bind: {create_host_path: false}` instead of the `KEY:TARGET:ro` short form
+precisely for those hosts, because the short form auto-creates a source the host does not
+have as a root-owned **directory** - at the container target, where `file("/etc/timezone")`
+then reads a directory and fails, and on the host, where it survives `docker compose down`
+and misleads the next `dpkg-reconfigure tzdata`. Refusing is the better half of that trade:
+`docker compose up` stops at the `coder` service with
+`bind source path does not exist: /etc/timezone` and creates nothing anywhere, and the host
+grows the file in one command:
+
+```sh
+printf '%s\n' Area/City >/etc/timezone # as root; or: dpkg-reconfigure tzdata
+```
+
+Setting `TZ` in `.env` pins the zone but does not rescue a missing file, because the bind
+is checked before the container starts. `try()` in the resolver stays as the guard for the
+file that exists but answers empty: `trimspace` makes that `""`, `coalesce` skips it, and
+the read falls through to `Etc/UTC`.
 
 Coder starts every `run_on_start` body in one concurrent errgroup and sets *ready* only
 once all of them return, so moving the stage out of the startup body cost no ordering: the
