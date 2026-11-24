@@ -593,13 +593,77 @@ audit_merged() {
   return 0
 }
 
+# @function live_base_branches
+# Print the rows resting on another audited branch that is still unmerged.
+#
+# A stack layer is cut from its base branch, not from the trunk, so the trunk can
+# never contain its tip: read against the trunk alone, every layer of a stack is a
+# branch that "carries work main does not have", and a stack that sat out its
+# lifetime is reported as N stale branches when it is one change awaiting review on
+# a live base. A row is a layer when some other audited row is unmerged into the
+# trunk and that row's tip is already contained in this one - the shape a layer has,
+# because it carries its base's commits. Two rows at one tip contain each other, so
+# an unqualified test would exempt both and stop reporting a stale duplicate pair
+# entirely; equal tips exempt only the later name, which keeps one row of the pair
+# answerable, and strict ancestry needs no such guard.
+# Globals:
+#   none
+# Arguments:
+#   $1 - the label to print ("local" or "remote"); $2 - the trunk ref the ancestry
+#   test needs; $3 - the branch rows, as list_local/list_remote print them; $4 - the
+#   ref prefix that turns a row's name into a resolvable ref, as in audit_merged
+# Outputs:
+#   One audited row name per line on stdout, for each row resting on a live base
+# Returns:
+#   0
+live_base_branches() {
+  local kind="$1" trunk_ref="$2" rows="$3" ref_prefix="${4:-}"
+  local ns name sha date base other
+  ns="refs/heads/"
+  [ "${kind}" = "remote" ] && ns="refs/remotes/"
+  local -A row_tip=() layer=()
+  local -a bases=()
+  while IFS=$'\t' read -r name sha date; do
+    [ -n "${name}" ] || continue
+    [ -n "${sha}" ] || continue
+    row_tip["${name}"]="${sha}"
+    is_always_kept "${kind}" "${name}" && continue
+    git merge-base --is-ancestor "${ref_prefix}${name}" "${trunk_ref}" 2>/dev/null && continue
+    bases+=("${name}")
+  done <<<"${rows}"
+  for base in ${bases[@]+"${bases[@]}"}; do
+    # --contains is one pass over the namespace for the containment a layer has
+    # toward its base, rather than one merge-base per pair of rows.
+    while IFS= read -r other; do
+      [ -n "${other}" ] || continue
+      [ "${other}" != "${base}" ] || continue
+      # Only a row this run was handed is ever exempted: the namespace can hold refs
+      # the row list dropped, a remote --remote did not select or a row with no date.
+      [ -n "${row_tip[${other}]:-}" ] || continue
+      if [ "${row_tip[${base}]:-}" = "${row_tip[${other}]:-}" ] &&
+        [[ ! ${base} < ${other} ]]; then
+        continue
+      fi
+      layer["${other}"]=1
+    done < <(git for-each-ref --format='%(refname:lstrip=2)' \
+      --contains="${ns}${base}" "${ns}" 2>/dev/null || true)
+  done
+  for name in ${!layer[@]+"${!layer[@]}"}; do
+    printf '%s\n' "${name}"
+  done
+  return 0
+}
+
 # @function audit_stale
 # Warn on an unmerged branch whose last commit is older than the branch lifetime.
 # A branch this old is not a change in progress, and the longer it sits the less
 # anyone can say whether it is still wanted, which is when it stops being cheap.
 # A branch the trunk already contains is skipped: audit_merged names it once, under
 # the rule that actually applies, and repeating it here as "unmerged" would state
-# something the ancestry test just proved false.
+# something the ancestry test just proved false. A stack layer is skipped for the
+# opposite reason - no trunk can ever contain its tip while its base branch stays
+# unmerged - so live_base_branches answers that side of the ancestry, and the base
+# of the stack, which nothing exempts, is the row reported for the whole stack.
 # Globals:
 #   MAX_AGE_DAYS, TRUNK
 # Arguments:
@@ -614,14 +678,20 @@ audit_merged() {
 #   0
 audit_stale() {
   local kind="$1" trunk_ref="$2" rows="$3" ref_prefix="${4:-}"
-  local cutoff name sha date
+  local cutoff name sha date lay
+  local -A layered=()
   cutoff="$(date -d "-${MAX_AGE_DAYS} days" +%Y-%m-%d 2>/dev/null ||
     date -v-"${MAX_AGE_DAYS}"d +%Y-%m-%d)"
+  while IFS= read -r lay; do
+    [ -n "${lay}" ] || continue
+    layered["${lay}"]=1
+  done < <(live_base_branches "${kind}" "${trunk_ref}" "${rows}" "${ref_prefix}")
   while IFS=$'\t' read -r name sha date; do
     [ -n "${name}" ] || continue
     is_always_kept "${kind}" "${name}" && continue
     [ -n "${date}" ] || continue
     git merge-base --is-ancestor "${ref_prefix}${name}" "${trunk_ref}" 2>/dev/null && continue
+    [ -n "${layered[${name}]:-}" ] && continue
     if [[ ${date} < ${cutoff} ]]; then
       report_or_warn warn \
         "$(printf '%s branch %s is unmerged and its last commit is %s, older than the %s-day branch lifetime (tip %s)' "${kind}" "${name}" "${date}" "${MAX_AGE_DAYS}" "${sha}")"

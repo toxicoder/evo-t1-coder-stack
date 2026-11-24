@@ -106,6 +106,22 @@ add_branch() {
   git -C "${FIXTURE}/work" switch -q main
 }
 
+# add_layer <child> <base> [days-ago] - commit on a new branch cut from another
+# branch rather than from main, which is the shape a stacked layer has: it carries
+# its base's commits, so the trunk can never contain its tip while the base stays
+# unmerged. The base is pushed first, so the child's remote-tracking ref resolves.
+add_layer() {
+  local name="$1" base="$2" days="${3:-0}" when
+  when="$(date -d "-${days} days" +%Y-%m-%dT12:00:00Z 2>/dev/null ||
+    date -v-"${days}"d +%Y-%m-%dT12:00:00Z)"
+  git -C "${FIXTURE}/work" push -q origin "${base}"
+  git -C "${FIXTURE}/work" switch -q -c "${name}" "${base}"
+  GIT_COMMITTER_DATE="${when}" GIT_AUTHOR_DATE="${when}" \
+    git -C "${FIXTURE}/work" commit -q --allow-empty -m "work on ${name}"
+  git -C "${FIXTURE}/work" push -q origin "${name}"
+  git -C "${FIXTURE}/work" switch -q main
+}
+
 # merge_into_main <name> - fast-forward main onto the branch, which is the shape a
 # merged work branch has: its tip is an ancestor of main and it is still there.
 merge_into_main() {
@@ -563,6 +579,58 @@ deny() {
   [ "${status}" -eq 0 ]
   [[ "${output}" != *"feat/in-progress is unmerged"* ]]
   [[ "${output}" != *"warning:"* ]]
+}
+
+@test "branch-hygiene: a stack layer is not stale while its base branch is live" {
+  fixture_repo >/dev/null
+  add_branch feat/base-layer 30
+  add_layer feat/top-layer feat/base-layer 30
+  audit --max-age 14
+  [ "${status}" -eq 0 ]
+  # The base of the stack carries work main does not have and nothing exempts it, so
+  # it is the row that answers for the whole stack: one warning, not two.
+  [[ "${output}" == *"local branch feat/base-layer is unmerged and its last commit is"* ]]
+  # The layer carries its base's commits, so the trunk can never contain its tip and
+  # trunk-only ancestry would read it as abandoned in its own right.
+  [ "$(occurrences 'feat/top-layer is unmerged')" -eq 0 ]
+  [[ "${stderr}" != *"feat/top-layer is unmerged"* ]]
+  # Merge the base and the layer loses the live branch that made it active: it is now
+  # an unmerged branch of its own and a cleanup candidate like any other. The merged
+  # base keeps its own verdict, so widening the layer's ancestry did not cost the
+  # delete-on-merge rule anything.
+  merge_into_main feat/base-layer
+  audit --max-age 14
+  [[ "${output}" == *"local branch feat/base-layer is merged into main and still present"* ]]
+  [[ "${output}" == *"local branch feat/top-layer is unmerged and its last commit is"* ]]
+  # --plan is unaffected by the layer rule: the merged base is still offered up with
+  # its tip recorded first, and the layer is never offered, which is what a widened
+  # test in audit_merged instead of audit_stale would have done.
+  audit --max-age 14 --plan
+  [[ "${output}" == *"git branch -d feat/base-layer"* ]]
+  [[ "${output}" == *"record tip $(git -C "${FIXTURE}/work" rev-parse --short feat/base-layer) first"* ]]
+  [[ "${output}" != *"git branch -d feat/top-layer"* ]]
+}
+
+@test "branch-hygiene: live_base_branches names the layer and keeps one row answerable" {
+  fixture_repo >/dev/null
+  add_branch feat/base
+  add_layer feat/top feat/base 40
+  cd "${FIXTURE}/work"
+  load_lib
+  local rows
+  rows="$(printf 'feat/base\t%s\t2026-10-01\nfeat/top\t%s\t2026-10-02' \
+    "$(git rev-parse --short feat/base)" "$(git rev-parse --short feat/top)")"
+  run live_base_branches local main "${rows}" ""
+  [ "${output}" = "feat/top" ]
+  # Two rows at one tip contain each other, so an unguarded test would exempt both
+  # and stop reporting a stale duplicate pair altogether. Equal tips exempt only the
+  # later name, which leaves the earlier row as the candidate for the pair.
+  git -C "${FIXTURE}/work" branch dup/aaa feat/base
+  git -C "${FIXTURE}/work" branch dup/zzz feat/base
+  rows="$(printf 'dup/aaa\t%s\t2026-10-01\ndup/zzz\t%s\t2026-10-01' \
+    "$(git rev-parse --short dup/aaa)" "$(git rev-parse --short dup/zzz)")"
+  run live_base_branches local main "${rows}" ""
+  [ "${output}" = "dup/zzz" ]
 }
 
 @test "branch-hygiene: --strict promotes the stale warning to a failure" {
