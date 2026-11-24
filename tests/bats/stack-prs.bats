@@ -16,8 +16,12 @@
 #   - a stack merges bottom-up in the order the layers came back, because layer two
 #     landing before layer one has actually landed is how a layer ends up merged onto a
 #     base the trunk does not have;
-#   - `gh` exit 9 is not a failed call but a missing repository setting, so it maps to
-#     its own exit code and to a HANDOFF line naming the setting a human has to enable.
+#   - a repository with stacks turned off is not a failed call but a missing repository
+#     setting, so it maps to its own exit code and to a HANDOFF line pointing at the
+#     feature a human has to enable. The detection reads the HTTP status and the error
+#     text of a /stacks call rather than an exit code: code 9 belongs to the `gh stack`
+#     extension, and this CLI's only transport is `gh api`, for which no page gives 9 a
+#     meaning, so one test pins that a bare 9 is an ordinary failed call.
 #
 # Hermetic by construction: `gh` is a fixture script this file writes into the test's
 # own scratch bin, answering from canned bodies and an exit code the test chooses. No
@@ -66,7 +70,8 @@ setup() {
 # every call, the JSON body it was handed on stdin, and whether either of the two
 # injected environment variables survived into its environment - which is the only way
 # to see that the CLI removed them, since a stub cannot be asked afterwards what its
-# caller unstored.
+# caller unstored. STUB_GH_ERR is what it writes to stderr, which is how a test hands
+# the CLI the `gh: ... (HTTP 404)` line the disabled-repository detection reads.
 write_gh_stub() {
   cat >"${STUB_BIN}/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -113,6 +118,9 @@ else
   out="${STUB_GH_OUT:-}"
 fi
 [ -n "${out}" ] && printf '%s\n' "${out}"
+if [ -n "${STUB_GH_ERR:-}" ]; then
+  printf '%s\n' "${STUB_GH_ERR}" >&2
+fi
 exit "${STUB_GH_RC:-0}"
 STUB
   chmod 755 "${STUB_BIN}/gh"
@@ -283,7 +291,7 @@ occurrences() {
   assert_eq "a stack endpoint is allowed" 0 "${status}"
 }
 
-@test "stacks_disabled_note names the setting a human has to enable" {
+@test "stacks_disabled_note hands the operator the clicks they owe" {
   lib_shell '
     set -euo pipefail
     source "${EVO_T1_SRC}/lib/common.sh"
@@ -295,7 +303,27 @@ occurrences() {
   assert_eq "it prints" 0 "${status}"
   assert_match "a HANDOFF line" "HANDOFF: stacks are not enabled for toxicoder/ezrepo" "${stderr}"
   assert_match "the repository settings page" "settings" "${stderr}"
-  assert_match "the setting by name" "Allow stack updates" "${stderr}"
+  assert_match "and the feature to find there" "stacked-pull-requests feature" "${stderr}"
+  # The switch's own label is deliberately not pinned: no GitHub page in the cited set
+  # names it, and asserting an invented label would pin a guess as though somebody had
+  # verified a UI string.
+}
+
+@test "stacks_disabled_shape reads the missing setting from the status and the path" {
+  lib_run stacks_disabled_shape "/repos/o/r/stacks" 1 "gh: Not Found (HTTP 404)"
+  assert_eq "a bare 404 on the collection is" 0 "${status}"
+  lib_run stacks_disabled_shape "/repos/o/r/stacks/7" 1 "gh: Not Found (HTTP 404)"
+  assert_eq "and on one stack" 0 "${status}"
+  lib_run stacks_disabled_shape "/repos/o/r/stacks" 1 "gh: Stacks are not enabled here (HTTP 422)"
+  assert_eq "a 422 that names the feature is" 0 "${status}"
+  lib_run stacks_disabled_shape "/repos/o/r/pulls/7" 1 "gh: Not Found (HTTP 404)"
+  assert_eq "a 404 off the stacks paths is not" 1 "${status}"
+  lib_run stacks_disabled_shape "/repos/o/r/stacks/7/unstack" 1 "gh: Not Found (HTTP 404)"
+  assert_eq "a 404 on a stack that is not there is not" 1 "${status}"
+  lib_run stacks_disabled_shape "/repos/o/r/stacks" 1 "gh: Validation Failed (HTTP 422)"
+  assert_eq "an unrelated 422 is not" 1 "${status}"
+  lib_run stacks_disabled_shape "/repos/o/r/stacks" 0 ""
+  assert_eq "and a call that answered is not" 1 "${status}"
 }
 
 @test "resolve_repo_slug takes --slug verbatim and refuses a malformed one" {
@@ -340,7 +368,9 @@ occurrences() {
   assert_match "with the ordered body" \
     'body /repos/toxicoder/ezrepo/stacks {"pull_requests":\[12,13,14\]}' "$(gh_log)"
   assert_match "and the number" "stack 7 created from 3 layers" "${output}"
-  assert_match "layers stay drafts" "stay drafts" "${output}"
+  # Not "layers stay drafts": this CLI creates no pull requests, so it cannot claim a
+  # draft default it never sets. It only declines to clear draft without --open.
+  assert_match "layers keep whatever draft state they have" "keep the draft state" "${output}"
 }
 
 @test "create-stack --open marks every layer ready" {
@@ -484,13 +514,28 @@ occurrences() {
   assert_match "on a call that really ran" "pair=clear GET /repos/o/r/stacks/7" "$(gh_log)"
 }
 
-@test "gh exit 9 becomes a HANDOFF note and its own exit code" {
-  export STUB_GH_RC=9
+# The 404 on a /stacks path is the shape a repository without the feature answers, and
+# it is the only thing the CLI keys the HANDOFF on. This replaced a pin on `gh` exit 9,
+# which is the `gh stack` extension's documented code
+# (docs: stacked-prs-cli-commands#exit-codes) and carries no documented meaning for the
+# `gh api` transport this CLI uses.
+@test "a 404 on a stacks path becomes a HANDOFF note and its own exit code" {
+  export STUB_GH_RC=1
+  export STUB_GH_ERR="gh: Not Found (HTTP 404)"
   run_cli view --slug toxicoder/ezrepo --stack 7
   assert_eq "exit 3" 3 "${status}"
   assert_match "the note is a HANDOFF" "HANDOFF: stacks are not enabled for toxicoder/ezrepo" "${stderr}"
-  assert_match "and names the setting" "Allow stack updates" "${stderr}"
+  assert_match "and points at the feature" "stacked-pull-requests feature" "${stderr}"
   assert_match "with the settings path" "settings" "${stderr}"
+}
+
+@test "an undocumented exit 9 is an ordinary failed call, not the missing setting" {
+  export STUB_GH_RC=9
+  run_cli view --slug toxicoder/ezrepo --stack 7
+  assert_eq "the verb fails as a call would" 1 "${status}"
+  assert_match "naming the endpoint and the code" \
+    "could not read /repos/toxicoder/ezrepo/stacks/7 \(exit 9\)" "${stderr}"
+  assert_eq "without any HANDOFF note" 0 "$(grep -Ec 'HANDOFF' <<<"${stderr}" || true)"
 }
 
 @test "a failing call is exit 1 and a counted failure, not exit 2" {

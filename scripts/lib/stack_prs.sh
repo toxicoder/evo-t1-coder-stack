@@ -6,9 +6,33 @@
 # layer under it. Nothing in this tree could create, read, retarget, or land one:
 # `gh pr create` sets one base by hand, and a rebase of the bottom layer leaves every
 # layer above it pointing at a commit main already has. The GitHub stacks API owns the
-# chain (GET|POST /repos/{o}/{r}/stacks, GET /repos/{o}/{r}/stacks/{number},
-# POST .../stacks/{number}/add, POST .../stacks/{number}/unstack) and this lib is the
-# one place in the stack that speaks it, so the verbs have a single seam to test.
+# chain and this lib is the one place in the stack that speaks it, so the verbs have a
+# single seam to test.
+#
+# What that chain's endpoints are is a measured fact, not a guess. On 2026-11-24
+# `gh api --method GET /repos/toxicoder/evo-t1-coder-stack/stacks` answered HTTP 200
+# with a body opening
+# `[{"id":3949966,"number":193,"node_id":"PRS_...","base":{"ref":"main"},"open":false,`
+# and each entry carrying `pull_requests[]` whose items hold `number`, `state`, `draft`,
+# `merged_at`, `head.ref`, `head.sha`. That one response pinned `GET /repos/{o}/{r}/stacks`,
+# a stack's two identities (a global `id` and a repository-scoped `number`), the stack's
+# `base.ref`, and the ordered list key `pull_requests[]`. The paths and fields this CLI
+# still sends without that evidence - `GET /stacks/{number}`, `POST /stacks/{number}/add`,
+# `POST /stacks/{number}/unstack`, and the request-body field names `pull_requests` and
+# `pull_request` - are this CLI's own convention: the three operator-cited pages enumerate
+# no stacks REST endpoint at all, and the endpoint list at
+# https://docs.github.com/en/rest/pulls/stacks keeps its method/path tables in a form the
+# fetch lane cannot extract, so those names stay unconfirmed by documentation.
+#
+# Two facts about this API are documented, and this lib leans on both:
+#
+#   - a merge must go through the asynchronous merge API: "a stack cannot be merged with
+#     the legacy synchronous merge endpoints or mutations".
+#     https://docs.github.com/en/pull-requests/reference/stacked-pull-requests-apis-and-webhooks
+#   - there is no dedicated stack webhook event. GitHub adds a `stack` property to the
+#     `pull_request` object in `pull_request` payloads for lifecycle events that happen
+#     while the PR is part of a stack, on the same URL.
+#     https://docs.github.com/en/pull-requests/reference/stacked-pull-requests-apis-and-webhooks
 #
 # Two rules are load-bearing here and each is a function rather than a habit:
 #
@@ -23,12 +47,22 @@
 #     PUT .../pulls/{n}/merge is refused outright by assert_async_only: merging a
 #     twelve-layer stack through it holds one HTTP request per layer open until
 #     GitHub's own timeout, which reads as a hung CLI and can leave a layer merged
-#     with the run already dead.
+#     with the run already dead. The rule is GitHub's own words: a stack cannot be
+#     merged with the legacy synchronous merge endpoints "or mutations".
 #
-# Layers are drafts unless the operator asks for otherwise, so --open is what marks a
-# layer ready (POST /repos/{o}/{r}/pulls/{n}/ready). `gh stack` exits 9 when stacks are
-# not enabled for the repository; that is not a failure an operator can fix from the
-# shell, so it maps to a HANDOFF note naming the setting a human has to tick.
+# Whether a layer is a draft is the operator's decision, made when they opened the pull
+# request: this lib creates no pull requests, only stacks over existing ones, so it
+# never sets a draft state and claims no API default for one. `--open` is this CLI's own
+# convention for clearing draft on layers the operator says are ready, through
+# POST /repos/{o}/{r}/pulls/{n}/ready. (Draft-by-default is the `gh stack link`
+# behaviour, which "creates a draft pull request with the correct base branch" unless
+# --open; the REST create example shows draft:false.)
+#
+# A repository with stacks turned off is not a failure an operator can fix from the
+# shell, so it maps to a HANDOFF note. It is read from the HTTP status and error text of
+# the /stacks calls, because exit code 9 belongs to the `gh stack` extension - see
+# https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands#exit-codes -
+# and this CLI's only transport is `gh api`, for which no page gives code 9 any meaning.
 #
 # Usage (from an entry script, after `set -euo pipefail` and the common.sh source):
 #   # shellcheck source=lib/stack_prs.sh disable=SC1091
@@ -61,8 +95,12 @@ declare -ga PR_NUMBERS=()
 # The two shapes `view` asks gh to render. They live here rather than inline because
 # the response schema is GitHub's to change and a verb that reads it in three places
 # breaks in three places.
+#
+# `.[]` at the top level is measured, not guessed: the 200 body recorded in the header
+# is a bare JSON array of stack objects, not an object wrapping a `stacks` key, so a
+# `.stacks[]` here would answer every list view with nothing.
 JQ_STACK_LAYERS='.pull_requests[] | "\(.number)\t\(.head.ref)\t\(.base.ref)\t\(.draft)"'
-JQ_STACK_LIST='.stacks[] | "\(.number)\t\(.pull_requests | length)"'
+JQ_STACK_LIST='.[] | "\(.number)\t\(.pull_requests | length)"'
 
 # @function usage
 # Print the invocation summary and the flag list.
@@ -451,11 +489,44 @@ assert_async_only() {
   return 0
 }
 
+# @function stacks_disabled_shape
+# Decide whether a failed /stacks call is the repository having stacks turned off.
+# No page names a status or a message for that case, so this is the CLI's own
+# inference from what `gh api` can actually report: a call to the stacks collection or
+# to one stack that came back HTTP 404 or HTTP 422, either with text that names a
+# feature or an enablement problem or bare, which is what a repository without the
+# feature answers. A 404 anywhere else is an ordinary failed call and has to stay one:
+# off the two collection paths it means a wrong PR number or a stack that is not there,
+# so the path check comes first.
+# Globals:
+#   none
+# Arguments:
+#   $1 - the API path that was called; $2 - the gh exit code; $3 - gh's stderr text
+# Outputs:
+#   Nothing; the decision is the return code
+# Returns:
+#   0 when the call looks like the missing repository setting, 1 otherwise
+stacks_disabled_shape() {
+  local endpoint="${1:-}" gh_rc="${2:-0}" err_text="${3:-}"
+  [[ ${endpoint} =~ /stacks(/[0-9]+)?$ ]] || return 1
+  [[ ${gh_rc} -ne 0 ]] || return 1
+  if [[ ${err_text} =~ HTTP[[:space:]]+(404|422)($|[^0-9]) ]]; then
+    if [[ ${err_text} =~ [Nn]ot[[:space:]]+[Ff]ound ||
+      ${err_text} =~ [Uu]nprocessable ||
+      (${err_text} =~ [Ss]tack && ${err_text} =~ [Nn]ot[[:space:]]+([Ee]nabled|[Ss]upported|[Aa]vailable)) ]]; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 # @function stacks_disabled_note
 # Print what an operator has to do when the repository has no stacks.
-# `gh stack` exits 9 for a repository where stacks are not turned on. No shell
-# invocation can fix that, so the note is a HANDOFF line that names the exact setting,
-# the way this stack's auth checks hand a human the three clicks they owe.
+# No shell invocation can turn the feature on, so the note is a HANDOFF line in the
+# shape this stack's auth checks use: the three clicks a human owes. It names where to
+# look (Settings -> General -> the stacked-pull-requests feature) and not the label of
+# the switch, because no GitHub page in the cited set names that label and an invented
+# one reads as a fact somebody verified.
 # Globals:
 #   REPO_SLUG
 # Arguments:
@@ -467,7 +538,7 @@ assert_async_only() {
 stacks_disabled_note() {
   err "HANDOFF: stacks are not enabled for ${REPO_SLUG:-this repository}"
   err "a human has to turn them on: github.com/${REPO_SLUG:-o/r}/settings -> General ->"
-  err "  Pull Requests -> check 'Allow stack updates' (repository features), then re-run"
+  err "  the stacked-pull-requests feature (GitHub names no switch label), then re-run"
 }
 
 # @function gh_api
@@ -475,9 +546,11 @@ stacks_disabled_note() {
 # It builds `env -u GH_TOKEN -u GITHUB_TOKEN gh api` so the stale pair Coder injected
 # at workspace start cannot shadow the gh auth store the refresh job keeps live, and it
 # clears the response and the code before every call so a verb can never read a stale
-# GH_RESPONSE after a failed exchange. gh's own stderr is dropped on purpose: this CLI
-# prints its own error: line naming the endpoint and the code, and a bare gh `error:`
-# above it would be counted as a second failure by anything grepping the output.
+# GH_RESPONSE after a failed exchange. gh's own stderr goes to a scratch file rather
+# than the terminal on purpose: this CLI prints its own error: line naming the endpoint
+# and the code, and a bare gh `error:` above it would be counted as a second failure by
+# anything grepping the output. The file is read once, for the one thing the status text
+# decides below, and never echoed.
 # Globals:
 #   GH_RESPONSE, GH_RC, STACKS_DISABLED, DRY_RUN
 # Arguments:
@@ -491,7 +564,7 @@ stacks_disabled_note() {
 gh_api() {
   local method="$1" endpoint="$2" jq_expr="${3:-}" json_body="${4:-}"
   local -a cmd
-  local rc=0
+  local rc=0 err_file err_text=""
 
   GH_RESPONSE=""
   GH_RC=0
@@ -509,19 +582,29 @@ gh_api() {
     return 0
   fi
 
+  err_file="$(mktemp "${TMPDIR:-/tmp}/stack-prs-gh-err.XXXXXX")"
   cmd=(env -u GH_TOKEN -u GITHUB_TOKEN gh api --method "${method}" "${endpoint}")
   if [ -n "${jq_expr}" ]; then
     cmd+=(--jq "${jq_expr}")
   fi
   if [ -n "${json_body}" ]; then
     cmd+=(--input -)
-    GH_RESPONSE="$(printf '%s' "${json_body}" | "${cmd[@]}" 2>/dev/null)" || rc=$?
+    GH_RESPONSE="$(printf '%s' "${json_body}" | "${cmd[@]}" 2>"${err_file}")" || rc=$?
   else
-    GH_RESPONSE="$("${cmd[@]}" 2>/dev/null)" || rc=$?
+    GH_RESPONSE="$("${cmd[@]}" 2>"${err_file}")" || rc=$?
   fi
   GH_RC="${rc}"
+  err_text="$(cat "${err_file}" 2>/dev/null || true)"
+  rm -f "${err_file}"
 
-  if [ "${rc}" -eq 9 ]; then
+  # The missing repository setting is read from what gh api returned, not from its exit
+  # code. Code 9 is the `gh stack` *extension*'s documented answer for a repository
+  # without stacks
+  # (https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands#exit-codes),
+  # and this CLI's only transport is `gh api`, for which no page gives code 9 any
+  # meaning -- so gh_api no longer branches on it, and an unexplained 9 falls through to
+  # the ordinary failed call below.
+  if stacks_disabled_shape "${endpoint}" "${rc}" "${err_text}"; then
     stacks_disabled_note
     # shellcheck disable=SC2034 # written here, read by main() in the entry script
     STACKS_DISABLED=1
@@ -538,6 +621,8 @@ gh_api() {
 # Print the create-stack body: the layer numbers, bottom of the stack first.
 # The order is the contract the API reads as the chain, so it is preserved exactly as
 # --prs gave it rather than sorted: the operator states which layer sits on which.
+# The response key `pull_requests[]` is measured (see the header); the request-body
+# field name of the same spelling is this CLI's own and stays unconfirmed by docs.
 # Globals:
 #   PR_NUMBERS
 # Arguments:
@@ -556,8 +641,13 @@ body_pull_requests() {
 
 # @function open_layer
 # Take one layer out of draft.
-# A layer is a draft unless the operator asked for it, which is the API's default and
-# the safe one: nobody reviews a stack whose bottom layer is not written yet.
+# This CLI never sets a draft state: it stacks over pull requests the operator already
+# opened, so each layer keeps whatever draft state it was opened with. `--open` is this
+# CLI's own convention for clearing draft on the layers the operator says are ready, so
+# nobody has to hand-edit six PRs after one create-stack. (Draft-by-default is the
+# `gh stack link` behaviour, not a REST default: the REST create example shows
+# draft:false.
+# https://docs.github.com/en/pull-requests/reference/use-other-tools-with-stacked-pull-requests)
 # Globals:
 #   REPO_SLUG
 # Arguments:
@@ -607,7 +697,7 @@ verb_create_stack() {
       open_layer "${pr}" || return 1
     done
   else
-    note "layers stay drafts; pass --open to mark them ready"
+    note "layers keep the draft state they were opened with; pass --open to mark them ready"
   fi
   return 0
 }
@@ -693,6 +783,11 @@ verb_view() {
 # Point every layer above the bottom at its parent's branch.
 # A stack drifts the moment someone pushes a new branch under a layer or unstacks the
 # middle of it, and a wrong base is invisible until the review lands on the wrong diff.
+# What this does not do is rebase. GitHub retargets a stack onto a new base but "does
+# not rebase" its branches, and until something rebases it, `push` and `submit` stop
+# (https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands#retargeted-stacks);
+# this CLI has no rebase verb, so a stack left in that state needs a rebase from the
+# operator on each layer branch before it can move again.
 # The bottom layer is left alone: its base is the trunk, which is the one base nobody
 # retargets, and PATCHing it would silently merge an unmerged branch's work into main's
 # review surface.
@@ -796,6 +891,10 @@ merge_layer_async() {
     phase "would merge-async PR ${pr} with method ${MERGE_METHOD}"
     return 0
   fi
+  # The method is sent on every call. GitHub documents that the merge-method flags are
+  # ignored, with a warning, when the base is on a merge queue, so a merge queue on the
+  # trunk decides the method and this value is advisory there.
+  # https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands
   phase "merge-async PR ${pr} (${MERGE_METHOD})"
   if ! gh_api PUT "/repos/${REPO_SLUG}/pulls/${pr}/merge-async" '.id' \
     "$(printf '{"merge_method":"%s"}' "${MERGE_METHOD}")"; then

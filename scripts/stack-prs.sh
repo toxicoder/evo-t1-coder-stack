@@ -4,8 +4,9 @@
 #
 # The ingress for the stacked-PR rules in scripts/lib/stack_prs.sh: it names the
 # repository, reads the flags, and runs one verb. Everything that decides what a
-# stack *is* - the endpoints, the merge-async pair, the draft rule, the exit-9
-# mapping - lives in the lib, where a Bats suite can reach each function alone.
+# stack *is* - the endpoints, the merge-async pair, the --open convention, the
+# stacks-disabled HANDOFF - lives in the lib, where a Bats suite can reach each
+# function alone.
 #
 # A stack is a chain of pull requests where each layer's base is the branch under it,
 # and a chain is only worth having if the tool keeps it consistent: `create-stack`

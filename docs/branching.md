@@ -283,11 +283,20 @@ to it.
 - Merge bottom-up, and only through the asynchronous merge endpoint: `PUT` on
   `/repos/{o}/{r}/pulls/{n}/merge-async`, then poll the matching
   `GET .../pulls/{n}/merge-async/{uuid}` until it reports the result. Each merge hands the
-  layer above a new base, so the stack unwinds one layer at a time from the bottom.
+  layer above a new base, so the stack unwinds one layer at a time from the bottom. The
+  rule is GitHub's own words: "a stack cannot be merged with the legacy synchronous merge
+  endpoints **or mutations**". The async merge merges every PR in the stack up to and
+  including the one requested, runs in the background, is atomic, and reports a
+  branch-protection failure as a failed polling result rather than a submit-time error
+  (<https://docs.github.com/en/pull-requests/reference/stacked-pull-requests-apis-and-webhooks>).
 
-- Never merge a layer with the plain merge call and never merge out of order: the layer above
-  is left pointing at a base that no longer exists, carrying commits that belong to its
-  parent.
+- Never merge a layer with the plain merge call and never merge out of that order. GitHub
+  re-targets the layers above a merged parent automatically, so an upper layer is not left
+  pointing at a base branch that no longer exists; what GitHub does not do is rebase it. A
+  stack moved onto a new base keeps carrying the commits its old base already had, and
+  while it sits retargeted-but-not-rebased, `push` and `submit` stop until `sync` or
+  `rebase` runs
+  (<https://docs.github.com/en/pull-requests/reference/stacked-prs-cli-commands#retargeted-stacks>).
 
 - Record a layer's tip SHA before it is deleted - the same record any deletion leaves behind,
   per [Work branches](#work-branches) - and delete only the layers the trunk already
@@ -296,9 +305,11 @@ to it.
 ### Enabling it, and the two CLIs
 
 - Stacks are enabled per repository, and that is an operator action in the repository's
-  settings: no script can turn it on. A stack call against a repository that has them off is
-  reported as a note naming that setting, so the reader knows a person has to act rather than
-  the command being worth retrying.
+  settings: no script can turn it on. Which switch is not named here, because no GitHub page
+  in the cited set names its label: the CLI points a reader at Settings -> General -> the
+  stacked-pull-requests feature. A stack call against a repository that has them off is
+  reported as a HANDOFF note, so the reader knows a person has to act rather than the command
+  being worth retrying.
 
 - Every call goes through `env -u GH_TOKEN -u GITHUB_TOKEN gh api`, for the reason in
   [troubleshooting.md](troubleshooting.md).
